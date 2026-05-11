@@ -37,6 +37,7 @@ benchmarks/longmemeval/results/
 # Claude Code / Codex
 .claude
 .codex
+.superpowers
 
 # Logs
 logs
