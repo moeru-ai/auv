@@ -60,11 +60,14 @@ Implemented in the current prototype:
 - minimal `inspect` CLI path over stored run snapshots
 - fixture driver for non-destructive runtime validation
 - macOS screenshot driver using `/usr/sbin/screencapture`
+- macOS window observation report via Swift + `CGWindowList`
+- macOS permission probe for screen recording, accessibility, and automation
+- macOS app launch and focus via `open` + `osascript`
+- macOS click, type, press-keys, scroll, and wait primitives via Swift + Quartz
 
 Intentionally not implemented yet:
 
 - OCR driver
-- mouse and keyboard input driver
 - trace replay
 - inspect UI
 - AIRI-style action executor, approval queue, or MCP tool registration shell

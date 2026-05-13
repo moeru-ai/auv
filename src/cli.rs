@@ -40,7 +40,11 @@ USAGE
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
   - The CLI is a thin frontend over the library runtime in src/lib.rs.
-  - `debug.captureScreen` proves driver-level desktop reuse without importing AIRI server tooling.
+  - `debug.captureScreen`, `debug.observeWindows`, and `debug.probePermissions` are the current desktop donor entrypoints.
+  - Operation-specific flags are forwarded as string inputs, for example:
+    `auv-cli invoke debug.click --x 640 --y 480 --button left`
+    `auv-cli invoke debug.pressKeys --keys cmd+k`
+    `auv-cli invoke debug.focusApp --app Music`
 "
 }
 
