@@ -22,12 +22,38 @@ impl CommandCatalog {
 }
 
 pub fn default_command_catalog() -> CommandCatalog {
-  let commands = vec![CommandSpec {
-    id: "debug.fixtureObserve",
-    summary: "Emit a deterministic observation result without touching the host UI.",
-    driver_id: "fixture.observe",
-    operation: "observe_fixture_scene",
-  }];
+  let commands = vec![
+    CommandSpec {
+      id: "debug.captureScreen",
+      summary: "Capture one desktop screenshot through the shared runtime path.",
+      driver_id: "macos.observe",
+      operation: "capture_screen",
+    },
+    CommandSpec {
+      id: "debug.probeDisplays",
+      summary: "Enumerate connected macOS displays and capture a coordinate-space report.",
+      driver_id: "macos.observe",
+      operation: "probe_displays",
+    },
+    CommandSpec {
+      id: "debug.probeCoordinateReadiness",
+      summary: "Capture a screenshot and compare its pixels against the observed macOS coordinate space.",
+      driver_id: "macos.observe",
+      operation: "probe_coordinate_readiness",
+    },
+    CommandSpec {
+      id: "debug.probePermissions",
+      summary: "Probe macOS screen recording, accessibility, and automation permissions.",
+      driver_id: "macos.observe",
+      operation: "probe_permissions",
+    },
+    CommandSpec {
+      id: "debug.fixtureObserve",
+      summary: "Emit a deterministic observation result without touching the host UI.",
+      driver_id: "fixture.observe",
+      operation: "observe_fixture_scene",
+    },
+  ];
 
   CommandCatalog::new(commands)
 }
@@ -80,15 +106,18 @@ mod tests {
   }
 
   #[test]
-  fn default_catalog_exposes_runtime_validation_command() {
+  fn default_catalog_always_exposes_observation_commands() {
     let catalog = default_command_catalog();
-    assert!(catalog.resolve("debug.fixtureObserve").is_some());
+    assert!(catalog.resolve("debug.captureScreen").is_some());
+    assert!(catalog.resolve("debug.probeDisplays").is_some());
+    assert!(catalog.resolve("debug.probeCoordinateReadiness").is_some());
+    assert!(catalog.resolve("debug.probePermissions").is_some());
   }
 
   #[test]
-  fn default_catalog_does_not_expose_platform_commands_yet() {
+  fn default_catalog_does_not_expose_mutation_commands() {
     let catalog = default_command_catalog();
-    assert!(catalog.resolve("debug.captureScreen").is_none());
-    assert!(catalog.resolve("debug.probePermissions").is_none());
+    assert!(catalog.resolve("debug.click").is_none());
+    assert!(catalog.resolve("debug.focusApp").is_none());
   }
 }

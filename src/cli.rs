@@ -41,7 +41,7 @@ USAGE
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
   - The CLI is a thin frontend over the library runtime in src/lib.rs.
-  - `debug.fixtureObserve` is the current runtime-validation entrypoint.
+  - `debug.captureScreen`, `debug.probeDisplays`, `debug.probeCoordinateReadiness`, and `debug.probePermissions` are the current macOS capability-validation entrypoints.
 ",
   )
 }
