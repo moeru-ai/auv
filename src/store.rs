@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -105,22 +104,22 @@ impl LocalStore {
 fn write_run_snapshot(run: &RunRecord, directory: &Path) -> AuvResult<()> {
   write_snapshot_file(
     &directory.join("meta.txt"),
-    render_meta(run),
+    run.render_meta(),
     "run metadata",
   )?;
   write_snapshot_file(
     &directory.join("inputs.txt"),
-    render_inputs(&run.inputs),
+    run.render_inputs(),
     "run inputs",
   )?;
   write_snapshot_file(
     &directory.join("events.log"),
-    render_events(run),
+    run.render_events(),
     "run events",
   )?;
   write_snapshot_file(
     &directory.join("artifacts.txt"),
-    render_artifacts(run),
+    run.render_artifacts(),
     "artifact manifest",
   )?;
   write_snapshot_file(
@@ -130,7 +129,7 @@ fn write_run_snapshot(run: &RunRecord, directory: &Path) -> AuvResult<()> {
   )?;
   write_snapshot_file(
     &directory.join("inspect.txt"),
-    render_inspection(run),
+    run.to_string(),
     "inspect snapshot",
   )?;
   Ok(())
@@ -141,114 +140,91 @@ fn write_snapshot_file(path: &Path, content: String, label: &str) -> AuvResult<(
     .map_err(|error| format!("failed to write {} {}: {error}", label, path.display()))
 }
 
-fn render_meta(run: &RunRecord) -> String {
-  let target = run
-    .target_application_id
-    .clone()
-    .unwrap_or_else(|| "n/a".to_string());
-  let finished = run
-    .finished_at_millis
-    .map(|value| value.to_string())
-    .unwrap_or_else(|| "n/a".to_string());
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::model::RunStatus;
+  use std::collections::BTreeMap;
+  use std::env;
 
-  [
-    format!("runId: {}", run.run_id),
-    format!("status: {}", run.status.as_str()),
-    format!("command: {}", run.command_id),
-    format!("driver: {}", run.driver_id),
-    format!("operation: {}", run.operation),
-    format!("targetApplicationId: {target}"),
-    format!("runtimeVersion: {}", run.runtime_version),
-    format!("startedAtMillis: {}", run.started_at_millis),
-    format!("finishedAtMillis: {finished}"),
-  ]
-  .join("\n")
-    + "\n"
-}
-
-fn render_inputs(inputs: &BTreeMap<String, String>) -> String {
-  if inputs.is_empty() {
-    return "none\n".to_string();
+  #[test]
+  fn local_store_creates_root_directories() {
+    let root = temp_dir("store-init");
+    LocalStore::new(root.clone()).expect("should initialize");
+    assert!(root.join("runs").exists());
+    assert!(root.join("artifacts").exists());
+    let _ = fs::remove_dir_all(root);
   }
 
-  let mut lines = Vec::new();
-  for (key, value) in inputs {
-    lines.push(format!("{key}={value}"));
+  #[test]
+  fn local_store_persists_and_renders_run() {
+    let root = temp_dir("store-persist");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+    let run = RunRecord {
+      run_id: "test_run".to_string(),
+      command_id: "test.cmd".to_string(),
+      driver_id: "test.driver".to_string(),
+      operation: "test_op".to_string(),
+      target_application_id: None,
+      runtime_version: "0.0.1".to_string(),
+      started_at_millis: 1000,
+      finished_at_millis: Some(1100),
+      status: RunStatus::Completed,
+      inputs: BTreeMap::new(),
+      output_summary: "success".to_string(),
+      events: Vec::new(),
+      artifacts: Vec::new(),
+    };
+
+    store.persist_run(&run).expect("should persist");
+    let inspection = store.render_inspection("test_run").expect("should render");
+
+    assert!(inspection.contains("Run test_run"));
+    assert!(inspection.contains("Status: completed"));
+    assert!(inspection.contains("Command: test.cmd"));
+
+    let _ = fs::remove_dir_all(root);
   }
-  lines.join("\n") + "\n"
-}
 
-fn render_events(run: &RunRecord) -> String {
-  if run.events.is_empty() {
-    return "none\n".to_string();
+  #[test]
+  fn local_store_fails_if_run_already_exists() {
+    let root = temp_dir("store-conflict");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+    let run = dummy_run("conflict_run");
+
+    store
+      .persist_run(&run)
+      .expect("first persist should succeed");
+    let error = store
+      .persist_run(&run)
+      .expect_err("second persist should fail");
+    assert!(error.contains("already exists"));
+
+    let _ = fs::remove_dir_all(root);
   }
 
-  let mut lines = Vec::new();
-  for event in &run.events {
-    lines.push(format!(
-      "{} {} {}",
-      event.at_millis, event.kind, event.message
-    ));
-  }
-  lines.join("\n") + "\n"
-}
-
-fn render_artifacts(run: &RunRecord) -> String {
-  if run.artifacts.is_empty() {
-    return "none\n".to_string();
+  fn temp_dir(label: &str) -> PathBuf {
+    let path = env::temp_dir().join(format!("auv-{}-{}", label, now_millis()));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).expect("temp dir should be creatable");
+    path
   }
 
-  let mut lines = Vec::new();
-  for artifact in &run.artifacts {
-    let note = artifact.note.clone().unwrap_or_else(|| "n/a".to_string());
-    lines.push(format!(
-      "{} kind={} path={} note={}",
-      artifact.id,
-      artifact.kind,
-      artifact.path.display(),
-      note
-    ));
+  fn dummy_run(run_id: &str) -> RunRecord {
+    RunRecord {
+      run_id: run_id.to_string(),
+      command_id: "test.cmd".to_string(),
+      driver_id: "test.driver".to_string(),
+      operation: "test_op".to_string(),
+      target_application_id: None,
+      runtime_version: "0.0.1".to_string(),
+      started_at_millis: now_millis(),
+      finished_at_millis: None,
+      status: RunStatus::Failed,
+      inputs: BTreeMap::new(),
+      output_summary: String::new(),
+      events: Vec::new(),
+      artifacts: Vec::new(),
+    }
   }
-  lines.join("\n") + "\n"
-}
-
-fn render_inspection(run: &RunRecord) -> String {
-  let target = run
-    .target_application_id
-    .clone()
-    .unwrap_or_else(|| "n/a".to_string());
-  let finished = run
-    .finished_at_millis
-    .map(|value| value.to_string())
-    .unwrap_or_else(|| "n/a".to_string());
-  let sections = vec![
-    format!("Run {}", run.run_id),
-    format!("Status: {}", run.status.as_str()),
-    format!("Command: {}", run.command_id),
-    format!("Driver: {}", run.driver_id),
-    format!("Operation: {}", run.operation),
-    format!("Target: {target}"),
-    format!("Runtime Version: {}", run.runtime_version),
-    format!("Started At (ms): {}", run.started_at_millis),
-    format!("Finished At (ms): {finished}"),
-    String::new(),
-    "Inputs".to_string(),
-    render_block(&render_inputs(&run.inputs)),
-    "Output".to_string(),
-    render_block(&format!("{}\n", run.output_summary)),
-    "Artifacts".to_string(),
-    render_block(&render_artifacts(run)),
-    "Events".to_string(),
-    render_block(&render_events(run)),
-  ];
-
-  sections.join("\n")
-}
-
-fn render_block(raw: &str) -> String {
-  raw
-    .lines()
-    .map(|line| format!("  {line}"))
-    .collect::<Vec<_>>()
-    .join("\n")
 }

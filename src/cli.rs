@@ -27,8 +27,9 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
   }
 }
 
-pub fn help_text() -> &'static str {
-  "\
+pub fn help_text() -> String {
+  String::from(
+    "\
 auv-cli prototype
 
 USAGE
@@ -40,12 +41,16 @@ USAGE
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
   - The CLI is a thin frontend over the library runtime in src/lib.rs.
-  - `debug.captureScreen`, `debug.observeWindows`, and `debug.probePermissions` are the current desktop donor entrypoints.
-  - Operation-specific flags are forwarded as string inputs, for example:
-    `auv-cli invoke debug.click --x 640 --y 480 --button left`
-    `auv-cli invoke debug.pressKeys --keys cmd+k`
-    `auv-cli invoke debug.focusApp --app Music`
-"
+  - `debug.captureScreen`, `debug.probeDisplays`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.observeWindows`, `debug.observeWindowTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
+  - `debug.observeWindowTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
+  - `--reveal_settle_ms <millis>` can be used to make the reveal step explicit instead of depending on hard-coded timing assumptions.
+  - `debug.typeText` supports `--replace_existing true`, `--submit_key return`, and `--submit_settle_ms 800` for repeatable text-entry flows.
+  - `debug.pressKey` supports both special keys like `Return` and shortcuts like `cmd+f`, with optional `--settle_ms`.
+  - `debug.clickWindowPoint` accepts either `--offset_x/--offset_y` or `--relative_x/--relative_y` against the target window bounds.
+  - `debug.findScreenText` and `debug.clickScreenText` use macOS Vision OCR over a captured screenshot and operate in screenshot-pixel anchors projected back to logical points.
+  - `debug.clickScreenText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
+",
+  )
 }
 
 fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {

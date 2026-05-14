@@ -1,0 +1,112 @@
+{
+  "skill_id": "macos.qqmusic.search_ocr_anchor.v0",
+  "version": "0.1.0",
+  "status": "validated-recipe",
+  "target_app": {
+    "platform": "macOS",
+    "bundle_id": "com.tencent.QQMusicMac",
+    "display_mode": "live-desktop"
+  },
+  "objective": "Reach QQ Music search results, resolve a known OCR text anchor, click that anchor, and capture post-action evidence.",
+  "distilled_with": {
+    "model": "glm-4-air-250414",
+    "request_id": "20260514171311e0d48da2670e448f",
+    "note": "Model output was reviewed and normalized against live AUV validation before writing this skill file."
+  },
+  "required_commands": [
+    "debug.focusTextInput",
+    "debug.typeText",
+    "debug.findScreenText",
+    "debug.clickScreenText",
+    "debug.captureScreen"
+  ],
+  "inputs": {
+    "query": {
+      "type": "string",
+      "default": "aa",
+      "note": "ASCII baseline avoids IME ambiguity during initial validation."
+    },
+    "anchor_text": {
+      "type": "string",
+      "default": "I DRINK THE LIGHT",
+      "note": "A known visible result title used as the first OCR anchor baseline."
+    },
+    "reveal_shortcut": {
+      "type": "string",
+      "default": "cmd+f"
+    },
+    "reveal_settle_ms": {
+      "type": "integer",
+      "default": 300
+    },
+    "submit_settle_ms": {
+      "type": "integer",
+      "default": 900
+    }
+  },
+  "steps": [
+    {
+      "command_id": "debug.focusTextInput",
+      "args": {
+        "target": "com.tencent.QQMusicMac",
+        "query": "搜索",
+        "reveal_shortcut": "cmd+f",
+        "reveal_settle_ms": 300,
+        "max_depth": 5,
+        "max_children": 20
+      },
+      "purpose": "Reveal and focus the QQ Music search box through AX."
+    },
+    {
+      "command_id": "debug.typeText",
+      "args": {
+        "target": "com.tencent.QQMusicMac",
+        "text": "aa",
+        "replace_existing": true,
+        "submit_key": "return",
+        "submit_settle_ms": 900
+      },
+      "purpose": "Submit a stable baseline query and wait for the search results state."
+    },
+    {
+      "command_id": "debug.findScreenText",
+      "args": {
+        "query": "I DRINK THE LIGHT"
+      },
+      "purpose": "Resolve a screenshot OCR text anchor in result-list pixel space."
+    },
+    {
+      "command_id": "debug.clickScreenText",
+      "args": {
+        "query": "I DRINK THE LIGHT",
+        "click_count": 1
+      },
+      "purpose": "Project the OCR anchor back to logical coordinates and click it."
+    },
+    {
+      "command_id": "debug.captureScreen",
+      "args": {
+        "label": "qqmusic-result-anchor-aa"
+      },
+      "purpose": "Capture post-click evidence for later inspect/review."
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "focusTextInput succeeds for query 搜索",
+      "typeText submits aa with return",
+      "findScreenText reports at least one match for I DRINK THE LIGHT",
+      "clickScreenText emits a logicalPoint note and click artifact",
+      "post-click screenshot shows the result row selected or highlighted"
+    ],
+    "non_goals": [
+      "Playback activation is not yet proven.",
+      "This recipe does not assert that the selected row starts playing."
+    ]
+  },
+  "known_limits": {
+    "black_box_region": "QQ Music result rows remain visually accessible but weakly exposed through AX.",
+    "user_disturbance": "clickScreenText uses pointer-level control and is intrusive on a live desktop, even though cursor restoration is attempted.",
+    "fallback_needed": "If OCR does not find the anchor, higher-level distillation must try another visible result title or a stronger visual strategy."
+  }
+}
