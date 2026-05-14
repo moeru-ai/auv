@@ -1,0 +1,9 @@
+screenshotPath=/var/folders/6h/bvgn_0x55ll991kz_8p6f9xm0000gn/T/auv-qqmusic-search-aa-1778749178113-56939.png
+screenshotPixels=3024x1964
+coordinateContract=debug.captureScreen emits main-display physical screenshot pixels
+capturedAt=2026-05-14T08:59:38Z
+combinedLogicalBounds=-222,-1080,1920,2062
+mainDisplayId=1
+mainDisplayLogicalSize=1512x982
+mainDisplayPixelSize=3024x1964
+mainDisplayScaleFactor=2.000

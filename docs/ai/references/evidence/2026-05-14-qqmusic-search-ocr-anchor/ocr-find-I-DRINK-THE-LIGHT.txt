@@ -1,0 +1,10 @@
+recognizedAt=2026-05-14T08:59:39Z
+imagePath=/var/folders/6h/bvgn_0x55ll991kz_8p6f9xm0000gn/T/auv-screen-text-I-DRINK-THE-LIGHT-1778749178853-57073.png
+imageWidth=3024
+imageHeight=1964
+query=I DRINK THE LIGHT
+exact=false
+caseSensitive=false
+match	0	I DRINK THE LIGHT (Jengi Remix)	1.000000	791	1296	413	31
+match	1	I DRINK THE LIGHT (Jengi...	1.000000	1912	1318	347	31
+matchCount=2

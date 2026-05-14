@@ -38,6 +38,10 @@ The corresponding normalized recipe artifact lives in:
 
 - `docs/ai/references/2026-05-14-qqmusic-search-ocr-anchor-skill-v0.json`
 
+The curated raw evidence pack lives in:
+
+- `docs/ai/references/evidence/2026-05-14-qqmusic-search-ocr-anchor/`
+
 ## Local Validation Evidence
 
 The recipe was rerun locally more than once and produced the same core outcome:

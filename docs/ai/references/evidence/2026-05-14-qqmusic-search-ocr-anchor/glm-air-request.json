@@ -1,0 +1,16 @@
+{
+  "model": "glm-4-air-250414",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You distill validated desktop automation evidence into a compact JSON recipe. Return JSON only."
+    },
+    {
+      "role": "user",
+      "content": "Distill a minimal reusable recipe for a macOS QQ Music black-box search flow. Proven facts only:\n- target app id: com.tencent.QQMusicMac\n- reveal shortcut: cmd+f\n- reveal settle ms: 300\n- query used in validation: aa\n- successful repeatable chain: focus search input -> type query -> submit return -> OCR find text anchor I DRINK THE LIGHT -> click OCR text anchor -> capture screenshot evidence\n- verified command ids: debug.focusTextInput, debug.typeText, debug.findScreenText, debug.clickScreenText, debug.captureScreen\n- do not claim playback activation succeeded\nReturn compact JSON with keys: skill_id, version, target_app, objective, required_commands, inputs, steps, verification, known_limits."
+    }
+  ],
+  "temperature": 0.1,
+  "max_tokens": 800,
+  "stream": false
+}

@@ -1,0 +1,9 @@
+query=I DRINK THE LIGHT
+matchIndex=0
+matchText=I DRINK THE LIGHT (Jengi Remix)
+matchBounds=791,1296,413,31
+matchConfidence=1.000
+screenshotCenter=997.500,1311.500
+logicalPoint=498.750,655.750
+button=left
+clickCount=1
