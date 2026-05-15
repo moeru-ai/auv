@@ -8,6 +8,11 @@
     "display_mode": "live-desktop"
   },
   "objective": "Reach QQ音乐 search results, activate one visible result-row anchor through a double-click, and verify the resulting now-playing title from the captured evidence image.",
+  "distilled_with": {
+    "model": "glm-4-air-250414",
+    "request_id": "20260515140242254a20de94e84a55",
+    "note": "Model output was reviewed and normalized against the live AUV playback baseline before writing this skill file."
+  },
   "distilled_for": {
     "intended_models": [
       "glm-4-air-250414",

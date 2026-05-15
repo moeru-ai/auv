@@ -1,0 +1,16 @@
+{
+  "model": "glm-4-air-250414",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You distill validated desktop automation evidence into a compact JSON skill. Return JSON only."
+    },
+    {
+      "role": "user",
+      "content": "Distill a narrow reusable playback skill for a macOS QQ Music black-box result activation flow. Proven facts only:\\n- target app id: com.tencent.QQMusicMac\\n- reveal shortcut: cmd+f\\n- reveal settle ms: 300\\n- submit settle ms: 900\\n- validated query: aa\\n- validated visible row anchor: Cure For Me\\n- validated playback title after activation: Cure For Me - AURORA\\n- successful repeatable chain: press shortcut -> paste query with clipboard restore -> submit return -> dismiss overlay escape -> OCR resolve visible row anchor -> double-click OCR row anchor -> capture screenshot evidence -> OCR verify playback title from the captured evidence image\\n- verified command ids: debug.pressKey, debug.pasteTextPreserveClipboard, debug.findScreenText, debug.clickScreenText, debug.captureScreen, debug.findImageText\\n- do not claim generalized playback for arbitrary rows\\n- do not claim pointer-free playback activation\\n- do not claim Chinese OCR anchor stability\\nReturn compact JSON with keys: skill_id, version, target_app, objective, required_commands, inputs, disturbance_policy, steps, verification, known_limits."
+    }
+  ],
+  "temperature": 0.1,
+  "max_tokens": 1200,
+  "stream": false
+}
