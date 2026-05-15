@@ -1,0 +1,266 @@
+{
+  "recipe_id": "macos.qqmusic.play_visible_anchor.v0",
+  "version": "0.1.0",
+  "status": "validated-recipe",
+  "platform": "macOS",
+  "target_app": {
+    "name": "QQ音乐",
+    "bundle_id": "${app_id}",
+    "display_mode": "live-desktop"
+  },
+  "objective": "Reach QQ音乐 search results, double-click a visible result-row OCR anchor, and verify the resulting now-playing title from the captured evidence image.",
+  "inputs": {
+    "app_id": {
+      "type": "string",
+      "default": "com.tencent.QQMusicMac"
+    },
+    "query": {
+      "type": "string",
+      "default": "aa",
+      "note": "Current validated playback baseline starts from the ASCII query aa."
+    },
+    "anchor_text": {
+      "type": "string",
+      "default": "Cure For Me",
+      "note": "A visible row-title anchor from the QQ音乐 results list."
+    },
+    "playback_title": {
+      "type": "string",
+      "default": "Cure For Me - AURORA",
+      "note": "The expected bottom-player title OCR string after result activation."
+    },
+    "reveal_shortcut": {
+      "type": "string",
+      "default": "cmd+f"
+    },
+    "reveal_settle_ms": {
+      "type": "integer",
+      "default": 300
+    },
+    "submit_settle_ms": {
+      "type": "integer",
+      "default": 900
+    },
+    "dismiss_overlay_key": {
+      "type": "string",
+      "default": "escape"
+    },
+    "dismiss_overlay_settle_ms": {
+      "type": "integer",
+      "default": 300
+    },
+    "click_count": {
+      "type": "integer",
+      "default": 2,
+      "note": "The first validated activation path is a row double-click."
+    },
+    "selection_region_left_ratio": {
+      "type": "number",
+      "default": 0.14
+    },
+    "selection_region_top_ratio": {
+      "type": "number",
+      "default": 0.34
+    },
+    "selection_region_right_ratio": {
+      "type": "number",
+      "default": 0.90
+    },
+    "selection_region_bottom_ratio": {
+      "type": "number",
+      "default": 0.95
+    },
+    "selection_min_confidence": {
+      "type": "number",
+      "default": 0.90
+    },
+    "verification_region_left_ratio": {
+      "type": "number",
+      "default": 0.22
+    },
+    "verification_region_top_ratio": {
+      "type": "number",
+      "default": 0.80
+    },
+    "verification_region_right_ratio": {
+      "type": "number",
+      "default": 0.45
+    },
+    "verification_region_bottom_ratio": {
+      "type": "number",
+      "default": 0.90
+    },
+    "verification_min_confidence": {
+      "type": "number",
+      "default": 0.90
+    }
+  },
+  "preconditions": [
+    "The host is macOS.",
+    "QQ音乐 is installed and can be addressed by ${app_id}.",
+    "Screen Recording and Accessibility permissions are already granted.",
+    "The recipe runs on the live desktop, brings QQ音乐 to the foreground, and still uses pointer disturbance for activation."
+  ],
+  "disturbance_policy": {
+    "max_disturbance": "pointer",
+    "declared_classes": [
+      "none",
+      "foreground_app",
+      "keyboard",
+      "clipboard",
+      "pointer"
+    ],
+    "notes": [
+      "This recipe is not non-disturbing. It foregrounds QQ音乐, uses the clipboard during search entry, and uses pointer disturbance for result activation.",
+      "The playback verification step is observation-only because it runs OCR against the captured evidence image instead of recapturing the live desktop.",
+      "This is a narrow validated playback baseline, not a general qqmusic.play_song contract."
+    ]
+  },
+  "steps": [
+    {
+      "id": "open-search",
+      "command_id": "debug.pressKey",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard"
+        ],
+        "max": "keyboard"
+      },
+      "args": {
+        "target": "${app_id}",
+        "key": "${reveal_shortcut}",
+        "settle_ms": "${reveal_settle_ms}"
+      }
+    },
+    {
+      "id": "paste-query",
+      "command_id": "debug.pasteTextPreserveClipboard",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard",
+          "clipboard"
+        ],
+        "max": "clipboard"
+      },
+      "args": {
+        "target": "${app_id}",
+        "text": "${query}",
+        "replace_existing": true,
+        "submit_key": "return",
+        "submit_settle_ms": "${submit_settle_ms}"
+      }
+    },
+    {
+      "id": "dismiss-search-overlay",
+      "command_id": "debug.pressKey",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard"
+        ],
+        "max": "keyboard"
+      },
+      "args": {
+        "target": "${app_id}",
+        "key": "${dismiss_overlay_key}",
+        "settle_ms": "${dismiss_overlay_settle_ms}"
+      }
+    },
+    {
+      "id": "resolve-ocr-anchor",
+      "command_id": "debug.findScreenText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "query": "${anchor_text}",
+        "min_confidence": "${selection_min_confidence}",
+        "region_left_ratio": "${selection_region_left_ratio}",
+        "region_top_ratio": "${selection_region_top_ratio}",
+        "region_right_ratio": "${selection_region_right_ratio}",
+        "region_bottom_ratio": "${selection_region_bottom_ratio}"
+      }
+    },
+    {
+      "id": "double-click-row-anchor",
+      "command_id": "debug.clickScreenText",
+      "disturbance": {
+        "classes": [
+          "pointer"
+        ],
+        "max": "pointer"
+      },
+      "args": {
+        "query": "${anchor_text}",
+        "click_count": "${click_count}",
+        "min_confidence": "${selection_min_confidence}",
+        "region_left_ratio": "${selection_region_left_ratio}",
+        "region_top_ratio": "${selection_region_top_ratio}",
+        "region_right_ratio": "${selection_region_right_ratio}",
+        "region_bottom_ratio": "${selection_region_bottom_ratio}"
+      }
+    },
+    {
+      "id": "capture-evidence",
+      "command_id": "debug.captureScreen",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "label": "qqmusic-playback-anchor-${query}"
+      }
+    },
+    {
+      "id": "verify-player-title",
+      "command_id": "debug.findImageText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "image_path": "${step_capture_evidence_artifact_image_0}",
+        "query": "${playback_title}",
+        "min_confidence": "${verification_min_confidence}",
+        "region_left_ratio": "${verification_region_left_ratio}",
+        "region_top_ratio": "${verification_region_top_ratio}",
+        "region_right_ratio": "${verification_region_right_ratio}",
+        "region_bottom_ratio": "${verification_region_bottom_ratio}"
+      }
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "The query is submitted through clipboard-backed search entry.",
+      "A visible OCR row anchor is resolved in the results list.",
+      "The row anchor double-click completes.",
+      "A captured post-click screenshot artifact exists.",
+      "debug.findImageText confirms ${playback_title} inside the bottom-player title region of the captured evidence image."
+    ],
+    "success_criteria": [
+      "A known row anchor is activated through a double-click.",
+      "A captured evidence image exists.",
+      "The evidence image contains the expected now-playing title."
+    ],
+    "non_goals": [
+      "This recipe does not prove generalized playback for arbitrary rows.",
+      "This recipe does not prove pointer-free playback activation.",
+      "This recipe does not prove Chinese OCR anchor stability."
+    ]
+  },
+  "known_limits": {
+    "narrow_baseline": "This recipe is validated for a narrow baseline and should not yet be advertised as a broad QQ音乐 playback skill.",
+    "pointer_required": "Result activation still depends on pointer disturbance through OCR-projected row selection.",
+    "captured_image_verification": "Playback verification currently trusts OCR over the captured evidence image, not live-screen OCR.",
+    "shared_app_state": "Do not run multiple QQ音乐 recipes against the same live app instance at once."
+  }
+}

@@ -8,6 +8,7 @@ Current baseline:
 - `open-search-submit-query.v0.json`
 - `select-result-anchor.v0.json`
 - `search-ocr-anchor.v0.json`
+- `play-visible-anchor.v0.json`
 
 The lower-disturbance baseline proves only the following chain:
 
@@ -47,6 +48,10 @@ It does **not** prove playback activation yet.
 There is now a narrower experimental playback wrapper:
 
 - `scripts/local/qqmusic-play-visible-anchor.sh`
+
+And now also a formal playback recipe:
+
+- `recipes/macos/qqmusic/play-visible-anchor.v0.json`
 
 It is intentionally not advertised as a generic recipe manifest yet. The
 current validation still depends on one captured-image verification trick:
@@ -131,6 +136,10 @@ DRY_RUN=1 ./scripts/local/qqmusic-select-visible-anchor.sh "Cure For Me"
 
 DRY_RUN=1 ./scripts/local/qqmusic-play-visible-anchor.sh aa "Cure For Me" "Cure For Me - AURORA"
 ./scripts/local/qqmusic-play-visible-anchor.sh aa "Cure For Me" "Cure For Me - AURORA"
+
+python3 scripts/recipes/run_recipe.py \
+  recipes/macos/qqmusic/play-visible-anchor.v0.json \
+  --dry-run
 ```
 
 ## Why This Exists

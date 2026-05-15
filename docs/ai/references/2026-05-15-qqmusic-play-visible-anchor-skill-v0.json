@@ -1,0 +1,166 @@
+{
+  "skill_id": "macos.qqmusic.play_visible_anchor.v0",
+  "version": "0.1.0",
+  "status": "validated-recipe",
+  "target_app": {
+    "platform": "macOS",
+    "bundle_id": "com.tencent.QQMusicMac",
+    "display_mode": "live-desktop"
+  },
+  "objective": "Reach QQ音乐 search results, activate one visible result-row anchor through a double-click, and verify the resulting now-playing title from the captured evidence image.",
+  "distilled_for": {
+    "intended_models": [
+      "glm-4-air-250414",
+      "lightweight tool-calling models"
+    ],
+    "note": "This artifact is normalized from live AUV validation so lightweight models can follow an explicit operation chain instead of improvising from raw screenshots."
+  },
+  "required_commands": [
+    "debug.pressKey",
+    "debug.pasteTextPreserveClipboard",
+    "debug.findScreenText",
+    "debug.clickScreenText",
+    "debug.captureScreen",
+    "debug.findImageText"
+  ],
+  "inputs": {
+    "query": {
+      "type": "string",
+      "default": "aa"
+    },
+    "anchor_text": {
+      "type": "string",
+      "default": "Cure For Me"
+    },
+    "playback_title": {
+      "type": "string",
+      "default": "Cure For Me - AURORA"
+    },
+    "reveal_shortcut": {
+      "type": "string",
+      "default": "cmd+f"
+    },
+    "reveal_settle_ms": {
+      "type": "integer",
+      "default": 300
+    },
+    "submit_settle_ms": {
+      "type": "integer",
+      "default": 900
+    },
+    "click_count": {
+      "type": "integer",
+      "default": 2
+    }
+  },
+  "disturbance_policy": {
+    "max_disturbance": "pointer",
+    "declared_classes": [
+      "none",
+      "foreground_app",
+      "keyboard",
+      "clipboard",
+      "pointer"
+    ],
+    "notes": [
+      "Search entry is clipboard-backed and pointer-free.",
+      "Playback activation still depends on pointer disturbance through a row double-click.",
+      "Playback verification is observation-only because it runs OCR over the captured evidence image.",
+      "This is a narrow validated playback baseline, not a generalized qqmusic.play_song contract."
+    ]
+  },
+  "steps": [
+    {
+      "command_id": "debug.pressKey",
+      "args": {
+        "target": "com.tencent.QQMusicMac",
+        "key": "cmd+f",
+        "settle_ms": 300
+      },
+      "purpose": "Reveal the QQ音乐 search UI."
+    },
+    {
+      "command_id": "debug.pasteTextPreserveClipboard",
+      "args": {
+        "target": "com.tencent.QQMusicMac",
+        "text": "aa",
+        "replace_existing": true,
+        "submit_key": "return",
+        "submit_settle_ms": 900
+      },
+      "purpose": "Submit the known baseline query while preserving and restoring the clipboard."
+    },
+    {
+      "command_id": "debug.pressKey",
+      "args": {
+        "target": "com.tencent.QQMusicMac",
+        "key": "escape",
+        "settle_ms": 300
+      },
+      "purpose": "Dismiss the search overlay before OCR inspects the result-list region."
+    },
+    {
+      "command_id": "debug.findScreenText",
+      "args": {
+        "query": "Cure For Me",
+        "min_confidence": 0.9,
+        "region_left_ratio": 0.14,
+        "region_top_ratio": 0.34,
+        "region_right_ratio": 0.9,
+        "region_bottom_ratio": 0.95
+      },
+      "purpose": "Resolve a visible result-row OCR anchor."
+    },
+    {
+      "command_id": "debug.clickScreenText",
+      "args": {
+        "query": "Cure For Me",
+        "click_count": 2,
+        "min_confidence": 0.9,
+        "region_left_ratio": 0.14,
+        "region_top_ratio": 0.34,
+        "region_right_ratio": 0.9,
+        "region_bottom_ratio": 0.95
+      },
+      "purpose": "Double-click the resolved result-row anchor."
+    },
+    {
+      "command_id": "debug.captureScreen",
+      "args": {
+        "label": "qqmusic-playback-anchor-aa"
+      },
+      "purpose": "Capture post-click evidence."
+    },
+    {
+      "command_id": "debug.findImageText",
+      "args": {
+        "image_path": "<artifact from previous capture step>",
+        "query": "Cure For Me - AURORA",
+        "min_confidence": 0.9,
+        "region_left_ratio": 0.22,
+        "region_top_ratio": 0.8,
+        "region_right_ratio": 0.45,
+        "region_bottom_ratio": 0.9
+      },
+      "purpose": "Verify the bottom-player title from the captured evidence image."
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "A result-row OCR anchor is resolved.",
+      "The row double-click completes.",
+      "A captured evidence image exists.",
+      "The evidence image contains the expected playback title."
+    ],
+    "non_goals": [
+      "This artifact does not prove generalized playback for arbitrary rows.",
+      "This artifact does not prove Chinese OCR anchor stability."
+    ]
+  },
+  "known_limits": {
+    "narrow_baseline": "Validated around one known query, row anchor, and expected player title.",
+    "pointer_required": "The activation step still uses pointer disturbance.",
+    "artifact_dependency": "Playback verification relies on the captured evidence image from the same run.",
+    "shared_app_state": "Do not run concurrently against the same live QQ音乐 instance."
+  }
+}

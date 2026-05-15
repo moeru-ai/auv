@@ -307,5 +307,8 @@ playback contract.
 
 - `docs/ai/references/2026-05-14-glm-air-qqmusic-search-evidence.md`
 - `docs/ai/references/2026-05-14-qqmusic-search-ocr-anchor-skill-v0.json`
+- `docs/ai/references/2026-05-15-qqmusic-play-visible-anchor-skill-v0.json`
+- `docs/ai/references/2026-05-15-qqmusic-playback-verification.md`
 - `docs/ai/references/evidence/2026-05-14-qqmusic-search-ocr-anchor/`
 - `recipes/macos/qqmusic/search-ocr-anchor.v0.json`
+- `recipes/macos/qqmusic/play-visible-anchor.v0.json`

@@ -32,6 +32,11 @@ The first practical wrapper for this baseline is:
 ./scripts/local/qqmusic-play-visible-anchor.sh aa "Cure For Me" "Cure For Me - AURORA"
 ```
 
+The formal recipe and normalized skill artifact now live at:
+
+- `recipes/macos/qqmusic/play-visible-anchor.v0.json`
+- `docs/ai/references/2026-05-15-qqmusic-play-visible-anchor-skill-v0.json`
+
 ## Why This Is Narrow
 
 This baseline still depends on:
@@ -40,6 +45,11 @@ This baseline still depends on:
 - pointer disturbance for result activation
 - a known player-title string for post-click verification
 - OCR over a captured evidence image instead of a semantic playback API
+
+It now also depends on the recipe runner exporting the capture step's image
+artifact path into the later verification step. That makes the playback chain
+machine-replayable without keeping shell-specific parsing logic as the source of
+truth.
 
 That means the baseline is good enough to prove a real playback slice, but not
 good enough to advertise a general-purpose QQ音乐 playback skill.

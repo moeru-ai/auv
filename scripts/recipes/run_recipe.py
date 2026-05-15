@@ -86,6 +86,63 @@ def build_command(step: dict, variables: dict[str, str]) -> list[str]:
   return command
 
 
+def sanitize_step_component(raw: str) -> str:
+  lowered = raw.strip().lower().replace("-", "_")
+  collapsed = "".join(character if (character.isalnum() or character == "_") else "_" for character in lowered)
+  while "__" in collapsed:
+    collapsed = collapsed.replace("__", "_")
+  cleaned = collapsed.strip("_")
+  return cleaned or "step"
+
+
+def parse_invoke_output(output: str) -> dict[str, object]:
+  parsed: dict[str, object] = {
+    "run_id": "",
+    "status": "",
+    "output": "",
+    "artifacts": [],
+  }
+
+  artifacts: list[str] = []
+  for raw_line in output.splitlines():
+    line = raw_line.strip()
+    if line.startswith("runId: "):
+      parsed["run_id"] = line.removeprefix("runId: ").strip()
+    elif line.startswith("status: "):
+      parsed["status"] = line.removeprefix("status: ").strip()
+    elif line.startswith("output: "):
+      parsed["output"] = line.removeprefix("output: ").strip()
+    elif line.startswith("artifact: "):
+      artifacts.append(line.removeprefix("artifact: ").strip())
+
+  parsed["artifacts"] = artifacts
+  return parsed
+
+
+def export_step_result_variables(step_id: str, parsed: dict[str, object], variables: dict[str, str]) -> None:
+  prefix = f"step_{sanitize_step_component(step_id)}"
+  run_id = str(parsed.get("run_id", ""))
+  status = str(parsed.get("status", ""))
+  output = str(parsed.get("output", ""))
+  artifacts = [str(value) for value in parsed.get("artifacts", [])]
+
+  variables[f"{prefix}_run_id"] = run_id
+  variables[f"{prefix}_status"] = status
+  variables[f"{prefix}_output"] = output
+  variables[f"{prefix}_artifact_count"] = str(len(artifacts))
+
+  image_artifacts = [artifact for artifact in artifacts if artifact.lower().endswith((".png", ".jpg", ".jpeg"))]
+
+  for index, artifact in enumerate(artifacts):
+    variables[f"{prefix}_artifact_{index}"] = artifact
+
+  if artifacts:
+    variables[f"{prefix}_artifact_last"] = artifacts[-1]
+  if image_artifacts:
+    variables[f"{prefix}_artifact_image_0"] = image_artifacts[0]
+    variables[f"{prefix}_artifact_image_last"] = image_artifacts[-1]
+
+
 def disturbance_rank(name: str) -> int:
   try:
     return DISTURBANCE_ORDER.index(name)
@@ -200,7 +257,12 @@ def run_recipe(
       )
       if dry_run:
         continue
-      subprocess.run(command, check=True)
+      completed = subprocess.run(command, check=True, capture_output=True, text=True)
+      if completed.stdout:
+        print(completed.stdout, end="")
+      if completed.stderr:
+        print(completed.stderr, end="", file=sys.stderr)
+      export_step_result_variables(step["id"], parse_invoke_output(completed.stdout), variables)
 
   return 0
 
