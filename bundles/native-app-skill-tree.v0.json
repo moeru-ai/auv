@@ -11,6 +11,10 @@
     "applicationFamily": "native-macos-apps",
     "platform": "macOS"
   },
+  "versions": {
+    "auv": ">=0.0.1, <0.1.0",
+    "targetApplication": ""
+  },
   "members": [
     {
       "recipeId": "macos.qqmusic.play_visible_anchor.v0",

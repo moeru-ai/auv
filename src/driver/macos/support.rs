@@ -940,7 +940,7 @@ fn normalize_ax_text(value: &str) -> String {
   value
     .chars()
     .filter(|character| !character.is_whitespace())
-  .collect::<String>()
+    .collect::<String>()
     .to_lowercase()
 }
 

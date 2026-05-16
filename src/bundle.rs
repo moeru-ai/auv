@@ -14,6 +14,8 @@ pub struct SkillBundleManifest {
   #[serde(default)]
   pub target: SkillBundleTarget,
   #[serde(default)]
+  pub versions: SkillBundleVersions,
+  #[serde(default)]
   pub members: Vec<SkillBundleMember>,
   #[serde(default)]
   pub verification: SkillBundleVerification,
@@ -39,6 +41,14 @@ pub struct SkillBundleTarget {
   pub application_family: String,
   #[serde(default)]
   pub platform: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct SkillBundleVersions {
+  #[serde(default)]
+  pub auv: String,
+  #[serde(default, rename = "targetApplication")]
+  pub target_application: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]

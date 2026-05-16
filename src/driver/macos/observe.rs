@@ -507,7 +507,10 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     .max_by(|left, right| left.0.cmp(&right.0))
     .map(|(_, node)| node)
     .ok_or_else(|| {
-      let mut detail = format!("no matching ax text node found for target_text {}", expected_text);
+      let mut detail = format!(
+        "no matching ax text node found for target_text {}",
+        expected_text
+      );
       if let Some(role) = expected_role.as_deref() {
         detail.push_str(&format!(" and target_role {}", role));
       }
