@@ -49,6 +49,7 @@ graph TD
 - Notes has a validated native-app sample that uses `verifyAxText`.
 - TextEdit has a validated native-app sample that uses the same contract.
 - The same runtime can carry a second native app without screenshot OCR.
+- The first bundle-shaped artifact is `bundles/native-app-skill-tree.v0.json`.
 
 ## What Is Not Proven
 

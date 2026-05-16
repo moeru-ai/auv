@@ -1,0 +1,79 @@
+{
+  "apiVersion": "auv.ai/v1alpha1",
+  "kind": "SkillBundle",
+  "metadata": {
+    "id": "native.app.skill-tree.v0",
+    "name": "AUV Native App Skill Tree",
+    "version": "0.1.0",
+    "status": "working"
+  },
+  "target": {
+    "applicationFamily": "native-macos-apps",
+    "platform": "macOS"
+  },
+  "members": [
+    {
+      "recipeId": "macos.qqmusic.play_visible_anchor.v0",
+      "caseMatrixId": "macos.qqmusic.play_visible_anchor.v0",
+      "role": "music-player-narrow-skill",
+      "validatedCaseIds": [
+        "ascii-aa-cure-for-me",
+        "ascii-aa-soft-universe",
+        "ascii-aa-aa-alone-again"
+      ],
+      "candidateCaseIds": [
+        "chinese-query-chinese-anchor"
+      ],
+      "contract": "verifyNowPlayingTitle",
+      "evidenceRefs": [
+        "docs/ai/references/2026-05-15-qqmusic-playback-verification.md",
+        "docs/ai/references/2026-05-15-qqmusic-play-visible-anchor-skill-v0.json"
+      ]
+    },
+    {
+      "recipeId": "macos.notes.create_and_verify_note.v0",
+      "caseMatrixId": "macos.notes.create_and_verify_note.v0",
+      "role": "native-text-sample",
+      "validatedCaseIds": [
+        "notes-marker-baseline"
+      ],
+      "contract": "verifyAxText",
+      "evidenceRefs": [
+        "docs/ai/references/2026-05-17-notes-ax-text-sample.md"
+      ]
+    },
+    {
+      "recipeId": "macos.textedit.create_and_verify_text.v0",
+      "caseMatrixId": "macos.textedit.create_and_verify_text.v0",
+      "role": "native-text-sample",
+      "validatedCaseIds": [
+        "textedit-marker-baseline"
+      ],
+      "contract": "verifyAxText",
+      "evidenceRefs": [
+        "recipes/macos/textedit/README.md"
+      ]
+    }
+  ],
+  "verification": {
+    "expectedSignals": [
+      "The bundle lists one QQ音乐 narrow skill and two native text samples.",
+      "The bundle keeps QQ音乐 playback verification separate from generic AX text verification.",
+      "The bundle is inspectable through the CLI."
+    ],
+    "successCriteria": [
+      "The bundle can be listed and shown through the CLI.",
+      "The validated sample set is preserved without rewriting target titles or broadening scope."
+    ],
+    "nonGoals": [
+      "This bundle does not claim generalized cross-app distillation.",
+      "This bundle does not claim universal AX coverage.",
+      "This bundle does not collapse native text verification into QQ音乐 playback."
+    ]
+  },
+  "knownLimits": [
+    "This is the first bundle-shaped artifact, not the final schema.",
+    "The bundle intentionally stays shallow and app-centered.",
+    "Target application version compatibility is still unresolved."
+  ]
+}

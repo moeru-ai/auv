@@ -21,6 +21,7 @@ repo rules.
 - The distillation template is documented in `docs/ai/references/2026-05-17-distillation-template-v0.md`.
 - The current validated sample set is QQ音乐, Notes, and TextEdit.
 - The reusable boundary is "validated sample -> controlled distillation candidate", not "keep chasing OCR".
+- The first bundle-shaped artifact is `bundles/native-app-skill-tree.v0.json`.
 
 ## Working Rule
 

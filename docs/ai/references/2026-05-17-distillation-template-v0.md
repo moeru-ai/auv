@@ -71,6 +71,10 @@ The distilled output should answer:
 These three samples are enough to drive the next round of controlled
 distillation without starting from raw screenshots or free-form chat logs.
 
+The first bundle-shaped container for those samples is:
+
+- `bundles/native-app-skill-tree.v0.json`
+
 ## Practical Next Step
 
 The next distillation run should compare:
@@ -84,4 +88,3 @@ and ask whether the reusable center is:
 - app-specific search/playback
 - generic AX text verification
 - or a bundle that contains both as separate strategies
-

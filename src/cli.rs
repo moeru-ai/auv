@@ -14,6 +14,10 @@ pub enum CliCommand {
   SkillShow {
     query: String,
   },
+  SkillBundleList,
+  SkillBundleShow {
+    query: String,
+  },
   SkillCasesList,
   SkillCasesShow {
     query: String,
@@ -63,6 +67,8 @@ USAGE
   auv-cli inspect <run-id>
   auv-cli skill list
   auv-cli skill show <skill-id-or-path>
+  auv-cli skill bundle list
+  auv-cli skill bundle show <bundle-id-or-path>
   auv-cli skill cases list
   auv-cli skill cases show <matrix-id-or-path>
   auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>]
@@ -166,9 +172,36 @@ fn parse_skill(arguments: &[String]) -> AuvResult<CliCommand> {
         query: arguments[2].clone(),
       })
     }
+    "bundle" => parse_skill_bundle(arguments),
     "run" => parse_skill_run(arguments),
     other => Err(format!(
       "unknown skill subcommand {other}; use `auv-cli skill list` to inspect the current catalog"
+    )),
+  }
+}
+
+fn parse_skill_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 3 {
+    return Err("usage: auv-cli skill bundle <list|show> ...".to_string());
+  }
+
+  match arguments[2].as_str() {
+    "list" => {
+      if arguments.len() != 3 {
+        return Err("usage: auv-cli skill bundle list".to_string());
+      }
+      Ok(CliCommand::SkillBundleList)
+    }
+    "show" => {
+      if arguments.len() != 4 {
+        return Err("usage: auv-cli skill bundle show <bundle-id-or-path>".to_string());
+      }
+      Ok(CliCommand::SkillBundleShow {
+        query: arguments[3].clone(),
+      })
+    }
+    other => Err(format!(
+      "unknown skill bundle subcommand {other}; use `auv-cli skill bundle list`"
     )),
   }
 }

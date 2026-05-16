@@ -4,6 +4,7 @@ use std::env;
 use std::process;
 
 use auv_cli::build_default_runtime;
+use auv_cli::bundle::SkillBundleCatalog;
 use auv_cli::model::RunStatus;
 use auv_cli::skill::{SkillCaseMatrixCatalog, SkillCatalog, run_skill, run_skill_case_matrix};
 use cli::{CliCommand, help_text, parse_cli};
@@ -22,6 +23,7 @@ fn run() -> Result<(), String> {
     env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
   let runtime = build_default_runtime(project_root.clone())?;
   let skill_catalog = SkillCatalog::discover(&project_root)?;
+  let bundle_catalog = SkillBundleCatalog::discover(&project_root)?;
   let case_matrix_catalog = SkillCaseMatrixCatalog::discover(&project_root)?;
 
   match command {
@@ -102,6 +104,34 @@ fn run() -> Result<(), String> {
         "{}",
         serde_json::to_string_pretty(&value).map_err(|error| format!(
           "failed to render skill manifest {}: {error}",
+          entry.path.display()
+        ))?
+      );
+    }
+    CliCommand::SkillBundleList => {
+      for entry in bundle_catalog.entries() {
+        println!("{}", entry.manifest.metadata.id);
+        println!("  {}", entry.manifest.metadata.name);
+        if !entry.manifest.metadata.status.is_empty() {
+          println!("  status: {}", entry.manifest.metadata.status);
+        }
+        println!("  path: {}", entry.path.display());
+      }
+    }
+    CliCommand::SkillBundleShow { query } => {
+      let entry = bundle_catalog.resolve(&project_root, &query)?;
+      let raw = std::fs::read_to_string(&entry.path).map_err(|error| {
+        format!(
+          "failed to read bundle manifest {}: {error}",
+          entry.path.display()
+        )
+      })?;
+      let value: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| format!("failed to parse {}: {error}", entry.path.display()))?;
+      println!(
+        "{}",
+        serde_json::to_string_pretty(&value).map_err(|error| format!(
+          "failed to render bundle manifest {}: {error}",
           entry.path.display()
         ))?
       );
