@@ -28,7 +28,7 @@ The machine-readable matrix lives at:
 
 The following case is the current canonical row-based fallback baseline:
 
-1. `ascii-aa-first-visible-row`
+1. `ascii-aa-row-fallback`
    - query: `aa`
    - row index: `1`
    - playback title: `Cure For Me - AURORA`
@@ -48,7 +48,7 @@ What it does **not** prove:
 
 The matrix also includes one explicit candidate case:
 
-- `chinese-query-first-visible-row`
+- `chinese-query-row-fallback`
   - query: `周杰伦`
   - row index: `1`
   - playback title: `晴天`

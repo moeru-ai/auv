@@ -84,7 +84,7 @@
     "row_index": {
       "type": "integer",
       "default": 2,
-      "note": "1-based index of the visible result row to activate."
+      "note": "1-based index of the visible result row to activate. The current canonical fallback baseline uses 2 in the current QQ音乐 layout."
     },
     "row_anchor_mode": {
       "type": "string",

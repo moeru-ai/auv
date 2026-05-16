@@ -213,5 +213,5 @@ Current case-matrix truth:
 
 Current row-fallback case truth:
 
-- `ascii-aa-first-visible-row` is validated
-- `chinese-query-first-visible-row` is a candidate for row-based fallback
+- `ascii-aa-row-fallback` is validated
+- `chinese-query-row-fallback` is a candidate for row-based fallback

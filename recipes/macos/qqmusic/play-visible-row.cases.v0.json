@@ -4,7 +4,7 @@
   "status": "active-case-matrix",
   "cases": [
     {
-      "case_id": "ascii-aa-first-visible-row",
+      "case_id": "ascii-aa-row-fallback",
       "status": "validated",
       "inputs": {
         "query": "aa",
@@ -18,7 +18,7 @@
       ]
     },
     {
-      "case_id": "chinese-query-first-visible-row",
+      "case_id": "chinese-query-row-fallback",
       "status": "candidate",
       "inputs": {
         "query": "周杰伦",
