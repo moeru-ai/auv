@@ -45,6 +45,9 @@ graph TD
 ## What Is Proven
 
 - QQ音乐 has a validated narrow playback slice.
+- The native-app bundle now carries two separate QQ音乐 members:
+  - OCR-anchor playback
+  - row-fallback playback
 - `verifyNowPlayingTitle` is a stable AX-based contract.
 - Notes has a validated native-app sample that uses `verifyAxText`.
 - TextEdit has a validated native-app sample that uses the same contract.
@@ -63,6 +66,7 @@ graph TD
 - QQ音乐 narrow baseline: `docs/ai/references/2026-05-15-qqmusic-playback-verification.md`
 - QQ音乐 narrow coverage: `docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md`
 - QQ音乐 row fallback: `docs/ai/references/2026-05-16-qqmusic-row-fallback-case-matrix.md`
+- QQ音乐 narrow coverage: `docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md`
 - Notes sample: `docs/ai/references/2026-05-17-notes-ax-text-sample.md`
 - TextEdit sample: `recipes/macos/textedit/README.md`
 - Distillation template: `docs/ai/references/2026-05-17-distillation-template-v0.md`

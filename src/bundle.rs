@@ -77,6 +77,20 @@ pub struct SkillBundleMember {
   pub app_bundle_id: String,
   #[serde(default, rename = "targetApplication")]
   pub target_application: String,
+  #[serde(default, rename = "coverageSummary")]
+  pub coverage_summary: SkillBundleMemberCoverageSummary,
+}
+
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
+pub struct SkillBundleMemberCoverageSummary {
+  #[serde(default, rename = "activationStatus")]
+  pub activation_status: String,
+  #[serde(default, rename = "semanticSelectionStatus")]
+  pub semantic_selection_status: String,
+  #[serde(default, rename = "validatedClaims")]
+  pub validated_claims: Vec<String>,
+  #[serde(default, rename = "boundaryClaims")]
+  pub boundary_claims: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -252,6 +266,8 @@ struct ExportedBundlePackageMember {
   package_dir: String,
   #[serde(rename = "coverageReport")]
   coverage_report: String,
+  #[serde(default, rename = "coverageSummary")]
+  coverage_summary: SkillBundleMemberCoverageSummary,
 }
 
 #[derive(Debug, Deserialize)]
@@ -601,6 +617,7 @@ pub fn verify_exported_bundle_package_standalone(package_root: &Path) -> Result<
       || package_member.contract != member.contract
       || package_member.app_bundle_id != member.app_bundle_id
       || package_member.target_application != member.target_application
+      || package_member.coverage_summary != member.coverage_summary
       || package_member.validated_case_ids != member.validated_case_ids
       || package_member.candidate_case_ids != member.candidate_case_ids
       || package_member.evidence_refs != member.evidence_refs
@@ -1222,6 +1239,7 @@ fn verify_exported_bundle_package(
       || package_member.contract != member.contract
       || package_member.app_bundle_id != member.app_bundle_id
       || package_member.target_application != member.target_application
+      || package_member.coverage_summary != member.coverage_summary
       || package_member.validated_case_ids != member.validated_case_ids
       || package_member.candidate_case_ids != member.candidate_case_ids
       || package_member.evidence_refs != member.evidence_refs
@@ -1431,6 +1449,12 @@ fn render_bundle_package_manifest(
         "evidenceRefs": member.evidence_refs,
         "packageDir": member_path,
         "coverageReport": bundle_member_coverage_relative_path(&member.recipe_id),
+        "coverageSummary": {
+          "activationStatus": member.coverage_summary.activation_status,
+          "semanticSelectionStatus": member.coverage_summary.semantic_selection_status,
+          "validatedClaims": member.coverage_summary.validated_claims,
+          "boundaryClaims": member.coverage_summary.boundary_claims,
+        },
       })
     })
     .collect::<Vec<_>>();
@@ -1513,6 +1537,18 @@ fn render_bundle_member_evidence(member: &SkillBundleMember) -> String {
   if !member.target_application.is_empty() {
     lines.push(format!("targetApplication={}", member.target_application));
   }
+  if !member.coverage_summary.activation_status.is_empty() {
+    lines.push(format!(
+      "activationStatus={}",
+      member.coverage_summary.activation_status
+    ));
+  }
+  if !member.coverage_summary.semantic_selection_status.is_empty() {
+    lines.push(format!(
+      "semanticSelectionStatus={}",
+      member.coverage_summary.semantic_selection_status
+    ));
+  }
   if !member.validated_case_ids.is_empty() {
     lines.push("validatedCaseIds=".to_string());
     for case_id in &member.validated_case_ids {
@@ -1531,6 +1567,18 @@ fn render_bundle_member_evidence(member: &SkillBundleMember) -> String {
       lines.push(format!("  - {}", evidence));
     }
   }
+  if !member.coverage_summary.validated_claims.is_empty() {
+    lines.push("validatedClaims=".to_string());
+    for claim in &member.coverage_summary.validated_claims {
+      lines.push(format!("  - {}", claim));
+    }
+  }
+  if !member.coverage_summary.boundary_claims.is_empty() {
+    lines.push("boundaryClaims=".to_string());
+    for claim in &member.coverage_summary.boundary_claims {
+      lines.push(format!("  - {}", claim));
+    }
+  }
   lines.join("\n") + "\n"
 }
 
@@ -1546,7 +1594,7 @@ fn render_bundle_member_summary(
     member.evidence_refs.join(", ")
   };
   format!(
-    "`{}` -> `{}` ({})\n  - dir: `{}`\n  - recipe: `{}`\n  - case matrix: `{}`\n  - evidence: `{}`\n  - source recipe: `{}`\n  - source case matrix: `{}`\n  - evidence refs: {}",
+    "`{}` -> `{}` ({})\n  - dir: `{}`\n  - recipe: `{}`\n  - case matrix: `{}`\n  - evidence: `{}`\n  - source recipe: `{}`\n  - source case matrix: `{}`\n  - activation status: `{}`\n  - semantic selection status: `{}`\n  - evidence refs: {}",
     member.recipe_id,
     member.case_matrix_id,
     member.contract,
@@ -1556,6 +1604,16 @@ fn render_bundle_member_summary(
     bundle_member_evidence_relative_path(&member.recipe_id),
     recipe_path.display(),
     case_matrix_path.display(),
+    if member.coverage_summary.activation_status.is_empty() {
+      "unspecified"
+    } else {
+      member.coverage_summary.activation_status.as_str()
+    },
+    if member.coverage_summary.semantic_selection_status.is_empty() {
+      "unspecified"
+    } else {
+      member.coverage_summary.semantic_selection_status.as_str()
+    },
     evidence
   )
 }
@@ -1625,6 +1683,18 @@ fn render_bundle_package_coverage(
     output.push_str(&format!("### {}\n\n", member.recipe_id));
     output.push_str(&format!("- role: `{}`\n", member.role));
     output.push_str(&format!("- contract: `{}`\n", member.contract));
+    if !member.coverage_summary.activation_status.is_empty() {
+      output.push_str(&format!(
+        "- activation status: `{}`\n",
+        member.coverage_summary.activation_status
+      ));
+    }
+    if !member.coverage_summary.semantic_selection_status.is_empty() {
+      output.push_str(&format!(
+        "- semantic selection status: `{}`\n",
+        member.coverage_summary.semantic_selection_status
+      ));
+    }
     if !member.app_bundle_id.is_empty() {
       output.push_str(&format!("- app bundle id: `{}`\n", member.app_bundle_id));
     }
@@ -1654,6 +1724,18 @@ fn render_bundle_package_coverage(
       "- case matrix path: `{}`\n",
       bundle_member_cases_relative_path(&member.recipe_id)
     ));
+    if !member.coverage_summary.validated_claims.is_empty() {
+      output.push_str("- validated claims:\n");
+      for claim in &member.coverage_summary.validated_claims {
+        output.push_str(&format!("  - {}\n", claim));
+      }
+    }
+    if !member.coverage_summary.boundary_claims.is_empty() {
+      output.push_str("- boundary claims:\n");
+      for claim in &member.coverage_summary.boundary_claims {
+        output.push_str(&format!("  - {}\n", claim));
+      }
+    }
     output.push('\n');
   }
 
@@ -1709,6 +1791,18 @@ fn render_bundle_standalone_coverage(
     output.push_str(&format!("### {}\n\n", member.recipe_id));
     output.push_str(&format!("- role: `{}`\n", member.role));
     output.push_str(&format!("- contract: `{}`\n", member.contract));
+    if !member.coverage_summary.activation_status.is_empty() {
+      output.push_str(&format!(
+        "- activation status: `{}`\n",
+        member.coverage_summary.activation_status
+      ));
+    }
+    if !member.coverage_summary.semantic_selection_status.is_empty() {
+      output.push_str(&format!(
+        "- semantic selection status: `{}`\n",
+        member.coverage_summary.semantic_selection_status
+      ));
+    }
     if !member.app_bundle_id.is_empty() {
       output.push_str(&format!("- app bundle id: `{}`\n", member.app_bundle_id));
     }
@@ -1738,6 +1832,18 @@ fn render_bundle_standalone_coverage(
       "- case matrix path: `{}`\n",
       bundle_member_cases_relative_path(&member.recipe_id)
     ));
+    if !member.coverage_summary.validated_claims.is_empty() {
+      output.push_str("- validated claims:\n");
+      for claim in &member.coverage_summary.validated_claims {
+        output.push_str(&format!("  - {}\n", claim));
+      }
+    }
+    if !member.coverage_summary.boundary_claims.is_empty() {
+      output.push_str("- boundary claims:\n");
+      for claim in &member.coverage_summary.boundary_claims {
+        output.push_str(&format!("  - {}\n", claim));
+      }
+    }
     output.push('\n');
   }
 
@@ -2025,6 +2131,7 @@ mod tests {
             evidence_refs: Vec::new(),
             app_bundle_id: (*app_bundle_id).to_string(),
             target_application: String::new(),
+            coverage_summary: SkillBundleMemberCoverageSummary::default(),
           })
           .collect(),
         verification: SkillBundleVerification {

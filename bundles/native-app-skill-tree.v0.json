@@ -31,9 +31,50 @@
       "contract": "verifyNowPlayingTitle",
       "appBundleId": "com.tencent.QQMusicMac",
       "targetApplication": ">=11.1.1, <12.0.0",
+      "coverageSummary": {
+        "activationStatus": "validated",
+        "semanticSelectionStatus": "validated-ascii-only",
+        "validatedClaims": [
+          "ASCII QQ音乐 playback is validated through OCR-anchor activation and evidence-image verification.",
+          "The anchor-based narrow skill is validated across multiple visible ASCII rows on the aa result page."
+        ],
+        "boundaryClaims": [
+          "Chinese OCR anchor playback is still a candidate boundary.",
+          "This member does not prove pointer-free activation or generalized playback for arbitrary queries."
+        ]
+      },
       "evidenceRefs": [
         "docs/ai/references/2026-05-15-qqmusic-playback-verification.md",
-        "docs/ai/references/2026-05-15-qqmusic-play-visible-anchor-skill-v0.json"
+        "docs/ai/references/2026-05-15-qqmusic-play-visible-anchor-skill-v0.json",
+        "docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md"
+      ]
+    },
+    {
+      "recipeId": "macos.qqmusic.play_visible_row.v0",
+      "caseMatrixId": "macos.qqmusic.play_visible_row.v0",
+      "role": "music-player-row-fallback",
+      "validatedCaseIds": [
+        "ascii-aa-row-fallback",
+        "chinese-query-row-fallback"
+      ],
+      "contract": "verifyNowPlayingTitle",
+      "appBundleId": "com.tencent.QQMusicMac",
+      "targetApplication": ">=11.1.1, <12.0.0",
+      "coverageSummary": {
+        "activationStatus": "validated",
+        "semanticSelectionStatus": "not-validated",
+        "validatedClaims": [
+          "The row-fallback activation path is validated on the ASCII aa result page.",
+          "The row-fallback activation path is validated on the Chinese 周杰伦 result page."
+        ],
+        "boundaryClaims": [
+          "Chinese row fallback does not yet prove requested-title semantic selection.",
+          "The current Chinese validated row case verifies the observed playback title 天空仍灿烂, not the requested title 晴天."
+        ]
+      },
+      "evidenceRefs": [
+        "docs/ai/references/2026-05-16-qqmusic-row-fallback-case-matrix.md",
+        "docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md"
       ]
     },
     {
@@ -46,6 +87,16 @@
       "contract": "verifyAxText",
       "appBundleId": "com.apple.Notes",
       "targetApplication": ">=4.13.0, <5.0.0",
+      "coverageSummary": {
+        "activationStatus": "validated",
+        "semanticSelectionStatus": "not-applicable",
+        "validatedClaims": [
+          "Notes marker insertion and AX text verification are validated on macOS."
+        ],
+        "boundaryClaims": [
+          "This member is a native text sample, not a music-selection skill."
+        ]
+      },
       "evidenceRefs": [
         "docs/ai/references/2026-05-17-notes-ax-text-sample.md"
       ]
@@ -60,6 +111,16 @@
       "contract": "verifyAxText",
       "appBundleId": "com.apple.TextEdit",
       "targetApplication": ">=1.20.0, <2.0.0",
+      "coverageSummary": {
+        "activationStatus": "validated",
+        "semanticSelectionStatus": "not-applicable",
+        "validatedClaims": [
+          "TextEdit marker insertion and AX text verification are validated on macOS."
+        ],
+        "boundaryClaims": [
+          "This member is a native text sample, not a music-selection skill."
+        ]
+      },
       "evidenceRefs": [
         "recipes/macos/textedit/README.md"
       ]
@@ -67,7 +128,8 @@
   ],
   "verification": {
     "expectedSignals": [
-      "The bundle lists one QQ音乐 narrow skill and two native text samples.",
+      "The bundle lists two QQ音乐 narrow skills and two native text samples.",
+      "Member-level coverage summaries distinguish validated activation from unresolved semantic selection.",
       "The bundle keeps QQ音乐 playback verification separate from generic AX text verification.",
       "The bundle is inspectable through the CLI."
     ],
