@@ -535,6 +535,7 @@ pub fn run_skill_case_matrix(
   options: SkillCaseRunOptions,
 ) -> AuvResult<()> {
   let skill_entry = skill_catalog.resolve_recipe_id(&matrix_entry.matrix.skill_id)?;
+  validate_case_matrix_against_skill(&skill_entry.manifest, &matrix_entry.matrix)?;
   let cases = select_cases(&matrix_entry.matrix, &options)?;
   let selected_case_count = cases.len();
 
@@ -650,6 +651,8 @@ fn collect_case_matrix_entries(
         path.display()
       )
     })?;
+    validate_case_matrix_manifest(&matrix)
+      .map_err(|error| format!("invalid case-matrix manifest {}: {error}", path.display()))?;
     entries.push(SkillCaseMatrixEntry {
       matrix,
       path: fs::canonicalize(&path)
@@ -755,6 +758,147 @@ fn validate_disturbance_policy(
   }
 
   Ok(active_max)
+}
+
+fn validate_case_matrix_manifest(matrix: &SkillCaseMatrix) -> AuvResult<()> {
+  if matrix.skill_id.trim().is_empty() {
+    return Err("case matrix skill_id must not be empty".to_string());
+  }
+  if matrix.version.trim().is_empty() {
+    return Err(format!(
+      "case matrix {} must declare a non-empty version",
+      matrix.skill_id
+    ));
+  }
+  semver::Version::parse(&matrix.version).map_err(|error| {
+    format!(
+      "case matrix {} has invalid version {}: {error}",
+      matrix.skill_id, matrix.version
+    )
+  })?;
+  if matrix.status.trim().is_empty() {
+    return Err(format!(
+      "case matrix {} must declare a non-empty status",
+      matrix.skill_id
+    ));
+  }
+  if matrix.cases.is_empty() {
+    return Err(format!(
+      "case matrix {} must declare at least one case",
+      matrix.skill_id
+    ));
+  }
+
+  let mut seen_case_ids = std::collections::BTreeSet::new();
+  for (index, case) in matrix.cases.iter().enumerate() {
+    let case_label = if case.case_id.trim().is_empty() {
+      format!("case-{}", index + 1)
+    } else {
+      case.case_id.clone()
+    };
+    if case.case_id.trim().is_empty() {
+      return Err(format!(
+        "case matrix {} has a case with an empty case_id",
+        matrix.skill_id
+      ));
+    }
+    if !seen_case_ids.insert(case.case_id.clone()) {
+      return Err(format!(
+        "case matrix {} contains duplicate case_id {}",
+        matrix.skill_id, case.case_id
+      ));
+    }
+    if case.status.trim().is_empty() {
+      return Err(format!(
+        "case matrix {} case {} must declare a non-empty status",
+        matrix.skill_id, case_label
+      ));
+    }
+    if case.disturbance.trim().is_empty() {
+      return Err(format!(
+        "case matrix {} case {} must declare a non-empty disturbance",
+        matrix.skill_id, case_label
+      ));
+    }
+    DisturbanceClass::parse(&case.disturbance).map_err(|error| {
+      format!(
+        "case matrix {} case {} has invalid disturbance {}: {error}",
+        matrix.skill_id, case_label, case.disturbance
+      )
+    })?;
+
+    for key in case.inputs.keys() {
+      if key.trim().is_empty() {
+        return Err(format!(
+          "case matrix {} case {} has an empty input key",
+          matrix.skill_id, case_label
+        ));
+      }
+    }
+  }
+
+  Ok(())
+}
+
+fn validate_case_matrix_against_skill(
+  manifest: &SkillManifest,
+  matrix: &SkillCaseMatrix,
+) -> AuvResult<()> {
+  if matrix.skill_id != manifest.recipe_id {
+    return Err(format!(
+      "case matrix {} does not match skill {}",
+      matrix.skill_id, manifest.recipe_id
+    ));
+  }
+
+  let recipe_max = if manifest.disturbance_policy.max_disturbance.is_empty() {
+    DisturbanceClass::Pointer
+  } else {
+    DisturbanceClass::parse(&manifest.disturbance_policy.max_disturbance).map_err(|error| {
+      format!(
+        "skill {} has invalid disturbance_policy.max_disturbance {}: {error}",
+        manifest.recipe_id, manifest.disturbance_policy.max_disturbance
+      )
+    })?
+  };
+
+  for case in &matrix.cases {
+    let case_disturbance = DisturbanceClass::parse(&case.disturbance).map_err(|error| {
+      format!(
+        "case matrix {} case {} has invalid disturbance {}: {error}",
+        matrix.skill_id, case.case_id, case.disturbance
+      )
+    })?;
+    if case_disturbance > recipe_max {
+      return Err(format!(
+        "case matrix {} case {} uses disturbance {} above skill max {}",
+        matrix.skill_id,
+        case.case_id,
+        case_disturbance.as_str(),
+        recipe_max.as_str()
+      ));
+    }
+
+    for key in case.inputs.keys() {
+      if !manifest.inputs.contains_key(key) {
+        return Err(format!(
+          "case matrix {} case {} references unknown input {}",
+          matrix.skill_id, case.case_id, key
+        ));
+      }
+    }
+
+    for (input_key, spec) in &manifest.inputs {
+      if spec.default.is_none() && !case.inputs.contains_key(input_key) {
+        return Err(format!(
+          "case matrix {} case {} is missing required input {}",
+          matrix.skill_id, case.case_id, input_key
+        ));
+      }
+    }
+  }
+
+  Ok(())
 }
 
 fn parse_step_max(step: &SkillStep) -> AuvResult<DisturbanceClass> {
@@ -1053,8 +1197,9 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, default_inputs, export_step_variables,
-    is_image_artifact, render_template, render_value, sanitize_lock_component,
+    SkillCaseMatrix, SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, default_inputs,
+    export_step_variables, is_image_artifact, render_template, render_value,
+    sanitize_lock_component, validate_case_matrix_against_skill, validate_case_matrix_manifest,
     validate_skill_manifest,
   };
   use crate::model::{InvokeResult, RunStatus, now_millis};
@@ -1166,7 +1311,12 @@ mod tests {
       r#"{
         "skill_id": "test.example.v0",
         "version": "0.1.0",
-        "cases": [{ "case_id": "baseline", "status": "validated" }]
+        "status": "active-case-matrix",
+        "cases": [{
+          "case_id": "baseline",
+          "status": "validated",
+          "disturbance": "none"
+        }]
       }"#,
     )
     .expect("matrix should write");
@@ -1286,5 +1436,147 @@ mod tests {
 
     let error = validate_skill_manifest(&manifest).expect_err("invalid version should fail");
     assert!(error.contains("invalid version"));
+  }
+
+  #[test]
+  fn validate_case_matrix_manifest_accepts_minimal_valid_matrix() {
+    let matrix: SkillCaseMatrix = serde_json::from_value(json!({
+      "skill_id": "test.skill",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "baseline",
+        "status": "validated",
+        "inputs": {
+          "query": "aa"
+        },
+        "disturbance": "none"
+      }]
+    }))
+    .expect("matrix should deserialize");
+
+    validate_case_matrix_manifest(&matrix).expect("matrix should validate");
+  }
+
+  #[test]
+  fn validate_case_matrix_manifest_rejects_duplicate_case_ids() {
+    let matrix: SkillCaseMatrix = serde_json::from_value(json!({
+      "skill_id": "test.skill",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "baseline",
+        "status": "validated",
+        "disturbance": "none"
+      }, {
+        "case_id": "baseline",
+        "status": "validated",
+        "disturbance": "none"
+      }]
+    }))
+    .expect("matrix should deserialize");
+
+    let error = validate_case_matrix_manifest(&matrix).expect_err("duplicate ids should fail");
+    assert!(error.contains("duplicate case_id"));
+  }
+
+  #[test]
+  fn validate_case_matrix_against_skill_rejects_unknown_inputs() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "none",
+        "declared_classes": ["none"]
+      },
+      "steps": [{
+        "command_id": "debug.captureScreen",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+    let matrix: SkillCaseMatrix = serde_json::from_value(json!({
+      "skill_id": "test.skill",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "baseline",
+        "status": "validated",
+        "inputs": {
+          "query": "aa",
+          "unknown": "value"
+        },
+        "disturbance": "none"
+      }]
+    }))
+    .expect("matrix should deserialize");
+
+    let error = validate_case_matrix_against_skill(&manifest, &matrix)
+      .expect_err("unknown input should fail");
+    assert!(error.contains("unknown input"));
+  }
+
+  #[test]
+  fn validate_case_matrix_against_skill_rejects_missing_required_inputs() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string" },
+        "title": { "type": "string" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["pointer"]
+      },
+      "steps": [{
+        "command_id": "debug.captureScreen",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+    let matrix: SkillCaseMatrix = serde_json::from_value(json!({
+      "skill_id": "test.skill",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "baseline",
+        "status": "validated",
+        "inputs": {
+          "query": "aa"
+        },
+        "disturbance": "none"
+      }]
+    }))
+    .expect("matrix should deserialize");
+
+    let error = validate_case_matrix_against_skill(&manifest, &matrix)
+      .expect_err("missing required input should fail");
+    assert!(error.contains("missing required input"));
   }
 }
