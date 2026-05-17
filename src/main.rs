@@ -163,7 +163,13 @@ fn run() -> Result<(), String> {
         &case_matrix_catalog,
         entry,
       )?;
-      export_bundle(&project_root, entry, PathBuf::from(output_dir))?;
+      export_bundle(
+        &project_root,
+        &skill_catalog,
+        &case_matrix_catalog,
+        entry,
+        PathBuf::from(output_dir),
+      )?;
       println!("bundle: {}", entry.manifest.metadata.id);
       println!("status: exported");
     }
@@ -239,6 +245,8 @@ fn run() -> Result<(), String> {
 
 fn export_bundle(
   project_root: &Path,
+  skill_catalog: &SkillCatalog,
+  case_matrix_catalog: &SkillCaseMatrixCatalog,
   entry: &auv_cli::bundle::SkillBundleCatalogEntry,
   output_dir: PathBuf,
 ) -> Result<(), String> {
@@ -253,7 +261,23 @@ fn export_bundle(
   fs::create_dir_all(&output_dir)
     .map_err(|error| format!("failed to create bundle export directory {}: {error}", output_dir.display()))?;
 
-  let manifest_path = output_dir.join("bundle.json");
+  let package_root = output_dir.join(sanitized_bundle_package_name(&entry.manifest.metadata.id));
+  if package_root.exists() {
+    fs::remove_dir_all(&package_root).map_err(|error| {
+      format!(
+        "failed to clear existing bundle export package {}: {error}",
+        package_root.display()
+      )
+    })?;
+  }
+  fs::create_dir_all(&package_root).map_err(|error| {
+    format!(
+      "failed to create bundle export package directory {}: {error}",
+      package_root.display()
+    )
+  })?;
+
+  let manifest_path = package_root.join("bundle.json");
   fs::copy(&entry.path, &manifest_path).map_err(|error| {
     format!(
       "failed to copy bundle manifest {} -> {}: {error}",
@@ -262,18 +286,348 @@ fn export_bundle(
     )
   })?;
 
-  let readme_path = output_dir.join("README.md");
-  fs::write(
-    &readme_path,
+  let members_root = package_root.join("members");
+  fs::create_dir_all(&members_root).map_err(|error| {
     format!(
-      "# {}\n\nExported from {}\n",
-      entry.manifest.metadata.name,
-      entry.path.display()
-    ),
+      "failed to create bundle member package directory {}: {error}",
+      members_root.display()
+    )
+  })?;
+
+  let mut package_index = Vec::new();
+  package_index.push(format!("bundleId={}", entry.manifest.metadata.id));
+  package_index.push(format!("bundleName={}", entry.manifest.metadata.name));
+  package_index.push(format!("sourceManifest={}", entry.path.display()));
+  package_index.push("members=".to_string());
+  let mut package_members = Vec::new();
+  for member in &entry.manifest.members {
+    let recipe_entry = skill_catalog.resolve_recipe_id(&member.recipe_id).map_err(|error| {
+      format!(
+        "failed to resolve recipe {} while exporting bundle: {error}",
+        member.recipe_id
+      )
+    })?;
+    let case_matrix_entry = case_matrix_catalog
+      .resolve(project_root, &member.case_matrix_id)
+      .map_err(|error| {
+        format!(
+          "failed to resolve case matrix {} while exporting bundle: {error}",
+          member.case_matrix_id
+        )
+      })?;
+
+    let member_dir = members_root.join(sanitized_bundle_package_name(&member.recipe_id));
+    fs::create_dir_all(&member_dir).map_err(|error| {
+      format!(
+        "failed to create bundle member directory {}: {error}",
+        member_dir.display()
+      )
+    })?;
+
+    let recipe_path = member_dir.join("recipe.json");
+    fs::copy(&recipe_entry.path, &recipe_path).map_err(|error| {
+      format!(
+        "failed to copy recipe {} -> {}: {error}",
+        recipe_entry.path.display(),
+        recipe_path.display()
+      )
+    })?;
+
+    let case_matrix_path = member_dir.join("cases.json");
+    fs::copy(&case_matrix_entry.path, &case_matrix_path).map_err(|error| {
+      format!(
+        "failed to copy case matrix {} -> {}: {error}",
+        case_matrix_entry.path.display(),
+        case_matrix_path.display()
+      )
+    })?;
+
+    let evidence_path = member_dir.join("evidence.txt");
+    fs::write(&evidence_path, render_bundle_member_evidence(member)).map_err(|error| {
+      format!(
+        "failed to write bundle member evidence {}: {error}",
+        evidence_path.display()
+      )
+    })?;
+
+    let summary_path = member_dir.join("summary.txt");
+    fs::write(
+      &summary_path,
+      render_bundle_member_summary(member, &member_dir, &recipe_entry.path, &case_matrix_entry.path),
+    )
+    .map_err(|error| {
+      format!(
+        "failed to write bundle member summary {}: {error}",
+        summary_path.display()
+      )
+    })?;
+
+    let evidence_refs_dir = member_dir.join("evidence");
+    fs::create_dir_all(&evidence_refs_dir).map_err(|error| {
+      format!(
+        "failed to create bundle evidence directory {}: {error}",
+        evidence_refs_dir.display()
+      )
+    })?;
+    for evidence_ref in &member.evidence_refs {
+      let evidence_source = project_root.join(evidence_ref);
+      if evidence_source.exists() {
+        let destination = evidence_refs_dir.join(sanitized_bundle_package_name(evidence_ref));
+        if evidence_source.is_dir() {
+          copy_directory(&evidence_source, &destination)?;
+        } else {
+          fs::copy(&evidence_source, &destination).map_err(|error| {
+            format!(
+              "failed to copy evidence ref {} -> {}: {error}",
+              evidence_source.display(),
+              destination.display()
+            )
+          })?;
+        }
+      }
+    }
+
+    package_index.push(format!(
+      "  - recipeId={} caseMatrixId={} role={} contract={} memberDir={}",
+      member.recipe_id,
+      member.case_matrix_id,
+      member.role,
+      member.contract,
+      member_dir.display()
+    ));
+
+    package_members.push(render_bundle_package_member(
+      member,
+      &member_dir,
+      &recipe_entry.path,
+      &case_matrix_entry.path,
+    ));
+  }
+
+  let index_path = package_root.join("index.txt");
+  fs::write(&index_path, package_index.join("\n") + "\n").map_err(|error| {
+    format!(
+      "failed to write bundle export index {}: {error}",
+      index_path.display()
+    )
+  })?;
+
+  let readme_path = package_root.join("README.md");
+  let mut readme = String::new();
+  readme.push_str(&format!("# {}\n\n", entry.manifest.metadata.name));
+  readme.push_str("This package is a self-contained export of the current bundle-shaped artifact.\n\n");
+  readme.push_str("Contents:\n");
+  readme.push_str("- `bundle.json`: canonical bundle manifest\n");
+  readme.push_str("- `index.txt`: compact package index for downstream consumers\n\n");
+  readme.push_str("- `members/<recipe-id>/recipe.json`: copied recipe manifest\n");
+  readme.push_str("- `members/<recipe-id>/cases.json`: copied case matrix\n");
+  readme.push_str("- `members/<recipe-id>/evidence.txt`: member evidence index\n");
+  readme.push_str("- `members/<recipe-id>/summary.txt`: member summary\n\n");
+  readme.push_str("Source manifest:\n");
+  readme.push_str(&format!("- `{}`\n", entry.path.display()));
+  readme.push_str("\nMembers:\n");
+  for member in &package_members {
+    readme.push_str("- ");
+    readme.push_str(member);
+    readme.push('\n');
+  }
+  fs::write(&readme_path, readme).map_err(|error| {
+    format!(
+      "failed to write bundle export readme {}: {error}",
+      readme_path.display()
+    )
+  })?;
+
+  let package_manifest_path = package_root.join("package.json");
+  fs::write(
+    &package_manifest_path,
+    render_bundle_package_manifest(entry, project_root, &package_members),
   )
-  .map_err(|error| format!("failed to write bundle export readme {}: {error}", readme_path.display()))?;
+  .map_err(|error| {
+    format!(
+      "failed to write bundle export package manifest {}: {error}",
+      package_manifest_path.display()
+    )
+  })?;
 
   Ok(())
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> Result<(), String> {
+  fs::create_dir_all(destination).map_err(|error| {
+    format!(
+      "failed to create evidence directory {}: {error}",
+      destination.display()
+    )
+  })?;
+
+  for entry in fs::read_dir(source).map_err(|error| {
+    format!(
+      "failed to read evidence directory {}: {error}",
+      source.display()
+    )
+  })? {
+    let entry = entry.map_err(|error| format!("failed to enumerate evidence directory entry: {error}"))?;
+    let path = entry.path();
+    let destination_path = destination.join(entry.file_name());
+    if path.is_dir() {
+      copy_directory(&path, &destination_path)?;
+    } else {
+      fs::copy(&path, &destination_path).map_err(|error| {
+        format!(
+          "failed to copy evidence file {} -> {}: {error}",
+          path.display(),
+          destination_path.display()
+        )
+      })?;
+    }
+  }
+
+  Ok(())
+}
+
+fn render_bundle_package_manifest(
+  entry: &auv_cli::bundle::SkillBundleCatalogEntry,
+  project_root: &Path,
+  package_members: &[String],
+) -> String {
+  let members = entry
+    .manifest
+    .members
+    .iter()
+    .zip(package_members.iter())
+    .map(|(member, member_path)| {
+      serde_json::json!({
+        "recipeId": member.recipe_id,
+        "caseMatrixId": member.case_matrix_id,
+        "role": member.role,
+        "contract": member.contract,
+        "appBundleId": member.app_bundle_id,
+        "targetApplication": member.target_application,
+        "validatedCaseIds": member.validated_case_ids,
+        "candidateCaseIds": member.candidate_case_ids,
+        "evidenceRefs": member.evidence_refs,
+        "packageDir": member_path,
+      })
+    })
+    .collect::<Vec<_>>();
+
+  let value = serde_json::json!({
+    "bundleId": entry.manifest.metadata.id,
+    "bundleName": entry.manifest.metadata.name,
+    "bundleVersion": entry.manifest.metadata.version,
+    "bundleStatus": entry.manifest.metadata.status,
+    "sourceManifest": entry.path.display().to_string(),
+    "projectRoot": project_root.display().to_string(),
+    "members": members,
+    "verification": {
+      "expectedSignals": entry.manifest.verification.expected_signals,
+      "successCriteria": entry.manifest.verification.success_criteria,
+      "nonGoals": entry.manifest.verification.non_goals,
+    },
+    "knownLimits": entry.manifest.known_limits,
+  });
+
+  serde_json::to_string_pretty(&value)
+    .unwrap_or_else(|error| format!("{{\"error\":\"failed to render bundle package manifest: {error}\"}}\n"))
+}
+
+fn render_bundle_member_evidence(member: &auv_cli::bundle::SkillBundleMember) -> String {
+  let mut lines = vec![
+    format!("recipeId={}", member.recipe_id),
+    format!("caseMatrixId={}", member.case_matrix_id),
+    format!("role={}", member.role),
+    format!("contract={}", member.contract),
+  ];
+  if !member.app_bundle_id.is_empty() {
+    lines.push(format!("appBundleId={}", member.app_bundle_id));
+  }
+  if !member.target_application.is_empty() {
+    lines.push(format!("targetApplication={}", member.target_application));
+  }
+  if !member.validated_case_ids.is_empty() {
+    lines.push("validatedCaseIds=".to_string());
+    for case_id in &member.validated_case_ids {
+      lines.push(format!("  - {}", case_id));
+    }
+  }
+  if !member.candidate_case_ids.is_empty() {
+    lines.push("candidateCaseIds=".to_string());
+    for case_id in &member.candidate_case_ids {
+      lines.push(format!("  - {}", case_id));
+    }
+  }
+  if !member.evidence_refs.is_empty() {
+    lines.push("evidenceRefs=".to_string());
+    for evidence in &member.evidence_refs {
+      lines.push(format!("  - {}", evidence));
+    }
+  }
+  lines.join("\n") + "\n"
+}
+
+fn render_bundle_member_summary(
+  member: &auv_cli::bundle::SkillBundleMember,
+  member_dir: &Path,
+  recipe_path: &Path,
+  case_matrix_path: &Path,
+) -> String {
+  let evidence = if member.evidence_refs.is_empty() {
+    "none".to_string()
+  } else {
+    member.evidence_refs.join(", ")
+  };
+  format!(
+    "`{}` -> `{}` ({})\n  - dir: `{}`\n  - recipe: `{}`\n  - case matrix: `{}`\n  - evidence refs: {}",
+    member.recipe_id,
+    member.case_matrix_id,
+    member.contract,
+    member_dir.display(),
+    recipe_path.display(),
+    case_matrix_path.display(),
+    evidence
+  )
+}
+
+fn render_bundle_package_member(
+  member: &auv_cli::bundle::SkillBundleMember,
+  member_dir: &Path,
+  recipe_path: &Path,
+  case_matrix_path: &Path,
+) -> String {
+  format!(
+    "{} -> {} [{}] dir={} recipe={} cases={}",
+    member.recipe_id,
+    member.case_matrix_id,
+    member.contract,
+    member_dir.display(),
+    recipe_path.display(),
+    case_matrix_path.display()
+  )
+}
+
+fn sanitized_bundle_package_name(raw: &str) -> String {
+  let lowered = raw.trim().to_lowercase();
+  let collapsed = lowered
+    .chars()
+    .map(|character| {
+      if character.is_ascii_alphanumeric() {
+        character
+      } else {
+        '-'
+      }
+    })
+    .collect::<String>();
+  let trimmed = collapsed
+    .split('-')
+    .filter(|segment| !segment.is_empty())
+    .collect::<Vec<_>>()
+    .join("-");
+  if trimmed.is_empty() {
+    "bundle-export".to_string()
+  } else {
+    trimmed
+  }
 }
 
 fn verify_bundle(
