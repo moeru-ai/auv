@@ -530,6 +530,10 @@ fn render_bundle_package_manifest(
     "bundleName": entry.manifest.metadata.name,
     "bundleVersion": entry.manifest.metadata.version,
     "bundleStatus": entry.manifest.metadata.status,
+    "versions": {
+      "auv": entry.manifest.versions.auv,
+      "targetApplication": entry.manifest.versions.target_application,
+    },
     "sourceManifest": entry.path.display().to_string(),
     "projectRoot": project_root.display().to_string(),
     "members": members,
@@ -684,6 +688,7 @@ fn verify_bundle(
       entry.manifest.metadata.id
     ));
   }
+  verify_bundle_metadata_version(entry)?;
   if entry.manifest.target.application_family.trim().is_empty() {
     return Err(format!(
       "bundle {} must declare a target.applicationFamily",
@@ -702,6 +707,7 @@ fn verify_bundle(
       entry.manifest.metadata.id
     ));
   }
+  let bundle_target_application = validate_bundle_target_application_scope(entry)?;
   if entry.manifest.members.is_empty() {
     return Err(format!(
       "bundle {} has no members",
@@ -738,6 +744,18 @@ fn verify_bundle(
       "bundle {} requires runtime {} but current runtime is {}",
       entry.manifest.metadata.id, entry.manifest.versions.auv, runtime_version
     ));
+  }
+  if let Some((bundle_app_bundle_id, bundle_target_req)) = bundle_target_application {
+    let bundle_app_version = resolve_installed_app_version(&bundle_app_bundle_id)?;
+    if !bundle_target_req.matches(&bundle_app_version) {
+      return Err(format!(
+        "bundle {} requires targetApplication {} but app {} version is {}",
+        entry.manifest.metadata.id,
+        entry.manifest.versions.target_application,
+        bundle_app_bundle_id,
+        bundle_app_version
+      ));
+    }
   }
   let mut seen = std::collections::BTreeSet::new();
   for member in &entry.manifest.members {
@@ -850,6 +868,59 @@ fn verify_bundle(
   Ok(())
 }
 
+fn validate_bundle_target_application_scope(
+  entry: &auv_cli::bundle::SkillBundleCatalogEntry,
+) -> Result<Option<(String, semver::VersionReq)>, String> {
+  let raw = entry.manifest.versions.target_application.trim();
+  if raw.is_empty() {
+    return Ok(None);
+  }
+
+  let target_req = semver::VersionReq::parse(raw).map_err(|error| {
+    format!(
+      "bundle {} has invalid versions.targetApplication {}: {error}",
+      entry.manifest.metadata.id, entry.manifest.versions.target_application
+    )
+  })?;
+
+  let mut app_bundle_ids = std::collections::BTreeSet::new();
+  for member in &entry.manifest.members {
+    let app_bundle_id = member.app_bundle_id.trim();
+    if !app_bundle_id.is_empty() {
+      app_bundle_ids.insert(app_bundle_id.to_string());
+    }
+  }
+
+  if app_bundle_ids.is_empty() {
+    return Err(format!(
+      "bundle {} declares versions.targetApplication {} but no member declares appBundleId",
+      entry.manifest.metadata.id, entry.manifest.versions.target_application
+    ));
+  }
+  if app_bundle_ids.len() > 1 {
+    let bundle_ids = app_bundle_ids.into_iter().collect::<Vec<_>>().join(", ");
+    return Err(format!(
+      "bundle {} declares versions.targetApplication {} but spans multiple appBundleId values: {}",
+      entry.manifest.metadata.id, entry.manifest.versions.target_application, bundle_ids
+    ));
+  }
+
+  let app_bundle_id = app_bundle_ids.into_iter().next().unwrap();
+  Ok(Some((app_bundle_id, target_req)))
+}
+
+fn verify_bundle_metadata_version(
+  entry: &auv_cli::bundle::SkillBundleCatalogEntry,
+) -> Result<(), String> {
+  semver::Version::parse(&entry.manifest.metadata.version).map_err(|error| {
+    format!(
+      "bundle {} has invalid metadata.version {}: {error}",
+      entry.manifest.metadata.id, entry.manifest.metadata.version
+    )
+  })?;
+  Ok(())
+}
+
 fn resolve_member_target_app_version(
   skill_catalog: &SkillCatalog,
   recipe_id: &str,
@@ -863,6 +934,10 @@ fn resolve_member_target_app_version(
   }
 
   skill_catalog.resolve_recipe_id(recipe_id)?;
+  resolve_installed_app_version(app_bundle_id)
+}
+
+fn resolve_installed_app_version(app_bundle_id: &str) -> Result<semver::Version, String> {
   let app_path = resolve_installed_app_path(app_bundle_id)?;
   let version = read_app_version(&app_path)?;
   semver::Version::parse(&version).map_err(|error| {
@@ -958,4 +1033,97 @@ fn normalize_semver_version(raw: &str) -> Result<String, String> {
   semver::Version::parse(&candidate)
     .map(|_| candidate)
     .map_err(|error| format!("version {trimmed} could not be normalized: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn bundle_entry_with(
+    metadata_version: &str,
+    target_application: &str,
+    member_app_bundle_ids: &[&str],
+  ) -> auv_cli::bundle::SkillBundleCatalogEntry {
+    auv_cli::bundle::SkillBundleCatalogEntry {
+      manifest: auv_cli::bundle::SkillBundleManifest {
+        api_version: "auv.ai/v1alpha1".to_string(),
+        kind: "SkillBundle".to_string(),
+        metadata: auv_cli::bundle::SkillBundleMetadata {
+          id: "test.bundle.v0".to_string(),
+          name: "Test Bundle".to_string(),
+          version: metadata_version.to_string(),
+          status: "working".to_string(),
+        },
+        target: auv_cli::bundle::SkillBundleTarget {
+          application_family: "native-macos-apps".to_string(),
+          platform: "macOS".to_string(),
+        },
+        versions: auv_cli::bundle::SkillBundleVersions {
+          auv: ">=0.0.1, <0.1.0".to_string(),
+          target_application: target_application.to_string(),
+        },
+        members: member_app_bundle_ids
+          .iter()
+          .enumerate()
+          .map(
+            |(index, app_bundle_id)| auv_cli::bundle::SkillBundleMember {
+              recipe_id: format!("test.recipe.{index}"),
+              case_matrix_id: format!("test.recipe.{index}.cases"),
+              role: "sample".to_string(),
+              validated_case_ids: vec!["baseline".to_string()],
+              candidate_case_ids: Vec::new(),
+              contract: "verifyAxText".to_string(),
+              evidence_refs: Vec::new(),
+              app_bundle_id: (*app_bundle_id).to_string(),
+              target_application: String::new(),
+            },
+          )
+          .collect(),
+        verification: auv_cli::bundle::SkillBundleVerification {
+          expected_signals: vec!["signal".to_string()],
+          success_criteria: vec!["criteria".to_string()],
+          non_goals: Vec::new(),
+        },
+        known_limits: Vec::new(),
+      },
+      path: PathBuf::from("/tmp/test-bundle.json"),
+    }
+  }
+
+  #[test]
+  fn bundle_metadata_version_must_be_semver() {
+    let entry = bundle_entry_with("not-a-version", "", &["com.apple.Notes"]);
+    let error = verify_bundle_metadata_version(&entry).expect_err("metadata version should fail");
+    assert!(error.contains("metadata.version"));
+  }
+
+  #[test]
+  fn bundle_target_application_scope_rejects_multi_app_bundle() {
+    let entry = bundle_entry_with(
+      "0.1.0",
+      ">=1.0.0, <2.0.0",
+      &["com.apple.Notes", "com.apple.TextEdit"],
+    );
+    let error = validate_bundle_target_application_scope(&entry)
+      .expect_err("multi-app bundle targetApplication should fail");
+    assert!(error.contains("spans multiple appBundleId values"));
+  }
+
+  #[test]
+  fn bundle_target_application_scope_allows_empty_for_multi_app_bundle() {
+    let entry = bundle_entry_with("0.1.0", "", &["com.apple.Notes", "com.apple.TextEdit"]);
+    let scope = validate_bundle_target_application_scope(&entry)
+      .expect("empty targetApplication should be allowed");
+    assert!(scope.is_none());
+  }
+
+  #[test]
+  fn bundle_target_application_scope_allows_single_app_bundle() {
+    let entry = bundle_entry_with("0.1.0", ">=1.0.0, <2.0.0", &["com.apple.Notes"]);
+    let scope = validate_bundle_target_application_scope(&entry)
+      .expect("single-app targetApplication should be allowed")
+      .expect("scope should exist");
+    assert_eq!(scope.0, "com.apple.Notes");
+    assert!(scope.1.matches(&semver::Version::parse("1.4.0").unwrap()));
+  }
 }
