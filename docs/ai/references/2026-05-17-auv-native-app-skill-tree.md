@@ -61,6 +61,7 @@ graph TD
 ## Evidence
 
 - QQ音乐 narrow baseline: `docs/ai/references/2026-05-15-qqmusic-playback-verification.md`
+- QQ音乐 narrow coverage: `docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md`
 - QQ音乐 row fallback: `docs/ai/references/2026-05-16-qqmusic-row-fallback-case-matrix.md`
 - Notes sample: `docs/ai/references/2026-05-17-notes-ax-text-sample.md`
 - TextEdit sample: `recipes/macos/textedit/README.md`

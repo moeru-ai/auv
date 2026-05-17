@@ -32,6 +32,9 @@ pub enum CliCommand {
   SkillCasesShow {
     query: String,
   },
+  SkillCasesReport {
+    query: String,
+  },
   SkillCasesRun {
     query: String,
     dry_run: bool,
@@ -84,6 +87,7 @@ USAGE
   auv-cli skill bundle package verify <package-dir>
   auv-cli skill cases list
   auv-cli skill cases show <matrix-id-or-path>
+  auv-cli skill cases report <matrix-id-or-path>
   auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>]
   auv-cli skill run <skill-id-or-path> [--dry-run] [--max-disturbance <class>] [--set key=value]
 
@@ -263,6 +267,14 @@ fn parse_skill_cases(arguments: &[String]) -> AuvResult<CliCommand> {
         return Err("usage: auv-cli skill cases show <matrix-id-or-path>".to_string());
       }
       Ok(CliCommand::SkillCasesShow {
+        query: arguments[3].clone(),
+      })
+    }
+    "report" => {
+      if arguments.len() != 4 {
+        return Err("usage: auv-cli skill cases report <matrix-id-or-path>".to_string());
+      }
+      Ok(CliCommand::SkillCasesReport {
         query: arguments[3].clone(),
       })
     }

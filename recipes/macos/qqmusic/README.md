@@ -214,9 +214,16 @@ Current row-fallback case truth:
 
 - `ascii-aa-row-fallback` is validated
 - `chinese-query-row-fallback` is validated for row-based fallback activation
-- Chinese validated case keeps `target_title=晴天` and separate `observed_playback_title=天空仍灿烂`
+- Chinese validated case now records `requested_title=晴天` and verifies `target_title=天空仍灿烂`
 - Row-fallback verification now prefers AX tree title matching over screenshot OCR for the current now-playing title
-- Chinese target-title disambiguation is now verified through row activation plus now-playing AX verification
+- Chinese target-title disambiguation is not yet proven through row fallback; the current validated case proves activation on the Chinese result page, not semantic song selection
+
+Coverage reporting entrypoints are now:
+
+```bash
+auv-cli skill cases report macos.qqmusic.play_visible_anchor.v0
+auv-cli skill cases report macos.qqmusic.play_visible_row.v0
+```
 
 The current verification direction is:
 

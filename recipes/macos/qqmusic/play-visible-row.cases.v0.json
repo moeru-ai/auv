@@ -9,10 +9,10 @@
       "inputs": {
         "query": "aa",
         "row_index": "2",
+        "requested_title": "Cure For Me - AURORA",
         "target_title": "Cure For Me - AURORA",
         "observed_playback_title": "Cure For Me - AURORA",
         "target_artist": "",
-        "result_title_artist_scope_path_prefix": "0.8",
         "now_playing_scope_path_prefix": "0.4.4"
       },
       "disturbance": "pointer",
@@ -27,7 +27,8 @@
       "inputs": {
         "query": "周杰伦",
         "row_index": "1",
-        "target_title": "晴天",
+        "requested_title": "晴天",
+        "target_title": "天空仍灿烂",
         "observed_playback_title": "天空仍灿烂",
         "target_artist": "周杰伦",
         "now_playing_scope_path_prefix": "0.4.4"
@@ -36,7 +37,8 @@
       "notes": [
         "Chinese OCR anchor resolution is no longer the gating signal for this case.",
         "Use this case to validate row-based fallback activation for the Chinese result page.",
-        "The target title remains 晴天, and the current observed playback title is now verified through the AX tree."
+        "This case validates the observed AX playback title 天空仍灿烂 after a Chinese result-page activation attempt.",
+        "It does not yet prove semantic requested-title selection for 晴天."
       ]
     }
   ]

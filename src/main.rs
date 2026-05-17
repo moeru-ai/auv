@@ -9,7 +9,10 @@ use auv_cli::bundle::{
   SkillBundleCatalog, export_bundle, verify_bundle, verify_exported_bundle_package_standalone,
 };
 use auv_cli::model::RunStatus;
-use auv_cli::skill::{SkillCaseMatrixCatalog, SkillCatalog, run_skill, run_skill_case_matrix};
+use auv_cli::skill::{
+  SkillCaseMatrixCatalog, SkillCatalog, render_skill_case_matrix_report, run_skill,
+  run_skill_case_matrix,
+};
 use cli::{CliCommand, help_text, parse_cli};
 
 fn main() {
@@ -205,6 +208,14 @@ fn run() -> Result<(), String> {
           "failed to render case-matrix manifest {}: {error}",
           entry.path.display()
         ))?
+      );
+    }
+    CliCommand::SkillCasesReport { query } => {
+      let matrix_entry = case_matrix_catalog.resolve(&project_root, &query)?;
+      let skill_entry = skill_catalog.resolve_recipe_id(&matrix_entry.matrix.skill_id)?;
+      print!(
+        "{}",
+        render_skill_case_matrix_report(skill_entry, matrix_entry)?
       );
     }
     CliCommand::SkillCasesRun {

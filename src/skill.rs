@@ -584,6 +584,109 @@ pub fn run_skill_case_matrix(
   Ok(())
 }
 
+pub fn render_skill_case_matrix_report(
+  skill_entry: &SkillCatalogEntry,
+  matrix_entry: &SkillCaseMatrixEntry,
+) -> AuvResult<String> {
+  validate_case_matrix_against_skill(&skill_entry.manifest, &matrix_entry.matrix)?;
+
+  let manifest = &skill_entry.manifest;
+  let matrix = &matrix_entry.matrix;
+
+  let mut by_status = BTreeMap::<String, usize>::new();
+  let mut by_disturbance = BTreeMap::<String, usize>::new();
+  for case in &matrix.cases {
+    *by_status.entry(case.status.clone()).or_insert(0) += 1;
+    *by_disturbance.entry(case.disturbance.clone()).or_insert(0) += 1;
+  }
+
+  let target_app_display = if manifest.target_app.name.trim().is_empty() {
+    manifest.target_app.bundle_id.clone()
+  } else if manifest.target_app.bundle_id.trim().is_empty() {
+    manifest.target_app.name.clone()
+  } else {
+    format!(
+      "{} ({})",
+      manifest.target_app.name.trim(),
+      manifest.target_app.bundle_id.trim()
+    )
+  };
+
+  let mut output = String::new();
+  output.push_str(&format!("# Skill Case Report: {}\n\n", matrix.skill_id));
+  output.push_str(&format!("- skill version: `{}`\n", manifest.version));
+  output.push_str(&format!("- matrix version: `{}`\n", matrix.version));
+  output.push_str(&format!("- matrix status: `{}`\n", matrix.status));
+  output.push_str(&format!("- target app: `{}`\n", target_app_display));
+  output.push_str(&format!("- objective: {}\n", manifest.objective.trim()));
+  output.push_str(&format!(
+    "- max disturbance: `{}`\n",
+    if manifest.disturbance_policy.max_disturbance.is_empty() {
+      "pointer"
+    } else {
+      &manifest.disturbance_policy.max_disturbance
+    }
+  ));
+  output.push_str(&format!("- case count: `{}`\n\n", matrix.cases.len()));
+
+  output.push_str("## Status Counts\n\n");
+  for (status, count) in &by_status {
+    output.push_str(&format!("- `{}`: `{}`\n", status, count));
+  }
+  output.push_str("\n## Disturbance Counts\n\n");
+  for (disturbance, count) in &by_disturbance {
+    output.push_str(&format!("- `{}`: `{}`\n", disturbance, count));
+  }
+
+  output.push_str("\n## Cases\n\n");
+  for case in &matrix.cases {
+    output.push_str(&format!("### {} [{}]\n\n", case.case_id, case.status));
+    output.push_str(&format!("- disturbance: `{}`\n", case.disturbance));
+    if !case.inputs.is_empty() {
+      output.push_str("- inputs:\n");
+      for (key, value) in &case.inputs {
+        output.push_str(&format!("  - `{}` = `{}`\n", key, value));
+      }
+    }
+    if !case.notes.is_empty() {
+      output.push_str("- notes:\n");
+      for note in &case.notes {
+        output.push_str(&format!("  - {}\n", note));
+      }
+    }
+    if let (Some(requested_title), Some(target_title)) = (
+      case.inputs.get("requested_title"),
+      case.inputs.get("target_title"),
+    ) && !requested_title.trim().is_empty()
+      && requested_title != target_title
+    {
+      output.push_str("- verification gap:\n");
+      output.push_str(&format!("  - requested_title = `{}`\n", requested_title));
+      output.push_str(&format!("  - verified_target = `{}`\n", target_title));
+      output.push_str(
+        "  - this case validates the current activation path, not semantic target-title selection.\n",
+      );
+    }
+    output.push('\n');
+  }
+
+  output.push_str("## Verification Contract\n\n");
+  output.push_str("- expected signals:\n");
+  for signal in &manifest.verification.expected_signals {
+    output.push_str(&format!("  - {}\n", signal));
+  }
+  output.push_str("- success criteria:\n");
+  for criterion in &manifest.verification.success_criteria {
+    output.push_str(&format!("  - {}\n", criterion));
+  }
+  output.push_str("- non-goals:\n");
+  for non_goal in &manifest.verification.non_goals {
+    output.push_str(&format!("  - {}\n", non_goal));
+  }
+
+  Ok(output)
+}
+
 fn collect_skill_entries(root: &Path, entries: &mut Vec<SkillCatalogEntry>) -> AuvResult<()> {
   for raw_entry in fs::read_dir(root)
     .map_err(|error| format!("failed to read skill directory {}: {error}", root.display()))?

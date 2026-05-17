@@ -114,6 +114,16 @@ becomes the product-facing coverage entrypoint. That is the current QQ音乐
 shape: one executable recipe, plus one case matrix that declares which inputs
 are actually validated.
 
+Case matrices may also need to separate:
+
+- the user-requested semantic target
+- the concretely verified observed target
+
+The first current example is QQ音乐 row fallback on a Chinese result page,
+where `requested_title` and `target_title` can diverge. That is not a cosmetic
+detail. It is the difference between "activation path validated" and
+"requested-title selection validated".
+
 ## Verification Contract
 
 Productized narrow skills should define:

@@ -19,10 +19,15 @@
       "default": "aa",
       "note": "Current fallback baseline starts from the ASCII query aa."
     },
+    "requested_title": {
+      "type": "string",
+      "default": "",
+      "note": "Optional user-intended title for coverage reporting when the verified playback title is different from the semantic request."
+    },
     "target_title": {
       "type": "string",
       "default": "Cure For Me - AURORA",
-      "note": "The expected bottom-player title OCR string after row activation."
+      "note": "The expected now-playing title that must be verified through the AX tree after row activation."
     },
     "observed_playback_title": {
       "type": "string",

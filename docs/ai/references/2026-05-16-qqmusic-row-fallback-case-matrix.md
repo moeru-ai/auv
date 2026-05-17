@@ -30,7 +30,7 @@ The following case is the current canonical row-based fallback baseline:
 
 1. `ascii-aa-row-fallback`
    - query: `aa`
-   - row index: `1`
+   - row index: `2`
    - playback title: `Cure For Me - AURORA`
 
 What this proves:
@@ -50,9 +50,14 @@ The matrix also includes one validated Chinese case:
 
 1. `chinese-query-row-fallback`
    - query: `周杰伦`
+   - requested title: `晴天`
    - row index: `1`
-   - target title: `晴天`
-   - observed playback title: `天空仍灿烂`
+   - verified playback title: `天空仍灿烂`
 
-This proves the Chinese fallback path can activate a visible row and verify the
-target title through the AX tree without screenshot OCR.
+This proves the Chinese fallback path can activate a visible row on the Chinese
+result page and verify one concrete now-playing title through the AX tree
+without screenshot OCR.
+
+It does **not** prove that the current row fallback semantically selected
+`晴天`. The current verified playback title is `天空仍灿烂`, so this case should
+be read as an activation-path proof, not as title-selection proof.
