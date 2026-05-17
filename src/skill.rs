@@ -323,6 +323,7 @@ pub fn run_skill(
   options: SkillRunOptions,
 ) -> AuvResult<()> {
   let manifest = &entry.manifest;
+  validate_skill_manifest(manifest)?;
   let mut variables = default_inputs(manifest)?;
   for (key, value) in options.overrides {
     variables.insert(key, value);
@@ -373,6 +374,157 @@ pub fn run_skill(
     enforce_invoke_success(&result)?;
   }
 
+  Ok(())
+}
+
+fn validate_skill_manifest(manifest: &SkillManifest) -> AuvResult<()> {
+  validate_skill_identity(manifest)?;
+  validate_skill_target_app(manifest)?;
+  validate_skill_inputs(manifest)?;
+  validate_skill_steps(manifest)?;
+  validate_skill_verification(manifest)?;
+  Ok(())
+}
+
+fn validate_skill_identity(manifest: &SkillManifest) -> AuvResult<()> {
+  if manifest.recipe_id.trim().is_empty() {
+    return Err("skill manifest recipe_id must not be empty".to_string());
+  }
+  if manifest.version.trim().is_empty() {
+    return Err(format!(
+      "skill {} must declare a non-empty version",
+      manifest.recipe_id
+    ));
+  }
+  semver::Version::parse(&manifest.version).map_err(|error| {
+    format!(
+      "skill {} has invalid version {}: {error}",
+      manifest.recipe_id, manifest.version
+    )
+  })?;
+  if manifest.objective.trim().is_empty() {
+    return Err(format!(
+      "skill {} must declare a non-empty objective",
+      manifest.recipe_id
+    ));
+  }
+  Ok(())
+}
+
+fn validate_skill_target_app(manifest: &SkillManifest) -> AuvResult<()> {
+  if manifest.target_app.bundle_id.trim().is_empty() {
+    return Err(format!(
+      "skill {} must declare a non-empty target_app.bundle_id",
+      manifest.recipe_id
+    ));
+  }
+  if manifest.target_app.display_mode.trim().is_empty() {
+    return Err(format!(
+      "skill {} must declare a non-empty target_app.display_mode",
+      manifest.recipe_id
+    ));
+  }
+  Ok(())
+}
+
+fn validate_skill_inputs(manifest: &SkillManifest) -> AuvResult<()> {
+  for (key, spec) in &manifest.inputs {
+    if key.trim().is_empty() {
+      return Err(format!(
+        "skill {} has an input with an empty key",
+        manifest.recipe_id
+      ));
+    }
+    if spec.kind.trim().is_empty() {
+      return Err(format!(
+        "skill {} input {} must declare a non-empty type",
+        manifest.recipe_id, key
+      ));
+    }
+    if let Some(default) = &spec.default {
+      stringify_value(default).map_err(|error| {
+        format!(
+          "skill {} input {} has an invalid default value: {error}",
+          manifest.recipe_id, key
+        )
+      })?;
+    }
+  }
+  Ok(())
+}
+
+fn validate_skill_steps(manifest: &SkillManifest) -> AuvResult<()> {
+  if manifest.steps.is_empty() {
+    return Err(format!(
+      "skill {} must declare at least one step",
+      manifest.recipe_id
+    ));
+  }
+
+  for (index, step) in manifest.steps.iter().enumerate() {
+    let step_label = if step.id.trim().is_empty() {
+      format!("step-{}", index + 1)
+    } else {
+      step.id.clone()
+    };
+    if step.command_id.trim().is_empty() {
+      return Err(format!(
+        "skill {} step {} must declare a non-empty command_id",
+        manifest.recipe_id, step_label
+      ));
+    }
+    if step.disturbance.max.trim().is_empty() {
+      return Err(format!(
+        "skill {} step {} must declare disturbance.max",
+        manifest.recipe_id, step_label
+      ));
+    }
+    if step.disturbance.classes.is_empty() {
+      return Err(format!(
+        "skill {} step {} must declare disturbance.classes",
+        manifest.recipe_id, step_label
+      ));
+    }
+    for class in &step.disturbance.classes {
+      DisturbanceClass::parse(class).map_err(|error| {
+        format!(
+          "skill {} step {} has invalid disturbance class {}: {error}",
+          manifest.recipe_id, step_label, class
+        )
+      })?;
+    }
+    parse_step_max(step).map_err(|error| {
+      format!(
+        "skill {} step {} has invalid disturbance.max {}: {error}",
+        manifest.recipe_id, step_label, step.disturbance.max
+      )
+    })?;
+
+    for key in step.args.keys() {
+      if key.trim().is_empty() {
+        return Err(format!(
+          "skill {} step {} has an empty arg key",
+          manifest.recipe_id, step_label
+        ));
+      }
+    }
+  }
+  Ok(())
+}
+
+fn validate_skill_verification(manifest: &SkillManifest) -> AuvResult<()> {
+  if manifest.verification.expected_signals.is_empty() {
+    return Err(format!(
+      "skill {} must declare verification.expected_signals",
+      manifest.recipe_id
+    ));
+  }
+  if manifest.verification.success_criteria.is_empty() {
+    return Err(format!(
+      "skill {} must declare verification.success_criteria",
+      manifest.recipe_id
+    ));
+  }
   Ok(())
 }
 
@@ -903,6 +1055,7 @@ mod tests {
   use super::{
     SkillCaseMatrixCatalog, SkillCatalog, SkillManifest, default_inputs, export_step_variables,
     is_image_artifact, render_template, render_value, sanitize_lock_component,
+    validate_skill_manifest,
   };
   use crate::model::{InvokeResult, RunStatus, now_millis};
 
@@ -1051,5 +1204,87 @@ mod tests {
       sanitize_lock_component("  weird / bundle id  "),
       "weird-bundle-id"
     );
+  }
+
+  #[test]
+  fn validate_skill_manifest_accepts_minimal_valid_recipe() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "aa" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["pointer"]
+      },
+      "steps": [{
+        "id": "step-1",
+        "command_id": "debug.captureScreen",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    validate_skill_manifest(&manifest).expect("manifest should validate");
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_empty_steps() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "objective": "test",
+      "steps": [],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let error = validate_skill_manifest(&manifest).expect_err("empty steps should fail");
+    assert!(error.contains("at least one step"));
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_invalid_version() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "not-a-version",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "objective": "test",
+      "steps": [{
+        "command_id": "debug.captureScreen",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let error = validate_skill_manifest(&manifest).expect_err("invalid version should fail");
+    assert!(error.contains("invalid version"));
   }
 }
