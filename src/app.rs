@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,13 +14,14 @@ use crate::driver::{
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
 use crate::runtime::Runtime;
 use crate::skill::{
-  SkillCaseMatrix, SkillManifest, SkillStrategy, validate_case_matrix_against_skill,
-  validate_case_matrix_manifest, validate_skill_manifest,
+  SkillCaseMatrix, SkillCaseRunOptions, SkillManifest, SkillStrategy, run_skill_case_matrix_inline,
+  validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
 };
 
 const APP_PROBE_VERSION: &str = "v0";
 const APP_ANALYSIS_VERSION: &str = "v0";
 const APP_DISTILL_VERSION: &str = "v0";
+const APP_VALIDATE_VERSION: &str = "v0";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppIdentity {
@@ -73,12 +74,30 @@ pub struct AppDistillOutput {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppValidateOutput {
+  pub validation: AppValidation,
+  pub validation_path: PathBuf,
+  pub report_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppDistillation {
   pub distill_version: String,
   pub created_at_millis: u128,
   pub source_analysis_path: PathBuf,
   pub app_identity: AppIdentity,
   pub candidates: Vec<AppDistilledCandidate>,
+  pub known_boundaries: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppValidation {
+  pub validate_version: String,
+  pub created_at_millis: u128,
+  pub source_distillation_path: PathBuf,
+  pub source_analysis_path: PathBuf,
+  pub app_identity: AppIdentity,
+  pub candidates: Vec<AppValidatedCandidate>,
   pub known_boundaries: Vec<String>,
 }
 
@@ -90,6 +109,20 @@ pub struct AppDistilledCandidate {
   pub rationale: String,
   pub recipe_path: PathBuf,
   pub case_matrix_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppValidatedCandidate {
+  pub recipe_id: String,
+  pub taxonomy_id: String,
+  pub status: AppValidationStatus,
+  pub rationale: String,
+  pub recipe_path: PathBuf,
+  pub case_matrix_path: PathBuf,
+  pub selected_case_count: usize,
+  pub unresolved_inputs: Vec<String>,
+  pub failure_message: Option<String>,
+  pub resolved_inputs: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -148,6 +181,24 @@ impl AssessmentStatus {
       Self::Likely => "likely",
       Self::Unknown => "unknown",
       Self::Unavailable => "unavailable",
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AppValidationStatus {
+  Validated,
+  Candidate,
+  Rejected,
+}
+
+impl AppValidationStatus {
+  fn as_str(&self) -> &'static str {
+    match self {
+      Self::Validated => "validated",
+      Self::Candidate => "candidate",
+      Self::Rejected => "rejected",
     }
   }
 }
@@ -478,6 +529,117 @@ pub fn distill_app_analysis(
   Ok(AppDistillOutput {
     distillation,
     distillation_path,
+    report_path,
+  })
+}
+
+pub fn validate_app_distillation(runtime: &Runtime, query: &Path) -> AuvResult<AppValidateOutput> {
+  let distillation_path = resolve_distillation_path(query)?;
+  let distillation: AppDistillation = read_json(&distillation_path)?;
+  let analysis: AppAnalysis = read_json(&distillation.source_analysis_path)?;
+  let probe = read_json::<AppProbe>(&analysis.probe_path).ok();
+  let ax_snapshot = probe
+    .as_ref()
+    .and_then(|probe| parse_ax_snapshot(probe).ok());
+
+  let mut candidates = Vec::new();
+  for candidate in &distillation.candidates {
+    let manifest: SkillManifest = read_json(&candidate.recipe_path)?;
+    let mut matrix: SkillCaseMatrix = read_json(&candidate.case_matrix_path)?;
+    let mut resolved_inputs = BTreeMap::new();
+    let unresolved_inputs = apply_candidate_grounding(
+      &analysis,
+      ax_snapshot.as_ref(),
+      &candidate.taxonomy_id,
+      &mut matrix,
+      &mut resolved_inputs,
+    );
+    let selected_case_count = matrix.cases.len();
+
+    let validated = if unresolved_inputs.is_empty() {
+      match run_skill_case_matrix_inline(
+        runtime,
+        &manifest,
+        &matrix,
+        SkillCaseRunOptions {
+          dry_run: false,
+          max_disturbance: None,
+          only_case_ids: Vec::new(),
+          include_nonvalidated: true,
+        },
+      ) {
+        Ok(()) => AppValidatedCandidate {
+          recipe_id: candidate.recipe_id.clone(),
+          taxonomy_id: candidate.taxonomy_id.clone(),
+          status: AppValidationStatus::Validated,
+          rationale: format!(
+            "All {} candidate case(s) executed successfully through the shared runtime.",
+            selected_case_count
+          ),
+          recipe_path: candidate.recipe_path.clone(),
+          case_matrix_path: candidate.case_matrix_path.clone(),
+          selected_case_count,
+          unresolved_inputs,
+          failure_message: None,
+          resolved_inputs,
+        },
+        Err(error) => AppValidatedCandidate {
+          recipe_id: candidate.recipe_id.clone(),
+          taxonomy_id: candidate.taxonomy_id.clone(),
+          status: AppValidationStatus::Rejected,
+          rationale: "The candidate was runnable, but live execution failed.".to_string(),
+          recipe_path: candidate.recipe_path.clone(),
+          case_matrix_path: candidate.case_matrix_path.clone(),
+          selected_case_count,
+          unresolved_inputs,
+          failure_message: Some(error),
+          resolved_inputs,
+        },
+      }
+    } else {
+      AppValidatedCandidate {
+        recipe_id: candidate.recipe_id.clone(),
+        taxonomy_id: candidate.taxonomy_id.clone(),
+        status: AppValidationStatus::Candidate,
+        rationale:
+          "The candidate still requires live grounding for unresolved inputs before execution."
+            .to_string(),
+        recipe_path: candidate.recipe_path.clone(),
+        case_matrix_path: candidate.case_matrix_path.clone(),
+        selected_case_count,
+        unresolved_inputs,
+        failure_message: None,
+        resolved_inputs,
+      }
+    };
+    candidates.push(validated);
+  }
+
+  let validation = AppValidation {
+    validate_version: APP_VALIDATE_VERSION.to_string(),
+    created_at_millis: now_millis(),
+    source_distillation_path: distillation_path.clone(),
+    source_analysis_path: distillation.source_analysis_path.clone(),
+    app_identity: distillation.app_identity.clone(),
+    candidates,
+    known_boundaries: distillation.known_boundaries.clone(),
+  };
+  let validation_root = distillation_path
+    .parent()
+    .unwrap_or_else(|| Path::new("."))
+    .to_path_buf();
+  let validation_path = validation_root.join("validation.json");
+  let report_path = validation_root.join("validation-report.md");
+  write_pretty_json(&validation_path, &validation)?;
+  fs::write(&report_path, render_app_validation_report(&validation)).map_err(|error| {
+    format!(
+      "failed to write app validation report {}: {error}",
+      report_path.display()
+    )
+  })?;
+  Ok(AppValidateOutput {
+    validation,
+    validation_path,
     report_path,
   })
 }
@@ -1039,6 +1201,234 @@ fn render_app_distillation_report(
   lines.join("\n") + "\n"
 }
 
+fn render_app_validation_report(validation: &AppValidation) -> String {
+  let mut lines = vec![
+    format!(
+      "# App Validation Report: {}",
+      if validation.app_identity.app_name.is_empty() {
+        &validation.app_identity.bundle_id
+      } else {
+        &validation.app_identity.app_name
+      }
+    ),
+    String::new(),
+    format!(
+      "- source distillation: `{}`",
+      validation.source_distillation_path.display()
+    ),
+    format!(
+      "- source analysis: `{}`",
+      validation.source_analysis_path.display()
+    ),
+    format!("- validate version: `{}`", validation.validate_version),
+    String::new(),
+  ];
+  let mut by_status = BTreeMap::<&str, usize>::new();
+  for candidate in &validation.candidates {
+    *by_status.entry(candidate.status.as_str()).or_insert(0) += 1;
+  }
+  lines.push("## Status Counts".to_string());
+  lines.push(String::new());
+  if by_status.is_empty() {
+    lines.push("- none recorded".to_string());
+  } else {
+    for (status, count) in by_status {
+      lines.push(format!("- `{status}`: `{count}`"));
+    }
+  }
+  lines.push(String::new());
+  lines.push("## Candidate Results".to_string());
+  lines.push(String::new());
+  if validation.candidates.is_empty() {
+    lines.push("- none validated".to_string());
+  } else {
+    for candidate in &validation.candidates {
+      lines.push(format!(
+        "### {} [{}]",
+        candidate.recipe_id,
+        candidate.status.as_str()
+      ));
+      lines.push(String::new());
+      lines.push(format!("- taxonomy: `{}`", candidate.taxonomy_id));
+      lines.push(format!(
+        "- selected cases: `{}`",
+        candidate.selected_case_count
+      ));
+      lines.push(format!("- recipe: `{}`", candidate.recipe_path.display()));
+      lines.push(format!(
+        "- cases: `{}`",
+        candidate.case_matrix_path.display()
+      ));
+      lines.push(format!("- rationale: {}", candidate.rationale));
+      if !candidate.resolved_inputs.is_empty() {
+        lines.push("- resolved inputs:".to_string());
+        for (key, value) in &candidate.resolved_inputs {
+          lines.push(format!("  - `{key}` = `{value}`"));
+        }
+      }
+      if !candidate.unresolved_inputs.is_empty() {
+        lines.push("- unresolved inputs:".to_string());
+        for key in &candidate.unresolved_inputs {
+          lines.push(format!("  - `{key}`"));
+        }
+      }
+      if let Some(error) = &candidate.failure_message {
+        lines.push("- failure:".to_string());
+        lines.push(format!("  - {}", error.replace('\n', "\n  - ")));
+      }
+      lines.push(String::new());
+    }
+  }
+  lines.push("## Boundaries Carried Forward".to_string());
+  lines.push(String::new());
+  if validation.known_boundaries.is_empty() {
+    lines.push("- none recorded".to_string());
+  } else {
+    for note in &validation.known_boundaries {
+      lines.push(format!("- {note}"));
+    }
+  }
+  lines.join("\n") + "\n"
+}
+
+fn apply_candidate_grounding(
+  analysis: &AppAnalysis,
+  ax_snapshot: Option<&ObservedAxTreeSnapshot>,
+  taxonomy_id: &str,
+  matrix: &mut SkillCaseMatrix,
+  resolved_inputs: &mut BTreeMap<String, String>,
+) -> Vec<String> {
+  let mut unresolved = BTreeSet::new();
+  let search_entry_query = choose_search_entry_query(ax_snapshot);
+  let native_text_query = choose_native_text_focus_query(ax_snapshot);
+  let stable_anchor =
+    first_stable_anchor_value(&analysis.grounding_assessment.stable_anchor_candidates);
+
+  for case in &mut matrix.cases {
+    for (key, value) in &mut case.inputs {
+      if !looks_like_placeholder(value) {
+        resolved_inputs
+          .entry(key.clone())
+          .or_insert_with(|| value.clone());
+        continue;
+      }
+
+      let replacement = match (taxonomy_id, key.as_str()) {
+        ("search-entry.ax-text-input.clipboard-submit.capture-screen-evidence", "focus_query") => {
+          search_entry_query.clone()
+        }
+        ("search-entry.ax-text-input.clipboard-submit.capture-screen-evidence", "query") => {
+          Some(format!(
+            "AUV_{}",
+            recipe_app_slug(&analysis.app_identity).to_ascii_uppercase()
+          ))
+        }
+        ("native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text", "focus_query") => {
+          native_text_query.clone()
+        }
+        ("result-selection.ocr-anchor.pointer-click.capture-screen-evidence", "anchor_text") => {
+          stable_anchor.clone()
+        }
+        _ => None,
+      };
+
+      if let Some(replacement) = replacement.filter(|value| !value.trim().is_empty()) {
+        *value = replacement.clone();
+        resolved_inputs.entry(key.clone()).or_insert(replacement);
+      } else {
+        unresolved.insert(key.clone());
+      }
+    }
+  }
+
+  unresolved.into_iter().collect()
+}
+
+fn choose_search_entry_query(snapshot: Option<&ObservedAxTreeSnapshot>) -> Option<String> {
+  let snapshot = snapshot?;
+  snapshot.nodes.iter().find_map(|node| {
+    let looks_like_search = node.subrole == "AXSearchField"
+      || node.role == "AXSearchField"
+      || node.placeholder.to_lowercase().contains("search")
+      || node.title.to_lowercase().contains("search")
+      || node.description.to_lowercase().contains("search")
+      || node.placeholder.contains("搜索")
+      || node.title.contains("搜索")
+      || node.description.contains("搜索");
+    if !looks_like_search {
+      return None;
+    }
+    preferred_ax_query_text(node)
+  })
+}
+
+fn choose_native_text_focus_query(snapshot: Option<&ObservedAxTreeSnapshot>) -> Option<String> {
+  let snapshot = snapshot?;
+  snapshot
+    .nodes
+    .iter()
+    .find(|node| {
+      let role = node.role.as_str();
+      let subrole = node.subrole.as_str();
+      role == "AXTextField"
+        || role == "AXTextArea"
+        || role == "AXComboBox"
+        || subrole == "AXSearchField"
+        || !node.placeholder.trim().is_empty()
+    })
+    .and_then(preferred_ax_query_text)
+}
+
+fn preferred_ax_query_text(node: &crate::driver::ObservedAxNode) -> Option<String> {
+  first_non_empty_string(&[
+    non_empty_trimmed(&node.placeholder),
+    non_empty_trimmed(&node.title),
+    non_empty_trimmed(&node.description),
+    non_empty_trimmed(&node.help),
+    non_empty_trimmed(&node.identifier),
+    short_non_empty_value(&node.value),
+  ])
+}
+
+fn short_non_empty_value(value: &str) -> Option<String> {
+  let trimmed = value.trim();
+  if trimmed.is_empty() || trimmed.len() > 64 || trimmed.contains('\n') {
+    None
+  } else {
+    Some(trimmed.to_string())
+  }
+}
+
+fn non_empty_trimmed(value: &str) -> Option<String> {
+  let trimmed = value.trim();
+  if trimmed.is_empty() {
+    None
+  } else {
+    Some(trimmed.to_string())
+  }
+}
+
+fn first_stable_anchor_value(candidates: &[String]) -> Option<String> {
+  candidates.iter().find_map(|value| {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+      return None;
+    }
+    if let Some((_, suffix)) = trimmed.split_once(':') {
+      let suffix = suffix.trim();
+      if !suffix.is_empty() {
+        return Some(suffix.to_string());
+      }
+    }
+    Some(trimmed.to_string())
+  })
+}
+
+fn looks_like_placeholder(value: &str) -> bool {
+  let trimmed = value.trim();
+  trimmed.starts_with("TODO_") || trimmed == "TODO"
+}
+
 fn parse_permission_state(probe: &AppProbe) -> AuvResult<AppPermissionState> {
   let report = read_named_text_artifact(probe, "probe-permissions", None)?;
   Ok(AppPermissionState {
@@ -1452,6 +1842,26 @@ fn resolve_analysis_path(query: &Path) -> AuvResult<PathBuf> {
     ));
   }
   Err(format!("analysis path does not exist: {}", query.display()))
+}
+
+fn resolve_distillation_path(query: &Path) -> AuvResult<PathBuf> {
+  if query.is_file() {
+    return Ok(query.to_path_buf());
+  }
+  if query.is_dir() {
+    let candidate = query.join("distillation.json");
+    if candidate.exists() {
+      return Ok(candidate);
+    }
+    return Err(format!(
+      "distillation directory {} does not contain distillation.json",
+      query.display()
+    ));
+  }
+  Err(format!(
+    "distillation path does not exist: {}",
+    query.display()
+  ))
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> AuvResult<T> {
@@ -1969,6 +2379,15 @@ mod tests {
   }
 
   #[test]
+  fn parse_distillation_directory_resolves_distillation_json() {
+    let root = temp_dir("app-distill-resolve");
+    fs::write(root.join("distillation.json"), "{}").expect("distillation.json should be writable");
+    let resolved = resolve_distillation_path(&root).expect("directory should resolve");
+    assert_eq!(resolved, root.join("distillation.json"));
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
   fn recommended_strategy_uses_stable_taxonomy_id() {
     let strategy = recommended_strategy(
       "native-text",
@@ -2110,6 +2529,26 @@ mod tests {
       serde_json::from_value(matrix_value).expect("candidate matrix should parse");
     validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
     validate_case_matrix_against_skill(&manifest, &matrix).expect("candidate matrix should align");
+  }
+
+  #[test]
+  fn apply_candidate_grounding_marks_unresolved_search_entry_without_search_signal() {
+    let analysis = sample_analysis_with_strategy(
+      "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence",
+    );
+    let mut matrix: SkillCaseMatrix =
+      serde_json::from_value(render_search_entry_candidate_cases(&analysis))
+        .expect("candidate matrix should parse");
+    let mut resolved = BTreeMap::new();
+    let unresolved = apply_candidate_grounding(
+      &analysis,
+      None,
+      "search-entry.ax-text-input.clipboard-submit.capture-screen-evidence",
+      &mut matrix,
+      &mut resolved,
+    );
+    assert!(unresolved.iter().any(|key| key == "focus_query"));
+    assert!(resolved.get("query").is_some());
   }
 
   fn sample_analysis_with_strategy(taxonomy_id: &str) -> AppAnalysis {

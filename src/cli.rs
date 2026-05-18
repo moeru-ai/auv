@@ -18,6 +18,9 @@ pub enum CliCommand {
     query: String,
     output_dir: Option<String>,
   },
+  AppValidate {
+    query: String,
+  },
   Invoke(InvokeRequest),
   Inspect {
     run_id: String,
@@ -95,6 +98,7 @@ USAGE
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
+  auv-cli app validate <distill-dir-or-distillation-json>
   auv-cli invoke <command-id> [--target <application-id>] [--label <text>]
   auv-cli inspect <run-id>
   auv-cli skill list
@@ -132,13 +136,14 @@ NOTES
   - `app probe` is the deterministic raw-facts entrypoint for phase-2 distillation work; it records app identity plus runtime-backed surface probes into `.auv/app-probes/.../probe.json`.
   - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as the input to later candidate-skill distillation instead of free-form chat summaries.
   - `app distill` turns one analyzed app surface into candidate recipe/case-matrix scaffolds that already pass the current skill validators; they are candidate outputs, not validated skills.
+  - `app validate` turns one distillation directory into `validation.json` and `validation-report.md`; it only promotes a candidate to validated if the generated case matrix actually runs live.
 ",
   )
 }
 
 fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err("usage: auv-cli app <probe|analyze> ...".to_string());
+    return Err("usage: auv-cli app <probe|analyze|distill|validate> ...".to_string());
   }
 
   match arguments[1].as_str() {
@@ -152,8 +157,16 @@ fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
       })
     }
     "distill" => parse_app_distill(arguments),
+    "validate" => {
+      if arguments.len() != 3 {
+        return Err("usage: auv-cli app validate <distill-dir-or-distillation-json>".to_string());
+      }
+      Ok(CliCommand::AppValidate {
+        query: arguments[2].clone(),
+      })
+    }
     other => Err(format!(
-      "unknown app subcommand {other}; use `auv-cli app probe`, `auv-cli app analyze`, or `auv-cli app distill`"
+      "unknown app subcommand {other}; use `auv-cli app probe`, `auv-cli app analyze`, `auv-cli app distill`, or `auv-cli app validate`"
     )),
   }
 }
@@ -418,6 +431,22 @@ mod tests {
       CliCommand::AppDistill { query, output_dir } => {
         assert_eq!(query, "/tmp/analysis");
         assert_eq!(output_dir.as_deref(), Some("/tmp/out"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_app_validate_command() {
+    let command = parse_cli(&[
+      "app".to_string(),
+      "validate".to_string(),
+      "/tmp/distill".to_string(),
+    ])
+    .expect("app validate command should parse");
+    match command {
+      CliCommand::AppValidate { query } => {
+        assert_eq!(query, "/tmp/distill");
       }
       other => panic!("unexpected command: {other:?}"),
     }

@@ -555,7 +555,14 @@ pub fn run_skill(
   entry: &SkillCatalogEntry,
   options: SkillRunOptions,
 ) -> AuvResult<()> {
-  let manifest = &entry.manifest;
+  run_skill_manifest(runtime, &entry.manifest, options)
+}
+
+pub(crate) fn run_skill_manifest(
+  runtime: &Runtime,
+  manifest: &SkillManifest,
+  options: SkillRunOptions,
+) -> AuvResult<()> {
   validate_skill_manifest_with_commands(manifest, runtime.list_commands())?;
   let mut variables = default_inputs(manifest)?;
   for (key, value) in options.overrides {
@@ -846,27 +853,37 @@ pub fn run_skill_case_matrix(
   options: SkillCaseRunOptions,
 ) -> AuvResult<()> {
   let skill_entry = skill_catalog.resolve_recipe_id(&matrix_entry.matrix.skill_id)?;
-  validate_case_matrix_against_skill_with_commands(
+  run_skill_case_matrix_inline(
+    runtime,
     &skill_entry.manifest,
     &matrix_entry.matrix,
-    runtime.list_commands(),
-  )?;
-  let cases = select_cases(&matrix_entry.matrix, &options)?;
+    options,
+  )
+}
+
+pub(crate) fn run_skill_case_matrix_inline(
+  runtime: &Runtime,
+  manifest: &SkillManifest,
+  matrix: &SkillCaseMatrix,
+  options: SkillCaseRunOptions,
+) -> AuvResult<()> {
+  validate_case_matrix_against_skill_with_commands(manifest, matrix, runtime.list_commands())?;
+  let cases = select_cases(matrix, &options)?;
   let selected_case_count = cases.len();
 
-  println!("case-matrix: {}", matrix_entry.matrix.skill_id);
-  println!("version: {}", matrix_entry.matrix.version);
-  if !matrix_entry.matrix.status.is_empty() {
-    println!("status: {}", matrix_entry.matrix.status);
+  println!("case-matrix: {}", matrix.skill_id);
+  println!("version: {}", matrix.version);
+  if !matrix.status.is_empty() {
+    println!("status: {}", matrix.status);
   }
   println!("selected cases: {}", cases.len());
 
   let mut failures = Vec::new();
   for case in cases {
     println!("case: {} [{}]", case.case_id, case.status);
-    match run_skill(
+    match run_skill_manifest(
       runtime,
-      skill_entry,
+      manifest,
       SkillRunOptions {
         dry_run: options.dry_run,
         max_disturbance: options.max_disturbance,

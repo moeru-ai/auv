@@ -16,6 +16,7 @@ opinions. The `analyze` step must be grounded in deterministic probe artifacts.
 - `auv-cli app probe <bundle-id> [--output-dir <dir>]`
 - `auv-cli app analyze <probe-dir-or-probe-json>`
 - `auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]`
+- `auv-cli app validate <distill-dir-or-distillation-json>`
 
 ## Probe Output
 
@@ -94,6 +95,29 @@ The current distill step is intentionally narrow:
 This means `distill` is allowed to produce useful candidate shapes, but not to
 invent success claims.
 
+## Validate Output
+
+`app validate` consumes `distillation.json` and writes:
+
+- `validation.json`
+- `validation-report.md`
+
+The current validate step is also intentionally narrow:
+
+- it loads candidate recipe/case-matrix pairs from the distillation output
+- it applies only conservative auto-grounding
+- it classifies each candidate as:
+  - `validated`
+  - `candidate`
+  - `rejected`
+- it does **not** promote validated candidates into the main skill tree
+
+The current honesty rule is:
+
+- unresolved `TODO_*` inputs keep a candidate in `candidate`
+- live runtime failures move a runnable candidate to `rejected`
+- only successful live execution moves a candidate to `validated`
+
 ## Truth Boundaries
 
 `app analyze` is not a validator.
@@ -123,8 +147,8 @@ This workflow does not prove:
 - cross-app reuse
 - cross-platform reuse
 
-It only establishes a probe-backed app-surface analysis baseline that later
-`distill` and `validate` steps can consume.
+It only establishes a probe-backed app-surface baseline that later `distill`
+and `validate` steps can consume.
 
 ## First Smoke Result
 
@@ -146,3 +170,35 @@ skill shapes that the sampled app surface does not justify.
 The same honesty bar now applies to `app distill`: candidate files must be
 machine-valid and strategy-consistent, but they must stay clearly marked as
 candidate-only until the validate/promote path proves them live.
+
+The same honesty bar now applies to `app validate`: auto-grounding can help,
+but it must stay conservative. If validate cannot resolve a `focus_query`,
+`anchor_text`, or similar candidate input honestly, it must leave the skill in
+`candidate` rather than manufacturing a fake validated result.
+
+## Second Smoke Result
+
+The current `TextEdit` smoke now covers the full phase-2 chain:
+
+- `app probe`
+- `app analyze`
+- `app distill`
+- `app validate`
+
+That smoke produced two candidate outcomes:
+
+- `macos.textedit.native_text_candidate.v0` -> `validated`
+  - validate reused a live AX text-surface query (`First Text View`)
+  - the marker paste completed
+  - `debug.verifyAxText` verified the same marker through AX
+
+- `macos.textedit.search_entry_candidate.v0` -> `candidate`
+  - validate refused to invent a fake `focus_query`
+  - it only auto-filled the trivial `query`
+  - the candidate therefore remained runnable-in-principle but unresolved
+
+This is the current honesty bar for `app validate`:
+
+- promote only the slices that really run live
+- keep unresolved candidate slices in `candidate`
+- do not use auto-grounding as permission to fabricate validation
