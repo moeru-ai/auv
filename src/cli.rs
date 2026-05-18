@@ -7,6 +7,13 @@ pub enum CliCommand {
   Help,
   ListCommands,
   ListDrivers,
+  AppProbe {
+    bundle_id: String,
+    output_dir: Option<String>,
+  },
+  AppAnalyze {
+    query: String,
+  },
   Invoke(InvokeRequest),
   Inspect {
     run_id: String,
@@ -63,6 +70,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "help" | "--help" | "-h" => Ok(CliCommand::Help),
     "list-commands" => Ok(CliCommand::ListCommands),
     "list-drivers" => Ok(CliCommand::ListDrivers),
+    "app" => parse_app(arguments),
     "inspect" => parse_inspect(arguments),
     "invoke" => parse_invoke(arguments),
     "skill" => parse_skill(arguments),
@@ -80,6 +88,8 @@ auv-cli prototype
 USAGE
   auv-cli list-commands
   auv-cli list-drivers
+  auv-cli app probe <bundle-id> [--output-dir <dir>]
+  auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli invoke <command-id> [--target <application-id>] [--label <text>]
   auv-cli inspect <run-id>
   auv-cli skill list
@@ -114,8 +124,60 @@ NOTES
   - `debug.clickScreenText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
   - `skill run` is the product-facing recipe entrypoint: it resolves a recipe manifest from `recipes/`, validates disturbance policy, replays steps through the shared runtime, and carries step artifact paths into later verification steps.
   - `skill cases run` replays validated case-matrix entries serially; this is the current narrow-skill coverage entrypoint for QQ音乐 productization.
+  - `app probe` is the deterministic raw-facts entrypoint for phase-2 distillation work; it records app identity plus runtime-backed surface probes into `.auv/app-probes/.../probe.json`.
+  - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as the input to later candidate-skill distillation instead of free-form chat summaries.
 ",
   )
+}
+
+fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 2 {
+    return Err("usage: auv-cli app <probe|analyze> ...".to_string());
+  }
+
+  match arguments[1].as_str() {
+    "probe" => parse_app_probe(arguments),
+    "analyze" => {
+      if arguments.len() != 3 {
+        return Err("usage: auv-cli app analyze <probe-dir-or-probe-json>".to_string());
+      }
+      Ok(CliCommand::AppAnalyze {
+        query: arguments[2].clone(),
+      })
+    }
+    other => Err(format!(
+      "unknown app subcommand {other}; use `auv-cli app probe` or `auv-cli app analyze`"
+    )),
+  }
+}
+
+fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 3 {
+    return Err("usage: auv-cli app probe <bundle-id> [--output-dir <dir>]".to_string());
+  }
+
+  let bundle_id = arguments[2].clone();
+  let mut output_dir = None;
+  let mut index = 3;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--output-dir" => {
+        if index + 1 >= arguments.len() {
+          return Err("--output-dir requires a value".to_string());
+        }
+        output_dir = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      other => {
+        return Err(format!("unexpected app-probe argument {other}"));
+      }
+    }
+  }
+
+  Ok(CliCommand::AppProbe {
+    bundle_id,
+    output_dir,
+  })
 }
 
 fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -280,6 +342,29 @@ mod tests {
     match command {
       CliCommand::SkillBundleCoverage { query } => {
         assert_eq!(query, "native.app.skill-tree.v0");
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_app_probe_command() {
+    let command = parse_cli(&[
+      "app".to_string(),
+      "probe".to_string(),
+      "com.tencent.QQMusicMac".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/probe".to_string(),
+    ])
+    .expect("app probe command should parse");
+
+    match command {
+      CliCommand::AppProbe {
+        bundle_id,
+        output_dir,
+      } => {
+        assert_eq!(bundle_id, "com.tencent.QQMusicMac");
+        assert_eq!(output_dir.as_deref(), Some("/tmp/probe"));
       }
       other => panic!("unexpected command: {other:?}"),
     }

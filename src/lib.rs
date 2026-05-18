@@ -1,3 +1,4 @@
+pub mod app;
 pub mod bundle;
 pub mod catalog;
 pub mod driver;
