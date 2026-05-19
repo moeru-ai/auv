@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::driver::{copy_file, sanitized_artifact_name};
-use crate::model::{AuvResult, ProducedArtifact};
+use crate::model::{AuvResult, ProducedArtifact, now_millis};
 use crate::trace::{
   ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
   EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, SPAN_API_VERSION, SpanId,
@@ -32,38 +32,86 @@ impl LocalStore {
     &self.root
   }
 
-  pub fn run_dir(&self, run_id: impl AsRef<str>) -> PathBuf {
-    self.root.join("runs").join(run_id.as_ref())
+  pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {
+    Ok(
+      self
+        .root
+        .join("runs")
+        .join(validate_run_id(run_id.as_ref())?),
+    )
   }
 
   pub fn write_run_snapshot(&self, snapshot: &CanonicalRun) -> AuvResult<()> {
-    let run_directory = self.run_dir(&snapshot.run.run_id);
-    fs::create_dir_all(run_directory.join("artifacts")).map_err(|error| {
-      format!(
-        "failed to create canonical run directory {}: {error}",
+    let run_id = validate_run_id(snapshot.run.run_id.as_str())?;
+    let runs_root = self.root.join("runs");
+    let run_directory = self.run_dir(run_id)?;
+    if run_directory.exists() {
+      return Err(format!(
+        "run directory {} already exists",
         run_directory.display()
+      ));
+    }
+
+    let staging_directory = runs_root.join(format!(".{run_id}-tmp-{}", now_millis()));
+    fs::create_dir(&staging_directory).map_err(|error| {
+      format!(
+        "failed to create staging run directory {}: {error}",
+        staging_directory.display()
       )
     })?;
-    write_json_atomic(
-      &run_directory.join("run.json"),
-      &snapshot.run,
-      "run metadata",
-    )?;
-    write_jsonl_atomic(
-      &run_directory.join("spans.jsonl"),
-      &snapshot.spans,
-      "span records",
-    )?;
-    write_jsonl_atomic(
-      &run_directory.join("events.jsonl"),
-      &snapshot.events,
-      "event records",
-    )?;
-    write_jsonl_atomic(
-      &run_directory.join("artifacts.jsonl"),
-      &snapshot.artifacts,
-      "artifact records",
-    )?;
+
+    let write_result = (|| {
+      fs::create_dir_all(staging_directory.join("artifacts")).map_err(|error| {
+        format!(
+          "failed to create canonical run directory {}: {error}",
+          staging_directory.display()
+        )
+      })?;
+      write_jsonl_atomic(
+        &staging_directory.join("spans.jsonl"),
+        &snapshot.spans,
+        "span records",
+      )?;
+      write_jsonl_atomic(
+        &staging_directory.join("events.jsonl"),
+        &snapshot.events,
+        "event records",
+      )?;
+      write_jsonl_atomic(
+        &staging_directory.join("artifacts.jsonl"),
+        &snapshot.artifacts,
+        "artifact records",
+      )?;
+      write_json_atomic(
+        &staging_directory.join("run.json"),
+        &snapshot.run,
+        "run metadata",
+      )?;
+      Ok(())
+    })();
+
+    if let Err(error) = write_result {
+      let _ = fs::remove_dir_all(&staging_directory);
+      return Err(error);
+    }
+
+    if run_directory.exists() {
+      let _ = fs::remove_dir_all(&staging_directory);
+      return Err(format!(
+        "run directory {} already exists",
+        run_directory.display()
+      ));
+    }
+
+    fs::rename(&staging_directory, &run_directory).map_err(|error| {
+      let _ = fs::remove_dir_all(&staging_directory);
+      format!(
+        "failed to publish run directory {} from {}: {error}",
+        run_directory.display(),
+        staging_directory.display()
+      )
+    })?;
+
     Ok(())
   }
 
@@ -107,12 +155,9 @@ impl LocalStore {
       sanitized_artifact_name(preferred_name.trim_end_matches(&format!(".{extension}")));
     let relative_path =
       PathBuf::from("artifacts").join(format!("{}_{base_name}.{extension}", artifact_id.as_str()));
-    let destination = self.run_dir(run_id).join(&relative_path);
+    let destination = self.run_dir(run_id)?.join(&relative_path);
 
     copy_file(&source_path, &destination)?;
-    if source_path != destination {
-      let _ = fs::remove_file(&source_path);
-    }
 
     Ok(ArtifactRecordV1Alpha1 {
       api_version: ARTIFACT_API_VERSION.to_string(),
@@ -129,31 +174,27 @@ impl LocalStore {
   }
 
   pub fn read_run(&self, run_id: &str) -> AuvResult<CanonicalRun> {
-    let run_directory = self.run_dir(run_id);
-    let run: RunRecordV1Alpha1 = read_json(&run_directory.join("run.json"))?;
-    if run.api_version != RUN_API_VERSION {
-      return Err(format!("unsupported_run_format: {}", run.api_version));
-    }
-    let spans: Vec<SpanRecordV1Alpha1> = read_jsonl(&run_directory.join("spans.jsonl"))?;
-    let events: Vec<EventRecordV1Alpha1> = read_jsonl(&run_directory.join("events.jsonl"))?;
-    let artifacts: Vec<ArtifactRecordV1Alpha1> =
-      read_jsonl(&run_directory.join("artifacts.jsonl"))?;
-
-    for span in &spans {
-      if span.api_version != SPAN_API_VERSION {
-        return Err(format!("invalid_run_format: {}", span.api_version));
-      }
-    }
-    for event in &events {
-      if event.api_version != EVENT_API_VERSION {
-        return Err(format!("invalid_run_format: {}", event.api_version));
-      }
-    }
-    for artifact in &artifacts {
-      if artifact.api_version != ARTIFACT_API_VERSION {
-        return Err(format!("invalid_run_format: {}", artifact.api_version));
-      }
-    }
+    let run_directory = self.run_dir(run_id)?;
+    let run: RunRecordV1Alpha1 = read_versioned_json(
+      &run_directory.join("run.json"),
+      RUN_API_VERSION,
+      "run metadata",
+    )?;
+    let spans: Vec<SpanRecordV1Alpha1> = read_versioned_jsonl(
+      &run_directory.join("spans.jsonl"),
+      SPAN_API_VERSION,
+      "span records",
+    )?;
+    let events: Vec<EventRecordV1Alpha1> = read_versioned_jsonl(
+      &run_directory.join("events.jsonl"),
+      EVENT_API_VERSION,
+      "event records",
+    )?;
+    let artifacts: Vec<ArtifactRecordV1Alpha1> = read_versioned_jsonl(
+      &run_directory.join("artifacts.jsonl"),
+      ARTIFACT_API_VERSION,
+      "artifact records",
+    )?;
 
     Ok(CanonicalRun {
       run,
@@ -177,14 +218,44 @@ impl LocalStore {
       if !run_path.exists() {
         continue;
       }
-      let run: RunRecordV1Alpha1 = read_json(&run_path)?;
-      if run.api_version == RUN_API_VERSION {
-        runs.push(run);
+      let value = read_json_value(&run_path)?;
+      match api_version_from_value(&value, &run_path.to_string_lossy()) {
+        Ok(RUN_API_VERSION) => {
+          let run: RunRecordV1Alpha1 = serde_json::from_value(value)
+            .map_err(|error| format!("failed to parse {}: {error}", run_path.display()))?;
+          runs.push(run);
+        }
+        Ok(_) | Err(_) => continue,
       }
     }
     runs.sort_by_key(|run| run.started_at_millis);
     Ok(runs)
   }
+}
+
+fn validate_run_id(run_id: &str) -> AuvResult<&str> {
+  if run_id.is_empty() || run_id == "." || run_id == ".." {
+    return Err(format!(
+      "invalid run id {run_id:?}: expected a safe path component"
+    ));
+  }
+  if !run_id
+    .bytes()
+    .all(|byte| matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'.'))
+  {
+    return Err(format!(
+      "invalid run id {run_id:?}: expected a safe path component"
+    ));
+  }
+  let path = Path::new(run_id);
+  if path.components().count() != 1
+    || path.file_name().and_then(|name| name.to_str()) != Some(run_id)
+  {
+    return Err(format!(
+      "invalid run id {run_id:?}: expected a safe path component"
+    ));
+  }
+  Ok(run_id)
 }
 
 fn write_json_atomic<T: serde::Serialize>(path: &Path, value: &T, label: &str) -> AuvResult<()> {
@@ -217,13 +288,32 @@ fn write_jsonl_atomic<T: serde::Serialize>(
     .map_err(|error| format!("failed to publish {label} {}: {error}", path.display()))
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> AuvResult<T> {
+fn read_json_value(path: &Path) -> AuvResult<serde_json::Value> {
   let raw = fs::read_to_string(path)
     .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
   serde_json::from_str(&raw).map_err(|error| format!("failed to parse {}: {error}", path.display()))
 }
 
-fn read_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> AuvResult<Vec<T>> {
+fn read_versioned_json<T: serde::de::DeserializeOwned>(
+  path: &Path,
+  expected_api_version: &str,
+  label: &str,
+) -> AuvResult<T> {
+  let value = read_json_value(path)?;
+  require_api_version(
+    &value,
+    expected_api_version,
+    &format!("{label} {}", path.display()),
+  )?;
+  serde_json::from_value(value)
+    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+}
+
+fn read_versioned_jsonl<T: serde::de::DeserializeOwned>(
+  path: &Path,
+  expected_api_version: &str,
+  label: &str,
+) -> AuvResult<Vec<T>> {
   let raw = fs::read_to_string(path)
     .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
   let mut records = Vec::new();
@@ -231,7 +321,19 @@ fn read_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> AuvResult<Vec<T>> 
     if line.trim().is_empty() {
       continue;
     }
-    let record = serde_json::from_str(line).map_err(|error| {
+    let value: serde_json::Value = serde_json::from_str(line).map_err(|error| {
+      format!(
+        "failed to parse {} line {}: {error}",
+        path.display(),
+        index + 1
+      )
+    })?;
+    require_api_version(
+      &value,
+      expected_api_version,
+      &format!("{label} {} line {}", path.display(), index + 1),
+    )?;
+    let record = serde_json::from_value(value).map_err(|error| {
       format!(
         "failed to parse {} line {}: {error}",
         path.display(),
@@ -241,6 +343,27 @@ fn read_jsonl<T: serde::de::DeserializeOwned>(path: &Path) -> AuvResult<Vec<T>> 
     records.push(record);
   }
   Ok(records)
+}
+
+fn require_api_version(
+  value: &serde_json::Value,
+  expected_api_version: &str,
+  label: &str,
+) -> AuvResult<()> {
+  let api_version = api_version_from_value(value, label)?;
+  if api_version != expected_api_version {
+    return Err(format!(
+      "unsupported_run_format: expected {expected_api_version}, found {api_version}"
+    ));
+  }
+  Ok(())
+}
+
+fn api_version_from_value<'a>(value: &'a serde_json::Value, label: &str) -> AuvResult<&'a str> {
+  value
+    .get("api_version")
+    .and_then(|api_version| api_version.as_str())
+    .ok_or_else(|| format!("invalid_run_format: missing api_version in {label}"))
 }
 
 fn mime_type_for_extension(extension: &str) -> &'static str {
@@ -302,6 +425,37 @@ mod tests {
     let root = temp_dir("store-list");
     let store = LocalStore::new(root.clone()).expect("should initialize");
     fs::create_dir_all(root.join("runs").join("old_run_without_run_json")).expect("old run dir");
+
+    let runs = store.list_runs().expect("runs should list");
+    assert!(runs.is_empty());
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn local_store_rejects_unsafe_run_ids() {
+    let root = temp_dir("store-unsafe-run-id");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+
+    for run_id in ["", ".", "..", "../escape", "nested/run", "nested\\run"] {
+      let error = store
+        .run_dir(run_id)
+        .expect_err("run id should be rejected");
+      assert!(error.contains("invalid run id"));
+    }
+
+    assert!(store.run_dir("run_SAFE-1.2").is_ok());
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn local_store_ignores_incomplete_staging_directories() {
+    let root = temp_dir("store-incomplete-staging");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+    let staging_dir = root.join("runs").join(".run_store_test-tmp-100");
+    fs::create_dir_all(&staging_dir).expect("staging dir");
+    fs::write(staging_dir.join("spans.jsonl"), "").expect("staging span file");
 
     let runs = store.list_runs().expect("runs should list");
     assert!(runs.is_empty());
