@@ -69,13 +69,23 @@ The current report shape covers:
 1. app basic information
 2. available surfaces
 3. grounding assessment
-4. control strategy
-5. verification assessment
-6. known boundaries
-7. recommended candidate strategies
+4. candidate / annotation layer
+5. control strategy
+6. verification assessment
+7. known boundaries
+8. recommended candidate strategies
 
 The structured `analysis.json` is the machine-facing handoff to later
 distillation. The Markdown report is for humans and LLM review.
+
+The current `analysis.json` also carries structured candidate annotations rather
+than only prose. These candidates are the first machine-consumable layer for
+list-like UI targets and ambiguous grounding:
+
+- AX focus-query candidates
+- OCR anchor-text candidates
+- grouped visible-row candidates when the sampled surface looks collection-like
+- primary-window region candidates
 
 ## Distill Output
 
@@ -89,6 +99,7 @@ distillation. The Markdown report is for humans and LLM review.
 The current distill step is intentionally narrow:
 
 - it generates candidate recipe and case-matrix scaffolds
+- it carries forward suggested annotation ids from the source analysis
 - it validates those generated artifacts against the current skill validators
 - it does **not** promote them to validated skills
 
@@ -105,7 +116,7 @@ invent success claims.
 The current validate step is also intentionally narrow:
 
 - it loads candidate recipe/case-matrix pairs from the distillation output
-- it applies only conservative auto-grounding
+- it applies only conservative auto-grounding from the structured analysis candidates
 - it classifies each candidate as:
   - `validated`
   - `candidate`
@@ -175,6 +186,10 @@ The same honesty bar now applies to `app validate`: auto-grounding can help,
 but it must stay conservative. If validate cannot resolve a `focus_query`,
 `anchor_text`, or similar candidate input honestly, it must leave the skill in
 `candidate` rather than manufacturing a fake validated result.
+
+The current honesty bar also applies to the candidate layer itself: a noisy OCR
+match should still be emitted as a noisy OCR candidate instead of being silently
+rewritten into a cleaner but false anchor.
 
 ## Second Smoke Result
 

@@ -100,6 +100,10 @@ async fn run() -> Result<(), String> {
       println!("status: analyzed");
       println!("analysis: {}", output.analysis_path.display());
       println!("report: {}", output.report_path.display());
+      println!(
+        "annotations: {}",
+        output.analysis.annotation_candidates.len()
+      );
     }
     CliCommand::AppDistill { query, output_dir } => {
       let output = distill_app_analysis(

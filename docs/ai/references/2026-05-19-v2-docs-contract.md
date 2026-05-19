@@ -62,6 +62,7 @@ V2 should focus on five concrete contracts.
 
 - machine-consumable `analysis.json`
 - human-readable `report.md`
+- structured candidate / annotation objects derived from probe artifacts
 
 The report should describe:
 
@@ -74,6 +75,14 @@ The report should describe:
 - recommended strategies
 
 But it must not silently upgrade recommendation into validation truth.
+
+The candidate / annotation layer is where V2 starts turning prose into
+machine-consumable grounding hints. It should be able to represent at least:
+
+- AX focus-query candidates
+- OCR text-anchor candidates
+- visible-row candidates for list-like UI targets
+- stable window or region candidates
 
 ### 2. Distillation Contract
 
@@ -230,7 +239,7 @@ The next V2 steps should be:
 
 1. consume the current `xcap` capture surface without redesigning it
 2. tighten selector coherence around `AppSelector / ResolvedAppRef / WindowRef`
-3. add a candidate or annotation layer for list-like UI targets
+3. keep hardening the candidate or annotation layer for list-like UI targets
 4. formalize verification-provider truth and semantic-vs-activation boundaries
 5. only then promote newly validated slices into the skill tree or bundle layer
 

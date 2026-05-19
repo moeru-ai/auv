@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::driver::{
-  ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow,
-  OcrTextSnapshot, compute_combined_bounds, parse_observed_ax_tree, parse_ocr_text_snapshot,
-  parse_window_line, report_value, sanitized_artifact_name,
+  ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow, ObservedRect,
+  ObservedWindow, OcrTextSnapshot, compute_combined_bounds, group_ocr_matches_into_rows,
+  parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line, report_value,
+  sanitized_artifact_name,
 };
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
 use crate::recording::{RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
@@ -112,6 +113,7 @@ pub struct AppDistilledCandidate {
   pub taxonomy_id: String,
   pub status: AssessmentStatus,
   pub rationale: String,
+  pub suggested_annotation_ids: Vec<String>,
   pub recipe_path: PathBuf,
   pub case_matrix_path: PathBuf,
 }
@@ -122,6 +124,7 @@ pub struct AppValidatedCandidate {
   pub taxonomy_id: String,
   pub status: AppValidationStatus,
   pub rationale: String,
+  pub used_annotation_ids: Vec<String>,
   pub recipe_path: PathBuf,
   pub case_matrix_path: PathBuf,
   pub selected_case_count: usize,
@@ -143,6 +146,7 @@ pub struct AppAnalysis {
   pub control_assessment: AppControlAssessment,
   pub verification_assessment: AppVerificationAssessment,
   pub disturbance_profile: AppDisturbanceProfile,
+  pub annotation_candidates: Vec<AppSurfaceCandidate>,
   pub known_boundaries: Vec<String>,
   pub recommended_strategies: Vec<AppRecommendedStrategy>,
 }
@@ -254,6 +258,32 @@ pub struct AppDisturbanceProfile {
   pub pointer_fallback: Vec<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppPoint {
+  pub x: i64,
+  pub y: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppSurfaceCandidate {
+  pub candidate_id: String,
+  pub area: String,
+  pub kind: String,
+  pub source: String,
+  pub status: AssessmentStatus,
+  pub primary_text: String,
+  #[serde(default)]
+  pub secondary_text: String,
+  #[serde(default)]
+  pub query_value: String,
+  pub bounds: Option<AppRect>,
+  pub click_point: Option<AppPoint>,
+  pub confidence: Option<f64>,
+  pub evidence_step_id: String,
+  #[serde(default)]
+  pub notes: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppRecommendedStrategy {
   pub taxonomy_id: String,
@@ -281,6 +311,11 @@ impl AppRect {
 
   fn center(&self) -> (i64, i64) {
     (self.x + self.width / 2, self.y + self.height / 2)
+  }
+
+  fn center_point(&self) -> AppPoint {
+    let (x, y) = self.center();
+    AppPoint { x, y }
   }
 
   fn render_compact(&self) -> String {
@@ -645,6 +680,10 @@ fn distill_app_analysis_into_run(
       taxonomy_id: strategy.taxonomy_id.clone(),
       status: strategy.status,
       rationale: strategy.rationale.clone(),
+      suggested_annotation_ids: suggested_annotation_ids_for_taxonomy(
+        &analysis.annotation_candidates,
+        &strategy.taxonomy_id,
+      ),
       recipe_path,
       case_matrix_path,
     });
@@ -737,7 +776,7 @@ fn validate_app_distillation_into_run(
     let manifest: SkillManifest = read_json(&candidate.recipe_path)?;
     let mut matrix: SkillCaseMatrix = read_json(&candidate.case_matrix_path)?;
     let mut resolved_inputs = BTreeMap::new();
-    let unresolved_inputs = apply_candidate_grounding(
+    let (unresolved_inputs, used_annotation_ids) = apply_candidate_grounding(
       &analysis,
       ax_snapshot.as_ref(),
       &candidate.taxonomy_id,
@@ -788,6 +827,7 @@ fn validate_app_distillation_into_run(
               "All {} candidate case(s) executed successfully through the shared runtime.",
               selected_case_count
             ),
+            used_annotation_ids: used_annotation_ids.clone(),
             recipe_path: candidate.recipe_path.clone(),
             case_matrix_path: candidate.case_matrix_path.clone(),
             selected_case_count,
@@ -813,6 +853,7 @@ fn validate_app_distillation_into_run(
             taxonomy_id: candidate.taxonomy_id.clone(),
             status: AppValidationStatus::Rejected,
             rationale: "The candidate was runnable, but live execution failed.".to_string(),
+            used_annotation_ids: used_annotation_ids.clone(),
             recipe_path: candidate.recipe_path.clone(),
             case_matrix_path: candidate.case_matrix_path.clone(),
             selected_case_count,
@@ -830,6 +871,7 @@ fn validate_app_distillation_into_run(
         rationale:
           "The candidate still requires live grounding for unresolved inputs before execution."
             .to_string(),
+        used_annotation_ids,
         recipe_path: candidate.recipe_path.clone(),
         case_matrix_path: candidate.case_matrix_path.clone(),
         selected_case_count,
@@ -988,6 +1030,14 @@ fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnaly
     overlay_debug_artifacts_recommended: ocr_snapshot.matches.is_empty()
       || ax_quality != AssessmentStatus::Available,
   };
+  let annotation_candidates = build_annotation_candidates(
+    &probe.app,
+    primary_window,
+    primary_window_bounds.as_ref(),
+    &ax_snapshot,
+    &ocr_snapshot,
+    has_collection_like_surface(&ax_snapshot),
+  );
 
   let mut control_notes = Vec::new();
   control_notes.push(format!(
@@ -1154,6 +1204,7 @@ fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnaly
     control_assessment,
     verification_assessment,
     disturbance_profile,
+    annotation_candidates,
     known_boundaries,
     recommended_strategies,
   })
@@ -1287,7 +1338,53 @@ fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
     }
   }
   lines.push(String::new());
-  lines.push("## 4. Control Strategy".to_string());
+  lines.push("## 4. Candidate / Annotation Layer".to_string());
+  lines.push(String::new());
+  lines.push(format!(
+    "- structured candidate count: `{}`",
+    analysis.annotation_candidates.len()
+  ));
+  if analysis.annotation_candidates.is_empty() {
+    lines.push("- none synthesized from the current probe artifacts".to_string());
+  } else {
+    for candidate in &analysis.annotation_candidates {
+      lines.push(format!(
+        "- `{}`: area=`{}`, kind=`{}`, source=`{}`, status=`{}`",
+        candidate.candidate_id,
+        candidate.area,
+        candidate.kind,
+        candidate.source,
+        candidate.status.as_str()
+      ));
+      if !candidate.primary_text.trim().is_empty() {
+        lines.push(format!("  - primaryText: {}", candidate.primary_text));
+      }
+      if !candidate.secondary_text.trim().is_empty() {
+        lines.push(format!("  - secondaryText: {}", candidate.secondary_text));
+      }
+      if !candidate.query_value.trim().is_empty() {
+        lines.push(format!("  - queryValue: `{}`", candidate.query_value));
+      }
+      if let Some(bounds) = &candidate.bounds {
+        lines.push(format!("  - bounds: `{}`", bounds.render_compact()));
+      }
+      if let Some(point) = &candidate.click_point {
+        lines.push(format!("  - clickPoint: `{}, {}`", point.x, point.y));
+      }
+      if let Some(confidence) = candidate.confidence {
+        lines.push(format!("  - confidence: `{confidence:.3}`"));
+      }
+      lines.push(format!(
+        "  - evidenceStep: `{}`",
+        candidate.evidence_step_id
+      ));
+      for note in &candidate.notes {
+        lines.push(format!("  - note: {note}"));
+      }
+    }
+  }
+  lines.push(String::new());
+  lines.push("## 5. Control Strategy".to_string());
   lines.push(String::new());
   lines.push(format!(
     "- preferred path: {}",
@@ -1315,7 +1412,7 @@ fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
     analysis.disturbance_profile.pointer_fallback.join(", ")
   ));
   lines.push(String::new());
-  lines.push("## 5. Verification Assessment".to_string());
+  lines.push("## 6. Verification Assessment".to_string());
   lines.push(String::new());
   lines.push(format!(
     "- AX verify: `{}`",
@@ -1337,7 +1434,7 @@ fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
     lines.push(format!("- note: {note}"));
   }
   lines.push(String::new());
-  lines.push("## Known Boundaries".to_string());
+  lines.push("## 7. Known Boundaries".to_string());
   lines.push(String::new());
   if analysis.known_boundaries.is_empty() {
     lines.push("- none recorded".to_string());
@@ -1347,7 +1444,7 @@ fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
     }
   }
   lines.push(String::new());
-  lines.push("## Recommended Candidate Strategies".to_string());
+  lines.push("## 8. Recommended Candidate Strategies".to_string());
   lines.push(String::new());
   if analysis.recommended_strategies.is_empty() {
     lines.push("- none generated".to_string());
@@ -1387,6 +1484,10 @@ fn render_app_distillation_report(
       "- generated candidate count: `{}`",
       distillation.candidates.len()
     ),
+    format!(
+      "- available analysis annotations: `{}`",
+      analysis.annotation_candidates.len()
+    ),
     String::new(),
     "## Candidate Outputs".to_string(),
     String::new(),
@@ -1406,6 +1507,12 @@ fn render_app_distillation_report(
         candidate.case_matrix_path.display()
       ));
       lines.push(format!("  - rationale: {}", candidate.rationale));
+      if !candidate.suggested_annotation_ids.is_empty() {
+        lines.push("  - suggested annotations:".to_string());
+        for candidate_id in &candidate.suggested_annotation_ids {
+          lines.push(format!("    - `{candidate_id}`"));
+        }
+      }
     }
   }
   lines.push(String::new());
@@ -1502,6 +1609,12 @@ fn render_app_validation_report(validation: &AppValidation) -> String {
         candidate.case_matrix_path.display()
       ));
       lines.push(format!("- rationale: {}", candidate.rationale));
+      if !candidate.used_annotation_ids.is_empty() {
+        lines.push("- used annotations:".to_string());
+        for candidate_id in &candidate.used_annotation_ids {
+          lines.push(format!("  - `{candidate_id}`"));
+        }
+      }
       if !candidate.resolved_inputs.is_empty() {
         lines.push("- resolved inputs:".to_string());
         for (key, value) in &candidate.resolved_inputs {
@@ -1539,12 +1652,13 @@ fn apply_candidate_grounding(
   taxonomy_id: &str,
   matrix: &mut SkillCaseMatrix,
   resolved_inputs: &mut BTreeMap<String, String>,
-) -> Vec<String> {
+) -> (Vec<String>, Vec<String>) {
   let mut unresolved = BTreeSet::new();
-  let search_entry_query = choose_search_entry_query(ax_snapshot);
-  let native_text_query = choose_native_text_focus_query(ax_snapshot);
-  let stable_anchor =
-    first_stable_anchor_value(&analysis.grounding_assessment.stable_anchor_candidates);
+  let mut used_annotation_ids = BTreeSet::new();
+  let search_entry_annotation = find_annotation_candidate(analysis, "search-entry", "focus-query");
+  let native_text_annotation = find_annotation_candidate(analysis, "native-text", "focus-query");
+  let result_selection_annotation =
+    find_annotation_candidate(analysis, "result-selection", "anchor-text");
 
   for case in &mut matrix.cases {
     for (key, value) in &mut case.inputs {
@@ -1557,17 +1671,32 @@ fn apply_candidate_grounding(
 
       let replacement = match (taxonomy_id, key.as_str()) {
         ("search-entry.ax-text-input.clipboard-submit.capture-evidence", "focus_query") => {
-          search_entry_query.clone()
+          if let Some(candidate) = search_entry_annotation {
+            used_annotation_ids.insert(candidate.candidate_id.clone());
+            Some(candidate.query_value.clone())
+          } else {
+            choose_search_entry_query(ax_snapshot)
+          }
         }
         ("search-entry.ax-text-input.clipboard-submit.capture-evidence", "query") => Some(format!(
           "AUV_{}",
           recipe_app_slug(&analysis.app_identity).to_ascii_uppercase()
         )),
         ("native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text", "focus_query") => {
-          native_text_query.clone()
+          if let Some(candidate) = native_text_annotation {
+            used_annotation_ids.insert(candidate.candidate_id.clone());
+            Some(candidate.query_value.clone())
+          } else {
+            choose_native_text_focus_query(ax_snapshot)
+          }
         }
         ("result-selection.ocr-anchor.pointer-click.capture-evidence", "anchor_text") => {
-          stable_anchor.clone()
+          if let Some(candidate) = result_selection_annotation {
+            used_annotation_ids.insert(candidate.candidate_id.clone());
+            Some(candidate.query_value.clone())
+          } else {
+            first_stable_anchor_value(&analysis.grounding_assessment.stable_anchor_candidates)
+          }
         }
         _ => None,
       };
@@ -1581,42 +1710,242 @@ fn apply_candidate_grounding(
     }
   }
 
-  unresolved.into_iter().collect()
+  (
+    unresolved.into_iter().collect(),
+    used_annotation_ids.into_iter().collect(),
+  )
 }
 
-fn choose_search_entry_query(snapshot: Option<&ObservedAxTreeSnapshot>) -> Option<String> {
-  let snapshot = snapshot?;
-  snapshot.nodes.iter().find_map(|node| {
-    let looks_like_search = node.subrole == "AXSearchField"
+fn build_annotation_candidates(
+  app: &AppIdentity,
+  primary_window: Option<&ObservedWindow>,
+  primary_window_bounds: Option<&AppRect>,
+  ax_snapshot: &ObservedAxTreeSnapshot,
+  ocr_snapshot: &OcrTextSnapshot,
+  has_collection_surface: bool,
+) -> Vec<AppSurfaceCandidate> {
+  let mut candidates = Vec::new();
+
+  if let Some(bounds) = primary_window_bounds.cloned() {
+    candidates.push(AppSurfaceCandidate {
+      candidate_id: "window-primary-region".to_string(),
+      area: "window.primary".to_string(),
+      kind: "region".to_string(),
+      source: "window".to_string(),
+      status: AssessmentStatus::Candidate,
+      primary_text: primary_window
+        .map(|window| window.title.clone())
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| app.app_name.clone()),
+      secondary_text: app.bundle_id.clone(),
+      query_value: bounds.render_compact(),
+      click_point: Some(bounds.center_point()),
+      bounds: Some(bounds),
+      confidence: None,
+      evidence_step_id: "observe-windows".to_string(),
+      notes: vec!["Primary visible window bounds from the window snapshot.".to_string()],
+    });
+  }
+
+  if let Some(node) = find_search_entry_node(ax_snapshot)
+    && let Some(query_value) = preferred_ax_query_text(node)
+  {
+    candidates.push(ax_focus_candidate(
+      "search-entry-focus-ax",
+      "search-entry",
+      "focus-query",
+      node,
+      query_value,
+      "observe-window-tree",
+      "AX-exposed search-entry or search-like input candidate.",
+    ));
+  }
+
+  if let Some(node) = find_native_text_focus_node(ax_snapshot)
+    && let Some(query_value) = preferred_ax_query_text(node)
+  {
+    candidates.push(ax_focus_candidate(
+      "native-text-focus-ax",
+      "native-text",
+      "focus-query",
+      node,
+      query_value,
+      "observe-window-tree",
+      "AX-exposed editable text-surface candidate.",
+    ));
+  }
+
+  for matched in ocr_snapshot.matches.iter().take(8) {
+    let bounds = AppRect::from_observed(&matched.bounds);
+    let area = if has_collection_surface && ocr_snapshot.matches.len() >= 2 {
+      "result-selection"
+    } else {
+      "ocr-visible-text"
+    };
+    let mut notes =
+      vec!["Visible OCR text candidate from the sampled screenshot artifact.".to_string()];
+    if matched.text == ocr_snapshot.query {
+      notes.push("This match equals the sampled OCR query.".to_string());
+    }
+    candidates.push(AppSurfaceCandidate {
+      candidate_id: format!("ocr-anchor-{}", matched.match_index),
+      area: area.to_string(),
+      kind: "anchor-text".to_string(),
+      source: "ocr".to_string(),
+      status: if has_collection_surface {
+        AssessmentStatus::Candidate
+      } else {
+        AssessmentStatus::Partial
+      },
+      primary_text: matched.text.clone(),
+      secondary_text: String::new(),
+      query_value: matched.text.clone(),
+      click_point: Some(bounds.center_point()),
+      bounds: Some(bounds),
+      confidence: Some(matched.confidence),
+      evidence_step_id: "ocr-sample".to_string(),
+      notes,
+    });
+  }
+
+  if has_collection_surface && ocr_snapshot.matches.len() >= 2 {
+    let rows = group_ocr_rows_from_ocr_snapshot(ocr_snapshot);
+    for row in rows.into_iter().take(8) {
+      candidates.push(row_candidate(row));
+    }
+  }
+
+  candidates
+}
+
+fn ax_focus_candidate(
+  candidate_id: &str,
+  area: &str,
+  kind: &str,
+  node: &crate::driver::ObservedAxNode,
+  query_value: String,
+  evidence_step_id: &str,
+  note: &str,
+) -> AppSurfaceCandidate {
+  let bounds = AppRect::from_observed(&node.bounds);
+  AppSurfaceCandidate {
+    candidate_id: candidate_id.to_string(),
+    area: area.to_string(),
+    kind: kind.to_string(),
+    source: "ax".to_string(),
+    status: AssessmentStatus::Candidate,
+    primary_text: summarize_ax_node_text(node),
+    secondary_text: format!("role={} path={}", node.role, node.path),
+    query_value,
+    click_point: Some(bounds.center_point()),
+    bounds: Some(bounds),
+    confidence: None,
+    evidence_step_id: evidence_step_id.to_string(),
+    notes: vec![note.to_string()],
+  }
+}
+
+fn group_ocr_rows_from_ocr_snapshot(snapshot: &OcrTextSnapshot) -> Vec<ObservedOcrRow> {
+  let matches = snapshot.matches.iter().collect::<Vec<_>>();
+  group_ocr_matches_into_rows(&matches)
+}
+
+fn row_candidate(row: ObservedOcrRow) -> AppSurfaceCandidate {
+  let bounds = AppRect::from_observed(&row.bounds);
+  AppSurfaceCandidate {
+    candidate_id: format!("visible-row-{}", row.row_index + 1),
+    area: "result-selection".to_string(),
+    kind: "row".to_string(),
+    source: row.source,
+    status: AssessmentStatus::Candidate,
+    primary_text: row.text_fragments.join(" | "),
+    secondary_text: format!("rowIndex={}", row.row_index + 1),
+    query_value: format!("{}", row.row_index + 1),
+    click_point: Some(bounds.center_point()),
+    bounds: Some(bounds),
+    confidence: None,
+    evidence_step_id: "ocr-sample".to_string(),
+    notes: vec![
+      "Visible row candidate grouped from OCR observations; useful for list-like UI targets."
+        .to_string(),
+    ],
+  }
+}
+
+fn suggested_annotation_ids_for_taxonomy(
+  candidates: &[AppSurfaceCandidate],
+  taxonomy_id: &str,
+) -> Vec<String> {
+  candidates
+    .iter()
+    .filter(|candidate| annotation_matches_taxonomy(candidate, taxonomy_id))
+    .map(|candidate| candidate.candidate_id.clone())
+    .take(8)
+    .collect()
+}
+
+fn annotation_matches_taxonomy(candidate: &AppSurfaceCandidate, taxonomy_id: &str) -> bool {
+  match taxonomy_id {
+    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
+      candidate.area == "search-entry" || candidate.candidate_id == "window-primary-region"
+    }
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
+      candidate.area == "native-text" || candidate.candidate_id == "window-primary-region"
+    }
+    "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
+      candidate.area == "result-selection" || candidate.candidate_id == "window-primary-region"
+    }
+    _ => false,
+  }
+}
+
+fn find_annotation_candidate<'a>(
+  analysis: &'a AppAnalysis,
+  area: &str,
+  kind: &str,
+) -> Option<&'a AppSurfaceCandidate> {
+  analysis.annotation_candidates.iter().find(|candidate| {
+    candidate.area == area && candidate.kind == kind && !candidate.query_value.trim().is_empty()
+  })
+}
+
+fn find_search_entry_node(
+  snapshot: &ObservedAxTreeSnapshot,
+) -> Option<&crate::driver::ObservedAxNode> {
+  snapshot.nodes.iter().find(|node| {
+    node.subrole == "AXSearchField"
       || node.role == "AXSearchField"
       || node.placeholder.to_lowercase().contains("search")
       || node.title.to_lowercase().contains("search")
       || node.description.to_lowercase().contains("search")
       || node.placeholder.contains("搜索")
       || node.title.contains("搜索")
-      || node.description.contains("搜索");
-    if !looks_like_search {
-      return None;
-    }
-    preferred_ax_query_text(node)
+      || node.description.contains("搜索")
   })
+}
+
+fn find_native_text_focus_node(
+  snapshot: &ObservedAxTreeSnapshot,
+) -> Option<&crate::driver::ObservedAxNode> {
+  snapshot.nodes.iter().find(|node| {
+    let role = node.role.as_str();
+    let subrole = node.subrole.as_str();
+    role == "AXTextField"
+      || role == "AXTextArea"
+      || role == "AXComboBox"
+      || subrole == "AXSearchField"
+      || !node.placeholder.trim().is_empty()
+  })
+}
+
+fn choose_search_entry_query(snapshot: Option<&ObservedAxTreeSnapshot>) -> Option<String> {
+  let snapshot = snapshot?;
+  find_search_entry_node(snapshot).and_then(preferred_ax_query_text)
 }
 
 fn choose_native_text_focus_query(snapshot: Option<&ObservedAxTreeSnapshot>) -> Option<String> {
   let snapshot = snapshot?;
-  snapshot
-    .nodes
-    .iter()
-    .find(|node| {
-      let role = node.role.as_str();
-      let subrole = node.subrole.as_str();
-      role == "AXTextField"
-        || role == "AXTextArea"
-        || role == "AXComboBox"
-        || subrole == "AXSearchField"
-        || !node.placeholder.trim().is_empty()
-    })
-    .and_then(preferred_ax_query_text)
+  find_native_text_focus_node(snapshot).and_then(preferred_ax_query_text)
 }
 
 fn preferred_ax_query_text(node: &crate::driver::ObservedAxNode) -> Option<String> {
@@ -2954,6 +3283,26 @@ mod tests {
         non_pointer_control: vec!["keyboard".to_string()],
         pointer_fallback: vec!["pointer".to_string()],
       },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "search-entry-focus-ax".to_string(),
+        area: "search-entry".to_string(),
+        kind: "focus-query".to_string(),
+        source: "ax".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "Search".to_string(),
+        secondary_text: "role=AXTextField path=0.1".to_string(),
+        query_value: "Search".to_string(),
+        bounds: Some(AppRect {
+          x: 10,
+          y: 10,
+          width: 80,
+          height: 20,
+        }),
+        click_point: Some(AppPoint { x: 50, y: 20 }),
+        confidence: None,
+        evidence_step_id: "observe-window-tree".to_string(),
+        notes: vec!["sample note".to_string()],
+      }],
       known_boundaries: vec!["one boundary".to_string()],
       recommended_strategies: vec![
         recommended_strategy(
@@ -2972,8 +3321,9 @@ mod tests {
     assert!(report.contains("## 1. App Basic Information"));
     assert!(report.contains("## 2. Available Surfaces"));
     assert!(report.contains("## 3. Grounding Assessment"));
-    assert!(report.contains("## 4. Control Strategy"));
-    assert!(report.contains("## 5. Verification Assessment"));
+    assert!(report.contains("## 4. Candidate / Annotation Layer"));
+    assert!(report.contains("## 5. Control Strategy"));
+    assert!(report.contains("## 6. Verification Assessment"));
     assert!(report.contains("Recommended Candidate Strategies"));
   }
 
@@ -3018,7 +3368,7 @@ mod tests {
       serde_json::from_value(render_search_entry_candidate_cases(&analysis))
         .expect("candidate matrix should parse");
     let mut resolved = BTreeMap::new();
-    let unresolved = apply_candidate_grounding(
+    let (unresolved, used_annotations) = apply_candidate_grounding(
       &analysis,
       None,
       "search-entry.ax-text-input.clipboard-submit.capture-evidence",
@@ -3026,6 +3376,7 @@ mod tests {
       &mut resolved,
     );
     assert!(unresolved.iter().any(|key| key == "focus_query"));
+    assert!(used_annotations.is_empty());
     assert!(resolved.contains_key("query"));
   }
 
@@ -3059,6 +3410,7 @@ mod tests {
         taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
+        suggested_annotation_ids: Vec::new(),
         recipe_path,
         case_matrix_path,
       }],
@@ -3129,6 +3481,7 @@ mod tests {
         taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
+        suggested_annotation_ids: Vec::new(),
         recipe_path,
         case_matrix_path,
       }],
@@ -3239,6 +3592,7 @@ mod tests {
         non_pointer_control: vec!["keyboard".to_string()],
         pointer_fallback: vec!["pointer".to_string()],
       },
+      annotation_candidates: vec![],
       known_boundaries: vec![],
       recommended_strategies: vec![AppRecommendedStrategy {
         taxonomy_id: taxonomy_id.to_string(),
