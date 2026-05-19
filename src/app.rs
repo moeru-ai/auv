@@ -467,6 +467,14 @@ fn probe_app_into_run(
   };
   let probe_path = output_dir.join("probe.json");
   write_pretty_json(&probe_path, &probe)?;
+  stage_app_artifact(
+    runtime,
+    run,
+    parent,
+    "probe.output",
+    &probe_path,
+    "probe.json",
+  )?;
   Ok(probe)
 }
 
@@ -616,6 +624,22 @@ fn distill_app_analysis_into_run(
       .join(format!("{candidate_slug}.cases.json"));
     write_pretty_json(&recipe_path, &recipe_value)?;
     write_pretty_json(&case_matrix_path, &matrix_value)?;
+    stage_app_artifact(
+      runtime,
+      run,
+      span,
+      "distillation.candidate.recipe",
+      &recipe_path,
+      &format!("{candidate_slug}.recipe.json"),
+    )?;
+    stage_app_artifact(
+      runtime,
+      run,
+      span,
+      "distillation.candidate.case_matrix",
+      &case_matrix_path,
+      &format!("{candidate_slug}.cases.json"),
+    )?;
     candidates.push(AppDistilledCandidate {
       recipe_id: manifest.recipe_id.clone(),
       taxonomy_id: strategy.taxonomy_id.clone(),
@@ -3044,23 +3068,22 @@ mod tests {
 
     validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
 
-    let validate_run_ids = sink
+    let finished_runs = sink
       .drain_for_test()
       .into_iter()
       .filter_map(|event| match event {
-        RunStreamEvent::RunFinished { run, .. } if run.run_type == RunType::Validate => {
-          Some(run.run_id)
-        }
+        RunStreamEvent::RunFinished { run, .. } => Some(run),
         _ => None,
       })
       .collect::<Vec<_>>();
     assert_eq!(
-      validate_run_ids.len(),
+      finished_runs.len(),
       1,
-      "app validation should not create standalone case-matrix validate runs"
+      "app validation should not create standalone skill or case-matrix runs"
     );
+    assert_eq!(finished_runs[0].run_type, RunType::Validate);
     let canonical = runtime
-      .read_run(validate_run_ids[0].as_str())
+      .read_run(finished_runs[0].run_id.as_str())
       .expect("app validate run should read");
     assert_eq!(canonical.spans[0].name, "auv.validate");
     assert!(canonical.spans.iter().any(|span| span.name == "auv.case"));
@@ -3070,6 +3093,82 @@ mod tests {
         .iter()
         .any(|span| span.name == "auv.execute")
     );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn validate_app_distillation_keeps_failed_case_inside_app_validate_run() {
+    let root = temp_dir("app-validate-failed-nested-case");
+    let sink = Arc::new(MemoryRunEventSink::new());
+    let runtime = test_runtime(root.clone()).with_event_sink(sink.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("candidate.recipe.json");
+    let case_matrix_path = root.join("candidate.cases.json");
+
+    let mut analysis = sample_analysis_with_strategy(
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    );
+    analysis.probe_path = root.join("missing-probe.json");
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    let mut manifest_value = test_candidate_manifest_value();
+    manifest_value["steps"][0]["expect"]["output_must_contain"] =
+      serde_json::json!(["definitely-missing"]);
+    write_pretty_json(&recipe_path, &manifest_value).expect("candidate recipe should write");
+    write_pretty_json(&case_matrix_path, &test_candidate_matrix_value())
+      .expect("candidate matrix should write");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.recorded.skill".to_string(),
+        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let output =
+      validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
+    assert_eq!(
+      output.validation.candidates[0].status,
+      AppValidationStatus::Rejected
+    );
+
+    let finished_runs = sink
+      .drain_for_test()
+      .into_iter()
+      .filter_map(|event| match event {
+        RunStreamEvent::RunFinished { run, .. } => Some(run),
+        _ => None,
+      })
+      .collect::<Vec<_>>();
+    assert_eq!(
+      finished_runs.len(),
+      1,
+      "failed candidate validation should still stay inside the app validate run"
+    );
+    assert_eq!(finished_runs[0].run_type, RunType::Validate);
+    let canonical = runtime
+      .read_run(finished_runs[0].run_id.as_str())
+      .expect("app validate run should read");
+    assert!(
+      canonical
+        .spans
+        .iter()
+        .any(|span| { span.name == "auv.execute" && span.status_code == TraceStatusCode::Error })
+    );
+    assert!(canonical.spans.iter().any(|span| {
+      span.name == "auv.app.validate.candidate" && span.status_code == TraceStatusCode::Error
+    }));
 
     let _ = fs::remove_dir_all(root);
   }
