@@ -2,6 +2,7 @@ pub mod app;
 pub mod bundle;
 pub mod catalog;
 pub mod driver;
+pub mod inspect;
 pub mod model;
 pub mod recording;
 pub mod runtime;

@@ -48,7 +48,7 @@ impl Runtime {
 
   pub fn inspect(&self, run_id: &str) -> AuvResult<String> {
     let canonical = self.store.read_run(run_id)?;
-    Ok(render_canonical_inspection(&canonical))
+    Ok(crate::inspect::render_text(&canonical))
   }
 
   pub fn read_run(&self, run_id: &str) -> AuvResult<crate::store::CanonicalRun> {
@@ -433,56 +433,6 @@ fn render_artifact_event(artifact: &crate::trace::ArtifactRecordV1Alpha1) -> Str
   )
 }
 
-fn render_canonical_inspection(snapshot: &crate::store::CanonicalRun) -> String {
-  let status = match snapshot.run.status_code {
-    TraceStatusCode::Ok => "completed",
-    TraceStatusCode::Error => "failed",
-    TraceStatusCode::Unset => "running",
-  };
-  let mut output = format!(
-    "Run: {}\nStatus: {}\nRun Type: {}\n",
-    snapshot.run.run_id,
-    status,
-    snapshot.run.run_type.as_str()
-  );
-  if let Some(summary) = &snapshot.run.summary {
-    output.push_str(&format!("Summary: {summary}\n"));
-  }
-  if let Some(failure) = &snapshot.run.failure {
-    output.push_str(&format!("Failure: {}\n", failure.message));
-  }
-  output.push_str("\nSpans:\n");
-  for span in &snapshot.spans {
-    output.push_str(&format!(
-      "- {} {} parent={}\n",
-      span.span_id,
-      span.name,
-      span
-        .parent_span_id
-        .as_ref()
-        .map(|span_id| span_id.as_str())
-        .unwrap_or("n/a")
-    ));
-  }
-  output.push_str("\nEvents:\n");
-  for event in &snapshot.events {
-    output.push_str(&format!(
-      "- {} {} {}\n",
-      event.span_id,
-      event.name,
-      event.message.as_deref().unwrap_or("")
-    ));
-  }
-  output.push_str("\nArtifacts:\n");
-  for artifact in &snapshot.artifacts {
-    output.push_str(&format!(
-      "- {} {} {}\n",
-      artifact.artifact_id, artifact.role, artifact.path
-    ));
-  }
-  output
-}
-
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
@@ -772,7 +722,7 @@ mod tests {
     let inspection = runtime
       .inspect(&result.run_id)
       .expect("failed run should still be inspectable");
-    assert!(inspection.contains("Status: failed"));
+    assert!(inspection.contains("Status: error"));
     assert!(inspection.contains("artifact staging failed"));
 
     let _ = fs::remove_dir_all(project_root);
