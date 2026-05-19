@@ -3,6 +3,7 @@ pub mod bundle;
 pub mod catalog;
 pub mod driver;
 pub mod model;
+pub mod recording;
 pub mod runtime;
 pub mod skill;
 pub mod store;
