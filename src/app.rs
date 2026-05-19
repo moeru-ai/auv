@@ -34,12 +34,14 @@ const APP_VALIDATE_VERSION: &str = "v0";
 pub struct AppIdentity {
   pub bundle_id: String,
   pub app_name: String,
-  pub app_path: PathBuf,
+  pub app_path: Option<PathBuf>,
   pub main_executable_path: Option<PathBuf>,
   pub version: String,
   pub build_version: String,
   pub url_schemes: Vec<String>,
   pub apple_script_addressable: bool,
+  pub launch_services_resolved: bool,
+  pub resolution_notes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -389,6 +391,7 @@ fn probe_app_into_run(
     "debug.probePermissions",
     None,
     BTreeMap::new(),
+    false,
   )?);
   steps.push(invoke_probe_step(
     runtime,
@@ -398,6 +401,7 @@ fn probe_app_into_run(
     "debug.listDisplays",
     None,
     BTreeMap::new(),
+    false,
   )?);
   steps.push(invoke_probe_step(
     runtime,
@@ -407,6 +411,7 @@ fn probe_app_into_run(
     "debug.probeCoordinateReadiness",
     None,
     BTreeMap::new(),
+    false,
   )?);
 
   let mut window_inputs = BTreeMap::new();
@@ -419,6 +424,7 @@ fn probe_app_into_run(
     "debug.observeWindows",
     Some(app.bundle_id.clone()),
     window_inputs,
+    false,
   )?);
 
   let mut tree_inputs = BTreeMap::new();
@@ -432,6 +438,7 @@ fn probe_app_into_run(
     "debug.observeWindowTree",
     Some(app.bundle_id.clone()),
     tree_inputs,
+    true,
   )?);
 
   let capture_label = format!("app-probe-{}", sanitized_artifact_name(&app.bundle_id));
@@ -449,6 +456,7 @@ fn probe_app_into_run(
     "debug.captureDisplay",
     Some(app.bundle_id.clone()),
     capture_inputs,
+    true,
   )?;
   let screenshot_artifact_path = capture_step
     .artifact_paths
@@ -459,38 +467,35 @@ fn probe_app_into_run(
         .and_then(|value| value.to_str())
         .is_some_and(|value| value.eq_ignore_ascii_case("png"))
     })
-    .cloned()
-    .ok_or_else(|| {
-      format!(
-        "capture-display probe step did not produce a screenshot artifact for {}",
-        app.bundle_id
-      )
-    })?;
+    .cloned();
   steps.push(capture_step);
 
-  let mut ocr_inputs = BTreeMap::new();
-  ocr_inputs.insert(
-    "image_path".to_string(),
-    screenshot_artifact_path.display().to_string(),
-  );
-  ocr_inputs.insert(
-    "query".to_string(),
-    if app.app_name.trim().is_empty() {
-      app.bundle_id.clone()
-    } else {
-      app.app_name.clone()
-    },
-  );
-  ocr_inputs.insert("min_confidence".to_string(), "0.55".to_string());
-  steps.push(invoke_probe_step(
-    runtime,
-    run,
-    parent,
-    "ocr-sample",
-    "debug.findImageText",
-    None,
-    ocr_inputs,
-  )?);
+  if let Some(screenshot_artifact_path) = screenshot_artifact_path {
+    let mut ocr_inputs = BTreeMap::new();
+    ocr_inputs.insert(
+      "image_path".to_string(),
+      screenshot_artifact_path.display().to_string(),
+    );
+    ocr_inputs.insert(
+      "query".to_string(),
+      if app.app_name.trim().is_empty() {
+        app.bundle_id.clone()
+      } else {
+        app.app_name.clone()
+      },
+    );
+    ocr_inputs.insert("min_confidence".to_string(), "0.55".to_string());
+    steps.push(invoke_probe_step(
+      runtime,
+      run,
+      parent,
+      "ocr-sample",
+      "debug.findImageText",
+      None,
+      ocr_inputs,
+      true,
+    )?);
+  }
 
   let probe = AppProbe {
     probe_version: APP_PROBE_VERSION.to_string(),
@@ -929,12 +934,44 @@ fn validate_app_distillation_into_run(
 }
 
 fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnalysis> {
-  let permission_state = parse_permission_state(probe)?;
-  let display_snapshot = parse_display_step(probe)?;
-  let coordinate_readiness = parse_coordinate_readiness(probe)?;
-  let window_snapshot = parse_window_snapshot(probe)?;
-  let ax_snapshot = parse_ax_snapshot(probe)?;
-  let ocr_snapshot = parse_ocr_snapshot(probe)?;
+  let mut known_boundaries = probe.app.resolution_notes.clone();
+  known_boundaries.extend(summarize_failed_probe_steps(probe));
+  let permission_state = parse_permission_state(probe).unwrap_or_else(|error| {
+    known_boundaries.push(format!(
+      "Permission probe data was incomplete: {error}. Treat permission-dependent conclusions as provisional."
+    ));
+    default_permission_state()
+  });
+  let display_snapshot = parse_display_step(probe).unwrap_or_else(|error| {
+    known_boundaries.push(format!(
+      "Display probe data was incomplete: {error}. Display-relative projection remains provisional."
+    ));
+    default_display_snapshot()
+  });
+  let coordinate_readiness = parse_coordinate_readiness(probe).unwrap_or_else(|error| {
+    known_boundaries.push(format!(
+      "Coordinate-readiness probe data was incomplete: {error}. Logical-input alignment remains provisional."
+    ));
+    default_coordinate_readiness(error)
+  });
+  let window_snapshot = parse_window_snapshot(probe).unwrap_or_else(|error| {
+    known_boundaries.push(format!(
+      "Window observation data was incomplete: {error}. Window-targeted control should be treated as candidate-only."
+    ));
+    default_window_snapshot()
+  });
+  let ax_snapshot = parse_ax_snapshot(probe).unwrap_or_else(|error| {
+    known_boundaries.push(format!(
+      "AX snapshot was unavailable or partial: {error}. AX-first strategies remain candidate-only."
+    ));
+    default_ax_snapshot(&probe.app)
+  });
+  let ocr_snapshot = parse_ocr_snapshot(probe).unwrap_or_else(|error| {
+    known_boundaries.push(format!(
+      "OCR sample was unavailable or partial: {error}. OCR-anchor strategies remain candidate-only."
+    ));
+    default_ocr_snapshot(&probe.app)
+  });
 
   let primary_window = choose_primary_window(&window_snapshot.windows);
   let primary_window_bounds = primary_window.map(|window| AppRect::from_observed(&window.bounds));
@@ -1118,7 +1155,6 @@ fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnaly
     pointer_fallback: vec!["pointer".to_string()],
   };
 
-  let mut known_boundaries = Vec::new();
   if permission_state.accessibility != "granted" {
     known_boundaries.push(format!(
       "Accessibility permission is {} instead of granted; AX-first strategies will remain degraded until this is fixed.",
@@ -1210,6 +1246,24 @@ fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnaly
   })
 }
 
+fn summarize_failed_probe_steps(probe: &AppProbe) -> Vec<String> {
+  probe
+    .steps
+    .iter()
+    .filter(|step| step.status != RunStatus::Completed.as_str())
+    .map(|step| {
+      let failure = step
+        .failure_message
+        .clone()
+        .unwrap_or_else(|| step.output_summary.clone());
+      format!(
+        "Probe step `{}` (`{}`) did not complete successfully: {}",
+        step.id, step.command_id, failure
+      )
+    })
+    .collect()
+}
+
 fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
   let mut lines = vec![
     format!(
@@ -1228,10 +1282,26 @@ fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
     "## 1. App Basic Information".to_string(),
     String::new(),
     format!("- app name: `{}`", analysis.app_identity.app_name),
-    format!("- app path: `{}`", analysis.app_identity.app_path.display()),
+    format!(
+      "- app path: `{}`",
+      analysis
+        .app_identity
+        .app_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+    ),
     format!(
       "- version: `{}` (`build {}`)",
       analysis.app_identity.version, analysis.app_identity.build_version
+    ),
+    format!(
+      "- launch-services resolved: `{}`",
+      if analysis.app_identity.launch_services_resolved {
+        "true"
+      } else {
+        "false"
+      }
     ),
   ];
   if let Some(executable) = analysis.app_identity.main_executable_path.as_ref() {
@@ -2082,6 +2152,71 @@ fn parse_ocr_snapshot(probe: &AppProbe) -> AuvResult<OcrTextSnapshot> {
   parse_ocr_text_snapshot(&report)
 }
 
+fn default_permission_state() -> AppPermissionState {
+  AppPermissionState {
+    screen_recording: "unknown".to_string(),
+    accessibility: "unknown".to_string(),
+    automation_to_system_events: "unknown".to_string(),
+    launch_host_process: "unknown".to_string(),
+  }
+}
+
+fn default_display_snapshot() -> ObservedDisplaySnapshot {
+  ObservedDisplaySnapshot {
+    combined_bounds: ObservedRect {
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    },
+    displays: Vec::new(),
+    captured_at: String::new(),
+  }
+}
+
+fn default_coordinate_readiness(reason: String) -> CoordinateReadinessReport {
+  CoordinateReadinessReport {
+    ready_for_logical_input: false,
+    reason,
+  }
+}
+
+fn default_window_snapshot() -> WindowSnapshotAnalysis {
+  WindowSnapshotAnalysis {
+    observed_at: String::new(),
+    frontmost_app_name: String::new(),
+    frontmost_window_title: String::new(),
+    windows: Vec::new(),
+  }
+}
+
+fn default_ax_snapshot(app: &AppIdentity) -> ObservedAxTreeSnapshot {
+  ObservedAxTreeSnapshot {
+    observed_at: String::new(),
+    app_name: app.app_name.clone(),
+    bundle_id: app.bundle_id.clone(),
+    window_title: String::new(),
+    nodes: Vec::new(),
+  }
+}
+
+fn default_ocr_snapshot(app: &AppIdentity) -> OcrTextSnapshot {
+  OcrTextSnapshot {
+    recognized_at: String::new(),
+    image_path: PathBuf::new(),
+    image_width: 0,
+    image_height: 0,
+    query: if app.app_name.trim().is_empty() {
+      app.bundle_id.clone()
+    } else {
+      app.app_name.clone()
+    },
+    exact: false,
+    case_sensitive: false,
+    matches: Vec::new(),
+  }
+}
+
 fn read_named_text_artifact(
   probe: &AppProbe,
   step_id: &str,
@@ -2335,45 +2470,67 @@ fn recommended_strategy(
 
 fn resolve_app_identity(bundle_id: &str) -> AuvResult<AppIdentity> {
   let escaped_bundle_id = bundle_id.replace('"', "\\\"");
-  let path_script = format!("POSIX path of (path to application id \"{escaped_bundle_id}\")");
-  let app_path_raw = run_command_capture("osascript", &["-e", &path_script])?;
-  let app_path = PathBuf::from(app_path_raw.trim());
-  let info_plist_path = app_path.join("Contents/Info.plist");
-  let info_json = run_command_capture(
-    "plutil",
-    &[
-      "-convert",
-      "json",
-      "-o",
-      "-",
-      info_plist_path
-        .to_str()
-        .ok_or_else(|| format!("non-utf8 Info.plist path {}", info_plist_path.display()))?,
-    ],
-  )?;
-  let info: Value = serde_json::from_str(&info_json).map_err(|error| {
-    format!(
-      "failed to parse Info.plist JSON for {}: {error}",
-      app_path.display()
-    )
-  })?;
+  let mut resolution_notes = Vec::new();
+  let launch_services_path = match resolve_launch_services_app_path(&escaped_bundle_id) {
+    Ok(path) => Some(path),
+    Err(error) => {
+      resolution_notes.push(format!(
+        "LaunchServices could not resolve `{bundle_id}` to an application path: {error}"
+      ));
+      None
+    }
+  };
+  let app_path =
+    launch_services_path
+      .clone()
+      .or_else(|| match resolve_spotlight_app_path(bundle_id) {
+        Ok(path) => Some(path),
+        Err(error) => {
+          resolution_notes.push(format!(
+            "Spotlight could not resolve `{bundle_id}` to an installed app bundle: {error}"
+          ));
+          None
+        }
+      });
+  let launch_services_resolved = launch_services_path.is_some();
+  let info = app_path
+    .as_ref()
+    .map(|app_path| read_app_info_plist(app_path.as_path()))
+    .transpose()?;
   let app_name = first_non_empty_string(&[
-    json_string(&info, "CFBundleDisplayName"),
-    json_string(&info, "CFBundleName"),
-    app_path
-      .file_stem()
-      .and_then(|value| value.to_str())
-      .map(|value| value.to_string()),
+    info
+      .as_ref()
+      .and_then(|info| json_string(info, "CFBundleDisplayName")),
+    info
+      .as_ref()
+      .and_then(|info| json_string(info, "CFBundleName")),
+    app_path.as_ref().and_then(|app_path| {
+      app_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_string())
+    }),
   ])
   .unwrap_or_else(|| bundle_id.to_string());
-  let version =
-    json_string(&info, "CFBundleShortVersionString").unwrap_or_else(|| "unknown".to_string());
-  let build_version =
-    json_string(&info, "CFBundleVersion").unwrap_or_else(|| "unknown".to_string());
-  let main_executable_path = json_string(&info, "CFBundleExecutable")
-    .map(|value| app_path.join("Contents/MacOS").join(value));
+  let version = info
+    .as_ref()
+    .and_then(|info| json_string(info, "CFBundleShortVersionString"))
+    .unwrap_or_else(|| "unknown".to_string());
+  let build_version = info
+    .as_ref()
+    .and_then(|info| json_string(info, "CFBundleVersion"))
+    .unwrap_or_else(|| "unknown".to_string());
+  let main_executable_path = info
+    .as_ref()
+    .and_then(|info| json_string(info, "CFBundleExecutable"))
+    .and_then(|value| {
+      app_path
+        .as_ref()
+        .map(|app_path| app_path.join("Contents/MacOS").join(value))
+    });
   let url_schemes = info
-    .get("CFBundleURLTypes")
+    .as_ref()
+    .and_then(|info| info.get("CFBundleURLTypes"))
     .and_then(Value::as_array)
     .map(|entries| {
       entries
@@ -2404,6 +2561,47 @@ fn resolve_app_identity(bundle_id: &str) -> AuvResult<AppIdentity> {
     build_version,
     url_schemes,
     apple_script_addressable,
+    launch_services_resolved,
+    resolution_notes,
+  })
+}
+
+fn resolve_launch_services_app_path(escaped_bundle_id: &str) -> AuvResult<PathBuf> {
+  let path_script = format!("POSIX path of (path to application id \"{escaped_bundle_id}\")");
+  let app_path_raw = run_command_capture("osascript", &["-e", &path_script])?;
+  Ok(PathBuf::from(app_path_raw.trim()))
+}
+
+fn resolve_spotlight_app_path(bundle_id: &str) -> AuvResult<PathBuf> {
+  let query = format!("kMDItemCFBundleIdentifier == \"{bundle_id}\"");
+  let raw = run_command_capture("mdfind", &[&query])?;
+  let candidate = raw
+    .lines()
+    .map(str::trim)
+    .find(|line| !line.is_empty())
+    .ok_or_else(|| format!("no Spotlight match for bundle id `{bundle_id}`"))?;
+  Ok(PathBuf::from(candidate))
+}
+
+fn read_app_info_plist(app_path: &Path) -> AuvResult<Value> {
+  let info_plist_path = app_path.join("Contents/Info.plist");
+  let info_json = run_command_capture(
+    "plutil",
+    &[
+      "-convert",
+      "json",
+      "-o",
+      "-",
+      info_plist_path
+        .to_str()
+        .ok_or_else(|| format!("non-utf8 Info.plist path {}", info_plist_path.display()))?,
+    ],
+  )?;
+  serde_json::from_str(&info_json).map_err(|error| {
+    format!(
+      "failed to parse Info.plist JSON for {}: {error}",
+      app_path.display()
+    )
   })
 }
 
@@ -2423,6 +2621,7 @@ fn invoke_probe_step(
   command_id: &str,
   target_application_id: Option<String>,
   inputs: BTreeMap<String, String>,
+  allow_failure: bool,
 ) -> AuvResult<AppProbeStep> {
   let step_span = run.start_span(
     parent,
@@ -2453,7 +2652,20 @@ fn invoke_probe_step(
           "{error}; additionally failed to finish failed probe step span: {finish_error}"
         ));
       }
-      return Err(error);
+      if !allow_failure {
+        return Err(error.clone());
+      }
+      return Ok(AppProbeStep {
+        id: step_id.to_string(),
+        command_id: command_id.to_string(),
+        target_application_id,
+        inputs,
+        run_id: run.id().to_string(),
+        status: RunStatus::Failed.as_str().to_string(),
+        output_summary: format!("Probe step {step_id} failed"),
+        artifact_paths: Vec::new(),
+        failure_message: Some(error),
+      });
     }
   };
   let status_code = if result.status == RunStatus::Completed {
@@ -2469,7 +2681,7 @@ fn invoke_probe_step(
       failure: result.failure_message.clone(),
     },
   )?;
-  if result.status != RunStatus::Completed {
+  if result.status != RunStatus::Completed && !allow_failure {
     return Err(format!(
       "probe step {} ({}) failed: {}",
       step_id,
@@ -3192,6 +3404,7 @@ mod tests {
       "test.first",
       None,
       BTreeMap::new(),
+      false,
     )
     .expect("first step should complete");
     let second = invoke_probe_step(
@@ -3202,6 +3415,7 @@ mod tests {
       "test.second",
       None,
       BTreeMap::new(),
+      false,
     )
     .expect("second step should complete");
 
@@ -3220,12 +3434,14 @@ mod tests {
       app_identity: AppIdentity {
         bundle_id: "com.example.App".to_string(),
         app_name: "Example".to_string(),
-        app_path: PathBuf::from("/Applications/Example.app"),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
         main_executable_path: None,
         version: "1.0".to_string(),
         build_version: "100".to_string(),
         url_schemes: vec!["example".to_string()],
         apple_script_addressable: true,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
       },
       window_context: AppWindowContext {
         observed_window_count: 1,
@@ -3526,6 +3742,115 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[test]
+  fn build_app_analysis_tolerates_partial_probe_failures() {
+    let root = temp_dir("partial-app-probe");
+    let probe_path = root.join("probe.json");
+    let permissions_path = root.join("artifact_probe-permissions.txt");
+    let displays_path = root.join("artifact_display-list.json");
+    let readiness_path = root.join("artifact_coordinate-readiness-report.txt");
+    let windows_path = root.join("artifact_observe-windows.txt");
+
+    fs::write(
+      &permissions_path,
+      "screenRecording=granted\naccessibility=granted\nautomationToSystemEvents=granted\nlaunchHostProcess=Atlas\n",
+    )
+    .expect("permissions artifact should write");
+    fs::write(
+      &displays_path,
+      serde_json::to_string(&vec![serde_json::json!({
+        "displayId": 1,
+        "isMain": true,
+        "isBuiltIn": true,
+        "bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+        "visibleBounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+        "scaleFactor": 2.0,
+        "pixelWidth": 3024,
+        "pixelHeight": 1964
+      })])
+      .expect("display artifact should serialize"),
+    )
+    .expect("display artifact should write");
+    fs::write(&readiness_path, "readyForLogicalInput=true\nreason=ok\n")
+      .expect("readiness artifact should write");
+    fs::write(
+      &windows_path,
+      "observedAt=2026-05-19T00:00:00Z\nfrontmostAppName=\nfrontmostWindowTitle=\n",
+    )
+    .expect("windows artifact should write");
+
+    let probe = AppProbe {
+      probe_version: APP_PROBE_VERSION.to_string(),
+      created_at_millis: 0,
+      project_root: root.clone(),
+      output_dir: root.clone(),
+      app: AppIdentity {
+        bundle_id: "com.netease.163music".to_string(),
+        app_name: "com.netease.163music".to_string(),
+        app_path: None,
+        main_executable_path: None,
+        version: "unknown".to_string(),
+        build_version: "unknown".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: false,
+        resolution_notes: vec![
+          "LaunchServices could not resolve `com.netease.163music`.".to_string(),
+        ],
+      },
+      steps: vec![
+        probe_step_fixture(
+          "probe-permissions",
+          "debug.probePermissions",
+          vec![permissions_path],
+        ),
+        probe_step_fixture("list-displays", "debug.listDisplays", vec![displays_path]),
+        probe_step_fixture(
+          "probe-coordinate-readiness",
+          "debug.probeCoordinateReadiness",
+          vec![readiness_path],
+        ),
+        probe_step_fixture(
+          "observe-windows",
+          "debug.observeWindows",
+          vec![windows_path],
+        ),
+        failed_probe_step_fixture(
+          "observe-window-tree",
+          "debug.observeWindowTree",
+          "app not available",
+        ),
+        failed_probe_step_fixture(
+          "capture-display",
+          "debug.captureDisplay",
+          "app not available",
+        ),
+      ],
+    };
+
+    let analysis = build_app_analysis(&probe_path, &probe).expect("analysis should still build");
+    assert!(analysis.annotation_candidates.is_empty());
+    assert!(analysis.recommended_strategies.is_empty());
+    assert!(
+      analysis
+        .known_boundaries
+        .iter()
+        .any(|entry| entry.contains("LaunchServices could not resolve"))
+    );
+    assert!(
+      analysis
+        .known_boundaries
+        .iter()
+        .any(|entry| entry.contains("observe-window-tree"))
+    );
+    assert_eq!(
+      analysis.available_surfaces.accessibility_tree,
+      AssessmentStatus::Unavailable
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
   fn sample_analysis_with_strategy(taxonomy_id: &str) -> AppAnalysis {
     AppAnalysis {
       analysis_version: APP_ANALYSIS_VERSION.to_string(),
@@ -3534,12 +3859,14 @@ mod tests {
       app_identity: AppIdentity {
         bundle_id: "com.example.App".to_string(),
         app_name: "Example".to_string(),
-        app_path: PathBuf::from("/Applications/Example.app"),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
         main_executable_path: None,
         version: "1.0".to_string(),
         build_version: "100".to_string(),
         url_schemes: vec![],
         apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
       },
       window_context: AppWindowContext {
         observed_window_count: 1,
@@ -3607,6 +3934,34 @@ mod tests {
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
+  }
+
+  fn probe_step_fixture(id: &str, command_id: &str, artifact_paths: Vec<PathBuf>) -> AppProbeStep {
+    AppProbeStep {
+      id: id.to_string(),
+      command_id: command_id.to_string(),
+      target_application_id: None,
+      inputs: BTreeMap::new(),
+      run_id: "run_fixture".to_string(),
+      status: RunStatus::Completed.as_str().to_string(),
+      output_summary: "ok".to_string(),
+      artifact_paths,
+      failure_message: None,
+    }
+  }
+
+  fn failed_probe_step_fixture(id: &str, command_id: &str, error: &str) -> AppProbeStep {
+    AppProbeStep {
+      id: id.to_string(),
+      command_id: command_id.to_string(),
+      target_application_id: None,
+      inputs: BTreeMap::new(),
+      run_id: "run_fixture".to_string(),
+      status: RunStatus::Failed.as_str().to_string(),
+      output_summary: format!("Probe step {id} failed"),
+      artifact_paths: Vec::new(),
+      failure_message: Some(error.to_string()),
+    }
   }
 
   fn test_runtime(project_root: PathBuf) -> Runtime {

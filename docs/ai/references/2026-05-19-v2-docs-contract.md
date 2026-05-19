@@ -64,6 +64,16 @@ V2 should focus on five concrete contracts.
 - human-readable `report.md`
 - structured candidate / annotation objects derived from probe artifacts
 
+This contract must also tolerate partial probe truth:
+
+- unresolved app identity
+- failed target-specific AX steps
+- failed target-specific capture steps
+
+As long as the probe still recorded deterministic baseline facts, `app analyze`
+should continue and convert those failures into explicit boundaries instead of
+crashing the whole lane.
+
 The report should describe:
 
 - app identity
@@ -83,6 +93,14 @@ machine-consumable grounding hints. It should be able to represent at least:
 - OCR text-anchor candidates
 - visible-row candidates for list-like UI targets
 - stable window or region candidates
+
+But when the probe truth is too weak, the correct output is still:
+
+- zero candidates
+- zero strategies
+- explicit failure boundaries
+
+That is more useful than fake genericity.
 
 ### 2. Distillation Contract
 

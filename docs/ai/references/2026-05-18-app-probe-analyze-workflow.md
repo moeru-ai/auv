@@ -27,9 +27,9 @@ opinions. The `analyze` step must be grounded in deterministic probe artifacts.
 The current implementation records:
 
 1. app identity
-   - bundle id
-   - app name
-   - app path
+  - bundle id
+  - app name
+  - app path
    - main executable path
    - version and build version
    - URL schemes
@@ -56,6 +56,17 @@ Each recorded step includes:
 
 This means distillation can start from actual runtime traces instead of chat
 memory.
+
+Important:
+
+- `app probe` is now allowed to capture a **partial** app identity when
+  LaunchServices or Spotlight cannot resolve the bundle id to an installed app
+  bundle.
+- target-specific probe steps such as AX tree observation or app-targeted
+  capture are also allowed to fail without aborting the whole probe
+  directory.
+- those failures are recorded into `probe.json` and must later surface as
+  analysis boundaries rather than being silently ignored.
 
 ## Analyze Output
 
@@ -86,6 +97,17 @@ list-like UI targets and ambiguous grounding:
 - OCR anchor-text candidates
 - grouped visible-row candidates when the sampled surface looks collection-like
 - primary-window region candidates
+
+If the probe captured only a partial app identity or some target-specific
+steps failed, `app analyze` should still produce `analysis.json` and `report.md`
+as long as enough deterministic baseline facts remain to speak honestly. In
+that situation the output should prefer:
+
+- zero candidates
+- zero recommended strategies
+- explicit `known_boundaries`
+
+over manufacturing candidate slices from missing evidence.
 
 ## Distill Output
 
@@ -190,6 +212,11 @@ but it must stay conservative. If validate cannot resolve a `focus_query`,
 The current honesty bar also applies to the candidate layer itself: a noisy OCR
 match should still be emitted as a noisy OCR candidate instead of being silently
 rewritten into a cleaner but false anchor.
+
+The same rule now applies one step earlier to `app probe`: missing app identity
+resolution, failed AX capture, or failed app-targeted screenshot should survive
+as recorded probe truth. They are boundaries, not excuses to abort the entire
+workflow before analysis can describe the problem.
 
 ## Second Smoke Result
 
