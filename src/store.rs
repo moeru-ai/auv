@@ -45,45 +45,45 @@ impl LocalStore {
     let run_id = validate_run_id(snapshot.run.run_id.as_str())?;
     let runs_root = self.root.join("runs");
     let run_directory = self.run_dir(run_id)?;
-    if run_directory.exists() {
-      return Err(format!(
-        "run directory {} already exists",
-        run_directory.display()
-      ));
-    }
-
-    let staging_directory = runs_root.join(format!(".{run_id}-tmp-{}", now_millis()));
-    fs::create_dir(&staging_directory).map_err(|error| {
-      format!(
-        "failed to create staging run directory {}: {error}",
-        staging_directory.display()
-      )
-    })?;
-
-    let write_result = (|| {
-      fs::create_dir_all(staging_directory.join("artifacts")).map_err(|error| {
+    let write_directory = if run_directory.exists() {
+      validate_unpublished_run_directory(&run_directory)?;
+      run_directory.clone()
+    } else {
+      let staging_directory = runs_root.join(format!(".{run_id}-tmp-{}", now_millis()));
+      fs::create_dir(&staging_directory).map_err(|error| {
         format!(
-          "failed to create canonical run directory {}: {error}",
+          "failed to create staging run directory {}: {error}",
           staging_directory.display()
         )
       })?;
+      staging_directory
+    };
+    let using_staging_directory = write_directory != run_directory;
+
+    let write_result = (|| {
+      fs::create_dir_all(write_directory.join("artifacts")).map_err(|error| {
+        format!(
+          "failed to create canonical run directory {}: {error}",
+          write_directory.display()
+        )
+      })?;
       write_jsonl_atomic(
-        &staging_directory.join("spans.jsonl"),
+        &write_directory.join("spans.jsonl"),
         &snapshot.spans,
         "span records",
       )?;
       write_jsonl_atomic(
-        &staging_directory.join("events.jsonl"),
+        &write_directory.join("events.jsonl"),
         &snapshot.events,
         "event records",
       )?;
       write_jsonl_atomic(
-        &staging_directory.join("artifacts.jsonl"),
+        &write_directory.join("artifacts.jsonl"),
         &snapshot.artifacts,
         "artifact records",
       )?;
       write_json_atomic(
-        &staging_directory.join("run.json"),
+        &write_directory.join("run.json"),
         &snapshot.run,
         "run metadata",
       )?;
@@ -91,26 +91,32 @@ impl LocalStore {
     })();
 
     if let Err(error) = write_result {
-      let _ = fs::remove_dir_all(&staging_directory);
+      if using_staging_directory {
+        let _ = fs::remove_dir_all(&write_directory);
+      } else {
+        cleanup_run_record_files(&write_directory);
+      }
       return Err(error);
     }
 
-    if run_directory.exists() {
-      let _ = fs::remove_dir_all(&staging_directory);
-      return Err(format!(
-        "run directory {} already exists",
-        run_directory.display()
-      ));
-    }
+    if using_staging_directory {
+      if run_directory.exists() {
+        let _ = fs::remove_dir_all(&write_directory);
+        return Err(format!(
+          "run directory {} already exists",
+          run_directory.display()
+        ));
+      }
 
-    fs::rename(&staging_directory, &run_directory).map_err(|error| {
-      let _ = fs::remove_dir_all(&staging_directory);
-      format!(
-        "failed to publish run directory {} from {}: {error}",
-        run_directory.display(),
-        staging_directory.display()
-      )
-    })?;
+      fs::rename(&write_directory, &run_directory).map_err(|error| {
+        let _ = fs::remove_dir_all(&write_directory);
+        format!(
+          "failed to publish run directory {} from {}: {error}",
+          run_directory.display(),
+          write_directory.display()
+        )
+      })?;
+    }
 
     Ok(())
   }
@@ -256,6 +262,59 @@ fn validate_run_id(run_id: &str) -> AuvResult<&str> {
     ));
   }
   Ok(run_id)
+}
+
+fn validate_unpublished_run_directory(run_directory: &Path) -> AuvResult<()> {
+  if run_directory.join("run.json").exists() {
+    return Err(format!(
+      "run directory {} already exists",
+      run_directory.display()
+    ));
+  }
+  for file_name in ["spans.jsonl", "events.jsonl", "artifacts.jsonl"] {
+    if run_directory.join(file_name).exists() {
+      return Err(format!(
+        "run directory {} contains incomplete canonical records",
+        run_directory.display()
+      ));
+    }
+  }
+
+  let artifacts_directory = run_directory.join("artifacts");
+  if !artifacts_directory.is_dir() {
+    return Err(format!(
+      "run directory {} already exists without staged artifacts",
+      run_directory.display()
+    ));
+  }
+
+  for entry in fs::read_dir(run_directory).map_err(|error| {
+    format!(
+      "failed to read run directory {}: {error}",
+      run_directory.display()
+    )
+  })? {
+    let entry = entry.map_err(|error| {
+      format!(
+        "failed to enumerate run directory {}: {error}",
+        run_directory.display()
+      )
+    })?;
+    if entry.file_name() != "artifacts" {
+      return Err(format!(
+        "run directory {} already contains non-artifact data",
+        run_directory.display()
+      ));
+    }
+  }
+
+  Ok(())
+}
+
+fn cleanup_run_record_files(run_directory: &Path) {
+  for file_name in ["run.json", "spans.jsonl", "events.jsonl", "artifacts.jsonl"] {
+    let _ = fs::remove_file(run_directory.join(file_name));
+  }
 }
 
 fn write_json_atomic<T: serde::Serialize>(path: &Path, value: &T, label: &str) -> AuvResult<()> {
@@ -459,6 +518,55 @@ mod tests {
 
     let runs = store.list_runs().expect("runs should list");
     assert!(runs.is_empty());
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn local_store_persists_run_after_staging_artifact() {
+    let root = temp_dir("store-staged-artifact");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+    let run = dummy_run("run_staged_artifact");
+    let span = dummy_span(&run.root_span_id);
+    let source_path = root.join("source-output.txt");
+    fs::write(&source_path, "artifact body").expect("source artifact");
+
+    let artifact = store
+      .stage_artifact_file(
+        &run.run_id,
+        0,
+        &span.span_id,
+        None,
+        "driver.output".to_string(),
+        source_path.clone(),
+        "output.txt".to_string(),
+        Some("output".to_string()),
+      )
+      .expect("artifact should stage");
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![artifact.clone()],
+      })
+      .expect("run should persist after artifact staging");
+
+    let artifact_path = root
+      .join("runs")
+      .join("run_staged_artifact")
+      .join(&artifact.path);
+    assert_eq!(
+      fs::read_to_string(&artifact_path).expect("staged artifact should remain"),
+      "artifact body"
+    );
+    assert!(source_path.exists());
+
+    let loaded = store
+      .read_run("run_staged_artifact")
+      .expect("persisted run should read");
+    assert_eq!(loaded.artifacts.len(), 1);
 
     let _ = fs::remove_dir_all(root);
   }
