@@ -978,10 +978,6 @@ pub(crate) fn run_skill_case_matrix_recorded(
   matrix: &SkillCaseMatrix,
   options: SkillCaseRunOptions,
 ) -> AuvResult<RunId> {
-  validate_case_matrix_against_skill_with_commands(manifest, matrix, runtime.list_commands())?;
-  let cases = select_cases(matrix, &options)?;
-  let selected_case_count = cases.len();
-
   let mut attributes = crate::recording::Attributes::new();
   attributes.insert(
     "auv.case_matrix.skill_id".to_string(),
@@ -991,6 +987,40 @@ pub(crate) fn run_skill_case_matrix_recorded(
     crate::recording::RunSpec::new(crate::trace::RunType::Validate, "auv.validate")
       .with_attributes(attributes),
   )?;
+  let root = run.root_span();
+
+  match run_skill_case_matrix_into_run(runtime, &mut run, &root, manifest, matrix, options) {
+    Ok(selected_case_count) => runtime.finish_run(
+      run,
+      crate::recording::RunFinish {
+        status_code: TraceStatusCode::Ok,
+        summary: Some(format!(
+          "Validated {} selected case(s) for {}",
+          selected_case_count, matrix.skill_id
+        )),
+        failure: None,
+      },
+    ),
+    Err(error) => finish_failed_recorded_run(
+      runtime,
+      run,
+      error,
+      format!("Case matrix {} failed", matrix.skill_id),
+    ),
+  }
+}
+
+pub(crate) fn run_skill_case_matrix_into_run(
+  runtime: &Runtime,
+  run: &mut crate::recording::RecordingRun,
+  parent: &crate::recording::SpanRef,
+  manifest: &SkillManifest,
+  matrix: &SkillCaseMatrix,
+  options: SkillCaseRunOptions,
+) -> AuvResult<usize> {
+  validate_case_matrix_against_skill_with_commands(manifest, matrix, runtime.list_commands())?;
+  let cases = select_cases(matrix, &options)?;
+  let selected_case_count = cases.len();
 
   println!("case-matrix: {}", matrix.skill_id);
   println!("version: {}", matrix.version);
@@ -1003,7 +1033,7 @@ pub(crate) fn run_skill_case_matrix_recorded(
   for case in cases {
     println!("case: {} [{}]", case.case_id, case.status);
     let case_span = run.start_span(
-      &run.root_span(),
+      parent,
       span_record(
         "auv.case",
         BTreeMap::from([("auv.case.id".to_string(), string_attr(&case.case_id))]),
@@ -1022,7 +1052,7 @@ pub(crate) fn run_skill_case_matrix_recorded(
 
     let case_result = run_skill_manifest_into_run(
       runtime,
-      &mut run,
+      run,
       &execute_span,
       manifest,
       SkillRunOptions {
@@ -1053,14 +1083,8 @@ pub(crate) fn run_skill_case_matrix_recorded(
         println!("case-result: ok");
       }
       Err(error) => {
-        let finish_error = finish_case_spans_after_error(
-          &mut run,
-          &execute_span,
-          &case_span,
-          manifest,
-          case,
-          &error,
-        );
+        let finish_error =
+          finish_case_spans_after_error(run, &execute_span, &case_span, manifest, case, &error);
         println!("case-result: failed");
         println!("case-error: {error}");
         failures.push((
@@ -1079,30 +1103,15 @@ pub(crate) fn run_skill_case_matrix_recorded(
       .map(|(case_id, error)| format!("- {case_id}: {error}"))
       .collect::<Vec<_>>()
       .join("\n");
-    return finish_failed_recorded_run(
-      runtime,
-      run,
-      format!(
-        "{} of {} selected case(s) failed:\n{}",
-        failures.len(),
-        selected_case_count,
-        summary
-      ),
-      format!("Case matrix {} failed", matrix.skill_id),
-    );
+    return Err(format!(
+      "{} of {} selected case(s) failed:\n{}",
+      failures.len(),
+      selected_case_count,
+      summary
+    ));
   }
 
-  runtime.finish_run(
-    run,
-    crate::recording::RunFinish {
-      status_code: TraceStatusCode::Ok,
-      summary: Some(format!(
-        "Validated {} selected case(s) for {}",
-        selected_case_count, matrix.skill_id
-      )),
-      failure: None,
-    },
-  )
+  Ok(selected_case_count)
 }
 
 pub fn render_skill_case_matrix_report(

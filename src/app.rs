@@ -15,8 +15,9 @@ use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_mil
 use crate::recording::{RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
 use crate::skill::{
-  SkillCaseMatrix, SkillCaseRunOptions, SkillManifest, SkillStrategy, run_skill_case_matrix_inline,
-  validate_case_matrix_against_skill, validate_case_matrix_manifest, validate_skill_manifest,
+  SkillCaseMatrix, SkillCaseRunOptions, SkillManifest, SkillStrategy,
+  run_skill_case_matrix_into_run, validate_case_matrix_against_skill,
+  validate_case_matrix_manifest, validate_skill_manifest,
 };
 use crate::trace::{
   RunType, SPAN_API_VERSION, SpanRecordV1Alpha1, TraceState, TraceStatusCode, new_span_id,
@@ -722,8 +723,20 @@ fn validate_app_distillation_into_run(
     let selected_case_count = matrix.cases.len();
 
     let validated = if unresolved_inputs.is_empty() {
-      match run_skill_case_matrix_inline(
+      let candidate_span = run.start_span(
+        span,
+        app_span_record(
+          "auv.app.validate.candidate",
+          BTreeMap::from([(
+            "auv.recipe.id".to_string(),
+            string_attr(candidate.recipe_id.clone()),
+          )]),
+        ),
+      )?;
+      let case_matrix_result = run_skill_case_matrix_into_run(
         runtime,
+        run,
+        &candidate_span,
         &manifest,
         &matrix,
         SkillCaseRunOptions {
@@ -732,34 +745,58 @@ fn validate_app_distillation_into_run(
           only_case_ids: Vec::new(),
           include_nonvalidated: true,
         },
-      ) {
-        Ok(()) => AppValidatedCandidate {
-          recipe_id: candidate.recipe_id.clone(),
-          taxonomy_id: candidate.taxonomy_id.clone(),
-          status: AppValidationStatus::Validated,
-          rationale: format!(
-            "All {} candidate case(s) executed successfully through the shared runtime.",
-            selected_case_count
-          ),
-          recipe_path: candidate.recipe_path.clone(),
-          case_matrix_path: candidate.case_matrix_path.clone(),
-          selected_case_count,
-          unresolved_inputs,
-          failure_message: None,
-          resolved_inputs,
-        },
-        Err(error) => AppValidatedCandidate {
-          recipe_id: candidate.recipe_id.clone(),
-          taxonomy_id: candidate.taxonomy_id.clone(),
-          status: AppValidationStatus::Rejected,
-          rationale: "The candidate was runnable, but live execution failed.".to_string(),
-          recipe_path: candidate.recipe_path.clone(),
-          case_matrix_path: candidate.case_matrix_path.clone(),
-          selected_case_count,
-          unresolved_inputs,
-          failure_message: Some(error),
-          resolved_inputs,
-        },
+      );
+      match case_matrix_result {
+        Ok(_) => {
+          run.finish_span(
+            &candidate_span,
+            SpanFinish {
+              status_code: TraceStatusCode::Ok,
+              summary: Some(format!("Validated candidate {}", candidate.recipe_id)),
+              failure: None,
+            },
+          )?;
+          AppValidatedCandidate {
+            recipe_id: candidate.recipe_id.clone(),
+            taxonomy_id: candidate.taxonomy_id.clone(),
+            status: AppValidationStatus::Validated,
+            rationale: format!(
+              "All {} candidate case(s) executed successfully through the shared runtime.",
+              selected_case_count
+            ),
+            recipe_path: candidate.recipe_path.clone(),
+            case_matrix_path: candidate.case_matrix_path.clone(),
+            selected_case_count,
+            unresolved_inputs,
+            failure_message: None,
+            resolved_inputs,
+          }
+        }
+        Err(error) => {
+          run.finish_span(
+            &candidate_span,
+            SpanFinish {
+              status_code: TraceStatusCode::Error,
+              summary: Some(format!(
+                "Candidate {} failed validation",
+                candidate.recipe_id
+              )),
+              failure: Some(error.clone()),
+            },
+          )?;
+          AppValidatedCandidate {
+            recipe_id: candidate.recipe_id.clone(),
+            taxonomy_id: candidate.taxonomy_id.clone(),
+            status: AppValidationStatus::Rejected,
+            rationale: "The candidate was runnable, but live execution failed.".to_string(),
+            recipe_path: candidate.recipe_path.clone(),
+            case_matrix_path: candidate.case_matrix_path.clone(),
+            selected_case_count,
+            unresolved_inputs,
+            failure_message: Some(error),
+            resolved_inputs,
+          }
+        }
       }
     } else {
       AppValidatedCandidate {
@@ -2723,9 +2760,10 @@ mod tests {
   use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse};
-  use crate::recording::RunSpec;
+  use crate::recording::{MemoryRunEventSink, RunSpec, RunStreamEvent};
   use crate::store::LocalStore;
   use crate::trace::RunType;
+  use std::sync::Arc;
 
   struct TestProbeDriver;
 
@@ -2967,6 +3005,75 @@ mod tests {
     assert!(resolved.contains_key("query"));
   }
 
+  #[test]
+  fn validate_app_distillation_nests_case_runs_in_app_validate_run() {
+    let root = temp_dir("app-validate-nested-cases");
+    let sink = Arc::new(MemoryRunEventSink::new());
+    let runtime = test_runtime(root.clone()).with_event_sink(sink.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("candidate.recipe.json");
+    let case_matrix_path = root.join("candidate.cases.json");
+
+    let mut analysis = sample_analysis_with_strategy(
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    );
+    analysis.probe_path = root.join("missing-probe.json");
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    write_pretty_json(&recipe_path, &test_candidate_manifest_value())
+      .expect("candidate recipe should write");
+    write_pretty_json(&case_matrix_path, &test_candidate_matrix_value())
+      .expect("candidate matrix should write");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.recorded.skill".to_string(),
+        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
+
+    let validate_run_ids = sink
+      .drain_for_test()
+      .into_iter()
+      .filter_map(|event| match event {
+        RunStreamEvent::RunFinished { run, .. } if run.run_type == RunType::Validate => {
+          Some(run.run_id)
+        }
+        _ => None,
+      })
+      .collect::<Vec<_>>();
+    assert_eq!(
+      validate_run_ids.len(),
+      1,
+      "app validation should not create standalone case-matrix validate runs"
+    );
+    let canonical = runtime
+      .read_run(validate_run_ids[0].as_str())
+      .expect("app validate run should read");
+    assert_eq!(canonical.spans[0].name, "auv.validate");
+    assert!(canonical.spans.iter().any(|span| span.name == "auv.case"));
+    assert!(
+      canonical
+        .spans
+        .iter()
+        .any(|span| span.name == "auv.execute")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
   fn sample_analysis_with_strategy(taxonomy_id: &str) -> AppAnalysis {
     AppAnalysis {
       analysis_version: APP_ANALYSIS_VERSION.to_string(),
@@ -3067,6 +3174,14 @@ mod tests {
         disturbance_classes: &[DisturbanceClass::None],
         max_disturbance: DisturbanceClass::None,
       },
+      CommandSpec {
+        id: "test.skill.invoke",
+        summary: "Test skill command",
+        driver_id: "test.probe",
+        operation: "test_operation",
+        disturbance_classes: &[DisturbanceClass::None],
+        max_disturbance: DisturbanceClass::None,
+      },
     ]);
     let drivers = DriverRegistry::new(vec![Box::new(TestProbeDriver)]);
     Runtime::new(
@@ -3075,5 +3190,55 @@ mod tests {
       drivers,
       LocalStore::new(project_root).expect("store should initialize"),
     )
+  }
+
+  fn test_candidate_manifest_value() -> Value {
+    serde_json::json!({
+      "recipe_id": "test.recorded.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "fixture.app", "display_mode": "fixture" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "test app validation nesting",
+      "disturbance_policy": {
+        "max_disturbance": "none",
+        "declared_classes": ["none"]
+      },
+      "steps": [{
+        "id": "first",
+        "command_id": "test.skill.invoke",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        },
+        "expect": {
+          "output_must_contain": ["ok"]
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    })
+  }
+
+  fn test_candidate_matrix_value() -> Value {
+    serde_json::json!({
+      "skill_id": "test.recorded.skill",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "baseline",
+        "status": "validated",
+        "inputs": {},
+        "disturbance": "none"
+      }]
+    })
   }
 }
