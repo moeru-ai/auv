@@ -57,11 +57,15 @@ remain as files or blobs rather than being embedded directly in events.
 ## Inspect Server
 
 The inspect server is a read-only HTTP and WebSocket access layer over stored
-and live run data. It is not the runtime execution API.
+and same-process live run data. It is not the runtime execution API.
 
 The server exists so browser viewers, Android WebViews, IDE integrations, and
 other tools can list runs, fetch run structure, load artifacts, and subscribe to
 live run events.
+
+The default CLI endpoint is `127.0.0.1:8765`. A standalone `inspect serve`
+process can read historical runs from `.auv/runs/`; live streaming requires the
+runtime and server to share the same in-process event sink.
 
 Replay and mutation APIs are out of scope for the first inspect-server design.
 

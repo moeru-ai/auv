@@ -340,8 +340,18 @@ Endpoint behavior:
 - `GET /runs/{run_id}/events` returns all event records.
 - `GET /runs/{run_id}/artifacts` returns artifact metadata.
 - `GET /runs/{run_id}/artifacts/{artifact_id}` returns the artifact file or
-  redirects to a local static-file route.
-- `WS /runs/{run_id}/stream` streams incremental updates for a running run.
+  a structured error. The server must resolve artifact paths under the run
+  directory and reject paths or symlinks that escape it.
+- `WS /runs/{run_id}/stream` streams incremental updates for a running run. The
+  first implementation requires the runtime and inspect server to share the
+  same in-process event sink; a standalone `inspect serve` process can serve
+  history but cannot receive live events from another process.
+
+The CLI command is:
+
+```text
+auv-cli inspect serve [--host 127.0.0.1] [--port 8765]
+```
 
 Viewer load flow:
 
@@ -356,15 +366,14 @@ Viewer load flow:
 WebSocket messages should reuse the canonical shapes:
 
 ```json
-{ "type": "span.started", "span": {} }
-{ "type": "event.appended", "event": {} }
-{ "type": "artifact.created", "artifact": {} }
-{ "type": "span.finished", "span": {} }
-{ "type": "run.finished", "run": {} }
+{ "type": "span_started", "run_id": "run_...", "span": {} }
+{ "type": "event_appended", "run_id": "run_...", "event": {} }
+{ "type": "artifact_created", "run_id": "run_...", "artifact": {} }
+{ "type": "span_finished", "run_id": "run_...", "span": {} }
+{ "type": "run_finished", "run_id": "run_...", "run": {} }
 ```
 
-The exact message wrapper can evolve during implementation, but the embedded
-records should remain the same records persisted to disk.
+The embedded records are the same `v1alpha1` records persisted to disk.
 
 ## Suggested Rust Components
 
@@ -376,7 +385,7 @@ Suggested implementation components:
 - Runtime recording context passed through command, skill, probe, distill, and
   validate flows.
 - Formatter layer for `auv inspect` output.
-- Inspect server using `axum`, `tokio`, `tower-http`, and `serde_json`.
+- Inspect server using `axum`, `tokio`, and `serde_json`.
 - Live stream fanout using `tokio::sync::broadcast`.
 
 The first implementation does not need to build the browser viewer. It only
