@@ -417,6 +417,18 @@ fn probe_app_into_run(
     BTreeMap::new(),
     false,
   )?);
+  let mut activate_inputs = BTreeMap::new();
+  activate_inputs.insert("settle_ms".to_string(), "250".to_string());
+  steps.push(invoke_probe_step(
+    runtime,
+    run,
+    parent,
+    "activate-target-app",
+    "debug.activateApp",
+    Some(app.bundle_id.clone()),
+    activate_inputs,
+    true,
+  )?);
 
   let mut window_inputs = BTreeMap::new();
   window_inputs.insert("limit".to_string(), "20".to_string());
@@ -428,7 +440,7 @@ fn probe_app_into_run(
     "debug.observeWindows",
     Some(app.bundle_id.clone()),
     window_inputs,
-    false,
+    true,
   )?);
 
   let mut tree_inputs = BTreeMap::new();
@@ -978,7 +990,9 @@ fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnaly
   });
 
   let primary_window = choose_primary_window(&window_snapshot.windows);
-  let primary_window_bounds = primary_window.map(|window| AppRect::from_observed(&window.bounds));
+  let primary_window_bounds = primary_window
+    .map(|window| AppRect::from_observed(&window.bounds))
+    .or_else(|| primary_window_bounds_from_ax_snapshot(&ax_snapshot));
   let primary_window_display_scale = primary_window_bounds
     .as_ref()
     .and_then(|bounds| display_scale_for_rect_center(&display_snapshot, bounds));
@@ -1221,6 +1235,19 @@ fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnaly
       "The sample OCR query produced filtered matches on the captured image, so OCR-anchor result selection is a candidate grounding strategy.",
     )?);
   }
+  if primary_window_bounds.is_some()
+    && pointer_fallback_surface == AssessmentStatus::Likely
+    && recommended_strategies.is_empty()
+  {
+    recommended_strategies.push(recommended_strategy(
+      "window-action",
+      "window-point",
+      "pointer-click",
+      "captureEvidence",
+      AssessmentStatus::Candidate,
+      "The sampled app surface exposed a stable primary window region but not a reliable semantic target. Distill a window-relative pointer candidate instead of inventing AX or OCR grounding that the probe did not prove.",
+    )?);
+  }
 
   Ok(AppAnalysis {
     analysis_version: APP_ANALYSIS_VERSION.to_string(),
@@ -1234,6 +1261,8 @@ fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResult<AppAnaly
       frontmost_window_title: window_snapshot.frontmost_window_title,
       primary_window_title: primary_window
         .map(|window| window.title.clone())
+        .filter(|title| !title.trim().is_empty())
+        .or_else(|| non_empty_trimmed(&ax_snapshot.window_title))
         .unwrap_or_default(),
       primary_window_bounds,
       primary_window_display_scale,
@@ -1814,11 +1843,25 @@ fn build_annotation_candidates(
 
   if let Some(bounds) = primary_window_bounds.cloned() {
     let compact_bounds = bounds.render_compact();
+    let evidence_step_id = if primary_window.is_some() {
+      "observe-windows"
+    } else {
+      "observe-window-tree"
+    };
+    let note = if primary_window.is_some() {
+      "Primary visible window bounds from the window snapshot."
+    } else {
+      "Primary window bounds inferred from the AX root window because the window snapshot did not expose a visible window."
+    };
     candidates.push(AppSurfaceCandidate {
       candidate_id: "window-primary-region".to_string(),
       area: "window.primary".to_string(),
       kind: "region".to_string(),
-      source: "window".to_string(),
+      source: if primary_window.is_some() {
+        "window".to_string()
+      } else {
+        "ax".to_string()
+      },
       status: AssessmentStatus::Candidate,
       primary_text: primary_window
         .map(|window| window.title.clone())
@@ -1830,9 +1873,9 @@ fn build_annotation_candidates(
       click_point: Some(bounds.center_point()),
       bounds: Some(bounds),
       confidence: None,
-      evidence_step_id: "observe-windows".to_string(),
+      evidence_step_id: evidence_step_id.to_string(),
       input_bindings: BTreeMap::from([("window_bounds".to_string(), compact_bounds)]),
-      notes: vec!["Primary visible window bounds from the window snapshot.".to_string()],
+      notes: vec![note.to_string()],
     });
   }
 
@@ -1990,6 +2033,9 @@ fn annotation_matches_taxonomy(candidate: &AppSurfaceCandidate, taxonomy_id: &st
     }
     "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
       candidate.area == "result-selection" || candidate.candidate_id == "window-primary-region"
+    }
+    "window-action.window-point.pointer-click.capture-evidence" => {
+      candidate.candidate_id == "window-primary-region"
     }
     _ => false,
   }
@@ -2357,6 +2403,20 @@ fn choose_primary_window(windows: &[ObservedWindow]) -> Option<&ObservedWindow> 
     let titled_bonus = if window.title.trim().is_empty() { 0 } else { 1 };
     (area, titled_bonus)
   })
+}
+
+fn primary_window_bounds_from_ax_snapshot(snapshot: &ObservedAxTreeSnapshot) -> Option<AppRect> {
+  snapshot
+    .nodes
+    .iter()
+    .find(|node| {
+      (node.role == "AXWindow"
+        || node.subrole == "AXStandardWindow"
+        || node.subrole.ends_with("Window"))
+        && node.bounds.width > 0
+        && node.bounds.height > 0
+    })
+    .map(|node| AppRect::from_observed(&node.bounds))
 }
 
 fn display_scale_for_rect_center(
@@ -2963,6 +3023,9 @@ fn render_candidate_recipe(
     "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
       Ok(render_result_selection_candidate_recipe(analysis))
     }
+    "window-action.window-point.pointer-click.capture-evidence" => {
+      Ok(render_window_action_candidate_recipe(analysis))
+    }
     other => Err(format!(
       "no candidate distillation template exists yet for strategy taxonomy {}",
       other
@@ -2983,6 +3046,9 @@ fn render_candidate_case_matrix(
     }
     "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
       Ok(render_result_selection_candidate_cases(analysis))
+    }
+    "window-action.window-point.pointer-click.capture-evidence" => {
+      Ok(render_window_action_candidate_cases(analysis))
     }
     other => Err(format!(
       "no candidate case-matrix distillation template exists yet for strategy taxonomy {}",
@@ -3331,6 +3397,116 @@ fn render_result_selection_candidate_cases(analysis: &AppAnalysis) -> Value {
   })
 }
 
+fn render_window_action_candidate_recipe(analysis: &AppAnalysis) -> Value {
+  let app_slug = recipe_app_slug(&analysis.app_identity);
+  json!({
+    "recipe_id": format!("macos.{app_slug}.window_action_candidate.v0"),
+    "version": "0.1.0",
+    "status": "candidate-recipe",
+    "platform": "macOS",
+    "target_app": {
+      "name": analysis.app_identity.app_name,
+      "bundle_id": "${app_id}",
+      "display_mode": "live-desktop"
+    },
+    "strategy": {
+      "family": "window-action",
+      "grounding": "window-point",
+      "activation": "pointer-click",
+      "verificationContract": "captureEvidence"
+    },
+    "objective": format!("Candidate window-relative pointer slice for {} distilled from app-surface analysis.", analysis.app_identity.app_name),
+    "inputs": {
+      "app_id": { "type": "string", "default": analysis.app_identity.bundle_id },
+      "relative_x": { "type": "number", "note": "Replace with a window-relative x ratio in the range [0, 1]." },
+      "relative_y": { "type": "number", "note": "Replace with a window-relative y ratio in the range [0, 1]." },
+      "activate_settle_ms": { "type": "integer", "default": 250 },
+      "post_click_settle_ms": { "type": "integer", "default": 500 }
+    },
+    "preconditions": [
+      "The host is macOS.",
+      format!("{} is installed and can be addressed by ${{app_id}}.", analysis.app_identity.app_name),
+      "Screen Recording and Accessibility permissions are already granted.",
+      "A stable target point can be expressed relative to the primary app window."
+    ],
+    "disturbance_policy": {
+      "max_disturbance": "pointer",
+      "declared_classes": ["none", "foreground_app", "pointer"],
+      "notes": [
+        "This is a candidate distilled from probe/analyze output, not a validated skill.",
+        "The relative_x and relative_y inputs must be grounded against a real target point before validate can promote anything."
+      ]
+    },
+    "steps": [
+      {
+        "id": "activate-target-app",
+        "command_id": "debug.activateApp",
+        "disturbance": { "classes": ["foreground_app"], "max": "foreground_app" },
+        "args": { "target": "${app_id}", "settle_ms": "${activate_settle_ms}" },
+        "purpose": "Bring the app to the foreground before the pointer action."
+      },
+      {
+        "id": "click-window-point",
+        "command_id": "debug.clickWindowPoint",
+        "disturbance": { "classes": ["foreground_app", "pointer"], "max": "pointer" },
+        "args": { "target": "${app_id}", "relative_x": "${relative_x}", "relative_y": "${relative_y}" },
+        "purpose": "Click a window-relative target point without pretending semantic grounding exists."
+      },
+      {
+        "id": "capture-evidence",
+        "command_id": "debug.captureWindow",
+        "disturbance": { "classes": ["none"], "max": "none" },
+        "args": { "target": "${app_id}", "activate_target_before_capture": true, "label": format!("{app_slug}-window-action") },
+        "expect": { "artifact_count_at_least": 1 },
+        "purpose": "Capture post-click evidence for later inspection."
+      }
+    ],
+    "verification": {
+      "expected_signals": [
+        "The app can be foregrounded.",
+        "A stable target point can be clicked relative to the resolved window.",
+        "A post-click window screenshot artifact exists."
+      ],
+      "success_criteria": [
+        "The window-relative pointer click succeeds.",
+        "A post-click evidence artifact exists."
+      ],
+      "non_goals": [
+        "This candidate does not prove semantic selection.",
+        "This candidate does not prove app-specific intent like search, playback, or result activation."
+      ]
+    },
+    "known_limits": {
+      "candidate_only": "This recipe was distilled from analysis output and has not been validated yet.",
+      "relative_point": "The relative_x and relative_y inputs must be grounded against a real window target before validate.",
+      "semantic_success": "This candidate only proves a window-relative pointer action shape."
+    }
+  })
+}
+
+fn render_window_action_candidate_cases(analysis: &AppAnalysis) -> Value {
+  json!({
+    "skill_id": format!("macos.{}.window_action_candidate.v0", recipe_app_slug(&analysis.app_identity)),
+    "version": "0.1.0",
+    "status": "candidate-case-matrix",
+    "cases": [
+      {
+        "case_id": "default-candidate",
+        "status": "candidate",
+        "inputs": {
+          "relative_x": "TODO_RELATIVE_X",
+          "relative_y": "TODO_RELATIVE_Y"
+        },
+        "disturbance": "pointer",
+        "notes": [
+          "Generated from app analyze output.",
+          "Replace relative_x and relative_y with a concrete window-relative target before validate."
+        ]
+      }
+    ]
+  })
+}
+
 #[derive(Clone, Debug)]
 struct CoordinateReadinessReport {
   ready_for_logical_input: bool,
@@ -3600,6 +3776,21 @@ mod tests {
       serde_json::from_value(recipe).expect("candidate recipe should parse");
     validate_skill_manifest(&manifest).expect("candidate recipe should validate");
     let matrix_value = render_native_text_candidate_cases(&analysis);
+    let matrix: SkillCaseMatrix =
+      serde_json::from_value(matrix_value).expect("candidate matrix should parse");
+    validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
+    validate_case_matrix_against_skill(&manifest, &matrix).expect("candidate matrix should align");
+  }
+
+  #[test]
+  fn window_action_distillation_template_validates() {
+    let analysis =
+      sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
+    let recipe = render_window_action_candidate_recipe(&analysis);
+    let manifest: SkillManifest =
+      serde_json::from_value(recipe).expect("candidate recipe should parse");
+    validate_skill_manifest(&manifest).expect("candidate recipe should validate");
+    let matrix_value = render_window_action_candidate_cases(&analysis);
     let matrix: SkillCaseMatrix =
       serde_json::from_value(matrix_value).expect("candidate matrix should parse");
     validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
@@ -3877,6 +4068,118 @@ mod tests {
       analysis.available_surfaces.accessibility_tree,
       AssessmentStatus::Unavailable
     );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn build_app_analysis_emits_window_action_from_ax_root_window() {
+    let root = temp_dir("ax-root-window-app-probe");
+    let probe_path = root.join("probe.json");
+    let permissions_path = root.join("artifact_probe-permissions.txt");
+    let displays_path = root.join("artifact_display-list.json");
+    let readiness_path = root.join("artifact_coordinate-readiness-report.txt");
+    let windows_path = root.join("artifact_observe-windows.txt");
+    let ax_path = root.join("artifact_window-tree.txt");
+
+    fs::write(
+      &permissions_path,
+      "screenRecording=granted\naccessibility=granted\nautomationToSystemEvents=granted\nlaunchHostProcess=Atlas\n",
+    )
+    .expect("permissions artifact should write");
+    fs::write(
+      &displays_path,
+      serde_json::to_string(&vec![serde_json::json!({
+        "display_ref": "display_0",
+        "native_display_id": "1",
+        "is_main": true,
+        "is_builtin": true,
+        "global_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+        "visible_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+        "scale_factor": 2.0,
+        "physical_pixel_size": {"width": 3024, "height": 1964}
+      })])
+      .expect("display artifact should serialize"),
+    )
+    .expect("display artifact should write");
+    fs::write(
+      &readiness_path,
+      "readyForLogicalInput=false\nreason=main display pixels are 2x logical points\n",
+    )
+    .expect("readiness artifact should write");
+    fs::write(
+      &windows_path,
+      "observedAt=2026-05-19T00:00:00Z\nfrontmostAppName=网易云音乐\nfrontmostWindowTitle=\nwindowCount=0\n",
+    )
+    .expect("windows artifact should write");
+    fs::write(
+      &ax_path,
+      "observedAt=2026-05-19T00:00:00Z\nappName=网易云音乐\nbundleId=com.netease.163music\npid=44741\nwindowTitle=\nrootRole=AXWindow\nnode\t0\t0\tAXWindow\tAXStandardWindow\t\t\t\t\t\t\t227\t100\t1058\t752\nnodeCount=1\n",
+    )
+    .expect("ax artifact should write");
+
+    let probe = AppProbe {
+      probe_version: APP_PROBE_VERSION.to_string(),
+      created_at_millis: 0,
+      project_root: root.clone(),
+      output_dir: root.clone(),
+      app: AppIdentity {
+        bundle_id: "com.netease.163music".to_string(),
+        app_name: "NeteaseMusic".to_string(),
+        app_path: Some(PathBuf::from("/Applications/NeteaseMusic.app")),
+        main_executable_path: None,
+        version: "3.1.7".to_string(),
+        build_version: "3283".to_string(),
+        url_schemes: vec!["orpheus".to_string()],
+        apple_script_addressable: true,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      steps: vec![
+        probe_step_fixture(
+          "probe-permissions",
+          "debug.probePermissions",
+          vec![permissions_path],
+        ),
+        probe_step_fixture("list-displays", "debug.listDisplays", vec![displays_path]),
+        probe_step_fixture(
+          "probe-coordinate-readiness",
+          "debug.probeCoordinateReadiness",
+          vec![readiness_path],
+        ),
+        probe_step_fixture(
+          "observe-windows",
+          "debug.observeWindows",
+          vec![windows_path],
+        ),
+        probe_step_fixture(
+          "observe-window-tree",
+          "debug.observeWindowTree",
+          vec![ax_path],
+        ),
+      ],
+    };
+
+    let analysis = build_app_analysis(&probe_path, &probe).expect("analysis should still build");
+    assert_eq!(
+      analysis.window_context.primary_window_bounds,
+      Some(AppRect {
+        x: 227,
+        y: 100,
+        width: 1058,
+        height: 752,
+      })
+    );
+    let window_candidate = analysis
+      .annotation_candidates
+      .iter()
+      .find(|candidate| candidate.candidate_id == "window-primary-region")
+      .expect("window candidate should exist");
+    assert_eq!(window_candidate.source, "ax");
+    assert_eq!(window_candidate.evidence_step_id, "observe-window-tree");
+    assert!(analysis.recommended_strategies.iter().any(|strategy| {
+      strategy.taxonomy_id == "window-action.window-point.pointer-click.capture-evidence"
+    }));
 
     let _ = fs::remove_dir_all(root);
   }

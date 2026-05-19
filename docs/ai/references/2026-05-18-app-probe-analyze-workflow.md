@@ -39,6 +39,7 @@ The current implementation records:
    - `debug.probePermissions`
    - `debug.listDisplays`
    - `debug.probeCoordinateReadiness`
+   - `debug.activateApp`
    - `debug.observeWindows`
    - `debug.observeWindowTree`
    - `debug.captureDisplay`
@@ -108,6 +109,10 @@ At minimum they may carry:
 
 This is the start of a contract that can later describe fixed-layout or
 window-relative action targets without collapsing back into ad-hoc README prose.
+
+When the semantic surface is weak but the probe still exposed a stable primary
+window region, `app analyze` may now emit a `window-primary-region` annotation
+derived from either the visible window snapshot or the AX root window fallback.
 
 If the probe captured only a partial app identity or some target-specific
 steps failed, `app analyze` should still produce `analysis.json` and `report.md`
@@ -255,6 +260,23 @@ This is the current honesty bar for `app validate`:
 - promote only the slices that really run live
 - keep unresolved candidate slices in `candidate`
 - do not use auto-grounding as permission to fabricate validation
+
+## Fixed-Layout Pointer Result
+
+The current NetEaseMusic V2 pass now covers a different kind of truth:
+
+- `app probe` still records weak semantic signals
+- `app analyze` can recover one `window-primary-region` candidate from the AX
+  root window even when `observe-windows` reports zero visible windows
+- `app distill` can emit one generic
+  `window-action.window-point.pointer-click.capture-evidence` candidate
+- `app validate` keeps that candidate in `candidate` until `relative_x` and
+  `relative_y` are grounded live
+
+That is the current honesty bar for fixed-layout baselines:
+
+- keep the window-relative pointer slice machine-readable
+- do not pretend it is already a semantic search or playback skill
 
 ## Relationship To V2
 

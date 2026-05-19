@@ -60,12 +60,21 @@ That means the current baseline is:
 
 but still only a fixed-layout local slice.
 
-It is not yet a promoted bundle member because the current V2 workflow has not
-re-expressed this slice through:
+It is not yet a promoted bundle member because the current V2 workflow only
+re-expresses part of this slice so far:
 
-- app-surface analysis
-- candidate or annotation objects
-- validation or promotion truth
+- `app analyze` can now emit one `window-primary-region` annotation from the
+  AX root window fallback
+- `app distill` can now emit one
+  `window-action.window-point.pointer-click.capture-evidence` candidate
+- `app validate` keeps that candidate in `candidate` because `relative_x` and
+  `relative_y` are still unresolved
+
+That is useful progress, but it still does not produce:
+
+- semantic search-entry grounding
+- semantic result-selection grounding
+- validated playback truth through the V2 path
 
 ## Current Honest Classification
 
@@ -74,6 +83,7 @@ The right classification for this NetEaseMusic slice is:
 - `local-validated-recipe`
 - `fixed-layout baseline`
 - `phase-2 input`
+- `window-relative pointer candidate available`
 - `not yet promoted`
 
 The wrong classification would be:
@@ -96,6 +106,7 @@ That makes it a good stress sample for:
 
 - selector coherence
 - candidate / annotation layer design
+- window-relative pointer candidate distillation
 - activation-vs-semantic verification boundaries
 
 ## Next Product Step
@@ -105,8 +116,9 @@ Do not force this recipe directly into the frozen skill tree.
 The next step should be:
 
 1. keep the recipe as a truthful local baseline
-2. use it to pressure-test V2 candidate / annotation contracts
-3. only promote it after the workflow can describe it without lying
+2. keep using it to pressure-test V2 candidate / annotation contracts
+3. ground the fixed points into honest window-relative targets
+4. only promote it after the workflow can describe and validate it without lying
 
 ## Related Files
 

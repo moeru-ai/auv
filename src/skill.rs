@@ -78,6 +78,7 @@ pub enum SkillStrategyFamily {
   ResultSelection,
   Playback,
   NativeText,
+  WindowAction,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +87,7 @@ pub enum SkillGrounding {
   OcrAnchor,
   VisualRow,
   AxText,
+  WindowPoint,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,6 +169,12 @@ impl SkillStrategyTaxonomy {
         activation: SkillActivation::PointerFocusClipboardPaste,
         verification_contract: SkillVerificationContract::VerifyAxText,
       },
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::WindowAction,
+        grounding: SkillGrounding::WindowPoint,
+        activation: SkillActivation::PointerClick,
+        verification_contract: SkillVerificationContract::CaptureEvidence,
+      },
     ];
     ALLOWED
   }
@@ -191,8 +199,9 @@ impl SkillStrategyFamily {
       "result-selection" => Ok(Self::ResultSelection),
       "playback" => Ok(Self::Playback),
       "native-text" => Ok(Self::NativeText),
+      "window-action" => Ok(Self::WindowAction),
       other => Err(format!(
-        "strategy.family {} is unsupported; allowed values: search-entry, result-selection, playback, native-text",
+        "strategy.family {} is unsupported; allowed values: search-entry, result-selection, playback, native-text, window-action",
         other
       )),
     }
@@ -204,6 +213,7 @@ impl SkillStrategyFamily {
       Self::ResultSelection => "result-selection",
       Self::Playback => "playback",
       Self::NativeText => "native-text",
+      Self::WindowAction => "window-action",
     }
   }
 }
@@ -215,8 +225,9 @@ impl SkillGrounding {
       "ocr-anchor" => Ok(Self::OcrAnchor),
       "visual-row" => Ok(Self::VisualRow),
       "ax-text" => Ok(Self::AxText),
+      "window-point" => Ok(Self::WindowPoint),
       other => Err(format!(
-        "strategy.grounding {} is unsupported; allowed values: ax-text-input, ocr-anchor, visual-row, ax-text",
+        "strategy.grounding {} is unsupported; allowed values: ax-text-input, ocr-anchor, visual-row, ax-text, window-point",
         other
       )),
     }
@@ -228,6 +239,7 @@ impl SkillGrounding {
       Self::OcrAnchor => "ocr-anchor",
       Self::VisualRow => "visual-row",
       Self::AxText => "ax-text",
+      Self::WindowPoint => "window-point",
     }
   }
 }
