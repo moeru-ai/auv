@@ -127,7 +127,7 @@ fn bundle_entry_with(
 
 #[test]
 fn bundle_metadata_version_must_be_semver() {
-  let entry = bundle_entry_with("not-a-version", "", &["com.apple.Notes"]);
+  let entry = bundle_entry_with("not-a-version", "", &["com.example.notes"]);
   let error = verify_bundle_metadata_version(&entry).expect_err("metadata version should fail");
   assert!(error.contains("metadata.version"));
 }
@@ -137,7 +137,7 @@ fn bundle_target_application_scope_rejects_multi_app_bundle() {
   let entry = bundle_entry_with(
     "0.1.0",
     ">=1.0.0, <2.0.0",
-    &["com.apple.Notes", "com.apple.TextEdit"],
+    &["com.example.notes", "com.example.editor"],
   );
   let error = validate_bundle_target_application_scope(&entry)
     .expect_err("multi-app bundle targetApplication should fail");
@@ -146,7 +146,7 @@ fn bundle_target_application_scope_rejects_multi_app_bundle() {
 
 #[test]
 fn bundle_target_application_scope_allows_empty_for_multi_app_bundle() {
-  let entry = bundle_entry_with("0.1.0", "", &["com.apple.Notes", "com.apple.TextEdit"]);
+  let entry = bundle_entry_with("0.1.0", "", &["com.example.notes", "com.example.editor"]);
   let scope = validate_bundle_target_application_scope(&entry)
     .expect("empty targetApplication should be allowed");
   assert!(scope.is_none());
@@ -154,11 +154,11 @@ fn bundle_target_application_scope_allows_empty_for_multi_app_bundle() {
 
 #[test]
 fn bundle_target_application_scope_allows_single_app_bundle() {
-  let entry = bundle_entry_with("0.1.0", ">=1.0.0, <2.0.0", &["com.apple.Notes"]);
+  let entry = bundle_entry_with("0.1.0", ">=1.0.0, <2.0.0", &["com.example.notes"]);
   let scope = validate_bundle_target_application_scope(&entry)
     .expect("single-app targetApplication should be allowed")
     .expect("scope should exist");
-  assert_eq!(scope.0, "com.apple.Notes");
+  assert_eq!(scope.0, "com.example.notes");
   assert!(scope.1.matches(&semver::Version::parse("1.4.0").unwrap()));
 }
 
@@ -221,7 +221,7 @@ fn write_temp_bundle_manifest(
         "coverageSummary": {
           "activationStatus": "validated",
           "semanticSelectionStatus": "not-applicable",
-          "validatedClaims": ["TextEdit marker insertion and AX text verification are validated on macOS."],
+          "validatedClaims": ["Example editor marker insertion and AX text verification are validated on macOS."],
           "boundaryClaims": ["This member is a native text sample, not a music-selection skill."]
         },
         "evidenceRefs": evidence_refs,
@@ -437,7 +437,7 @@ fn verify_bundle_rejects_member_contract_mismatch_with_recipe_strategy() {
   write_temp_bundle_manifest(
     &project_root,
     &["docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md"],
-    "com.apple.TextEdit",
+    "com.example.editor",
     "verifyNowPlayingTitle",
     ">=1.20.0, <2.0.0",
     "",

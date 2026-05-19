@@ -8,8 +8,9 @@ use super::types::{
 use super::xcap_backend;
 use crate::driver::macos::{
   DriverCall, DriverResponse, build_text_artifact, maybe_activate_target_app_for_observation,
-  optional_bool, optional_i64, optional_string, required_f64, sanitize_file_component,
-  screenshot_temp_path,
+  optional_bool, optional_string, parse_app_selector, parse_window_selection, required_f64,
+  resolve_app_ref, resolve_window_candidate, retry_window_capture_operation,
+  sanitize_file_component, screenshot_temp_path, window_capture_readiness_diagnostic,
 };
 use crate::model::{AuvResult, ProducedArtifact, now_millis};
 
@@ -273,10 +274,7 @@ pub(crate) fn capture_region(call: &DriverCall) -> AuvResult<DriverResponse> {
 
 pub(crate) fn capture_window(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "window-capture".to_string());
-  let window_id = optional_string(call, "window_id").map(|value| value.trim().to_string());
-  let window_title = optional_string(call, "window_title").map(|value| value.trim().to_string());
-  let window_index = optional_window_index(call, "window_index")?;
-  let prefer_main_window = optional_bool(call, "prefer_main_window")?.unwrap_or(true);
+  let selection = parse_window_selection(call)?;
   let include_shadow = optional_bool(call, "include_shadow")?.unwrap_or(false);
   if include_shadow {
     return Err(format!(
@@ -289,26 +287,45 @@ pub(crate) fn capture_window(call: &DriverCall) -> AuvResult<DriverResponse> {
     .application_id
     .clone()
     .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty());
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| "operation requires --target <application-id>".to_string())?;
   let activated_app = maybe_activate_target_app_for_observation(call)?;
 
   let displays = xcap_backend::list_displays()?;
-  let windows = xcap_backend::list_windows(&displays)?;
-  let selected = if let Some(window_id) = window_id.as_deref() {
-    select_window_by_id(&windows, window_id)?
-  } else {
-    let matches = windows
-      .iter()
-      .filter(|window| {
-        window_matches_selectors(window, target_app.as_deref(), window_title.as_deref())
-      })
-      .collect::<Vec<_>>();
-
-    select_window_match(&matches, window_index, prefer_main_window)?
-  };
-
-  let displays = xcap_backend::list_displays()?;
-  let (xcap_window, selected) = find_fresh_xcap_window(&selected, &displays)?;
+  let selector = parse_app_selector(&target_app)?;
+  let (selected_candidate, xcap_window, selected) = retry_window_capture_operation(|| {
+    let observed = crate::driver::macos::observe::observe_windows_snapshot(128, &target_app)?;
+    let resolved_app = resolve_app_ref(&observed, &selector)?;
+    let selected_candidate =
+      resolve_window_candidate(&observed, &resolved_app, &displays, &selection)?;
+    if selection.has_selector() && !selected_candidate.is_fully_contained_in_display {
+      return Err(window_capture_readiness_diagnostic(
+        &selected_candidate,
+        &displays,
+      ));
+    }
+    let native_window_id = selected_candidate
+      .native_window_id
+      .as_deref()
+      .ok_or_else(|| {
+        format!(
+          "{}: resolved window candidate has no native window id",
+          capture_error::STALE_WINDOW_REF
+        )
+      })?;
+    let (xcap_window, selected) = find_fresh_xcap_window_by_native_id(
+      native_window_id,
+      selected_candidate.window_ref.window_number,
+      &displays,
+    )?;
+    if selected.display_ref.is_none() {
+      return Err(format!(
+        "{}: refreshed window is not fully contained by one display",
+        capture_error::STALE_WINDOW_REF
+      ));
+    }
+    Ok((selected_candidate, xcap_window, selected))
+  })?;
   let display_ref = selected.display_ref.clone().ok_or_else(|| {
     format!(
       "{}: refreshed window is not fully contained by one display",
@@ -389,6 +406,12 @@ pub(crate) fn capture_window(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("windowRef={}", selected.window_ref),
     format!("displayRef={display_ref}"),
     format!("nativeWindowId={}", selected.native_window_id),
+    format!("candidateIndex={}", selected_candidate.candidate_index),
+    format!("selectionReason={}", selected_candidate.selection_reason),
+    format!(
+      "isFullyContainedInDisplay={}",
+      selected_candidate.is_fully_contained_in_display
+    ),
     format!("includeShadow={include_shadow}"),
     format!(
       "screenshotPixels={:.0}x{:.0}",
@@ -523,135 +546,9 @@ fn render_display_note(display: &DisplayDescriptor) -> String {
   )
 }
 
-fn window_matches_selectors(
-  window: &WindowDescriptor,
-  target_app: Option<&str>,
-  window_title: Option<&str>,
-) -> bool {
-  if let Some(target_app) = target_app
-    && !target_app.is_empty()
-    && window.app_name != target_app
-    && window
-      .owner_bundle_id
-      .as_deref()
-      .map(|bundle_id| bundle_id != target_app)
-      .unwrap_or(true)
-    && window.native_window_id != target_app
-  {
-    return false;
-  }
-  if let Some(window_title) = window_title
-    && !window_title.is_empty()
-    && !window.title.contains(window_title)
-  {
-    return false;
-  }
-  true
-}
-
-fn select_window_by_id(
-  windows: &[WindowDescriptor],
-  window_id: &str,
-) -> AuvResult<WindowDescriptor> {
-  if window_id.trim().is_empty() {
-    return Err(format!(
-      "{}: window_id must not be empty",
-      capture_error::WINDOW_NOT_FOUND
-    ));
-  }
-  let matches = windows
-    .iter()
-    .filter(|window| window.native_window_id == window_id)
-    .collect::<Vec<_>>();
-  match matches.as_slice() {
-    [window] => Ok((*window).clone()),
-    [] => Err(format!(
-      "{}: no xcap window matched window_id {}",
-      capture_error::WINDOW_NOT_FOUND,
-      window_id
-    )),
-    _ => Err(format!(
-      "{}: window_id {} matched {} xcap windows",
-      capture_error::AMBIGUOUS_WINDOW_SELECTOR,
-      window_id,
-      matches.len()
-    )),
-  }
-}
-
-fn optional_window_index(call: &DriverCall, key: &str) -> AuvResult<Option<usize>> {
-  match optional_i64(call, key)? {
-    Some(value) if value < 0 => Err(format!(
-      "invalid --{} value {}: expected a non-negative integer",
-      key, value
-    )),
-    Some(value) => Ok(Some(value as usize)),
-    None => Ok(None),
-  }
-}
-
-fn select_window_match(
-  matches: &[&WindowDescriptor],
-  window_index: Option<usize>,
-  prefer_main_window: bool,
-) -> AuvResult<WindowDescriptor> {
-  if matches.is_empty() {
-    return Err(format!(
-      "{}: no xcap window matched the provided selector",
-      capture_error::WINDOW_NOT_FOUND
-    ));
-  }
-
-  if let Some(window_index) = window_index {
-    return matches
-      .get(window_index)
-      .map(|window| (*window).clone())
-      .ok_or_else(|| {
-        format!(
-          "{}: window_index {} is outside {} matched xcap window(s)",
-          capture_error::WINDOW_NOT_FOUND,
-          window_index,
-          matches.len()
-        )
-      });
-  }
-
-  if matches.len() == 1 {
-    return Ok(matches[0].clone());
-  }
-
-  if prefer_main_window {
-    let mut scored = matches
-      .iter()
-      .map(|window| (main_window_score(window), *window))
-      .collect::<Vec<_>>();
-    scored.sort_by(|(left, _), (right, _)| right.cmp(left));
-    if scored[0].0 != scored[1].0 {
-      return Ok(scored[0].1.clone());
-    }
-  }
-
-  Err(format!(
-    "{}: selector matched {} xcap windows",
-    capture_error::AMBIGUOUS_WINDOW_SELECTOR,
-    matches.len()
-  ))
-}
-
-fn main_window_score(window: &WindowDescriptor) -> (bool, i32, u64) {
-  let area = (window.global_logical_bounds.width.max(0.0)
-    * window.global_logical_bounds.height.max(0.0))
-  .round()
-  .max(0.0) as u64;
-  (
-    window.is_focused.unwrap_or(false),
-    window.z_order.unwrap_or(i32::MIN),
-    area,
-  )
-}
-
-fn find_fresh_xcap_window(
-  selected: &WindowDescriptor,
+fn find_fresh_xcap_window_by_native_id(
+  native_window_id: &str,
+  window_number: i64,
   displays: &[DisplayDescriptor],
 ) -> AuvResult<(xcap::Window, WindowDescriptor)> {
   let windows = xcap::Window::all().map_err(|error| {
@@ -664,7 +561,7 @@ fn find_fresh_xcap_window(
     let Ok(id) = window.id() else {
       continue;
     };
-    if id.to_string() == selected.native_window_id {
+    if id.to_string() == native_window_id {
       let pids = [window.pid().map_err(|error| {
         format!(
           "{}: failed to read refreshed window pid: {error}",
@@ -675,11 +572,7 @@ fn find_fresh_xcap_window(
       .collect::<HashSet<_>>();
       let bundle_ids = xcap_backend::bundle_ids_by_pid(&pids).unwrap_or_else(|_| HashMap::new());
       let refreshed = xcap_backend::descriptor_from_window(
-        selected
-          .window_ref
-          .strip_prefix("window_")
-          .and_then(|value| value.parse::<usize>().ok())
-          .unwrap_or(0),
+        window_number.max(0) as usize,
         window,
         displays,
         &bundle_ids,
@@ -697,107 +590,6 @@ fn find_fresh_xcap_window(
   Err(format!(
     "{}: selected window {} disappeared before capture",
     capture_error::STALE_WINDOW_REF,
-    selected.window_ref
+    window_number
   ))
-}
-
-#[cfg(test)]
-mod window_selector_tests {
-  use super::*;
-
-  fn window(owner_bundle_id: Option<&str>) -> WindowDescriptor {
-    WindowDescriptor {
-      window_ref: "window_0".to_string(),
-      title: "Main".to_string(),
-      app_name: "NetEaseMusic".to_string(),
-      owner_bundle_id: owner_bundle_id.map(str::to_string),
-      owner_pid: Some(42),
-      z_order: Some(10),
-      is_focused: Some(false),
-      is_minimized: Some(false),
-      global_logical_bounds: Rect {
-        x: 0.0,
-        y: 0.0,
-        width: 100.0,
-        height: 100.0,
-      },
-      display_ref: Some("display_0".to_string()),
-      native_window_id: "9001".to_string(),
-      capture_backend: CaptureBackend::XcapMacos,
-    }
-  }
-
-  #[test]
-  fn window_selector_matches_bundle_id_target() {
-    assert!(window_matches_selectors(
-      &window(Some("com.netease.163music")),
-      Some("com.netease.163music"),
-      None
-    ));
-  }
-
-  #[test]
-  fn window_selector_rejects_wrong_bundle_id_target() {
-    assert!(!window_matches_selectors(
-      &window(Some("com.netease.163music")),
-      Some("com.tencent.QQMusicMac"),
-      None
-    ));
-  }
-
-  #[test]
-  fn window_selector_still_matches_app_name_target() {
-    assert!(window_matches_selectors(
-      &window(Some("com.netease.163music")),
-      Some("NetEaseMusic"),
-      None
-    ));
-  }
-
-  #[test]
-  fn window_id_selector_ignores_other_selector_inputs() {
-    let first = window(Some("com.netease.163music"));
-    let mut second = window(Some("com.tencent.QQMusicMac"));
-    second.native_window_id = "9002".to_string();
-    second.app_name = "QQMusic".to_string();
-
-    let selected = select_window_by_id(&[first, second], "9002").unwrap();
-
-    assert_eq!(selected.app_name, "QQMusic");
-  }
-
-  #[test]
-  fn window_selector_uses_window_index_to_disambiguate() {
-    let first = window(Some("com.netease.163music"));
-    let mut second = window(Some("com.netease.163music"));
-    second.native_window_id = "9002".to_string();
-
-    let selected = select_window_match(&[&first, &second], Some(1), true).unwrap();
-
-    assert_eq!(selected.native_window_id, "9002");
-  }
-
-  #[test]
-  fn window_selector_prefers_focused_main_window() {
-    let first = window(Some("com.netease.163music"));
-    let mut second = window(Some("com.netease.163music"));
-    second.native_window_id = "9002".to_string();
-    second.is_focused = Some(true);
-
-    let selected = select_window_match(&[&first, &second], None, true).unwrap();
-
-    assert_eq!(selected.native_window_id, "9002");
-  }
-
-  #[test]
-  fn window_selector_fails_ambiguous_without_preference() {
-    let first = window(Some("com.netease.163music"));
-    let mut second = window(Some("com.netease.163music"));
-    second.native_window_id = "9002".to_string();
-    second.z_order = first.z_order;
-
-    let error = select_window_match(&[&first, &second], None, false).unwrap_err();
-
-    assert!(error.contains(capture_error::AMBIGUOUS_WINDOW_SELECTOR));
-  }
 }

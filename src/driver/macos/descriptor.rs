@@ -7,7 +7,7 @@ pub(crate) fn driver_descriptor() -> DriverDescriptor {
     capabilities: &[
       "observe.screenshot",
       "observe.windows",
-      "observe.window-tree",
+      "observe.ax-tree",
       "observe.permissions",
       "observe.displays",
       "observe.identify-point",

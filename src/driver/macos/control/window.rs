@@ -9,13 +9,16 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
       "operation requires --target <application-id> or --app <application-id>".to_string()
     })?;
   let selector = parse_app_selector(&app)?;
+  let selection = parse_window_selection(call)?;
   activate_target_app(&app)?;
 
-  let snapshot = super::super::observe::observe_windows_snapshot(128, "")?;
+  let displays = super::super::capture::xcap_backend::list_displays()?;
+  let snapshot = super::super::observe::observe_windows_snapshot(128, &app)?;
   let resolved_app = resolve_app_ref(&snapshot, &selector)?;
-  let window = resolve_window_ref(&snapshot, &resolved_app)?;
+  let selected = resolve_window_candidate(&snapshot, &resolved_app, &displays, &selection)?;
+  let window = &selected.window_ref;
 
-  let (logical_x, logical_y, coordinate_summary) = resolve_window_point(call, &window)?;
+  let (logical_x, logical_y, coordinate_summary) = resolve_window_point(call, window)?;
   let button_label = optional_string(call, "button").unwrap_or_else(|| "left".to_string());
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
   let click_interval_ms = resolve_click_interval_ms(call)?;
@@ -55,6 +58,12 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
       format!("windowBounds={}", render_rect_compact(&window.bounds)),
       format!("ownerBundleId={}", window.owner_bundle_id),
       format!("ownerPid={}", window.owner_pid),
+      format!("candidateIndex={}", selected.candidate_index),
+      format!("selectionReason={}", selected.selection_reason),
+      format!(
+        "isFullyContainedInDisplay={}",
+        selected.is_fully_contained_in_display
+      ),
       format!("resolvedLogicalPoint={logical_x:.3},{logical_y:.3}"),
       coordinate_summary.clone(),
       format!("button={button_label}"),
@@ -77,6 +86,12 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
     ),
     format!("windowRef={}", window.window_number),
     format!("windowBounds={}", render_rect_compact(&window.bounds)),
+    format!("candidateIndex={}", selected.candidate_index),
+    format!("selectionReason={}", selected.selection_reason),
+    format!(
+      "isFullyContainedInDisplay={}",
+      selected.is_fully_contained_in_display
+    ),
     format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
     coordinate_summary,
     format!("clickIntervalMs={click_interval_ms}"),

@@ -23,8 +23,16 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-click-{}", sanitize_file_component(&query));
   let activated_app = maybe_activate_target_app_for_observation(call)?;
+  let display_selection = parse_display_selection(call)?;
+  let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
+  let capture_source = resolve_screen_capture_source(&displays, display_selection.as_ref(), None)?;
   let (screenshot_path, capture_contract) =
-    crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&label)?;
+    crate::driver::macos::capture::xcap_backend::capture_display_to_path(
+      &label,
+      Some(&capture_source.display_ref),
+      Some(&capture_source.native_display_id),
+      false,
+    )?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
   let exact = optional_bool(call, "exact")?.unwrap_or(false);
   let case_sensitive = optional_bool(call, "case_sensitive")?.unwrap_or(false);
@@ -104,6 +112,9 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       format!("anchorOffset={anchor_offset_x:.3},{anchor_offset_y:.3}"),
       format!("screenshotCenter={screenshot_center_x:.3},{screenshot_center_y:.3}"),
       format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
+      format!("displayRef={}", capture_source.display_ref),
+      format!("nativeDisplayId={}", capture_source.native_display_id),
+      format!("captureSourceReason={}", capture_source.selection_reason),
       format!("button={button_label}"),
       format!("clickCount={click_count}"),
       format!("clickIntervalMs={click_interval_ms}"),
@@ -128,6 +139,9 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     format!("anchorOffset={anchor_offset_x:.3},{anchor_offset_y:.3}"),
     format!("screenshotCenter={screenshot_center_x:.3},{screenshot_center_y:.3}"),
     format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
+    format!("displayRef={}", capture_source.display_ref),
+    format!("nativeDisplayId={}", capture_source.native_display_id),
+    format!("captureSourceReason={}", capture_source.selection_reason),
     format!("button={button_label}"),
     format!("clickCount={click_count}"),
     format!("clickIntervalMs={click_interval_ms}"),
@@ -152,8 +166,16 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
 pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "screen-row-click".to_string());
   let activated_app = maybe_activate_target_app_for_observation(call)?;
+  let display_selection = parse_display_selection(call)?;
+  let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
+  let capture_source = resolve_screen_capture_source(&displays, display_selection.as_ref(), None)?;
   let (screenshot_path, capture_contract) =
-    crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&label)?;
+    crate::driver::macos::capture::xcap_backend::capture_display_to_path(
+      &label,
+      Some(&capture_source.display_ref),
+      Some(&capture_source.native_display_id),
+      false,
+    )?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
   if !(0.0..=1.0).contains(&min_confidence) {
@@ -266,6 +288,9 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
       format!("rowAnchorRatio={row_anchor_x_ratio:.3},{row_anchor_y_ratio:.3}"),
       format!("screenshotCenter={screenshot_center_x:.3},{screenshot_center_y:.3}"),
       format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
+      format!("displayRef={}", capture_source.display_ref),
+      format!("nativeDisplayId={}", capture_source.native_display_id),
+      format!("captureSourceReason={}", capture_source.selection_reason),
       format!("button={button_label}"),
       format!("clickCount={click_count}"),
       format!("clickIntervalMs={click_interval_ms}"),
@@ -290,6 +315,9 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("rowAnchorMode={row_anchor_mode}"),
     format!("rowAnchorRatio={row_anchor_x_ratio:.3},{row_anchor_y_ratio:.3}"),
     format!("logicalPoint={logical_x:.3},{logical_y:.3}"),
+    format!("displayRef={}", capture_source.display_ref),
+    format!("nativeDisplayId={}", capture_source.native_display_id),
+    format!("captureSourceReason={}", capture_source.selection_reason),
     format!("button={button_label}"),
     format!("clickCount={click_count}"),
     format!("clickIntervalMs={click_interval_ms}"),

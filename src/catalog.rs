@@ -146,6 +146,38 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "debug.findWindowText",
+      summary: "Capture a resolved window and locate OCR text anchors in window pixel space.",
+      driver_id: "macos.observe",
+      operation: "find_window_text",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.waitForWindowText",
+      summary: "Poll resolved-window OCR until a text anchor appears or the timeout expires.",
+      driver_id: "macos.observe",
+      operation: "wait_for_window_text",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.findWindowRows",
+      summary: "Detect visible OCR row bands inside a resolved window.",
+      driver_id: "macos.observe",
+      operation: "find_window_rows",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.waitForWindowRows",
+      summary: "Poll resolved-window row detection until enough rows appear or the timeout expires.",
+      driver_id: "macos.observe",
+      operation: "wait_for_window_rows",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.verifyNowPlayingTitle",
       summary: "Verify the current now-playing title from the observed AX tree without relying on screenshot OCR.",
       driver_id: "macos.observe",
@@ -162,18 +194,18 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
-      id: "debug.observeWindows",
-      summary: "Observe visible macOS windows and capture a text report artifact.",
+      id: "debug.listWindows",
+      summary: "List visible macOS window candidates using the normalized AUV window selector model.",
       driver_id: "macos.observe",
-      operation: "observe_windows",
+      operation: "list_windows",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
-      id: "debug.observeWindowTree",
+      id: "debug.observeAxTree",
       summary: "Capture an AX tree snapshot for a target macOS app window.",
       driver_id: "macos.observe",
-      operation: "observe_window_tree",
+      operation: "observe_ax_tree",
       disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,
       max_disturbance: DisturbanceClass::Keyboard,
     },
@@ -263,6 +295,22 @@ pub fn default_command_catalog() -> CommandCatalog {
       driver_id: "macos.observe",
       operation: "click_screen_row",
       disturbance_classes: POINTER_ONLY,
+      max_disturbance: DisturbanceClass::Pointer,
+    },
+    CommandSpec {
+      id: "debug.clickWindowText",
+      summary: "Capture a resolved window, resolve an OCR text anchor, and click its projected logical point.",
+      driver_id: "macos.observe",
+      operation: "click_window_text",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
+      max_disturbance: DisturbanceClass::Pointer,
+    },
+    CommandSpec {
+      id: "debug.clickWindowRow",
+      summary: "Capture a resolved window, detect visible rows, and click a row-derived projected logical point.",
+      driver_id: "macos.observe",
+      operation: "click_window_row",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
@@ -356,8 +404,8 @@ mod tests {
     assert!(catalog.resolve("debug.findScreenText").is_some());
     assert!(catalog.resolve("debug.verifyNowPlayingTitle").is_some());
     assert!(catalog.resolve("debug.verifyAxText").is_some());
-    assert!(catalog.resolve("debug.observeWindows").is_some());
-    assert!(catalog.resolve("debug.observeWindowTree").is_some());
+    assert!(catalog.resolve("debug.listWindows").is_some());
+    assert!(catalog.resolve("debug.observeAxTree").is_some());
     assert!(catalog.resolve("debug.probePermissions").is_some());
     assert!(catalog.resolve("debug.focusTextInput").is_some());
     assert!(catalog.resolve("debug.pressButton").is_some());
@@ -372,6 +420,39 @@ mod tests {
     assert!(catalog.resolve("debug.clickWindowPoint").is_some());
     assert!(catalog.resolve("debug.clickScreenText").is_some());
     assert!(catalog.resolve("debug.scrollPoint").is_some());
+  }
+
+  #[test]
+  fn command_catalog_resolves_window_listing_commands() {
+    let catalog = default_command_catalog();
+    assert!(catalog.resolve("debug.listDisplays").is_some());
+    assert!(catalog.resolve("debug.listWindows").is_some());
+    assert!(catalog.resolve("debug.observeWindows").is_none());
+  }
+
+  #[test]
+  fn command_catalog_resolves_window_ocr_commands() {
+    let catalog = default_command_catalog();
+    for command_id in [
+      "debug.findWindowText",
+      "debug.waitForWindowText",
+      "debug.clickWindowText",
+      "debug.findWindowRows",
+      "debug.waitForWindowRows",
+      "debug.clickWindowRow",
+    ] {
+      assert!(
+        catalog.resolve(command_id).is_some(),
+        "missing {command_id}"
+      );
+    }
+  }
+
+  #[test]
+  fn command_catalog_renames_window_tree_to_ax_tree() {
+    let catalog = default_command_catalog();
+    assert!(catalog.resolve("debug.observeAxTree").is_some());
+    assert!(catalog.resolve("debug.observeWindowTree").is_none());
   }
 
   #[test]

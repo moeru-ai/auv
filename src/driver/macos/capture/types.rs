@@ -104,8 +104,6 @@ pub(crate) mod capture_error {
   pub(crate) const PERMISSION_DENIED: &str = "capture.permission_denied";
   pub(crate) const DISPLAY_NOT_FOUND: &str = "capture.display_not_found";
   pub(crate) const STALE_DISPLAY_REF: &str = "capture.stale_display_ref";
-  pub(crate) const WINDOW_NOT_FOUND: &str = "capture.window_not_found";
-  pub(crate) const AMBIGUOUS_WINDOW_SELECTOR: &str = "capture.ambiguous_window_selector";
   pub(crate) const STALE_WINDOW_REF: &str = "capture.stale_window_ref";
   pub(crate) const REGION_OUT_OF_BOUNDS: &str = "capture.region_out_of_bounds";
   pub(crate) const REGION_CROSSES_DISPLAYS: &str = "capture.region_crosses_displays";

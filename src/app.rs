@@ -533,8 +533,8 @@ fn probe_app_into_run(
     runtime,
     run,
     parent,
-    "observe-windows",
-    "debug.observeWindows",
+    "list-windows",
+    "debug.listWindows",
     Some(app.bundle_id.clone()),
     window_inputs,
     true,
@@ -547,8 +547,8 @@ fn probe_app_into_run(
     runtime,
     run,
     parent,
-    "observe-window-tree",
-    "debug.observeWindowTree",
+    "observe-ax-tree",
+    "debug.observeAxTree",
     Some(app.bundle_id.clone()),
     tree_inputs,
     true,
@@ -2117,9 +2117,9 @@ fn build_annotation_candidates(
     let click_point = bounds.center_point();
     let input_bindings = window_region_input_bindings(&compact_bounds, &click_point, &bounds);
     let evidence_step_id = if primary_window.is_some() {
-      "observe-windows"
+      "list-windows"
     } else {
-      "observe-window-tree"
+      "observe-ax-tree"
     };
     let note = if primary_window.is_some() {
       "Primary visible window bounds from the window snapshot."
@@ -2165,7 +2165,7 @@ fn build_annotation_candidates(
       "focus-query",
       node,
       query_value,
-      "observe-window-tree",
+      "observe-ax-tree",
       candidate_compatibility(
         &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
         &[],
@@ -2183,7 +2183,7 @@ fn build_annotation_candidates(
       "focus-query",
       node,
       query_value,
-      "observe-window-tree",
+      "observe-ax-tree",
       candidate_compatibility(
         &["native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text"],
         &[],
@@ -2588,7 +2588,7 @@ fn parse_coordinate_readiness(probe: &AppProbe) -> AuvResult<CoordinateReadiness
 }
 
 fn parse_window_snapshot(probe: &AppProbe) -> AuvResult<WindowSnapshotAnalysis> {
-  let report = read_named_text_artifact(probe, "observe-windows", None)?;
+  let report = read_named_text_artifact(probe, "list-windows", Some("window-list"))?;
   let windows = report
     .lines()
     .filter(|line| line.starts_with("window\t"))
@@ -2609,7 +2609,7 @@ fn parse_window_snapshot(probe: &AppProbe) -> AuvResult<WindowSnapshotAnalysis> 
 }
 
 fn parse_ax_snapshot(probe: &AppProbe) -> AuvResult<ObservedAxTreeSnapshot> {
-  let report = read_named_text_artifact(probe, "observe-window-tree", None)?;
+  let report = read_named_text_artifact(probe, "observe-ax-tree", None)?;
   parse_observed_ax_tree(&report)
 }
 
@@ -4262,7 +4262,7 @@ mod tests {
         }),
         click_point: Some(AppPoint { x: 50, y: 20 }),
         confidence: None,
-        evidence_step_id: "observe-window-tree".to_string(),
+        evidence_step_id: "observe-ax-tree".to_string(),
         input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
         compatibility: candidate_compatibility(
           &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
@@ -4457,7 +4457,7 @@ mod tests {
       }),
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
-      evidence_step_id: "observe-window-tree".to_string(),
+      evidence_step_id: "observe-ax-tree".to_string(),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -4701,7 +4701,7 @@ mod tests {
       }),
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
-      evidence_step_id: "observe-window-tree".to_string(),
+      evidence_step_id: "observe-ax-tree".to_string(),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -4944,7 +4944,7 @@ mod tests {
     let permissions_path = root.join("artifact_probe-permissions.txt");
     let displays_path = root.join("artifact_display-list.json");
     let readiness_path = root.join("artifact_coordinate-readiness-report.txt");
-    let windows_path = root.join("artifact_observe-windows.txt");
+    let windows_path = root.join("artifact_window-list.txt");
 
     fs::write(
       &permissions_path,
@@ -4980,8 +4980,8 @@ mod tests {
       project_root: root.clone(),
       output_dir: root.clone(),
       app: AppIdentity {
-        bundle_id: "com.netease.163music".to_string(),
-        app_name: "com.netease.163music".to_string(),
+        bundle_id: "com.example.missing".to_string(),
+        app_name: "com.example.missing".to_string(),
         app_path: None,
         main_executable_path: None,
         version: "unknown".to_string(),
@@ -4990,7 +4990,7 @@ mod tests {
         apple_script_addressable: false,
         launch_services_resolved: false,
         resolution_notes: vec![
-          "LaunchServices could not resolve `com.netease.163music`.".to_string(),
+          "LaunchServices could not resolve `com.example.missing`.".to_string(),
         ],
       },
       steps: vec![
@@ -5005,14 +5005,10 @@ mod tests {
           "debug.probeCoordinateReadiness",
           vec![readiness_path],
         ),
-        probe_step_fixture(
-          "observe-windows",
-          "debug.observeWindows",
-          vec![windows_path],
-        ),
+        probe_step_fixture("list-windows", "debug.listWindows", vec![windows_path]),
         failed_probe_step_fixture(
-          "observe-window-tree",
-          "debug.observeWindowTree",
+          "observe-ax-tree",
+          "debug.observeAxTree",
           "app not available",
         ),
         failed_probe_step_fixture(
@@ -5036,7 +5032,7 @@ mod tests {
       analysis
         .known_boundaries
         .iter()
-        .any(|entry| entry.contains("observe-window-tree"))
+        .any(|entry| entry.contains("observe-ax-tree"))
     );
     assert_eq!(
       analysis.available_surfaces.accessibility_tree,
@@ -5053,8 +5049,8 @@ mod tests {
     let permissions_path = root.join("artifact_probe-permissions.txt");
     let displays_path = root.join("artifact_display-list.json");
     let readiness_path = root.join("artifact_coordinate-readiness-report.txt");
-    let windows_path = root.join("artifact_observe-windows.txt");
-    let ax_path = root.join("artifact_window-tree.txt");
+    let windows_path = root.join("artifact_window-list.txt");
+    let ax_path = root.join("artifact_ax-tree.txt");
 
     fs::write(
       &permissions_path,
@@ -5083,12 +5079,12 @@ mod tests {
     .expect("readiness artifact should write");
     fs::write(
       &windows_path,
-      "observedAt=2026-05-19T00:00:00Z\nfrontmostAppName=网易云音乐\nfrontmostWindowTitle=\nwindowCount=0\n",
+      "observedAt=2026-05-19T00:00:00Z\nfrontmostAppName=ExampleMusic\nfrontmostWindowTitle=\nwindowCount=0\n",
     )
     .expect("windows artifact should write");
     fs::write(
       &ax_path,
-      "observedAt=2026-05-19T00:00:00Z\nappName=网易云音乐\nbundleId=com.netease.163music\npid=44741\nwindowTitle=\nrootRole=AXWindow\nnode\t0\t0\tAXWindow\tAXStandardWindow\t\t\t\t\t\t\t227\t100\t1058\t752\nnodeCount=1\n",
+      "observedAt=2026-05-19T00:00:00Z\nappName=ExampleMusic\nbundleId=com.example.music\npid=44741\nwindowTitle=\nrootRole=AXWindow\nnode\t0\t0\tAXWindow\tAXStandardWindow\t\t\t\t\t\t\t227\t100\t1058\t752\nnodeCount=1\n",
     )
     .expect("ax artifact should write");
 
@@ -5098,9 +5094,9 @@ mod tests {
       project_root: root.clone(),
       output_dir: root.clone(),
       app: AppIdentity {
-        bundle_id: "com.netease.163music".to_string(),
-        app_name: "NeteaseMusic".to_string(),
-        app_path: Some(PathBuf::from("/Applications/NeteaseMusic.app")),
+        bundle_id: "com.example.music".to_string(),
+        app_name: "ExampleMusic".to_string(),
+        app_path: Some(PathBuf::from("/Applications/ExampleMusic.app")),
         main_executable_path: None,
         version: "3.1.7".to_string(),
         build_version: "3283".to_string(),
@@ -5121,16 +5117,8 @@ mod tests {
           "debug.probeCoordinateReadiness",
           vec![readiness_path],
         ),
-        probe_step_fixture(
-          "observe-windows",
-          "debug.observeWindows",
-          vec![windows_path],
-        ),
-        probe_step_fixture(
-          "observe-window-tree",
-          "debug.observeWindowTree",
-          vec![ax_path],
-        ),
+        probe_step_fixture("list-windows", "debug.listWindows", vec![windows_path]),
+        probe_step_fixture("observe-ax-tree", "debug.observeAxTree", vec![ax_path]),
       ],
     };
 
@@ -5150,7 +5138,7 @@ mod tests {
       .find(|candidate| candidate.candidate_id == "window-primary-region")
       .expect("window candidate should exist");
     assert_eq!(window_candidate.source, "ax");
-    assert_eq!(window_candidate.evidence_step_id, "observe-window-tree");
+    assert_eq!(window_candidate.evidence_step_id, "observe-ax-tree");
     assert_eq!(
       window_candidate.input_bindings.get("relative_x"),
       Some(&"0.500000".to_string())

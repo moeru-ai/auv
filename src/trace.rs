@@ -283,7 +283,7 @@ mod tests {
       started_at_millis: 100,
       finished_at_millis: Some(200),
       root_span_id: SpanId::new("0000000000000001"),
-      attributes: BTreeMap::from([("target".to_string(), string_attr("TextEdit"))]),
+      attributes: BTreeMap::from([("target".to_string(), string_attr("ExampleEditor"))]),
       summary: Some("completed".to_string()),
       failure: None,
     };
@@ -302,7 +302,7 @@ mod tests {
         "finished_at_millis": 200,
         "root_span_id": "0000000000000001",
         "attributes": {
-          "target": "TextEdit"
+          "target": "ExampleEditor"
         },
         "summary": "completed",
         "failure": null

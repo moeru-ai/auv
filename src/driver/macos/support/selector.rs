@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
+use std::thread;
+use std::time::Duration;
 
 use super::super::*;
+use crate::driver::macos::capture::types::DisplayDescriptor;
 
 pub(crate) fn parse_app_selector(raw: &str) -> AuvResult<AppSelector> {
   let trimmed = raw.trim();
@@ -100,51 +103,144 @@ pub(crate) fn resolve_app_ref(
   ))
 }
 
-pub(crate) fn resolve_window_ref(
+pub(crate) fn build_window_candidates(
   snapshot: &ObservedWindowSnapshot,
   resolved_app: &ResolvedAppRef,
-) -> AuvResult<WindowRef> {
-  let mut candidate_windows = snapshot
+  displays: &[DisplayDescriptor],
+) -> AuvResult<Vec<WindowCandidate>> {
+  let mut windows = snapshot
     .windows
     .iter()
     .filter(|window| window_matches_resolved_app(window, resolved_app))
+    .filter(|window| is_substantial_window(window))
     .collect::<Vec<_>>();
-  if candidate_windows.is_empty() {
-    return Err(format!(
-      "could not resolve a visible window for selector {:?} via {}",
-      resolved_app.selector.raw, resolved_app.match_strategy
-    ));
+
+  windows.sort_by_key(|window| {
+    std::cmp::Reverse((
+      if window.layer == 0 { 1 } else { 0 },
+      if !window.title.trim().is_empty() {
+        1
+      } else {
+        0
+      },
+      window_area(window),
+    ))
+  });
+
+  Ok(
+    windows
+      .into_iter()
+      .enumerate()
+      .map(|(candidate_index, window)| {
+        let display = containing_display(&window.bounds, displays);
+        let is_main_candidate = candidate_index == 0;
+        WindowCandidate {
+          candidate_index,
+          window_ref: window.to_window_ref(),
+          native_window_id: Some(window.window_number.to_string()),
+          display_ref: display.map(|display| display.display_ref.clone()),
+          native_display_id: display.map(|display| display.native_display_id.clone()),
+          is_main_candidate,
+          is_fully_contained_in_display: display.is_some(),
+          area: window_area(window),
+          selection_reason: if is_main_candidate {
+            "largest-visible-normal-window".to_string()
+          } else {
+            "visible-app-window".to_string()
+          },
+        }
+      })
+      .collect(),
+  )
+}
+
+pub(crate) fn resolve_window_candidate(
+  snapshot: &ObservedWindowSnapshot,
+  resolved_app: &ResolvedAppRef,
+  displays: &[DisplayDescriptor],
+  selection: &WindowSelection,
+) -> AuvResult<WindowCandidate> {
+  let candidates = build_window_candidates(snapshot, resolved_app, displays)?;
+  if selection.has_selector() {
+    let filtered = filter_window_candidates(&candidates, selection);
+    if filtered.len() == 1 {
+      return Ok(filtered[0].clone());
+    }
+    if filtered.len() > 1 {
+      let selector_detail = if selection.title.is_some() {
+        "title"
+      } else if selection.window_ref.is_some() {
+        "window_ref"
+      } else if selection.native_window_id.is_some() {
+        "native_window_id"
+      } else {
+        "selector"
+      };
+      return Err(format!(
+        "multiple window candidates matched {selector_detail}; inspect `debug.listWindows` and provide --window_ref or --native_window_id"
+      ));
+    }
+    return Err(
+      "no window candidate matched the explicit selector; inspect `debug.listWindows` and refresh --window_ref, --native_window_id, or --title"
+        .to_string(),
+    );
   }
 
-  if candidate_windows
-    .iter()
-    .any(|window| is_substantial_window(window))
-  {
-    candidate_windows.retain(|window| is_substantial_window(window));
-  }
-
-  let window = candidate_windows
+  candidates
     .into_iter()
-    .max_by_key(|window| {
-      (
-        if window.layer == 0 { 1 } else { 0 },
-        if is_substantial_window(window) { 1 } else { 0 },
-        if !window.title.trim().is_empty() {
-          1
-        } else {
-          0
-        },
-        window_area(window),
+    .find(|candidate| candidate.is_fully_contained_in_display)
+    .ok_or_else(|| {
+      "could not resolve a fully contained visible window; inspect `debug.listWindows`".to_string()
+    })
+}
+
+pub(crate) fn retry_window_capture_operation<T, F>(mut operation: F) -> AuvResult<T>
+where
+  F: FnMut() -> AuvResult<T>,
+{
+  let retry_delays = [150_u64, 300_u64];
+  for (attempt_index, delay_ms) in retry_delays.iter().copied().enumerate() {
+    match operation() {
+      Ok(value) => return Ok(value),
+      Err(error) if is_retryable_window_capture_error(&error) => {
+        let _ = attempt_index;
+        thread::sleep(Duration::from_millis(delay_ms));
+      }
+      Err(error) => return Err(error),
+    }
+  }
+  operation()
+}
+
+pub(crate) fn is_retryable_window_capture_error(error: &str) -> bool {
+  error.contains("could not resolve a fully contained visible window")
+    || error.contains("refreshed window is not fully contained by one display")
+}
+
+pub(crate) fn window_capture_readiness_diagnostic(
+  candidate: &WindowCandidate,
+  displays: &[DisplayDescriptor],
+) -> String {
+  let display_bounds = displays
+    .iter()
+    .map(|display| {
+      format!(
+        "{}={:.3},{:.3},{:.3},{:.3}",
+        display.display_ref,
+        display.global_logical_bounds.x,
+        display.global_logical_bounds.y,
+        display.global_logical_bounds.width,
+        display.global_logical_bounds.height
       )
     })
-    .ok_or_else(|| {
-      format!(
-        "could not choose a preferred visible window for selector {:?}",
-        resolved_app.selector.raw
-      )
-    })?;
-
-  Ok(window.to_window_ref())
+    .collect::<Vec<_>>()
+    .join("; ");
+  format!(
+    "selected window window_{} is not fully contained by one display; windowBounds={}; displayBounds=[{}]; inspect `debug.listWindows` or choose a fully visible window",
+    candidate.window_ref.window_number,
+    render_observed_rect_compact(&candidate.window_ref.bounds),
+    display_bounds
+  )
 }
 
 fn build_resolved_app_ref(
@@ -209,4 +305,48 @@ fn window_matches_resolved_app(window: &ObservedWindow, resolved_app: &ResolvedA
 
 fn is_substantial_window(window: &ObservedWindow) -> bool {
   window.bounds.width >= 160 && window.bounds.height >= 120
+}
+
+fn filter_window_candidates<'a>(
+  candidates: &'a [WindowCandidate],
+  selection: &WindowSelection,
+) -> Vec<&'a WindowCandidate> {
+  candidates
+    .iter()
+    .filter(|candidate| {
+      selection.window_ref.as_ref().is_none_or(|expected| {
+        expected == &candidate.window_ref.window_number.to_string()
+          || expected == &format!("window_{}", candidate.window_ref.window_number)
+      })
+    })
+    .filter(|candidate| {
+      selection
+        .native_window_id
+        .as_ref()
+        .is_none_or(|expected| candidate.native_window_id.as_ref() == Some(expected))
+    })
+    .filter(|candidate| {
+      selection
+        .title
+        .as_ref()
+        .is_none_or(|expected| candidate.window_ref.title == expected.as_str())
+    })
+    .collect()
+}
+
+fn containing_display<'a>(
+  bounds: &ObservedRect,
+  displays: &'a [DisplayDescriptor],
+) -> Option<&'a DisplayDescriptor> {
+  displays.iter().find(|display| {
+    let display_bounds = &display.global_logical_bounds;
+    bounds.x as f64 >= display_bounds.x
+      && bounds.y as f64 >= display_bounds.y
+      && (bounds.x + bounds.width) as f64 <= display_bounds.x + display_bounds.width
+      && (bounds.y + bounds.height) as f64 <= display_bounds.y + display_bounds.height
+  })
+}
+
+fn render_observed_rect_compact(rect: &ObservedRect) -> String {
+  format!("{},{},{},{}", rect.x, rect.y, rect.width, rect.height)
 }

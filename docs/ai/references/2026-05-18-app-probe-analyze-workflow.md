@@ -41,7 +41,7 @@ The current implementation records:
    - `debug.probeCoordinateReadiness`
    - `debug.activateApp`
    - `debug.observeWindows`
-   - `debug.observeWindowTree`
+   - `debug.observeAxTree`
    - `debug.captureDisplay`
    - `debug.findImageText` as a sample OCR-on-artifact pass
 

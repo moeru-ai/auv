@@ -24,7 +24,11 @@ let rawWindowInfo = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[S
 var windows: [[String: Any]] = []
 for window in rawWindowInfo {
   let ownerName = (window[kCGWindowOwnerName as String] as? String) ?? "Unknown"
-  if !appFilter.isEmpty && !ownerName.lowercased().contains(appFilter) {
+  let ownerPid = window[kCGWindowOwnerPID as String] as? Int ?? 0
+  let ownerBundleId = NSRunningApplication(processIdentifier: pid_t(ownerPid))?.bundleIdentifier ?? ""
+  if !appFilter.isEmpty
+    && !ownerName.lowercased().contains(appFilter)
+    && ownerBundleId.lowercased() != appFilter {
     continue
   }
 
@@ -32,9 +36,7 @@ for window in rawWindowInfo {
   let layer = window[kCGWindowLayer as String] as? Int ?? 0
   let bounds = boundsDict(window[kCGWindowBounds as String] as? NSDictionary)
   let title = (window[kCGWindowName as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-  let ownerPid = window[kCGWindowOwnerPID as String] as? Int ?? 0
   let windowNumber = window[kCGWindowNumber as String] as? Int ?? 0
-  let ownerBundleId = NSRunningApplication(processIdentifier: pid_t(ownerPid))?.bundleIdentifier ?? ""
 
   if alpha <= 0 || (bounds?["width"] ?? 0) <= 1 || (bounds?["height"] ?? 0) <= 1 {
     continue

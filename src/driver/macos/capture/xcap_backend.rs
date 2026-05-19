@@ -53,9 +53,18 @@ pub(crate) fn list_displays() -> AuvResult<Vec<DisplayDescriptor>> {
 }
 
 pub(crate) fn capture_main_display_to_path(label: &str) -> AuvResult<(PathBuf, CaptureContract)> {
+  capture_display_to_path(label, None, None, true)
+}
+
+pub(crate) fn capture_display_to_path(
+  label: &str,
+  display_ref: Option<&str>,
+  native_display_id: Option<&str>,
+  main: bool,
+) -> AuvResult<(PathBuf, CaptureContract)> {
   let monitors = xcap::Monitor::all().map_err(backend_failed)?;
   let displays = descriptors_from_monitors(&monitors)?;
-  let display_index = resolve_display_index(&displays, None, None, true)?;
+  let display_index = resolve_display_index(&displays, display_ref, native_display_id, main)?;
   let display = displays
     .get(display_index)
     .ok_or_else(|| {
@@ -101,24 +110,6 @@ pub(crate) fn capture_main_display_to_path(label: &str) -> AuvResult<(PathBuf, C
   Ok((path, contract))
 }
 
-pub(crate) fn list_windows(displays: &[DisplayDescriptor]) -> AuvResult<Vec<WindowDescriptor>> {
-  let windows = xcap::Window::all().map_err(backend_failed)?;
-  let pids = windows
-    .iter()
-    .filter_map(|window| window.pid().ok())
-    .collect::<HashSet<_>>();
-  let bundle_ids = bundle_ids_by_pid(&pids)?;
-  Ok(
-    windows
-      .iter()
-      .enumerate()
-      .filter_map(|(index, window)| {
-        descriptor_from_window(index, window, displays, &bundle_ids).ok()
-      })
-      .collect(),
-  )
-}
-
 pub(crate) fn descriptor_from_window(
   index: usize,
   window: &xcap::Window,
@@ -150,6 +141,108 @@ pub(crate) fn descriptor_from_window(
     native_window_id: window.id().map_err(backend_failed)?.to_string(),
     capture_backend: CaptureBackend::XcapMacos,
   })
+}
+
+pub(crate) fn capture_window_native_id_to_path(
+  label: &str,
+  native_window_id: &str,
+  window_number: i64,
+) -> AuvResult<(PathBuf, CaptureContract, WindowDescriptor)> {
+  let displays = list_displays()?;
+  let windows = xcap::Window::all().map_err(|error| {
+    format!(
+      "{}: failed to re-enumerate windows before capture: {error}",
+      capture_error::BACKEND_FAILED
+    )
+  })?;
+  for window in &windows {
+    let Ok(id) = window.id() else {
+      continue;
+    };
+    if id.to_string() != native_window_id {
+      continue;
+    }
+
+    let pids = [window.pid().map_err(|error| {
+      format!(
+        "{}: failed to read refreshed window pid: {error}",
+        capture_error::STALE_WINDOW_REF
+      )
+    })?]
+    .into_iter()
+    .collect::<HashSet<_>>();
+    let bundle_ids = bundle_ids_by_pid(&pids).unwrap_or_else(|_| HashMap::new());
+    let selected = descriptor_from_window(
+      window_number.max(0) as usize,
+      window,
+      &displays,
+      &bundle_ids,
+    )
+    .map_err(|error| {
+      format!(
+        "{}: failed to refresh selected window descriptor: {error}",
+        capture_error::STALE_WINDOW_REF
+      )
+    })?;
+    let display_ref = selected.display_ref.clone().ok_or_else(|| {
+      format!(
+        "{}: refreshed window is not fully contained by one display",
+        capture_error::STALE_WINDOW_REF
+      )
+    })?;
+    let display = displays
+      .iter()
+      .find(|display| display.display_ref == display_ref)
+      .ok_or_else(|| {
+        format!(
+          "{}: refreshed window display {} is missing from the display list",
+          capture_error::STALE_DISPLAY_REF,
+          display_ref
+        )
+      })?;
+    let image = window.capture_image().map_err(map_xcap_capture_error)?;
+    let path = screenshot_temp_path(label);
+    let screenshot_pixel_size = save_rgba_image(image, &path)?;
+    let pixel_to_logical_scale = Scale2D {
+      x: selected.global_logical_bounds.width / screenshot_pixel_size.width,
+      y: selected.global_logical_bounds.height / screenshot_pixel_size.height,
+    };
+    let logical_to_pixel_scale = Scale2D {
+      x: screenshot_pixel_size.width / selected.global_logical_bounds.width,
+      y: screenshot_pixel_size.height / selected.global_logical_bounds.height,
+    };
+    let contract = CaptureContract {
+      coordinate_contract_version: 1,
+      capture_source: CaptureSource::Window {
+        window_ref: selected.window_ref.clone(),
+        display_ref: display_ref.clone(),
+        native_window_id: selected.native_window_id.clone(),
+        native_display_id: display.native_display_id.clone(),
+      },
+      capture_backend: CaptureBackend::XcapMacos,
+      include_shadow: false,
+      source_global_logical_bounds: selected.global_logical_bounds.clone(),
+      source_physical_pixel_bounds: Rect {
+        x: (selected.global_logical_bounds.x - display.global_logical_bounds.x)
+          * display.logical_to_pixel_scale.x,
+        y: (selected.global_logical_bounds.y - display.global_logical_bounds.y)
+          * display.logical_to_pixel_scale.y,
+        width: screenshot_pixel_size.width,
+        height: screenshot_pixel_size.height,
+      },
+      screenshot_pixel_size,
+      pixel_to_logical_scale,
+      logical_to_pixel_scale,
+      captured_at_unix_ms: now_millis(),
+    };
+    return Ok((path, contract, selected));
+  }
+
+  Err(format!(
+    "{}: selected window {} disappeared before capture",
+    capture_error::STALE_WINDOW_REF,
+    native_window_id
+  ))
 }
 
 pub(crate) fn bundle_ids_by_pid(pids: &HashSet<u32>) -> AuvResult<HashMap<u32, String>> {

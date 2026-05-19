@@ -24,7 +24,7 @@ graph TD
   A --> B["Shared runtime primitives"]
   B --> B1["activateApp / pressKey / focusTextInput / pressButton"]
   B --> B2["typeText / pasteTextPreserveClipboard"]
-  B --> B3["observeWindowTree / verifyImageText / verifyNowPlayingTitle / verifyAxText"]
+  B --> B3["observeAxTree / verifyImageText / verifyNowPlayingTitle / verifyAxText"]
 
   A --> C["QQ音乐 narrow skill"]
   C --> C1["search submit"]

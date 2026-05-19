@@ -54,6 +54,82 @@ segments.
 Artifacts are referenced from spans or events by metadata. Large payloads should
 remain as files or blobs rather than being embedded directly in events.
 
+## Observation Scope
+
+An observation scope is the coordinate and capture surface used by an
+observation or pointer action. The scope determines how region ratios are
+interpreted, how OCR or row bounds are projected into clickable coordinates,
+and which candidate objects are eligible for selection.
+
+The current scope terms are `screen`, `display`, `window`, and `region`.
+
+## Screen
+
+A screen is the logical desktop observation surface. It is the user-facing
+workspace formed by one or more displays.
+
+`screen` is a logical term, not a physical identifier. AUV should not expose a
+`screen_id` for desktop automation. Commands that operate at screen level may
+choose a display-backed capture source, but selector names should use display
+terminology when they refer to physical or system display objects.
+
+## Display
+
+A display is a physical or system-reported monitor area that contributes to the
+logical screen.
+
+Display selectors identify which part of the screen to capture or inspect. AUV
+may expose selectors such as a display ref, native display id, or main-display
+flag. Display refs are scoped to an observation snapshot unless a command
+explicitly documents a stronger stability guarantee.
+
+## Window
+
+A window is an application-owned observation surface with bounds, ownership
+metadata, and a relationship to one or more displays.
+
+For the first macOS window-capture implementation, AUV treats a window as
+eligible for window-scoped capture only when it can be resolved to one display.
+If a window straddles displays or its display containment is ambiguous, the
+operation should fail with structured metadata rather than guessing. Future
+platforms may need richer containment models for surfaces such as browser
+elements that overlap multiple layout or backing surfaces.
+
+## Window Candidate
+
+A window candidate is one possible window match returned by a window-listing
+operation. Candidates should include enough metadata for inspection and stable
+selection, such as window ref, native window id when available, owner bundle id,
+owner pid, title, bounds, display relationship, layer, area, visibility, and the
+reason it appears in the ordered list.
+
+Candidate list order is useful for presentation and fallback heuristics, but it
+is not a stable identity. Recipes should prefer explicit selectors such as a
+window ref from the same observation, a native window id, an owner/title
+predicate, or another documented stable selector over relying on a bare list
+index.
+
+## Window Resolver
+
+A window resolver turns a target application and optional window selector into
+one selected window candidate.
+
+All window-scoped commands should share the same resolver so that
+`captureWindow`, `clickWindowPoint`, OCR window commands, and row window
+commands agree about which window they are using. When the resolver cannot make
+a clear choice, it should return an ambiguity error that points users to the
+window-listing API instead of silently selecting an arbitrary candidate.
+
+## Region
+
+A region is a crop or filter applied inside an observation scope.
+
+Region coordinates and ratios are relative to the current scope. For example, a
+`region_top_ratio` on a window-scoped command is relative to the captured
+window image, while the same ratio on a display-scoped command is relative to
+the selected display capture. A region should not be used as a substitute for
+the scope itself.
+
 ## Inspect Server
 
 The inspect server is a read-only HTTP and WebSocket access layer over stored

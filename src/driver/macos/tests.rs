@@ -6,14 +6,17 @@ use super::{
   OcrTextMatch, ScreenshotDimensions,
   control::common::{ClickPointCallOptions, build_click_point_call},
   support::{
-    app_contains_window, assess_coordinate_readiness, filter_ocr_matches, find_now_playing_ax_node,
+    TextMatchCommandReport, app_contains_window, assess_coordinate_readiness,
+    build_window_candidates, filter_ocr_matches, find_now_playing_ax_node,
     group_ocr_matches_into_rows, optional_bool, optional_f64, parse_app_selector,
-    parse_display_snapshot, parse_mouse_button, parse_observed_ax_tree,
+    parse_display_selection, parse_display_snapshot, parse_mouse_button, parse_observed_ax_tree,
     parse_ocr_region_constraint, parse_ocr_text_snapshot, parse_shortcut,
-    parse_visual_rows_snapshot, process_is_alive, project_main_screenshot_point,
-    read_lock_owner_pid, read_png_dimensions, render_rect_compact, resolve_app_ref,
-    resolve_display_point, resolve_scroll_deltas, resolve_window_point, resolve_window_ref,
-    sanitize_file_component, special_key_code, swift_string_literal, temp_file_path, window_area,
+    parse_visual_rows_snapshot, parse_window_selection, process_is_alive,
+    project_main_screenshot_point, read_lock_owner_pid, read_png_dimensions, render_rect_compact,
+    render_text_match_command_json, resolve_app_ref, resolve_display_point,
+    resolve_screen_capture_source, resolve_scroll_deltas, resolve_window_candidate,
+    resolve_window_point, sanitize_file_component, special_key_code, swift_string_literal,
+    temp_file_path, window_area,
   },
 };
 use crate::{
@@ -168,12 +171,12 @@ fn assess_coordinate_readiness_flags_retina_backing_mismatch() {
 #[test]
 fn parse_ocr_text_snapshot_parses_matches() {
   let snapshot = parse_ocr_text_snapshot(sample_ocr_report()).expect("OCR report should parse");
-  assert_eq!(snapshot.query, "I DRINK THE LIGHT");
+  assert_eq!(snapshot.query, "Primary Track");
   assert_eq!(snapshot.image_width, 3024);
   assert_eq!(snapshot.image_height, 1964);
   assert_eq!(snapshot.matches.len(), 2);
   assert_eq!(snapshot.matches[0].match_index, 0);
-  assert_eq!(snapshot.matches[0].text, "I DRINK THE LIGHT (Jengi Remix)");
+  assert_eq!(snapshot.matches[0].text, "Primary Track Remix");
   assert_eq!(snapshot.matches[0].bounds.x, 741);
   assert_eq!(snapshot.matches[1].match_index, 1);
   assert!((snapshot.matches[1].confidence - 0.945678).abs() < f64::EPSILON);
@@ -213,7 +216,7 @@ fn filter_ocr_matches_applies_confidence_and_region() {
   };
   let filtered = filter_ocr_matches(&snapshot.matches, 0.95, Some(&region));
   assert_eq!(filtered.len(), 1);
-  assert_eq!(filtered[0].text, "I DRINK THE LIGHT (Jengi Remix)");
+  assert_eq!(filtered[0].text, "Primary Track Remix");
 }
 
 #[test]
@@ -264,9 +267,9 @@ fn group_ocr_matches_into_rows_merges_nearby_vertical_observations() {
 #[test]
 fn find_now_playing_ax_node_matches_title_and_artist() {
   let snapshot = parse_observed_ax_tree(sample_ax_report()).expect("AX report should parse");
-  let node = find_now_playing_ax_node(&snapshot, "天空仍灿烂", Some("周杰伦"), Some("0.4.4"))
+  let node = find_now_playing_ax_node(&snapshot, "TrackAlpha", Some("ArtistAlpha"), Some("0.4.4"))
     .expect("now-playing node should match");
-  assert_eq!(node.title, "歌曲名：天空仍灿烂 - 歌手名：周杰伦");
+  assert_eq!(node.title, "Track: TrackAlpha - Artist: ArtistAlpha");
 }
 
 #[test]
@@ -325,7 +328,7 @@ fn build_click_point_call_populates_required_inputs() {
       click_count: 2,
       click_interval_ms: Some(80),
       settle_ms: Some(300),
-      app: Some("com.apple.TextEdit"),
+      app: Some("com.example.editor"),
     },
   );
   assert_eq!(call.operation, "click_point");
@@ -341,7 +344,7 @@ fn build_click_point_call_populates_required_inputs() {
   assert_eq!(call.inputs.get("settle_ms"), Some(&"300".to_string()));
   assert_eq!(
     call.inputs.get("app"),
-    Some(&"com.apple.TextEdit".to_string())
+    Some(&"com.example.editor".to_string())
   );
 }
 
@@ -367,18 +370,18 @@ fn build_click_point_call_omits_optional_inputs_when_absent() {
 
 #[test]
 fn app_contains_window_matches_bundleish_identifiers() {
-  assert!(app_contains_window("com.apple.TextEdit", "TextEdit"));
-  assert!(app_contains_window("QQ音乐", "QQ音乐"));
-  assert!(!app_contains_window("TextEdit", "Notes"));
+  assert!(app_contains_window("com.example.editor", "example.editor"));
+  assert!(app_contains_window("ExampleMusic", "ExampleMusic"));
+  assert!(!app_contains_window("ExampleEditor", "OtherApp"));
 }
 
 #[test]
 fn window_area_uses_window_bounds() {
   let window = super::ObservedWindow {
     window_number: 7,
-    app_name: "TextEdit".to_string(),
+    app_name: "ExampleEditor".to_string(),
     owner_pid: 1,
-    owner_bundle_id: "com.apple.TextEdit".to_string(),
+    owner_bundle_id: "com.example.editor".to_string(),
     layer: 0,
     title: "Untitled".to_string(),
     bounds: super::ObservedRect {
@@ -425,21 +428,43 @@ fn resolve_window_point_rejects_mixed_modes() {
 }
 
 #[test]
+fn parse_window_selection_accepts_ref_native_id_and_title() {
+  let call = build_call([
+    ("window_ref", "42"),
+    ("native_window_id", "42"),
+    ("title", "Main Window"),
+  ]);
+
+  let selection = parse_window_selection(&call).expect("selection should parse");
+
+  assert_eq!(selection.window_ref.as_deref(), Some("42"));
+  assert_eq!(selection.native_window_id.as_deref(), Some("42"));
+  assert_eq!(selection.title.as_deref(), Some("Main Window"));
+}
+
+#[test]
+fn parse_window_selection_rejects_window_index() {
+  let call = build_call([("window_index", "1")]);
+
+  let error = parse_window_selection(&call).expect_err("window_index should be rejected");
+
+  assert!(error.contains("--window_index is not supported"));
+}
+
+#[test]
 fn parse_app_selector_recognizes_bundle_id() {
-  let selector =
-    parse_app_selector("com.netease.163music").expect("bundle id selector should parse");
-  assert_eq!(selector.bundle_id.as_deref(), Some("com.netease.163music"));
+  let selector = parse_app_selector("com.example.music").expect("bundle id selector should parse");
+  assert_eq!(selector.bundle_id.as_deref(), Some("com.example.music"));
   assert!(selector.app_name_hint.is_none());
 }
 
 #[test]
 fn resolve_app_ref_prefers_exact_bundle_id_matches() {
-  let selector =
-    parse_app_selector("com.netease.163music").expect("bundle id selector should parse");
+  let selector = parse_app_selector("com.example.music").expect("bundle id selector should parse");
   let snapshot = super::ObservedWindowSnapshot {
-    frontmost_app_name: "NetEaseMusic".to_string(),
-    frontmost_app_bundle_id: "com.netease.163music".to_string(),
-    frontmost_window_title: "网易云音乐".to_string(),
+    frontmost_app_name: "ExampleMusic".to_string(),
+    frontmost_app_bundle_id: "com.example.music".to_string(),
+    frontmost_window_title: "Main Window".to_string(),
     observed_at: "2026-05-18T00:00:00Z".to_string(),
     windows: vec![
       super::ObservedWindow {
@@ -458,11 +483,11 @@ fn resolve_app_ref_prefers_exact_bundle_id_matches() {
       },
       super::ObservedWindow {
         window_number: 9,
-        app_name: "NetEaseMusic".to_string(),
+        app_name: "ExampleMusic".to_string(),
         owner_pid: 30,
-        owner_bundle_id: "com.netease.163music".to_string(),
+        owner_bundle_id: "com.example.music".to_string(),
         layer: 0,
-        title: "网易云音乐".to_string(),
+        title: "Main Window".to_string(),
         bounds: super::ObservedRect {
           x: 100,
           y: 100,
@@ -476,72 +501,224 @@ fn resolve_app_ref_prefers_exact_bundle_id_matches() {
   let resolved = resolve_app_ref(&snapshot, &selector).expect("app ref should resolve");
   assert_eq!(
     resolved.resolved_bundle_id.as_deref(),
-    Some("com.netease.163music")
+    Some("com.example.music")
   );
-  assert_eq!(resolved.resolved_app_name, "NetEaseMusic");
+  assert_eq!(resolved.resolved_app_name, "ExampleMusic");
   assert_eq!(resolved.match_strategy, "bundle-id-exact");
 }
 
 #[test]
-fn resolve_window_ref_prefers_substantial_main_window() {
-  let selector =
-    parse_app_selector("com.netease.163music").expect("bundle id selector should parse");
-  let snapshot = super::ObservedWindowSnapshot {
-    frontmost_app_name: "NetEaseMusic".to_string(),
-    frontmost_app_bundle_id: "com.netease.163music".to_string(),
-    frontmost_window_title: "网易云音乐".to_string(),
-    observed_at: "2026-05-18T00:00:00Z".to_string(),
-    windows: vec![
-      super::ObservedWindow {
-        window_number: 7,
-        app_name: "NetEaseMusic".to_string(),
-        owner_pid: 30,
-        owner_bundle_id: "com.netease.163music".to_string(),
-        layer: 0,
-        title: "StatusIndicator".to_string(),
-        bounds: super::ObservedRect {
-          x: 4532,
-          y: -929,
-          width: 28,
-          height: 28,
-        },
-      },
-      super::ObservedWindow {
-        window_number: 11,
-        app_name: "NetEaseMusic".to_string(),
-        owner_pid: 30,
-        owner_bundle_id: "com.netease.163music".to_string(),
-        layer: 0,
-        title: "".to_string(),
-        bounds: super::ObservedRect {
-          x: 3009,
-          y: 265,
-          width: 1644,
-          height: 1140,
-        },
-      },
-      super::ObservedWindow {
-        window_number: 12,
-        app_name: "NetEaseMusic".to_string(),
-        owner_pid: 30,
-        owner_bundle_id: "com.netease.163music".to_string(),
-        layer: 0,
-        title: "网易云音乐".to_string(),
-        bounds: super::ObservedRect {
-          x: 3009,
-          y: 265,
-          width: 1644,
-          height: 1140,
-        },
-      },
-    ],
+fn build_window_candidates_marks_main_and_containment() {
+  let displays = sample_display_descriptors_for_windows();
+  let snapshot = sample_multi_window_snapshot();
+  let selector = parse_app_selector("com.example.music").expect("selector should parse");
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app should resolve");
+
+  let candidates =
+    build_window_candidates(&snapshot, &resolved, &displays).expect("candidates should build");
+
+  assert_eq!(candidates.len(), 2);
+  assert_eq!(candidates[0].window_ref.window_number, 42);
+  assert!(candidates[0].is_main_candidate);
+  assert!(candidates[0].is_fully_contained_in_display);
+  assert_eq!(candidates[0].display_ref.as_deref(), Some("display_1"));
+  assert_eq!(
+    candidates[0].selection_reason,
+    "largest-visible-normal-window"
+  );
+  assert_eq!(candidates[0].candidate_index, 0);
+}
+
+#[test]
+fn resolve_window_candidate_rejects_ambiguous_title() {
+  let displays = sample_display_descriptors_for_windows();
+  let snapshot = sample_ambiguous_title_window_snapshot();
+  let selector = parse_app_selector("com.example.music").expect("selector should parse");
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app should resolve");
+  let requested = super::WindowSelection {
+    window_ref: None,
+    native_window_id: None,
+    title: Some("Main Window".to_string()),
   };
 
-  let resolved = resolve_app_ref(&snapshot, &selector).expect("app ref should resolve");
-  let window = resolve_window_ref(&snapshot, &resolved).expect("window ref should resolve");
-  assert_eq!(window.window_number, 12);
-  assert_eq!(window.title, "网易云音乐");
-  assert_eq!(window.owner_bundle_id, "com.netease.163music");
+  let error = resolve_window_candidate(&snapshot, &resolved, &displays, &requested)
+    .expect_err("ambiguous title should fail");
+
+  assert!(error.contains("multiple window candidates matched title"));
+  assert!(error.contains("debug.listWindows"));
+}
+
+#[test]
+fn resolve_window_candidate_rejects_stale_explicit_selector() {
+  let displays = sample_display_descriptors_for_windows();
+  let snapshot = sample_multi_window_snapshot();
+  let selector = parse_app_selector("com.example.music").expect("selector should parse");
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app should resolve");
+  let requested = super::WindowSelection {
+    window_ref: Some("window_999".to_string()),
+    native_window_id: None,
+    title: None,
+  };
+
+  let error = resolve_window_candidate(&snapshot, &resolved, &displays, &requested)
+    .expect_err("stale selector should fail");
+
+  assert!(error.contains("no window candidate matched the explicit selector"));
+  assert!(error.contains("debug.listWindows"));
+}
+
+#[test]
+fn resolve_screen_capture_source_prefers_explicit_display() {
+  let displays = sample_display_descriptors_for_windows();
+  let selection = super::DisplaySelection {
+    display_ref: Some("display_1".to_string()),
+    native_display_id: None,
+    main: false,
+  };
+
+  let source = resolve_screen_capture_source(&displays, Some(&selection), None)
+    .expect("source should resolve");
+
+  assert_eq!(source.display_ref, "display_1");
+  assert_eq!(source.selection_reason, "explicit-display-ref");
+}
+
+#[test]
+fn resolve_screen_capture_source_uses_target_window_display() {
+  let displays = sample_display_descriptors_for_windows();
+  let snapshot = sample_multi_window_snapshot();
+  let selector = parse_app_selector("com.example.music").expect("selector should parse");
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app should resolve");
+  let candidate = resolve_window_candidate(
+    &snapshot,
+    &resolved,
+    &displays,
+    &super::WindowSelection::default(),
+  )
+  .expect("candidate should resolve");
+
+  let source = resolve_screen_capture_source(&displays, None, Some(&candidate))
+    .expect("source should resolve");
+
+  assert_eq!(source.display_ref, "display_1");
+  assert_eq!(source.selection_reason, "target-window-display");
+}
+
+#[test]
+fn parse_display_selection_accepts_native_display_id() {
+  let call = build_call([("native_display_id", "2")]);
+
+  let selection = parse_display_selection(&call)
+    .expect("selection should parse")
+    .expect("selection should exist");
+
+  assert_eq!(selection.native_display_id.as_deref(), Some("2"));
+  assert!(!selection.main);
+}
+
+#[test]
+fn window_candidate_json_contains_stable_selector_fields() {
+  let displays = sample_display_descriptors_for_windows();
+  let snapshot = sample_multi_window_snapshot();
+  let selector = parse_app_selector("com.example.music").expect("selector should parse");
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app should resolve");
+  let candidates =
+    build_window_candidates(&snapshot, &resolved, &displays).expect("candidates should build");
+
+  let json = serde_json::to_value(&candidates[0]).expect("candidate should encode");
+
+  assert_eq!(json["candidate_index"], 0);
+  assert_eq!(json["window_ref"]["window_number"], 42);
+  assert_eq!(json["native_window_id"], "42");
+  assert_eq!(json["display_ref"], "display_1");
+  assert_eq!(json["native_display_id"], "2");
+}
+
+#[test]
+fn render_window_list_json_includes_snapshot_and_candidates() {
+  let displays = sample_display_descriptors_for_windows();
+  let snapshot = sample_multi_window_snapshot();
+  let selector = parse_app_selector("com.example.music").expect("selector should parse");
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app should resolve");
+  let candidates =
+    build_window_candidates(&snapshot, &resolved, &displays).expect("candidates should build");
+
+  let json = super::observe::render_window_list_json(&snapshot, &candidates, None)
+    .expect("window list JSON should render");
+  let parsed: serde_json::Value = serde_json::from_str(&json).expect("json should parse");
+
+  assert_eq!(parsed["snapshot"]["frontmost_app_name"], "ExampleMusic");
+  assert_eq!(parsed["snapshot"]["windows"][0]["window_number"], 42);
+  assert_eq!(parsed["candidates"][0]["native_window_id"], "42");
+  assert!(parsed["candidate_resolution"].is_null());
+}
+
+#[test]
+fn window_capture_readiness_diagnostic_names_partial_window_and_display_bounds() {
+  let displays = sample_display_descriptors_for_windows();
+  let mut snapshot = sample_multi_window_snapshot();
+  snapshot.windows[0].bounds = super::ObservedRect {
+    x: 1500,
+    y: 50,
+    width: 1200,
+    height: 800,
+  };
+  let selector = parse_app_selector("com.example.music").expect("selector should parse");
+  let resolved = resolve_app_ref(&snapshot, &selector).expect("app should resolve");
+  let candidate = build_window_candidates(&snapshot, &resolved, &displays)
+    .expect("candidates should build")
+    .remove(0);
+
+  let diagnostic = super::support::window_capture_readiness_diagnostic(&candidate, &displays);
+
+  assert!(diagnostic.contains("window_42"));
+  assert!(diagnostic.contains("not fully contained"));
+  assert!(diagnostic.contains("windowBounds=1500,50,1200,800"));
+  assert!(diagnostic.contains("display_1=1512.000,0.000,1643.000,1053.000"));
+}
+
+#[test]
+fn retryable_window_capture_error_only_matches_transient_containment_failures() {
+  assert!(super::support::is_retryable_window_capture_error(
+    "could not resolve a fully contained visible window; inspect `debug.listWindows`"
+  ));
+  assert!(super::support::is_retryable_window_capture_error(
+    "stale-window-ref: refreshed window is not fully contained by one display"
+  ));
+  assert!(!super::support::is_retryable_window_capture_error(
+    "operation requires --target <application-id>"
+  ));
+}
+
+#[test]
+fn render_text_match_json_records_scope_and_point() {
+  let report = TextMatchCommandReport {
+    scope: "window".to_string(),
+    capture_source: "window_42".to_string(),
+    query: "Primary Track".to_string(),
+    match_count: 1,
+    filtered_match_count: 1,
+    region: Some(super::ObservedRect {
+      x: 10,
+      y: 20,
+      width: 300,
+      height: 200,
+    }),
+    best_match_bounds: Some(super::ObservedRect {
+      x: 40,
+      y: 60,
+      width: 120,
+      height: 24,
+    }),
+    screenshot_point: Some((100.0, 72.0)),
+    logical_point: Some((1650.0, 112.0)),
+  };
+
+  let json = render_text_match_command_json(&report).expect("json should render");
+
+  assert!(json.contains("\"scope\": \"window\""));
+  assert!(json.contains("\"capture_source\": \"window_42\""));
+  assert!(json.contains("\"logical_point\""));
 }
 
 #[test]
@@ -571,8 +748,8 @@ fn sample_window_ref() -> super::WindowRef {
   super::WindowRef {
     window_number: 7,
     owner_pid: 1,
-    owner_bundle_id: "com.apple.TextEdit".to_string(),
-    app_name: "TextEdit".to_string(),
+    owner_bundle_id: "com.example.editor".to_string(),
+    app_name: "ExampleEditor".to_string(),
     title: "Untitled".to_string(),
     bounds: super::ObservedRect {
       x: 100,
@@ -582,6 +759,114 @@ fn sample_window_ref() -> super::WindowRef {
     },
     layer: 0,
   }
+}
+
+fn sample_display_descriptors_for_windows() -> Vec<super::capture::types::DisplayDescriptor> {
+  vec![
+    super::capture::types::DisplayDescriptor {
+      display_ref: "display_0".to_string(),
+      is_main: true,
+      is_builtin: true,
+      global_logical_bounds: super::capture::types::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1512.0,
+        height: 982.0,
+      },
+      visible_logical_bounds: super::capture::types::Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1512.0,
+        height: 982.0,
+      },
+      physical_pixel_size: super::capture::types::Size {
+        width: 3024.0,
+        height: 1964.0,
+      },
+      scale_factor: 2.0,
+      pixel_to_logical_scale: super::capture::types::Scale2D { x: 0.5, y: 0.5 },
+      logical_to_pixel_scale: super::capture::types::Scale2D { x: 2.0, y: 2.0 },
+      native_display_id: "3".to_string(),
+      capture_backend: super::capture::types::CaptureBackend::XcapMacos,
+    },
+    super::capture::types::DisplayDescriptor {
+      display_ref: "display_1".to_string(),
+      is_main: false,
+      is_builtin: false,
+      global_logical_bounds: super::capture::types::Rect {
+        x: 1512.0,
+        y: 0.0,
+        width: 1643.0,
+        height: 1053.0,
+      },
+      visible_logical_bounds: super::capture::types::Rect {
+        x: 1512.0,
+        y: 0.0,
+        width: 1643.0,
+        height: 1053.0,
+      },
+      physical_pixel_size: super::capture::types::Size {
+        width: 3286.0,
+        height: 2106.0,
+      },
+      scale_factor: 2.0,
+      pixel_to_logical_scale: super::capture::types::Scale2D { x: 0.5, y: 0.5 },
+      logical_to_pixel_scale: super::capture::types::Scale2D { x: 2.0, y: 2.0 },
+      native_display_id: "2".to_string(),
+      capture_backend: super::capture::types::CaptureBackend::XcapMacos,
+    },
+  ]
+}
+
+fn sample_multi_window_snapshot() -> super::ObservedWindowSnapshot {
+  super::ObservedWindowSnapshot {
+    frontmost_app_name: "ExampleMusic".to_string(),
+    frontmost_app_bundle_id: "com.example.music".to_string(),
+    frontmost_window_title: "Main Window".to_string(),
+    observed_at: "2026-05-20T00:00:00Z".to_string(),
+    windows: vec![
+      super::ObservedWindow {
+        window_number: 42,
+        app_name: "ExampleMusic".to_string(),
+        owner_pid: 100,
+        owner_bundle_id: "com.example.music".to_string(),
+        layer: 0,
+        title: "Main Window".to_string(),
+        bounds: super::ObservedRect {
+          x: 1600,
+          y: 50,
+          width: 1200,
+          height: 800,
+        },
+      },
+      super::ObservedWindow {
+        window_number: 43,
+        app_name: "ExampleMusic".to_string(),
+        owner_pid: 100,
+        owner_bundle_id: "com.example.music".to_string(),
+        layer: 0,
+        title: "Secondary Window".to_string(),
+        bounds: super::ObservedRect {
+          x: 100,
+          y: 100,
+          width: 320,
+          height: 180,
+        },
+      },
+    ],
+  }
+}
+
+fn sample_ambiguous_title_window_snapshot() -> super::ObservedWindowSnapshot {
+  let mut snapshot = sample_multi_window_snapshot();
+  snapshot.windows[1].title = "Main Window".to_string();
+  snapshot.windows[1].bounds = super::ObservedRect {
+    x: 100,
+    y: 100,
+    width: 900,
+    height: 600,
+  };
+  snapshot
 }
 
 fn sample_display_report() -> &'static str {
@@ -596,11 +881,11 @@ fn sample_ocr_report() -> &'static str {
 imagePath=/tmp/auv-screen.png\n\
 imageWidth=3024\n\
 imageHeight=1964\n\
-query=I DRINK THE LIGHT\n\
+query=Primary Track\n\
 exact=false\n\
 caseSensitive=false\n\
-match\t0\tI DRINK THE LIGHT (Jengi Remix)\t0.998901\t741\t1286\t513\t51\n\
-match\t1\tTHE GODS WE CAN TOUCH\t0.945678\t1604\t808\t300\t42\n\
+match\t0\tPrimary Track Remix\t0.998901\t741\t1286\t513\t51\n\
+match\t1\tSecondary Track\t0.945678\t1604\t808\t300\t42\n\
 matchCount=2\n"
 }
 
@@ -619,15 +904,15 @@ rowCount=2\n"
 
 fn sample_ax_report() -> &'static str {
   "observedAt=2026-05-16T07:00:00Z\n\
-appName=QQ音乐\n\
-bundleId=com.tencent.QQMusicMac\n\
+appName=ExampleMusic\n\
+bundleId=com.example.music\n\
 pid=1495\n\
 windowTitle=\n\
 rootRole=AXWindow\n\
-node\t0\t0\tAXWindow\tAXStandardWindow\tQQMianWindow\t\t\t\t\t\t66\t33\t1280\t857\n\
-node\t1\t0.4\tAXUnknown\t\t播放控制栏\t\t\t\t\t\t298\t800\t1036\t78\n\
-node\t2\t0.4.4\tAXUnknown\t\t歌曲名：天空仍灿烂 - 歌手名：周杰伦\t\t\t\t\t\t375\t812\t264\t24\n\
-node\t2\t0.4.9\tAXUnknown\t\t播放列表\t\t\t\t\t\t1284\t824\t30\t30\n"
+node\t0\t0\tAXWindow\tAXStandardWindow\tMainWindow\t\t\t\t\t\t66\t33\t1280\t857\n\
+node\t1\t0.4\tAXUnknown\t\tPlayback Controls\t\t\t\t\t\t298\t800\t1036\t78\n\
+node\t2\t0.4.4\tAXUnknown\t\tTrack: TrackAlpha - Artist: ArtistAlpha\t\t\t\t\t\t375\t812\t264\t24\n\
+node\t2\t0.4.9\tAXUnknown\t\tPlaylist\t\t\t\t\t\t1284\t824\t30\t30\n"
 }
 
 fn temp_png_path(label: &str) -> PathBuf {

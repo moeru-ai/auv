@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+use serde::Serialize;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ObservedRect {
   pub(crate) x: i64,
   pub(crate) y: i64,
@@ -27,7 +29,7 @@ pub(crate) struct ObservedDisplaySnapshot {
   pub(crate) captured_at: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ObservedWindow {
   pub(crate) window_number: i64,
   pub(crate) app_name: String,
@@ -38,7 +40,7 @@ pub(crate) struct ObservedWindow {
   pub(crate) bounds: ObservedRect,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ObservedWindowSnapshot {
   pub(crate) frontmost_app_name: String,
   pub(crate) frontmost_app_bundle_id: String,
@@ -63,7 +65,7 @@ pub(crate) struct ResolvedAppRef {
   pub(crate) match_strategy: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct WindowRef {
   pub(crate) window_number: i64,
   pub(crate) owner_pid: i64,
@@ -72,6 +74,32 @@ pub(crate) struct WindowRef {
   pub(crate) title: String,
   pub(crate) bounds: ObservedRect,
   pub(crate) layer: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct WindowCandidate {
+  pub(crate) candidate_index: usize,
+  pub(crate) window_ref: WindowRef,
+  pub(crate) native_window_id: Option<String>,
+  pub(crate) display_ref: Option<String>,
+  pub(crate) native_display_id: Option<String>,
+  pub(crate) is_main_candidate: bool,
+  pub(crate) is_fully_contained_in_display: bool,
+  pub(crate) area: i64,
+  pub(crate) selection_reason: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct WindowSelection {
+  pub(crate) window_ref: Option<String>,
+  pub(crate) native_window_id: Option<String>,
+  pub(crate) title: Option<String>,
+}
+
+impl WindowSelection {
+  pub(crate) fn has_selector(&self) -> bool {
+    self.window_ref.is_some() || self.native_window_id.is_some() || self.title.is_some()
+  }
 }
 
 impl ObservedWindow {

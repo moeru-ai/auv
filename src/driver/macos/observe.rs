@@ -183,34 +183,55 @@ pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverR
   })
 }
 
-pub(super) fn observe_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
+pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let limit = optional_i64(call, "limit")?.unwrap_or(12).max(1);
   let app_filter = app_identifier(call).unwrap_or_default();
-  let report = run_swift_script(&build_observe_windows_script(limit, &app_filter))?;
-  let window_count = report_value(&report, "windowCount=")
-    .unwrap_or("0")
-    .parse::<usize>()
-    .unwrap_or(0);
-  let frontmost_app = report_value(&report, "frontmostAppName=")
-    .unwrap_or("")
-    .to_string();
-  let frontmost_window = report_value(&report, "frontmostWindowTitle=")
-    .unwrap_or("")
-    .to_string();
-  let observed_at = report_value(&report, "observedAt=")
-    .unwrap_or("")
-    .to_string();
-  let artifact = build_text_artifact(
-    "observe-windows",
+  let snapshot = observe_windows_snapshot(limit, &app_filter)?;
+  let report = render_window_snapshot_report(&snapshot);
+  let window_count = snapshot.windows.len();
+  let frontmost_app = snapshot.frontmost_app_name.clone();
+  let frontmost_window = snapshot.frontmost_window_title.clone();
+  let observed_at = snapshot.observed_at.clone();
+  let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
+  let candidate_app = if app_filter.trim().is_empty() {
+    snapshot.frontmost_app_bundle_id.trim()
+  } else {
+    app_filter.trim()
+  };
+  let mut candidate_note = None;
+  let rendered_candidates = if candidate_app.is_empty() {
+    Vec::new()
+  } else {
+    match parse_app_selector(candidate_app)
+      .and_then(|selector| resolve_app_ref(&snapshot, &selector))
+      .and_then(|resolved_app| build_window_candidates(&snapshot, &resolved_app, &displays))
+    {
+      Ok(candidates) => candidates,
+      Err(error) => {
+        candidate_note = Some(format!("candidateResolution={error}"));
+        Vec::new()
+      }
+    }
+  };
+  let json = render_window_list_json(&snapshot, &rendered_candidates, candidate_note.as_deref())?;
+  let json_artifact = build_text_artifact(
+    "window-list",
+    "json",
+    "window-list",
+    json,
+    "Machine-readable macOS window candidate list.",
+  )?;
+  let text_artifact = build_text_artifact(
+    "window-list",
     "txt",
-    &format!(
-      "observe-windows-{}",
-      sanitize_file_component(&frontmost_app)
-    ),
+    &format!("window-list-{}", sanitize_file_component(&frontmost_app)),
     report.clone(),
-    "Captured window observation report from the macOS desktop driver.",
+    "Human-readable macOS window candidate report.",
   )?;
   let mut notes = vec![format!("observedAt={observed_at}")];
+  if let Some(candidate_note) = candidate_note {
+    notes.push(candidate_note);
+  }
   for line in report
     .lines()
     .filter(|line| line.starts_with("window\t"))
@@ -238,8 +259,32 @@ pub(super) fn observe_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
     backend: Some("macos.swift.cgwindowlist".to_string()),
     signals: std::collections::BTreeMap::new(),
     notes,
-    artifacts: vec![artifact],
+    artifacts: vec![json_artifact, text_artifact],
   })
+}
+
+#[derive(serde::Serialize)]
+struct WindowListJson<'a> {
+  snapshot: &'a ObservedWindowSnapshot,
+  candidates: &'a [WindowCandidate],
+  candidate_resolution: Option<&'a str>,
+}
+
+pub(super) fn render_window_list_json(
+  snapshot: &ObservedWindowSnapshot,
+  candidates: &[WindowCandidate],
+  candidate_resolution: Option<&str>,
+) -> AuvResult<String> {
+  serde_json::to_string_pretty(&WindowListJson {
+    snapshot,
+    candidates,
+    candidate_resolution,
+  })
+  .map(|mut rendered| {
+    rendered.push('\n');
+    rendered
+  })
+  .map_err(|error| format!("failed to encode window list JSON: {error}"))
 }
 
 pub(super) fn observe_windows_snapshot(
@@ -269,7 +314,33 @@ pub(super) fn observe_windows_snapshot(
   })
 }
 
-pub(super) fn observe_window_tree(call: &DriverCall) -> AuvResult<DriverResponse> {
+fn render_window_snapshot_report(snapshot: &ObservedWindowSnapshot) -> String {
+  let mut lines = vec![
+    format!("observedAt={}", snapshot.observed_at),
+    format!("frontmostAppName={}", snapshot.frontmost_app_name),
+    format!("frontmostAppBundleId={}", snapshot.frontmost_app_bundle_id),
+    format!("frontmostWindowTitle={}", snapshot.frontmost_window_title),
+    format!("windowCount={}", snapshot.windows.len()),
+  ];
+  for window in &snapshot.windows {
+    lines.push(format!(
+      "window\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+      window.app_name,
+      window.owner_pid,
+      window.owner_bundle_id,
+      window.window_number,
+      window.layer,
+      window.title,
+      window.bounds.x,
+      window.bounds.y,
+      window.bounds.width,
+      window.bounds.height
+    ));
+  }
+  lines.join("\n") + "\n"
+}
+
+pub(super) fn observe_ax_tree(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
   let reveal_shortcut = optional_non_empty_string(call, "reveal_shortcut");
   let reveal_settle_ms = optional_positive_u64(call, "reveal_settle_ms")?.unwrap_or(250);
@@ -302,10 +373,10 @@ pub(super) fn observe_window_tree(call: &DriverCall) -> AuvResult<DriverResponse
     .parse::<usize>()
     .unwrap_or(0);
   let artifact = build_text_artifact(
-    "window-tree",
+    "ax-tree",
     "txt",
     &format!(
-      "window-tree-{}",
+      "ax-tree-{}",
       sanitize_file_component(if app_name.is_empty() {
         "app"
       } else {
@@ -648,32 +719,30 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-{}", sanitize_file_component(&query));
   let activated_app = maybe_activate_target_app_for_observation(call)?;
+  let display_selection = parse_display_selection(call)?;
+  let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
+  let capture_source = resolve_screen_capture_source(&displays, display_selection.as_ref(), None)?;
   let (screenshot_path, capture_contract) =
-    crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&label)?;
+    crate::driver::macos::capture::xcap_backend::capture_display_to_path(
+      &label,
+      Some(&capture_source.display_ref),
+      Some(&capture_source.native_display_id),
+      false,
+    )?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
+  let capture = CapturedObservation {
+    scope: "screen".to_string(),
+    capture_source: capture_source.display_ref.clone(),
+    screenshot_path: screenshot_path.clone(),
+    capture_contract,
+    dimensions: dimensions.clone(),
+  };
   let exact = optional_bool(call, "exact")?.unwrap_or(false);
   let case_sensitive = optional_bool(call, "case_sensitive")?.unwrap_or(false);
-  let max_observations = optional_i64(call, "max_observations")?
-    .unwrap_or(64)
-    .clamp(1, 256);
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
-  if !(0.0..=1.0).contains(&min_confidence) {
-    return Err(format!(
-      "invalid --min_confidence value {:.3}: expected a ratio within 0.0..=1.0",
-      min_confidence
-    ));
-  }
   let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
-  let ocr_report = run_swift_script(&build_ocr_find_text_script(
-    screenshot_path.as_path(),
-    &query,
-    exact,
-    case_sensitive,
-    max_observations,
-    region.as_ref(),
-  ))?;
-  let ocr_snapshot = parse_ocr_text_snapshot(&ocr_report)?;
-  let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
+  let (ocr_snapshot, filtered_matches, ocr_report, command_report) =
+    run_text_match_on_capture(call, &capture, &query)?;
   let report_artifact = build_text_artifact(
     "screen-text-report",
     "txt",
@@ -681,6 +750,18 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     ocr_report,
     "Captured Vision OCR text-anchor report for a desktop screenshot.",
   )?;
+  let json_artifact = command_report
+    .as_ref()
+    .map(|report| {
+      build_text_artifact(
+        "screen-text-report",
+        "json",
+        &format!("screen-text-report-{}", sanitize_file_component(&query)),
+        render_text_match_command_json(report)?,
+        "Machine-readable OCR text-anchor command report.",
+      )
+    })
+    .transpose()?;
   let screenshot_artifact = ProducedArtifact {
     kind: "screenshot".to_string(),
     source_path: screenshot_path,
@@ -698,6 +779,9 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       "screenshotPixels={}x{}",
       ocr_snapshot.image_width, ocr_snapshot.image_height
     ),
+    format!("displayRef={}", capture_source.display_ref),
+    format!("nativeDisplayId={}", capture_source.native_display_id),
+    format!("captureSourceReason={}", capture_source.selection_reason),
   ];
   if let Some(region) = region.as_ref() {
     notes.push(render_ocr_region_note(region));
@@ -710,7 +794,7 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     let (screenshot_center_x, screenshot_center_y) = ocr_match_center(best_match);
     let (logical_x, logical_y) =
       crate::driver::macos::capture::xcap_backend::project_capture_pixel_to_global_logical(
-        &capture_contract,
+        &capture.capture_contract,
         screenshot_center_x,
         screenshot_center_y,
       )?;
@@ -742,7 +826,10 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
         .map(|matched| matched.text.as_str()),
     ),
     notes,
-    artifacts: vec![screenshot_artifact, report_artifact],
+    artifacts: match json_artifact {
+      Some(json_artifact) => vec![screenshot_artifact, report_artifact, json_artifact],
+      None => vec![screenshot_artifact, report_artifact],
+    },
   })
 }
 
@@ -763,6 +850,9 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
   }
   let timeout_ms = optional_positive_u64(call, "timeout_ms")?.unwrap_or(3000);
   let poll_interval_ms = optional_positive_u64(call, "poll_interval_ms")?.unwrap_or(250);
+  let display_selection = parse_display_selection(call)?;
+  let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
+  let capture_source = resolve_screen_capture_source(&displays, display_selection.as_ref(), None)?;
   let started_at = Instant::now();
   let mut attempts = 0usize;
   let mut previous_screenshot_path: Option<PathBuf> = None;
@@ -772,7 +862,12 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
     let attempt_label = format!("{label}-attempt-{attempts}");
     let activated_app = maybe_activate_target_app_for_observation(call)?;
     let (screenshot_path, capture_contract) =
-      crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&attempt_label)?;
+      crate::driver::macos::capture::xcap_backend::capture_display_to_path(
+        &attempt_label,
+        Some(&capture_source.display_ref),
+        Some(&capture_source.native_display_id),
+        false,
+      )?;
     let dimensions = read_png_dimensions(&screenshot_path)?;
     let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
     let ocr_report = run_swift_script(&build_ocr_find_text_script(
@@ -832,6 +927,9 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
           "screenshotPixels={}x{}",
           ocr_snapshot.image_width, ocr_snapshot.image_height
         ),
+        format!("displayRef={}", capture_source.display_ref),
+        format!("nativeDisplayId={}", capture_source.native_display_id),
+        format!("captureSourceReason={}", capture_source.selection_reason),
       ];
       if let Some(region) = region.as_ref() {
         notes.push(render_ocr_region_note(region));
@@ -888,8 +986,16 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
 pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "screen-rows".to_string());
   let activated_app = maybe_activate_target_app_for_observation(call)?;
+  let display_selection = parse_display_selection(call)?;
+  let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
+  let capture_source = resolve_screen_capture_source(&displays, display_selection.as_ref(), None)?;
   let (screenshot_path, _capture_contract) =
-    crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&label)?;
+    crate::driver::macos::capture::xcap_backend::capture_display_to_path(
+      &label,
+      Some(&capture_source.display_ref),
+      Some(&capture_source.native_display_id),
+      false,
+    )?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
   let min_confidence = optional_f64(call, "min_confidence")?.unwrap_or(0.0);
   if !(0.0..=1.0).contains(&min_confidence) {
@@ -932,6 +1038,9 @@ pub(super) fn find_screen_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
       "screenshotPixels={}x{}",
       dimensions.width, dimensions.height
     ),
+    format!("displayRef={}", capture_source.display_ref),
+    format!("nativeDisplayId={}", capture_source.native_display_id),
+    format!("captureSourceReason={}", capture_source.selection_reason),
   ];
   if let Some(region) = region.as_ref() {
     notes.push(render_ocr_region_note(region));
@@ -994,6 +1103,9 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
     .clamp(1, 64) as usize;
   let timeout_ms = optional_positive_u64(call, "timeout_ms")?.unwrap_or(3000);
   let poll_interval_ms = optional_positive_u64(call, "poll_interval_ms")?.unwrap_or(250);
+  let display_selection = parse_display_selection(call)?;
+  let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
+  let capture_source = resolve_screen_capture_source(&displays, display_selection.as_ref(), None)?;
   let started_at = Instant::now();
   let mut attempts = 0usize;
   let mut previous_screenshot_path: Option<PathBuf> = None;
@@ -1003,7 +1115,12 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
     let attempt_label = format!("{label}-attempt-{attempts}");
     let activated_app = maybe_activate_target_app_for_observation(call)?;
     let (screenshot_path, _capture_contract) =
-      crate::driver::macos::capture::xcap_backend::capture_main_display_to_path(&attempt_label)?;
+      crate::driver::macos::capture::xcap_backend::capture_display_to_path(
+        &attempt_label,
+        Some(&capture_source.display_ref),
+        Some(&capture_source.native_display_id),
+        false,
+      )?;
     let dimensions = read_png_dimensions(&screenshot_path)?;
     let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
     let detection = detect_screen_rows(
@@ -1055,6 +1172,9 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
           "screenshotPixels={}x{}",
           dimensions.width, dimensions.height
         ),
+        format!("displayRef={}", capture_source.display_ref),
+        format!("nativeDisplayId={}", capture_source.native_display_id),
+        format!("captureSourceReason={}", capture_source.selection_reason),
       ];
       if let Some(region) = region.as_ref() {
         notes.push(render_ocr_region_note(region));

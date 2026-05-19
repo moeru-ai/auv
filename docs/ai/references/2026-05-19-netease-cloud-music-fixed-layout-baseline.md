@@ -2,7 +2,10 @@
 
 Date: 2026-05-19
 
-Status: local validated baseline, not promoted
+Status: superseded baseline, not promoted
+
+This fixed-layout baseline has been superseded by the window-scoped OCR design
+and should not be treated as validated after the 2026-05-20 migration.
 
 ## Purpose
 

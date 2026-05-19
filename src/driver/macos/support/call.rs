@@ -26,6 +26,20 @@ pub(crate) fn required_non_empty_string(call: &DriverCall, key: &str) -> AuvResu
   Ok(value)
 }
 
+pub(crate) fn parse_window_selection(call: &DriverCall) -> AuvResult<WindowSelection> {
+  if call.inputs.contains_key("window_index") {
+    return Err(
+      "--window_index is not supported because window candidate order is not stable; use --window_ref, --native_window_id, or --title"
+        .to_string(),
+    );
+  }
+  Ok(WindowSelection {
+    window_ref: optional_non_empty_string(call, "window_ref"),
+    native_window_id: optional_non_empty_string(call, "native_window_id"),
+    title: optional_non_empty_string(call, "title"),
+  })
+}
+
 pub(crate) fn required_f64(call: &DriverCall, key: &str) -> AuvResult<f64> {
   optional_f64(call, key)?.ok_or_else(|| format!("operation requires --{} <number>", key))
 }
