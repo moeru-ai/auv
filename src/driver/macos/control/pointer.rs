@@ -40,7 +40,7 @@ pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("clickIntervalMs={click_interval_ms}"),
     format!("settleMs={settle_ms}"),
     "coordinateSpace=global-logical".to_string(),
-    "cursorAfter=target".to_string(),
+    "cursorAfter=restored-to-original".to_string(),
   ]
   .join("\n")
     + "\n";
@@ -74,7 +74,7 @@ pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
         resolution.backing_pixel_x, resolution.backing_pixel_y
       ),
       render_display_note(&resolution.display),
-      "cursorAfter=target".to_string(),
+      "cursorAfter=restored-to-original".to_string(),
     ],
     artifacts: vec![artifact],
   })
@@ -103,7 +103,7 @@ pub(crate) fn scroll_point(call: &DriverCall) -> AuvResult<DriverResponse> {
     format!("deltaY={delta_y:.0}"),
     format!("normalizedScroll={normalized_scroll}"),
     "coordinateSpace=global-logical".to_string(),
-    "cursorAfter=target".to_string(),
+    "cursorAfter=restored-to-original".to_string(),
   ]
   .join("\n")
     + "\n";
@@ -136,7 +136,7 @@ pub(crate) fn scroll_point(call: &DriverCall) -> AuvResult<DriverResponse> {
         resolution.backing_pixel_x, resolution.backing_pixel_y
       ),
       render_display_note(&resolution.display),
-      "cursorAfter=target".to_string(),
+      "cursorAfter=restored-to-original".to_string(),
     ],
     artifacts: vec![artifact],
   })
