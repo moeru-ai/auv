@@ -1,19 +1,8 @@
 use std::collections::BTreeMap;
-use std::sync::{LazyLock, Mutex};
-use std::thread;
-use std::time::Duration;
 
 use super::*;
 
-mod daemon;
-mod protocol;
-
-use daemon::OverlayDaemon;
-use protocol::OverlayDaemonCommand::{HideCursor, ShowCursor};
-
 const DEFAULT_PREVIEW_MS: u64 = 250;
-
-static OVERLAY_DAEMON: LazyLock<Mutex<Option<OverlayDaemon>>> = LazyLock::new(|| Mutex::new(None));
 
 pub(crate) fn overlay_show_cursor(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
@@ -128,20 +117,13 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
   }
 
   // 1. Show overlay cursor.
-  let (show_event, daemon_pid) = {
-    let mut guard = lock_overlay_daemon()?;
-    let daemon = ensure_overlay_daemon(&mut guard)?;
-    let ack = daemon.send(ShowCursor {
-      x,
-      y,
-      label: label.clone(),
-    })?;
-    (ack.event, daemon.pid())
-  };
+  crate::driver::macos::native::overlay::show_cursor(x, y, &label)?;
+  let controller_pid = std::process::id();
+  let show_event = "shown".to_string();
 
   // 2. Hold overlay for preview visibility before the click.
   if preview_ms > 0 {
-    thread::sleep(Duration::from_millis(preview_ms));
+    crate::driver::macos::native::overlay::pump_events(preview_ms)?;
   }
 
   // 3. Click. Native pointer bridge handles warp-to-target + CGEvent + warp-restore internally.
@@ -154,21 +136,15 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
   );
 
   if settle_ms > 0 {
-    thread::sleep(Duration::from_millis(settle_ms));
+    crate::driver::macos::native::overlay::pump_events(settle_ms)?;
   }
 
   // 4. Hide overlay cursor regardless of click success.
-  let hide_event = {
-    let mut guard = lock_overlay_daemon()?;
-    if let Some(daemon) = guard.as_mut() {
-      daemon
-        .send(HideCursor)
-        .map(|ack| ack.event)
-        .unwrap_or_else(|_| "hide_failed".to_string())
-    } else {
-      "no_active_daemon".to_string()
-    }
-  };
+  let hide_event =
+    match crate::driver::macos::native::overlay::hide_cursor().map(|_| "hidden".to_string()) {
+      Ok(event) => event,
+      Err(_) => "hide_failed".to_string(),
+    };
 
   // Propagate click errors after overlay cleanup.
   click_result?;
@@ -182,7 +158,7 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
     format!("clickCount={click_count}"),
     format!("clickIntervalMs={click_interval_ms}"),
     format!("settleMs={settle_ms}"),
-    format!("daemonPid={daemon_pid}"),
+    format!("controllerPid={controller_pid}"),
     format!("showEvent={show_event}"),
     format!("hideEvent={hide_event}"),
     format!("displayId={}", resolution.display.display_id),
@@ -216,13 +192,13 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
       "Overlay-clicked {button_name} at global logical point ({x:.3}, {y:.3}) on display #{} with label \"{label}\".",
       resolution.display.display_id
     ),
-    backend: Some("macos.swift.quartz-click+overlay-daemon".to_string()),
+    backend: Some("macos.swift.quartz-click+overlay-ffi".to_string()),
     signals: BTreeMap::from([
       (
         "overlayEvent".to_string(),
         format!("{show_event}+{hide_event}"),
       ),
-      ("daemonPid".to_string(), daemon_pid.to_string()),
+      ("controllerPid".to_string(), controller_pid.to_string()),
       ("cursorDisturbance".to_string(), "warp-visible".to_string()),
       ("experimental".to_string(), "true".to_string()),
     ]),
@@ -234,7 +210,7 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
       format!("clickCount={click_count}"),
       format!("clickIntervalMs={click_interval_ms}"),
       format!("settleMs={settle_ms}"),
-      format!("daemonPid={daemon_pid}"),
+      format!("controllerPid={controller_pid}"),
       render_display_note(&resolution.display),
       "cursorAfter=restored-to-original".to_string(),
       "cursorDisturbance=warp-visible".to_string(),
@@ -268,7 +244,7 @@ pub(crate) fn overlay_shutdown(_call: &DriverCall) -> AuvResult<DriverResponse> 
 pub(crate) struct OverlayWrapperOutcome {
   pub(crate) show_event: String,
   pub(crate) hide_event: String,
-  pub(crate) daemon_pid: u32,
+  pub(crate) controller_pid: u32,
 }
 
 /// Show the overlay cursor at `(x, y)`, run `body`, then hide the overlay —
@@ -284,53 +260,25 @@ pub(crate) fn with_overlay_cursor<R, F>(
 where
   F: FnOnce() -> AuvResult<R>,
 {
-  let (show_event, daemon_pid) = {
-    let mut guard = lock_overlay_daemon()?;
-    let daemon = ensure_overlay_daemon(&mut guard)?;
-    let ack = daemon.send(ShowCursor {
-      x,
-      y,
-      label: label.to_string(),
-    })?;
-    (ack.event, daemon.pid())
-  };
+  crate::driver::macos::native::overlay::show_cursor(x, y, label)?;
+  let show_event = "shown".to_string();
+  let controller_pid = std::process::id();
 
   let body_result = body();
 
-  let hide_event = {
-    let mut guard = lock_overlay_daemon()?;
-    if let Some(daemon) = guard.as_mut() {
-      daemon
-        .send(HideCursor)
-        .map(|ack| ack.event)
-        .unwrap_or_else(|_| "hide_failed".to_string())
-    } else {
-      "no_active_daemon".to_string()
-    }
-  };
+  let hide_event =
+    match crate::driver::macos::native::overlay::hide_cursor().map(|_| "hidden".to_string()) {
+      Ok(event) => event,
+      Err(_) => "hide_failed".to_string(),
+    };
 
   let outcome = OverlayWrapperOutcome {
     show_event,
     hide_event,
-    daemon_pid,
+    controller_pid,
   };
 
   body_result.map(|value| (value, outcome))
-}
-
-fn lock_overlay_daemon() -> AuvResult<std::sync::MutexGuard<'static, Option<OverlayDaemon>>> {
-  OVERLAY_DAEMON
-    .lock()
-    .map_err(|error| format!("overlay daemon lock poisoned: {error}"))
-}
-
-fn ensure_overlay_daemon(daemon: &mut Option<OverlayDaemon>) -> AuvResult<&mut OverlayDaemon> {
-  if daemon.is_none() {
-    *daemon = Some(OverlayDaemon::spawn()?);
-  }
-  daemon
-    .as_mut()
-    .ok_or_else(|| "failed to initialize overlay daemon".to_string())
 }
 
 fn native_overlay_signals(controller_pid: u32, event: &str) -> BTreeMap<String, String> {

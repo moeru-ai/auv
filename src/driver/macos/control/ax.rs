@@ -1,6 +1,3 @@
-use std::thread;
-use std::time::Duration;
-
 use super::super::overlay::with_overlay_cursor;
 use super::super::*;
 use super::common::{
@@ -129,7 +126,7 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   let (press_action, overlay_outcome) = if overlay {
     let (action, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
       if preview_ms > 0 {
-        thread::sleep(Duration::from_millis(preview_ms));
+        crate::driver::macos::native::overlay::pump_events(preview_ms)?;
       }
       let action = crate::driver::macos::native::ax_tree::perform_ax_path_action(
         snapshot.pid,
@@ -138,7 +135,7 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
         &action_name,
       )?;
       if settle_ms > 0 {
-        thread::sleep(Duration::from_millis(settle_ms));
+        crate::driver::macos::native::overlay::pump_events(settle_ms)?;
       }
       Ok(action)
     })?;
@@ -165,7 +162,7 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   if let Some(outcome) = &overlay_outcome {
     report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
     report.push_str(&format!("overlayHideEvent={}\n", outcome.hide_event));
-    report.push_str(&format!("daemonPid={}\n", outcome.daemon_pid));
+    report.push_str(&format!("controllerPid={}\n", outcome.controller_pid));
     report.push_str(&format!("previewMs={preview_ms}\n"));
     report.push_str(&format!("settleMs={settle_ms}\n"));
     report.push_str(&format!("overlayLabel={overlay_label}\n"));
@@ -190,7 +187,7 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
     notes.push("overlayPresentation=visual-only".to_string());
     notes.push(format!("overlayShowEvent={}", outcome.show_event));
     notes.push(format!("overlayHideEvent={}", outcome.hide_event));
-    notes.push(format!("daemonPid={}", outcome.daemon_pid));
+    notes.push(format!("controllerPid={}", outcome.controller_pid));
     notes.push(format!("previewMs={preview_ms}"));
     notes.push(format!("settleMs={settle_ms}"));
     notes.push(format!("overlayLabel={overlay_label}"));
@@ -215,11 +212,14 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
       "overlayEvent".to_string(),
       format!("{}+{}", outcome.show_event, outcome.hide_event),
     );
-    signals.insert("daemonPid".to_string(), outcome.daemon_pid.to_string());
+    signals.insert(
+      "controllerPid".to_string(),
+      outcome.controller_pid.to_string(),
+    );
   }
 
   let backend = if overlay {
-    "macos.ax.perform-action+overlay-daemon"
+    "macos.ax.perform-action+overlay-ffi"
   } else {
     "macos.ax.perform-action"
   };
@@ -397,7 +397,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
   let (press_action, overlay_outcome) = if overlay {
     let (action, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
       if preview_ms > 0 {
-        thread::sleep(Duration::from_millis(preview_ms));
+        crate::driver::macos::native::overlay::pump_events(preview_ms)?;
       }
       let action = crate::driver::macos::native::ax_tree::perform_ax_path_action(
         ax_capture.pid as i32,
@@ -406,7 +406,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
         &action_name,
       )?;
       if settle_ms > 0 {
-        thread::sleep(Duration::from_millis(settle_ms));
+        crate::driver::macos::native::overlay::pump_events(settle_ms)?;
       }
       Ok(action)
     })?;
@@ -464,7 +464,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
   if let Some(outcome) = &overlay_outcome {
     report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
     report.push_str(&format!("overlayHideEvent={}\n", outcome.hide_event));
-    report.push_str(&format!("daemonPid={}\n", outcome.daemon_pid));
+    report.push_str(&format!("controllerPid={}\n", outcome.controller_pid));
     report.push_str(&format!("previewMs={preview_ms}\n"));
     report.push_str(&format!("settleMs={settle_ms}\n"));
     report.push_str(&format!("overlayLabel={overlay_label}\n"));
@@ -512,7 +512,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
     notes.push("overlayPresentation=visual-only".to_string());
     notes.push(format!("overlayShowEvent={}", outcome.show_event));
     notes.push(format!("overlayHideEvent={}", outcome.hide_event));
-    notes.push(format!("daemonPid={}", outcome.daemon_pid));
+    notes.push(format!("controllerPid={}", outcome.controller_pid));
     notes.push(format!("previewMs={preview_ms}"));
     notes.push(format!("settleMs={settle_ms}"));
     notes.push(format!("overlayLabel={overlay_label}"));
@@ -531,11 +531,14 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
       "overlayEvent".to_string(),
       format!("{}+{}", outcome.show_event, outcome.hide_event),
     );
-    signals.insert("daemonPid".to_string(), outcome.daemon_pid.to_string());
+    signals.insert(
+      "controllerPid".to_string(),
+      outcome.controller_pid.to_string(),
+    );
   }
 
   let backend = if overlay {
-    "macos.ax.click-window-text+overlay-daemon"
+    "macos.ax.click-window-text+overlay-ffi"
   } else {
     "macos.ax.click-window-text"
   };
