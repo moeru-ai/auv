@@ -220,6 +220,8 @@ pub(crate) mod ffi {
   }
 
   extern "Swift" {
+    type NativeOverlayController;
+
     fn probe_permissions() -> NativePermissionProbeResponse;
     fn list_displays() -> NativeDisplayListResponse;
     fn list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse;
@@ -239,5 +241,15 @@ pub(crate) mod ffi {
     fn capture_clipboard() -> NativeClipboardSnapshotResponse;
     fn restore_clipboard(snapshot_payload: String) -> NativeActionResponse;
     fn set_clipboard_text(text: String) -> NativeActionResponse;
+    fn make_overlay_controller() -> NativeOverlayController;
+    fn show_overlay_cursor(
+      self: &NativeOverlayController,
+      x: f64,
+      y: f64,
+      label: String,
+    ) -> NativeActionResponse;
+    fn hide_overlay_cursor(self: &NativeOverlayController) -> NativeActionResponse;
+    fn shutdown_overlay_cursor(self: &NativeOverlayController) -> NativeActionResponse;
+    fn pump_overlay_events(duration_ms: u64) -> NativeActionResponse;
   }
 }
