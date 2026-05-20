@@ -1,3 +1,5 @@
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
@@ -35,6 +37,156 @@ pub enum RunUpdate {
     run_id: RunId,
     run: RunRecordV1Alpha1,
   },
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectServerSession {
+  pub url: String,
+  pub store_root: String,
+  pub write_enabled: bool,
+  pub write_token: Option<String>,
+  pub pid: u32,
+  pub started_at_millis: u128,
+}
+
+pub fn default_session_path() -> std::path::PathBuf {
+  std::env::var_os("AUV_INSPECT_SESSION")
+    .map(std::path::PathBuf::from)
+    .unwrap_or_else(|| std::env::temp_dir().join("auv-inspect-session.json"))
+}
+
+pub fn write_inspect_session(session: &InspectServerSession) -> AuvResult<()> {
+  let path = default_session_path();
+  if let Some(parent) = path.parent()
+    && !parent.as_os_str().is_empty()
+  {
+    std::fs::create_dir_all(parent)
+      .map_err(|error| format!("failed to create inspect session directory: {error}"))?;
+  }
+  let bytes = serde_json::to_vec_pretty(session)
+    .map_err(|error| format!("failed to encode inspect session: {error}"))?;
+  write_inspect_session_bytes(&path, &bytes)
+}
+
+fn write_inspect_session_bytes(path: &Path, bytes: &[u8]) -> AuvResult<()> {
+  let temp_path = inspect_session_temp_path(path)?;
+  let write_result = (|| {
+    let mut file = create_inspect_session_temp_file(&temp_path)?;
+    file.write_all(bytes).map_err(|error| {
+      format!(
+        "failed to write inspect session {}: {error}",
+        temp_path.display()
+      )
+    })?;
+    file.sync_all().map_err(|error| {
+      format!(
+        "failed to sync inspect session {}: {error}",
+        temp_path.display()
+      )
+    })?;
+    drop(file);
+    replace_inspect_session_file(&temp_path, path)
+  })();
+
+  if let Err(error) = write_result {
+    let _ = std::fs::remove_file(&temp_path);
+    return Err(error);
+  }
+
+  Ok(())
+}
+
+fn inspect_session_temp_path(path: &Path) -> AuvResult<PathBuf> {
+  let parent = path
+    .parent()
+    .filter(|parent| !parent.as_os_str().is_empty())
+    .unwrap_or_else(|| Path::new("."));
+  let file_name = path
+    .file_name()
+    .ok_or_else(|| format!("inspect session path {} has no file name", path.display()))?;
+  Ok(parent.join(format!(
+    ".{}.{}.{}.tmp",
+    file_name.to_string_lossy(),
+    std::process::id(),
+    crate::model::now_millis()
+  )))
+}
+
+#[cfg(unix)]
+fn create_inspect_session_temp_file(path: &Path) -> AuvResult<std::fs::File> {
+  use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+  let file = std::fs::OpenOptions::new()
+    .write(true)
+    .create_new(true)
+    .mode(0o600)
+    .open(path)
+    .map_err(|error| {
+      format!(
+        "failed to create inspect session temp file {}: {error}",
+        path.display()
+      )
+    })?;
+  std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(|error| {
+    format!(
+      "failed to restrict inspect session temp file {}: {error}",
+      path.display()
+    )
+  })?;
+  Ok(file)
+}
+
+#[cfg(not(unix))]
+fn create_inspect_session_temp_file(path: &Path) -> AuvResult<std::fs::File> {
+  std::fs::OpenOptions::new()
+    .write(true)
+    .create_new(true)
+    .open(path)
+    .map_err(|error| {
+      format!(
+        "failed to create inspect session temp file {}: {error}",
+        path.display()
+      )
+    })
+}
+
+#[cfg(unix)]
+fn replace_inspect_session_file(temp_path: &Path, path: &Path) -> AuvResult<()> {
+  std::fs::rename(temp_path, path).map_err(|error| {
+    format!(
+      "failed to replace inspect session {} from {}: {error}",
+      path.display(),
+      temp_path.display()
+    )
+  })
+}
+
+#[cfg(not(unix))]
+fn replace_inspect_session_file(temp_path: &Path, path: &Path) -> AuvResult<()> {
+  let _ = std::fs::remove_file(path);
+  std::fs::rename(temp_path, path).map_err(|error| {
+    format!(
+      "failed to replace inspect session {} from {}: {error}",
+      path.display(),
+      temp_path.display()
+    )
+  })
+}
+
+pub fn read_inspect_session() -> AuvResult<Option<InspectServerSession>> {
+  let path = default_session_path();
+  if !path.exists() {
+    return Ok(None);
+  }
+  let raw = std::fs::read_to_string(&path)
+    .map_err(|error| format!("failed to read inspect session {}: {error}", path.display()))?;
+  serde_json::from_str(&raw).map(Some).map_err(|error| {
+    format!(
+      "failed to parse inspect session {}: {error}",
+      path.display()
+    )
+  })
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -525,7 +677,9 @@ mod tests {
     TraceStatusCode,
   };
 
-  use super::{ApiRunUpdate, RunRecorder, RunUpdate};
+  use super::{ApiRunUpdate, InspectServerSession, RunRecorder, RunUpdate, write_inspect_session};
+
+  static ENV_LOCK: Mutex<()> = Mutex::new(());
 
   #[derive(Default)]
   struct CapturingRecorder {
@@ -593,5 +747,47 @@ mod tests {
 
     assert_eq!(first.updates(), vec![update.clone()]);
     assert_eq!(second.updates(), vec![update]);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn write_inspect_session_replaces_file_with_owner_only_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let root = std::env::temp_dir().join(format!(
+      "auv-inspect-session-permissions-{}",
+      crate::model::now_millis()
+    ));
+    let path = root.join("session.json");
+    std::fs::create_dir_all(&root).expect("session test directory should write");
+    std::fs::write(&path, "{}").expect("existing session file should write");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+      .expect("existing session file permissions should change");
+    unsafe {
+      std::env::set_var("AUV_INSPECT_SESSION", &path);
+    }
+
+    write_inspect_session(&InspectServerSession {
+      url: "http://127.0.0.1:8765".to_string(),
+      store_root: root.display().to_string(),
+      write_enabled: true,
+      write_token: Some("secret".to_string()),
+      pid: 123,
+      started_at_millis: 456,
+    })
+    .expect("session should write");
+
+    let mode = std::fs::metadata(&path)
+      .expect("session file should exist")
+      .permissions()
+      .mode()
+      & 0o777;
+    unsafe {
+      std::env::remove_var("AUV_INSPECT_SESSION");
+    }
+    let _ = std::fs::remove_dir_all(root);
+
+    assert_eq!(mode, 0o600);
   }
 }

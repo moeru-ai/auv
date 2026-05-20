@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -25,10 +26,19 @@ struct InspectServerState {
   recorder: Arc<BroadcastRunRecorder>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct InspectWriteConfig {
+  pub enabled: bool,
+  pub token: Option<String>,
+  pub no_token: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct InspectServeConfig {
   pub host: String,
   pub port: u16,
+  pub store_root: Option<PathBuf>,
+  pub write: InspectWriteConfig,
 }
 
 impl Default for InspectServeConfig {
@@ -36,8 +46,32 @@ impl Default for InspectServeConfig {
     Self {
       host: DEFAULT_INSPECT_HOST.to_string(),
       port: DEFAULT_INSPECT_PORT,
+      store_root: None,
+      write: InspectWriteConfig::default(),
     }
   }
+}
+
+impl InspectServeConfig {
+  pub fn validate_write_security(&self) -> AuvResult<()> {
+    if !self.write.enabled {
+      return Ok(());
+    }
+    if self.write.no_token && self.write.token.is_some() {
+      return Err("--no-write-token cannot be combined with a write token".to_string());
+    }
+    if self.write.no_token && !is_loopback_host(&self.host) {
+      return Err("non-loopback inspect server write requires a token".to_string());
+    }
+    if !is_loopback_host(&self.host) && self.write.token.is_none() {
+      return Err("non-loopback inspect server write requires a token".to_string());
+    }
+    Ok(())
+  }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+  matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
 /// Single-payload HTML viewer served at `GET /`. Inlines CSS + JS; SVG
@@ -103,7 +137,6 @@ const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
     "image/svg+xml",
   ),
 ];
-
 pub fn router(store: LocalStore, recorder: Arc<BroadcastRunRecorder>) -> Router {
   let state = InspectServerState {
     store: Arc::new(store),
@@ -178,16 +211,27 @@ pub async fn serve(
   recorder: Arc<BroadcastRunRecorder>,
   config: InspectServeConfig,
 ) -> AuvResult<SocketAddr> {
-  let address = format!("{}:{}", config.host, config.port)
-    .parse::<SocketAddr>()
-    .map_err(|error| format!("invalid inspect server address: {error}"))?;
+  config.validate_write_security()?;
+  let address = (config.host.as_str(), config.port);
+  let display_address = format!("{}:{}", config.host, config.port);
   let listener = TcpListener::bind(address)
     .await
-    .map_err(|error| format!("failed to bind inspect server {address}: {error}"))?;
+    .map_err(|error| format!("failed to bind inspect server {display_address}: {error}"))?;
   let local_address = listener
     .local_addr()
     .map_err(|error| format!("failed to read inspect server address: {error}"))?;
   println!("inspect server: http://{local_address}");
+  if config.write.enabled {
+    let session = crate::run_recording::InspectServerSession {
+      url: format!("http://{local_address}"),
+      store_root: store.root().display().to_string(),
+      write_enabled: true,
+      write_token: config.write.token.clone(),
+      pid: std::process::id(),
+      started_at_millis: crate::model::now_millis(),
+    };
+    crate::run_recording::write_inspect_session(&session)?;
+  }
   axum::serve(listener, router(store, recorder))
     .await
     .map_err(|error| format!("inspect server failed: {error}"))?;
@@ -378,6 +422,58 @@ mod tests {
     EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
     SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
+
+  #[test]
+  fn write_config_rejects_no_token_on_non_loopback() {
+    let error = super::InspectServeConfig {
+      host: "0.0.0.0".to_string(),
+      port: 8765,
+      store_root: None,
+      write: super::InspectWriteConfig {
+        enabled: true,
+        token: None,
+        no_token: true,
+      },
+    }
+    .validate_write_security()
+    .expect_err("non-loopback write without token should reject");
+
+    assert!(error.contains("non-loopback"));
+  }
+
+  #[test]
+  fn write_config_allows_no_token_on_loopback() {
+    super::InspectServeConfig {
+      host: "127.0.0.1".to_string(),
+      port: 8765,
+      store_root: None,
+      write: super::InspectWriteConfig {
+        enabled: true,
+        token: None,
+        no_token: true,
+      },
+    }
+    .validate_write_security()
+    .expect("loopback write without token should be allowed");
+  }
+
+  #[test]
+  fn write_config_rejects_token_with_no_token() {
+    let error = super::InspectServeConfig {
+      host: "127.0.0.1".to_string(),
+      port: 8765,
+      store_root: None,
+      write: super::InspectWriteConfig {
+        enabled: true,
+        token: Some("secret".to_string()),
+        no_token: true,
+      },
+    }
+    .validate_write_security()
+    .expect_err("token and no-token should conflict");
+
+    assert!(error.contains("--no-write-token"));
+  }
 
   #[tokio::test]
   async fn routes_return_canonical_records_and_artifact_bytes() {

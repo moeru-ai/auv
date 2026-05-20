@@ -46,19 +46,19 @@ async fn run() -> Result<(), String> {
     write,
   } = &command
   {
-    // Write options are parsed in Task 4 and wired in the inspect write task.
-    let _parsed_write_options = (
-      write.enabled,
-      write.token.as_deref(),
-      write.token_file.as_deref(),
-      write.no_token,
-    );
     let store_root = resolve_store_root(&project_root, store_root.as_ref());
-    let store = auv_cli::store::LocalStore::new(store_root)?;
+    let store = auv_cli::store::LocalStore::new(store_root.clone())?;
     let recorder = Arc::new(auv_cli::run_recording::BroadcastRunRecorder::new(1024));
+    let token = resolve_inspect_serve_write_token(write)?;
     let config = auv_cli::inspect_server::InspectServeConfig {
       host: host.clone(),
       port: *port,
+      store_root: Some(store_root.clone()),
+      write: auv_cli::inspect_server::InspectWriteConfig {
+        enabled: write.enabled || token.is_some(),
+        token,
+        no_token: write.no_token,
+      },
     };
     auv_cli::inspect_server::serve(store, recorder, config).await?;
     return Ok(());
@@ -381,10 +381,125 @@ fn resolve_store_root(project_root: &PathBuf, explicit: Option<&String>) -> Path
     .unwrap_or_else(|| auv_cli::default_project_store_root(project_root.clone()))
 }
 
+fn resolve_inspect_serve_write_token(
+  write: &cli::InspectServeWriteOptions,
+) -> Result<Option<String>, String> {
+  if write.token.is_some() && write.token_file.is_some() {
+    return Err("--write-token cannot be combined with --write-token-file".to_string());
+  }
+
+  if let Some(token) = &write.token {
+    return normalize_write_token("--write-token", token.clone()).map(Some);
+  }
+
+  if let Some(path) = &write.token_file {
+    let token = std::fs::read_to_string(path)
+      .map_err(|error| format!("failed to read write token file {path}: {error}"))?
+      .trim()
+      .to_string();
+    return normalize_write_token("--write-token-file", token).map(Some);
+  }
+
+  if write.enabled && !write.no_token {
+    let token = format!(
+      "session-{}-{}",
+      std::process::id(),
+      auv_cli::model::now_millis()
+    );
+    return normalize_write_token("generated write token", token).map(Some);
+  }
+
+  Ok(None)
+}
+
+fn normalize_write_token(source: &str, token: String) -> Result<String, String> {
+  if token.trim().is_empty() {
+    Err(format!("{source} resolved to an empty write token"))
+  } else {
+    Ok(token)
+  }
+}
+
 fn build_runtime_for_inspect(
   project_root: &PathBuf,
   inspect: &InspectClientOptions,
 ) -> Result<auv_cli::runtime::Runtime, String> {
   let store_root = resolve_store_root(project_root, inspect.store_root.as_ref());
   build_runtime_with_store_root(project_root.clone(), store_root)
+}
+
+#[cfg(test)]
+mod tests {
+  use std::fs;
+
+  use super::*;
+
+  #[test]
+  fn inspect_serve_write_token_rejects_token_and_token_file_conflict() {
+    let write = cli::InspectServeWriteOptions {
+      enabled: true,
+      token: Some("secret".to_string()),
+      token_file: Some("token.txt".to_string()),
+      no_token: false,
+    };
+
+    let error =
+      resolve_inspect_serve_write_token(&write).expect_err("conflicting token sources reject");
+
+    assert!(error.contains("--write-token"));
+    assert!(error.contains("--write-token-file"));
+  }
+
+  #[test]
+  fn inspect_serve_write_token_rejects_empty_token_file() {
+    let path = std::env::temp_dir().join(format!(
+      "auv-empty-write-token-{}.txt",
+      auv_cli::model::now_millis()
+    ));
+    fs::write(&path, " \n\t").expect("token file should write");
+    let write = cli::InspectServeWriteOptions {
+      enabled: true,
+      token: None,
+      token_file: Some(path.display().to_string()),
+      no_token: false,
+    };
+
+    let error =
+      resolve_inspect_serve_write_token(&write).expect_err("empty token file should reject");
+
+    assert!(error.contains("empty"));
+    let _ = fs::remove_file(path);
+  }
+
+  #[test]
+  fn inspect_serve_write_token_rejects_empty_explicit_token() {
+    let write = cli::InspectServeWriteOptions {
+      enabled: true,
+      token: Some(String::new()),
+      token_file: None,
+      no_token: false,
+    };
+
+    let error =
+      resolve_inspect_serve_write_token(&write).expect_err("empty explicit token should reject");
+
+    assert!(error.contains("empty"));
+  }
+
+  #[test]
+  fn inspect_serve_write_token_generates_non_empty_session_token() {
+    let write = cli::InspectServeWriteOptions {
+      enabled: true,
+      token: None,
+      token_file: None,
+      no_token: false,
+    };
+
+    let token = resolve_inspect_serve_write_token(&write)
+      .expect("generated token should resolve")
+      .expect("write-enabled serve should generate a token");
+
+    assert!(token.starts_with("session-"));
+    assert!(!token.is_empty());
+  }
 }
