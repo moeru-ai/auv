@@ -245,6 +245,169 @@ pub(crate) fn capture_window_native_id_to_path(
   ))
 }
 
+/// Fallback window capture for windows where `kCGWindowSharingState == 0`.
+///
+/// xcap filters those out during enumeration, but `CGWindowListCreateImage` can
+/// still capture them when Screen Recording is granted.  We call the CoreGraphics
+/// API directly (in-process) so the TCC permission from the auv-cli process applies.
+///
+/// `logical_bounds` must be in global macOS screen coordinates (y=0 at top), the
+/// same coordinate space that `kCGWindowBounds` returns.
+pub(crate) fn capture_window_cg_to_path(
+  label: &str,
+  window_number: i64,
+  logical_bounds: &Rect,
+  displays: &[DisplayDescriptor],
+) -> AuvResult<(PathBuf, CaptureContract, WindowDescriptor)> {
+  #[cfg(target_os = "macos")]
+  {
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use objc2_core_graphics::{
+      CGDataProvider, CGImage, CGWindowID, CGWindowImageOption, CGWindowListCreateImage,
+      CGWindowListOption,
+    };
+
+    let cg_rect = CGRect {
+      origin: CGPoint { x: logical_bounds.x, y: logical_bounds.y },
+      size: CGSize { width: logical_bounds.width, height: logical_bounds.height },
+    };
+    let window_id = window_number.max(0) as CGWindowID;
+
+    let image = unsafe {
+      CGWindowListCreateImage(
+        cg_rect,
+        CGWindowListOption::OptionIncludingWindow,
+        window_id,
+        CGWindowImageOption::Default,
+      )
+    }
+    .ok_or_else(|| {
+      format!(
+        "{}: CGWindowListCreateImage returned nil for window {}",
+        capture_error::BACKEND_FAILED,
+        window_number
+      )
+    })?;
+
+    let (pixel_width, pixel_height, rgba) = unsafe {
+      let w = CGImage::width(Some(&image));
+      let h = CGImage::height(Some(&image));
+      let data_provider = CGImage::data_provider(Some(&image));
+      let data = CGDataProvider::data(data_provider.as_deref())
+        .ok_or_else(|| {
+          format!(
+            "{}: failed to get pixel data for window {}",
+            capture_error::BACKEND_FAILED,
+            window_number
+          )
+        })?
+        .to_vec();
+      let bytes_per_row = CGImage::bytes_per_row(Some(&image));
+      let mut buffer = Vec::with_capacity(w * h * 4);
+      for row in data.chunks_exact(bytes_per_row) {
+        buffer.extend_from_slice(&row[..w * 4]);
+      }
+      for bgra in buffer.chunks_exact_mut(4) {
+        bgra.swap(0, 2);
+      }
+      let img = image::RgbaImage::from_raw(w as u32, h as u32, buffer).ok_or_else(|| {
+        format!(
+          "{}: failed to build RgbaImage from CG data for window {}",
+          capture_error::BACKEND_FAILED,
+          window_number
+        )
+      })?;
+      (w as f64, h as f64, img)
+    };
+
+    if pixel_width <= 0.0 || pixel_height <= 0.0 {
+      return Err(format!(
+        "{}: CGWindowListCreateImage returned zero-size image for window {}",
+        capture_error::BACKEND_FAILED,
+        window_number
+      ));
+    }
+
+    let path = screenshot_temp_path(label);
+    save_rgba_image(rgba, &path)?;
+
+    let screenshot_pixel_size = Size { width: pixel_width, height: pixel_height };
+    let source_global_logical_bounds = logical_bounds.clone();
+    let logical_x = logical_bounds.x;
+    let logical_y = logical_bounds.y;
+    let logical_width = logical_bounds.width;
+    let logical_height = logical_bounds.height;
+    let pixel_to_logical_scale = Scale2D {
+      x: logical_width / pixel_width,
+      y: logical_height / pixel_height,
+    };
+    let logical_to_pixel_scale = Scale2D {
+      x: pixel_width / logical_width,
+      y: pixel_height / logical_height,
+    };
+
+    let display_ref = display_index_for_window(displays, &source_global_logical_bounds)
+      .ok()
+      .map(|idx| displays[idx].display_ref.clone());
+    let native_display_id = display_ref
+      .as_ref()
+      .and_then(|dref| displays.iter().find(|d| &d.display_ref == dref))
+      .map(|d| d.native_display_id.clone());
+
+    let source_physical_pixel_bounds = display_ref
+      .as_ref()
+      .and_then(|dref| displays.iter().find(|d| &d.display_ref == dref))
+      .map(|display| Rect {
+        x: (logical_x - display.global_logical_bounds.x) * display.logical_to_pixel_scale.x,
+        y: (logical_y - display.global_logical_bounds.y) * display.logical_to_pixel_scale.y,
+        width: pixel_width,
+        height: pixel_height,
+      })
+      .unwrap_or(Rect { x: 0.0, y: 0.0, width: pixel_width, height: pixel_height });
+
+    let window_ref = format!("window_{}", window_number.max(0));
+    let capture_source = CaptureSource::Window {
+      window_ref: window_ref.clone(),
+      display_ref: display_ref.clone().unwrap_or_default(),
+      native_window_id: window_number.to_string(),
+      native_display_id: native_display_id.clone().unwrap_or_default(),
+    };
+    let contract = CaptureContract {
+      coordinate_contract_version: 1,
+      capture_source,
+      capture_backend: CaptureBackend::XcapMacos,
+      include_shadow: false,
+      source_global_logical_bounds: source_global_logical_bounds.clone(),
+      source_physical_pixel_bounds,
+      screenshot_pixel_size,
+      pixel_to_logical_scale,
+      logical_to_pixel_scale,
+      captured_at_unix_ms: crate::model::now_millis(),
+    };
+    let descriptor = WindowDescriptor {
+      window_ref,
+      title: String::new(),
+      app_name: String::new(),
+      owner_bundle_id: None,
+      owner_pid: None,
+      z_order: None,
+      is_focused: None,
+      is_minimized: None,
+      global_logical_bounds: source_global_logical_bounds,
+      display_ref,
+      native_window_id: window_number.to_string(),
+      capture_backend: CaptureBackend::XcapMacos,
+    };
+
+    return Ok((path, contract, descriptor));
+  }
+  #[cfg(not(target_os = "macos"))]
+  Err(format!(
+    "{}: CG window capture is only supported on macOS",
+    capture_error::BACKEND_FAILED
+  ))
+}
+
 pub(crate) fn bundle_ids_by_pid(pids: &HashSet<u32>) -> AuvResult<HashMap<u32, String>> {
   crate::driver::macos::native::window::bundle_ids_by_pid(pids).map_err(backend_failed)
 }

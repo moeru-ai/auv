@@ -24,6 +24,15 @@ pub(crate) fn maybe_activate_target_app_for_observation(
   }
 
   activate_target_app(&app)?;
+  // Activation returns as soon as osascript exits, but the macOS WindowServer
+  // needs a tick to update window numbers / focused-window state. Without this
+  // settle, observe_windows → capture_window_native_id often races and the
+  // selected window "disappears before capture". Override with
+  // --activate_settle_ms when an app needs more time.
+  let settle_ms = optional_positive_u64(call, "activate_settle_ms")?.unwrap_or(200);
+  if settle_ms > 0 {
+    std::thread::sleep(std::time::Duration::from_millis(settle_ms));
+  }
   Ok(Some(app))
 }
 

@@ -251,6 +251,47 @@ pub(crate) fn ax_node_center(node: &ObservedAxNode) -> (f64, f64) {
   )
 }
 
+/// Find the AX node best matching a screen point — used by OCR→AX pipelines
+/// where the caller has a (x, y) anchor and wants the pressable control there.
+///
+/// Strategy: among nodes whose bounds contain the point, score by depth
+/// (deeper wins, so we land on the actual control rather than its container)
+/// plus a role bias toward pressable roles (AXButton, AXCheckBox, AXLink,
+/// AXMenuItem). The role bias breaks ties when a button is wrapped by a
+/// same-sized group element with no role of its own.
+pub(crate) fn find_ax_node_at_point<'a>(
+  snapshot: &'a ObservedAxTreeSnapshot,
+  x: f64,
+  y: f64,
+) -> Option<&'a ObservedAxNode> {
+  snapshot
+    .nodes
+    .iter()
+    .filter(|node| node.bounds.width > 0 && node.bounds.height > 0)
+    .filter(|node| ax_node_contains_point(node, x, y))
+    .max_by_key(|node| score_ax_node_at_point(node))
+}
+
+fn ax_node_contains_point(node: &ObservedAxNode, x: f64, y: f64) -> bool {
+  let left = node.bounds.x as f64;
+  let top = node.bounds.y as f64;
+  let right = left + node.bounds.width as f64;
+  let bottom = top + node.bounds.height as f64;
+  x >= left && x <= right && y >= top && y <= bottom
+}
+
+fn score_ax_node_at_point(node: &ObservedAxNode) -> i64 {
+  let mut score = node.depth as i64 * 10;
+  match node.role.as_str() {
+    "AXButton" | "AXCheckBox" | "AXLink" | "AXMenuItem" | "AXMenuButton" => score += 50,
+    "AXRadioButton" | "AXPopUpButton" => score += 40,
+    "AXStaticText" => score += 20,
+    "AXGroup" | "AXUnknown" => score -= 10,
+    _ => {}
+  }
+  score
+}
+
 pub(crate) fn render_ax_interaction_report(
   kind: &str,
   snapshot: &ObservedAxTreeSnapshot,

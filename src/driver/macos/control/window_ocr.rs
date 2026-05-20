@@ -473,7 +473,7 @@ pub(crate) fn click_window_row(call: &DriverCall) -> AuvResult<DriverResponse> {
   })
 }
 
-fn capture_resolved_window_observation(
+pub(super) fn capture_resolved_window_observation(
   call: &DriverCall,
   label: &str,
 ) -> AuvResult<CapturedObservation> {
@@ -496,11 +496,34 @@ fn capture_resolved_window_observation(
     let native_window_id = candidate.native_window_id.as_deref().ok_or_else(|| {
       "resolved window candidate has no native window id; inspect `debug.listWindows`".to_string()
     })?;
-    crate::driver::macos::capture::xcap_backend::capture_window_native_id_to_path(
+    let result = crate::driver::macos::capture::xcap_backend::capture_window_native_id_to_path(
       label,
       native_window_id,
       candidate.window_ref.window_number,
-    )
+    );
+    match result {
+      Ok(x) => Ok(x),
+      Err(ref e)
+        if e.contains(crate::driver::macos::capture::types::capture_error::STALE_WINDOW_REF) =>
+      {
+        // xcap skips windows with kCGWindowSharingState==0 during enumeration.
+        // Fall back to direct CGWindowListCreateImage which respects Screen Recording permission
+        // regardless of sharing state.
+        let logical_bounds = crate::driver::macos::capture::types::Rect {
+          x: candidate.window_ref.bounds.x as f64,
+          y: candidate.window_ref.bounds.y as f64,
+          width: candidate.window_ref.bounds.width as f64,
+          height: candidate.window_ref.bounds.height as f64,
+        };
+        crate::driver::macos::capture::xcap_backend::capture_window_cg_to_path(
+          label,
+          candidate.window_ref.window_number,
+          &logical_bounds,
+          &displays,
+        )
+      }
+      Err(e) => Err(e),
+    }
   })?;
   let dimensions = read_png_dimensions(&screenshot_path)?;
   Ok(CapturedObservation {
@@ -576,7 +599,7 @@ fn row_notes(
   ]
 }
 
-fn logical_point_for_match(
+pub(super) fn logical_point_for_match(
   capture: &CapturedObservation,
   matched: &OcrTextMatch,
 ) -> AuvResult<(f64, f64)> {

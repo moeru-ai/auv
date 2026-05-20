@@ -250,6 +250,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::Keyboard,
     },
     CommandSpec {
+      id: "debug.axClickWindowText",
+      summary: "Find visible text in a window via Vision OCR, resolve the AX node at that point, then press it via AXUIElementPerformAction (cursorDisturbance=none). Pass --overlay true for the dual-cursor visual. Errors with a hint to debug.clickWindowText when the OCR anchor maps to a canvas-rendered or non-AX-pressable region.",
+      driver_id: "macos.observe",
+      operation: "ax_click_window_text",
+      disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,
+      max_disturbance: DisturbanceClass::Keyboard,
+    },
+    CommandSpec {
       id: "debug.typeText",
       summary: "Type text into the active macOS control through System Events.",
       driver_id: "macos.observe",
@@ -450,6 +458,7 @@ mod tests {
     assert!(catalog.resolve("debug.focusTextInput").is_some());
     assert!(catalog.resolve("debug.pressButton").is_some());
     assert!(catalog.resolve("debug.axPressButton").is_some());
+    assert!(catalog.resolve("debug.axClickWindowText").is_some());
     assert!(catalog.resolve("debug.typeText").is_some());
     assert!(
       catalog

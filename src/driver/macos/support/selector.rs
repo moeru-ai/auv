@@ -215,6 +215,10 @@ where
 pub(crate) fn is_retryable_window_capture_error(error: &str) -> bool {
   error.contains("could not resolve a fully contained visible window")
     || error.contains("refreshed window is not fully contained by one display")
+    // Window enumeration → screenshot races: macOS reassigns window IDs while
+    // the candidate is being captured, so the ID we selected vanishes between
+    // the two enumerations. Always transient, always worth retrying.
+    || error.contains("disappeared before capture")
 }
 
 pub(crate) fn window_capture_readiness_diagnostic(

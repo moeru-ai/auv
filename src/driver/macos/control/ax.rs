@@ -7,6 +7,7 @@ use super::common::{
   DEFAULT_CLICK_INTERVAL_MS, activate_app_if_needed, build_ax_click_notes,
   send_reveal_shortcut_if_needed,
 };
+use super::window_ocr::{capture_resolved_window_observation, logical_point_for_match};
 
 pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
@@ -332,5 +333,224 @@ pub(crate) fn press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
     signals: std::collections::BTreeMap::new(),
     notes,
     artifacts: vec![artifact],
+  })
+}
+
+pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let query = required_non_empty_string(call, "query")?;
+  let match_index = optional_i64(call, "match_index")?.unwrap_or(0).max(0) as usize;
+  let anchor_offset_x = optional_f64(call, "anchor_offset_x")?.unwrap_or(0.0);
+  let anchor_offset_y = optional_f64(call, "anchor_offset_y")?.unwrap_or(0.0);
+  let max_depth = optional_i64(call, "max_depth")?.unwrap_or(6).clamp(1, 10);
+  let max_children = optional_i64(call, "max_children")?
+    .unwrap_or(16)
+    .clamp(1, 50);
+  let action_name =
+    optional_non_empty_string(call, "action").unwrap_or_else(|| "AXPress".to_string());
+  let overlay = optional_bool(call, "overlay")?.unwrap_or(false);
+  let overlay_label = optional_non_empty_string(call, "label").unwrap_or_else(|| "AUV".to_string());
+  let preview_ms =
+    optional_positive_u64(call, "preview_ms")?.unwrap_or(if overlay { 250 } else { 0 });
+  let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
+
+  let app = app_identifier(call)
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| "operation requires --target <application-id>".to_string())?;
+
+  // 1. OCR locate the text inside the target window.
+  let capture_label = format!("ax-click-window-text-{}", sanitize_file_component(&query));
+  let capture = capture_resolved_window_observation(call, &capture_label)?;
+  let (ocr_snapshot, filtered, ocr_report, _command_report) =
+    run_text_match_on_capture(call, &capture, &query)?;
+  let matched_ocr = filtered.get(match_index).ok_or_else(|| {
+    format!(
+      "no OCR text match at index {match_index} for query {query} inside resolved window; observed {} match(es). Inspect `debug.findWindowText`",
+      filtered.len()
+    )
+  })?;
+  let (logical_x_base, logical_y_base) = logical_point_for_match(&capture, matched_ocr)?;
+  let logical_x = logical_x_base + anchor_offset_x;
+  let logical_y = logical_y_base + anchor_offset_y;
+
+  // 2. Observe AX tree and resolve the pressable node under the OCR anchor.
+  // Activation already happened inside capture_resolved_window_observation.
+  let ax_capture =
+    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?;
+  let ax_snapshot = &ax_capture.snapshot;
+  if ax_capture.pid <= 0 {
+    return Err(format!(
+      "native AX tree capture did not return a valid pid for app {:?} (got {}); cannot dispatch AX action",
+      ax_snapshot.app_name, ax_capture.pid
+    ));
+  }
+  let ax_node = find_ax_node_at_point(ax_snapshot, logical_x, logical_y).ok_or_else(|| {
+    format!(
+      "no AX node found at OCR anchor ({logical_x:.3}, {logical_y:.3}) for text {:?}; the visible text may be canvas-rendered or outside the observed window's AX subtree. Try debug.clickWindowText if you accept cursor warp.",
+      matched_ocr.text
+    )
+  })?;
+  let (center_x, center_y) = ax_node_center(ax_node);
+
+  // 3. AX press (optionally wrapped by the overlay marker for visual feedback).
+  let (press_action, overlay_outcome) = if overlay {
+    let (action, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
+      if preview_ms > 0 {
+        thread::sleep(Duration::from_millis(preview_ms));
+      }
+      let action = crate::driver::macos::native::ax_tree::perform_ax_path_action(
+        ax_capture.pid as i32,
+        &ax_node.path,
+        &ax_node.role,
+        &action_name,
+      )?;
+      if settle_ms > 0 {
+        thread::sleep(Duration::from_millis(settle_ms));
+      }
+      Ok(action)
+    })?;
+    (action, Some(outcome))
+  } else {
+    (
+      crate::driver::macos::native::ax_tree::perform_ax_path_action(
+        ax_capture.pid as i32,
+        &ax_node.path,
+        &ax_node.role,
+        &action_name,
+      )?,
+      None,
+    )
+  };
+  let performed_action = press_action.performed_action;
+  let available_actions = press_action.available_actions;
+
+  // 4. Compose the artifact report (OCR side + AX side + press side).
+  let mut report =
+    render_ax_interaction_report("ax-click-window-text", &ax_snapshot, ax_node, &query);
+  report.push_str(&format!("ocrMatchText={}\n", matched_ocr.text));
+  report.push_str(&format!(
+    "ocrMatchBounds={}\n",
+    render_rect_compact(&matched_ocr.bounds)
+  ));
+  report.push_str(&format!(
+    "ocrMatchConfidence={:.3}\n",
+    matched_ocr.confidence
+  ));
+  report.push_str(&format!("ocrMatchIndex={match_index}\n"));
+  report.push_str(&format!("ocrFilteredCount={}\n", filtered.len()));
+  report.push_str(&format!(
+    "ocrSnapshotMatches={}\n",
+    ocr_snapshot.matches.len()
+  ));
+  report.push_str(&format!(
+    "ocrAnchorLogicalPoint={logical_x_base:.3},{logical_y_base:.3}\n"
+  ));
+  report.push_str(&format!(
+    "anchorOffset={anchor_offset_x:.3},{anchor_offset_y:.3}\n"
+  ));
+  report.push_str(&format!(
+    "axResolvedLogicalPoint={logical_x:.3},{logical_y:.3}\n"
+  ));
+  report.push_str(&format!("axNodeCenter={center_x:.3},{center_y:.3}\n"));
+  report.push_str(&format!("performedAction={performed_action}\n"));
+  report.push_str(&format!("availableActions={available_actions}\n"));
+  report.push_str("pressMechanism=ax-action\n");
+  report.push_str("cursorDisturbance=none\n");
+  report.push_str(&format!(
+    "overlayPresentation={}\n",
+    if overlay { "visual-only" } else { "off" }
+  ));
+  if let Some(outcome) = &overlay_outcome {
+    report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
+    report.push_str(&format!("overlayHideEvent={}\n", outcome.hide_event));
+    report.push_str(&format!("daemonPid={}\n", outcome.daemon_pid));
+    report.push_str(&format!("previewMs={preview_ms}\n"));
+    report.push_str(&format!("settleMs={settle_ms}\n"));
+    report.push_str(&format!("overlayLabel={overlay_label}\n"));
+  }
+
+  let report_artifact = build_text_artifact(
+    "ax-click-window-text",
+    "txt",
+    &format!("ax-click-window-text-{}", sanitize_file_component(&query)),
+    report,
+    "Located text via Vision OCR, resolved to the AX node at that point, and pressed it via AXUIElementPerformAction without warping the real cursor.",
+  )?;
+  let ocr_artifact = build_text_artifact(
+    "ax-click-window-text",
+    "txt",
+    &format!(
+      "ax-click-window-text-ocr-{}",
+      sanitize_file_component(&query)
+    ),
+    ocr_report,
+    "Vision OCR text-anchor report consumed by debug.axClickWindowText.",
+  )?;
+
+  // 5. Notes + signals.
+  let mut notes = build_ax_click_notes(&query, ax_node, center_x, center_y);
+  notes.push(format!("ocrMatchText={}", matched_ocr.text));
+  notes.push(format!(
+    "ocrMatchBounds={}",
+    render_rect_compact(&matched_ocr.bounds)
+  ));
+  notes.push(format!("ocrMatchConfidence={:.3}", matched_ocr.confidence));
+  notes.push(format!(
+    "ocrAnchorLogicalPoint={logical_x_base:.3},{logical_y_base:.3}"
+  ));
+  notes.push(format!(
+    "anchorOffset={anchor_offset_x:.3},{anchor_offset_y:.3}"
+  ));
+  notes.push("pressMechanism=ax-action".to_string());
+  notes.push("cursorDisturbance=none".to_string());
+  notes.push(format!("performedAction={performed_action}"));
+  if !available_actions.is_empty() {
+    notes.push(format!("availableActions={available_actions}"));
+  }
+  if let Some(outcome) = &overlay_outcome {
+    notes.push("overlayPresentation=visual-only".to_string());
+    notes.push(format!("overlayShowEvent={}", outcome.show_event));
+    notes.push(format!("overlayHideEvent={}", outcome.hide_event));
+    notes.push(format!("daemonPid={}", outcome.daemon_pid));
+    notes.push(format!("previewMs={preview_ms}"));
+    notes.push(format!("settleMs={settle_ms}"));
+    notes.push(format!("overlayLabel={overlay_label}"));
+  }
+
+  let mut signals = std::collections::BTreeMap::new();
+  signals.insert("pressMechanism".to_string(), "ax-action".to_string());
+  signals.insert("cursorDisturbance".to_string(), "none".to_string());
+  signals.insert("performedAction".to_string(), performed_action);
+  if !available_actions.is_empty() {
+    signals.insert("availableActions".to_string(), available_actions);
+  }
+  signals.insert("click.resolved_text".to_string(), matched_ocr.text.clone());
+  if let Some(outcome) = &overlay_outcome {
+    signals.insert(
+      "overlayEvent".to_string(),
+      format!("{}+{}", outcome.show_event, outcome.hide_event),
+    );
+    signals.insert("daemonPid".to_string(), outcome.daemon_pid.to_string());
+  }
+
+  let backend = if overlay {
+    "macos.ax.click-window-text+overlay-daemon"
+  } else {
+    "macos.ax.click-window-text"
+  };
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Pressed AX node at OCR text {:?} inside {} via AXUIElementPerformAction (no cursor warp).",
+      matched_ocr.text,
+      if ax_snapshot.app_name.is_empty() {
+        "target app"
+      } else {
+        &ax_snapshot.app_name
+      }
+    ),
+    backend: Some(backend.to_string()),
+    signals,
+    notes,
+    artifacts: vec![ocr_artifact, report_artifact],
   })
 }

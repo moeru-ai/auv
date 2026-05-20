@@ -7,10 +7,10 @@ use super::{
   control::common::{ClickPointCallOptions, build_click_point_call},
   support::{
     TextMatchCommandReport, app_contains_window, assess_coordinate_readiness,
-    build_window_candidates, filter_ocr_matches, filter_windows_for_app, find_now_playing_ax_node,
-    group_ocr_matches_into_rows, optional_bool, optional_f64, parse_app_selector,
-    parse_display_selection, parse_display_snapshot, parse_mouse_button, parse_observed_ax_tree,
-    parse_ocr_region_constraint, parse_ocr_text_snapshot, parse_shortcut,
+    build_window_candidates, filter_ocr_matches, filter_windows_for_app, find_ax_node_at_point,
+    find_now_playing_ax_node, group_ocr_matches_into_rows, optional_bool, optional_f64,
+    parse_app_selector, parse_display_selection, parse_display_snapshot, parse_mouse_button,
+    parse_observed_ax_tree, parse_ocr_region_constraint, parse_ocr_text_snapshot, parse_shortcut,
     parse_visual_rows_snapshot, parse_window_selection, process_is_alive,
     project_main_screenshot_point, read_lock_owner_pid, read_png_dimensions, render_rect_compact,
     render_text_match_command_json, resolve_app_ref, resolve_display_point,
@@ -279,6 +279,36 @@ fn parse_observed_ax_tree_extracts_pid_for_action_dispatch() {
     snapshot.pid, 1495,
     "pid must be parsed so ax_press_path can re-resolve the AX element by PID + path"
   );
+}
+
+#[test]
+fn find_ax_node_at_point_prefers_deepest_pressable_container() {
+  let report = "observedAt=2026-05-20T00:00:00Z\n\
+appName=Demo\n\
+bundleId=com.example.demo\n\
+pid=42\n\
+windowTitle=\n\
+rootRole=AXWindow\n\
+node\t0\t0\tAXWindow\t\t\t\t\t\t\t\t0\t0\t800\t600\n\
+node\t1\t0.0\tAXGroup\t\t\t\t\t\t\t\t100\t100\t200\t40\n\
+node\t2\t0.0.0\tAXButton\t\tStart return\t\t\t\t\t\t110\t108\t180\t24\n";
+  let snapshot = parse_observed_ax_tree(report).expect("report should parse");
+  // Point (200, 120) is inside both the window (0..800, 0..600),
+  // the AXGroup container (100..300, 100..140), and the AXButton (110..290, 108..132).
+  // The resolver must land on the button (deepest + pressable role bonus),
+  // otherwise OCR→AX would press the wrapping group with no AXPress action.
+  let node = find_ax_node_at_point(&snapshot, 200.0, 120.0).expect("a node should contain point");
+  assert_eq!(node.role, "AXButton", "expected to land on the button");
+  assert_eq!(node.title, "Start return");
+}
+
+#[test]
+fn find_ax_node_at_point_returns_none_when_outside_all_bounds() {
+  let snapshot = parse_observed_ax_tree(sample_ax_report()).expect("AX report should parse");
+  // Point (-1, -1) is outside every node bound; resolver must return None
+  // so callers can surface "no AX node at OCR anchor" instead of pressing
+  // some unrelated container that happens to span the screen.
+  assert!(find_ax_node_at_point(&snapshot, -1.0, -1.0).is_none());
 }
 
 #[test]
