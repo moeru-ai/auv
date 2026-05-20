@@ -2,6 +2,59 @@ use std::collections::BTreeMap;
 
 use auv_cli::model::{AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InspectWriteSetting {
+  Default,
+  Enabled,
+  Disabled,
+}
+
+impl InspectWriteSetting {
+  fn parse(raw: &str) -> AuvResult<Self> {
+    match raw {
+      "default" => Ok(Self::Default),
+      "true" => Ok(Self::Enabled),
+      "false" => Ok(Self::Disabled),
+      other => Err(format!(
+        "invalid inspect write setting {other:?}; expected true, false, or default"
+      )),
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectClientOptions {
+  pub store_root: Option<String>,
+  pub local_write: InspectWriteSetting,
+  pub server_write: InspectWriteSetting,
+  pub require_server_write: bool,
+  pub server_url: Option<String>,
+  pub server_token: Option<String>,
+  pub server_token_file: Option<String>,
+}
+
+impl Default for InspectClientOptions {
+  fn default() -> Self {
+    Self {
+      store_root: None,
+      local_write: InspectWriteSetting::Default,
+      server_write: InspectWriteSetting::Default,
+      require_server_write: false,
+      server_url: None,
+      server_token: None,
+      server_token_file: None,
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct InspectServeWriteOptions {
+  pub enabled: bool,
+  pub token: Option<String>,
+  pub token_file: Option<String>,
+  pub no_token: bool,
+}
+
 #[derive(Debug)]
 pub enum CliCommand {
   Help,
@@ -21,13 +74,18 @@ pub enum CliCommand {
   AppValidate {
     query: String,
   },
-  Invoke(InvokeRequest),
+  Invoke {
+    request: InvokeRequest,
+    inspect: InspectClientOptions,
+  },
   Inspect {
     run_id: String,
   },
   InspectServe {
     host: String,
     port: u16,
+    store_root: Option<String>,
+    write: InspectServeWriteOptions,
   },
   SkillList,
   SkillShow {
@@ -63,12 +121,14 @@ pub enum CliCommand {
     max_disturbance: Option<DisturbanceClass>,
     only_case_ids: Vec<String>,
     include_nonvalidated: bool,
+    inspect: InspectClientOptions,
   },
   SkillRun {
     query: String,
     dry_run: bool,
     max_disturbance: Option<DisturbanceClass>,
     overrides: BTreeMap<String, String>,
+    inspect: InspectClientOptions,
   },
   XtaskGenerateSwiftBridge,
 }
@@ -118,9 +178,9 @@ USAGE
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
   auv-cli app validate <distill-dir-or-distillation-json>
-  auv-cli invoke <command-id> [--target <application-id>] [--label <text>]
+  auv-cli invoke <command-id> [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
-  auv-cli inspect serve [--host <host>] [--port <port>]
+  auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv-cli skill list
   auv-cli skill show <skill-id-or-path>
   auv-cli skill bundle list
@@ -132,8 +192,8 @@ USAGE
   auv-cli skill cases list
   auv-cli skill cases show <matrix-id-or-path>
   auv-cli skill cases report <matrix-id-or-path>
-  auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>]
-  auv-cli skill run <skill-id-or-path> [--dry-run] [--max-disturbance <class>] [--set key=value]
+  auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli skill run <skill-id-or-path> [--dry-run] [--max-disturbance <class>] [--set key=value] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
 
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
@@ -270,6 +330,8 @@ fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut host = auv_cli::inspect_server::DEFAULT_INSPECT_HOST.to_string();
   let mut port = auv_cli::inspect_server::DEFAULT_INSPECT_PORT;
+  let mut store_root = None;
+  let mut write = InspectServeWriteOptions::default();
   let mut index = 2;
   while index < arguments.len() {
     match arguments[index].as_str() {
@@ -289,31 +351,119 @@ fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
           .map_err(|error| format!("invalid --port value: {error}"))?;
         index += 2;
       }
+      "--store-root" => {
+        if index + 1 >= arguments.len() {
+          return Err("--store-root requires a value".to_string());
+        }
+        store_root = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      "--enable-write" => {
+        write.enabled = true;
+        index += 1;
+      }
+      "--write-token" => {
+        if index + 1 >= arguments.len() {
+          return Err("--write-token requires a value".to_string());
+        }
+        write.enabled = true;
+        write.token = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      "--write-token-file" => {
+        if index + 1 >= arguments.len() {
+          return Err("--write-token-file requires a value".to_string());
+        }
+        write.enabled = true;
+        write.token_file = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      "--no-write-token" => {
+        write.no_token = true;
+        index += 1;
+      }
       other => {
         return Err(format!("unexpected inspect-serve argument {other}"));
       }
     }
   }
 
-  Ok(CliCommand::InspectServe { host, port })
+  Ok(CliCommand::InspectServe {
+    host,
+    port,
+    store_root,
+    write,
+  })
+}
+
+fn parse_inspect_client_option(
+  argument: &str,
+  value: Option<&String>,
+  inspect: &mut InspectClientOptions,
+) -> AuvResult<Option<usize>> {
+  match argument {
+    "--store-root" => {
+      let value = value.ok_or_else(|| "--store-root requires a value".to_string())?;
+      inspect.store_root = Some(value.clone());
+      Ok(Some(2))
+    }
+    "--inspect-local-write" => {
+      let value = value.ok_or_else(|| "--inspect-local-write requires a value".to_string())?;
+      inspect.local_write = InspectWriteSetting::parse(value)?;
+      Ok(Some(2))
+    }
+    "--inspect-server-write" => {
+      let value = value.ok_or_else(|| "--inspect-server-write requires a value".to_string())?;
+      inspect.server_write = InspectWriteSetting::parse(value)?;
+      Ok(Some(2))
+    }
+    "--require-inspect-server-write" => {
+      inspect.require_server_write = true;
+      Ok(Some(1))
+    }
+    "--inspect-server-url" => {
+      let value = value.ok_or_else(|| "--inspect-server-url requires a value".to_string())?;
+      inspect.server_url = Some(value.clone());
+      Ok(Some(2))
+    }
+    "--inspect-server-token" => {
+      let value = value.ok_or_else(|| "--inspect-server-token requires a value".to_string())?;
+      inspect.server_token = Some(value.clone());
+      Ok(Some(2))
+    }
+    "--inspect-server-token-file" => {
+      let value =
+        value.ok_or_else(|| "--inspect-server-token-file requires a value".to_string())?;
+      inspect.server_token_file = Some(value.clone());
+      Ok(Some(2))
+    }
+    _ => Ok(None),
+  }
 }
 
 fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv-cli invoke <command-id> [--target <application-id>] [--label <text>]".to_string(),
+      "usage: auv-cli invoke <command-id> [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string(),
     );
   }
 
   let command_id = arguments[1].clone();
   let mut target = ExecutionTarget::default();
   let mut inputs = BTreeMap::new();
+  let mut inspect = InspectClientOptions::default();
   let mut index = 2;
 
   while index < arguments.len() {
     let argument = &arguments[index];
     if !argument.starts_with("--") {
       return Err(format!("unexpected positional argument {argument}"));
+    }
+    if let Some(consumed) =
+      parse_inspect_client_option(argument.as_str(), arguments.get(index + 1), &mut inspect)?
+    {
+      index += consumed;
+      continue;
     }
     if index + 1 >= arguments.len() {
       return Err(format!("flag {argument} requires a value"));
@@ -336,11 +486,14 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
     index += 2;
   }
 
-  Ok(CliCommand::Invoke(InvokeRequest {
-    command_id,
-    target,
-    inputs,
-  }))
+  Ok(CliCommand::Invoke {
+    request: InvokeRequest {
+      command_id,
+      target,
+      inputs,
+    },
+    inspect,
+  })
 }
 
 fn parse_skill(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -471,7 +624,7 @@ fn parse_skill_cases(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_skill_run(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 3 {
     return Err(
-      "usage: auv-cli skill run <skill-id-or-path> [--dry-run] [--max-disturbance <class>] [--set key=value]".to_string(),
+      "usage: auv-cli skill run <skill-id-or-path> [--dry-run] [--max-disturbance <class>] [--set key=value] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string(),
     );
   }
 
@@ -479,9 +632,19 @@ fn parse_skill_run(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut dry_run = false;
   let mut max_disturbance = None;
   let mut overrides = BTreeMap::new();
+  let mut inspect = InspectClientOptions::default();
   let mut index = 3;
 
   while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
     match arguments[index].as_str() {
       "--dry-run" => {
         dry_run = true;
@@ -519,13 +682,14 @@ fn parse_skill_run(arguments: &[String]) -> AuvResult<CliCommand> {
     dry_run,
     max_disturbance,
     overrides,
+    inspect,
   })
 }
 
 fn parse_skill_cases_run(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 4 {
     return Err(
-      "usage: auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>]".to_string(),
+      "usage: auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string(),
     );
   }
 
@@ -534,9 +698,19 @@ fn parse_skill_cases_run(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut max_disturbance = None;
   let mut only_case_ids = Vec::new();
   let mut include_nonvalidated = false;
+  let mut inspect = InspectClientOptions::default();
   let mut index = 4;
 
   while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
     match arguments[index].as_str() {
       "--dry-run" => {
         dry_run = true;
@@ -572,6 +746,7 @@ fn parse_skill_cases_run(arguments: &[String]) -> AuvResult<CliCommand> {
     max_disturbance,
     only_case_ids,
     include_nonvalidated,
+    inspect,
   })
 }
 
@@ -669,9 +844,140 @@ mod tests {
     .expect("inspect serve command should parse");
 
     match command {
-      CliCommand::InspectServe { host, port } => {
+      CliCommand::InspectServe {
+        host,
+        port,
+        store_root,
+        write,
+      } => {
         assert_eq!(host, "0.0.0.0");
         assert_eq!(port, 0);
+        assert_eq!(store_root, None);
+        assert_eq!(write, InspectServeWriteOptions::default());
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_inspect_serve_write_options() {
+    let command = parse_cli(&[
+      "inspect".to_string(),
+      "serve".to_string(),
+      "--store-root".to_string(),
+      "/tmp/auv-store".to_string(),
+      "--enable-write".to_string(),
+      "--write-token".to_string(),
+      "secret".to_string(),
+    ])
+    .expect("inspect serve options should parse");
+
+    match command {
+      CliCommand::InspectServe {
+        host,
+        port,
+        store_root,
+        write,
+      } => {
+        assert_eq!(host, auv_cli::inspect_server::DEFAULT_INSPECT_HOST);
+        assert_eq!(port, auv_cli::inspect_server::DEFAULT_INSPECT_PORT);
+        assert_eq!(store_root.as_deref(), Some("/tmp/auv-store"));
+        assert!(write.enabled);
+        assert_eq!(write.token.as_deref(), Some("secret"));
+        assert!(!write.no_token);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_skill_run_inspect_write_options() {
+    let command = parse_cli(&[
+      "skill".to_string(),
+      "run".to_string(),
+      "recipe.id".to_string(),
+      "--store-root".to_string(),
+      "/tmp/auv-store".to_string(),
+      "--inspect-local-write".to_string(),
+      "false".to_string(),
+      "--inspect-server-write".to_string(),
+      "true".to_string(),
+      "--require-inspect-server-write".to_string(),
+      "--inspect-server-url".to_string(),
+      "http://127.0.0.1:8765".to_string(),
+      "--inspect-server-token".to_string(),
+      "secret".to_string(),
+    ])
+    .expect("skill run inspect options should parse");
+
+    match command {
+      CliCommand::SkillRun { inspect, .. } => {
+        assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
+        assert_eq!(inspect.local_write, InspectWriteSetting::Disabled);
+        assert_eq!(inspect.server_write, InspectWriteSetting::Enabled);
+        assert!(inspect.require_server_write);
+        assert_eq!(inspect.server_url.as_deref(), Some("http://127.0.0.1:8765"));
+        assert_eq!(inspect.server_token.as_deref(), Some("secret"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_inspect_write_options() {
+    let command = parse_cli(&[
+      "invoke".to_string(),
+      "debug.captureDisplay".to_string(),
+      "--store-root".to_string(),
+      "/tmp/auv-store".to_string(),
+      "--inspect-local-write".to_string(),
+      "default".to_string(),
+      "--inspect-server-write".to_string(),
+      "false".to_string(),
+      "--inspect-server-token-file".to_string(),
+      "/tmp/token".to_string(),
+    ])
+    .expect("invoke inspect options should parse");
+
+    match command {
+      CliCommand::Invoke { request, inspect } => {
+        assert_eq!(request.command_id, "debug.captureDisplay");
+        assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
+        assert_eq!(inspect.local_write, InspectWriteSetting::Default);
+        assert_eq!(inspect.server_write, InspectWriteSetting::Disabled);
+        assert_eq!(inspect.server_token_file.as_deref(), Some("/tmp/token"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_skill_cases_run_inspect_write_options() {
+    let command = parse_cli(&[
+      "skill".to_string(),
+      "cases".to_string(),
+      "run".to_string(),
+      "matrix.id".to_string(),
+      "--case".to_string(),
+      "case-1".to_string(),
+      "--store-root".to_string(),
+      "/tmp/auv-store".to_string(),
+      "--inspect-server-url".to_string(),
+      "http://127.0.0.1:8765".to_string(),
+      "--require-inspect-server-write".to_string(),
+    ])
+    .expect("skill cases run inspect options should parse");
+
+    match command {
+      CliCommand::SkillCasesRun {
+        only_case_ids,
+        inspect,
+        ..
+      } => {
+        assert_eq!(only_case_ids, vec!["case-1"]);
+        assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
+        assert!(inspect.require_server_write);
+        assert_eq!(inspect.server_url.as_deref(), Some("http://127.0.0.1:8765"));
       }
       other => panic!("unexpected command: {other:?}"),
     }

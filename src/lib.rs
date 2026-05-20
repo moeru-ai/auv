@@ -21,12 +21,24 @@ use runtime::Runtime;
 use store::LocalStore;
 
 pub fn build_default_runtime(project_root: PathBuf) -> AuvResult<Runtime> {
-  let store = build_default_store(project_root.clone())?;
+  let store_root = default_project_store_root(project_root.clone());
+  build_runtime_with_store_root(project_root, store_root)
+}
+
+pub fn build_runtime_with_store_root(
+  project_root: PathBuf,
+  store_root: PathBuf,
+) -> AuvResult<Runtime> {
+  let store = LocalStore::new(store_root)?;
   let commands = default_command_catalog();
   let drivers = default_driver_registry();
   Ok(Runtime::new(project_root, commands, drivers, store))
 }
 
+pub fn default_project_store_root(project_root: PathBuf) -> PathBuf {
+  project_root.join(".auv")
+}
+
 pub fn build_default_store(project_root: PathBuf) -> AuvResult<LocalStore> {
-  LocalStore::new(project_root.join(".auv"))
+  LocalStore::new(default_project_store_root(project_root))
 }

@@ -16,8 +16,8 @@ use auv_cli::skill::{
   SkillCaseMatrixCatalog, SkillCatalog, render_skill_case_matrix_report, run_skill,
   run_skill_case_matrix,
 };
-use auv_cli::{build_default_runtime, build_default_store};
-use cli::{CliCommand, help_text, parse_cli};
+use auv_cli::{build_default_runtime, build_runtime_with_store_root};
+use cli::{CliCommand, InspectClientOptions, help_text, parse_cli};
 
 #[tokio::main]
 async fn main() {
@@ -39,8 +39,22 @@ async fn run() -> Result<(), String> {
     return Ok(());
   }
 
-  if let CliCommand::InspectServe { host, port } = &command {
-    let store = build_default_store(project_root)?;
+  if let CliCommand::InspectServe {
+    host,
+    port,
+    store_root,
+    write,
+  } = &command
+  {
+    // Write options are parsed in Task 4 and wired in the inspect write task.
+    let _parsed_write_options = (
+      write.enabled,
+      write.token.as_deref(),
+      write.token_file.as_deref(),
+      write.no_token,
+    );
+    let store_root = resolve_store_root(&project_root, store_root.as_ref());
+    let store = auv_cli::store::LocalStore::new(store_root)?;
     let recorder = Arc::new(auv_cli::run_recording::BroadcastRunRecorder::new(1024));
     let config = auv_cli::inspect_server::InspectServeConfig {
       host: host.clone(),
@@ -50,7 +64,6 @@ async fn run() -> Result<(), String> {
     return Ok(());
   }
 
-  let runtime = build_default_runtime(project_root.clone())?;
   let runtime_version = env!("CARGO_PKG_VERSION").to_string();
   let skill_catalog = SkillCatalog::discover(&project_root)?;
   let bundle_catalog = SkillBundleCatalog::discover(&project_root)?;
@@ -62,6 +75,7 @@ async fn run() -> Result<(), String> {
     }
     CliCommand::XtaskGenerateSwiftBridge => unreachable!("xtask is handled before runtime setup"),
     CliCommand::ListCommands => {
+      let runtime = build_default_runtime(project_root.clone())?;
       for command in runtime.list_commands() {
         println!(
           "{} -> {}.{}",
@@ -81,6 +95,7 @@ async fn run() -> Result<(), String> {
       }
     }
     CliCommand::ListDrivers => {
+      let runtime = build_default_runtime(project_root.clone())?;
       for driver in runtime.list_drivers() {
         println!("{}", driver.id);
         println!("  {}", driver.summary);
@@ -92,6 +107,7 @@ async fn run() -> Result<(), String> {
       bundle_id,
       output_dir,
     } => {
+      let runtime = build_default_runtime(project_root.clone())?;
       let probe = probe_app(
         &project_root,
         &runtime,
@@ -104,6 +120,7 @@ async fn run() -> Result<(), String> {
       println!("steps: {}", probe.steps.len());
     }
     CliCommand::AppAnalyze { query } => {
+      let runtime = build_default_runtime(project_root.clone())?;
       let output = analyze_app_probe(&runtime, &PathBuf::from(query))?;
       println!("app: {}", output.analysis.app_identity.bundle_id);
       println!("status: analyzed");
@@ -115,6 +132,7 @@ async fn run() -> Result<(), String> {
       );
     }
     CliCommand::AppDistill { query, output_dir } => {
+      let runtime = build_default_runtime(project_root.clone())?;
       let output = distill_app_analysis(
         &runtime,
         &PathBuf::from(query),
@@ -127,6 +145,7 @@ async fn run() -> Result<(), String> {
       println!("candidates: {}", output.distillation.candidates.len());
     }
     CliCommand::AppValidate { query } => {
+      let runtime = build_default_runtime(project_root.clone())?;
       let output = validate_app_distillation(&runtime, &PathBuf::from(query))?;
       println!("app: {}", output.validation.app_identity.bundle_id);
       println!("status: assessed");
@@ -134,7 +153,8 @@ async fn run() -> Result<(), String> {
       println!("report: {}", output.report_path.display());
       println!("candidates: {}", output.validation.candidates.len());
     }
-    CliCommand::Invoke(request) => {
+    CliCommand::Invoke { request, inspect } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let result = runtime.invoke(request)?;
       println!("runId: {}", result.run_id);
       println!("status: {}", result.status.as_str());
@@ -155,6 +175,7 @@ async fn run() -> Result<(), String> {
       }
     }
     CliCommand::Inspect { run_id } => {
+      let runtime = build_default_runtime(project_root.clone())?;
       print!("{}", runtime.inspect(&run_id)?);
     }
     CliCommand::InspectServe { .. } => {
@@ -314,7 +335,9 @@ async fn run() -> Result<(), String> {
       max_disturbance,
       only_case_ids,
       include_nonvalidated,
+      inspect,
     } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let entry = case_matrix_catalog.resolve(&project_root, &query)?;
       run_skill_case_matrix(
         &runtime,
@@ -333,7 +356,9 @@ async fn run() -> Result<(), String> {
       dry_run,
       max_disturbance,
       overrides,
+      inspect,
     } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let entry = skill_catalog.resolve(&project_root, &query)?;
       run_skill(
         &runtime,
@@ -348,4 +373,18 @@ async fn run() -> Result<(), String> {
   }
 
   Ok(())
+}
+
+fn resolve_store_root(project_root: &PathBuf, explicit: Option<&String>) -> PathBuf {
+  explicit
+    .map(PathBuf::from)
+    .unwrap_or_else(|| auv_cli::default_project_store_root(project_root.clone()))
+}
+
+fn build_runtime_for_inspect(
+  project_root: &PathBuf,
+  inspect: &InspectClientOptions,
+) -> Result<auv_cli::runtime::Runtime, String> {
+  let store_root = resolve_store_root(project_root, inspect.store_root.as_ref());
+  build_runtime_with_store_root(project_root.clone(), store_root)
 }
