@@ -14,12 +14,12 @@ use super::overlay::{
   overlay_click_point, overlay_hide_cursor, overlay_show_cursor, overlay_shutdown,
 };
 use super::{
-  Driver, DriverCall, DriverDescriptor, DriverResponse, MacOsObserveDriver, descriptor,
+  Driver, DriverCall, DriverDescriptor, DriverResponse, MacOsDesktopDriver, descriptor,
   require_macos,
 };
 use crate::model::AuvResult;
 
-impl Driver for MacOsObserveDriver {
+impl Driver for MacOsDesktopDriver {
   fn descriptor(&self) -> DriverDescriptor {
     descriptor::driver_descriptor()
   }
@@ -75,7 +75,7 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
     "overlay_shutdown" => overlay_shutdown(call),
     "overlay_click_point" => overlay_click_point(call),
     other => Err(format!(
-      "driver macos.observe does not support operation {}",
+      "driver macos.desktop does not support operation {}",
       other
     )),
   }

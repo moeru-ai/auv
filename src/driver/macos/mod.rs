@@ -21,4 +21,4 @@ pub(crate) use self::constants::*;
 pub(crate) use self::support::*;
 pub(crate) use self::types::*;
 
-pub(crate) struct MacOsObserveDriver;
+pub(crate) struct MacOsDesktopDriver;

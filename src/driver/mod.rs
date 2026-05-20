@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse};
 
 use self::fixture::FixtureObserveDriver;
-use self::macos::MacOsObserveDriver;
+use self::macos::MacOsDesktopDriver;
 pub(crate) use self::macos::{
   ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow,
   ObservedRect, ObservedWindow, OcrTextSnapshot, clear_stale_lock_file, compute_combined_bounds,
@@ -51,6 +51,6 @@ impl DriverRegistry {
 pub fn default_driver_registry() -> DriverRegistry {
   DriverRegistry::new(vec![
     Box::new(FixtureObserveDriver),
-    Box::new(MacOsObserveDriver),
+    Box::new(MacOsDesktopDriver),
   ])
 }

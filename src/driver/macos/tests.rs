@@ -20,9 +20,29 @@ use super::{
   },
 };
 use crate::{
-  driver::{DriverRegistry, fixture::FixtureObserveDriver},
+  driver::{Driver, DriverRegistry, fixture::FixtureObserveDriver},
   model::{DriverCall, ExecutionTarget, now_millis},
 };
+
+#[test]
+fn macos_driver_descriptor_uses_desktop_namespace() {
+  let driver = super::MacOsDesktopDriver;
+  let descriptor = driver.descriptor();
+
+  assert_eq!(descriptor.id, "macos.desktop");
+  assert!(
+    descriptor
+      .capabilities
+      .iter()
+      .any(|capability| *capability == "desktop.capture-window")
+  );
+  assert!(
+    !descriptor
+      .capabilities
+      .iter()
+      .any(|capability| capability.starts_with("observe."))
+  );
+}
 
 #[test]
 fn optional_f64_rejects_non_finite_numbers() {
