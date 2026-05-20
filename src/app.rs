@@ -819,6 +819,7 @@ fn validate_app_distillation_into_run(
     .and_then(|probe| parse_ax_snapshot(probe).ok());
 
   let mut candidates = Vec::new();
+  let mut unresolved_candidate_failures = Vec::new();
   for candidate in &distillation.candidates {
     let manifest: SkillManifest = read_json(&candidate.recipe_path)?;
     let mut matrix: SkillCaseMatrix = read_json(&candidate.case_matrix_path)?;
@@ -929,19 +930,24 @@ fn validate_app_distillation_into_run(
         }
       }
     } else {
+      let unresolved_summary = format!(
+        "Validation could not execute {} because grounding left unresolved inputs: {}.",
+        candidate.recipe_id,
+        unresolved_inputs.join(", ")
+      );
+      unresolved_candidate_failures.push(unresolved_summary.clone());
       AppValidatedCandidate {
         recipe_id: candidate.recipe_id.clone(),
         taxonomy_id: candidate.taxonomy_id.clone(),
-        status: AppValidationStatus::Candidate,
-        rationale:
-          "The candidate still requires live grounding for unresolved inputs before execution."
-            .to_string(),
+        status: AppValidationStatus::Rejected,
+        rationale: "Validation failed before execution because candidate grounding was incomplete."
+          .to_string(),
         used_annotation_ids,
         recipe_path: candidate.recipe_path.clone(),
         case_matrix_path: candidate.case_matrix_path.clone(),
         selected_case_count,
         unresolved_inputs,
-        failure_message: None,
+        failure_message: Some(unresolved_summary),
         resolved_inputs,
       }
     };
@@ -986,6 +992,12 @@ fn validate_app_distillation_into_run(
     &report_path,
     "validation-report.md",
   )?;
+  if !unresolved_candidate_failures.is_empty() {
+    return Err(format!(
+      "app validation failed because candidate grounding left unresolved inputs:\n- {}",
+      unresolved_candidate_failures.join("\n- ")
+    ));
+  }
   Ok(AppValidateOutput {
     validation,
     validation_path,
@@ -4584,6 +4596,71 @@ mod tests {
       .collect::<Vec<_>>();
     assert_eq!(finished_runs.len(), 1);
     assert_eq!(finished_runs[0].run_type, RunType::Validate);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn validate_app_distillation_fails_on_unresolved_grounding_inputs() {
+    let root = temp_dir("app-validate-unresolved-grounding");
+    let runtime = test_runtime(root.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("window-action.recipe.json");
+    let case_matrix_path = root.join("window-action.cases.json");
+
+    let mut analysis =
+      sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
+    analysis.probe_path = root.join("missing-probe.json");
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    write_pretty_json(&recipe_path, &test_window_action_candidate_manifest_value())
+      .expect("candidate recipe should write");
+    write_pretty_json(
+      &case_matrix_path,
+      &test_window_action_candidate_matrix_value(),
+    )
+    .expect("candidate matrix should write");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.window.action".to_string(),
+        taxonomy_id: "window-action.window-point.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        suggested_annotation_ids: Vec::new(),
+        candidate_shape: AppDistilledCandidateShape::default(),
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let error = validate_app_distillation(&runtime, &distillation_path)
+      .expect_err("unresolved grounding should fail validation");
+    assert!(error.contains("relative_x"));
+    assert!(error.contains("relative_y"));
+
+    let validation: AppValidation =
+      read_json(&root.join("validation.json")).expect("validation output should still write");
+    assert_eq!(
+      validation.candidates[0].status,
+      AppValidationStatus::Rejected
+    );
+    assert_eq!(
+      validation.candidates[0].unresolved_inputs,
+      vec!["relative_x".to_string(), "relative_y".to_string()]
+    );
+    assert!(
+      validation.candidates[0]
+        .failure_message
+        .as_deref()
+        .is_some_and(|message| message.contains("grounding left unresolved inputs"))
+    );
 
     let _ = fs::remove_dir_all(root);
   }
