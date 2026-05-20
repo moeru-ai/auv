@@ -7,7 +7,9 @@ use super::common::{
   DEFAULT_CLICK_INTERVAL_MS, activate_app_if_needed, build_ax_click_notes,
   send_reveal_shortcut_if_needed,
 };
-use super::window_ocr::{capture_resolved_window_observation, logical_point_for_match};
+use super::window_ocr::{
+  capture_resolved_window_observation, click_window_text, logical_point_for_match,
+};
 
 pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
@@ -553,4 +555,96 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
     notes,
     artifacts: vec![ocr_artifact, report_artifact],
   })
+}
+
+pub(crate) fn smart_press(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let query = required_non_empty_string(call, "query")?;
+  let allow_pointer_fallback = optional_bool(call, "allow_pointer_fallback")?.unwrap_or(true);
+  let overlay_requested = optional_bool(call, "overlay")?;
+
+  let mut smart_call = call.clone();
+  smart_call.operation = "smart_press".to_string();
+  if overlay_requested.is_none() {
+    smart_call
+      .inputs
+      .insert("overlay".to_string(), "true".to_string());
+  }
+
+  match ax_click_window_text(&smart_call) {
+    Ok(response) => mark_smart_press_response(response, &query, "ax-action", false, None),
+    Err(primary_error) => {
+      if !allow_pointer_fallback {
+        return Err(format!(
+          "smartPress AX strategy failed and pointer fallback is disabled: {primary_error}"
+        ));
+      }
+
+      match click_window_text(&smart_call) {
+        Ok(response) => {
+          mark_smart_press_response(response, &query, "pointer-click", true, Some(primary_error))
+        }
+        Err(fallback_error) => Err(format!(
+          "smartPress AX strategy failed: {primary_error}; pointer fallback also failed: {fallback_error}"
+        )),
+      }
+    }
+  }
+}
+
+fn mark_smart_press_response(
+  mut response: DriverResponse,
+  query: &str,
+  strategy: &str,
+  fallback_used: bool,
+  primary_error: Option<String>,
+) -> AuvResult<DriverResponse> {
+  response
+    .signals
+    .insert("smartPress.strategy".to_string(), strategy.to_string());
+  response.signals.insert(
+    "smartPress.fallbackUsed".to_string(),
+    fallback_used.to_string(),
+  );
+  response.notes.push("smartPress=true".to_string());
+  response
+    .notes
+    .push(format!("smartPressStrategy={strategy}"));
+  response
+    .notes
+    .push(format!("smartPressFallbackUsed={fallback_used}"));
+  if let Some(error) = primary_error.as_deref() {
+    response
+      .notes
+      .push(format!("smartPressPrimaryError={}", report_value(error)));
+  }
+
+  let mut report = vec![
+    "operation=smart_press".to_string(),
+    format!("query={query}"),
+    format!("strategy={strategy}"),
+    format!("fallbackUsed={fallback_used}"),
+  ];
+  if let Some(error) = primary_error.as_deref() {
+    report.push(format!("primaryError={}", report_value(error)));
+  }
+  let artifact = build_text_artifact(
+    "smart-press",
+    "txt",
+    &format!("smart-press-{}", sanitize_file_component(query)),
+    report.join("\n") + "\n",
+    "Recorded the selected smartPress strategy and fallback decision.",
+  )?;
+  response.artifacts.push(artifact);
+
+  response.backend = Some(format!("macos.smart-press.{strategy}"));
+  response.summary = format!("Smart press used {strategy}: {}", response.summary);
+  Ok(response)
+}
+
+fn report_value(raw: &str) -> String {
+  raw
+    .replace('\\', "\\\\")
+    .replace('\n', "\\n")
+    .replace('\r', "\\r")
+    .replace('\t', "\\t")
 }

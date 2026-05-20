@@ -262,25 +262,31 @@ pub(crate) fn capture_window_cg_to_path(
   #[cfg(target_os = "macos")]
   {
     use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    #[allow(deprecated)]
+    use objc2_core_graphics::CGWindowListCreateImage;
     use objc2_core_graphics::{
-      CGDataProvider, CGImage, CGWindowID, CGWindowImageOption, CGWindowListCreateImage,
-      CGWindowListOption,
+      CGDataProvider, CGImage, CGWindowID, CGWindowImageOption, CGWindowListOption,
     };
 
     let cg_rect = CGRect {
-      origin: CGPoint { x: logical_bounds.x, y: logical_bounds.y },
-      size: CGSize { width: logical_bounds.width, height: logical_bounds.height },
+      origin: CGPoint {
+        x: logical_bounds.x,
+        y: logical_bounds.y,
+      },
+      size: CGSize {
+        width: logical_bounds.width,
+        height: logical_bounds.height,
+      },
     };
     let window_id = window_number.max(0) as CGWindowID;
 
-    let image = unsafe {
-      CGWindowListCreateImage(
-        cg_rect,
-        CGWindowListOption::OptionIncludingWindow,
-        window_id,
-        CGWindowImageOption::Default,
-      )
-    }
+    #[allow(deprecated)]
+    let image = CGWindowListCreateImage(
+      cg_rect,
+      CGWindowListOption::OptionIncludingWindow,
+      window_id,
+      CGWindowImageOption::Default,
+    )
     .ok_or_else(|| {
       format!(
         "{}: CGWindowListCreateImage returned nil for window {}",
@@ -289,7 +295,7 @@ pub(crate) fn capture_window_cg_to_path(
       )
     })?;
 
-    let (pixel_width, pixel_height, rgba) = unsafe {
+    let (pixel_width, pixel_height, rgba) = {
       let w = CGImage::width(Some(&image));
       let h = CGImage::height(Some(&image));
       let data_provider = CGImage::data_provider(Some(&image));
@@ -331,7 +337,10 @@ pub(crate) fn capture_window_cg_to_path(
     let path = screenshot_temp_path(label);
     save_rgba_image(rgba, &path)?;
 
-    let screenshot_pixel_size = Size { width: pixel_width, height: pixel_height };
+    let screenshot_pixel_size = Size {
+      width: pixel_width,
+      height: pixel_height,
+    };
     let source_global_logical_bounds = logical_bounds.clone();
     let logical_x = logical_bounds.x;
     let logical_y = logical_bounds.y;
@@ -363,7 +372,12 @@ pub(crate) fn capture_window_cg_to_path(
         width: pixel_width,
         height: pixel_height,
       })
-      .unwrap_or(Rect { x: 0.0, y: 0.0, width: pixel_width, height: pixel_height });
+      .unwrap_or(Rect {
+        x: 0.0,
+        y: 0.0,
+        width: pixel_width,
+        height: pixel_height,
+      });
 
     let window_ref = format!("window_{}", window_number.max(0));
     let capture_source = CaptureSource::Window {

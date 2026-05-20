@@ -2,6 +2,7 @@ use std::fs;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::super::overlay::overlay_click_point;
 use super::super::*;
 use super::common::{ClickPointCallOptions, build_click_point_call, resolve_click_interval_ms};
 use super::pointer::click_point;
@@ -202,7 +203,11 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
   let click_interval_ms = resolve_click_interval_ms(call)?;
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
-  let nested_call = build_click_point_call(
+  let overlay = optional_bool(call, "overlay")?.unwrap_or(false);
+  let overlay_label = optional_non_empty_string(call, "label").unwrap_or_else(|| "AUV".to_string());
+  let preview_ms =
+    optional_positive_u64(call, "preview_ms")?.unwrap_or(if overlay { 250 } else { 0 });
+  let mut nested_call = build_click_point_call(
     &call.target,
     call.working_directory.as_path(),
     ClickPointCallOptions {
@@ -215,7 +220,18 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       app: call.target.application_id.as_deref(),
     },
   );
-  let _ = click_point(&nested_call)?;
+  if overlay {
+    nested_call.operation = "overlay_click_point".to_string();
+    nested_call
+      .inputs
+      .insert("label".to_string(), overlay_label.clone());
+    nested_call
+      .inputs
+      .insert("preview_ms".to_string(), preview_ms.to_string());
+    let _ = overlay_click_point(&nested_call)?;
+  } else {
+    let _ = click_point(&nested_call)?;
+  }
 
   let report_artifact = build_text_artifact(
     "window-text-click",
@@ -248,7 +264,21 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     format!("clickCount={click_count}"),
     format!("clickIntervalMs={click_interval_ms}"),
     format!("settleMs={settle_ms}"),
+    "pressMechanism=pointer-click".to_string(),
+    "cursorDisturbance=warp-visible".to_string(),
   ]);
+  if overlay {
+    notes.push("overlayPresentation=visual-only".to_string());
+    notes.push(format!("overlayLabel={overlay_label}"));
+    notes.push(format!("previewMs={preview_ms}"));
+  }
+
+  let mut signals = click_window_text_signals(&matched.text);
+  signals.insert("pressMechanism".to_string(), "pointer-click".to_string());
+  signals.insert("cursorDisturbance".to_string(), "warp-visible".to_string());
+  if overlay {
+    signals.insert("overlayPresentation".to_string(), "visual-only".to_string());
+  }
 
   Ok(DriverResponse {
     summary: format!(
@@ -256,7 +286,7 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       matched.text, query
     ),
     backend: Some("macos.vision.click-window-text".to_string()),
-    signals: click_window_text_signals(&matched.text),
+    signals,
     notes,
     artifacts: match json_artifact {
       Some(json_artifact) => vec![screenshot_artifact, report_artifact, json_artifact],

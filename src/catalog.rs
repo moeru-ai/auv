@@ -243,7 +243,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     },
     CommandSpec {
       id: "debug.axPressButton",
-      summary: "Press a control by query via AXUIElementPerformAction; does not warp the real cursor (cursorDisturbance=none). Pass --overlay true to draw a visual AUV cursor over the target during the press for the dual-cursor effect. Falls back with an error when the AX target has no matching action — use debug.pressButton for non-AX-pressable targets.",
+      summary: "Press a control by query via AXUIElementPerformAction; does not warp the real cursor (cursorDisturbance=none). Pass --overlay true to draw a visual AUV cursor over the target during the press for the dual-cursor effect. Falls back with an error when the AX target has no matching action; use debug.pressButton for non-AX-pressable targets.",
       driver_id: "macos.observe",
       operation: "ax_press_button",
       disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,
@@ -256,6 +256,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       operation: "ax_click_window_text",
       disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,
       max_disturbance: DisturbanceClass::Keyboard,
+    },
+    CommandSpec {
+      id: "debug.smartPress",
+      summary: "Try OCR-to-AX press first; if it fails and --allow_pointer_fallback is not false, fall back to pointer click. Overlay defaults on for this debug command so the target is visible before either strategy acts.",
+      driver_id: "macos.observe",
+      operation: "smart_press",
+      disturbance_classes: POINTER_WITH_FOREGROUND,
+      max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
       id: "debug.typeText",
@@ -459,6 +467,7 @@ mod tests {
     assert!(catalog.resolve("debug.pressButton").is_some());
     assert!(catalog.resolve("debug.axPressButton").is_some());
     assert!(catalog.resolve("debug.axClickWindowText").is_some());
+    assert!(catalog.resolve("debug.smartPress").is_some());
     assert!(catalog.resolve("debug.typeText").is_some());
     assert!(
       catalog
