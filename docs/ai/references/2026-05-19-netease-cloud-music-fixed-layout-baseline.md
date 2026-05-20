@@ -85,6 +85,19 @@ That is useful progress, but it still does not produce:
 - semantic result-selection grounding
 - validated playback truth through the V2 path
 
+The current rerun also makes the next bottleneck clearer:
+
+- this is **not** primarily blocked by the verification provider for the current
+  window-action slice; that slice already validates through runtime execution
+  plus captured evidence
+- the bigger gap is still candidate insufficiency for list-like or result-like
+  targets
+- the current OCR sample can now see title-level text such as `网易云音乐`, but
+  that is still not an honest result-selection candidate
+
+So the next product question is not "can we verify more?" first.
+It is "can analyze emit a real list/result candidate shape for this app at all?"
+
 ## Current Honest Classification
 
 The right classification for this NetEaseMusic slice is:

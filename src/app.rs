@@ -116,6 +116,8 @@ pub struct AppDistilledCandidate {
   pub status: AssessmentStatus,
   pub rationale: String,
   pub suggested_annotation_ids: Vec<String>,
+  #[serde(default)]
+  pub candidate_shape: AppDistilledCandidateShape,
   pub recipe_path: PathBuf,
   pub case_matrix_path: PathBuf,
 }
@@ -286,6 +288,28 @@ pub struct AppSurfaceCandidate {
   pub evidence_step_id: String,
   #[serde(default)]
   pub input_bindings: BTreeMap<String, String>,
+  #[serde(default)]
+  pub compatibility: AppCandidateCompatibility,
+  #[serde(default)]
+  pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppCandidateCompatibility {
+  #[serde(default)]
+  pub direct_taxonomy_ids: Vec<String>,
+  #[serde(default)]
+  pub context_taxonomy_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppDistilledCandidateShape {
+  #[serde(default)]
+  pub direct_candidate_ids: Vec<String>,
+  #[serde(default)]
+  pub context_candidate_ids: Vec<String>,
+  #[serde(default)]
+  pub provided_inputs: BTreeMap<String, String>,
   #[serde(default)]
   pub notes: Vec<String>,
 }
@@ -654,8 +678,9 @@ fn distill_app_analysis_into_run(
 
   let mut candidates = Vec::new();
   for strategy in &analysis.recommended_strategies {
-    let recipe_value = render_candidate_recipe(&analysis, strategy)?;
-    let matrix_value = render_candidate_case_matrix(&analysis, strategy)?;
+    let candidate_shape = build_distilled_candidate_shape(&analysis, &strategy.taxonomy_id);
+    let recipe_value = render_candidate_recipe(&analysis, strategy, &candidate_shape)?;
+    let matrix_value = render_candidate_case_matrix(&analysis, strategy, &candidate_shape)?;
     let manifest: SkillManifest =
       serde_json::from_value(recipe_value.clone()).map_err(|error| {
         format!(
@@ -704,10 +729,8 @@ fn distill_app_analysis_into_run(
       taxonomy_id: strategy.taxonomy_id.clone(),
       status: strategy.status,
       rationale: strategy.rationale.clone(),
-      suggested_annotation_ids: suggested_annotation_ids_for_taxonomy(
-        &analysis.annotation_candidates,
-        &strategy.taxonomy_id,
-      ),
+      suggested_annotation_ids: suggested_annotation_ids_for_candidate_shape(&candidate_shape),
+      candidate_shape,
       recipe_path,
       case_matrix_path,
     });
@@ -800,13 +823,31 @@ fn validate_app_distillation_into_run(
     let manifest: SkillManifest = read_json(&candidate.recipe_path)?;
     let mut matrix: SkillCaseMatrix = read_json(&candidate.case_matrix_path)?;
     let mut resolved_inputs = BTreeMap::new();
-    let (unresolved_inputs, used_annotation_ids) = apply_candidate_grounding(
+    let mut used_annotation_ids = if candidate.candidate_shape.provided_inputs.is_empty() {
+      Vec::new()
+    } else {
+      candidate.candidate_shape.direct_candidate_ids.clone()
+    };
+    apply_distilled_candidate_shape_inputs(
+      &candidate.candidate_shape,
+      &mut matrix,
+      &mut resolved_inputs,
+    );
+    let (unresolved_inputs, grounded_annotation_ids) = apply_candidate_grounding(
       &analysis,
       ax_snapshot.as_ref(),
       &candidate.taxonomy_id,
       &mut matrix,
       &mut resolved_inputs,
     );
+    for candidate_id in grounded_annotation_ids {
+      if !used_annotation_ids
+        .iter()
+        .any(|existing| existing == &candidate_id)
+      {
+        used_annotation_ids.push(candidate_id);
+      }
+    }
     let selected_case_count = matrix.cases.len();
 
     let validated = if unresolved_inputs.is_empty() {
@@ -1496,6 +1537,18 @@ fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
           lines.push(format!("    - `{key}` = `{value}`"));
         }
       }
+      if !candidate.compatibility.direct_taxonomy_ids.is_empty() {
+        lines.push("  - directTaxonomyIds:".to_string());
+        for taxonomy_id in &candidate.compatibility.direct_taxonomy_ids {
+          lines.push(format!("    - `{taxonomy_id}`"));
+        }
+      }
+      if !candidate.compatibility.context_taxonomy_ids.is_empty() {
+        lines.push("  - contextTaxonomyIds:".to_string());
+        for taxonomy_id in &candidate.compatibility.context_taxonomy_ids {
+          lines.push(format!("    - `{taxonomy_id}`"));
+        }
+      }
       for note in &candidate.notes {
         lines.push(format!("  - note: {note}"));
       }
@@ -1631,6 +1684,27 @@ fn render_app_distillation_report(
           lines.push(format!("    - `{candidate_id}`"));
         }
       }
+      if !candidate.candidate_shape.direct_candidate_ids.is_empty() {
+        lines.push("  - direct candidate ids:".to_string());
+        for candidate_id in &candidate.candidate_shape.direct_candidate_ids {
+          lines.push(format!("    - `{candidate_id}`"));
+        }
+      }
+      if !candidate.candidate_shape.context_candidate_ids.is_empty() {
+        lines.push("  - context candidate ids:".to_string());
+        for candidate_id in &candidate.candidate_shape.context_candidate_ids {
+          lines.push(format!("    - `{candidate_id}`"));
+        }
+      }
+      if !candidate.candidate_shape.provided_inputs.is_empty() {
+        lines.push("  - candidate shape inputs:".to_string());
+        for (key, value) in &candidate.candidate_shape.provided_inputs {
+          lines.push(format!("    - `{key}` = `{value}`"));
+        }
+      }
+      for note in &candidate.candidate_shape.notes {
+        lines.push(format!("  - shape note: {note}"));
+      }
     }
   }
   lines.push(String::new());
@@ -1762,6 +1836,31 @@ fn render_app_validation_report(validation: &AppValidation) -> String {
     }
   }
   lines.join("\n") + "\n"
+}
+
+fn apply_distilled_candidate_shape_inputs(
+  candidate_shape: &AppDistilledCandidateShape,
+  matrix: &mut SkillCaseMatrix,
+  resolved_inputs: &mut BTreeMap<String, String>,
+) {
+  for case in &mut matrix.cases {
+    for (key, value) in &mut case.inputs {
+      if !looks_like_placeholder(value) {
+        resolved_inputs
+          .entry(key.clone())
+          .or_insert_with(|| value.clone());
+        continue;
+      }
+      if let Some(shape_value) = candidate_shape.provided_inputs.get(key)
+        && !shape_value.trim().is_empty()
+      {
+        *value = shape_value.clone();
+        resolved_inputs
+          .entry(key.clone())
+          .or_insert_with(|| shape_value.clone());
+      }
+    }
+  }
 }
 
 fn apply_candidate_grounding(
@@ -1904,6 +2003,10 @@ fn build_annotation_candidates(
       confidence: None,
       evidence_step_id: evidence_step_id.to_string(),
       input_bindings,
+      compatibility: candidate_compatibility(
+        &["window-action.window-point.pointer-click.capture-evidence"],
+        &[],
+      ),
       notes: vec![note.to_string()],
     });
   }
@@ -1918,6 +2021,10 @@ fn build_annotation_candidates(
       node,
       query_value,
       "observe-window-tree",
+      candidate_compatibility(
+        &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
+        &[],
+      ),
       "AX-exposed search-entry or search-like input candidate.",
     ));
   }
@@ -1932,6 +2039,10 @@ fn build_annotation_candidates(
       node,
       query_value,
       "observe-window-tree",
+      candidate_compatibility(
+        &["native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text"],
+        &[],
+      ),
       "AX-exposed editable text-surface candidate.",
     ));
   }
@@ -1967,6 +2078,14 @@ fn build_annotation_candidates(
       confidence: Some(matched.confidence),
       evidence_step_id: "ocr-sample".to_string(),
       input_bindings: BTreeMap::from([("anchor_text".to_string(), matched.text.clone())]),
+      compatibility: if area == "result-selection" {
+        candidate_compatibility(
+          &["result-selection.ocr-anchor.pointer-click.capture-evidence"],
+          &[],
+        )
+      } else {
+        AppCandidateCompatibility::default()
+      },
       notes,
     });
   }
@@ -2001,6 +2120,7 @@ fn ax_focus_candidate(
   node: &crate::driver::ObservedAxNode,
   query_value: String,
   evidence_step_id: &str,
+  compatibility: AppCandidateCompatibility,
   note: &str,
 ) -> AppSurfaceCandidate {
   let bounds = AppRect::from_observed(&node.bounds);
@@ -2020,6 +2140,7 @@ fn ax_focus_candidate(
     confidence: None,
     evidence_step_id: evidence_step_id.to_string(),
     input_bindings: BTreeMap::from([("focus_query".to_string(), focus_query)]),
+    compatibility,
     notes: vec![note.to_string()],
   }
 }
@@ -2046,6 +2167,10 @@ fn row_candidate(row: ObservedOcrRow) -> AppSurfaceCandidate {
     confidence: None,
     evidence_step_id: "ocr-sample".to_string(),
     input_bindings: BTreeMap::from([("row_index".to_string(), format!("{}", row.row_index + 1))]),
+    compatibility: candidate_compatibility(
+      &[],
+      &["result-selection.ocr-anchor.pointer-click.capture-evidence"],
+    ),
     notes: vec![
       "Visible row candidate grouped from OCR observations; useful for list-like UI targets."
         .to_string(),
@@ -2053,34 +2178,87 @@ fn row_candidate(row: ObservedOcrRow) -> AppSurfaceCandidate {
   }
 }
 
-fn suggested_annotation_ids_for_taxonomy(
-  candidates: &[AppSurfaceCandidate],
-  taxonomy_id: &str,
-) -> Vec<String> {
-  candidates
-    .iter()
-    .filter(|candidate| annotation_matches_taxonomy(candidate, taxonomy_id))
-    .map(|candidate| candidate.candidate_id.clone())
-    .take(8)
-    .collect()
+fn candidate_compatibility(
+  direct_taxonomy_ids: &[&str],
+  context_taxonomy_ids: &[&str],
+) -> AppCandidateCompatibility {
+  AppCandidateCompatibility {
+    direct_taxonomy_ids: direct_taxonomy_ids
+      .iter()
+      .map(|value| value.to_string())
+      .collect(),
+    context_taxonomy_ids: context_taxonomy_ids
+      .iter()
+      .map(|value| value.to_string())
+      .collect(),
+  }
 }
 
-fn annotation_matches_taxonomy(candidate: &AppSurfaceCandidate, taxonomy_id: &str) -> bool {
-  match taxonomy_id {
-    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
-      candidate.area == "search-entry" || candidate.candidate_id == "window-primary-region"
+fn build_distilled_candidate_shape(
+  analysis: &AppAnalysis,
+  taxonomy_id: &str,
+) -> AppDistilledCandidateShape {
+  let mut direct_candidate_ids = Vec::new();
+  let mut context_candidate_ids = Vec::new();
+  let mut provided_inputs = BTreeMap::new();
+  let mut notes = Vec::new();
+
+  for candidate in &analysis.annotation_candidates {
+    if candidate
+      .compatibility
+      .direct_taxonomy_ids
+      .iter()
+      .any(|value| value == taxonomy_id)
+    {
+      direct_candidate_ids.push(candidate.candidate_id.clone());
+      for (key, value) in &candidate.input_bindings {
+        if !value.trim().is_empty() {
+          provided_inputs
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
+        }
+      }
+    } else if candidate
+      .compatibility
+      .context_taxonomy_ids
+      .iter()
+      .any(|value| value == taxonomy_id)
+    {
+      context_candidate_ids.push(candidate.candidate_id.clone());
     }
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
-      candidate.area == "native-text" || candidate.candidate_id == "window-primary-region"
-    }
-    "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
-      candidate.area == "result-selection" || candidate.candidate_id == "window-primary-region"
-    }
-    "window-action.window-point.pointer-click.capture-evidence" => {
-      candidate.candidate_id == "window-primary-region"
-    }
-    _ => false,
   }
+
+  if direct_candidate_ids.is_empty() {
+    notes.push(format!(
+      "No direct candidate shape was available for taxonomy {} during distill.",
+      taxonomy_id
+    ));
+  }
+  if !context_candidate_ids.is_empty() {
+    notes.push(
+      "Context-only candidates were recorded for later review, but they did not project directly into recipe inputs."
+        .to_string(),
+    );
+  }
+
+  AppDistilledCandidateShape {
+    direct_candidate_ids,
+    context_candidate_ids,
+    provided_inputs,
+    notes,
+  }
+}
+
+fn suggested_annotation_ids_for_candidate_shape(
+  candidate_shape: &AppDistilledCandidateShape,
+) -> Vec<String> {
+  candidate_shape
+    .direct_candidate_ids
+    .iter()
+    .chain(candidate_shape.context_candidate_ids.iter())
+    .take(8)
+    .cloned()
+    .collect()
 }
 
 fn find_annotation_candidate<'a>(
@@ -3101,6 +3279,7 @@ fn candidate_slug(taxonomy_id: &str) -> String {
 fn render_candidate_recipe(
   analysis: &AppAnalysis,
   strategy: &AppRecommendedStrategy,
+  _candidate_shape: &AppDistilledCandidateShape,
 ) -> AuvResult<Value> {
   match strategy.taxonomy_id.as_str() {
     "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
@@ -3125,20 +3304,21 @@ fn render_candidate_recipe(
 fn render_candidate_case_matrix(
   analysis: &AppAnalysis,
   strategy: &AppRecommendedStrategy,
+  candidate_shape: &AppDistilledCandidateShape,
 ) -> AuvResult<Value> {
   match strategy.taxonomy_id.as_str() {
-    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
-      Ok(render_search_entry_candidate_cases(analysis))
-    }
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
-      Ok(render_native_text_candidate_cases(analysis))
-    }
-    "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
-      Ok(render_result_selection_candidate_cases(analysis))
-    }
-    "window-action.window-point.pointer-click.capture-evidence" => {
-      Ok(render_window_action_candidate_cases(analysis))
-    }
+    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => Ok(
+      render_search_entry_candidate_cases(analysis, candidate_shape),
+    ),
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => Ok(
+      render_native_text_candidate_cases(analysis, candidate_shape),
+    ),
+    "result-selection.ocr-anchor.pointer-click.capture-evidence" => Ok(
+      render_result_selection_candidate_cases(analysis, candidate_shape),
+    ),
+    "window-action.window-point.pointer-click.capture-evidence" => Ok(
+      render_window_action_candidate_cases(analysis, candidate_shape),
+    ),
     other => Err(format!(
       "no candidate case-matrix distillation template exists yet for strategy taxonomy {}",
       other
@@ -3419,7 +3599,15 @@ fn render_result_selection_candidate_recipe(analysis: &AppAnalysis) -> Value {
   })
 }
 
-fn render_search_entry_candidate_cases(analysis: &AppAnalysis) -> Value {
+fn render_search_entry_candidate_cases(
+  analysis: &AppAnalysis,
+  candidate_shape: &AppDistilledCandidateShape,
+) -> Value {
+  let focus_query = candidate_shape
+    .provided_inputs
+    .get("focus_query")
+    .cloned()
+    .unwrap_or_else(|| "TODO_FOCUS_QUERY".to_string());
   json!({
     "skill_id": format!("macos.{}.search_entry_candidate.v0", recipe_app_slug(&analysis.app_identity)),
     "version": "0.1.0",
@@ -3429,7 +3617,7 @@ fn render_search_entry_candidate_cases(analysis: &AppAnalysis) -> Value {
         "case_id": "default-candidate",
         "status": "candidate",
         "inputs": {
-          "focus_query": "TODO_FOCUS_QUERY",
+          "focus_query": focus_query,
           "query": "TODO_QUERY"
         },
         "disturbance": "pointer",
@@ -3442,7 +3630,15 @@ fn render_search_entry_candidate_cases(analysis: &AppAnalysis) -> Value {
   })
 }
 
-fn render_native_text_candidate_cases(analysis: &AppAnalysis) -> Value {
+fn render_native_text_candidate_cases(
+  analysis: &AppAnalysis,
+  candidate_shape: &AppDistilledCandidateShape,
+) -> Value {
+  let focus_query = candidate_shape
+    .provided_inputs
+    .get("focus_query")
+    .cloned()
+    .unwrap_or_else(|| "TODO_TEXT_SURFACE_QUERY".to_string());
   json!({
     "skill_id": format!("macos.{}.native_text_candidate.v0", recipe_app_slug(&analysis.app_identity)),
     "version": "0.1.0",
@@ -3452,7 +3648,7 @@ fn render_native_text_candidate_cases(analysis: &AppAnalysis) -> Value {
         "case_id": "default-candidate",
         "status": "candidate",
         "inputs": {
-          "focus_query": "TODO_TEXT_SURFACE_QUERY"
+          "focus_query": focus_query
         },
         "disturbance": "pointer",
         "notes": [
@@ -3464,7 +3660,15 @@ fn render_native_text_candidate_cases(analysis: &AppAnalysis) -> Value {
   })
 }
 
-fn render_result_selection_candidate_cases(analysis: &AppAnalysis) -> Value {
+fn render_result_selection_candidate_cases(
+  analysis: &AppAnalysis,
+  candidate_shape: &AppDistilledCandidateShape,
+) -> Value {
+  let anchor_text = candidate_shape
+    .provided_inputs
+    .get("anchor_text")
+    .cloned()
+    .unwrap_or_else(|| "TODO_VISIBLE_ANCHOR_TEXT".to_string());
   json!({
     "skill_id": format!("macos.{}.result_selection_candidate.v0", recipe_app_slug(&analysis.app_identity)),
     "version": "0.1.0",
@@ -3474,7 +3678,7 @@ fn render_result_selection_candidate_cases(analysis: &AppAnalysis) -> Value {
         "case_id": "default-candidate",
         "status": "candidate",
         "inputs": {
-          "anchor_text": "TODO_VISIBLE_ANCHOR_TEXT"
+          "anchor_text": anchor_text
         },
         "disturbance": "pointer",
         "notes": [
@@ -3573,7 +3777,20 @@ fn render_window_action_candidate_recipe(analysis: &AppAnalysis) -> Value {
   })
 }
 
-fn render_window_action_candidate_cases(analysis: &AppAnalysis) -> Value {
+fn render_window_action_candidate_cases(
+  analysis: &AppAnalysis,
+  candidate_shape: &AppDistilledCandidateShape,
+) -> Value {
+  let relative_x = candidate_shape
+    .provided_inputs
+    .get("relative_x")
+    .cloned()
+    .unwrap_or_else(|| "TODO_RELATIVE_X".to_string());
+  let relative_y = candidate_shape
+    .provided_inputs
+    .get("relative_y")
+    .cloned()
+    .unwrap_or_else(|| "TODO_RELATIVE_Y".to_string());
   json!({
     "skill_id": format!("macos.{}.window_action_candidate.v0", recipe_app_slug(&analysis.app_identity)),
     "version": "0.1.0",
@@ -3583,8 +3800,8 @@ fn render_window_action_candidate_cases(analysis: &AppAnalysis) -> Value {
         "case_id": "default-candidate",
         "status": "candidate",
         "inputs": {
-          "relative_x": "TODO_RELATIVE_X",
-          "relative_y": "TODO_RELATIVE_Y"
+          "relative_x": relative_x,
+          "relative_y": relative_y
         },
         "disturbance": "pointer",
         "notes": [
@@ -3876,6 +4093,10 @@ mod tests {
         confidence: None,
         evidence_step_id: "observe-window-tree".to_string(),
         input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
+        compatibility: candidate_compatibility(
+          &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
+          &[],
+        ),
         notes: vec!["sample note".to_string()],
       }],
       known_boundaries: vec!["one boundary".to_string()],
@@ -3908,13 +4129,23 @@ mod tests {
   fn search_entry_distillation_template_validates() {
     let analysis =
       sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
-    let recipe = render_candidate_recipe(&analysis, &analysis.recommended_strategies[0])
-      .expect("candidate recipe should render");
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
+    let recipe = render_candidate_recipe(
+      &analysis,
+      &analysis.recommended_strategies[0],
+      &candidate_shape,
+    )
+    .expect("candidate recipe should render");
     let manifest: SkillManifest =
       serde_json::from_value(recipe).expect("candidate recipe should parse");
     validate_skill_manifest(&manifest).expect("candidate recipe should validate");
-    let matrix_value = render_candidate_case_matrix(&analysis, &analysis.recommended_strategies[0])
-      .expect("candidate matrix should render");
+    let matrix_value = render_candidate_case_matrix(
+      &analysis,
+      &analysis.recommended_strategies[0],
+      &candidate_shape,
+    )
+    .expect("candidate matrix should render");
     let matrix: SkillCaseMatrix =
       serde_json::from_value(matrix_value).expect("candidate matrix should parse");
     validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
@@ -3930,7 +4161,9 @@ mod tests {
     let manifest: SkillManifest =
       serde_json::from_value(recipe).expect("candidate recipe should parse");
     validate_skill_manifest(&manifest).expect("candidate recipe should validate");
-    let matrix_value = render_native_text_candidate_cases(&analysis);
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
+    let matrix_value = render_native_text_candidate_cases(&analysis, &candidate_shape);
     let matrix: SkillCaseMatrix =
       serde_json::from_value(matrix_value).expect("candidate matrix should parse");
     validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
@@ -3945,7 +4178,9 @@ mod tests {
     let manifest: SkillManifest =
       serde_json::from_value(recipe).expect("candidate recipe should parse");
     validate_skill_manifest(&manifest).expect("candidate recipe should validate");
-    let matrix_value = render_window_action_candidate_cases(&analysis);
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
+    let matrix_value = render_window_action_candidate_cases(&analysis, &candidate_shape);
     let matrix: SkillCaseMatrix =
       serde_json::from_value(matrix_value).expect("candidate matrix should parse");
     validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
@@ -3953,12 +4188,68 @@ mod tests {
   }
 
   #[test]
+  fn build_distilled_candidate_shape_projects_direct_inputs() {
+    let mut analysis =
+      sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
+    analysis.annotation_candidates.push(AppSurfaceCandidate {
+      candidate_id: "window-primary-region".to_string(),
+      area: "window.primary".to_string(),
+      kind: "region".to_string(),
+      source: "ax".to_string(),
+      status: AssessmentStatus::Candidate,
+      primary_text: "Example".to_string(),
+      secondary_text: "com.example.App".to_string(),
+      query_value: "100,200,800,600".to_string(),
+      coordinate_space: "global-logical".to_string(),
+      bounds: Some(AppRect {
+        x: 100,
+        y: 200,
+        width: 800,
+        height: 600,
+      }),
+      click_point: Some(AppPoint { x: 500, y: 500 }),
+      confidence: None,
+      evidence_step_id: "observe-window-tree".to_string(),
+      input_bindings: BTreeMap::from([
+        ("window_bounds".to_string(), "100,200,800,600".to_string()),
+        ("relative_x".to_string(), "0.500000".to_string()),
+        ("relative_y".to_string(), "0.500000".to_string()),
+      ]),
+      compatibility: candidate_compatibility(
+        &["window-action.window-point.pointer-click.capture-evidence"],
+        &[],
+      ),
+      notes: vec!["sample window region".to_string()],
+    });
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "window-action.window-point.pointer-click.capture-evidence",
+    );
+    assert_eq!(
+      candidate_shape.direct_candidate_ids,
+      vec!["window-primary-region".to_string()]
+    );
+    assert_eq!(
+      candidate_shape.provided_inputs.get("relative_x"),
+      Some(&"0.500000".to_string())
+    );
+    assert_eq!(
+      candidate_shape.provided_inputs.get("relative_y"),
+      Some(&"0.500000".to_string())
+    );
+    assert!(candidate_shape.notes.is_empty());
+  }
+
+  #[test]
   fn apply_candidate_grounding_marks_unresolved_search_entry_without_search_signal() {
     let analysis =
       sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
-    let mut matrix: SkillCaseMatrix =
-      serde_json::from_value(render_search_entry_candidate_cases(&analysis))
-        .expect("candidate matrix should parse");
+    let mut matrix: SkillCaseMatrix = serde_json::from_value(render_search_entry_candidate_cases(
+      &analysis,
+      &AppDistilledCandidateShape::default(),
+    ))
+    .expect("candidate matrix should parse");
     let mut resolved = BTreeMap::new();
     let (unresolved, used_annotations) = apply_candidate_grounding(
       &analysis,
@@ -4000,11 +4291,17 @@ mod tests {
         ("relative_x".to_string(), "0.500000".to_string()),
         ("relative_y".to_string(), "0.500000".to_string()),
       ]),
+      compatibility: candidate_compatibility(
+        &["window-action.window-point.pointer-click.capture-evidence"],
+        &[],
+      ),
       notes: vec!["sample window region".to_string()],
     });
-    let mut matrix: SkillCaseMatrix =
-      serde_json::from_value(render_window_action_candidate_cases(&analysis))
-        .expect("candidate matrix should parse");
+    let mut matrix: SkillCaseMatrix = serde_json::from_value(render_window_action_candidate_cases(
+      &analysis,
+      &AppDistilledCandidateShape::default(),
+    ))
+    .expect("candidate matrix should parse");
     let mut resolved = BTreeMap::new();
     let (unresolved, used_annotations) = apply_candidate_grounding(
       &analysis,
@@ -4062,6 +4359,7 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: Vec::new(),
+        candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
       }],
@@ -4133,6 +4431,7 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: Vec::new(),
+        candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
       }],
@@ -4214,6 +4513,10 @@ mod tests {
         ("relative_x".to_string(), "0.500000".to_string()),
         ("relative_y".to_string(), "0.500000".to_string()),
       ]),
+      compatibility: candidate_compatibility(
+        &["window-action.window-point.pointer-click.capture-evidence"],
+        &[],
+      ),
       notes: vec!["sample window region".to_string()],
     });
     write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
@@ -4236,6 +4539,7 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["window-primary-region".to_string()],
+        candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
       }],
@@ -4279,6 +4583,81 @@ mod tests {
       .collect::<Vec<_>>();
     assert_eq!(finished_runs.len(), 1);
     assert_eq!(finished_runs[0].run_type, RunType::Validate);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn validate_app_distillation_uses_candidate_shape_inputs_before_analysis_fallback() {
+    let root = temp_dir("app-validate-window-action-shape");
+    let runtime = test_runtime(root.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("window-action.recipe.json");
+    let case_matrix_path = root.join("window-action.cases.json");
+
+    let mut analysis =
+      sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
+    analysis.probe_path = root.join("missing-probe.json");
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    write_pretty_json(&recipe_path, &test_window_action_candidate_manifest_value())
+      .expect("candidate recipe should write");
+    write_pretty_json(
+      &case_matrix_path,
+      &test_window_action_candidate_matrix_value(),
+    )
+    .expect("candidate matrix should write");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.window.action".to_string(),
+        taxonomy_id: "window-action.window-point.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        suggested_annotation_ids: vec!["window-primary-region".to_string()],
+        candidate_shape: AppDistilledCandidateShape {
+          direct_candidate_ids: vec!["window-primary-region".to_string()],
+          context_candidate_ids: Vec::new(),
+          provided_inputs: BTreeMap::from([
+            ("window_bounds".to_string(), "100,200,800,600".to_string()),
+            ("relative_x".to_string(), "0.500000".to_string()),
+            ("relative_y".to_string(), "0.500000".to_string()),
+          ]),
+          notes: Vec::new(),
+        },
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let output =
+      validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
+    assert_eq!(
+      output.validation.candidates[0].status,
+      AppValidationStatus::Validated
+    );
+    assert_eq!(
+      output.validation.candidates[0].used_annotation_ids,
+      vec!["window-primary-region".to_string()]
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .resolved_inputs
+        .get("relative_x"),
+      Some(&"0.500000".to_string())
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .resolved_inputs
+        .get("relative_y"),
+      Some(&"0.500000".to_string())
+    );
 
     let _ = fs::remove_dir_all(root);
   }

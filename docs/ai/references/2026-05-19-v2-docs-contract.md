@@ -101,9 +101,19 @@ small target-spec fields such as:
 - `bounds`
 - `click_point`
 - `input_bindings`
+- `compatibility.direct_taxonomy_ids`
+- `compatibility.context_taxonomy_ids`
 
 That is the minimum needed to keep fixed-layout local baselines machine-readable
 without pretending they are already general-purpose semantic skills.
+
+`direct_taxonomy_ids` and `context_taxonomy_ids` should not be collapsed into
+one vague list.
+
+- direct means the candidate can already project real recipe inputs for that
+  taxonomy
+- context means the candidate is still useful evidence, but not yet an honest
+  recipe-input source
 
 But when the probe truth is too weak, the correct output is still:
 
@@ -121,6 +131,15 @@ That is more useful than fake genericity.
 - `candidates/*.recipe.json`
 - `candidates/*.cases.json`
 - `report.md`
+
+Each distilled candidate should also carry a machine-readable `candidate_shape`
+so distill is not forced to rediscover everything from prose later. The shape
+should be able to record:
+
+- direct candidate ids
+- context candidate ids
+- provided inputs
+- shape notes
 
 The output must be:
 
@@ -143,6 +162,10 @@ V2 should keep that honesty boundary and extend it into promotion:
 - only validated slices are allowed to promote
 - candidate slices stay candidate even if they look promising
 - rejected slices stay recorded as failure evidence, not silently rewritten
+
+Validate should prefer `candidate_shape.provided_inputs` from distill before it
+falls back to analysis-side auto-grounding. Otherwise distill is only pretending
+to be candidate-aware while validate still behaves like a prose reader.
 
 ### 4. Target Resolution Contract
 

@@ -106,9 +106,18 @@ At minimum they may carry:
 - `bounds`
 - `click_point`
 - `input_bindings`
+- `compatibility.direct_taxonomy_ids`
+- `compatibility.context_taxonomy_ids`
 
 This is the start of a contract that can later describe fixed-layout or
 window-relative action targets without collapsing back into ad-hoc README prose.
+
+The important distinction is:
+
+- direct taxonomy ids mean the candidate can already project concrete recipe
+  inputs for that taxonomy
+- context taxonomy ids mean the candidate is still useful evidence, but not yet
+  a direct recipe-input source
 
 When the semantic surface is weak but the probe still exposed a stable primary
 window region, `app analyze` may now emit a `window-primary-region` annotation
@@ -138,6 +147,12 @@ The current distill step is intentionally narrow:
 
 - it generates candidate recipe and case-matrix scaffolds
 - it carries forward suggested annotation ids from the source analysis
+- it now also records a machine-readable `candidate_shape` per distilled
+  candidate:
+  - direct candidate ids
+  - context candidate ids
+  - provided inputs
+  - shape notes
 - it validates those generated artifacts against the current skill validators
 - it does **not** promote them to validated skills
 
@@ -154,7 +169,8 @@ invent success claims.
 The current validate step is also intentionally narrow:
 
 - it loads candidate recipe/case-matrix pairs from the distillation output
-- it applies only conservative auto-grounding from the structured analysis candidates
+- it first applies any `candidate_shape.provided_inputs` from distill
+- it then applies only conservative auto-grounding from the structured analysis candidates
 - it classifies each candidate as:
   - `validated`
   - `candidate`
