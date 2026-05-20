@@ -171,11 +171,14 @@ activation-level window action.
 
 ## Failure Classification
 
-Primary finding:
+Initial primary finding before `bf873de`:
 
 - `selector/window` is the first hard issue. The probe window observation path
   returned zero windows for a bundle-id target, while validation later resolved
   the same app/window through a different selector path.
+
+This was the right first blocker at source commit `f183527`. It was addressed
+by `bf873de`; see the live regression below.
 
 Secondary findings:
 
@@ -191,6 +194,93 @@ Secondary findings:
   slice because the slice is deliberately `evidence-only`.
 - `semantic mismatch` is expected: clicking the window center activated a
   playlist card, not a requested domain action.
+
+## `bf873de` Live Regression
+
+After `fix(macos): resolve observe windows by app selector`, the selector/window
+path was rerun against the live desktop.
+
+Direct regression command:
+
+```bash
+cargo run --quiet -- invoke debug.observeWindows \
+  --target com.netease.163music \
+  --limit 20
+```
+
+Run id:
+
+- `run_1779254646170_94392_0`
+
+Result:
+
+```text
+status: completed
+output: Observed 1 window(s) for 网易云音乐; frontmost app is ChatGPT Atlas.
+```
+
+Artifact evidence:
+
+```text
+appSelector=com.netease.163music
+matchStrategy=bundle-id-exact
+resolvedAppBundleId=com.netease.163music
+resolvedAppName=网易云音乐
+windowCount=1
+window	网易云音乐	79097	com.netease.163music	3178	0		226	101	1060	752
+```
+
+Full pass rerun directory:
+
+```text
+.auv/app-passes/2026-05-20-netease-selector-regression-bf873de
+```
+
+Rerun commands:
+
+```bash
+cargo run --quiet -- app probe com.netease.163music \
+  --output-dir .auv/app-passes/2026-05-20-netease-selector-regression-bf873de/probe
+
+cargo run --quiet -- app analyze \
+  .auv/app-passes/2026-05-20-netease-selector-regression-bf873de/probe
+
+cargo run --quiet -- app distill \
+  .auv/app-passes/2026-05-20-netease-selector-regression-bf873de/probe/analysis.json \
+  --output-dir .auv/app-passes/2026-05-20-netease-selector-regression-bf873de/distill
+
+cargo run --quiet -- app validate \
+  .auv/app-passes/2026-05-20-netease-selector-regression-bf873de/distill
+```
+
+Rerun run ids:
+
+- probe: `run_1779254667630_94512_0`
+- analyze: `run_1779254691857_94979_0`
+- distill: `run_1779254692300_94980_0`
+- validate: `run_1779254692749_94978_0`
+
+The rerun changed the important window evidence:
+
+- `window_context.observed_window_count = 1`
+- `window_context.primary_window_bounds = "226,101,1060,752"`
+- `annotation_candidates[0].candidate_id = "window-primary-region"`
+- `annotation_candidates[0].source = "window"`
+- `annotation_candidates[0].evidence_step_id = "observe-windows"`
+
+The distill and validate stages still preserved annotation linkage:
+
+- `suggested_annotation_ids = ["window-primary-region"]`
+- `used_annotation_ids = ["window-primary-region"]`
+- `verification_mode = "evidence-only"`
+- `unresolved_inputs = []`
+
+Conclusion:
+
+The original selector/window blocker is resolved for this live regression. The
+NetEaseMusic output is still not promotable as a semantic skill because the
+candidate remains a window-level pointer activation with evidence-only
+verification.
 
 ## Decision
 
@@ -214,14 +304,24 @@ The pass does not prove:
 Recommended next cut:
 
 ```text
-tighten selector/window coherence for probe-time window observation
+tighten candidate taxonomy / OCR truth levels
 ```
 
-Specifically, `debug.observeWindows --target com.netease.163music` should not
-filter only by localized owner name. It should resolve bundle id coherently, or
-observe unfiltered windows and apply the same `AppSelector -> ResolvedAppRef ->
-WindowRef` logic used by `clickWindowPoint`.
+The selector/window regression should stay covered by automated tests and live
+evidence, but it is no longer the first blocker in this pass.
 
-After that, rerun this same pass. Only then decide whether the next real product
-cut is candidate taxonomy, list row discovery, align-and-click, or verification
-provider hardening.
+The remaining issue is truth-level precision: analysis still treats raw
+low-confidence OCR observations as enough to make `ocr_sample_status` sound like
+a candidate, while the active probe summary reports zero filtered matches under
+the configured threshold. V2 should explicitly separate:
+
+- raw OCR observation count
+- filtered OCR match count
+- visible text anchors
+- list/result candidates
+- semantic result evidence
+
+After that, rerun this same pass again. If no list/result candidate appears, the
+next real product cut is list row discovery. If row candidates appear but clicks
+are unstable, the next cut is `alignAndClick`. If clicks work but success cannot
+be proven, the next cut is verification provider hardening.
