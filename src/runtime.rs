@@ -40,6 +40,10 @@ impl Runtime {
     self.commands.all()
   }
 
+  pub fn project_root(&self) -> &Path {
+    &self.project_root
+  }
+
   pub fn list_drivers(&self) -> Vec<DriverDescriptor> {
     self.drivers.descriptors()
   }
