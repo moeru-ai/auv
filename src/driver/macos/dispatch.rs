@@ -9,6 +9,7 @@ use super::observe::{
   observe_windows, probe_coordinate_readiness, probe_permissions, project_screenshot_point,
   verify_ax_text, verify_now_playing_title, wait_for_screen_rows, wait_for_screen_text,
 };
+use super::overlay::{overlay_hide_cursor, overlay_show_cursor, overlay_shutdown};
 use super::{
   Driver, DriverCall, DriverDescriptor, DriverResponse, MacOsObserveDriver, descriptor,
   require_macos,
@@ -57,6 +58,9 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
     "click_screen_text" => click_screen_text(call),
     "click_screen_row" => click_screen_row(call),
     "scroll_point" => scroll_point(call),
+    "overlay_show_cursor" => overlay_show_cursor(call),
+    "overlay_hide_cursor" => overlay_hide_cursor(call),
+    "overlay_shutdown" => overlay_shutdown(call),
     other => Err(format!(
       "driver macos.observe does not support operation {}",
       other

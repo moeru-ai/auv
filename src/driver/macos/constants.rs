@@ -17,6 +17,8 @@ pub(crate) const RESTORE_CLIPBOARD_SCRIPT_TEMPLATE: &str =
   include_str!("scripts/restore_clipboard.swift");
 pub(crate) const SET_CLIPBOARD_TEXT_SCRIPT_TEMPLATE: &str =
   include_str!("scripts/set_clipboard_text.swift");
+pub(crate) const OVERLAY_CURSOR_DAEMON_SCRIPT: &str =
+  include_str!("scripts/overlay_cursor_daemon.swift");
 
 pub(crate) const XCRUN_BINARY: &str = "/usr/bin/xcrun";
 pub(crate) const OSASCRIPT_BINARY: &str = "/usr/bin/osascript";

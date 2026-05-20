@@ -9,6 +9,7 @@ mod control;
 mod descriptor;
 mod dispatch;
 mod observe;
+mod overlay;
 mod support;
 #[cfg(test)]
 mod tests;

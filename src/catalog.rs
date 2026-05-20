@@ -274,6 +274,30 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
+      id: "debug.overlayShowCursor",
+      summary: "Show an experimental visual-only AUV cursor label overlay inside the current process.",
+      driver_id: "macos.observe",
+      operation: "overlay_show_cursor",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.overlayHideCursor",
+      summary: "Hide the experimental visual-only AUV cursor label overlay inside the current process.",
+      driver_id: "macos.observe",
+      operation: "overlay_hide_cursor",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.overlayShutdown",
+      summary: "Shut down the experimental visual-only AUV cursor overlay daemon inside the current process.",
+      driver_id: "macos.observe",
+      operation: "overlay_shutdown",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.fixtureObserve",
       summary: "Emit a deterministic observation result without touching the real UI.",
       driver_id: "fixture.observe",
@@ -372,6 +396,9 @@ mod tests {
     assert!(catalog.resolve("debug.clickWindowPoint").is_some());
     assert!(catalog.resolve("debug.clickScreenText").is_some());
     assert!(catalog.resolve("debug.scrollPoint").is_some());
+    assert!(catalog.resolve("debug.overlayShowCursor").is_some());
+    assert!(catalog.resolve("debug.overlayHideCursor").is_some());
+    assert!(catalog.resolve("debug.overlayShutdown").is_some());
   }
 
   #[test]
