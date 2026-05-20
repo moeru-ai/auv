@@ -180,6 +180,19 @@ Validate should prefer `candidate_shape.provided_inputs` from distill before it
 falls back to analysis-side auto-grounding. Otherwise distill is only pretending
 to be candidate-aware while validate still behaves like a prose reader.
 
+Under the current implementation, unresolved recipe inputs are a validation
+failure, not a soft candidate outcome:
+
+- `app distill` may emit candidate scaffolds with unresolved `TODO_*` fields
+- `app validate` must resolve those fields through `candidate_shape` or honest
+  analysis-side grounding before it attempts live execution
+- if the fields remain unresolved, the candidate is marked `rejected`, the
+  unresolved inputs are written into `validation.json`, and validation returns a
+  failure
+
+This keeps "candidate" as a distillation/promotability concept, not a way to
+hide that validation could not execute the recipe.
+
 ### 4. Target Resolution Contract
 
 V2 should explicitly recognize that app identity and window identity are not

@@ -179,9 +179,15 @@ The current validate step is also intentionally narrow:
 
 The current honesty rule is:
 
-- unresolved `TODO_*` inputs keep a candidate in `candidate`
+- unresolved `TODO_*` inputs or missing grounding inputs move the candidate to
+  `rejected` before execution
 - live runtime failures move a runnable candidate to `rejected`
 - only successful live execution moves a candidate to `validated`
+
+This is deliberately stricter than the distillation phase. `app distill` may
+emit candidate scaffolds, but `app validate` must not preserve an unresolved
+candidate as if validation had made progress. It writes the validation report
+with the unresolved inputs and fails the validation command.
 
 ## Truth Boundaries
 
@@ -238,8 +244,8 @@ candidate-only until the validate/promote path proves them live.
 
 The same honesty bar now applies to `app validate`: auto-grounding can help,
 but it must stay conservative. If validate cannot resolve a `focus_query`,
-`anchor_text`, or similar candidate input honestly, it must leave the skill in
-`candidate` rather than manufacturing a fake validated result.
+`anchor_text`, or similar candidate input honestly, it must reject that
+candidate before execution rather than manufacturing a fake validated result.
 
 The current honesty bar also applies to the candidate layer itself: a noisy OCR
 match should still be emitted as a noisy OCR candidate instead of being silently
@@ -277,15 +283,16 @@ That smoke produced two candidate outcomes:
   - the marker paste completed
   - `debug.verifyAxText` verified the same marker through AX
 
-- `macos.textedit.search_entry_candidate.v0` -> `candidate`
+- `macos.textedit.search_entry_candidate.v0` -> `rejected`
   - validate refused to invent a fake `focus_query`
   - it only auto-filled the trivial `query`
-  - the candidate therefore remained runnable-in-principle but unresolved
+  - the candidate therefore failed before execution with explicit unresolved
+    grounding inputs
 
 This is the current honesty bar for `app validate`:
 
 - promote only the slices that really run live
-- keep unresolved candidate slices in `candidate`
+- reject unresolved candidate slices before execution
 - do not use auto-grounding as permission to fabricate validation
 
 ## Fixed-Layout Pointer Result
