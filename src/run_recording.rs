@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tokio::sync::broadcast;
 
@@ -10,6 +11,8 @@ use crate::trace::{
   ArtifactId, ArtifactRecordV1Alpha1, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, SpanId,
   SpanRecordV1Alpha1,
 };
+
+const INSPECT_SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RunUpdate {
@@ -51,9 +54,36 @@ pub struct InspectServerSession {
 }
 
 pub fn default_session_path() -> std::path::PathBuf {
-  std::env::var_os("AUV_INSPECT_SESSION")
-    .map(std::path::PathBuf::from)
-    .unwrap_or_else(|| std::env::temp_dir().join("auv-inspect-session.json"))
+  if let Some(path) = std::env::var_os("AUV_INSPECT_SESSION") {
+    return std::path::PathBuf::from(path);
+  }
+  if let Some(path) = std::env::var_os("XDG_RUNTIME_DIR") {
+    return std::path::PathBuf::from(path)
+      .join("auv")
+      .join("inspect-session.json");
+  }
+  #[cfg(target_os = "macos")]
+  if let Some(home) = std::env::var_os("HOME") {
+    return std::path::PathBuf::from(home)
+      .join("Library")
+      .join("Caches")
+      .join("AUV")
+      .join("inspect-session.json");
+  }
+  if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
+    return std::path::PathBuf::from(path)
+      .join("auv")
+      .join("inspect-session.json");
+  }
+  if let Some(home) = std::env::var_os("HOME") {
+    return std::path::PathBuf::from(home)
+      .join(".cache")
+      .join("auv")
+      .join("inspect-session.json");
+  }
+  std::env::temp_dir()
+    .join(format!("auv-{}", current_user_id_for_path()))
+    .join("inspect-session.json")
 }
 
 pub fn write_inspect_session(session: &InspectServerSession) -> AuvResult<()> {
@@ -61,8 +91,7 @@ pub fn write_inspect_session(session: &InspectServerSession) -> AuvResult<()> {
   if let Some(parent) = path.parent()
     && !parent.as_os_str().is_empty()
   {
-    std::fs::create_dir_all(parent)
-      .map_err(|error| format!("failed to create inspect session directory: {error}"))?;
+    create_private_session_directory(parent)?;
   }
   let bytes = serde_json::to_vec_pretty(session)
     .map_err(|error| format!("failed to encode inspect session: {error}"))?;
@@ -179,6 +208,7 @@ pub fn read_inspect_session() -> AuvResult<Option<InspectServerSession>> {
   if !path.exists() {
     return Ok(None);
   }
+  validate_inspect_session_file(&path)?;
   let raw = std::fs::read_to_string(&path)
     .map_err(|error| format!("failed to read inspect session {}: {error}", path.display()))?;
   serde_json::from_str(&raw).map(Some).map_err(|error| {
@@ -187,6 +217,68 @@ pub fn read_inspect_session() -> AuvResult<Option<InspectServerSession>> {
       path.display()
     )
   })
+}
+
+#[cfg(unix)]
+fn current_user_id_for_path() -> u32 {
+  unsafe { libc::getuid() }
+}
+
+#[cfg(not(unix))]
+fn current_user_id_for_path() -> u32 {
+  0
+}
+
+#[cfg(unix)]
+fn create_private_session_directory(path: &Path) -> AuvResult<()> {
+  use std::os::unix::fs::PermissionsExt;
+
+  std::fs::create_dir_all(path)
+    .map_err(|error| format!("failed to create inspect session directory: {error}"))?;
+  std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(|error| {
+    format!(
+      "failed to restrict inspect session directory {}: {error}",
+      path.display()
+    )
+  })
+}
+
+#[cfg(not(unix))]
+fn create_private_session_directory(path: &Path) -> AuvResult<()> {
+  std::fs::create_dir_all(path)
+    .map_err(|error| format!("failed to create inspect session directory: {error}"))
+}
+
+#[cfg(unix)]
+fn validate_inspect_session_file(path: &Path) -> AuvResult<()> {
+  use std::os::unix::fs::MetadataExt;
+
+  let metadata = std::fs::symlink_metadata(path)
+    .map_err(|error| format!("failed to stat inspect session {}: {error}", path.display()))?;
+  if !metadata.file_type().is_file() {
+    return Err(format!(
+      "unsafe inspect session {}: descriptor is not a regular file",
+      path.display()
+    ));
+  }
+  if metadata.uid() != current_user_id_for_path() {
+    return Err(format!(
+      "unsafe inspect session {}: descriptor is not owned by the current user",
+      path.display()
+    ));
+  }
+  if metadata.mode() & 0o077 != 0 {
+    return Err(format!(
+      "unsafe inspect session {}: descriptor permissions must not grant group/other access",
+      path.display()
+    ));
+  }
+  Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_inspect_session_file(_path: &Path) -> AuvResult<()> {
+  Ok(())
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -504,6 +596,10 @@ impl RunUpdate {
 
 pub trait RunRecorder: Send + Sync {
   fn record(&self, update: RunUpdate) -> AuvResult<()>;
+
+  fn requires_successful_delivery(&self) -> bool {
+    false
+  }
 }
 
 pub struct NoopRunRecorder;
@@ -542,24 +638,123 @@ impl RunRecorder for CompositeRunRecorder {
       ))
     }
   }
+
+  fn requires_successful_delivery(&self) -> bool {
+    self
+      .recorders
+      .iter()
+      .any(|recorder| recorder.requires_successful_delivery())
+  }
+}
+
+#[derive(Clone)]
+pub struct InspectServerRunRecorder {
+  base_url: String,
+  token: Option<String>,
+  required: bool,
+}
+
+impl InspectServerRunRecorder {
+  pub fn new(base_url: String, token: Option<String>, required: bool) -> Self {
+    Self {
+      base_url: base_url.trim_end_matches('/').to_string(),
+      token,
+      required,
+    }
+  }
+
+  fn handle_failure(&self, message: String) -> AuvResult<()> {
+    if self.required {
+      Err(message)
+    } else {
+      eprintln!("warning: {message}");
+      Ok(())
+    }
+  }
+}
+
+impl RunRecorder for InspectServerRunRecorder {
+  fn record(&self, update: RunUpdate) -> AuvResult<()> {
+    let base_url = self.base_url.clone();
+    let token = self.token.clone();
+    let run_id = update.run_id().as_str().to_string();
+    let api_update = ApiRunUpdate::from(update);
+    let result = std::thread::spawn(move || {
+      let url = format!("{base_url}/write/runs/{run_id}/updates");
+      let client = reqwest::blocking::Client::builder()
+        .connect_timeout(INSPECT_SERVER_WRITE_TIMEOUT)
+        .timeout(INSPECT_SERVER_WRITE_TIMEOUT)
+        .build()
+        .map_err(|error| format!("inspect server write client setup failed: {error}"))?;
+      let mut request = client
+        .post(url)
+        .json(&serde_json::json!({ "updates": [api_update] }));
+      if let Some(token) = token {
+        request = request.bearer_auth(token);
+      }
+      let response = request
+        .send()
+        .map_err(|error| format!("inspect server write failed: {error}"))?;
+      if response.status().is_success() {
+        return Ok(());
+      }
+      let status = response.status();
+      let body = response.text().unwrap_or_else(|_| String::new());
+      Err(format!(
+        "inspect server write rejected with {status}: {body}"
+      ))
+    })
+    .join()
+    .unwrap_or_else(|_| Err("inspect server write failed: client thread panicked".to_string()));
+
+    result.or_else(|message| self.handle_failure(message))
+  }
+
+  fn requires_successful_delivery(&self) -> bool {
+    self.required
+  }
+}
+
+#[cfg(test)]
+fn inspect_server_write_timeout_for_test() -> Duration {
+  INSPECT_SERVER_WRITE_TIMEOUT
 }
 
 #[derive(Clone)]
 pub struct RunRecordingBackend {
   store: LocalStore,
   recorder: Arc<dyn RunRecorder>,
+  local_snapshot_write_enabled: bool,
+  cleanup_store_on_drop: bool,
 }
 
 impl RunRecordingBackend {
   pub fn new(store: LocalStore, recorder: Arc<dyn RunRecorder>) -> Self {
-    Self { store, recorder }
+    Self {
+      store,
+      recorder,
+      local_snapshot_write_enabled: true,
+      cleanup_store_on_drop: false,
+    }
   }
 
   pub fn local_only(store: LocalStore) -> Self {
     Self {
       store,
       recorder: Arc::new(NoopRunRecorder),
+      local_snapshot_write_enabled: true,
+      cleanup_store_on_drop: false,
     }
+  }
+
+  pub fn with_local_snapshot_write_enabled(mut self, enabled: bool) -> Self {
+    self.local_snapshot_write_enabled = enabled;
+    self
+  }
+
+  pub fn with_temporary_store_cleanup(mut self, cleanup: bool) -> Self {
+    self.cleanup_store_on_drop = cleanup;
+    self
   }
 
   pub fn store(&self) -> &LocalStore {
@@ -574,11 +769,18 @@ impl RunRecordingBackend {
     self.recorder.record(update)
   }
 
+  pub fn requires_successful_delivery(&self) -> bool {
+    self.recorder.requires_successful_delivery()
+  }
+
   pub fn read_run(&self, run_id: &str) -> AuvResult<CanonicalRun> {
     self.store.read_run(run_id)
   }
 
   pub fn write_run_snapshot(&self, snapshot: &CanonicalRun) -> AuvResult<()> {
+    if !self.local_snapshot_write_enabled {
+      return Ok(());
+    }
     self.store.write_run_snapshot(snapshot)
   }
 
@@ -610,6 +812,14 @@ impl RunRecordingBackend {
     self
       .store
       .stage_artifact_file(run_id, index, span_id, event_id, artifact)
+  }
+}
+
+impl Drop for RunRecordingBackend {
+  fn drop(&mut self) {
+    if self.cleanup_store_on_drop {
+      let _ = std::fs::remove_dir_all(self.store.root());
+    }
   }
 }
 
@@ -676,12 +886,16 @@ impl RunRecorder for BroadcastRunRecorder {
 mod tests {
   use std::sync::{Arc, Mutex};
 
+  use crate::store::{ArtifactFileSource, LocalStore};
   use crate::trace::{
     RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SpanId, TraceId, TraceState,
     TraceStatusCode,
   };
 
-  use super::{ApiRunUpdate, InspectServerSession, RunRecorder, RunUpdate, write_inspect_session};
+  use super::{
+    ApiRunUpdate, InspectServerRunRecorder, InspectServerSession, RunRecorder, RunUpdate,
+    read_inspect_session, write_inspect_session,
+  };
 
   static ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -751,6 +965,200 @@ mod tests {
 
     assert_eq!(first.updates(), vec![update.clone()]);
     assert_eq!(second.updates(), vec![update]);
+  }
+
+  #[test]
+  fn inspect_server_recorder_has_bounded_request_timeout() {
+    assert!(super::inspect_server_write_timeout_for_test() <= std::time::Duration::from_secs(10));
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn read_inspect_session_rejects_world_readable_env_override() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let root = std::env::temp_dir().join(format!(
+      "auv-inspect-session-unsafe-mode-{}",
+      crate::model::now_millis()
+    ));
+    std::fs::create_dir_all(&root).expect("session test directory should write");
+    let path = root.join("session.json");
+    std::fs::write(
+      &path,
+      serde_json::to_string(&InspectServerSession {
+        url: "http://127.0.0.1:8765".to_string(),
+        store_root: root.display().to_string(),
+        write_enabled: true,
+        write_token: Some("secret".to_string()),
+        pid: 123,
+        started_at_millis: 456,
+      })
+      .expect("session should encode"),
+    )
+    .expect("session should write");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+      .expect("session file permissions should change");
+    unsafe {
+      std::env::set_var("AUV_INSPECT_SESSION", &path);
+    }
+
+    let error = read_inspect_session().expect_err("unsafe session file should reject");
+
+    unsafe {
+      std::env::remove_var("AUV_INSPECT_SESSION");
+    }
+    let _ = std::fs::remove_dir_all(root);
+    assert!(error.contains("unsafe inspect session"));
+  }
+
+  #[test]
+  fn recording_backend_cleans_temporary_store_on_drop() {
+    let root = std::env::temp_dir().join(format!(
+      "auv-recording-temp-store-cleanup-{}",
+      crate::model::now_millis()
+    ));
+    let source = std::env::temp_dir().join(format!(
+      "auv-recording-temp-source-{}.txt",
+      crate::model::now_millis()
+    ));
+    std::fs::write(&source, "artifact body").expect("artifact source should write");
+    {
+      let store = LocalStore::new(root.clone()).expect("store should initialize");
+      let recording = super::RunRecordingBackend::new(store, Arc::new(super::NoopRunRecorder))
+        .with_local_snapshot_write_enabled(false)
+        .with_temporary_store_cleanup(true);
+      let artifact = recording
+        .stage_artifact_file(
+          &RunId::new("run_temp_cleanup"),
+          0,
+          &SpanId::new("0000000000000001"),
+          None,
+          ArtifactFileSource {
+            role: "text".to_string(),
+            source_path: source.clone(),
+            preferred_name: "artifact.txt".to_string(),
+            summary: None,
+          },
+        )
+        .expect("temporary artifact should stage");
+      assert!(
+        recording
+          .run_dir("run_temp_cleanup")
+          .expect("run dir")
+          .join(artifact.path)
+          .exists()
+      );
+      assert!(root.exists());
+    }
+
+    let _ = std::fs::remove_file(source);
+    assert!(!root.exists());
+  }
+
+  #[tokio::test(flavor = "multi_thread")]
+  async fn inspect_server_recorder_posts_update_batch_with_token() {
+    use axum::http::{HeaderMap, header::AUTHORIZATION};
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use serde_json::Value;
+    use tokio::net::TcpListener;
+
+    let captured = Arc::new(Mutex::new(None::<(Option<String>, Value)>));
+    let captured_route = captured.clone();
+    let app = Router::new().route(
+      "/write/runs/run_update_test/updates",
+      post(move |headers: HeaderMap, Json(value): Json<Value>| {
+        let captured = captured_route.clone();
+        async move {
+          let authorization = headers
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned);
+          *captured.lock().expect("capture lock") = Some((authorization, value));
+          Json(serde_json::json!({ "accepted": 1 }))
+        }
+      }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0")
+      .await
+      .expect("bind test server");
+    let address = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+      axum::serve(listener, app).await.expect("test server");
+    });
+
+    let recorder = InspectServerRunRecorder::new(
+      format!("http://{address}"),
+      Some("secret".to_string()),
+      false,
+    );
+    recorder
+      .record(RunUpdate::RunStarted {
+        run_id: RunId::new("run_update_test"),
+        run: test_run(),
+      })
+      .expect("server record should succeed");
+
+    let (authorization, body) = captured
+      .lock()
+      .expect("capture lock")
+      .clone()
+      .expect("captured request");
+    assert_eq!(authorization.as_deref(), Some("Bearer secret"));
+    assert_eq!(body["updates"][0]["type"], "runStarted");
+    assert_eq!(body["updates"][0]["runId"], "run_update_test");
+    assert_eq!(body["updates"][0]["run"]["apiVersion"], "auv.run.v1alpha1");
+  }
+
+  #[tokio::test(flavor = "multi_thread")]
+  async fn inspect_server_recorder_only_fails_rejected_writes_when_required() {
+    use axum::http::StatusCode;
+    use axum::routing::post;
+    use axum::{Json, Router};
+    use serde_json::Value;
+    use tokio::net::TcpListener;
+
+    let app = Router::new().route(
+      "/write/runs/run_update_test/updates",
+      post(|Json(_value): Json<Value>| async {
+        (
+          StatusCode::CONFLICT,
+          Json(serde_json::json!({
+            "error": {
+              "code": "runConflict",
+              "message": "duplicate run",
+              "retryable": false
+            }
+          })),
+        )
+      }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0")
+      .await
+      .expect("bind test server");
+    let address = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+      axum::serve(listener, app).await.expect("test server");
+    });
+
+    let optional = InspectServerRunRecorder::new(format!("http://{address}"), None, false);
+    optional
+      .record(RunUpdate::RunStarted {
+        run_id: RunId::new("run_update_test"),
+        run: test_run(),
+      })
+      .expect("optional server write rejection should warn and continue");
+
+    let required = InspectServerRunRecorder::new(format!("http://{address}"), None, true);
+    let error = required
+      .record(RunUpdate::RunStarted {
+        run_id: RunId::new("run_update_test"),
+        run: test_run(),
+      })
+      .expect_err("required server write rejection should fail");
+    assert!(error.contains("inspect server write rejected"));
+    assert!(error.contains("409"));
   }
 
   #[cfg(unix)]

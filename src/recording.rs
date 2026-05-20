@@ -219,10 +219,12 @@ pub struct RecordingRun {
   events: Vec<EventRecordV1Alpha1>,
   artifacts: Vec<ArtifactRecordV1Alpha1>,
   recorder: Arc<dyn RunRecorder>,
+  recording_errors: Vec<String>,
 }
 
 pub struct RecordedRun {
   pub snapshot: CanonicalRun,
+  pub recording_errors: Vec<String>,
 }
 
 impl RecordingRun {
@@ -231,21 +233,23 @@ impl RecordingRun {
     root_span: SpanRecordV1Alpha1,
     recorder: Arc<dyn RunRecorder>,
   ) -> Self {
-    let _ = recorder.record(RunUpdate::RunStarted {
-      run_id: run.run_id.clone(),
-      run: run.clone(),
-    });
-    let _ = recorder.record(RunUpdate::SpanStarted {
-      run_id: run.run_id.clone(),
-      span: root_span.clone(),
-    });
-    Self {
+    let mut recording = Self {
       run,
       spans: vec![root_span],
       events: Vec::new(),
       artifacts: Vec::new(),
       recorder,
-    }
+      recording_errors: Vec::new(),
+    };
+    recording.record_update(RunUpdate::RunStarted {
+      run_id: recording.run.run_id.clone(),
+      run: recording.run.clone(),
+    });
+    recording.record_update(RunUpdate::SpanStarted {
+      run_id: recording.run.run_id.clone(),
+      span: recording.spans[0].clone(),
+    });
+    recording
   }
 
   pub fn id(&self) -> &RunId {
@@ -254,6 +258,10 @@ impl RecordingRun {
 
   pub fn root_span(&self) -> SpanRef {
     SpanRef::new(self.run.root_span_id.clone())
+  }
+
+  pub fn recording_errors(&self) -> &[String] {
+    &self.recording_errors
   }
 
   pub fn start_span(
@@ -276,7 +284,7 @@ impl RecordingRun {
     }
     span.parent_span_id = Some(parent.id().clone());
     let span_ref = SpanRef::new(span.span_id.clone());
-    let _ = self.recorder.record(RunUpdate::SpanStarted {
+    self.record_update(RunUpdate::SpanStarted {
       run_id: self.run.run_id.clone(),
       span: span.clone(),
     });
@@ -285,7 +293,7 @@ impl RecordingRun {
   }
 
   pub fn finish_span(&mut self, span: &SpanRef, finish: SpanFinish) -> AuvResult<()> {
-    if let Some(record) = self
+    let update = if let Some(record) = self
       .spans
       .iter_mut()
       .find(|record| record.span_id == *span.id())
@@ -298,22 +306,28 @@ impl RecordingRun {
       record.finished_at_millis = Some(now_millis());
       record.summary = finish.summary;
       record.failure = finish.failure.map(|message| TraceFailure { message });
-      let _ = self.recorder.record(RunUpdate::SpanFinished {
+      Some(RunUpdate::SpanFinished {
         run_id: self.run.run_id.clone(),
         span: record.clone(),
-      });
-      return Ok(());
+      })
+    } else {
+      None
+    };
+    if let Some(update) = update {
+      self.record_update(update);
+      Ok(())
+    } else {
+      Err(format!(
+        "span {} does not belong to run {}",
+        span.id(),
+        self.run.run_id
+      ))
     }
-    Err(format!(
-      "span {} does not belong to run {}",
-      span.id(),
-      self.run.run_id
-    ))
   }
 
   pub fn record_event(&mut self, event: EventRecordV1Alpha1) -> EventId {
     let event_id = event.event_id.clone();
-    let _ = self.recorder.record(RunUpdate::EventAppended {
+    self.record_update(RunUpdate::EventAppended {
       run_id: self.run.run_id.clone(),
       event: event.clone(),
     });
@@ -323,7 +337,7 @@ impl RecordingRun {
 
   pub fn record_artifact(&mut self, artifact: ArtifactRecordV1Alpha1) -> ArtifactId {
     let artifact_id = artifact.artifact_id.clone();
-    let _ = self.recorder.record(RunUpdate::ArtifactCreated {
+    self.record_update(RunUpdate::ArtifactCreated {
       run_id: self.run.run_id.clone(),
       artifact: artifact.clone(),
     });
@@ -347,16 +361,20 @@ impl RecordingRun {
     self.run.finished_at_millis = Some(finished_at_millis);
     self.run.summary = summary;
     self.run.failure = failure;
+    let mut finish_updates = Vec::new();
     for span in &mut self.spans {
       if span.state == TraceState::Running {
         span.state = TraceState::Ended;
         span.status_code = status_code;
         span.finished_at_millis = Some(finished_at_millis);
-        let _ = self.recorder.record(RunUpdate::SpanFinished {
+        finish_updates.push(RunUpdate::SpanFinished {
           run_id: self.run.run_id.clone(),
           span: span.clone(),
         });
       }
+    }
+    for update in finish_updates {
+      self.record_update(update);
     }
     RecordedRun {
       snapshot: CanonicalRun {
@@ -365,6 +383,15 @@ impl RecordingRun {
         events: self.events,
         artifacts: self.artifacts,
       },
+      recording_errors: self.recording_errors,
+    }
+  }
+
+  fn record_update(&mut self, update: RunUpdate) {
+    if let Err(error) = self.recorder.record(update)
+      && self.recorder.requires_successful_delivery()
+    {
+      self.recording_errors.push(error);
     }
   }
 

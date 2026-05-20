@@ -424,15 +424,147 @@ fn build_runtime_for_inspect(
   project_root: &PathBuf,
   inspect: &InspectClientOptions,
 ) -> Result<auv_cli::runtime::Runtime, String> {
-  let store_root = resolve_store_root(project_root, inspect.store_root.as_ref());
-  build_runtime_with_store_root(project_root.clone(), store_root)
+  let server_target = if should_try_server_write(inspect) {
+    if let Some((url, token)) = resolve_inspect_server_target(inspect)? {
+      Some((url, token))
+    } else if inspect.require_server_write {
+      return Err(
+        "inspect server write is required but no inspect server is configured".to_string(),
+      );
+    } else if matches!(inspect.server_write, cli::InspectWriteSetting::Enabled) {
+      eprintln!("warning: inspect server write requested but no inspect server is configured");
+      None
+    } else {
+      None
+    }
+  } else {
+    None
+  };
+
+  let local_write_enabled = should_write_local(inspect);
+  let store_root = if local_write_enabled {
+    resolve_store_root(project_root, inspect.store_root.as_ref())
+  } else {
+    temp_runtime_store_root()
+  };
+  let store = auv_cli::store::LocalStore::new(store_root.clone())?;
+  let mut recorders: Vec<Arc<dyn auv_cli::run_recording::RunRecorder>> = Vec::new();
+
+  if let Some((url, token)) = server_target {
+    recorders.push(Arc::new(
+      auv_cli::run_recording::InspectServerRunRecorder::new(
+        url,
+        token,
+        inspect.require_server_write,
+      ),
+    ));
+  }
+
+  let recorder: Arc<dyn auv_cli::run_recording::RunRecorder> = match recorders.len() {
+    0 => Arc::new(auv_cli::run_recording::NoopRunRecorder),
+    1 => recorders.remove(0),
+    _ => Arc::new(auv_cli::run_recording::CompositeRunRecorder::new(recorders)),
+  };
+  let recording = auv_cli::run_recording::RunRecordingBackend::new(store, recorder)
+    .with_local_snapshot_write_enabled(local_write_enabled)
+    .with_temporary_store_cleanup(!local_write_enabled);
+  Ok(build_runtime_with_store_root(project_root.clone(), store_root)?.with_recording(recording))
+}
+
+fn should_write_local(inspect: &InspectClientOptions) -> bool {
+  !matches!(inspect.local_write, cli::InspectWriteSetting::Disabled)
+}
+
+fn should_try_server_write(inspect: &InspectClientOptions) -> bool {
+  inspect.require_server_write
+    || !matches!(inspect.server_write, cli::InspectWriteSetting::Disabled)
+}
+
+fn resolve_inspect_server_target(
+  inspect: &InspectClientOptions,
+) -> Result<Option<(String, Option<String>)>, String> {
+  let explicit_token = resolve_client_token(inspect)?;
+  if let Some(url) = &inspect.server_url {
+    return Ok(Some((url.clone(), explicit_token)));
+  }
+  let Some(session) = read_discovered_inspect_session(inspect)? else {
+    return Ok(None);
+  };
+  if !session.write_enabled {
+    return Ok(None);
+  }
+  if !is_local_inspect_url(&session.url) {
+    if inspect.require_server_write {
+      return Err(format!(
+        "inspect server write is required but discovered inspect server URL is not local: {}",
+        session.url
+      ));
+    }
+    eprintln!(
+      "warning: ignoring discovered inspect server with non-local URL: {}",
+      session.url
+    );
+    return Ok(None);
+  }
+  Ok(Some((session.url, explicit_token.or(session.write_token))))
+}
+
+fn read_discovered_inspect_session(
+  inspect: &InspectClientOptions,
+) -> Result<Option<auv_cli::run_recording::InspectServerSession>, String> {
+  match auv_cli::run_recording::read_inspect_session() {
+    Ok(session) => Ok(session),
+    Err(error) if inspect.require_server_write => Err(error),
+    Err(error) => {
+      eprintln!("warning: ignoring inspect server session descriptor: {error}");
+      Ok(None)
+    }
+  }
+}
+
+fn is_local_inspect_url(raw: &str) -> bool {
+  let Ok(url) = reqwest::Url::parse(raw) else {
+    return false;
+  };
+  match url.host_str() {
+    Some(host) if host.eq_ignore_ascii_case("localhost") => true,
+    Some(host) => host
+      .parse::<std::net::IpAddr>()
+      .is_ok_and(|address| address.is_loopback()),
+    None => false,
+  }
+}
+
+fn resolve_client_token(inspect: &InspectClientOptions) -> Result<Option<String>, String> {
+  if let Some(token) = &inspect.server_token {
+    return normalize_write_token("--inspect-server-token", token.clone()).map(Some);
+  }
+  if let Some(path) = &inspect.server_token_file {
+    let token = std::fs::read_to_string(path)
+      .map_err(|error| format!("failed to read inspect server token file {path}: {error}"))?
+      .trim()
+      .to_string();
+    return normalize_write_token("--inspect-server-token-file", token).map(Some);
+  }
+  Ok(None)
+}
+
+fn temp_runtime_store_root() -> PathBuf {
+  std::env::temp_dir().join(format!(
+    "auv-runtime-store-{}-{}",
+    std::process::id(),
+    auv_cli::model::now_millis()
+  ))
 }
 
 #[cfg(test)]
 mod tests {
   use std::fs;
+  use std::sync::Mutex;
 
   use super::*;
+
+  static ENV_LOCK: Mutex<()> = Mutex::new(());
 
   #[test]
   fn inspect_serve_write_token_rejects_token_and_token_file_conflict() {
@@ -501,5 +633,226 @@ mod tests {
 
     assert!(token.starts_with("session-"));
     assert!(!token.is_empty());
+  }
+
+  #[test]
+  fn inspect_server_target_prefers_explicit_url_and_token_file() {
+    let path = std::env::temp_dir().join(format!(
+      "auv-client-write-token-{}.txt",
+      auv_cli::model::now_millis()
+    ));
+    fs::write(&path, "secret\n").expect("token file should write");
+    let inspect = InspectClientOptions {
+      server_url: Some("http://127.0.0.1:9876/".to_string()),
+      server_token_file: Some(path.display().to_string()),
+      ..InspectClientOptions::default()
+    };
+
+    let target = resolve_inspect_server_target(&inspect).expect("explicit target should resolve");
+
+    let _ = fs::remove_file(path);
+    assert_eq!(
+      target,
+      Some((
+        "http://127.0.0.1:9876/".to_string(),
+        Some("secret".to_string())
+      ))
+    );
+  }
+
+  #[test]
+  fn required_inspect_server_write_rejects_missing_target() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let root = std::env::temp_dir().join(format!(
+      "auv-missing-inspect-session-{}",
+      auv_cli::model::now_millis()
+    ));
+    fs::create_dir_all(&root).expect("session dir should write");
+    let session_path = root.join("session.json");
+    unsafe {
+      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+    }
+    let inspect = InspectClientOptions {
+      server_write: cli::InspectWriteSetting::Enabled,
+      require_server_write: true,
+      ..InspectClientOptions::default()
+    };
+
+    let error = match build_runtime_for_inspect(&root, &inspect) {
+      Ok(_) => panic!("required server write without target should fail"),
+      Err(error) => error,
+    };
+
+    unsafe {
+      std::env::remove_var("AUV_INSPECT_SESSION");
+    }
+    let _ = fs::remove_dir_all(root);
+    assert!(error.contains("inspect server write is required"));
+  }
+
+  #[test]
+  fn required_missing_server_with_local_write_disabled_does_not_leave_temp_store() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let root = std::env::temp_dir().join(format!(
+      "auv-missing-required-server-no-local-{}",
+      auv_cli::model::now_millis()
+    ));
+    fs::create_dir_all(&root).expect("session dir should write");
+    let session_path = root.join("session.json");
+    unsafe {
+      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+    }
+    let prefix = format!("auv-runtime-store-{}-", std::process::id());
+    let before = temp_runtime_store_entries(&prefix);
+    let inspect = InspectClientOptions {
+      local_write: cli::InspectWriteSetting::Disabled,
+      server_write: cli::InspectWriteSetting::Enabled,
+      require_server_write: true,
+      ..InspectClientOptions::default()
+    };
+
+    let error = match build_runtime_for_inspect(&root, &inspect) {
+      Ok(_) => panic!("required server write without target should fail"),
+      Err(error) => error,
+    };
+    let after = temp_runtime_store_entries(&prefix);
+
+    unsafe {
+      std::env::remove_var("AUV_INSPECT_SESSION");
+    }
+    let _ = fs::remove_dir_all(root);
+    assert!(error.contains("inspect server write is required"));
+    assert_eq!(after, before);
+  }
+
+  #[test]
+  fn optional_inspect_server_write_ignores_malformed_discovered_session() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let root = std::env::temp_dir().join(format!(
+      "auv-malformed-inspect-session-{}",
+      auv_cli::model::now_millis()
+    ));
+    fs::create_dir_all(&root).expect("session dir should write");
+    let session_path = root.join("session.json");
+    fs::write(&session_path, "not json").expect("malformed session should write");
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600))
+        .expect("session file permissions should change");
+    }
+    unsafe {
+      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+    }
+    let inspect = InspectClientOptions {
+      server_write: cli::InspectWriteSetting::Default,
+      require_server_write: false,
+      ..InspectClientOptions::default()
+    };
+
+    let runtime = build_runtime_for_inspect(&root, &inspect);
+
+    unsafe {
+      std::env::remove_var("AUV_INSPECT_SESSION");
+    }
+    let _ = fs::remove_dir_all(root);
+    assert!(runtime.is_ok());
+  }
+
+  #[test]
+  fn required_inspect_server_write_rejects_malformed_discovered_session() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let root = std::env::temp_dir().join(format!(
+      "auv-required-malformed-inspect-session-{}",
+      auv_cli::model::now_millis()
+    ));
+    fs::create_dir_all(&root).expect("session dir should write");
+    let session_path = root.join("session.json");
+    fs::write(&session_path, "not json").expect("malformed session should write");
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600))
+        .expect("session file permissions should change");
+    }
+    unsafe {
+      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+    }
+    let inspect = InspectClientOptions {
+      server_write: cli::InspectWriteSetting::Default,
+      require_server_write: true,
+      ..InspectClientOptions::default()
+    };
+
+    let error = match build_runtime_for_inspect(&root, &inspect) {
+      Ok(_) => panic!("required server write should reject malformed session"),
+      Err(error) => error,
+    };
+
+    unsafe {
+      std::env::remove_var("AUV_INSPECT_SESSION");
+    }
+    let _ = fs::remove_dir_all(root);
+    assert!(error.contains("failed to parse inspect session"));
+  }
+
+  #[test]
+  fn default_discovery_ignores_non_local_session_url() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let root = std::env::temp_dir().join(format!(
+      "auv-remote-inspect-session-{}",
+      auv_cli::model::now_millis()
+    ));
+    fs::create_dir_all(&root).expect("session dir should write");
+    let session_path = root.join("session.json");
+    fs::write(
+      &session_path,
+      serde_json::to_string(&auv_cli::run_recording::InspectServerSession {
+        url: "http://203.0.113.7:8765".to_string(),
+        store_root: root.display().to_string(),
+        write_enabled: true,
+        write_token: Some("secret".to_string()),
+        pid: 123,
+        started_at_millis: 456,
+      })
+      .expect("session should encode"),
+    )
+    .expect("session should write");
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt;
+      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600))
+        .expect("session file permissions should change");
+    }
+    unsafe {
+      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+    }
+    let inspect = InspectClientOptions {
+      server_write: cli::InspectWriteSetting::Default,
+      require_server_write: false,
+      ..InspectClientOptions::default()
+    };
+
+    let target =
+      resolve_inspect_server_target(&inspect).expect("optional discovery should ignore remote URL");
+
+    unsafe {
+      std::env::remove_var("AUV_INSPECT_SESSION");
+    }
+    let _ = fs::remove_dir_all(root);
+    assert_eq!(target, None);
+  }
+
+  fn temp_runtime_store_entries(prefix: &str) -> Vec<String> {
+    let mut entries = fs::read_dir(std::env::temp_dir())
+      .expect("temp dir should read")
+      .filter_map(|entry| {
+        let entry = entry.ok()?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        name.starts_with(prefix).then_some(name)
+      })
+      .collect::<Vec<_>>();
+    entries.sort();
+    entries
   }
 }

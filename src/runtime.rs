@@ -102,11 +102,14 @@ impl Runtime {
       summary: None,
       failure: None,
     };
-    Ok(crate::recording::RecordingRun::new(
-      run,
-      root_span,
-      self.recording.recorder(),
-    ))
+    let run = crate::recording::RecordingRun::new(run, root_span, self.recording.recorder());
+    if self.recording.requires_successful_delivery() && !run.recording_errors().is_empty() {
+      return Err(format!(
+        "run recording delivery failed: {}",
+        run.recording_errors().join("; ")
+      ));
+    }
+    Ok(run)
   }
 
   pub fn finish_run(
@@ -117,11 +120,21 @@ impl Runtime {
     let failure = finish.failure.map(|message| TraceFailure { message });
     let recorded = run.finish(finish.status_code, finish.summary, failure);
     let run_id = recorded.snapshot.run.run_id.clone();
+    let mut recording_errors = recorded.recording_errors;
     self.recording.write_run_snapshot(&recorded.snapshot)?;
-    let _ = self.recording.record(RunUpdate::RunFinished {
+    if let Err(error) = self.recording.record(RunUpdate::RunFinished {
       run_id: run_id.clone(),
       run: recorded.snapshot.run,
-    });
+    }) && self.recording.requires_successful_delivery()
+    {
+      recording_errors.push(error);
+    }
+    if !recording_errors.is_empty() {
+      return Err(format!(
+        "run recording delivery failed: {}",
+        recording_errors.join("; ")
+      ));
+    }
     Ok(run_id)
   }
 
@@ -492,6 +505,7 @@ mod tests {
   use std::fs;
   use std::path::PathBuf;
   use std::sync::Arc;
+  use std::sync::atomic::{AtomicUsize, Ordering};
 
   use serde_json::json;
 
@@ -507,7 +521,12 @@ mod tests {
 
   struct ArtifactFailureDriver;
   struct ArtifactSuccessDriver;
+  struct CountingDriver {
+    calls: Arc<AtomicUsize>,
+  }
   struct FailRunFinishedRecorder;
+  struct RequiredFailRunStartedRecorder;
+  struct RequiredFailRunFinishedRecorder;
   struct SuccessDriver;
 
   impl RunRecorder for FailRunFinishedRecorder {
@@ -516,6 +535,32 @@ mod tests {
         RunUpdate::RunFinished { .. } => Err("run finished recorder failure".to_string()),
         _ => Ok(()),
       }
+    }
+  }
+
+  impl RunRecorder for RequiredFailRunStartedRecorder {
+    fn record(&self, update: RunUpdate) -> AuvResult<()> {
+      match update {
+        RunUpdate::RunStarted { .. } => Err("run started recorder failure".to_string()),
+        _ => Ok(()),
+      }
+    }
+
+    fn requires_successful_delivery(&self) -> bool {
+      true
+    }
+  }
+
+  impl RunRecorder for RequiredFailRunFinishedRecorder {
+    fn record(&self, update: RunUpdate) -> AuvResult<()> {
+      match update {
+        RunUpdate::RunFinished { .. } => Err("run finished recorder failure".to_string()),
+        _ => Ok(()),
+      }
+    }
+
+    fn requires_successful_delivery(&self) -> bool {
+      true
     }
   }
 
@@ -571,6 +616,28 @@ mod tests {
           preferred_name: "artifact.txt".to_string(),
           note: Some("captured".to_string()),
         }],
+      })
+    }
+  }
+
+  impl Driver for CountingDriver {
+    fn descriptor(&self) -> DriverDescriptor {
+      DriverDescriptor {
+        id: "test.driver",
+        summary: "Counting driver",
+        capabilities: &["test.counting"],
+        donor_boundary: "test-only",
+      }
+    }
+
+    fn invoke(&self, _call: &DriverCall) -> AuvResult<DriverResponse> {
+      self.calls.fetch_add(1, Ordering::SeqCst);
+      Ok(DriverResponse {
+        summary: "driver counted".to_string(),
+        backend: Some("test.backend".to_string()),
+        signals: BTreeMap::new(),
+        notes: vec![],
+        artifacts: vec![],
       })
     }
   }
@@ -746,6 +813,64 @@ mod tests {
       .expect("snapshot should still be persisted");
     assert_eq!(canonical.run.status_code, crate::trace::TraceStatusCode::Ok);
 
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_aborts_before_driver_when_required_initial_recording_fails() {
+    let project_root = temp_dir("runtime-required-initial-recorder-failure-project");
+    let store_root = temp_dir("runtime-required-initial-recorder-failure-store");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let runtime = Runtime::new(
+      project_root.clone(),
+      CommandCatalog::new(vec![CommandSpec {
+        id: "test.invoke",
+        summary: "Test invoke",
+        driver_id: "test.driver",
+        operation: "test_operation",
+        disturbance_classes: &[crate::model::DisturbanceClass::None],
+        max_disturbance: crate::model::DisturbanceClass::None,
+      }]),
+      DriverRegistry::new(vec![Box::new(CountingDriver {
+        calls: calls.clone(),
+      })]),
+      LocalStore::new(store_root.clone()).expect("store should initialize"),
+    )
+    .with_recorder(Arc::new(RequiredFailRunStartedRecorder));
+
+    let error = runtime
+      .invoke(InvokeRequest {
+        command_id: "test.invoke".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+      })
+      .expect_err("required initial recording failure should abort invoke");
+
+    assert!(error.contains("run recording delivery failed"));
+    assert!(error.contains("run started recorder failure"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_fails_when_required_run_finished_recorder_delivery_fails() {
+    let project_root = temp_dir("runtime-required-recorder-failure-project");
+    let store_root = temp_dir("runtime-required-recorder-failure-store");
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone())
+      .with_recorder(Arc::new(RequiredFailRunFinishedRecorder));
+
+    let error = runtime
+      .invoke(InvokeRequest {
+        command_id: "test.invoke".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+      })
+      .expect_err("required recorder delivery failure should fail invoke");
+
+    assert!(error.contains("run recording delivery failed"));
+    assert!(error.contains("run finished recorder failure"));
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
   }
