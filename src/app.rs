@@ -127,6 +127,8 @@ pub struct AppValidatedCandidate {
   pub recipe_id: String,
   pub taxonomy_id: String,
   pub status: AppValidationStatus,
+  #[serde(default)]
+  pub verification_mode: AppVerificationMode,
   pub rationale: String,
   pub used_annotation_ids: Vec<String>,
   pub recipe_path: PathBuf,
@@ -213,6 +215,68 @@ impl AppValidationStatus {
       Self::Candidate => "candidate",
       Self::Rejected => "rejected",
     }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AppVerificationMode {
+  EvidenceOnly,
+  #[default]
+  MachineAsserted,
+}
+
+impl AppVerificationMode {
+  fn as_str(&self) -> &'static str {
+    match self {
+      Self::EvidenceOnly => "evidence-only",
+      Self::MachineAsserted => "machine-asserted",
+    }
+  }
+
+  fn manual_review_required(&self) -> bool {
+    matches!(self, Self::EvidenceOnly)
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AppCandidateGroundingTaxonomy {
+  SearchEntryAxTextInputClipboardSubmitCaptureEvidence,
+  NativeTextAxTextPointerFocusClipboardPasteVerifyAxText,
+  ResultSelectionOcrAnchorPointerClickCaptureEvidence,
+  WindowActionWindowPointPointerClickCaptureEvidence,
+}
+
+impl AppCandidateGroundingTaxonomy {
+  fn parse(raw: &str) -> AuvResult<Self> {
+    match raw.trim() {
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
+        Ok(Self::SearchEntryAxTextInputClipboardSubmitCaptureEvidence)
+      }
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
+        Ok(Self::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText)
+      }
+      "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
+        Ok(Self::ResultSelectionOcrAnchorPointerClickCaptureEvidence)
+      }
+      "window-action.window-point.pointer-click.capture-evidence" => {
+        Ok(Self::WindowActionWindowPointPointerClickCaptureEvidence)
+      }
+      other => Err(format!(
+        "unsupported candidate grounding taxonomy {}. allowed values: {}",
+        other,
+        Self::allowed_ids().join(", ")
+      )),
+    }
+  }
+
+  fn allowed_ids() -> &'static [&'static str] {
+    &[
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      "result-selection.ocr-anchor.pointer-click.capture-evidence",
+      "window-action.window-point.pointer-click.capture-evidence",
+    ]
   }
 }
 
@@ -823,6 +887,13 @@ fn validate_app_distillation_into_run(
   for candidate in &distillation.candidates {
     let manifest: SkillManifest = read_json(&candidate.recipe_path)?;
     let mut matrix: SkillCaseMatrix = read_json(&candidate.case_matrix_path)?;
+    let verification_mode =
+      verification_mode_for_strategy(&manifest.strategy).map_err(|error| {
+        format!(
+          "candidate {} uses an unsupported verification contract: {error}",
+          candidate.recipe_id
+        )
+      })?;
     let mut resolved_inputs = BTreeMap::new();
     let mut used_annotation_ids = if candidate.candidate_shape.provided_inputs.is_empty() {
       Vec::new()
@@ -840,7 +911,13 @@ fn validate_app_distillation_into_run(
       &candidate.taxonomy_id,
       &mut matrix,
       &mut resolved_inputs,
-    );
+    )
+    .map_err(|error| {
+      format!(
+        "candidate {} uses an unsupported grounding taxonomy: {error}",
+        candidate.recipe_id
+      )
+    })?;
     for candidate_id in grounded_annotation_ids {
       if !used_annotation_ids
         .iter()
@@ -889,10 +966,8 @@ fn validate_app_distillation_into_run(
             recipe_id: candidate.recipe_id.clone(),
             taxonomy_id: candidate.taxonomy_id.clone(),
             status: AppValidationStatus::Validated,
-            rationale: format!(
-              "All {} candidate case(s) executed successfully through the shared runtime.",
-              selected_case_count
-            ),
+            verification_mode,
+            rationale: validated_candidate_rationale(selected_case_count, verification_mode),
             used_annotation_ids: used_annotation_ids.clone(),
             recipe_path: candidate.recipe_path.clone(),
             case_matrix_path: candidate.case_matrix_path.clone(),
@@ -918,6 +993,7 @@ fn validate_app_distillation_into_run(
             recipe_id: candidate.recipe_id.clone(),
             taxonomy_id: candidate.taxonomy_id.clone(),
             status: AppValidationStatus::Rejected,
+            verification_mode,
             rationale: "The candidate was runnable, but live execution failed.".to_string(),
             used_annotation_ids: used_annotation_ids.clone(),
             recipe_path: candidate.recipe_path.clone(),
@@ -940,6 +1016,7 @@ fn validate_app_distillation_into_run(
         recipe_id: candidate.recipe_id.clone(),
         taxonomy_id: candidate.taxonomy_id.clone(),
         status: AppValidationStatus::Rejected,
+        verification_mode,
         rationale: "Validation failed before execution because candidate grounding was incomplete."
           .to_string(),
         used_annotation_ids,
@@ -1777,8 +1854,12 @@ fn render_app_validation_report(validation: &AppValidation) -> String {
     String::new(),
   ];
   let mut by_status = BTreeMap::<&str, usize>::new();
+  let mut by_verification_mode = BTreeMap::<&str, usize>::new();
   for candidate in &validation.candidates {
     *by_status.entry(candidate.status.as_str()).or_insert(0) += 1;
+    *by_verification_mode
+      .entry(candidate.verification_mode.as_str())
+      .or_insert(0) += 1;
   }
   lines.push("## Status Counts".to_string());
   lines.push(String::new());
@@ -1787,6 +1868,27 @@ fn render_app_validation_report(validation: &AppValidation) -> String {
   } else {
     for (status, count) in by_status {
       lines.push(format!("- `{status}`: `{count}`"));
+    }
+  }
+  lines.push(String::new());
+  lines.push("## Verification Semantics".to_string());
+  lines.push(String::new());
+  lines.push(
+    "- `validated` means the selected live cases executed successfully through the shared runtime."
+      .to_string(),
+  );
+  lines.push(
+    "- `machine-asserted` means the verification contract includes a machine-readable assertion step such as AX or OCR verification."
+      .to_string(),
+  );
+  lines.push(
+    "- `evidence-only` means the recipe captured evidence but did not machine-assert the user-visible outcome; human review is still required."
+      .to_string(),
+  );
+  if !by_verification_mode.is_empty() {
+    lines.push(String::new());
+    for (mode, count) in by_verification_mode {
+      lines.push(format!("- `{mode}`: `{count}`"));
     }
   }
   lines.push(String::new());
@@ -1811,6 +1913,18 @@ fn render_app_validation_report(validation: &AppValidation) -> String {
       lines.push(format!(
         "- cases: `{}`",
         candidate.case_matrix_path.display()
+      ));
+      lines.push(format!(
+        "- verification mode: `{}`",
+        candidate.verification_mode.as_str()
+      ));
+      lines.push(format!(
+        "- manual review required: `{}`",
+        if candidate.verification_mode.manual_review_required() {
+          "yes"
+        } else {
+          "no"
+        }
       ));
       lines.push(format!("- rationale: {}", candidate.rationale));
       if !candidate.used_annotation_ids.is_empty() {
@@ -1881,7 +1995,8 @@ fn apply_candidate_grounding(
   taxonomy_id: &str,
   matrix: &mut SkillCaseMatrix,
   resolved_inputs: &mut BTreeMap<String, String>,
-) -> (Vec<String>, Vec<String>) {
+) -> AuvResult<(Vec<String>, Vec<String>)> {
+  let taxonomy = AppCandidateGroundingTaxonomy::parse(taxonomy_id)?;
   let mut unresolved = BTreeSet::new();
   let mut used_annotation_ids = BTreeSet::new();
   let search_entry_annotation = find_annotation_candidate(analysis, "search-entry", "focus-query");
@@ -1902,8 +2017,11 @@ fn apply_candidate_grounding(
         continue;
       }
 
-      let replacement = match (taxonomy_id, key.as_str()) {
-        ("search-entry.ax-text-input.clipboard-submit.capture-evidence", "focus_query") => {
+      let replacement = match (taxonomy, key.as_str()) {
+        (
+          AppCandidateGroundingTaxonomy::SearchEntryAxTextInputClipboardSubmitCaptureEvidence,
+          "focus_query",
+        ) => {
           if let Some(candidate) = search_entry_annotation {
             used_annotation_ids.insert(candidate.candidate_id.clone());
             Some(candidate.query_value.clone())
@@ -1911,11 +2029,17 @@ fn apply_candidate_grounding(
             choose_search_entry_query(ax_snapshot)
           }
         }
-        ("search-entry.ax-text-input.clipboard-submit.capture-evidence", "query") => Some(format!(
+        (
+          AppCandidateGroundingTaxonomy::SearchEntryAxTextInputClipboardSubmitCaptureEvidence,
+          "query",
+        ) => Some(format!(
           "AUV_{}",
           recipe_app_slug(&analysis.app_identity).to_ascii_uppercase()
         )),
-        ("native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text", "focus_query") => {
+        (
+          AppCandidateGroundingTaxonomy::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText,
+          "focus_query",
+        ) => {
           if let Some(candidate) = native_text_annotation {
             used_annotation_ids.insert(candidate.candidate_id.clone());
             Some(candidate.query_value.clone())
@@ -1923,7 +2047,10 @@ fn apply_candidate_grounding(
             choose_native_text_focus_query(ax_snapshot)
           }
         }
-        ("result-selection.ocr-anchor.pointer-click.capture-evidence", "anchor_text") => {
+        (
+          AppCandidateGroundingTaxonomy::ResultSelectionOcrAnchorPointerClickCaptureEvidence,
+          "anchor_text",
+        ) => {
           if let Some(candidate) = result_selection_annotation {
             used_annotation_ids.insert(candidate.candidate_id.clone());
             Some(candidate.query_value.clone())
@@ -1931,7 +2058,10 @@ fn apply_candidate_grounding(
             first_stable_anchor_value(&analysis.grounding_assessment.stable_anchor_candidates)
           }
         }
-        ("window-action.window-point.pointer-click.capture-evidence", "relative_x") => {
+        (
+          AppCandidateGroundingTaxonomy::WindowActionWindowPointPointerClickCaptureEvidence,
+          "relative_x",
+        ) => {
           if let Some(candidate) = window_primary_region_annotation {
             candidate.input_bindings.get("relative_x").map(|value| {
               used_annotation_ids.insert(candidate.candidate_id.clone());
@@ -1941,7 +2071,10 @@ fn apply_candidate_grounding(
             None
           }
         }
-        ("window-action.window-point.pointer-click.capture-evidence", "relative_y") => {
+        (
+          AppCandidateGroundingTaxonomy::WindowActionWindowPointPointerClickCaptureEvidence,
+          "relative_y",
+        ) => {
           if let Some(candidate) = window_primary_region_annotation {
             candidate.input_bindings.get("relative_y").map(|value| {
               used_annotation_ids.insert(candidate.candidate_id.clone());
@@ -1963,10 +2096,10 @@ fn apply_candidate_grounding(
     }
   }
 
-  (
+  Ok((
     unresolved.into_iter().collect(),
     used_annotation_ids.into_iter().collect(),
-  )
+  ))
 }
 
 fn build_annotation_candidates(
@@ -2258,6 +2391,35 @@ fn build_distilled_candidate_shape(
     context_candidate_ids,
     provided_inputs,
     notes,
+  }
+}
+
+fn verification_mode_for_strategy(strategy: &SkillStrategy) -> AuvResult<AppVerificationMode> {
+  match strategy.verification_contract.trim() {
+    "captureEvidence" => Ok(AppVerificationMode::EvidenceOnly),
+    "verifyImageText" | "verifyNowPlayingTitle" | "verifyAxText" => {
+      Ok(AppVerificationMode::MachineAsserted)
+    }
+    other => Err(format!(
+      "strategy.verificationContract {} is unsupported; expected one of captureEvidence, verifyImageText, verifyNowPlayingTitle, verifyAxText",
+      other
+    )),
+  }
+}
+
+fn validated_candidate_rationale(
+  selected_case_count: usize,
+  verification_mode: AppVerificationMode,
+) -> String {
+  match verification_mode {
+    AppVerificationMode::MachineAsserted => format!(
+      "All {} candidate case(s) executed successfully through the shared runtime with machine-asserted verification.",
+      selected_case_count
+    ),
+    AppVerificationMode::EvidenceOnly => format!(
+      "All {} candidate case(s) executed successfully through the shared runtime, but the verification contract is evidence-only and still requires human review.",
+      selected_case_count
+    ),
   }
 }
 
@@ -3293,23 +3455,19 @@ fn render_candidate_recipe(
   strategy: &AppRecommendedStrategy,
   _candidate_shape: &AppDistilledCandidateShape,
 ) -> AuvResult<Value> {
-  match strategy.taxonomy_id.as_str() {
-    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
+  match AppCandidateGroundingTaxonomy::parse(&strategy.taxonomy_id)? {
+    AppCandidateGroundingTaxonomy::SearchEntryAxTextInputClipboardSubmitCaptureEvidence => {
       Ok(render_search_entry_candidate_recipe(analysis))
     }
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
+    AppCandidateGroundingTaxonomy::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText => {
       Ok(render_native_text_candidate_recipe(analysis))
     }
-    "result-selection.ocr-anchor.pointer-click.capture-evidence" => {
+    AppCandidateGroundingTaxonomy::ResultSelectionOcrAnchorPointerClickCaptureEvidence => {
       Ok(render_result_selection_candidate_recipe(analysis))
     }
-    "window-action.window-point.pointer-click.capture-evidence" => {
+    AppCandidateGroundingTaxonomy::WindowActionWindowPointPointerClickCaptureEvidence => {
       Ok(render_window_action_candidate_recipe(analysis))
     }
-    other => Err(format!(
-      "no candidate distillation template exists yet for strategy taxonomy {}",
-      other
-    )),
   }
 }
 
@@ -3318,23 +3476,19 @@ fn render_candidate_case_matrix(
   strategy: &AppRecommendedStrategy,
   candidate_shape: &AppDistilledCandidateShape,
 ) -> AuvResult<Value> {
-  match strategy.taxonomy_id.as_str() {
-    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => Ok(
+  match AppCandidateGroundingTaxonomy::parse(&strategy.taxonomy_id)? {
+    AppCandidateGroundingTaxonomy::SearchEntryAxTextInputClipboardSubmitCaptureEvidence => Ok(
       render_search_entry_candidate_cases(analysis, candidate_shape),
     ),
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => Ok(
+    AppCandidateGroundingTaxonomy::NativeTextAxTextPointerFocusClipboardPasteVerifyAxText => Ok(
       render_native_text_candidate_cases(analysis, candidate_shape),
     ),
-    "result-selection.ocr-anchor.pointer-click.capture-evidence" => Ok(
+    AppCandidateGroundingTaxonomy::ResultSelectionOcrAnchorPointerClickCaptureEvidence => Ok(
       render_result_selection_candidate_cases(analysis, candidate_shape),
     ),
-    "window-action.window-point.pointer-click.capture-evidence" => Ok(
+    AppCandidateGroundingTaxonomy::WindowActionWindowPointPointerClickCaptureEvidence => Ok(
       render_window_action_candidate_cases(analysis, candidate_shape),
     ),
-    other => Err(format!(
-      "no candidate case-matrix distillation template exists yet for strategy taxonomy {}",
-      other
-    )),
   }
 }
 
@@ -4270,7 +4424,8 @@ mod tests {
       "search-entry.ax-text-input.clipboard-submit.capture-evidence",
       &mut matrix,
       &mut resolved,
-    );
+    )
+    .expect("known taxonomy should ground");
     assert!(unresolved.iter().any(|key| key == "focus_query"));
     assert!(used_annotations.is_empty());
     assert!(resolved.contains_key("query"));
@@ -4322,7 +4477,8 @@ mod tests {
       "window-action.window-point.pointer-click.capture-evidence",
       &mut matrix,
       &mut resolved,
-    );
+    )
+    .expect("known taxonomy should ground");
     assert!(unresolved.is_empty());
     assert_eq!(resolved.get("relative_x"), Some(&"0.500000".to_string()));
     assert_eq!(resolved.get("relative_y"), Some(&"0.500000".to_string()));
@@ -4339,6 +4495,27 @@ mod tests {
       matrix.cases[0].inputs.get("relative_y"),
       Some(&"0.500000".to_string())
     );
+  }
+
+  #[test]
+  fn apply_candidate_grounding_rejects_unknown_taxonomy() {
+    let analysis =
+      sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
+    let mut matrix: SkillCaseMatrix = serde_json::from_value(render_search_entry_candidate_cases(
+      &analysis,
+      &AppDistilledCandidateShape::default(),
+    ))
+    .expect("candidate matrix should parse");
+    let mut resolved = BTreeMap::new();
+    let error = apply_candidate_grounding(
+      &analysis,
+      None,
+      "search-entry.ax-text-input.clipboard-submit.unknown-contract",
+      &mut matrix,
+      &mut resolved,
+    )
+    .expect_err("unknown taxonomy should fail fast");
+    assert!(error.contains("unsupported candidate grounding taxonomy"));
   }
 
   #[test]
@@ -4567,6 +4744,15 @@ mod tests {
       AppValidationStatus::Validated
     );
     assert_eq!(
+      output.validation.candidates[0].verification_mode,
+      AppVerificationMode::EvidenceOnly
+    );
+    assert!(
+      output.validation.candidates[0]
+        .rationale
+        .contains("evidence-only")
+    );
+    assert_eq!(
       output.validation.candidates[0]
         .resolved_inputs
         .get("relative_x"),
@@ -4585,6 +4771,9 @@ mod tests {
         .any(|candidate_id| candidate_id == "window-primary-region")
     );
     assert!(output.validation.candidates[0].unresolved_inputs.is_empty());
+    let report = fs::read_to_string(&output.report_path).expect("report should exist");
+    assert!(report.contains("verification mode: `evidence-only`"));
+    assert!(report.contains("manual review required: `yes`"));
 
     let finished_runs = sink
       .drain_for_test()
@@ -4719,6 +4908,10 @@ mod tests {
     assert_eq!(
       output.validation.candidates[0].status,
       AppValidationStatus::Validated
+    );
+    assert_eq!(
+      output.validation.candidates[0].verification_mode,
+      AppVerificationMode::EvidenceOnly
     );
     assert_eq!(
       output.validation.candidates[0].used_annotation_ids,

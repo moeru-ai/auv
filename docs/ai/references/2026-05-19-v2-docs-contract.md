@@ -157,6 +157,19 @@ This phase is about generating candidate shapes, not inventing success claims.
 - `candidate`
 - `rejected`
 
+But `validated` is only the execution-status boundary. It does not by itself
+mean the system machine-proved the user-visible outcome. V2 should carry one
+more explicit field alongside it:
+
+- `verification_mode = machine-asserted | evidence-only`
+
+Where:
+
+- `machine-asserted` means the recipe ended in a structured verification step
+  such as AX text or OCR title assertion
+- `evidence-only` means the recipe completed and retained evidence, but human
+  review is still required before treating the outcome as behavior truth
+
 V2 should keep that honesty boundary and extend it into promotion:
 
 - only validated slices are allowed to promote

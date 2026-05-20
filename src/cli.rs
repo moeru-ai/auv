@@ -141,7 +141,7 @@ NOTES
   - `app probe` is the deterministic raw-facts entrypoint for phase-2 distillation work; it records app identity plus runtime-backed surface probes into `.auv/app-probes/.../probe.json`.
   - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as the input to later candidate-skill distillation instead of free-form chat summaries.
   - `app distill` turns one analyzed app surface into candidate recipe/case-matrix scaffolds that already pass the current skill validators; they are candidate outputs, not validated skills.
-  - `app validate` turns one distillation directory into `validation.json` and `validation-report.md`; it only promotes a candidate to validated if the generated case matrix actually runs live.
+  - `app validate` turns one distillation directory into `validation.json` and `validation-report.md`; `validated` means the generated case matrix ran live, while `verification_mode=evidence-only` still means human review is required.
 ",
   )
 }
