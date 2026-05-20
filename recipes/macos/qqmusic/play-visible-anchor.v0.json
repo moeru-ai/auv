@@ -210,13 +210,11 @@
         "activate_target_before_capture": true
       },
       "expect": {
-        "output_must_contain": [
-          "timedOut=false",
-          "bestMatchText=${anchor_text}"
-        ],
-        "output_must_not_contain": [
-          "filteredMatchCount=0"
-        ]
+        "signal_equals": {
+          "ocr.timed_out": "false",
+          "ocr.match_found": "true",
+          "ocr.best_match_text": "${anchor_text}"
+        }
       }
     },
     {
@@ -239,12 +237,10 @@
         "activate_target_before_capture": true
       },
       "expect": {
-        "output_must_contain": [
-          "bestMatchText=${anchor_text}"
-        ],
-        "output_must_not_contain": [
-          "filteredMatchCount=0"
-        ]
+        "signal_equals": {
+          "ocr.match_found": "true",
+          "ocr.best_match_text": "${anchor_text}"
+        }
       }
     },
     {
@@ -269,12 +265,9 @@
         "activate_target_before_capture": true
       },
       "expect": {
-        "output_must_contain": [
-          "matchText=${anchor_text}"
-        ],
-        "output_must_not_contain": [
-          "filteredMatchCount=0"
-        ]
+        "signal_equals": {
+          "click.resolved_text": "${anchor_text}"
+        }
       }
     },
     {
@@ -314,12 +307,10 @@
         "region_bottom_ratio": "${verification_region_bottom_ratio}"
       },
       "expect": {
-        "output_must_contain": [
-          "bestMatchText=${playback_title}"
-        ],
-        "output_must_not_contain": [
-          "filteredMatchCount=0"
-        ]
+        "signal_equals": {
+          "ocr.match_found": "true",
+          "ocr.best_match_text": "${playback_title}"
+        }
       }
     }
   ],

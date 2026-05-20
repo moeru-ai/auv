@@ -3653,7 +3653,11 @@ fn render_native_text_candidate_recipe(analysis: &AppAnalysis) -> Value {
         "command_id": "debug.verifyAxText",
         "disturbance": { "classes": ["none"], "max": "none" },
         "args": { "target": "${app_id}", "target_text": "${target_text}", "max_depth": 6, "max_children": 48 },
-        "expect": { "output_must_contain": ["targetText=${target_text}"], "artifact_count_at_least": 1 },
+        "expect": {
+          "signal_equals": { "ax.node_found": "true" },
+          "signal_contains": { "ax.matched_text": "${target_text}" },
+          "artifact_count_at_least": 1
+        },
         "purpose": "Verify the marker through the AX tree."
       }
     ],

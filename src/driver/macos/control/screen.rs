@@ -6,6 +6,19 @@ pub(super) fn click_screen_text_signals(text: &str) -> std::collections::BTreeMa
   std::collections::BTreeMap::from([("click.resolved_text".to_string(), text.to_string())])
 }
 
+pub(super) fn click_screen_row_signals(
+  clicked_row_index: usize,
+  detected_row_count: usize,
+) -> std::collections::BTreeMap<String, String> {
+  std::collections::BTreeMap::from([
+    (
+      "rows.clicked_index".to_string(),
+      clicked_row_index.to_string(),
+    ),
+    ("rows.count".to_string(), detected_row_count.to_string()),
+  ])
+}
+
 pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let query = required_non_empty_string(call, "query")?;
   let label = format!("screen-text-click-{}", sanitize_file_component(&query));
@@ -299,7 +312,7 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
       "macos.vision.click-screen-row.{}",
       detection.strategy
     )),
-    signals: std::collections::BTreeMap::new(),
+    signals: click_screen_row_signals(row_index + 1, rows.len()),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
@@ -307,7 +320,7 @@ pub(crate) fn click_screen_row(call: &DriverCall) -> AuvResult<DriverResponse> {
 
 #[cfg(test)]
 mod tests {
-  use super::click_screen_text_signals;
+  use super::{click_screen_row_signals, click_screen_text_signals};
 
   #[test]
   fn click_screen_text_signals_exposes_resolved_text() {
@@ -317,5 +330,13 @@ mod tests {
       signals.get("click.resolved_text"),
       Some(&"Play Now".to_string())
     );
+  }
+
+  #[test]
+  fn click_screen_row_signals_expose_clicked_index_and_count() {
+    let signals = click_screen_row_signals(2, 5);
+
+    assert_eq!(signals.get("rows.clicked_index"), Some(&"2".to_string()));
+    assert_eq!(signals.get("rows.count"), Some(&"5".to_string()));
   }
 }

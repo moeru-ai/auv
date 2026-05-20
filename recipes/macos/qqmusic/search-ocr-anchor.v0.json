@@ -266,7 +266,7 @@
   "verification": {
     "expected_signals": [
       "debug.pressKey succeeds for the known search shortcut.",
-      "debug.pasteTextPreserveClipboard reports clipboardRestored=true.",
+      "debug.pasteTextPreserveClipboard reports clipboard.restored=true.",
       "debug.findScreenText reports at least one filtered match for ${anchor_text} inside the result-list region.",
       "debug.clickScreenText emits a logicalPoint note and completes the click.",
       "The post-click screenshot shows the target row selected or highlighted."

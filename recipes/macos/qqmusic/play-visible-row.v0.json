@@ -279,9 +279,10 @@
         "activate_target_before_capture": true
       },
       "expect": {
-        "output_must_contain": [
-          "timedOut=false"
-        ]
+        "signal_equals": {
+          "rows.requirement_met": "true",
+          "rows.timed_out": "false"
+        }
       }
     },
     {
@@ -310,9 +311,9 @@
         "activate_target_before_capture": true
       },
       "expect": {
-        "output_must_contain": [
-          "rowIndex=${row_index}"
-        ]
+        "signal_equals": {
+          "rows.clicked_index": "${row_index}"
+        }
       }
     },
     {
@@ -337,9 +338,9 @@
         "region_bottom_ratio": "${play_button_region_bottom_ratio}"
       },
       "expect": {
-        "output_must_contain": [
-          "matchText=${play_button_query}"
-        ]
+        "signal_equals": {
+          "click.resolved_text": "${play_button_query}"
+        }
       }
     },
     {
@@ -360,9 +361,12 @@
         "max_children": 40
       },
       "expect": {
-        "output_must_contain": [
-          "matchedTitle=${target_title}"
-        ]
+        "signal_equals": {
+          "ax.node_found": "true"
+        },
+        "signal_contains": {
+          "ax.now_playing_title": "${target_title}"
+        }
       }
     }
   ],

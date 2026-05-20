@@ -147,10 +147,13 @@
         "max_children": 48
       },
       "expect": {
-        "output_must_contain": [
-          "targetText=${note_body}",
-          "matchedRole=AXTextArea"
-        ],
+        "signal_equals": {
+          "ax.node_found": "true",
+          "ax.matched_role": "AXTextArea"
+        },
+        "signal_contains": {
+          "ax.matched_text": "${note_body}"
+        },
         "artifact_count_at_least": 1
       },
       "purpose": "Verify the body text through the AX tree, not screenshot OCR."

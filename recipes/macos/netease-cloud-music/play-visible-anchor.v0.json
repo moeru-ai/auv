@@ -212,12 +212,10 @@
         "max_observations": "${max_observations}"
       },
       "expect": {
-        "output_must_contain": [
-          "bestMatchText=${result_title}"
-        ],
-        "output_must_not_contain": [
-          "filteredMatchCount=0"
-        ]
+        "signal_equals": {
+          "ocr.match_found": "true",
+          "ocr.best_match_text": "${result_title}"
+        }
       }
     },
     {
@@ -236,12 +234,10 @@
         "max_observations": "${max_observations}"
       },
       "expect": {
-        "output_must_contain": [
-          "bestMatchText=${result_artist}"
-        ],
-        "output_must_not_contain": [
-          "filteredMatchCount=0"
-        ]
+        "signal_equals": {
+          "ocr.match_found": "true",
+          "ocr.best_match_text": "${result_artist}"
+        }
       }
     },
     {
@@ -301,12 +297,10 @@
         "region_bottom_ratio": "${player_region_bottom_ratio}"
       },
       "expect": {
-        "output_must_contain": [
-          "bestMatchText=${result_title}"
-        ],
-        "output_must_not_contain": [
-          "filteredMatchCount=0"
-        ]
+        "signal_equals": {
+          "ocr.match_found": "true",
+          "ocr.best_match_text": "${result_title}"
+        }
       }
     },
     {
@@ -329,12 +323,10 @@
         "region_bottom_ratio": "${player_region_bottom_ratio}"
       },
       "expect": {
-        "output_must_contain": [
-          "bestMatchText=${result_artist}"
-        ],
-        "output_must_not_contain": [
-          "filteredMatchCount=0"
-        ]
+        "signal_equals": {
+          "ocr.match_found": "true",
+          "ocr.best_match_text": "${result_artist}"
+        }
       }
     }
   ],

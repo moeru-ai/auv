@@ -135,7 +135,7 @@
   "verification": {
     "expected_signals": [
       "debug.pressKey succeeds for the known search shortcut.",
-      "debug.pasteTextPreserveClipboard reports clipboardRestored=true.",
+      "debug.pasteTextPreserveClipboard reports clipboard.restored=true.",
       "A post-submit screenshot artifact exists."
     ],
     "success_criteria": [

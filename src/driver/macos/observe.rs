@@ -9,22 +9,51 @@ use super::*;
 pub(super) fn verify_now_playing_title_signals(
   matched_title: &str,
 ) -> std::collections::BTreeMap<String, String> {
-  std::collections::BTreeMap::from([
-    ("ax.node_found".to_string(), "true".to_string()),
-    (
-      "ax.now_playing_title".to_string(),
-      matched_title.to_string(),
-    ),
-  ])
+  let mut signals =
+    std::collections::BTreeMap::from([("ax.node_found".to_string(), "true".to_string())]);
+  insert_optional_signal(&mut signals, "ax.now_playing_title", matched_title);
+  signals
 }
 
 pub(super) fn verify_ax_text_signals(
   matched_text: &str,
+  matched_role: &str,
 ) -> std::collections::BTreeMap<String, String> {
-  std::collections::BTreeMap::from([
-    ("ax.node_found".to_string(), "true".to_string()),
-    ("ax.matched_text".to_string(), matched_text.to_string()),
-  ])
+  let mut signals =
+    std::collections::BTreeMap::from([("ax.node_found".to_string(), "true".to_string())]);
+  insert_optional_signal(&mut signals, "ax.matched_text", matched_text);
+  insert_optional_signal(&mut signals, "ax.matched_role", matched_role);
+  signals
+}
+
+pub(super) fn ocr_detection_signals(
+  filtered_match_count: usize,
+  best_match_text: Option<&str>,
+) -> std::collections::BTreeMap<String, String> {
+  let mut signals = std::collections::BTreeMap::from([
+    (
+      "ocr.match_found".to_string(),
+      (!filtered_match_count.eq(&0)).to_string(),
+    ),
+    (
+      "ocr.filtered_match_count".to_string(),
+      filtered_match_count.to_string(),
+    ),
+  ]);
+  if let Some(best_match_text) = best_match_text {
+    insert_optional_signal(&mut signals, "ocr.best_match_text", best_match_text);
+  }
+  signals
+}
+
+pub(super) fn wait_ocr_detection_signals(
+  filtered_match_count: usize,
+  best_match_text: Option<&str>,
+  timed_out: bool,
+) -> std::collections::BTreeMap<String, String> {
+  let mut signals = ocr_detection_signals(filtered_match_count, best_match_text);
+  signals.insert("ocr.timed_out".to_string(), timed_out.to_string());
+  signals
 }
 
 pub(super) fn row_detection_signals(
@@ -34,6 +63,30 @@ pub(super) fn row_detection_signals(
     ("rows.count".to_string(), row_count.to_string()),
     ("rows.visible".to_string(), (!row_count.eq(&0)).to_string()),
   ])
+}
+
+pub(super) fn wait_row_detection_signals(
+  row_count: usize,
+  required_row_count: usize,
+  timed_out: bool,
+) -> std::collections::BTreeMap<String, String> {
+  let mut signals = row_detection_signals(row_count);
+  signals.insert(
+    "rows.requirement_met".to_string(),
+    (row_count >= required_row_count).to_string(),
+  );
+  signals.insert("rows.timed_out".to_string(), timed_out.to_string());
+  signals
+}
+
+fn insert_optional_signal(
+  signals: &mut std::collections::BTreeMap<String, String>,
+  key: &str,
+  value: &str,
+) {
+  if !value.trim().is_empty() {
+    signals.insert(key.to_string(), value.to_string());
+  }
 }
 
 fn preferred_ax_signal_text(node: &ObservedAxNode) -> String {
@@ -527,7 +580,7 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       summary_suffix
     ),
     backend: Some("macos.observe.verify-ax-text".to_string()),
-    signals: verify_ax_text_signals(&preferred_ax_signal_text(matched)),
+    signals: verify_ax_text_signals(&preferred_ax_signal_text(matched), &matched.role),
     notes,
     artifacts: vec![artifact],
   })
@@ -682,7 +735,12 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   Ok(DriverResponse {
     summary,
     backend: Some("macos.vision.screen-text".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    signals: ocr_detection_signals(
+      filtered_matches.len(),
+      filtered_matches
+        .first()
+        .map(|matched| matched.text.as_str()),
+    ),
     notes,
     artifacts: vec![screenshot_artifact, report_artifact],
   })
@@ -808,7 +866,13 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
       return Ok(DriverResponse {
         summary,
         backend: Some("macos.vision.wait-screen-text".to_string()),
-        signals: std::collections::BTreeMap::new(),
+        signals: wait_ocr_detection_signals(
+          filtered_matches.len(),
+          filtered_matches
+            .first()
+            .map(|matched| matched.text.as_str()),
+          timed_out,
+        ),
         notes,
         artifacts: vec![screenshot_artifact, report_artifact],
       });
@@ -1023,7 +1087,7 @@ pub(super) fn wait_for_screen_rows(call: &DriverCall) -> AuvResult<DriverRespons
           "macos.vision.wait-screen-rows.{}",
           detection.strategy
         )),
-        signals: row_detection_signals(rows.len()),
+        signals: wait_row_detection_signals(rows.len(), min_row_count, timed_out),
         notes,
         artifacts: vec![screenshot_artifact, report_artifact],
       });
@@ -1115,7 +1179,12 @@ pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   Ok(DriverResponse {
     summary,
     backend: Some("macos.vision.image-text".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    signals: ocr_detection_signals(
+      filtered_matches.len(),
+      filtered_matches
+        .first()
+        .map(|matched| matched.text.as_str()),
+    ),
     notes,
     artifacts: vec![report_artifact],
   })
@@ -1225,8 +1294,9 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
 #[cfg(test)]
 mod tests {
   use super::{
-    ObservedAxNode, ObservedRect, preferred_ax_signal_text, row_detection_signals,
-    verify_ax_text_signals, verify_now_playing_title_signals,
+    ObservedAxNode, ObservedRect, ocr_detection_signals, preferred_ax_signal_text,
+    row_detection_signals, verify_ax_text_signals, verify_now_playing_title_signals,
+    wait_ocr_detection_signals, wait_row_detection_signals,
   };
 
   #[test]
@@ -1242,13 +1312,47 @@ mod tests {
 
   #[test]
   fn verify_ax_text_signals_include_presence_and_match_text() {
-    let signals = verify_ax_text_signals("已粘贴完成");
+    let signals = verify_ax_text_signals("已粘贴完成", "AXTextArea");
 
     assert_eq!(signals.get("ax.node_found"), Some(&"true".to_string()));
     assert_eq!(
       signals.get("ax.matched_text"),
       Some(&"已粘贴完成".to_string())
     );
+    assert_eq!(
+      signals.get("ax.matched_role"),
+      Some(&"AXTextArea".to_string())
+    );
+  }
+
+  #[test]
+  fn ocr_detection_signals_include_match_presence_and_best_text() {
+    let signals = ocr_detection_signals(2, Some("晴天"));
+    let empty = ocr_detection_signals(0, None);
+
+    assert_eq!(signals.get("ocr.match_found"), Some(&"true".to_string()));
+    assert_eq!(
+      signals.get("ocr.filtered_match_count"),
+      Some(&"2".to_string())
+    );
+    assert_eq!(
+      signals.get("ocr.best_match_text"),
+      Some(&"晴天".to_string())
+    );
+    assert_eq!(empty.get("ocr.match_found"), Some(&"false".to_string()));
+    assert_eq!(
+      empty.get("ocr.filtered_match_count"),
+      Some(&"0".to_string())
+    );
+    assert!(!empty.contains_key("ocr.best_match_text"));
+  }
+
+  #[test]
+  fn wait_ocr_detection_signals_include_timeout_status() {
+    let signals = wait_ocr_detection_signals(1, Some("播放"), false);
+
+    assert_eq!(signals.get("ocr.match_found"), Some(&"true".to_string()));
+    assert_eq!(signals.get("ocr.timed_out"), Some(&"false".to_string()));
   }
 
   #[test]
@@ -1260,6 +1364,20 @@ mod tests {
     assert_eq!(empty.get("rows.visible"), Some(&"false".to_string()));
     assert_eq!(visible.get("rows.count"), Some(&"3".to_string()));
     assert_eq!(visible.get("rows.visible"), Some(&"true".to_string()));
+  }
+
+  #[test]
+  fn wait_row_detection_signals_include_requirement_state() {
+    let ready = wait_row_detection_signals(3, 2, false);
+    let timed_out = wait_row_detection_signals(1, 2, true);
+
+    assert_eq!(ready.get("rows.requirement_met"), Some(&"true".to_string()));
+    assert_eq!(ready.get("rows.timed_out"), Some(&"false".to_string()));
+    assert_eq!(
+      timed_out.get("rows.requirement_met"),
+      Some(&"false".to_string())
+    );
+    assert_eq!(timed_out.get("rows.timed_out"), Some(&"true".to_string()));
   }
 
   #[test]
