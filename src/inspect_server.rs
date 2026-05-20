@@ -399,10 +399,7 @@ async fn write_updates(
 ) -> Result<Response, InspectHttpError> {
   authorize_write(&headers, &state.write)?;
   let _write_guard = state.write_locks.lock(&run_id).await;
-  let mut snapshot = match state.store.read_run(&run_id) {
-    Ok(snapshot) => Some(snapshot),
-    Err(_) => None,
-  };
+  let mut snapshot = state.store.read_run(&run_id).ok();
   let updates = request
     .updates
     .into_iter()
@@ -457,6 +454,7 @@ async fn write_artifact(
   )
 }
 
+#[allow(clippy::result_large_err)]
 fn authorize_write(
   headers: &HeaderMap,
   write: &InspectWriteConfig,
@@ -487,6 +485,7 @@ fn authorize_write(
   }
 }
 
+#[allow(clippy::result_large_err)]
 fn validate_update_run_ids(run_id: &str, update: &RunUpdate) -> Result<(), InspectHttpError> {
   if update.run_id().as_str() != run_id {
     return Err(InspectHttpError::bad_request(format!(
@@ -675,6 +674,7 @@ impl RunConflict {
   }
 }
 
+#[allow(clippy::result_large_err)]
 fn ensure_stream_run_exists(store: &LocalStore, run_id: &str) -> Result<(), InspectHttpError> {
   store
     .read_run(run_id)

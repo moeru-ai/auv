@@ -4136,7 +4136,7 @@ mod tests {
       first_probe_span.attributes.get("auv.step.kind"),
       Some(&serde_json::json!("probe"))
     );
-    assert!(first_probe_span.attributes.get("auv.step.index").is_none());
+    assert!(!first_probe_span.attributes.contains_key("auv.step.index"));
 
     let _ = fs::remove_dir_all(root);
   }

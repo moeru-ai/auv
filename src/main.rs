@@ -2,7 +2,7 @@ mod cli;
 mod xtask;
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
@@ -375,10 +375,10 @@ async fn run() -> Result<(), String> {
   Ok(())
 }
 
-fn resolve_store_root(project_root: &PathBuf, explicit: Option<&String>) -> PathBuf {
+fn resolve_store_root(project_root: &Path, explicit: Option<&String>) -> PathBuf {
   explicit
     .map(PathBuf::from)
-    .unwrap_or_else(|| auv_cli::default_project_store_root(project_root.clone()))
+    .unwrap_or_else(|| auv_cli::default_project_store_root(project_root.to_path_buf()))
 }
 
 fn resolve_inspect_serve_write_token(
@@ -421,7 +421,7 @@ fn normalize_write_token(source: &str, token: String) -> Result<String, String> 
 }
 
 fn build_runtime_for_inspect(
-  project_root: &PathBuf,
+  project_root: &Path,
   inspect: &InspectClientOptions,
 ) -> Result<auv_cli::runtime::Runtime, String> {
   let server_target = if should_try_server_write(inspect) {
@@ -468,7 +468,10 @@ fn build_runtime_for_inspect(
   let recording = auv_cli::run_recording::RunRecordingBackend::new(store, recorder)
     .with_local_snapshot_write_enabled(local_write_enabled)
     .with_temporary_store_cleanup(!local_write_enabled);
-  Ok(build_runtime_with_store_root(project_root.clone(), store_root)?.with_recording(recording))
+  Ok(
+    build_runtime_with_store_root(project_root.to_path_buf(), store_root)?
+      .with_recording(recording),
+  )
 }
 
 fn should_write_local(inspect: &InspectClientOptions) -> bool {
