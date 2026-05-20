@@ -140,6 +140,23 @@ pub struct StopEvidence {
   pub page_index: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScanProgress {
+  pub page_index: usize,
+  pub scroll_count: usize,
+  pub consecutive_no_progress: usize,
+  pub new_observation_count: usize,
+  pub hook_stop_requested: bool,
+  pub match_found: bool,
+  pub next_section_candidate: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StopDecision {
+  pub stop_evidence: StopEvidence,
+  pub completeness_claim: CompletenessClaim,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ScrollScanArtifact {
   pub scan_id: String,
@@ -153,6 +170,114 @@ pub struct ScrollScanArtifact {
   pub stop_evidence: StopEvidence,
   pub completeness_claim: CompletenessClaim,
   pub warnings: Vec<String>,
+}
+
+pub fn evaluate_stop_policy(policy: &StopPolicy, progress: &ScanProgress) -> Option<StopDecision> {
+  if progress.hook_stop_requested {
+    return Some(stop_decision(
+      StopReason::HookRequestedStop,
+      "scan hook requested stop",
+      progress.page_index,
+      CompletenessClaim::Unknown,
+    ));
+  }
+  if progress.match_found {
+    return Some(stop_decision(
+      StopReason::MatchFound,
+      "target match found",
+      progress.page_index,
+      CompletenessClaim::Unknown,
+    ));
+  }
+  if progress.next_section_candidate && matches!(policy, StopPolicy::UntilNextSection { .. }) {
+    return Some(stop_decision(
+      StopReason::NextSectionCandidate,
+      "next section candidate observed",
+      progress.page_index,
+      CompletenessClaim::PartialNextSectionCandidate,
+    ));
+  }
+
+  match policy {
+    StopPolicy::UntilEnd {
+      max_pages,
+      max_scrolls,
+      no_progress_limit,
+    } => bounded_or_no_progress_stop(*max_pages, *max_scrolls, *no_progress_limit, progress),
+    StopPolicy::UntilNextSection {
+      max_pages,
+      max_scrolls,
+    }
+    | StopPolicy::UntilMatch {
+      max_pages,
+      max_scrolls,
+      ..
+    }
+    | StopPolicy::Bounded {
+      max_pages,
+      max_scrolls,
+    } => bounded_stop(*max_pages, *max_scrolls, progress),
+  }
+}
+
+fn bounded_or_no_progress_stop(
+  max_pages: usize,
+  max_scrolls: usize,
+  no_progress_limit: usize,
+  progress: &ScanProgress,
+) -> Option<StopDecision> {
+  if progress.consecutive_no_progress >= no_progress_limit {
+    return Some(stop_decision(
+      StopReason::NoProgressLimit,
+      format!("reached no_progress_limit={no_progress_limit}"),
+      progress.page_index,
+      // REVIEW: "Complete by no visual progress" is an evidence claim, not a proof
+      // that the application has no hidden content. Keep this wording visible in
+      // reports and docs.
+      CompletenessClaim::CompleteByNoVisualProgress,
+    ));
+  }
+  bounded_stop(max_pages, max_scrolls, progress)
+}
+
+fn bounded_stop(
+  max_pages: usize,
+  max_scrolls: usize,
+  progress: &ScanProgress,
+) -> Option<StopDecision> {
+  if progress.page_index + 1 >= max_pages {
+    return Some(stop_decision(
+      StopReason::MaxPages,
+      format!("reached max_pages={max_pages}"),
+      progress.page_index,
+      CompletenessClaim::PartialMaxPages,
+    ));
+  }
+  if progress.scroll_count >= max_scrolls {
+    return Some(stop_decision(
+      StopReason::MaxScrolls,
+      format!("reached max_scrolls={max_scrolls}"),
+      progress.page_index,
+      CompletenessClaim::Unknown,
+    ));
+  }
+  None
+}
+
+fn stop_decision(
+  reason: StopReason,
+  message: impl Into<String>,
+  page_index: usize,
+  completeness_claim: CompletenessClaim,
+) -> StopDecision {
+  StopDecision {
+    stop_evidence: StopEvidence {
+      reason,
+      message: message.into(),
+      page_index,
+    },
+    completeness_claim,
+  }
 }
 
 pub fn normalize_observation_text(raw: &str) -> String {
@@ -322,6 +447,57 @@ mod tests {
       vec!["obs_0001".to_string(), "obs_0002".to_string()]
     );
     assert_eq!(clusters[0].merge_reason, "same_text_adjacent_page_near_y");
+  }
+
+  #[test]
+  fn bounded_policy_stops_at_max_pages() {
+    let decision = evaluate_stop_policy(
+      &StopPolicy::Bounded {
+        max_pages: 2,
+        max_scrolls: 10,
+      },
+      &ScanProgress {
+        page_index: 1,
+        scroll_count: 1,
+        consecutive_no_progress: 0,
+        new_observation_count: 3,
+        hook_stop_requested: false,
+        match_found: false,
+        next_section_candidate: false,
+      },
+    );
+
+    assert_eq!(
+      decision.expect("stop expected").completeness_claim,
+      CompletenessClaim::PartialMaxPages
+    );
+  }
+
+  #[test]
+  fn until_end_policy_stops_after_no_progress_limit() {
+    let decision = evaluate_stop_policy(
+      &StopPolicy::UntilEnd {
+        max_pages: 20,
+        max_scrolls: 20,
+        no_progress_limit: 2,
+      },
+      &ScanProgress {
+        page_index: 3,
+        scroll_count: 3,
+        consecutive_no_progress: 2,
+        new_observation_count: 0,
+        hook_stop_requested: false,
+        match_found: false,
+        next_section_candidate: false,
+      },
+    );
+
+    let decision = decision.expect("stop expected");
+    assert_eq!(decision.stop_evidence.reason, StopReason::NoProgressLimit);
+    assert_eq!(
+      decision.completeness_claim,
+      CompletenessClaim::CompleteByNoVisualProgress
+    );
   }
 
   fn observation(id: &str, page_index: usize, text: &str, y: i64) -> CollectionObservation {
