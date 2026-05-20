@@ -42,6 +42,8 @@ benchmarks/longmemeval/results/
 .claude
 .codex
 .superpowers
+.worktrees
+.worktrees/
 
 # Logs
 logs
