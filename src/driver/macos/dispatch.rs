@@ -1,3 +1,4 @@
+use super::ax_tree::capture_ax_tree;
 use super::capture::commands::{capture_display, capture_region, capture_window, list_displays};
 use super::control::{
   activate_app, ax_click_window_text, ax_press_button, click_point, click_screen_row,
@@ -7,8 +8,8 @@ use super::control::{
 };
 use super::observe::{
   find_image_text, find_screen_rows, find_screen_text, identify_point, list_windows,
-  observe_ax_tree, probe_coordinate_readiness, probe_permissions, project_screenshot_point,
-  verify_ax_text, verify_now_playing_title, wait_for_screen_rows, wait_for_screen_text,
+  probe_coordinate_readiness, probe_permissions, project_screenshot_point, verify_ax_text,
+  verify_now_playing_title, wait_for_screen_rows, wait_for_screen_text,
 };
 use super::overlay::{
   overlay_click_point, overlay_hide_cursor, overlay_show_cursor, overlay_shutdown,
@@ -41,7 +42,7 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
     "project_screenshot_point" => project_screenshot_point(call),
     "identify_point" => identify_point(call),
     "list_windows" => list_windows(call),
-    "observe_ax_tree" => observe_ax_tree(call),
+    "capture_ax_tree" => capture_ax_tree(call),
     "find_screen_text" => find_screen_text(call),
     "wait_for_screen_text" => wait_for_screen_text(call),
     "find_screen_rows" => find_screen_rows(call),

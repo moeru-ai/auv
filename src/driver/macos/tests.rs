@@ -45,6 +45,17 @@ fn macos_driver_descriptor_uses_desktop_namespace() {
 }
 
 #[test]
+fn dispatch_rejects_removed_observe_ax_tree_operation_name() {
+  let call = build_call([]);
+  let mut call = call;
+  call.operation = "observe_ax_tree".to_string();
+
+  let error = super::dispatch::invoke_operation(&call).unwrap_err();
+
+  assert!(error.contains("does not support operation observe_ax_tree"));
+}
+
+#[test]
 fn optional_f64_rejects_non_finite_numbers() {
   let call = build_call([("x", "NaN")]);
   let error = optional_f64(&call, "x").expect_err("NaN should be rejected");

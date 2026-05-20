@@ -4,6 +4,7 @@ use crate::model::{
 };
 
 pub(crate) mod capture;
+mod ax_tree;
 mod constants;
 mod control;
 mod descriptor;
