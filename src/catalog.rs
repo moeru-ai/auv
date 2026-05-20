@@ -23,7 +23,7 @@ const PRESS_BUTTON_DISTURBANCE: &[DisturbanceClass] = &[
   DisturbanceClass::Keyboard,
   DisturbanceClass::Pointer,
 ];
-const OBSERVE_WINDOW_TREE_DISTURBANCE: &[DisturbanceClass] =
+const CAPTURE_AX_TREE_DISTURBANCE: &[DisturbanceClass] =
   &[DisturbanceClass::ForegroundApp, DisturbanceClass::Keyboard];
 
 pub struct CommandCatalog {
@@ -52,7 +52,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.captureDisplay",
       summary: "Capture one display screenshot with a coordinate contract through xcap.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "capture_display",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -60,7 +60,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.captureRegion",
       summary: "Capture one display-contained region and emit a coordinate contract.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "capture_region",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -68,7 +68,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.captureWindow",
       summary: "Capture one single-display window and emit a coordinate contract.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "capture_window",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -76,7 +76,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.listDisplays",
       summary: "List connected displays using the normalized AUV coordinate contract.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "list_displays",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -84,7 +84,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.projectScreenshotPoint",
       summary: "Project main-display screenshot pixels back into AUV global logical coordinates.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "project_screenshot_point",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -92,7 +92,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.identifyPoint",
       summary: "Resolve a logical desktop point against the current macOS display layout.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "identify_point",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -100,7 +100,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.probeCoordinateReadiness",
       summary: "Capture a screenshot and compare its pixels against the observed macOS coordinate space.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "probe_coordinate_readiness",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -108,7 +108,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.findScreenText",
       summary: "Capture a screenshot and locate OCR text anchors in screenshot pixel space.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "find_screen_text",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -116,7 +116,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.waitForScreenText",
       summary: "Poll live-desktop OCR until a target text anchor appears or the timeout expires.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "wait_for_screen_text",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -124,7 +124,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.findScreenRows",
       summary: "Detect visible OCR row bands inside a constrained screen region without depending on one exact anchor string.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "find_screen_rows",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -132,7 +132,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.waitForScreenRows",
       summary: "Poll live-desktop OCR row detection until at least a target number of visible rows appears or the timeout expires.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "wait_for_screen_rows",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -140,7 +140,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.findImageText",
       summary: "Locate OCR text anchors inside an existing image artifact without touching the live desktop.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "find_image_text",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -148,7 +148,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.findWindowText",
       summary: "Capture a resolved window and locate OCR text anchors in window pixel space.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "find_window_text",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -156,7 +156,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.waitForWindowText",
       summary: "Poll resolved-window OCR until a text anchor appears or the timeout expires.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "wait_for_window_text",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -164,7 +164,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.findWindowRows",
       summary: "Detect visible OCR row bands inside a resolved window.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "find_window_rows",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -172,7 +172,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.waitForWindowRows",
       summary: "Poll resolved-window row detection until enough rows appear or the timeout expires.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "wait_for_window_rows",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -180,7 +180,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.verifyNowPlayingTitle",
       summary: "Verify the current now-playing title from the observed AX tree without relying on screenshot OCR.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "verify_now_playing_title",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -188,7 +188,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.verifyAxText",
       summary: "Verify that a text-bearing AX node exists in the observed tree without relying on screenshot OCR.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "verify_ax_text",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -196,23 +196,23 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.listWindows",
       summary: "List visible macOS window candidates using the normalized AUV window selector model.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "list_windows",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
-      id: "debug.observeAxTree",
+      id: "debug.captureAxTree",
       summary: "Capture an AX tree snapshot for a target macOS app window.",
-      driver_id: "macos.observe",
-      operation: "observe_ax_tree",
-      disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,
+      driver_id: "macos.desktop",
+      operation: "capture_ax_tree",
+      disturbance_classes: CAPTURE_AX_TREE_DISTURBANCE,
       max_disturbance: DisturbanceClass::Keyboard,
     },
     CommandSpec {
       id: "debug.probePermissions",
       summary: "Probe macOS screen recording, accessibility, and automation permissions.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "probe_permissions",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -220,7 +220,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.activateApp",
       summary: "Bring a target macOS app to the foreground before a foreground-dependent step.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "activate_app",
       disturbance_classes: FOREGROUND_ONLY,
       max_disturbance: DisturbanceClass::ForegroundApp,
@@ -228,7 +228,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.focusTextInput",
       summary: "Focus a target macOS text input by query through AX.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "focus_text_input",
       disturbance_classes: FOCUS_POINTER_ENTRY,
       max_disturbance: DisturbanceClass::Pointer,
@@ -236,7 +236,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.pressButton",
       summary: "Press a known macOS button-like control by query through AX.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "press_button",
       disturbance_classes: PRESS_BUTTON_DISTURBANCE,
       max_disturbance: DisturbanceClass::Pointer,
@@ -244,23 +244,23 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.axPressButton",
       summary: "Press a control by query via AXUIElementPerformAction; does not warp the real cursor (cursorDisturbance=none). Pass --overlay true to draw a visual AUV cursor over the target during the press for the dual-cursor effect. Falls back with an error when the AX target has no matching action; use debug.pressButton for non-AX-pressable targets.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "ax_press_button",
-      disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,
+      disturbance_classes: CAPTURE_AX_TREE_DISTURBANCE,
       max_disturbance: DisturbanceClass::Keyboard,
     },
     CommandSpec {
       id: "debug.axClickWindowText",
       summary: "Find visible text in a window via Vision OCR, resolve the AX node at that point, then press it via AXUIElementPerformAction (cursorDisturbance=none). Pass --overlay true for the dual-cursor visual. Errors with a hint to debug.clickWindowText when the OCR anchor maps to a canvas-rendered or non-AX-pressable region.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "ax_click_window_text",
-      disturbance_classes: OBSERVE_WINDOW_TREE_DISTURBANCE,
+      disturbance_classes: CAPTURE_AX_TREE_DISTURBANCE,
       max_disturbance: DisturbanceClass::Keyboard,
     },
     CommandSpec {
       id: "debug.smartPress",
       summary: "Try OCR-to-AX press first; if it fails and --allow_pointer_fallback is not false, fall back to pointer click. Overlay defaults on for this debug command so the target is visible before either strategy acts.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "smart_press",
       disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
@@ -268,7 +268,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.typeText",
       summary: "Type text into the active macOS control through System Events.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "type_text",
       disturbance_classes: FOREGROUND_KEYBOARD,
       max_disturbance: DisturbanceClass::Keyboard,
@@ -276,7 +276,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.pasteTextPreserveClipboard",
       summary: "Paste text into the active macOS control through the clipboard, then restore the prior clipboard snapshot.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "paste_text_preserve_clipboard",
       disturbance_classes: FOREGROUND_KEYBOARD_CLIPBOARD,
       max_disturbance: DisturbanceClass::Clipboard,
@@ -284,7 +284,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.pressKey",
       summary: "Press a keyboard key or shortcut in the active macOS app through System Events.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "press_key",
       disturbance_classes: FOREGROUND_KEYBOARD,
       max_disturbance: DisturbanceClass::Keyboard,
@@ -292,7 +292,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.clickPoint",
       summary: "Click a macOS global logical point through Quartz and record its display contract.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "click_point",
       disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
@@ -300,7 +300,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.clickWindowPoint",
       summary: "Click a point relative to a target macOS window and record the resolved global point.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "click_window_point",
       disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
@@ -308,7 +308,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.clickScreenText",
       summary: "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "click_screen_text",
       disturbance_classes: POINTER_ONLY,
       max_disturbance: DisturbanceClass::Pointer,
@@ -316,7 +316,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.clickScreenRow",
       summary: "Detect visible OCR row bands inside a constrained screen region and click a chosen row-derived point.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "click_screen_row",
       disturbance_classes: POINTER_ONLY,
       max_disturbance: DisturbanceClass::Pointer,
@@ -324,7 +324,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.clickWindowText",
       summary: "Capture a resolved window, resolve an OCR text anchor, and click its projected logical point.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "click_window_text",
       disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
@@ -332,7 +332,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.clickWindowRow",
       summary: "Capture a resolved window, detect visible rows, and click a row-derived projected logical point.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "click_window_row",
       disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
@@ -340,7 +340,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.scrollPoint",
       summary: "Scroll at a macOS global logical point through Quartz and record its display contract.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "scroll_point",
       disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
@@ -348,7 +348,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayClickPoint",
       summary: "Show overlay cursor, click the target point, then hide overlay. Experimental debug-only path; the real cursor visibly warps to the click target and back (cursorDisturbance=warp-visible).",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "overlay_click_point",
       disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
@@ -356,7 +356,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayShowCursor",
       summary: "Show an experimental visual-only AUV cursor label overlay inside the current process.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "overlay_show_cursor",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -364,7 +364,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayHideCursor",
       summary: "Hide the experimental visual-only AUV cursor label overlay inside the current process.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "overlay_hide_cursor",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -372,7 +372,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayShutdown",
       summary: "Shut down the experimental visual-only AUV cursor overlay daemon inside the current process.",
-      driver_id: "macos.observe",
+      driver_id: "macos.desktop",
       operation: "overlay_shutdown",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
@@ -461,7 +461,7 @@ mod tests {
     assert!(catalog.resolve("debug.verifyNowPlayingTitle").is_some());
     assert!(catalog.resolve("debug.verifyAxText").is_some());
     assert!(catalog.resolve("debug.listWindows").is_some());
-    assert!(catalog.resolve("debug.observeAxTree").is_some());
+    assert!(catalog.resolve("debug.captureAxTree").is_some());
     assert!(catalog.resolve("debug.probePermissions").is_some());
     assert!(catalog.resolve("debug.focusTextInput").is_some());
     assert!(catalog.resolve("debug.pressButton").is_some());
@@ -514,7 +514,35 @@ mod tests {
   #[test]
   fn command_catalog_renames_window_tree_to_ax_tree() {
     let catalog = default_command_catalog();
-    assert!(catalog.resolve("debug.observeAxTree").is_some());
+    assert!(catalog.resolve("debug.captureAxTree").is_some());
+    assert!(catalog.resolve("debug.observeAxTree").is_none());
+    assert!(catalog.resolve("debug.observeWindowTree").is_none());
+  }
+
+  #[test]
+  fn default_catalog_uses_macos_desktop_driver_id() {
+    let catalog = default_command_catalog();
+
+    for command in catalog.all().iter().filter(|command| {
+      command.id.starts_with("debug.") && command.driver_id != "fixture.observe"
+    }) {
+      assert_eq!(
+        command.driver_id, "macos.desktop",
+        "command {} should route through macos.desktop",
+        command.id
+      );
+    }
+  }
+
+  #[test]
+  fn command_catalog_renames_observe_ax_tree_to_capture_ax_tree() {
+    let catalog = default_command_catalog();
+    let command = catalog
+      .resolve("debug.captureAxTree")
+      .expect("debug.captureAxTree should exist");
+
+    assert_eq!(command.operation, "capture_ax_tree");
+    assert!(catalog.resolve("debug.observeAxTree").is_none());
     assert!(catalog.resolve("debug.observeWindowTree").is_none());
   }
 
