@@ -161,6 +161,8 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
     was_already_focused = focus_result.was_already_focused,
   );
   if let Some(outcome) = &overlay_outcome {
+    report.push_str("userCursorSource=current-hardware-cursor\n");
+    report.push_str("userCursorTracking=polling-30hz\n");
     report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
     report.push_str(&format!("overlayHideEvent={}\n", outcome.hide_event));
     report.push_str(&format!("controllerPid={}\n", outcome.controller_pid));
@@ -188,6 +190,7 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
   if let Some(outcome) = &overlay_outcome {
     notes.push("overlayPresentation=dual-cursor-visual-only".to_string());
     notes.push("userCursorSource=current-hardware-cursor".to_string());
+    notes.push("userCursorTracking=polling-30hz".to_string());
     notes.push(format!("overlayShowEvent={}", outcome.show_event));
     notes.push(format!("overlayHideEvent={}", outcome.hide_event));
     notes.push(format!("controllerPid={}", outcome.controller_pid));
@@ -228,6 +231,7 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
       "dual-cursor-visual-only".to_string(),
     );
     signals.insert("dualCursor".to_string(), "true".to_string());
+    signals.insert("userCursorTracking".to_string(), "polling-30hz".to_string());
   }
 
   Ok(DriverResponse {
@@ -350,6 +354,8 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
     },
   );
   if let Some(outcome) = &overlay_outcome {
+    report.push_str("userCursorSource=current-hardware-cursor\n");
+    report.push_str("userCursorTracking=polling-30hz\n");
     report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
     report.push_str(&format!("overlayHideEvent={}\n", outcome.hide_event));
     report.push_str(&format!("controllerPid={}\n", outcome.controller_pid));
@@ -376,6 +382,7 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   if let Some(outcome) = &overlay_outcome {
     notes.push("overlayPresentation=dual-cursor-visual-only".to_string());
     notes.push("userCursorSource=current-hardware-cursor".to_string());
+    notes.push("userCursorTracking=polling-30hz".to_string());
     notes.push(format!("overlayShowEvent={}", outcome.show_event));
     notes.push(format!("overlayHideEvent={}", outcome.hide_event));
     notes.push(format!("controllerPid={}", outcome.controller_pid));
@@ -412,6 +419,7 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
       "dual-cursor-visual-only".to_string(),
     );
     signals.insert("dualCursor".to_string(), "true".to_string());
+    signals.insert("userCursorTracking".to_string(), "polling-30hz".to_string());
   }
 
   let backend = if overlay {
@@ -663,6 +671,8 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
     }
   ));
   if let Some(outcome) = &overlay_outcome {
+    report.push_str("userCursorSource=current-hardware-cursor\n");
+    report.push_str("userCursorTracking=polling-30hz\n");
     report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
     report.push_str(&format!("overlayHideEvent={}\n", outcome.hide_event));
     report.push_str(&format!("controllerPid={}\n", outcome.controller_pid));
@@ -712,6 +722,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
   if let Some(outcome) = &overlay_outcome {
     notes.push("overlayPresentation=dual-cursor-visual-only".to_string());
     notes.push("userCursorSource=current-hardware-cursor".to_string());
+    notes.push("userCursorTracking=polling-30hz".to_string());
     notes.push(format!("overlayShowEvent={}", outcome.show_event));
     notes.push(format!("overlayHideEvent={}", outcome.hide_event));
     notes.push(format!("controllerPid={}", outcome.controller_pid));
@@ -742,6 +753,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
       "dual-cursor-visual-only".to_string(),
     );
     signals.insert("dualCursor".to_string(), "true".to_string());
+    signals.insert("userCursorTracking".to_string(), "polling-30hz".to_string());
   }
 
   let backend = if overlay {

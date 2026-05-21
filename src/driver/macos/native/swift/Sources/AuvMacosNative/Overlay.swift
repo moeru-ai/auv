@@ -150,6 +150,8 @@ final class NativeOverlayCursorState {
 
 final class NativeOverlayController {
   private var cursors: [String: NativeOverlayCursorState] = [:]
+  private var userCursorTrackingTimer: Timer?
+  private var userCursorTrackingLabel: String = "you"
 
   func show_overlay_cursor(x: Double, y: Double, label: RustString) -> NativeActionResponse {
     runOnMain {
@@ -174,15 +176,7 @@ final class NativeOverlayController {
     runOnMain {
       let resolvedLabel = label.toString()
       let resolvedUserLabel = user_label.toString()
-      let userPoint = self.currentMouseLogicalPoint()
-
-      self.placeCursor(
-        state: self.ensureCursor(id: "you", label: resolvedUserLabel, variant: .you),
-        x: userPoint.x,
-        y: userPoint.y,
-        label: resolvedUserLabel.isEmpty ? "you" : resolvedUserLabel,
-        variant: .you
-      )
+      self.startUserCursorTracking(label: resolvedUserLabel)
       self.placeCursor(
         state: self.ensureCursor(id: "auv", label: resolvedLabel, variant: .auv),
         x: x,
@@ -204,14 +198,7 @@ final class NativeOverlayController {
       let resolvedLabel = label.toString()
       let resolvedUserLabel = user_label.toString()
       let userPoint = self.currentMouseLogicalPoint()
-
-      self.placeCursor(
-        state: self.ensureCursor(id: "you", label: resolvedUserLabel, variant: .you),
-        x: userPoint.x,
-        y: userPoint.y,
-        label: resolvedUserLabel.isEmpty ? "you" : resolvedUserLabel,
-        variant: .you
-      )
+      self.startUserCursorTracking(label: resolvedUserLabel)
 
       let duration = max(0.0, Double(duration_ms) / 1000.0)
       let targetLabel = resolvedLabel.isEmpty ? "auv · replay" : resolvedLabel
@@ -319,6 +306,7 @@ final class NativeOverlayController {
 
   func hide_overlay_cursor() -> NativeActionResponse {
     runOnMain {
+      self.stopUserCursorTracking()
       for state in self.cursors.values {
         state.window.orderOut(nil)
       }
@@ -327,6 +315,7 @@ final class NativeOverlayController {
 
   func shutdown_overlay_cursor() -> NativeActionResponse {
     runOnMain {
+      self.stopUserCursorTracking()
       for state in self.cursors.values {
         state.window.orderOut(nil)
         state.window.close()
@@ -490,7 +479,41 @@ final class NativeOverlayController {
   }
 
   private func hideCursor(id: String) {
+    if id == "you" {
+      stopUserCursorTracking()
+    }
     cursors[id]?.window.orderOut(nil)
+  }
+
+  private func startUserCursorTracking(label: String) {
+    userCursorTrackingLabel = label.isEmpty ? "you" : label
+    updateUserCursorFromHardware()
+
+    if userCursorTrackingTimer != nil {
+      return
+    }
+
+    let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+      self?.updateUserCursorFromHardware()
+    }
+    userCursorTrackingTimer = timer
+    RunLoop.main.add(timer, forMode: .common)
+  }
+
+  private func stopUserCursorTracking() {
+    userCursorTrackingTimer?.invalidate()
+    userCursorTrackingTimer = nil
+  }
+
+  private func updateUserCursorFromHardware() {
+    let userPoint = currentMouseLogicalPoint()
+    placeCursor(
+      state: ensureCursor(id: "you", label: userCursorTrackingLabel, variant: .you),
+      x: userPoint.x,
+      y: userPoint.y,
+      label: userCursorTrackingLabel,
+      variant: .you
+    )
   }
 
   private func cursorStartPoint(_ state: NativeOverlayCursorState) -> (x: Double, y: Double) {
