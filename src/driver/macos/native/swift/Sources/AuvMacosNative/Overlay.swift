@@ -54,12 +54,30 @@ final class NativeOverlayCursorView: NSView {
   var label: String = "auv · replay"
   var variant: AuvOverlayCursorVariant = .auv
 
+  /// Set by `NativeOverlayController.flashCursor` to start the click
+  /// ripple animation: an expanding lime ring emanating from the
+  /// cursor tip. Read-only from `draw()`; `nil` means no ripple is
+  /// active. The controller is responsible for clearing this after
+  /// the flash window closes.
+  var flashStartedAt: Date?
+  var flashDuration: TimeInterval = 0
+
+  /// Cursor tip in view coords (approx — matches the sprite's
+  /// arrow tip at SVG cell (0, 0), with a 4pt visual nudge so the
+  /// ring doesn't clip too aggressively on top-left).
+  static let cursorTipInView = NSPoint(x: 4, y: 4)
+
   override var isFlipped: Bool {
     true
   }
 
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
+
+    // Click ripple — draw FIRST so the cursor sprite paints on top
+    // of the ring (the ring should look like it's emerging from
+    // behind/around the cursor, not floating over it).
+    drawFlashRippleIfActive()
 
     // Layout matches preview/brand-replay-cursor.html: 24pt sprite +
     // 8pt gap + pill that auto-sizes to the label width. The view's
@@ -129,6 +147,41 @@ final class NativeOverlayCursorView: NSView {
       )
       rect.fill()
     }
+  }
+
+  /// Render the click ripple if a flash is in progress. The ring
+  /// expands from a small radius around the cursor tip out past the
+  /// sprite bounds, fading to transparent. Color: `--auv-brand-2`
+  /// (`#7fd030`, lime) — the same accent the `cursor-auv-click.svg`
+  /// 4-ray burst uses, so the press moment reads as a single
+  /// coherent burst rather than two unrelated lime cues.
+  private func drawFlashRippleIfActive() {
+    guard let started = flashStartedAt, flashDuration > 0 else { return }
+    let elapsed = Date().timeIntervalSince(started)
+    let t = CGFloat(min(1.0, max(0.0, elapsed / flashDuration)))
+    if t >= 1.0 { return }
+
+    let center = NativeOverlayCursorView.cursorTipInView
+    // Ease-out cubic on radius matches the move animation's curve.
+    let easedRadius = 1.0 - pow(1.0 - t, 3.0)
+    let startRadius: CGFloat = 3
+    let endRadius: CGFloat = 28
+    let radius = startRadius + (endRadius - startRadius) * easedRadius
+    // Alpha decays linearly so the ring is brightest as it crosses
+    // the sprite silhouette, then fades as it leaves the cursor.
+    let alpha: CGFloat = (1.0 - t) * 0.7
+
+    let ringRect = NSRect(
+      x: center.x - radius,
+      y: center.y - radius,
+      width: radius * 2,
+      height: radius * 2
+    )
+    let ring = NSBezierPath(ovalIn: ringRect)
+    ring.lineWidth = 2
+    // #7fd030 — moeru lime
+    NSColor(srgbRed: 0.498, green: 0.816, blue: 0.188, alpha: alpha).setStroke()
+    ring.stroke()
   }
 }
 
@@ -468,7 +521,27 @@ final class NativeOverlayController {
       label: targetLabel,
       variant: .auvClick
     )
-    drainEvents(until: Date().addingTimeInterval(Double(durationMs) / 1000.0))
+
+    // Drive the click-ripple ring: tell the view the flash window
+    // starts now, then pump ~60fps redraws so the ring animates
+    // outward over the flash duration. Mirrors the redraw loop in
+    // `moveCursor` so the timing semantics stay one place.
+    let durationSec = Double(durationMs) / 1000.0
+    let started = Date()
+    state.view.flashStartedAt = started
+    state.view.flashDuration = durationSec
+    let deadline = started.addingTimeInterval(durationSec)
+    while Date() < deadline {
+      state.view.needsDisplay = true
+      state.window.displayIfNeeded()
+      drainEvents(until: Date().addingTimeInterval(1.0 / 60.0))
+    }
+    // Clear ripple state and force one last paint so the sprite is
+    // shown without a half-rendered ring trailing it.
+    state.view.flashStartedAt = nil
+    state.view.flashDuration = 0
+    state.view.needsDisplay = true
+
     placeCursor(
       state: state,
       x: x,
