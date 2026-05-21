@@ -385,40 +385,8 @@
 <body>
 <div class="shell">
   <div class="top-bar">
-    <!-- Logo mark — inlined from docs/design/assets/logo-mark.svg -->
-    <svg class="logo" viewBox="0 0 32 32" shape-rendering="crispEdges" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="2" y="2" width="28" height="28" fill="#0e1013"/>
-      <rect x="0" y="2" width="2" height="28" fill="#ffffff"/>
-      <rect x="30" y="2" width="2" height="28" fill="#ffffff"/>
-      <rect x="2" y="0" width="28" height="2" fill="#ffffff"/>
-      <rect x="2" y="30" width="28" height="2" fill="#ffffff"/>
-      <rect x="7" y="8" width="2" height="2" fill="#00c4d2"/>
-      <rect x="9" y="8" width="2" height="2" fill="#00c4d2"/>
-      <rect x="5" y="10" width="2" height="2" fill="#00c4d2"/>
-      <rect x="11" y="10" width="2" height="2" fill="#00c4d2"/>
-      <rect x="5" y="12" width="2" height="2" fill="#00c4d2"/>
-      <rect x="7" y="12" width="2" height="2" fill="#00c4d2"/>
-      <rect x="9" y="12" width="2" height="2" fill="#00c4d2"/>
-      <rect x="11" y="12" width="2" height="2" fill="#00c4d2"/>
-      <rect x="5" y="14" width="2" height="2" fill="#00c4d2"/>
-      <rect x="11" y="14" width="2" height="2" fill="#00c4d2"/>
-      <rect x="5" y="16" width="2" height="2" fill="#00c4d2"/>
-      <rect x="11" y="16" width="2" height="2" fill="#00c4d2"/>
-      <rect x="22" y="6" width="2" height="2" fill="#ffffff"/>
-      <rect x="20" y="8" width="2" height="2" fill="#ffffff"/>
-      <rect x="22" y="8" width="2" height="2" fill="#00e0e0"/>
-      <rect x="24" y="8" width="2" height="2" fill="#ffffff"/>
-      <rect x="22" y="10" width="2" height="2" fill="#ffffff"/>
-      <rect x="17" y="16" width="2" height="2" fill="#7fd030"/>
-      <rect x="23" y="16" width="2" height="2" fill="#7fd030"/>
-      <rect x="17" y="18" width="2" height="2" fill="#7fd030"/>
-      <rect x="23" y="18" width="2" height="2" fill="#7fd030"/>
-      <rect x="19" y="20" width="2" height="2" fill="#7fd030"/>
-      <rect x="21" y="20" width="2" height="2" fill="#7fd030"/>
-      <rect x="19" y="22" width="2" height="2" fill="#7fd030"/>
-      <rect x="21" y="22" width="2" height="2" fill="#7fd030"/>
-      <rect x="20" y="24" width="2" height="2" fill="#a0e020"/>
-    </svg>
+    <!-- Logo mark — served from /assets/logo-mark.svg (design system) -->
+    <img class="logo" src="/assets/logo-mark.svg" alt="">
     <div class="brand-name">auv</div>
     <div class="crumb">/ inspect viewer</div>
     <div class="spacer"></div>
@@ -456,22 +424,7 @@
       </div>
       <div class="events-rail" id="events-rail" hidden>
         <div class="span-detail empty" id="span-detail">
-          <!-- Sparkle sprite — inlined from docs/design/assets/sparkle.svg -->
-          <svg class="sparkle" viewBox="0 0 16 16" shape-rendering="crispEdges" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="7" y="2" width="2" height="2" fill="#ffffff"/>
-            <rect x="5" y="4" width="2" height="2" fill="#ffffff"/>
-            <rect x="7" y="4" width="2" height="2" fill="#00e0e0"/>
-            <rect x="9" y="4" width="2" height="2" fill="#ffffff"/>
-            <rect x="3" y="6" width="2" height="2" fill="#ffffff"/>
-            <rect x="5" y="6" width="2" height="2" fill="#00e0e0"/>
-            <rect x="7" y="6" width="2" height="2" fill="#00c4d2"/>
-            <rect x="9" y="6" width="2" height="2" fill="#00e0e0"/>
-            <rect x="11" y="6" width="2" height="2" fill="#ffffff"/>
-            <rect x="5" y="8" width="2" height="2" fill="#ffffff"/>
-            <rect x="7" y="8" width="2" height="2" fill="#00e0e0"/>
-            <rect x="9" y="8" width="2" height="2" fill="#ffffff"/>
-            <rect x="7" y="10" width="2" height="2" fill="#ffffff"/>
-          </svg>
+          <img class="sparkle" src="/assets/sparkle.svg" alt="">
           <span>Select a span to inspect its attributes.</span>
         </div>
         <div class="pane-header">
@@ -605,25 +558,10 @@
     return row;
   }
 
-  // Sparkle sprite reused by the empty-state span detail. Mirrors the
-  // inline copy in the HTML scaffold; both must stay in sync with
-  // docs/design/assets/sparkle.svg.
-  const SPARKLE_SVG =
-    '<svg class="sparkle" viewBox="0 0 16 16" shape-rendering="crispEdges" fill="none" xmlns="http://www.w3.org/2000/svg">'
-    + '<rect x="7" y="2" width="2" height="2" fill="#ffffff"/>'
-    + '<rect x="5" y="4" width="2" height="2" fill="#ffffff"/>'
-    + '<rect x="7" y="4" width="2" height="2" fill="#00e0e0"/>'
-    + '<rect x="9" y="4" width="2" height="2" fill="#ffffff"/>'
-    + '<rect x="3" y="6" width="2" height="2" fill="#ffffff"/>'
-    + '<rect x="5" y="6" width="2" height="2" fill="#00e0e0"/>'
-    + '<rect x="7" y="6" width="2" height="2" fill="#00c4d2"/>'
-    + '<rect x="9" y="6" width="2" height="2" fill="#00e0e0"/>'
-    + '<rect x="11" y="6" width="2" height="2" fill="#ffffff"/>'
-    + '<rect x="5" y="8" width="2" height="2" fill="#ffffff"/>'
-    + '<rect x="7" y="8" width="2" height="2" fill="#00e0e0"/>'
-    + '<rect x="9" y="8" width="2" height="2" fill="#ffffff"/>'
-    + '<rect x="7" y="10" width="2" height="2" fill="#ffffff"/>'
-    + '</svg>';
+  // Sparkle sprite reused by the empty-state span detail. Served from
+  // /assets/sparkle.svg by inspect_server's design asset route; both
+  // the HTML scaffold and dynamic re-renders point at the same URL.
+  const SPARKLE_IMG = '<img class="sparkle" src="/assets/sparkle.svg" alt="">';
 
   const state = {
     runs: [],
@@ -732,10 +670,10 @@
     node.innerHTML = "";
     if (!span) {
       node.className = "span-detail empty";
-      // Inline sparkle via innerHTML — createElement('svg') yields an HTML
-      // element in the wrong namespace; using a template keeps the SVG
-      // namespace correct without depending on a framework.
-      node.innerHTML = SPARKLE_SVG
+      // Re-mount sparkle <img> alongside the empty-state copy. The
+      // browser handles SVG namespacing via the /assets/sparkle.svg
+      // request, so no template gymnastics are needed.
+      node.innerHTML = SPARKLE_IMG
         + '<span>Select a span to inspect its attributes.</span>';
       return;
     }

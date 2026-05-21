@@ -40,12 +40,69 @@ impl Default for InspectServeConfig {
   }
 }
 
-/// Single-payload HTML viewer served at `GET /`. Inlines CSS + JS + the
-/// pixel-art logo SVG; consumes the same `/runs` JSON contract any other
-/// client would. Visual tokens match `docs/design/colors_and_type.css`;
-/// when the canonical tokens drift, sync the inlined `:root` block in the
-/// embedded HTML.
+/// Single-payload HTML viewer served at `GET /`. Inlines CSS + JS; SVG
+/// assets used by the viewer are served separately under `/assets/:name`
+/// from the design-system asset library (see [`design_asset`]). Visual
+/// tokens match `docs/design/colors_and_type.css`; when the canonical
+/// tokens drift, sync the inlined `:root` block in the embedded HTML.
 const VIEWER_HTML: &str = include_str!("inspect_server_viewer.html");
+
+/// Compile-time map of design-system asset filename -> bytes, mounted at
+/// `GET /assets/:name`. Each entry is pulled in via `include_bytes!`
+/// from `docs/design/assets/` so the bundle ships a single binary and
+/// the viewer payload itself stays under ~40 KB even as more sprites
+/// land in C.3b and beyond.
+///
+/// To add a new asset: drop the SVG into `docs/design/assets/`, then
+/// add a `(filename, bytes, mime)` row here. SVG is the default; binary
+/// or raster assets can land alongside with their actual mime type.
+const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
+  (
+    "logo-mark.svg",
+    include_bytes!("../docs/design/assets/logo-mark.svg"),
+    "image/svg+xml",
+  ),
+  (
+    "sparkle.svg",
+    include_bytes!("../docs/design/assets/sparkle.svg"),
+    "image/svg+xml",
+  ),
+  (
+    "icon-png.svg",
+    include_bytes!("../docs/design/assets/icon-png.svg"),
+    "image/svg+xml",
+  ),
+  (
+    "icon-json.svg",
+    include_bytes!("../docs/design/assets/icon-json.svg"),
+    "image/svg+xml",
+  ),
+  (
+    "icon-bin.svg",
+    include_bytes!("../docs/design/assets/icon-bin.svg"),
+    "image/svg+xml",
+  ),
+  (
+    "sprite-inspector.svg",
+    include_bytes!("../docs/design/assets/sprite-inspector.svg"),
+    "image/svg+xml",
+  ),
+  (
+    "cursor-auv.svg",
+    include_bytes!("../docs/design/assets/cursor-auv.svg"),
+    "image/svg+xml",
+  ),
+  (
+    "cursor-auv-click.svg",
+    include_bytes!("../docs/design/assets/cursor-auv-click.svg"),
+    "image/svg+xml",
+  ),
+  (
+    "cursor-you.svg",
+    include_bytes!("../docs/design/assets/cursor-you.svg"),
+    "image/svg+xml",
+  ),
+];
 
 pub fn router(store: LocalStore, event_sink: Arc<BroadcastRunEventSink>) -> Router {
   let state = InspectServerState {
@@ -54,6 +111,7 @@ pub fn router(store: LocalStore, event_sink: Arc<BroadcastRunEventSink>) -> Rout
   };
   Router::new()
     .route("/", get(serve_viewer))
+    .route("/assets/{asset_name}", get(serve_design_asset))
     .route("/runs", get(list_runs))
     .route("/runs/{run_id}", get(get_run))
     .route("/runs/{run_id}/spans", get(get_spans))
@@ -71,6 +129,45 @@ async fn serve_viewer() -> Response {
     HeaderValue::from_static("text/html; charset=utf-8"),
   );
   response
+}
+
+fn design_asset(name: &str) -> Option<(&'static [u8], &'static str)> {
+  // Hardened against path traversal: reject anything that looks like a
+  // path segment. Axum already URL-decodes the matched param, so a
+  // literal `..` or slash in the name means a malformed request, not a
+  // legitimate asset lookup.
+  if name.is_empty()
+    || name.contains('/')
+    || name.contains('\\')
+    || name.contains("..")
+    || name.starts_with('.')
+  {
+    return None;
+  }
+  DESIGN_ASSETS
+    .iter()
+    .find(|(asset_name, _, _)| *asset_name == name)
+    .map(|(_, bytes, mime)| (*bytes, *mime))
+}
+
+async fn serve_design_asset(Path(asset_name): Path<String>) -> Response {
+  match design_asset(&asset_name) {
+    Some((bytes, mime)) => {
+      let mut response = Body::from(bytes).into_response();
+      let content_type = HeaderValue::from_str(mime)
+        .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
+      response.headers_mut().insert(CONTENT_TYPE, content_type);
+      // Assets are bundled at compile time and never change at runtime,
+      // so a one-year immutable cache is safe; clients can rely on the
+      // filename being stable across server restarts of the same build.
+      if let Ok(cache_control) = HeaderValue::from_str("public, max-age=31536000, immutable") {
+        response.headers_mut().insert("cache-control", cache_control);
+      }
+      response
+    }
+    None => InspectHttpError::not_found(format!("design asset {asset_name:?} not found"))
+      .into_response(),
+  }
 }
 
 pub async fn serve(
@@ -488,6 +585,86 @@ mod tests {
       html.contains("/events\")"),
       "viewer payload should fetch /runs/:id/events on selection"
     );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn assets_route_serves_known_design_svgs_with_svg_mime() {
+    let root = temp_dir("inspect-server-assets-route");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+
+    for name in [
+      "logo-mark.svg",
+      "sparkle.svg",
+      "icon-png.svg",
+      "icon-json.svg",
+      "icon-bin.svg",
+      "sprite-inspector.svg",
+      "cursor-auv.svg",
+      "cursor-auv-click.svg",
+      "cursor-you.svg",
+    ] {
+      let response = app
+        .clone()
+        .oneshot(
+          Request::builder()
+            .uri(format!("/assets/{name}"))
+            .body(Body::empty())
+            .expect("request should build"),
+        )
+        .await
+        .expect("route should respond");
+      assert_eq!(response.status(), StatusCode::OK, "asset {name} should 200");
+      assert_eq!(
+        response
+          .headers()
+          .get("content-type")
+          .and_then(|value| value.to_str().ok()),
+        Some("image/svg+xml"),
+        "asset {name} should serve as image/svg+xml",
+      );
+      let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body should read");
+      assert!(
+        body.starts_with(b"<svg"),
+        "asset {name} should be an SVG; got prefix {:?}",
+        &body[..16.min(body.len())]
+      );
+    }
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn assets_route_rejects_unknown_and_traversal_names() {
+    let root = temp_dir("inspect-server-assets-route-deny");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+
+    for bad in [
+      "/assets/does-not-exist.svg",
+      "/assets/..%2Fsecrets.toml",
+      "/assets/.hidden",
+    ] {
+      let response = app
+        .clone()
+        .oneshot(
+          Request::builder()
+            .uri(bad)
+            .body(Body::empty())
+            .expect("request should build"),
+        )
+        .await
+        .expect("route should respond");
+      assert_eq!(
+        response.status(),
+        StatusCode::NOT_FOUND,
+        "{bad} should 404 (not traverse, not collide)"
+      );
+    }
 
     let _ = fs::remove_dir_all(root);
   }
