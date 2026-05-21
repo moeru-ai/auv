@@ -8,6 +8,22 @@ Current baseline:
 - `create-and-verify-note.cases.v0.json`
 - `../../docs/ai/references/2026-05-17-auv-native-app-skill-tree.md`
 
+Phase 2 contract-consuming variant (candidate, not yet validated on live
+desktop):
+
+- `create-and-verify-note.v1.json`
+- `create-and-verify-note.cases.v1.json`
+- `../../docs/ai/references/2026-05-21-phase-3-first-contract-consumer-design.md`
+
+v1 swaps the create-note step from `debug.pressButton` to
+`debug.axPressButton` and asserts the Phase 2 contract via
+`expect.signal_equals` (`cursorDisturbance=none`,
+`pressMechanism=ax-action`, `performedAction=AXPress`). The recipe-level
+disturbance budget remains `pointer` because `focus-body` still uses
+`debug.focusTextInput`; adding a `debug.axFocusTextInput` primitive is
+the next Phase 3 driver-side work item before the chain can become fully
+keyboard-only.
+
 What it proves:
 
 1. activate Notes
@@ -24,12 +40,23 @@ Replay:
 
 ```bash
 cargo run --quiet -- skill run macos.notes.create_and_verify_note.v0
+
+# v1 is candidate-only; run cases with --all-statuses to include it.
+cargo run --quiet -- skill cases run \
+  macos.notes.create_and_verify_note.v1 --dry-run --all-statuses
+cargo run --quiet -- skill cases run \
+  macos.notes.create_and_verify_note.v1 --all-statuses
 ```
 
-Validated case:
+Validated case (v0):
 
 - `notes-marker-baseline`
 
+Candidate case (v1):
+
+- `notes-marker-ax-press`
+
 The current marker is:
 
-- `AUV_NOTE_MARKER_2026_05_16`
+- v0: `AUV_NOTE_MARKER_2026_05_16`
+- v1: `AUV_NOTE_MARKER_2026_05_21_V1`

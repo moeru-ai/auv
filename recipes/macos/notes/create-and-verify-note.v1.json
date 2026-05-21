@@ -1,0 +1,192 @@
+{
+  "recipe_id": "macos.notes.create_and_verify_note.v1",
+  "version": "0.2.0",
+  "status": "experimental-recipe",
+  "platform": "macOS",
+  "target_app": {
+    "name": "备忘录",
+    "bundle_id": "${app_id}",
+    "display_mode": "live-desktop"
+  },
+  "strategy": {
+    "family": "native-text",
+    "grounding": "ax-text",
+    "activation": "pointer-focus-clipboard-paste",
+    "verificationContract": "verifyAxText"
+  },
+  "objective": "Create a new Notes note using AXUIElementPerformAction (no cursor warp on the create step), write a unique marker into the body, and verify the marker through the AX tree without screenshot OCR. First narrow skill to consume the Phase 2 cursorDisturbance contract.",
+  "inputs": {
+    "app_id": {
+      "type": "string",
+      "default": "com.apple.Notes"
+    },
+    "note_body": {
+      "type": "string",
+      "default": "AUV_NOTE_MARKER_2026_05_21_V1"
+    },
+    "activate_settle_ms": {
+      "type": "integer",
+      "default": 250
+    },
+    "type_settle_ms": {
+      "type": "integer",
+      "default": 250
+    },
+    "body_scope_path_prefix": {
+      "type": "string",
+      "default": "0.0.5"
+    }
+  },
+  "preconditions": [
+    "The host is macOS.",
+    "备忘录 is installed and can be addressed by ${app_id}.",
+    "Screen Recording and Accessibility permissions are already granted."
+  ],
+  "disturbance_policy": {
+    "max_disturbance": "pointer",
+    "declared_classes": [
+      "none",
+      "foreground_app",
+      "keyboard",
+      "clipboard",
+      "pointer"
+    ],
+    "notes": [
+      "create-note is now contract-asserted at keyboard disturbance (cursorDisturbance=none, pressMechanism=ax-action). focus-body still uses debug.focusTextInput which warps the cursor, so the recipe-level budget remains pointer until debug.axFocusTextInput exists.",
+      "Verification uses AX tree text matching instead of screenshot OCR.",
+      "This is the first narrow skill that consumes the Phase 2 cursorDisturbance contract through expect.signal_equals."
+    ]
+  },
+  "steps": [
+    {
+      "id": "activate-target-app",
+      "command_id": "debug.activateApp",
+      "disturbance": {
+        "classes": [
+          "foreground_app"
+        ],
+        "max": "foreground_app"
+      },
+      "args": {
+        "target": "${app_id}",
+        "settle_ms": "${activate_settle_ms}"
+      }
+    },
+    {
+      "id": "create-note",
+      "command_id": "debug.axPressButton",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard"
+        ],
+        "max": "keyboard"
+      },
+      "args": {
+        "target": "${app_id}",
+        "query": "新建备忘录",
+        "max_depth": 4,
+        "max_children": 24
+      },
+      "expect": {
+        "signal_equals": {
+          "cursorDisturbance": "none",
+          "pressMechanism": "ax-action",
+          "performedAction": "AXPress"
+        }
+      },
+      "purpose": "Create a fresh note via AXUIElementPerformAction. This is the contract-consuming step: the case fails if the driver did not actually press through AX (would be the case if the action set fell back to a pointer click)."
+    },
+    {
+      "id": "focus-body",
+      "command_id": "debug.focusTextInput",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard",
+          "pointer"
+        ],
+        "max": "pointer"
+      },
+      "args": {
+        "target": "${app_id}",
+        "query": "Note Body Text View",
+        "max_depth": 7,
+        "max_children": 40
+      },
+      "purpose": "Focus the note body text area through AX. Still uses click_point internally; Phase 3 work item is to add debug.axFocusTextInput so this step can also become keyboard-only."
+    },
+    {
+      "id": "paste-note-body",
+      "command_id": "debug.pasteTextPreserveClipboard",
+      "disturbance": {
+        "classes": [
+          "foreground_app",
+          "keyboard",
+          "clipboard"
+        ],
+        "max": "clipboard"
+      },
+      "args": {
+        "target": "${app_id}",
+        "text": "${note_body}",
+        "replace_existing": true,
+        "submit_settle_ms": "${type_settle_ms}"
+      },
+      "purpose": "Write the marker into the body of the note through the clipboard so the exact ASCII marker survives input-method quirks."
+    },
+    {
+      "id": "verify-note-marker",
+      "command_id": "debug.verifyAxText",
+      "disturbance": {
+        "classes": [
+          "none"
+        ],
+        "max": "none"
+      },
+      "args": {
+        "target": "${app_id}",
+        "target_text": "${note_body}",
+        "target_role": "AXTextArea",
+        "scope_path_prefix": "${body_scope_path_prefix}",
+        "max_depth": 7,
+        "max_children": 48
+      },
+      "expect": {
+        "signal_equals": {
+          "ax.node_found": "true",
+          "ax.matched_role": "AXTextArea"
+        },
+        "signal_contains": {
+          "ax.matched_text": "${note_body}"
+        },
+        "artifact_count_at_least": 1
+      },
+      "purpose": "Verify the body text through the AX tree, not screenshot OCR."
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "Notes can be activated and a new note can be created through AXUIElementPerformAction without warping the cursor.",
+      "The driver reports cursorDisturbance=none and pressMechanism=ax-action for the create step.",
+      "The body text area can be focused (pointer-warped fallback retained until axFocusTextInput exists).",
+      "The marker text can be pasted into the note body.",
+      "The same marker can be verified through the AX tree."
+    ],
+    "success_criteria": [
+      "create-note step's signals match the Phase 2 ax-action contract.",
+      "The marker is visible in the AX tree under the note body contract.",
+      "The recipe completes without screenshot OCR."
+    ],
+    "non_goals": [
+      "This recipe does not yet prove a fully keyboard-only Notes pipeline (focus-body remains pointer until axFocusTextInput lands).",
+      "This recipe does not prove cross-app browser or music-player reuse.",
+      "This recipe does not exercise smartPress fallback."
+    ]
+  },
+  "known_limits": {
+    "narrow_baseline": "First contract-consuming skill; only one step (create-note) is asserted against the Phase 2 contract.",
+    "focus_body_remains_pointer": "focus-body still warps the cursor; recipe-level disturbance stays at pointer.",
+    "shared_app_state": "Do not run concurrently with another Notes recipe against the same live app instance."
+  }
+}

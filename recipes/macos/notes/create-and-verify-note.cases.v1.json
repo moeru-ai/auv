@@ -1,0 +1,22 @@
+{
+  "skill_id": "macos.notes.create_and_verify_note.v1",
+  "version": "0.2.0",
+  "status": "active-case-matrix",
+  "cases": [
+    {
+      "case_id": "notes-marker-ax-press",
+      "status": "candidate",
+      "inputs": {
+        "note_body": "AUV_NOTE_MARKER_2026_05_21_V1",
+        "body_scope_path_prefix": "0.0.5"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "First case for the Phase 2 contract-consuming variant of the Notes baseline.",
+        "create-note asserts cursorDisturbance=none, pressMechanism=ax-action, performedAction=AXPress.",
+        "Recipe-level disturbance is still pointer because focus-body has not been migrated yet.",
+        "Status starts as candidate; promote to validated only after a real live-desktop run passes."
+      ]
+    }
+  ]
+}
