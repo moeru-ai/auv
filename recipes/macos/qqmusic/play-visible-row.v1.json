@@ -196,7 +196,7 @@
       "id": "click-visible-row",
       "command_id": "debug.clickScreenRow",
       "disturbance": {
-        "classes": ["pointer"],
+        "classes": ["foreground_app", "pointer"],
         "max": "pointer"
       },
       "args": {

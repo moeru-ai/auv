@@ -248,6 +248,7 @@
       "command_id": "debug.clickScreenText",
       "disturbance": {
         "classes": [
+          "foreground_app",
           "pointer"
         ],
         "max": "pointer"

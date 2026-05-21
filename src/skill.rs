@@ -1040,6 +1040,7 @@ fn validate_skill_steps(
         )
       })?;
     }
+    validate_step_arg_implied_disturbance(&manifest.recipe_id, &step_label, step)?;
     validate_step_disturbance_against_command(&manifest.recipe_id, &step_label, step, command)?;
 
     for key in step.args.keys() {
@@ -1052,6 +1053,51 @@ fn validate_skill_steps(
     }
   }
   Ok(())
+}
+
+fn validate_step_arg_implied_disturbance(
+  recipe_id: &str,
+  step_label: &str,
+  step: &SkillStep,
+) -> AuvResult<()> {
+  if step_arg_bool(step, "activate_target_before_capture") {
+    let declares_foreground = step
+      .disturbance
+      .classes
+      .iter()
+      .any(|class| class == DisturbanceClass::ForegroundApp.as_str());
+    if !declares_foreground {
+      return Err(format!(
+        "skill {} step {} sets activate_target_before_capture=true but does not declare disturbance class foreground_app",
+        recipe_id, step_label
+      ));
+    }
+
+    let step_max = parse_step_max(step).map_err(|error| {
+      format!(
+        "skill {} step {} has invalid disturbance.max {}: {error}",
+        recipe_id, step_label, step.disturbance.max
+      )
+    })?;
+    if step_max < DisturbanceClass::ForegroundApp {
+      return Err(format!(
+        "skill {} step {} sets activate_target_before_capture=true but disturbance.max {} is below foreground_app",
+        recipe_id,
+        step_label,
+        step_max.as_str()
+      ));
+    }
+  }
+
+  Ok(())
+}
+
+fn step_arg_bool(step: &SkillStep, key: &str) -> bool {
+  match step.args.get(key) {
+    Some(Value::Bool(value)) => *value,
+    Some(Value::String(value)) => value.trim().eq_ignore_ascii_case("true"),
+    _ => false,
+  }
 }
 
 fn validate_step_disturbance_against_command(
@@ -2845,6 +2891,100 @@ mod tests {
     assert!(error.contains("not declared by command"));
     assert!(error.contains("debug.smartPress"));
     assert!(error.contains("keyboard"));
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_hidden_foreground_capture_disturbance_class() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "aa" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "foreground_app",
+        "declared_classes": ["none", "foreground_app"]
+      },
+      "steps": [{
+        "id": "capture",
+        "command_id": "debug.captureDisplay",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "foreground_app"
+        },
+        "args": {
+          "target": "app",
+          "activate_target_before_capture": true
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let error = validate_skill_manifest(&manifest)
+      .expect_err("hidden foreground capture disturbance should fail");
+    assert!(error.contains("activate_target_before_capture=true"));
+    assert!(error.contains("foreground_app"));
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_hidden_foreground_capture_disturbance_max() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "aa" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "foreground_app",
+        "declared_classes": ["none", "foreground_app"]
+      },
+      "steps": [{
+        "id": "capture",
+        "command_id": "debug.captureDisplay",
+        "disturbance": {
+          "classes": ["foreground_app"],
+          "max": "none"
+        },
+        "args": {
+          "target": "app",
+          "activate_target_before_capture": "true"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let error = validate_skill_manifest(&manifest)
+      .expect_err("foreground capture disturbance max should fail");
+    assert!(error.contains("activate_target_before_capture=true"));
+    assert!(error.contains("below foreground_app"));
   }
 
   #[test]

@@ -290,6 +290,7 @@
       "command_id": "debug.clickScreenRow",
       "disturbance": {
         "classes": [
+          "foreground_app",
           "pointer"
         ],
         "max": "pointer"

@@ -3561,7 +3561,7 @@ fn render_search_entry_candidate_recipe(analysis: &AppAnalysis) -> Value {
       {
         "id": "capture-evidence",
         "command_id": "debug.captureDisplay",
-        "disturbance": { "classes": ["none"], "max": "none" },
+        "disturbance": { "classes": ["foreground_app"], "max": "foreground_app" },
         "args": { "target": "${app_id}", "activate_target_before_capture": true, "label": format!("{app_slug}-search-entry-${{query}}") },
         "expect": { "artifact_count_at_least": 1 },
         "purpose": "Capture post-submit evidence for later validation."
@@ -3923,7 +3923,7 @@ fn render_window_action_candidate_recipe(analysis: &AppAnalysis) -> Value {
       {
         "id": "capture-evidence",
         "command_id": "debug.captureWindow",
-        "disturbance": { "classes": ["none"], "max": "none" },
+        "disturbance": { "classes": ["foreground_app"], "max": "foreground_app" },
         "args": { "target": "${app_id}", "activate_target_before_capture": true, "label": format!("{app_slug}-window-action") },
         "expect": { "artifact_count_at_least": 1 },
         "purpose": "Capture post-click evidence for later inspection."
