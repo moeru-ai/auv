@@ -669,6 +669,9 @@ pub fn hook_decision_from_variables(
   page_index: usize,
   variables: &BTreeMap<String, String>,
 ) -> AuvResult<Option<HookDecisionRecord>> {
+  // REVIEW: Hook recipes currently communicate decisions through exported
+  // variables such as last.scan.hook.action. Revisit if hooks need a smaller
+  // manifest or a first-class typed return artifact.
   let Some(action) = variables.get("last.scan.hook.action") else {
     return Ok(None);
   };
@@ -1244,6 +1247,16 @@ mod tests {
     assert_eq!(decision.action, HookAction::Stop);
     assert_eq!(decision.reason, "next section");
     assert_eq!(decision.page_index, 3);
+  }
+
+  #[test]
+  fn hook_decision_rejects_unknown_action() {
+    let variables = BTreeMap::from([("last.scan.hook.action".to_string(), "teleport".to_string())]);
+
+    let error = hook_decision_from_variables("per_page_after_observe", 0, &variables)
+      .expect_err("invalid action should fail");
+
+    assert!(error.contains("invalid scan hook action"));
   }
 
   #[test]
