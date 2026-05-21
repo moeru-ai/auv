@@ -597,6 +597,15 @@ impl RunUpdate {
 pub trait RunRecorder: Send + Sync {
   fn record(&self, update: RunUpdate) -> AuvResult<()>;
 
+  fn record_artifact_bytes(
+    &self,
+    _run_id: &RunId,
+    _artifact: &ArtifactRecordV1Alpha1,
+    _path: &Path,
+  ) -> AuvResult<()> {
+    Ok(())
+  }
+
   fn requires_successful_delivery(&self) -> bool {
     false
   }
@@ -644,6 +653,29 @@ impl RunRecorder for CompositeRunRecorder {
       .recorders
       .iter()
       .any(|recorder| recorder.requires_successful_delivery())
+  }
+
+  fn record_artifact_bytes(
+    &self,
+    run_id: &RunId,
+    artifact: &ArtifactRecordV1Alpha1,
+    path: &Path,
+  ) -> AuvResult<()> {
+    let mut failures = Vec::new();
+    for recorder in &self.recorders {
+      if let Err(error) = recorder.record_artifact_bytes(run_id, artifact, path) {
+        failures.push(error);
+      }
+    }
+    if failures.is_empty() {
+      Ok(())
+    } else {
+      Err(format!(
+        "{} recorder target(s) failed to write artifact bytes: {}",
+        failures.len(),
+        failures.join("; ")
+      ))
+    }
   }
 }
 
@@ -712,6 +744,62 @@ impl RunRecorder for InspectServerRunRecorder {
 
   fn requires_successful_delivery(&self) -> bool {
     self.required
+  }
+
+  fn record_artifact_bytes(
+    &self,
+    run_id: &RunId,
+    artifact: &ArtifactRecordV1Alpha1,
+    path: &Path,
+  ) -> AuvResult<()> {
+    let base_url = self.base_url.clone();
+    let token = self.token.clone();
+    let required = self.required;
+    let run_id = run_id.as_str().to_string();
+    let artifact_id = artifact.artifact_id.as_str().to_string();
+    let mime_type = artifact.mime_type.clone();
+    let path = path.to_path_buf();
+    let result = std::thread::spawn(move || {
+      let bytes = std::fs::read(&path)
+        .map_err(|error| format!("inspect server artifact upload read failed: {error}"))?;
+      let url = format!("{base_url}/write/runs/{run_id}/artifacts/{artifact_id}");
+      let client = reqwest::blocking::Client::builder()
+        .connect_timeout(INSPECT_SERVER_WRITE_TIMEOUT)
+        .timeout(INSPECT_SERVER_WRITE_TIMEOUT)
+        .build()
+        .map_err(|error| format!("inspect server artifact upload client setup failed: {error}"))?;
+      let mut request = client
+        .post(url)
+        .header(reqwest::header::CONTENT_TYPE, mime_type)
+        .body(bytes);
+      if let Some(token) = token {
+        request = request.bearer_auth(token);
+      }
+      let response = request
+        .send()
+        .map_err(|error| format!("inspect server artifact upload failed: {error}"))?;
+      if response.status().is_success() {
+        return Ok(());
+      }
+      let status = response.status();
+      let body = response.text().unwrap_or_else(|_| String::new());
+      Err(format!(
+        "inspect server artifact upload rejected with {status}: {body}"
+      ))
+    })
+    .join()
+    .unwrap_or_else(|_| {
+      Err("inspect server artifact upload failed: client thread panicked".to_string())
+    });
+
+    result.or_else(|message| {
+      if required {
+        Err(message)
+      } else {
+        eprintln!("warning: {message}");
+        Ok(())
+      }
+    })
   }
 }
 
@@ -813,6 +901,15 @@ impl RunRecordingBackend {
       .store
       .stage_artifact_file(run_id, index, span_id, event_id, artifact)
   }
+
+  pub fn record_artifact_bytes(
+    &self,
+    run_id: &RunId,
+    artifact: &ArtifactRecordV1Alpha1,
+    path: &Path,
+  ) -> AuvResult<()> {
+    self.recorder.record_artifact_bytes(run_id, artifact, path)
+  }
 }
 
 impl Drop for RunRecordingBackend {
@@ -888,8 +985,8 @@ mod tests {
 
   use crate::store::{ArtifactFileSource, LocalStore};
   use crate::trace::{
-    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SpanId, TraceId, TraceState,
-    TraceStatusCode,
+    ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, RUN_API_VERSION, RunId,
+    RunRecordV1Alpha1, RunType, SpanId, TraceId, TraceState, TraceStatusCode,
   };
 
   use super::{
@@ -1109,6 +1206,81 @@ mod tests {
     assert_eq!(body["updates"][0]["type"], "runStarted");
     assert_eq!(body["updates"][0]["runId"], "run_update_test");
     assert_eq!(body["updates"][0]["run"]["apiVersion"], "auv.run.v1alpha1");
+  }
+
+  #[tokio::test(flavor = "multi_thread")]
+  async fn inspect_server_recorder_uploads_artifact_bytes_with_token() {
+    use axum::Router;
+    use axum::body::{Body, to_bytes};
+    use axum::http::{HeaderMap, header::AUTHORIZATION};
+    use axum::routing::post;
+    use tokio::net::TcpListener;
+
+    let captured = Arc::new(Mutex::new(None::<(Option<String>, String, Vec<u8>)>));
+    let captured_route = captured.clone();
+    let app = Router::new().route(
+      "/write/runs/run_update_test/artifacts/artifact_0001",
+      post(move |headers: HeaderMap, body: Body| {
+        let captured = captured_route.clone();
+        async move {
+          let authorization = headers
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned);
+          let bytes = to_bytes(body, usize::MAX)
+            .await
+            .expect("body should read")
+            .to_vec();
+          *captured.lock().expect("capture lock") =
+            Some((authorization, "artifact_0001".to_string(), bytes));
+          "ok"
+        }
+      }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0")
+      .await
+      .expect("bind test server");
+    let address = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+      axum::serve(listener, app).await.expect("test server");
+    });
+    let path = std::env::temp_dir().join(format!(
+      "auv-artifact-upload-source-{}.txt",
+      crate::model::now_millis()
+    ));
+    std::fs::write(&path, "artifact body").expect("artifact source should write");
+
+    let recorder = InspectServerRunRecorder::new(
+      format!("http://{address}"),
+      Some("secret".to_string()),
+      true,
+    );
+    let artifact = ArtifactRecordV1Alpha1 {
+      api_version: ARTIFACT_API_VERSION.to_string(),
+      artifact_id: ArtifactId::new("artifact_0001"),
+      span_id: SpanId::new("0000000000000001"),
+      event_id: None,
+      role: "driver.output".to_string(),
+      mime_type: "text/plain".to_string(),
+      path: "artifacts/artifact_0001_output.txt".to_string(),
+      sha256: None,
+      attributes: Default::default(),
+      summary: None,
+    };
+
+    recorder
+      .record_artifact_bytes(&RunId::new("run_update_test"), &artifact, &path)
+      .expect("artifact upload should succeed");
+
+    let (authorization, artifact_id, bytes) = captured
+      .lock()
+      .expect("capture lock")
+      .clone()
+      .expect("captured request");
+    assert_eq!(authorization.as_deref(), Some("Bearer secret"));
+    assert_eq!(artifact_id, "artifact_0001");
+    assert_eq!(bytes, b"artifact body");
+    let _ = std::fs::remove_file(path);
   }
 
   #[tokio::test(flavor = "multi_thread")]

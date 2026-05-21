@@ -265,26 +265,8 @@ impl LocalStore {
     run_id: &str,
     artifact_id: &str,
   ) -> AuvResult<(ArtifactRecordV1Alpha1, PathBuf)> {
-    let canonical = self.read_run(run_id)?;
-    let artifact = canonical
-      .artifacts
-      .into_iter()
-      .find(|artifact| artifact.artifact_id.as_str() == artifact_id)
-      .ok_or_else(|| format!("artifact {artifact_id} not found in run {run_id}"))?;
-    let artifact_path = artifact.path.clone();
-    let relative_path = Path::new(&artifact_path);
-    if relative_path.is_absolute()
-      || relative_path
-        .components()
-        .any(|component| !matches!(component, std::path::Component::Normal(_)))
-    {
-      return Err(format!(
-        "invalid artifact path {:?} in run {run_id}",
-        artifact.path
-      ));
-    }
+    let (artifact, candidate_path) = self.artifact_path(run_id, artifact_id)?;
     let run_directory = self.run_dir(run_id)?;
-    let candidate_path = run_directory.join(relative_path);
     let canonical_run_directory = fs::canonicalize(&run_directory).map_err(|error| {
       format!(
         "failed to resolve run directory {}: {error}",
@@ -305,6 +287,99 @@ impl LocalStore {
       ));
     }
     Ok((artifact, canonical_artifact_path))
+  }
+
+  pub fn write_artifact_bytes(
+    &self,
+    run_id: &str,
+    artifact_id: &str,
+    bytes: &[u8],
+  ) -> AuvResult<ArtifactRecordV1Alpha1> {
+    let (artifact, candidate_path) = self.artifact_path(run_id, artifact_id)?;
+    let run_directory = self.run_dir(run_id)?;
+    let canonical_run_directory = fs::canonicalize(&run_directory).map_err(|error| {
+      format!(
+        "failed to resolve run directory {}: {error}",
+        run_directory.display()
+      )
+    })?;
+    let parent = candidate_path
+      .parent()
+      .ok_or_else(|| format!("invalid artifact path {:?} in run {run_id}", artifact.path))?;
+    fs::create_dir_all(parent).map_err(|error| {
+      format!(
+        "failed to create artifact directory {}: {error}",
+        parent.display()
+      )
+    })?;
+    let canonical_parent = fs::canonicalize(parent).map_err(|error| {
+      format!(
+        "failed to resolve artifact directory {}: {error}",
+        parent.display()
+      )
+    })?;
+    if !canonical_parent.starts_with(&canonical_run_directory) {
+      return Err(format!(
+        "artifact directory {} escapes run directory {}",
+        canonical_parent.display(),
+        canonical_run_directory.display()
+      ));
+    }
+    if let Ok(metadata) = fs::symlink_metadata(&candidate_path)
+      && metadata.file_type().is_symlink()
+    {
+      return Err(format!(
+        "refusing to overwrite symlink artifact path {}",
+        candidate_path.display()
+      ));
+    }
+
+    let file_name = candidate_path
+      .file_name()
+      .and_then(|file_name| file_name.to_str())
+      .unwrap_or("artifact");
+    let temp_path = parent.join(format!(".{file_name}.upload-{}.tmp", now_millis()));
+    fs::write(&temp_path, bytes).map_err(|error| {
+      format!(
+        "failed to write artifact upload {}: {error}",
+        temp_path.display()
+      )
+    })?;
+    fs::rename(&temp_path, &candidate_path).map_err(|error| {
+      let _ = fs::remove_file(&temp_path);
+      format!(
+        "failed to publish artifact upload {}: {error}",
+        candidate_path.display()
+      )
+    })?;
+    Ok(artifact)
+  }
+
+  fn artifact_path(
+    &self,
+    run_id: &str,
+    artifact_id: &str,
+  ) -> AuvResult<(ArtifactRecordV1Alpha1, PathBuf)> {
+    let canonical = self.read_run(run_id)?;
+    let artifact = canonical
+      .artifacts
+      .into_iter()
+      .find(|artifact| artifact.artifact_id.as_str() == artifact_id)
+      .ok_or_else(|| format!("artifact {artifact_id} not found in run {run_id}"))?;
+    let artifact_path = artifact.path.clone();
+    let relative_path = Path::new(&artifact_path);
+    if relative_path.is_absolute()
+      || relative_path
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+      return Err(format!(
+        "invalid artifact path {:?} in run {run_id}",
+        artifact.path
+      ));
+    }
+    let run_directory = self.run_dir(run_id)?;
+    Ok((artifact, run_directory.join(relative_path)))
   }
 }
 

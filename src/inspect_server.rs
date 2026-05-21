@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::body::Body;
+use axum::body::{Body, to_bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -22,6 +22,7 @@ use crate::trace::{RunId, TraceState};
 
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_INSPECT_PORT: u16 = 8765;
+const MAX_ARTIFACT_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
 
 #[derive(Clone)]
 struct InspectServerState {
@@ -435,23 +436,19 @@ async fn write_artifact(
   State(state): State<InspectServerState>,
   Path((run_id, artifact_id)): Path<(String, String)>,
   headers: HeaderMap,
+  body: Body,
 ) -> Result<Response, InspectHttpError> {
   authorize_write(&headers, &state.write)?;
-  Ok(
-    (
-      StatusCode::NOT_IMPLEMENTED,
-      Json(serde_json::json!({
-        "error": {
-          "code": "artifactUploadNotImplemented",
-          "message": "inspect server artifact byte upload is reserved but not implemented",
-          "runId": run_id,
-          "artifactId": artifact_id,
-          "retryable": false
-        }
-      })),
-    )
-      .into_response(),
-  )
+  let bytes = to_bytes(body, MAX_ARTIFACT_UPLOAD_BYTES)
+    .await
+    .map_err(|error| {
+      InspectHttpError::payload_too_large(format!("artifact upload rejected: {error}"))
+    })?;
+  let artifact = state
+    .store
+    .write_artifact_bytes(&run_id, &artifact_id, &bytes)
+    .map_err(InspectHttpError::from_store)?;
+  Ok(Json(artifact).into_response())
 }
 
 #[allow(clippy::result_large_err)]
@@ -785,7 +782,7 @@ impl InspectHttpError {
   fn from_store(error: String) -> Self {
     let status = if error.contains("invalid run id") {
       StatusCode::BAD_REQUEST
-    } else if error.contains("escapes run directory") {
+    } else if error.contains("escapes run directory") || error.contains("symlink artifact path") {
       StatusCode::FORBIDDEN
     } else if error.contains("failed to read") || error.contains("not found") {
       StatusCode::NOT_FOUND
@@ -818,6 +815,14 @@ impl InspectHttpError {
   fn forbidden(message: String) -> Self {
     Self {
       status: StatusCode::FORBIDDEN,
+      message,
+      structured: None,
+    }
+  }
+
+  fn payload_too_large(message: String) -> Self {
+    Self {
+      status: StatusCode::PAYLOAD_TOO_LARGE,
       message,
       structured: None,
     }
@@ -1092,11 +1097,13 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn write_artifact_returns_not_implemented_when_authorized() {
-    let root = temp_dir("inspect-write-artifact-not-implemented");
+  async fn write_artifact_persists_bytes_when_authorized() {
+    let root = temp_dir("inspect-write-artifact-authorized");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_write_artifact");
+    write_test_run(&store, run_id.clone(), Some("uploaded.txt"));
     let app = router_with_config(
-      store,
+      store.clone(),
       Arc::new(BroadcastRunRecorder::new(16)),
       super::InspectWriteConfig {
         enabled: true,
@@ -1109,7 +1116,7 @@ mod tests {
       .oneshot(
         Request::builder()
           .method("POST")
-          .uri("/write/runs/run_write_test/artifacts/artifact_write_test")
+          .uri("/write/runs/run_write_artifact/artifacts/artifact_server_test")
           .header("authorization", "Bearer secret")
           .body(Body::from("artifact body"))
           .expect("request should build"),
@@ -1117,15 +1124,19 @@ mod tests {
       .await
       .expect("route should respond");
 
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX)
       .await
       .expect("body should read");
-    let value: serde_json::Value = serde_json::from_slice(&body).expect("json error");
-    assert_eq!(value["error"]["code"], "artifactUploadNotImplemented");
-    assert_eq!(value["error"]["runId"], "run_write_test");
-    assert_eq!(value["error"]["artifactId"], "artifact_write_test");
-    assert_eq!(value["error"]["retryable"], false);
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("artifact json");
+    assert_eq!(value["artifact_id"], "artifact_server_test");
+    let (_, artifact_path) = store
+      .artifact_file("run_write_artifact", "artifact_server_test")
+      .expect("artifact file should resolve");
+    assert_eq!(
+      fs::read_to_string(artifact_path).expect("artifact should read"),
+      "artifact body"
+    );
     let _ = fs::remove_dir_all(root);
   }
 
@@ -2062,6 +2073,47 @@ mod tests {
       .expect("route should respond");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn write_artifact_rejects_symlink_target() {
+    let root = temp_dir("inspect-write-artifact-symlink");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_write_symlink_escape");
+    write_test_run(&store, run_id.clone(), Some("escape.txt"));
+    let outside = root.join("outside.txt");
+    fs::write(&outside, "secret").expect("outside file should write");
+    let link = root
+      .join("runs")
+      .join(run_id.as_str())
+      .join("artifacts")
+      .join("escape.txt");
+    let _ = fs::remove_file(&link);
+    std::os::unix::fs::symlink(&outside, &link).expect("symlink should write");
+    let app = router_with_config(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      write_without_token(),
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .method("POST")
+          .uri("/write/runs/run_write_symlink_escape/artifacts/artifact_server_test")
+          .body(Body::from("artifact body"))
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+      fs::read_to_string(outside).expect("outside file should remain untouched"),
+      "secret"
+    );
     let _ = fs::remove_dir_all(root);
   }
 

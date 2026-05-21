@@ -25,7 +25,8 @@ attributes, and clearer CLI options.
 - Introduce a runtime-side `RunRecordingBackend` abstraction.
 - Support cross-process local reporting to an opt-in inspect server over HTTP.
 - Keep inspect server write disabled by default.
-- Use camelCase for external HTTP and WebSocket payloads.
+- Use camelCase for external HTTP write payloads; the current viewer WebSocket
+  stream keeps the existing snake_case event tags.
 - Keep current on-disk canonical JSON shape unchanged in this phase.
 - Add stable step/span attributes for web viewer grouping.
 - Make local run storage configurable through a store root.
@@ -164,12 +165,14 @@ POST /write/runs/{runId}/artifacts/{artifactId}
 }
 ```
 
-The WebSocket stream should use the same camelCase update shape, one update per
-message.
+The WebSocket stream emits one update per message using the viewer-facing
+snake_case event tags that the current inspect viewer consumes, such as
+`span_started`, `event_appended`, `artifact_created`, `span_finished`, and
+`run_finished`.
 
-The server converts public camelCase DTOs into internal Rust/store records. The
-on-disk canonical run files can stay with their current snake_case fields until
-a separate format/version migration is planned.
+The server converts public camelCase HTTP DTOs into internal Rust/store records.
+The on-disk canonical run files can stay with their current snake_case fields
+until a separate format/version migration is planned.
 
 When the inspect server accepts an update batch, it updates its configured
 `RunStore` snapshot and publishes the same update records to connected
@@ -363,11 +366,13 @@ Phase 1 keeps artifact handling conservative:
 
 - Local write stages artifacts into the configured local store.
 - Server write sends artifact metadata through `artifactCreated`.
-- `POST /write/runs/{runId}/artifacts/{artifactId}` is reserved for artifact
-  bytes and currently returns a structured not-implemented response.
+- `POST /write/runs/{runId}/artifacts/{artifactId}` accepts artifact bytes only
+  after the corresponding artifact metadata exists in the server store.
+- Uploaded bytes are written to the relative artifact path declared by the
+  accepted artifact metadata, with path traversal and symlink-target checks.
 
-This means live viewers can show artifact metadata immediately. Full artifact
-preview for cross-process/release use requires phase 2 artifact byte upload.
+This means live viewers can show artifact metadata immediately and can preview
+server-side artifact bytes once the runtime uploads them.
 
 ## Stable Viewer Attributes
 
@@ -446,8 +451,9 @@ That can be a follow-up after the write API and recording backend are in place.
 - Add recorder support for uploading artifact bytes.
 - Teach viewer APIs to serve server-side uploaded artifacts.
 
-The phase 1 implementation only reserves the route and keeps byte persistence
-for a later artifact-upload phase.
+The phase 1 implementation now includes the local inspect-server artifact upload
+path. Broader remote write exposure remains guarded by the existing localhost
+and token policy.
 
 ## Testing
 

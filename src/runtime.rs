@@ -280,6 +280,10 @@ impl Runtime {
             Some(event_id.clone()),
           ) {
             Ok(stored_artifact) => {
+              let staged_path = self
+                .recording
+                .run_dir(run.id())?
+                .join(&stored_artifact.path);
               record_event_with_id(
                 run,
                 driver_span.id(),
@@ -288,13 +292,21 @@ impl Runtime {
                 Some(render_artifact_event(&stored_artifact)),
                 vec![stored_artifact.artifact_id.clone()],
               );
-              artifact_paths.push(
+              artifact_paths.push(staged_path.clone());
+              run.record_artifact(stored_artifact.clone());
+              if let Err(error) =
                 self
                   .recording
-                  .run_dir(run.id())?
-                  .join(&stored_artifact.path),
-              );
-              run.record_artifact(stored_artifact);
+                  .record_artifact_bytes(run.id(), &stored_artifact, &staged_path)
+              {
+                record_event(
+                  run,
+                  driver_span.id(),
+                  "artifact.failed",
+                  Some(format!("artifact upload failed: {error}")),
+                );
+                artifact_failure = Some(error);
+              }
             }
             Err(error) => {
               record_event(
@@ -311,7 +323,7 @@ impl Runtime {
 
         if let Some(error) = artifact_failure {
           let output_summary = format!(
-            "Artifact staging failed after run creation. Inspect {} for the recorded trace.",
+            "Artifact handling failed after run creation. Inspect {} for the recorded trace.",
             run.id()
           );
           record_event(
@@ -319,7 +331,7 @@ impl Runtime {
             driver_span.id(),
             "run.failed",
             Some(format!(
-              "artifact staging failed after driver success: {error}"
+              "artifact handling failed after driver success: {error}"
             )),
           );
           (RunStatus::Failed, output_summary, Some(error))
@@ -408,7 +420,10 @@ impl Runtime {
       vec![artifact.artifact_id.clone()],
     );
     let staged_path = self.recording.run_dir(run.id())?.join(&artifact.path);
-    run.record_artifact(artifact);
+    run.record_artifact(artifact.clone());
+    self
+      .recording
+      .record_artifact_bytes(run.id(), &artifact, &staged_path)?;
     Ok(staged_path)
   }
 }

@@ -175,9 +175,9 @@ not define a universal single source of truth when both are enabled; each target
 owns the records it accepted, and callers choose which store or server they
 inspect.
 
-Artifact byte upload is reserved but not implemented in the first write phase.
-Replay and broader mutation APIs remain out of scope for the first
-inspect-server design.
+Artifact byte upload is available in write mode after the corresponding
+artifact metadata has been accepted for the run. Replay and broader mutation
+APIs remain out of scope for the first inspect-server design.
 
 ## Run Recording Backend
 
