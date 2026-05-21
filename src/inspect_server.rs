@@ -161,12 +161,15 @@ async fn serve_design_asset(Path(asset_name): Path<String>) -> Response {
       // so a one-year immutable cache is safe; clients can rely on the
       // filename being stable across server restarts of the same build.
       if let Ok(cache_control) = HeaderValue::from_str("public, max-age=31536000, immutable") {
-        response.headers_mut().insert("cache-control", cache_control);
+        response
+          .headers_mut()
+          .insert("cache-control", cache_control);
       }
       response
     }
-    None => InspectHttpError::not_found(format!("design asset {asset_name:?} not found"))
-      .into_response(),
+    None => {
+      InspectHttpError::not_found(format!("design asset {asset_name:?} not found")).into_response()
+    }
   }
 }
 
@@ -584,6 +587,57 @@ mod tests {
     assert!(
       html.contains("/events\")"),
       "viewer payload should fetch /runs/:id/events on selection"
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn root_payload_includes_websocket_stream_markers() {
+    let root = temp_dir("inspect-server-viewer-stream");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
+
+    // The viewer should open the documented /stream endpoint when a
+    // running run is selected, and react to all five RunStreamEvent
+    // tag values.
+    assert!(
+      html.contains("/runs/\" + encodeURIComponent(runId) + \"/stream"),
+      "viewer payload should open ws on /runs/:id/stream"
+    );
+    for tag in [
+      "span_started",
+      "span_finished",
+      "event_appended",
+      "artifact_created",
+      "run_finished",
+    ] {
+      assert!(
+        html.contains(tag),
+        "viewer payload should handle RunStreamEvent variant {tag}"
+      );
+    }
+    // The "live" tint reserved in C.3a is now produced by streamed
+    // events.
+    assert!(
+      html.contains("event-row.live") && html.contains("_live = true"),
+      "viewer payload should tag streamed events as live"
     );
 
     let _ = fs::remove_dir_all(root);

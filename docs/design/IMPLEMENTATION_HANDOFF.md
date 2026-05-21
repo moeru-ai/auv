@@ -11,7 +11,12 @@ context.
 |---|---|---|
 | **A — overlay cursor** | `7f18b27` | `NativeOverlayCursorView.draw()` renders the pixel cyan+lime AUV cursor + cyan-strong (`#009ba6`) brand pill; default label `auv · replay`. Sprite ported from `assets/cursor-auv.svg`. |
 | **B — vendor bundle** | `7b7061f` | Full upstream bundle vendored to `docs/design/` with `README.md` recording vendoring decisions + implementation status. |
-| **C.1 — viewer shell + run list** | `3ae972b` | `GET /` on `inspect_server` returns a vanilla HTML+CSS+JS viewer. Pixel logo top bar, 320px sidebar fetching `/runs`, status pills, run cards. Span tree / events / artifacts pane intentionally deferred. |
+| **C.1 — viewer shell + run list** | `3ae972b` | `GET /` on `inspect_server` returns a vanilla HTML+CSS+JS viewer. Pixel logo top bar, 320px sidebar fetching `/runs`, status pills, run cards. |
+| **C.2 — viewer span tree** | `4f0cbe0` | Run selection fetches `/runs/:id` + `/runs/:id/spans`; renders span sigils, statuses, durations, and timing bars. (Landed by Codex.) |
+| **C.3a — viewer events rail** | `132ef3d` | 320px events rail below the span tree, fetching `/runs/:id/events`. Span-detail panel above the rail re-renders on row click. |
+| **C.5 — viewer asset route (early)** | `e7726a4` | `GET /assets/:name` serves design-system SVGs from a compile-time map (path-traversal hardened, immutable cache). Inlined logo + sparkle migrated. |
+| **C.3b — viewer artifact panel** | `a0b924a` | 340px right rail with artifact list + mime-routed preview (text/`<pre>`, image/`<img>`, else diagonal-stripe placeholder). Uses `/assets/icon-*.svg` + `/assets/sprite-inspector.svg`. |
+| **C.4 — viewer WebSocket live stream** | _this commit_ | When a `running` run is selected, the viewer opens `ws://host/runs/:id/stream` and handles `span_started` / `span_finished` / `event_appended` / `artifact_created` / `run_finished` frames; one 2 s reconnect on error, then `disconnected`. Streamed events get the `_live` tint reserved in C.3a. |
 
 ## Architecture decisions (do not relitigate)
 
@@ -33,10 +38,13 @@ These were settled in C.1. New phases should follow:
    keep the same names (`--brand`, `--validated`, etc.), and add a
    matching assertion if the token is new.
 
-3. **One file per route.** `GET /` returns the viewer payload.
-   Future asset routes (`/assets/logo-mark.svg` etc.) come in C.5
-   if/when more sprites are needed. Until then, inline small SVGs
-   directly into the HTML.
+3. **Routes by purpose.** `GET /` returns the viewer payload;
+   `GET /assets/:name` (added in C.5) serves design-system SVGs
+   from a compile-time `include_bytes!` map keyed on
+   `docs/design/assets/` filenames. To add a new asset, drop the
+   SVG into that directory and add an entry to `DESIGN_ASSETS`
+   in `src/inspect_server.rs`. The filename is the URL — keep
+   them stable.
 
 4. **The JSON contract is fixed.** Endpoints already exist:
    `/runs`, `/runs/:id`, `/runs/:id/spans`, `/runs/:id/events`,
@@ -66,6 +74,9 @@ mock; the data contract is the matching Rust struct.
 | C.5 | — | n/a | new routes under `/assets/*` |
 
 ## Phase C.2 — span tree + run detail pane
+
+> **Shipped in `4f0cbe0`** (by Codex). Section kept for historical
+> context + future extension.
 
 **Goal**: when the user clicks a run in the sidebar, replace the
 placeholder with the span tree.
@@ -135,6 +146,8 @@ Pure HTML assertion — no need to round-trip data.
 
 ## Phase C.3a — events rail
 
+> **Shipped in `132ef3d`.** Section kept for historical context.
+
 **Goal**: a 320px-tall horizontal rail below the span tree, showing
 `events.jsonl` tail.
 
@@ -173,6 +186,12 @@ shared `state.activeSpanId`. When set, find the matching span and
 pass it to `renderSpanDetail`. When unset, show the empty state.
 
 ## Phase C.3b — artifact panel
+
+> **Shipped in `a0b924a`.** Uses `/assets/icon-*.svg` +
+> `/assets/sprite-inspector.svg` (C.5 was pulled forward; see
+> below). Note: the mock's `bytes` field is omitted from the
+> metadata grid because the v1alpha1 `ArtifactRecord` doesn't
+> carry it.
 
 **Goal**: a 340px-wide right rail with artifact list + preview pane.
 
@@ -216,6 +235,13 @@ crosses 30 KB. Note the choice in the commit message either way.
 
 ## Phase C.4 — WebSocket live streaming
 
+> **Shipped in _this commit_.** Section kept for historical context.
+> Handles `span_started` / `span_finished` / `event_appended` /
+> `artifact_created` / `run_finished` per `RunStreamEvent` in
+> `src/recording.rs:215`. Single 2 s retry on error, then
+> `disconnected`. Streamed events get the `_live` tint reserved
+> in C.3a.
+
 **Goal**: when the selected run is `state == "running"`, open the
 `/runs/:id/stream` WebSocket and append events live; pulse the
 connection pill cyan.
@@ -241,6 +267,11 @@ schedule a single retry after 2s; on the second failure flip to
 `disconnected` and stop. Don't infinite-loop.
 
 ## Phase C.5 — extract assets to /assets/* route
+
+> **Shipped in `e7726a4` (pulled forward to land before C.3b).**
+> Hand-rolled `GET /assets/:name` against a compile-time
+> `DESIGN_ASSETS` map (option 2 from the original recommendation).
+> Path traversal hardened. Cache-Control: immutable, 1 year.
 
 Only do this when total inlined-SVG bytes start to feel bloated, or
 when the same asset is needed from multiple HTML payloads.

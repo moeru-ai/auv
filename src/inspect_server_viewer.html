@@ -708,6 +708,13 @@
     activeSpanId: null,
     activeArtifactId: null,
     fetchedAt: null,
+    // C.4: WebSocket live stream state. ws is the open socket (or
+    // null); streamRunId is the run id the socket is bound to;
+    // retryScheduled flips after a single reconnect attempt so we
+    // don't spin on a flaky server.
+    ws: null,
+    streamRunId: null,
+    retryScheduled: false,
   };
 
   function renderRunList() {
@@ -743,6 +750,7 @@
   }
 
   async function selectRun(runId) {
+    closeStream();
     state.activeRunId = runId;
     state.activeRun = state.runs.find(function (r) { return r.run_id === runId; }) || null;
     state.spans = [];
@@ -766,6 +774,9 @@
     renderArtifactPreview(null, []);
     renderRunList();
     await loadRunDetail(runId);
+    if (state.activeRunId === runId && state.activeRun && isRunning(state.activeRun)) {
+      openStream(runId);
+    }
   }
 
   async function loadRunDetail(runId) {
@@ -894,7 +905,8 @@
     for (const event of events) {
       const cls = classifyEventName(event.name);
       const tRel = runStarted > 0 ? fmtRelativeSeconds(event.timestamp_millis - runStarted) : "—";
-      const row = el("div", { className: "event-row" }, [
+      const live = event._live ? " live" : "";
+      const row = el("div", { className: "event-row" + live }, [
         el("span", { className: "t" }, [tRel]),
         el("span", { className: "name" + (cls ? " " + cls : "") }, [event.name || ""]),
         el("span", { className: "span" }, [midTrunc(event.span_id || "", 4, 4)]),
@@ -902,6 +914,9 @@
       ]);
       list.appendChild(row);
     }
+    // Pin the tail of the rail so the latest event stays visible when
+    // streaming.
+    list.scrollTop = list.scrollHeight;
   }
 
   // -- Artifact panel (C.3b) -------------------------------------------------
@@ -1058,6 +1073,143 @@
 
     surface.className = "surface binary";
     surface.textContent = "binary · " + (artifact.mime_type || "unknown mime");
+  }
+
+  // -- C.4 WebSocket live streaming -----------------------------------------
+
+  function isRunning(run) {
+    return !!run && (run.state === "running" || run.state === "started");
+  }
+
+  function streamEndpoint(runId) {
+    const proto = (location.protocol === "https:") ? "wss:" : "ws:";
+    return proto + "//" + location.host + "/runs/" + encodeURIComponent(runId) + "/stream";
+  }
+
+  function openStream(runId) {
+    // The viewer keeps a single live connection at a time; selectRun
+    // closes any prior socket before reaching here, so this is just an
+    // open call.
+    let socket;
+    try {
+      socket = new WebSocket(streamEndpoint(runId));
+    } catch (err) {
+      setConnection(false, "/runs (ws open failed: " + err.message + ")");
+      return;
+    }
+    state.ws = socket;
+    state.streamRunId = runId;
+    setConnection(true, streamEndpoint(runId));
+
+    socket.addEventListener("message", function (event) {
+      if (state.streamRunId !== runId) return;
+      try {
+        onStreamMessage(JSON.parse(event.data));
+      } catch (err) {
+        // ignore malformed frames; keep the stream alive.
+      }
+    });
+    socket.addEventListener("close", function () {
+      if (state.streamRunId !== runId) return;
+      onStreamClosed(runId, false);
+    });
+    socket.addEventListener("error", function () {
+      if (state.streamRunId !== runId) return;
+      onStreamClosed(runId, true);
+    });
+  }
+
+  function closeStream() {
+    if (state.ws) {
+      try { state.ws.close(); } catch (e) { /* socket already torn */ }
+    }
+    state.ws = null;
+    state.streamRunId = null;
+    state.retryScheduled = false;
+    setConnection(true, location.host + "/runs");
+  }
+
+  function onStreamClosed(runId, isError) {
+    if (state.streamRunId !== runId) return;
+    state.ws = null;
+    if (isError && !state.retryScheduled) {
+      state.retryScheduled = true;
+      setConnection(false, "/runs/:id/stream (reconnecting in 2s)");
+      window.setTimeout(function () {
+        if (state.activeRunId !== runId) return;
+        if (state.activeRun && isRunning(state.activeRun)) {
+          openStream(runId);
+        } else {
+          setConnection(true, location.host + "/runs");
+        }
+      }, 2000);
+      return;
+    }
+    state.retryScheduled = false;
+    state.streamRunId = null;
+    if (state.activeRunId === runId && state.activeRun && isRunning(state.activeRun)) {
+      setConnection(false, "/runs/:id/stream (disconnected)");
+    } else {
+      setConnection(true, location.host + "/runs");
+    }
+  }
+
+  function onStreamMessage(frame) {
+    if (!frame || typeof frame !== "object") return;
+    const run = state.activeRun;
+    switch (frame.type) {
+      case "span_started":
+      case "span_finished":
+        upsertSpan(frame.span);
+        if (run) {
+          renderSpanTree(run, state.spans);
+          if (state.activeSpanId) {
+            renderSpanDetail(findSpan(state.activeSpanId));
+          }
+        }
+        break;
+      case "event_appended": {
+        const ev = frame.event;
+        if (ev) {
+          ev._live = true;
+          state.events.push(ev);
+          renderEventList(state.events, run);
+        }
+        break;
+      }
+      case "artifact_created": {
+        const artifact = frame.artifact;
+        if (artifact) {
+          state.artifacts.push(artifact);
+          renderArtifactList(state.artifacts);
+          if (!state.activeArtifactId) {
+            renderArtifactPreview(null, state.artifacts);
+          }
+        }
+        break;
+      }
+      case "run_finished":
+        if (frame.run) {
+          state.activeRun = frame.run;
+          // Reflect the finished state in the sidebar + run header.
+          const idx = state.runs.findIndex(function (r) { return r.run_id === frame.run.run_id; });
+          if (idx >= 0) state.runs[idx] = frame.run;
+          setMainHeader(frame.run, false);
+          renderRunList();
+        }
+        // Server closes the socket after RunFinished; tear our side down too.
+        closeStream();
+        break;
+      default:
+        break;
+    }
+  }
+
+  function upsertSpan(span) {
+    if (!span || !span.span_id) return;
+    const idx = state.spans.findIndex(function (s) { return s.span_id === span.span_id; });
+    if (idx >= 0) state.spans[idx] = span;
+    else state.spans.push(span);
   }
 
   function orderedSpans(run, spans) {
