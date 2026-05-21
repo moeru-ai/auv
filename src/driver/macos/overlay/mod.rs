@@ -7,7 +7,7 @@ const DEFAULT_PREVIEW_MS: u64 = 250;
 pub(crate) fn overlay_show_cursor(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;
-  let label = optional_non_empty_string(call, "label").unwrap_or_else(|| "AUV".to_string());
+  let label = optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · replay".to_string());
   let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
   crate::driver::macos::native::overlay::show_cursor(x, y, &label)?;
   let controller_pid = std::process::id();
@@ -98,7 +98,7 @@ pub(crate) fn overlay_hide_cursor(_call: &DriverCall) -> AuvResult<DriverRespons
 pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;
-  let label = optional_non_empty_string(call, "label").unwrap_or_else(|| "AUV".to_string());
+  let label = optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · replay".to_string());
   let preview_ms = optional_positive_u64(call, "preview_ms")?.unwrap_or(DEFAULT_PREVIEW_MS);
   let click_count = optional_i64(call, "click_count")?.unwrap_or(1).clamp(1, 4);
   let click_interval_ms = optional_positive_u64(call, "click_interval_ms")?

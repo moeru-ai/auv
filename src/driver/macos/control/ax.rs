@@ -210,7 +210,7 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   let action_name =
     optional_non_empty_string(call, "action").unwrap_or_else(|| "AXPress".to_string());
   let overlay = optional_bool(call, "overlay")?.unwrap_or(false);
-  let overlay_label = optional_non_empty_string(call, "label").unwrap_or_else(|| "AUV".to_string());
+  let overlay_label = optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · replay".to_string());
   let preview_ms =
     optional_positive_u64(call, "preview_ms")?.unwrap_or(if overlay { 250 } else { 0 });
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
@@ -460,7 +460,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
   let action_name =
     optional_non_empty_string(call, "action").unwrap_or_else(|| "AXPress".to_string());
   let overlay = optional_bool(call, "overlay")?.unwrap_or(false);
-  let overlay_label = optional_non_empty_string(call, "label").unwrap_or_else(|| "AUV".to_string());
+  let overlay_label = optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · replay".to_string());
   let preview_ms =
     optional_positive_u64(call, "preview_ms")?.unwrap_or(if overlay { 250 } else { 0 });
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);

@@ -1,8 +1,54 @@
 import AppKit
 import Foundation
 
+/// Pixel-art cursor sprite ported from the AUV design system.
+///
+/// Each entry is a 2x2 cell on a 24x24 sprite grid (matches the SVG
+/// viewBox in `docs/design/assets/cursor-auv.svg` and friends). The
+/// `width` / `height` are in cells (1 cell = 2 sprite-px); the
+/// renderer scales the whole grid to the requested output size.
+struct AuvPixelCell {
+  let x: Int
+  let y: Int
+  let width: Int
+  let height: Int
+  let color: NSColor
+}
+
+/// Two-color brand pill matching the design system's cursor labels
+/// (`auv` cyan-strong, `you` slate). Colors are sampled from the
+/// Moeru AI org palette in `colors_and_type.css`.
+enum AuvOverlayCursorVariant {
+  /// AUV replay cursor — cyan body + lime crook accent. Default for
+  /// every Phase 2/3 driver command that wraps a non-cursor-touching
+  /// action with `with_overlay_cursor`.
+  case auv
+  /// User cursor decoration (illustration-only — macOS does not let
+  /// us repaint the hardware cursor; this variant exists so an
+  /// inspect-viewer mock or future trace overlay can render it on
+  /// top of a screenshot).
+  case you
+
+  var sprite: [AuvPixelCell] {
+    switch self {
+    case .auv: return auvSprite()
+    case .you: return youSprite()
+    }
+  }
+
+  var pillBackground: NSColor {
+    switch self {
+    // --auv-brand-strong (#009ba6)
+    case .auv: return NSColor(srgbRed: 0.0, green: 0.608, blue: 0.651, alpha: 1.0)
+    // slate (#2a3a52)
+    case .you: return NSColor(srgbRed: 0.164, green: 0.227, blue: 0.322, alpha: 1.0)
+    }
+  }
+}
+
 final class NativeOverlayCursorView: NSView {
-  var label: String = "AUV"
+  var label: String = "auv · replay"
+  var variant: AuvOverlayCursorVariant = .auv
 
   override var isFlipped: Bool {
     true
@@ -11,61 +57,109 @@ final class NativeOverlayCursorView: NSView {
   override func draw(_ dirtyRect: NSRect) {
     super.draw(dirtyRect)
 
-    let cursorPath = NSBezierPath()
-    cursorPath.move(to: NSPoint(x: 8, y: 6))
-    cursorPath.line(to: NSPoint(x: 8, y: 32))
-    cursorPath.line(to: NSPoint(x: 18, y: 24))
-    cursorPath.line(to: NSPoint(x: 24, y: 39))
-    cursorPath.line(to: NSPoint(x: 31, y: 36))
-    cursorPath.line(to: NSPoint(x: 25, y: 21))
-    cursorPath.line(to: NSPoint(x: 38, y: 21))
-    cursorPath.close()
-    NSColor.white.setFill()
-    cursorPath.fill()
-    NSColor.black.withAlphaComponent(0.72).setStroke()
-    cursorPath.lineWidth = 1.5
-    cursorPath.stroke()
+    // Layout matches preview/brand-replay-cursor.html: 24pt sprite +
+    // 8pt gap + pill that auto-sizes to the label width. The view's
+    // frame is laid out to fit; everything draws against (0, 0) in
+    // flipped (top-left origin) coordinates.
+    let spriteSize: CGFloat = 24
+    let spriteOrigin = NSPoint(x: 0, y: 0)
+    drawPixelSprite(variant.sprite, origin: spriteOrigin, outputSize: spriteSize)
 
-    let labelRect = NSRect(x: 42, y: 10, width: 72, height: 26)
-    let background = NSBezierPath(roundedRect: labelRect, xRadius: 9, yRadius: 9)
-    NSColor.black.withAlphaComponent(0.82).setFill()
-    background.fill()
-
-    let paragraph = NSMutableParagraphStyle()
-    paragraph.alignment = .center
-    let attributes: [NSAttributedString.Key: Any] = [
-      .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+    // Label pill — mono 11pt, white text, brand background, 999px
+    // pill radius. Padding 3/8 per design.
+    let pillFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+    let pillAttributes: [NSAttributedString.Key: Any] = [
+      .font: pillFont,
       .foregroundColor: NSColor.white,
-      .paragraphStyle: paragraph
     ]
-    (label as NSString).draw(
-      in: labelRect.insetBy(dx: 8, dy: 5),
-      withAttributes: attributes
+    let textSize = (label as NSString).size(withAttributes: pillAttributes)
+    let pillPaddingX: CGFloat = 8
+    let pillPaddingY: CGFloat = 3
+    let pillWidth = ceil(textSize.width) + pillPaddingX * 2
+    let pillHeight = ceil(textSize.height) + pillPaddingY * 2
+    let pillOriginX = spriteSize + 6
+    let pillOriginY = (spriteSize - pillHeight) / 2
+    let pillRect = NSRect(x: pillOriginX, y: pillOriginY, width: pillWidth, height: pillHeight)
+    let pillPath = NSBezierPath(roundedRect: pillRect, xRadius: pillHeight / 2, yRadius: pillHeight / 2)
+    variant.pillBackground.setFill()
+    pillPath.fill()
+
+    let textRect = NSRect(
+      x: pillRect.minX + pillPaddingX,
+      y: pillRect.minY + pillPaddingY,
+      width: pillRect.width - pillPaddingX * 2,
+      height: pillRect.height - pillPaddingY * 2
     )
+    (label as NSString).draw(in: textRect, withAttributes: pillAttributes)
+  }
+
+  /// Compute the smallest frame that fits a sprite + label pill.
+  /// Used by the controller to resize the host window so the pill
+  /// never gets clipped by a fixed-width frame.
+  func intrinsicLayoutSize() -> NSSize {
+    let spriteSize: CGFloat = 24
+    let pillFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+    let textSize = (label as NSString).size(withAttributes: [.font: pillFont])
+    let pillWidth = ceil(textSize.width) + 16
+    let pillHeight = ceil(textSize.height) + 6
+    let width = spriteSize + 6 + pillWidth
+    let height = max(spriteSize, pillHeight)
+    return NSSize(width: width, height: height)
+  }
+
+  private func drawPixelSprite(
+    _ cells: [AuvPixelCell],
+    origin: NSPoint,
+    outputSize: CGFloat
+  ) {
+    // Native grid is 24 sprite-units wide (12 cells of 2 units). The
+    // sprite uses isFlipped so cell (0,0) is top-left.
+    let cellPt = outputSize / 24.0
+    for cell in cells {
+      cell.color.setFill()
+      let rect = NSRect(
+        x: origin.x + CGFloat(cell.x) * cellPt,
+        y: origin.y + CGFloat(cell.y) * cellPt,
+        width: CGFloat(cell.width) * cellPt,
+        height: CGFloat(cell.height) * cellPt
+      )
+      rect.fill()
+    }
   }
 }
 
 final class NativeOverlayController {
-  private let size = NSSize(width: 120, height: 48)
   private var window: NSWindow?
   private var overlayView: NativeOverlayCursorView?
 
   func show_overlay_cursor(x: Double, y: Double, label: RustString) -> NativeActionResponse {
     runOnMain {
       let window = self.ensureWindow()
-      self.overlayView?.label = label.toString()
+      let resolvedLabel = label.toString()
+      self.overlayView?.label = resolvedLabel
+      self.overlayView?.variant = .auv
+
+      // Resize host window to fit sprite + dynamically-sized label.
+      let intrinsic = self.overlayView?.intrinsicLayoutSize() ?? NSSize(width: 140, height: 24)
+      let viewSize = NSSize(
+        width: ceil(intrinsic.width),
+        height: ceil(intrinsic.height)
+      )
+      self.overlayView?.frame = NSRect(origin: .zero, size: viewSize)
       self.overlayView?.needsDisplay = true
 
-      let offsetX = 12.0
-      let offsetY = 12.0
+      // Position the sprite tip a few px down-right of the requested
+      // target point — matches the hover offset in the design preview.
+      let offsetX = 4.0
+      let offsetY = 4.0
       let topLeftX = x + offsetX
       let topLeftY = y + offsetY
-      let appKitY = self.referenceHeight() - topLeftY - self.size.height
+      let appKitY = self.referenceHeight() - topLeftY - Double(viewSize.height)
       let frame = NSRect(
         x: topLeftX,
         y: appKitY,
-        width: self.size.width,
-        height: self.size.height
+        width: Double(viewSize.width),
+        height: Double(viewSize.height)
       )
 
       window.setFrame(frame, display: true)
@@ -97,9 +191,10 @@ final class NativeOverlayController {
     let app = NSApplication.shared
     app.setActivationPolicy(.accessory)
 
-    let view = NativeOverlayCursorView(frame: NSRect(origin: .zero, size: size))
+    let initial = NSSize(width: 160, height: 24)
+    let view = NativeOverlayCursorView(frame: NSRect(origin: .zero, size: initial))
     let window = NSWindow(
-      contentRect: NSRect(origin: .zero, size: size),
+      contentRect: NSRect(origin: .zero, size: initial),
       styleMask: [.borderless],
       backing: .buffered,
       defer: false
@@ -157,4 +252,95 @@ private func runOnMain(_ body: @escaping () -> Void) -> NativeActionResponse {
     result = nativeActionOk()
   }
   return result
+}
+
+// MARK: - Pixel sprites ported from auv-design-system assets/
+//
+// Each function returns the rect data verbatim from the matching
+// SVG: cursor-auv.svg (replay state) and cursor-you.svg (illustration).
+// Coordinates are in 2-unit cells on a 24-unit grid — see the SVG
+// `viewBox="0 0 24 24"`.
+
+private let auvOutlineColor = NSColor(srgbRed: 0.082, green: 0.090, blue: 0.102, alpha: 1.0)  // #15171a
+private let auvBodyColor = NSColor(srgbRed: 0.0, green: 0.769, blue: 0.823, alpha: 1.0)        // #00c4d2
+private let auvHighlightColor = NSColor(srgbRed: 0.0, green: 0.878, blue: 0.878, alpha: 1.0)   // #00e0e0
+private let auvAccentColor = NSColor(srgbRed: 0.498, green: 0.816, blue: 0.188, alpha: 1.0)    // #7fd030
+
+private let youOutlineColor = NSColor(srgbRed: 0.055, green: 0.063, blue: 0.075, alpha: 1.0)   // #0e1013
+private let youBodyColor = NSColor(srgbRed: 0.353, green: 0.384, blue: 0.439, alpha: 1.0)      // #5a6270
+private let youHighlightColor = NSColor(srgbRed: 0.604, green: 0.639, blue: 0.698, alpha: 1.0) // #9aa3b2
+
+private func auvSprite() -> [AuvPixelCell] {
+  var cells: [AuvPixelCell] = []
+  // outline (#15171a)
+  let outline: [(Int, Int, Int, Int)] = [
+    (0, 0, 2, 2), (0, 2, 2, 2), (0, 4, 2, 2), (0, 6, 2, 2), (0, 8, 2, 2),
+    (0, 10, 2, 2), (0, 12, 2, 2), (0, 14, 2, 2), (0, 16, 2, 2),
+    (2, 2, 2, 2), (2, 16, 2, 2),
+    (4, 4, 2, 2), (4, 16, 2, 2),
+    (6, 6, 2, 2), (6, 14, 2, 2),
+    (8, 8, 2, 2), (8, 12, 2, 2),
+    (10, 10, 2, 2), (10, 14, 2, 2),
+    (12, 10, 2, 2), (12, 14, 2, 2),
+    (14, 14, 2, 2), (14, 16, 2, 2),
+  ]
+  for (x, y, w, h) in outline {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvOutlineColor))
+  }
+  // body (#00c4d2)
+  let body: [(Int, Int, Int, Int)] = [
+    (2, 4, 2, 12), (4, 6, 2, 10), (6, 8, 2, 6), (8, 10, 2, 2),
+  ]
+  for (x, y, w, h) in body {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvBodyColor))
+  }
+  // highlight (#00e0e0)
+  let highlight: [(Int, Int, Int, Int)] = [
+    (2, 4, 2, 2), (2, 6, 2, 2),
+  ]
+  for (x, y, w, h) in highlight {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvHighlightColor))
+  }
+  // crook accent (#7fd030)
+  let accent: [(Int, Int, Int, Int)] = [
+    (10, 12, 2, 2), (12, 12, 2, 2),
+  ]
+  for (x, y, w, h) in accent {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvAccentColor))
+  }
+  return cells
+}
+
+private func youSprite() -> [AuvPixelCell] {
+  var cells: [AuvPixelCell] = []
+  // outline (#0e1013)
+  let outline: [(Int, Int, Int, Int)] = [
+    (0, 0, 2, 2), (0, 2, 2, 2), (0, 4, 2, 2), (0, 6, 2, 2), (0, 8, 2, 2),
+    (0, 10, 2, 2), (0, 12, 2, 2), (0, 14, 2, 2), (0, 16, 2, 2),
+    (2, 2, 2, 2), (2, 16, 2, 2),
+    (4, 4, 2, 2), (4, 16, 2, 2),
+    (6, 6, 2, 2), (6, 14, 2, 2),
+    (8, 8, 2, 2), (8, 12, 2, 2),
+    (10, 10, 2, 2), (10, 14, 2, 2),
+    (12, 10, 2, 2), (12, 14, 2, 2),
+    (14, 14, 2, 2), (14, 16, 2, 2),
+  ]
+  for (x, y, w, h) in outline {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: youOutlineColor))
+  }
+  // body (#5a6270)
+  let body: [(Int, Int, Int, Int)] = [
+    (2, 4, 2, 12), (4, 6, 2, 10), (6, 8, 2, 6), (8, 10, 2, 2),
+  ]
+  for (x, y, w, h) in body {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: youBodyColor))
+  }
+  // highlight (#9aa3b2)
+  let highlight: [(Int, Int, Int, Int)] = [
+    (2, 4, 2, 2), (2, 6, 2, 2),
+  ]
+  for (x, y, w, h) in highlight {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: youHighlightColor))
+  }
+  return cells
 }
