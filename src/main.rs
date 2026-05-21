@@ -12,6 +12,9 @@ use auv_cli::bundle::{
   verify_exported_bundle_package_standalone,
 };
 use auv_cli::model::RunStatus;
+use auv_cli::scan::{
+  ScanRegion, ScanTarget, ScanWindowRegionOptions, StopPolicy, scan_window_region,
+};
 use auv_cli::skill::{
   SkillCaseMatrixCatalog, SkillCatalog, render_skill_case_matrix_report, run_skill,
   run_skill_case_matrix,
@@ -180,6 +183,46 @@ async fn run() -> Result<(), String> {
     }
     CliCommand::InspectServe { .. } => {
       unreachable!("inspect serve is handled before runtime setup")
+    }
+    CliCommand::ScanWindowRegion {
+      target,
+      region,
+      max_pages,
+      max_scrolls,
+      direction,
+      scroll_amount,
+      settle_ms,
+      min_confidence,
+      max_observations,
+      per_page_after_observe_recipe,
+      on_stop_candidate_recipe,
+    } => {
+      let runtime = build_default_runtime(project_root.clone())?;
+      let region = parse_scan_region_arg(&region)?;
+      let run_id = scan_window_region(
+        &runtime,
+        ScanWindowRegionOptions {
+          target: ScanTarget {
+            application_id: Some(target),
+            window_title: None,
+            region,
+          },
+          stop_policy: StopPolicy::UntilEnd {
+            max_pages,
+            max_scrolls,
+            no_progress_limit: 2,
+          },
+          direction,
+          scroll_amount,
+          settle_ms,
+          min_confidence,
+          max_observations,
+          per_page_after_observe_recipe,
+          on_stop_candidate_recipe,
+        },
+      )?;
+      println!("runId: {run_id}");
+      println!("status: scanned");
     }
     CliCommand::SkillList => {
       for entry in skill_catalog.entries() {
@@ -373,6 +416,23 @@ async fn run() -> Result<(), String> {
   }
 
   Ok(())
+}
+
+fn parse_scan_region_arg(raw: &str) -> Result<ScanRegion, String> {
+  let values = raw
+    .split(',')
+    .map(|value| value.trim().parse::<f64>())
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|error| format!("invalid --region ratios: {error}"))?;
+  if values.len() != 4 {
+    return Err("--region must contain four comma-separated ratios".to_string());
+  }
+  Ok(ScanRegion {
+    left_ratio: values[0],
+    top_ratio: values[1],
+    right_ratio: values[2],
+    bottom_ratio: values[3],
+  })
 }
 
 fn resolve_store_root(project_root: &Path, explicit: Option<&String>) -> PathBuf {
