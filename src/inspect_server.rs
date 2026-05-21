@@ -441,6 +441,58 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn root_payload_includes_events_rail_markers() {
+    let root = temp_dir("inspect-server-viewer-events-rail");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router(store, Arc::new(BroadcastRunEventSink::new(16)));
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
+
+    // Layout shell for the events rail.
+    assert!(
+      html.contains("Events · events.jsonl"),
+      "viewer payload should include the C.3a events rail header"
+    );
+    assert!(
+      html.contains("id=\"events-rail\""),
+      "viewer payload should mount the events rail container"
+    );
+    assert!(
+      html.contains("id=\"span-detail\""),
+      "viewer payload should mount the span detail panel above the rail"
+    );
+    assert!(
+      html.contains("Select a span to inspect its attributes."),
+      "viewer payload should include the empty-state span detail copy"
+    );
+    // Fetch wiring: events come in alongside spans on run selection.
+    assert!(
+      html.contains("/runs/:id/events"),
+      "viewer payload should document the events endpoint"
+    );
+    assert!(
+      html.contains("/events\")"),
+      "viewer payload should fetch /runs/:id/events on selection"
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
   async fn stream_payload_filters_events_by_run_id() {
     let run_a = RunId::new("run_stream_a");
     let run_b = RunId::new("run_stream_b");

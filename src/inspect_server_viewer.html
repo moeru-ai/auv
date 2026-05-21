@@ -294,6 +294,92 @@
     font-family: var(--font-mono);
     font-size: 12px;
   }
+
+  /* Events rail (C.3a) */
+  .events-rail {
+    flex: 0 0 320px;
+    background: var(--shell-2);
+    border-top: 1px solid var(--shell-line);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .events-rail[hidden] { display: none; }
+  .span-detail {
+    flex: 0 0 auto;
+    padding: 14px 20px;
+    color: var(--fg);
+    display: flex; flex-direction: column; gap: 8px;
+    border-bottom: 1px solid var(--shell-line);
+  }
+  .span-detail.empty {
+    padding: 20px;
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+    color: var(--fg-3);
+    font-family: var(--font-sans); font-size: 13px;
+  }
+  .span-detail .sparkle { width: 24px; height: 24px; image-rendering: pixelated; flex: none; }
+  .span-detail .head {
+    display: flex; gap: 10px; align-items: center;
+  }
+  .span-detail .kind {
+    font-family: var(--font-ui); font-size: 10px;
+    letter-spacing: 0.8px; text-transform: uppercase;
+    font-weight: 600; color: var(--fg-3);
+  }
+  .span-detail .name {
+    font-family: var(--font-mono); font-size: 13px;
+    color: var(--brand-soft);
+  }
+  .span-detail .span-id {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--fg-3);
+  }
+  .span-detail .attrs {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    row-gap: 4px; column-gap: 16px;
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  .span-detail .attrs .k { color: var(--fg-3); }
+  .span-detail .attrs .v {
+    color: var(--fg);
+    word-break: break-all;
+  }
+  .span-detail .attrs-empty {
+    font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--fg-3);
+  }
+
+  .event-list {
+    flex: 1; min-height: 0;
+    overflow: auto;
+    padding: 6px 0;
+  }
+  .event-row {
+    display: grid;
+    grid-template-columns: 70px 160px 60px 1fr;
+    gap: 12px;
+    padding: 4px 20px;
+    font-family: var(--font-mono); font-size: 12px;
+    line-height: 1.45;
+  }
+  .event-row.live {
+    /* live tint reserved for C.4 WebSocket stream. */
+    background: rgba(31, 125, 140, 0.08);
+  }
+  .event-row .t { color: var(--fg-3); }
+  .event-row .name { color: var(--fg); }
+  .event-row .name.failed { color: var(--failed); }
+  .event-row .name.started { color: var(--brand-soft); }
+  .event-row .span { color: var(--fg-3); }
+  .event-row .body { color: var(--fg-2); word-break: break-word; }
+  .event-empty {
+    padding: 20px;
+    color: var(--fg-3);
+    font-family: var(--font-mono); font-size: 12px;
+  }
 </style>
 </head>
 <body>
@@ -367,6 +453,33 @@
       <div class="placeholder" id="main-body">
         <div>select a run from the sidebar.</div>
         <div>this viewer reads <code>/runs</code> and renders the AUV trace contract.</div>
+      </div>
+      <div class="events-rail" id="events-rail" hidden>
+        <div class="span-detail empty" id="span-detail">
+          <!-- Sparkle sprite — inlined from docs/design/assets/sparkle.svg -->
+          <svg class="sparkle" viewBox="0 0 16 16" shape-rendering="crispEdges" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="7" y="2" width="2" height="2" fill="#ffffff"/>
+            <rect x="5" y="4" width="2" height="2" fill="#ffffff"/>
+            <rect x="7" y="4" width="2" height="2" fill="#00e0e0"/>
+            <rect x="9" y="4" width="2" height="2" fill="#ffffff"/>
+            <rect x="3" y="6" width="2" height="2" fill="#ffffff"/>
+            <rect x="5" y="6" width="2" height="2" fill="#00e0e0"/>
+            <rect x="7" y="6" width="2" height="2" fill="#00c4d2"/>
+            <rect x="9" y="6" width="2" height="2" fill="#00e0e0"/>
+            <rect x="11" y="6" width="2" height="2" fill="#ffffff"/>
+            <rect x="5" y="8" width="2" height="2" fill="#ffffff"/>
+            <rect x="7" y="8" width="2" height="2" fill="#00e0e0"/>
+            <rect x="9" y="8" width="2" height="2" fill="#ffffff"/>
+            <rect x="7" y="10" width="2" height="2" fill="#ffffff"/>
+          </svg>
+          <span>Select a span to inspect its attributes.</span>
+        </div>
+        <div class="pane-header">
+          <span class="label">Events · events.jsonl</span>
+          <span class="spacer"></span>
+          <span class="right" id="event-count">— · tail</span>
+        </div>
+        <div class="event-list" id="event-list"></div>
       </div>
     </main>
   </div>
@@ -492,11 +605,32 @@
     return row;
   }
 
+  // Sparkle sprite reused by the empty-state span detail. Mirrors the
+  // inline copy in the HTML scaffold; both must stay in sync with
+  // docs/design/assets/sparkle.svg.
+  const SPARKLE_SVG =
+    '<svg class="sparkle" viewBox="0 0 16 16" shape-rendering="crispEdges" fill="none" xmlns="http://www.w3.org/2000/svg">'
+    + '<rect x="7" y="2" width="2" height="2" fill="#ffffff"/>'
+    + '<rect x="5" y="4" width="2" height="2" fill="#ffffff"/>'
+    + '<rect x="7" y="4" width="2" height="2" fill="#00e0e0"/>'
+    + '<rect x="9" y="4" width="2" height="2" fill="#ffffff"/>'
+    + '<rect x="3" y="6" width="2" height="2" fill="#ffffff"/>'
+    + '<rect x="5" y="6" width="2" height="2" fill="#00e0e0"/>'
+    + '<rect x="7" y="6" width="2" height="2" fill="#00c4d2"/>'
+    + '<rect x="9" y="6" width="2" height="2" fill="#00e0e0"/>'
+    + '<rect x="11" y="6" width="2" height="2" fill="#ffffff"/>'
+    + '<rect x="5" y="8" width="2" height="2" fill="#ffffff"/>'
+    + '<rect x="7" y="8" width="2" height="2" fill="#00e0e0"/>'
+    + '<rect x="9" y="8" width="2" height="2" fill="#ffffff"/>'
+    + '<rect x="7" y="10" width="2" height="2" fill="#ffffff"/>'
+    + '</svg>';
+
   const state = {
     runs: [],
     activeRunId: null,
     activeRun: null,
     spans: [],
+    events: [],
     activeSpanId: null,
     fetchedAt: null,
   };
@@ -537,29 +671,41 @@
     state.activeRunId = runId;
     state.activeRun = state.runs.find(function (r) { return r.run_id === runId; }) || null;
     state.spans = [];
+    state.events = [];
     state.activeSpanId = null;
     const active = state.runs.find(function (r) { return r.run_id === runId; });
     setMainHeader(active, true);
     if (active) {
-      renderPlaceholder(["loading " + active.run_id + "…", "fetching /runs/:id and /runs/:id/spans."]);
+      renderPlaceholder(["loading " + active.run_id + "…", "fetching /runs/:id, /runs/:id/spans, /runs/:id/events."]);
     }
+    showEventsRail(!!active);
+    renderSpanDetail(null);
+    renderEventList([], null);
     renderRunList();
     await loadRunDetail(runId);
   }
 
   async function loadRunDetail(runId) {
     try {
-      const runResponse = await fetch("/runs/" + encodeURIComponent(runId));
+      const [runResponse, spansResponse, eventsResponse] = await Promise.all([
+        fetch("/runs/" + encodeURIComponent(runId)),
+        fetch("/runs/" + encodeURIComponent(runId) + "/spans"),
+        fetch("/runs/" + encodeURIComponent(runId) + "/events"),
+      ]);
       if (!runResponse.ok) throw new Error("/runs/" + runId + " HTTP " + runResponse.status);
-      const spansResponse = await fetch("/runs/" + encodeURIComponent(runId) + "/spans");
       if (!spansResponse.ok) throw new Error("/runs/" + runId + "/spans HTTP " + spansResponse.status);
+      if (!eventsResponse.ok) throw new Error("/runs/" + runId + "/events HTTP " + eventsResponse.status);
       const run = await runResponse.json();
       const spans = await spansResponse.json();
+      const events = await eventsResponse.json();
       if (state.activeRunId !== runId) return;
       state.activeRun = run;
       state.spans = Array.isArray(spans) ? spans : [];
+      state.events = Array.isArray(events) ? events : [];
       setMainHeader(run, false);
       renderSpanTree(run, state.spans);
+      renderSpanDetail(state.activeSpanId ? findSpan(state.activeSpanId) : null);
+      renderEventList(state.events, run);
     } catch (err) {
       if (state.activeRunId !== runId) return;
       setConnection(false, "/runs/:id (" + err.message + ")");
@@ -567,6 +713,104 @@
         "failed to load run detail.",
         err.message,
       ]);
+      showEventsRail(false);
+    }
+  }
+
+  function findSpan(spanId) {
+    return state.spans.find(function (s) { return s.span_id === spanId; }) || null;
+  }
+
+  function showEventsRail(visible) {
+    const rail = document.getElementById("events-rail");
+    if (visible) rail.removeAttribute("hidden");
+    else rail.setAttribute("hidden", "");
+  }
+
+  function renderSpanDetail(span) {
+    const node = document.getElementById("span-detail");
+    node.innerHTML = "";
+    if (!span) {
+      node.className = "span-detail empty";
+      // Inline sparkle via innerHTML — createElement('svg') yields an HTML
+      // element in the wrong namespace; using a template keeps the SVG
+      // namespace correct without depending on a framework.
+      node.innerHTML = SPARKLE_SVG
+        + '<span>Select a span to inspect its attributes.</span>';
+      return;
+    }
+    node.className = "span-detail";
+    const attrs = span.attributes || {};
+    const headChildren = [
+      el("span", { className: "kind" }, ["span"]),
+      el("span", { className: "name" }, [span.name || ""]),
+      el("span", { className: "span-id" }, ["span_id=" + span.span_id]),
+    ];
+    node.appendChild(el("div", { className: "head" }, headChildren));
+    const attrKeys = Object.keys(attrs).sort();
+    if (attrKeys.length === 0) {
+      node.appendChild(el("div", { className: "attrs-empty" }, ["(no attributes)"]));
+    } else {
+      const grid = el("div", { className: "attrs" }, []);
+      for (const k of attrKeys) {
+        grid.appendChild(el("span", { className: "k" }, [k]));
+        grid.appendChild(el("span", { className: "v" }, [String(stringifyAttr(attrs[k]))]));
+      }
+      node.appendChild(grid);
+    }
+  }
+
+  function stringifyAttr(v) {
+    if (v === null || v === undefined) return "";
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") return v;
+    try { return JSON.stringify(v); } catch (e) { return String(v); }
+  }
+
+  function fmtRelativeSeconds(ms) {
+    if (ms == null || !isFinite(ms)) return "—";
+    const seconds = ms / 1000;
+    const sign = seconds >= 0 ? "+" : "";
+    return sign + seconds.toFixed(2) + "s";
+  }
+
+  function classifyEventName(name) {
+    const lower = (name || "").toLowerCase();
+    if (lower.indexOf("failed") >= 0 || lower.indexOf("error") >= 0) return "failed";
+    if (lower.indexOf("started") >= 0 || lower.indexOf("invoke") >= 0) return "started";
+    return "";
+  }
+
+  function eventBody(event) {
+    if (event.message) return event.message;
+    const attrs = event.attributes || {};
+    const keys = Object.keys(attrs);
+    if (!keys.length) return "";
+    return keys.sort().map(function (k) {
+      return k + "=" + stringifyAttr(attrs[k]);
+    }).join(" ");
+  }
+
+  function renderEventList(events, run) {
+    const list = document.getElementById("event-list");
+    const counter = document.getElementById("event-count");
+    list.innerHTML = "";
+    if (!events.length) {
+      counter.textContent = "0 · tail";
+      list.appendChild(el("div", { className: "event-empty" }, ["no events recorded for this run."]));
+      return;
+    }
+    counter.textContent = events.length + " · tail";
+    const runStarted = run ? (run.started_at_millis || 0) : 0;
+    for (const event of events) {
+      const cls = classifyEventName(event.name);
+      const tRel = runStarted > 0 ? fmtRelativeSeconds(event.timestamp_millis - runStarted) : "—";
+      const row = el("div", { className: "event-row" }, [
+        el("span", { className: "t" }, [tRel]),
+        el("span", { className: "name" + (cls ? " " + cls : "") }, [event.name || ""]),
+        el("span", { className: "span" }, [midTrunc(event.span_id || "", 4, 4)]),
+        el("span", { className: "body" }, [eventBody(event)]),
+      ]);
+      list.appendChild(row);
     }
   }
 
@@ -662,6 +906,7 @@
         onClick: function () {
           state.activeSpanId = span.span_id;
           renderSpanTree(run, spans);
+          renderSpanDetail(span);
         },
       }, [
         el("span", {
