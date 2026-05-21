@@ -35,6 +35,48 @@ pub(crate) fn show_dual_cursor(_x: f64, _y: f64, _label: &str, _user_label: &str
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) fn move_dual_cursor(
+  x: f64,
+  y: f64,
+  label: &str,
+  user_label: &str,
+  duration_ms: u64,
+) -> AuvResult<()> {
+  with_controller("move_overlay_dual_cursor", |controller| {
+    controller.move_overlay_dual_cursor(
+      x,
+      y,
+      label.to_string(),
+      user_label.to_string(),
+      duration_ms,
+    )
+  })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn move_dual_cursor(
+  _x: f64,
+  _y: f64,
+  _label: &str,
+  _user_label: &str,
+  _duration_ms: u64,
+) -> AuvResult<()> {
+  Err("macOS native overlay is unsupported on this target".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn flash_cursor(x: f64, y: f64, label: &str, duration_ms: u64) -> AuvResult<()> {
+  with_controller("flash_overlay_cursor", |controller| {
+    controller.flash_overlay_cursor(x, y, label.to_string(), duration_ms)
+  })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn flash_cursor(_x: f64, _y: f64, _label: &str, _duration_ms: u64) -> AuvResult<()> {
+  Err("macOS native overlay is unsupported on this target".to_string())
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn hide_cursor() -> AuvResult<()> {
   with_controller("hide_overlay_cursor", |controller| {
     controller.hide_overlay_cursor()

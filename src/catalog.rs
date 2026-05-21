@@ -355,7 +355,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     },
     CommandSpec {
       id: "debug.overlayClickPoint",
-      summary: "Show overlay cursor, click the target point, then hide overlay. Experimental debug-only path; the real cursor visibly warps to the click target and back (cursorDisturbance=warp-visible).",
+      summary: "Move the visual AUV cursor to a target point, click, flash the click-state cursor, then hide overlay. Experimental debug-only path; the real cursor visibly warps to the click target and back (cursorDisturbance=warp-visible).",
       driver_id: "macos.desktop",
       operation: "overlay_click_point",
       disturbance_classes: POINTER_WITH_FOREGROUND,
@@ -374,6 +374,22 @@ pub fn default_command_catalog() -> CommandCatalog {
       summary: "Show experimental visual-only dual cursor overlays: AUV at a target point and You at the current hardware cursor.",
       driver_id: "macos.desktop",
       operation: "overlay_show_dual_cursor",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.overlayMoveCursor",
+      summary: "Animate the experimental visual-only AUV cursor from the current hardware cursor toward a target point.",
+      driver_id: "macos.desktop",
+      operation: "overlay_move_cursor",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
+      id: "debug.overlayFlashCursor",
+      summary: "Flash the experimental AUV click-state cursor sprite at a target point.",
+      driver_id: "macos.desktop",
+      operation: "overlay_flash_cursor",
       disturbance_classes: NONE,
       max_disturbance: DisturbanceClass::None,
     },
@@ -499,6 +515,8 @@ mod tests {
     assert!(catalog.resolve("debug.overlayClickPoint").is_some());
     assert!(catalog.resolve("debug.overlayShowCursor").is_some());
     assert!(catalog.resolve("debug.overlayShowDualCursor").is_some());
+    assert!(catalog.resolve("debug.overlayMoveCursor").is_some());
+    assert!(catalog.resolve("debug.overlayFlashCursor").is_some());
     assert!(catalog.resolve("debug.overlayHideCursor").is_some());
     assert!(catalog.resolve("debug.overlayShutdown").is_some());
   }

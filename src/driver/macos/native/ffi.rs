@@ -281,6 +281,21 @@ pub(crate) mod ffi {
       label: String,
       user_label: String,
     ) -> NativeActionResponse;
+    fn move_overlay_dual_cursor(
+      self: &NativeOverlayController,
+      x: f64,
+      y: f64,
+      label: String,
+      user_label: String,
+      duration_ms: u64,
+    ) -> NativeActionResponse;
+    fn flash_overlay_cursor(
+      self: &NativeOverlayController,
+      x: f64,
+      y: f64,
+      label: String,
+      duration_ms: u64,
+    ) -> NativeActionResponse;
     fn hide_overlay_cursor(self: &NativeOverlayController) -> NativeActionResponse;
     fn shutdown_overlay_cursor(self: &NativeOverlayController) -> NativeActionResponse;
     fn pump_overlay_events(duration_ms: u64) -> NativeActionResponse;

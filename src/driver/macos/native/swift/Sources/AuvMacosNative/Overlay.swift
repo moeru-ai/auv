@@ -23,6 +23,9 @@ enum AuvOverlayCursorVariant {
   /// every Phase 2/3 driver command that wraps a non-cursor-touching
   /// action with `with_overlay_cursor`.
   case auv
+  /// AUV click cursor — replay cursor plus the lime burst from
+  /// `docs/design/assets/cursor-auv-click.svg`.
+  case auvClick
   /// User cursor decoration (illustration-only — macOS does not let
   /// us repaint the hardware cursor; this variant exists so an
   /// inspect-viewer mock or future trace overlay can render it on
@@ -32,6 +35,7 @@ enum AuvOverlayCursorVariant {
   var sprite: [AuvPixelCell] {
     switch self {
     case .auv: return auvSprite()
+    case .auvClick: return auvClickSprite()
     case .you: return youSprite()
     }
   }
@@ -39,7 +43,7 @@ enum AuvOverlayCursorVariant {
   var pillBackground: NSColor {
     switch self {
     // --auv-brand-strong (#009ba6)
-    case .auv: return NSColor(srgbRed: 0.0, green: 0.608, blue: 0.651, alpha: 1.0)
+    case .auv, .auvClick: return NSColor(srgbRed: 0.0, green: 0.608, blue: 0.651, alpha: 1.0)
     // slate (#2a3a52)
     case .you: return NSColor(srgbRed: 0.164, green: 0.227, blue: 0.322, alpha: 1.0)
     }
@@ -182,6 +186,107 @@ final class NativeOverlayController {
     }
   }
 
+  func move_overlay_dual_cursor(
+    x: Double,
+    y: Double,
+    label: RustString,
+    user_label: RustString,
+    duration_ms: UInt64
+  ) -> NativeActionResponse {
+    runOnMain {
+      let resolvedLabel = label.toString()
+      let resolvedUserLabel = user_label.toString()
+      let (auvWindow, auvView) = self.ensureAuvWindow()
+      let (youWindow, youView) = self.ensureUserWindow()
+      let userPoint = self.currentMouseLogicalPoint()
+
+      self.placeCursor(
+        window: youWindow,
+        view: youView,
+        x: userPoint.x,
+        y: userPoint.y,
+        label: resolvedUserLabel.isEmpty ? "you" : resolvedUserLabel,
+        variant: .you
+      )
+
+      let duration = max(0.0, Double(duration_ms) / 1000.0)
+      let start = Date()
+      let deadline = start.addingTimeInterval(duration)
+      let targetLabel = resolvedLabel.isEmpty ? "auv · replay" : resolvedLabel
+
+      if duration <= 0 {
+        self.placeCursor(
+          window: auvWindow,
+          view: auvView,
+          x: x,
+          y: y,
+          label: targetLabel,
+          variant: .auv
+        )
+        return
+      }
+
+      while true {
+        let elapsed = Date().timeIntervalSince(start)
+        let rawT = min(1.0, max(0.0, elapsed / duration))
+        let eased = 1.0 - pow(1.0 - rawT, 3.0)
+        let currentX = userPoint.x + (x - userPoint.x) * eased
+        let currentY = userPoint.y + (y - userPoint.y) * eased
+        self.placeCursor(
+          window: auvWindow,
+          view: auvView,
+          x: currentX,
+          y: currentY,
+          label: targetLabel,
+          variant: .auv
+        )
+        self.drainEvents(until: Date().addingTimeInterval(1.0 / 60.0))
+        if Date() >= deadline || rawT >= 1.0 {
+          break
+        }
+      }
+
+      self.placeCursor(
+        window: auvWindow,
+        view: auvView,
+        x: x,
+        y: y,
+        label: targetLabel,
+        variant: .auv
+      )
+    }
+  }
+
+  func flash_overlay_cursor(
+    x: Double,
+    y: Double,
+    label: RustString,
+    duration_ms: UInt64
+  ) -> NativeActionResponse {
+    runOnMain {
+      let resolvedLabel = label.toString()
+      let targetLabel = resolvedLabel.isEmpty ? "auv · click" : resolvedLabel
+      let (auvWindow, auvView) = self.ensureAuvWindow()
+      self.placeCursor(
+        window: auvWindow,
+        view: auvView,
+        x: x,
+        y: y,
+        label: targetLabel,
+        variant: .auvClick
+      )
+      self.drainEvents(until: Date().addingTimeInterval(Double(duration_ms) / 1000.0))
+      self.placeCursor(
+        window: auvWindow,
+        view: auvView,
+        x: x,
+        y: y,
+        label: resolvedLabel.isEmpty ? "auv · replay" : resolvedLabel,
+        variant: .auv
+      )
+    }
+  }
+
   func hide_overlay_cursor() -> NativeActionResponse {
     runOnMain {
       self.window?.orderOut(nil)
@@ -298,6 +403,22 @@ final class NativeOverlayController {
   private func referenceHeight() -> Double {
     Double(NSScreen.main?.frame.height ?? NSScreen.screens.first?.frame.height ?? 0)
   }
+
+  private func drainEvents(until deadline: Date) {
+    while Date() < deadline {
+      autoreleasepool {
+        if let event = NSApplication.shared.nextEvent(
+          matching: .any,
+          until: Date().addingTimeInterval(0.005),
+          inMode: .default,
+          dequeue: true
+        ) {
+          NSApplication.shared.sendEvent(event)
+        }
+        NSApplication.shared.updateWindows()
+      }
+    }
+  }
 }
 
 func make_overlay_controller() -> NativeOverlayController {
@@ -347,7 +468,9 @@ private func runOnMain(_ body: @escaping () -> Void) -> NativeActionResponse {
 private let auvOutlineColor = NSColor(srgbRed: 0.082, green: 0.090, blue: 0.102, alpha: 1.0)  // #15171a
 private let auvBodyColor = NSColor(srgbRed: 0.0, green: 0.769, blue: 0.823, alpha: 1.0)        // #00c4d2
 private let auvHighlightColor = NSColor(srgbRed: 0.0, green: 0.878, blue: 0.878, alpha: 1.0)   // #00e0e0
+private let auvClickHighlightColor = NSColor(srgbRed: 0.812, green: 0.957, blue: 0.969, alpha: 1.0) // #cff4f7
 private let auvAccentColor = NSColor(srgbRed: 0.498, green: 0.816, blue: 0.188, alpha: 1.0)    // #7fd030
+private let auvSparkColor = NSColor(srgbRed: 0.627, green: 0.878, blue: 0.125, alpha: 1.0)      // #a0e020
 
 private let youOutlineColor = NSColor(srgbRed: 0.055, green: 0.063, blue: 0.075, alpha: 1.0)   // #0e1013
 private let youBodyColor = NSColor(srgbRed: 0.353, green: 0.384, blue: 0.439, alpha: 1.0)      // #5a6270
@@ -383,6 +506,61 @@ private func auvSprite() -> [AuvPixelCell] {
   ]
   for (x, y, w, h) in highlight {
     cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvHighlightColor))
+  }
+  // crook accent (#7fd030)
+  let accent: [(Int, Int, Int, Int)] = [
+    (10, 12, 2, 2), (12, 12, 2, 2),
+  ]
+  for (x, y, w, h) in accent {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvAccentColor))
+  }
+  return cells
+}
+
+private func auvClickSprite() -> [AuvPixelCell] {
+  var cells: [AuvPixelCell] = []
+  // click burst (#7fd030)
+  let burstAccent: [(Int, Int, Int, Int)] = [
+    (6, -2, 2, 2), (14, 2, 2, 2), (-2, 6, 2, 2), (-4, 12, 2, 2), (16, 10, 2, 2),
+  ]
+  for (x, y, w, h) in burstAccent {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvAccentColor))
+  }
+  // click burst highlight (#a0e020)
+  let burstHighlight: [(Int, Int, Int, Int)] = [
+    (6, 0, 2, 2), (12, 0, 2, 2), (14, 6, 2, 2), (-2, 10, 2, 2),
+  ]
+  for (x, y, w, h) in burstHighlight {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvSparkColor))
+  }
+  // outline (#15171a)
+  let outline: [(Int, Int, Int, Int)] = [
+    (0, 0, 2, 2), (0, 2, 2, 2), (0, 4, 2, 2), (0, 6, 2, 2), (0, 8, 2, 2),
+    (0, 10, 2, 2), (0, 12, 2, 2), (0, 14, 2, 2), (0, 16, 2, 2),
+    (2, 2, 2, 2), (2, 16, 2, 2),
+    (4, 4, 2, 2), (4, 16, 2, 2),
+    (6, 6, 2, 2), (6, 14, 2, 2),
+    (8, 8, 2, 2), (8, 12, 2, 2),
+    (10, 10, 2, 2), (10, 14, 2, 2),
+    (12, 10, 2, 2), (12, 14, 2, 2),
+    (14, 14, 2, 2), (14, 16, 2, 2),
+  ]
+  for (x, y, w, h) in outline {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvOutlineColor))
+  }
+  // click highlight (#cff4f7)
+  let highlight: [(Int, Int, Int, Int)] = [
+    (2, 4, 2, 4), (4, 6, 2, 4),
+  ]
+  for (x, y, w, h) in highlight {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvClickHighlightColor))
+  }
+  // body (#00c4d2)
+  let body: [(Int, Int, Int, Int)] = [
+    (2, 8, 2, 8), (4, 10, 2, 6), (6, 8, 2, 6), (8, 10, 2, 2),
+  ]
+  for (x, y, w, h) in body {
+    cells.append(AuvPixelCell(x: x, y: y, width: w, height: h, color: auvBodyColor))
   }
   // crook accent (#7fd030)
   let accent: [(Int, Int, Int, Int)] = [
