@@ -97,6 +97,12 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
     .unwrap_or(16)
     .clamp(1, 50);
   let activate = optional_bool(call, "activate")?.unwrap_or(true);
+  let overlay = optional_bool(call, "overlay")?.unwrap_or(false);
+  let overlay_label =
+    optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · replay".to_string());
+  let preview_ms =
+    optional_positive_u64(call, "preview_ms")?.unwrap_or(if overlay { 250 } else { 0 });
+  let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(0);
 
   if activate {
     activate_app_if_needed(&app)?;
@@ -116,18 +122,52 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
     .ok_or_else(|| no_matching_ax_node_error(snapshot, &query, "text input-like"))?;
   let (center_x, center_y) = ax_node_center(matched);
 
-  let focus_result = crate::driver::macos::native::ax_tree::set_ax_focused_path(
-    capture.pid as i32,
-    &matched.path,
-    &matched.role,
-  )?;
+  let (focus_result, overlay_outcome) = if overlay {
+    let (result, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
+      if preview_ms > 0 {
+        crate::driver::macos::native::overlay::pump_events(preview_ms)?;
+      }
+      let result = crate::driver::macos::native::ax_tree::set_ax_focused_path(
+        capture.pid as i32,
+        &matched.path,
+        &matched.role,
+      )?;
+      if settle_ms > 0 {
+        crate::driver::macos::native::overlay::pump_events(settle_ms)?;
+      }
+      Ok(result)
+    })?;
+    (result, Some(outcome))
+  } else {
+    (
+      crate::driver::macos::native::ax_tree::set_ax_focused_path(
+        capture.pid as i32,
+        &matched.path,
+        &matched.role,
+      )?,
+      None,
+    )
+  };
 
   let report = render_ax_interaction_report("ax-focus-text-input", snapshot, matched, &query);
-  let report = format!(
-    "{report}setAttribute={set_attribute}\nwasAlreadyFocused={was_already_focused}\nfocusMechanism=ax-attribute\ncursorDisturbance=none\nactivatedApp={activate}\n",
+  let mut report = format!(
+    "{report}setAttribute={set_attribute}\nwasAlreadyFocused={was_already_focused}\nfocusMechanism=ax-attribute\ncursorDisturbance=none\nactivatedApp={activate}\noverlayPresentation={}\n",
+    if overlay {
+      "dual-cursor-visual-only"
+    } else {
+      "off"
+    },
     set_attribute = focus_result.set_attribute,
     was_already_focused = focus_result.was_already_focused,
   );
+  if let Some(outcome) = &overlay_outcome {
+    report.push_str(&format!("overlayShowEvent={}\n", outcome.show_event));
+    report.push_str(&format!("overlayHideEvent={}\n", outcome.hide_event));
+    report.push_str(&format!("controllerPid={}\n", outcome.controller_pid));
+    report.push_str(&format!("previewMs={preview_ms}\n"));
+    report.push_str(&format!("settleMs={settle_ms}\n"));
+    report.push_str(&format!("overlayLabel={overlay_label}\n"));
+  }
   let artifact = build_text_artifact(
     "ax-focus-text-input",
     "txt",
@@ -145,6 +185,16 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
     focus_result.was_already_focused
   ));
   notes.push(format!("activatedApp={activate}"));
+  if let Some(outcome) = &overlay_outcome {
+    notes.push("overlayPresentation=dual-cursor-visual-only".to_string());
+    notes.push("userCursorSource=current-hardware-cursor".to_string());
+    notes.push(format!("overlayShowEvent={}", outcome.show_event));
+    notes.push(format!("overlayHideEvent={}", outcome.hide_event));
+    notes.push(format!("controllerPid={}", outcome.controller_pid));
+    notes.push(format!("previewMs={preview_ms}"));
+    notes.push(format!("settleMs={settle_ms}"));
+    notes.push(format!("overlayLabel={overlay_label}"));
+  }
   if let Some(shortcut) = reveal_shortcut.as_deref() {
     notes.push(format!("revealShortcut={shortcut}"));
     notes.push(format!("revealSettleMs={reveal_settle_ms}"));
@@ -156,11 +206,29 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
   let mut signals = std::collections::BTreeMap::new();
   signals.insert("focusMechanism".to_string(), "ax-attribute".to_string());
   signals.insert("cursorDisturbance".to_string(), "none".to_string());
-  signals.insert("setAttribute".to_string(), focus_result.set_attribute);
+  signals.insert(
+    "setAttribute".to_string(),
+    focus_result.set_attribute.clone(),
+  );
   signals.insert(
     "wasAlreadyFocused".to_string(),
     focus_result.was_already_focused.to_string(),
   );
+  if let Some(outcome) = &overlay_outcome {
+    signals.insert(
+      "overlayEvent".to_string(),
+      format!("{}+{}", outcome.show_event, outcome.hide_event),
+    );
+    signals.insert(
+      "controllerPid".to_string(),
+      outcome.controller_pid.to_string(),
+    );
+    signals.insert(
+      "overlayPresentation".to_string(),
+      "dual-cursor-visual-only".to_string(),
+    );
+    signals.insert("dualCursor".to_string(), "true".to_string());
+  }
 
   Ok(DriverResponse {
     summary: if matched.title.is_empty() && matched.description.is_empty() {
@@ -190,7 +258,14 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
         query
       )
     },
-    backend: Some("macos.ax.set-focused".to_string()),
+    backend: Some(
+      if overlay {
+        "macos.ax.set-focused+overlay-ffi"
+      } else {
+        "macos.ax.set-focused"
+      }
+      .to_string(),
+    ),
     signals,
     notes,
     artifacts: vec![artifact],
