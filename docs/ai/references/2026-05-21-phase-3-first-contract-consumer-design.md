@@ -123,11 +123,14 @@ In rough order:
    `pointer-focus-clipboard-paste` because the enum is closed. Once the
    schema migration lands, v2's taxonomy label can become honest at
    the recipe header level too.
-3. **Recipe-level disturbance assertion** — today
-   `disturbance_policy.max` is documentation; the runner does not
-   enforce that every step's `disturbance.max` respects the recipe
-   budget. Add a pre-flight check so `max_disturbance: "keyboard"`
-   actually rejects a step declaring `disturbance.max: "pointer"`.
+3. ~~**Recipe-level disturbance assertion**~~ — DONE
+   (`feat(skill): enforce recipe disturbance budget at manifest
+   validation`). `validate_skill_disturbance_budget` is now part of
+   `validate_skill_manifest_with_commands`, so `skill list`,
+   `skill cases run --dry-run`, and bundle verify all reject recipes
+   where any step's `disturbance.max` exceeds the recipe's
+   `disturbance_policy.max_disturbance` or where any step's class is
+   not in `disturbance_policy.declared_classes`. Test count 200 -> 203.
 4. **Cross-app case matrix for smartPress fallback** — drive smartPress
    against TextEdit / Notes (AX wins) and a Chromium web view (AX fails →
    pointer fallback) so the fallback path has real data, not just doc

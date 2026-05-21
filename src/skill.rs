@@ -755,7 +755,79 @@ pub(crate) fn validate_skill_manifest_with_commands(
   validate_skill_strategy(manifest)?;
   validate_skill_inputs(manifest)?;
   validate_skill_steps(manifest, command_catalog)?;
+  validate_skill_disturbance_budget(manifest)?;
   validate_skill_verification(manifest)?;
+  Ok(())
+}
+
+/// Enforce that every step's declared `disturbance.max` and class set
+/// respects the recipe's `disturbance_policy.max_disturbance` budget and
+/// the policy's `declared_classes` list.
+///
+/// Phase 3 #4: this turns the recipe budget from documentation into a
+/// load-time constraint so `skill list`, `skill cases run --dry-run`,
+/// and bundle verify all catch violations before any driver call.
+pub(crate) fn validate_skill_disturbance_budget(manifest: &SkillManifest) -> AuvResult<()> {
+  let recipe_max = if manifest.disturbance_policy.max_disturbance.trim().is_empty() {
+    return Err(format!(
+      "skill {} must declare disturbance_policy.max_disturbance",
+      manifest.recipe_id
+    ));
+  } else {
+    DisturbanceClass::parse(&manifest.disturbance_policy.max_disturbance).map_err(|error| {
+      format!(
+        "skill {} has invalid disturbance_policy.max_disturbance {}: {error}",
+        manifest.recipe_id, manifest.disturbance_policy.max_disturbance
+      )
+    })?
+  };
+
+  for (index, step) in manifest.steps.iter().enumerate() {
+    let step_label = step_id(step, index);
+    let step_max = parse_step_max(step).map_err(|error| {
+      format!(
+        "skill {} step {step_label} has invalid disturbance.max {}: {error}",
+        manifest.recipe_id, step.disturbance.max
+      )
+    })?;
+    if step_max > recipe_max {
+      return Err(format!(
+        "skill {} step {step_label} declares disturbance.max {} above recipe budget {}",
+        manifest.recipe_id,
+        step_max.as_str(),
+        recipe_max.as_str()
+      ));
+    }
+    for class in &step.disturbance.classes {
+      let parsed = DisturbanceClass::parse(class).map_err(|error| {
+        format!(
+          "skill {} step {step_label} has invalid disturbance class {}: {error}",
+          manifest.recipe_id, class
+        )
+      })?;
+      if parsed > step_max {
+        return Err(format!(
+          "skill {} step {step_label} declares class {} above its own max {}",
+          manifest.recipe_id,
+          class,
+          step_max.as_str()
+        ));
+      }
+      if !manifest.disturbance_policy.declared_classes.is_empty()
+        && !manifest
+          .disturbance_policy
+          .declared_classes
+          .iter()
+          .any(|declared| declared == class)
+      {
+        return Err(format!(
+          "skill {} step {step_label} uses class {} not declared in disturbance_policy.declared_classes",
+          manifest.recipe_id, class
+        ));
+      }
+    }
+  }
+
   Ok(())
 }
 
@@ -2493,7 +2565,7 @@ mod tests {
       },
       "disturbance_policy": {
         "max_disturbance": "pointer",
-        "declared_classes": ["pointer"]
+        "declared_classes": ["none", "pointer"]
       },
       "steps": [{
         "id": "step-1",
@@ -2597,6 +2669,145 @@ mod tests {
     let error = validate_skill_manifest_with_commands(&manifest, catalog.all())
       .expect_err("step disturbance above command max should fail");
     assert!(error.contains("above command"));
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_step_disturbance_above_recipe_budget() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "aa" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "keyboard",
+        "declared_classes": ["foreground_app", "keyboard", "pointer"]
+      },
+      "steps": [{
+        "id": "step-1",
+        "command_id": "debug.pressButton",
+        "disturbance": {
+          "classes": ["foreground_app", "keyboard", "pointer"],
+          "max": "pointer"
+        },
+        "args": { "target": "${app_id}", "query": "Run" }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let error =
+      validate_skill_manifest(&manifest).expect_err("step above recipe budget should fail");
+    assert!(
+      error.contains("above recipe budget"),
+      "unexpected error: {error}"
+    );
+    assert!(error.contains("pointer"));
+    assert!(error.contains("keyboard"));
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_step_class_above_step_max() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "aa" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["foreground_app", "keyboard", "pointer"]
+      },
+      "steps": [{
+        "id": "step-1",
+        "command_id": "debug.pressButton",
+        "disturbance": {
+          "classes": ["foreground_app", "keyboard", "pointer"],
+          "max": "keyboard"
+        },
+        "args": { "target": "${app_id}", "query": "Run" }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let error =
+      validate_skill_manifest(&manifest).expect_err("class above step max should fail");
+    assert!(
+      error.contains("above its own max"),
+      "unexpected error: {error}"
+    );
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_class_not_in_declared_classes() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "aa" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["pointer"]
+      },
+      "steps": [{
+        "id": "step-1",
+        "command_id": "debug.captureDisplay",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let error = validate_skill_manifest(&manifest)
+      .expect_err("class not in declared_classes should fail");
+    assert!(
+      error.contains("not declared in disturbance_policy.declared_classes"),
+      "unexpected error: {error}"
+    );
   }
 
   #[test]
