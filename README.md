@@ -33,6 +33,11 @@ Useful CLI entrypoints:
 - `cargo run --quiet -- skill cases list`
 - `cargo run --quiet -- skill bundle list`
 - `cargo run --quiet -- skill bundle coverage native.app.skill-tree.v0`
+- `cargo run --quiet -- scan window-region --target <bundle-id> --region 0.0,0.0,1.0,1.0 --max-pages 3`
+
+`scan window-region` is the first scroll-scan workflow. It is OCR-first,
+region-scoped, conservative about duplicate text, and records why scanning
+stopped instead of unconditionally claiming a complete collection.
 
 ## License
 
