@@ -193,9 +193,9 @@
       "command_id": "debug.waitForScreenText",
       "disturbance": {
         "classes": [
-          "none"
+          "foreground_app"
         ],
-        "max": "none"
+        "max": "foreground_app"
       },
       "args": {
         "target": "${app_id}",
@@ -222,9 +222,9 @@
       "command_id": "debug.findScreenText",
       "disturbance": {
         "classes": [
-          "none"
+          "foreground_app"
         ],
-        "max": "none"
+        "max": "foreground_app"
       },
       "args": {
         "target": "${app_id}",
@@ -275,9 +275,9 @@
       "command_id": "debug.captureDisplay",
       "disturbance": {
         "classes": [
-          "none"
+          "foreground_app"
         ],
-        "max": "none"
+        "max": "foreground_app"
       },
       "args": {
         "target": "${app_id}",

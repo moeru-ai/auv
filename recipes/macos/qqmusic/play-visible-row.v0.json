@@ -261,9 +261,9 @@
       "command_id": "debug.waitForScreenRows",
       "disturbance": {
         "classes": [
-          "none"
+          "foreground_app"
         ],
-        "max": "none"
+        "max": "foreground_app"
       },
       "args": {
         "target": "${app_id}",
@@ -322,7 +322,6 @@
       "disturbance": {
         "classes": [
           "foreground_app",
-          "keyboard",
           "pointer"
         ],
         "max": "pointer"

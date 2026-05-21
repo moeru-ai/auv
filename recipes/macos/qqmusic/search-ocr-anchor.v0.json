@@ -253,9 +253,9 @@
       "command_id": "debug.captureDisplay",
       "disturbance": {
         "classes": [
-          "none"
+          "foreground_app"
         ],
-        "max": "none"
+        "max": "foreground_app"
       },
       "args": {
         "label": "qqmusic-result-anchor-${query}"

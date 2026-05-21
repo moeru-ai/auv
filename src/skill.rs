@@ -1040,22 +1040,7 @@ fn validate_skill_steps(
         )
       })?;
     }
-    let step_max = parse_step_max(step).map_err(|error| {
-      format!(
-        "skill {} step {} has invalid disturbance.max {}: {error}",
-        manifest.recipe_id, step_label, step.disturbance.max
-      )
-    })?;
-    if step_max > command.max_disturbance {
-      return Err(format!(
-        "skill {} step {} uses disturbance.max {} above command {} max {}",
-        manifest.recipe_id,
-        step_label,
-        step_max.as_str(),
-        command.id,
-        command.max_disturbance.as_str()
-      ));
-    }
+    validate_step_disturbance_against_command(&manifest.recipe_id, &step_label, step, command)?;
 
     for key in step.args.keys() {
       if key.trim().is_empty() {
@@ -1066,6 +1051,47 @@ fn validate_skill_steps(
       }
     }
   }
+  Ok(())
+}
+
+fn validate_step_disturbance_against_command(
+  recipe_id: &str,
+  step_label: &str,
+  step: &SkillStep,
+  command: &crate::model::CommandSpec,
+) -> AuvResult<()> {
+  let step_max = parse_step_max(step).map_err(|error| {
+    format!(
+      "skill {} step {} has invalid disturbance.max {}: {error}",
+      recipe_id, step_label, step.disturbance.max
+    )
+  })?;
+  if step_max > command.max_disturbance {
+    return Err(format!(
+      "skill {} step {} uses disturbance.max {} above command {} max {}",
+      recipe_id,
+      step_label,
+      step_max.as_str(),
+      command.id,
+      command.max_disturbance.as_str()
+    ));
+  }
+
+  for class in &step.disturbance.classes {
+    let parsed = DisturbanceClass::parse(class).map_err(|error| {
+      format!(
+        "skill {} step {} has invalid disturbance class {}: {error}",
+        recipe_id, step_label, class
+      )
+    })?;
+    if !command.disturbance_classes.contains(&parsed) {
+      return Err(format!(
+        "skill {} step {} uses disturbance class {} not declared by command {}",
+        recipe_id, step_label, class, command.id
+      ));
+    }
+  }
+
   Ok(())
 }
 
@@ -1784,21 +1810,12 @@ pub(crate) fn validate_case_matrix_against_skill_with_commands(
         step.command_id
       ));
     };
-    let step_max = parse_step_max(step)?;
-    if step_max > command.max_disturbance {
-      return Err(format!(
-        "skill {} step {} uses disturbance.max {} above command {} max {}",
-        manifest.recipe_id,
-        if step.id.trim().is_empty() {
-          &step.command_id
-        } else {
-          &step.id
-        },
-        step_max.as_str(),
-        command.id,
-        command.max_disturbance.as_str()
-      ));
-    }
+    let step_label = if step.id.trim().is_empty() {
+      step.command_id.clone()
+    } else {
+      step.id.clone()
+    };
+    validate_step_disturbance_against_command(&manifest.recipe_id, &step_label, step, command)?;
   }
 
   Ok(())
@@ -2650,6 +2667,52 @@ mod tests {
   }
 
   #[test]
+  fn validate_skill_manifest_accepts_window_action_smart_press_taxonomy() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.smart-press.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "window-action",
+        "grounding": "window-point",
+        "activation": "smart-press",
+        "verificationContract": "captureEvidence"
+      },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "Run" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["foreground_app", "pointer", "none"]
+      },
+      "steps": [{
+        "id": "smart-press",
+        "command_id": "debug.smartPress",
+        "disturbance": {
+          "classes": ["foreground_app", "pointer"],
+          "max": "pointer"
+        },
+        "args": {
+          "target": "app",
+          "query": "${query}",
+          "overlay": "true",
+          "allow_pointer_fallback": "true"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    validate_skill_manifest(&manifest).expect("smart-press manifest should validate");
+  }
+
+  #[test]
   fn validate_skill_manifest_rejects_unknown_command_id() {
     let manifest: SkillManifest = serde_json::from_value(json!({
       "recipe_id": "test.skill",
@@ -2733,6 +2796,55 @@ mod tests {
     let error = validate_skill_manifest_with_commands(&manifest, catalog.all())
       .expect_err("step disturbance above command max should fail");
     assert!(error.contains("above command"));
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_step_class_not_declared_by_command() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "window-action",
+        "grounding": "window-point",
+        "activation": "smart-press",
+        "verificationContract": "captureEvidence"
+      },
+      "objective": "test",
+      "inputs": {
+        "query": { "type": "string", "default": "Run" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["foreground_app", "keyboard", "pointer"]
+      },
+      "steps": [{
+        "id": "smart-press",
+        "command_id": "debug.smartPress",
+        "disturbance": {
+          "classes": ["foreground_app", "keyboard", "pointer"],
+          "max": "pointer"
+        },
+        "args": {
+          "target": "app",
+          "query": "${query}"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let catalog = default_command_catalog();
+    let error = validate_skill_manifest_with_commands(&manifest, catalog.all())
+      .expect_err("step class not declared by command should fail");
+    assert!(error.contains("not declared by command"));
+    assert!(error.contains("debug.smartPress"));
+    assert!(error.contains("keyboard"));
   }
 
   #[test]

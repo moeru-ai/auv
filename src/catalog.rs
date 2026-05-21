@@ -1,6 +1,8 @@
 use crate::model::{CommandSpec, DisturbanceClass};
 
 const NONE: &[DisturbanceClass] = &[DisturbanceClass::None];
+const NONE_OR_FOREGROUND: &[DisturbanceClass] =
+  &[DisturbanceClass::None, DisturbanceClass::ForegroundApp];
 const FOREGROUND_KEYBOARD: &[DisturbanceClass] =
   &[DisturbanceClass::ForegroundApp, DisturbanceClass::Keyboard];
 const FOREGROUND_KEYBOARD_CLIPBOARD: &[DisturbanceClass] = &[
@@ -17,7 +19,6 @@ const FOCUS_POINTER_ENTRY: &[DisturbanceClass] = &[
 ];
 const POINTER_WITH_FOREGROUND: &[DisturbanceClass] =
   &[DisturbanceClass::ForegroundApp, DisturbanceClass::Pointer];
-const POINTER_ONLY: &[DisturbanceClass] = &[DisturbanceClass::Pointer];
 const PRESS_BUTTON_DISTURBANCE: &[DisturbanceClass] = &[
   DisturbanceClass::ForegroundApp,
   DisturbanceClass::Keyboard,
@@ -51,27 +52,27 @@ pub fn default_command_catalog() -> CommandCatalog {
   let commands = vec![
     CommandSpec {
       id: "debug.captureDisplay",
-      summary: "Capture one display screenshot with a coordinate contract through xcap.",
+      summary: "Capture one display screenshot with a coordinate contract through xcap. If activate_target_before_capture is true, the target app is foregrounded first.",
       driver_id: "macos.desktop",
       operation: "capture_display",
-      disturbance_classes: NONE,
-      max_disturbance: DisturbanceClass::None,
+      disturbance_classes: NONE_OR_FOREGROUND,
+      max_disturbance: DisturbanceClass::ForegroundApp,
     },
     CommandSpec {
       id: "debug.captureRegion",
-      summary: "Capture one display-contained region and emit a coordinate contract.",
+      summary: "Capture one display-contained region and emit a coordinate contract. If activate_target_before_capture is true, the target app is foregrounded first.",
       driver_id: "macos.desktop",
       operation: "capture_region",
-      disturbance_classes: NONE,
-      max_disturbance: DisturbanceClass::None,
+      disturbance_classes: NONE_OR_FOREGROUND,
+      max_disturbance: DisturbanceClass::ForegroundApp,
     },
     CommandSpec {
       id: "debug.captureWindow",
-      summary: "Capture one single-display window and emit a coordinate contract.",
+      summary: "Capture one single-display window and emit a coordinate contract. If activate_target_before_capture is true, the target app is foregrounded first.",
       driver_id: "macos.desktop",
       operation: "capture_window",
-      disturbance_classes: NONE,
-      max_disturbance: DisturbanceClass::None,
+      disturbance_classes: NONE_OR_FOREGROUND,
+      max_disturbance: DisturbanceClass::ForegroundApp,
     },
     CommandSpec {
       id: "debug.listDisplays",
@@ -107,35 +108,35 @@ pub fn default_command_catalog() -> CommandCatalog {
     },
     CommandSpec {
       id: "debug.findScreenText",
-      summary: "Capture a screenshot and locate OCR text anchors in screenshot pixel space.",
+      summary: "Capture a screenshot and locate OCR text anchors in screenshot pixel space. If activate_target_before_capture is true, the target app is foregrounded first.",
       driver_id: "macos.desktop",
       operation: "find_screen_text",
-      disturbance_classes: NONE,
-      max_disturbance: DisturbanceClass::None,
+      disturbance_classes: NONE_OR_FOREGROUND,
+      max_disturbance: DisturbanceClass::ForegroundApp,
     },
     CommandSpec {
       id: "debug.waitForScreenText",
-      summary: "Poll live-desktop OCR until a target text anchor appears or the timeout expires.",
+      summary: "Poll live-desktop OCR until a target text anchor appears or the timeout expires. If activate_target_before_capture is true, the target app is foregrounded before each capture attempt.",
       driver_id: "macos.desktop",
       operation: "wait_for_screen_text",
-      disturbance_classes: NONE,
-      max_disturbance: DisturbanceClass::None,
+      disturbance_classes: NONE_OR_FOREGROUND,
+      max_disturbance: DisturbanceClass::ForegroundApp,
     },
     CommandSpec {
       id: "debug.findScreenRows",
-      summary: "Detect visible OCR row bands inside a constrained screen region without depending on one exact anchor string.",
+      summary: "Detect visible OCR row bands inside a constrained screen region without depending on one exact anchor string. If activate_target_before_capture is true, the target app is foregrounded first.",
       driver_id: "macos.desktop",
       operation: "find_screen_rows",
-      disturbance_classes: NONE,
-      max_disturbance: DisturbanceClass::None,
+      disturbance_classes: NONE_OR_FOREGROUND,
+      max_disturbance: DisturbanceClass::ForegroundApp,
     },
     CommandSpec {
       id: "debug.waitForScreenRows",
-      summary: "Poll live-desktop OCR row detection until at least a target number of visible rows appears or the timeout expires.",
+      summary: "Poll live-desktop OCR row detection until at least a target number of visible rows appears or the timeout expires. If activate_target_before_capture is true, the target app is foregrounded before each capture attempt.",
       driver_id: "macos.desktop",
       operation: "wait_for_screen_rows",
-      disturbance_classes: NONE,
-      max_disturbance: DisturbanceClass::None,
+      disturbance_classes: NONE_OR_FOREGROUND,
+      max_disturbance: DisturbanceClass::ForegroundApp,
     },
     CommandSpec {
       id: "debug.findImageText",
@@ -315,18 +316,18 @@ pub fn default_command_catalog() -> CommandCatalog {
     },
     CommandSpec {
       id: "debug.clickScreenText",
-      summary: "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point.",
+      summary: "Capture a screenshot, resolve an OCR text anchor, and click its projected logical point. If activate_target_before_capture is true, the target app is foregrounded before capture.",
       driver_id: "macos.desktop",
       operation: "click_screen_text",
-      disturbance_classes: POINTER_ONLY,
+      disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
       id: "debug.clickScreenRow",
-      summary: "Detect visible OCR row bands inside a constrained screen region and click a chosen row-derived point.",
+      summary: "Detect visible OCR row bands inside a constrained screen region and click a chosen row-derived point. If activate_target_before_capture is true, the target app is foregrounded before capture.",
       driver_id: "macos.desktop",
       operation: "click_screen_row",
-      disturbance_classes: POINTER_ONLY,
+      disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {

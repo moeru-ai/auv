@@ -60,7 +60,6 @@
     "declared_classes": [
       "none",
       "foreground_app",
-      "keyboard",
       "pointer"
     ],
     "notes": [
@@ -90,7 +89,6 @@
       "disturbance": {
         "classes": [
           "foreground_app",
-          "keyboard",
           "pointer"
         ],
         "max": "pointer"
@@ -100,7 +98,9 @@
         "query": "${press_query}",
         "max_depth": "${max_depth}",
         "max_children": "${max_children}",
-        "label": "${overlay_label}"
+        "label": "${overlay_label}",
+        "overlay": "true",
+        "allow_pointer_fallback": "true"
       },
       "expect": {
         "artifact_count_at_least": 1
@@ -112,9 +112,9 @@
       "command_id": "debug.captureDisplay",
       "disturbance": {
         "classes": [
-          "none"
+          "foreground_app"
         ],
-        "max": "none"
+        "max": "foreground_app"
       },
       "args": {
         "target": "${app_id}",

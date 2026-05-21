@@ -169,8 +169,8 @@
       "id": "wait-for-screen-rows",
       "command_id": "debug.waitForScreenRows",
       "disturbance": {
-        "classes": ["none"],
-        "max": "none"
+        "classes": ["foreground_app"],
+        "max": "foreground_app"
       },
       "args": {
         "target": "${app_id}",
