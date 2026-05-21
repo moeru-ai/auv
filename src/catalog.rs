@@ -250,6 +250,14 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::Keyboard,
     },
     CommandSpec {
+      id: "debug.axFocusTextInput",
+      summary: "Focus a text input by query via AXUIElementSetAttributeValue(kAXFocusedAttribute); does not warp the real cursor (cursorDisturbance=none, focusMechanism=ax-attribute). Errors when the target does not accept programmatic focus; use debug.focusTextInput if pointer warp is acceptable.",
+      driver_id: "macos.desktop",
+      operation: "ax_focus_text_input",
+      disturbance_classes: CAPTURE_AX_TREE_DISTURBANCE,
+      max_disturbance: DisturbanceClass::Keyboard,
+    },
+    CommandSpec {
       id: "debug.axClickWindowText",
       summary: "Find visible text in a window via Vision OCR, resolve the AX node at that point, then press it via AXUIElementPerformAction (cursorDisturbance=none). Pass --overlay true for the dual-cursor visual. Errors with a hint to debug.clickWindowText when the OCR anchor maps to a canvas-rendered or non-AX-pressable region.",
       driver_id: "macos.desktop",
@@ -466,6 +474,7 @@ mod tests {
     assert!(catalog.resolve("debug.focusTextInput").is_some());
     assert!(catalog.resolve("debug.pressButton").is_some());
     assert!(catalog.resolve("debug.axPressButton").is_some());
+    assert!(catalog.resolve("debug.axFocusTextInput").is_some());
     assert!(catalog.resolve("debug.axClickWindowText").is_some());
     assert!(catalog.resolve("debug.smartPress").is_some());
     assert!(catalog.resolve("debug.typeText").is_some());

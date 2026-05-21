@@ -1,10 +1,11 @@
 use super::ax_tree::capture_ax_tree;
 use super::capture::commands::{capture_display, capture_region, capture_window, list_displays};
 use super::control::{
-  activate_app, ax_click_window_text, ax_press_button, click_point, click_screen_row,
-  click_screen_text, click_window_point, click_window_row, click_window_text, find_window_rows,
-  find_window_text, focus_text_input, paste_text_preserve_clipboard, press_button, press_key,
-  scroll_point, smart_press, type_text, wait_for_window_rows, wait_for_window_text,
+  activate_app, ax_click_window_text, ax_focus_text_input, ax_press_button, click_point,
+  click_screen_row, click_screen_text, click_window_point, click_window_row, click_window_text,
+  find_window_rows, find_window_text, focus_text_input, paste_text_preserve_clipboard,
+  press_button, press_key, scroll_point, smart_press, type_text, wait_for_window_rows,
+  wait_for_window_text,
 };
 use super::observe::{
   find_image_text, find_screen_rows, find_screen_text, identify_point, list_windows,
@@ -57,6 +58,7 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
     "verify_now_playing_title" => verify_now_playing_title(call),
     "activate_app" => activate_app(call),
     "focus_text_input" => focus_text_input(call),
+    "ax_focus_text_input" => ax_focus_text_input(call),
     "press_button" => press_button(call),
     "ax_press_button" => ax_press_button(call),
     "ax_click_window_text" => ax_click_window_text(call),

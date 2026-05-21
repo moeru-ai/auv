@@ -87,6 +87,116 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   })
 }
 
+pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let app = app_identifier(call).unwrap_or_default();
+  let query = required_non_empty_string(call, "query")?;
+  let reveal_shortcut = optional_non_empty_string(call, "reveal_shortcut");
+  let reveal_settle_ms = optional_positive_u64(call, "reveal_settle_ms")?.unwrap_or(250);
+  let max_depth = optional_i64(call, "max_depth")?.unwrap_or(6).clamp(1, 10);
+  let max_children = optional_i64(call, "max_children")?
+    .unwrap_or(16)
+    .clamp(1, 50);
+  let activate = optional_bool(call, "activate")?.unwrap_or(true);
+
+  if activate {
+    activate_app_if_needed(&app)?;
+  }
+  send_reveal_shortcut_if_needed(reveal_shortcut.as_deref(), reveal_settle_ms)?;
+
+  let capture =
+    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?;
+  let snapshot = &capture.snapshot;
+  if capture.pid <= 0 {
+    return Err(format!(
+      "native AX tree capture did not return a valid pid for app {:?} (got {}); cannot dispatch AX focus",
+      snapshot.app_name, capture.pid
+    ));
+  }
+  let matched = find_best_ax_node(snapshot, &query)
+    .ok_or_else(|| no_matching_ax_node_error(snapshot, &query, "text input-like"))?;
+  let (center_x, center_y) = ax_node_center(matched);
+
+  let focus_result = crate::driver::macos::native::ax_tree::set_ax_focused_path(
+    capture.pid as i32,
+    &matched.path,
+    &matched.role,
+  )?;
+
+  let report = render_ax_interaction_report("ax-focus-text-input", snapshot, matched, &query);
+  let report = format!(
+    "{report}setAttribute={set_attribute}\nwasAlreadyFocused={was_already_focused}\nfocusMechanism=ax-attribute\ncursorDisturbance=none\nactivatedApp={activate}\n",
+    set_attribute = focus_result.set_attribute,
+    was_already_focused = focus_result.was_already_focused,
+  );
+  let artifact = build_text_artifact(
+    "ax-focus-text-input",
+    "txt",
+    &format!("ax-focus-text-input-{}", sanitize_file_component(&query)),
+    report,
+    "Focused a text input via AXUIElementSetAttributeValue(kAXFocusedAttribute); the real cursor is not moved.",
+  )?;
+
+  let mut notes = build_ax_click_notes(&query, matched, center_x, center_y);
+  notes.push("focusMechanism=ax-attribute".to_string());
+  notes.push("cursorDisturbance=none".to_string());
+  notes.push(format!("setAttribute={}", focus_result.set_attribute));
+  notes.push(format!(
+    "wasAlreadyFocused={}",
+    focus_result.was_already_focused
+  ));
+  notes.push(format!("activatedApp={activate}"));
+  if let Some(shortcut) = reveal_shortcut.as_deref() {
+    notes.push(format!("revealShortcut={shortcut}"));
+    notes.push(format!("revealSettleMs={reveal_settle_ms}"));
+  }
+  if !matched.placeholder.is_empty() {
+    notes.push(format!("matchedPlaceholder={}", matched.placeholder));
+  }
+
+  let mut signals = std::collections::BTreeMap::new();
+  signals.insert("focusMechanism".to_string(), "ax-attribute".to_string());
+  signals.insert("cursorDisturbance".to_string(), "none".to_string());
+  signals.insert("setAttribute".to_string(), focus_result.set_attribute);
+  signals.insert(
+    "wasAlreadyFocused".to_string(),
+    focus_result.was_already_focused.to_string(),
+  );
+
+  Ok(DriverResponse {
+    summary: if matched.title.is_empty() && matched.description.is_empty() {
+      format!(
+        "Focused text input in {} via AXUIElementSetAttributeValue(kAXFocusedAttribute) using query {} (role {}).",
+        if snapshot.app_name.is_empty() {
+          "target app"
+        } else {
+          &snapshot.app_name
+        },
+        query,
+        matched.role
+      )
+    } else {
+      format!(
+        "Focused {} in {} via AXUIElementSetAttributeValue(kAXFocusedAttribute) using query {} (no cursor warp).",
+        if matched.title.is_empty() {
+          matched.description.as_str()
+        } else {
+          matched.title.as_str()
+        },
+        if snapshot.app_name.is_empty() {
+          "target app"
+        } else {
+          &snapshot.app_name
+        },
+        query
+      )
+    },
+    backend: Some("macos.ax.set-focused".to_string()),
+    signals,
+    notes,
+    artifacts: vec![artifact],
+  })
+}
+
 pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
   let query = required_non_empty_string(call, "query")?;
