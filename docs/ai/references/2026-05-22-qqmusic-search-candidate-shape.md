@@ -277,7 +277,13 @@ The contract's first test is a single end-to-end music loop:
                    ...
                  ])}
 
-2. action:  music.result.play(candidate_id="row#1")
+2. action:  music.result.play(candidate_ref={
+                     source_run_id: <getter run>,
+                     source_span_id: <getter span>,
+                     source_operation_id: "music.search.results",
+                     source_artifact_id: <candidate-set artifact>,
+                     candidate_local_id: "row#1"
+                   })
               -> OperationResult { output: Verification(
                    VerificationResult {
                      executed: true,
@@ -314,7 +320,7 @@ Mapping to existing primitives (so the implementation cost is real):
 
 So the first contract-consuming skill is **not** a new recipe
 type; it's a typed facade over `play_visible_row.v0` that exposes
-candidates from `findScreenRows` and re-verifies preconditions
+candidates from `findWindowRows` and re-verifies preconditions
 before delegating to the existing row-click flow.
 
 This is deliberately conservative. The contract's first job is to
