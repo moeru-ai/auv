@@ -1917,6 +1917,18 @@ mod tests {
       html.contains("sprite-inspector.svg"),
       "viewer payload should use the inspector sprite for the empty preview state"
     );
+    assert!(
+      html.contains("click.overlay")
+        && html.contains("click.overlay.annotation")
+        && html.contains("evidence-summary"),
+      "viewer payload should include click overlay evidence-aware preview helpers"
+    );
+    assert!(
+      html.contains("defaultArtifactId")
+        && html.contains("findClickOverlayAnnotationArtifact")
+        && html.contains("loadEvidenceSummary"),
+      "viewer payload should prioritize click overlay artifacts and load paired annotation summaries"
+    );
 
     let _ = fs::remove_dir_all(root);
   }

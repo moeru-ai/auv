@@ -407,6 +407,34 @@
     background: var(--shell-3);
     border-left-color: var(--brand);
   }
+  .artifact-row.evidence {
+    background:
+      linear-gradient(90deg, rgba(0, 196, 210, 0.13), transparent 55%),
+      transparent;
+  }
+  .artifact-row.annotation {
+    background:
+      linear-gradient(90deg, rgba(127, 208, 48, 0.10), transparent 55%),
+      transparent;
+  }
+  .artifact-row .badge {
+    align-self: flex-start;
+    margin-top: 1px;
+    border: 1px solid var(--brand-strong);
+    color: var(--brand-soft);
+    background: rgba(0, 155, 166, 0.16);
+    border-radius: 2px;
+    padding: 1px 4px;
+    font-family: var(--font-ui);
+    font-size: 9px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .artifact-row.annotation .badge {
+    border-color: var(--validated);
+    color: var(--validated-soft);
+    background: rgba(47, 125, 79, 0.16);
+  }
   .artifact-row .mime-icon {
     width: 28px; height: 28px; flex: none;
     image-rendering: pixelated; display: block;
@@ -482,6 +510,24 @@
     display: block;
     image-rendering: auto;
   }
+  .artifact-preview .evidence-summary {
+    border: 1px solid var(--shell-line);
+    background: rgba(0, 196, 210, 0.07);
+    border-radius: 4px;
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .artifact-preview .evidence-summary .k { color: var(--fg-3); }
+  .artifact-preview .evidence-summary .v {
+    color: var(--fg);
+    word-break: break-word;
+  }
+  .artifact-preview .evidence-summary.loading .v { color: var(--fg-3); }
+  .artifact-preview .evidence-summary.error .v { color: var(--failed); }
   .artifact-preview .surface pre {
     margin: 0; padding: 14px;
     color: var(--fg-2);
@@ -707,6 +753,7 @@
     artifacts: [],
     activeSpanId: null,
     activeArtifactId: null,
+    activeEvidenceRequestId: 0,
     fetchedAt: null,
     // C.4: WebSocket live stream state. ws is the open socket (or
     // null); streamRunId is the run id the socket is bound to;
@@ -800,12 +847,13 @@
       state.spans = Array.isArray(spans) ? spans : [];
       state.events = Array.isArray(events) ? events : [];
       state.artifacts = Array.isArray(artifacts) ? artifacts : [];
+      state.activeArtifactId = defaultArtifactId(state.artifacts);
       setMainHeader(run, false);
       renderSpanTree(run, state.spans);
       renderSpanDetail(state.activeSpanId ? findSpan(state.activeSpanId) : null);
       renderEventList(state.events, run);
       renderArtifactList(state.artifacts);
-      renderArtifactPreview(null, state.artifacts);
+      renderArtifactPreview(findArtifact(state.activeArtifactId), state.artifacts);
     } catch (err) {
       if (state.activeRunId !== runId) return;
       setConnection(false, "/runs/:id (" + err.message + ")");
@@ -946,6 +994,53 @@
     return !!mime && mime.indexOf("image/") === 0;
   }
 
+  function isClickOverlayArtifact(artifact) {
+    return !!artifact && artifact.role === "click.overlay";
+  }
+
+  function isClickOverlayAnnotation(artifact) {
+    return !!artifact && artifact.role === "click.overlay.annotation";
+  }
+
+  function artifactStem(artifact) {
+    const basename = pathBasename(artifact && artifact.path);
+    const idx = basename.lastIndexOf(".");
+    const stem = idx > 0 ? basename.slice(0, idx) : basename;
+    return stem.replace(/^artifact_\d+_/, "");
+  }
+
+  function pairedOverlayStem(artifact) {
+    return artifactStem(artifact).replace(/\.annotation$/, "");
+  }
+
+  function findClickOverlayAnnotationArtifact(overlayArtifact, artifacts) {
+    if (!overlayArtifact || !artifacts) return null;
+    const stem = pairedOverlayStem(overlayArtifact);
+    return artifacts.find(function (candidate) {
+      return isClickOverlayAnnotation(candidate) && pairedOverlayStem(candidate) === stem;
+    }) || null;
+  }
+
+  function findClickOverlayImageArtifact(annotationArtifact, artifacts) {
+    if (!annotationArtifact || !artifacts) return null;
+    const stem = pairedOverlayStem(annotationArtifact);
+    return artifacts.find(function (candidate) {
+      return isClickOverlayArtifact(candidate) && pairedOverlayStem(candidate) === stem;
+    }) || null;
+  }
+
+  function defaultArtifactId(artifacts) {
+    if (!artifacts || !artifacts.length) return null;
+    const overlay = artifacts.slice().reverse().find(isClickOverlayArtifact);
+    return overlay ? overlay.artifact_id : null;
+  }
+
+  function artifactBadge(artifact, artifacts) {
+    if (isClickOverlayArtifact(artifact)) return "evidence";
+    if (isClickOverlayAnnotation(artifact)) return "annotation";
+    return "";
+  }
+
   function pathBasename(path) {
     if (!path) return "";
     const idx = path.lastIndexOf("/");
@@ -976,10 +1071,17 @@
         el("span", { className: "file" }, [pathBasename(artifact.path)]),
       ]);
       const active = artifact.artifact_id === state.activeArtifactId;
+      const badge = artifactBadge(artifact, artifacts);
+      const rowChildren = badge
+        ? [icon, meta, el("span", { className: "badge" }, [badge])]
+        : [icon, meta];
       const row = el(
         "button",
         {
-          className: "artifact-row" + (active ? " active" : ""),
+          className: "artifact-row"
+            + (isClickOverlayArtifact(artifact) ? " evidence" : "")
+            + (isClickOverlayAnnotation(artifact) ? " annotation" : "")
+            + (active ? " active" : ""),
           dataset: { artifactId: artifact.artifact_id },
           onClick: function () {
             state.activeArtifactId = artifact.artifact_id;
@@ -987,7 +1089,7 @@
             renderArtifactPreview(findArtifact(state.activeArtifactId), state.artifacts);
           },
         },
-        [icon, meta]
+        rowChildren
       );
       list.appendChild(row);
     }
@@ -1020,6 +1122,8 @@
     if (artifact.event_id) entries.push(["event_id", artifact.event_id]);
     if (artifact.sha256) entries.push(["sha256", artifact.sha256]);
     if (artifact.summary) entries.push(["summary", artifact.summary]);
+    if (isClickOverlayArtifact(artifact)) entries.push(["evidence", "click overlay"]);
+    if (isClickOverlayAnnotation(artifact)) entries.push(["evidence", "click overlay annotation"]);
     const grid = el("div", { className: "attrs" }, []);
     for (const [k, v] of entries) {
       grid.appendChild(el("span", { className: "k" }, [k]));
@@ -1028,11 +1132,102 @@
     return grid;
   }
 
+  function renderEvidenceSummaryContainer() {
+    return el("div", { className: "evidence-summary loading" }, [
+      el("span", { className: "k" }, ["evidence"]),
+      el("span", { className: "v" }, ["loading click overlay annotation…"]),
+    ]);
+  }
+
+  function pointSummary(point) {
+    if (!point) return "—";
+    const sx = Number(point.screenshot_x);
+    const sy = Number(point.screenshot_y);
+    const lx = Number(point.logical_x);
+    const ly = Number(point.logical_y);
+    return "screen=(" + sx.toFixed(1) + "," + sy.toFixed(1)
+      + ") logical=(" + lx.toFixed(1) + "," + ly.toFixed(1) + ")";
+  }
+
+  function renderEvidenceSummary(container, payload, annotationArtifact) {
+    container.className = "evidence-summary";
+    container.innerHTML = "";
+    const rows = [
+      ["kind", payload.kind || "click.overlay"],
+      ["query", payload.query || "—"],
+      ["strategy", payload.strategy || "—"],
+      ["fallback", payload.fallback_used == null ? "—" : String(payload.fallback_used)],
+      ["cursor", payload.cursor_disturbance || "—"],
+      ["press", payload.press_mechanism || "—"],
+      ["overlay", payload.overlay_presentation || "—"],
+      ["expected", pointSummary(payload.expected_target)],
+      ["actual", pointSummary(payload.action_point)],
+    ];
+    if (payload.ocr_match) rows.push([
+      "ocr",
+      (payload.ocr_match.text || "—") + " · confidence="
+        + Number(payload.ocr_match.confidence || 0).toFixed(2),
+    ]);
+    if (payload.row) rows.push([
+      "row",
+      "#" + (Number(payload.row.row_index || 0) + 1)
+        + " · " + (payload.row.source || "—")
+        + " · " + ((payload.row.text_fragments || []).join(" | ") || "—"),
+    ]);
+    rows.push(["annotation", annotationArtifact ? annotationArtifact.artifact_id : "—"]);
+
+    for (const [k, v] of rows) {
+      container.appendChild(el("span", { className: "k" }, [k]));
+      container.appendChild(el("span", { className: "v" }, [String(v)]));
+    }
+  }
+
+  function loadEvidenceSummary(container, overlayArtifact, artifacts, requestId) {
+    const annotation = findClickOverlayAnnotationArtifact(overlayArtifact, artifacts);
+    if (!annotation) {
+      container.className = "evidence-summary error";
+      container.innerHTML = "";
+      container.appendChild(el("span", { className: "k" }, ["evidence"]));
+      container.appendChild(el("span", { className: "v" }, ["missing click.overlay.annotation artifact"]));
+      return;
+    }
+    const annotationUrl = "/runs/" + encodeURIComponent(state.activeRunId)
+      + "/artifacts/" + encodeURIComponent(annotation.artifact_id);
+    fetch(annotationUrl)
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      })
+      .then(function (payload) {
+        if (state.activeEvidenceRequestId !== requestId) return;
+        renderEvidenceSummary(container, payload || {}, annotation);
+      })
+      .catch(function (err) {
+        if (state.activeEvidenceRequestId !== requestId) return;
+        container.className = "evidence-summary error";
+        container.innerHTML = "";
+        container.appendChild(el("span", { className: "k" }, ["evidence"]));
+        container.appendChild(el("span", { className: "v" }, [
+          "failed to load click overlay annotation: " + err.message,
+        ]));
+      });
+  }
+
   function renderArtifactPreview(artifact, artifacts) {
     const preview = document.getElementById("artifact-preview");
+    state.activeEvidenceRequestId += 1;
     if (!artifact) {
       renderArtifactPreviewEmpty(artifacts ? artifacts.length : 0);
       return;
+    }
+    if (isClickOverlayAnnotation(artifact)) {
+      const overlay = findClickOverlayImageArtifact(artifact, artifacts);
+      if (overlay) {
+        state.activeArtifactId = overlay.artifact_id;
+        renderArtifactList(state.artifacts);
+        renderArtifactPreview(overlay, artifacts);
+        return;
+      }
     }
     preview.className = "artifact-preview detail";
     preview.innerHTML = "";
@@ -1047,6 +1242,11 @@
     if (isImageMime(artifact.mime_type)) {
       surface.className = "surface image";
       surface.appendChild(el("img", { src: artifactUrl, alt: artifact.role || "" }));
+      if (isClickOverlayArtifact(artifact)) {
+        const summary = renderEvidenceSummaryContainer();
+        preview.appendChild(summary);
+        loadEvidenceSummary(summary, artifact, artifacts, state.activeEvidenceRequestId);
+      }
       return;
     }
 
@@ -1181,10 +1381,11 @@
         const artifact = frame.artifact;
         if (artifact) {
           state.artifacts.push(artifact);
-          renderArtifactList(state.artifacts);
-          if (!state.activeArtifactId) {
-            renderArtifactPreview(null, state.artifacts);
+          if (isClickOverlayArtifact(artifact)) {
+            state.activeArtifactId = artifact.artifact_id;
           }
+          renderArtifactList(state.artifacts);
+          renderArtifactPreview(findArtifact(state.activeArtifactId), state.artifacts);
         }
         break;
       }
