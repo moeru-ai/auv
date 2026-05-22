@@ -119,6 +119,28 @@ When an implementation is mostly complete, update durable reference material in
 `docs/ai/references/`. Add, merge, or revise reference docs so completed and
 partially completed work is discoverable outside the original plan or spec.
 
+### Documentation Placement
+
+Use `docs/ai/references/` only for durable project reference material: accepted
+design notes, implementation handoffs, evidence packs, coverage reports, and
+records that should be useful to reviewers after the original task context is
+gone. Content in this directory should describe the current project state or a
+clearly labeled historical decision.
+
+Use `docs/ai/explanations/` for committed explanatory material: tutorials,
+interactive explainers, conceptual walkthroughs, diagrams, and other documents
+whose purpose is to teach or clarify an idea rather than record project
+evidence. Prefer English for committed explanations unless the user explicitly
+asks for another language.
+
+Use `docs/notes/<owner>/` for personal, exploratory, or scratch material,
+including rough HTML demos, temporary investigation notes, local run logs, and
+drafts that are not ready to be shared as durable project references. Do not
+commit notes from `docs/notes/<owner>/` unless the user explicitly asks for
+that exact material to be committed. If a note becomes generally useful, move
+or rewrite it into `docs/ai/explanations/` or `docs/ai/references/` as
+appropriate before committing.
+
 ## Validation Commands
 
 - `cargo fmt --check`
