@@ -357,6 +357,22 @@ pub struct SkillStep {
   pub args: BTreeMap<String, Value>,
   #[serde(default)]
   pub purpose: String,
+  /// Step-level opt-out for Rule 1 in
+  /// `docs/ai/references/2026-05-22-phase-3-mainline-acceptance.md`.
+  /// Required when a `command_id` is restricted to the
+  /// `macos.demo.*` namespace by the mainline-compliance gate (today
+  /// only `debug.smartPress`). The reason must be human-readable; the
+  /// category limits the kind of exemption being claimed.
+  #[serde(default)]
+  pub mainline_exemption: Option<MainlineExemption>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct MainlineExemption {
+  #[serde(default)]
+  pub reason: String,
+  #[serde(default)]
+  pub category: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -794,7 +810,92 @@ pub(crate) fn validate_skill_manifest_with_commands(
   validate_skill_inputs(manifest)?;
   validate_skill_steps(manifest, command_catalog)?;
   validate_skill_disturbance_budget(manifest)?;
+  validate_skill_mainline_compliance(manifest)?;
   validate_skill_verification(manifest)?;
+  Ok(())
+}
+
+/// Phase 3 Rule 1 from
+/// `docs/ai/references/2026-05-22-phase-3-mainline-acceptance.md`:
+/// `debug.smartPress` is a discovery vehicle, not a production
+/// default. Allowed in `macos.demo.*` recipes (presentation
+/// surface) or in any recipe where the step declares an explicit
+/// `mainline_exemption: { reason, category }` opt-in. The exemption
+/// must be a non-empty reason and a known category
+/// (`discovery` | `experiment` | `reverification`); the audit doc
+/// catalogues every active exemption so the opt-out cannot become a
+/// silent default.
+pub(crate) fn validate_skill_mainline_compliance(manifest: &SkillManifest) -> AuvResult<()> {
+  const RESTRICTED_COMMANDS: &[&str] = &["debug.smartPress"];
+  const DEMO_PREFIX: &str = "macos.demo.";
+  const ALLOWED_CATEGORIES: &[&str] = &["discovery", "experiment", "reverification"];
+
+  let in_demo_namespace = manifest.recipe_id.starts_with(DEMO_PREFIX);
+
+  for (index, step) in manifest.steps.iter().enumerate() {
+    let step_label = step_id(step, index);
+    let is_restricted = RESTRICTED_COMMANDS
+      .iter()
+      .any(|cmd| *cmd == step.command_id);
+    if !is_restricted {
+      continue;
+    }
+    if in_demo_namespace {
+      continue;
+    }
+
+    let Some(exemption) = step.mainline_exemption.as_ref() else {
+      return Err(format!(
+        "skill {} step {step_label} uses {} outside the macos.demo.* namespace without a step-level mainline_exemption. \
+         See docs/ai/references/2026-05-22-phase-3-mainline-acceptance.md rule 1 — either move the recipe to macos.demo.* or declare an explicit exemption with reason + category.",
+        manifest.recipe_id, step.command_id,
+      ));
+    };
+
+    let reason = exemption.reason.trim();
+    if reason.is_empty() {
+      return Err(format!(
+        "skill {} step {step_label} mainline_exemption.reason must be non-empty (rule 1)",
+        manifest.recipe_id,
+      ));
+    }
+    let category = exemption.category.trim();
+    if !ALLOWED_CATEGORIES.iter().any(|c| *c == category) {
+      return Err(format!(
+        "skill {} step {step_label} mainline_exemption.category {category:?} is not one of {ALLOWED_CATEGORIES:?} (rule 1)",
+        manifest.recipe_id,
+      ));
+    }
+  }
+  Ok(())
+}
+
+/// Phase 3 Rule 2 from
+/// `docs/ai/references/2026-05-22-phase-3-mainline-acceptance.md`:
+/// any recipe that uses `debug.smartPress` in any step cannot have
+/// `status == "validated"` cases. The promotion path for a smart-
+/// press recipe is candidate -> evidence -> spawn a non-smart child
+/// fixed to whichever strategy actually works.
+pub(crate) fn validate_smart_press_case_status(
+  manifest: &SkillManifest,
+  matrix: &SkillCaseMatrix,
+) -> AuvResult<()> {
+  let uses_smart_press = manifest
+    .steps
+    .iter()
+    .any(|step| step.command_id == "debug.smartPress");
+  if !uses_smart_press {
+    return Ok(());
+  }
+  for case in &matrix.cases {
+    if case.status.trim() == "validated" {
+      return Err(format!(
+        "case matrix {} case {} is status=validated, but recipe {} uses debug.smartPress (rule 2 — smart-press recipes cannot host validated cases; promote to a non-smart child recipe instead). \
+         See docs/ai/references/2026-05-22-phase-3-mainline-acceptance.md.",
+        matrix.skill_id, case.case_id, manifest.recipe_id,
+      ));
+    }
+  }
   Ok(())
 }
 
@@ -1830,6 +1931,8 @@ pub(crate) fn validate_case_matrix_against_skill(
     }
   }
 
+  validate_smart_press_case_status(manifest, matrix)?;
+
   Ok(())
 }
 
@@ -2746,6 +2849,10 @@ mod tests {
           "query": "${query}",
           "overlay": "true",
           "allow_pointer_fallback": "true"
+        },
+        "mainline_exemption": {
+          "reason": "Phase 3 #5 cross-app smartPress discovery vehicle; recipe lives outside macos.demo.* for taxonomy-test coverage.",
+          "category": "discovery"
         }
       }],
       "verification": {
@@ -2756,6 +2863,139 @@ mod tests {
     .expect("manifest should deserialize");
 
     validate_skill_manifest(&manifest).expect("smart-press manifest should validate");
+  }
+
+  fn smart_press_manifest_template(
+    recipe_id: &str,
+    exemption: Option<serde_json::Value>,
+  ) -> SkillManifest {
+    let mut step = json!({
+      "id": "smart-press",
+      "command_id": "debug.smartPress",
+      "disturbance": {
+        "classes": ["foreground_app", "pointer"],
+        "max": "pointer"
+      },
+      "args": {
+        "target": "app",
+        "query": "${query}",
+        "overlay": "true"
+      }
+    });
+    if let Some(exemption) = exemption {
+      step
+        .as_object_mut()
+        .expect("step should be object")
+        .insert("mainline_exemption".to_string(), exemption);
+    }
+    serde_json::from_value(json!({
+      "recipe_id": recipe_id,
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "window-action",
+        "grounding": "window-point",
+        "activation": "smart-press",
+        "verificationContract": "captureEvidence"
+      },
+      "objective": "test",
+      "inputs": { "query": { "type": "string", "default": "Run" } },
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["foreground_app", "pointer", "none"]
+      },
+      "steps": [step],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize")
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_smart_press_in_product_namespace_without_exemption() {
+    let manifest = smart_press_manifest_template("macos.qqmusic.play.v9", None);
+    let error = validate_skill_manifest(&manifest)
+      .expect_err("smart-press in product namespace without exemption should fail");
+    assert!(
+      error.contains("mainline_exemption"),
+      "unexpected error: {error}"
+    );
+    assert!(error.contains("rule 1"), "unexpected error: {error}");
+  }
+
+  #[test]
+  fn validate_skill_manifest_accepts_smart_press_with_explicit_exemption() {
+    let manifest = smart_press_manifest_template(
+      "macos.qqmusic.play.v9",
+      Some(json!({
+        "reason": "Phase 3 #6 controlled experiment on whether QQ音乐 play control is AX-pressable",
+        "category": "experiment"
+      })),
+    );
+    validate_skill_manifest(&manifest)
+      .expect("smart-press in product namespace with valid exemption should validate");
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_smart_press_exemption_with_unknown_category() {
+    let manifest = smart_press_manifest_template(
+      "macos.qqmusic.play.v9",
+      Some(json!({
+        "reason": "this should fail because the category is not in the allow-list",
+        "category": "because-i-said-so"
+      })),
+    );
+    let error =
+      validate_skill_manifest(&manifest).expect_err("unknown exemption category should fail");
+    assert!(error.contains("category"), "unexpected error: {error}");
+    assert!(error.contains("rule 1"), "unexpected error: {error}");
+  }
+
+  #[test]
+  fn validate_case_matrix_rejects_validated_case_on_smart_press_recipe() {
+    let manifest = smart_press_manifest_template("macos.demo.smart.v9", None);
+    let matrix: SkillCaseMatrix = serde_json::from_value(json!({
+      "skill_id": "macos.demo.smart.v9",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "demo-validated",
+        "status": "validated",
+        "inputs": { "query": "Run" },
+        "disturbance": "pointer"
+      }]
+    }))
+    .expect("matrix should deserialize");
+    let error = validate_case_matrix_against_skill(&manifest, &matrix)
+      .expect_err("validated case on smart-press recipe should fail");
+    assert!(error.contains("rule 2"), "unexpected error: {error}");
+    assert!(
+      error.contains("debug.smartPress"),
+      "unexpected error: {error}"
+    );
+  }
+
+  #[test]
+  fn validate_case_matrix_accepts_candidate_case_on_smart_press_recipe() {
+    let manifest = smart_press_manifest_template("macos.demo.smart.v9", None);
+    let matrix: SkillCaseMatrix = serde_json::from_value(json!({
+      "skill_id": "macos.demo.smart.v9",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "demo-candidate",
+        "status": "candidate",
+        "inputs": { "query": "Run" },
+        "disturbance": "pointer"
+      }]
+    }))
+    .expect("matrix should deserialize");
+    validate_case_matrix_against_skill(&manifest, &matrix)
+      .expect("candidate case on smart-press recipe should validate");
   }
 
   #[test]

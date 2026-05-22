@@ -240,6 +240,10 @@
         "overlay": "true",
         "allow_pointer_fallback": "true"
       },
+      "mainline_exemption": {
+        "reason": "Phase 3 #6 controlled experiment — explicit measurement of whether the QQ音乐 play control is reachable through the AX path versus requiring the pointer-click fallback. Recipe lives in the product namespace (not macos.demo.*) because it is a deliberate fork of the validated play_visible_row.v0 product recipe; the goal is to produce hands-off replay evidence that informs whether a future non-smart child recipe should pin AX-action or pointer-click. All cases stay candidate per Rule 2; the recipe is not a product default. See docs/ai/references/2026-05-22-phase-3-mainline-acceptance.md.",
+        "category": "experiment"
+      },
       "expect": {
         "artifact_count_at_least": 1
       },
