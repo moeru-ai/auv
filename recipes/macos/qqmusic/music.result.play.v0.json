@@ -126,7 +126,7 @@
       "id": "play-candidate",
       "command_id": "music.result.play",
       "disturbance": {
-        "classes": ["none", "foreground_app", "pointer"],
+        "classes": ["foreground_app", "pointer"],
         "max": "pointer"
       },
       "args": {

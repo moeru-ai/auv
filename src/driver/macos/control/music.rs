@@ -684,9 +684,12 @@ fn click_music_candidate_row(
   let mut inputs = BTreeMap::new();
   inputs.insert("row_index".to_string(), row_index.to_string());
   inputs.insert("label".to_string(), "music-result-play-row".to_string());
+  // Do NOT activate before capture by default — activating QQ音乐 when it is not
+  // frontmost causes it to navigate away from search results to the home screen.
+  // The caller must ensure QQ音乐 is already frontmost with search results visible.
   inputs.insert(
     "activate_target_before_capture".to_string(),
-    optional_string(call, "activate_target_before_capture").unwrap_or_else(|| "true".to_string()),
+    optional_string(call, "activate_target_before_capture").unwrap_or_else(|| "false".to_string()),
   );
   copy_input_or_default(call, &mut inputs, "click_count", "click_count", "2");
   copy_input_or_default(
