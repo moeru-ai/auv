@@ -287,19 +287,15 @@ fn scan_window_region_into_run(
       consecutive_no_progress = 0;
     }
 
-    // TODO: Replace this weak no-progress proxy with explicit directional
-    // scroll-boundary evidence. Downward scans need reliable bottom detection;
-    // upward scans need reliable top detection; both directions also need
-    // "scroll until match" semantics so UntilMatch can search above or below
-    // the current viewport instead of only checking already visible rows.
-    // Today we infer progress only from newly observed item signatures, so
-    // repeated virtualized rows, OCR churn, or duplicated labels can make
-    // "top/bottom reached" ambiguous. We need at least one of:
-    // screenshot-region diffing before/after scroll, scrollbar/thumb geometry,
-    // AX scroll value when available, or driver-level scroll-effect evidence.
-    // Sectioned lists also need middleware that can detect separators,
-    // sticky headers, or section boundary regions during the scroll loop so a
-    // scan can stop at, enter, or report section transitions deliberately.
+    // Boundary evidence is still incomplete. We now distinguish raw
+    // no-progress heuristics from adjacent-page repeated row-band overlap, but
+    // downward scans still need stronger bottom detection and upward scans
+    // still need stronger top detection. Future layers should add screenshot
+    // diff stability, scrollbar/thumb geometry, AX scroll values, or explicit
+    // driver-level scroll-effect evidence. Sectioned lists also need
+    // middleware that can detect separators, sticky headers, or section
+    // boundary regions during the scroll loop so a scan can stop at, enter, or
+    // report section transitions deliberately.
     // MaaFW reference: Context::wait_freezes and ActionHelper compare image
     // stability around an action, while Pipeline roi/target references keep
     // image evidence tied to a node result; see:
@@ -311,6 +307,7 @@ fn scan_window_region_into_run(
       scroll_count,
       consecutive_no_progress,
       new_observation_count,
+      &state.observations,
     );
     if let Some(candidate) = scroll_boundary_candidate.clone() {
       state.scroll_boundary_candidates.push(candidate);
@@ -791,21 +788,93 @@ fn scroll_boundary_candidate_for_progress(
   scroll_count: usize,
   consecutive_no_progress: usize,
   new_observation_count: usize,
+  observations: &[CollectionObservation],
 ) -> Option<ScrollBoundaryCandidate> {
   if page_index == 0 || scroll_count == 0 || new_observation_count > 0 {
     return None;
   }
   let normalized_direction = direction.trim().to_ascii_lowercase();
   let boundary = scroll_boundary_for_direction(&normalized_direction)?;
+  let repeated_overlap_count = repeated_row_band_overlap_count(page_index, observations);
+  let (basis, confidence) = if repeated_overlap_count >= 2 {
+    ("repeated_row_band_overlap", "corroborated")
+  } else {
+    ("no_new_observations_after_scroll", "heuristic")
+  };
   Some(ScrollBoundaryCandidate {
     page_index,
     scroll_count,
     direction: normalized_direction,
     boundary,
-    basis: "no_new_observations_after_scroll".to_string(),
-    confidence: "heuristic".to_string(),
+    basis: basis.to_string(),
+    confidence: confidence.to_string(),
     consecutive_no_progress,
   })
+}
+
+fn repeated_row_band_overlap_count(
+  page_index: usize,
+  observations: &[CollectionObservation],
+) -> usize {
+  if page_index == 0 {
+    return 0;
+  }
+  let previous_page = page_index - 1;
+  let previous = observations
+    .iter()
+    .filter(|observation| observation.page_index == previous_page)
+    .collect::<Vec<_>>();
+  let current = observations
+    .iter()
+    .filter(|observation| observation.page_index == page_index)
+    .collect::<Vec<_>>();
+  let mut matched_previous = BTreeSet::new();
+  let mut overlap_count = 0;
+
+  for observation in current {
+    if let Some((previous_index, _)) =
+      previous
+        .iter()
+        .enumerate()
+        .find(|(previous_index, candidate)| {
+          !matched_previous.contains(previous_index)
+            && repeated_row_band_overlap(candidate, observation)
+        })
+    {
+      matched_previous.insert(previous_index);
+      overlap_count += 1;
+    }
+  }
+
+  overlap_count
+}
+
+fn repeated_row_band_overlap(left: &CollectionObservation, right: &CollectionObservation) -> bool {
+  if !should_merge_adjacent_observations(left, right) {
+    return false;
+  }
+  rect_overlap_ratio(
+    left.bounds.x,
+    left.bounds.width,
+    right.bounds.x,
+    right.bounds.width,
+  ) >= 0.5
+    && rect_overlap_ratio(
+      left.bounds.y,
+      left.bounds.height,
+      right.bounds.y,
+      right.bounds.height,
+    ) >= 0.6
+}
+
+fn rect_overlap_ratio(start_a: i64, size_a: i64, start_b: i64, size_b: i64) -> f64 {
+  if size_a <= 0 || size_b <= 0 {
+    return 0.0;
+  }
+  let end_a = start_a + size_a;
+  let end_b = start_b + size_b;
+  let overlap = (end_a.min(end_b) - start_a.max(start_b)).max(0);
+  overlap as f64 / size_a.min(size_b) as f64
 }
 
 fn scroll_boundary_for_direction(direction: &str) -> Option<ScrollBoundary> {
@@ -2105,7 +2174,7 @@ mod tests {
   #[test]
   fn scroll_boundary_candidate_maps_direction_to_boundary() {
     let candidate =
-      scroll_boundary_candidate_for_progress("up", 2, 2, 1, 0).expect("boundary candidate");
+      scroll_boundary_candidate_for_progress("up", 2, 2, 1, 0, &[]).expect("boundary candidate");
 
     assert_eq!(candidate.boundary, ScrollBoundary::Top);
     assert_eq!(candidate.direction, "up");
@@ -2115,9 +2184,47 @@ mod tests {
 
   #[test]
   fn scroll_boundary_candidate_requires_prior_scroll_and_no_new_observations() {
-    assert!(scroll_boundary_candidate_for_progress("down", 0, 0, 0, 0).is_none());
-    assert!(scroll_boundary_candidate_for_progress("down", 1, 0, 1, 0).is_none());
-    assert!(scroll_boundary_candidate_for_progress("down", 1, 1, 0, 2).is_none());
+    assert!(scroll_boundary_candidate_for_progress("down", 0, 0, 0, 0, &[]).is_none());
+    assert!(scroll_boundary_candidate_for_progress("down", 1, 0, 1, 0, &[]).is_none());
+    assert!(scroll_boundary_candidate_for_progress("down", 1, 1, 0, 2, &[]).is_none());
+  }
+
+  #[test]
+  fn scroll_boundary_candidate_uses_corroborated_basis_for_downward_repeated_row_overlap() {
+    let observations = repeated_overlap_page_observations();
+
+    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations)
+      .expect("boundary candidate");
+
+    assert_eq!(candidate.boundary, ScrollBoundary::Bottom);
+    assert_eq!(candidate.basis, "repeated_row_band_overlap");
+    assert_eq!(candidate.confidence, "corroborated");
+  }
+
+  #[test]
+  fn scroll_boundary_candidate_uses_corroborated_basis_for_upward_repeated_row_overlap() {
+    let observations = repeated_overlap_page_observations();
+
+    let candidate = scroll_boundary_candidate_for_progress("up", 1, 1, 1, 0, &observations)
+      .expect("boundary candidate");
+
+    assert_eq!(candidate.boundary, ScrollBoundary::Top);
+    assert_eq!(candidate.basis, "repeated_row_band_overlap");
+    assert_eq!(candidate.confidence, "corroborated");
+  }
+
+  #[test]
+  fn scroll_boundary_candidate_keeps_heuristic_basis_for_single_repeated_row_overlap() {
+    let observations = vec![
+      observation("obs_0001", 0, "Repeat A", 120),
+      observation("obs_0002", 1, "Repeat A", 118),
+    ];
+
+    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations)
+      .expect("boundary candidate");
+
+    assert_eq!(candidate.basis, "no_new_observations_after_scroll");
+    assert_eq!(candidate.confidence, "heuristic");
   }
 
   #[test]
@@ -2136,7 +2243,7 @@ mod tests {
         hook_stop_requested: false,
         match_found: false,
         next_section_candidate: false,
-        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0),
+        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[]),
       },
     )
     .expect("boundary stop expected");
@@ -2147,6 +2254,12 @@ mod tests {
       CompletenessClaim::CompleteByReachedBoundary
     );
     assert!(decision.stop_evidence.message.contains("bottom"));
+    assert!(
+      decision
+        .stop_evidence
+        .message
+        .contains("no_new_observations_after_scroll")
+    );
   }
 
   #[test]
@@ -2164,7 +2277,7 @@ mod tests {
         hook_stop_requested: false,
         match_found: false,
         next_section_candidate: false,
-        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0),
+        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[]),
       },
     );
 
@@ -2757,6 +2870,15 @@ mod tests {
       source_artifacts: Vec::new(),
       attributes: BTreeMap::new(),
     }
+  }
+
+  fn repeated_overlap_page_observations() -> Vec<CollectionObservation> {
+    vec![
+      observation("obs_0001", 0, "Repeat A", 120),
+      observation("obs_0002", 0, "Repeat B", 172),
+      observation("obs_0003", 1, "Repeat A", 118),
+      observation("obs_0004", 1, "Repeat B", 170),
+    ]
   }
 
   fn write_temp_json_artifact(label: &str, raw: &str) -> PathBuf {
