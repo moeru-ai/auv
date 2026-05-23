@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::contract::{RecognitionResult, RecognitionSource, RecognitionSurface, RecognizedItem};
 use crate::model::{
   AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus,
 };
@@ -463,6 +464,13 @@ pub fn observations_from_observe_json(
 ) -> AuvResult<Vec<CollectionObservation>> {
   let value: Value =
     serde_json::from_str(raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
+  if let Some(recognition) = recognition_result_from_value(&value) {
+    return Ok(observations_from_recognition_result(
+      page_index,
+      &recognition,
+      &source_artifact,
+    ));
+  }
   let rows = value
     .get("item_candidates")
     .and_then(Value::as_array)
@@ -474,6 +482,29 @@ pub fn observations_from_observe_json(
     .iter()
     .enumerate()
     .map(|(row_index, row)| observation_from_row(page_index, row_index, row, &source_artifact))
+    .collect()
+}
+
+fn recognition_result_from_value(value: &Value) -> Option<RecognitionResult> {
+  serde_json::from_value(value.clone()).ok()
+}
+
+fn observations_from_recognition_result(
+  page_index: usize,
+  recognition: &RecognitionResult,
+  source_artifact: &Path,
+) -> Vec<CollectionObservation> {
+  let items = if recognition.filtered.is_empty() {
+    &recognition.all
+  } else {
+    &recognition.filtered
+  };
+  items
+    .iter()
+    .enumerate()
+    .map(|(item_index, item)| {
+      observation_from_recognized_item(page_index, item_index, item, recognition, source_artifact)
+    })
     .collect()
 }
 
@@ -964,6 +995,31 @@ fn observation_from_row(
   })
 }
 
+fn observation_from_recognized_item(
+  page_index: usize,
+  item_index: usize,
+  item: &RecognizedItem,
+  recognition: &RecognitionResult,
+  source_artifact: &Path,
+) -> CollectionObservation {
+  let raw_text = recognized_item_text(item);
+  CollectionObservation {
+    observation_id: format!("obs_{:04}_{:04}", page_index + 1, item_index + 1),
+    page_index,
+    raw_text: raw_text.clone(),
+    normalized_text_key: normalize_observation_text(&raw_text),
+    bounds: ScanRect {
+      x: item.box_.x,
+      y: item.box_.y,
+      width: item.box_.width,
+      height: item.box_.height,
+    },
+    section_context: None,
+    source_artifacts: vec![source_artifact.to_path_buf()],
+    attributes: observation_attributes_from_recognized_item(item_index, item, recognition),
+  }
+}
+
 fn observation_attributes_from_row(row: &Value) -> BTreeMap<String, String> {
   let mut attributes = BTreeMap::new();
   if let Some(source) = row.get("source").and_then(Value::as_str) {
@@ -998,6 +1054,98 @@ fn observation_attributes_from_row(row: &Value) -> BTreeMap<String, String> {
     }
   }
   attributes
+}
+
+fn observation_attributes_from_recognized_item(
+  item_index: usize,
+  item: &RecognizedItem,
+  recognition: &RecognitionResult,
+) -> BTreeMap<String, String> {
+  let mut attributes = BTreeMap::new();
+  attributes.insert("item_index".to_string(), item_index.to_string());
+  attributes.insert(
+    "recognition_id".to_string(),
+    recognition.recognition_id.clone(),
+  );
+  attributes.insert("recognized_item_id".to_string(), item.item_id.clone());
+  attributes.insert(
+    "recognition_source".to_string(),
+    recognition_source_name(recognition.source).to_string(),
+  );
+  attributes.insert(
+    "recognition_surface".to_string(),
+    recognition_surface_name(recognition.scope.surface).to_string(),
+  );
+  attributes.insert("recognized_item_kind".to_string(), item.kind.clone());
+  if let Some(source) = item.detail.get("source").and_then(Value::as_str) {
+    attributes.insert("source".to_string(), source.to_string());
+  } else {
+    attributes.insert(
+      "source".to_string(),
+      format!(
+        "recognition:{}",
+        recognition_source_name(recognition.source)
+      ),
+    );
+  }
+  if let Some(row_index) = item.detail.get("row_index").and_then(Value::as_u64) {
+    attributes.insert("row_index".to_string(), row_index.to_string());
+    attributes.insert("row_candidate_index".to_string(), row_index.to_string());
+  }
+  if let Some(text_fragments) = recognized_item_text_fragments(item) {
+    if !text_fragments.is_empty() {
+      attributes.insert("text_fragments".to_string(), text_fragments.join(" | "));
+    }
+  }
+  attributes
+}
+
+fn recognized_item_text(item: &RecognizedItem) -> String {
+  item
+    .text
+    .as_deref()
+    .filter(|text| !text.trim().is_empty())
+    .map(str::to_string)
+    .or_else(|| recognized_item_text_fragments(item).map(|fragments| fragments.join(" | ")))
+    .unwrap_or_default()
+}
+
+fn recognized_item_text_fragments(item: &RecognizedItem) -> Option<Vec<String>> {
+  let fragments = item
+    .detail
+    .get("text_fragments")
+    .and_then(Value::as_array)?
+    .iter()
+    .filter_map(Value::as_str)
+    .map(str::trim)
+    .filter(|fragment| !fragment.is_empty())
+    .map(str::to_string)
+    .collect::<Vec<_>>();
+  if fragments.is_empty() {
+    None
+  } else {
+    Some(fragments)
+  }
+}
+
+fn recognition_source_name(source: RecognitionSource) -> &'static str {
+  match source {
+    RecognitionSource::OcrText => "ocr_text",
+    RecognitionSource::OcrRow => "ocr_row",
+    RecognitionSource::VisualRow => "visual_row",
+    RecognitionSource::SegmentedRegion => "segmented_region",
+    RecognitionSource::IconMatch => "icon_match",
+    RecognitionSource::Custom => "custom",
+  }
+}
+
+fn recognition_surface_name(surface: RecognitionSurface) -> &'static str {
+  match surface {
+    RecognitionSurface::Screen => "screen",
+    RecognitionSurface::Display => "display",
+    RecognitionSurface::Window => "window",
+    RecognitionSurface::Region => "region",
+  }
 }
 
 fn json_i64(bounds: &Value, key: &str, row_index: usize) -> AuvResult<i64> {
@@ -1109,15 +1257,52 @@ fn observations_from_first_json_artifact(
   result: &InvokeResult,
   source_artifact: PathBuf,
 ) -> AuvResult<Vec<CollectionObservation>> {
-  let json_path = first_artifact_with_extension(result, "json")
-    .ok_or_else(|| "observe window region did not produce a JSON artifact".to_string())?;
-  let raw = fs::read_to_string(&json_path).map_err(|error| {
-    format!(
-      "failed to read observe JSON {}: {error}",
-      json_path.display()
-    )
-  })?;
-  observations_from_observe_json(page_index, &raw, source_artifact)
+  let json_paths = result
+    .artifact_paths
+    .iter()
+    .filter(|path| {
+      path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("json"))
+    })
+    .cloned()
+    .collect::<Vec<_>>();
+  if json_paths.is_empty() {
+    return Err("observe window region did not produce a JSON artifact".to_string());
+  }
+  observations_from_json_artifacts(page_index, &json_paths, &source_artifact)
+}
+
+fn observations_from_json_artifacts(
+  page_index: usize,
+  json_paths: &[PathBuf],
+  source_artifact: &Path,
+) -> AuvResult<Vec<CollectionObservation>> {
+  let mut raw_json_artifacts = Vec::with_capacity(json_paths.len());
+  for path in json_paths {
+    let raw = fs::read_to_string(path)
+      .map_err(|error| format!("failed to read observe JSON {}: {error}", path.display()))?;
+    let value: Value =
+      serde_json::from_str(&raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
+    if recognition_result_from_value(&value).is_some() {
+      return observations_from_observe_json(page_index, &raw, source_artifact.to_path_buf());
+    }
+    raw_json_artifacts.push(raw);
+  }
+
+  let mut last_error = None;
+  for raw in raw_json_artifacts {
+    match observations_from_observe_json(page_index, &raw, source_artifact.to_path_buf()) {
+      Ok(observations) => return Ok(observations),
+      Err(error) => last_error = Some(error),
+    }
+  }
+
+  Err(last_error.unwrap_or_else(|| {
+    "observe window region did not produce a parseable recognition or rows JSON artifact"
+      .to_string()
+  }))
 }
 
 fn first_artifact_with_extension(result: &InvokeResult, extension: &str) -> Option<PathBuf> {
@@ -1751,6 +1936,10 @@ fn write_scan_artifact(artifact: &ScrollScanArtifact) -> AuvResult<PathBuf> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::fs;
+  use std::sync::atomic::{AtomicU64, Ordering};
+
+  static TEST_ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
   #[test]
   fn scan_artifact_serializes_completeness_and_observations() {
@@ -2193,6 +2382,210 @@ mod tests {
   }
 
   #[test]
+  fn parse_observe_json_prefers_recognition_result_filtered_items() {
+    let raw = r#"{
+    "recognition_id": "window_region_demo",
+    "source": "visual_row",
+    "scope": {
+      "surface": "region",
+      "display_ref": "display-1",
+      "native_display_id": "69732928",
+      "app_bundle_id": "com.tencent.QQMusicMac",
+      "window_title": null,
+      "window_number": 91,
+      "region_hint": null,
+      "capture_artifact": null,
+      "capture_contract_artifact": null
+    },
+    "best": null,
+    "filtered": [
+      {
+        "item_id": "row#1",
+        "kind": "row",
+        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
+        "text": "Whisper of time",
+        "provider_score": null,
+        "detail": {
+          "row_index": 2,
+          "source": "row_filter",
+          "text_fragments": ["Whisper of time"]
+        }
+      },
+      {
+        "item_id": "row#2",
+        "kind": "row",
+        "box": { "x": 100, "y": 348, "width": 600, "height": 86 },
+        "text": "万书隙",
+        "provider_score": null,
+        "detail": {
+          "row_index": 3,
+          "source": "row_filter",
+          "text_fragments": ["万书隙"]
+        }
+      }
+    ],
+    "all": [
+      {
+        "item_id": "row#0",
+        "kind": "row",
+        "box": { "x": 100, "y": 92, "width": 600, "height": 84 },
+        "text": "Ignored",
+        "provider_score": null,
+        "detail": {
+          "row_index": 1,
+          "source": "visual-bands",
+          "text_fragments": ["Ignored"]
+        }
+      }
+    ],
+    "detail": { "provider": "macos.row_detection" },
+    "evidence": [],
+    "known_limits": []
+  }"#;
+
+    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
+      .expect("parse recognition observations");
+
+    assert_eq!(observations.len(), 2);
+    assert_eq!(observations[0].raw_text, "Whisper of time");
+    assert_eq!(
+      observations[0]
+        .attributes
+        .get("recognition_id")
+        .map(String::as_str),
+      Some("window_region_demo")
+    );
+    assert_eq!(
+      observations[0]
+        .attributes
+        .get("recognized_item_id")
+        .map(String::as_str),
+      Some("row#1")
+    );
+    assert_eq!(
+      observations[0]
+        .attributes
+        .get("recognition_source")
+        .map(String::as_str),
+      Some("visual_row")
+    );
+    assert_eq!(
+      observations[0]
+        .attributes
+        .get("recognition_surface")
+        .map(String::as_str),
+      Some("region")
+    );
+    assert_eq!(
+      observations[0]
+        .attributes
+        .get("row_candidate_index")
+        .map(String::as_str),
+      Some("2")
+    );
+    assert_eq!(
+      observations[0].attributes.get("source").map(String::as_str),
+      Some("row_filter")
+    );
+  }
+
+  #[test]
+  fn observations_from_json_artifacts_prefers_recognition_result_over_legacy_rows() {
+    let legacy_raw = r#"{
+    "extractor": "ocr-row",
+    "rows": [
+      {
+        "row_index": 0,
+        "source": "visual-bands+ocr-text",
+        "text": "Legacy Row",
+        "text_fragments": ["Legacy Row"],
+        "bounds": { "x": 1, "y": 2, "width": 30, "height": 10 }
+      }
+    ]
+  }"#;
+    let recognition_raw = r#"{
+    "recognition_id": "window_region_demo",
+    "source": "ocr_row",
+    "scope": {
+      "surface": "region",
+      "display_ref": null,
+      "native_display_id": null,
+      "app_bundle_id": null,
+      "window_title": null,
+      "window_number": null,
+      "region_hint": null,
+      "capture_artifact": null,
+      "capture_contract_artifact": null
+    },
+    "best": {
+      "item_id": "row#1",
+      "kind": "row",
+      "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
+      "text": "Preferred Row",
+      "provider_score": null,
+      "detail": {
+        "row_index": 2,
+        "source": "row_filter",
+        "text_fragments": ["Preferred Row"]
+      }
+    },
+    "filtered": [
+      {
+        "item_id": "row#1",
+        "kind": "row",
+        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
+        "text": "Preferred Row",
+        "provider_score": null,
+        "detail": {
+          "row_index": 2,
+          "source": "row_filter",
+          "text_fragments": ["Preferred Row"]
+        }
+      }
+    ],
+    "all": [
+      {
+        "item_id": "row#1",
+        "kind": "row",
+        "box": { "x": 100, "y": 220, "width": 600, "height": 84 },
+        "text": "Preferred Row",
+        "provider_score": null,
+        "detail": {
+          "row_index": 2,
+          "source": "row_filter",
+          "text_fragments": ["Preferred Row"]
+        }
+      }
+    ],
+    "detail": { "provider": "macos.row_detection" },
+    "evidence": [],
+    "known_limits": []
+  }"#;
+    let legacy_path = write_temp_json_artifact("legacy", legacy_raw);
+    let recognition_path = write_temp_json_artifact("recognition", recognition_raw);
+
+    let observations = observations_from_json_artifacts(
+      0,
+      &[legacy_path.clone(), recognition_path.clone()],
+      Path::new("artifacts/page.png"),
+    )
+    .expect("recognition should win over legacy rows");
+
+    let _ = fs::remove_file(legacy_path);
+    let _ = fs::remove_file(recognition_path);
+
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].raw_text, "Preferred Row");
+    assert_eq!(
+      observations[0]
+        .attributes
+        .get("recognized_item_id")
+        .map(String::as_str),
+      Some("row#1")
+    );
+  }
+
+  #[test]
   fn count_new_observations_tracks_visual_only_rows_once() {
     let mut known = BTreeSet::new();
     let mut visual = observation("obs_0001_0001", 0, "", 120);
@@ -2364,5 +2757,15 @@ mod tests {
       source_artifacts: Vec::new(),
       attributes: BTreeMap::new(),
     }
+  }
+
+  fn write_temp_json_artifact(label: &str, raw: &str) -> PathBuf {
+    let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+      "auv-scroll-scan-{label}-{}-{counter}.json",
+      std::process::id()
+    ));
+    fs::write(&path, raw).expect("write temp json artifact");
+    path
   }
 }
