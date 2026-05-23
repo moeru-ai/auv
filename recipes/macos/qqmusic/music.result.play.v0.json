@@ -1,0 +1,193 @@
+{
+  "recipe_id": "macos.qqmusic.music.result.play.v0",
+  "version": "0.3.0",
+  "status": "experimental-recipe",
+  "platform": "macOS",
+  "target_app": {
+    "name": "QQ音乐",
+    "bundle_id": "${app_id}",
+    "display_mode": "live-desktop"
+  },
+  "strategy": {
+    "family": "playback",
+    "grounding": "visual-row",
+    "activation": "pointer-row-activation",
+    "verificationContract": "verifyNowPlayingTitle"
+  },
+  "objective": "Play a search result identified by a CandidateRef from a prior music.search.results OperationResult artifact. The underlying driver operation resolves Candidate.target_spec.row_index itself, re-checks liveness preconditions, activates the row, presses the play control, and emits a typed VerificationResult.",
+  "inputs": {
+    "app_id": {
+      "type": "string",
+      "default": "com.tencent.QQMusicMac"
+    },
+    "source_run_id": {
+      "type": "string",
+      "note": "run_id of the run that produced the OperationResult candidate-set artifact."
+    },
+    "source_artifact_id": {
+      "type": "string",
+      "default": "artifact_0003",
+      "note": "artifact_id of the OperationResult JSON within source_run_id. Default is artifact_0003 (music.search.results always produces it at index 3)."
+    },
+    "candidate_local_id": {
+      "type": "string",
+      "default": "row#1",
+      "note": "candidate_local_id within the OperationResult to validate and play."
+    },
+    "target_title": {
+      "type": "string",
+      "note": "Expected now-playing title for verification."
+    },
+    "target_artist": {
+      "type": "string",
+      "default": ""
+    },
+    "play_button_query": {
+      "type": "string",
+      "default": "播放"
+    },
+    "play_button_region_left_ratio": {
+      "type": "number",
+      "default": 0.18
+    },
+    "play_button_region_top_ratio": {
+      "type": "number",
+      "default": 0.28
+    },
+    "play_button_region_right_ratio": {
+      "type": "number",
+      "default": 0.6
+    },
+    "play_button_region_bottom_ratio": {
+      "type": "number",
+      "default": 0.42
+    },
+    "play_button_min_confidence": {
+      "type": "number",
+      "default": 0.75
+    },
+    "play_button_overlay_label": {
+      "type": "string",
+      "default": "auv · play"
+    },
+    "activation_settle_ms": {
+      "type": "integer",
+      "default": 900
+    },
+    "click_count": {
+      "type": "integer",
+      "default": 2
+    },
+    "row_min_confidence": {
+      "type": "number",
+      "default": 0.90
+    },
+    "row_max_observations": {
+      "type": "integer",
+      "default": 128
+    },
+    "row_anchor_mode": {
+      "type": "string",
+      "default": "title_band"
+    },
+    "row_anchor_x_ratio": {
+      "type": "number",
+      "default": 0.25
+    },
+    "row_anchor_y_ratio": {
+      "type": "number",
+      "default": 0.50
+    },
+    "now_playing_scope_path_prefix": {
+      "type": "string",
+      "default": "0.4.4"
+    }
+  },
+  "preconditions": [
+    "The host is macOS.",
+    "QQ音乐 is installed and can be addressed by ${app_id}.",
+    "Screen Recording and Accessibility permissions are already granted.",
+    "source_run_id and source_artifact_id point to a valid OperationResult from music.search.results.",
+    "The selected Candidate contains Candidate.target_spec.row_index.",
+    "The search result surface must still be visible (not navigated away) when this recipe runs."
+  ],
+  "disturbance_policy": {
+    "max_disturbance": "pointer",
+    "declared_classes": ["none", "foreground_app", "pointer"],
+    "notes": [
+      "Liveness re-check is disturbance-free when the candidate only requires window_ref.",
+      "Row activation uses pointer disturbance through window-scoped visual-row detection.",
+      "Play press may take the AX path (no pointer disturbance) or fall back to pointer.",
+      "The driver emits a VerificationResult with failure_layer when grounding, control, or verification fails."
+    ]
+  },
+  "steps": [
+    {
+      "id": "play-candidate",
+      "command_id": "music.result.play",
+      "disturbance": {
+        "classes": ["none", "foreground_app", "pointer"],
+        "max": "pointer"
+      },
+      "args": {
+        "target": "${app_id}",
+        "source_run_id": "${source_run_id}",
+        "source_artifact_id": "${source_artifact_id}",
+        "candidate_local_id": "${candidate_local_id}",
+        "target_title": "${target_title}",
+        "target_artist": "${target_artist}",
+        "play_button_query": "${play_button_query}",
+        "play_button_region_left_ratio": "${play_button_region_left_ratio}",
+        "play_button_region_top_ratio": "${play_button_region_top_ratio}",
+        "play_button_region_right_ratio": "${play_button_region_right_ratio}",
+        "play_button_region_bottom_ratio": "${play_button_region_bottom_ratio}",
+        "play_button_min_confidence": "${play_button_min_confidence}",
+        "play_button_overlay_label": "${play_button_overlay_label}",
+        "activation_settle_ms": "${activation_settle_ms}",
+        "click_count": "${click_count}",
+        "row_min_confidence": "${row_min_confidence}",
+        "row_max_observations": "${row_max_observations}",
+        "row_anchor_mode": "${row_anchor_mode}",
+        "row_anchor_x_ratio": "${row_anchor_x_ratio}",
+        "row_anchor_y_ratio": "${row_anchor_y_ratio}",
+        "now_playing_scope_path_prefix": "${now_playing_scope_path_prefix}"
+      },
+      "mainline_exemption": {
+        "reason": "Controlled measurement of whether the QQ音乐 play control is reachable via AX path vs pointer fallback when activated from a contract-candidate row. Cases stay candidate per Rule 2.",
+        "category": "experiment"
+      },
+      "expect": {
+        "signal_equals": {
+          "music.result.semantic_matched": "true"
+        },
+        "artifact_count_at_least": 1
+      }
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "music.result.play resolves the candidate and validates liveness.",
+      "music.result.play extracts Candidate.target_spec.row_index internally.",
+      "music.result.play activates the row through window-scoped visual-row detection.",
+      "music.result.play presses the play control via smartPress.",
+      "music.result.play verifies ${target_title} through the AX now-playing contract."
+    ],
+    "success_criteria": [
+      "Candidate liveness preconditions pass.",
+      "The result row is activated through window-scoped visual-row detection.",
+      "The play control is pressed.",
+      "The current now-playing title is verified through the AX tree.",
+      "The emitted VerificationResult has semantic_matched=true."
+    ],
+    "non_goals": [
+      "This recipe does not perform the initial search — it consumes an already-produced OperationResult.",
+      "This recipe does not select which candidate to play — that decision is made by the caller.",
+      "This recipe does not prove generalized playback for arbitrary row indices.",
+      "This recipe does not use OCR text anchors for row activation (visual-band detection is used instead)."
+    ]
+  },
+  "known_limits": {
+    "visual_row_index_stability": "Row index is detected from the current visual state. If the result list scrolls or reorders between music.search.results and this recipe, the row_index may point to a different song.",
+    "liveness_window_ref_only": "For VisualRow candidates produced by QQ音乐, anchor_recheck is not set (window-level OCR cannot see WebView content). Liveness is checked via window_ref only (app running with visible windows)."
+  }
+}

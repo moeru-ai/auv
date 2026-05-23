@@ -225,13 +225,6 @@ impl Runtime {
       )),
     );
 
-    let call = DriverCall {
-      operation: command.operation.to_string(),
-      target: request.target,
-      inputs: request.inputs,
-      working_directory: self.project_root.clone(),
-    };
-
     let driver_span = run.start_span(
       &command_span,
       span_record(
@@ -240,7 +233,7 @@ impl Runtime {
           command.id,
           command.driver_id,
           command.operation,
-          call.target.application_id.as_deref(),
+          request.target.application_id.as_deref(),
         ),
       ),
     )?;
@@ -253,6 +246,17 @@ impl Runtime {
         command.driver_id, command.operation
       )),
     );
+
+    let mut call_inputs = request.inputs;
+    call_inputs.insert("_auv_run_id".to_string(), run.id().to_string());
+    call_inputs.insert("_auv_span_id".to_string(), driver_span.id().to_string());
+
+    let call = DriverCall {
+      operation: command.operation.to_string(),
+      target: request.target,
+      inputs: call_inputs,
+      working_directory: self.project_root.clone(),
+    };
 
     let mut artifact_paths = Vec::new();
     let mut response_signals = Default::default();

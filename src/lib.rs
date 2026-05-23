@@ -1,6 +1,7 @@
 pub mod app;
 pub mod bundle;
 pub mod catalog;
+pub mod contract;
 pub mod driver;
 pub mod inspect;
 pub mod inspect_server;

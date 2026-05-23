@@ -303,6 +303,15 @@ candidates, hook decisions, stop evidence, and a completeness claim.
 Observed collections are evidence artifacts. They are not application-specific
 semantic objects such as playlists, search results, inboxes, or tables.
 
+## Surface Selector
+
+A surface selector is a provisional, cross-surface query contract for producing
+candidates from a target surface. It can describe AX, OCR, row, DOM, visual, or
+command-like constraints, but a backend may support only a subset.
+
+Surface selectors do not execute UI actions. They resolve to candidates with
+evidence; actions consume those candidates and verify their own results.
+
 ## Completeness Claim
 
 A completeness claim is the scanner's structured statement about whether the

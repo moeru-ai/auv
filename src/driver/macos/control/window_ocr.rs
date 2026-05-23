@@ -638,7 +638,7 @@ pub(super) fn capture_resolved_window_observation(
   })
 }
 
-fn detect_rows_for_capture(
+pub(super) fn detect_rows_for_capture(
   call: &DriverCall,
   capture: &CapturedObservation,
 ) -> AuvResult<(DetectedScreenRows, Vec<ObservedOcrRow>)> {
