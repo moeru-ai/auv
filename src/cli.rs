@@ -198,7 +198,7 @@ USAGE
   auv-cli invoke <command-id> [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
-  auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--max-pages <n>] [--max-scrolls <n>]
+  auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
   auv-cli skill list
   auv-cli skill show <skill-id-or-path>
   auv-cli skill bundle list

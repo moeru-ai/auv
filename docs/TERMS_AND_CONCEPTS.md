@@ -294,6 +294,13 @@ A scroll scan records what AUV saw, how it moved the viewport, and why it
 stopped. It should not claim a complete collection unless the stop evidence
 supports that claim.
 
+Directional scroll-boundary evidence is provisional. The first implementation
+records a `scroll_boundary_candidates` list when an up/down/left/right scroll is
+followed by a page with no new observation signatures. That maps directions to
+top/bottom/left/right boundary candidates with `confidence=heuristic`; it is not
+yet proof from scrollbar geometry, AX scroll values, or screenshot-diff
+stability.
+
 ## Observed Collection
 
 An observed collection is the structured result of a scroll scan. It contains

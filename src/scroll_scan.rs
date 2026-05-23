@@ -110,6 +110,26 @@ pub struct SectionCandidate {
   pub confidence: String,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollBoundary {
+  Top,
+  Bottom,
+  Left,
+  Right,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScrollBoundaryCandidate {
+  pub page_index: usize,
+  pub scroll_count: usize,
+  pub direction: String,
+  pub boundary: ScrollBoundary,
+  pub basis: String,
+  pub confidence: String,
+  pub consecutive_no_progress: usize,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HookDecisionRecord {
   pub hook_name: String,
@@ -159,6 +179,7 @@ pub struct ScanProgress {
   pub hook_stop_requested: bool,
   pub match_found: bool,
   pub next_section_candidate: bool,
+  pub scroll_boundary_candidate: Option<ScrollBoundaryCandidate>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,6 +197,7 @@ pub struct ScrollScanArtifact {
   pub observations: Vec<CollectionObservation>,
   pub clusters: Vec<ObservationCluster>,
   pub section_candidates: Vec<SectionCandidate>,
+  pub scroll_boundary_candidates: Vec<ScrollBoundaryCandidate>,
   pub hook_decisions: Vec<HookDecisionRecord>,
   pub stop_evidence: StopEvidence,
   pub completeness_claim: CompletenessClaim,
@@ -282,6 +304,16 @@ fn scan_window_region_into_run(
     // image evidence tied to a node result; see:
     // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Context.cpp
     // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Component/ActionHelper.cpp
+    let scroll_boundary_candidate = scroll_boundary_candidate_for_progress(
+      &options.direction,
+      page_index,
+      scroll_count,
+      consecutive_no_progress,
+      new_observation_count,
+    );
+    if let Some(candidate) = scroll_boundary_candidate.clone() {
+      state.scroll_boundary_candidates.push(candidate);
+    }
     let progress = ScanProgress {
       page_index,
       scroll_count,
@@ -297,6 +329,7 @@ fn scan_window_region_into_run(
         .last()
         .is_some_and(|decision| decision.action == HookAction::Stop)
         && matches!(options.stop_policy, StopPolicy::UntilNextSection { .. }),
+      scroll_boundary_candidate,
     };
 
     if let Some(mut decision) = evaluate_stop_policy(&options.stop_policy, &progress) {
@@ -449,6 +482,7 @@ struct ScanWindowRegionState {
   pages: Vec<ScanPageRecord>,
   observations: Vec<CollectionObservation>,
   known_observation_signatures: BTreeSet<String>,
+  scroll_boundary_candidates: Vec<ScrollBoundaryCandidate>,
   hook_decisions: Vec<HookDecisionRecord>,
   warnings: Vec<String>,
 }
@@ -475,6 +509,7 @@ impl ScanWindowRegionState {
       observations: self.observations,
       clusters,
       section_candidates: Vec::new(),
+      scroll_boundary_candidates: self.scroll_boundary_candidates,
       hook_decisions: self.hook_decisions,
       stop_evidence: final_decision.stop_evidence,
       completeness_claim: final_decision.completeness_claim,
@@ -582,6 +617,21 @@ pub fn evaluate_stop_policy(policy: &StopPolicy, progress: &ScanProgress) -> Opt
       "next section candidate observed",
       progress.page_index,
       CompletenessClaim::PartialNextSectionCandidate,
+    ));
+  }
+  if let Some(boundary_candidate) = &progress.scroll_boundary_candidate
+    && !matches!(policy, StopPolicy::Bounded { .. })
+  {
+    return Some(stop_decision(
+      StopReason::ReachedBoundary,
+      format!(
+        "directional {} boundary candidate observed after {} scroll(s): {}",
+        scroll_boundary_name(boundary_candidate.boundary),
+        boundary_candidate.scroll_count,
+        boundary_candidate.basis
+      ),
+      progress.page_index,
+      CompletenessClaim::CompleteByReachedBoundary,
     ));
   }
 
@@ -702,6 +752,48 @@ fn error_stop_decision(page_index: usize) -> StopDecision {
     page_index,
     CompletenessClaim::Unknown,
   )
+}
+
+fn scroll_boundary_candidate_for_progress(
+  direction: &str,
+  page_index: usize,
+  scroll_count: usize,
+  consecutive_no_progress: usize,
+  new_observation_count: usize,
+) -> Option<ScrollBoundaryCandidate> {
+  if page_index == 0 || scroll_count == 0 || new_observation_count > 0 {
+    return None;
+  }
+  let normalized_direction = direction.trim().to_ascii_lowercase();
+  let boundary = scroll_boundary_for_direction(&normalized_direction)?;
+  Some(ScrollBoundaryCandidate {
+    page_index,
+    scroll_count,
+    direction: normalized_direction,
+    boundary,
+    basis: "no_new_observations_after_scroll".to_string(),
+    confidence: "heuristic".to_string(),
+    consecutive_no_progress,
+  })
+}
+
+fn scroll_boundary_for_direction(direction: &str) -> Option<ScrollBoundary> {
+  match direction.trim().to_ascii_lowercase().as_str() {
+    "up" => Some(ScrollBoundary::Top),
+    "down" => Some(ScrollBoundary::Bottom),
+    "left" => Some(ScrollBoundary::Left),
+    "right" => Some(ScrollBoundary::Right),
+    _ => None,
+  }
+}
+
+fn scroll_boundary_name(boundary: ScrollBoundary) -> &'static str {
+  match boundary {
+    ScrollBoundary::Top => "top",
+    ScrollBoundary::Bottom => "bottom",
+    ScrollBoundary::Left => "left",
+    ScrollBoundary::Right => "right",
+  }
 }
 
 pub fn hook_decision_from_variables(
@@ -1709,6 +1801,15 @@ mod tests {
         confidence: 1.0,
       }],
       section_candidates: Vec::new(),
+      scroll_boundary_candidates: vec![ScrollBoundaryCandidate {
+        page_index: 1,
+        scroll_count: 1,
+        direction: "down".to_string(),
+        boundary: ScrollBoundary::Bottom,
+        basis: "no_new_observations_after_scroll".to_string(),
+        confidence: "heuristic".to_string(),
+        consecutive_no_progress: 1,
+      }],
       hook_decisions: Vec::new(),
       stop_evidence: StopEvidence {
         reason: StopReason::MaxPages,
@@ -1724,6 +1825,8 @@ mod tests {
     assert!(rendered.contains("\"completeness_claim\": \"partial_max_pages\""));
     assert!(rendered.contains("\"normalized_text_key\": \"alpha\""));
     assert!(rendered.contains("\"merge_reason\": \"single_observation\""));
+    assert!(rendered.contains("\"scroll_boundary_candidates\""));
+    assert!(rendered.contains("\"boundary\": \"bottom\""));
   }
 
   #[test]
@@ -1772,6 +1875,7 @@ mod tests {
         hook_stop_requested: false,
         match_found: false,
         next_section_candidate: false,
+        scroll_boundary_candidate: None,
       },
     );
 
@@ -1797,6 +1901,7 @@ mod tests {
         hook_stop_requested: false,
         match_found: false,
         next_section_candidate: false,
+        scroll_boundary_candidate: None,
       },
     );
 
@@ -1806,6 +1911,75 @@ mod tests {
       decision.completeness_claim,
       CompletenessClaim::CompleteByNoVisualProgress
     );
+  }
+
+  #[test]
+  fn scroll_boundary_candidate_maps_direction_to_boundary() {
+    let candidate =
+      scroll_boundary_candidate_for_progress("up", 2, 2, 1, 0).expect("boundary candidate");
+
+    assert_eq!(candidate.boundary, ScrollBoundary::Top);
+    assert_eq!(candidate.direction, "up");
+    assert_eq!(candidate.basis, "no_new_observations_after_scroll");
+    assert_eq!(candidate.confidence, "heuristic");
+  }
+
+  #[test]
+  fn scroll_boundary_candidate_requires_prior_scroll_and_no_new_observations() {
+    assert!(scroll_boundary_candidate_for_progress("down", 0, 0, 0, 0).is_none());
+    assert!(scroll_boundary_candidate_for_progress("down", 1, 0, 1, 0).is_none());
+    assert!(scroll_boundary_candidate_for_progress("down", 1, 1, 0, 2).is_none());
+  }
+
+  #[test]
+  fn until_match_policy_stops_at_directional_boundary_candidate() {
+    let decision = evaluate_stop_policy(
+      &StopPolicy::UntilMatch {
+        query: "needle".to_string(),
+        max_pages: 20,
+        max_scrolls: 20,
+      },
+      &ScanProgress {
+        page_index: 2,
+        scroll_count: 2,
+        consecutive_no_progress: 1,
+        new_observation_count: 0,
+        hook_stop_requested: false,
+        match_found: false,
+        next_section_candidate: false,
+        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0),
+      },
+    )
+    .expect("boundary stop expected");
+
+    assert_eq!(decision.stop_evidence.reason, StopReason::ReachedBoundary);
+    assert_eq!(
+      decision.completeness_claim,
+      CompletenessClaim::CompleteByReachedBoundary
+    );
+    assert!(decision.stop_evidence.message.contains("bottom"));
+  }
+
+  #[test]
+  fn bounded_policy_ignores_directional_boundary_candidate() {
+    let decision = evaluate_stop_policy(
+      &StopPolicy::Bounded {
+        max_pages: 20,
+        max_scrolls: 20,
+      },
+      &ScanProgress {
+        page_index: 2,
+        scroll_count: 2,
+        consecutive_no_progress: 1,
+        new_observation_count: 0,
+        hook_stop_requested: false,
+        match_found: false,
+        next_section_candidate: false,
+        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0),
+      },
+    );
+
+    assert!(decision.is_none());
   }
 
   #[test]
@@ -1900,6 +2074,7 @@ mod tests {
       hook_stop_requested: false,
       match_found: true,
       next_section_candidate: false,
+      scroll_boundary_candidate: None,
     };
 
     let hard_cap =
@@ -1923,6 +2098,7 @@ mod tests {
       hook_stop_requested: false,
       match_found: true,
       next_section_candidate: false,
+      scroll_boundary_candidate: None,
     };
 
     assert!(hard_cap_stop_decision_for_policy(&policy, &progress).is_none());

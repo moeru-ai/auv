@@ -89,6 +89,7 @@ It should contain:
 - raw observations
 - conservative clusters
 - section candidates
+- scroll boundary candidates
 - hook decisions
 - stop policy configuration
 - stop evidence
@@ -104,6 +105,15 @@ Completeness should be a structured claim, not a boolean. Expected values:
 - `partial_unstable_content`
 - `partial_next_section_candidate`
 - `unknown`
+
+Current boundary detection is direction-aware but still heuristic. AUV records
+`scroll_boundary_candidates` when a scroll has happened and the next observed
+page contributes no new observation signatures. The candidate records direction,
+mapped boundary (`top`, `bottom`, `left`, `right`), basis, confidence, page, and
+scroll count. `until-match`, `until-end`, and `until-next-section` may stop on
+that candidate with `reached_boundary`; `bounded` scans intentionally ignore it.
+This does not replace future stronger evidence from scrollbar/thumb geometry,
+AX scroll values, or screenshot-diff stability checks.
 
 ## Observation Identity and Merging
 
