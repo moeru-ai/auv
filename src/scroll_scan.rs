@@ -131,7 +131,7 @@ pub struct ScrollBoundaryCandidate {
   pub consecutive_no_progress: usize,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct HookDecisionRecord {
   pub hook_name: String,
   pub page_index: usize,
@@ -141,6 +141,16 @@ pub struct HookDecisionRecord {
   pub row_candidate_index: Option<usize>,
   pub action: HookAction,
   pub reason: String,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub annotations: Vec<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub adjusted_region: Option<ScanRegion>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub adjusted_scroll: Option<ScanHookAdjustedScroll>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub retry_policy: Option<ScanHookRetryPolicy>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub evidence: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -152,6 +162,47 @@ pub enum HookAction {
   AdjustRegion,
   AdjustScroll,
   Annotate,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ScanHookAdjustedScroll {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub direction: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub amount: Option<f64>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub settle_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ScanHookRetryPolicy {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub max_attempts: Option<usize>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub settle_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+struct StructuredHookDecisionSignal {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  hook_name: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  stage: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  page_index: Option<usize>,
+  action: HookAction,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  reason: Option<String>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  annotations: Vec<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  adjusted_region: Option<ScanRegion>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  adjusted_scroll: Option<ScanHookAdjustedScroll>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  retry_policy: Option<ScanHookRetryPolicy>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  evidence: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -896,34 +947,102 @@ fn scroll_boundary_name(boundary: ScrollBoundary) -> &'static str {
   }
 }
 
+const SCAN_HOOK_DECISION_SIGNAL: &str = "last.scan.hook.decision";
+const SCAN_HOOK_ACTION_SIGNAL: &str = "last.scan.hook.action";
+const SCAN_HOOK_REASON_SIGNAL: &str = "last.scan.hook.reason";
+
 pub fn hook_decision_from_variables(
   hook_name: &str,
   page_index: usize,
   variables: &BTreeMap<String, String>,
 ) -> AuvResult<Option<HookDecisionRecord>> {
-  // TODO: Replace exported scalar variables with a typed recipe return value.
-  // Hook recipes currently communicate decisions through strings such as
-  // last.scan.hook.action because SkillRunSummary has no structured return
-  // channel. MaaFW keeps recognition/action details as JSON in runtime cache
-  // and exposes them by id; the closest references are:
-  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Component/Recognizer.cpp
-  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Tasker/RuntimeCache.cpp
-  let Some(action) = variables.get("last.scan.hook.action") else {
+  if let Some(raw) = variables.get(SCAN_HOOK_DECISION_SIGNAL) {
+    return parse_structured_hook_decision_signal(hook_name, page_index, raw).map(Some);
+  }
+
+  let Some(action) = variables.get(SCAN_HOOK_ACTION_SIGNAL) else {
     return Ok(None);
   };
   let action = parse_hook_action(action)?;
   let reason = variables
-    .get("last.scan.hook.reason")
+    .get(SCAN_HOOK_REASON_SIGNAL)
     .cloned()
     .unwrap_or_else(|| "hook did not provide a reason".to_string());
-  Ok(Some(HookDecisionRecord {
+  Ok(Some(base_hook_decision_record(
+    hook_name, page_index, action, reason,
+  )))
+}
+
+fn parse_structured_hook_decision_signal(
+  hook_name: &str,
+  page_index: usize,
+  raw: &str,
+) -> AuvResult<HookDecisionRecord> {
+  let signal: StructuredHookDecisionSignal = serde_json::from_str(raw).map_err(|error| {
+    format!(
+      "invalid structured scan hook decision in {}: {error}",
+      SCAN_HOOK_DECISION_SIGNAL
+    )
+  })?;
+  if let Some(signal_hook_name) = signal.hook_name.as_deref()
+    && signal_hook_name != hook_name
+  {
+    return Err(format!(
+      "structured scan hook decision hook_name {:?} does not match expected {:?}",
+      signal_hook_name, hook_name
+    ));
+  }
+  if let Some(signal_stage) = signal.stage.as_deref()
+    && signal_stage != hook_name
+  {
+    return Err(format!(
+      "structured scan hook decision stage {:?} does not match expected {:?}",
+      signal_stage, hook_name
+    ));
+  }
+  if let Some(signal_page_index) = signal.page_index
+    && signal_page_index != page_index
+  {
+    return Err(format!(
+      "structured scan hook decision page_index {} does not match expected {}",
+      signal_page_index, page_index
+    ));
+  }
+  let mut decision = base_hook_decision_record(
+    hook_name,
+    page_index,
+    signal.action,
+    signal
+      .reason
+      .unwrap_or_else(|| "hook did not provide a reason".to_string()),
+  );
+  decision.annotations = signal.annotations;
+  decision.adjusted_region = signal.adjusted_region;
+  decision.adjusted_scroll = signal.adjusted_scroll;
+  decision.retry_policy = signal.retry_policy;
+  decision.evidence = signal.evidence;
+  Ok(decision)
+}
+
+fn base_hook_decision_record(
+  hook_name: &str,
+  page_index: usize,
+  action: HookAction,
+  reason: String,
+) -> HookDecisionRecord {
+  HookDecisionRecord {
     hook_name: hook_name.to_string(),
     page_index,
     item_index: None,
     row_candidate_index: None,
     action,
     reason,
-  }))
+    annotations: Vec::new(),
+    adjusted_region: None,
+    adjusted_scroll: None,
+    retry_policy: None,
+    evidence: Vec::new(),
+  }
 }
 
 fn validate_scan_loop_hook_decision(decision: &HookDecisionRecord) -> AuvResult<()> {
@@ -2301,6 +2420,8 @@ mod tests {
     assert_eq!(decision.action, HookAction::Stop);
     assert_eq!(decision.reason, "next section");
     assert_eq!(decision.page_index, 3);
+    assert!(decision.annotations.is_empty());
+    assert!(decision.evidence.is_empty());
   }
 
   #[test]
@@ -2311,6 +2432,63 @@ mod tests {
       .expect_err("invalid action should fail");
 
     assert!(error.contains("invalid scan hook action"));
+  }
+
+  #[test]
+  fn hook_decision_prefers_structured_signal_when_present() {
+    let variables = BTreeMap::from([
+      (
+        "last.scan.hook.decision".to_string(),
+        serde_json::json!({
+          "hook_name": "per_page_after_observe",
+          "page_index": 3,
+          "action": "stop",
+          "reason": "structured decision",
+          "annotations": ["sticky header repeated"],
+          "evidence": ["artifacts/page-0003-overlay.json"]
+        })
+        .to_string(),
+      ),
+      ("last.scan.hook.action".to_string(), "continue".to_string()),
+      (
+        "last.scan.hook.reason".to_string(),
+        "scalar fallback should lose".to_string(),
+      ),
+    ]);
+
+    let decision = hook_decision_from_variables("per_page_after_observe", 3, &variables)
+      .expect("decision should parse")
+      .expect("decision should exist");
+
+    assert_eq!(decision.action, HookAction::Stop);
+    assert_eq!(decision.reason, "structured decision");
+    assert_eq!(
+      decision.annotations,
+      vec!["sticky header repeated".to_string()]
+    );
+    assert_eq!(
+      decision.evidence,
+      vec!["artifacts/page-0003-overlay.json".to_string()]
+    );
+  }
+
+  #[test]
+  fn hook_decision_rejects_mismatched_structured_page_index() {
+    let variables = BTreeMap::from([(
+      "last.scan.hook.decision".to_string(),
+      serde_json::json!({
+        "hook_name": "per_page_after_observe",
+        "page_index": 4,
+        "action": "stop",
+        "reason": "wrong page"
+      })
+      .to_string(),
+    )]);
+
+    let error = hook_decision_from_variables("per_page_after_observe", 3, &variables)
+      .expect_err("mismatched page index should fail");
+
+    assert!(error.contains("page_index 4 does not match expected 3"));
   }
 
   #[test]
@@ -2353,6 +2531,11 @@ mod tests {
       row_candidate_index: None,
       action: HookAction::AdjustRegion,
       reason: "need a wider region".to_string(),
+      annotations: Vec::new(),
+      adjusted_region: None,
+      adjusted_scroll: None,
+      retry_policy: None,
+      evidence: Vec::new(),
     };
 
     let error = validate_scan_loop_hook_decision(&decision).expect_err("action should fail");

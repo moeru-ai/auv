@@ -2213,7 +2213,10 @@ fn export_step_variables(
 }
 
 fn is_top_level_hook_signal(key: &str) -> bool {
-  matches!(key, "last.scan.hook.action" | "last.scan.hook.reason")
+  matches!(
+    key,
+    "last.scan.hook.decision" | "last.scan.hook.action" | "last.scan.hook.reason"
+  )
 }
 
 fn enforce_invoke_success(result: &InvokeResult) -> AuvResult<()> {
@@ -2413,6 +2416,18 @@ mod tests {
             "last.scan.hook.reason".to_string(),
             "test driver signal".to_string(),
           ),
+          (
+            "last.scan.hook.decision".to_string(),
+            serde_json::json!({
+              "hook_name": "per_list_item_candidate",
+              "page_index": 0,
+              "action": "continue",
+              "reason": "test driver structured signal",
+              "annotations": ["structured fixture annotation"],
+              "evidence": ["artifacts/fixture-overlay.json"]
+            })
+            .to_string(),
+          ),
         ]),
         notes: vec!["outcome=ok".to_string()],
         artifacts: vec![],
@@ -2571,6 +2586,12 @@ mod tests {
       summary.exported_variables.get("last.scan.hook.reason"),
       Some(&"test driver signal".to_string())
     );
+    assert!(
+      summary
+        .exported_variables
+        .get("last.scan.hook.decision")
+        .is_some()
+    );
     assert_eq!(
       summary.exported_variables.get("query"),
       Some(&"default query".to_string())
@@ -2588,6 +2609,12 @@ mod tests {
         .exported_variables
         .get("step_first_signal_step_first_run_id"),
       Some(&"driver overwritten run id".to_string())
+    );
+    assert!(
+      summary
+        .exported_variables
+        .get("step_first_signal_last_scan_hook_decision")
+        .is_some()
     );
 
     let _ = runtime.finish_run(

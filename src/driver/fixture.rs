@@ -2,6 +2,7 @@ use super::Driver;
 use std::collections::BTreeMap;
 
 use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse};
+use serde_json::json;
 
 pub(crate) struct FixtureObserveDriver;
 
@@ -40,6 +41,41 @@ impl Driver for FixtureObserveDriver {
     }
     if let Some(reason) = call.inputs.get("hook_reason") {
       signals.insert("last.scan.hook.reason".to_string(), reason.clone());
+    }
+    if let Some(action) = call.inputs.get("hook_action") {
+      let decision = json!({
+        "hook_name": call
+          .inputs
+          .get("hook_name")
+          .cloned()
+          .unwrap_or_else(|| "fixture".to_string()),
+        "stage": call
+          .inputs
+          .get("hook_stage")
+          .cloned()
+          .unwrap_or_else(|| "fixture".to_string()),
+        "page_index": call
+          .inputs
+          .get("hook_page_index")
+          .and_then(|value| value.parse::<usize>().ok()),
+        "action": action,
+        "reason": call
+          .inputs
+          .get("hook_reason")
+          .cloned()
+          .unwrap_or_else(|| "fixture observe default reason".to_string()),
+        "annotations": call
+          .inputs
+          .get("hook_annotation")
+          .map(|value| vec![value.clone()])
+          .unwrap_or_default(),
+        "evidence": call
+          .inputs
+          .get("hook_evidence")
+          .map(|value| vec![value.clone()])
+          .unwrap_or_default(),
+      });
+      signals.insert("last.scan.hook.decision".to_string(), decision.to_string());
     }
     if let Some(context) = call.inputs.get("context") {
       signals.insert("fixture.context".to_string(), context.clone());
