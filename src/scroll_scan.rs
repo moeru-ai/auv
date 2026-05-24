@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
+use swift_bridge::bridge;
 use crate::contract::{RecognitionResult, RecognitionSource, RecognitionSurface, RecognizedItem};
 use crate::model::{
   AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus,
@@ -51,6 +51,17 @@ pub enum StopPolicy {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CompletenessClaim {
+  /// Scan stopped after consecutive pages with no new observations while
+  /// scrolling downward. Suggests the bottom of the list was reached, but no
+  /// AX or scrollbar evidence corroborates the boundary.
+  CompleteByNoVisualProgressDown,
+  /// Scan stopped after consecutive pages with no new observations while
+  /// scrolling upward. Suggests the top of the list was reached, but no
+  /// AX or scrollbar evidence corroborates the boundary.
+  CompleteByNoVisualProgressUp,
+  /// Scan stopped due to no visual progress but the scroll direction is
+  /// lateral or unknown. Kept as a fallback for directions that do not map
+  /// to a top/bottom claim.
   CompleteByNoVisualProgress,
   CompleteByReachedBoundary,
   PartialMaxPages,
@@ -266,8 +277,24 @@ pub struct ScanWindowRegionOptions {
   pub min_confidence: f64,
   pub max_observations: i64,
   pub per_page_after_observe_recipe: Option<String>,
+  pub per_page_after_observe_inline_hook: Option<crate::skill::SkillManifest>,
   pub per_list_item_candidate_recipe: Option<String>,
+  pub per_list_item_candidate_inline_hook: Option<crate::skill::SkillManifest>,
   pub on_stop_candidate_recipe: Option<String>,
+  pub on_stop_candidate_inline_hook: Option<crate::skill::SkillManifest>,
+}
+
+pub(crate) fn attach_inline_scan_hooks_from_manifest(
+  parent: &crate::skill::SkillManifest,
+  options: &mut ScanWindowRegionOptions,
+) -> AuvResult<()> {
+  options.per_page_after_observe_inline_hook =
+    crate::skill::build_inline_scan_hook_manifest(parent, "per_page_after_observe")?;
+  options.per_list_item_candidate_inline_hook =
+    crate::skill::build_inline_scan_hook_manifest(parent, "per_list_item_candidate")?;
+  options.on_stop_candidate_inline_hook =
+    crate::skill::build_inline_scan_hook_manifest(parent, "on_stop_candidate")?;
+  Ok(())
 }
 
 pub fn scan_window_region(
@@ -381,12 +408,13 @@ fn scan_window_region_into_run(
       scroll_boundary_candidate,
     };
 
-    if let Some(mut decision) = evaluate_stop_policy(&options.stop_policy, &progress) {
+    if let Some(mut decision) = evaluate_stop_policy(&options.stop_policy, &progress, &options.direction) {
       let stop_hook_result = run_optional_scan_hook(
         runtime,
         run,
         root,
         options.on_stop_candidate_recipe.as_deref(),
+        options.on_stop_candidate_inline_hook.as_ref(),
         "on_stop_candidate",
         page_index,
         &options,
@@ -632,6 +660,7 @@ fn scan_window_region_page(
     run,
     root,
     options.per_list_item_candidate_recipe.as_deref(),
+    options.per_list_item_candidate_inline_hook.as_ref(),
     options,
     &page_observations,
     state,
@@ -657,6 +686,7 @@ fn scan_window_region_page(
     run,
     root,
     options.per_page_after_observe_recipe.as_deref(),
+    options.per_page_after_observe_inline_hook.as_ref(),
     "per_page_after_observe",
     page_index,
     options,
@@ -673,7 +703,22 @@ fn scan_window_region_page(
   })
 }
 
-pub fn evaluate_stop_policy(policy: &StopPolicy, progress: &ScanProgress) -> Option<StopDecision> {
+/// Returns the direction-aware `CompleteByNoVisualProgress*` claim for the
+/// given scan direction. Downward → `CompleteByNoVisualProgressDown`, upward →
+/// `CompleteByNoVisualProgressUp`, anything else → the generic fallback.
+fn direction_aware_no_progress_claim(direction: &str) -> CompletenessClaim {
+  match direction.trim().to_ascii_lowercase().as_str() {
+    "down" => CompletenessClaim::CompleteByNoVisualProgressDown,
+    "up" => CompletenessClaim::CompleteByNoVisualProgressUp,
+    _ => CompletenessClaim::CompleteByNoVisualProgress,
+  }
+}
+
+pub fn evaluate_stop_policy(
+  policy: &StopPolicy,
+  progress: &ScanProgress,
+  direction: &str,
+) -> Option<StopDecision> {
   if progress.hook_stop_requested {
     return Some(stop_decision(
       StopReason::HookRequestedStop,
@@ -719,7 +764,7 @@ pub fn evaluate_stop_policy(policy: &StopPolicy, progress: &ScanProgress) -> Opt
       max_pages,
       max_scrolls,
       no_progress_limit,
-    } => bounded_or_no_progress_stop(*max_pages, *max_scrolls, *no_progress_limit, progress),
+    } => bounded_or_no_progress_stop(*max_pages, *max_scrolls, *no_progress_limit, direction, progress),
     StopPolicy::UntilNextSection {
       max_pages,
       max_scrolls,
@@ -740,19 +785,27 @@ fn bounded_or_no_progress_stop(
   max_pages: usize,
   max_scrolls: usize,
   no_progress_limit: usize,
+  direction: &str,
   progress: &ScanProgress,
 ) -> Option<StopDecision> {
   if progress.consecutive_no_progress >= no_progress_limit {
+    // Emit a direction-aware completeness claim so callers can distinguish
+    // "reached the bottom" from "reached the top" without inspecting the
+    // scan direction separately. The claim is still heuristic (no AX scroll
+    // position or scrollbar-thumb evidence backs it) but is more precise than
+    // the generic CompleteByNoVisualProgress fallback.
+    // A future layer should corroborate with AX scroll values or screenshot
+    // diff stability (see TODO 1385).
+    let claim = direction_aware_no_progress_claim(direction);
     return Some(stop_decision(
       StopReason::NoProgressLimit,
-      format!("reached no_progress_limit={no_progress_limit}"),
+      format!(
+        "reached no_progress_limit={no_progress_limit} scrolling {direction} \
+         ({} consecutive page(s) with no new observations)",
+        progress.consecutive_no_progress,
+      ),
       progress.page_index,
-      // TODO: Back this completeness claim with explicit boundary evidence.
-      // "Complete by no visual progress" is only an evidence claim today, not
-      // proof that the application has no hidden content. Split the future
-      // evidence into direction-aware top/bottom claims so upward and downward
-      // scans do not both collapse into generic no-progress.
-      CompletenessClaim::CompleteByNoVisualProgress,
+      claim,
     ));
   }
   bounded_stop(max_pages, max_scrolls, progress)
@@ -1517,34 +1570,35 @@ fn count_new_observations(
 }
 
 fn observation_signature(observation: &CollectionObservation) -> String {
-  let identity = if observation.normalized_text_key.is_empty() {
-    // TODO: Replace visual-only geometry identity with row OCR, AX ids, or
-    // local image hashes. Source + viewport geometry is only a bounded progress
-    // signal and can misidentify virtualized or repeated rows.
-    format!(
-      "visual:{}:{}",
-      observation
-        .attributes
-        .get("source")
-        .map(String::as_str)
-        .unwrap_or("unknown"),
-      observation
-        .attributes
-        .get("row_index")
-        .map(String::as_str)
-        .unwrap_or("?")
-    )
-  } else {
+  if !observation.normalized_text_key.is_empty() {
+    // Text-bearing: identity by content alone — no geometry.
+    // The same text at a different y after a partial scroll is the *same* item,
+    // not new content. Including y caused consecutive_no_progress to never
+    // increment, so UntilEnd scans never auto-stopped.
+    // Known trade-off: duplicate items with identical text (e.g. the same song
+    // listed twice in a playlist) collapse to one signature. Callers that need
+    // exact position-aware dedup should not use this function.
     observation.normalized_text_key.clone()
-  };
-  format!(
-    "{}|x={}|y={}|w={}|h={}",
-    identity,
-    observation.bounds.x,
-    observation.bounds.y,
-    observation.bounds.width,
-    observation.bounds.height
-  )
+  } else {
+    // Visual-only fallback: no OCR text is available.
+    // TODO: Replace with row OCR, AX ids, or local image hashes once those are
+    // produced for visual-band observations (TODO 1524).
+    // Use source + stable geometry (x, w, h) without y so a partial-scroll
+    // shift does not generate a spurious "new" signature.
+    // Known limit: two bands sharing source/x/w/h collide into one signature.
+    let source = observation
+      .attributes
+      .get("source")
+      .map(String::as_str)
+      .unwrap_or("unknown");
+    format!(
+      "visual:{}|x={}|w={}|h={}",
+      source,
+      observation.bounds.x,
+      observation.bounds.width,
+      observation.bounds.height
+    )
+  }
 }
 
 fn match_found_on_current_page(
@@ -1561,22 +1615,54 @@ fn match_found_on_current_page(
       .any(|observation| observation.normalized_text_key.contains(&normalized_query))
 }
 
+/// Typed context object passed as `scan.item` to per-list-item-candidate hooks.
+///
+/// Replaces the former `scan.item.*` scalar overrides. Hook recipes receive all
+/// item fields as one JSON string under the `scan.item` key and can parse it
+/// with `serde_json` or equivalent. Geometry, provenance, and artifact paths
+/// are all present in one coherent value, matching the MaaFW
+/// `custom_recognition_param` / `custom_action_param` pattern.
+///
+/// TODO: Add section-boundary and segmentation context (section role, local
+/// item range) once region segmentation can identify list bodies, sticky
+/// headers, and separators (TODO 1583).
+#[derive(Debug, Serialize)]
+struct ListItemHookContext {
+  index: usize,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  row_candidate_index: Option<usize>,
+  text: String,
+  bounds: ListItemHookBounds,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  source: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  filter_reason: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  segmented_region_role: Option<String>,
+  /// Raw JSON array string from the `text_fragments` attribute, if present.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  text_fragments: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  source_artifact: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  crop_artifact: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  context_artifact: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ListItemHookBounds {
+  x: i64,
+  y: i64,
+  width: i64,
+  height: i64,
+}
+
 fn list_item_candidate_hook_overrides(
   options: &ScanWindowRegionOptions,
   item: &CollectionObservation,
 ) -> BTreeMap<String, String> {
-  // TODO: Replace these scalar scan.item.* overrides with one typed hook
-  // context object. We keep the scalar surface small for now because recipe
-  // step args are still rendered as strings, but list-item parsing needs the
-  // crop artifact, OCR fragments, bounds, and provenance as one coherent value.
-  // MaaFW reference: custom_recognition_param/custom_action_param are JSON
-  // values, and custom recognition returns a box plus JSON detail:
-  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Resource/PipelineTypes.h
-  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Component/CustomRecognition.cpp
-  // TODO: Include section-boundary and segmentation context here once region
-  // segmentation can identify list bodies, sticky headers, separators, and
-  // section-local item ranges. That middleware is the core difference between
-  // "scroll until match" and "scroll within this section until match".
+  // Hook-level orchestration scalars — available to every hook stage.
   let mut overrides = BTreeMap::from([
     (
       "scan.hook.name".to_string(),
@@ -1592,59 +1678,42 @@ fn list_item_candidate_hook_overrides(
       "scan.target.application_id".to_string(),
       options.target.application_id.clone().unwrap_or_default(),
     ),
-    (
-      "scan.item.index".to_string(),
-      item
-        .attributes
-        .get("item_index")
-        .cloned()
-        .unwrap_or_else(|| "0".to_string()),
-    ),
-    (
-      "scan.item.row_candidate_index".to_string(),
-      item
-        .attributes
-        .get("row_candidate_index")
-        .cloned()
-        .unwrap_or_default(),
-    ),
-    ("scan.item.text".to_string(), item.raw_text.clone()),
-    ("scan.item.bounds.x".to_string(), item.bounds.x.to_string()),
-    ("scan.item.bounds.y".to_string(), item.bounds.y.to_string()),
-    (
-      "scan.item.bounds.width".to_string(),
-      item.bounds.width.to_string(),
-    ),
-    (
-      "scan.item.bounds.height".to_string(),
-      item.bounds.height.to_string(),
-    ),
   ]);
-  for key in [
-    "source",
-    "filter_reason",
-    "segmented_region_role",
-    "text_fragments",
-  ] {
-    if let Some(value) = item.attributes.get(key) {
-      overrides.insert(format!("scan.item.{key}"), value.clone());
-    }
-  }
-  if let Some(source_artifact) = item.source_artifacts.first() {
-    overrides.insert(
-      "scan.item.source_artifact".to_string(),
-      source_artifact.display().to_string(),
-    );
-  }
-  if let Some(crop_artifact) = item.attributes.get("crop_artifact") {
-    overrides.insert("scan.item.crop_artifact".to_string(), crop_artifact.clone());
-  }
-  if let Some(context_artifact) = item.attributes.get("context_artifact") {
-    overrides.insert(
-      "scan.item.context_artifact".to_string(),
-      context_artifact.clone(),
-    );
-  }
+
+  // Item context: all item fields in one typed JSON blob under `scan.item`.
+  // Hook recipes reference `${scan.item}` and parse the JSON string; individual
+  // fields are no longer injected as separate scalars.
+  let context = ListItemHookContext {
+    index: item
+      .attributes
+      .get("item_index")
+      .and_then(|v| v.parse().ok())
+      .unwrap_or(0),
+    row_candidate_index: item
+      .attributes
+      .get("row_candidate_index")
+      .and_then(|v| v.parse().ok()),
+    text: item.raw_text.clone(),
+    bounds: ListItemHookBounds {
+      x: item.bounds.x,
+      y: item.bounds.y,
+      width: item.bounds.width,
+      height: item.bounds.height,
+    },
+    source: item.attributes.get("source").cloned(),
+    filter_reason: item.attributes.get("filter_reason").cloned(),
+    segmented_region_role: item.attributes.get("segmented_region_role").cloned(),
+    text_fragments: item.attributes.get("text_fragments").cloned(),
+    source_artifact: item.source_artifacts.first().map(|p| p.display().to_string()),
+    crop_artifact: item.attributes.get("crop_artifact").cloned(),
+    context_artifact: item.attributes.get("context_artifact").cloned(),
+  };
+  // serde_json::to_string is infallible for this struct (no f32/f64 NaN, no
+  // maps with non-string keys). The fallback `"{}"` keeps the key present so
+  // hook recipes that reference `${scan.item}` never receive an unresolved
+  // template variable.
+  let context_json = serde_json::to_string(&context).unwrap_or_else(|_| "{}".to_string());
+  overrides.insert("scan.item".to_string(), context_json);
   overrides
 }
 
@@ -1946,33 +2015,23 @@ fn run_list_item_candidate_hooks(
   run: &mut crate::recording::RecordingRun,
   root: &crate::recording::SpanRef,
   recipe: Option<&str>,
+  inline_hook: Option<&crate::skill::SkillManifest>,
   options: &ScanWindowRegionOptions,
   items: &[CollectionObservation],
   state: &mut ScanWindowRegionState,
 ) -> AuvResult<()> {
-  let Some(recipe) = recipe else {
+  let Some(manifest) =
+    resolve_scan_hook_manifest(runtime, inline_hook, recipe, "per_list_item_candidate")?
+  else {
     return Ok(());
   };
-  let project_root = runtime.project_root();
-  // TODO: Allow recipe manifests to declare inline hook/sub-recipe blocks.
-  // This standalone recipe lookup exists because SkillCatalog currently resolves
-  // only top-level recipe_id values from recipes/**/*.json, while scroll scan
-  // needs a per-list-item hook that belongs conceptually to the parent workflow.
-  // MaaFW reference: Context::run_task/run_recognition/run_action accept a JSON
-  // pipeline_override, so a caller can synthesize or override nested pipeline
-  // nodes without creating a separate resource file for every hook:
-  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Context.cpp
-  // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/docs/zh_cn/3.1-任务流水线协议.md
-  let catalog = crate::skill::SkillCatalog::discover(project_root)?;
-  let entry = catalog.resolve(project_root, recipe)?;
-  validate_scan_sub_recipe(&entry.manifest, "per_list_item_candidate")?;
 
   for item in items {
     let summary = crate::skill::run_skill_manifest_into_run(
       runtime,
       run,
       root,
-      &entry.manifest,
+      &manifest,
       crate::skill::SkillRunOptions {
         dry_run: false,
         max_disturbance: Some(DisturbanceClass::None),
@@ -2039,19 +2098,18 @@ fn run_optional_scan_hook(
   run: &mut crate::recording::RecordingRun,
   root: &crate::recording::SpanRef,
   recipe: Option<&str>,
+  inline_hook: Option<&crate::skill::SkillManifest>,
   hook_name: &str,
   page_index: usize,
   options: &ScanWindowRegionOptions,
   stop_evidence: Option<&StopEvidence>,
 ) -> AuvResult<Option<HookDecisionRecord>> {
-  let Some(recipe) = recipe else {
+  let Some(manifest) = resolve_scan_hook_manifest(runtime, inline_hook, recipe, hook_name)? else {
     return Ok(None);
   };
-  let project_root = runtime.project_root();
-  let catalog = crate::skill::SkillCatalog::discover(project_root)?;
-  let entry = catalog.resolve(project_root, recipe)?;
   let mut overrides = BTreeMap::from([
     ("scan.hook.name".to_string(), hook_name.to_string()),
+    ("scan.hook.stage".to_string(), hook_name.to_string()),
     ("scan.page_index".to_string(), page_index.to_string()),
     ("scan.direction".to_string(), options.direction.clone()),
     (
@@ -2073,7 +2131,7 @@ fn run_optional_scan_hook(
     runtime,
     run,
     root,
-    &entry.manifest,
+    &manifest,
     crate::skill::SkillRunOptions {
       dry_run: false,
       max_disturbance: Some(DisturbanceClass::None),
@@ -2082,6 +2140,27 @@ fn run_optional_scan_hook(
     },
   )?;
   hook_decision_from_variables(hook_name, page_index, &summary.exported_variables)
+}
+
+fn resolve_scan_hook_manifest(
+  runtime: &crate::runtime::Runtime,
+  inline_hook: Option<&crate::skill::SkillManifest>,
+  recipe: Option<&str>,
+  expected_stage: &str,
+) -> AuvResult<Option<crate::skill::SkillManifest>> {
+  if let Some(manifest) = inline_hook {
+    validate_scan_sub_recipe(manifest, expected_stage)?;
+    return Ok(Some(manifest.clone()));
+  }
+
+  let Some(recipe) = recipe else {
+    return Ok(None);
+  };
+  let project_root = runtime.project_root();
+  let catalog = crate::skill::SkillCatalog::discover(project_root)?;
+  let entry = catalog.resolve(project_root, recipe)?;
+  validate_scan_sub_recipe(&entry.manifest, expected_stage)?;
+  Ok(Some(entry.manifest.clone()))
 }
 
 fn stage_scan_artifact(
@@ -2124,10 +2203,133 @@ fn write_scan_artifact(artifact: &ScrollScanArtifact) -> AuvResult<PathBuf> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::collections::BTreeMap;
+  use std::env;
   use std::fs;
   use std::sync::atomic::{AtomicU64, Ordering};
 
+  use serde_json::json;
+
+  use crate::catalog::CommandCatalog;
+  use crate::driver::{Driver, DriverRegistry};
+  use crate::model::{
+    AuvResult, CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse,
+    ProducedArtifact,
+  };
+  use crate::store::LocalStore;
+
   static TEST_ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+  struct ScrollScanFixtureDriver;
+
+  impl Driver for ScrollScanFixtureDriver {
+    fn descriptor(&self) -> DriverDescriptor {
+      DriverDescriptor {
+        id: "test.scroll-scan.driver",
+        summary: "Fixture scroll-scan driver",
+        capabilities: &["test.scroll_scan"],
+        donor_boundary: "test-only",
+      }
+    }
+
+    fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
+      match call.operation.as_str() {
+        "observe_window_region" => {
+          let artifact_path = call
+            .working_directory
+            .join(format!("{}-observe.json", sanitize_test_label(&call.inputs)));
+          let payload = json!({
+            "item_candidates": [
+              {
+                "item_index": 4,
+                "row_candidate_index": 7,
+                "source": "row_filter",
+                "filter_reason": "accepted_repeating_row_geometry",
+                "text": "Fixture Song",
+                "text_fragments": ["Fixture Song"],
+                "bounds": { "x": 100, "y": 220, "width": 600, "height": 84 }
+              }
+            ]
+          });
+          fs::write(
+            &artifact_path,
+            serde_json::to_string_pretty(&payload).expect("fixture rows json should serialize"),
+          )
+          .map_err(|error| format!("failed to write fixture observe artifact: {error}"))?;
+          Ok(DriverResponse {
+            summary: "fixture observe rows".to_string(),
+            backend: Some("test.scroll-scan.fixture".to_string()),
+            signals: BTreeMap::new(),
+            notes: vec![],
+            artifacts: vec![ProducedArtifact {
+              kind: "observe-window-region".to_string(),
+              source_path: artifact_path,
+              preferred_name: "observe-window-region.json".to_string(),
+              note: Some("Fixture observe rows".to_string()),
+            }],
+          })
+        }
+        "scroll_window_region" => Ok(DriverResponse {
+          summary: "fixture scroll".to_string(),
+          backend: Some("test.scroll-scan.fixture".to_string()),
+          signals: BTreeMap::new(),
+          notes: vec![],
+          artifacts: vec![],
+        }),
+        "observe_fixture_scene" => {
+          let action = call
+            .inputs
+            .get("hook_action")
+            .cloned()
+            .unwrap_or_else(|| "continue".to_string());
+          let reason = call
+            .inputs
+            .get("hook_reason")
+            .cloned()
+            .unwrap_or_else(|| "fixture hook continued".to_string());
+          let hook_name = call
+            .inputs
+            .get("hook_name")
+            .cloned()
+            .unwrap_or_else(|| "fixture".to_string());
+          let hook_stage = call
+            .inputs
+            .get("hook_stage")
+            .cloned()
+            .unwrap_or_else(|| hook_name.clone());
+          let page_index = call
+            .inputs
+            .get("hook_page_index")
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(0);
+          Ok(DriverResponse {
+            summary: format!("fixture hook {hook_name} returned {action}"),
+            backend: Some("test.scroll-scan.fixture".to_string()),
+            signals: BTreeMap::from([
+              ("last.scan.hook.action".to_string(), action.clone()),
+              ("last.scan.hook.reason".to_string(), reason.clone()),
+              (
+                "last.scan.hook.decision".to_string(),
+                json!({
+                  "hook_name": hook_name,
+                  "stage": hook_stage,
+                  "page_index": page_index,
+                  "action": action,
+                  "reason": reason,
+                  "annotations": ["fixture hook annotation"],
+                  "evidence": ["artifacts/fixture-hook.json"]
+                })
+                .to_string(),
+              ),
+            ]),
+            notes: vec![],
+            artifacts: vec![],
+          })
+        }
+        other => Err(format!("unsupported test.scroll-scan operation {other}")),
+      }
+    }
+  }
 
   #[test]
   fn scan_artifact_serializes_completeness_and_observations() {
@@ -2254,6 +2456,7 @@ mod tests {
         next_section_candidate: false,
         scroll_boundary_candidate: None,
       },
+      "down",
     );
 
     assert_eq!(
@@ -2263,7 +2466,7 @@ mod tests {
   }
 
   #[test]
-  fn until_end_policy_stops_after_no_progress_limit() {
+  fn until_end_policy_stops_after_no_progress_limit_downward() {
     let decision = evaluate_stop_policy(
       &StopPolicy::UntilEnd {
         max_pages: 20,
@@ -2280,14 +2483,47 @@ mod tests {
         next_section_candidate: false,
         scroll_boundary_candidate: None,
       },
-    );
+      "down",
+    )
+    .expect("stop expected");
 
-    let decision = decision.expect("stop expected");
     assert_eq!(decision.stop_evidence.reason, StopReason::NoProgressLimit);
     assert_eq!(
       decision.completeness_claim,
-      CompletenessClaim::CompleteByNoVisualProgress
+      CompletenessClaim::CompleteByNoVisualProgressDown
     );
+    assert!(decision.stop_evidence.message.contains("scrolling down"));
+    assert!(decision.stop_evidence.message.contains("no_progress_limit=2"));
+  }
+
+  #[test]
+  fn until_end_policy_stops_after_no_progress_limit_upward() {
+    let decision = evaluate_stop_policy(
+      &StopPolicy::UntilEnd {
+        max_pages: 20,
+        max_scrolls: 20,
+        no_progress_limit: 3,
+      },
+      &ScanProgress {
+        page_index: 5,
+        scroll_count: 5,
+        consecutive_no_progress: 3,
+        new_observation_count: 0,
+        hook_stop_requested: false,
+        match_found: false,
+        next_section_candidate: false,
+        scroll_boundary_candidate: None,
+      },
+      "up",
+    )
+    .expect("stop expected");
+
+    assert_eq!(decision.stop_evidence.reason, StopReason::NoProgressLimit);
+    assert_eq!(
+      decision.completeness_claim,
+      CompletenessClaim::CompleteByNoVisualProgressUp
+    );
+    assert!(decision.stop_evidence.message.contains("scrolling up"));
   }
 
   #[test]
@@ -2364,6 +2600,7 @@ mod tests {
         next_section_candidate: false,
         scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[]),
       },
+      "down",
     )
     .expect("boundary stop expected");
 
@@ -2398,6 +2635,7 @@ mod tests {
         next_section_candidate: false,
         scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[]),
       },
+      "down",
     );
 
     assert!(decision.is_none());
@@ -2492,13 +2730,17 @@ mod tests {
   }
 
   #[test]
-  fn count_new_observations_uses_position_signature_for_repeated_text() {
+  fn count_new_observations_deduplicates_same_text_at_different_scroll_positions() {
+    // Same text at a different y (different scroll position) must NOT count as
+    // new — that is the whole point: consecutive_no_progress should increment
+    // when the same content reappears after a partial scroll, so UntilEnd scans
+    // eventually auto-stop instead of running forever.
     let mut known_signatures = BTreeSet::new();
     let first = vec![observation("obs_0001", 0, "Repeat", 10)];
     let second = vec![observation("obs_0002", 1, "Repeat", 80)];
 
     assert_eq!(count_new_observations(&first, &mut known_signatures), 1);
-    assert_eq!(count_new_observations(&second, &mut known_signatures), 1);
+    assert_eq!(count_new_observations(&second, &mut known_signatures), 0);
   }
 
   #[test]
@@ -2897,6 +3139,72 @@ mod tests {
   }
 
   #[test]
+  fn attach_inline_scan_hooks_from_manifest_injects_parent_local_hook() {
+    let parent_manifest = inline_hook_parent_manifest();
+    let mut options = bounded_scan_options();
+
+    attach_inline_scan_hooks_from_manifest(&parent_manifest, &mut options)
+      .expect("inline hook attachment should succeed");
+
+    let hook = options
+      .per_list_item_candidate_inline_hook
+      .as_ref()
+      .expect("per_list_item_candidate inline hook should attach");
+    assert_eq!(
+      hook.recipe_id,
+      "test.inline-hook.parent.hook.per_list_item_candidate"
+    );
+    assert_eq!(hook.invocation.stage, "per_list_item_candidate");
+  }
+
+  #[test]
+  fn scan_window_region_executes_inline_list_item_hook_under_scan_run() {
+    let project_root = temp_dir("scroll-scan-inline-hook-project");
+    let store_root = temp_dir("scroll-scan-inline-hook-store");
+    let runtime = scroll_scan_test_runtime(project_root.clone(), store_root.clone());
+    let parent_manifest = inline_hook_parent_manifest();
+    let mut options = bounded_scan_options();
+    attach_inline_scan_hooks_from_manifest(&parent_manifest, &mut options)
+      .expect("inline hook attachment should succeed");
+
+    let run_id = scan_window_region(&runtime, options).expect("scan should succeed");
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+
+    assert!(canonical.spans.iter().any(|span| {
+      span
+        .attributes
+        .get("auv.recipe.id")
+        .is_some_and(|value| value == &json!("test.inline-hook.parent.hook.per_list_item_candidate"))
+    }));
+    assert!(canonical.artifacts.iter().any(|artifact| artifact.role == "scroll-scan"));
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn scan_window_region_keeps_standalone_list_item_hook_recipe_compatible() {
+    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let store_root = temp_dir("scroll-scan-standalone-hook-store");
+    let runtime = scroll_scan_test_runtime(project_root.clone(), store_root.clone());
+    let mut options = bounded_scan_options();
+    options.per_list_item_candidate_recipe =
+      Some("scan.fixture.list_item_candidate_continue.v0".to_string());
+
+    let run_id = scan_window_region(&runtime, options).expect("scan should succeed");
+    let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
+
+    assert!(canonical.spans.iter().any(|span| {
+      span
+        .attributes
+        .get("auv.recipe.id")
+        .is_some_and(|value| value == &json!("scan.fixture.list_item_candidate_continue.v0"))
+    }));
+
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
   fn list_item_candidate_hook_overrides_include_outer_scan_context() {
     let mut item = observation("obs_0001_0001", 2, "Song A", 120);
     item
@@ -2936,14 +3244,18 @@ mod tests {
       min_confidence: 0.0,
       max_observations: 128,
       per_page_after_observe_recipe: None,
+      per_page_after_observe_inline_hook: None,
       per_list_item_candidate_recipe: Some(
         "scan.fixture.list_item_candidate_continue.v0".to_string(),
       ),
+      per_list_item_candidate_inline_hook: None,
       on_stop_candidate_recipe: None,
+      on_stop_candidate_inline_hook: None,
     };
 
     let overrides = list_item_candidate_hook_overrides(&options, &item);
 
+    // Hook-level orchestration scalars must still be present.
     assert_eq!(
       overrides.get("scan.hook.stage").map(String::as_str),
       Some("per_list_item_candidate")
@@ -2952,26 +3264,24 @@ mod tests {
       overrides.get("scan.page_index").map(String::as_str),
       Some("2")
     );
-    assert_eq!(
-      overrides.get("scan.item.index").map(String::as_str),
-      Some("4")
-    );
-    assert_eq!(
-      overrides
-        .get("scan.item.row_candidate_index")
-        .map(String::as_str),
-      Some("7")
-    );
-    assert_eq!(
-      overrides.get("scan.item.bounds.y").map(String::as_str),
-      Some("120")
-    );
-    assert_eq!(
-      overrides
-        .get("scan.item.source_artifact")
-        .map(String::as_str),
-      Some("artifacts/page.png")
-    );
+
+    // scan.item.* scalar keys must be absent — replaced by the JSON blob.
+    assert!(!overrides.contains_key("scan.item.index"));
+    assert!(!overrides.contains_key("scan.item.bounds.y"));
+    assert!(!overrides.contains_key("scan.item.source_artifact"));
+
+    // The typed context blob must be present and round-trip cleanly.
+    let context_json = overrides
+      .get("scan.item")
+      .expect("scan.item JSON blob must be present");
+    let ctx: serde_json::Value =
+      serde_json::from_str(context_json).expect("scan.item must be valid JSON");
+    assert_eq!(ctx["index"], 4);
+    assert_eq!(ctx["row_candidate_index"], 7);
+    assert_eq!(ctx["bounds"]["y"], 120);
+    assert_eq!(ctx["source_artifact"], "artifacts/page.png");
+    assert_eq!(ctx["source"], "row_filter");
+    assert_eq!(ctx["filter_reason"], "accepted_repeating_row_geometry");
   }
 
   #[test]
@@ -3071,6 +3381,149 @@ mod tests {
       std::process::id()
     ));
     fs::write(&path, raw).expect("write temp json artifact");
+    path
+  }
+
+  fn bounded_scan_options() -> ScanWindowRegionOptions {
+    ScanWindowRegionOptions {
+      target: ScanTarget {
+        application_id: Some("com.example.App".to_string()),
+        window_title: None,
+        region: ScanRegion {
+          left_ratio: 0.2,
+          top_ratio: 0.3,
+          right_ratio: 0.9,
+          bottom_ratio: 0.8,
+        },
+      },
+      stop_policy: StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      },
+      direction: "down".to_string(),
+      scroll_amount: 40.0,
+      settle_ms: 250,
+      min_confidence: 0.0,
+      max_observations: 128,
+      per_page_after_observe_recipe: None,
+      per_page_after_observe_inline_hook: None,
+      per_list_item_candidate_recipe: None,
+      per_list_item_candidate_inline_hook: None,
+      on_stop_candidate_recipe: None,
+      on_stop_candidate_inline_hook: None,
+    }
+  }
+
+  fn inline_hook_parent_manifest() -> crate::skill::SkillManifest {
+    serde_json::from_value(json!({
+      "recipe_id": "test.inline-hook.parent",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "fixture://scan-hook", "display_mode": "fixture" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "test parent manifest with inline hook",
+      "disturbance_policy": {
+        "max_disturbance": "none",
+        "declared_classes": ["none"]
+      },
+      "steps": [{
+        "id": "capture",
+        "command_id": "debug.captureDisplay",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        }
+      }],
+      "hooks": {
+        "per_list_item_candidate": {
+          "input_schema": "auv.scan.list_item_candidate.context.v1",
+          "return_schema": "auv.scan.hook_decision.v0",
+          "steps": [{
+            "id": "return-hook-decision",
+            "command_id": "debug.fixtureObserve",
+            "disturbance": {
+              "classes": ["none"],
+              "max": "none"
+            },
+            "args": {
+              "target": "fixture://scan-hook",
+              "hook_action": "continue",
+              "hook_reason": "inline hook continued",
+              "hook_name": "${scan.hook.name}",
+              "hook_stage": "${scan.hook.stage}",
+              "hook_page_index": "${scan.page_index}"
+            }
+          }]
+        }
+      },
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("inline hook manifest should deserialize")
+  }
+
+  fn scroll_scan_test_runtime(project_root: PathBuf, store_root: PathBuf) -> crate::runtime::Runtime {
+    crate::runtime::Runtime::new(
+      project_root,
+      CommandCatalog::new(vec![
+        CommandSpec {
+          id: "debug.observeWindowRegion",
+          summary: "Observe fixture region",
+          driver_id: "test.scroll-scan.driver",
+          operation: "observe_window_region",
+          disturbance_classes: &[DisturbanceClass::None],
+          max_disturbance: DisturbanceClass::None,
+        },
+        CommandSpec {
+          id: "debug.scrollWindowRegion",
+          summary: "Scroll fixture region",
+          driver_id: "test.scroll-scan.driver",
+          operation: "scroll_window_region",
+          disturbance_classes: &[DisturbanceClass::Pointer],
+          max_disturbance: DisturbanceClass::Pointer,
+        },
+        CommandSpec {
+          id: "debug.fixtureObserve",
+          summary: "Return fixture hook decision",
+          driver_id: "test.scroll-scan.driver",
+          operation: "observe_fixture_scene",
+          disturbance_classes: &[DisturbanceClass::None],
+          max_disturbance: DisturbanceClass::None,
+        },
+      ]),
+      DriverRegistry::new(vec![Box::new(ScrollScanFixtureDriver)]),
+      LocalStore::new(store_root).expect("store should initialize"),
+    )
+  }
+
+  fn sanitize_test_label(inputs: &BTreeMap<String, String>) -> String {
+    inputs
+      .get("label")
+      .map(String::as_str)
+      .unwrap_or("fixture")
+      .chars()
+      .map(|character| {
+        if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+          character
+        } else {
+          '-'
+        }
+      })
+      .collect::<String>()
+  }
+
+  fn temp_dir(label: &str) -> PathBuf {
+    let path = env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
   }
 }
