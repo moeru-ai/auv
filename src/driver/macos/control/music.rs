@@ -13,12 +13,13 @@ use crate::contract::{
   WindowRefPrecondition,
 };
 use crate::model::ExecutionTarget;
-use crate::trace::{ArtifactId, RunId, SpanId};
+use crate::trace::RunId;
 
-const SCREENSHOT_ARTIFACT_ID: &str = "artifact_0001";
-const REPORT_ARTIFACT_ID: &str = "artifact_0002";
-const OPERATION_RESULT_ARTIFACT_ID: &str = "artifact_0003";
-const RECOGNITION_RESULT_ARTIFACT_ID: &str = "artifact_0004";
+/// Default `source_artifact_id` for callers consuming `music.search.results`
+/// output. Coupled to the slot `music_search_results` uses for its
+/// `OperationResult` JSON artifact; update both sides together if the producer
+/// response shape changes.
+const MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID: &str = "artifact_0003";
 
 struct ResolvedMusicCandidate {
   operation_result: OperationResult,
@@ -37,12 +38,14 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
 
   let app_bundle_id = app_identifier(call).unwrap_or_default();
 
-  let evidence_artifact_ref = |artifact_id: &str| ArtifactRef {
-    run_id: RunId::new(call.run_context.run_id.as_str()),
-    artifact_id: ArtifactId::new(artifact_id),
-    span_id: SpanId::new(call.run_context.span_id.as_str()),
-    captured_event_id: None,
-  };
+  // The response contains four artifacts in this order. Reserve refs up front so
+  // the OperationResult JSON (slot 2) can cite the recognition artifact (slot 3)
+  // before either has been built. `push` below must follow the same slot order.
+  let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
+  let screenshot_ref = artifacts.ref_at(0);
+  let report_ref = artifacts.ref_at(1);
+  let op_result_ref = artifacts.ref_at(2);
+  let recognition_ref = artifacts.ref_at(3);
 
   let ocr_text_strategy = detection.strategy == "ocr-text";
   let candidates: Vec<Candidate> = rows
@@ -89,7 +92,7 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
           row_index: Some(row.row_index + 1),
         },
         evidence: CandidateEvidence {
-          artifact_ref: evidence_artifact_ref(SCREENSHOT_ARTIFACT_ID),
+          artifact_ref: screenshot_ref.clone(),
           observation: serde_json::json!({
             "provider": "vision_ocr.window_rows",
             "row_index": row.row_index,
@@ -101,7 +104,7 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
               "width": row.bounds.width,
               "height": row.bounds.height,
             },
-            "recognition_result_ref": evidence_artifact_ref(RECOGNITION_RESULT_ARTIFACT_ID),
+            "recognition_result_ref": recognition_ref.clone(),
             "recognized_item_id": format!("row#{}", row.row_index + 1),
           }),
         },
@@ -130,15 +133,15 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
     status: OperationStatus::Completed,
     operation_id: "music.search.results".to_string(),
     evidence_artifacts: vec![
-      evidence_artifact_ref(SCREENSHOT_ARTIFACT_ID),
-      evidence_artifact_ref(REPORT_ARTIFACT_ID),
-      evidence_artifact_ref(RECOGNITION_RESULT_ARTIFACT_ID),
+      screenshot_ref.clone(),
+      report_ref.clone(),
+      recognition_ref.clone(),
     ],
     output: OperationOutput::Candidates {
       candidates: candidates.clone(),
     },
     freshness_basis: Some(FreshnessBasis {
-      source_artifact: Some(evidence_artifact_ref(SCREENSHOT_ARTIFACT_ID)),
+      source_artifact: Some(screenshot_ref.clone()),
       source_operation_id: Some("debug.findWindowRows".to_string()),
       notes: vec!["window-scoped OCR rows".to_string()],
     }),
@@ -209,16 +212,24 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
     },
   )?;
 
+  // Push in slot order: must match the ref_at(0..=3) reservations above.
+  artifacts.push(screenshot);
+  artifacts.push(report);
+  artifacts.push(result_artifact);
+  artifacts.push(recognition_artifact);
+
+  let op_result_id = op_result_ref.artifact_id.as_str();
+  let recognition_id = recognition_ref.artifact_id.as_str();
   let row_count = rows.len();
   let summary = if row_count > 0 {
     format!(
-      "Produced {} search-result candidate(s) from window OCR rows (strategy {}); typed OperationResult at artifact_0003 and structured recognition at artifact_0004.",
-      row_count, detection.strategy
+      "Produced {} search-result candidate(s) from window OCR rows (strategy {}); typed OperationResult at {} and structured recognition at {}.",
+      row_count, detection.strategy, op_result_id, recognition_id
     )
   } else {
     format!(
-      "Detected 0 rows inside resolved window after strategy {}; empty candidate set in OperationResult artifact_0003 with structured recognition at artifact_0004.",
-      detection.strategy
+      "Detected 0 rows inside resolved window after strategy {}; empty candidate set in OperationResult {} with structured recognition at {}.",
+      detection.strategy, op_result_id, recognition_id
     )
   };
 
@@ -235,17 +246,17 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
       format!("rowStrategy={}", detection.strategy),
       format!("rowCount={row_count}"),
       format!("candidateCount={row_count}"),
-      "operationResultArtifact=artifact_0003".to_string(),
-      "recognitionResultArtifact=artifact_0004".to_string(),
+      format!("operationResultArtifact={op_result_id}"),
+      format!("recognitionResultArtifact={recognition_id}"),
     ],
-    artifacts: vec![screenshot, report, result_artifact, recognition_artifact],
+    artifacts: artifacts.into_vec(),
   })
 }
 
 pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<DriverResponse> {
   let source_run_id = required_non_empty_string(call, "source_run_id")?;
   let source_artifact_id = optional_non_empty_string(call, "source_artifact_id")
-    .unwrap_or_else(|| OPERATION_RESULT_ARTIFACT_ID.to_string());
+    .unwrap_or_else(|| MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string());
   let candidate_local_id = required_non_empty_string(call, "candidate_local_id")?;
 
   let resolved = load_music_candidate(
@@ -300,7 +311,7 @@ pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<
 pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> {
   let source_run_id = required_non_empty_string(call, "source_run_id")?;
   let source_artifact_id = optional_non_empty_string(call, "source_artifact_id")
-    .unwrap_or_else(|| OPERATION_RESULT_ARTIFACT_ID.to_string());
+    .unwrap_or_else(|| MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string());
   let candidate_local_id = required_non_empty_string(call, "candidate_local_id")?;
   let target_title = required_non_empty_string(call, "target_title")?;
   let target_artist = optional_non_empty_string(call, "target_artist");
@@ -1047,7 +1058,15 @@ fn report_text(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::trace::{ArtifactId, SpanId};
   use serde_json::json;
+
+  // Slot positions `music_search_results` reserves in its DriverArtifactBuilder.
+  // These tests exercise the *consumer* side (candidate_evidence_refs); the
+  // labels match what the producer's builder will emit so failures point at
+  // the right contract if the producer shape ever drifts.
+  const SCREENSHOT_ARTIFACT_ID: &str = "artifact_0001";
+  const RECOGNITION_RESULT_ARTIFACT_ID: &str = "artifact_0004";
 
   fn artifact_ref(id: &str) -> ArtifactRef {
     ArtifactRef {

@@ -5,6 +5,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::super::*;
+use crate::contract::ArtifactRef;
+use crate::model::DriverRunContext;
+use crate::trace::{ArtifactId, RunId, SpanId};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -195,3 +198,116 @@ pub(crate) fn sanitized_artifact_name(raw: &str) -> String {
 }
 
 pub(crate) struct CommandOutput {}
+
+/// Builds the `artifacts` vector for a `DriverResponse` while exposing typed
+/// `ArtifactRef`s pointing at the IDs the runtime will assign once it stages
+/// the response.
+///
+/// The runtime stages artifacts in order, minting IDs as `artifact_{:04}`
+/// based on 1-indexed position. This builder ties ref minting to push position
+/// so drivers can embed cross-artifact `ArtifactRef`s (e.g. evidence refs in
+/// `OperationResult` JSON or `recognition_result_ref` in candidate evidence)
+/// without hardcoding string constants like `"artifact_0001"` that drift
+/// silently whenever the response shape changes.
+pub(crate) struct DriverArtifactBuilder {
+  run_context: DriverRunContext,
+  artifacts: Vec<ProducedArtifact>,
+}
+
+impl DriverArtifactBuilder {
+  pub(crate) fn new(run_context: &DriverRunContext) -> Self {
+    Self {
+      run_context: run_context.clone(),
+      artifacts: Vec::new(),
+    }
+  }
+
+  /// Returns the `ArtifactRef` the artifact at the given 0-indexed slot will
+  /// receive after the runtime stages the response. Lets callers refer
+  /// forward to artifacts before pushing them — necessary when building
+  /// content that embeds refs pointing at later artifacts in the same
+  /// response (e.g. an `OperationResult` whose evidence list cites a
+  /// recognition artifact pushed after it).
+  ///
+  /// Callers are responsible for matching push order to reserved slots;
+  /// `push` returns the same ref so the round-trip is checkable.
+  pub(crate) fn ref_at(&self, slot: usize) -> ArtifactRef {
+    ArtifactRef {
+      run_id: RunId::new(self.run_context.run_id.as_str()),
+      artifact_id: ArtifactId::new(&format!("artifact_{:04}", slot + 1)),
+      span_id: SpanId::new(self.run_context.span_id.as_str()),
+      captured_event_id: None,
+    }
+  }
+
+  /// Pushes an artifact and returns its `ArtifactRef`. Equivalent to
+  /// `ref_at(self.len())` before the push.
+  pub(crate) fn push(&mut self, artifact: ProducedArtifact) -> ArtifactRef {
+    let slot = self.artifacts.len();
+    self.artifacts.push(artifact);
+    self.ref_at(slot)
+  }
+
+  pub(crate) fn into_vec(self) -> Vec<ProducedArtifact> {
+    self.artifacts
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn driver_artifact_builder_assigns_sequential_ids() {
+    let ctx = DriverRunContext {
+      run_id: "run_42".to_string(),
+      span_id: "span_7".to_string(),
+    };
+    let mut builder = DriverArtifactBuilder::new(&ctx);
+    let first = builder.push(ProducedArtifact {
+      kind: "screenshot".to_string(),
+      source_path: PathBuf::from("/tmp/a.png"),
+      preferred_name: "a.png".to_string(),
+      note: None,
+    });
+    let second = builder.push(ProducedArtifact {
+      kind: "report".to_string(),
+      source_path: PathBuf::from("/tmp/b.txt"),
+      preferred_name: "b.txt".to_string(),
+      note: None,
+    });
+
+    assert_eq!(first.artifact_id.as_str(), "artifact_0001");
+    assert_eq!(second.artifact_id.as_str(), "artifact_0002");
+    assert_eq!(first.run_id.as_str(), "run_42");
+    assert_eq!(first.span_id.as_str(), "span_7");
+    assert_eq!(builder.into_vec().len(), 2);
+  }
+
+  #[test]
+  fn driver_artifact_builder_ref_at_matches_push_position() {
+    let ctx = DriverRunContext::default();
+    let mut builder = DriverArtifactBuilder::new(&ctx);
+    // Forward-reference a slot before pushing it.
+    let forward = builder.ref_at(2);
+    builder.push(ProducedArtifact {
+      kind: "x".to_string(),
+      source_path: PathBuf::from("/tmp/0.txt"),
+      preferred_name: "0.txt".to_string(),
+      note: None,
+    });
+    builder.push(ProducedArtifact {
+      kind: "y".to_string(),
+      source_path: PathBuf::from("/tmp/1.txt"),
+      preferred_name: "1.txt".to_string(),
+      note: None,
+    });
+    let actual = builder.push(ProducedArtifact {
+      kind: "z".to_string(),
+      source_path: PathBuf::from("/tmp/2.txt"),
+      preferred_name: "2.txt".to_string(),
+      note: None,
+    });
+    assert_eq!(forward.artifact_id, actual.artifact_id);
+  }
+}
