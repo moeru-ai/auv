@@ -133,7 +133,10 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
     let seg_artifact = segmented_region_recognition_artifact(
       &format!("{}-segmentation", sanitize_file_component(&label)),
       SegmentedRegionArtifactRequest {
-        recognition_id: format!("window_region_{}_segmentation", sanitize_file_component(&label)),
+        recognition_id: format!(
+          "window_region_{}_segmentation",
+          sanitize_file_component(&label)
+        ),
         surface: crate::contract::RecognitionSurface::Region,
         segments: &segments,
         row_count: rows.len(),
@@ -676,7 +679,7 @@ pub(crate) struct SegmentedRegion {
   pub(crate) contributing_row_count: usize,
 }
 
-pub(crate) fn classify_segmented_regions(
+fn classify_segmented_regions(
   rows: &[ObservedOcrRow],
   filter: &ListRowFilterResult,
 ) -> Vec<SegmentedRegion> {
@@ -902,13 +905,21 @@ mod tests {
     assert!(region.y + region.height <= 100);
   }
 
-  fn render_json(rows: &[ObservedOcrRow], region: ObservedRect, w: i64, h: i64) -> serde_json::Value {
+  fn render_json(
+    rows: &[ObservedOcrRow],
+    region: ObservedRect,
+    w: i64,
+    h: i64,
+  ) -> serde_json::Value {
     let filter = filter_list_row_candidates(rows);
     let json = render_observe_window_region_json(
       rows,
       &filter,
       &region,
-      &ScreenshotDimensions { width: w, height: h },
+      &ScreenshotDimensions {
+        width: w,
+        height: h,
+      },
       std::path::Path::new("/tmp/window.png"),
     )
     .expect("json should render");
@@ -917,7 +928,17 @@ mod tests {
 
   #[test]
   fn render_observe_window_region_json_includes_coordinate_semantics() {
-    let value = render_json(&[], ObservedRect { x: 99, y: 10, width: 1, height: 80 }, 100, 200);
+    let value = render_json(
+      &[],
+      ObservedRect {
+        x: 99,
+        y: 10,
+        width: 1,
+        height: 80,
+      },
+      100,
+      200,
+    );
     assert_eq!(
       value["coordinate_space"],
       serde_json::Value::String("window_screenshot_pixels".to_string())
@@ -935,7 +956,17 @@ mod tests {
       observed_row(3, 120, 588, 700, 86),
       observed_row(4, 120, 716, 700, 82),
     ];
-    let value = render_json(&rows, ObservedRect { x: 80, y: 100, width: 800, height: 720 }, 1000, 900);
+    let value = render_json(
+      &rows,
+      ObservedRect {
+        x: 80,
+        y: 100,
+        width: 800,
+        height: 720,
+      },
+      1000,
+      900,
+    );
 
     assert_eq!(value["row_candidates"].as_array().unwrap().len(), 5);
     assert_eq!(value["item_candidates"].as_array().unwrap().len(), 3);
@@ -961,7 +992,17 @@ mod tests {
       .enumerate()
       .map(|(index, height)| observed_row(index, 120, 100 + index as i64 * 120, 700, *height))
       .collect::<Vec<_>>();
-    let value = render_json(&rows, ObservedRect { x: 80, y: 100, width: 800, height: 1200 }, 1000, 1400);
+    let value = render_json(
+      &rows,
+      ObservedRect {
+        x: 80,
+        y: 100,
+        width: 800,
+        height: 1200,
+      },
+      1000,
+      1400,
+    );
 
     let item_row_indices = value["item_candidates"]
       .as_array()
@@ -986,20 +1027,32 @@ mod tests {
     // Rows 1-4: list items with consistent height ~80px
     // Row 5: thin separator (height 4px)
     let rows = vec![
-      observed_row(0, 100, 50, 700, 120),   // sticky_header candidate
-      observed_row(1, 100, 200, 700, 80),   // list item
-      observed_row(2, 100, 300, 700, 82),   // list item
-      observed_row(3, 100, 400, 700, 78),   // list item
-      observed_row(4, 100, 500, 700, 81),   // list item
-      observed_row(5, 100, 620, 700, 3),    // section_separator (thin)
+      observed_row(0, 100, 50, 700, 120), // sticky_header candidate
+      observed_row(1, 100, 200, 700, 80), // list item
+      observed_row(2, 100, 300, 700, 82), // list item
+      observed_row(3, 100, 400, 700, 78), // list item
+      observed_row(4, 100, 500, 700, 81), // list item
+      observed_row(5, 100, 620, 700, 3),  // section_separator (thin)
     ];
     let filter = filter_list_row_candidates(&rows);
     let segments = classify_segmented_regions(&rows, &filter);
 
     let roles: Vec<&str> = segments.iter().map(|s| s.role.as_str()).collect();
-    assert!(roles.contains(&"list_region"), "should identify list_region: {:?}", roles);
-    assert!(roles.contains(&"sticky_header"), "should identify sticky_header: {:?}", roles);
-    assert!(roles.contains(&"section_separator"), "should identify section_separator: {:?}", roles);
+    assert!(
+      roles.contains(&"list_region"),
+      "should identify list_region: {:?}",
+      roles
+    );
+    assert!(
+      roles.contains(&"sticky_header"),
+      "should identify sticky_header: {:?}",
+      roles
+    );
+    assert!(
+      roles.contains(&"section_separator"),
+      "should identify section_separator: {:?}",
+      roles
+    );
   }
 
   #[test]
@@ -1021,7 +1074,10 @@ mod tests {
         segments: &segments,
         row_count: rows.len(),
         screenshot_path: std::path::Path::new("/tmp/test.png"),
-        screenshot_dimensions: &ScreenshotDimensions { width: 1000, height: 800 },
+        screenshot_dimensions: &ScreenshotDimensions {
+          width: 1000,
+          height: 800,
+        },
         display_ref: Some("display_1"),
         native_display_id: Some("2"),
         app_bundle_id: Some("com.example.app"),
@@ -1037,7 +1093,10 @@ mod tests {
     assert_eq!(json["source"], serde_json::json!("segmented_region"));
     assert_eq!(json["scope"]["surface"], serde_json::json!("window"));
     assert_eq!(json["best"]["kind"], serde_json::json!("list_region"));
-    assert_eq!(json["detail"]["provider"], serde_json::json!("rule_based_segmentation"));
+    assert_eq!(
+      json["detail"]["provider"],
+      serde_json::json!("rule_based_segmentation")
+    );
     assert_eq!(json["detail"]["row_count"], serde_json::json!(4));
   }
 

@@ -2770,8 +2770,8 @@ mod tests {
     }))
     .expect("manifest should deserialize");
 
-    let error = validate_skill_manifest(&manifest)
-      .expect_err("unknown inline hook stage should fail");
+    let error =
+      validate_skill_manifest(&manifest).expect_err("unknown inline hook stage should fail");
     assert!(error.contains("unsupported inline hook"));
     assert!(error.contains("before_scan"));
   }

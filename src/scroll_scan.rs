@@ -2,13 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use swift_bridge::bridge;
 use crate::contract::{RecognitionResult, RecognitionSource, RecognitionSurface, RecognizedItem};
 use crate::model::{
   AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus,
 };
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ScanRegion {
@@ -284,6 +283,7 @@ pub struct ScanWindowRegionOptions {
   pub on_stop_candidate_inline_hook: Option<crate::skill::SkillManifest>,
 }
 
+#[allow(dead_code)]
 pub(crate) fn attach_inline_scan_hooks_from_manifest(
   parent: &crate::skill::SkillManifest,
   options: &mut ScanWindowRegionOptions,
@@ -408,7 +408,9 @@ fn scan_window_region_into_run(
       scroll_boundary_candidate,
     };
 
-    if let Some(mut decision) = evaluate_stop_policy(&options.stop_policy, &progress, &options.direction) {
+    if let Some(mut decision) =
+      evaluate_stop_policy(&options.stop_policy, &progress, &options.direction)
+    {
       let stop_hook_result = run_optional_scan_hook(
         runtime,
         run,
@@ -764,7 +766,13 @@ pub fn evaluate_stop_policy(
       max_pages,
       max_scrolls,
       no_progress_limit,
-    } => bounded_or_no_progress_stop(*max_pages, *max_scrolls, *no_progress_limit, direction, progress),
+    } => bounded_or_no_progress_stop(
+      *max_pages,
+      *max_scrolls,
+      *no_progress_limit,
+      direction,
+      progress,
+    ),
     StopPolicy::UntilNextSection {
       max_pages,
       max_scrolls,
@@ -1593,10 +1601,7 @@ fn observation_signature(observation: &CollectionObservation) -> String {
       .unwrap_or("unknown");
     format!(
       "visual:{}|x={}|w={}|h={}",
-      source,
-      observation.bounds.x,
-      observation.bounds.width,
-      observation.bounds.height
+      source, observation.bounds.x, observation.bounds.width, observation.bounds.height
     )
   }
 }
@@ -1704,7 +1709,10 @@ fn list_item_candidate_hook_overrides(
     filter_reason: item.attributes.get("filter_reason").cloned(),
     segmented_region_role: item.attributes.get("segmented_region_role").cloned(),
     text_fragments: item.attributes.get("text_fragments").cloned(),
-    source_artifact: item.source_artifacts.first().map(|p| p.display().to_string()),
+    source_artifact: item
+      .source_artifacts
+      .first()
+      .map(|p| p.display().to_string()),
     crop_artifact: item.attributes.get("crop_artifact").cloned(),
     context_artifact: item.attributes.get("context_artifact").cloned(),
   };
@@ -2235,9 +2243,10 @@ mod tests {
     fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
       match call.operation.as_str() {
         "observe_window_region" => {
-          let artifact_path = call
-            .working_directory
-            .join(format!("{}-observe.json", sanitize_test_label(&call.inputs)));
+          let artifact_path = call.working_directory.join(format!(
+            "{}-observe.json",
+            sanitize_test_label(&call.inputs)
+          ));
           let payload = json!({
             "item_candidates": [
               {
@@ -2493,7 +2502,12 @@ mod tests {
       CompletenessClaim::CompleteByNoVisualProgressDown
     );
     assert!(decision.stop_evidence.message.contains("scrolling down"));
-    assert!(decision.stop_evidence.message.contains("no_progress_limit=2"));
+    assert!(
+      decision
+        .stop_evidence
+        .message
+        .contains("no_progress_limit=2")
+    );
   }
 
   #[test]
@@ -3171,12 +3185,16 @@ mod tests {
     let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
 
     assert!(canonical.spans.iter().any(|span| {
-      span
-        .attributes
-        .get("auv.recipe.id")
-        .is_some_and(|value| value == &json!("test.inline-hook.parent.hook.per_list_item_candidate"))
+      span.attributes.get("auv.recipe.id").is_some_and(|value| {
+        value == &json!("test.inline-hook.parent.hook.per_list_item_candidate")
+      })
     }));
-    assert!(canonical.artifacts.iter().any(|artifact| artifact.role == "scroll-scan"));
+    assert!(
+      canonical
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == "scroll-scan")
+    );
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
@@ -3470,7 +3488,10 @@ mod tests {
     .expect("inline hook manifest should deserialize")
   }
 
-  fn scroll_scan_test_runtime(project_root: PathBuf, store_root: PathBuf) -> crate::runtime::Runtime {
+  fn scroll_scan_test_runtime(
+    project_root: PathBuf,
+    store_root: PathBuf,
+  ) -> crate::runtime::Runtime {
     crate::runtime::Runtime::new(
       project_root,
       CommandCatalog::new(vec![

@@ -800,8 +800,8 @@ fn click_music_candidate_row(
 }
 
 fn press_music_play_button(call: &DriverCall, app_id: &str) -> AuvResult<DriverResponse> {
-  let query = optional_non_empty_string(call, "play_button_query")
-    .unwrap_or_else(|| "播放".to_string());
+  let query =
+    optional_non_empty_string(call, "play_button_query").unwrap_or_else(|| "播放".to_string());
   let min_confidence = optional_f64(call, "play_button_min_confidence")?.unwrap_or(0.75);
   let label = optional_non_empty_string(call, "play_button_overlay_label")
     .unwrap_or_else(|| "auv · play".to_string());
@@ -858,8 +858,14 @@ fn press_music_play_button(call: &DriverCall, app_id: &str) -> AuvResult<DriverR
   inputs.insert("label".to_string(), label);
   inputs.insert("region_left_ratio".to_string(), format!("{screen_left:.4}"));
   inputs.insert("region_top_ratio".to_string(), format!("{screen_top:.4}"));
-  inputs.insert("region_right_ratio".to_string(), format!("{screen_right:.4}"));
-  inputs.insert("region_bottom_ratio".to_string(), format!("{screen_bottom:.4}"));
+  inputs.insert(
+    "region_right_ratio".to_string(),
+    format!("{screen_right:.4}"),
+  );
+  inputs.insert(
+    "region_bottom_ratio".to_string(),
+    format!("{screen_bottom:.4}"),
+  );
 
   click_screen_text(&DriverCall {
     operation: "click_screen_text".to_string(),
