@@ -361,6 +361,12 @@ pub(crate) fn find_window_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
     } => (Some(display_ref.as_str()), Some(native_display_id.as_str())),
     _ => (None, None),
   };
+
+  // Reserve slot 0 for the screenshot so the recognition artifact can cite its
+  // ArtifactRef before the screenshot itself is pushed.
+  let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
+  let screenshot_ref = artifacts.ref_at(0);
+
   let recognition_artifact = row_recognition_artifact(
     "window-rows-recognition",
     &format!(
@@ -387,14 +393,12 @@ pub(crate) fn find_window_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
         .as_ref()
         .map(|value| observed_rect_to_ratio_region(value, &capture.dimensions)),
       capture_contract: Some(&capture.capture_contract),
-      capture_artifact: None,
+      capture_artifact: Some(screenshot_ref.clone()),
       additional_detail: serde_json::json!({
         "scope": &capture.scope,
         "capture_source": &capture.capture_source,
       }),
-      known_limits: vec![
-        "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
-      ],
+      known_limits: Vec::new(),
     },
   )?;
   let screenshot_artifact = screenshot_artifact(&capture, &label, "window row detection");
@@ -415,12 +419,17 @@ pub(crate) fn find_window_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
       detection.strategy
     )
   };
+  // Push in slot order: must match `ref_at(0)` reservation.
+  artifacts.push(screenshot_artifact);
+  artifacts.push(report_artifact);
+  artifacts.push(recognition_artifact);
+
   Ok(DriverResponse {
     summary,
     backend: Some(format!("macos.vision.window-rows.{}", detection.strategy)),
     signals: crate::driver::macos::observe::row_detection_signals(rows.len()),
     notes,
-    artifacts: vec![screenshot_artifact, report_artifact, recognition_artifact],
+    artifacts: artifacts.into_vec(),
   })
 }
 
@@ -468,6 +477,12 @@ pub(crate) fn wait_for_window_rows(call: &DriverCall) -> AuvResult<DriverRespons
         } => (Some(display_ref.as_str()), Some(native_display_id.as_str())),
         _ => (None, None),
       };
+
+      // Reserve slot 0 for the screenshot so the recognition artifact can cite
+      // its ArtifactRef before the screenshot itself is pushed.
+      let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
+      let screenshot_ref = artifacts.ref_at(0);
+
       let recognition_artifact = row_recognition_artifact(
         "window-rows-wait-recognition",
         &format!(
@@ -494,16 +509,14 @@ pub(crate) fn wait_for_window_rows(call: &DriverCall) -> AuvResult<DriverRespons
             .as_ref()
             .map(|value| observed_rect_to_ratio_region(value, &capture.dimensions)),
           capture_contract: Some(&capture.capture_contract),
-          capture_artifact: None,
+          capture_artifact: Some(screenshot_ref.clone()),
           additional_detail: serde_json::json!({
             "scope": &capture.scope,
             "capture_source": &capture.capture_source,
             "attempt_count": attempts,
             "timed_out": timed_out,
           }),
-          known_limits: vec![
-            "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
-          ],
+          known_limits: Vec::new(),
         },
       )?;
       let screenshot_artifact =
@@ -531,6 +544,11 @@ pub(crate) fn wait_for_window_rows(call: &DriverCall) -> AuvResult<DriverRespons
           detection.strategy
         )
       };
+      // Push in slot order: must match `ref_at(0)` reservation.
+      artifacts.push(screenshot_artifact);
+      artifacts.push(report_artifact);
+      artifacts.push(recognition_artifact);
+
       return Ok(DriverResponse {
         summary,
         backend: Some(format!(
@@ -543,7 +561,7 @@ pub(crate) fn wait_for_window_rows(call: &DriverCall) -> AuvResult<DriverRespons
           timed_out,
         ),
         notes,
-        artifacts: vec![screenshot_artifact, report_artifact, recognition_artifact],
+        artifacts: artifacts.into_vec(),
       });
     }
 
