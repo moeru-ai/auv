@@ -105,7 +105,6 @@ pub enum RecognitionSource {
   VisualRow,
   SegmentedRegion,
   IconMatch,
-  NeuralNetworkDetect,
   Custom,
 }
 

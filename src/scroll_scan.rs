@@ -1384,7 +1384,6 @@ fn recognition_source_name(source: RecognitionSource) -> &'static str {
     RecognitionSource::VisualRow => "visual_row",
     RecognitionSource::SegmentedRegion => "segmented_region",
     RecognitionSource::IconMatch => "icon_match",
-    RecognitionSource::NeuralNetworkDetect => "neural_network_detect",
     RecognitionSource::Custom => "custom",
   }
 }

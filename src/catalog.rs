@@ -197,14 +197,6 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
-      id: "debug.findNeuralDetect",
-      summary: "Detect objects in a resolved macOS window screenshot using an ONNX model via the auv-onnx-runner subprocess and emit a RecognitionResult artifact.",
-      driver_id: "macos.desktop",
-      operation: "find_neural_detect",
-      disturbance_classes: NONE,
-      max_disturbance: DisturbanceClass::None,
-    },
-    CommandSpec {
       id: "debug.scrollWindowRegion",
       summary: "Scroll at the center of a resolved macOS window region and record scroll evidence.",
       driver_id: "macos.desktop",

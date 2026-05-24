@@ -3,7 +3,6 @@ mod ax;
 pub(crate) mod common;
 mod icon_match;
 mod music;
-mod neural_detect;
 mod pointer;
 mod region;
 mod screen;
@@ -20,7 +19,6 @@ pub(crate) use self::icon_match::find_icon_match;
 pub(crate) use self::music::{
   music_result_play, music_search_results, music_validate_candidate_liveness,
 };
-pub(crate) use self::neural_detect::find_neural_detect;
 pub(crate) use self::pointer::{click_point, scroll_point};
 pub(crate) use self::region::{observe_window_region, scroll_window_region};
 pub(crate) use self::screen::{click_screen_row, click_screen_text};

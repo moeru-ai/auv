@@ -3,7 +3,6 @@ mod ax;
 mod call;
 mod display;
 mod geometry;
-pub(crate) mod neural_detect;
 mod observation;
 mod ocr;
 mod ocr_commands;
