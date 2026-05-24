@@ -48,6 +48,12 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
     } => (Some(display_ref.as_str()), Some(native_display_id.as_str())),
     _ => (None, None),
   };
+
+  // Reserve refs up front so recognition artifacts can cite the screenshot's
+  // ArtifactRef before it has been pushed onto the response.
+  let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
+  let screenshot_ref = artifacts.ref_at(0);
+
   let recognition_artifact = row_recognition_artifact(
     "window-region-recognition",
     &format!("{}-recognition", sanitize_file_component(&label)),
@@ -72,7 +78,7 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
         &capture.dimensions,
       )),
       capture_contract: Some(&capture.capture_contract),
-      capture_artifact: None,
+      capture_artifact: Some(screenshot_ref.clone()),
       additional_detail: serde_json::json!({
         "scope": &capture.scope,
         "capture_source": &capture.capture_source,
@@ -86,7 +92,6 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
         "min_confidence": min_confidence,
       }),
       known_limits: vec![
-        "driver-stage recognition evidence has no runtime artifact refs yet".to_string(),
         "region observation still uses heuristic row filtering for list semantics".to_string(),
       ],
     },
@@ -101,15 +106,11 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
   // distinguish top/bottom boundaries from ordinary repeated content.
   let screenshot_artifact = ProducedArtifact {
     kind: "screenshot".to_string(),
-    source_path: capture.screenshot_path,
+    source_path: capture.screenshot_path.clone(),
     preferred_name: format!("{}.png", sanitize_file_component(&label)),
     note: Some("Window screenshot captured for region observation.".to_string()),
   };
-  let mut artifacts = vec![
-    screenshot_artifact.clone(),
-    json_artifact,
-    recognition_artifact,
-  ];
+
   let overlay_rows = rows
     .iter()
     .map(|row| OverlayEvidenceRow {
@@ -119,19 +120,19 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
       text_fragments: row.text_fragments.clone(),
     })
     .collect::<Vec<_>>();
-  artifacts.extend(build_row_observation_overlay_artifacts(
-    RowObservationOverlayRequest {
-      label: label.clone(),
-      screenshot_path: screenshot_artifact.source_path.clone(),
-      screenshot_dimensions: capture.dimensions.clone(),
-      strategy: detection.strategy.clone(),
-      rows: overlay_rows,
-    },
-  )?);
+  let overlay_artifacts = build_row_observation_overlay_artifacts(RowObservationOverlayRequest {
+    label: label.clone(),
+    screenshot_path: capture.screenshot_path.clone(),
+    screenshot_dimensions: capture.dimensions.clone(),
+    strategy: detection.strategy.clone(),
+    rows: overlay_rows,
+  })?;
 
   let segments = classify_segmented_regions(&rows, &row_filter);
-  if !segments.is_empty() {
-    let seg_artifact = segmented_region_recognition_artifact(
+  let seg_artifact = if segments.is_empty() {
+    None
+  } else {
+    Some(segmented_region_recognition_artifact(
       &format!("{}-segmentation", sanitize_file_component(&label)),
       SegmentedRegionArtifactRequest {
         recognition_id: format!(
@@ -141,7 +142,7 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
         surface: crate::contract::RecognitionSurface::Region,
         segments: &segments,
         row_count: rows.len(),
-        screenshot_path: screenshot_artifact.source_path.as_path(),
+        screenshot_path: capture.screenshot_path.as_path(),
         screenshot_dimensions: &capture.dimensions,
         display_ref,
         native_display_id,
@@ -151,9 +152,20 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
           &ocr_region,
           &capture.dimensions,
         )),
+        capture_artifact: Some(screenshot_ref.clone()),
       },
-    )?;
-    artifacts.push(seg_artifact);
+    )?)
+  };
+
+  // Push in slot order: must match `ref_at(0)` reservation above.
+  artifacts.push(screenshot_artifact);
+  artifacts.push(json_artifact);
+  artifacts.push(recognition_artifact);
+  for overlay in overlay_artifacts {
+    artifacts.push(overlay);
+  }
+  if let Some(seg) = seg_artifact {
+    artifacts.push(seg);
   }
 
   Ok(DriverResponse {
@@ -176,7 +188,7 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
         capture.dimensions.width, capture.dimensions.height
       ),
     ],
-    artifacts,
+    artifacts: artifacts.into_vec(),
   })
 }
 
@@ -753,6 +765,9 @@ struct SegmentedRegionArtifactRequest<'a> {
   app_bundle_id: Option<&'a str>,
   window_number: Option<i64>,
   region_hint: Option<crate::contract::RatioRegion>,
+  /// ArtifactRef pointing at the screenshot artifact this segmentation is
+  /// derived from. Populates `scope.capture_artifact` and `evidence`.
+  capture_artifact: Option<crate::contract::ArtifactRef>,
 }
 
 fn segmented_region_recognition_artifact(
@@ -788,6 +803,10 @@ fn segmented_region_recognition_artifact(
     .collect();
 
   let best = items.first().cloned();
+  let evidence = match request.capture_artifact.as_ref() {
+    Some(reference) => vec![reference.clone()],
+    None => Vec::new(),
+  };
 
   let result = RecognitionResult {
     recognition_id: request.recognition_id,
@@ -800,7 +819,7 @@ fn segmented_region_recognition_artifact(
       window_title: None,
       window_number: request.window_number,
       region_hint: request.region_hint,
-      capture_artifact: None,
+      capture_artifact: request.capture_artifact,
       capture_contract_artifact: None,
     },
     best,
@@ -816,7 +835,7 @@ fn segmented_region_recognition_artifact(
         "height": request.screenshot_dimensions.height,
       },
     }),
-    evidence: Vec::new(),
+    evidence,
     known_limits: vec![
       "geometry-only segmentation: no AX element tree or visual diff evidence".to_string(),
     ],
@@ -1084,6 +1103,7 @@ mod tests {
         app_bundle_id: Some("com.example.app"),
         window_number: Some(42),
         region_hint: None,
+        capture_artifact: None,
       },
     )
     .expect("artifact should build");
