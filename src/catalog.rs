@@ -478,7 +478,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     },
     CommandSpec {
       id: "music.validate.candidate.liveness",
-      summary: "Resolve a CandidateRef from a stored OperationResult artifact and verify its liveness preconditions (window_ref + anchor_recheck).",
+      summary: "Resolve a candidate (source_run_id + source_artifact_id + candidate_local_id) from a stored OperationResult artifact and verify its liveness preconditions (window_ref + anchor_recheck).",
       driver_id: "macos.desktop",
       operation: "music_validate_candidate_liveness",
       disturbance_classes: NONE,
@@ -494,7 +494,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     },
     CommandSpec {
       id: "music.result.play",
-      summary: "Consume a music.search.results CandidateRef, re-check liveness, activate the resolved row, press play, and emit a typed VerificationResult.",
+      summary: "Consume a music.search.results candidate (source_run_id + source_artifact_id + candidate_local_id), re-check liveness, activate the resolved row, press play, and emit a typed VerificationResult.",
       driver_id: "macos.desktop",
       operation: "music_result_play",
       disturbance_classes: POINTER_WITH_FOREGROUND,

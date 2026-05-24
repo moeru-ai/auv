@@ -117,7 +117,7 @@
     "notes": [
       "Liveness re-check is disturbance-free when the candidate only requires window_ref.",
       "Row activation uses pointer disturbance through window-scoped visual-row detection.",
-      "Play press may take the AX path (no pointer disturbance) or fall back to pointer.",
+      "Play press uses full-display screen OCR (click_screen_text) with a window-anchored region, which requires pointer disturbance.",
       "The driver emits a VerificationResult with failure_layer when grounding, control, or verification fails."
     ]
   },
@@ -169,7 +169,7 @@
       "music.result.play resolves the candidate and validates liveness.",
       "music.result.play extracts Candidate.target_spec.row_index internally.",
       "music.result.play activates the row through window-scoped visual-row detection.",
-      "music.result.play presses the play control via smartPress.",
+      "music.result.play presses the play control via full-display screen OCR (click_screen_text), converting window-relative region ratios to screen ratios.",
       "music.result.play verifies ${target_title} through the AX now-playing contract."
     ],
     "success_criteria": [

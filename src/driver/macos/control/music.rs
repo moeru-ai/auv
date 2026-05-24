@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 
 use super::super::*;
-use super::ax::smart_press;
+use super::screen::click_screen_text;
 use super::window_ocr::{
   capture_resolved_window_observation, click_window_row, detect_rows_for_capture,
 };
@@ -456,16 +456,13 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
       );
     }
   };
+  // click_screen_text uses full-display OCR; no AX/pointer fallback applies.
   let smart_press_strategy = press_response
-    .signals
-    .get("smartPress.strategy")
-    .cloned()
-    .unwrap_or_default();
-  let smart_press_fallback = press_response
-    .signals
-    .get("smartPress.fallbackUsed")
-    .cloned()
-    .unwrap_or_default();
+    .backend
+    .as_deref()
+    .unwrap_or("screen-ocr")
+    .to_string();
+  let smart_press_fallback = "false".to_string();
   notes.push(format!("playPressSummary={}", press_response.summary));
   notes.extend(prefix_notes("playPress", &press_response.notes));
   artifacts.extend(press_response.artifacts);
@@ -803,62 +800,69 @@ fn click_music_candidate_row(
 }
 
 fn press_music_play_button(call: &DriverCall, app_id: &str) -> AuvResult<DriverResponse> {
-  let mut inputs = BTreeMap::new();
-  inputs.insert(
-    "query".to_string(),
-    optional_non_empty_string(call, "play_button_query").unwrap_or_else(|| "播放".to_string()),
-  );
-  copy_input_or_default(
-    call,
-    &mut inputs,
-    "play_button_min_confidence",
-    "min_confidence",
-    "0.75",
-  );
-  copy_input_or_default(
-    call,
-    &mut inputs,
-    "play_button_region_left_ratio",
-    "region_left_ratio",
-    "0.18",
-  );
-  copy_input_or_default(
-    call,
-    &mut inputs,
-    "play_button_region_top_ratio",
-    "region_top_ratio",
-    "0.28",
-  );
-  copy_input_or_default(
-    call,
-    &mut inputs,
-    "play_button_region_right_ratio",
-    "region_right_ratio",
-    "0.60",
-  );
-  copy_input_or_default(
-    call,
-    &mut inputs,
-    "play_button_region_bottom_ratio",
-    "region_bottom_ratio",
-    "0.42",
-  );
-  inputs.insert(
-    "label".to_string(),
-    optional_non_empty_string(call, "play_button_overlay_label")
-      .unwrap_or_else(|| "auv · play".to_string()),
-  );
-  copy_input_or_default(call, &mut inputs, "overlay", "overlay", "true");
-  copy_input_or_default(
-    call,
-    &mut inputs,
-    "allow_pointer_fallback",
-    "allow_pointer_fallback",
-    "true",
-  );
+  let query = optional_non_empty_string(call, "play_button_query")
+    .unwrap_or_else(|| "播放".to_string());
+  let min_confidence = optional_f64(call, "play_button_min_confidence")?.unwrap_or(0.75);
+  let label = optional_non_empty_string(call, "play_button_overlay_label")
+    .unwrap_or_else(|| "auv · play".to_string());
 
-  smart_press(&DriverCall {
-    operation: "smart_press".to_string(),
+  // Window-relative region ratios for the "播放" hover button search area.
+  let win_left = optional_f64(call, "play_button_region_left_ratio")?.unwrap_or(0.18);
+  let win_top = optional_f64(call, "play_button_region_top_ratio")?.unwrap_or(0.28);
+  let win_right = optional_f64(call, "play_button_region_right_ratio")?.unwrap_or(0.60);
+  let win_bottom = optional_f64(call, "play_button_region_bottom_ratio")?.unwrap_or(0.42);
+
+  // smart_press / ax_click_window_text cannot find "播放" in QQ音乐's WebView
+  // because the native window capture misses WebView-rendered pixels. Use
+  // click_screen_text (full-display OCR) instead, converting the window-relative
+  // search region to screen-relative ratios so the OCR search stays anchored to
+  // the visible QQ音乐 window rather than scanning the whole display.
+  let snapshot = super::super::observe::observe_windows_snapshot(24, app_id)?;
+  let selector = parse_app_selector(app_id)?;
+  let resolved_app = resolve_app_ref(&snapshot, &selector)?;
+  let xcap_displays = super::super::capture::xcap_backend::list_displays()?;
+  let window_candidate = resolve_window_candidate(
+    &snapshot,
+    &resolved_app,
+    &xcap_displays,
+    &WindowSelection::default(),
+  )?;
+  let wb = &window_candidate.window_ref.bounds;
+
+  let display_snapshot = enumerate_displays()?;
+  let main_display = display_snapshot
+    .displays
+    .iter()
+    .find(|d| d.is_main)
+    .ok_or_else(|| "press_music_play_button: no main display found".to_string())?;
+  let screen_w = main_display.bounds.width as f64;
+  let screen_h = main_display.bounds.height as f64;
+  let screen_ox = main_display.bounds.x as f64;
+  let screen_oy = main_display.bounds.y as f64;
+
+  // Absolute logical screen coordinates of the search region corners.
+  let abs_left = wb.x as f64 + win_left * wb.width as f64;
+  let abs_top = wb.y as f64 + win_top * wb.height as f64;
+  let abs_right = wb.x as f64 + win_right * wb.width as f64;
+  let abs_bottom = wb.y as f64 + win_bottom * wb.height as f64;
+
+  // Screen-relative ratios for click_screen_text, clamped to [0, 1].
+  let screen_left = ((abs_left - screen_ox) / screen_w).clamp(0.0, 1.0);
+  let screen_top = ((abs_top - screen_oy) / screen_h).clamp(0.0, 1.0);
+  let screen_right = ((abs_right - screen_ox) / screen_w).clamp(0.0, 1.0);
+  let screen_bottom = ((abs_bottom - screen_oy) / screen_h).clamp(0.0, 1.0);
+
+  let mut inputs = BTreeMap::new();
+  inputs.insert("query".to_string(), query);
+  inputs.insert("min_confidence".to_string(), format!("{min_confidence:.3}"));
+  inputs.insert("label".to_string(), label);
+  inputs.insert("region_left_ratio".to_string(), format!("{screen_left:.4}"));
+  inputs.insert("region_top_ratio".to_string(), format!("{screen_top:.4}"));
+  inputs.insert("region_right_ratio".to_string(), format!("{screen_right:.4}"));
+  inputs.insert("region_bottom_ratio".to_string(), format!("{screen_bottom:.4}"));
+
+  click_screen_text(&DriverCall {
+    operation: "click_screen_text".to_string(),
     target: ExecutionTarget {
       application_id: Some(app_id.to_string()),
     },
@@ -947,7 +951,10 @@ fn music_result_play_failure_response(
     ),
     (
       "music.result.failure_layer".to_string(),
-      failure_layer_id(failure.failure_layer).to_string(),
+      serde_json::to_value(failure.failure_layer)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_default(),
     ),
   ]);
   if let Some(app) = app_identifier(call) {
@@ -1028,17 +1035,6 @@ fn prefix_notes(prefix: &str, notes: &[String]) -> Vec<String> {
     .iter()
     .map(|note| format!("{prefix}.{note}"))
     .collect()
-}
-
-fn failure_layer_id(layer: FailureLayer) -> &'static str {
-  match layer {
-    FailureLayer::GroundingFailed => "grounding_failed",
-    FailureLayer::CandidateExpired => "candidate_expired",
-    FailureLayer::ControlFailed => "control_failed",
-    FailureLayer::VerificationUnreliable => "verification_unreliable",
-    FailureLayer::StateChangedNoMatch => "state_changed_no_match",
-    FailureLayer::SemanticMismatch => "semantic_mismatch",
-  }
 }
 
 fn report_text(raw: &str) -> String {
