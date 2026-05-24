@@ -542,7 +542,7 @@ pub fn observations_from_observe_json(
 ) -> AuvResult<Vec<CollectionObservation>> {
   let value: Value =
     serde_json::from_str(raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
-  if let Some(recognition) = recognition_result_from_value(&value) {
+  if let Some(recognition) = recognition_result_from_value(&value)? {
     return Ok(observations_from_recognition_result(
       page_index,
       &recognition,
@@ -563,8 +563,23 @@ pub fn observations_from_observe_json(
     .collect()
 }
 
-fn recognition_result_from_value(value: &Value) -> Option<RecognitionResult> {
-  serde_json::from_value(value.clone()).ok()
+/// Cheap structural check: does this JSON value carry the markers of a `RecognitionResult`?
+/// Used to discriminate observe JSON formats without paying for a full deserialization.
+fn has_recognition_result_shape(value: &Value) -> bool {
+  value.get("recognition_id").is_some() && value.get("source").is_some()
+}
+
+/// Returns `Ok(None)` if the value clearly is not a `RecognitionResult` (no discriminator fields),
+/// `Ok(Some(_))` on a clean parse, or `Err` if the value looks like one but fails to deserialize —
+/// so the caller can surface the underlying serde error instead of silently falling back to the
+/// legacy `rows` path with a misleading "missing rows array" message.
+fn recognition_result_from_value(value: &Value) -> AuvResult<Option<RecognitionResult>> {
+  if !has_recognition_result_shape(value) {
+    return Ok(None);
+  }
+  serde_json::from_value(value.clone())
+    .map(Some)
+    .map_err(|error| format!("recognition result JSON failed to deserialize: {error}"))
 }
 
 fn observations_from_recognition_result(
@@ -1534,7 +1549,7 @@ fn observations_from_json_artifacts(
       .map_err(|error| format!("failed to read observe JSON {}: {error}", path.display()))?;
     let value: Value =
       serde_json::from_str(&raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
-    if recognition_result_from_value(&value).is_some() {
+    if has_recognition_result_shape(&value) {
       return observations_from_observe_json(page_index, &raw, source_artifact.to_path_buf());
     }
     raw_json_artifacts.push(raw);
@@ -3135,6 +3150,54 @@ mod tests {
         .map(String::as_str),
       Some("row#1")
     );
+  }
+
+  #[test]
+  fn parse_observe_json_propagates_recognition_deserialize_errors() {
+    // Has recognition_result discriminator fields (recognition_id + source) but `filtered`
+    // is the wrong type (object instead of array). Previously this would silently fall back
+    // to the legacy `rows` path and surface a misleading "missing rows array" error.
+    let raw = r#"{
+      "recognition_id": "broken",
+      "source": "ocr_row",
+      "scope": {
+        "surface": "region",
+        "display_ref": null, "native_display_id": null, "app_bundle_id": null,
+        "window_title": null, "window_number": null, "region_hint": null,
+        "capture_artifact": null, "capture_contract_artifact": null
+      },
+      "best": null,
+      "filtered": { "not": "an array" },
+      "all": [],
+      "detail": {},
+      "evidence": [],
+      "known_limits": []
+    }"#;
+
+    let error = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
+      .expect_err("malformed recognition result should surface a deserialize error");
+    assert!(
+      error.contains("recognition result"),
+      "error should identify the failing layer: {error}"
+    );
+    assert!(
+      !error.contains("missing rows array"),
+      "should not fall back to legacy path's misleading error: {error}"
+    );
+  }
+
+  #[test]
+  fn has_recognition_result_shape_requires_both_discriminators() {
+    let only_id: Value = serde_json::from_str(r#"{"recognition_id":"x"}"#).expect("parse");
+    let only_source: Value = serde_json::from_str(r#"{"source":"ocr_row"}"#).expect("parse");
+    let both: Value =
+      serde_json::from_str(r#"{"recognition_id":"x","source":"ocr_row"}"#).expect("parse");
+    let neither: Value = serde_json::from_str(r#"{"rows":[]}"#).expect("parse");
+
+    assert!(!has_recognition_result_shape(&only_id));
+    assert!(!has_recognition_result_shape(&only_source));
+    assert!(has_recognition_result_shape(&both));
+    assert!(!has_recognition_result_shape(&neither));
   }
 
   #[test]
