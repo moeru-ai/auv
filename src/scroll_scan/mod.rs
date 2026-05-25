@@ -804,6 +804,7 @@ fn scan_window_region_page(
     "observe window region",
   )?;
   let screenshot_artifact = first_artifact_with_extension(&observe_result, "png");
+  let screenshot_artifact_record = first_artifact_record_with_extension(&observe_result, "png");
   let source_artifact = screenshot_artifact
     .clone()
     .unwrap_or_else(|| first_artifact_with_extension(&observe_result, "json").unwrap_or_default());
@@ -846,11 +847,13 @@ fn scan_window_region_page(
   });
   state.snapshots.push(build_page_observation_snapshot(
     run.id(),
-    root.id(),
+    &observe_result.producer_span_id,
     page_index,
     &options.target,
     &page_observations,
     snapshot_screenshot.as_deref(),
+    screenshot_artifact_record,
+    &observe_result.artifacts,
     new_observation_count,
   ));
 
@@ -1500,6 +1503,18 @@ fn first_artifact_with_extension(result: &InvokeResult, extension: &str) -> Opti
         .is_some_and(|value| value.eq_ignore_ascii_case(extension))
     })
     .cloned()
+}
+
+fn first_artifact_record_with_extension<'a>(
+  result: &'a InvokeResult,
+  extension: &str,
+) -> Option<&'a crate::trace::ArtifactRecordV1Alpha1> {
+  result.artifacts.iter().find(|artifact| {
+    std::path::Path::new(&artifact.path)
+      .extension()
+      .and_then(|value| value.to_str())
+      .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+  })
 }
 
 fn count_new_observations(
@@ -3457,17 +3472,31 @@ mod tests {
       "snapshot id should follow snapshot_{{run}}_{{page}} format, got {}",
       first.snapshot_id
     );
-    // v0 provenance carve-out: evidence ArtifactRefs not threaded yet.
     assert!(
-      first.evidence.is_empty(),
-      "evidence remains empty in v0; paths surface via detail and per-node source_artifacts"
+      !first.evidence.is_empty(),
+      "snapshot should carry structured evidence refs for the page observe artifacts"
+    );
+    assert_eq!(
+      first.span_id, first.evidence[0].span_id,
+      "snapshot span must identify the producer span that emitted its evidence"
+    );
+    assert_ne!(
+      first.span_id, canonical.run.root_span_id,
+      "snapshot must not point at the scan root span when the observe command produced child evidence"
     );
     assert!(
       first
         .known_limits
         .iter()
-        .any(|limit| limit.contains("ArtifactRefs not threaded")),
-      "snapshot must document the evidence ArtifactRef gap"
+        .any(|limit| limit.contains("did not include a png artifact")),
+      "fixture observe response omits a png, so snapshot should record that remaining limit"
+    );
+    assert!(
+      first
+        .known_limits
+        .iter()
+        .all(|limit| !limit.contains("ArtifactRefs not threaded")),
+      "snapshot should not claim ArtifactRef evidence is missing after evidence refs are wired"
     );
 
     let _ = fs::remove_dir_all(project_root);

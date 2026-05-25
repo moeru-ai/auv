@@ -124,8 +124,8 @@ mod tests {
     TraceStatusCode,
   };
 
-  use super::{WireUpdate, camel_to_snake, snake_to_camel};
   use super::super::update::RunUpdate;
+  use super::{WireUpdate, camel_to_snake, snake_to_camel};
 
   fn test_run() -> RunRecordV1Alpha1 {
     RunRecordV1Alpha1 {

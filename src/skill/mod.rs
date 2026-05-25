@@ -1397,7 +1397,7 @@ mod tests {
     InvokeResult, RunStatus, now_millis,
   };
   use crate::store::LocalStore;
-  use crate::trace::RunId;
+  use crate::trace::{RunId, SpanId};
 
   struct SkillSuccessDriver;
 
@@ -1722,9 +1722,11 @@ mod tests {
       "capture-evidence",
       &InvokeResult {
         run_id: "run_1".to_string(),
+        producer_span_id: SpanId::new("0000000000000001"),
         status: RunStatus::Completed,
         output_summary: "ok".to_string(),
         signals: BTreeMap::new(),
+        artifacts: vec![],
         artifact_paths: vec![
           PathBuf::from("/tmp/report.txt"),
           PathBuf::from("/tmp/evidence.png"),
@@ -1974,6 +1976,7 @@ mod tests {
     .expect("step should deserialize");
     let result = InvokeResult {
       run_id: "run_2".to_string(),
+      producer_span_id: SpanId::new("0000000000000002"),
       status: RunStatus::Completed,
       output_summary: "human summary only".to_string(),
       signals: BTreeMap::from([
@@ -1981,6 +1984,7 @@ mod tests {
         ("matchedRole".to_string(), "AXTextArea".to_string()),
         ("timedOut".to_string(), "false".to_string()),
       ]),
+      artifacts: vec![],
       artifact_paths: vec![PathBuf::from("/tmp/evidence.txt")],
       failure_message: None,
     };
@@ -2013,9 +2017,11 @@ mod tests {
       &step,
       &InvokeResult {
         run_id: "run_3".to_string(),
+        producer_span_id: SpanId::new("0000000000000003"),
         status: RunStatus::Completed,
         output_summary: "targetText=hello".to_string(),
         signals: BTreeMap::new(),
+        artifacts: vec![],
         artifact_paths: vec![],
         failure_message: None,
       },
@@ -2047,6 +2053,7 @@ mod tests {
     .expect("step should deserialize");
     let result = InvokeResult {
       run_id: "run_4".to_string(),
+      producer_span_id: SpanId::new("0000000000000004"),
       status: RunStatus::Completed,
       output_summary: "human summary only".to_string(),
       signals: BTreeMap::from([
@@ -2056,6 +2063,7 @@ mod tests {
           "prefix hello suffix".to_string(),
         ),
       ]),
+      artifacts: vec![],
       artifact_paths: vec![],
       failure_message: None,
     };
@@ -2090,9 +2098,11 @@ mod tests {
       &step,
       &InvokeResult {
         run_id: "run_5".to_string(),
+        producer_span_id: SpanId::new("0000000000000005"),
         status: RunStatus::Completed,
         output_summary: String::new(),
         signals: BTreeMap::from([("clipboard.restored".to_string(), "true".to_string())]),
+        artifacts: vec![],
         artifact_paths: vec![],
         failure_message: None,
       },

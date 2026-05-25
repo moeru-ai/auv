@@ -5,6 +5,8 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::trace::{ArtifactRecordV1Alpha1, SpanId};
+
 pub type AuvResult<T> = Result<T, String>;
 
 static RUN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -123,9 +125,11 @@ impl RunStatus {
 #[derive(Clone, Debug)]
 pub struct InvokeResult {
   pub run_id: String,
+  pub producer_span_id: SpanId,
   pub status: RunStatus,
   pub output_summary: String,
   pub signals: BTreeMap<String, String>,
+  pub artifacts: Vec<ArtifactRecordV1Alpha1>,
   pub artifact_paths: Vec<PathBuf>,
   pub failure_message: Option<String>,
 }
@@ -147,12 +151,23 @@ pub struct DriverDescriptor {
 /// macOS host with one implicit session — drivers can ignore them. The fields
 /// exist so future RPC/JS-SDK frontends can route to remote/VM devices and
 /// scope state per session without changing the driver contract again.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct DriverRunContext {
   pub run_id: String,
   pub span_id: String,
   pub device_id: String,
   pub session_id: String,
+}
+
+impl Default for DriverRunContext {
+  fn default() -> Self {
+    Self {
+      run_id: String::new(),
+      span_id: String::new(),
+      device_id: "local".to_string(),
+      session_id: "default".to_string(),
+    }
+  }
 }
 
 #[derive(Clone, Debug)]

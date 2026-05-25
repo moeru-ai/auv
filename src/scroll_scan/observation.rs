@@ -5,11 +5,12 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::contract::{
-  NodeRef, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox, RecognitionResult,
-  RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem, SurfaceNode,
+  ArtifactRef, NodeRef, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox,
+  RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
+  SurfaceNode,
 };
 use crate::model::{AuvResult, now_millis};
-use crate::trace::{RunId, SpanId};
+use crate::trace::{ArtifactRecordV1Alpha1, RunId, SpanId};
 
 use super::{CollectionObservation, ObservationCluster, ScanRect, ScanTarget};
 
@@ -236,11 +237,11 @@ pub(crate) fn surface_nodes_from_observations(
 /// `nodes` field projects this page's observations into the unified UI layer;
 /// the snapshot context captures who, what, when, and where.
 ///
-/// Provenance limitations: scroll scan currently has access to screenshot
-/// paths (not `ArtifactRef`s with stable artifact ids), so the snapshot's
-/// `evidence` vector is empty and the path is reported through `detail` plus
-/// the per-node `source_artifacts`. The limit is recorded in `known_limits`
-/// so consumers don't mistake it for "no evidence captured".
+/// Provenance limitations: scroll scan now threads observe-artifact
+/// `ArtifactRef`s into the snapshot envelope, but it still does not emit a
+/// separate capture-contract artifact. Per-node `source_artifacts` remain path
+/// strings for now because `SurfaceNode` has not yet grown structured artifact
+/// refs.
 pub(crate) fn build_page_observation_snapshot(
   run_id: &RunId,
   span_id: &SpanId,
@@ -248,10 +249,17 @@ pub(crate) fn build_page_observation_snapshot(
   target: &ScanTarget,
   page_observations: &[CollectionObservation],
   screenshot_artifact: Option<&Path>,
+  screenshot_artifact_record: Option<&ArtifactRecordV1Alpha1>,
+  evidence_artifacts: &[ArtifactRecordV1Alpha1],
   new_observation_count: usize,
 ) -> ObservationSnapshot {
   let nodes = surface_nodes_from_observations(run_id, span_id, page_observations);
   let screenshot_path = screenshot_artifact.map(|path| path.display().to_string());
+  let capture_artifact = screenshot_artifact_record.map(|artifact| artifact_ref(run_id, artifact));
+  let evidence = evidence_artifacts
+    .iter()
+    .map(|artifact| artifact_ref(run_id, artifact))
+    .collect::<Vec<_>>();
   let observation_count = page_observations.len();
   let mut detail = serde_json::Map::new();
   detail.insert(
@@ -273,13 +281,17 @@ pub(crate) fn build_page_observation_snapshot(
     );
   }
 
-  let mut known_limits = vec![
-    "scroll_scan v0: evidence ArtifactRefs not threaded yet; see source_artifacts on each node for paths"
-      .to_string(),
-  ];
+  let mut known_limits = Vec::new();
   if screenshot_artifact.is_none() {
-    known_limits
-      .push("scroll_scan: observe response did not include a png artifact for this page".to_string());
+    known_limits.push(
+      "scroll_scan: observe response did not include a png artifact for this page".to_string(),
+    );
+  }
+  if evidence.is_empty() {
+    known_limits.push(
+      "scroll_scan: observe response did not expose any evidence artifacts for this page"
+        .to_string(),
+    );
   }
 
   ObservationSnapshot {
@@ -287,7 +299,7 @@ pub(crate) fn build_page_observation_snapshot(
     run_id: run_id.clone(),
     span_id: span_id.clone(),
     captured_at_millis: now_millis(),
-    source: ObservationSource::Ocr,
+    source: infer_observation_source(page_observations),
     scope: RecognitionScope {
       surface: RecognitionSurface::Region,
       display_ref: None,
@@ -301,14 +313,82 @@ pub(crate) fn build_page_observation_snapshot(
         right: target.region.right_ratio,
         bottom: target.region.bottom_ratio,
       }),
-      capture_artifact: None,
+      capture_artifact,
       capture_contract_artifact: None,
     },
     capture_contract_ref: None,
-    evidence: Vec::new(),
+    evidence,
     nodes,
     detail: serde_json::Value::Object(detail),
     known_limits,
+  }
+}
+
+fn artifact_ref(run_id: &RunId, artifact: &ArtifactRecordV1Alpha1) -> ArtifactRef {
+  ArtifactRef {
+    run_id: run_id.clone(),
+    artifact_id: artifact.artifact_id.clone(),
+    span_id: artifact.span_id.clone(),
+    captured_event_id: artifact.event_id.clone(),
+  }
+}
+
+fn infer_observation_source(page_observations: &[CollectionObservation]) -> ObservationSource {
+  let mut saw_ax = false;
+  let mut saw_ocr = false;
+  let mut saw_visual = false;
+
+  for observation in page_observations {
+    match observation_source_hint(observation) {
+      Some(ObservationSource::Ax) => saw_ax = true,
+      Some(ObservationSource::Ocr) => saw_ocr = true,
+      Some(ObservationSource::Visual) => saw_visual = true,
+      Some(ObservationSource::Merged) => {
+        saw_ocr = true;
+        saw_visual = true;
+      }
+      None => {}
+    }
+  }
+
+  let source_count = usize::from(saw_ax) + usize::from(saw_ocr) + usize::from(saw_visual);
+  if source_count > 1 {
+    ObservationSource::Merged
+  } else if saw_visual {
+    ObservationSource::Visual
+  } else if saw_ax {
+    ObservationSource::Ax
+  } else {
+    ObservationSource::Ocr
+  }
+}
+
+fn observation_source_hint(observation: &CollectionObservation) -> Option<ObservationSource> {
+  observation
+    .attributes
+    .get("recognition_source")
+    .and_then(|value| classify_source_tag(value))
+    .or_else(|| {
+      observation
+        .attributes
+        .get("source")
+        .and_then(|value| classify_source_tag(value))
+    })
+}
+
+fn classify_source_tag(value: &str) -> Option<ObservationSource> {
+  let normalized = value.trim().to_ascii_lowercase();
+  if normalized.contains("ax") {
+    Some(ObservationSource::Ax)
+  } else if normalized.contains("ocr") {
+    Some(ObservationSource::Ocr)
+  } else if normalized.contains("visual")
+    || normalized.contains("segment")
+    || normalized.contains("icon")
+  {
+    Some(ObservationSource::Visual)
+  } else {
+    None
   }
 }
 
@@ -377,6 +457,98 @@ fn surface_node_from_observation(
       "source_artifacts": source_artifacts,
       "attributes": observation.attributes.clone(),
     }),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::collections::BTreeMap;
+  use std::path::PathBuf;
+
+  use super::{
+    build_page_observation_snapshot, infer_observation_source, normalize_observation_text,
+  };
+  use crate::contract::ObservationSource;
+  use crate::scroll_scan::{CollectionObservation, ScanRect, ScanRegion, ScanTarget};
+  use crate::trace::{RunId, SpanId};
+
+  fn sample_target() -> ScanTarget {
+    ScanTarget {
+      application_id: Some("com.example.App".to_string()),
+      window_title: Some("Fixture".to_string()),
+      region: ScanRegion {
+        left_ratio: 0.2,
+        top_ratio: 0.3,
+        right_ratio: 0.8,
+        bottom_ratio: 0.9,
+      },
+    }
+  }
+
+  fn sample_observation(id: &str, source_key: &str, source_value: &str) -> CollectionObservation {
+    CollectionObservation {
+      observation_id: id.to_string(),
+      page_index: 0,
+      raw_text: format!("{source_value} item"),
+      normalized_text_key: normalize_observation_text(&format!("{source_value} item")),
+      bounds: ScanRect {
+        x: 10,
+        y: 20,
+        width: 100,
+        height: 24,
+      },
+      section_context: None,
+      source_artifacts: vec![PathBuf::from("/tmp/fixture.json")],
+      attributes: BTreeMap::from([(source_key.to_string(), source_value.to_string())]),
+    }
+  }
+
+  #[test]
+  fn infer_observation_source_prefers_visual_when_rows_are_visual() {
+    let observations = vec![sample_observation(
+      "obs_visual",
+      "recognition_source",
+      "visual_row",
+    )];
+    assert_eq!(
+      infer_observation_source(&observations),
+      ObservationSource::Visual
+    );
+  }
+
+  #[test]
+  fn infer_observation_source_marks_mixed_visual_and_ocr_pages_as_merged() {
+    let observations = vec![
+      sample_observation("obs_ocr", "recognition_source", "ocr_row"),
+      sample_observation("obs_visual", "recognition_source", "visual_row"),
+    ];
+    assert_eq!(
+      infer_observation_source(&observations),
+      ObservationSource::Merged
+    );
+  }
+
+  #[test]
+  fn build_page_observation_snapshot_uses_supplied_producer_span() {
+    let run_id = RunId::new("run_snapshot_test");
+    let span_id = SpanId::new("0000000000000007");
+    let snapshot = build_page_observation_snapshot(
+      &run_id,
+      &span_id,
+      0,
+      &sample_target(),
+      &[sample_observation(
+        "obs_ocr",
+        "recognition_source",
+        "ocr_row",
+      )],
+      None,
+      None,
+      &[],
+      1,
+    );
+
+    assert_eq!(snapshot.span_id, span_id);
   }
 }
 

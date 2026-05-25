@@ -31,9 +31,7 @@ pub fn default_session_path() -> PathBuf {
     return PathBuf::from(path);
   }
   if let Some(path) = std::env::var_os("XDG_RUNTIME_DIR") {
-    return PathBuf::from(path)
-      .join("auv")
-      .join("inspect-session.json");
+    return PathBuf::from(path).join("auv").join("inspect-session.json");
   }
   #[cfg(target_os = "macos")]
   if let Some(home) = std::env::var_os("HOME") {
@@ -44,9 +42,7 @@ pub fn default_session_path() -> PathBuf {
       .join("inspect-session.json");
   }
   if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
-    return PathBuf::from(path)
-      .join("auv")
-      .join("inspect-session.json");
+    return PathBuf::from(path).join("auv").join("inspect-session.json");
   }
   if let Some(home) = std::env::var_os("HOME") {
     return PathBuf::from(home)

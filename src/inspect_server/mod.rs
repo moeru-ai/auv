@@ -722,12 +722,10 @@ async fn next_stream_payload(
 ) -> Option<String> {
   loop {
     match receiver.recv().await {
-      Ok(update) if update.run_id().as_str() == run_id => {
-        match serde_json::to_string(&update) {
-          Ok(payload) => return Some(payload),
-          Err(_) => continue,
-        }
-      }
+      Ok(update) if update.run_id().as_str() == run_id => match serde_json::to_string(&update) {
+        Ok(payload) => return Some(payload),
+        Err(_) => continue,
+      },
       Ok(_) => {}
       Err(broadcast::error::RecvError::Lagged(_)) => {}
       Err(broadcast::error::RecvError::Closed) => return None,

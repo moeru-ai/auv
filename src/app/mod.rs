@@ -1133,8 +1133,8 @@ mod tests {
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::RunStatus;
   use crate::model::{CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse};
-  use crate::run_builder::RunSpec;
   use crate::recording::{MemoryRunRecorder, RunUpdate};
+  use crate::run_builder::RunSpec;
   use crate::store::LocalStore;
   use crate::trace::RunType;
   use serde_json::Value;

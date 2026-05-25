@@ -282,6 +282,7 @@ impl Runtime {
     };
 
     let mut artifact_paths = Vec::new();
+    let mut artifact_records = Vec::new();
     let mut response_signals = Default::default();
 
     let (status, output_summary, failure_message) = match driver.invoke(&call) {
@@ -325,6 +326,7 @@ impl Runtime {
               );
               artifact_paths.push(staged_path.clone());
               run.record_artifact(stored_artifact.clone());
+              artifact_records.push(stored_artifact.clone());
               if let Err(error) =
                 self
                   .recording
@@ -412,9 +414,11 @@ impl Runtime {
 
     Ok(InvokeResult {
       run_id: run.id().to_string(),
+      producer_span_id: driver_span.id().clone(),
       status,
       output_summary,
       signals: response_signals,
+      artifacts: artifact_records,
       artifact_paths,
       failure_message,
     })
@@ -1145,11 +1149,8 @@ mod tests {
     let project_root = temp_dir("runtime-driver-ctx-project");
     let store_root = temp_dir("runtime-driver-ctx-store");
     let contexts = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let runtime = runtime_with_context_capture(
-      project_root.clone(),
-      store_root.clone(),
-      contexts.clone(),
-    );
+    let runtime =
+      runtime_with_context_capture(project_root.clone(), store_root.clone(), contexts.clone());
 
     runtime
       .invoke(InvokeRequest {

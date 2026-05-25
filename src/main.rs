@@ -518,13 +518,11 @@ fn build_runtime_for_inspect(
   let mut recorders: Vec<Arc<dyn auv_cli::recording::RunRecorder>> = Vec::new();
 
   if let Some((url, token)) = server_target {
-    recorders.push(Arc::new(
-      auv_cli::recording::InspectServerRunRecorder::new(
-        url,
-        token,
-        inspect.require_server_write,
-      ),
-    ));
+    recorders.push(Arc::new(auv_cli::recording::InspectServerRunRecorder::new(
+      url,
+      token,
+      inspect.require_server_write,
+    )));
   }
 
   let recorder: Arc<dyn auv_cli::recording::RunRecorder> = match recorders.len() {

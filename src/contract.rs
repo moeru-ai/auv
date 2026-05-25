@@ -386,11 +386,13 @@ pub enum ObservationSource {
 /// own `recognition_source` so the unified shape doesn't lose finer-grained
 /// origin information.
 ///
-/// **Status: v0, not yet wired to drivers.** Today no producer emits
-/// `ObservationSnapshot` artifacts; existing `RecognitionResult`, AX snapshots,
-/// and scroll-scan outputs remain authoritative. The type exists so the
-/// observed UI layer can grow with one stable shape rather than diverging per
-/// producer. Field set and semantics may shift before this is marked stable.
+/// **Status: v0, first producer landed.** `scroll_scan` now emits per-page
+/// `ObservationSnapshot` envelopes inside `ScrollScanArtifact.snapshots`.
+/// Other producers still emit their existing authoritative shapes
+/// (`RecognitionResult`, AX snapshots, raw detector JSON). The type exists so
+/// those producers can converge on one stable observed-UI projection rather
+/// than diverging per producer. Field set and semantics may still shift before
+/// this is marked stable.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ObservationSnapshot {
   /// Stable identifier for this snapshot. Producers should use a deterministic
@@ -948,8 +950,8 @@ mod tests {
 
   #[test]
   fn verification_method_built_in_variants_serialize_as_snake_case_kind() {
-    let value = serde_json::to_value(&VerificationMethod::TextVisible)
-      .expect("method should serialize");
+    let value =
+      serde_json::to_value(&VerificationMethod::TextVisible).expect("method should serialize");
     assert_eq!(value, json!({ "kind": "text_visible" }));
 
     let value = serde_json::to_value(&VerificationMethod::NoProgressBoundary)
@@ -963,7 +965,10 @@ mod tests {
       name: "music.now_playing".to_string(),
     })
     .expect("custom method should serialize");
-    assert_eq!(value, json!({ "kind": "custom", "name": "music.now_playing" }));
+    assert_eq!(
+      value,
+      json!({ "kind": "custom", "name": "music.now_playing" })
+    );
   }
 
   #[test]
@@ -1074,11 +1079,20 @@ mod tests {
     };
 
     let value = serde_json::to_value(&snapshot).expect("snapshot should serialize");
-    assert_eq!(value["snapshot_id"], json!("snapshot_run_001_span_001_0001"));
+    assert_eq!(
+      value["snapshot_id"],
+      json!("snapshot_run_001_span_001_0001")
+    );
     assert_eq!(value["source"], json!("merged"));
     assert_eq!(value["scope"]["surface"], json!("window"));
     assert_eq!(value["nodes"].as_array().expect("nodes array").len(), 2);
-    assert_eq!(value["known_limits"].as_array().expect("limits array").len(), 2);
+    assert_eq!(
+      value["known_limits"]
+        .as_array()
+        .expect("limits array")
+        .len(),
+      2
+    );
 
     let parsed: ObservationSnapshot =
       serde_json::from_value(value).expect("snapshot should deserialize");
@@ -1098,9 +1112,7 @@ mod tests {
       evidence: vec![artifact_ref()],
       nodes: Vec::new(),
       detail: json!({ "reason": "no_recognized_items" }),
-      known_limits: vec![
-        "OCR ran but produced no rows above min_confidence".to_string(),
-      ],
+      known_limits: vec!["OCR ran but produced no rows above min_confidence".to_string()],
     };
 
     let value = serde_json::to_value(&snapshot).expect("snapshot should serialize");

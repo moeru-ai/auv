@@ -229,12 +229,12 @@ An observation snapshot carries:
 - Known limits documenting incomplete coverage, low confidence, or missing
   context.
 
-Status: provisional. Today no producer emits observation snapshots; existing
-`RecognitionResult`, AX snapshots, and scroll-scan outputs remain
-authoritative. The type exists so future projection work (AX trees, OCR row
-groupings, scroll-scan rows, image detectors) can converge on one shape
-rather than diverging per producer. Field set and semantics may shift before
-this is marked stable.
+Status: provisional. `scroll_scan` now emits per-page observation snapshots in
+`ScrollScanArtifact.snapshots`; other producers still emit their current
+authoritative shapes such as `RecognitionResult` and AX snapshots. The type
+exists so future projection work (AX trees, OCR row groupings, image
+detectors) can converge on one shape rather than diverging per producer.
+Field set and semantics may shift before this is marked stable.
 
 ## Node Ref
 
