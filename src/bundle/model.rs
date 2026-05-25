@@ -1,3 +1,4 @@
+// File: src/bundle/model.rs
 use std::path::PathBuf;
 
 use serde::Deserialize;

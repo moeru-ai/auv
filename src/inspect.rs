@@ -1,3 +1,4 @@
+// File: src/inspect.rs
 //! Human-readable run inspection helpers.
 //!
 //! This module renders stored run snapshots (`CanonicalRun`) into a simple text

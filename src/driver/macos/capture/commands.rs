@@ -1,3 +1,4 @@
+// File: src/driver/macos/capture/commands.rs
 use std::collections::{HashMap, HashSet};
 
 use super::artifact::{render_capture_contract_json, render_capture_contract_text};

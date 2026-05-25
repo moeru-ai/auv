@@ -1,3 +1,4 @@
+// File: src/bundle/export.rs
 //! Bundle export (package builder).
 //!
 //! Exports a `bundles/*.json` manifest into a self-contained package directory

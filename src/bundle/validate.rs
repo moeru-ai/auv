@@ -1,3 +1,4 @@
+// File: src/bundle/validate.rs
 use crate::skill::{SkillCaseMatrixCatalog, SkillCatalog};
 
 use super::model::SkillBundleCatalogEntry;

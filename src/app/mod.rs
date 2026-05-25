@@ -1,3 +1,4 @@
+// File: src/app/mod.rs
 //! App-centric workflows: probe → analyze → distill → validate.
 //!
 //! This module is a tooling pipeline that turns observed runs/artifacts into:

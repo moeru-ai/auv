@@ -1,3 +1,4 @@
+// File: src/driver/macos/control/music.rs
 //! Typed consumer operations for the macOS music demo workflow.
 //!
 //! This file implements end-to-end commands that *produce* typed candidates

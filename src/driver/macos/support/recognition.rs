@@ -1,3 +1,4 @@
+// File: src/driver/macos/support/recognition.rs
 use std::path::Path;
 
 use serde_json::json;

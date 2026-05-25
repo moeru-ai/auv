@@ -1,3 +1,4 @@
+// File: src/bundle/catalog.rs
 use std::fs;
 use std::path::Path;
 

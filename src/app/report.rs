@@ -1,3 +1,4 @@
+// File: src/app/report.rs
 use std::collections::BTreeMap;
 
 use super::{AppAnalysis, AppDistillation, AppValidation};

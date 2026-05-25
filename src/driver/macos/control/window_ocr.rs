@@ -1,3 +1,4 @@
+// File: src/driver/macos/control/window_ocr.rs
 //! Window-scoped OCR observation + click primitives.
 //!
 //! Implements commands that capture a resolved window, run Vision OCR (text or

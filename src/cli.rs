@@ -1,3 +1,4 @@
+// File: src/cli.rs
 use std::collections::BTreeMap;
 
 use auv_cli::model::{AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest};

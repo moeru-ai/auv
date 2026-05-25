@@ -1,3 +1,4 @@
+// File: src/driver/macos/support/ocr.rs
 use std::path::{Path, PathBuf};
 
 use super::super::*;

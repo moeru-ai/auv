@@ -1,3 +1,4 @@
+// File: src/driver/macos/control/region.rs
 //! Region-scoped observation primitives for the macOS driver.
 //!
 //! Implements operations like `debug.observeWindowRegion`: capture a resolved

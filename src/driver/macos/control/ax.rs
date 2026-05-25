@@ -1,3 +1,4 @@
+// File: src/driver/macos/control/ax.rs
 //! AX-tree driven actions for the macOS driver.
 //!
 //! Implements action commands that locate targets via an observed AX snapshot

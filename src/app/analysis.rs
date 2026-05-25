@@ -1,3 +1,4 @@
+// File: src/app/analysis.rs
 //! App probe analysis.
 //!
 //! Turns a collected `AppProbe` (probe runs + artifacts) into a structured

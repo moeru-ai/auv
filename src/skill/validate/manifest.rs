@@ -1,3 +1,10 @@
+// File: src/skill/validate/manifest.rs
+//! Skill recipe manifest validation rules.
+//!
+//! Performs static checks over skill recipes: identity/target, strategy taxonomy
+//! parsing, declared inputs, step references to the command catalog, disturbance
+//! budgets, and verification expectations.
+
 use serde_json::Value;
 
 use crate::catalog::default_command_catalog;

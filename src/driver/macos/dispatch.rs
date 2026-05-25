@@ -1,3 +1,4 @@
+// File: src/driver/macos/dispatch.rs
 use super::ax_tree::capture_ax_tree;
 use super::capture::commands::{capture_display, capture_region, capture_window, list_displays};
 use super::control::{

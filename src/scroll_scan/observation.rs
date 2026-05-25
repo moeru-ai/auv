@@ -1,3 +1,4 @@
+// File: src/scroll_scan/observation.rs
 use std::collections::BTreeMap;
 use std::path::Path;
 

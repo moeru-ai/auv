@@ -1,3 +1,4 @@
+// File: src/driver/macos/native/permission.rs
 #[cfg(target_os = "macos")]
 use super::ffi::ffi::{NativePermissionProbeResponse, NativePermissionStatus, probe_permissions};
 use crate::model::AuvResult;

@@ -1,3 +1,4 @@
+// File: src/driver/macos/native/ocr.rs
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]

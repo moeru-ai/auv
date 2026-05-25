@@ -1,3 +1,4 @@
+// File: src/contract.rs
 //! Shared observation + verification contracts used across AUV.
 //!
 //! This module defines typed evidence objects (e.g. `RecognitionResult`,

@@ -1,3 +1,4 @@
+// File: src/store.rs
 //! Local run store (canonical snapshots + artifact files).
 //!
 //! The store persists a run as `run.json` plus `spans.jsonl`, `events.jsonl`,

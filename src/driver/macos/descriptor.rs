@@ -1,3 +1,4 @@
+// File: src/driver/macos/descriptor.rs
 use super::*;
 
 pub(crate) fn driver_descriptor() -> DriverDescriptor {

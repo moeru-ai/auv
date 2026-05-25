@@ -1,3 +1,4 @@
+// File: src/driver/macos/observe.rs
 //! macOS observation + verification helpers.
 //!
 //! This module is part of the `macos.desktop` driver implementation. It shapes

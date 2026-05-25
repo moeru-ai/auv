@@ -1,3 +1,4 @@
+// File: src/driver/macos/capture/xcap_backend.rs
 //! xcap-based screen/window capture backend.
 //!
 //! This module interfaces with `xcap` to list displays/windows and capture

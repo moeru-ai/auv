@@ -1,3 +1,4 @@
+// File: src/xtask.rs
 use std::path::{Path, PathBuf};
 
 pub(crate) fn generate_swift_bridge_for_ide(project_root: &Path) -> Result<PathBuf, String> {

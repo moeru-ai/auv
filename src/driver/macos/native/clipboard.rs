@@ -1,3 +1,4 @@
+// File: src/driver/macos/native/clipboard.rs
 #[cfg(target_os = "macos")]
 use super::ffi::ffi::{
   NativeActionResponse, NativeClipboardSnapshotResponse,

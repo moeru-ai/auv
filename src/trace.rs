@@ -1,3 +1,4 @@
+// File: src/trace.rs
 //! Versioned trace record contracts.
 //!
 //! Defines the stable, serializable data model for run/span/event/artifact

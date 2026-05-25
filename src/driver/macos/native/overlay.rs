@@ -1,3 +1,4 @@
+// File: src/driver/macos/native/overlay.rs
 #[cfg(target_os = "macos")]
 use std::cell::RefCell;
 

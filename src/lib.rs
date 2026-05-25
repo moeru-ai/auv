@@ -1,3 +1,4 @@
+// File: src/lib.rs
 pub mod app;
 pub mod bundle;
 pub mod catalog;

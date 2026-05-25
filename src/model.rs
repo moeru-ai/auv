@@ -1,3 +1,4 @@
+// File: src/model.rs
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process;

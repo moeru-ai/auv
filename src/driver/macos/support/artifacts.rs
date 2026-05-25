@@ -1,3 +1,4 @@
+// File: src/driver/macos/support/artifacts.rs
 use std::env;
 use std::fs;
 use std::io::ErrorKind;

@@ -1,3 +1,4 @@
+// File: src/driver/macos/native/mod.rs
 pub(crate) mod ax_tree;
 pub(crate) mod clipboard;
 pub(crate) mod error;

@@ -1,3 +1,4 @@
+// File: src/driver/macos/support/scripts.rs
 use super::super::*;
 
 pub(crate) fn probe_automation_to_system_events() -> String {

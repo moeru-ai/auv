@@ -1,3 +1,4 @@
+// File: src/driver/macos/types.rs
 use std::path::PathBuf;
 
 use serde::Serialize;

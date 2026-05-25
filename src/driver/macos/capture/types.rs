@@ -1,3 +1,4 @@
+// File: src/driver/macos/capture/types.rs
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

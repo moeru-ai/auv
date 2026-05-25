@@ -1,3 +1,4 @@
+// File: src/app/recipe.rs
 //! Recipe scaffolding renderers.
 //!
 //! Renders starter recipe manifests + case matrices from `AppAnalysis` and

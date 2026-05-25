@@ -1,3 +1,4 @@
+// File: src/scroll_scan/mod.rs
 //! Scroll-scan orchestration for window/region list-like content.
 //!
 //! `scroll_scan` produces *bounded observation evidence* (pages, row-like

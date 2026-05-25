@@ -1,3 +1,4 @@
+// File: src/driver/macos/support/display.rs
 use std::fs;
 use std::io::Read;
 use std::path::Path;

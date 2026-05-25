@@ -1,3 +1,4 @@
+// File: src/driver/macos/control/pointer.rs
 use std::thread;
 use std::time::Duration;
 

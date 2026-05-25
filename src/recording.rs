@@ -1,3 +1,4 @@
+// File: src/recording.rs
 //! In-process run recording (canonical snapshot builder).
 //!
 //! `RecordingRun` constructs an in-memory `CanonicalRun` (run + spans + events

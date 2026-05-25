@@ -1,3 +1,4 @@
+// File: src/skill/case_matrix.rs
 use std::collections::BTreeMap;
 
 use crate::catalog::default_command_catalog;

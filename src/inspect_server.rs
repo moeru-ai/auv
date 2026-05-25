@@ -1,3 +1,4 @@
+// File: src/inspect_server.rs
 //! HTTP/WebSocket inspection server for recorded runs.
 //!
 //! The inspect server serves a single-page HTML viewer plus JSON endpoints for

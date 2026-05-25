@@ -1,3 +1,4 @@
+// File: src/bundle/mod.rs
 mod catalog;
 mod export;
 mod model;

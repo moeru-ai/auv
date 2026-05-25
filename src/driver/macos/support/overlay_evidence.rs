@@ -1,3 +1,4 @@
+// File: src/driver/macos/support/overlay_evidence.rs
 //! Overlay evidence rendering.
 //!
 //! Builds "what happened" PNG + JSON annotation artifacts by compositing

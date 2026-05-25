@@ -1,3 +1,4 @@
+// File: src/catalog.rs
 //! Built-in command catalog.
 //!
 //! The catalog is the *registry* of command IDs -> driver operations, including

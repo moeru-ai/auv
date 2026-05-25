@@ -1,3 +1,4 @@
+// File: src/runtime.rs
 //! Runtime execution engine.
 //!
 //! `Runtime` is the shared core used by CLI and other frontends: it resolves

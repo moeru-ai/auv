@@ -1,3 +1,4 @@
+// File: src/bundle/paths.rs
 pub(crate) fn sanitized_bundle_package_name(raw: &str) -> String {
   let lowered = raw.trim().to_lowercase();
   let collapsed = lowered

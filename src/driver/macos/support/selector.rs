@@ -1,3 +1,4 @@
+// File: src/driver/macos/support/selector.rs
 use std::collections::BTreeSet;
 use std::thread;
 use std::time::Duration;

@@ -1,3 +1,4 @@
+// File: src/driver/macos/capture/artifact.rs
 use super::types::{CaptureContract, CaptureSource, CoordinateSpace};
 use crate::model::AuvResult;
 

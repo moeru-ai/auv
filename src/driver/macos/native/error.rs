@@ -1,3 +1,4 @@
+// File: src/driver/macos/native/error.rs
 use crate::model::AuvResult;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

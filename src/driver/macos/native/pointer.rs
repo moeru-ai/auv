@@ -1,3 +1,4 @@
+// File: src/driver/macos/native/pointer.rs
 #[cfg(target_os = "macos")]
 use super::ffi::ffi::{
   NativeActionResponse, NativeMouseLocationResponse, click_point as native_click_point,

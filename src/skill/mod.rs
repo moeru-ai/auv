@@ -1,3 +1,4 @@
+// File: src/skill/mod.rs
 //! Skill (recipe) loading, validation, and execution.
 //!
 //! A skill manifest is a declarative recipe: inputs + ordered steps (commands)

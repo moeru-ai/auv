@@ -1,3 +1,4 @@
+// File: src/driver/macos/overlay/mod.rs
 //! Experimental visual-only overlay cursor support.
 //!
 //! Overlay operations render an AUV cursor (and variants) for preview/replay

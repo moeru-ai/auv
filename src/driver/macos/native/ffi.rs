@@ -1,3 +1,4 @@
+// File: src/driver/macos/native/ffi.rs
 #[swift_bridge::bridge]
 pub(crate) mod ffi {
   // swift-bridge 0.1.59 has not proven Vec<transparent struct> reliable for

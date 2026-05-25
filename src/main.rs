@@ -1,3 +1,4 @@
+// File: src/main.rs
 mod cli;
 mod xtask;
 
