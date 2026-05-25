@@ -133,8 +133,8 @@ pub struct RunRecordV1Alpha1 {
   pub run_type: RunType,
   pub state: TraceState,
   pub status_code: TraceStatusCode,
-  pub started_at_millis: u128,
-  pub finished_at_millis: Option<u128>,
+  pub started_at_millis: u64,
+  pub finished_at_millis: Option<u64>,
   pub root_span_id: SpanId,
   pub attributes: BTreeMap<String, serde_json::Value>,
   pub summary: Option<String>,
@@ -149,8 +149,8 @@ pub struct SpanRecordV1Alpha1 {
   pub name: String,
   pub state: TraceState,
   pub status_code: TraceStatusCode,
-  pub started_at_millis: u128,
-  pub finished_at_millis: Option<u128>,
+  pub started_at_millis: u64,
+  pub finished_at_millis: Option<u64>,
   pub attributes: BTreeMap<String, serde_json::Value>,
   pub summary: Option<String>,
   pub failure: Option<TraceFailure>,
@@ -162,7 +162,7 @@ pub struct EventRecordV1Alpha1 {
   pub event_id: EventId,
   pub span_id: SpanId,
   pub name: String,
-  pub timestamp_millis: u128,
+  pub timestamp_millis: u64,
   pub attributes: BTreeMap<String, serde_json::Value>,
   pub message: Option<String>,
   pub artifact_ids: Vec<ArtifactId>,
@@ -194,11 +194,7 @@ pub fn new_run_id() -> RunId {
 
 pub fn new_trace_id() -> TraceId {
   let sequence = TRACE_COUNTER.fetch_add(1, Ordering::Relaxed);
-  TraceId::new(format_trace_id(
-    now_millis() as u64,
-    process::id(),
-    sequence,
-  ))
+  TraceId::new(format_trace_id(now_millis(), process::id(), sequence))
 }
 
 pub fn new_span_id() -> SpanId {

@@ -23,7 +23,7 @@ pub struct InspectServerSession {
   pub write_enabled: bool,
   pub write_token: Option<String>,
   pub pid: u32,
-  pub started_at_millis: u128,
+  pub started_at_millis: u64,
 }
 
 pub fn default_session_path() -> PathBuf {

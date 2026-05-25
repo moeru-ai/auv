@@ -136,11 +136,14 @@ pub struct DriverResponse {
   pub artifacts: Vec<ProducedArtifact>,
 }
 
-pub fn now_millis() -> u128 {
-  SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .unwrap_or_default()
-    .as_millis()
+pub fn now_millis() -> u64 {
+  u64::try_from(
+    SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap_or_default()
+      .as_millis(),
+  )
+  .unwrap_or(u64::MAX)
 }
 
 pub fn new_run_id() -> String {

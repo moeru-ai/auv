@@ -97,7 +97,7 @@ pub(crate) struct CaptureContract {
   pub screenshot_pixel_size: Size,
   pub pixel_to_logical_scale: Scale2D,
   pub logical_to_pixel_scale: Scale2D,
-  pub captured_at_unix_ms: u128,
+  pub captured_at_unix_ms: u64,
 }
 
 pub(crate) mod capture_error {

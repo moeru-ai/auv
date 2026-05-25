@@ -61,7 +61,7 @@ pub(crate) fn acquire_clipboard_lock(timeout_ms: u64) -> AuvResult<ClipboardLock
       }
       Err(error) if error.kind() == ErrorKind::AlreadyExists => {
         clear_stale_lock_file(&path)?;
-        if now_millis().saturating_sub(started_at) > timeout_ms as u128 {
+        if now_millis().saturating_sub(started_at) > timeout_ms {
           let owner = describe_lock_owner(&path).unwrap_or_else(|_| "unknown owner".to_string());
           return Err(format!(
             "timed out waiting for the global macOS clipboard lock after {} ms ({owner}; path={})",

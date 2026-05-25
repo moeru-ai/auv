@@ -70,7 +70,7 @@ pub struct AppIdentity {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppProbe {
   pub probe_version: String,
-  pub created_at_millis: u128,
+  pub created_at_millis: u64,
   pub project_root: PathBuf,
   pub output_dir: PathBuf,
   pub app: AppIdentity,
@@ -114,7 +114,7 @@ pub struct AppValidateOutput {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppDistillation {
   pub distill_version: String,
-  pub created_at_millis: u128,
+  pub created_at_millis: u64,
   pub source_analysis_path: PathBuf,
   pub app_identity: AppIdentity,
   pub candidates: Vec<AppDistilledCandidate>,
@@ -124,7 +124,7 @@ pub struct AppDistillation {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppValidation {
   pub validate_version: String,
-  pub created_at_millis: u128,
+  pub created_at_millis: u64,
   pub source_distillation_path: PathBuf,
   pub source_analysis_path: PathBuf,
   pub app_identity: AppIdentity,
@@ -165,7 +165,7 @@ pub struct AppValidatedCandidate {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AppAnalysis {
   pub analysis_version: String,
-  pub created_at_millis: u128,
+  pub created_at_millis: u64,
   pub probe_path: PathBuf,
   pub app_identity: AppIdentity,
   pub window_context: AppWindowContext,

@@ -2,8 +2,7 @@
 //!
 //! `RunUpdate` is the canonical in-process event (uses internal record types).
 //! `Api*Record` + `ApiRunUpdate` are the camelCase wire shapes for the inspect
-//! server HTTP write API. The `From` impls convert between them, with
-//! `api_millis()` clamping u128 timestamps to u64.
+//! server HTTP write API. The `From` impls convert between them.
 
 use crate::trace::{
   ArtifactId, ArtifactRecordV1Alpha1, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, SpanId,
@@ -121,8 +120,8 @@ impl From<RunRecordV1Alpha1> for ApiRunRecord {
       run_type: record.run_type,
       state: record.state,
       status_code: record.status_code,
-      started_at_millis: api_millis(record.started_at_millis),
-      finished_at_millis: record.finished_at_millis.map(api_millis),
+      started_at_millis: record.started_at_millis,
+      finished_at_millis: record.finished_at_millis,
       root_span_id: record.root_span_id,
       attributes: record.attributes,
       summary: record.summary,
@@ -140,8 +139,8 @@ impl From<ApiRunRecord> for RunRecordV1Alpha1 {
       run_type: record.run_type,
       state: record.state,
       status_code: record.status_code,
-      started_at_millis: u128::from(record.started_at_millis),
-      finished_at_millis: record.finished_at_millis.map(u128::from),
+      started_at_millis: record.started_at_millis,
+      finished_at_millis: record.finished_at_millis,
       root_span_id: record.root_span_id,
       attributes: record.attributes,
       summary: record.summary,
@@ -159,8 +158,8 @@ impl From<SpanRecordV1Alpha1> for ApiSpanRecord {
       name: record.name,
       state: record.state,
       status_code: record.status_code,
-      started_at_millis: api_millis(record.started_at_millis),
-      finished_at_millis: record.finished_at_millis.map(api_millis),
+      started_at_millis: record.started_at_millis,
+      finished_at_millis: record.finished_at_millis,
       attributes: record.attributes,
       summary: record.summary,
       failure: record.failure,
@@ -177,8 +176,8 @@ impl From<ApiSpanRecord> for SpanRecordV1Alpha1 {
       name: record.name,
       state: record.state,
       status_code: record.status_code,
-      started_at_millis: u128::from(record.started_at_millis),
-      finished_at_millis: record.finished_at_millis.map(u128::from),
+      started_at_millis: record.started_at_millis,
+      finished_at_millis: record.finished_at_millis,
       attributes: record.attributes,
       summary: record.summary,
       failure: record.failure,
@@ -193,7 +192,7 @@ impl From<EventRecordV1Alpha1> for ApiEventRecord {
       event_id: record.event_id,
       span_id: record.span_id,
       name: record.name,
-      timestamp_millis: api_millis(record.timestamp_millis),
+      timestamp_millis: record.timestamp_millis,
       attributes: record.attributes,
       message: record.message,
       artifact_ids: record.artifact_ids,
@@ -208,16 +207,12 @@ impl From<ApiEventRecord> for EventRecordV1Alpha1 {
       event_id: record.event_id,
       span_id: record.span_id,
       name: record.name,
-      timestamp_millis: u128::from(record.timestamp_millis),
+      timestamp_millis: record.timestamp_millis,
       attributes: record.attributes,
       message: record.message,
       artifact_ids: record.artifact_ids,
     }
   }
-}
-
-fn api_millis(value: u128) -> u64 {
-  u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 impl From<ArtifactRecordV1Alpha1> for ApiArtifactRecord {
