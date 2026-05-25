@@ -584,6 +584,14 @@ also update `docs/TERMS_AND_CONCEPTS.md`.
   overlay crate. The bridge-generation xtask now emits IDE bridge files for
   both the driver and overlay Swift packages, which keeps the split boundary
   explicit while preserving SourceKit indexing.
+- 2026-05-25 Task 5: `auv_driver::DriverDescriptor` only carries shared
+  driver identity (`id`, `platform`, `summary`), while the legacy command
+  catalog still needs command capabilities and donor-boundary text. The macOS
+  crate now owns `MacosDriverDescriptor` for the shared public shape plus
+  doc-hidden legacy descriptor metadata for the root adapter. Root
+  `src/driver/macos/descriptor.rs` adapts that metadata back into the legacy
+  `crate::model::DriverDescriptor` until catalog commands migrate away from the
+  root `DriverCall` surface.
 
 ## Migration Plan
 

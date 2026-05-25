@@ -1,3 +1,4 @@
+mod descriptor;
 mod driver;
 
 // TODO(driver-crates): These modules are temporarily public so the root
@@ -19,4 +20,7 @@ pub mod types;
 #[doc(hidden)]
 pub mod native;
 
-pub use driver::MacosDriver;
+pub use descriptor::{MacosDriverDescriptor, macos_driver_descriptor};
+#[doc(hidden)]
+pub use descriptor::{MacosLegacyDescriptorMetadata, macos_legacy_descriptor_metadata};
+pub use driver::{MacosDriver, MacosDriverSession};
