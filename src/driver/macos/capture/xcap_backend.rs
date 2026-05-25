@@ -31,11 +31,12 @@ fn backend_failed(error: impl std::fmt::Display) -> String {
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn now_millis() -> u128 {
-  SystemTime::now()
+fn now_millis() -> u64 {
+  let millis = SystemTime::now()
     .duration_since(UNIX_EPOCH)
     .unwrap_or_default()
-    .as_millis()
+    .as_millis();
+  u64::try_from(millis).unwrap_or(u64::MAX)
 }
 
 pub fn screenshot_temp_path(label: &str) -> PathBuf {
