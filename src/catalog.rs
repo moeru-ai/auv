@@ -505,7 +505,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     },
     CommandSpec {
       id: "music.search.results",
-      summary: "Detect visible search-result rows in a resolved window and produce a typed OperationResult candidate-set artifact.",
+      summary: "Detect visible search-result rows in a resolved window, produce a typed OperationResult candidate-set artifact, and emit CandidateRef signals (including selected_candidate_ref when --selected_row_index is provided).",
       driver_id: "macos.desktop",
       operation: "music_search_results",
       disturbance_classes: NONE,

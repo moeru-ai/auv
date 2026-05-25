@@ -66,6 +66,18 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
   let (detection, rows) = detect_rows_for_capture(call, &capture)?;
   let region =
     parse_ocr_region_constraint(call, capture.dimensions.width, capture.dimensions.height)?;
+  let selected_row_index = optional_i64(call, "selected_row_index")?
+    .map(|value| {
+      if value < 1 {
+        Err(format!(
+          "invalid --selected_row_index value {}: expected an integer >= 1",
+          value
+        ))
+      } else {
+        Ok(value as usize)
+      }
+    })
+    .transpose()?;
 
   let app_bundle_id = app_identifier(call).unwrap_or_default();
 
@@ -296,7 +308,12 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
       "macos.vision.music-search-results.{}",
       detection.strategy
     )),
-    signals: crate::driver::macos::observe::row_detection_signals(row_count),
+    signals: music_search_result_signals(
+      &operation_result,
+      &op_result_ref,
+      &candidates,
+      selected_row_index,
+    )?,
     notes: vec![
       "scope=window".to_string(),
       format!("windowRef={}", capture.capture_source),
@@ -914,6 +931,91 @@ fn candidate_recognized_item_id(evidence: &CandidateEvidence) -> Option<String> 
     .map(str::to_string)
 }
 
+fn music_search_result_candidate_ref(
+  operation_result: &OperationResult,
+  source_artifact_ref: &ArtifactRef,
+  candidate: &Candidate,
+) -> CandidateRef {
+  CandidateRef {
+    source_run_id: operation_result.run_id.clone(),
+    source_span_id: candidate.evidence.artifact_ref.span_id.clone(),
+    source_operation_id: operation_result.operation_id.clone(),
+    source_artifact_id: source_artifact_ref.artifact_id.clone(),
+    candidate_local_id: candidate.candidate_local_id.clone(),
+  }
+}
+
+fn music_search_result_signals(
+  operation_result: &OperationResult,
+  source_artifact_ref: &ArtifactRef,
+  candidates: &[Candidate],
+  selected_row_index: Option<usize>,
+) -> AuvResult<BTreeMap<String, String>> {
+  let mut signals = crate::driver::macos::observe::row_detection_signals(candidates.len());
+  signals.insert(
+    "music.search.results.source_run_id".to_string(),
+    operation_result.run_id.as_str().to_string(),
+  );
+  signals.insert(
+    "music.search.results.operation_result_artifact_id".to_string(),
+    source_artifact_ref.artifact_id.as_str().to_string(),
+  );
+  signals.insert(
+    "music.search.results.candidate_count".to_string(),
+    candidates.len().to_string(),
+  );
+  if let Some(selected_row_index) = selected_row_index {
+    signals.insert(
+      "music.search.results.selected_row_index".to_string(),
+      selected_row_index.to_string(),
+    );
+    signals.insert(
+      "music.search.results.selected_candidate_resolved".to_string(),
+      "false".to_string(),
+    );
+  }
+
+  for candidate in candidates {
+    let candidate_ref =
+      music_search_result_candidate_ref(operation_result, source_artifact_ref, candidate);
+    let candidate_ref_json = serde_json::to_string(&candidate_ref).map_err(|error| {
+      format!(
+        "failed to serialize CandidateRef for {}: {error}",
+        candidate.candidate_local_id
+      )
+    })?;
+    signals.insert(
+      format!(
+        "music.search.results.candidate_ref.{}",
+        candidate.candidate_local_id
+      ),
+      candidate_ref_json.clone(),
+    );
+    if let Some(row_index) = candidate.target_spec.row_index {
+      signals.insert(
+        format!("music.search.results.candidate_ref.row_{row_index}"),
+        candidate_ref_json.clone(),
+      );
+      if Some(row_index) == selected_row_index {
+        signals.insert(
+          "music.search.results.selected_candidate_ref".to_string(),
+          candidate_ref_json.clone(),
+        );
+        signals.insert(
+          "music.search.results.selected_candidate_local_id".to_string(),
+          candidate.candidate_local_id.clone(),
+        );
+        signals.insert(
+          "music.search.results.selected_candidate_resolved".to_string(),
+          "true".to_string(),
+        );
+      }
+    }
+  }
+
+  Ok(signals)
+}
+
 fn candidate_input_provenance(
   candidate_input: &MusicCandidateInput,
 ) -> Option<ResolvedCandidateProvenance> {
@@ -1481,6 +1583,18 @@ mod tests {
     }
   }
 
+  fn sample_operation_result(candidates: Vec<Candidate>) -> OperationResult {
+    OperationResult {
+      run_id: RunId::new("run_test"),
+      status: OperationStatus::Completed,
+      operation_id: MUSIC_SEARCH_RESULTS_OPERATION_ID.to_string(),
+      evidence_artifacts: Vec::new(),
+      output: OperationOutput::Candidates { candidates },
+      freshness_basis: None,
+      known_limits: Vec::new(),
+    }
+  }
+
   #[test]
   fn resolve_music_candidate_input_prefers_candidate_ref_json() {
     let candidate_ref = sample_candidate_ref();
@@ -1538,17 +1652,7 @@ mod tests {
       "recognition_id": "music_search_results",
       "recognized_item_id": "row#1"
     }));
-    let source_operation_result = OperationResult {
-      run_id: RunId::new("run_test"),
-      status: OperationStatus::Completed,
-      operation_id: MUSIC_SEARCH_RESULTS_OPERATION_ID.to_string(),
-      evidence_artifacts: Vec::new(),
-      output: OperationOutput::Candidates {
-        candidates: vec![candidate.clone()],
-      },
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
+    let source_operation_result = sample_operation_result(vec![candidate.clone()]);
     let candidate_input = MusicCandidateInput {
       source_run_id: candidate_ref.source_run_id.as_str().to_string(),
       source_artifact_id: candidate_ref.source_artifact_id.as_str().to_string(),
@@ -1565,6 +1669,71 @@ mod tests {
       provenance.node_ref.as_ref().expect("node ref").node_id,
       "obs_0001_0001"
     );
+  }
+
+  #[test]
+  fn music_search_result_signals_export_selected_candidate_ref() {
+    let mut second_candidate = sample_candidate(json!({
+      "provider": "vision_ocr.window_rows"
+    }));
+    second_candidate.candidate_local_id = "row#2".to_string();
+    second_candidate.target_spec.row_index = Some(2);
+    second_candidate.label = Some("Song B".to_string());
+    let operation_result =
+      sample_operation_result(vec![sample_candidate(json!({})), second_candidate.clone()]);
+
+    let signals = music_search_result_signals(
+      &operation_result,
+      &artifact_ref(MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID),
+      match &operation_result.output {
+        OperationOutput::Candidates { candidates } => candidates,
+        other => panic!("expected candidates output, got {other:?}"),
+      },
+      Some(2),
+    )
+    .expect("signals");
+
+    assert_eq!(
+      signals.get("music.search.results.selected_candidate_resolved"),
+      Some(&"true".to_string())
+    );
+    assert_eq!(
+      signals.get("music.search.results.selected_candidate_local_id"),
+      Some(&"row#2".to_string())
+    );
+    let selected_candidate_ref: CandidateRef = serde_json::from_str(
+      signals
+        .get("music.search.results.selected_candidate_ref")
+        .expect("selected candidate ref"),
+    )
+    .expect("candidate ref JSON");
+    assert_eq!(selected_candidate_ref.candidate_local_id, "row#2");
+    assert_eq!(
+      signals.get("music.search.results.candidate_ref.row_1"),
+      signals.get("music.search.results.candidate_ref.row#1")
+    );
+  }
+
+  #[test]
+  fn music_search_result_signals_marks_missing_selected_candidate_ref() {
+    let operation_result = sample_operation_result(vec![sample_candidate(json!({}))]);
+
+    let signals = music_search_result_signals(
+      &operation_result,
+      &artifact_ref(MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID),
+      match &operation_result.output {
+        OperationOutput::Candidates { candidates } => candidates,
+        other => panic!("expected candidates output, got {other:?}"),
+      },
+      Some(3),
+    )
+    .expect("signals");
+
+    assert_eq!(
+      signals.get("music.search.results.selected_candidate_resolved"),
+      Some(&"false".to_string())
+    );
+    assert!(!signals.contains_key("music.search.results.selected_candidate_ref"));
   }
 
   #[test]
@@ -1639,17 +1808,7 @@ mod tests {
       "recognized_item_id": "row#1"
     }));
     let evidence = candidate_evidence_refs(&candidate);
-    let source_operation_result = OperationResult {
-      run_id: RunId::new("run_test"),
-      status: OperationStatus::Completed,
-      operation_id: MUSIC_SEARCH_RESULTS_OPERATION_ID.to_string(),
-      evidence_artifacts: Vec::new(),
-      output: OperationOutput::Candidates {
-        candidates: vec![candidate.clone()],
-      },
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
+    let source_operation_result = sample_operation_result(vec![candidate.clone()]);
     let candidate_input = MusicCandidateInput {
       source_run_id: "run_test".to_string(),
       source_artifact_id: MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string(),

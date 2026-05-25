@@ -1,6 +1,6 @@
 {
   "recipe_id": "macos.qqmusic.music.result.play.v0",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "status": "experimental-recipe",
   "platform": "macOS",
   "target_app": {
@@ -14,25 +14,31 @@
     "activation": "pointer-row-activation",
     "verificationContract": "verifyNowPlayingTitle"
   },
-  "objective": "Play a search result identified by a CandidateRef from a prior music.search.results OperationResult artifact. The underlying driver operation resolves Candidate.target_spec.row_index itself, re-checks liveness preconditions, activates the row, presses the play control, and emits a typed VerificationResult.",
+  "objective": "Play a search result identified by a prior music.search.results handle. Preferred input is candidate_ref JSON exported from a producer step or caller; legacy source_run_id + source_artifact_id + candidate_local_id remains accepted. The underlying driver operation resolves Candidate.target_spec.row_index itself, re-checks liveness preconditions, activates the row, presses the play control, and emits a typed VerificationResult.",
   "inputs": {
     "app_id": {
       "type": "string",
       "default": "com.tencent.QQMusicMac"
     },
+    "candidate_ref": {
+      "type": "string",
+      "default": "",
+      "note": "Preferred CandidateRef JSON from music.search.results. Parent recipes can pass ${step_search_results_signal_music_search_results_selected_candidate_ref}."
+    },
     "source_run_id": {
       "type": "string",
-      "note": "run_id of the run that produced the OperationResult candidate-set artifact."
+      "default": "",
+      "note": "Legacy fallback run_id of the run that produced the OperationResult candidate-set artifact. Ignored when candidate_ref is provided."
     },
     "source_artifact_id": {
       "type": "string",
       "default": "artifact_0003",
-      "note": "artifact_id of the OperationResult JSON within source_run_id. Default is artifact_0003 (music.search.results always produces it at index 3)."
+      "note": "Legacy fallback artifact_id of the OperationResult JSON within source_run_id. Default is artifact_0003 (music.search.results always produces it at index 3). Ignored when candidate_ref is provided."
     },
     "candidate_local_id": {
       "type": "string",
       "default": "row#1",
-      "note": "candidate_local_id within the OperationResult to validate and play."
+      "note": "Legacy fallback candidate_local_id within the OperationResult to validate and play. Ignored when candidate_ref is provided."
     },
     "target_title": {
       "type": "string",
@@ -107,7 +113,7 @@
     "The host is macOS.",
     "QQ音乐 is installed and can be addressed by ${app_id}.",
     "Screen Recording and Accessibility permissions are already granted.",
-    "source_run_id and source_artifact_id point to a valid OperationResult from music.search.results.",
+    "Either candidate_ref is a valid CandidateRef from music.search.results, or source_run_id and source_artifact_id point to a valid OperationResult from music.search.results.",
     "The selected Candidate contains Candidate.target_spec.row_index.",
     "The search result surface must still be visible (not navigated away) when this recipe runs."
   ],
@@ -131,6 +137,7 @@
       },
       "args": {
         "target": "${app_id}",
+        "candidate_ref": "${candidate_ref}",
         "source_run_id": "${source_run_id}",
         "source_artifact_id": "${source_artifact_id}",
         "candidate_local_id": "${candidate_local_id}",
