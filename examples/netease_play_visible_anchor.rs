@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use auv_cli::recording::{RunFinish, RunSpec};
+use auv_cli::run_builder::{Attributes, RecordingRun, RunFinish, RunSpec, SpanRef};
 use auv_cli::runtime::Runtime;
 use auv_cli::trace::{RunType, TraceStatusCode, string_attr};
 use auv_driver::capture::{Activation, Capture, CaptureOptions};
@@ -129,7 +129,7 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
 fn run_recorded(inputs: Inputs) -> Result<(), Box<dyn std::error::Error>> {
   let project_root = std::env::current_dir()?;
   let runtime = auv_cli::build_default_runtime(project_root.clone())?;
-  let mut attributes = auv_cli::recording::Attributes::new();
+  let mut attributes = Attributes::new();
   attributes.insert(
     "auv.example.id".to_string(),
     string_attr("netease_play_visible_anchor"),
@@ -190,8 +190,8 @@ fn run_recorded(inputs: Inputs) -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_steps(
   runtime: &Runtime,
-  run: &mut auv_cli::recording::RecordingRun,
-  root: &auv_cli::recording::SpanRef,
+  run: &mut RecordingRun,
+  root: &SpanRef,
   inputs: Inputs,
 ) -> Result<(), Box<dyn std::error::Error>> {
   let driver = MacosDriver::new();
@@ -315,8 +315,8 @@ fn run_steps(
 
 fn record_capture(
   runtime: &Runtime,
-  run: &mut auv_cli::recording::RecordingRun,
-  root: &auv_cli::recording::SpanRef,
+  run: &mut RecordingRun,
+  root: &SpanRef,
   label: &str,
   capture: &Capture,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
