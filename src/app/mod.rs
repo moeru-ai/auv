@@ -2434,6 +2434,7 @@ mod tests {
     let commands = CommandCatalog::new(vec![
       CommandSpec {
         id: "test.first",
+        namespace: crate::model::CommandNamespace::Test,
         summary: "Test first command",
         driver_id: "test.probe",
         operation: "first",
@@ -2442,6 +2443,7 @@ mod tests {
       },
       CommandSpec {
         id: "test.second",
+        namespace: crate::model::CommandNamespace::Test,
         summary: "Test second command",
         driver_id: "test.probe",
         operation: "second",
@@ -2450,6 +2452,7 @@ mod tests {
       },
       CommandSpec {
         id: "test.skill.invoke",
+        namespace: crate::model::CommandNamespace::Test,
         summary: "Test skill command",
         driver_id: "test.probe",
         operation: "test_operation",

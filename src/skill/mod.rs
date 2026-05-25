@@ -3410,6 +3410,7 @@ mod tests {
       project_root,
       CommandCatalog::new(vec![CommandSpec {
         id: "test.skill.invoke",
+        namespace: crate::model::CommandNamespace::Test,
         summary: "Test skill invoke",
         driver_id: "test.skill.driver",
         operation: "test_operation",

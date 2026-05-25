@@ -872,6 +872,7 @@ mod tests {
       project_root.clone(),
       CommandCatalog::new(vec![CommandSpec {
         id: "test.invoke",
+        namespace: crate::model::CommandNamespace::Test,
         summary: "Test invoke",
         driver_id: "test.driver",
         operation: "test_operation",
@@ -929,6 +930,7 @@ mod tests {
       project_root.clone(),
       CommandCatalog::new(vec![CommandSpec {
         id: "test.invoke",
+        namespace: crate::model::CommandNamespace::Test,
         summary: "Test invoke",
         driver_id: "test.driver",
         operation: "test_operation",
@@ -986,6 +988,7 @@ mod tests {
       project_root.clone(),
       CommandCatalog::new(vec![CommandSpec {
         id: "test.invoke",
+        namespace: crate::model::CommandNamespace::Test,
         summary: "Test invoke",
         driver_id: "test.driver",
         operation: "test_operation",
@@ -1065,6 +1068,7 @@ mod tests {
       project_root,
       CommandCatalog::new(vec![CommandSpec {
         id: "test.invoke",
+        namespace: crate::model::CommandNamespace::Test,
         summary: "Test invoke",
         driver_id: "test.driver",
         operation: "test_operation",
@@ -1214,6 +1218,7 @@ mod tests {
       project_root,
       CommandCatalog::new(vec![CommandSpec {
         id: "test.invoke",
+        namespace: crate::model::CommandNamespace::Test,
         summary: "Test invoke",
         driver_id: "test.driver",
         operation: "test_operation",

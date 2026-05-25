@@ -3822,6 +3822,7 @@ mod tests {
       CommandCatalog::new(vec![
         CommandSpec {
           id: "debug.observeWindowRegion",
+          namespace: crate::model::CommandNamespace::Observe,
           summary: "Observe fixture region",
           driver_id: "test.scroll-scan.driver",
           operation: "observe_window_region",
@@ -3830,6 +3831,7 @@ mod tests {
         },
         CommandSpec {
           id: "debug.scrollWindowRegion",
+          namespace: crate::model::CommandNamespace::Action,
           summary: "Scroll fixture region",
           driver_id: "test.scroll-scan.driver",
           operation: "scroll_window_region",
@@ -3838,6 +3840,7 @@ mod tests {
         },
         CommandSpec {
           id: "debug.fixtureObserve",
+          namespace: crate::model::CommandNamespace::Observe,
           summary: "Return fixture hook decision",
           driver_id: "test.scroll-scan.driver",
           operation: "observe_fixture_scene",
