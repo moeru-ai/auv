@@ -188,7 +188,7 @@ pub(crate) fn type_text_via_system_events(
     lines.push("key code 51".to_string());
     lines.push("delay 0.05".to_string());
   }
-  lines.push(format!("keystroke {}", osascript_string_literal(text)));
+  push_text_keystroke_lines(&mut lines, text);
   if let Some(submit_key) = submit_key {
     let key_code = special_key_code(submit_key)?;
     lines.push("delay 0.05".to_string());
@@ -200,6 +200,16 @@ pub(crate) fn type_text_via_system_events(
     thread::sleep(Duration::from_millis(submit_settle_ms));
   }
   Ok(())
+}
+
+pub(crate) fn push_text_keystroke_lines(lines: &mut Vec<String>, text: &str) {
+  for character in text.chars() {
+    lines.push(format!(
+      "keystroke {}",
+      osascript_string_literal(&character.to_string())
+    ));
+    lines.push("delay 0.02".to_string());
+  }
 }
 
 pub(crate) fn paste_text_preserving_clipboard(
@@ -220,6 +230,7 @@ pub(crate) fn paste_text_preserving_clipboard(
       lines.push("delay 0.05".to_string());
     }
     lines.push("keystroke \"v\" using {command down}".to_string());
+    lines.push("delay 0.15".to_string());
     if let Some(submit_key) = submit_key {
       let key_code = special_key_code(submit_key)?;
       lines.push("delay 0.05".to_string());
@@ -251,10 +262,11 @@ pub(crate) fn special_key_code(raw: &str) -> AuvResult<u32> {
     "return" => Ok(36),
     "enter" => Ok(76),
     "tab" => Ok(48),
+    "delete" | "backspace" => Ok(51),
     "escape" | "esc" => Ok(53),
     "space" => Ok(49),
     other => Err(format!(
-      "invalid submit key {}; supported values are return, enter, tab, escape, and space",
+      "invalid submit key {}; supported values are return, enter, tab, delete, backspace, escape, and space",
       other
     )),
   }

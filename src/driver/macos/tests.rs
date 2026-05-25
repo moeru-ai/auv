@@ -13,11 +13,11 @@ use super::{
     parse_app_selector, parse_display_selection, parse_display_snapshot, parse_mouse_button,
     parse_observed_ax_tree, parse_ocr_region_constraint, parse_ocr_text_snapshot, parse_shortcut,
     parse_visual_rows_snapshot, parse_window_selection, process_is_alive,
-    project_main_screenshot_point, read_lock_owner_pid, read_png_dimensions, render_rect_compact,
-    render_text_match_command_json, resolve_app_ref, resolve_display_point,
-    resolve_screen_capture_source, resolve_scroll_deltas, resolve_window_candidate,
-    resolve_window_point, sanitize_file_component, special_key_code, swift_string_literal,
-    temp_file_path, window_area,
+    project_main_screenshot_point, push_text_keystroke_lines, read_lock_owner_pid,
+    read_png_dimensions, render_rect_compact, render_text_match_command_json, resolve_app_ref,
+    resolve_display_point, resolve_screen_capture_source, resolve_scroll_deltas,
+    resolve_window_candidate, resolve_window_point, sanitize_file_component, special_key_code,
+    swift_string_literal, temp_file_path, window_area,
   },
 };
 use crate::{
@@ -103,6 +103,39 @@ fn optional_bool_accepts_true_false_forms() {
 #[test]
 fn special_key_code_maps_return() {
   assert_eq!(special_key_code("return").expect("return should map"), 36);
+}
+
+#[test]
+fn special_key_code_maps_delete_aliases() {
+  assert_eq!(special_key_code("delete").expect("delete should map"), 51);
+  assert_eq!(
+    special_key_code("backspace").expect("backspace should map"),
+    51
+  );
+}
+
+#[test]
+fn push_text_keystroke_lines_keeps_spaces_as_separate_events() {
+  let mut lines = Vec::new();
+  push_text_keystroke_lines(&mut lines, "For Me");
+
+  assert_eq!(
+    lines,
+    vec![
+      "keystroke \"F\"",
+      "delay 0.02",
+      "keystroke \"o\"",
+      "delay 0.02",
+      "keystroke \"r\"",
+      "delay 0.02",
+      "keystroke \" \"",
+      "delay 0.02",
+      "keystroke \"M\"",
+      "delay 0.02",
+      "keystroke \"e\"",
+      "delay 0.02",
+    ]
+  );
 }
 
 #[test]
