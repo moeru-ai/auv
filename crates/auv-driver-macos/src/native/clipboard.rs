@@ -1,24 +1,24 @@
 // File: src/driver/macos/native/clipboard.rs
 #[cfg(target_os = "macos")]
-use super::ffi::ffi::{
+use super::binding::ffi::{
   NativeActionResponse, NativeClipboardSnapshotResponse,
   capture_clipboard as native_capture_clipboard, restore_clipboard as native_restore_clipboard,
   set_clipboard_text as native_set_clipboard_text,
 };
-use crate::model::AuvResult;
+use super::types::AuvResult;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn capture_clipboard_snapshot() -> AuvResult<String> {
+pub fn capture_clipboard_snapshot() -> AuvResult<String> {
   decode_clipboard_snapshot(native_capture_clipboard())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn capture_clipboard_snapshot() -> AuvResult<String> {
+pub fn capture_clipboard_snapshot() -> AuvResult<String> {
   Err("macOS native clipboard capture is unsupported on this target".to_string())
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn restore_clipboard_snapshot(snapshot_payload: &str) -> AuvResult<()> {
+pub fn restore_clipboard_snapshot(snapshot_payload: &str) -> AuvResult<()> {
   action_result(
     "restore_clipboard",
     native_restore_clipboard(snapshot_payload.to_string()),
@@ -26,12 +26,12 @@ pub(crate) fn restore_clipboard_snapshot(snapshot_payload: &str) -> AuvResult<()
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn restore_clipboard_snapshot(_snapshot_payload: &str) -> AuvResult<()> {
+pub fn restore_clipboard_snapshot(_snapshot_payload: &str) -> AuvResult<()> {
   Err("macOS native clipboard restore is unsupported on this target".to_string())
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn set_clipboard_text(text: &str) -> AuvResult<()> {
+pub fn set_clipboard_text(text: &str) -> AuvResult<()> {
   action_result(
     "set_clipboard_text",
     native_set_clipboard_text(text.to_string()),
@@ -39,7 +39,7 @@ pub(crate) fn set_clipboard_text(text: &str) -> AuvResult<()> {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn set_clipboard_text(_text: &str) -> AuvResult<()> {
+pub fn set_clipboard_text(_text: &str) -> AuvResult<()> {
   Err("macOS native clipboard set text is unsupported on this target".to_string())
 }
 

@@ -1,21 +1,20 @@
-// File: src/driver/macos/native/error.rs
-use crate::model::AuvResult;
+use super::types::AuvResult;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NativeDriverError {
-  pub(crate) operation: String,
-  pub(crate) message: String,
-  pub(crate) recovery_hint: String,
+pub struct NativeDriverError {
+  pub operation: String,
+  pub message: String,
+  pub recovery_hint: String,
 }
 
-pub(crate) fn native_error_to_auv(error: NativeDriverError) -> String {
+pub fn native_error_to_auv(error: NativeDriverError) -> String {
   format!(
     "macos native {} failed: {}; recovery={}",
     error.operation, error.message, error.recovery_hint
   )
 }
 
-pub(crate) fn native_result<T>(
+pub fn native_result<T>(
   operation: &str,
   value: Option<T>,
   error_message: Option<String>,

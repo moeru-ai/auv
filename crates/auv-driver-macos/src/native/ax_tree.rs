@@ -1,40 +1,39 @@
 // File: src/driver/macos/native/ax_tree.rs
 #[cfg(target_os = "macos")]
-use super::ffi::ffi::{
+use super::binding::ffi::{
   NativeAxActionRequest, NativeAxActionResponse, NativeAxFocusRequest, NativeAxFocusResponse,
   NativeAxTreeRequest, NativeAxTreeResponse, capture_ax_tree, perform_ax_action, set_ax_focused,
 };
-use crate::driver::macos::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
-use crate::model::AuvResult;
+use super::types::{AuvResult, ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NativeAxTreeCapture {
-  pub(crate) snapshot: ObservedAxTreeSnapshot,
-  pub(crate) pid: i64,
-  pub(crate) root_role: String,
+pub struct NativeAxTreeCapture {
+  pub snapshot: ObservedAxTreeSnapshot,
+  pub pid: i64,
+  pub root_role: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NativeAxAction {
-  pub(crate) performed_action: String,
-  pub(crate) available_actions: String,
+pub struct NativeAxAction {
+  pub performed_action: String,
+  pub available_actions: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NativeAxFocus {
-  pub(crate) set_attribute: String,
-  pub(crate) was_already_focused: bool,
-  pub(crate) role: String,
-  pub(crate) subrole: String,
-  pub(crate) title: String,
-  pub(crate) description: String,
-  pub(crate) identifier: String,
-  pub(crate) placeholder: String,
-  pub(crate) bounds: ObservedRect,
+pub struct NativeAxFocus {
+  pub set_attribute: String,
+  pub was_already_focused: bool,
+  pub role: String,
+  pub subrole: String,
+  pub title: String,
+  pub description: String,
+  pub identifier: String,
+  pub placeholder: String,
+  pub bounds: ObservedRect,
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn capture_ax_tree_snapshot(
+pub fn capture_ax_tree_snapshot(
   app: &str,
   max_depth: i64,
   max_children: i64,
@@ -49,7 +48,7 @@ pub(crate) fn capture_ax_tree_snapshot(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn capture_ax_tree_snapshot(
+pub fn capture_ax_tree_snapshot(
   _app: &str,
   _max_depth: i64,
   _max_children: i64,
@@ -58,7 +57,7 @@ pub(crate) fn capture_ax_tree_snapshot(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn perform_ax_path_action(
+pub fn perform_ax_path_action(
   pid: i32,
   path: &str,
   expected_role: &str,
@@ -75,7 +74,7 @@ pub(crate) fn perform_ax_path_action(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn perform_ax_path_action(
+pub fn perform_ax_path_action(
   _pid: i32,
   _path: &str,
   _expected_role: &str,
@@ -85,11 +84,7 @@ pub(crate) fn perform_ax_path_action(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn set_ax_focused_path(
-  pid: i32,
-  path: &str,
-  expected_role: &str,
-) -> AuvResult<NativeAxFocus> {
+pub fn set_ax_focused_path(pid: i32, path: &str, expected_role: &str) -> AuvResult<NativeAxFocus> {
   decode_ax_focus_response(DecodedAxFocusResponse::from(set_ax_focused(
     NativeAxFocusRequest {
       pid: i64::from(pid),
@@ -100,7 +95,7 @@ pub(crate) fn set_ax_focused_path(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn set_ax_focused_path(
+pub fn set_ax_focused_path(
   _pid: i32,
   _path: &str,
   _expected_role: &str,
@@ -108,9 +103,7 @@ pub(crate) fn set_ax_focused_path(
   Err("macOS native AX focus dispatch is unsupported on this target".to_string())
 }
 
-pub(crate) fn decode_ax_tree_response(
-  response: DecodedAxTreeResponse,
-) -> AuvResult<NativeAxTreeCapture> {
+pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<NativeAxTreeCapture> {
   if response.error_message.is_some() {
     return super::error::native_result(
       "capture_ax_tree",
@@ -194,9 +187,7 @@ pub(crate) fn decode_ax_tree_response(
   })
 }
 
-pub(crate) fn decode_ax_action_response(
-  response: DecodedAxActionResponse,
-) -> AuvResult<NativeAxAction> {
+pub fn decode_ax_action_response(response: DecodedAxActionResponse) -> AuvResult<NativeAxAction> {
   if response.error_message.is_some() {
     return super::error::native_result(
       "perform_ax_action",
@@ -212,9 +203,7 @@ pub(crate) fn decode_ax_action_response(
   })
 }
 
-pub(crate) fn decode_ax_focus_response(
-  response: DecodedAxFocusResponse,
-) -> AuvResult<NativeAxFocus> {
+pub fn decode_ax_focus_response(response: DecodedAxFocusResponse) -> AuvResult<NativeAxFocus> {
   if response.error_message.is_some() {
     return super::error::native_result(
       "set_ax_focused",
@@ -242,7 +231,7 @@ pub(crate) fn decode_ax_focus_response(
   })
 }
 
-pub(crate) fn render_ax_tree_report(capture: &NativeAxTreeCapture) -> String {
+pub fn render_ax_tree_report(capture: &NativeAxTreeCapture) -> String {
   let snapshot = &capture.snapshot;
   let mut lines = vec![
     format!("observedAt={}", snapshot.observed_at),
@@ -276,55 +265,55 @@ pub(crate) fn render_ax_tree_report(capture: &NativeAxTreeCapture) -> String {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DecodedAxTreeResponse {
-  pub(crate) observed_at: String,
-  pub(crate) app_name: String,
-  pub(crate) bundle_id: String,
-  pub(crate) pid: i64,
-  pub(crate) window_title: String,
-  pub(crate) root_role: String,
-  pub(crate) depths: Vec<i64>,
-  pub(crate) paths: Vec<String>,
-  pub(crate) roles: Vec<String>,
-  pub(crate) subroles: Vec<String>,
-  pub(crate) titles: Vec<String>,
-  pub(crate) descriptions: Vec<String>,
-  pub(crate) helps: Vec<String>,
-  pub(crate) identifiers: Vec<String>,
-  pub(crate) placeholders: Vec<String>,
-  pub(crate) values: Vec<String>,
-  pub(crate) x_values: Vec<i64>,
-  pub(crate) y_values: Vec<i64>,
-  pub(crate) width_values: Vec<i64>,
-  pub(crate) height_values: Vec<i64>,
-  pub(crate) error_message: Option<String>,
-  pub(crate) recovery_hint: Option<String>,
+pub struct DecodedAxTreeResponse {
+  pub observed_at: String,
+  pub app_name: String,
+  pub bundle_id: String,
+  pub pid: i64,
+  pub window_title: String,
+  pub root_role: String,
+  pub depths: Vec<i64>,
+  pub paths: Vec<String>,
+  pub roles: Vec<String>,
+  pub subroles: Vec<String>,
+  pub titles: Vec<String>,
+  pub descriptions: Vec<String>,
+  pub helps: Vec<String>,
+  pub identifiers: Vec<String>,
+  pub placeholders: Vec<String>,
+  pub values: Vec<String>,
+  pub x_values: Vec<i64>,
+  pub y_values: Vec<i64>,
+  pub width_values: Vec<i64>,
+  pub height_values: Vec<i64>,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DecodedAxActionResponse {
-  pub(crate) performed_action: String,
-  pub(crate) available_actions: String,
-  pub(crate) error_message: Option<String>,
-  pub(crate) recovery_hint: Option<String>,
+pub struct DecodedAxActionResponse {
+  pub performed_action: String,
+  pub available_actions: String,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DecodedAxFocusResponse {
-  pub(crate) set_attribute: String,
-  pub(crate) was_already_focused: bool,
-  pub(crate) role: String,
-  pub(crate) subrole: String,
-  pub(crate) title: String,
-  pub(crate) description: String,
-  pub(crate) identifier: String,
-  pub(crate) placeholder: String,
-  pub(crate) x: i64,
-  pub(crate) y: i64,
-  pub(crate) width: i64,
-  pub(crate) height: i64,
-  pub(crate) error_message: Option<String>,
-  pub(crate) recovery_hint: Option<String>,
+pub struct DecodedAxFocusResponse {
+  pub set_attribute: String,
+  pub was_already_focused: bool,
+  pub role: String,
+  pub subrole: String,
+  pub title: String,
+  pub description: String,
+  pub identifier: String,
+  pub placeholder: String,
+  pub x: i64,
+  pub y: i64,
+  pub width: i64,
+  pub height: i64,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
 }
 
 #[cfg(target_os = "macos")]

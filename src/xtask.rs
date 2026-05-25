@@ -7,9 +7,9 @@ pub(crate) fn generate_swift_bridge_for_ide(project_root: &Path) -> Result<PathB
 
 #[cfg(target_os = "macos")]
 fn generate_swift_bridge_for_ide_impl(project_root: &Path) -> Result<PathBuf, String> {
-  let ffi_rs = project_root.join("src/driver/macos/native/ffi.rs");
+  let ffi_rs = project_root.join("crates/auv-driver-macos/src/native/binding.rs");
   let generated_dir =
-    project_root.join("src/driver/macos/native/swift/Sources/AuvMacosNative/Generated");
+    project_root.join("crates/auv-driver-macos/native/swift/Sources/AuvMacosNative/Generated");
   std::fs::create_dir_all(&generated_dir).map_err(|error| {
     format!(
       "failed to create Swift bridge generated directory {}: {error}",
@@ -17,10 +17,11 @@ fn generate_swift_bridge_for_ide_impl(project_root: &Path) -> Result<PathBuf, St
     )
   })?;
 
-  swift_bridge_build::parse_bridges(vec![ffi_rs]).write_all_concatenated(&generated_dir, "auv_cli");
+  swift_bridge_build::parse_bridges(vec![ffi_rs])
+    .write_all_concatenated(&generated_dir, "auv_driver_macos");
   std::fs::write(
     generated_dir.join("native-bridging-header.h"),
-    "#include \"SwiftBridgeCore.h\"\n#include \"auv_cli/auv_cli.h\"\n",
+    "#include \"SwiftBridgeCore.h\"\n#include \"auv_driver_macos/auv_driver_macos.h\"\n",
   )
   .map_err(|error| {
     format!(

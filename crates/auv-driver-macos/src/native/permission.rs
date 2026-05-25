@@ -1,22 +1,24 @@
 // File: src/driver/macos/native/permission.rs
 #[cfg(target_os = "macos")]
-use super::ffi::ffi::{NativePermissionProbeResponse, NativePermissionStatus, probe_permissions};
-use crate::model::AuvResult;
+use super::binding::ffi::{
+  NativePermissionProbeResponse, NativePermissionStatus, probe_permissions,
+};
+use super::types::AuvResult;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn probe_native_permissions() -> AuvResult<NativePermissionProbe> {
+pub fn probe_native_permissions() -> AuvResult<NativePermissionProbe> {
   Ok(NativePermissionProbe::from(probe_permissions()))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn probe_native_permissions() -> AuvResult<NativePermissionProbe> {
+pub fn probe_native_permissions() -> AuvResult<NativePermissionProbe> {
   Err("macOS native permission probe is unsupported on this target".to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct NativePermissionProbe {
-  pub(crate) screen_recording: &'static str,
-  pub(crate) accessibility: &'static str,
+pub struct NativePermissionProbe {
+  pub screen_recording: &'static str,
+  pub accessibility: &'static str,
 }
 
 #[cfg(target_os = "macos")]

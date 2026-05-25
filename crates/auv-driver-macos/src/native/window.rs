@@ -1,32 +1,28 @@
 // File: src/driver/macos/native/window.rs
 #[cfg(target_os = "macos")]
-use super::ffi::ffi::{
+use super::binding::ffi::{
   NativeBundleIdsByPidRequest, NativeBundleIdsByPidResponse, NativeDisplayListResponse,
   NativeWindowListRequest, NativeWindowListResponse, bundle_ids_by_pid as native_bundle_ids_by_pid,
   list_displays, list_windows,
 };
-use crate::driver::macos::{
-  ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow, ObservedWindowSnapshot,
-  compute_combined_bounds,
+use super::types::{
+  AuvResult, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow,
+  ObservedWindowSnapshot, compute_combined_bounds,
 };
-use crate::model::AuvResult;
 use std::collections::{HashMap, HashSet};
 
 #[cfg(target_os = "macos")]
-pub(crate) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
+pub fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
   decode_display_response(DecodedDisplayListResponse::from(list_displays()))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
+pub fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
   Err("macOS native display enumeration is unsupported on this target".to_string())
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn observe_windows_snapshot(
-  limit: i64,
-  app_filter: &str,
-) -> AuvResult<ObservedWindowSnapshot> {
+pub fn observe_windows_snapshot(limit: i64, app_filter: &str) -> AuvResult<ObservedWindowSnapshot> {
   let response = list_windows(NativeWindowListRequest {
     limit,
     app_filter: app_filter.to_string(),
@@ -35,14 +31,14 @@ pub(crate) fn observe_windows_snapshot(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn observe_windows_snapshot(
+pub fn observe_windows_snapshot(
   _limit: i64,
   _app_filter: &str,
 ) -> AuvResult<ObservedWindowSnapshot> {
   Err("macOS native window listing is unsupported on this target".to_string())
 }
 
-pub(crate) fn decode_display_response(
+pub fn decode_display_response(
   response: DecodedDisplayListResponse,
 ) -> AuvResult<ObservedDisplaySnapshot> {
   if response.error_message.is_some() {
@@ -116,7 +112,7 @@ pub(crate) fn decode_display_response(
   })
 }
 
-pub(crate) fn decode_window_response(
+pub fn decode_window_response(
   response: DecodedWindowListResponse,
 ) -> AuvResult<ObservedWindowSnapshot> {
   if response.error_message.is_some() {
@@ -171,7 +167,7 @@ pub(crate) fn decode_window_response(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn bundle_ids_by_pid(pids: &HashSet<u32>) -> AuvResult<HashMap<u32, String>> {
+pub fn bundle_ids_by_pid(pids: &HashSet<u32>) -> AuvResult<HashMap<u32, String>> {
   let mut sorted_pids = pids.iter().copied().collect::<Vec<_>>();
   sorted_pids.sort_unstable();
   let response = native_bundle_ids_by_pid(NativeBundleIdsByPidRequest {
@@ -181,11 +177,11 @@ pub(crate) fn bundle_ids_by_pid(pids: &HashSet<u32>) -> AuvResult<HashMap<u32, S
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn bundle_ids_by_pid(_pids: &HashSet<u32>) -> AuvResult<HashMap<u32, String>> {
+pub fn bundle_ids_by_pid(_pids: &HashSet<u32>) -> AuvResult<HashMap<u32, String>> {
   Err("macOS native bundle id lookup is unsupported on this target".to_string())
 }
 
-pub(crate) fn decode_bundle_ids_by_pid_response(
+pub fn decode_bundle_ids_by_pid_response(
   response: DecodedBundleIdsByPidResponse,
 ) -> AuvResult<HashMap<u32, String>> {
   if response.error_message.is_some() {
@@ -212,52 +208,52 @@ pub(crate) fn decode_bundle_ids_by_pid_response(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DecodedDisplayListResponse {
-  pub(crate) captured_at: String,
-  pub(crate) ids: Vec<i64>,
-  pub(crate) main_flags: Vec<bool>,
-  pub(crate) built_in_flags: Vec<bool>,
-  pub(crate) bounds_x_values: Vec<i64>,
-  pub(crate) bounds_y_values: Vec<i64>,
-  pub(crate) bounds_width_values: Vec<i64>,
-  pub(crate) bounds_height_values: Vec<i64>,
-  pub(crate) visible_x_values: Vec<i64>,
-  pub(crate) visible_y_values: Vec<i64>,
-  pub(crate) visible_width_values: Vec<i64>,
-  pub(crate) visible_height_values: Vec<i64>,
-  pub(crate) scale_factors: Vec<f64>,
-  pub(crate) pixel_width_values: Vec<i64>,
-  pub(crate) pixel_height_values: Vec<i64>,
-  pub(crate) error_message: Option<String>,
-  pub(crate) recovery_hint: Option<String>,
+pub struct DecodedDisplayListResponse {
+  pub captured_at: String,
+  pub ids: Vec<i64>,
+  pub main_flags: Vec<bool>,
+  pub built_in_flags: Vec<bool>,
+  pub bounds_x_values: Vec<i64>,
+  pub bounds_y_values: Vec<i64>,
+  pub bounds_width_values: Vec<i64>,
+  pub bounds_height_values: Vec<i64>,
+  pub visible_x_values: Vec<i64>,
+  pub visible_y_values: Vec<i64>,
+  pub visible_width_values: Vec<i64>,
+  pub visible_height_values: Vec<i64>,
+  pub scale_factors: Vec<f64>,
+  pub pixel_width_values: Vec<i64>,
+  pub pixel_height_values: Vec<i64>,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DecodedWindowListResponse {
-  pub(crate) observed_at: String,
-  pub(crate) frontmost_app_name: String,
-  pub(crate) frontmost_app_bundle_id: String,
-  pub(crate) frontmost_window_title: String,
-  pub(crate) app_names: Vec<String>,
-  pub(crate) owner_pids: Vec<i64>,
-  pub(crate) owner_bundle_ids: Vec<String>,
-  pub(crate) window_numbers: Vec<i64>,
-  pub(crate) layers: Vec<i64>,
-  pub(crate) titles: Vec<String>,
-  pub(crate) x_values: Vec<i64>,
-  pub(crate) y_values: Vec<i64>,
-  pub(crate) width_values: Vec<i64>,
-  pub(crate) height_values: Vec<i64>,
-  pub(crate) error_message: Option<String>,
-  pub(crate) recovery_hint: Option<String>,
+pub struct DecodedWindowListResponse {
+  pub observed_at: String,
+  pub frontmost_app_name: String,
+  pub frontmost_app_bundle_id: String,
+  pub frontmost_window_title: String,
+  pub app_names: Vec<String>,
+  pub owner_pids: Vec<i64>,
+  pub owner_bundle_ids: Vec<String>,
+  pub window_numbers: Vec<i64>,
+  pub layers: Vec<i64>,
+  pub titles: Vec<String>,
+  pub x_values: Vec<i64>,
+  pub y_values: Vec<i64>,
+  pub width_values: Vec<i64>,
+  pub height_values: Vec<i64>,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DecodedBundleIdsByPidResponse {
-  pub(crate) pids: Vec<i64>,
-  pub(crate) bundle_ids: Vec<String>,
-  pub(crate) error_message: Option<String>,
-  pub(crate) recovery_hint: Option<String>,
+pub struct DecodedBundleIdsByPidResponse {
+  pub pids: Vec<i64>,
+  pub bundle_ids: Vec<String>,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
 }
 
 #[cfg(target_os = "macos")]

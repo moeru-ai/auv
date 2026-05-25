@@ -59,11 +59,7 @@ auv-driver-macos = { path = "crates/auv-driver-macos" }
 auv-overlay-macos = { path = "crates/auv-overlay-macos" }
 objc2-core-graphics.workspace = true
 objc2-core-foundation.workspace = true
-swift-bridge.workspace = true
 swift-bridge-build.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
-
-[target.'cfg(target_os = "macos")'.build-dependencies]
-swift-bridge-build.workspace = true

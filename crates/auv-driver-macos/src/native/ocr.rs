@@ -2,37 +2,36 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
-use super::ffi::ffi::{
+use super::binding::ffi::{
   NativeOcrTextRequest, NativeOcrTextResponse, NativeVisualRowsRequest, NativeVisualRowsResponse,
   find_ocr_text, find_visual_rows,
 };
-use crate::driver::macos::{
-  DetectedScreenRows, ObservedOcrRow, ObservedRect, OcrTextMatch, OcrTextSnapshot,
+use super::types::{
+  AuvResult, DetectedScreenRows, ObservedOcrRow, ObservedRect, OcrTextMatch, OcrTextSnapshot,
 };
-use crate::model::AuvResult;
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NativeOcrTextCapture {
-  pub(crate) snapshot: OcrTextSnapshot,
-  pub(crate) normalized_query: String,
-  pub(crate) crop_rect: Option<ObservedRect>,
-  pub(crate) ocr_scale_factor: f64,
+pub struct NativeOcrTextCapture {
+  pub snapshot: OcrTextSnapshot,
+  pub normalized_query: String,
+  pub crop_rect: Option<ObservedRect>,
+  pub ocr_scale_factor: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NativeVisualRowsCapture {
-  pub(crate) rows: DetectedScreenRows,
-  pub(crate) detected_at: String,
-  pub(crate) image_path: PathBuf,
-  pub(crate) image_width: i64,
-  pub(crate) image_height: i64,
-  pub(crate) crop_rect: Option<ObservedRect>,
-  pub(crate) analysis_strip: ObservedRect,
-  pub(crate) peak_densities: Vec<f64>,
+pub struct NativeVisualRowsCapture {
+  pub rows: DetectedScreenRows,
+  pub detected_at: String,
+  pub image_path: PathBuf,
+  pub image_width: i64,
+  pub image_height: i64,
+  pub crop_rect: Option<ObservedRect>,
+  pub analysis_strip: ObservedRect,
+  pub peak_densities: Vec<f64>,
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn find_text(
+pub fn find_text(
   image_path: &Path,
   query: &str,
   exact: bool,
@@ -63,7 +62,7 @@ pub(crate) fn find_text(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn find_text(
+pub fn find_text(
   _image_path: &Path,
   _query: &str,
   _exact: bool,
@@ -75,7 +74,7 @@ pub(crate) fn find_text(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn find_rows(
+pub fn find_rows(
   image_path: &Path,
   crop_region: Option<&ObservedRect>,
 ) -> AuvResult<NativeVisualRowsCapture> {
@@ -98,14 +97,14 @@ pub(crate) fn find_rows(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn find_rows(
+pub fn find_rows(
   _image_path: &Path,
   _crop_region: Option<&ObservedRect>,
 ) -> AuvResult<NativeVisualRowsCapture> {
   Err("macOS native visual row detection is unsupported on this target".to_string())
 }
 
-pub(crate) fn decode_ocr_text_response(
+pub fn decode_ocr_text_response(
   response: DecodedOcrTextResponse,
 ) -> AuvResult<NativeOcrTextCapture> {
   if response.error_message.is_some() {
@@ -176,7 +175,7 @@ pub(crate) fn decode_ocr_text_response(
   })
 }
 
-pub(crate) fn decode_visual_rows_response(
+pub fn decode_visual_rows_response(
   response: DecodedVisualRowsResponse,
 ) -> AuvResult<NativeVisualRowsCapture> {
   if response.error_message.is_some() {
@@ -264,7 +263,7 @@ impl NativeVisualRowsCapture {
   }
 }
 
-pub(crate) fn render_ocr_text_report(capture: &NativeOcrTextCapture) -> String {
+pub fn render_ocr_text_report(capture: &NativeOcrTextCapture) -> String {
   let snapshot = &capture.snapshot;
   let mut lines = vec![
     format!("recognizedAt={}", snapshot.recognized_at),
@@ -299,7 +298,7 @@ pub(crate) fn render_ocr_text_report(capture: &NativeOcrTextCapture) -> String {
   lines.join("\n") + "\n"
 }
 
-pub(crate) fn render_visual_rows_report(
+pub fn render_visual_rows_report(
   capture: NativeVisualRowsCapture,
   rows: &[ObservedOcrRow],
 ) -> String {
@@ -335,55 +334,55 @@ pub(crate) fn render_visual_rows_report(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DecodedOcrTextResponse {
-  pub(crate) recognized_at: String,
-  pub(crate) image_path: String,
-  pub(crate) image_width: i64,
-  pub(crate) image_height: i64,
-  pub(crate) query: String,
-  pub(crate) exact: bool,
-  pub(crate) case_sensitive: bool,
-  pub(crate) normalized_query: String,
-  pub(crate) crop_enabled: bool,
-  pub(crate) crop_x: i64,
-  pub(crate) crop_y: i64,
-  pub(crate) crop_width: i64,
-  pub(crate) crop_height: i64,
-  pub(crate) ocr_scale_factor: f64,
-  pub(crate) match_indices: Vec<i64>,
-  pub(crate) texts: Vec<String>,
-  pub(crate) confidences: Vec<f64>,
-  pub(crate) x_values: Vec<i64>,
-  pub(crate) y_values: Vec<i64>,
-  pub(crate) width_values: Vec<i64>,
-  pub(crate) height_values: Vec<i64>,
-  pub(crate) error_message: Option<String>,
-  pub(crate) recovery_hint: Option<String>,
+pub struct DecodedOcrTextResponse {
+  pub recognized_at: String,
+  pub image_path: String,
+  pub image_width: i64,
+  pub image_height: i64,
+  pub query: String,
+  pub exact: bool,
+  pub case_sensitive: bool,
+  pub normalized_query: String,
+  pub crop_enabled: bool,
+  pub crop_x: i64,
+  pub crop_y: i64,
+  pub crop_width: i64,
+  pub crop_height: i64,
+  pub ocr_scale_factor: f64,
+  pub match_indices: Vec<i64>,
+  pub texts: Vec<String>,
+  pub confidences: Vec<f64>,
+  pub x_values: Vec<i64>,
+  pub y_values: Vec<i64>,
+  pub width_values: Vec<i64>,
+  pub height_values: Vec<i64>,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DecodedVisualRowsResponse {
-  pub(crate) detected_at: String,
-  pub(crate) image_path: String,
-  pub(crate) image_width: i64,
-  pub(crate) image_height: i64,
-  pub(crate) crop_enabled: bool,
-  pub(crate) crop_x: i64,
-  pub(crate) crop_y: i64,
-  pub(crate) crop_width: i64,
-  pub(crate) crop_height: i64,
-  pub(crate) analysis_strip_x: i64,
-  pub(crate) analysis_strip_y: i64,
-  pub(crate) analysis_strip_width: i64,
-  pub(crate) analysis_strip_height: i64,
-  pub(crate) row_indices: Vec<i64>,
-  pub(crate) x_values: Vec<i64>,
-  pub(crate) y_values: Vec<i64>,
-  pub(crate) width_values: Vec<i64>,
-  pub(crate) height_values: Vec<i64>,
-  pub(crate) peak_densities: Vec<f64>,
-  pub(crate) error_message: Option<String>,
-  pub(crate) recovery_hint: Option<String>,
+pub struct DecodedVisualRowsResponse {
+  pub detected_at: String,
+  pub image_path: String,
+  pub image_width: i64,
+  pub image_height: i64,
+  pub crop_enabled: bool,
+  pub crop_x: i64,
+  pub crop_y: i64,
+  pub crop_width: i64,
+  pub crop_height: i64,
+  pub analysis_strip_x: i64,
+  pub analysis_strip_y: i64,
+  pub analysis_strip_width: i64,
+  pub analysis_strip_height: i64,
+  pub row_indices: Vec<i64>,
+  pub x_values: Vec<i64>,
+  pub y_values: Vec<i64>,
+  pub width_values: Vec<i64>,
+  pub height_values: Vec<i64>,
+  pub peak_densities: Vec<f64>,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
 }
 
 #[cfg(target_os = "macos")]
