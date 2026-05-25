@@ -25,15 +25,20 @@ pub enum Click {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PasteTextOptions {
   pub text: String,
-  pub submit: Submit,
+  pub replace_existing: bool,
+  pub submit: TextSubmit,
+  pub settle: Duration,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Submit {
+pub enum TextSubmit {
   #[default]
   No,
-  Enter,
+  Return,
+  Search,
+  Done,
+  Go,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

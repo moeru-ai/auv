@@ -12,7 +12,7 @@ pub use capture::{Activation, Capture, CaptureOptions, ImageView};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
 pub use geometry::{CoordinateSpace, Point, RatioRect, Rect, Size};
-pub use input::{Click, PasteTextOptions, Submit, WaitOptions};
+pub use input::{Click, PasteTextOptions, TextSubmit, WaitOptions};
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
 pub use vision::{ImageMatch, ImageMatchResult, RecognizedText, TextRecognition};
@@ -27,7 +27,7 @@ mod tests {
     display::{Display, ObservedDisplays},
     error::{DriverError, DriverResult},
     geometry::{CoordinateSpace, Point, RatioRect, Rect, Size},
-    input::{Click, PasteTextOptions, Submit, WaitOptions},
+    input::{Click, PasteTextOptions, TextSubmit, WaitOptions},
     selector::{App, AppSelector, TextMatcher, Window as SelectWindow, WindowSelector},
     traits::{Driver, DriverDescriptor, DriverSession, PlatformKind},
     vision::{ImageMatch, ImageMatchResult, RecognizedText, TextRecognition},
@@ -65,7 +65,7 @@ mod tests {
     let _ = std::any::type_name::<Rect>();
     let _ = std::any::type_name::<Size>();
     let _ = std::any::type_name::<PasteTextOptions>();
-    let _ = std::any::type_name::<Submit>();
+    let _ = std::any::type_name::<TextSubmit>();
     let _ = std::any::type_name::<WaitOptions>();
     let _ = std::any::type_name::<AppSelector>();
     let _ = std::any::type_name::<TextMatcher>();
