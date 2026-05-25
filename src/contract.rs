@@ -305,6 +305,74 @@ pub enum FailureLayer {
   SemanticMismatch,
 }
 
+/// Coarse evidence source for an [`ObservationSnapshot`]. AX trees, OCR
+/// fragments, visual detectors, and fused outputs all project into one
+/// [`SurfaceNode`] shape — the snapshot still tags its origin so downstream
+/// callers can reason about coverage and uncertainty.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationSource {
+  /// Snapshot derived from the macOS accessibility tree.
+  Ax,
+  /// Snapshot derived from OCR over a captured image.
+  Ocr,
+  /// Snapshot derived from visual detectors (template match, row detector,
+  /// segmentation, icon match).
+  Visual,
+  /// Snapshot that fuses multiple sources into one merged projection.
+  Merged,
+}
+
+/// **Provisional contract.** A normalized snapshot of UI observations captured
+/// at one moment within a run/span. The projection target for AX trees, OCR
+/// fragments, visual detector outputs, and scroll-scan list-item candidates so
+/// consumers can read evidence without knowing which producer generated it.
+///
+/// Envelope layout: the snapshot carries source/scope/coordinate context, raw
+/// provider blob, and known limits. The per-item observations live in the
+/// `nodes` field as a list of [`SurfaceNode`]s; each node still carries its
+/// own `recognition_source` so the unified shape doesn't lose finer-grained
+/// origin information.
+///
+/// **Status: v0, not yet wired to drivers.** Today no producer emits
+/// `ObservationSnapshot` artifacts; existing `RecognitionResult`, AX snapshots,
+/// and scroll-scan outputs remain authoritative. The type exists so the
+/// observed UI layer can grow with one stable shape rather than diverging per
+/// producer. Field set and semantics may shift before this is marked stable.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ObservationSnapshot {
+  /// Stable identifier for this snapshot. Producers should use a deterministic
+  /// format such as `snapshot_{run_id}_{span_id}_{seq}` so events and
+  /// artifacts can reference snapshots after the fact.
+  pub snapshot_id: String,
+  /// Run that captured this snapshot.
+  pub run_id: RunId,
+  /// Span that captured this snapshot.
+  pub span_id: SpanId,
+  /// Wall-clock millis-since-epoch when the snapshot was captured.
+  pub captured_at_millis: u64,
+  /// Coarse evidence source (`ax` / `ocr` / `visual` / `merged`).
+  pub source: ObservationSource,
+  /// Capture scope: surface, display, app/window, optional region.
+  pub scope: RecognitionScope,
+  /// Reference to the capture contract artifact that defines the coordinate
+  /// system, scale, and source bounds of this snapshot. Optional because
+  /// AX-only snapshots may have no pixel capture to anchor.
+  pub capture_contract_ref: Option<ArtifactRef>,
+  /// Evidence artifacts produced alongside the snapshot (screenshots, raw
+  /// OCR JSON, AX snapshot files, detector outputs, etc.).
+  pub evidence: Vec<ArtifactRef>,
+  /// Per-item observed UI nodes. The unified projection.
+  pub nodes: Vec<SurfaceNode>,
+  /// Raw provider-specific detail blob. Consumers should not rely on this
+  /// shape; it exists for debugging and forward-compat.
+  pub detail: serde_json::Value,
+  /// Known limitations of this snapshot. Examples: "AX tree partial:
+  /// accessibility permission missing", "OCR provider score below threshold",
+  /// "visual rows detected without baseline".
+  pub known_limits: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -802,5 +870,157 @@ mod tests {
     let parsed: VerificationResult =
       serde_json::from_value(value).expect("verification result should deserialize");
     assert_eq!(parsed, result);
+  }
+
+  fn sample_node(node_id: &str, source: RecognitionSource) -> SurfaceNode {
+    SurfaceNode {
+      node_ref: NodeRef {
+        run_id: RunId::new("run_snapshot"),
+        span_id: SpanId::new("span_snapshot"),
+        node_id: node_id.to_string(),
+      },
+      kind: "observation".to_string(),
+      label: Some("Play".to_string()),
+      box_: RecognitionBox {
+        x: 100,
+        y: 200,
+        width: 80,
+        height: 24,
+      },
+      source_artifacts: vec!["artifacts/scan-page-0001.png".to_string()],
+      recognition_id: Some("recognition_001".to_string()),
+      recognition_source: Some(source),
+      recognition_surface: Some(RecognitionSurface::Window),
+      recognized_item_id: Some("item_001".to_string()),
+      recognized_item_kind: Some("button".to_string()),
+      provider_score: Some(0.91),
+      detail: json!({}),
+    }
+  }
+
+  fn snapshot_scope() -> RecognitionScope {
+    RecognitionScope {
+      surface: RecognitionSurface::Window,
+      display_ref: None,
+      native_display_id: None,
+      app_bundle_id: Some("com.netease.163music".to_string()),
+      window_title: Some("网易云音乐".to_string()),
+      window_number: Some(42),
+      region_hint: Some(RatioRegion {
+        left: 0.0,
+        top: 0.18,
+        right: 1.0,
+        bottom: 0.72,
+      }),
+      capture_artifact: Some(artifact_ref()),
+      capture_contract_artifact: Some(artifact_ref()),
+    }
+  }
+
+  #[test]
+  fn observation_source_serializes_as_snake_case() {
+    for (source, wire) in [
+      (ObservationSource::Ax, "ax"),
+      (ObservationSource::Ocr, "ocr"),
+      (ObservationSource::Visual, "visual"),
+      (ObservationSource::Merged, "merged"),
+    ] {
+      let value = serde_json::to_value(source).expect("source should serialize");
+      assert_eq!(value, json!(wire));
+      let parsed: ObservationSource =
+        serde_json::from_value(json!(wire)).expect("source should deserialize");
+      assert_eq!(parsed, source);
+    }
+  }
+
+  #[test]
+  fn observation_snapshot_round_trips_with_unified_projection() {
+    let snapshot = ObservationSnapshot {
+      snapshot_id: "snapshot_run_001_span_001_0001".to_string(),
+      run_id: RunId::new("run_001"),
+      span_id: SpanId::new("span_001"),
+      captured_at_millis: 1_779_090_000_000,
+      source: ObservationSource::Merged,
+      scope: snapshot_scope(),
+      capture_contract_ref: Some(artifact_ref()),
+      evidence: vec![artifact_ref()],
+      nodes: vec![
+        sample_node("node_ax_play", RecognitionSource::Custom),
+        sample_node("node_ocr_play", RecognitionSource::OcrText),
+      ],
+      detail: json!({
+        "fusion_strategy": "ax_then_ocr",
+        "ax_node_count": 1,
+        "ocr_row_count": 1,
+      }),
+      known_limits: vec![
+        "AX tree was partial: window title bar missing".to_string(),
+        "OCR provider score min was 0.40, lower than recipe expectation".to_string(),
+      ],
+    };
+
+    let value = serde_json::to_value(&snapshot).expect("snapshot should serialize");
+    assert_eq!(value["snapshot_id"], json!("snapshot_run_001_span_001_0001"));
+    assert_eq!(value["source"], json!("merged"));
+    assert_eq!(value["scope"]["surface"], json!("window"));
+    assert_eq!(value["nodes"].as_array().expect("nodes array").len(), 2);
+    assert_eq!(value["known_limits"].as_array().expect("limits array").len(), 2);
+
+    let parsed: ObservationSnapshot =
+      serde_json::from_value(value).expect("snapshot should deserialize");
+    assert_eq!(parsed, snapshot);
+  }
+
+  #[test]
+  fn observation_snapshot_allows_empty_nodes_for_negative_evidence() {
+    let snapshot = ObservationSnapshot {
+      snapshot_id: "snapshot_negative".to_string(),
+      run_id: RunId::new("run_002"),
+      span_id: SpanId::new("span_002"),
+      captured_at_millis: 1_779_090_001_000,
+      source: ObservationSource::Ocr,
+      scope: snapshot_scope(),
+      capture_contract_ref: None,
+      evidence: vec![artifact_ref()],
+      nodes: Vec::new(),
+      detail: json!({ "reason": "no_recognized_items" }),
+      known_limits: vec![
+        "OCR ran but produced no rows above min_confidence".to_string(),
+      ],
+    };
+
+    let value = serde_json::to_value(&snapshot).expect("snapshot should serialize");
+    let parsed: ObservationSnapshot =
+      serde_json::from_value(value).expect("snapshot should deserialize");
+    assert_eq!(parsed, snapshot);
+    assert!(parsed.nodes.is_empty());
+  }
+
+  #[test]
+  fn observation_snapshot_ax_source_can_omit_capture_contract() {
+    let snapshot = ObservationSnapshot {
+      snapshot_id: "snapshot_ax_only".to_string(),
+      run_id: RunId::new("run_003"),
+      span_id: SpanId::new("span_003"),
+      captured_at_millis: 1_779_090_002_000,
+      source: ObservationSource::Ax,
+      scope: snapshot_scope(),
+      capture_contract_ref: None,
+      evidence: vec![artifact_ref()],
+      nodes: vec![sample_node("ax_button", RecognitionSource::Custom)],
+      detail: json!({ "ax_root": "AXApplication" }),
+      known_limits: Vec::new(),
+    };
+
+    let value = serde_json::to_value(&snapshot).expect("snapshot should serialize");
+    assert_eq!(value["source"], json!("ax"));
+    assert!(
+      value["capture_contract_ref"].is_null(),
+      "ax snapshot may not have a capture contract"
+    );
+
+    let parsed: ObservationSnapshot =
+      serde_json::from_value(value).expect("snapshot should deserialize");
+    assert_eq!(parsed, snapshot);
   }
 }

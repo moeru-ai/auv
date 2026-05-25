@@ -206,6 +206,36 @@ The inspect viewer may surface `ScrollScanArtifact.nodes` as a lightweight
 preview for review, but that preview is still evidence, not a node-action
 contract.
 
+## Observation Snapshot
+
+An observation snapshot is a provisional envelope around the
+observed-UI-layer projection. It groups one moment of looking at a surface —
+AX tree, OCR pass, visual detector output, scroll-scan list-item batch, or a
+fused multi-source view — into one normalized record bound to a run/span.
+
+An observation snapshot carries:
+
+- A `source` tag at coarse granularity: `ax`, `ocr`, `visual`, `merged`.
+- The `scope` it was captured in (screen / display / window / region) plus
+  app/window context.
+- Optional reference to a capture contract artifact that defines the
+  coordinate system, scale, and source bounds.
+- Evidence artifact references (screenshots, raw provider JSON, AX snapshot
+  files).
+- A list of `SurfaceNode`s as the per-item projection. Each node retains its
+  own finer-grained `recognition_source` so the envelope's coarse tag does
+  not erase per-item provenance.
+- Raw provider-specific detail for debugging and forward-compatibility.
+- Known limits documenting incomplete coverage, low confidence, or missing
+  context.
+
+Status: provisional. Today no producer emits observation snapshots; existing
+`RecognitionResult`, AX snapshots, and scroll-scan outputs remain
+authoritative. The type exists so future projection work (AX trees, OCR row
+groupings, scroll-scan rows, image detectors) can converge on one shape
+rather than diverging per producer. Field set and semantics may shift before
+this is marked stable.
+
 ## Node Ref
 
 A node ref is the stable handle for a surface node inside a run. It is the
