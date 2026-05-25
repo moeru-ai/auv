@@ -32,6 +32,8 @@ use crate::trace::{ArtifactId, RunId};
 /// `OperationResult` JSON artifact; update both sides together if the producer
 /// response shape changes.
 const MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID: &str = "artifact_0003";
+const MUSIC_SEARCH_RESULTS_OPERATION_ID: &str = "music.search.results";
+const MUSIC_RESULT_PLAY_OPERATION_ID: &str = "music.result.play";
 
 struct ResolvedMusicCandidate {
   operation_result: OperationResult,
@@ -40,6 +42,14 @@ struct ResolvedMusicCandidate {
 
 struct CandidateLivenessCheck {
   anchor_recheck_ran: bool,
+}
+
+#[derive(Clone, Debug)]
+struct MusicCandidateInput {
+  source_run_id: String,
+  source_artifact_id: String,
+  candidate_local_id: String,
+  structured_candidate_ref: Option<CandidateRef>,
 }
 
 #[derive(Clone, Debug)]
@@ -302,18 +312,19 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
 }
 
 pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<DriverResponse> {
-  let source_run_id = required_non_empty_string(call, "source_run_id")?;
-  let source_artifact_id = optional_non_empty_string(call, "source_artifact_id")
-    .unwrap_or_else(|| MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string());
-  let candidate_local_id = required_non_empty_string(call, "candidate_local_id")?;
+  let candidate_input = resolve_music_candidate_input(call)?;
 
   let resolved = load_music_candidate(
     call,
-    &source_run_id,
-    &source_artifact_id,
-    &candidate_local_id,
+    &candidate_input.source_run_id,
+    &candidate_input.source_artifact_id,
+    &candidate_input.candidate_local_id,
   )?;
-  let liveness = check_music_candidate_liveness(call, &resolved.candidate, &candidate_local_id)?;
+  let liveness = check_music_candidate_liveness(
+    call,
+    &resolved.candidate,
+    &candidate_input.candidate_local_id,
+  )?;
 
   let anchor_text = resolved
     .candidate
@@ -331,12 +342,16 @@ pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<
 
   Ok(DriverResponse {
     summary: format!(
-      "Candidate {candidate_local_id} liveness OK; anchor_text={anchor_text}; row_index={row_index}"
+      "Candidate {} liveness OK; anchor_text={anchor_text}; row_index={row_index}",
+      candidate_input.candidate_local_id
     ),
     backend: Some("macos.contract.music-validate-candidate-liveness".to_string()),
     signals: BTreeMap::from([
       ("candidate.resolved".to_string(), "true".to_string()),
-      ("candidate.local_id".to_string(), candidate_local_id.clone()),
+      (
+        "candidate.local_id".to_string(),
+        candidate_input.candidate_local_id.clone(),
+      ),
       ("candidate.anchor_text".to_string(), anchor_text),
       ("candidate.row_index".to_string(), row_index),
       ("candidate.label".to_string(), label),
@@ -347,9 +362,9 @@ pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<
       ),
     ]),
     notes: vec![
-      format!("sourceRunId={source_run_id}"),
-      format!("sourceArtifactId={source_artifact_id}"),
-      format!("candidateLocalId={candidate_local_id}"),
+      format!("sourceRunId={}", candidate_input.source_run_id),
+      format!("sourceArtifactId={}", candidate_input.source_artifact_id),
+      format!("candidateLocalId={}", candidate_input.candidate_local_id),
       format!("operationId={}", resolved.operation_result.operation_id),
     ],
     artifacts: Vec::new(),
@@ -357,25 +372,25 @@ pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<
 }
 
 pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> {
-  let source_run_id = required_non_empty_string(call, "source_run_id")?;
-  let source_artifact_id = optional_non_empty_string(call, "source_artifact_id")
-    .unwrap_or_else(|| MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string());
-  let candidate_local_id = required_non_empty_string(call, "candidate_local_id")?;
+  let candidate_input = resolve_music_candidate_input(call)?;
   let target_title = required_non_empty_string(call, "target_title")?;
   let target_artist = optional_non_empty_string(call, "target_artist");
 
   let resolved = match load_music_candidate(
     call,
-    &source_run_id,
-    &source_artifact_id,
-    &candidate_local_id,
+    &candidate_input.source_run_id,
+    &candidate_input.source_artifact_id,
+    &candidate_input.candidate_local_id,
   ) {
     Ok(resolved) => resolved,
     Err(error) => {
       return music_result_play_failure_response(
         call,
         MusicResultPlayFailure {
-          summary: format!("Could not resolve candidate {candidate_local_id}: {error}"),
+          summary: format!(
+            "Could not resolve candidate {}: {error}",
+            candidate_input.candidate_local_id
+          ),
           failure_layer: FailureLayer::CandidateExpired,
           resolved: false,
           executed: false,
@@ -383,47 +398,51 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
           observed_label: None,
           evidence: Vec::new(),
           notes: vec![
-            format!("sourceRunId={source_run_id}"),
-            format!("sourceArtifactId={source_artifact_id}"),
-            format!("candidateLocalId={candidate_local_id}"),
+            format!("sourceRunId={}", candidate_input.source_run_id),
+            format!("sourceArtifactId={}", candidate_input.source_artifact_id),
+            format!("candidateLocalId={}", candidate_input.candidate_local_id),
             format!("error={}", report_text(&error)),
           ],
           artifacts: Vec::new(),
-          provenance: None,
+          provenance: candidate_input_provenance(&candidate_input),
         },
       );
     }
   };
   let candidate = &resolved.candidate;
   let provenance =
-    resolved_candidate_provenance(&resolved.operation_result, &source_artifact_id, candidate);
+    resolved_candidate_provenance(&candidate_input, &resolved.operation_result, candidate)?;
   let candidate_evidence = candidate_evidence_refs(candidate);
 
-  let liveness = match check_music_candidate_liveness(call, candidate, &candidate_local_id) {
-    Ok(liveness) => liveness,
-    Err(error) => {
-      return music_result_play_failure_response(
-        call,
-        MusicResultPlayFailure {
-          summary: format!("Candidate {candidate_local_id} liveness failed: {error}"),
-          failure_layer: FailureLayer::CandidateExpired,
-          resolved: true,
-          executed: false,
-          state_changed: false,
-          observed_label: candidate.label.clone(),
-          evidence: candidate_evidence,
-          notes: vec![
-            format!("sourceRunId={source_run_id}"),
-            format!("sourceArtifactId={source_artifact_id}"),
-            format!("candidateLocalId={candidate_local_id}"),
-            format!("error={}", report_text(&error)),
-          ],
-          artifacts: Vec::new(),
-          provenance: Some(provenance.clone()),
-        },
-      );
-    }
-  };
+  let liveness =
+    match check_music_candidate_liveness(call, candidate, &candidate_input.candidate_local_id) {
+      Ok(liveness) => liveness,
+      Err(error) => {
+        return music_result_play_failure_response(
+          call,
+          MusicResultPlayFailure {
+            summary: format!(
+              "Candidate {} liveness failed: {error}",
+              candidate_input.candidate_local_id
+            ),
+            failure_layer: FailureLayer::CandidateExpired,
+            resolved: true,
+            executed: false,
+            state_changed: false,
+            observed_label: candidate.label.clone(),
+            evidence: candidate_evidence,
+            notes: vec![
+              format!("sourceRunId={}", candidate_input.source_run_id),
+              format!("sourceArtifactId={}", candidate_input.source_artifact_id),
+              format!("candidateLocalId={}", candidate_input.candidate_local_id),
+              format!("error={}", report_text(&error)),
+            ],
+            artifacts: Vec::new(),
+            provenance: Some(provenance.clone()),
+          },
+        );
+      }
+    };
 
   let row_index = match candidate.target_spec.row_index {
     Some(row_index) => row_index,
@@ -432,7 +451,8 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
         call,
         MusicResultPlayFailure {
           summary: format!(
-            "Candidate {candidate_local_id} cannot be played because target_spec.row_index is missing"
+            "Candidate {} cannot be played because target_spec.row_index is missing",
+            candidate_input.candidate_local_id
           ),
           failure_layer: FailureLayer::GroundingFailed,
           resolved: true,
@@ -441,9 +461,9 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
           observed_label: candidate.label.clone(),
           evidence: candidate_evidence,
           notes: vec![
-            format!("sourceRunId={source_run_id}"),
-            format!("sourceArtifactId={source_artifact_id}"),
-            format!("candidateLocalId={candidate_local_id}"),
+            format!("sourceRunId={}", candidate_input.source_run_id),
+            format!("sourceArtifactId={}", candidate_input.source_artifact_id),
+            format!("candidateLocalId={}", candidate_input.candidate_local_id),
             "missing=target_spec.row_index".to_string(),
           ],
           artifacts: Vec::new(),
@@ -456,9 +476,9 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
   let app_id = resolve_music_result_play_app(call, candidate);
   let mut artifacts = Vec::new();
   let mut notes = vec![
-    format!("sourceRunId={source_run_id}"),
-    format!("sourceArtifactId={source_artifact_id}"),
-    format!("candidateLocalId={candidate_local_id}"),
+    format!("sourceRunId={}", candidate_input.source_run_id),
+    format!("sourceArtifactId={}", candidate_input.source_artifact_id),
+    format!("candidateLocalId={}", candidate_input.candidate_local_id),
     format!("candidateRowIndex={row_index}"),
     format!(
       "candidateLabel={}",
@@ -483,7 +503,10 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
       return music_result_play_failure_response(
         call,
         MusicResultPlayFailure {
-          summary: format!("Candidate {candidate_local_id} row activation failed: {error}"),
+          summary: format!(
+            "Candidate {} row activation failed: {error}",
+            candidate_input.candidate_local_id
+          ),
           failure_layer: FailureLayer::ControlFailed,
           resolved: true,
           executed: true,
@@ -511,7 +534,10 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
       return music_result_play_failure_response(
         call,
         MusicResultPlayFailure {
-          summary: format!("Candidate {candidate_local_id} play-button press failed: {error}"),
+          summary: format!(
+            "Candidate {} play-button press failed: {error}",
+            candidate_input.candidate_local_id
+          ),
           failure_layer: FailureLayer::ControlFailed,
           resolved: true,
           executed: true,
@@ -548,7 +574,8 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
         call,
         MusicResultPlayFailure {
           summary: format!(
-            "Candidate {candidate_local_id} was activated, but now-playing verification failed: {error}"
+            "Candidate {} was activated, but now-playing verification failed: {error}",
+            candidate_input.candidate_local_id
           ),
           failure_layer: FailureLayer::VerificationUnreliable,
           resolved: true,
@@ -606,7 +633,10 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
       "true".to_string(),
     ),
     ("music.result.failure_layer".to_string(), "".to_string()),
-    ("candidate.local_id".to_string(), candidate_local_id.clone()),
+    (
+      "candidate.local_id".to_string(),
+      candidate_input.candidate_local_id.clone(),
+    ),
     ("candidate.row_index".to_string(), row_index.to_string()),
     ("candidate.liveness_ok".to_string(), "true".to_string()),
     (
@@ -623,7 +653,8 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
 
   Ok(DriverResponse {
     summary: format!(
-      "Played candidate {candidate_local_id} (row {row_index}) and verified now-playing title {target_title}."
+      "Played candidate {} (row {row_index}) and verified now-playing title {target_title}.",
+      candidate_input.candidate_local_id
     ),
     backend: Some("macos.contract.music-result-play".to_string()),
     signals,
@@ -664,6 +695,53 @@ fn find_artifact_path_in_jsonl(
     "artifact {artifact_id} not found in artifacts.jsonl at {}",
     jsonl_path.display()
   ))
+}
+
+fn resolve_music_candidate_input(call: &DriverCall) -> AuvResult<MusicCandidateInput> {
+  if let Some(raw_candidate_ref) = optional_non_empty_string(call, "candidate_ref") {
+    let candidate_ref = parse_music_candidate_ref(&raw_candidate_ref)?;
+    if candidate_ref.source_operation_id != MUSIC_SEARCH_RESULTS_OPERATION_ID {
+      return Err(format!(
+        "candidate_ref.source_operation_id must be {}; got {}",
+        MUSIC_SEARCH_RESULTS_OPERATION_ID, candidate_ref.source_operation_id
+      ));
+    }
+    return Ok(MusicCandidateInput {
+      source_run_id: candidate_ref.source_run_id.as_str().to_string(),
+      source_artifact_id: candidate_ref.source_artifact_id.as_str().to_string(),
+      candidate_local_id: candidate_ref.candidate_local_id.clone(),
+      structured_candidate_ref: Some(candidate_ref),
+    });
+  }
+
+  Ok(MusicCandidateInput {
+    source_run_id: required_non_empty_string(call, "source_run_id")?,
+    source_artifact_id: optional_non_empty_string(call, "source_artifact_id")
+      .unwrap_or_else(|| MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string()),
+    candidate_local_id: required_non_empty_string(call, "candidate_local_id")?,
+    structured_candidate_ref: None,
+  })
+}
+
+fn parse_music_candidate_ref(raw_candidate_ref: &str) -> AuvResult<CandidateRef> {
+  let candidate_ref: CandidateRef = serde_json::from_str(raw_candidate_ref)
+    .map_err(|error| format!("invalid --candidate_ref JSON: {error}"))?;
+  if candidate_ref.source_run_id.as_str().trim().is_empty() {
+    return Err("candidate_ref.source_run_id must not be empty".to_string());
+  }
+  if candidate_ref.source_span_id.as_str().trim().is_empty() {
+    return Err("candidate_ref.source_span_id must not be empty".to_string());
+  }
+  if candidate_ref.source_operation_id.trim().is_empty() {
+    return Err("candidate_ref.source_operation_id must not be empty".to_string());
+  }
+  if candidate_ref.source_artifact_id.as_str().trim().is_empty() {
+    return Err("candidate_ref.source_artifact_id must not be empty".to_string());
+  }
+  if candidate_ref.candidate_local_id.trim().is_empty() {
+    return Err("candidate_ref.candidate_local_id must not be empty".to_string());
+  }
+  Ok(candidate_ref)
 }
 
 fn load_music_candidate(
@@ -836,24 +914,77 @@ fn candidate_recognized_item_id(evidence: &CandidateEvidence) -> Option<String> 
     .map(str::to_string)
 }
 
+fn candidate_input_provenance(
+  candidate_input: &MusicCandidateInput,
+) -> Option<ResolvedCandidateProvenance> {
+  candidate_input
+    .structured_candidate_ref
+    .as_ref()
+    .map(|candidate_ref| ResolvedCandidateProvenance {
+      candidate_ref: candidate_ref.clone(),
+      node_ref: None,
+      recognition_artifact_ref: None,
+      recognition_id: None,
+      recognized_item_id: None,
+    })
+}
+
 fn resolved_candidate_provenance(
+  candidate_input: &MusicCandidateInput,
   operation_result: &OperationResult,
-  source_artifact_id: &str,
   candidate: &Candidate,
-) -> ResolvedCandidateProvenance {
-  ResolvedCandidateProvenance {
-    candidate_ref: CandidateRef {
+) -> AuvResult<ResolvedCandidateProvenance> {
+  if operation_result.operation_id != MUSIC_SEARCH_RESULTS_OPERATION_ID {
+    return Err(format!(
+      "music consumer expected {} artifact, got {}",
+      MUSIC_SEARCH_RESULTS_OPERATION_ID, operation_result.operation_id
+    ));
+  }
+  let candidate_ref = match candidate_input.structured_candidate_ref.as_ref() {
+    Some(candidate_ref) => {
+      if candidate_ref.source_run_id != operation_result.run_id {
+        return Err(format!(
+          "candidate_ref.source_run_id {} does not match loaded operation result run {}",
+          candidate_ref.source_run_id.as_str(),
+          operation_result.run_id.as_str()
+        ));
+      }
+      if candidate_ref.source_operation_id != operation_result.operation_id {
+        return Err(format!(
+          "candidate_ref.source_operation_id {} does not match loaded operation {}",
+          candidate_ref.source_operation_id, operation_result.operation_id
+        ));
+      }
+      if candidate_ref.candidate_local_id != candidate.candidate_local_id {
+        return Err(format!(
+          "candidate_ref.candidate_local_id {} does not match loaded candidate {}",
+          candidate_ref.candidate_local_id, candidate.candidate_local_id
+        ));
+      }
+      if candidate_ref.source_span_id != candidate.evidence.artifact_ref.span_id {
+        return Err(format!(
+          "candidate_ref.source_span_id {} does not match candidate evidence span {}",
+          candidate_ref.source_span_id.as_str(),
+          candidate.evidence.artifact_ref.span_id.as_str()
+        ));
+      }
+      candidate_ref.clone()
+    }
+    None => CandidateRef {
       source_run_id: operation_result.run_id.clone(),
       source_span_id: candidate.evidence.artifact_ref.span_id.clone(),
       source_operation_id: operation_result.operation_id.clone(),
-      source_artifact_id: ArtifactId::new(source_artifact_id),
+      source_artifact_id: ArtifactId::new(&candidate_input.source_artifact_id),
       candidate_local_id: candidate.candidate_local_id.clone(),
     },
+  };
+  Ok(ResolvedCandidateProvenance {
+    candidate_ref,
     node_ref: candidate_node_ref(&candidate.evidence),
     recognition_artifact_ref: recognition_result_ref(&candidate.evidence),
     recognition_id: candidate_recognition_id(&candidate.evidence),
     recognized_item_id: candidate_recognized_item_id(&candidate.evidence),
-  }
+  })
 }
 
 fn music_search_result_node_ref(call: &DriverCall, row_index: usize) -> NodeRef {
@@ -1202,7 +1333,7 @@ fn music_result_play_operation_result(
   OperationResult {
     run_id: RunId::new(call.run_context.run_id.as_str()),
     status,
-    operation_id: "music.result.play".to_string(),
+    operation_id: MUSIC_RESULT_PLAY_OPERATION_ID.to_string(),
     evidence_artifacts,
     output: OperationOutput::Verification { verification },
     freshness_basis: None,
@@ -1323,6 +1454,119 @@ mod tests {
     }
   }
 
+  fn sample_candidate_ref() -> CandidateRef {
+    CandidateRef {
+      source_run_id: RunId::new("run_test"),
+      source_span_id: SpanId::new("span_test"),
+      source_operation_id: MUSIC_SEARCH_RESULTS_OPERATION_ID.to_string(),
+      source_artifact_id: ArtifactId::new(
+        MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID,
+      ),
+      candidate_local_id: "row#1".to_string(),
+    }
+  }
+
+  fn sample_driver_call() -> DriverCall {
+    DriverCall {
+      operation: MUSIC_RESULT_PLAY_OPERATION_ID.to_string(),
+      target: ExecutionTarget {
+        application_id: Some("com.tencent.QQMusicMac".to_string()),
+      },
+      inputs: BTreeMap::new(),
+      working_directory: std::env::temp_dir(),
+      run_context: DriverRunContext {
+        run_id: "run_music_test".to_string(),
+        span_id: "span_music_test".to_string(),
+      },
+    }
+  }
+
+  #[test]
+  fn resolve_music_candidate_input_prefers_candidate_ref_json() {
+    let candidate_ref = sample_candidate_ref();
+    let mut call = sample_driver_call();
+    call.inputs.insert(
+      "candidate_ref".to_string(),
+      serde_json::to_string(&candidate_ref).expect("candidate ref JSON"),
+    );
+    call
+      .inputs
+      .insert("source_run_id".to_string(), "run_legacy".to_string());
+    call
+      .inputs
+      .insert("candidate_local_id".to_string(), "row#9".to_string());
+
+    let resolved = resolve_music_candidate_input(&call).expect("candidate input");
+
+    assert_eq!(resolved.source_run_id, "run_test");
+    assert_eq!(
+      resolved.source_artifact_id,
+      MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID
+    );
+    assert_eq!(resolved.candidate_local_id, "row#1");
+    assert_eq!(resolved.structured_candidate_ref, Some(candidate_ref));
+  }
+
+  #[test]
+  fn resolve_music_candidate_input_falls_back_to_legacy_fields() {
+    let mut call = sample_driver_call();
+    call
+      .inputs
+      .insert("source_run_id".to_string(), "run_legacy".to_string());
+    call
+      .inputs
+      .insert("candidate_local_id".to_string(), "row#9".to_string());
+
+    let resolved = resolve_music_candidate_input(&call).expect("candidate input");
+
+    assert_eq!(resolved.source_run_id, "run_legacy");
+    assert_eq!(
+      resolved.source_artifact_id,
+      MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID
+    );
+    assert_eq!(resolved.candidate_local_id, "row#9");
+    assert!(resolved.structured_candidate_ref.is_none());
+  }
+
+  #[test]
+  fn resolved_candidate_provenance_preserves_structured_candidate_ref() {
+    let candidate_ref = sample_candidate_ref();
+    let candidate = sample_candidate(json!({
+      "recognition_result_ref": artifact_ref(RECOGNITION_RESULT_ARTIFACT_ID),
+      "surface_nodes_ref": artifact_ref(SURFACE_NODES_ARTIFACT_ID),
+      "node_ref": sample_node_ref(),
+      "recognition_id": "music_search_results",
+      "recognized_item_id": "row#1"
+    }));
+    let source_operation_result = OperationResult {
+      run_id: RunId::new("run_test"),
+      status: OperationStatus::Completed,
+      operation_id: MUSIC_SEARCH_RESULTS_OPERATION_ID.to_string(),
+      evidence_artifacts: Vec::new(),
+      output: OperationOutput::Candidates {
+        candidates: vec![candidate.clone()],
+      },
+      freshness_basis: None,
+      known_limits: Vec::new(),
+    };
+    let candidate_input = MusicCandidateInput {
+      source_run_id: candidate_ref.source_run_id.as_str().to_string(),
+      source_artifact_id: candidate_ref.source_artifact_id.as_str().to_string(),
+      candidate_local_id: candidate_ref.candidate_local_id.clone(),
+      structured_candidate_ref: Some(candidate_ref.clone()),
+    };
+
+    let provenance =
+      resolved_candidate_provenance(&candidate_input, &source_operation_result, &candidate)
+        .expect("provenance");
+
+    assert_eq!(provenance.candidate_ref, candidate_ref);
+    assert_eq!(
+      provenance.node_ref.as_ref().expect("node ref").node_id,
+      "obs_0001_0001"
+    );
+  }
+
   #[test]
   fn candidate_evidence_refs_include_recognition_artifact_when_present() {
     let candidate = sample_candidate(json!({
@@ -1398,7 +1642,7 @@ mod tests {
     let source_operation_result = OperationResult {
       run_id: RunId::new("run_test"),
       status: OperationStatus::Completed,
-      operation_id: "music.search.results".to_string(),
+      operation_id: MUSIC_SEARCH_RESULTS_OPERATION_ID.to_string(),
       evidence_artifacts: Vec::new(),
       output: OperationOutput::Candidates {
         candidates: vec![candidate.clone()],
@@ -1406,11 +1650,15 @@ mod tests {
       freshness_basis: None,
       known_limits: Vec::new(),
     };
-    let provenance = resolved_candidate_provenance(
-      &source_operation_result,
-      MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID,
-      &candidate,
-    );
+    let candidate_input = MusicCandidateInput {
+      source_run_id: "run_test".to_string(),
+      source_artifact_id: MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string(),
+      candidate_local_id: "row#1".to_string(),
+      structured_candidate_ref: None,
+    };
+    let provenance =
+      resolved_candidate_provenance(&candidate_input, &source_operation_result, &candidate)
+        .expect("provenance");
     let verification = VerificationResult {
       executed: true,
       state_changed: true,
@@ -1424,18 +1672,7 @@ mod tests {
       consumed_recognized_item_id: provenance.recognized_item_id.clone(),
       observed_label: Some("Song A".to_string()),
     };
-    let call = DriverCall {
-      operation: "music.result.play".to_string(),
-      target: ExecutionTarget {
-        application_id: Some("com.tencent.QQMusicMac".to_string()),
-      },
-      inputs: BTreeMap::new(),
-      working_directory: std::env::temp_dir(),
-      run_context: DriverRunContext {
-        run_id: "run_music_test".to_string(),
-        span_id: "span_music_test".to_string(),
-      },
-    };
+    let call = sample_driver_call();
 
     let result =
       music_result_play_operation_result(&call, OperationStatus::Completed, verification, evidence);
