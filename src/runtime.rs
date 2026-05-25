@@ -302,11 +302,11 @@ impl Runtime {
         }
 
         let mut artifact_failure = None;
-        for (index, artifact) in response.artifacts.into_iter().enumerate() {
+        for artifact in response.artifacts {
           let event_id = new_event_id();
           match self.recording.stage_artifact(
             run.id(),
-            index,
+            run.artifact_count(),
             artifact,
             driver_span.id(),
             Some(event_id.clone()),
