@@ -667,6 +667,7 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
   if let Some(artist) = target_artist.as_deref() {
     signals.insert("target.artist".to_string(), artist.to_string());
   }
+  insert_music_result_provenance_signals(&mut signals, Some(&provenance));
 
   Ok(DriverResponse {
     summary: format!(
@@ -1417,6 +1418,7 @@ fn music_result_play_failure_response(
   if let Some(app) = app_identifier(call) {
     signals.insert("target.app".to_string(), app);
   }
+  insert_music_result_provenance_signals(&mut signals, failure.provenance.as_ref());
   Ok(DriverResponse {
     summary: failure.summary,
     backend: Some("macos.contract.music-result-play".to_string()),
@@ -1457,6 +1459,64 @@ fn music_result_play_artifact(operation_result: &OperationResult) -> AuvResult<P
     operation_result_json,
     "Typed OperationResult verification for music.result.play.",
   )
+}
+
+fn insert_music_result_provenance_signals(
+  signals: &mut BTreeMap<String, String>,
+  provenance: Option<&ResolvedCandidateProvenance>,
+) {
+  let Some(provenance) = provenance else {
+    return;
+  };
+
+  signals.insert(
+    "music.result.consumed_candidate_source_run_id".to_string(),
+    provenance.candidate_ref.source_run_id.as_str().to_string(),
+  );
+  signals.insert(
+    "music.result.consumed_candidate_source_span_id".to_string(),
+    provenance.candidate_ref.source_span_id.as_str().to_string(),
+  );
+  signals.insert(
+    "music.result.consumed_candidate_source_operation_id".to_string(),
+    provenance.candidate_ref.source_operation_id.clone(),
+  );
+  signals.insert(
+    "music.result.consumed_candidate_source_artifact_id".to_string(),
+    provenance
+      .candidate_ref
+      .source_artifact_id
+      .as_str()
+      .to_string(),
+  );
+  signals.insert(
+    "music.result.consumed_candidate_local_id".to_string(),
+    provenance.candidate_ref.candidate_local_id.clone(),
+  );
+  if let Some(node_ref) = provenance.node_ref.as_ref() {
+    signals.insert(
+      "music.result.consumed_node_id".to_string(),
+      node_ref.node_id.clone(),
+    );
+  }
+  if let Some(recognition_ref) = provenance.recognition_artifact_ref.as_ref() {
+    signals.insert(
+      "music.result.consumed_recognition_artifact_id".to_string(),
+      recognition_ref.artifact_id.as_str().to_string(),
+    );
+  }
+  if let Some(recognition_id) = provenance.recognition_id.as_deref() {
+    signals.insert(
+      "music.result.consumed_recognition_id".to_string(),
+      recognition_id.to_string(),
+    );
+  }
+  if let Some(recognized_item_id) = provenance.recognized_item_id.as_deref() {
+    signals.insert(
+      "music.result.consumed_recognized_item_id".to_string(),
+      recognized_item_id.to_string(),
+    );
+  }
 }
 
 fn copy_optional_input(
@@ -1734,6 +1794,60 @@ mod tests {
       Some(&"false".to_string())
     );
     assert!(!signals.contains_key("music.search.results.selected_candidate_ref"));
+  }
+
+  #[test]
+  fn music_result_provenance_signals_include_candidate_and_recognition_fields() {
+    let candidate = sample_candidate(json!({
+      "recognition_result_ref": artifact_ref(RECOGNITION_RESULT_ARTIFACT_ID),
+      "surface_nodes_ref": artifact_ref(SURFACE_NODES_ARTIFACT_ID),
+      "node_ref": sample_node_ref(),
+      "recognition_id": "music_search_results",
+      "recognized_item_id": "row#1"
+    }));
+    let provenance = resolved_candidate_provenance(
+      &MusicCandidateInput {
+        source_run_id: "run_test".to_string(),
+        source_artifact_id: MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string(),
+        candidate_local_id: "row#1".to_string(),
+        structured_candidate_ref: None,
+      },
+      &sample_operation_result(vec![candidate.clone()]),
+      &candidate,
+    )
+    .expect("provenance");
+    let mut signals = BTreeMap::new();
+
+    insert_music_result_provenance_signals(&mut signals, Some(&provenance));
+
+    assert_eq!(
+      signals.get("music.result.consumed_candidate_source_operation_id"),
+      Some(&MUSIC_SEARCH_RESULTS_OPERATION_ID.to_string())
+    );
+    assert_eq!(
+      signals.get("music.result.consumed_candidate_source_artifact_id"),
+      Some(&MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string())
+    );
+    assert_eq!(
+      signals.get("music.result.consumed_candidate_local_id"),
+      Some(&"row#1".to_string())
+    );
+    assert_eq!(
+      signals.get("music.result.consumed_node_id"),
+      Some(&"obs_0001_0001".to_string())
+    );
+    assert_eq!(
+      signals.get("music.result.consumed_recognition_artifact_id"),
+      Some(&RECOGNITION_RESULT_ARTIFACT_ID.to_string())
+    );
+    assert_eq!(
+      signals.get("music.result.consumed_recognition_id"),
+      Some(&"music_search_results".to_string())
+    );
+    assert_eq!(
+      signals.get("music.result.consumed_recognized_item_id"),
+      Some(&"row#1".to_string())
+    );
   }
 
   #[test]

@@ -298,7 +298,9 @@
       "expect": {
         "signal_equals": {
           "music.result.play.resolved": "true",
-          "music.result.semantic_matched": "true"
+          "music.result.semantic_matched": "true",
+          "music.result.consumed_candidate_source_operation_id": "music.search.results",
+          "music.result.consumed_candidate_local_id": "${step_search_results_signal_music_search_results_selected_candidate_local_id}"
         },
         "artifact_count_at_least": 1
       }
