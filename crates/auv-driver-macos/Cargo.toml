@@ -1,0 +1,9 @@
+[package]
+name = "auv-driver-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+auv-driver = { path = "../auv-driver" }

@@ -180,6 +180,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 name = "auv-cli"
 version = "0.0.1"
 dependencies = [
+ "auv-driver",
+ "auv-driver-macos",
+ "auv-overlay-macos",
  "axum",
  "image",
  "libc",
@@ -194,6 +197,28 @@ dependencies = [
  "tokio",
  "tower",
  "xcap",
+]
+
+[[package]]
+name = "auv-driver"
+version = "0.0.1"
+dependencies = [
+ "image",
+ "serde",
+]
+
+[[package]]
+name = "auv-driver-macos"
+version = "0.0.1"
+dependencies = [
+ "auv-driver",
+]
+
+[[package]]
+name = "auv-overlay-macos"
+version = "0.0.1"
+dependencies = [
+ "auv-driver",
 ]
 
 [[package]]
