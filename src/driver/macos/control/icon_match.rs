@@ -25,6 +25,17 @@ pub(crate) fn find_icon_match(call: &DriverCall) -> AuvResult<DriverResponse> {
   }
 
   let app_bundle_id = app_identifier(call).filter(|v| looks_like_bundle_identifier(v));
+
+  // Icon matching is an observation workflow, not an input action:
+  //
+  // 1. Resolve and capture the target window.
+  // 2. Convert the caller's ratio region into screenshot pixel coordinates.
+  // 3. Run grayscale NCC template matching against the captured pixels.
+  // 4. Persist both the screenshot and the recognition JSON as artifacts.
+  //
+  // The returned RecognitionResult is evidence for a later decision. It should
+  // not directly click the match here; higher-level recipe/Rust/RPC automation
+  // should inspect the match, apply guards/fallbacks, then invoke input APIs.
   let capture = super::window_ocr::capture_resolved_window_observation(call, &label)?;
 
   let search_region =
