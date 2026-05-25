@@ -1,5 +1,6 @@
 mod descriptor;
 mod driver;
+mod session;
 
 // TODO(driver-crates): These modules are temporarily public so the root
 // command adapter can build while command-facing code migrates to typed
@@ -24,3 +25,4 @@ pub use descriptor::{MacosDriverDescriptor, macos_driver_descriptor};
 #[doc(hidden)]
 pub use descriptor::{MacosLegacyDescriptorMetadata, macos_legacy_descriptor_metadata};
 pub use driver::{MacosDriver, MacosDriverSession};
+pub use session::{ClipboardApi, InputApi, OcrMatch, OcrMatches, VisionApi, WindowApi};

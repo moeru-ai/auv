@@ -17,7 +17,7 @@ impl MacosDriver {
 
 #[derive(Clone, Copy, Debug)]
 pub struct MacosDriverSession {
-  _private: (),
+  pub(crate) _private: (),
 }
 
 impl MacosDriverSession {
