@@ -425,6 +425,37 @@ command-like constraints, but a backend may support only a subset.
 Surface selectors do not execute UI actions. They resolve to candidates with
 evidence; actions consume those candidates and verify their own results.
 
+## Verification Method
+
+A verification method is the typed taxonomy of an assertion carried by a
+`VerificationResult`. AUV's value isn't "the action ran"; it's "the world is
+in the expected state, and here is the evidence". The method makes that
+claim explicit instead of leaking it through the producing command id.
+
+Standard methods:
+
+- `text_visible`: a specific text fragment is visible on the captured
+  surface. Evidence: OCR pass over the capture.
+- `ax_text`: an AX node carries the expected label / value / role.
+  Evidence: AX snapshot.
+- `state_changed`: the UI state changed between two captures.
+  Evidence: pre/post screenshots, AX diff, or both.
+- `candidate_alive`: a previously emitted candidate is still valid.
+  Evidence: re-observation of the candidate's anchor context.
+- `semantic_match`: the broader semantic goal of an action was achieved
+  (e.g. "the track titled X is now playing"). Evidence: domain-specific
+  signals.
+- `no_progress_boundary`: a scroll/scan reached a content boundary and no
+  further progress is expected. Evidence: stop reason plus screenshot
+  diff stability plus completeness claim.
+- `custom`: producer-defined kind with a `name` hint. Consumers must not
+  pattern-match on the hint string for safety-critical decisions.
+
+Status: provisional. The taxonomy may grow. The `custom` variant lets
+producers emit verifications outside the standard set without forking the
+enum. Legacy `VerificationResult` records deserialized without a method
+default to `custom { name: "legacy" }` so the carve-out is explicit.
+
 ## Completeness Claim
 
 A completeness claim is the scanner's structured statement about whether the

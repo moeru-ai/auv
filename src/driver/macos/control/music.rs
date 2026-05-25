@@ -22,7 +22,7 @@ use crate::contract::{
   CandidateRef, ControlRequirements, FailureLayer, FreshnessBasis, LivenessPreconditions, NodeRef,
   OperationOutput, OperationResult, OperationStatus, RatioRegion, RecognitionBox,
   RecognitionSource, RecognitionSurface, SurfaceNode, TargetGrounding, TargetSpec,
-  VerificationResult, WindowRefPrecondition,
+  VerificationMethod, VerificationResult, WindowRefPrecondition,
 };
 use crate::model::ExecutionTarget;
 use crate::trace::{ArtifactId, RunId};
@@ -621,6 +621,7 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
   artifacts.extend(verify_response.artifacts);
 
   let verification = VerificationResult {
+    method: VerificationMethod::SemanticMatch,
     executed: true,
     state_changed: true,
     semantic_matched: Some(true),
@@ -1355,6 +1356,7 @@ fn music_result_play_failure_response(
   failure: MusicResultPlayFailure,
 ) -> AuvResult<DriverResponse> {
   let verification = VerificationResult {
+    method: VerificationMethod::SemanticMatch,
     executed: failure.executed,
     state_changed: failure.state_changed,
     semantic_matched: Some(false),
@@ -1935,6 +1937,7 @@ mod tests {
       resolved_candidate_provenance(&candidate_input, &source_operation_result, &candidate)
         .expect("provenance");
     let verification = VerificationResult {
+      method: VerificationMethod::SemanticMatch,
       executed: true,
       state_changed: true,
       semantic_matched: Some(true),

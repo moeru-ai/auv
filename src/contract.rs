@@ -276,6 +276,10 @@ pub struct ControlRequirements {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VerificationResult {
+  /// Taxonomy of the assertion. Lets downstream tooling reason about coverage
+  /// without parsing the producing command id. See [`VerificationMethod`].
+  #[serde(default = "VerificationMethod::default_legacy")]
+  pub method: VerificationMethod,
   pub executed: bool,
   pub state_changed: bool,
   pub semantic_matched: Option<bool>,
@@ -292,6 +296,54 @@ pub struct VerificationResult {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub consumed_recognized_item_id: Option<String>,
   pub observed_label: Option<String>,
+}
+
+/// Taxonomy of [`VerificationResult`]s. AUV's value isn't "the action ran";
+/// it's "the world is in the expected state, and here is the evidence". A
+/// typed method makes that claim explicit instead of leaking through the
+/// producing command id.
+///
+/// **Provisional.** Variant set may grow; `Custom` exists so producers can
+/// emit verifications outside the standard set without forking the enum.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VerificationMethod {
+  /// Assertion: a specific text fragment is visible on the captured surface.
+  /// Evidence: OCR pass over the capture.
+  TextVisible,
+  /// Assertion: an AX node carries the expected label / value / role.
+  /// Evidence: AX snapshot.
+  AxText,
+  /// Assertion: the UI state changed between two captures (delta visible).
+  /// Evidence: pre/post screenshots, AX diff, or both.
+  StateChanged,
+  /// Assertion: a previously emitted candidate is still alive (visible,
+  /// addressable, with matching anchors).
+  /// Evidence: re-observation of the candidate's anchor context.
+  CandidateAlive,
+  /// Assertion: the broader semantic goal of an action was achieved (e.g.
+  /// "the track titled X is now playing").
+  /// Evidence: domain-specific signals (Now Playing AX, server state, etc.).
+  SemanticMatch,
+  /// Assertion: a scroll/scan has reached a content boundary (top/bottom/
+  /// next-section) and no further progress is expected.
+  /// Evidence: stop reason + screenshot diff stability + completeness claim.
+  NoProgressBoundary,
+  /// Producer-defined verification kind. The `name` carries the producer's
+  /// taxonomy hint (e.g. `"music.now_playing"`); downstream consumers must
+  /// not pattern-match on the string for safety-critical decisions.
+  Custom { name: String },
+}
+
+impl VerificationMethod {
+  /// Default used when an older snapshot is deserialized without a method
+  /// field. Returns [`Self::Custom { name: "legacy" }`] so the carve-out is
+  /// explicit rather than silently picking a real method.
+  pub fn default_legacy() -> Self {
+    Self::Custom {
+      name: "legacy".to_string(),
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -824,6 +876,7 @@ mod tests {
   #[test]
   fn verification_result_failure_layer_uses_snake_case_contract() {
     let result = VerificationResult {
+      method: VerificationMethod::SemanticMatch,
       executed: true,
       state_changed: true,
       semantic_matched: Some(false),
@@ -870,6 +923,67 @@ mod tests {
     let parsed: VerificationResult =
       serde_json::from_value(value).expect("verification result should deserialize");
     assert_eq!(parsed, result);
+  }
+
+  #[test]
+  fn verification_method_round_trips_each_taxonomy_variant() {
+    let methods = [
+      VerificationMethod::TextVisible,
+      VerificationMethod::AxText,
+      VerificationMethod::StateChanged,
+      VerificationMethod::CandidateAlive,
+      VerificationMethod::SemanticMatch,
+      VerificationMethod::NoProgressBoundary,
+      VerificationMethod::Custom {
+        name: "music.now_playing".to_string(),
+      },
+    ];
+    for method in methods {
+      let value = serde_json::to_value(&method).expect("method should serialize");
+      let parsed: VerificationMethod =
+        serde_json::from_value(value).expect("method should deserialize");
+      assert_eq!(parsed, method);
+    }
+  }
+
+  #[test]
+  fn verification_method_built_in_variants_serialize_as_snake_case_kind() {
+    let value = serde_json::to_value(&VerificationMethod::TextVisible)
+      .expect("method should serialize");
+    assert_eq!(value, json!({ "kind": "text_visible" }));
+
+    let value = serde_json::to_value(&VerificationMethod::NoProgressBoundary)
+      .expect("method should serialize");
+    assert_eq!(value, json!({ "kind": "no_progress_boundary" }));
+  }
+
+  #[test]
+  fn verification_method_custom_variant_carries_producer_hint() {
+    let value = serde_json::to_value(&VerificationMethod::Custom {
+      name: "music.now_playing".to_string(),
+    })
+    .expect("custom method should serialize");
+    assert_eq!(value, json!({ "kind": "custom", "name": "music.now_playing" }));
+  }
+
+  #[test]
+  fn legacy_verification_result_without_method_decodes_as_custom_legacy() {
+    let legacy = json!({
+      "executed": true,
+      "state_changed": false,
+      "semantic_matched": null,
+      "failure_layer": null,
+      "evidence": [],
+      "observed_label": null
+    });
+    let parsed: VerificationResult =
+      serde_json::from_value(legacy).expect("legacy verification should decode");
+    assert_eq!(
+      parsed.method,
+      VerificationMethod::Custom {
+        name: "legacy".to_string()
+      }
+    );
   }
 
   fn sample_node(node_id: &str, source: RecognitionSource) -> SurfaceNode {
