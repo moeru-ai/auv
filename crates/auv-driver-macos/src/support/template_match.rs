@@ -1,28 +1,26 @@
 // File: src/driver/macos/support/template_match.rs
 use std::path::Path;
 
-use crate::model::AuvResult;
-
-use super::super::ObservedRect;
+use crate::types::{AuvResult, ObservedRect};
 
 #[derive(Debug)]
-pub(crate) struct TemplateMatchItem {
-  pub(crate) x: i64,
-  pub(crate) y: i64,
-  pub(crate) width: i64,
-  pub(crate) height: i64,
-  pub(crate) score: f64,
+pub struct TemplateMatchItem {
+  pub x: i64,
+  pub y: i64,
+  pub width: i64,
+  pub height: i64,
+  pub score: f64,
 }
 
 #[derive(Debug)]
-pub(crate) struct TemplateMatchOutput {
-  pub(crate) matches: Vec<TemplateMatchItem>,
-  pub(crate) template_width: u32,
-  pub(crate) template_height: u32,
-  pub(crate) search_x: i64,
-  pub(crate) search_y: i64,
-  pub(crate) search_width: u32,
-  pub(crate) search_height: u32,
+pub struct TemplateMatchOutput {
+  pub matches: Vec<TemplateMatchItem>,
+  pub template_width: u32,
+  pub template_height: u32,
+  pub search_x: i64,
+  pub search_y: i64,
+  pub search_width: u32,
+  pub search_height: u32,
 }
 
 const MAX_SEARCH_PIXELS: u64 = 10_000_000;
@@ -30,7 +28,7 @@ const MAX_RESULTS: usize = 16;
 
 /// Normalized cross-correlation template matching on grayscale images.
 /// Returns at most MAX_RESULTS matches above `threshold` after non-maximum suppression.
-pub(crate) fn match_template(
+pub fn match_template(
   screenshot_path: &Path,
   template_path: &Path,
   search_region: Option<&ObservedRect>,

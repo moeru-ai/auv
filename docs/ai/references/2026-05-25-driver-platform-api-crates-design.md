@@ -558,6 +558,25 @@ Use short dated bullets while implementing. Prefer concrete file/module names
 and the reason the issue matters. If a note introduces or changes a core term,
 also update `docs/TERMS_AND_CONCEPTS.md`.
 
+- 2026-05-25 Task 3: `src/driver/macos/observe.rs` could not move as a
+  full implementation without pulling root `DriverCall`, `DriverResponse`, and
+  `ProducedArtifact` into `auv-driver-macos`. The crate now owns the lower-level
+  types/capture/support helpers, while root `observe.rs` remains a compatibility
+  adapter until observation commands return typed driver-session outputs.
+- 2026-05-25 Task 3: capture backend code needed local temp screenshot naming
+  after moving to `crates/auv-driver-macos`, because the old helper lived beside
+  root artifact construction. This is a sign that file naming/storage should be
+  split from root artifact staging in a later runtime boundary pass.
+- 2026-05-25 Task 3: pure capture geometry moved into
+  `crates/auv-driver-macos/src/capture/geometry.rs`, while root
+  `xcap_backend.rs` keeps the screenshot file write path. This preserves the
+  current command/artifact behavior without making the driver crate own run
+  storage.
+- 2026-05-25 Task 3: the root macOS command adapter is now compiled and
+  depended on only for `target_os = "macos"`. Non-mac default runtime currently
+  registers only the fixture driver; full Windows/Linux driver registration is
+  a later platform implementation task.
+
 ## Migration Plan
 
 1. Add workspace members for the three crates.

@@ -2,13 +2,13 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Size {
+pub struct Size {
   pub width: f64,
   pub height: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Rect {
+pub struct Rect {
   pub x: f64,
   pub y: f64,
   pub width: f64,
@@ -16,19 +16,19 @@ pub(crate) struct Rect {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Scale2D {
+pub struct Scale2D {
   pub x: f64,
   pub y: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CaptureBackend {
+pub enum CaptureBackend {
   XcapMacos,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct DisplayDescriptor {
+pub struct DisplayDescriptor {
   pub display_ref: String,
   pub is_main: bool,
   pub is_builtin: bool,
@@ -43,7 +43,7 @@ pub(crate) struct DisplayDescriptor {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct WindowDescriptor {
+pub struct WindowDescriptor {
   pub window_ref: String,
   pub title: String,
   pub app_name: String,
@@ -60,7 +60,7 @@ pub(crate) struct WindowDescriptor {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum CoordinateSpace {
+pub enum CoordinateSpace {
   GlobalLogical,
   DisplayLogical,
   DisplayPhysical,
@@ -68,7 +68,7 @@ pub(crate) enum CoordinateSpace {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum CaptureSource {
+pub enum CaptureSource {
   Display {
     display_ref: String,
     native_display_id: String,
@@ -87,7 +87,7 @@ pub(crate) enum CaptureSource {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct CaptureContract {
+pub struct CaptureContract {
   pub coordinate_contract_version: u32,
   pub capture_source: CaptureSource,
   pub capture_backend: CaptureBackend,
@@ -100,14 +100,14 @@ pub(crate) struct CaptureContract {
   pub captured_at_unix_ms: u64,
 }
 
-pub(crate) mod capture_error {
-  pub(crate) const UNSUPPORTED_BACKEND: &str = "capture.unsupported_backend";
-  pub(crate) const PERMISSION_DENIED: &str = "capture.permission_denied";
-  pub(crate) const DISPLAY_NOT_FOUND: &str = "capture.display_not_found";
-  pub(crate) const STALE_DISPLAY_REF: &str = "capture.stale_display_ref";
-  pub(crate) const STALE_WINDOW_REF: &str = "capture.stale_window_ref";
-  pub(crate) const REGION_OUT_OF_BOUNDS: &str = "capture.region_out_of_bounds";
-  pub(crate) const REGION_CROSSES_DISPLAYS: &str = "capture.region_crosses_displays";
-  pub(crate) const COORDINATE_CONTRACT_STALE: &str = "capture.coordinate_contract_stale";
-  pub(crate) const BACKEND_FAILED: &str = "capture.backend_failed";
+pub mod capture_error {
+  pub const UNSUPPORTED_BACKEND: &str = "capture.unsupported_backend";
+  pub const PERMISSION_DENIED: &str = "capture.permission_denied";
+  pub const DISPLAY_NOT_FOUND: &str = "capture.display_not_found";
+  pub const STALE_DISPLAY_REF: &str = "capture.stale_display_ref";
+  pub const STALE_WINDOW_REF: &str = "capture.stale_window_ref";
+  pub const REGION_OUT_OF_BOUNDS: &str = "capture.region_out_of_bounds";
+  pub const REGION_CROSSES_DISPLAYS: &str = "capture.region_crosses_displays";
+  pub const COORDINATE_CONTRACT_STALE: &str = "capture.coordinate_contract_stale";
+  pub const BACKEND_FAILED: &str = "capture.backend_failed";
 }

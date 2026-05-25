@@ -1,8 +1,8 @@
 // File: src/driver/macos/capture/artifact.rs
 use super::types::{CaptureContract, CaptureSource, CoordinateSpace};
-use crate::model::AuvResult;
+use crate::types::AuvResult;
 
-pub(crate) fn render_capture_contract_json(contract: &CaptureContract) -> AuvResult<String> {
+pub fn render_capture_contract_json(contract: &CaptureContract) -> AuvResult<String> {
   let mut rendered = serde_json::to_string_pretty(contract).map_err(|error| {
     format!("capture.backend_failed: failed to encode capture contract JSON: {error}")
   })?;
@@ -10,7 +10,7 @@ pub(crate) fn render_capture_contract_json(contract: &CaptureContract) -> AuvRes
   Ok(rendered)
 }
 
-pub(crate) fn render_capture_contract_text(contract: &CaptureContract) -> String {
+pub fn render_capture_contract_text(contract: &CaptureContract) -> String {
   format!(
     concat!(
       "coordinateContractVersion={}\n",

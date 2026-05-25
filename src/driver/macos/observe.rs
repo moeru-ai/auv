@@ -15,104 +15,14 @@ use std::time::Duration;
 use std::time::Instant;
 
 use super::*;
-
-pub(super) fn verify_now_playing_title_signals(
-  matched_title: &str,
-) -> std::collections::BTreeMap<String, String> {
-  let mut signals =
-    std::collections::BTreeMap::from([("ax.node_found".to_string(), "true".to_string())]);
-  insert_optional_signal(&mut signals, "ax.now_playing_title", matched_title);
-  signals
-}
-
-pub(super) fn verify_ax_text_signals(
-  matched_text: &str,
-  matched_role: &str,
-) -> std::collections::BTreeMap<String, String> {
-  let mut signals =
-    std::collections::BTreeMap::from([("ax.node_found".to_string(), "true".to_string())]);
-  insert_optional_signal(&mut signals, "ax.matched_text", matched_text);
-  insert_optional_signal(&mut signals, "ax.matched_role", matched_role);
-  signals
-}
-
-pub(super) fn ocr_detection_signals(
-  filtered_match_count: usize,
-  best_match_text: Option<&str>,
-) -> std::collections::BTreeMap<String, String> {
-  let mut signals = std::collections::BTreeMap::from([
-    (
-      "ocr.match_found".to_string(),
-      (!filtered_match_count.eq(&0)).to_string(),
-    ),
-    (
-      "ocr.filtered_match_count".to_string(),
-      filtered_match_count.to_string(),
-    ),
-  ]);
-  if let Some(best_match_text) = best_match_text {
-    insert_optional_signal(&mut signals, "ocr.best_match_text", best_match_text);
-  }
-  signals
-}
-
-pub(super) fn wait_ocr_detection_signals(
-  filtered_match_count: usize,
-  best_match_text: Option<&str>,
-  timed_out: bool,
-) -> std::collections::BTreeMap<String, String> {
-  let mut signals = ocr_detection_signals(filtered_match_count, best_match_text);
-  signals.insert("ocr.timed_out".to_string(), timed_out.to_string());
-  signals
-}
-
-pub(super) fn row_detection_signals(
-  row_count: usize,
-) -> std::collections::BTreeMap<String, String> {
-  std::collections::BTreeMap::from([
-    ("rows.count".to_string(), row_count.to_string()),
-    ("rows.visible".to_string(), (!row_count.eq(&0)).to_string()),
-  ])
-}
-
-pub(super) fn wait_row_detection_signals(
-  row_count: usize,
-  required_row_count: usize,
-  timed_out: bool,
-) -> std::collections::BTreeMap<String, String> {
-  let mut signals = row_detection_signals(row_count);
-  signals.insert(
-    "rows.requirement_met".to_string(),
-    (row_count >= required_row_count).to_string(),
-  );
-  signals.insert("rows.timed_out".to_string(), timed_out.to_string());
-  signals
-}
-
-fn insert_optional_signal(
-  signals: &mut std::collections::BTreeMap<String, String>,
-  key: &str,
-  value: &str,
-) {
-  if !value.trim().is_empty() {
-    signals.insert(key.to_string(), value.to_string());
-  }
-}
-
-fn preferred_ax_signal_text(node: &ObservedAxNode) -> String {
-  for value in [
-    &node.value,
-    &node.title,
-    &node.description,
-    &node.help,
-    &node.placeholder,
-  ] {
-    if !value.trim().is_empty() {
-      return value.clone();
-    }
-  }
-  String::new()
-}
+pub(super) use auv_driver_macos::observe::{
+  find_ax_text_node, ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
+  render_window_list_json, render_window_snapshot_report, row_detection_signals,
+  verify_ax_text_signals, verify_now_playing_title_signals, wait_ocr_detection_signals,
+  wait_row_detection_signals,
+};
+#[cfg(test)]
+use auv_driver_macos::types::ResolvedAppRef;
 
 pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "coordinate-readiness".to_string());
@@ -271,61 +181,11 @@ pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   })
 }
 
-#[derive(serde::Serialize)]
-struct WindowListJson<'a> {
-  snapshot: &'a ObservedWindowSnapshot,
-  candidates: &'a [WindowCandidate],
-  candidate_resolution: Option<&'a str>,
-}
-
-pub(super) fn render_window_list_json(
-  snapshot: &ObservedWindowSnapshot,
-  candidates: &[WindowCandidate],
-  candidate_resolution: Option<&str>,
-) -> AuvResult<String> {
-  serde_json::to_string_pretty(&WindowListJson {
-    snapshot,
-    candidates,
-    candidate_resolution,
-  })
-  .map(|mut rendered| {
-    rendered.push('\n');
-    rendered
-  })
-  .map_err(|error| format!("failed to encode window list JSON: {error}"))
-}
-
 pub(super) fn observe_windows_snapshot(
   limit: i64,
   app_filter: &str,
 ) -> AuvResult<ObservedWindowSnapshot> {
   crate::driver::macos::native::window::observe_windows_snapshot(limit, app_filter)
-}
-
-fn render_window_snapshot_report(snapshot: &ObservedWindowSnapshot) -> String {
-  let mut lines = vec![
-    format!("observedAt={}", snapshot.observed_at),
-    format!("frontmostAppName={}", snapshot.frontmost_app_name),
-    format!("frontmostAppBundleId={}", snapshot.frontmost_app_bundle_id),
-    format!("frontmostWindowTitle={}", snapshot.frontmost_window_title),
-    format!("windowCount={}", snapshot.windows.len()),
-  ];
-  for window in &snapshot.windows {
-    lines.push(format!(
-      "window\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-      window.app_name,
-      window.owner_pid,
-      window.owner_bundle_id,
-      window.window_number,
-      window.layer,
-      window.title,
-      window.bounds.x,
-      window.bounds.y,
-      window.bounds.width,
-      window.bounds.height
-    ));
-  }
-  lines.join("\n") + "\n"
 }
 
 /// Exposed for unit-tests only — wraps the private impl so tests can call it
@@ -484,69 +344,18 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let snapshot =
     crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
       .snapshot;
-  let expected_text_lc = expected_text.trim().to_lowercase();
-  let expected_role_lc = expected_role
-    .as_deref()
-    .map(|value| value.trim().to_lowercase())
-    .filter(|value| !value.is_empty());
-  let expected_subrole_lc = expected_subrole
-    .as_deref()
-    .map(|value| value.trim().to_lowercase())
-    .filter(|value| !value.is_empty());
   let scope_path_prefix = scope_path_prefix
     .as_deref()
     .map(|value| value.trim().to_string())
     .filter(|value| !value.is_empty());
 
-  let matched = snapshot
-    .nodes
-    .iter()
-    .filter(|node| node.bounds.width > 0 && node.bounds.height > 0)
-    .filter(|node| {
-      scope_path_prefix
-        .as_ref()
-        .is_none_or(|prefix| node.path.starts_with(prefix))
-    })
-    .filter(|node| {
-      if let Some(role) = expected_role_lc.as_deref() {
-        node.role.to_lowercase() == role
-      } else {
-        true
-      }
-    })
-    .filter(|node| {
-      if let Some(subrole) = expected_subrole_lc.as_deref() {
-        node.subrole.to_lowercase() == subrole
-      } else {
-        true
-      }
-    })
-    .filter_map(|node| {
-      let searchable = ax_node_search_text(node);
-      if searchable.contains(&expected_text_lc) {
-        Some((100 - node.depth as i64, node))
-      } else {
-        None
-      }
-    })
-    .max_by(|left, right| left.0.cmp(&right.0))
-    .map(|(_, node)| node)
-    .ok_or_else(|| {
-      let mut detail = format!(
-        "no matching ax text node found for target_text {}",
-        expected_text
-      );
-      if let Some(role) = expected_role.as_deref() {
-        detail.push_str(&format!(" and target_role {}", role));
-      }
-      if let Some(subrole) = expected_subrole.as_deref() {
-        detail.push_str(&format!(" and target_subrole {}", subrole));
-      }
-      if let Some(scope) = scope_path_prefix.as_deref() {
-        detail.push_str(&format!(" within scope_path_prefix {}", scope));
-      }
-      detail
-    })?;
+  let matched = find_ax_text_node(
+    &snapshot.nodes,
+    &expected_text,
+    expected_role.as_deref(),
+    expected_subrole.as_deref(),
+    scope_path_prefix.as_deref(),
+  )?;
 
   let report = render_ax_interaction_report("verify-ax-text", &snapshot, matched, &expected_text);
   let artifact = build_text_artifact(
@@ -1445,22 +1254,6 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
     notes: report.lines().map(str::to_string).collect(),
     artifacts: vec![artifact],
   })
-}
-
-fn permission_probe_report(
-  screen_recording: &str,
-  accessibility: &str,
-  automation: &str,
-  launch_host: &str,
-) -> String {
-  [
-    format!("screenRecording={screen_recording}"),
-    format!("accessibility={accessibility}"),
-    format!("automationToSystemEvents={automation}"),
-    format!("launchHostProcess={launch_host}"),
-  ]
-  .join("\n")
-    + "\n"
 }
 
 #[cfg(test)]

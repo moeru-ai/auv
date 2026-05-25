@@ -211,6 +211,11 @@ name = "auv-driver-macos"
 version = "0.0.1"
 dependencies = [
  "auv-driver",
+ "image",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "serde",
+ "serde_json",
  "swift-bridge",
  "swift-bridge-build",
 ]

@@ -7,8 +7,13 @@ publish.workspace = true
 
 [dependencies]
 auv-driver = { path = "../auv-driver" }
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation.workspace = true
+objc2-core-graphics.workspace = true
 swift-bridge.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
