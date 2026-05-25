@@ -592,6 +592,12 @@ also update `docs/TERMS_AND_CONCEPTS.md`.
   `src/driver/macos/descriptor.rs` adapts that metadata back into the legacy
   `crate::model::DriverDescriptor` until catalog commands migrate away from the
   root `DriverCall` surface.
+- 2026-05-25 Task 7: the typed NetEase example exposed an awkward boundary:
+  native OCR still accepts image paths, while `auv_driver::Capture` is an
+  in-memory image. `auv-driver-macos` now writes a temporary PNG for OCR in the
+  typed session facade, then removes it. This is not run storage or artifact
+  staging, but it should be replaced by an in-memory OCR entrypoint when the
+  Swift native API grows one.
 
 ## Migration Plan
 

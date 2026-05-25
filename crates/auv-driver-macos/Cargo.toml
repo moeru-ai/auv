@@ -15,6 +15,7 @@ serde_json.workspace = true
 objc2-core-foundation.workspace = true
 objc2-core-graphics.workspace = true
 swift-bridge.workspace = true
+xcap.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 swift-bridge-build.workspace = true
