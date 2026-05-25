@@ -1,35 +1,56 @@
-use std::time::Duration;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use auv_driver::capture::{Activation, CaptureOptions};
-use auv_driver::input::{Click, PasteTextOptions, Submit, WaitOptions};
+use auv_cli::recording::{RunFinish, RunSpec};
+use auv_cli::runtime::Runtime;
+use auv_cli::trace::{RunType, TraceStatusCode, string_attr};
+use auv_driver::capture::{Activation, Capture, CaptureOptions};
+use auv_driver::input::{Click, PasteTextOptions, TextSubmit};
 use auv_driver::selector::{App, Window};
-use auv_driver::{Driver, RatioRect};
+use auv_driver::vision::TextRecognition;
+use auv_driver::{Driver, Point, RatioRect};
 use auv_driver_macos::MacosDriver;
+
+static TEMP_CAPTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 struct Inputs {
   app_id: String,
   query: String,
-  search_anchor: String,
   result_title: String,
   result_artist: String,
   result_index: usize,
-  search_region: RatioRect,
+  search_relative_x: f64,
+  search_relative_y: f64,
+  main_marker: String,
+  collapse_relative_x: f64,
+  collapse_relative_y: f64,
+  click_interval_ms: u64,
+  activation_settle_ms: u64,
+  submit_settle_ms: u64,
   result_region: RatioRect,
   player_region: RatioRect,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let inputs = parse_inputs(std::env::args().skip(1).collect())?;
-  run(inputs)
+  run_recorded(inputs)
 }
 
 fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
   let mut app_id = "com.netease.163music".to_string();
   let mut query = "AURORA Cure For Me".to_string();
-  let mut search_anchor = "搜索".to_string();
   let mut result_title = "Cure For Me".to_string();
   let mut result_artist = "AURORA".to_string();
   let mut result_index = 0_usize;
+  let mut search_relative_x = 0.31_f64;
+  let mut search_relative_y = 0.06_f64;
+  let mut main_marker = "网易云音乐".to_string();
+  let mut collapse_relative_x = 0.05_f64;
+  let mut collapse_relative_y = 0.015_f64;
+  let mut click_interval_ms = 80_u64;
+  let mut submit_settle_ms = 1200_u64;
+  let mut activation_settle_ms = 500_u64;
 
   let mut iter = args.into_iter();
   while let Some(flag) = iter.next() {
@@ -39,13 +60,48 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
     match flag.as_str() {
       "--app-id" => app_id = value,
       "--query" => query = value,
-      "--search-anchor" => search_anchor = value,
+      "--main-marker" => main_marker = value,
       "--result-title" => result_title = value,
       "--result-artist" => result_artist = value,
       "--result-index" => {
         result_index = value
           .parse()
           .map_err(|error| format!("invalid --result-index: {error}"))?;
+      }
+      "--click-interval-ms" => {
+        click_interval_ms = value
+          .parse()
+          .map_err(|error| format!("invalid --click-interval-ms: {error}"))?;
+      }
+      "--search-relative-x" => {
+        search_relative_x = value
+          .parse()
+          .map_err(|error| format!("invalid --search-relative-x: {error}"))?;
+      }
+      "--search-relative-y" => {
+        search_relative_y = value
+          .parse()
+          .map_err(|error| format!("invalid --search-relative-y: {error}"))?;
+      }
+      "--collapse-relative-x" => {
+        collapse_relative_x = value
+          .parse()
+          .map_err(|error| format!("invalid --collapse-relative-x: {error}"))?;
+      }
+      "--collapse-relative-y" => {
+        collapse_relative_y = value
+          .parse()
+          .map_err(|error| format!("invalid --collapse-relative-y: {error}"))?;
+      }
+      "--submit-settle-ms" => {
+        submit_settle_ms = value
+          .parse()
+          .map_err(|error| format!("invalid --submit-settle-ms: {error}"))?;
+      }
+      "--activation-settle-ms" => {
+        activation_settle_ms = value
+          .parse()
+          .map_err(|error| format!("invalid --activation-settle-ms: {error}"))?;
       }
       other => return Err(format!("unknown argument {other}")),
     }
@@ -54,29 +110,99 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
   Ok(Inputs {
     app_id,
     query,
-    search_anchor,
     result_title,
     result_artist,
     result_index,
-    search_region: RatioRect::new(0.20, 0.0, 0.42, 0.25),
+    search_relative_x,
+    search_relative_y,
+    main_marker,
+    collapse_relative_x,
+    collapse_relative_y,
+    click_interval_ms,
+    activation_settle_ms,
+    submit_settle_ms,
     result_region: RatioRect::new(0.12, 0.14, 0.74, 0.64),
     player_region: RatioRect::new(0.03, 0.86, 0.32, 0.14),
   })
 }
 
-fn run(inputs: Inputs) -> Result<(), Box<dyn std::error::Error>> {
+fn run_recorded(inputs: Inputs) -> Result<(), Box<dyn std::error::Error>> {
+  let project_root = std::env::current_dir()?;
+  let runtime = auv_cli::build_default_runtime(project_root.clone())?;
+  let mut attributes = auv_cli::recording::Attributes::new();
+  attributes.insert(
+    "auv.example.id".to_string(),
+    string_attr("netease_play_visible_anchor"),
+  );
+  attributes.insert(
+    "auv.target.application_id".to_string(),
+    string_attr(inputs.app_id.clone()),
+  );
+  attributes.insert(
+    "auv.example.query".to_string(),
+    string_attr(inputs.query.clone()),
+  );
+
+  let mut run = runtime.start_run(
+    RunSpec::new(RunType::Execute, "auv.example.netease_play_visible_anchor")
+      .with_attributes(attributes),
+  )?;
+  let root = run.root_span();
+  let run_id = run.id().to_string();
+  let run_dir = project_root.join(".auv").join("runs").join(&run_id);
+
+  // TODO: replace this manual example-side recording wrapper with a typed
+  // operation runtime so Rust-native driver API calls and CLI/RPC operations
+  // share the same span, event, artifact, and local-write behavior.
+  let result = run_steps(&runtime, &mut run, &root, inputs);
+  match result {
+    Ok(()) => {
+      runtime.finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some("NetEase visible anchor example completed".to_string()),
+          failure: None,
+        },
+      )?;
+      println!("recorded run: {}", run_dir.display());
+      Ok(())
+    }
+    Err(error) => {
+      let finish_result = runtime.finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Error,
+          summary: Some("NetEase visible anchor example failed".to_string()),
+          failure: Some(error.to_string()),
+        },
+      );
+      if let Err(finish_error) = finish_result {
+        return Err(
+          format!("{error}; additionally failed to persist recorded run {run_id}: {finish_error}")
+            .into(),
+        );
+      }
+      Err(format!("{error}; recorded run: {}", run_dir.display()).into())
+    }
+  }
+}
+
+fn run_steps(
+  runtime: &Runtime,
+  run: &mut auv_cli::recording::RecordingRun,
+  root: &auv_cli::recording::SpanRef,
+  inputs: Inputs,
+) -> Result<(), Box<dyn std::error::Error>> {
   let driver = MacosDriver::new();
   let session = driver.open_local()?;
   let app = App::bundle(inputs.app_id.clone());
   let window = session
     .window()
     .resolve(Window::main_visible().owned_by(app))?;
-  let wait = WaitOptions {
-    timeout: Duration::from_millis(3500),
-    poll_interval: Duration::from_millis(250),
-  };
+  let full_window_region = RatioRect::new(0.0, 0.0, 1.0, 1.0);
 
-  let _before = session.window().capture_with(
+  let mut before = session.window().capture_with(
     &window,
     CaptureOptions {
       activation: Activation::ActivateFirst {
@@ -85,53 +211,89 @@ fn run(inputs: Inputs) -> Result<(), Box<dyn std::error::Error>> {
       ..CaptureOptions::default()
     },
   )?;
-
-  let search_matches =
+  let cancel_matches =
     session
-      .window()
-      .find_text(&window, &inputs.search_anchor, inputs.search_region, wait)?;
-  let search_box = search_matches
-    .best_match()
-    .ok_or("search anchor not found")?;
-  session
-    .input()
-    .click_at(search_box.action_point(), Click::Single)?;
+      .vision()
+      .find_text_in_capture(&before, "取消", full_window_region)?;
+  if let Some(cancel) = cancel_matches.best_match() {
+    session
+      .input()
+      .click_at(cancel.action_point(), Click::Single)?;
+    std::thread::sleep(Duration::from_millis(500));
+    before = session.window().capture(&window)?;
+  }
+  record_capture(runtime, run, root, "before-search", &before)?;
 
-  session.clipboard().paste_text(PasteTextOptions {
+  let mut focus_capture = before;
+  let marker_matches = session.vision().find_text_in_capture(
+    &focus_capture,
+    &inputs.main_marker,
+    full_window_region,
+  )?;
+  if marker_matches.best_match().is_none() {
+    let collapse_point = window_relative_point(
+      &window,
+      inputs.collapse_relative_x,
+      inputs.collapse_relative_y,
+    );
+    session.input().click_at(collapse_point, Click::Single)?;
+    std::thread::sleep(Duration::from_millis(500));
+    focus_capture = session.window().capture(&window)?;
+    record_capture(runtime, run, root, "after-collapse-to-main", &focus_capture)?;
+  }
+
+  let search_point =
+    window_relative_point(&window, inputs.search_relative_x, inputs.search_relative_y);
+
+  session.input().click_at(search_point, Click::Single)?;
+  std::thread::sleep(Duration::from_millis(500));
+  let after_search_click = session.window().capture(&window)?;
+  record_capture(
+    runtime,
+    run,
+    root,
+    "after-search-click",
+    &after_search_click,
+  )?;
+
+  session.input().paste_text(PasteTextOptions {
     text: inputs.query.clone(),
-    submit: Submit::Enter,
+    replace_existing: true,
+    submit: TextSubmit::Return,
+    settle: Duration::from_millis(inputs.submit_settle_ms),
   })?;
 
-  session
-    .window()
-    .wait_text(&window, &inputs.query, inputs.search_region, wait)?;
-
   let after_search = session.window().capture(&window)?;
-  let result_matches = session.vision().find_text_in_capture(
-    &after_search,
+  record_capture(runtime, run, root, "after-search", &after_search)?;
+  let search_text = session
+    .vision()
+    .recognize_text_in_capture(&after_search, inputs.result_region)?;
+  expect_text_visible(
+    &search_text,
+    &inputs.result_artist,
+    "result artist on comprehensive results",
+  )?;
+  expect_text_visible(
+    &search_text,
     &inputs.result_title,
-    inputs.result_region,
+    "result title on comprehensive results",
   )?;
-  let selected = result_matches
-    .matches
-    .get(inputs.result_index)
-    .ok_or("requested result index was not visible")?;
-  expect_visible(
-    session.vision().find_text_in_capture(
-      &after_search,
-      &inputs.result_artist,
-      inputs.result_region,
-    )?,
-    "result artist",
-  )?;
+
+  let title_matches = search_text.find_contains(&inputs.result_title);
+  let selected = title_matches.get(inputs.result_index).ok_or_else(|| {
+    format!(
+      "result title was not visible for playback activation at index {}",
+      inputs.result_index
+    )
+  })?;
   session.input().click_at(
     selected.action_point(),
     Click::Double {
-      interval: Duration::from_millis(80),
+      interval: Duration::from_millis(inputs.click_interval_ms),
     },
   )?;
+  std::thread::sleep(Duration::from_millis(inputs.activation_settle_ms));
 
-  std::thread::sleep(Duration::from_millis(1200));
   let after_play = session.window().capture_with(
     &window,
     CaptureOptions {
@@ -141,31 +303,62 @@ fn run(inputs: Inputs) -> Result<(), Box<dyn std::error::Error>> {
       ..CaptureOptions::default()
     },
   )?;
-  expect_visible(
-    session.vision().find_text_in_capture(
-      &after_play,
-      &inputs.result_title,
-      inputs.player_region,
-    )?,
-    "player title",
-  )?;
-  expect_visible(
-    session.vision().find_text_in_capture(
-      &after_play,
-      &inputs.result_artist,
-      inputs.player_region,
-    )?,
-    "player artist",
-  )?;
+  record_capture(runtime, run, root, "after-play", &after_play)?;
+  let player_text = session
+    .vision()
+    .recognize_text_in_capture(&after_play, inputs.player_region)?;
+  expect_text_visible(&player_text, &inputs.result_title, "player title")?;
+  expect_text_visible(&player_text, &inputs.result_artist, "player artist")?;
 
   Ok(())
 }
 
-fn expect_visible(
-  matches: auv_driver_macos::OcrMatches,
+fn record_capture(
+  runtime: &Runtime,
+  run: &mut auv_cli::recording::RecordingRun,
+  root: &auv_cli::recording::SpanRef,
+  label: &str,
+  capture: &Capture,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+  let path = temp_png_path(label);
+  capture.image.save(&path)?;
+  let staged = runtime.stage_artifact_file(
+    run,
+    root,
+    "screenshot",
+    &path,
+    format!("{label}.png"),
+    Some(format!("NetEase example {label} window capture")),
+  )?;
+  let _ = std::fs::remove_file(path);
+  Ok(staged)
+}
+
+fn window_relative_point(window: &auv_driver::Window, relative_x: f64, relative_y: f64) -> Point {
+  Point::new(
+    window.frame.origin.x + window.frame.size.width * relative_x,
+    window.frame.origin.y + window.frame.size.height * relative_y,
+  )
+}
+
+fn temp_png_path(label: &str) -> PathBuf {
+  let millis = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_millis();
+  let sequence = TEMP_CAPTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
+  std::env::temp_dir().join(format!(
+    "auv-netease-example-{label}-{}-{millis}-{sequence}.png",
+    std::process::id()
+  ))
+}
+
+fn expect_text_visible(
+  recognition: &TextRecognition,
+  query: &str,
   label: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-  if matches.matches.is_empty() {
+  if recognition.best_contains(query).is_none() {
     Err(format!("{label} was not visible").into())
   } else {
     Ok(())
