@@ -27,6 +27,25 @@ const MAX_SEARCH_PIXELS: u64 = 10_000_000;
 const MAX_RESULTS: usize = 16;
 
 /// Normalized cross-correlation template matching on grayscale images.
+///
+/// Required workflow:
+/// 1. Capture the target surface first and pass that screenshot path here.
+/// 2. Pass a small template cropped at the same pixel scale as the screenshot.
+/// 3. Restrict `search_region` whenever possible; this implementation is a
+///    straightforward sliding-window matcher and intentionally favors clear
+///    traceability over speed.
+/// 4. Treat returned boxes as recognition evidence. Higher-level code decides
+///    whether and how to click, verify, or fall back.
+///
+/// Matching behavior:
+/// - Both screenshot and template are converted to grayscale with `to_luma8`.
+/// - Each candidate patch is mean-centered before scoring, so uniform brightness
+///   shifts are partly tolerated.
+/// - Template background still participates in the score. For theme-independent
+///   icons, a future masked/edge matcher should ignore non-icon pixels.
+/// - There is no scale or rotation invariance. The template must match the
+///   screenshot resolution.
+///
 /// Returns at most MAX_RESULTS matches above `threshold` after non-maximum suppression.
 pub fn match_template(
   screenshot_path: &Path,
