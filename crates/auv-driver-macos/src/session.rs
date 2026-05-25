@@ -8,8 +8,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use auv_driver::capture::{Activation, Capture, CaptureOptions};
 use auv_driver::error::{DriverError, DriverResult};
 use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect};
-use auv_driver::input::{Click, PasteTextOptions, Submit, WaitOptions};
+use auv_driver::input::{Click, PasteTextOptions, TextSubmit, WaitOptions};
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
+use auv_driver::vision::{RecognizedText, TextRecognition};
 use auv_driver::window::{Window, WindowRef};
 use image::RgbaImage;
 
@@ -201,19 +202,42 @@ impl InputApi<'_> {
     };
     crate::native::pointer::click_point(point.x, point.y, 0, count, interval).map_err(backend)
   }
-}
 
-impl ClipboardApi<'_> {
+  pub fn copy(&self) -> DriverResult<()> {
+    let _ = self.session;
+    run_osascript(&["tell application \"System Events\" to keystroke \"c\" using command down"])
+  }
+
+  pub fn paste(&self) -> DriverResult<()> {
+    let _ = self.session;
+    run_osascript(&["tell application \"System Events\" to keystroke \"v\" using command down"])
+  }
+
   pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<()> {
     let _ = self.session;
     let _lock = acquire_clipboard_lock(Duration::from_millis(5_000))?;
     let snapshot = crate::native::clipboard::capture_clipboard_snapshot().map_err(backend)?;
     let result = (|| {
+      let submit_key_code = text_submit_key_code(options.submit)?;
       crate::native::clipboard::set_clipboard_text(&options.text).map_err(backend)?;
-      run_osascript(&["tell application \"System Events\" to keystroke \"v\" using command down"])?;
-      match options.submit {
-        Submit::No => {}
-        Submit::Enter => run_osascript(&["tell application \"System Events\" to key code 36"])?,
+
+      let mut lines = vec!["tell application \"System Events\"".to_string()];
+      if options.replace_existing {
+        lines.push("keystroke \"a\" using {command down}".to_string());
+        lines.push("delay 0.05".to_string());
+        lines.push("key code 51".to_string());
+        lines.push("delay 0.05".to_string());
+      }
+      lines.push("keystroke \"v\" using {command down}".to_string());
+      lines.push("delay 0.15".to_string());
+      if let Some(key_code) = submit_key_code {
+        lines.push("delay 0.05".to_string());
+        lines.push(format!("key code {key_code}"));
+      }
+      lines.push("end tell".to_string());
+      run_osascript_lines(&lines)?;
+      if !options.settle.is_zero() {
+        thread::sleep(options.settle);
       }
       Ok(())
     })();
@@ -232,18 +256,34 @@ impl ClipboardApi<'_> {
   }
 }
 
+impl ClipboardApi<'_> {
+  pub fn snapshot(&self) -> DriverResult<String> {
+    let _ = self.session;
+    crate::native::clipboard::capture_clipboard_snapshot().map_err(backend)
+  }
+
+  pub fn restore(&self, snapshot: &str) -> DriverResult<()> {
+    let _ = self.session;
+    crate::native::clipboard::restore_clipboard_snapshot(snapshot).map_err(backend)
+  }
+
+  pub fn set_text(&self, text: &str) -> DriverResult<()> {
+    let _ = self.session;
+    crate::native::clipboard::set_clipboard_text(text).map_err(backend)
+  }
+}
+
 impl VisionApi<'_> {
-  pub fn find_text_in_capture(
+  pub fn recognize_text_in_capture(
     &self,
     capture: &Capture,
-    query: &str,
     region: RatioRect,
-  ) -> DriverResult<OcrMatches> {
+  ) -> DriverResult<TextRecognition> {
     let _ = self.session;
     let path = write_temp_capture_png(capture)?;
     let crop = ratio_rect_to_observed(capture, region);
     let native_result =
-      crate::native::ocr::find_text(&path, query, false, false, 256, Some(&crop)).map_err(backend);
+      crate::native::ocr::find_text(&path, "", false, false, 256, Some(&crop)).map_err(backend);
     let remove_result = std::fs::remove_file(&path);
     let native = native_result?;
     if let Err(error) = remove_result {
@@ -252,7 +292,17 @@ impl VisionApi<'_> {
         path.display()
       )));
     }
-    Ok(ocr_matches_from_native(&native, capture))
+    Ok(text_recognition_from_native(&native, capture))
+  }
+
+  pub fn find_text_in_capture(
+    &self,
+    capture: &Capture,
+    query: &str,
+    region: RatioRect,
+  ) -> DriverResult<OcrMatches> {
+    let recognition = self.recognize_text_in_capture(capture, region)?;
+    Ok(ocr_matches_from_recognition(&recognition, query))
   }
 }
 
@@ -513,7 +563,23 @@ fn ratio_rect_to_observed(capture: &Capture, region: RatioRect) -> ObservedRect 
   }
 }
 
-fn ocr_matches_from_native(native: &NativeOcrTextCapture, capture: &Capture) -> OcrMatches {
+fn ocr_matches_from_recognition(recognition: &TextRecognition, query: &str) -> OcrMatches {
+  let matches = recognition
+    .find_contains(query)
+    .into_iter()
+    .map(|recognized| OcrMatch {
+      text: recognized.text.clone(),
+      confidence: recognized.confidence.unwrap_or_default() as f64,
+      bounds: recognized.bounds,
+    })
+    .collect();
+  OcrMatches { matches }
+}
+
+fn text_recognition_from_native(
+  native: &NativeOcrTextCapture,
+  capture: &Capture,
+) -> TextRecognition {
   let x_scale = if capture.bounds.size.width > 0.0 {
     f64::from(capture.image.width()) / capture.bounds.size.width
   } else {
@@ -528,9 +594,9 @@ fn ocr_matches_from_native(native: &NativeOcrTextCapture, capture: &Capture) -> 
     .snapshot
     .matches
     .iter()
-    .map(|observed| OcrMatch {
+    .map(|observed| RecognizedText {
       text: observed.text.clone(),
-      confidence: observed.confidence,
+      confidence: Some(observed.confidence as f32),
       bounds: Rect::new(
         capture.bounds.origin.x + observed.bounds.x as f64 / x_scale,
         capture.bounds.origin.y + observed.bounds.y as f64 / y_scale,
@@ -538,8 +604,16 @@ fn ocr_matches_from_native(native: &NativeOcrTextCapture, capture: &Capture) -> 
         observed.bounds.height as f64 / y_scale,
       ),
     })
-    .collect();
-  OcrMatches { matches }
+    .collect::<Vec<_>>();
+  let text = matches
+    .iter()
+    .map(|recognized| recognized.text.as_str())
+    .collect::<Vec<_>>()
+    .join("\n");
+  TextRecognition {
+    text,
+    regions: matches,
+  }
 }
 
 fn write_temp_capture_png(capture: &Capture) -> DriverResult<PathBuf> {
@@ -582,6 +656,31 @@ fn run_osascript(scripts: &[&str]) -> DriverResult<()> {
     Ok(())
   } else {
     Err(backend(String::from_utf8_lossy(&output.stderr).trim()))
+  }
+}
+
+fn run_osascript_lines(lines: &[String]) -> DriverResult<()> {
+  let mut command = Command::new("osascript");
+  for line in lines {
+    command.arg("-e").arg(line);
+  }
+  let output = command
+    .output()
+    .map_err(|error| backend(format!("failed to run osascript: {error}")))?;
+  if output.status.success() {
+    Ok(())
+  } else {
+    Err(backend(String::from_utf8_lossy(&output.stderr).trim()))
+  }
+}
+
+fn text_submit_key_code(submit: TextSubmit) -> DriverResult<Option<u32>> {
+  match submit {
+    TextSubmit::No => Ok(None),
+    TextSubmit::Return => Ok(Some(36)),
+    TextSubmit::Search | TextSubmit::Done | TextSubmit::Go => Err(invalid_input(format!(
+      "text submit {submit:?} is not supported by the macOS desktop driver yet"
+    ))),
   }
 }
 
