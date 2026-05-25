@@ -443,7 +443,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayClickPoint",
       namespace: ACTION,
-      summary: "Move the visual AUV cursor to a target point, click, flash the click-state cursor, then hide overlay. Experimental debug-only path; the real cursor visibly warps to the click target and back (cursorDisturbance=warp-visible).",
+      summary: "Move the visual AUV cursor to a target point, click, flash the click-state cursor, then hide overlay. Legacy visualization command path; the real cursor visibly warps to the click target and back (cursorDisturbance=warp-visible).",
       driver_id: "macos.desktop",
       operation: "overlay_click_point",
       disturbance_classes: POINTER_WITH_FOREGROUND,
@@ -452,7 +452,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayShowCursor",
       namespace: OVERLAY,
-      summary: "Show an experimental visual-only AUV cursor label overlay inside the current process.",
+      summary: "Show a visual-only AUV cursor label overlay inside the current process.",
       driver_id: "macos.desktop",
       operation: "overlay_show_cursor",
       disturbance_classes: NONE,
@@ -461,7 +461,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayShowDualCursor",
       namespace: OVERLAY,
-      summary: "Show experimental visual-only dual cursor overlays: AUV at a target point and You at the current hardware cursor.",
+      summary: "Show visual-only dual cursor overlays: AUV at a target point and You at the current hardware cursor.",
       driver_id: "macos.desktop",
       operation: "overlay_show_dual_cursor",
       disturbance_classes: NONE,
@@ -470,7 +470,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayApplyCursorBatch",
       namespace: OVERLAY,
-      summary: "Apply a JSON batch of experimental visual-only overlay cursor operations in one process.",
+      summary: "Apply a JSON batch of visual-only overlay cursor operations in one process.",
       driver_id: "macos.desktop",
       operation: "overlay_apply_cursor_batch",
       disturbance_classes: NONE,
@@ -479,7 +479,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlaySetCursor",
       namespace: OVERLAY,
-      summary: "Show or update one experimental visual-only overlay cursor by cursor_id.",
+      summary: "Show or update one visual-only overlay cursor by cursor_id.",
       driver_id: "macos.desktop",
       operation: "overlay_set_cursor",
       disturbance_classes: NONE,
@@ -488,7 +488,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayMoveCursor",
       namespace: OVERLAY,
-      summary: "Animate the experimental visual-only AUV cursor from the current hardware cursor toward a target point.",
+      summary: "Animate the visual-only AUV cursor from the current hardware cursor toward a target point.",
       driver_id: "macos.desktop",
       operation: "overlay_move_cursor",
       disturbance_classes: NONE,
@@ -497,7 +497,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayMoveCursorById",
       namespace: OVERLAY,
-      summary: "Animate one experimental visual-only overlay cursor by cursor_id, reusing its previous position when available.",
+      summary: "Animate one visual-only overlay cursor by cursor_id, reusing its previous position when available.",
       driver_id: "macos.desktop",
       operation: "overlay_move_cursor_by_id",
       disturbance_classes: NONE,
@@ -506,7 +506,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayFlashCursor",
       namespace: OVERLAY,
-      summary: "Flash the experimental AUV click-state cursor sprite at a target point.",
+      summary: "Flash the AUV click-state cursor sprite at a target point.",
       driver_id: "macos.desktop",
       operation: "overlay_flash_cursor",
       disturbance_classes: NONE,
@@ -515,7 +515,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayFlashCursorById",
       namespace: OVERLAY,
-      summary: "Flash the experimental AUV click-state cursor sprite for one overlay cursor_id.",
+      summary: "Flash the AUV click-state cursor sprite for one overlay cursor_id.",
       driver_id: "macos.desktop",
       operation: "overlay_flash_cursor_by_id",
       disturbance_classes: NONE,
@@ -524,7 +524,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayHideCursorId",
       namespace: OVERLAY,
-      summary: "Hide one experimental visual-only overlay cursor by cursor_id.",
+      summary: "Hide one visual-only overlay cursor by cursor_id.",
       driver_id: "macos.desktop",
       operation: "overlay_hide_cursor_id",
       disturbance_classes: NONE,
@@ -533,7 +533,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayHideCursor",
       namespace: OVERLAY,
-      summary: "Hide the experimental visual-only AUV cursor label overlay inside the current process.",
+      summary: "Hide the visual-only AUV cursor label overlay inside the current process.",
       driver_id: "macos.desktop",
       operation: "overlay_hide_cursor",
       disturbance_classes: NONE,
@@ -542,7 +542,7 @@ pub fn default_command_catalog() -> CommandCatalog {
     CommandSpec {
       id: "debug.overlayShutdown",
       namespace: OVERLAY,
-      summary: "Shut down the experimental visual-only AUV cursor overlay daemon inside the current process.",
+      summary: "Shut down the visual-only AUV cursor overlay inside the current process.",
       driver_id: "macos.desktop",
       operation: "overlay_shutdown",
       disturbance_classes: NONE,

@@ -2,8 +2,8 @@
 //! Experimental visual-only overlay cursor support.
 //!
 //! Overlay operations render an AUV cursor (and variants) for preview/replay
-//! evidence while actions run. They are debug/inspection tooling and do not
-//! change the underlying automation semantics.
+//! evidence while actions run. They are visualization tooling for automation
+//! process/results and do not change the underlying automation semantics.
 //!
 //! Boundary: overlays are in-process and best-effort; do not assume cross-run
 //! or cross-process persistence.
@@ -726,10 +726,10 @@ pub(crate) fn overlay_hide_cursor(_call: &DriverCall) -> AuvResult<DriverRespons
   })
 }
 
-/// Debug-only wrapped click: shows overlay cursor, clicks, then hides overlay.
+/// Wrapped click: shows overlay cursor, clicks, then hides overlay.
 ///
-/// Does NOT modify `debug.clickPoint` behavior.  Flicker acceptability must be
-/// confirmed by manual observation before this is considered for any non-debug path.
+/// Does NOT modify `debug.clickPoint` behavior. Flicker acceptability must be
+/// confirmed by manual observation before this is used on broader command paths.
 pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
   let y = required_f64(call, "y")?;

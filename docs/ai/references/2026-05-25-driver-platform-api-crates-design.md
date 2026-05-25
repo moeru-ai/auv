@@ -576,6 +576,14 @@ also update `docs/TERMS_AND_CONCEPTS.md`.
   depended on only for `target_os = "macos"`. Non-mac default runtime currently
   registers only the fixture driver; full Windows/Linux driver registration is
   a later platform implementation task.
+- 2026-05-25 Task 4: overlay native code moved into
+  `crates/auv-overlay-macos`, with its Swift package under
+  `crates/auv-overlay-macos/native/swift/`. Root
+  `src/driver/macos/native::overlay` remains a compatibility delegation layer
+  for existing command paths, but `auv-driver-macos` does not depend on the
+  overlay crate. The bridge-generation xtask now emits IDE bridge files for
+  both the driver and overlay Swift packages, which keeps the split boundary
+  explicit while preserving SourceKit indexing.
 
 ## Migration Plan
 

@@ -28,84 +28,72 @@ pub(crate) mod window {
 pub(crate) mod overlay {
   use crate::model::AuvResult;
 
-  fn unsupported() -> AuvResult<()> {
-    Err(
-      "macOS native overlay is temporarily unsupported while overlay moves to auv-overlay-macos"
-        .to_string(),
-    )
+  pub(crate) fn show_cursor(x: f64, y: f64, label: &str) -> AuvResult<()> {
+    auv_overlay_macos::show_cursor(x, y, label)
   }
 
-  pub(crate) fn show_cursor(_x: f64, _y: f64, _label: &str) -> AuvResult<()> {
-    unsupported()
-  }
-
-  pub(crate) fn show_dual_cursor(
-    _x: f64,
-    _y: f64,
-    _label: &str,
-    _user_label: &str,
-  ) -> AuvResult<()> {
-    unsupported()
+  pub(crate) fn show_dual_cursor(x: f64, y: f64, label: &str, user_label: &str) -> AuvResult<()> {
+    auv_overlay_macos::show_dual_cursor(x, y, label, user_label)
   }
 
   pub(crate) fn set_cursor(
-    _cursor_id: &str,
-    _x: f64,
-    _y: f64,
-    _label: &str,
-    _variant: &str,
+    cursor_id: &str,
+    x: f64,
+    y: f64,
+    label: &str,
+    variant: &str,
   ) -> AuvResult<()> {
-    unsupported()
+    auv_overlay_macos::set_cursor(cursor_id, x, y, label, variant)
   }
 
   pub(crate) fn move_cursor(
-    _cursor_id: &str,
-    _x: f64,
-    _y: f64,
-    _label: &str,
-    _variant: &str,
-    _duration_ms: u64,
+    cursor_id: &str,
+    x: f64,
+    y: f64,
+    label: &str,
+    variant: &str,
+    duration_ms: u64,
   ) -> AuvResult<()> {
-    unsupported()
+    auv_overlay_macos::move_cursor(cursor_id, x, y, label, variant, duration_ms)
   }
 
   pub(crate) fn move_dual_cursor(
-    _x: f64,
-    _y: f64,
-    _label: &str,
-    _user_label: &str,
-    _duration_ms: u64,
+    x: f64,
+    y: f64,
+    label: &str,
+    user_label: &str,
+    duration_ms: u64,
   ) -> AuvResult<()> {
-    unsupported()
+    auv_overlay_macos::move_dual_cursor(x, y, label, user_label, duration_ms)
   }
 
-  pub(crate) fn flash_cursor(_x: f64, _y: f64, _label: &str, _duration_ms: u64) -> AuvResult<()> {
-    unsupported()
+  pub(crate) fn flash_cursor(x: f64, y: f64, label: &str, duration_ms: u64) -> AuvResult<()> {
+    auv_overlay_macos::flash_cursor(x, y, label, duration_ms)
   }
 
   pub(crate) fn flash_cursor_id(
-    _cursor_id: &str,
-    _x: f64,
-    _y: f64,
-    _label: &str,
-    _duration_ms: u64,
+    cursor_id: &str,
+    x: f64,
+    y: f64,
+    label: &str,
+    duration_ms: u64,
   ) -> AuvResult<()> {
-    unsupported()
+    auv_overlay_macos::flash_cursor_id(cursor_id, x, y, label, duration_ms)
   }
 
-  pub(crate) fn hide_cursor_id(_cursor_id: &str) -> AuvResult<()> {
-    unsupported()
+  pub(crate) fn hide_cursor_id(cursor_id: &str) -> AuvResult<()> {
+    auv_overlay_macos::hide_cursor_id(cursor_id)
   }
 
   pub(crate) fn hide_cursor() -> AuvResult<()> {
-    unsupported()
+    auv_overlay_macos::hide_cursor()
   }
 
-  pub(crate) fn pump_events(_duration_ms: u64) -> AuvResult<()> {
-    unsupported()
+  pub(crate) fn pump_events(duration_ms: u64) -> AuvResult<()> {
+    auv_overlay_macos::pump_events(duration_ms)
   }
 
   pub(crate) fn shutdown() -> AuvResult<()> {
-    unsupported()
+    auv_overlay_macos::shutdown()
   }
 }

@@ -37,9 +37,11 @@ async fn run() -> Result<(), String> {
   let project_root =
     env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
   if let CliCommand::XtaskGenerateSwiftBridge = &command {
-    let output = xtask::generate_swift_bridge_for_ide(&project_root)?;
+    let outputs = xtask::generate_swift_bridge_for_ide(&project_root)?;
     println!("generated Swift bridge files for IDE indexing");
-    println!("output: {}", output.display());
+    for output in outputs {
+      println!("output: {output}");
+    }
     return Ok(());
   }
 

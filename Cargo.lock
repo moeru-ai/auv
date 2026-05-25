@@ -224,7 +224,8 @@ dependencies = [
 name = "auv-overlay-macos"
 version = "0.0.1"
 dependencies = [
- "auv-driver",
+ "swift-bridge",
+ "swift-bridge-build",
 ]
 
 [[package]]

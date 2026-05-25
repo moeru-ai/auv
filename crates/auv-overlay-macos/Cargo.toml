@@ -5,5 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[dependencies]
-auv-driver = { path = "../auv-driver" }
+[target.'cfg(target_os = "macos")'.dependencies]
+swift-bridge.workspace = true
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+swift-bridge-build.workspace = true
