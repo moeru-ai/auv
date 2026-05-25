@@ -192,6 +192,18 @@ The machine-readable case matrix for the row-based fallback currently lives at:
 
 - `recipes/macos/qqmusic/play-visible-row.cases.v0.json`
 
+There is now also a structured producer-to-consumer playback slice:
+
+- `recipes/macos/qqmusic/play-search-result-candidate.v0.json`
+- `recipes/macos/qqmusic/play-search-result-candidate.cases.v0.json`
+
+This new slice does not claim broader playback capability by itself. Its value
+is narrower: it proves the contract chain
+
+1. `music.search.results` emits a typed candidate-set artifact plus `selected_candidate_ref`
+2. a later recipe step consumes that `CandidateRef`
+3. `music.result.play` preserves the consumed candidate/recognition provenance into its verification result
+
 Current product-facing coverage commands are:
 
 ```bash
@@ -218,11 +230,19 @@ Current row-fallback case truth:
 - Row-fallback verification now prefers AX tree title matching over screenshot OCR for the current now-playing title
 - Chinese target-title disambiguation is not yet proven through row fallback; the current validated case proves activation on the Chinese result page, not semantic song selection
 
+Current structured-candidate case truth:
+
+- `ascii-aa-structured-candidate-row-2` is candidate
+- `chinese-query-structured-candidate-row-1` is candidate
+- These cases exist to validate the producer `music.search.results` -> `CandidateRef` -> consumer `music.result.play` chain
+- They do not yet upgrade the semantic-selection claim beyond the current visible row index baseline
+
 Coverage reporting entrypoints are now:
 
 ```bash
 auv-cli skill cases report macos.qqmusic.play_visible_anchor.v0
 auv-cli skill cases report macos.qqmusic.play_visible_row.v0
+auv-cli skill cases report macos.qqmusic.play_search_result_candidate.v0
 ```
 
 The current verification direction is:

@@ -1,0 +1,41 @@
+{
+  "skill_id": "macos.qqmusic.play_search_result_candidate.v0",
+  "version": "0.1.0",
+  "status": "active-case-matrix",
+  "cases": [
+    {
+      "case_id": "ascii-aa-structured-candidate-row-2",
+      "status": "candidate",
+      "inputs": {
+        "query": "aa",
+        "row_index": "2",
+        "target_title": "Cure For Me - AURORA",
+        "target_artist": "",
+        "now_playing_scope_path_prefix": "0.4.4"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "This is the narrow structured-consumer successor to the validated row-fallback baseline.",
+        "The point of this case is not new playback coverage; it is to prove music.search.results -> selected_candidate_ref -> music.result.play as one product-facing chain.",
+        "Keep it candidate until hands-off replay confirms the full producer-to-consumer chain on the live desktop."
+      ]
+    },
+    {
+      "case_id": "chinese-query-structured-candidate-row-1",
+      "status": "candidate",
+      "inputs": {
+        "query": "周杰伦",
+        "row_index": "1",
+        "target_title": "天空仍灿烂",
+        "target_artist": "周杰伦",
+        "now_playing_scope_path_prefix": "0.4.4"
+      },
+      "disturbance": "pointer",
+      "notes": [
+        "This inherits the current Chinese row-order boundary from play_visible_row.v0.",
+        "It does not claim semantic selection of 晴天; it only claims that the selected visible row should survive as a structured CandidateRef into the consumer step.",
+        "Keep it candidate until the structured chain is replayed hands-off."
+      ]
+    }
+  ]
+}

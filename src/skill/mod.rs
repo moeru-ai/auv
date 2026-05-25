@@ -1937,6 +1937,21 @@ mod tests {
   }
 
   #[test]
+  fn qqmusic_play_search_result_candidate_case_matrix_aligns_with_recipe() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let recipe_path = root.join("recipes/macos/qqmusic/play-search-result-candidate.v0.json");
+    let matrix_path = root.join("recipes/macos/qqmusic/play-search-result-candidate.cases.v0.json");
+    let recipe_raw = fs::read_to_string(&recipe_path).expect("recipe file should read");
+    let matrix_raw = fs::read_to_string(&matrix_path).expect("matrix file should read");
+    let manifest: SkillManifest = serde_json::from_str(&recipe_raw).expect("recipe should parse");
+    let matrix: SkillCaseMatrix = serde_json::from_str(&matrix_raw).expect("matrix should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    validate_case_matrix_manifest(&matrix).expect("matrix should validate");
+    validate_case_matrix_against_skill(&manifest, &matrix).expect("matrix should align");
+  }
+
+  #[test]
   fn enforce_step_expectations_reads_structured_signals() {
     let step: SkillStep = serde_json::from_value(json!({
       "id": "verify-text",
