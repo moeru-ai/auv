@@ -32,7 +32,7 @@ use tokio::sync::broadcast;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::model::AuvResult;
-use crate::run_recording::{ApiRunUpdate, BroadcastRunRecorder, RunRecorder, RunUpdate};
+use crate::recording::{ApiRunUpdate, BroadcastRunRecorder, RunRecorder, RunUpdate};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::{RunId, TraceState};
 
@@ -740,27 +740,27 @@ async fn next_stream_payload(
 enum RunStreamEvent {
   RunStarted {
     run_id: RunId,
-    run: crate::run_recording::ApiRunRecord,
+    run: crate::recording::ApiRunRecord,
   },
   SpanStarted {
     run_id: RunId,
-    span: crate::run_recording::ApiSpanRecord,
+    span: crate::recording::ApiSpanRecord,
   },
   EventAppended {
     run_id: RunId,
-    event: crate::run_recording::ApiEventRecord,
+    event: crate::recording::ApiEventRecord,
   },
   ArtifactCreated {
     run_id: RunId,
-    artifact: crate::run_recording::ApiArtifactRecord,
+    artifact: crate::recording::ApiArtifactRecord,
   },
   SpanFinished {
     run_id: RunId,
-    span: crate::run_recording::ApiSpanRecord,
+    span: crate::recording::ApiSpanRecord,
   },
   RunFinished {
     run_id: RunId,
-    run: crate::run_recording::ApiRunRecord,
+    run: crate::recording::ApiRunRecord,
   },
 }
 
@@ -903,7 +903,7 @@ mod tests {
 
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
   use crate::model::now_millis;
-  use crate::run_recording::{BroadcastRunRecorder, RunRecorder, RunUpdate};
+  use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate};
   use crate::store::{CanonicalRun, LocalStore};
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
@@ -1352,7 +1352,7 @@ mod tests {
     run["finishedAtMillis"] = serde_json::Value::from(200);
     store
       .write_run_snapshot(&CanonicalRun {
-        run: serde_json::from_value::<crate::run_recording::ApiRunRecord>(run.clone())
+        run: serde_json::from_value::<crate::recording::ApiRunRecord>(run.clone())
           .expect("api run should decode")
           .into(),
         spans: Vec::new(),

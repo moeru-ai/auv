@@ -52,7 +52,7 @@ async fn run() -> Result<(), String> {
   {
     let store_root = resolve_store_root(&project_root, store_root.as_ref());
     let store = auv_cli::store::LocalStore::new(store_root.clone())?;
-    let recorder = Arc::new(auv_cli::run_recording::BroadcastRunRecorder::new(1024));
+    let recorder = Arc::new(auv_cli::recording::BroadcastRunRecorder::new(1024));
     let token = resolve_inspect_serve_write_token(write)?;
     let config = auv_cli::inspect_server::InspectServeConfig {
       host: host.clone(),
@@ -515,11 +515,11 @@ fn build_runtime_for_inspect(
     temp_runtime_store_root()
   };
   let store = auv_cli::store::LocalStore::new(store_root.clone())?;
-  let mut recorders: Vec<Arc<dyn auv_cli::run_recording::RunRecorder>> = Vec::new();
+  let mut recorders: Vec<Arc<dyn auv_cli::recording::RunRecorder>> = Vec::new();
 
   if let Some((url, token)) = server_target {
     recorders.push(Arc::new(
-      auv_cli::run_recording::InspectServerRunRecorder::new(
+      auv_cli::recording::InspectServerRunRecorder::new(
         url,
         token,
         inspect.require_server_write,
@@ -527,12 +527,12 @@ fn build_runtime_for_inspect(
     ));
   }
 
-  let recorder: Arc<dyn auv_cli::run_recording::RunRecorder> = match recorders.len() {
-    0 => Arc::new(auv_cli::run_recording::NoopRunRecorder),
+  let recorder: Arc<dyn auv_cli::recording::RunRecorder> = match recorders.len() {
+    0 => Arc::new(auv_cli::recording::NoopRunRecorder),
     1 => recorders.remove(0),
-    _ => Arc::new(auv_cli::run_recording::CompositeRunRecorder::new(recorders)),
+    _ => Arc::new(auv_cli::recording::CompositeRunRecorder::new(recorders)),
   };
-  let recording = auv_cli::run_recording::RunRecordingBackend::new(store, recorder)
+  let recording = auv_cli::recording::RunRecordingBackend::new(store, recorder)
     .with_local_snapshot_write_enabled(local_write_enabled)
     .with_temporary_store_cleanup(!local_write_enabled);
   Ok(

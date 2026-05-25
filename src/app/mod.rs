@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::driver::{ObservedRect, sanitized_artifact_name};
 use crate::model::{AuvResult, now_millis};
-use crate::recording::{RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
+use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
 use crate::skill::{
   SkillCaseMatrix, SkillCaseRunOptions, SkillManifest, run_skill_case_matrix_into_run,
@@ -1133,8 +1133,8 @@ mod tests {
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::RunStatus;
   use crate::model::{CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse};
-  use crate::recording::RunSpec;
-  use crate::run_recording::{MemoryRunRecorder, RunUpdate};
+  use crate::run_builder::RunSpec;
+  use crate::recording::{MemoryRunRecorder, RunUpdate};
   use crate::store::LocalStore;
   use crate::trace::RunType;
   use serde_json::Value;

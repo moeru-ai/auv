@@ -18,7 +18,7 @@ use crate::model::{
   AuvResult, DriverCall, DriverDescriptor, DriverRunContext, InvokeRequest, InvokeResult,
   RunStatus, now_millis,
 };
-use crate::run_recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend, RunUpdate};
+use crate::recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend, RunUpdate};
 use crate::store::{ArtifactFileSource, LocalStore};
 use crate::trace::{
   EVENT_API_VERSION, EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType,
@@ -86,8 +86,8 @@ impl Runtime {
 
   pub fn start_run(
     &self,
-    spec: crate::recording::RunSpec,
-  ) -> AuvResult<crate::recording::RecordingRun> {
+    spec: crate::run_builder::RunSpec,
+  ) -> AuvResult<crate::run_builder::RecordingRun> {
     let run_id = new_run_id();
     let root_span_id = new_span_id();
     let started = now_millis();
@@ -118,7 +118,7 @@ impl Runtime {
       summary: None,
       failure: None,
     };
-    let run = crate::recording::RecordingRun::new(run, root_span, self.recording.recorder());
+    let run = crate::run_builder::RecordingRun::new(run, root_span, self.recording.recorder());
     if self.recording.requires_successful_delivery() && !run.recording_errors().is_empty() {
       return Err(format!(
         "run recording delivery failed: {}",
@@ -130,8 +130,8 @@ impl Runtime {
 
   pub fn finish_run(
     &self,
-    run: crate::recording::RecordingRun,
-    finish: crate::recording::RunFinish,
+    run: crate::run_builder::RecordingRun,
+    finish: crate::run_builder::RunFinish,
   ) -> AuvResult<RunId> {
     let failure = finish.failure.map(|message| TraceFailure { message });
     let recorded = run.finish(finish.status_code, finish.summary, failure);
@@ -155,7 +155,7 @@ impl Runtime {
   }
 
   pub fn invoke(&self, request: InvokeRequest) -> AuvResult<InvokeResult> {
-    let mut run = self.start_run(crate::recording::RunSpec::new(
+    let mut run = self.start_run(crate::run_builder::RunSpec::new(
       RunType::Command,
       "auv.command",
     ))?;
@@ -165,7 +165,7 @@ impl Runtime {
       Err(error) => {
         if let Err(finish_error) = self.finish_run(
           run,
-          crate::recording::RunFinish {
+          crate::run_builder::RunFinish {
             status_code: TraceStatusCode::Error,
             summary: Some(format!(
               "Invocation failed. Inspect the run for details: {error}"
@@ -187,7 +187,7 @@ impl Runtime {
     };
     self.finish_run(
       run,
-      crate::recording::RunFinish {
+      crate::run_builder::RunFinish {
         status_code,
         summary: Some(result.output_summary.clone()),
         failure: result.failure_message.clone(),
@@ -198,8 +198,8 @@ impl Runtime {
 
   pub fn invoke_in_span(
     &self,
-    run: &mut crate::recording::RecordingRun,
-    parent: &crate::recording::SpanRef,
+    run: &mut crate::run_builder::RecordingRun,
+    parent: &crate::run_builder::SpanRef,
     request: InvokeRequest,
   ) -> AuvResult<InvokeResult> {
     let command = self.commands.resolve(&request.command_id).ok_or_else(|| {
@@ -384,7 +384,7 @@ impl Runtime {
     let span_failure = failure_message.clone();
     run.finish_span(
       &driver_span,
-      crate::recording::SpanFinish {
+      crate::run_builder::SpanFinish {
         status_code,
         summary: Some(output_summary.clone()),
         failure: span_failure.clone(),
@@ -392,7 +392,7 @@ impl Runtime {
     )?;
     run.finish_span(
       &command_span,
-      crate::recording::SpanFinish {
+      crate::run_builder::SpanFinish {
         status_code,
         summary: Some(output_summary.clone()),
         failure: span_failure,
@@ -411,8 +411,8 @@ impl Runtime {
 
   pub fn stage_artifact_file(
     &self,
-    run: &mut crate::recording::RecordingRun,
-    span: &crate::recording::SpanRef,
+    run: &mut crate::run_builder::RecordingRun,
+    span: &crate::run_builder::SpanRef,
     role: impl Into<String>,
     source_path: &Path,
     preferred_name: impl Into<String>,
@@ -450,7 +450,7 @@ impl Runtime {
 
 fn span_record(
   name: impl Into<String>,
-  attributes: crate::recording::Attributes,
+  attributes: crate::run_builder::Attributes,
 ) -> SpanRecordV1Alpha1 {
   SpanRecordV1Alpha1 {
     api_version: SPAN_API_VERSION.to_string(),
@@ -472,8 +472,8 @@ fn command_attributes(
   driver_id: &str,
   operation: &str,
   target_application_id: Option<&str>,
-) -> crate::recording::Attributes {
-  let mut attributes = crate::recording::Attributes::new();
+) -> crate::run_builder::Attributes {
+  let mut attributes = crate::run_builder::Attributes::new();
   attributes.insert("command_id".to_string(), string_attr(command_id));
   attributes.insert("driver_id".to_string(), string_attr(driver_id));
   attributes.insert("operation".to_string(), string_attr(operation));
@@ -494,7 +494,7 @@ fn command_attributes(
 }
 
 fn record_event(
-  run: &mut crate::recording::RecordingRun,
+  run: &mut crate::run_builder::RecordingRun,
   span_id: &crate::trace::SpanId,
   name: &str,
   message: Option<String>,
@@ -503,7 +503,7 @@ fn record_event(
 }
 
 fn record_event_with_id(
-  run: &mut crate::recording::RecordingRun,
+  run: &mut crate::run_builder::RecordingRun,
   span_id: &crate::trace::SpanId,
   event_id: crate::trace::EventId,
   name: &str,
@@ -551,7 +551,7 @@ mod tests {
     AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget,
     InvokeRequest, ProducedArtifact, RunStatus, now_millis,
   };
-  use crate::run_recording::{MemoryRunRecorder, RunRecorder, RunUpdate};
+  use crate::recording::{MemoryRunRecorder, RunRecorder, RunUpdate};
   use crate::store::LocalStore;
 
   struct ArtifactFailureDriver;
@@ -709,7 +709,7 @@ mod tests {
     let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
 
     let mut run = runtime
-      .start_run(crate::recording::RunSpec::new(
+      .start_run(crate::run_builder::RunSpec::new(
         crate::trace::RunType::Execute,
         "auv.execute",
       ))
@@ -735,7 +735,7 @@ mod tests {
     let run_id = runtime
       .finish_run(
         run,
-        crate::recording::RunFinish {
+        crate::run_builder::RunFinish {
           status_code: crate::trace::TraceStatusCode::Ok,
           summary: Some("done".to_string()),
           failure: None,

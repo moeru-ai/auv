@@ -8,7 +8,7 @@ pub mod inspect;
 pub mod inspect_server;
 pub mod model;
 pub mod recording;
-pub mod run_recording;
+pub mod run_builder;
 pub mod runtime;
 pub mod scroll_scan;
 pub mod skill;

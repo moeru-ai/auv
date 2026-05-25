@@ -716,8 +716,8 @@ pub(crate) fn run_skill_manifest_recorded(
 
 pub(crate) fn run_skill_manifest_into_run(
   runtime: &Runtime,
-  run: &mut crate::recording::RecordingRun,
-  parent: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  parent: &crate::run_builder::SpanRef,
   manifest: &SkillManifest,
   options: SkillRunOptions,
 ) -> AuvResult<SkillRunSummary> {
@@ -731,8 +731,8 @@ pub(crate) fn run_skill_manifest_into_run(
 
 pub(super) fn run_skill_manifest_into_run_with_reporter(
   runtime: &Runtime,
-  run: &mut crate::recording::RecordingRun,
-  parent: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  parent: &crate::run_builder::SpanRef,
   manifest: &SkillManifest,
   options: SkillRunOptions,
   reporter: &dyn RecipeRunReporter,
@@ -770,8 +770,8 @@ pub(super) fn run_skill_manifest_into_run_with_reporter(
 
 struct SkillManifestRuntime<'a> {
   runtime: &'a Runtime,
-  run: &'a mut crate::recording::RecordingRun,
-  parent: &'a crate::recording::SpanRef,
+  run: &'a mut crate::run_builder::RecordingRun,
+  parent: &'a crate::run_builder::SpanRef,
   manifest: &'a SkillManifest,
   dry_run: bool,
   reporter: &'a dyn RecipeRunReporter,
@@ -781,8 +781,8 @@ struct SkillManifestRuntime<'a> {
 
 struct SkillStepRuntime<'a> {
   runtime: &'a Runtime,
-  run: &'a mut crate::recording::RecordingRun,
-  step_span: &'a crate::recording::SpanRef,
+  run: &'a mut crate::run_builder::RecordingRun,
+  step_span: &'a crate::run_builder::SpanRef,
   manifest: &'a SkillManifest,
   dry_run: bool,
   reporter: &'a dyn RecipeRunReporter,
@@ -836,12 +836,12 @@ fn run_skill_step_recorded(
 }
 
 fn start_recipe_step_span(
-  run: &mut crate::recording::RecordingRun,
-  parent: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  parent: &crate::run_builder::SpanRef,
   manifest: &SkillManifest,
   step_id: &str,
   index: usize,
-) -> AuvResult<crate::recording::SpanRef> {
+) -> AuvResult<crate::run_builder::SpanRef> {
   run.start_span(
     parent,
     span_record(
@@ -861,15 +861,15 @@ fn start_recipe_step_span(
 }
 
 fn finish_recipe_step_span(
-  run: &mut crate::recording::RecordingRun,
-  step_span: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  step_span: &crate::run_builder::SpanRef,
   step_id: &str,
   step_result: AuvResult<()>,
 ) -> AuvResult<()> {
   match step_result {
     Ok(()) => run.finish_span(
       step_span,
-      crate::recording::SpanFinish {
+      crate::run_builder::SpanFinish {
         status_code: TraceStatusCode::Ok,
         summary: Some(format!("Completed recipe step {step_id}")),
         failure: None,
@@ -878,7 +878,7 @@ fn finish_recipe_step_span(
     Err(error) => {
       if let Err(finish_error) = run.finish_span(
         step_span,
-        crate::recording::SpanFinish {
+        crate::run_builder::SpanFinish {
           status_code: TraceStatusCode::Error,
           summary: Some(format!("Recipe step {step_id} failed")),
           failure: Some(error.clone()),
@@ -938,13 +938,13 @@ fn run_skill_step_into_span(
 
 pub(crate) fn finish_failed_recorded_run(
   runtime: &Runtime,
-  run: crate::recording::RecordingRun,
+  run: crate::run_builder::RecordingRun,
   error: String,
   summary: String,
 ) -> AuvResult<RunId> {
   if let Err(finish_error) = runtime.finish_run(
     run,
-    crate::recording::RunFinish {
+    crate::run_builder::RunFinish {
       status_code: TraceStatusCode::Error,
       summary: Some(summary),
       failure: Some(error.clone()),
@@ -959,7 +959,7 @@ pub(crate) fn finish_failed_recorded_run(
 
 pub(crate) fn span_record(
   name: impl Into<String>,
-  attributes: crate::recording::Attributes,
+  attributes: crate::run_builder::Attributes,
 ) -> crate::trace::SpanRecordV1Alpha1 {
   crate::trace::SpanRecordV1Alpha1 {
     api_version: crate::trace::SPAN_API_VERSION.to_string(),
@@ -1765,7 +1765,7 @@ mod tests {
     let runtime = skill_test_runtime(project_root.clone(), store_root.clone());
     let manifest = two_step_manifest();
     let mut run = runtime
-      .start_run(crate::recording::RunSpec::new(
+      .start_run(crate::run_builder::RunSpec::new(
         crate::trace::RunType::Execute,
         "auv.execute",
       ))
@@ -1825,7 +1825,7 @@ mod tests {
 
     let _ = runtime.finish_run(
       run,
-      crate::recording::RunFinish {
+      crate::run_builder::RunFinish {
         status_code: crate::trace::TraceStatusCode::Ok,
         summary: Some("test finished".to_string()),
         failure: None,
@@ -1887,7 +1887,7 @@ mod tests {
     }))
     .expect("manifest should deserialize");
     let mut run = runtime
-      .start_run(crate::recording::RunSpec::new(
+      .start_run(crate::run_builder::RunSpec::new(
         crate::trace::RunType::Execute,
         "auv.execute",
       ))
@@ -1916,7 +1916,7 @@ mod tests {
 
     let _ = runtime.finish_run(
       run,
-      crate::recording::RunFinish {
+      crate::run_builder::RunFinish {
         status_code: crate::trace::TraceStatusCode::Ok,
         summary: Some("test finished".to_string()),
         failure: None,
@@ -2111,7 +2111,7 @@ mod tests {
     let mut manifest = two_step_manifest();
     manifest.steps[0].expect.output_must_contain = vec!["missing-marker".to_string()];
     let mut run = runtime
-      .start_run(crate::recording::RunSpec::new(
+      .start_run(crate::run_builder::RunSpec::new(
         crate::trace::RunType::Execute,
         "auv.execute",
       ))
@@ -2136,7 +2136,7 @@ mod tests {
     let run_id = runtime
       .finish_run(
         run,
-        crate::recording::RunFinish {
+        crate::run_builder::RunFinish {
           status_code: crate::trace::TraceStatusCode::Error,
           summary: Some("test failed as expected".to_string()),
           failure: Some(error),

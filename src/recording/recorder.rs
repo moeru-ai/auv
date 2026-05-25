@@ -1,11 +1,8 @@
-//! Run update delivery backends.
+//! Run recorder trait and concrete backends.
 //!
-//! This module defines `RunUpdate` plus the `RunRecorder` abstraction used to
-//! stream run/span/event/artifact updates to different sinks (in-memory,
-//! broadcast, inspect-server HTTP write, composite fan-out, etc.).
-//!
-//! Boundary: recorders deliver/replicate trace data; they do not execute
-//! commands or interpret automation semantics.
+//! `RunRecorder` defines a sink that accepts `RunUpdate` events plus artifact
+//! bytes. Concrete impls fan updates to in-memory buffers, tokio broadcast
+//! channels, composite multi-sinks, or the inspect server HTTP write API.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -14,354 +11,11 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 
 use crate::model::AuvResult;
-use crate::store::{ArtifactFileSource, CanonicalRun, LocalStore};
-use crate::trace::{
-  ArtifactId, ArtifactRecordV1Alpha1, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, SpanId,
-  SpanRecordV1Alpha1,
-};
+use crate::trace::{ArtifactRecordV1Alpha1, RunId};
+
+use super::update::{ApiRunUpdate, RunUpdate};
 
 const INSPECT_SERVER_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum RunUpdate {
-  RunStarted {
-    run_id: RunId,
-    run: RunRecordV1Alpha1,
-  },
-  SpanStarted {
-    run_id: RunId,
-    span: SpanRecordV1Alpha1,
-  },
-  EventAppended {
-    run_id: RunId,
-    event: EventRecordV1Alpha1,
-  },
-  ArtifactCreated {
-    run_id: RunId,
-    artifact: ArtifactRecordV1Alpha1,
-  },
-  SpanFinished {
-    run_id: RunId,
-    span: SpanRecordV1Alpha1,
-  },
-  RunFinished {
-    run_id: RunId,
-    run: RunRecordV1Alpha1,
-  },
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApiRunRecord {
-  pub api_version: String,
-  pub run_id: RunId,
-  pub trace_id: crate::trace::TraceId,
-  pub run_type: crate::trace::RunType,
-  pub state: crate::trace::TraceState,
-  pub status_code: crate::trace::TraceStatusCode,
-  pub started_at_millis: u64,
-  pub finished_at_millis: Option<u64>,
-  pub root_span_id: SpanId,
-  pub attributes: crate::recording::Attributes,
-  pub summary: Option<String>,
-  pub failure: Option<crate::trace::TraceFailure>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApiSpanRecord {
-  pub api_version: String,
-  pub span_id: SpanId,
-  pub parent_span_id: Option<SpanId>,
-  pub name: String,
-  pub state: crate::trace::TraceState,
-  pub status_code: crate::trace::TraceStatusCode,
-  pub started_at_millis: u64,
-  pub finished_at_millis: Option<u64>,
-  pub attributes: crate::recording::Attributes,
-  pub summary: Option<String>,
-  pub failure: Option<crate::trace::TraceFailure>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApiEventRecord {
-  pub api_version: String,
-  pub event_id: crate::trace::EventId,
-  pub span_id: SpanId,
-  pub name: String,
-  pub timestamp_millis: u64,
-  pub attributes: crate::recording::Attributes,
-  pub message: Option<String>,
-  pub artifact_ids: Vec<ArtifactId>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ApiArtifactRecord {
-  pub api_version: String,
-  pub artifact_id: ArtifactId,
-  pub span_id: SpanId,
-  pub event_id: Option<crate::trace::EventId>,
-  pub role: String,
-  pub mime_type: String,
-  pub path: String,
-  pub sha256: Option<String>,
-  pub attributes: crate::recording::Attributes,
-  pub summary: Option<String>,
-}
-
-impl From<RunRecordV1Alpha1> for ApiRunRecord {
-  fn from(record: RunRecordV1Alpha1) -> Self {
-    Self {
-      api_version: record.api_version,
-      run_id: record.run_id,
-      trace_id: record.trace_id,
-      run_type: record.run_type,
-      state: record.state,
-      status_code: record.status_code,
-      started_at_millis: api_millis(record.started_at_millis),
-      finished_at_millis: record.finished_at_millis.map(api_millis),
-      root_span_id: record.root_span_id,
-      attributes: record.attributes,
-      summary: record.summary,
-      failure: record.failure,
-    }
-  }
-}
-
-impl From<ApiRunRecord> for RunRecordV1Alpha1 {
-  fn from(record: ApiRunRecord) -> Self {
-    Self {
-      api_version: record.api_version,
-      run_id: record.run_id,
-      trace_id: record.trace_id,
-      run_type: record.run_type,
-      state: record.state,
-      status_code: record.status_code,
-      started_at_millis: u128::from(record.started_at_millis),
-      finished_at_millis: record.finished_at_millis.map(u128::from),
-      root_span_id: record.root_span_id,
-      attributes: record.attributes,
-      summary: record.summary,
-      failure: record.failure,
-    }
-  }
-}
-
-impl From<SpanRecordV1Alpha1> for ApiSpanRecord {
-  fn from(record: SpanRecordV1Alpha1) -> Self {
-    Self {
-      api_version: record.api_version,
-      span_id: record.span_id,
-      parent_span_id: record.parent_span_id,
-      name: record.name,
-      state: record.state,
-      status_code: record.status_code,
-      started_at_millis: api_millis(record.started_at_millis),
-      finished_at_millis: record.finished_at_millis.map(api_millis),
-      attributes: record.attributes,
-      summary: record.summary,
-      failure: record.failure,
-    }
-  }
-}
-
-impl From<ApiSpanRecord> for SpanRecordV1Alpha1 {
-  fn from(record: ApiSpanRecord) -> Self {
-    Self {
-      api_version: record.api_version,
-      span_id: record.span_id,
-      parent_span_id: record.parent_span_id,
-      name: record.name,
-      state: record.state,
-      status_code: record.status_code,
-      started_at_millis: u128::from(record.started_at_millis),
-      finished_at_millis: record.finished_at_millis.map(u128::from),
-      attributes: record.attributes,
-      summary: record.summary,
-      failure: record.failure,
-    }
-  }
-}
-
-impl From<EventRecordV1Alpha1> for ApiEventRecord {
-  fn from(record: EventRecordV1Alpha1) -> Self {
-    Self {
-      api_version: record.api_version,
-      event_id: record.event_id,
-      span_id: record.span_id,
-      name: record.name,
-      timestamp_millis: api_millis(record.timestamp_millis),
-      attributes: record.attributes,
-      message: record.message,
-      artifact_ids: record.artifact_ids,
-    }
-  }
-}
-
-impl From<ApiEventRecord> for EventRecordV1Alpha1 {
-  fn from(record: ApiEventRecord) -> Self {
-    Self {
-      api_version: record.api_version,
-      event_id: record.event_id,
-      span_id: record.span_id,
-      name: record.name,
-      timestamp_millis: u128::from(record.timestamp_millis),
-      attributes: record.attributes,
-      message: record.message,
-      artifact_ids: record.artifact_ids,
-    }
-  }
-}
-
-fn api_millis(value: u128) -> u64 {
-  u64::try_from(value).unwrap_or(u64::MAX)
-}
-
-impl From<ArtifactRecordV1Alpha1> for ApiArtifactRecord {
-  fn from(record: ArtifactRecordV1Alpha1) -> Self {
-    Self {
-      api_version: record.api_version,
-      artifact_id: record.artifact_id,
-      span_id: record.span_id,
-      event_id: record.event_id,
-      role: record.role,
-      mime_type: record.mime_type,
-      path: record.path,
-      sha256: record.sha256,
-      attributes: record.attributes,
-      summary: record.summary,
-    }
-  }
-}
-
-impl From<ApiArtifactRecord> for ArtifactRecordV1Alpha1 {
-  fn from(record: ApiArtifactRecord) -> Self {
-    Self {
-      api_version: record.api_version,
-      artifact_id: record.artifact_id,
-      span_id: record.span_id,
-      event_id: record.event_id,
-      role: record.role,
-      mime_type: record.mime_type,
-      path: record.path,
-      sha256: record.sha256,
-      attributes: record.attributes,
-      summary: record.summary,
-    }
-  }
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum ApiRunUpdate {
-  RunStarted {
-    #[serde(rename = "runId")]
-    run_id: RunId,
-    run: ApiRunRecord,
-  },
-  SpanStarted {
-    #[serde(rename = "runId")]
-    run_id: RunId,
-    span: ApiSpanRecord,
-  },
-  EventAppended {
-    #[serde(rename = "runId")]
-    run_id: RunId,
-    event: ApiEventRecord,
-  },
-  ArtifactCreated {
-    #[serde(rename = "runId")]
-    run_id: RunId,
-    artifact: ApiArtifactRecord,
-  },
-  SpanFinished {
-    #[serde(rename = "runId")]
-    run_id: RunId,
-    span: ApiSpanRecord,
-  },
-  RunFinished {
-    #[serde(rename = "runId")]
-    run_id: RunId,
-    run: ApiRunRecord,
-  },
-}
-
-impl From<RunUpdate> for ApiRunUpdate {
-  fn from(update: RunUpdate) -> Self {
-    match update {
-      RunUpdate::RunStarted { run_id, run } => Self::RunStarted {
-        run_id,
-        run: run.into(),
-      },
-      RunUpdate::SpanStarted { run_id, span } => Self::SpanStarted {
-        run_id,
-        span: span.into(),
-      },
-      RunUpdate::EventAppended { run_id, event } => Self::EventAppended {
-        run_id,
-        event: event.into(),
-      },
-      RunUpdate::ArtifactCreated { run_id, artifact } => Self::ArtifactCreated {
-        run_id,
-        artifact: artifact.into(),
-      },
-      RunUpdate::SpanFinished { run_id, span } => Self::SpanFinished {
-        run_id,
-        span: span.into(),
-      },
-      RunUpdate::RunFinished { run_id, run } => Self::RunFinished {
-        run_id,
-        run: run.into(),
-      },
-    }
-  }
-}
-
-impl From<ApiRunUpdate> for RunUpdate {
-  fn from(update: ApiRunUpdate) -> Self {
-    match update {
-      ApiRunUpdate::RunStarted { run_id, run } => Self::RunStarted {
-        run_id,
-        run: run.into(),
-      },
-      ApiRunUpdate::SpanStarted { run_id, span } => Self::SpanStarted {
-        run_id,
-        span: span.into(),
-      },
-      ApiRunUpdate::EventAppended { run_id, event } => Self::EventAppended {
-        run_id,
-        event: event.into(),
-      },
-      ApiRunUpdate::ArtifactCreated { run_id, artifact } => Self::ArtifactCreated {
-        run_id,
-        artifact: artifact.into(),
-      },
-      ApiRunUpdate::SpanFinished { run_id, span } => Self::SpanFinished {
-        run_id,
-        span: span.into(),
-      },
-      ApiRunUpdate::RunFinished { run_id, run } => Self::RunFinished {
-        run_id,
-        run: run.into(),
-      },
-    }
-  }
-}
-
-impl RunUpdate {
-  pub fn run_id(&self) -> &RunId {
-    match self {
-      Self::RunStarted { run_id, .. }
-      | Self::SpanStarted { run_id, .. }
-      | Self::EventAppended { run_id, .. }
-      | Self::ArtifactCreated { run_id, .. }
-      | Self::SpanFinished { run_id, .. }
-      | Self::RunFinished { run_id, .. } => run_id,
-    }
-  }
-}
 
 pub trait RunRecorder: Send + Sync {
   fn record(&self, update: RunUpdate) -> AuvResult<()>;
@@ -583,118 +237,6 @@ fn inspect_server_write_timeout_for_test() -> Duration {
 }
 
 #[derive(Clone)]
-pub struct RunRecordingBackend {
-  store: LocalStore,
-  recorder: Arc<dyn RunRecorder>,
-  local_snapshot_write_enabled: bool,
-  cleanup_store_on_drop: bool,
-}
-
-impl RunRecordingBackend {
-  pub fn new(store: LocalStore, recorder: Arc<dyn RunRecorder>) -> Self {
-    Self {
-      store,
-      recorder,
-      local_snapshot_write_enabled: true,
-      cleanup_store_on_drop: false,
-    }
-  }
-
-  pub fn local_only(store: LocalStore) -> Self {
-    Self {
-      store,
-      recorder: Arc::new(NoopRunRecorder),
-      local_snapshot_write_enabled: true,
-      cleanup_store_on_drop: false,
-    }
-  }
-
-  pub fn with_local_snapshot_write_enabled(mut self, enabled: bool) -> Self {
-    self.local_snapshot_write_enabled = enabled;
-    self
-  }
-
-  pub fn with_temporary_store_cleanup(mut self, cleanup: bool) -> Self {
-    self.cleanup_store_on_drop = cleanup;
-    self
-  }
-
-  pub fn store(&self) -> &LocalStore {
-    &self.store
-  }
-
-  pub fn recorder(&self) -> Arc<dyn RunRecorder> {
-    self.recorder.clone()
-  }
-
-  pub fn record(&self, update: RunUpdate) -> AuvResult<()> {
-    self.recorder.record(update)
-  }
-
-  pub fn requires_successful_delivery(&self) -> bool {
-    self.recorder.requires_successful_delivery()
-  }
-
-  pub fn read_run(&self, run_id: &str) -> AuvResult<CanonicalRun> {
-    self.store.read_run(run_id)
-  }
-
-  pub fn write_run_snapshot(&self, snapshot: &CanonicalRun) -> AuvResult<()> {
-    if !self.local_snapshot_write_enabled {
-      return Ok(());
-    }
-    self.store.replace_run_snapshot(snapshot)
-  }
-
-  pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<std::path::PathBuf> {
-    self.store.run_dir(run_id)
-  }
-
-  pub fn stage_artifact(
-    &self,
-    run_id: &RunId,
-    index: usize,
-    artifact: crate::model::ProducedArtifact,
-    span_id: &SpanId,
-    event_id: Option<crate::trace::EventId>,
-  ) -> AuvResult<ArtifactRecordV1Alpha1> {
-    self
-      .store
-      .stage_artifact(run_id, index, artifact, span_id, event_id)
-  }
-
-  pub fn stage_artifact_file(
-    &self,
-    run_id: &RunId,
-    index: usize,
-    span_id: &SpanId,
-    event_id: Option<crate::trace::EventId>,
-    artifact: ArtifactFileSource,
-  ) -> AuvResult<ArtifactRecordV1Alpha1> {
-    self
-      .store
-      .stage_artifact_file(run_id, index, span_id, event_id, artifact)
-  }
-
-  pub fn record_artifact_bytes(
-    &self,
-    run_id: &RunId,
-    artifact: &ArtifactRecordV1Alpha1,
-    path: &Path,
-  ) -> AuvResult<()> {
-    self.recorder.record_artifact_bytes(run_id, artifact, path)
-  }
-}
-
-impl Drop for RunRecordingBackend {
-  fn drop(&mut self) {
-    if self.cleanup_store_on_drop {
-      let _ = std::fs::remove_dir_all(self.store.root());
-    }
-  }
-}
-
-#[derive(Clone)]
 pub struct MemoryRunRecorder {
   updates: Arc<Mutex<Vec<RunUpdate>>>,
 }
@@ -757,13 +299,12 @@ impl RunRecorder for BroadcastRunRecorder {
 mod tests {
   use std::sync::{Arc, Mutex};
 
-  use crate::store::{ArtifactFileSource, LocalStore};
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, RUN_API_VERSION, RunId,
     RunRecordV1Alpha1, RunType, SpanId, TraceId, TraceState, TraceStatusCode,
   };
 
-  use super::{ApiRunUpdate, InspectServerRunRecorder, RunRecorder, RunUpdate};
+  use super::{InspectServerRunRecorder, RunRecorder, RunUpdate};
 
   #[derive(Default)]
   struct CapturingRecorder {
@@ -801,21 +342,6 @@ mod tests {
   }
 
   #[test]
-  fn run_update_serializes_public_shape_as_camel_case() {
-    let update = RunUpdate::RunStarted {
-      run_id: RunId::new("run_update_test"),
-      run: test_run(),
-    };
-
-    let value = serde_json::to_value(ApiRunUpdate::from(update)).expect("update should serialize");
-    assert_eq!(value["type"], "runStarted");
-    assert_eq!(value["runId"], "run_update_test");
-    assert_eq!(value["run"]["apiVersion"], "auv.run.v1alpha1");
-    assert_eq!(value["run"]["rootSpanId"], "0000000000000001");
-    assert!(value["run"].get("root_span_id").is_none());
-  }
-
-  #[test]
   fn composite_recorder_fans_out_to_every_target() {
     let first = Arc::new(CapturingRecorder::default());
     let second = Arc::new(CapturingRecorder::default());
@@ -836,50 +362,6 @@ mod tests {
   #[test]
   fn inspect_server_recorder_has_bounded_request_timeout() {
     assert!(super::inspect_server_write_timeout_for_test() <= std::time::Duration::from_secs(10));
-  }
-
-  #[test]
-  fn recording_backend_cleans_temporary_store_on_drop() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-recording-temp-store-cleanup-{}",
-      crate::model::now_millis()
-    ));
-    let source = std::env::temp_dir().join(format!(
-      "auv-recording-temp-source-{}.txt",
-      crate::model::now_millis()
-    ));
-    std::fs::write(&source, "artifact body").expect("artifact source should write");
-    {
-      let store = LocalStore::new(root.clone()).expect("store should initialize");
-      let recording = super::RunRecordingBackend::new(store, Arc::new(super::NoopRunRecorder))
-        .with_local_snapshot_write_enabled(false)
-        .with_temporary_store_cleanup(true);
-      let artifact = recording
-        .stage_artifact_file(
-          &RunId::new("run_temp_cleanup"),
-          0,
-          &SpanId::new("0000000000000001"),
-          None,
-          ArtifactFileSource {
-            role: "text".to_string(),
-            source_path: source.clone(),
-            preferred_name: "artifact.txt".to_string(),
-            summary: None,
-          },
-        )
-        .expect("temporary artifact should stage");
-      assert!(
-        recording
-          .run_dir("run_temp_cleanup")
-          .expect("run dir")
-          .join(artifact.path)
-          .exists()
-      );
-      assert!(root.exists());
-    }
-
-    let _ = std::fs::remove_file(source);
-    assert!(!root.exists());
   }
 
   #[tokio::test(flavor = "multi_thread")]
@@ -1077,5 +559,4 @@ mod tests {
     assert!(error.contains("inspect server write rejected"));
     assert!(error.contains("409"));
   }
-
 }

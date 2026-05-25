@@ -43,13 +43,13 @@ pub(crate) fn run_skill_case_matrix_recorded(
   matrix: &SkillCaseMatrix,
   options: SkillCaseRunOptions,
 ) -> AuvResult<RunId> {
-  let mut attributes = crate::recording::Attributes::new();
+  let mut attributes = crate::run_builder::Attributes::new();
   attributes.insert(
     "auv.case_matrix.skill_id".to_string(),
     string_attr(matrix.skill_id.clone()),
   );
   let mut run = runtime.start_run(
-    crate::recording::RunSpec::new(crate::trace::RunType::Validate, "auv.validate")
+    crate::run_builder::RunSpec::new(crate::trace::RunType::Validate, "auv.validate")
       .with_attributes(attributes),
   )?;
   let root = run.root_span();
@@ -57,7 +57,7 @@ pub(crate) fn run_skill_case_matrix_recorded(
   match run_skill_case_matrix_into_run(runtime, &mut run, &root, manifest, matrix, options) {
     Ok(selected_case_count) => runtime.finish_run(
       run,
-      crate::recording::RunFinish {
+      crate::run_builder::RunFinish {
         status_code: TraceStatusCode::Ok,
         summary: Some(format!(
           "Validated {} selected case(s) for {}",
@@ -77,8 +77,8 @@ pub(crate) fn run_skill_case_matrix_recorded(
 
 pub(crate) fn run_skill_case_matrix_into_run(
   runtime: &Runtime,
-  run: &mut crate::recording::RecordingRun,
-  parent: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  parent: &crate::run_builder::SpanRef,
   manifest: &SkillManifest,
   matrix: &SkillCaseMatrix,
   options: SkillCaseRunOptions,
@@ -132,7 +132,7 @@ pub(crate) fn run_skill_case_matrix_into_run(
       Ok(_summary) => {
         run.finish_span(
           &execute_span,
-          crate::recording::SpanFinish {
+          crate::run_builder::SpanFinish {
             status_code: TraceStatusCode::Ok,
             summary: Some(format!("Executed skill {}", manifest.recipe_id)),
             failure: None,
@@ -140,7 +140,7 @@ pub(crate) fn run_skill_case_matrix_into_run(
         )?;
         run.finish_span(
           &case_span,
-          crate::recording::SpanFinish {
+          crate::run_builder::SpanFinish {
             status_code: TraceStatusCode::Ok,
             summary: Some(format!("Case {} passed", case.case_id)),
             failure: None,
@@ -308,16 +308,16 @@ pub fn render_skill_case_matrix_report(
 }
 
 fn finish_case_spans_after_error(
-  run: &mut crate::recording::RecordingRun,
-  execute_span: &crate::recording::SpanRef,
-  case_span: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  execute_span: &crate::run_builder::SpanRef,
+  case_span: &crate::run_builder::SpanRef,
   manifest: &SkillManifest,
   case: &SkillCase,
   error: &str,
 ) -> AuvResult<()> {
   run.finish_span(
     execute_span,
-    crate::recording::SpanFinish {
+    crate::run_builder::SpanFinish {
       status_code: TraceStatusCode::Error,
       summary: Some(format!("Skill {} failed", manifest.recipe_id)),
       failure: Some(error.to_string()),
@@ -325,7 +325,7 @@ fn finish_case_spans_after_error(
   )?;
   run.finish_span(
     case_span,
-    crate::recording::SpanFinish {
+    crate::run_builder::SpanFinish {
       status_code: TraceStatusCode::Error,
       summary: Some(format!("Case {} failed", case.case_id)),
       failure: Some(error.to_string()),

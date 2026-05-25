@@ -346,7 +346,7 @@ pub fn scan_window_region(
   runtime: &crate::runtime::Runtime,
   options: ScanWindowRegionOptions,
 ) -> AuvResult<crate::trace::RunId> {
-  let mut run = runtime.start_run(crate::recording::RunSpec::new(
+  let mut run = runtime.start_run(crate::run_builder::RunSpec::new(
     crate::trace::RunType::Execute,
     "auv.scan.window_region",
   ))?;
@@ -355,7 +355,7 @@ pub fn scan_window_region(
   match scan_window_region_into_run(runtime, &mut run, &root, options) {
     Ok(summary) => runtime.finish_run(
       run,
-      crate::recording::RunFinish {
+      crate::run_builder::RunFinish {
         status_code: crate::trace::TraceStatusCode::Ok,
         summary: Some(summary),
         failure: None,
@@ -364,7 +364,7 @@ pub fn scan_window_region(
     Err(error) => {
       let finish_result = runtime.finish_run(
         run,
-        crate::recording::RunFinish {
+        crate::run_builder::RunFinish {
           status_code: crate::trace::TraceStatusCode::Error,
           summary: Some(format!("Window region scan failed: {error}")),
           failure: Some(error.clone()),
@@ -382,8 +382,8 @@ pub fn scan_window_region(
 
 fn scan_window_region_into_run(
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::recording::RecordingRun,
-  root: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  root: &crate::run_builder::SpanRef,
   options: ScanWindowRegionOptions,
 ) -> AuvResult<String> {
   let mut state = ScanWindowRegionState::default();
@@ -780,8 +780,8 @@ fn region_inputs(target: &ScanTarget) -> BTreeMap<String, String> {
 
 fn scan_window_region_page(
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::recording::RecordingRun,
-  root: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  root: &crate::run_builder::SpanRef,
   page_index: usize,
   options: &ScanWindowRegionOptions,
   state: &mut ScanWindowRegionState,
@@ -1399,8 +1399,8 @@ fn parse_hook_action(raw: &str) -> AuvResult<HookAction> {
 
 fn invoke_scan_command(
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::recording::RecordingRun,
-  root: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  root: &crate::run_builder::SpanRef,
   request: InvokeRequest,
   label: &str,
 ) -> AuvResult<InvokeResult> {
@@ -1669,8 +1669,8 @@ impl ListItemCandidateContextArtifact {
 
 fn enrich_list_item_observations_with_crops(
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::recording::RecordingRun,
-  root: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  root: &crate::run_builder::SpanRef,
   page_index: usize,
   screenshot_artifact: Option<&Path>,
   options: &ScanWindowRegionOptions,
@@ -1935,8 +1935,8 @@ fn sanitize_scan_artifact_component(raw: &str) -> String {
 
 fn run_list_item_candidate_hooks(
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::recording::RecordingRun,
-  root: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  root: &crate::run_builder::SpanRef,
   recipe: Option<&str>,
   inline_hook: Option<&crate::skill::SkillManifest>,
   options: &ScanWindowRegionOptions,
@@ -2018,8 +2018,8 @@ fn validate_list_item_candidate_hook_decision(decision: &HookDecisionRecord) -> 
 
 fn run_optional_scan_hook(
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::recording::RecordingRun,
-  root: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  root: &crate::run_builder::SpanRef,
   recipe: Option<&str>,
   inline_hook: Option<&crate::skill::SkillManifest>,
   hook_name: &str,
@@ -2088,8 +2088,8 @@ fn resolve_scan_hook_manifest(
 
 fn stage_scan_artifact(
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::recording::RecordingRun,
-  root: &crate::recording::SpanRef,
+  run: &mut crate::run_builder::RecordingRun,
+  root: &crate::run_builder::SpanRef,
   artifact: &ScrollScanArtifact,
 ) -> AuvResult<PathBuf> {
   let temp_path = write_scan_artifact(artifact)?;

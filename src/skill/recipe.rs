@@ -100,13 +100,13 @@ impl<'a> SkillRecipeRunner<'a> {
 
 struct RecipeTraceRecorder<'a> {
   runtime: &'a Runtime,
-  run: crate::recording::RecordingRun,
-  root: crate::recording::SpanRef,
+  run: crate::run_builder::RecordingRun,
+  root: crate::run_builder::SpanRef,
 }
 
 impl<'a> RecipeTraceRecorder<'a> {
   fn start(runtime: &'a Runtime, recipe: &SkillRecipe) -> AuvResult<Self> {
-    let mut attributes = crate::recording::Attributes::new();
+    let mut attributes = crate::run_builder::Attributes::new();
 
     attributes.insert(
       "auv.recipe.id".to_string(),
@@ -114,7 +114,7 @@ impl<'a> RecipeTraceRecorder<'a> {
     );
 
     let run = runtime.start_run(
-      crate::recording::RunSpec::new(crate::trace::RunType::Execute, "auv.execute")
+      crate::run_builder::RunSpec::new(crate::trace::RunType::Execute, "auv.execute")
         .with_attributes(attributes),
     )?;
     let root = run.root_span();
@@ -122,11 +122,11 @@ impl<'a> RecipeTraceRecorder<'a> {
     Ok(Self { runtime, run, root })
   }
 
-  fn root(&self) -> crate::recording::SpanRef {
+  fn root(&self) -> crate::run_builder::SpanRef {
     self.root.clone()
   }
 
-  fn run_mut(&mut self) -> &mut crate::recording::RecordingRun {
+  fn run_mut(&mut self) -> &mut crate::run_builder::RecordingRun {
     &mut self.run
   }
 
@@ -137,7 +137,7 @@ impl<'a> RecipeTraceRecorder<'a> {
   ) -> AuvResult<RunId> {
     let run_id = self.runtime.finish_run(
       self.run,
-      crate::recording::RunFinish {
+      crate::run_builder::RunFinish {
         status_code: TraceStatusCode::Ok,
         summary: Some(format!("Executed skill {}", manifest.recipe_id)),
         failure: None,

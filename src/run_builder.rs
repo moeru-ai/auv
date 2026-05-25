@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::model::{AuvResult, now_millis};
-use crate::run_recording::{RunRecorder, RunUpdate};
+use crate::recording::{RunRecorder, RunUpdate};
 use crate::store::CanonicalRun;
 use crate::trace::{
   ArtifactId, ArtifactRecordV1Alpha1, EventId, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1,
@@ -36,7 +36,7 @@ mod tests {
     SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
 
-  use crate::run_recording::{BroadcastRunRecorder, MemoryRunRecorder, RunUpdate};
+  use crate::recording::{BroadcastRunRecorder, MemoryRunRecorder, RunUpdate};
 
   use super::{RecordingRun, SpanFinish, SpanRef};
 
