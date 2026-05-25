@@ -258,6 +258,29 @@ pub struct StopDecision {
   pub completeness_claim: CompletenessClaim,
 }
 
+// REVIEW: These thresholds are intentionally conservative. They only try to
+// identify "scroll likely had no visible effect" across adjacent screenshots,
+// not general scene similarity. Revisit after collecting more real scan traces
+// from window lists with animation, sticky headers, and partially occluded
+// content.
+const SCREENSHOT_STABILITY_SAMPLE_GRID: u32 = 24;
+const SCREENSHOT_STABILITY_MAX_MEAN_ABS_DIFF: f64 = 0.02;
+const SCREENSHOT_STABILITY_MAX_CHANGED_SAMPLE_RATIO: f64 = 0.08;
+const SCREENSHOT_STABILITY_CHANGED_SAMPLE_DELTA: f64 = 0.04;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScreenshotDiffStability {
+  mean_abs_diff: f64,
+  changed_sample_ratio: f64,
+}
+
+impl ScreenshotDiffStability {
+  fn is_stable(&self) -> bool {
+    self.mean_abs_diff <= SCREENSHOT_STABILITY_MAX_MEAN_ABS_DIFF
+      && self.changed_sample_ratio <= SCREENSHOT_STABILITY_MAX_CHANGED_SAMPLE_RATIO
+  }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ScrollScanArtifact {
   pub scan_id: String,
@@ -376,19 +399,29 @@ fn scan_window_region_into_run(
     }
 
     // Boundary evidence is still incomplete. We now distinguish raw
-    // no-progress heuristics from adjacent-page repeated row-band overlap, but
-    // downward scans still need stronger bottom detection and upward scans
-    // still need stronger top detection. Future layers should add screenshot
-    // diff stability, scrollbar/thumb geometry, AX scroll values, or explicit
-    // driver-level scroll-effect evidence. Sectioned lists also need
-    // middleware that can detect separators, sticky headers, or section
-    // boundary regions during the scroll loop so a scan can stop at, enter, or
-    // report section transitions deliberately.
+    // no-progress heuristics from adjacent-page repeated row-band overlap and
+    // adjacent screenshot-diff stability, but downward scans still need
+    // stronger bottom detection and upward scans still need stronger top
+    // detection. Future layers should add scrollbar/thumb geometry, AX scroll
+    // values, or explicit driver-level scroll-effect evidence. Sectioned lists
+    // also need middleware that can detect separators, sticky headers, or
+    // section boundary regions during the scroll loop so a scan can stop at,
+    // enter, or report section transitions deliberately.
     // MaaFW reference: Context::wait_freezes and ActionHelper compare image
     // stability around an action, while Pipeline roi/target references keep
     // image evidence tied to a node result; see:
     // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Context.cpp
     // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Component/ActionHelper.cpp
+    let screenshot_diff_stability =
+      match screenshot_diff_stability_for_pages(page_index, &state.pages) {
+        Ok(stability) => stability,
+        Err(error) => {
+          state.warnings.push(format!(
+            "failed to compare adjacent page screenshots for boundary evidence: {error}"
+          ));
+          None
+        }
+      };
     let scroll_boundary_candidate = scroll_boundary_candidate_for_progress(
       &options.direction,
       page_index,
@@ -396,6 +429,7 @@ fn scan_window_region_into_run(
       consecutive_no_progress,
       new_observation_count,
       &state.observations,
+      screenshot_diff_stability.as_ref(),
     );
     if let Some(candidate) = scroll_boundary_candidate.clone() {
       state.scroll_boundary_candidates.push(candidate);
@@ -907,8 +941,8 @@ fn bounded_or_no_progress_stop(
     // scan direction separately. The claim is still heuristic (no AX scroll
     // position or scrollbar-thumb evidence backs it) but is more precise than
     // the generic CompleteByNoVisualProgress fallback.
-    // A future layer should corroborate with AX scroll values or screenshot
-    // diff stability (see TODO 1385).
+    // A future layer should corroborate further with AX scroll values or
+    // provider-reported scroll state (see TODO 1385).
     let claim = direction_aware_no_progress_claim(direction);
     return Some(stop_decision(
       StopReason::NoProgressLimit,
@@ -1006,6 +1040,7 @@ fn scroll_boundary_candidate_for_progress(
   consecutive_no_progress: usize,
   new_observation_count: usize,
   observations: &[CollectionObservation],
+  screenshot_diff_stability: Option<&ScreenshotDiffStability>,
 ) -> Option<ScrollBoundaryCandidate> {
   if page_index == 0 || scroll_count == 0 || new_observation_count > 0 {
     return None;
@@ -1013,10 +1048,15 @@ fn scroll_boundary_candidate_for_progress(
   let normalized_direction = direction.trim().to_ascii_lowercase();
   let boundary = scroll_boundary_for_direction(&normalized_direction)?;
   let repeated_overlap_count = repeated_row_band_overlap_count(page_index, observations);
-  let (basis, confidence) = if repeated_overlap_count >= 2 {
-    ("repeated_row_band_overlap", "corroborated")
-  } else {
-    ("no_new_observations_after_scroll", "heuristic")
+  let screenshot_stable = screenshot_diff_stability.is_some_and(|stability| stability.is_stable());
+  let (basis, confidence) = match (repeated_overlap_count >= 2, screenshot_stable) {
+    (true, true) => (
+      "repeated_row_band_overlap+screenshot_diff_stability",
+      "corroborated",
+    ),
+    (true, false) => ("repeated_row_band_overlap", "corroborated"),
+    (false, true) => ("screenshot_diff_stability", "corroborated"),
+    (false, false) => ("no_new_observations_after_scroll", "heuristic"),
   };
   Some(ScrollBoundaryCandidate {
     page_index,
@@ -1026,6 +1066,102 @@ fn scroll_boundary_candidate_for_progress(
     basis: basis.to_string(),
     confidence: confidence.to_string(),
     consecutive_no_progress,
+  })
+}
+
+fn screenshot_diff_stability_for_pages(
+  page_index: usize,
+  pages: &[ScanPageRecord],
+) -> AuvResult<Option<ScreenshotDiffStability>> {
+  if page_index == 0 {
+    return Ok(None);
+  }
+  let previous_screenshot = pages
+    .iter()
+    .find(|page| page.page_index == page_index - 1)
+    .and_then(|page| page.screenshot_artifact.as_deref());
+  let current_screenshot = pages
+    .iter()
+    .find(|page| page.page_index == page_index)
+    .and_then(|page| page.screenshot_artifact.as_deref());
+  let (Some(previous_screenshot), Some(current_screenshot)) =
+    (previous_screenshot, current_screenshot)
+  else {
+    return Ok(None);
+  };
+  screenshot_diff_stability(previous_screenshot, current_screenshot).map(Some)
+}
+
+fn screenshot_diff_stability(
+  previous_screenshot: &Path,
+  current_screenshot: &Path,
+) -> AuvResult<ScreenshotDiffStability> {
+  let previous = image::open(previous_screenshot).map_err(|error| {
+    format!(
+      "failed to open previous screenshot {}: {error}",
+      previous_screenshot.display()
+    )
+  })?;
+  let current = image::open(current_screenshot).map_err(|error| {
+    format!(
+      "failed to open current screenshot {}: {error}",
+      current_screenshot.display()
+    )
+  })?;
+
+  let previous = previous.to_rgba8();
+  let current = current.to_rgba8();
+  let width = previous.width();
+  let height = previous.height();
+  if width == 0 || height == 0 {
+    return Err("cannot compare zero-sized screenshots for boundary evidence".to_string());
+  }
+  if width != current.width() || height != current.height() {
+    return Ok(ScreenshotDiffStability {
+      mean_abs_diff: 1.0,
+      changed_sample_ratio: 1.0,
+    });
+  }
+
+  let sample_grid_x = SCREENSHOT_STABILITY_SAMPLE_GRID.min(width);
+  let sample_grid_y = SCREENSHOT_STABILITY_SAMPLE_GRID.min(height);
+  let mut total_diff = 0.0;
+  let mut changed_samples = 0usize;
+  let mut sample_count = 0usize;
+
+  for sample_y in 0..sample_grid_y {
+    let y = if sample_grid_y == 1 {
+      0
+    } else {
+      sample_y * (height - 1) / (sample_grid_y - 1)
+    };
+    for sample_x in 0..sample_grid_x {
+      let x = if sample_grid_x == 1 {
+        0
+      } else {
+        sample_x * (width - 1) / (sample_grid_x - 1)
+      };
+      let previous_pixel = previous.get_pixel(x, y).0;
+      let current_pixel = current.get_pixel(x, y).0;
+      let pixel_diff = (f64::from(previous_pixel[0].abs_diff(current_pixel[0]))
+        + f64::from(previous_pixel[1].abs_diff(current_pixel[1]))
+        + f64::from(previous_pixel[2].abs_diff(current_pixel[2])))
+        / (255.0 * 3.0);
+      total_diff += pixel_diff;
+      if pixel_diff >= SCREENSHOT_STABILITY_CHANGED_SAMPLE_DELTA {
+        changed_samples += 1;
+      }
+      sample_count += 1;
+    }
+  }
+
+  if sample_count == 0 {
+    return Err("no screenshot samples available for boundary evidence".to_string());
+  }
+
+  Ok(ScreenshotDiffStability {
+    mean_abs_diff: total_diff / sample_count as f64,
+    changed_sample_ratio: changed_samples as f64 / sample_count as f64,
   })
 }
 
@@ -1978,6 +2114,7 @@ fn write_scan_artifact(artifact: &ScrollScanArtifact) -> AuvResult<PathBuf> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use image::{Rgba, RgbaImage};
   use std::collections::BTreeMap;
   use std::env;
   use std::fs;
@@ -2310,8 +2447,8 @@ mod tests {
 
   #[test]
   fn scroll_boundary_candidate_maps_direction_to_boundary() {
-    let candidate =
-      scroll_boundary_candidate_for_progress("up", 2, 2, 1, 0, &[]).expect("boundary candidate");
+    let candidate = scroll_boundary_candidate_for_progress("up", 2, 2, 1, 0, &[], None)
+      .expect("boundary candidate");
 
     assert_eq!(candidate.boundary, ScrollBoundary::Top);
     assert_eq!(candidate.direction, "up");
@@ -2321,16 +2458,16 @@ mod tests {
 
   #[test]
   fn scroll_boundary_candidate_requires_prior_scroll_and_no_new_observations() {
-    assert!(scroll_boundary_candidate_for_progress("down", 0, 0, 0, 0, &[]).is_none());
-    assert!(scroll_boundary_candidate_for_progress("down", 1, 0, 1, 0, &[]).is_none());
-    assert!(scroll_boundary_candidate_for_progress("down", 1, 1, 0, 2, &[]).is_none());
+    assert!(scroll_boundary_candidate_for_progress("down", 0, 0, 0, 0, &[], None).is_none());
+    assert!(scroll_boundary_candidate_for_progress("down", 1, 0, 1, 0, &[], None).is_none());
+    assert!(scroll_boundary_candidate_for_progress("down", 1, 1, 0, 2, &[], None).is_none());
   }
 
   #[test]
   fn scroll_boundary_candidate_uses_corroborated_basis_for_downward_repeated_row_overlap() {
     let observations = repeated_overlap_page_observations();
 
-    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations)
+    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, None)
       .expect("boundary candidate");
 
     assert_eq!(candidate.boundary, ScrollBoundary::Bottom);
@@ -2342,7 +2479,7 @@ mod tests {
   fn scroll_boundary_candidate_uses_corroborated_basis_for_upward_repeated_row_overlap() {
     let observations = repeated_overlap_page_observations();
 
-    let candidate = scroll_boundary_candidate_for_progress("up", 1, 1, 1, 0, &observations)
+    let candidate = scroll_boundary_candidate_for_progress("up", 1, 1, 1, 0, &observations, None)
       .expect("boundary candidate");
 
     assert_eq!(candidate.boundary, ScrollBoundary::Top);
@@ -2357,11 +2494,76 @@ mod tests {
       observation("obs_0002", 1, "Repeat A", 118),
     ];
 
-    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations)
+    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, None)
       .expect("boundary candidate");
 
     assert_eq!(candidate.basis, "no_new_observations_after_scroll");
     assert_eq!(candidate.confidence, "heuristic");
+  }
+
+  #[test]
+  fn scroll_boundary_candidate_uses_corroborated_basis_for_screenshot_diff_stability() {
+    let screenshot_a = write_temp_png_artifact("boundary-stable-a", [24, 48, 72, 255]);
+    let screenshot_b = write_temp_png_artifact("boundary-stable-b", [24, 48, 72, 255]);
+    let pages = vec![
+      page_record(0, Some(screenshot_a.clone())),
+      page_record(1, Some(screenshot_b.clone())),
+    ];
+    let screenshot_diff_stability = screenshot_diff_stability_for_pages(1, &pages)
+      .expect("screenshot diff should compare")
+      .expect("adjacent screenshot pair should exist");
+
+    let candidate = scroll_boundary_candidate_for_progress(
+      "down",
+      1,
+      1,
+      1,
+      0,
+      &[],
+      Some(&screenshot_diff_stability),
+    )
+    .expect("boundary candidate");
+
+    assert!(screenshot_diff_stability.is_stable());
+    assert_eq!(candidate.basis, "screenshot_diff_stability");
+    assert_eq!(candidate.confidence, "corroborated");
+
+    let _ = fs::remove_file(screenshot_a);
+    let _ = fs::remove_file(screenshot_b);
+  }
+
+  #[test]
+  fn scroll_boundary_candidate_combines_row_overlap_and_screenshot_diff_stability() {
+    let observations = repeated_overlap_page_observations();
+    let screenshot_a = write_temp_png_artifact("boundary-stable-combo-a", [90, 32, 16, 255]);
+    let screenshot_b = write_temp_png_artifact("boundary-stable-combo-b", [90, 32, 16, 255]);
+    let pages = vec![
+      page_record(0, Some(screenshot_a.clone())),
+      page_record(1, Some(screenshot_b.clone())),
+    ];
+    let screenshot_diff_stability = screenshot_diff_stability_for_pages(1, &pages)
+      .expect("screenshot diff should compare")
+      .expect("adjacent screenshot pair should exist");
+
+    let candidate = scroll_boundary_candidate_for_progress(
+      "down",
+      1,
+      1,
+      1,
+      0,
+      &observations,
+      Some(&screenshot_diff_stability),
+    )
+    .expect("boundary candidate");
+
+    assert_eq!(
+      candidate.basis,
+      "repeated_row_band_overlap+screenshot_diff_stability"
+    );
+    assert_eq!(candidate.confidence, "corroborated");
+
+    let _ = fs::remove_file(screenshot_a);
+    let _ = fs::remove_file(screenshot_b);
   }
 
   #[test]
@@ -2380,7 +2582,15 @@ mod tests {
         hook_stop_requested: false,
         match_found: false,
         next_section_candidate: false,
-        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[]),
+        scroll_boundary_candidate: scroll_boundary_candidate_for_progress(
+          "down",
+          2,
+          2,
+          1,
+          0,
+          &[],
+          None,
+        ),
       },
       "down",
     )
@@ -2415,7 +2625,15 @@ mod tests {
         hook_stop_requested: false,
         match_found: false,
         next_section_candidate: false,
-        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[]),
+        scroll_boundary_candidate: scroll_boundary_candidate_for_progress(
+          "down",
+          2,
+          2,
+          1,
+          0,
+          &[],
+          None,
+        ),
       },
       "down",
     );
@@ -3373,6 +3591,28 @@ mod tests {
     ));
     fs::write(&path, raw).expect("write temp json artifact");
     path
+  }
+
+  fn write_temp_png_artifact(label: &str, rgba: [u8; 4]) -> PathBuf {
+    let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!(
+      "auv-scroll-scan-{label}-{}-{counter}.png",
+      std::process::id()
+    ));
+    let image = RgbaImage::from_pixel(24, 24, Rgba(rgba));
+    image.save(&path).expect("write temp png artifact");
+    path
+  }
+
+  fn page_record(page_index: usize, screenshot_artifact: Option<PathBuf>) -> ScanPageRecord {
+    ScanPageRecord {
+      page_index,
+      observe_run_id: None,
+      screenshot_artifact,
+      observation_count: 0,
+      new_observation_count: 0,
+      summary: "fixture page".to_string(),
+    }
   }
 
   fn bounded_scan_options() -> ScanWindowRegionOptions {

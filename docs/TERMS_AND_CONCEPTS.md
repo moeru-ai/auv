@@ -327,12 +327,13 @@ A scroll scan records what AUV saw, how it moved the viewport, and why it
 stopped. It should not claim a complete collection unless the stop evidence
 supports that claim.
 
-Directional scroll-boundary evidence is provisional. The first implementation
+Directional scroll-boundary evidence is provisional. The current implementation
 records a `scroll_boundary_candidates` list when an up/down/left/right scroll is
 followed by a page with no new observation signatures. That maps directions to
-top/bottom/left/right boundary candidates with `confidence=heuristic`; it is not
-yet proof from scrollbar geometry, AX scroll values, or screenshot-diff
-stability.
+top/bottom/left/right boundary candidates with either `confidence=heuristic`
+(`no_new_observations_after_scroll`) or `confidence=corroborated` when repeated
+row overlap or adjacent screenshot-diff stability also supports the claim. It
+is still not proof from scrollbar geometry or AX scroll values.
 
 ## Observed Collection
 
