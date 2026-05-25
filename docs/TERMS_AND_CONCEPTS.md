@@ -193,6 +193,33 @@ candidates. OCR rows, visual row bands, segmented regions, icon matches, and
 future detector outputs should be able to project into this shape before an
 action consumes them.
 
+## Interaction Pipeline
+
+Interaction pipeline is a provisional term for the layer above driver
+primitives and below recipes or frontends. It composes primitive observations
+and input operations into reusable workflows such as candidate extraction,
+candidate parsing, matching, selection, verification, list scan, and
+scroll-until behavior.
+
+The interaction pipeline is not a driver. Drivers expose platform capabilities
+such as capture, OCR, AX tree capture, pointer scroll, keyboard input, and
+clipboard operations. The interaction pipeline decides how to combine those
+capabilities for a UI workflow while preserving inspectable decisions and
+evidence.
+
+## Candidate Context
+
+Candidate context is a provisional structured record passed to parsers,
+matchers, hooks, and interaction workflows. It should include the candidate's
+text, bounds, coordinate space, recognition provenance, source evidence,
+surface node refs when available, rejected/filtered reasons, and optional
+collection or page context.
+
+Candidate context should be available as typed Rust data and, when needed, as a
+structured JSON boundary for recipes or external code. Scalar template
+variables may exist as compatibility aliases, but they should not be the main
+parser or matcher contract.
+
 ## Surface Node
 
 A surface node is a provisional structured projection of an observation or
