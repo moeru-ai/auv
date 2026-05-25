@@ -3,10 +3,14 @@ use std::collections::BTreeSet;
 use std::thread;
 use std::time::Duration;
 
-use super::super::*;
-use crate::driver::macos::capture::types::DisplayDescriptor;
+use super::{app_contains_window, looks_like_bundle_identifier, window_area};
+use crate::capture::types::DisplayDescriptor;
+use crate::types::{
+  AppSelector, AuvResult, ObservedRect, ObservedWindow, ObservedWindowSnapshot, ResolvedAppRef,
+  WindowCandidate, WindowSelection,
+};
 
-pub(crate) fn parse_app_selector(raw: &str) -> AuvResult<AppSelector> {
+pub fn parse_app_selector(raw: &str) -> AuvResult<AppSelector> {
   let trimmed = raw.trim();
   if trimmed.is_empty() {
     return Err("app selector cannot be empty".to_string());
@@ -27,7 +31,7 @@ pub(crate) fn parse_app_selector(raw: &str) -> AuvResult<AppSelector> {
   })
 }
 
-pub(crate) fn resolve_app_ref(
+pub fn resolve_app_ref(
   snapshot: &ObservedWindowSnapshot,
   selector: &AppSelector,
 ) -> AuvResult<ResolvedAppRef> {
@@ -104,7 +108,7 @@ pub(crate) fn resolve_app_ref(
   ))
 }
 
-pub(crate) fn build_window_candidates(
+pub fn build_window_candidates(
   snapshot: &ObservedWindowSnapshot,
   resolved_app: &ResolvedAppRef,
   displays: &[DisplayDescriptor],
@@ -155,7 +159,7 @@ pub(crate) fn build_window_candidates(
   )
 }
 
-pub(crate) fn resolve_window_candidate(
+pub fn resolve_window_candidate(
   snapshot: &ObservedWindowSnapshot,
   resolved_app: &ResolvedAppRef,
   displays: &[DisplayDescriptor],
@@ -195,7 +199,7 @@ pub(crate) fn resolve_window_candidate(
     })
 }
 
-pub(crate) fn retry_window_capture_operation<T, F>(mut operation: F) -> AuvResult<T>
+pub fn retry_window_capture_operation<T, F>(mut operation: F) -> AuvResult<T>
 where
   F: FnMut() -> AuvResult<T>,
 {
@@ -213,7 +217,7 @@ where
   operation()
 }
 
-pub(crate) fn is_retryable_window_capture_error(error: &str) -> bool {
+pub fn is_retryable_window_capture_error(error: &str) -> bool {
   error.contains("could not resolve a fully contained visible window")
     || error.contains("refreshed window is not fully contained by one display")
     // Window enumeration → screenshot races: macOS reassigns window IDs while
@@ -222,7 +226,7 @@ pub(crate) fn is_retryable_window_capture_error(error: &str) -> bool {
     || error.contains("disappeared before capture")
 }
 
-pub(crate) fn window_capture_readiness_diagnostic(
+pub fn window_capture_readiness_diagnostic(
   candidate: &WindowCandidate,
   displays: &[DisplayDescriptor],
 ) -> String {
@@ -292,8 +296,7 @@ fn first_non_empty_bundle_id(windows: &[&ObservedWindow]) -> Option<String> {
   })
 }
 
-#[cfg(test)]
-pub(crate) fn filter_windows_for_app<'a>(
+pub fn filter_windows_for_app<'a>(
   windows: &'a [ObservedWindow],
   resolved_app: &ResolvedAppRef,
 ) -> Vec<&'a ObservedWindow> {

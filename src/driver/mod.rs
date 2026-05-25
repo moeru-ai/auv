@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse};
 
 use self::fixture::FixtureObserveDriver;
+#[cfg(target_os = "macos")]
 use self::macos::MacOsDesktopDriver;
+#[cfg(target_os = "macos")]
 pub(crate) use self::macos::{
   ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow,
   ObservedRect, ObservedWindow, OcrTextSnapshot, clear_stale_lock_file, compute_combined_bounds,
@@ -14,6 +16,7 @@ pub(crate) use self::macos::{
 };
 
 mod fixture;
+#[cfg(target_os = "macos")]
 mod macos;
 
 pub trait Driver {
@@ -51,8 +54,8 @@ impl DriverRegistry {
 }
 
 pub fn default_driver_registry() -> DriverRegistry {
-  DriverRegistry::new(vec![
-    Box::new(FixtureObserveDriver),
-    Box::new(MacOsDesktopDriver),
-  ])
+  let mut drivers: Vec<Box<dyn Driver>> = vec![Box::new(FixtureObserveDriver)];
+  #[cfg(target_os = "macos")]
+  drivers.push(Box::new(MacOsDesktopDriver));
+  DriverRegistry::new(drivers)
 }

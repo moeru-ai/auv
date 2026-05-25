@@ -1,8 +1,7 @@
-// File: src/driver/macos/support/ax.rs
-use super::super::*;
 use super::{parse_i64, render_rect_compact, report_value};
+use crate::types::{AuvResult, ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
-pub(crate) fn parse_observed_ax_tree(report: &str) -> AuvResult<ObservedAxTreeSnapshot> {
+pub fn parse_observed_ax_tree(report: &str) -> AuvResult<ObservedAxTreeSnapshot> {
   let observed_at = report_value(report, "observedAt=")
     .unwrap_or("")
     .to_string();
@@ -35,7 +34,7 @@ pub(crate) fn parse_observed_ax_tree(report: &str) -> AuvResult<ObservedAxTreeSn
   })
 }
 
-pub(crate) fn parse_observed_ax_node_line(line: &str) -> AuvResult<ObservedAxNode> {
+pub fn parse_observed_ax_node_line(line: &str) -> AuvResult<ObservedAxNode> {
   let columns = line.split('\t').collect::<Vec<_>>();
   if columns.len() != 15 {
     return Err(format!(
@@ -67,7 +66,7 @@ pub(crate) fn parse_observed_ax_node_line(line: &str) -> AuvResult<ObservedAxNod
   })
 }
 
-pub(crate) fn find_best_ax_node<'a>(
+pub fn find_best_ax_node<'a>(
   snapshot: &'a ObservedAxTreeSnapshot,
   query: &str,
 ) -> Option<&'a ObservedAxNode> {
@@ -81,7 +80,7 @@ pub(crate) fn find_best_ax_node<'a>(
     .map(|(_, node)| node)
 }
 
-pub(crate) fn find_now_playing_ax_node<'a>(
+pub fn find_now_playing_ax_node<'a>(
   snapshot: &'a ObservedAxTreeSnapshot,
   expected_title: &str,
   expected_artist: Option<&str>,
@@ -115,7 +114,7 @@ pub(crate) fn find_now_playing_ax_node<'a>(
     .map(|(_, node)| node)
 }
 
-pub(crate) fn ax_node_search_text(node: &ObservedAxNode) -> String {
+pub fn ax_node_search_text(node: &ObservedAxNode) -> String {
   let searchable = [
     node.title.as_str(),
     node.description.as_str(),
@@ -180,7 +179,7 @@ fn score_now_playing_ax_node_match(
   Some(score)
 }
 
-pub(crate) fn no_matching_ax_node_error(
+pub fn no_matching_ax_node_error(
   snapshot: &ObservedAxTreeSnapshot,
   query: &str,
   expected_kind: &str,
@@ -194,7 +193,7 @@ pub(crate) fn no_matching_ax_node_error(
   format!("no matching {expected_kind} node found for query {query}")
 }
 
-pub(crate) fn score_ax_node_match(node: &ObservedAxNode, query: &str) -> Option<i64> {
+pub fn score_ax_node_match(node: &ObservedAxNode, query: &str) -> Option<i64> {
   if query.is_empty() {
     return None;
   }
@@ -245,7 +244,7 @@ pub(crate) fn score_ax_node_match(node: &ObservedAxNode, query: &str) -> Option<
   Some(score - node.depth as i64)
 }
 
-pub(crate) fn ax_node_center(node: &ObservedAxNode) -> (f64, f64) {
+pub fn ax_node_center(node: &ObservedAxNode) -> (f64, f64) {
   (
     node.bounds.x as f64 + (node.bounds.width as f64 / 2.0),
     node.bounds.y as f64 + (node.bounds.height as f64 / 2.0),
@@ -260,7 +259,7 @@ pub(crate) fn ax_node_center(node: &ObservedAxNode) -> (f64, f64) {
 /// plus a role bias toward pressable roles (AXButton, AXCheckBox, AXLink,
 /// AXMenuItem). The role bias breaks ties when a button is wrapped by a
 /// same-sized group element with no role of its own.
-pub(crate) fn find_ax_node_at_point<'a>(
+pub fn find_ax_node_at_point<'a>(
   snapshot: &'a ObservedAxTreeSnapshot,
   x: f64,
   y: f64,
@@ -293,7 +292,7 @@ fn score_ax_node_at_point(node: &ObservedAxNode) -> i64 {
   score
 }
 
-pub(crate) fn render_ax_interaction_report(
+pub fn render_ax_interaction_report(
   kind: &str,
   snapshot: &ObservedAxTreeSnapshot,
   node: &ObservedAxNode,
