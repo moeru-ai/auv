@@ -281,6 +281,16 @@ pub struct VerificationResult {
   pub semantic_matched: Option<bool>,
   pub failure_layer: Option<FailureLayer>,
   pub evidence: Vec<ArtifactRef>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub consumed_candidate_ref: Option<CandidateRef>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub consumed_node_ref: Option<NodeRef>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub consumed_recognition_artifact_ref: Option<ArtifactRef>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub consumed_recognition_id: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub consumed_recognized_item_id: Option<String>,
   pub observed_label: Option<String>,
 }
 
@@ -751,11 +761,43 @@ mod tests {
       semantic_matched: Some(false),
       failure_layer: Some(FailureLayer::StateChangedNoMatch),
       evidence: vec![artifact_ref()],
+      consumed_candidate_ref: Some(CandidateRef {
+        source_run_id: RunId::new("run_getter"),
+        source_span_id: SpanId::new("span_getter"),
+        source_operation_id: "music.search.results".to_string(),
+        source_artifact_id: ArtifactId::new("artifact_candidates"),
+        candidate_local_id: "row#1".to_string(),
+      }),
+      consumed_node_ref: Some(NodeRef {
+        run_id: RunId::new("run_getter"),
+        span_id: SpanId::new("span_getter"),
+        node_id: "obs_0001_0001".to_string(),
+      }),
+      consumed_recognition_artifact_ref: Some(ArtifactRef {
+        run_id: RunId::new("run_getter"),
+        artifact_id: ArtifactId::new("artifact_recognition"),
+        span_id: SpanId::new("span_getter"),
+        captured_event_id: None,
+      }),
+      consumed_recognition_id: Some("music_search_results".to_string()),
+      consumed_recognized_item_id: Some("row#1".to_string()),
       observed_label: Some("天空仍灿烂".to_string()),
     };
 
     let value = serde_json::to_value(&result).expect("verification result should serialize");
     assert_eq!(value["failure_layer"], json!("state_changed_no_match"));
+    assert_eq!(
+      value["consumed_candidate_ref"]["candidate_local_id"],
+      json!("row#1")
+    );
+    assert_eq!(
+      value["consumed_node_ref"]["node_id"],
+      json!("obs_0001_0001")
+    );
+    assert_eq!(
+      value["consumed_recognition_id"],
+      json!("music_search_results")
+    );
 
     let parsed: VerificationResult =
       serde_json::from_value(value).expect("verification result should deserialize");
