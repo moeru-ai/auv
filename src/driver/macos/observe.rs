@@ -30,6 +30,7 @@ use crate::contract::{
 use crate::trace::RunId;
 
 const VERIFY_AX_TEXT_OPERATION_ID: &str = "verify.axText";
+const VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID: &str = "verify.musicNowPlaying";
 
 pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "coordinate-readiness".to_string());
@@ -278,13 +279,20 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
     }
     detail
   })?;
+
+  // Reserve slots up front so the OperationResult evidence list can cite the
+  // text report by its forward `ArtifactRef` before the artifact is staged.
+  let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
+  let report_ref = artifacts.ref_at(0);
+  let _operation_result_ref = artifacts.ref_at(1);
+
   let report = render_ax_interaction_report(
     "verify-now-playing-title",
     &snapshot,
     matched,
     &expected_title,
   );
-  let artifact = build_text_artifact(
+  artifacts.push(build_text_artifact(
     "verify-now-playing-title",
     "txt",
     &format!(
@@ -293,7 +301,14 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
     ),
     report,
     "Captured an AX tree snapshot and matched the current now-playing title without relying on screenshot OCR.",
-  )?;
+  )?);
+
+  let verification = build_verify_now_playing_title_verification(matched, vec![report_ref]);
+  let operation_result = build_verify_now_playing_title_operation_result(call, verification);
+  artifacts.push(build_verify_now_playing_title_operation_result_artifact(
+    &operation_result,
+    &expected_title,
+  )?);
 
   let mut notes = vec![
     format!("targetTitle={expected_title}"),
@@ -330,8 +345,83 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
     backend: Some("macos.desktop.verify-now-playing-title".to_string()),
     signals: verify_now_playing_title_signals(&matched.title),
     notes,
-    artifacts: vec![artifact],
+    artifacts: artifacts.into_vec(),
   })
+}
+
+/// Build the typed [`VerificationResult`] for `verify.musicNowPlaying`.
+///
+/// Only invoked on the success path — `find_now_playing_ax_node` returned
+/// `None` for no-match cases above, so the assertion held and
+/// `state_changed` reflects that the now-playing state matches the asserted
+/// title. The method is [`VerificationMethod::SemanticMatch`] because the
+/// match couples a target title (and optional artist) against the node's
+/// observed signal text — the same shape `music.result.play` already emits
+/// on the failure path in `music_result_play_failure_response`.
+fn build_verify_now_playing_title_verification(
+  matched: &ObservedAxNode,
+  evidence: Vec<ArtifactRef>,
+) -> VerificationResult {
+  let observed_label = preferred_ax_signal_text(matched);
+  VerificationResult {
+    method: VerificationMethod::SemanticMatch,
+    executed: true,
+    state_changed: true,
+    semantic_matched: Some(true),
+    failure_layer: None,
+    evidence,
+    consumed_candidate_ref: None,
+    consumed_node_ref: None,
+    consumed_recognition_artifact_ref: None,
+    consumed_recognition_id: None,
+    consumed_recognized_item_id: None,
+    observed_label: if observed_label.is_empty() {
+      None
+    } else {
+      Some(observed_label)
+    },
+  }
+}
+
+fn build_verify_now_playing_title_operation_result(
+  call: &DriverCall,
+  verification: VerificationResult,
+) -> OperationResult {
+  let evidence = verification.evidence.clone();
+  OperationResult {
+    run_id: RunId::new(call.run_context.run_id.as_str()),
+    status: OperationStatus::Completed,
+    operation_id: VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID.to_string(),
+    evidence_artifacts: evidence,
+    output: OperationOutput::Acknowledged { message: None },
+    verifications: vec![verification],
+    freshness_basis: None,
+    known_limits: Vec::new(),
+  }
+}
+
+fn build_verify_now_playing_title_operation_result_artifact(
+  operation_result: &OperationResult,
+  expected_title: &str,
+) -> AuvResult<ProducedArtifact> {
+  let json = serde_json::to_string_pretty(operation_result)
+    .map(|mut s| {
+      s.push('\n');
+      s
+    })
+    .map_err(|error| {
+      format!("failed to serialize verify.musicNowPlaying OperationResult: {error}")
+    })?;
+  build_text_artifact(
+    "operation-result",
+    "json",
+    &format!(
+      "verify-now-playing-title-{}-operation-result",
+      sanitize_file_component(expected_title)
+    ),
+    json,
+    "Typed OperationResult verification for verify.musicNowPlaying.",
+  )
 }
 
 pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -1351,10 +1441,11 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
 mod tests {
   use super::{
     ObservedAxNode, ObservedRect, VERIFY_AX_TEXT_OPERATION_ID,
-    build_verify_ax_text_operation_result, build_verify_ax_text_verification,
-    ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
-    row_detection_signals, verify_ax_text_signals, verify_now_playing_title_signals,
-    wait_ocr_detection_signals, wait_row_detection_signals,
+    VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID, build_verify_ax_text_operation_result,
+    build_verify_ax_text_verification, build_verify_now_playing_title_operation_result,
+    build_verify_now_playing_title_verification, ocr_detection_signals, permission_probe_report,
+    preferred_ax_signal_text, row_detection_signals, verify_ax_text_signals,
+    verify_now_playing_title_signals, wait_ocr_detection_signals, wait_row_detection_signals,
   };
   use crate::contract::{ArtifactRef, OperationOutput, OperationStatus, VerificationMethod};
   use crate::model::{DriverCall, DriverRunContext, ExecutionTarget};
@@ -1589,6 +1680,74 @@ mod tests {
       result.verifications,
       vec![verification.clone()],
       "verify.axText must populate the first-class verifications field"
+    );
+    assert_eq!(
+      result.evidence_artifacts, verification.evidence,
+      "evidence_artifacts must mirror the verification's evidence list"
+    );
+  }
+
+  #[test]
+  fn verify_now_playing_title_verification_records_semantic_match_with_observed_label() {
+    let matched = sample_matched_node();
+    let evidence = vec![sample_report_ref()];
+
+    let verification =
+      build_verify_now_playing_title_verification(&matched, evidence.clone());
+
+    assert_eq!(verification.method, VerificationMethod::SemanticMatch);
+    assert!(verification.executed);
+    assert!(verification.state_changed);
+    assert_eq!(verification.semantic_matched, Some(true));
+    assert!(verification.failure_layer.is_none());
+    assert_eq!(verification.evidence, evidence);
+    assert_eq!(
+      verification.observed_label.as_deref(),
+      Some("已粘贴完成"),
+      "observed_label must surface the matched node's preferred display text"
+    );
+  }
+
+  #[test]
+  fn verify_now_playing_title_verification_omits_observed_label_when_node_has_no_text() {
+    let blank = ObservedAxNode {
+      value: String::new(),
+      title: String::new(),
+      description: String::new(),
+      help: String::new(),
+      placeholder: String::new(),
+      ..sample_matched_node()
+    };
+
+    let verification = build_verify_now_playing_title_verification(&blank, Vec::new());
+
+    assert!(
+      verification.observed_label.is_none(),
+      "no display text should map to None, not an empty string"
+    );
+  }
+
+  #[test]
+  fn verify_now_playing_title_operation_result_promotes_claim_to_top_level_verifications() {
+    let call = sample_driver_call();
+    let verification = build_verify_now_playing_title_verification(
+      &sample_matched_node(),
+      vec![sample_report_ref()],
+    );
+
+    let result =
+      build_verify_now_playing_title_operation_result(&call, verification.clone());
+
+    assert_eq!(result.operation_id, VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID);
+    assert_eq!(result.status, OperationStatus::Completed);
+    assert!(matches!(
+      result.output,
+      OperationOutput::Acknowledged { .. }
+    ));
+    assert_eq!(
+      result.verifications,
+      vec![verification.clone()],
+      "verify.musicNowPlaying must populate the first-class verifications field"
     );
     assert_eq!(
       result.evidence_artifacts, verification.evidence,
