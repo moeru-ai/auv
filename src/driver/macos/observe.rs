@@ -24,7 +24,7 @@ pub(super) use super::typed::observe::{
 };
 use super::*;
 use crate::contract::{
-  ArtifactRef, OperationOutput, OperationResult, OperationStatus, VerificationMethod,
+  ArtifactRef, FailureLayer, OperationOutput, OperationResult, OperationStatus, VerificationMethod,
   VerificationResult,
 };
 use crate::trace::RunId;
@@ -446,85 +446,197 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     .map(|value| value.trim().to_string())
     .filter(|value| !value.is_empty());
 
-  let matched = find_ax_text_node(
+  // Reserve slots up front so the OperationResult evidence list can cite the
+  // text report by its forward `ArtifactRef` before the artifact is staged.
+  // Both branches stage the report into slot 0 and the OperationResult into
+  // slot 1 — the layout is identical for match and no-match so downstream
+  // tooling can index either case the same way.
+  let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
+  let report_ref = artifacts.ref_at(0);
+  let _operation_result_ref = artifacts.ref_at(1);
+
+  match find_ax_text_node(
     &snapshot.nodes,
     &expected_text,
     expected_role.as_deref(),
     expected_subrole.as_deref(),
     scope_path_prefix.as_deref(),
-  )?;
+  ) {
+    Ok(matched) => {
+      let report =
+        render_ax_interaction_report("verify-ax-text", &snapshot, matched, &expected_text);
+      artifacts.push(build_text_artifact(
+        "verify-ax-text",
+        "txt",
+        &format!("verify-ax-text-{}", sanitize_file_component(&expected_text)),
+        report,
+        "Captured an AX tree snapshot and matched a text-bearing node without relying on screenshot OCR.",
+      )?);
 
-  // Reserve slots up front so the OperationResult evidence list can cite the
-  // text report by its forward `ArtifactRef` before the artifact is staged.
-  let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
-  let report_ref = artifacts.ref_at(0);
-  let _operation_result_ref = artifacts.ref_at(1);
+      let verification = build_verify_ax_text_verification(matched, vec![report_ref]);
+      let operation_result = build_verify_ax_text_operation_result(
+        call,
+        OperationStatus::Completed,
+        verification,
+      );
+      artifacts.push(build_verify_ax_text_operation_result_artifact(
+        &operation_result,
+        &expected_text,
+      )?);
 
-  let report = render_ax_interaction_report("verify-ax-text", &snapshot, matched, &expected_text);
-  artifacts.push(build_text_artifact(
-    "verify-ax-text",
-    "txt",
-    &format!("verify-ax-text-{}", sanitize_file_component(&expected_text)),
-    report,
-    "Captured an AX tree snapshot and matched a text-bearing node without relying on screenshot OCR.",
-  )?);
+      let mut notes = vec![
+        format!("targetText={expected_text}"),
+        format!("matchedPath={}", matched.path),
+        format!("matchedRole={}", matched.role),
+        format!("matchedBounds={}", render_rect_compact(&matched.bounds)),
+      ];
+      if let Some(role) = expected_role.as_deref() {
+        notes.push(format!("targetRole={role}"));
+      }
+      if let Some(subrole) = expected_subrole.as_deref() {
+        notes.push(format!("targetSubrole={subrole}"));
+      }
+      if let Some(scope) = scope_path_prefix.as_deref() {
+        notes.push(format!("scopePathPrefix={scope}"));
+      }
+      if !matched.title.is_empty() {
+        notes.push(format!("matchedTitle={}", matched.title));
+      }
+      if !matched.description.is_empty() {
+        notes.push(format!("matchedDescription={}", matched.description));
+      }
+      if !matched.value.is_empty() {
+        notes.push(format!("matchedValue={}", matched.value));
+      }
 
-  let verification = build_verify_ax_text_verification(matched, vec![report_ref]);
-  let operation_result = build_verify_ax_text_operation_result(call, verification);
-  artifacts.push(build_verify_ax_text_operation_result_artifact(
-    &operation_result,
-    &expected_text,
-  )?);
+      let mut summary_suffix = String::new();
+      if let Some(role) = expected_role.as_deref() {
+        summary_suffix.push_str(&format!(" as {role}"));
+      }
+      if let Some(subrole) = expected_subrole.as_deref() {
+        summary_suffix.push_str(&format!(" ({subrole})"));
+      }
 
-  let mut notes = vec![
-    format!("targetText={expected_text}"),
-    format!("matchedPath={}", matched.path),
-    format!("matchedRole={}", matched.role),
-    format!("matchedBounds={}", render_rect_compact(&matched.bounds)),
+      Ok(DriverResponse {
+        summary: format!(
+          "Verified AX text {} in {}{} through the AX tree.",
+          expected_text,
+          if snapshot.app_name.is_empty() {
+            "target app"
+          } else {
+            &snapshot.app_name
+          },
+          summary_suffix
+        ),
+        backend: Some("macos.desktop.verify-ax-text".to_string()),
+        signals: verify_ax_text_signals(&preferred_ax_signal_text(matched), &matched.role),
+        notes,
+        artifacts: artifacts.into_vec(),
+      })
+    }
+    Err(no_match_detail) => {
+      let report = render_verify_ax_text_no_match_report(
+        &snapshot,
+        &expected_text,
+        expected_role.as_deref(),
+        expected_subrole.as_deref(),
+        scope_path_prefix.as_deref(),
+        &no_match_detail,
+      );
+      artifacts.push(build_text_artifact(
+        "verify-ax-text-no-match",
+        "txt",
+        &format!(
+          "verify-ax-text-{}-no-match",
+          sanitize_file_component(&expected_text)
+        ),
+        report,
+        "Captured an AX tree snapshot but found no node matching the asserted text.",
+      )?);
+
+      let verification = build_verify_ax_text_no_match_verification(vec![report_ref]);
+      let operation_result =
+        build_verify_ax_text_operation_result(call, OperationStatus::Failed, verification);
+      artifacts.push(build_verify_ax_text_operation_result_artifact(
+        &operation_result,
+        &expected_text,
+      )?);
+
+      let mut notes = vec![
+        format!("targetText={expected_text}"),
+        "result=no-match".to_string(),
+        format!("detail={no_match_detail}"),
+      ];
+      if let Some(role) = expected_role.as_deref() {
+        notes.push(format!("targetRole={role}"));
+      }
+      if let Some(subrole) = expected_subrole.as_deref() {
+        notes.push(format!("targetSubrole={subrole}"));
+      }
+      if let Some(scope) = scope_path_prefix.as_deref() {
+        notes.push(format!("scopePathPrefix={scope}"));
+      }
+
+      let mut signals = std::collections::BTreeMap::from([(
+        "ax.node_found".to_string(),
+        "false".to_string(),
+      )]);
+      signals.insert("ax.target_text".to_string(), expected_text.clone());
+      if let Some(role) = expected_role.as_deref() {
+        signals.insert("ax.target_role".to_string(), role.to_string());
+      }
+      if let Some(subrole) = expected_subrole.as_deref() {
+        signals.insert("ax.target_subrole".to_string(), subrole.to_string());
+      }
+
+      Ok(DriverResponse {
+        summary: format!(
+          "Verification failed: AX text {} not present in {} (semantic mismatch).",
+          expected_text,
+          if snapshot.app_name.is_empty() {
+            "target app"
+          } else {
+            &snapshot.app_name
+          }
+        ),
+        backend: Some("macos.desktop.verify-ax-text".to_string()),
+        signals,
+        notes,
+        artifacts: artifacts.into_vec(),
+      })
+    }
+  }
+}
+
+fn render_verify_ax_text_no_match_report(
+  snapshot: &auv_driver_macos::types::ObservedAxTreeSnapshot,
+  expected_text: &str,
+  expected_role: Option<&str>,
+  expected_subrole: Option<&str>,
+  scope_path_prefix: Option<&str>,
+  detail: &str,
+) -> String {
+  let mut lines = vec![
+    "kind=verify-ax-text-no-match".to_string(),
+    format!("observedAt={}", snapshot.observed_at),
+    format!("appName={}", snapshot.app_name),
+    format!("bundleId={}", snapshot.bundle_id),
+    format!("windowTitle={}", snapshot.window_title),
+    format!("queryText={expected_text}"),
   ];
-  if let Some(role) = expected_role.as_deref() {
-    notes.push(format!("targetRole={role}"));
+  if let Some(role) = expected_role {
+    lines.push(format!("queryRole={role}"));
   }
-  if let Some(subrole) = expected_subrole.as_deref() {
-    notes.push(format!("targetSubrole={subrole}"));
+  if let Some(subrole) = expected_subrole {
+    lines.push(format!("querySubrole={subrole}"));
   }
-  if let Some(scope) = scope_path_prefix.as_deref() {
-    notes.push(format!("scopePathPrefix={scope}"));
+  if let Some(scope) = scope_path_prefix {
+    lines.push(format!("queryScopePathPrefix={scope}"));
   }
-  if !matched.title.is_empty() {
-    notes.push(format!("matchedTitle={}", matched.title));
-  }
-  if !matched.description.is_empty() {
-    notes.push(format!("matchedDescription={}", matched.description));
-  }
-  if !matched.value.is_empty() {
-    notes.push(format!("matchedValue={}", matched.value));
-  }
-
-  let mut summary_suffix = String::new();
-  if let Some(role) = expected_role.as_deref() {
-    summary_suffix.push_str(&format!(" as {role}"));
-  }
-  if let Some(subrole) = expected_subrole.as_deref() {
-    summary_suffix.push_str(&format!(" ({subrole})"));
-  }
-
-  Ok(DriverResponse {
-    summary: format!(
-      "Verified AX text {} in {}{} through the AX tree.",
-      expected_text,
-      if snapshot.app_name.is_empty() {
-        "target app"
-      } else {
-        &snapshot.app_name
-      },
-      summary_suffix
-    ),
-    backend: Some("macos.desktop.verify-ax-text".to_string()),
-    signals: verify_ax_text_signals(&preferred_ax_signal_text(matched), &matched.role),
-    notes,
-    artifacts: artifacts.into_vec(),
-  })
+  lines.push(format!("nodeCount={}", snapshot.nodes.len()));
+  lines.push("result=no-match".to_string());
+  lines.push(format!("detail={detail}"));
+  lines.join("\n") + "\n"
 }
 
 /// Build the typed [`VerificationResult`] for `verify.axText`.
@@ -561,18 +673,46 @@ fn build_verify_ax_text_verification(
 
 fn build_verify_ax_text_operation_result(
   call: &DriverCall,
+  status: OperationStatus,
   verification: VerificationResult,
 ) -> OperationResult {
   let evidence = verification.evidence.clone();
   OperationResult {
     run_id: RunId::new(call.run_context.run_id.as_str()),
-    status: OperationStatus::Completed,
+    status,
     operation_id: VERIFY_AX_TEXT_OPERATION_ID.to_string(),
     evidence_artifacts: evidence,
     output: OperationOutput::Acknowledged { message: None },
     verifications: vec![verification],
     freshness_basis: None,
     known_limits: Vec::new(),
+  }
+}
+
+/// Build the typed [`VerificationResult`] for a `verify.axText` no-match.
+///
+/// Mirrors [`build_verify_ax_text_verification`] but flips the outcome:
+/// `executed=true` (the AX tree was probed), `state_changed=false`
+/// (observed state does not satisfy the assertion), `semantic_matched=
+/// Some(false)`, and `failure_layer=Some(SemanticMismatch)` — the
+/// assertion is well-formed and the probe was reliable, the world just
+/// doesn't match. No `observed_label` because there is no matched node.
+fn build_verify_ax_text_no_match_verification(
+  evidence: Vec<ArtifactRef>,
+) -> VerificationResult {
+  VerificationResult {
+    method: VerificationMethod::AxText,
+    executed: true,
+    state_changed: false,
+    semantic_matched: Some(false),
+    failure_layer: Some(FailureLayer::SemanticMismatch),
+    evidence,
+    consumed_candidate_ref: None,
+    consumed_node_ref: None,
+    consumed_recognition_artifact_ref: None,
+    consumed_recognition_id: None,
+    consumed_recognized_item_id: None,
+    observed_label: None,
   }
 }
 
@@ -1450,13 +1590,16 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
 mod tests {
   use super::{
     ObservedAxNode, ObservedRect, VERIFY_AX_TEXT_OPERATION_ID,
-    VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID, build_verify_ax_text_operation_result,
-    build_verify_ax_text_verification, build_verify_now_playing_title_operation_result,
-    build_verify_now_playing_title_verification, ocr_detection_signals, permission_probe_report,
-    preferred_ax_signal_text, row_detection_signals, verify_ax_text_signals,
-    verify_now_playing_title_signals, wait_ocr_detection_signals, wait_row_detection_signals,
+    VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID, build_verify_ax_text_no_match_verification,
+    build_verify_ax_text_operation_result, build_verify_ax_text_verification,
+    build_verify_now_playing_title_operation_result, build_verify_now_playing_title_verification,
+    ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
+    row_detection_signals, verify_ax_text_signals, verify_now_playing_title_signals,
+    wait_ocr_detection_signals, wait_row_detection_signals,
   };
-  use crate::contract::{ArtifactRef, OperationOutput, OperationStatus, VerificationMethod};
+  use crate::contract::{
+    ArtifactRef, FailureLayer, OperationOutput, OperationStatus, VerificationMethod,
+  };
   use crate::model::{DriverCall, DriverRunContext, ExecutionTarget};
   use crate::trace::{ArtifactId, RunId, SpanId};
   use std::collections::BTreeMap;
@@ -1683,7 +1826,11 @@ mod tests {
     let verification =
       build_verify_ax_text_verification(&sample_matched_node(), vec![sample_report_ref()]);
 
-    let result = build_verify_ax_text_operation_result(&call, verification.clone());
+    let result = build_verify_ax_text_operation_result(
+      &call,
+      OperationStatus::Completed,
+      verification.clone(),
+    );
 
     assert_eq!(result.operation_id, VERIFY_AX_TEXT_OPERATION_ID);
     assert_eq!(result.status, OperationStatus::Completed);
@@ -1695,6 +1842,73 @@ mod tests {
       result.verifications,
       vec![verification.clone()],
       "verify.axText must populate the first-class verifications field"
+    );
+    assert_eq!(
+      result.evidence_artifacts, verification.evidence,
+      "evidence_artifacts must mirror the verification's evidence list"
+    );
+  }
+
+  #[test]
+  fn verify_ax_text_no_match_verification_records_failed_semantic_match() {
+    let evidence = vec![sample_report_ref()];
+
+    let verification = build_verify_ax_text_no_match_verification(evidence.clone());
+
+    assert_eq!(verification.method, VerificationMethod::AxText);
+    assert!(
+      verification.executed,
+      "the AX probe still ran — only the assertion came back false"
+    );
+    assert!(
+      !verification.state_changed,
+      "observed state does not satisfy the assertion, so state_changed must be false"
+    );
+    assert_eq!(verification.semantic_matched, Some(false));
+    assert_eq!(
+      verification.failure_layer,
+      Some(FailureLayer::SemanticMismatch),
+      "no-match is a semantic mismatch, not an unreliable measurement"
+    );
+    assert_eq!(verification.evidence, evidence);
+  }
+
+  #[test]
+  fn verify_ax_text_no_match_verification_has_no_observed_label() {
+    let verification = build_verify_ax_text_no_match_verification(Vec::new());
+
+    assert!(
+      verification.observed_label.is_none(),
+      "no matched node means no observed label"
+    );
+  }
+
+  #[test]
+  fn verify_ax_text_failed_operation_result_carries_no_match_claim_with_failed_status() {
+    let call = sample_driver_call();
+    let verification = build_verify_ax_text_no_match_verification(vec![sample_report_ref()]);
+
+    let result = build_verify_ax_text_operation_result(
+      &call,
+      OperationStatus::Failed,
+      verification.clone(),
+    );
+
+    assert_eq!(result.operation_id, VERIFY_AX_TEXT_OPERATION_ID);
+    assert_eq!(
+      result.status,
+      OperationStatus::Failed,
+      "no-match must produce a Failed OperationResult so the run-level claim reflects the verification outcome"
+    );
+    assert_eq!(
+      result.verifications,
+      vec![verification.clone()],
+      "the failed claim must reach the first-class verifications field"
+    );
+    assert_eq!(
+      result.verifications[0].semantic_matched,
+      Some(false),
+      "the carried claim must read as semantic_matched=false"
     );
     assert_eq!(
       result.evidence_artifacts, verification.evidence,
