@@ -6,8 +6,11 @@ use std::time::Duration;
 
 use auv_driver::capture::{Activation, Capture, CaptureOptions};
 use auv_driver::error::{DriverError, DriverResult};
-use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect};
-use auv_driver::input::{Click, PasteTextOptions, TextSubmit, WaitOptions};
+use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, WindowPoint};
+use auv_driver::input::{
+  ActivationPolicy, Click, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
+  TextSubmit, WaitOptions,
+};
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::vision::{RecognizedText, TextRecognition};
 use auv_driver::window::{Window, WindowRef};
@@ -191,6 +194,46 @@ impl WindowApi<'_> {
     } else {
       Ok(matches)
     }
+  }
+
+  pub fn to_screen_point(&self, window: &Window, point: WindowPoint) -> DriverResult<ScreenPoint> {
+    let _ = self.session;
+    Ok(screen_point_for_window_point(window, point))
+  }
+
+  pub fn to_window_point(&self, window: &Window, point: ScreenPoint) -> DriverResult<WindowPoint> {
+    let _ = self.session;
+    Ok(window_point_for_screen_point(window, point))
+  }
+
+  pub fn prepare_for_input(
+    &self,
+    window: &Window,
+    options: PrepareForInputOptions,
+  ) -> DriverResult<InputPreparationLease> {
+    let _ = self.session;
+    match options.activation {
+      ActivationPolicy::NoChange | ActivationPolicy::Background => {
+        if !options.settle.is_zero() {
+          thread::sleep(options.settle);
+        }
+        Ok(InputPreparationLease::noop())
+      }
+      ActivationPolicy::FocusWithoutRaise => Err(DriverError::unsupported("focus_without_raise")),
+      ActivationPolicy::Foreground { settle } => {
+        activate_app_for_window(window)?;
+        if !settle.is_zero() {
+          thread::sleep(settle);
+        }
+        Ok(InputPreparationLease::noop())
+      }
+    }
+  }
+
+  pub fn restore_input(&self, mut lease: InputPreparationLease) -> DriverResult<()> {
+    let _ = self.session;
+    lease.mark_restored();
+    Ok(())
   }
 }
 
@@ -493,6 +536,22 @@ fn rect_from_observed(rect: &ObservedRect) -> Rect {
     rect.y as f64,
     rect.width as f64,
     rect.height as f64,
+  )
+}
+
+fn screen_point_for_window_point(window: &Window, point: WindowPoint) -> ScreenPoint {
+  let point = point.point();
+  ScreenPoint::new(
+    window.frame.origin.x + point.x,
+    window.frame.origin.y + point.y,
+  )
+}
+
+fn window_point_for_screen_point(window: &Window, point: ScreenPoint) -> WindowPoint {
+  let point = point.point();
+  WindowPoint::new(
+    point.x - window.frame.origin.x,
+    point.y - window.frame.origin.y,
   )
 }
 
@@ -819,6 +878,47 @@ fn invalid_input(message: impl std::fmt::Display) -> DriverError {
 fn not_found(target: impl std::fmt::Display) -> DriverError {
   DriverError::NotFound {
     target: target.to_string(),
+  }
+}
+
+#[cfg(test)]
+mod no_steal_tests {
+  use auv_driver::geometry::{ScreenPoint, WindowPoint};
+
+  use super::*;
+
+  fn sample_window() -> Window {
+    Window {
+      reference: WindowRef {
+        id: "42".to_string(),
+      },
+      title: None,
+      app_name: None,
+      app_bundle_id: None,
+      process_id: Some(123),
+      frame: Rect::new(100.0, 200.0, 800.0, 600.0),
+      coordinate_space: CoordinateSpace::Screen,
+      is_main: true,
+      is_visible: true,
+    }
+  }
+
+  #[test]
+  fn window_point_converts_to_screen_point() {
+    let window = sample_window();
+
+    let point = screen_point_for_window_point(&window, WindowPoint::new(25.0, 30.0));
+
+    assert_eq!(point, ScreenPoint::new(125.0, 230.0));
+  }
+
+  #[test]
+  fn screen_point_converts_to_window_point() {
+    let window = sample_window();
+
+    let point = window_point_for_screen_point(&window, ScreenPoint::new(125.0, 230.0));
+
+    assert_eq!(point, WindowPoint::new(25.0, 30.0));
   }
 }
 
