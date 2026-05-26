@@ -11,8 +11,12 @@ pub mod window;
 pub use capture::{Activation, Capture, CaptureOptions, ImageView};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
-pub use geometry::{CoordinateSpace, Point, RatioRect, Rect, Size};
-pub use input::{Click, PasteTextOptions, TextSubmit, WaitOptions};
+pub use geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
+pub use input::{
+  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
+  InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
+  TextSubmit, TypeTextOptions, WaitOptions,
+};
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
 pub use vision::{ImageMatch, ImageMatchResult, RecognizedText, TextRecognition};
@@ -26,8 +30,12 @@ mod tests {
     capture::{Activation, Capture, CaptureOptions, ImageView},
     display::{Display, ObservedDisplays},
     error::{DriverError, DriverResult},
-    geometry::{CoordinateSpace, Point, RatioRect, Rect, Size},
-    input::{Click, PasteTextOptions, TextSubmit, WaitOptions},
+    geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint},
+    input::{
+      ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
+      InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions,
+      PrepareForInputOptions, TextSubmit, TypeTextOptions, WaitOptions,
+    },
     selector::{App, AppSelector, TextMatcher, Window as SelectWindow, WindowSelector},
     traits::{Driver, DriverDescriptor, DriverSession, PlatformKind},
     vision::{ImageMatch, ImageMatchResult, RecognizedText, TextRecognition},
@@ -51,6 +59,36 @@ mod tests {
     let _click = Click::Double {
       interval: Duration::from_millis(100),
     };
+    let _screen_point = ScreenPoint::new(10.0, 20.0);
+    let _window_point = WindowPoint::new(3.0, 4.0);
+    let _click_options = ClickOptions {
+      policy: InputPolicy::BackgroundOnly,
+      click: Click::Single,
+    };
+    let _type_options = TypeTextOptions {
+      policy: InputPolicy::BackgroundPreferred,
+      replace_existing: true,
+      submit: TextSubmit::Return,
+      inter_char_delay: Duration::from_millis(8),
+      allow_clipboard_fallback: false,
+      settle: Duration::from_millis(50),
+    };
+    let _prepare_options = PrepareForInputOptions {
+      activation: ActivationPolicy::NoChange,
+      preserve_frontmost: true,
+      install_focus_guard: false,
+      settle: Duration::from_millis(0),
+    };
+    let _lease = InputPreparationLease::noop();
+    let _attempt = InputAttempt::success(InputDeliveryPath::WindowTargetedKeyboard);
+    let _result = InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard);
+    let _ = DisturbanceLevel::None;
+    let _ = ActivationPolicy::Background;
+    let _ = ActivationPolicy::FocusWithoutRaise;
+    let _ = ActivationPolicy::Foreground {
+      settle: Duration::from_millis(100),
+    };
+    let _ = InputPolicy::ForegroundPreferred;
 
     let _ = std::any::type_name::<Capture>();
     let _ = std::any::type_name::<CaptureOptions>();

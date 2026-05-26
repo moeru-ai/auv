@@ -27,6 +27,56 @@ impl Point {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ScreenPoint(pub Point);
+
+impl ScreenPoint {
+  pub const fn new(x: f64, y: f64) -> Self {
+    Self(Point::new(x, y))
+  }
+
+  pub const fn point(self) -> Point {
+    self.0
+  }
+}
+
+impl From<Point> for ScreenPoint {
+  fn from(point: Point) -> Self {
+    Self(point)
+  }
+}
+
+impl From<ScreenPoint> for Point {
+  fn from(point: ScreenPoint) -> Self {
+    point.0
+  }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct WindowPoint(pub Point);
+
+impl WindowPoint {
+  pub const fn new(x: f64, y: f64) -> Self {
+    Self(Point::new(x, y))
+  }
+
+  pub const fn point(self) -> Point {
+    self.0
+  }
+}
+
+impl From<Point> for WindowPoint {
+  fn from(point: Point) -> Self {
+    Self(point)
+  }
+}
+
+impl From<WindowPoint> for Point {
+  fn from(point: WindowPoint) -> Self {
+    point.0
+  }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Size {
   pub width: f64,
   pub height: f64,
