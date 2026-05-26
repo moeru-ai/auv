@@ -281,7 +281,9 @@ impl WindowApi<'_> {
       Ok(()) => Ok(InputActionResult::single_success(
         InputDeliveryPath::WindowTargetedKeyboard,
       )),
+      Err(background_error @ DriverError::InvalidInput { .. }) => Err(background_error),
       Err(background_error) => match options.policy {
+        // Task 4 intentionally keeps BackgroundPreferred background-only during no-steal rollout.
         InputPolicy::BackgroundOnly | InputPolicy::BackgroundPreferred => Err(background_error),
         InputPolicy::ForegroundPreferred if options.allow_clipboard_fallback => {
           let fallback_reason = background_error.to_string();
@@ -702,19 +704,14 @@ fn type_text_in_window(
   text: &str,
   options: TypeTextOptions,
 ) -> DriverResult<()> {
-  let submit_key_code = text_submit_key_code(options.submit)?;
+  let (submit_key_code, inter_char_delay_ms) = type_text_parts(options)?;
   if options.replace_existing {
     crate::native::input::hotkey_in_window(pid, number, 0, true, false, false, false)
       .map_err(backend)?;
     crate::native::input::press_key_in_window(pid, number, 51).map_err(backend)?;
   }
-  crate::native::input::type_text_in_window(
-    pid,
-    number,
-    text.to_string(),
-    duration_millis(options.inter_char_delay)?,
-  )
-  .map_err(backend)?;
+  crate::native::input::type_text_in_window(pid, number, text.to_string(), inter_char_delay_ms)
+    .map_err(backend)?;
   if let Some(key_code) = submit_key_code {
     crate::native::input::press_key_in_window(pid, number, key_code).map_err(backend)?;
   }
@@ -722,6 +719,12 @@ fn type_text_in_window(
     thread::sleep(options.settle);
   }
   Ok(())
+}
+
+fn type_text_parts(options: TypeTextOptions) -> DriverResult<(Option<i32>, u64)> {
+  let submit_key_code = text_submit_key_code(options.submit)?;
+  let inter_char_delay_ms = duration_millis(options.inter_char_delay)?;
+  Ok((submit_key_code, inter_char_delay_ms))
 }
 
 fn foreground_prepare_options(settle: Duration) -> PrepareForInputOptions {
@@ -1146,6 +1149,33 @@ mod no_steal_tests {
       .expect("double click"),
       (2, 75)
     );
+  }
+
+  #[test]
+  fn type_text_parts_validate_submit_and_delay_without_delivery() {
+    let parts = type_text_parts(TypeTextOptions {
+      submit: TextSubmit::Return,
+      inter_char_delay: Duration::from_millis(12),
+      ..TypeTextOptions::default()
+    })
+    .expect("type text parts");
+
+    assert_eq!(parts, (Some(36), 12));
+
+    assert!(matches!(
+      type_text_parts(TypeTextOptions {
+        submit: TextSubmit::Search,
+        ..TypeTextOptions::default()
+      }),
+      Err(DriverError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+      type_text_parts(TypeTextOptions {
+        inter_char_delay: Duration::MAX,
+        ..TypeTextOptions::default()
+      }),
+      Err(DriverError::InvalidInput { .. })
+    ));
   }
 
   #[test]
