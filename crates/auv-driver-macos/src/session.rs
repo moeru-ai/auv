@@ -221,9 +221,15 @@ impl WindowApi<'_> {
       }
       ActivationPolicy::FocusWithoutRaise => Err(DriverError::unsupported("focus_without_raise")),
       ActivationPolicy::Foreground { settle } => {
+        if options.preserve_frontmost || options.install_focus_guard {
+          return Err(DriverError::unsupported("foreground_restore"));
+        }
         activate_app_for_window(window)?;
         if !settle.is_zero() {
           thread::sleep(settle);
+        }
+        if !options.settle.is_zero() {
+          thread::sleep(options.settle);
         }
         Ok(InputPreparationLease::noop())
       }
@@ -919,6 +925,27 @@ mod no_steal_tests {
     let point = window_point_for_screen_point(&window, ScreenPoint::new(125.0, 230.0));
 
     assert_eq!(point, WindowPoint::new(25.0, 30.0));
+  }
+
+  #[test]
+  fn foreground_input_with_default_restore_options_is_unsupported() {
+    let session = MacosDriverSession { _private: () };
+    let window = sample_window();
+    let options = PrepareForInputOptions {
+      activation: ActivationPolicy::Foreground {
+        settle: Duration::ZERO,
+      },
+      ..PrepareForInputOptions::default()
+    };
+
+    let result = session.window().prepare_for_input(&window, options);
+
+    assert!(matches!(
+      result,
+      Err(DriverError::Unsupported {
+        operation: "foreground_restore"
+      })
+    ));
   }
 }
 
