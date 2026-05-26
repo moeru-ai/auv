@@ -45,26 +45,38 @@ private func modifierFlags(
   return flags
 }
 
-private func modifierKeyCodes(
+private struct ModifierKey {
+  let keyCode: CGKeyCode
+  let flag: CGEventFlags
+}
+
+private func modifierKeys(
   command: Bool,
   shift: Bool,
   option: Bool,
   control: Bool
-) -> [CGKeyCode] {
-  var keyCodes: [CGKeyCode] = []
+) -> [ModifierKey] {
+  var keys: [ModifierKey] = []
   if command {
-    keyCodes.append(55)
+    keys.append(ModifierKey(keyCode: 55, flag: .maskCommand))
   }
   if shift {
-    keyCodes.append(56)
+    keys.append(ModifierKey(keyCode: 56, flag: .maskShift))
   }
   if option {
-    keyCodes.append(58)
+    keys.append(ModifierKey(keyCode: 58, flag: .maskAlternate))
   }
   if control {
-    keyCodes.append(59)
+    keys.append(ModifierKey(keyCode: 59, flag: .maskControl))
   }
-  return keyCodes
+  return keys
+}
+
+private func validatedKeyCode(_ keyCode: Int32) -> CGKeyCode? {
+  guard keyCode >= 0 && keyCode <= Int32(UInt16.max) else {
+    return nil
+  }
+  return CGKeyCode(UInt16(keyCode))
 }
 
 private func makeKeyboardEvent(
@@ -121,7 +133,12 @@ func type_text_in_window(
 
 func press_key_in_window(pid: Int64, window_number: Int64, key_code: Int32) -> NativeActionResponse {
   let source = keyboardEventSource()
-  let virtualKey = CGKeyCode(UInt16(truncatingIfNeeded: key_code))
+  guard let virtualKey = validatedKeyCode(key_code) else {
+    return nativeActionError(
+      "invalid key_code \(key_code)",
+      "pass a key_code between 0 and \(UInt16.max)"
+    )
+  }
   guard
     let down = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: true),
     let up = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: false)
@@ -147,40 +164,66 @@ func hotkey_in_window(
   control: Bool
 ) -> NativeActionResponse {
   let source = keyboardEventSource()
-  let flags = modifierFlags(command: command, shift: shift, option: option, control: control)
-  let modifierCodes = modifierKeyCodes(command: command, shift: shift, option: option, control: control)
-  let virtualKey = CGKeyCode(UInt16(truncatingIfNeeded: key_code))
+  guard let virtualKey = validatedKeyCode(key_code) else {
+    return nativeActionError(
+      "invalid key_code \(key_code)",
+      "pass a key_code between 0 and \(UInt16.max)"
+    )
+  }
+  let fullFlags = modifierFlags(command: command, shift: shift, option: option, control: control)
+  let modifiers = modifierKeys(command: command, shift: shift, option: option, control: control)
+  var events: [CGEvent] = []
+  var currentFlags = CGEventFlags()
 
-  for modifierCode in modifierCodes {
-    guard let event = makeKeyboardEvent(source: source, keyCode: modifierCode, keyDown: true, flags: flags) else {
+  for modifier in modifiers {
+    currentFlags.insert(modifier.flag)
+    guard
+      let event = makeKeyboardEvent(
+        source: source,
+        keyCode: modifier.keyCode,
+        keyDown: true,
+        flags: currentFlags
+      )
+    else {
       return nativeActionError(
         "failed to create window-targeted modifier key event",
         "grant Accessibility permission and retry"
       )
     }
-    postKeyboardEvent(event, pid: pid, windowNumber: window_number)
+    events.append(event)
   }
 
   guard
-    let down = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: true, flags: flags),
-    let up = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: false, flags: flags)
+    let down = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: true, flags: fullFlags),
+    let up = makeKeyboardEvent(source: source, keyCode: virtualKey, keyDown: false, flags: fullFlags)
   else {
     return nativeActionError(
       "failed to create window-targeted hotkey event",
       "grant Accessibility permission and retry"
     )
   }
+  events.append(down)
+  events.append(up)
 
-  postKeyboardEvent(down, pid: pid, windowNumber: window_number)
-  postKeyboardEvent(up, pid: pid, windowNumber: window_number)
-
-  for modifierCode in modifierCodes.reversed() {
-    guard let event = makeKeyboardEvent(source: source, keyCode: modifierCode, keyDown: false) else {
+  for modifier in modifiers.reversed() {
+    currentFlags.remove(modifier.flag)
+    guard
+      let event = makeKeyboardEvent(
+        source: source,
+        keyCode: modifier.keyCode,
+        keyDown: false,
+        flags: currentFlags
+      )
+    else {
       return nativeActionError(
         "failed to create window-targeted modifier key event",
         "grant Accessibility permission and retry"
       )
     }
+    events.append(event)
+  }
+
+  for event in events {
     postKeyboardEvent(event, pid: pid, windowNumber: window_number)
   }
 

@@ -53,7 +53,8 @@ private func stampWindowTarget(
   _ event: CGEvent,
   pid: Int64,
   windowNumber: Int64,
-  windowLocation: CGPoint
+  windowLocation: CGPoint,
+  setWindowLocation: CGEventSetWindowLocationFn
 ) {
   event.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
   event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowNumber)
@@ -64,7 +65,7 @@ private func stampWindowTarget(
   if let eventWindowId = CGEventField(rawValue: 40) {
     event.setIntegerValueField(eventWindowId, value: windowNumber)
   }
-  cgEventSetWindowLocation?(event, windowLocation)
+  setWindowLocation(event, windowLocation)
 }
 
 func click_point(
@@ -133,6 +134,12 @@ func click_window_point(
   let clickIntervalSeconds = Double(click_interval_ms) / 1000.0
   let screenLocation = CGPoint(x: screen_x, y: screen_y)
   let windowLocation = CGPoint(x: window_x, y: window_y)
+  guard let setWindowLocation = cgEventSetWindowLocation else {
+    return nativeActionError(
+      "unsupported window-local event location",
+      "CGEventSetWindowLocation is unavailable; retry on a macOS version that exposes the SkyLight symbol"
+    )
+  }
 
   for clickNumber in 1...clickCount {
     guard
@@ -161,8 +168,20 @@ func click_window_point(
     // Provenance: CUA mouse and KWWK mouse background dispatch patterns.
     // https://github.com/trycua/cua/blob/a3448588286b6373013a5fa9072ac8bafb6681d6/libs/cua-driver-rs/crates/platform-macos/src/input/mouse.rs#L383-L438
     // https://github.com/EYHN/kwwk-computer-use-core/blob/eddd9e5475095de58bcb81cafbad79d1f5c5495d/Sources/KWWKComputerUseCore/BackgroundInputDispatcher.swift#L130-L162
-    stampWindowTarget(down, pid: pid, windowNumber: window_number, windowLocation: windowLocation)
-    stampWindowTarget(up, pid: pid, windowNumber: window_number, windowLocation: windowLocation)
+    stampWindowTarget(
+      down,
+      pid: pid,
+      windowNumber: window_number,
+      windowLocation: windowLocation,
+      setWindowLocation: setWindowLocation
+    )
+    stampWindowTarget(
+      up,
+      pid: pid,
+      windowNumber: window_number,
+      windowLocation: windowLocation,
+      setWindowLocation: setWindowLocation
+    )
 
     down.postToPid(pid_t(pid))
     up.postToPid(pid_t(pid))
