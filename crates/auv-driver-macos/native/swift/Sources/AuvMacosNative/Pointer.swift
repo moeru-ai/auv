@@ -1,6 +1,30 @@
 import AppKit
 import CoreGraphics
+import Darwin
 import Foundation
+
+private typealias CGEventSetWindowLocationFn = @convention(c) (
+  CGEvent,
+  UInt32,
+  CGPoint
+) -> Void
+
+private let cgEventSetWindowLocation: CGEventSetWindowLocationFn? = {
+  let symbolName = "CGEventSetWindowLocation"
+  let globalHandle = UnsafeMutableRawPointer(bitPattern: -2)
+  if let symbol = dlsym(globalHandle, symbolName) {
+    return unsafeBitCast(symbol, to: CGEventSetWindowLocationFn.self)
+  }
+
+  let skyLightPath = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
+  guard let handle = dlopen(skyLightPath, RTLD_LAZY) else {
+    return nil
+  }
+  guard let symbol = dlsym(handle, symbolName) else {
+    return nil
+  }
+  return unsafeBitCast(symbol, to: CGEventSetWindowLocationFn.self)
+}()
 
 private func mouseButton(_ value: Int32) -> CGMouseButton {
   switch value {
@@ -24,6 +48,24 @@ private func mouseUpType(_ button: CGMouseButton) -> CGEventType {
   case .center: return .otherMouseUp
   default: return .leftMouseUp
   }
+}
+
+private func stampMouseTarget(
+  _ event: CGEvent,
+  pid: Int64,
+  windowNumber: Int64,
+  windowLocation: CGPoint
+) {
+  event.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
+  event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowNumber)
+  event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: windowNumber)
+  if let eventWindowNumber = CGEventField(rawValue: 51) {
+    event.setIntegerValueField(eventWindowNumber, value: windowNumber)
+  }
+  if let eventWindowId = CGEventField(rawValue: 40) {
+    event.setIntegerValueField(eventWindowId, value: windowNumber)
+  }
+  cgEventSetWindowLocation?(event, UInt32(truncatingIfNeeded: windowNumber), windowLocation)
 }
 
 func click_point(
@@ -68,6 +110,63 @@ func click_point(
     up.setIntegerValueField(.mouseEventClickState, value: clickNumber)
     down.post(tap: .cghidEventTap)
     up.post(tap: .cghidEventTap)
+    if clickNumber < clickCount && clickIntervalSeconds > 0 {
+      Thread.sleep(forTimeInterval: clickIntervalSeconds)
+    }
+  }
+
+  return nativeActionOk()
+}
+
+func click_window_point(
+  pid: Int64,
+  window_number: Int64,
+  screen_x: Double,
+  screen_y: Double,
+  window_x: Double,
+  window_y: Double,
+  button_code: Int32,
+  click_count: Int64,
+  click_interval_ms: UInt64
+) -> NativeActionResponse {
+  let button = mouseButton(button_code)
+  let clickCount = max(click_count, 1)
+  let clickIntervalSeconds = Double(click_interval_ms) / 1000.0
+  let screenLocation = CGPoint(x: screen_x, y: screen_y)
+  let windowLocation = CGPoint(x: window_x, y: window_y)
+
+  for clickNumber in 1...clickCount {
+    guard
+      let down = CGEvent(
+        mouseEventSource: nil,
+        mouseType: mouseDownType(button),
+        mouseCursorPosition: screenLocation,
+        mouseButton: button
+      ),
+      let up = CGEvent(
+        mouseEventSource: nil,
+        mouseType: mouseUpType(button),
+        mouseCursorPosition: screenLocation,
+        mouseButton: button
+      )
+    else {
+      return nativeActionError(
+        "failed to create window-targeted mouse click event",
+        "grant Accessibility permission and retry"
+      )
+    }
+
+    down.setIntegerValueField(.mouseEventClickState, value: clickNumber)
+    up.setIntegerValueField(.mouseEventClickState, value: clickNumber)
+
+    // Provenance: CUA mouse and KWWK mouse background dispatch patterns.
+    // https://github.com/trycua/cua/blob/a3448588286b6373013a5fa9072ac8bafb6681d6/libs/cua-driver-rs/crates/platform-macos/src/input/mouse.rs#L383-L438
+    // https://github.com/EYHN/kwwk-computer-use-core/blob/eddd9e5475095de58bcb81cafbad79d1f5c5495d/Sources/KWWKComputerUseCore/BackgroundInputDispatcher.swift#L130-L162
+    stampMouseTarget(down, pid: pid, windowNumber: window_number, windowLocation: windowLocation)
+    stampMouseTarget(up, pid: pid, windowNumber: window_number, windowLocation: windowLocation)
+
+    down.postToPid(pid_t(pid))
+    up.postToPid(pid_t(pid))
     if clickNumber < clickCount && clickIntervalSeconds > 0 {
       Thread.sleep(forTimeInterval: clickIntervalSeconds)
     }

@@ -303,8 +303,35 @@ pub(crate) mod ffi {
       click_count: i64,
       click_interval_ms: u64,
     ) -> NativeActionResponse;
+    fn click_window_point(
+      pid: i64,
+      window_number: i64,
+      screen_x: f64,
+      screen_y: f64,
+      window_x: f64,
+      window_y: f64,
+      button_code: i32,
+      click_count: i64,
+      click_interval_ms: u64,
+    ) -> NativeActionResponse;
     fn current_mouse_location() -> NativeMouseLocationResponse;
     fn scroll_point(x: f64, y: f64, delta_x: f64, delta_y: f64) -> NativeActionResponse;
+    fn type_text_in_window(
+      pid: i64,
+      window_number: i64,
+      text: String,
+      inter_char_delay_ms: u64,
+    ) -> NativeActionResponse;
+    fn press_key_in_window(pid: i64, window_number: i64, key_code: i32) -> NativeActionResponse;
+    fn hotkey_in_window(
+      pid: i64,
+      window_number: i64,
+      key_code: i32,
+      command: bool,
+      shift: bool,
+      option: bool,
+      control: bool,
+    ) -> NativeActionResponse;
     fn capture_clipboard() -> NativeClipboardSnapshotResponse;
     fn restore_clipboard(snapshot_payload: String) -> NativeActionResponse;
     fn set_clipboard_text(text: String) -> NativeActionResponse;
