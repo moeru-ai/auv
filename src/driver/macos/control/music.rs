@@ -203,6 +203,7 @@ pub(crate) fn music_search_results(call: &DriverCall) -> AuvResult<DriverRespons
     output: OperationOutput::Candidates {
       candidates: candidates.clone(),
     },
+    verifications: Vec::new(),
     freshness_basis: Some(FreshnessBasis {
       source_artifact: Some(screenshot_ref.clone()),
       source_operation_id: Some("debug.findWindowRows".to_string()),
@@ -1441,7 +1442,10 @@ fn music_result_play_operation_result(
     status,
     operation_id: MUSIC_RESULT_PLAY_OPERATION_ID.to_string(),
     evidence_artifacts,
-    output: OperationOutput::Verification { verification },
+    output: OperationOutput::Verification {
+      verification: verification.clone(),
+    },
+    verifications: vec![verification],
     freshness_basis: None,
     known_limits: Vec::new(),
   }
@@ -1654,6 +1658,7 @@ mod tests {
       operation_id: MUSIC_SEARCH_RESULTS_OPERATION_ID.to_string(),
       evidence_artifacts: Vec::new(),
       output: OperationOutput::Candidates { candidates },
+      verifications: Vec::new(),
       freshness_basis: None,
       known_limits: Vec::new(),
     }
@@ -1969,6 +1974,15 @@ mod tests {
       result.evidence_artifacts[2].artifact_id.as_str(),
       SURFACE_NODES_ARTIFACT_ID
     );
+    assert_eq!(
+      result.verifications.len(),
+      1,
+      "music.result.play should mirror its verification claim at the top level"
+    );
+    assert!(matches!(
+      result.verifications[0].method,
+      VerificationMethod::SemanticMatch
+    ));
     match result.output {
       OperationOutput::Verification { verification } => {
         assert_eq!(verification.evidence.len(), 3);

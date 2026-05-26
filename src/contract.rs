@@ -44,6 +44,19 @@ pub struct OperationResult {
   pub operation_id: String,
   pub evidence_artifacts: Vec<ArtifactRef>,
   pub output: OperationOutput,
+  /// First-class verification claims attached to this operation. Independent
+  /// of [`OperationOutput`]: any operation — observe, action, or dedicated
+  /// verify — can attach one or more verifications when the world enters an
+  /// expected state. Consumers MAY scan this field directly instead of pattern-
+  /// matching on `output`. Serialized as empty when no claims were produced,
+  /// and accepted as missing for back-compat with older OperationResult JSON.
+  ///
+  /// [`OperationOutput::Verification`] is retained for now so single-claim
+  /// verify-only commands stay one-shape; new producers SHOULD prefer this
+  /// top-level field, especially when an action wants to record a verification
+  /// alongside its acknowledged output.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub verifications: Vec<VerificationResult>,
   pub freshness_basis: Option<FreshnessBasis>,
   pub known_limits: Vec<String>,
 }
@@ -752,6 +765,7 @@ mod tests {
       status: OperationStatus::Completed,
       operation_id: "music.search.results".to_string(),
       evidence_artifacts: vec![artifact.clone()],
+      verifications: Vec::new(),
       output: OperationOutput::Candidates {
         candidates: vec![Candidate {
           candidate_local_id: "row#1".to_string(),
@@ -1148,5 +1162,104 @@ mod tests {
     let parsed: ObservationSnapshot =
       serde_json::from_value(value).expect("snapshot should deserialize");
     assert_eq!(parsed, snapshot);
+  }
+
+  fn sample_verification(method: VerificationMethod) -> VerificationResult {
+    VerificationResult {
+      method,
+      executed: true,
+      state_changed: true,
+      semantic_matched: Some(true),
+      failure_layer: None,
+      evidence: vec![artifact_ref()],
+      consumed_candidate_ref: None,
+      consumed_node_ref: None,
+      consumed_recognition_artifact_ref: None,
+      consumed_recognition_id: None,
+      consumed_recognized_item_id: None,
+      observed_label: Some("Now playing X".to_string()),
+    }
+  }
+
+  #[test]
+  fn operation_result_carries_first_class_verifications_alongside_acknowledged_output() {
+    let verification = sample_verification(VerificationMethod::StateChanged);
+    let result = OperationResult {
+      run_id: RunId::new("run_action"),
+      status: OperationStatus::Completed,
+      operation_id: "music.result.play".to_string(),
+      evidence_artifacts: vec![artifact_ref()],
+      output: OperationOutput::Acknowledged {
+        message: Some("Issued play".to_string()),
+      },
+      verifications: vec![verification.clone()],
+      freshness_basis: None,
+      known_limits: Vec::new(),
+    };
+
+    let value = serde_json::to_value(&result).expect("result should serialize");
+    assert_eq!(value["output"]["kind"], json!("acknowledged"));
+    assert_eq!(
+      value["verifications"][0]["method"]["kind"],
+      json!("state_changed"),
+      "first-class verifications must serialize with their typed method"
+    );
+
+    let parsed: OperationResult =
+      serde_json::from_value(value).expect("result should deserialize");
+    assert_eq!(parsed.verifications, vec![verification]);
+  }
+
+  #[test]
+  fn legacy_operation_result_without_verifications_field_decodes_with_empty_vec() {
+    let json = json!({
+      "run_id": "run_legacy",
+      "status": "completed",
+      "operation_id": "music.search.results",
+      "evidence_artifacts": [],
+      "output": { "kind": "acknowledged", "message": null },
+      "freshness_basis": null,
+      "known_limits": []
+    });
+
+    let parsed: OperationResult =
+      serde_json::from_value(json).expect("legacy result should deserialize");
+    assert!(
+      parsed.verifications.is_empty(),
+      "missing verifications field must default to an empty list, preserving back-compat"
+    );
+
+    let reserialized = serde_json::to_value(&parsed).expect("result should re-serialize");
+    assert!(
+      reserialized.get("verifications").is_none(),
+      "empty verifications must skip serialize to keep wire compact for legacy producers"
+    );
+  }
+
+  #[test]
+  fn operation_result_supports_multiple_verification_claims() {
+    let result = OperationResult {
+      run_id: RunId::new("run_multi"),
+      status: OperationStatus::Completed,
+      operation_id: "music.result.play".to_string(),
+      evidence_artifacts: vec![artifact_ref()],
+      output: OperationOutput::Acknowledged { message: None },
+      verifications: vec![
+        sample_verification(VerificationMethod::StateChanged),
+        sample_verification(VerificationMethod::SemanticMatch),
+      ],
+      freshness_basis: None,
+      known_limits: Vec::new(),
+    };
+
+    let value = serde_json::to_value(&result).expect("result should serialize");
+    assert_eq!(
+      value["verifications"].as_array().map(|a| a.len()),
+      Some(2),
+      "multi-claim verifications must round-trip"
+    );
+    let parsed: OperationResult =
+      serde_json::from_value(value).expect("result should deserialize");
+    assert_eq!(parsed.verifications.len(), 2);
   }
 }
