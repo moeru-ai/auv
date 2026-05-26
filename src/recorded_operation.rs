@@ -9,16 +9,18 @@ use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
 use crate::model::{AuvResult, now_millis};
-use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanRef};
+use crate::run_builder::{Attributes, RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
 use crate::trace::{
-  EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RunId, TraceStatusCode, new_event_id,
+  EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RunId, SPAN_API_VERSION, SpanRecordV1Alpha1,
+  TraceState, TraceStatusCode, new_event_id, new_span_id,
 };
 
 pub struct RecordedOperationContext<'a> {
   runtime: &'a Runtime,
   run: &'a mut RecordingRun,
-  root: &'a SpanRef,
+  root: SpanRef,
+  current: SpanRef,
 }
 
 impl<'a> RecordedOperationContext<'a> {
@@ -39,11 +41,15 @@ impl<'a> RecordedOperationContext<'a> {
   }
 
   pub fn root_span(&self) -> &SpanRef {
-    self.root
+    &self.root
+  }
+
+  pub fn current_span(&self) -> &SpanRef {
+    &self.current
   }
 
   pub fn record_event(&mut self, name: impl Into<String>, message: Option<String>) -> EventId {
-    record_operation_event(self.run, self.root, name.into(), message)
+    record_operation_event(self.run, &self.current, name.into(), message)
   }
 
   pub fn stage_artifact_file(
@@ -53,8 +59,8 @@ impl<'a> RecordedOperationContext<'a> {
     preferred_name: impl Into<String>,
     summary: Option<String>,
   ) -> AuvResult<PathBuf> {
-    let root = self.root.clone();
-    self.stage_artifact_file_in_span(&root, role, source_path, preferred_name, summary)
+    let current = self.current.clone();
+    self.stage_artifact_file_in_span(&current, role, source_path, preferred_name, summary)
   }
 
   pub fn stage_artifact_file_in_span(
@@ -68,6 +74,68 @@ impl<'a> RecordedOperationContext<'a> {
     self
       .runtime
       .stage_artifact_file(self.run, span, role, source_path, preferred_name, summary)
+  }
+
+  pub fn in_span<T, E, F>(&mut self, name: impl Into<String>, operation: F) -> Result<T, E>
+  where
+    E: Display + From<String>,
+    F: FnOnce(&mut Self) -> Result<T, E>,
+  {
+    self.in_span_with_attributes(name, Attributes::new(), operation)
+  }
+
+  pub fn in_span_with_attributes<T, E, F>(
+    &mut self,
+    name: impl Into<String>,
+    attributes: Attributes,
+    operation: F,
+  ) -> Result<T, E>
+  where
+    E: Display + From<String>,
+    F: FnOnce(&mut Self) -> Result<T, E>,
+  {
+    let span_name = name.into();
+    let span = self
+      .run
+      .start_span(&self.current, operation_span_record(&span_name, attributes))
+      .map_err(E::from)?;
+    let previous = self.current.clone();
+    self.current = span.clone();
+    let result = operation(self);
+    self.current = previous;
+
+    match result {
+      Ok(value) => {
+        self
+          .run
+          .finish_span(
+            &span,
+            SpanFinish {
+              status_code: TraceStatusCode::Ok,
+              summary: Some(format!("{span_name} completed")),
+              failure: None,
+            },
+          )
+          .map_err(E::from)?;
+        Ok(value)
+      }
+      Err(error) => {
+        let message = error.to_string();
+        if let Err(finish_error) = self.run.finish_span(
+          &span,
+          SpanFinish {
+            status_code: TraceStatusCode::Error,
+            summary: Some(format!("{span_name} failed")),
+            failure: Some(message.clone()),
+          },
+        ) {
+          return Err(E::from(format!(
+            "{message}; additionally failed to finish failed span {span_name}: {finish_error}"
+          )));
+        }
+        Err(error)
+      }
+    }
   }
 }
 
@@ -109,7 +177,8 @@ impl Runtime {
       let mut context = RecordedOperationContext {
         runtime: self,
         run: &mut run,
-        root: &root,
+        root: root.clone(),
+        current: root.clone(),
       };
       operation(&mut context).map_err(|error| error.to_string())
     };
@@ -162,6 +231,22 @@ impl Runtime {
   }
 }
 
+fn operation_span_record(name: &str, attributes: Attributes) -> SpanRecordV1Alpha1 {
+  SpanRecordV1Alpha1 {
+    api_version: SPAN_API_VERSION.to_string(),
+    span_id: new_span_id(),
+    parent_span_id: None,
+    name: name.to_string(),
+    state: TraceState::Running,
+    status_code: TraceStatusCode::Unset,
+    started_at_millis: now_millis(),
+    finished_at_millis: None,
+    attributes,
+    summary: None,
+    failure: None,
+  }
+}
+
 fn record_operation_event(
   run: &mut RecordingRun,
   span: &SpanRef,
@@ -206,16 +291,19 @@ mod tests {
         RunSpec::new(RunType::Execute, "auv.example.typed"),
         "Typed operation sample",
         |context| {
-          context.record_event(
-            "typed.step",
-            Some("typed operation closure executed".to_string()),
-          );
-          context.stage_artifact_file(
-            "debug",
-            &source_path,
-            "sample.txt",
-            Some("first sample artifact".to_string()),
-          )?;
+          context.in_span("typed.step", |context| {
+            context.record_event(
+              "typed.step.event",
+              Some("typed operation closure executed".to_string()),
+            );
+            context.stage_artifact_file(
+              "debug",
+              &source_path,
+              "sample.txt",
+              Some("first sample artifact".to_string()),
+            )?;
+            Ok::<_, String>(())
+          })?;
           context.stage_artifact_file(
             "debug",
             &source_path,
@@ -239,7 +327,14 @@ mod tests {
     assert_eq!(run.artifacts.len(), 2);
     assert_eq!(run.artifacts[0].artifact_id.as_str(), "artifact_0001");
     assert_eq!(run.artifacts[1].artifact_id.as_str(), "artifact_0002");
-    assert_eq!(run.artifacts[0].span_id, run.run.root_span_id);
+    let child_span = run
+      .spans
+      .iter()
+      .find(|span| span.name == "typed.step")
+      .expect("child span should be recorded");
+    assert_eq!(child_span.status_code, TraceStatusCode::Ok);
+    assert_eq!(run.artifacts[0].span_id, child_span.span_id);
+    assert_eq!(run.artifacts[1].span_id, run.run.root_span_id);
     assert!(
       run
         .events
@@ -250,7 +345,13 @@ mod tests {
       run
         .events
         .iter()
-        .any(|event| event.name == "artifact.captured")
+        .any(|event| event.name == "typed.step.event" && event.span_id == child_span.span_id)
+    );
+    assert!(
+      run
+        .events
+        .iter()
+        .any(|event| event.name == "artifact.captured" && event.span_id == child_span.span_id)
     );
     assert!(output.run_dir.join(&run.artifacts[0].path).exists());
 
@@ -274,7 +375,7 @@ mod tests {
         "Typed operation failure sample",
         |context| {
           observed_run_id = Some(context.run_id().to_string());
-          Err::<(), _>("boom".to_string())
+          context.in_span("typed.failure", |_context| Err::<(), _>("boom".to_string()))
         },
       )
       .expect_err("recorded operation should fail");
@@ -293,6 +394,19 @@ mod tests {
     assert_eq!(
       run
         .run
+        .failure
+        .as_ref()
+        .map(|failure| failure.message.as_str()),
+      Some("boom")
+    );
+    let child_span = run
+      .spans
+      .iter()
+      .find(|span| span.name == "typed.failure")
+      .expect("failed child span should be recorded");
+    assert_eq!(child_span.status_code, TraceStatusCode::Error);
+    assert_eq!(
+      child_span
         .failure
         .as_ref()
         .map(|failure| failure.message.as_str()),

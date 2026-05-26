@@ -165,107 +165,119 @@ fn run_steps(
     .resolve(Window::main_visible().owned_by(app))?;
   let full_window_region = RatioRect::new(0.0, 0.0, 1.0, 1.0);
 
-  let mut before = session.window().capture_with(
-    &window,
-    CaptureOptions {
-      activation: Activation::ActivateFirst {
-        settle: Duration::from_millis(200),
-      },
-      ..CaptureOptions::default()
-    },
-  )?;
-  let cancel_matches =
-    session
-      .vision()
-      .find_text_in_capture(&before, "取消", full_window_region)?;
-  if let Some(cancel) = cancel_matches.best_match() {
-    session
-      .input()
-      .click_at(cancel.action_point(), Click::Single)?;
-    std::thread::sleep(Duration::from_millis(500));
-    before = session.window().capture(&window)?;
-  }
-  record_capture(context, "before-search", &before)?;
-
-  let mut focus_capture = before;
-  let marker_matches = session.vision().find_text_in_capture(
-    &focus_capture,
-    &inputs.main_marker,
-    full_window_region,
-  )?;
-  if marker_matches.best_match().is_none() {
-    let collapse_point = window_relative_point(
+  context.in_span("auv.example.netease.prepare", |context| {
+    let mut before = session.window().capture_with(
       &window,
-      inputs.collapse_relative_x,
-      inputs.collapse_relative_y,
-    );
-    session.input().click_at(collapse_point, Click::Single)?;
-    std::thread::sleep(Duration::from_millis(500));
-    focus_capture = session.window().capture(&window)?;
-    record_capture(context, "after-collapse-to-main", &focus_capture)?;
-  }
-
-  let search_point =
-    window_relative_point(&window, inputs.search_relative_x, inputs.search_relative_y);
-
-  session.input().click_at(search_point, Click::Single)?;
-  std::thread::sleep(Duration::from_millis(500));
-  let after_search_click = session.window().capture(&window)?;
-  record_capture(context, "after-search-click", &after_search_click)?;
-
-  session.input().paste_text(PasteTextOptions {
-    text: inputs.query.clone(),
-    replace_existing: true,
-    submit: TextSubmit::Return,
-    settle: Duration::from_millis(inputs.submit_settle_ms),
-  })?;
-
-  let after_search = session.window().capture(&window)?;
-  record_capture(context, "after-search", &after_search)?;
-  let search_text = session
-    .vision()
-    .recognize_text_in_capture(&after_search, inputs.result_region)?;
-  expect_text_visible(
-    &search_text,
-    &inputs.result_artist,
-    "result artist on comprehensive results",
-  )?;
-  expect_text_visible(
-    &search_text,
-    &inputs.result_title,
-    "result title on comprehensive results",
-  )?;
-
-  let title_matches = search_text.find_contains(&inputs.result_title);
-  let selected = title_matches.get(inputs.result_index).ok_or_else(|| {
-    format!(
-      "result title was not visible for playback activation at index {}",
-      inputs.result_index
-    )
-  })?;
-  session.input().click_at(
-    selected.action_point(),
-    Click::Double {
-      interval: Duration::from_millis(inputs.click_interval_ms),
-    },
-  )?;
-  std::thread::sleep(Duration::from_millis(inputs.activation_settle_ms));
-
-  let after_play = session.window().capture_with(
-    &window,
-    CaptureOptions {
-      activation: Activation::ActivateFirst {
-        settle: Duration::from_millis(200),
+      CaptureOptions {
+        activation: Activation::ActivateFirst {
+          settle: Duration::from_millis(200),
+        },
+        ..CaptureOptions::default()
       },
-      ..CaptureOptions::default()
-    },
-  )?;
-  record_capture(context, "after-play", &after_play)?;
-  let player_text = session
-    .vision()
-    .recognize_text_in_capture(&after_play, inputs.player_region)?;
-  expect_text_visible(&player_text, &inputs.result_title, "player title")?;
-  expect_text_visible(&player_text, &inputs.result_artist, "player artist")?;
+    )?;
+    let cancel_matches =
+      session
+        .vision()
+        .find_text_in_capture(&before, "取消", full_window_region)?;
+    if let Some(cancel) = cancel_matches.best_match() {
+      session
+        .input()
+        .click_at(cancel.action_point(), Click::Single)?;
+      std::thread::sleep(Duration::from_millis(500));
+      before = session.window().capture(&window)?;
+    }
+    record_capture(context, "before-search", &before)?;
+
+    let mut focus_capture = before;
+    let marker_matches = session.vision().find_text_in_capture(
+      &focus_capture,
+      &inputs.main_marker,
+      full_window_region,
+    )?;
+    if marker_matches.best_match().is_none() {
+      let collapse_point = window_relative_point(
+        &window,
+        inputs.collapse_relative_x,
+        inputs.collapse_relative_y,
+      );
+      session.input().click_at(collapse_point, Click::Single)?;
+      std::thread::sleep(Duration::from_millis(500));
+      focus_capture = session.window().capture(&window)?;
+      record_capture(context, "after-collapse-to-main", &focus_capture)?;
+    }
+
+    Ok::<_, Box<dyn std::error::Error>>(())
+  })?;
+
+  let selected_point = context.in_span("auv.example.netease.search", |context| {
+    let search_point =
+      window_relative_point(&window, inputs.search_relative_x, inputs.search_relative_y);
+
+    session.input().click_at(search_point, Click::Single)?;
+    std::thread::sleep(Duration::from_millis(500));
+    let after_search_click = session.window().capture(&window)?;
+    record_capture(context, "after-search-click", &after_search_click)?;
+
+    session.input().paste_text(PasteTextOptions {
+      text: inputs.query.clone(),
+      replace_existing: true,
+      submit: TextSubmit::Return,
+      settle: Duration::from_millis(inputs.submit_settle_ms),
+    })?;
+
+    let after_search = session.window().capture(&window)?;
+    record_capture(context, "after-search", &after_search)?;
+    let search_text = session
+      .vision()
+      .recognize_text_in_capture(&after_search, inputs.result_region)?;
+    expect_text_visible(
+      &search_text,
+      &inputs.result_artist,
+      "result artist on comprehensive results",
+    )?;
+    expect_text_visible(
+      &search_text,
+      &inputs.result_title,
+      "result title on comprehensive results",
+    )?;
+
+    let title_matches = search_text.find_contains(&inputs.result_title);
+    let selected = title_matches.get(inputs.result_index).ok_or_else(|| {
+      format!(
+        "result title was not visible for playback activation at index {}",
+        inputs.result_index
+      )
+    })?;
+    Ok::<_, Box<dyn std::error::Error>>(selected.action_point())
+  })?;
+
+  context.in_span("auv.example.netease.playback", |context| {
+    session.input().click_at(
+      selected_point,
+      Click::Double {
+        interval: Duration::from_millis(inputs.click_interval_ms),
+      },
+    )?;
+    std::thread::sleep(Duration::from_millis(inputs.activation_settle_ms));
+
+    let after_play = session.window().capture_with(
+      &window,
+      CaptureOptions {
+        activation: Activation::ActivateFirst {
+          settle: Duration::from_millis(200),
+        },
+        ..CaptureOptions::default()
+      },
+    )?;
+    record_capture(context, "after-play", &after_play)?;
+    let player_text = session
+      .vision()
+      .recognize_text_in_capture(&after_play, inputs.player_region)?;
+    expect_text_visible(&player_text, &inputs.result_title, "player title")?;
+    expect_text_visible(&player_text, &inputs.result_artist, "player artist")?;
+
+    Ok::<_, Box<dyn std::error::Error>>(())
+  })?;
 
   Ok(())
 }

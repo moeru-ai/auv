@@ -1205,8 +1205,7 @@ mod tests {
       "first-class verifications must serialize with their typed method"
     );
 
-    let parsed: OperationResult =
-      serde_json::from_value(value).expect("result should deserialize");
+    let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
     assert_eq!(parsed.verifications, vec![verification]);
   }
 
@@ -1258,8 +1257,7 @@ mod tests {
       Some(2),
       "multi-claim verifications must round-trip"
     );
-    let parsed: OperationResult =
-      serde_json::from_value(value).expect("result should deserialize");
+    let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
     assert_eq!(parsed.verifications.len(), 2);
   }
 }
