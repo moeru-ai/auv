@@ -2,7 +2,7 @@
 
 Date: 2026-05-26
 
-Status: draft for review
+Status: stage 1 implemented, later stages provisional
 
 ## Purpose
 
@@ -128,11 +128,14 @@ pub enum InputPolicy {
 
 - `BackgroundOnly`: only no-steal or background delivery is allowed. If no such
   path works, the action fails.
-- `BackgroundPreferred`: try no-steal/background paths first. Foreground
-  fallback is allowed, but the result must record the fallback reason and
-  disturbance.
-- `ForegroundPreferred`: choose the most stable foreground path first. This is
-  useful for debug and supervised runs.
+- `BackgroundPreferred`: try no-steal/background paths first. In the stage 1
+  macOS implementation this does not foreground-fallback yet; later interaction
+  policy can choose whether to allow that and must record the fallback reason
+  and disturbance when it does.
+- `ForegroundPreferred`: in the stage 1 macOS implementation, try
+  no-steal/window-targeted delivery first and use foreground fallback only if
+  that fails. The name is provisional and may be refined once action policy is
+  separated from delivery preference.
 
 ```rust
 pub enum ActivationPolicy {
@@ -205,8 +208,9 @@ AUV should follow that shape:
 4. If AX text paths fail, try pid/window-targeted keyboard delivery.
 5. Use clipboard paste only when `allow_clipboard_fallback` is true.
 6. Use foreground System Events only when the action policy is
-   `ForegroundPreferred`, or when the policy is `BackgroundPreferred` and all
-   no-steal/background paths failed.
+   `ForegroundPreferred` in stage 1. `BackgroundPreferred` foreground fallback
+   is intentionally deferred until the interaction policy layer can make that
+   disturbance explicit.
 
 Clipboard fallback must snapshot and restore the clipboard, and the action
 result must record clipboard disturbance even when restoration succeeds.
@@ -278,18 +282,33 @@ from CUA or KWWK, using GitHub permalinks with commit hashes and line anchors.
 
 ### Stage 1: Close the NetEase Loop
 
-- Add public macOS window APIs:
+- Added shared `WindowPoint`, `ScreenPoint`, input policy, preparation,
+  option, attempt, and result types in `auv-driver`.
+- Added public macOS window APIs:
   - `prepare_for_input`
   - `restore_input`
   - `click`
   - `type_text`
   - coordinate conversion helpers
-- Add result/attempt records for selected path and fallback reason.
-- Implement AX text path and background keyboard path where feasible.
-- Implement window-local background mouse click where feasible.
-- Migrate `examples/netease_play_visible_anchor.rs` away from
+- Added native Swift/Rust bridge wrappers for pid/window-targeted mouse and
+  keyboard delivery.
+- Added result/attempt records for selected path and fallback reason.
+- Implemented window-local background mouse click and pid/window-targeted
+  keyboard delivery where the macOS backend supports the required event
+  routing fields.
+- Migrated `examples/netease_play_visible_anchor.rs` away from
   `session.input().click_at` and `session.input().paste_text`.
 
+Deferred from stage 1:
+
+- AX text path (`AXSelectedText`, `AXValue`) is still a next step.
+- `FocusWithoutRaise`, foreground restoration, and focus guard installation
+  currently return unsupported where restoration semantics would otherwise be
+  misleading.
+- Window-level scroll, drag, hotkey, and press-key public helpers are not yet
+  exposed, although native keyboard wrappers exist for `type_text` internals.
+- Driver results are not yet written into run trace data beyond existing
+  example spans and screenshot artifacts.
 ### Stage 2: Improve Coverage
 
 - Add `press_key`, `hotkey`, `scroll`, and `drag` under `session.window()`.
