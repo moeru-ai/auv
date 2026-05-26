@@ -323,6 +323,9 @@ impl WindowApi<'_> {
     options: PrepareForInputOptions,
   ) -> DriverResult<InputPreparationLease> {
     let _ = self.session;
+    if options.install_focus_guard {
+      return Err(DriverError::unsupported("focus_guard"));
+    }
     match options.activation {
       ActivationPolicy::NoChange | ActivationPolicy::Background => {
         if !options.settle.is_zero() {
@@ -332,7 +335,7 @@ impl WindowApi<'_> {
       }
       ActivationPolicy::FocusWithoutRaise => Err(DriverError::unsupported("focus_without_raise")),
       ActivationPolicy::Foreground { settle } => {
-        if options.preserve_frontmost || options.install_focus_guard {
+        if options.preserve_frontmost {
           return Err(DriverError::unsupported("foreground_restore"));
         }
         activate_app_for_window(window)?;
@@ -1175,6 +1178,27 @@ mod no_steal_tests {
         ..TypeTextOptions::default()
       }),
       Err(DriverError::InvalidInput { .. })
+    ));
+  }
+
+  #[test]
+  fn prepare_for_input_rejects_unimplemented_focus_guard_without_activation() {
+    let session = MacosDriverSession { _private: () };
+    let window = sample_window();
+    let options = PrepareForInputOptions {
+      activation: ActivationPolicy::NoChange,
+      preserve_frontmost: false,
+      install_focus_guard: true,
+      settle: Duration::ZERO,
+    };
+
+    let result = session.window().prepare_for_input(&window, options);
+
+    assert!(matches!(
+      result,
+      Err(DriverError::Unsupported {
+        operation: "focus_guard"
+      })
     ));
   }
 
