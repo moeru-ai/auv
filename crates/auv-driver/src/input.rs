@@ -101,7 +101,7 @@ impl Default for PrepareForInputOptions {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputPreparationLease {
-  pub restored: bool,
+  restored: bool,
 }
 
 impl InputPreparationLease {

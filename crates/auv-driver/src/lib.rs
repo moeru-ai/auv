@@ -27,15 +27,14 @@ mod tests {
   use std::time::Duration;
 
   use crate::{
+    ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
+    InputDeliveryPath, InputPolicy, InputPreparationLease, PrepareForInputOptions, ScreenPoint,
+    TextSubmit, TypeTextOptions, WindowPoint,
     capture::{Activation, Capture, CaptureOptions, ImageView},
     display::{Display, ObservedDisplays},
     error::{DriverError, DriverResult},
-    geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint},
-    input::{
-      ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
-      InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions,
-      PrepareForInputOptions, TextSubmit, TypeTextOptions, WaitOptions,
-    },
+    geometry::{CoordinateSpace, Point, RatioRect, Rect, Size},
+    input::{PasteTextOptions, WaitOptions},
     selector::{App, AppSelector, TextMatcher, Window as SelectWindow, WindowSelector},
     traits::{Driver, DriverDescriptor, DriverSession, PlatformKind},
     vision::{ImageMatch, ImageMatchResult, RecognizedText, TextRecognition},
