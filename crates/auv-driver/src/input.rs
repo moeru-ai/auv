@@ -16,7 +16,8 @@ impl Default for MouseButton {
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Click {
   Single,
   Double { interval: Duration },
@@ -65,19 +66,16 @@ pub enum InputPolicy {
   ForegroundPreferred,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivationPolicy {
+  #[default]
   NoChange,
   Background,
   FocusWithoutRaise,
-  Foreground { settle: Duration },
-}
-
-impl Default for ActivationPolicy {
-  fn default() -> Self {
-    Self::NoChange
-  }
+  Foreground {
+    settle: Duration,
+  },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +97,7 @@ impl Default for PrepareForInputOptions {
   }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct InputPreparationLease {
   restored: bool,
 }
@@ -113,12 +111,12 @@ impl InputPreparationLease {
     self.restored = true;
   }
 
-  pub const fn is_restored(self) -> bool {
+  pub const fn is_restored(&self) -> bool {
     self.restored
   }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClickOptions {
   pub policy: InputPolicy,
   pub click: Click,
@@ -226,5 +224,47 @@ impl InputActionResult {
       focus_disturbance: DisturbanceLevel::None,
       clipboard_disturbance: DisturbanceLevel::None,
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn click_and_click_options_serde_roundtrip() {
+    let clicks = [
+      Click::Single,
+      Click::Double {
+        interval: Duration::from_millis(42),
+      },
+    ];
+
+    for click in clicks {
+      let encoded = serde_json::to_string(&click).expect("serialize click");
+      let decoded: Click = serde_json::from_str(&encoded).expect("deserialize click");
+      assert_eq!(decoded, click);
+    }
+
+    let options = ClickOptions {
+      policy: InputPolicy::ForegroundPreferred,
+      click: Click::Double {
+        interval: Duration::from_millis(100),
+      },
+    };
+
+    let encoded = serde_json::to_string(&options).expect("serialize click options");
+    let decoded: ClickOptions = serde_json::from_str(&encoded).expect("deserialize click options");
+    assert_eq!(decoded, options);
+  }
+
+  #[test]
+  fn input_preparation_lease_tracks_restoration() {
+    let mut lease = InputPreparationLease::noop();
+    assert!(!lease.is_restored());
+
+    lease.mark_restored();
+
+    assert!(lease.is_restored());
   }
 }
