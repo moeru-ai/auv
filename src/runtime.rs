@@ -62,11 +62,32 @@ impl Runtime {
 
   pub fn inspect(&self, run_id: &str) -> AuvResult<String> {
     let canonical = self.recording.read_run(run_id)?;
-    Ok(crate::inspect::render_text(&canonical))
+    let verifications = crate::run_read::extract_verifications(self.recording.store(), &canonical)?;
+    let observation_snapshots =
+      crate::run_read::extract_observation_snapshots(self.recording.store(), &canonical)?;
+    Ok(crate::inspect::render_text(
+      &canonical,
+      &verifications,
+      &observation_snapshots,
+    ))
   }
 
   pub fn read_run(&self, run_id: &str) -> AuvResult<crate::store::CanonicalRun> {
     self.recording.read_run(run_id)
+  }
+
+  pub fn list_verifications(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::contract::VerificationResult>> {
+    crate::run_read::list_verifications(self.recording.store(), run_id)
+  }
+
+  pub fn list_observation_snapshots(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::contract::ObservationSnapshot>> {
+    crate::run_read::list_observation_snapshots(self.recording.store(), run_id)
   }
 
   pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {

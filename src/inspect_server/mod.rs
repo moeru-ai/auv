@@ -31,10 +31,11 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
+use crate::contract::{ObservationSnapshot, VerificationResult};
 use crate::model::AuvResult;
 use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
 use crate::store::{CanonicalRun, LocalStore};
-use crate::trace::{RunId, TraceState};
+use crate::trace::{RunId, RunRecordV1Alpha1, TraceState};
 
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_INSPECT_PORT: u16 = 8765;
@@ -312,7 +313,19 @@ async fn get_run(
     .store
     .read_run(&run_id)
     .map_err(InspectHttpError::from_store)?;
-  Ok(Json(run.run).into_response())
+  let verifications = crate::run_read::extract_verifications(state.store.as_ref(), &run)
+    .map_err(InspectHttpError::from_store)?;
+  let observation_snapshots =
+    crate::run_read::extract_observation_snapshots(state.store.as_ref(), &run)
+      .map_err(InspectHttpError::from_store)?;
+  Ok(
+    Json(InspectRunResponse {
+      run: run.run,
+      verifications,
+      observation_snapshots,
+    })
+    .into_response(),
+  )
 }
 
 async fn get_spans(
@@ -473,6 +486,16 @@ async fn write_artifact(
 #[serde(rename_all = "camelCase")]
 struct ArtifactLookupQuery {
   span_id: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct InspectRunResponse {
+  #[serde(flatten)]
+  run: RunRecordV1Alpha1,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  verifications: Vec<VerificationResult>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  observation_snapshots: Vec<ObservationSnapshot>,
 }
 
 #[allow(clippy::result_large_err)]
@@ -831,6 +854,7 @@ impl IntoResponse for InspectHttpError {
 mod tests {
   use std::collections::BTreeMap;
   use std::fs;
+  use std::path::Path;
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -840,9 +864,18 @@ mod tests {
   use tower::ServiceExt;
 
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
+  use crate::contract::{
+    ObservationSnapshot, ObservationSource, OperationOutput, OperationResult, OperationStatus,
+    RecognitionScope, RecognitionSurface, VerificationMethod, VerificationResult,
+  };
   use crate::model::now_millis;
   use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate};
-  use crate::store::{CanonicalRun, LocalStore};
+  use crate::scroll_scan::{
+    CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster,
+    ScanPageRecord, ScanRegion, ScanTarget, ScrollBoundaryCandidate, ScrollScanArtifact,
+    SectionCandidate, StopEvidence, StopPolicy, StopReason,
+  };
+  use crate::store::{ArtifactFileSource, CanonicalRun, LocalStore};
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
     EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
@@ -1734,6 +1767,42 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn run_route_includes_read_side_verifications_and_observation_snapshots() {
+    let root = temp_dir("inspect-server-run-read-side");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_inspect_server_contracts");
+    write_test_run_with_read_side_contracts(&store, &root, run_id.clone());
+
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+    let run_response = app
+      .oneshot(
+        Request::builder()
+          .uri("/runs/run_inspect_server_contracts")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(run_response.status(), StatusCode::OK);
+    let run_body = to_bytes(run_response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let run: serde_json::Value = serde_json::from_slice(&run_body).expect("run should be json");
+    assert_eq!(run["run_id"], "run_inspect_server_contracts");
+    assert_eq!(run["verifications"][0]["method"]["kind"], "semantic_match");
+    assert_eq!(
+      run["observation_snapshots"][0]["snapshot_id"],
+      "snapshot_server_test"
+    );
+    assert!(
+      run.get("spans").is_none(),
+      "/runs/{run_id} should not inline spans even when enriched"
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
   async fn root_serves_inline_viewer_html() {
     let root = temp_dir("inspect-server-viewer");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
@@ -2437,6 +2506,179 @@ mod tests {
         artifacts,
       })
       .expect("run should persist");
+  }
+
+  fn write_test_run_with_read_side_contracts(store: &LocalStore, root: &Path, run_id: RunId) {
+    let span_id = SpanId::new("0000000000000001");
+    let run = RunRecordV1Alpha1 {
+      api_version: RUN_API_VERSION.to_string(),
+      run_id: run_id.clone(),
+      trace_id: TraceId::new("00000000000000000000000000000001"),
+      run_type: RunType::Execute,
+      state: TraceState::Ended,
+      status_code: TraceStatusCode::Ok,
+      started_at_millis: 100,
+      finished_at_millis: Some(101),
+      root_span_id: span_id.clone(),
+      attributes: BTreeMap::new(),
+      summary: Some("done".to_string()),
+      failure: None,
+    };
+    let span = SpanRecordV1Alpha1 {
+      api_version: SPAN_API_VERSION.to_string(),
+      span_id: span_id.clone(),
+      parent_span_id: None,
+      name: "auv.inspect.server".to_string(),
+      state: TraceState::Ended,
+      status_code: TraceStatusCode::Ok,
+      started_at_millis: 100,
+      finished_at_millis: Some(101),
+      attributes: BTreeMap::new(),
+      summary: None,
+      failure: None,
+    };
+    let verification = VerificationResult {
+      method: VerificationMethod::SemanticMatch,
+      executed: true,
+      state_changed: true,
+      semantic_matched: Some(true),
+      failure_layer: None,
+      evidence: Vec::new(),
+      consumed_candidate_ref: None,
+      consumed_node_ref: None,
+      consumed_recognition_artifact_ref: None,
+      consumed_recognition_id: None,
+      consumed_recognized_item_id: None,
+      observed_label: Some("Now Playing".to_string()),
+    };
+    let operation_result = OperationResult {
+      run_id: run_id.clone(),
+      status: OperationStatus::Completed,
+      operation_id: "music.result.play".to_string(),
+      evidence_artifacts: Vec::new(),
+      output: OperationOutput::Verification {
+        verification: verification.clone(),
+      },
+      verifications: vec![verification],
+      freshness_basis: None,
+      known_limits: Vec::new(),
+    };
+    let observation_snapshot = ObservationSnapshot {
+      snapshot_id: "snapshot_server_test".to_string(),
+      run_id: run_id.clone(),
+      span_id: span_id.clone(),
+      captured_at_millis: 100,
+      source: ObservationSource::Visual,
+      scope: RecognitionScope {
+        surface: RecognitionSurface::Window,
+        display_ref: None,
+        native_display_id: None,
+        app_bundle_id: Some("com.example.music".to_string()),
+        window_title: Some("Example Music".to_string()),
+        window_number: None,
+        region_hint: None,
+        capture_artifact: None,
+        capture_contract_artifact: None,
+      },
+      capture_contract_ref: None,
+      evidence: Vec::new(),
+      nodes: Vec::new(),
+      detail: serde_json::json!({"producer": "scroll_scan"}),
+      known_limits: vec!["visual only".to_string()],
+    };
+    let scroll_scan_artifact = ScrollScanArtifact {
+      scan_id: "scan_server_test".to_string(),
+      target: ScanTarget {
+        application_id: Some("com.example.music".to_string()),
+        window_title: Some("Example Music".to_string()),
+        region: ScanRegion {
+          left_ratio: 0.1,
+          top_ratio: 0.2,
+          right_ratio: 0.9,
+          bottom_ratio: 0.8,
+        },
+      },
+      stop_policy: StopPolicy::Bounded {
+        max_pages: 1,
+        max_scrolls: 0,
+      },
+      pages: Vec::<ScanPageRecord>::new(),
+      observations: Vec::<CollectionObservation>::new(),
+      nodes: Vec::new(),
+      snapshots: vec![observation_snapshot],
+      clusters: Vec::<ObservationCluster>::new(),
+      section_candidates: Vec::<SectionCandidate>::new(),
+      scroll_boundary_candidates: Vec::<ScrollBoundaryCandidate>::new(),
+      hook_decisions: Vec::<HookDecisionRecord>::new(),
+      stop_evidence: StopEvidence {
+        reason: StopReason::MaxPages,
+        message: "bounded for test".to_string(),
+        page_index: 0,
+      },
+      completeness_claim: CompletenessClaim::PartialMaxPages,
+      warnings: Vec::new(),
+    };
+    let artifacts = vec![
+      stage_json_artifact(
+        store,
+        root,
+        &run_id,
+        &span_id,
+        0,
+        "operation-result",
+        "music-result-play.json",
+        &operation_result,
+      ),
+      stage_json_artifact(
+        store,
+        root,
+        &run_id,
+        &span_id,
+        1,
+        "scroll-scan",
+        "scroll-scan.json",
+        &scroll_scan_artifact,
+      ),
+    ];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run should persist");
+  }
+
+  fn stage_json_artifact<T: serde::Serialize>(
+    store: &LocalStore,
+    root: &Path,
+    run_id: &RunId,
+    span_id: &SpanId,
+    index: usize,
+    role: &str,
+    preferred_name: &str,
+    value: &T,
+  ) -> ArtifactRecordV1Alpha1 {
+    let source_path = root.join(format!("source-{index}-{preferred_name}"));
+    let rendered =
+      serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
+    fs::write(&source_path, rendered).expect("artifact source should write");
+    store
+      .stage_artifact_file(
+        run_id,
+        index,
+        span_id,
+        None,
+        ArtifactFileSource {
+          role: role.to_string(),
+          source_path,
+          preferred_name: preferred_name.to_string(),
+          summary: None,
+        },
+      )
+      .expect("artifact should stage")
   }
 
   fn write_test_run_with_duplicate_artifacts(store: &LocalStore, run_id: RunId) {

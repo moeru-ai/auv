@@ -5,9 +5,16 @@
 //! form (useful for CLI/debug output). It does not provide a live viewer or any
 //! runtime execution logic; see `inspect_server` for the HTTP/WebSocket UI.
 
+use crate::contract::{
+  FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult,
+};
 use crate::store::CanonicalRun;
 
-pub fn render_text(run: &CanonicalRun) -> String {
+pub fn render_text(
+  run: &CanonicalRun,
+  verifications: &[VerificationResult],
+  observation_snapshots: &[ObservationSnapshot],
+) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
     run.run.run_id,
@@ -63,7 +70,83 @@ pub fn render_text(run: &CanonicalRun) -> String {
     ));
   }
 
+  output.push_str("\nVerifications:\n");
+  if verifications.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for verification in verifications {
+      output.push_str(&format!(
+        "- method={} executed={} state_changed={} semantic_matched={} failure_layer={} evidence={} observed_label={}\n",
+        render_verification_method(&verification.method),
+        verification.executed,
+        verification.state_changed,
+        render_optional_bool(verification.semantic_matched),
+        render_failure_layer(verification.failure_layer),
+        verification.evidence.len(),
+        verification.observed_label.as_deref().unwrap_or("n/a")
+      ));
+    }
+  }
+
+  output.push_str("\nObservations:\n");
+  if observation_snapshots.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for snapshot in observation_snapshots {
+      output.push_str(&format!(
+        "- {} span={} source={} nodes={} evidence={} limits={}\n",
+        snapshot.snapshot_id,
+        snapshot.span_id,
+        render_observation_source(snapshot.source),
+        snapshot.nodes.len(),
+        snapshot.evidence.len(),
+        snapshot.known_limits.len()
+      ));
+    }
+  }
+
   output
+}
+
+fn render_optional_bool(value: Option<bool>) -> &'static str {
+  match value {
+    Some(true) => "true",
+    Some(false) => "false",
+    None => "n/a",
+  }
+}
+
+fn render_failure_layer(layer: Option<FailureLayer>) -> &'static str {
+  match layer {
+    Some(FailureLayer::GroundingFailed) => "grounding_failed",
+    Some(FailureLayer::CandidateExpired) => "candidate_expired",
+    Some(FailureLayer::ControlFailed) => "control_failed",
+    Some(FailureLayer::VerificationUnreliable) => "verification_unreliable",
+    Some(FailureLayer::StateChangedNoMatch) => "state_changed_no_match",
+    Some(FailureLayer::SemanticMismatch) => "semantic_mismatch",
+    None => "n/a",
+  }
+}
+
+fn render_verification_method(method: &VerificationMethod) -> String {
+  match method {
+    VerificationMethod::TextVisible => "text_visible".to_string(),
+    VerificationMethod::AxText => "ax_text".to_string(),
+    VerificationMethod::StateChanged => "state_changed".to_string(),
+    VerificationMethod::CandidateAlive => "candidate_alive".to_string(),
+    VerificationMethod::SemanticMatch => "semantic_match".to_string(),
+    VerificationMethod::NoProgressBoundary => "no_progress_boundary".to_string(),
+    VerificationMethod::Custom { name } => format!("custom:{name}"),
+  }
+}
+
+fn render_observation_source(source: ObservationSource) -> &'static str {
+  match source {
+    ObservationSource::Ax => "ax",
+    ObservationSource::Ocr => "ocr",
+    ObservationSource::Visual => "visual",
+    ObservationSource::Merged => "merged",
+  }
 }
 
 #[cfg(test)]
@@ -71,6 +154,10 @@ mod tests {
   use std::collections::BTreeMap;
 
   use super::render_text;
+  use crate::contract::{
+    ObservationSnapshot, ObservationSource, RecognitionScope, RecognitionSurface,
+    VerificationMethod, VerificationResult,
+  };
   use crate::store::CanonicalRun;
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
@@ -79,7 +166,7 @@ mod tests {
   };
 
   #[test]
-  fn render_text_includes_run_span_event_and_artifact_records() {
+  fn render_text_includes_run_span_event_artifact_verification_and_observation_records() {
     let run_id = RunId::new("run_inspect_test");
     let root_span_id = SpanId::new("span_root");
     let event_id = EventId::new("event_test");
@@ -135,8 +222,45 @@ mod tests {
         summary: Some("output".to_string()),
       }],
     };
+    let verifications = vec![VerificationResult {
+      method: VerificationMethod::SemanticMatch,
+      executed: true,
+      state_changed: true,
+      semantic_matched: Some(true),
+      failure_layer: None,
+      evidence: Vec::new(),
+      consumed_candidate_ref: None,
+      consumed_node_ref: None,
+      consumed_recognition_artifact_ref: None,
+      consumed_recognition_id: None,
+      consumed_recognized_item_id: None,
+      observed_label: Some("Now Playing".to_string()),
+    }];
+    let observation_snapshots = vec![ObservationSnapshot {
+      snapshot_id: "snapshot_1".to_string(),
+      run_id: run_id.clone(),
+      span_id: SpanId::new("span_root"),
+      captured_at_millis: 1,
+      source: ObservationSource::Visual,
+      scope: RecognitionScope {
+        surface: RecognitionSurface::Window,
+        display_ref: None,
+        native_display_id: None,
+        app_bundle_id: Some("com.example.music".to_string()),
+        window_title: Some("Example Music".to_string()),
+        window_number: None,
+        region_hint: None,
+        capture_artifact: None,
+        capture_contract_artifact: None,
+      },
+      capture_contract_ref: None,
+      evidence: Vec::new(),
+      nodes: Vec::new(),
+      detail: serde_json::json!({"producer": "scroll_scan"}),
+      known_limits: vec!["visual only".to_string()],
+    }];
 
-    let output = render_text(&run);
+    let output = render_text(&run, &verifications, &observation_snapshots);
 
     assert!(output.contains("Run run_inspect_test"));
     assert!(output.contains("Type: command"));
@@ -144,5 +268,9 @@ mod tests {
     assert!(output.contains("auv.inspect.span"));
     assert!(output.contains("inspect.event"));
     assert!(output.contains("artifact_test"));
+    assert!(output.contains("Verifications:"));
+    assert!(output.contains("method=semantic_match"));
+    assert!(output.contains("Observations:"));
+    assert!(output.contains("snapshot_1"));
   }
 }

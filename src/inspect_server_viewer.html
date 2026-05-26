@@ -853,7 +853,73 @@
 
   function traceCrumb(run) {
     const trace = run && run.trace_id ? String(run.trace_id).slice(0, 12) + "…" : "—";
-    return (run && run.run_type ? run.run_type : "—") + " · trace_id=" + trace;
+    const base = (run && run.run_type ? run.run_type : "—") + " · trace_id=" + trace;
+    const readSide = summarizeRunReadSide(run);
+    return readSide ? base + " · " + readSide : base;
+  }
+
+  function quantity(count, singular, plural) {
+    return count + " " + (count === 1 ? singular : plural);
+  }
+
+  function verificationCount(run) {
+    return Array.isArray(run && run.verifications) ? run.verifications.length : 0;
+  }
+
+  function observationSnapshotCount(run) {
+    return Array.isArray(run && run.observation_snapshots)
+      ? run.observation_snapshots.length
+      : 0;
+  }
+
+  function summarizeRunReadSide(run) {
+    const parts = [];
+    const verifications = verificationCount(run);
+    const observations = observationSnapshotCount(run);
+    if (verifications) parts.push(quantity(verifications, "verification", "verifications"));
+    if (observations) parts.push(quantity(observations, "observation", "observations"));
+    return parts.join(" · ");
+  }
+
+  function runSummaryText(run) {
+    const summary = run && run.summary ? run.summary : "";
+    const readSide = summarizeRunReadSide(run);
+    if (summary && readSide) return summary + " · " + readSide;
+    return summary || readSide || "—";
+  }
+
+  function summarizeValues(values, limit) {
+    const max = limit || 3;
+    if (!values.length) return "—";
+    const head = values.slice(0, max).join(" · ");
+    if (values.length <= max) return head;
+    return head + " +" + (values.length - max);
+  }
+
+  function formatVerificationMethod(method) {
+    if (!method) return "unknown";
+    if (typeof method === "string") return method;
+    if (typeof method.kind === "string") {
+      if (method.kind === "custom" && method.name) return "custom:" + method.name;
+      return method.kind;
+    }
+    return stringifyAttr(method);
+  }
+
+  function mergeRunDetail(previous, incoming) {
+    if (!incoming || typeof incoming !== "object") return incoming;
+    const merged = Object.assign({}, incoming);
+    if (!Array.isArray(merged.verifications) && previous && Array.isArray(previous.verifications)) {
+      merged.verifications = previous.verifications.slice();
+    }
+    if (
+      !Array.isArray(merged.observation_snapshots)
+      && previous
+      && Array.isArray(previous.observation_snapshots)
+    ) {
+      merged.observation_snapshots = previous.observation_snapshots.slice();
+    }
+    return merged;
   }
 
   function renderRun(run, isActive, onSelect) {
@@ -862,7 +928,7 @@
       makeTypeChip(run.run_type),
     ]);
     const idRow = el("div", { className: "row-id" }, [midTrunc(run.run_id, 24, 8)]);
-    const summary = el("div", { className: "row-summary" }, [run.summary || "—"]);
+    const summary = el("div", { className: "row-summary" }, [runSummaryText(run)]);
     const meta = el("div", { className: "row-meta" }, [
       el("span", null, [fmtDuration(run.started_at_millis, run.finished_at_millis)]),
       el("span", { className: "right" }, [(run.run_type || "").toLowerCase()]),
@@ -987,15 +1053,18 @@
       const events = await eventsResponse.json();
       const artifacts = await artifactsResponse.json();
       if (state.activeRunId !== runId) return;
-      state.activeRun = run;
+      state.activeRun = mergeRunDetail(state.activeRun, run);
+      const runIndex = state.runs.findIndex(function (candidate) { return candidate.run_id === runId; });
+      if (runIndex >= 0) state.runs[runIndex] = state.activeRun;
       state.spans = Array.isArray(spans) ? spans : [];
       state.events = Array.isArray(events) ? events : [];
       state.artifacts = Array.isArray(artifacts) ? artifacts : [];
       state.activeArtifactKey = defaultArtifactKey(state.artifacts);
-      setMainHeader(run, false);
-      renderSpanTree(run, state.spans);
+      setMainHeader(state.activeRun, false);
+      renderRunList();
+      renderSpanTree(state.activeRun, state.spans);
       renderSpanDetail(state.activeSpanId ? findSpan(state.activeSpanId) : null);
-      renderEventList(state.events, run);
+      renderEventList(state.events, state.activeRun);
       renderArtifactList(state.artifacts);
       renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
     } catch (err) {
@@ -1024,6 +1093,41 @@
     const node = document.getElementById("span-detail");
     node.innerHTML = "";
     if (!span) {
+      const run = state.activeRun;
+      const verifications = run && Array.isArray(run.verifications) ? run.verifications : [];
+      const observations =
+        run && Array.isArray(run.observation_snapshots) ? run.observation_snapshots : [];
+      if (run && (verifications.length || observations.length)) {
+        node.className = "span-detail";
+        node.appendChild(el("div", { className: "head" }, [
+          el("span", { className: "kind" }, ["run"]),
+          el("span", { className: "name" }, ["stored evidence"]),
+          el("span", { className: "span-id" }, ["run_id=" + run.run_id]),
+        ]));
+        const grid = el("div", { className: "attrs" }, []);
+        const entries = [
+          ["verifications", String(verifications.length)],
+          [
+            "verification_methods",
+            summarizeValues(verifications.map(function (verification) {
+              return formatVerificationMethod(verification.method);
+            })),
+          ],
+          ["observation_snapshots", String(observations.length)],
+          [
+            "observation_sources",
+            summarizeValues(observations.map(function (snapshot) {
+              return snapshot && snapshot.source ? String(snapshot.source) : "unknown";
+            })),
+          ],
+        ];
+        for (const entry of entries) {
+          grid.appendChild(el("span", { className: "k" }, [entry[0]]));
+          grid.appendChild(el("span", { className: "v" }, [entry[1]]));
+        }
+        node.appendChild(grid);
+        return;
+      }
       node.className = "span-detail empty";
       // Re-mount sparkle <img> alongside the empty-state copy. The
       // browser handles SVG namespacing via the /assets/sparkle.svg
@@ -1748,11 +1852,12 @@
       }
       case "run_finished":
         if (frame.run) {
-          state.activeRun = frame.run;
+          state.activeRun = mergeRunDetail(state.activeRun, frame.run);
           // Reflect the finished state in the sidebar + run header.
           const idx = state.runs.findIndex(function (r) { return r.run_id === frame.run.run_id; });
-          if (idx >= 0) state.runs[idx] = frame.run;
-          setMainHeader(frame.run, false);
+          if (idx >= 0) state.runs[idx] = state.activeRun;
+          setMainHeader(state.activeRun, false);
+          if (!state.activeSpanId) renderSpanDetail(null);
           renderRunList();
         }
         // Server closes the socket after RunFinished; tear our side down too.
