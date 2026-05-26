@@ -21,30 +21,56 @@ use super::overlay::{
   overlay_shutdown,
 };
 use super::{
-  Driver, DriverCall, DriverDescriptor, DriverResponse, MacOsDesktopDriver, descriptor,
+  Driver, DriverCall, DriverDescriptor, DriverResponse, LegacyMacosCommandDriver, descriptor,
   require_macos,
 };
 use crate::model::AuvResult;
 
-impl Driver for MacOsDesktopDriver {
+impl Driver for LegacyMacosCommandDriver {
   fn descriptor(&self) -> DriverDescriptor {
     descriptor::driver_descriptor()
   }
 
   fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
-    invoke_operation(call)
+    invoke_legacy_command_operation(call)
   }
 }
 
-pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
+pub(crate) fn invoke_legacy_command_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
   require_macos()?;
 
-  match call.operation.as_str() {
+  if let Some(response) = dispatch_capture_operation(call) {
+    return response;
+  }
+  if let Some(response) = dispatch_observe_operation(call) {
+    return response;
+  }
+  if let Some(response) = dispatch_control_operation(call) {
+    return response;
+  }
+  if let Some(response) = dispatch_overlay_operation(call) {
+    return response;
+  }
+
+  Err(format!(
+    "driver macos.desktop does not support operation {}",
+    call.operation
+  ))
+}
+
+fn dispatch_capture_operation(call: &DriverCall) -> Option<AuvResult<DriverResponse>> {
+  Some(match call.operation.as_str() {
     "capture_display" => capture_display(call),
     "capture_region" => capture_region(call),
     "capture_window" => capture_window(call),
-    "probe_coordinate_readiness" => probe_coordinate_readiness(call),
     "list_displays" => list_displays(call),
+    _ => return None,
+  })
+}
+
+fn dispatch_observe_operation(call: &DriverCall) -> Option<AuvResult<DriverResponse>> {
+  Some(match call.operation.as_str() {
+    "probe_coordinate_readiness" => probe_coordinate_readiness(call),
     "project_screenshot_point" => project_screenshot_point(call),
     "identify_point" => identify_point(call),
     "list_windows" => list_windows(call),
@@ -67,6 +93,12 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
     "probe_permissions" => probe_permissions(call),
     "verify_ax_text" => verify_ax_text(call),
     "verify_now_playing_title" => verify_now_playing_title(call),
+    _ => return None,
+  })
+}
+
+fn dispatch_control_operation(call: &DriverCall) -> Option<AuvResult<DriverResponse>> {
+  Some(match call.operation.as_str() {
     "activate_app" => activate_app(call),
     "focus_text_input" => focus_text_input(call),
     "ax_focus_text_input" => ax_focus_text_input(call),
@@ -84,6 +116,12 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
     "click_window_text" => click_window_text(call),
     "click_window_row" => click_window_row(call),
     "scroll_point" => scroll_point(call),
+    _ => return None,
+  })
+}
+
+fn dispatch_overlay_operation(call: &DriverCall) -> Option<AuvResult<DriverResponse>> {
+  Some(match call.operation.as_str() {
     "overlay_show_cursor" => overlay_show_cursor(call),
     "overlay_show_dual_cursor" => overlay_show_dual_cursor(call),
     "overlay_apply_cursor_batch" => overlay_apply_cursor_batch(call),
@@ -96,9 +134,6 @@ pub(crate) fn invoke_operation(call: &DriverCall) -> AuvResult<DriverResponse> {
     "overlay_hide_cursor" => overlay_hide_cursor(call),
     "overlay_shutdown" => overlay_shutdown(call),
     "overlay_click_point" => overlay_click_point(call),
-    other => Err(format!(
-      "driver macos.desktop does not support operation {}",
-      other
-    )),
-  }
+    _ => return None,
+  })
 }

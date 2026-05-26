@@ -5,7 +5,7 @@ use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse};
 
 use self::fixture::FixtureObserveDriver;
 #[cfg(target_os = "macos")]
-use self::macos::MacOsDesktopDriver;
+use self::macos::LegacyMacosCommandDriver;
 #[cfg(target_os = "macos")]
 pub(crate) use self::macos::{
   ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow,
@@ -56,6 +56,6 @@ impl DriverRegistry {
 pub fn default_driver_registry() -> DriverRegistry {
   let mut drivers: Vec<Box<dyn Driver>> = vec![Box::new(FixtureObserveDriver)];
   #[cfg(target_os = "macos")]
-  drivers.push(Box::new(MacOsDesktopDriver));
+  drivers.push(Box::new(LegacyMacosCommandDriver));
   DriverRegistry::new(drivers)
 }

@@ -1582,7 +1582,10 @@ mod tests {
 
     assert_eq!(result.operation_id, VERIFY_AX_TEXT_OPERATION_ID);
     assert_eq!(result.status, OperationStatus::Completed);
-    assert!(matches!(result.output, OperationOutput::Acknowledged { .. }));
+    assert!(matches!(
+      result.output,
+      OperationOutput::Acknowledged { .. }
+    ));
     assert_eq!(
       result.verifications,
       vec![verification.clone()],

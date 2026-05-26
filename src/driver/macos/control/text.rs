@@ -1,4 +1,8 @@
 // File: src/driver/macos/control/text.rs
+use std::time::Duration;
+
+use auv_driver::{Driver as TypedDriver, PasteTextOptions, TextSubmit};
+
 use super::super::*;
 use super::common::activate_app_if_needed;
 
@@ -91,12 +95,19 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
   if activate {
     activate_app_if_needed(&app)?;
   }
-  paste_text_preserving_clipboard(
+  if !paste_text_preserve_clipboard_via_typed_session(
     &text,
     replace_existing,
     submit_key.as_deref(),
     submit_settle_ms,
-  )?;
+  )? {
+    paste_text_preserving_clipboard(
+      &text,
+      replace_existing,
+      submit_key.as_deref(),
+      submit_settle_ms,
+    )?;
+  }
 
   let artifact = build_text_artifact(
     "paste-text-preserve-clipboard",
@@ -217,9 +228,47 @@ pub(super) fn should_activate_text_input(call: &DriverCall) -> AuvResult<bool> {
   Ok(optional_bool(call, "activate")?.unwrap_or(true))
 }
 
+fn paste_text_preserve_clipboard_via_typed_session(
+  text: &str,
+  replace_existing: bool,
+  submit_key: Option<&str>,
+  submit_settle_ms: u64,
+) -> AuvResult<bool> {
+  let Some(submit) = typed_submit_for_legacy_submit_key(submit_key) else {
+    return Ok(false);
+  };
+  let driver = auv_driver_macos::MacosDriver::new();
+  let session = driver
+    .open_local()
+    .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+  session
+    .input()
+    .paste_text(PasteTextOptions {
+      text: text.to_string(),
+      replace_existing,
+      submit,
+      settle: Duration::from_millis(submit_settle_ms),
+    })
+    .map_err(|error| format!("typed macOS paste_text adapter failed: {error}"))?;
+  Ok(true)
+}
+
+fn typed_submit_for_legacy_submit_key(submit_key: Option<&str>) -> Option<TextSubmit> {
+  match submit_key.map(|value| value.trim().to_ascii_lowercase()) {
+    None => Some(TextSubmit::No),
+    Some(submit) if submit.is_empty() => Some(TextSubmit::No),
+    Some(submit) if submit == "return" => Some(TextSubmit::Return),
+    _ => None,
+  }
+}
+
 #[cfg(test)]
 mod tests {
-  use super::{clipboard_restore_signals, should_activate_text_input};
+  use auv_driver::TextSubmit;
+
+  use super::{
+    clipboard_restore_signals, should_activate_text_input, typed_submit_for_legacy_submit_key,
+  };
   use crate::model::{DriverCall, ExecutionTarget};
   use std::collections::BTreeMap;
   use std::path::PathBuf;
@@ -243,6 +292,29 @@ mod tests {
     let call = build_call([("activate", "false")]);
 
     assert!(!should_activate_text_input(&call).unwrap());
+  }
+
+  #[test]
+  fn typed_submit_mapping_uses_safe_shared_subset_only() {
+    assert_eq!(
+      typed_submit_for_legacy_submit_key(None),
+      Some(TextSubmit::No)
+    );
+    assert_eq!(
+      typed_submit_for_legacy_submit_key(Some("return")),
+      Some(TextSubmit::Return)
+    );
+    assert_eq!(
+      typed_submit_for_legacy_submit_key(Some(" Return ")),
+      Some(TextSubmit::Return)
+    );
+  }
+
+  #[test]
+  fn typed_submit_mapping_falls_back_for_legacy_only_submit_keys() {
+    assert_eq!(typed_submit_for_legacy_submit_key(Some("enter")), None);
+    assert_eq!(typed_submit_for_legacy_submit_key(Some("tab")), None);
+    assert_eq!(typed_submit_for_legacy_submit_key(Some("space")), None);
   }
 
   fn build_call<const N: usize>(entries: [(&str, &str); N]) -> DriverCall {

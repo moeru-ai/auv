@@ -27,7 +27,7 @@ use crate::{
 
 #[test]
 fn macos_driver_descriptor_uses_desktop_namespace() {
-  let driver = super::MacOsDesktopDriver;
+  let driver = super::LegacyMacosCommandDriver;
   let descriptor = driver.descriptor();
 
   assert_eq!(descriptor.id, "macos.desktop");
@@ -51,7 +51,7 @@ fn dispatch_rejects_removed_ax_tree_operation_name() {
   let mut call = call;
   call.operation = ["observe", "ax", "tree"].join("_");
 
-  let error = super::dispatch::invoke_operation(&call).unwrap_err();
+  let error = super::dispatch::invoke_legacy_command_operation(&call).unwrap_err();
 
   assert!(error.contains("does not support operation"));
   assert!(error.contains(&["observe", "ax", "tree"].join("_")));
