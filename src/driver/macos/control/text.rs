@@ -1,7 +1,5 @@
 // File: src/driver/macos/control/text.rs
-use std::time::Duration;
-
-use auv_driver::{Driver as TypedDriver, PasteTextOptions, TextSubmit};
+use auv_driver::TextSubmit;
 
 use super::super::*;
 use super::common::activate_app_if_needed;
@@ -95,10 +93,10 @@ pub(crate) fn paste_text_preserve_clipboard(call: &DriverCall) -> AuvResult<Driv
   if activate {
     activate_app_if_needed(&app)?;
   }
-  if !paste_text_preserve_clipboard_via_typed_session(
+  if !super::super::typed::session::try_paste_text_preserve_clipboard(
     &text,
     replace_existing,
-    submit_key.as_deref(),
+    typed_submit_for_legacy_submit_key(submit_key.as_deref()),
     submit_settle_ms,
   )? {
     paste_text_preserving_clipboard(
@@ -226,31 +224,6 @@ pub(crate) fn press_key(call: &DriverCall) -> AuvResult<DriverResponse> {
 
 pub(super) fn should_activate_text_input(call: &DriverCall) -> AuvResult<bool> {
   Ok(optional_bool(call, "activate")?.unwrap_or(true))
-}
-
-fn paste_text_preserve_clipboard_via_typed_session(
-  text: &str,
-  replace_existing: bool,
-  submit_key: Option<&str>,
-  submit_settle_ms: u64,
-) -> AuvResult<bool> {
-  let Some(submit) = typed_submit_for_legacy_submit_key(submit_key) else {
-    return Ok(false);
-  };
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver
-    .open_local()
-    .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
-  session
-    .input()
-    .paste_text(PasteTextOptions {
-      text: text.to_string(),
-      replace_existing,
-      submit,
-      settle: Duration::from_millis(submit_settle_ms),
-    })
-    .map_err(|error| format!("typed macOS paste_text adapter failed: {error}"))?;
-  Ok(true)
 }
 
 fn typed_submit_for_legacy_submit_key(submit_key: Option<&str>) -> Option<TextSubmit> {

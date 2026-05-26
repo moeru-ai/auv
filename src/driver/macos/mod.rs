@@ -27,6 +27,7 @@ mod overlay;
 mod support;
 #[cfg(test)]
 mod tests;
+mod typed;
 
 mod types;
 

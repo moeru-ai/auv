@@ -14,21 +14,20 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
+#[cfg(test)]
+use super::ResolvedAppRef;
+pub(super) use super::typed::observe::{
+  find_ax_text_node, ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
+  render_window_list_json, render_window_snapshot_report, row_detection_signals,
+  verify_ax_text_signals, verify_now_playing_title_signals, wait_ocr_detection_signals,
+  wait_row_detection_signals,
+};
 use super::*;
 use crate::contract::{
   ArtifactRef, OperationOutput, OperationResult, OperationStatus, VerificationMethod,
   VerificationResult,
 };
 use crate::trace::RunId;
-pub(super) use auv_driver_macos::observe::{
-  find_ax_text_node, ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
-  render_window_list_json, render_window_snapshot_report, row_detection_signals,
-  verify_ax_text_signals, verify_now_playing_title_signals, wait_ocr_detection_signals,
-  wait_row_detection_signals,
-};
-use auv_driver_macos::types::ObservedAxNode;
-#[cfg(test)]
-use auv_driver_macos::types::ResolvedAppRef;
 
 const VERIFY_AX_TEXT_OPERATION_ID: &str = "verify.axText";
 

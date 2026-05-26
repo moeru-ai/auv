@@ -1,5 +1,7 @@
 // TODO(driver-crates): temporary root compatibility while legacy command
 // handlers migrate to `auv-driver-macos` typed session APIs.
+#[cfg(test)]
+pub(crate) use auv_driver_macos::types::ResolvedAppRef;
 pub(crate) use auv_driver_macos::types::{
   CoordinateReadinessAssessment, DetectedScreenRows, ObservedAxNode, ObservedAxTreeSnapshot,
   ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow, ObservedPointResolution, ObservedRect,
