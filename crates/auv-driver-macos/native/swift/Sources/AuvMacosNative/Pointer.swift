@@ -5,7 +5,6 @@ import Foundation
 
 private typealias CGEventSetWindowLocationFn = @convention(c) (
   CGEvent,
-  UInt32,
   CGPoint
 ) -> Void
 
@@ -50,7 +49,7 @@ private func mouseUpType(_ button: CGMouseButton) -> CGEventType {
   }
 }
 
-private func stampMouseTarget(
+private func stampWindowTarget(
   _ event: CGEvent,
   pid: Int64,
   windowNumber: Int64,
@@ -65,7 +64,7 @@ private func stampMouseTarget(
   if let eventWindowId = CGEventField(rawValue: 40) {
     event.setIntegerValueField(eventWindowId, value: windowNumber)
   }
-  cgEventSetWindowLocation?(event, UInt32(truncatingIfNeeded: windowNumber), windowLocation)
+  cgEventSetWindowLocation?(event, windowLocation)
 }
 
 func click_point(
@@ -162,8 +161,8 @@ func click_window_point(
     // Provenance: CUA mouse and KWWK mouse background dispatch patterns.
     // https://github.com/trycua/cua/blob/a3448588286b6373013a5fa9072ac8bafb6681d6/libs/cua-driver-rs/crates/platform-macos/src/input/mouse.rs#L383-L438
     // https://github.com/EYHN/kwwk-computer-use-core/blob/eddd9e5475095de58bcb81cafbad79d1f5c5495d/Sources/KWWKComputerUseCore/BackgroundInputDispatcher.swift#L130-L162
-    stampMouseTarget(down, pid: pid, windowNumber: window_number, windowLocation: windowLocation)
-    stampMouseTarget(up, pid: pid, windowNumber: window_number, windowLocation: windowLocation)
+    stampWindowTarget(down, pid: pid, windowNumber: window_number, windowLocation: windowLocation)
+    stampWindowTarget(up, pid: pid, windowNumber: window_number, windowLocation: windowLocation)
 
     down.postToPid(pid_t(pid))
     up.postToPid(pid_t(pid))
