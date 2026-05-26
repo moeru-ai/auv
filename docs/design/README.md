@@ -23,7 +23,7 @@ remaining follow-on design work, read:
 
 The Rust runtime today consumes exactly **one** part of the design
 system at compile time — the cursor sprite + brand pill in
-`src/driver/macos/native/swift/Sources/AuvMacosNative/Overlay.swift`,
+`crates/auv-overlay-macos/native/swift/Sources/AuvMacosOverlayNative/Overlay.swift`,
 which ports rect data verbatim from `assets/cursor-auv.svg`.
 
 The rest of the bundle is reference material for surfaces that **do not
@@ -47,9 +47,9 @@ from, without re-fetching the original bundle.
 
 | Bundle element | Repo location | Status |
 |---|---|---|
-| `assets/cursor-auv.svg` rect data | `src/driver/.../Overlay.swift` (auvSprite) | done (Phase A) |
-| `assets/cursor-you.svg` rect data | `src/driver/.../Overlay.swift` (youSprite) | ported (used by viewer mocks, not by the live overlay yet) |
-| Brand cyan pill (`#009ba6`) | `src/driver/.../Overlay.swift` | done (Phase A) |
+| `assets/cursor-auv.svg` rect data | `crates/auv-overlay-macos/.../Overlay.swift` (auvSprite) | done (Phase A) |
+| `assets/cursor-you.svg` rect data | `crates/auv-overlay-macos/.../Overlay.swift` (youSprite) | ported (used by viewer mocks, not by the live overlay yet) |
+| Brand cyan pill (`#009ba6`) | `crates/auv-overlay-macos/.../Overlay.swift` | done (Phase A) |
 | `assets/logo-mark.svg` (top-bar pixel logo) | inlined in `src/inspect_server_viewer.html` | done (Phase C.1) |
 | `colors_and_type.css` core tokens (shell, brand, status) | inlined `:root` block in `src/inspect_server_viewer.html` | done (Phase C.1) |
 | `ui_kits/viewer/Sidebar.jsx` (run list) | `src/inspect_server_viewer.html` | done (Phase C.1) |
