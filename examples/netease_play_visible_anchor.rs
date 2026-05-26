@@ -6,10 +6,10 @@ use auv_cli::recorded_operation::RecordedOperationContext;
 use auv_cli::run_builder::{Attributes, RunSpec};
 use auv_cli::trace::{RunType, string_attr};
 use auv_driver::capture::{Activation, Capture, CaptureOptions};
-use auv_driver::input::{Click, PasteTextOptions, TextSubmit};
+use auv_driver::input::{Click, ClickOptions, InputPolicy, TextSubmit, TypeTextOptions};
 use auv_driver::selector::{App, Window};
 use auv_driver::vision::TextRecognition;
-use auv_driver::{Driver, Point, RatioRect};
+use auv_driver::{Driver, RatioRect, ScreenPoint, WindowPoint};
 use auv_driver_macos::MacosDriver;
 
 static TEMP_CAPTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -180,9 +180,17 @@ fn run_steps(
         .vision()
         .find_text_in_capture(&before, "取消", full_window_region)?;
     if let Some(cancel) = cancel_matches.best_match() {
-      session
-        .input()
-        .click_at(cancel.action_point(), Click::Single)?;
+      let cancel_point = session
+        .window()
+        .to_window_point(&window, ScreenPoint::from(cancel.action_point()))?;
+      session.window().click(
+        &window,
+        cancel_point,
+        ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          click: Click::Single,
+        },
+      )?;
       std::thread::sleep(Duration::from_millis(500));
       before = session.window().capture(&window)?;
     }
@@ -195,12 +203,19 @@ fn run_steps(
       full_window_region,
     )?;
     if marker_matches.best_match().is_none() {
-      let collapse_point = window_relative_point(
+      let collapse_point = window_relative_window_point(
         &window,
         inputs.collapse_relative_x,
         inputs.collapse_relative_y,
       );
-      session.input().click_at(collapse_point, Click::Single)?;
+      session.window().click(
+        &window,
+        collapse_point,
+        ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          click: Click::Single,
+        },
+      )?;
       std::thread::sleep(Duration::from_millis(500));
       focus_capture = session.window().capture(&window)?;
       record_capture(context, "after-collapse-to-main", &focus_capture)?;
@@ -211,19 +226,32 @@ fn run_steps(
 
   let selected_point = context.in_span("auv.example.netease.search", |context| {
     let search_point =
-      window_relative_point(&window, inputs.search_relative_x, inputs.search_relative_y);
+      window_relative_window_point(&window, inputs.search_relative_x, inputs.search_relative_y);
 
-    session.input().click_at(search_point, Click::Single)?;
+    session.window().click(
+      &window,
+      search_point,
+      ClickOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        click: Click::Single,
+      },
+    )?;
     std::thread::sleep(Duration::from_millis(500));
     let after_search_click = session.window().capture(&window)?;
     record_capture(context, "after-search-click", &after_search_click)?;
 
-    session.input().paste_text(PasteTextOptions {
-      text: inputs.query.clone(),
-      replace_existing: true,
-      submit: TextSubmit::Return,
-      settle: Duration::from_millis(inputs.submit_settle_ms),
-    })?;
+    session.window().type_text(
+      &window,
+      &inputs.query,
+      TypeTextOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        replace_existing: true,
+        submit: TextSubmit::Return,
+        inter_char_delay: Duration::from_millis(8),
+        allow_clipboard_fallback: true,
+        settle: Duration::from_millis(inputs.submit_settle_ms),
+      },
+    )?;
 
     let after_search = session.window().capture(&window)?;
     record_capture(context, "after-search", &after_search)?;
@@ -248,14 +276,21 @@ fn run_steps(
         inputs.result_index
       )
     })?;
-    Ok::<_, Box<dyn std::error::Error>>(selected.action_point())
+    let selected_point = session
+      .window()
+      .to_window_point(&window, ScreenPoint::from(selected.action_point()))?;
+    Ok::<_, Box<dyn std::error::Error>>(selected_point)
   })?;
 
   context.in_span("auv.example.netease.playback", |context| {
-    session.input().click_at(
+    session.window().click(
+      &window,
       selected_point,
-      Click::Double {
-        interval: Duration::from_millis(inputs.click_interval_ms),
+      ClickOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        click: Click::Double {
+          interval: Duration::from_millis(inputs.click_interval_ms),
+        },
       },
     )?;
     std::thread::sleep(Duration::from_millis(inputs.activation_settle_ms));
@@ -299,10 +334,14 @@ fn record_capture(
   Ok(staged)
 }
 
-fn window_relative_point(window: &auv_driver::Window, relative_x: f64, relative_y: f64) -> Point {
-  Point::new(
-    window.frame.origin.x + window.frame.size.width * relative_x,
-    window.frame.origin.y + window.frame.size.height * relative_y,
+fn window_relative_window_point(
+  window: &auv_driver::Window,
+  relative_x: f64,
+  relative_y: f64,
+) -> WindowPoint {
+  WindowPoint::new(
+    window.frame.size.width * relative_x,
+    window.frame.size.height * relative_y,
   )
 }
 
