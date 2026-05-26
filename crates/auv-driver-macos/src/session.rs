@@ -8,8 +8,9 @@ use auv_driver::capture::{Activation, Capture, CaptureOptions};
 use auv_driver::error::{DriverError, DriverResult};
 use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, WindowPoint};
 use auv_driver::input::{
-  ActivationPolicy, Click, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
-  TextSubmit, WaitOptions,
+  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
+  InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
+  TextSubmit, TypeTextOptions, WaitOptions,
 };
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::vision::{RecognizedText, TextRecognition};
@@ -204,6 +205,114 @@ impl WindowApi<'_> {
   pub fn to_window_point(&self, window: &Window, point: ScreenPoint) -> DriverResult<WindowPoint> {
     let _ = self.session;
     Ok(window_point_for_screen_point(window, point))
+  }
+
+  pub fn click(
+    &self,
+    window: &Window,
+    point: WindowPoint,
+    options: ClickOptions,
+  ) -> DriverResult<InputActionResult> {
+    let pid = window_pid(window)?;
+    let number = window_number(window)?;
+    let screen_point = self.to_screen_point(window, point)?;
+    let screen = screen_point.point();
+    let window_point = point.point();
+    let (click_count, click_interval_ms) = click_parts(&options.click)?;
+    let background_result = crate::native::input::click_window_point(
+      pid,
+      number,
+      screen.x,
+      screen.y,
+      window_point.x,
+      window_point.y,
+      0,
+      click_count,
+      click_interval_ms,
+    )
+    .map_err(backend);
+
+    match background_result {
+      Ok(()) => Ok(InputActionResult::single_success(
+        InputDeliveryPath::WindowTargetedMouse,
+      )),
+      Err(background_error) => match options.policy {
+        InputPolicy::BackgroundOnly | InputPolicy::BackgroundPreferred => Err(background_error),
+        InputPolicy::ForegroundPreferred => {
+          let fallback_reason = background_error.to_string();
+          let lease = self.prepare_for_input(window, foreground_prepare_options(Duration::ZERO))?;
+          let action_result = self
+            .session
+            .input()
+            .click_at(screen_point.point(), options.click.clone());
+          let restore_result = self.restore_input(lease);
+          action_result?;
+          restore_result?;
+          Ok(InputActionResult {
+            selected_path: InputDeliveryPath::ForegroundSystemEvents,
+            attempts: vec![
+              InputAttempt::failure(
+                InputDeliveryPath::WindowTargetedMouse,
+                fallback_reason.clone(),
+              ),
+              InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
+            ],
+            fallback_reason: Some(fallback_reason),
+            mouse_disturbance: DisturbanceLevel::Temporary,
+            focus_disturbance: DisturbanceLevel::Foreground,
+            clipboard_disturbance: DisturbanceLevel::None,
+          })
+        }
+      },
+    }
+  }
+
+  pub fn type_text(
+    &self,
+    window: &Window,
+    text: &str,
+    options: TypeTextOptions,
+  ) -> DriverResult<InputActionResult> {
+    let pid = window_pid(window)?;
+    let number = window_number(window)?;
+    let background_result = type_text_in_window(pid, number, text, options);
+
+    match background_result {
+      Ok(()) => Ok(InputActionResult::single_success(
+        InputDeliveryPath::WindowTargetedKeyboard,
+      )),
+      Err(background_error) => match options.policy {
+        InputPolicy::BackgroundOnly | InputPolicy::BackgroundPreferred => Err(background_error),
+        InputPolicy::ForegroundPreferred if options.allow_clipboard_fallback => {
+          let fallback_reason = background_error.to_string();
+          let lease = self.prepare_for_input(window, foreground_prepare_options(Duration::ZERO))?;
+          let action_result = self.session.input().paste_text(PasteTextOptions {
+            text: text.to_string(),
+            replace_existing: options.replace_existing,
+            submit: options.submit,
+            settle: options.settle,
+          });
+          let restore_result = self.restore_input(lease);
+          action_result?;
+          restore_result?;
+          Ok(InputActionResult {
+            selected_path: InputDeliveryPath::ClipboardPaste,
+            attempts: vec![
+              InputAttempt::failure(
+                InputDeliveryPath::WindowTargetedKeyboard,
+                fallback_reason.clone(),
+              ),
+              InputAttempt::success(InputDeliveryPath::ClipboardPaste),
+            ],
+            fallback_reason: Some(fallback_reason),
+            mouse_disturbance: DisturbanceLevel::None,
+            focus_disturbance: DisturbanceLevel::Foreground,
+            clipboard_disturbance: DisturbanceLevel::Temporary,
+          })
+        }
+        InputPolicy::ForegroundPreferred => Err(background_error),
+      },
+    }
   }
 
   pub fn prepare_for_input(
@@ -561,6 +670,69 @@ fn window_point_for_screen_point(window: &Window, point: ScreenPoint) -> WindowP
   )
 }
 
+fn window_number(window: &Window) -> DriverResult<i64> {
+  if window.reference.id.trim().is_empty() {
+    return Err(invalid_input("window is missing a native macOS window id"));
+  }
+  window.reference.id.parse::<i64>().map_err(|error| {
+    invalid_input(format!(
+      "window ref {} was not a native macOS window id: {error}",
+      window.reference.id
+    ))
+  })
+}
+
+fn window_pid(window: &Window) -> DriverResult<i64> {
+  window
+    .process_id
+    .map(i64::from)
+    .ok_or_else(|| invalid_input("window is missing an owner process id"))
+}
+
+fn click_parts(click: &Click) -> DriverResult<(i64, u64)> {
+  match click {
+    Click::Single => Ok((1, 0)),
+    Click::Double { interval } => Ok((2, duration_millis(*interval)?)),
+  }
+}
+
+fn type_text_in_window(
+  pid: i64,
+  number: i64,
+  text: &str,
+  options: TypeTextOptions,
+) -> DriverResult<()> {
+  let submit_key_code = text_submit_key_code(options.submit)?;
+  if options.replace_existing {
+    crate::native::input::hotkey_in_window(pid, number, 0, true, false, false, false)
+      .map_err(backend)?;
+    crate::native::input::press_key_in_window(pid, number, 51).map_err(backend)?;
+  }
+  crate::native::input::type_text_in_window(
+    pid,
+    number,
+    text.to_string(),
+    duration_millis(options.inter_char_delay)?,
+  )
+  .map_err(backend)?;
+  if let Some(key_code) = submit_key_code {
+    crate::native::input::press_key_in_window(pid, number, key_code).map_err(backend)?;
+  }
+  if !options.settle.is_zero() {
+    thread::sleep(options.settle);
+  }
+  Ok(())
+}
+
+fn foreground_prepare_options(settle: Duration) -> PrepareForInputOptions {
+  PrepareForInputOptions {
+    activation: ActivationPolicy::Foreground { settle },
+    preserve_frontmost: false,
+    install_focus_guard: false,
+    settle: Duration::ZERO,
+  }
+}
+
 fn activate_app_for_window(window: &Window) -> DriverResult<()> {
   if let Some(bundle_id) = &window.app_bundle_id {
     run_osascript(&[&format!(
@@ -780,7 +952,7 @@ fn run_osascript_lines(lines: &[String]) -> DriverResult<()> {
   }
 }
 
-fn text_submit_key_code(submit: TextSubmit) -> DriverResult<Option<u32>> {
+fn text_submit_key_code(submit: TextSubmit) -> DriverResult<Option<i32>> {
   match submit {
     TextSubmit::No => Ok(None),
     TextSubmit::Return => Ok(Some(36)),
@@ -925,6 +1097,55 @@ mod no_steal_tests {
     let point = window_point_for_screen_point(&window, ScreenPoint::new(125.0, 230.0));
 
     assert_eq!(point, WindowPoint::new(25.0, 30.0));
+  }
+
+  #[test]
+  fn window_number_parses_native_window_id() {
+    let window = sample_window();
+
+    let number = window_number(&window).expect("window number");
+
+    assert_eq!(number, 42);
+  }
+
+  #[test]
+  fn window_number_rejects_missing_or_invalid_native_window_id() {
+    let mut missing = sample_window();
+    missing.reference.id.clear();
+    let mut invalid = sample_window();
+    invalid.reference.id = "not-a-window-number".to_string();
+
+    assert!(matches!(
+      window_number(&missing),
+      Err(DriverError::InvalidInput { .. })
+    ));
+    assert!(matches!(
+      window_number(&invalid),
+      Err(DriverError::InvalidInput { .. })
+    ));
+  }
+
+  #[test]
+  fn window_pid_requires_owner_process_id() {
+    let mut window = sample_window();
+    window.process_id = None;
+
+    assert!(matches!(
+      window_pid(&window),
+      Err(DriverError::InvalidInput { .. })
+    ));
+  }
+
+  #[test]
+  fn click_parts_converts_click_count_and_interval() {
+    assert_eq!(click_parts(&Click::Single).expect("single click"), (1, 0));
+    assert_eq!(
+      click_parts(&Click::Double {
+        interval: Duration::from_millis(75),
+      })
+      .expect("double click"),
+      (2, 75)
+    );
   }
 
   #[test]
