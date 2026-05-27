@@ -712,6 +712,7 @@ fn type_text_in_window(
     crate::native::input::hotkey_in_window(pid, number, 0, true, false, false, false)
       .map_err(backend)?;
     crate::native::input::press_key_in_window(pid, number, 51).map_err(backend)?;
+    thread::sleep(Duration::from_millis(100));
   }
   crate::native::input::type_text_in_window(pid, number, text.to_string(), inter_char_delay_ms)
     .map_err(backend)?;
