@@ -395,10 +395,8 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
         notes.push(format!("scopePathPrefix={scope}"));
       }
 
-      let mut signals = std::collections::BTreeMap::from([(
-        "ax.node_found".to_string(),
-        "false".to_string(),
-      )]);
+      let mut signals =
+        std::collections::BTreeMap::from([("ax.node_found".to_string(), "false".to_string())]);
       signals.insert("ax.target_title".to_string(), expected_title.clone());
       if let Some(artist) = expected_artist.as_deref() {
         signals.insert("ax.target_artist".to_string(), artist.to_string());
@@ -605,11 +603,8 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
       )?);
 
       let verification = build_verify_ax_text_verification(matched, vec![report_ref]);
-      let operation_result = build_verify_ax_text_operation_result(
-        call,
-        OperationStatus::Completed,
-        verification,
-      );
+      let operation_result =
+        build_verify_ax_text_operation_result(call, OperationStatus::Completed, verification);
       artifacts.push(build_verify_ax_text_operation_result_artifact(
         &operation_result,
         &expected_text,
@@ -708,10 +703,8 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
         notes.push(format!("scopePathPrefix={scope}"));
       }
 
-      let mut signals = std::collections::BTreeMap::from([(
-        "ax.node_found".to_string(),
-        "false".to_string(),
-      )]);
+      let mut signals =
+        std::collections::BTreeMap::from([("ax.node_found".to_string(), "false".to_string())]);
       signals.insert("ax.target_text".to_string(), expected_text.clone());
       if let Some(role) = expected_role.as_deref() {
         signals.insert("ax.target_role".to_string(), role.to_string());
@@ -828,9 +821,7 @@ fn build_verify_ax_text_operation_result(
 /// Some(false)`, and `failure_layer=Some(SemanticMismatch)` — the
 /// assertion is well-formed and the probe was reliable, the world just
 /// doesn't match. No `observed_label` because there is no matched node.
-fn build_verify_ax_text_no_match_verification(
-  evidence: Vec<ArtifactRef>,
-) -> VerificationResult {
+fn build_verify_ax_text_no_match_verification(evidence: Vec<ArtifactRef>) -> VerificationResult {
   VerificationResult {
     method: VerificationMethod::AxText,
     executed: true,
@@ -2020,11 +2011,8 @@ mod tests {
     let call = sample_driver_call();
     let verification = build_verify_ax_text_no_match_verification(vec![sample_report_ref()]);
 
-    let result = build_verify_ax_text_operation_result(
-      &call,
-      OperationStatus::Failed,
-      verification.clone(),
-    );
+    let result =
+      build_verify_ax_text_operation_result(&call, OperationStatus::Failed, verification.clone());
 
     assert_eq!(result.operation_id, VERIFY_AX_TEXT_OPERATION_ID);
     assert_eq!(
