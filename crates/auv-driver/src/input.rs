@@ -120,6 +120,7 @@ impl InputPreparationLease {
 pub struct ClickOptions {
   pub policy: InputPolicy,
   pub click: Click,
+  pub window_strategy: WindowClickStrategy,
 }
 
 impl Default for ClickOptions {
@@ -127,8 +128,23 @@ impl Default for ClickOptions {
     Self {
       policy: InputPolicy::BackgroundPreferred,
       click: Click::Single,
+      window_strategy: WindowClickStrategy::default(),
     }
   }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowClickStrategy {
+  /// Use the Chromium-compatible background window click route.
+  ///
+  /// This stamps extra window-routing fields and sends a CUA-derived synthetic
+  /// event sequence for Chromium/WebView/Catalyst-style targets that ignore
+  /// the narrower pid-targeted route.
+  #[default]
+  ChromiumCompatible,
+  /// Use a direct pid-targeted mouse pair with window-local routing fields.
+  PidTargeted,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +267,7 @@ mod tests {
       click: Click::Double {
         interval: Duration::from_millis(100),
       },
+      window_strategy: WindowClickStrategy::PidTargeted,
     };
 
     let encoded = serde_json::to_string(&options).expect("serialize click options");

@@ -15,7 +15,7 @@ pub use geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, W
 pub use input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
   InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
-  TextSubmit, TypeTextOptions, WaitOptions,
+  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
@@ -29,7 +29,7 @@ mod tests {
   use crate::{
     ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
     InputDeliveryPath, InputPolicy, InputPreparationLease, PrepareForInputOptions, ScreenPoint,
-    TextSubmit, TypeTextOptions, WindowPoint,
+    TextSubmit, TypeTextOptions, WindowClickStrategy, WindowPoint,
     capture::{Activation, Capture, CaptureOptions, ImageView},
     display::{Display, ObservedDisplays},
     error::{DriverError, DriverResult},
@@ -63,6 +63,7 @@ mod tests {
     let _click_options = ClickOptions {
       policy: InputPolicy::BackgroundOnly,
       click: Click::Single,
+      window_strategy: WindowClickStrategy::ChromiumCompatible,
     };
     let _type_options = TypeTextOptions {
       policy: InputPolicy::BackgroundPreferred,

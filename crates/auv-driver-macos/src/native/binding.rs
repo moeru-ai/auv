@@ -313,6 +313,7 @@ pub(crate) mod ffi {
       button_code: i32,
       click_count: i64,
       click_interval_ms: u64,
+      window_strategy_code: i32,
     ) -> NativeActionResponse;
     fn current_mouse_location() -> NativeMouseLocationResponse;
     fn scroll_point(x: f64, y: f64, delta_x: f64, delta_y: f64) -> NativeActionResponse;

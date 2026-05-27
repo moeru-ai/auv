@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import Foundation
 
 /// Pixel-art cursor sprite ported from the AUV design system.
@@ -409,7 +410,8 @@ final class NativeOverlayController {
     window.backgroundColor = .clear
     window.ignoresMouseEvents = true
     window.hasShadow = false
-    window.level = .floating
+    window.level = .screenSaver
+    window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
     window.isReleasedWhenClosed = false
 
     return (window, view)
@@ -444,12 +446,11 @@ final class NativeOverlayController {
     // target point — matches the hover offset in the design preview.
     let offsetX = 4.0
     let offsetY = 4.0
-    let topLeftX = x + offsetX
-    let topLeftY = y + offsetY
-    let appKitY = referenceHeight() - topLeftY - Double(viewSize.height)
+    let auvTopLeft = CGPoint(x: x + offsetX, y: y + offsetY)
+    let appKitTopLeft = appKitPoint(fromAuvScreenPoint: auvTopLeft)
     let frame = NSRect(
-      x: topLeftX,
-      y: appKitY,
+      x: appKitTopLeft.x,
+      y: appKitTopLeft.y - Double(viewSize.height),
       width: Double(viewSize.width),
       height: Double(viewSize.height)
     )
@@ -613,18 +614,109 @@ final class NativeOverlayController {
   }
 
   private func currentMouseLogicalPoint() -> (x: Double, y: Double) {
-    // NSEvent.mouseLocation is in AppKit global coordinates, with a
-    // bottom-left origin on the main display. Convert it to the same
-    // top-left global-logical space accepted by show_overlay_cursor.
+    // NSEvent.mouseLocation is in AppKit screen coordinates. Convert it to
+    // the same AUV ScreenPoint space accepted by the public overlay API so
+    // the "you" cursor can share the same renderer path as the AUV cursor.
     let location = NSEvent.mouseLocation
-    return (
-      x: Double(location.x),
-      y: referenceHeight() - Double(location.y)
+    let auvPoint = auvScreenPoint(fromAppKitPoint: location)
+    return (x: auvPoint.x, y: auvPoint.y)
+  }
+
+  private struct DisplayCoordinateSpace {
+    let appKitFrame: CGRect
+    let cgFrame: CGRect
+  }
+
+  // NOTICE: AUV ScreenPoint values come from CGWindow/CGDisplay coordinates,
+  // while NSWindow.setFrame expects AppKit screen coordinates. These coordinate
+  // spaces match on the main display, but can diverge on secondary displays
+  // with negative AppKit origins. Do not convert by subtracting from one global
+  // desktop height; first choose the display containing the point, then map the
+  // point locally between CGDisplayBounds and NSScreen.frame.
+  //
+  // Reference:
+  // https://github.com/EYHN/kwwk-computer-use-core/blob/eddd9e5475095de58bcb81cafbad79d1f5c5495d/Sources/KWWKComputerUseCore/CoordinateSpaces.swift#L27-L43
+  private func appKitPoint(fromAuvScreenPoint point: CGPoint) -> CGPoint {
+    guard let space = displaySpace(containingCgPoint: point) else {
+      return point
+    }
+
+    let localX = point.x - space.cgFrame.minX
+    let localY = point.y - space.cgFrame.minY
+    return CGPoint(
+      x: space.appKitFrame.minX + localX,
+      y: space.appKitFrame.maxY - localY
     )
   }
 
-  private func referenceHeight() -> Double {
-    Double(NSScreen.main?.frame.height ?? NSScreen.screens.first?.frame.height ?? 0)
+  private func auvScreenPoint(fromAppKitPoint point: CGPoint) -> CGPoint {
+    guard let space = displaySpace(containingAppKitPoint: point) else {
+      return point
+    }
+
+    let localX = point.x - space.appKitFrame.minX
+    let localY = space.appKitFrame.maxY - point.y
+    return CGPoint(
+      x: space.cgFrame.minX + localX,
+      y: space.cgFrame.minY + localY
+    )
+  }
+
+  private func displaySpace(containingCgPoint point: CGPoint) -> DisplayCoordinateSpace? {
+    let spaces = displayCoordinateSpaces()
+    return spaces.first(where: { $0.cgFrame.contains(point) })
+      ?? spaces.min {
+        distanceSquared(from: point, to: $0.cgFrame) < distanceSquared(from: point, to: $1.cgFrame)
+      }
+  }
+
+  private func displaySpace(containingAppKitPoint point: CGPoint) -> DisplayCoordinateSpace? {
+    let spaces = displayCoordinateSpaces()
+    return spaces.first(where: { $0.appKitFrame.contains(point) })
+      ?? spaces.min {
+        distanceSquared(from: point, to: $0.appKitFrame)
+          < distanceSquared(from: point, to: $1.appKitFrame)
+      }
+  }
+
+  private func displayCoordinateSpaces() -> [DisplayCoordinateSpace] {
+    NSScreen.screens.compactMap { screen in
+      guard
+        let number = screen.deviceDescription[
+          NSDeviceDescriptionKey("NSScreenNumber")
+        ] as? NSNumber
+      else {
+        return nil
+      }
+
+      let displayId = CGDirectDisplayID(number.uint32Value)
+      return DisplayCoordinateSpace(
+        appKitFrame: screen.frame,
+        cgFrame: CGDisplayBounds(displayId)
+      )
+    }
+  }
+
+  private func distanceSquared(from point: CGPoint, to rect: CGRect) -> CGFloat {
+    let dx: CGFloat
+    if point.x < rect.minX {
+      dx = rect.minX - point.x
+    } else if point.x > rect.maxX {
+      dx = point.x - rect.maxX
+    } else {
+      dx = 0
+    }
+
+    let dy: CGFloat
+    if point.y < rect.minY {
+      dy = rect.minY - point.y
+    } else if point.y > rect.maxY {
+      dy = point.y - rect.maxY
+    } else {
+      dy = 0
+    }
+
+    return (dx * dx) + (dy * dy)
   }
 
   private func drainEvents(until deadline: Date) {

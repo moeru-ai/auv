@@ -5,10 +5,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use auv_cli::recorded_operation::RecordedOperationContext;
 use auv_cli::run_builder::{Attributes, RunSpec};
 use auv_cli::trace::{RunType, string_attr};
-use auv_driver::capture::{Activation, Capture, CaptureOptions};
-use auv_driver::input::{Click, ClickOptions, InputPolicy, TextSubmit, TypeTextOptions};
+use auv_driver::capture::Capture;
+use auv_driver::input::{Click, ClickOptions, TextSubmit, TypeTextOptions, WindowClickStrategy};
 use auv_driver::selector::{App, Window};
-use auv_driver::vision::TextRecognition;
+use auv_driver::vision::{RecognizedText, TextRecognition};
 use auv_driver::{Driver, RatioRect, ScreenPoint, WindowPoint};
 use auv_driver_macos::MacosDriver;
 
@@ -28,6 +28,8 @@ struct Inputs {
   click_interval_ms: u64,
   activation_settle_ms: u64,
   submit_settle_ms: u64,
+  show_overlay: bool,
+  overlay_pause_ms: u64,
   result_region: RatioRect,
   player_region: RatioRect,
 }
@@ -51,6 +53,8 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
   let mut click_interval_ms = 80_u64;
   let mut submit_settle_ms = 1200_u64;
   let mut activation_settle_ms = 500_u64;
+  let mut show_overlay = true;
+  let mut overlay_pause_ms = 450_u64;
 
   let mut iter = args.into_iter();
   while let Some(flag) = iter.next() {
@@ -103,6 +107,12 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
           .parse()
           .map_err(|error| format!("invalid --activation-settle-ms: {error}"))?;
       }
+      "--show-overlay" => show_overlay = parse_bool(&value)?,
+      "--overlay-pause-ms" => {
+        overlay_pause_ms = value
+          .parse()
+          .map_err(|error| format!("invalid --overlay-pause-ms: {error}"))?;
+      }
       other => return Err(format!("unknown argument {other}")),
     }
   }
@@ -121,9 +131,19 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
     click_interval_ms,
     activation_settle_ms,
     submit_settle_ms,
+    show_overlay,
+    overlay_pause_ms,
     result_region: RatioRect::new(0.12, 0.14, 0.74, 0.64),
     player_region: RatioRect::new(0.03, 0.86, 0.32, 0.14),
   })
+}
+
+fn parse_bool(value: &str) -> Result<bool, String> {
+  match value {
+    "true" | "1" | "yes" | "on" => Ok(true),
+    "false" | "0" | "no" | "off" => Ok(false),
+    other => Err(format!("invalid boolean value {other:?}")),
+  }
 }
 
 fn run_recorded(inputs: Inputs) -> Result<(), Box<dyn std::error::Error>> {
@@ -164,17 +184,10 @@ fn run_steps(
     .window()
     .resolve(Window::main_visible().owned_by(app))?;
   let full_window_region = RatioRect::new(0.0, 0.0, 1.0, 1.0);
+  let overlay = AnchorOverlay::new(inputs.show_overlay, inputs.overlay_pause_ms);
 
   context.in_span("auv.example.netease.prepare", |context| {
-    let mut before = session.window().capture_with(
-      &window,
-      CaptureOptions {
-        activation: Activation::ActivateFirst {
-          settle: Duration::from_millis(200),
-        },
-        ..CaptureOptions::default()
-      },
-    )?;
+    let mut before = session.window().capture(&window)?;
     let cancel_matches =
       session
         .vision()
@@ -183,14 +196,17 @@ fn run_steps(
       let cancel_point = session
         .window()
         .to_window_point(&window, ScreenPoint::from(cancel.action_point()))?;
+      overlay.before_click(&session, &window, cancel_point, "cancel")?;
       session.window().click(
         &window,
         cancel_point,
         ClickOptions {
-          policy: InputPolicy::ForegroundPreferred,
           click: Click::Single,
+          window_strategy: WindowClickStrategy::ChromiumCompatible,
+          ..ClickOptions::default()
         },
       )?;
+      overlay.after_click(&session, &window, cancel_point, "cancel")?;
       std::thread::sleep(Duration::from_millis(500));
       before = session.window().capture(&window)?;
     }
@@ -208,14 +224,17 @@ fn run_steps(
         inputs.collapse_relative_x,
         inputs.collapse_relative_y,
       );
+      overlay.before_click(&session, &window, collapse_point, "collapse")?;
       session.window().click(
         &window,
         collapse_point,
         ClickOptions {
-          policy: InputPolicy::ForegroundPreferred,
           click: Click::Single,
+          window_strategy: WindowClickStrategy::ChromiumCompatible,
+          ..ClickOptions::default()
         },
       )?;
+      overlay.after_click(&session, &window, collapse_point, "collapse")?;
       std::thread::sleep(Duration::from_millis(500));
       focus_capture = session.window().capture(&window)?;
       record_capture(context, "after-collapse-to-main", &focus_capture)?;
@@ -228,28 +247,47 @@ fn run_steps(
     let search_point =
       window_relative_window_point(&window, inputs.search_relative_x, inputs.search_relative_y);
 
+    // WORKAROUND:
+    //
+    // NetEase Cloud Music's CEF search entry can report a successful
+    // pid-targeted mouse delivery without actually entering text-input state
+    // after a single background click. A double click at the visible search
+    // anchor did focus the field during live testing, and the subsequent
+    // window-targeted keyboard path accepted text without foregrounding the app.
+    //
+    // Verification used the temporary `/private/tmp/auv-post-pid-probe` harness:
+    // `AUV_CLICK_REL_X=0.31 AUV_CLICK_REL_Y=0.06 AUV_TYPE_TEXT=auv_probe_double_type cargo run --quiet -- com.netease.163music`
+    // followed by this example with `--search-relative-y 0.045`. Remove this
+    // workaround only after NetEase accepts a single Chromium-compatible click
+    // plus background typing on the same visible anchor.
+    overlay.before_click(&session, &window, search_point, "search")?;
     session.window().click(
       &window,
       search_point,
       ClickOptions {
-        policy: InputPolicy::ForegroundPreferred,
-        click: Click::Single,
+        click: Click::Double {
+          interval: Duration::from_millis(inputs.click_interval_ms),
+        },
+        window_strategy: WindowClickStrategy::ChromiumCompatible,
+        ..ClickOptions::default()
       },
     )?;
+    overlay.after_click(&session, &window, search_point, "search")?;
     std::thread::sleep(Duration::from_millis(500));
     let after_search_click = session.window().capture(&window)?;
     record_capture(context, "after-search-click", &after_search_click)?;
 
+    overlay.mark_point(&session, &window, search_point, "type target")?;
     session.window().type_text(
       &window,
       &inputs.query,
       TypeTextOptions {
-        policy: InputPolicy::ForegroundPreferred,
         replace_existing: true,
         submit: TextSubmit::Return,
         inter_char_delay: Duration::from_millis(8),
-        allow_clipboard_fallback: true,
+        allow_clipboard_fallback: false,
         settle: Duration::from_millis(inputs.submit_settle_ms),
+        ..TypeTextOptions::default()
       },
     )?;
 
@@ -269,13 +307,7 @@ fn run_steps(
       "result title on comprehensive results",
     )?;
 
-    let title_matches = search_text.find_contains(&inputs.result_title);
-    let selected = title_matches.get(inputs.result_index).ok_or_else(|| {
-      format!(
-        "result title was not visible for playback activation at index {}",
-        inputs.result_index
-      )
-    })?;
+    let selected = select_song_result(&search_text, &inputs.result_title, inputs.result_index)?;
     let selected_point = session
       .window()
       .to_window_point(&window, ScreenPoint::from(selected.action_point()))?;
@@ -283,27 +315,22 @@ fn run_steps(
   })?;
 
   context.in_span("auv.example.netease.playback", |context| {
+    overlay.before_click(&session, &window, selected_point, "play result")?;
     session.window().click(
       &window,
       selected_point,
       ClickOptions {
-        policy: InputPolicy::ForegroundPreferred,
         click: Click::Double {
           interval: Duration::from_millis(inputs.click_interval_ms),
         },
+        window_strategy: WindowClickStrategy::ChromiumCompatible,
+        ..ClickOptions::default()
       },
     )?;
+    overlay.after_click(&session, &window, selected_point, "play result")?;
     std::thread::sleep(Duration::from_millis(inputs.activation_settle_ms));
 
-    let after_play = session.window().capture_with(
-      &window,
-      CaptureOptions {
-        activation: Activation::ActivateFirst {
-          settle: Duration::from_millis(200),
-        },
-        ..CaptureOptions::default()
-      },
-    )?;
+    let after_play = session.window().capture(&window)?;
     record_capture(context, "after-play", &after_play)?;
     let player_text = session
       .vision()
@@ -315,6 +342,74 @@ fn run_steps(
   })?;
 
   Ok(())
+}
+
+struct AnchorOverlay {
+  enabled: bool,
+  pause_ms: u64,
+}
+
+impl AnchorOverlay {
+  const fn new(enabled: bool, pause_ms: u64) -> Self {
+    Self { enabled, pause_ms }
+  }
+
+  fn mark_point(
+    &self,
+    session: &auv_driver_macos::MacosDriverSession,
+    window: &auv_driver::Window,
+    point: WindowPoint,
+    label: &str,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    if !self.enabled {
+      return Ok(());
+    }
+    let screen = session.window().to_screen_point(window, point)?.point();
+    auv_overlay_macos::set_cursor("netease-visible-anchor", screen.x, screen.y, label, "auv")?;
+    auv_overlay_macos::pump_events(self.pause_ms)?;
+    Ok(())
+  }
+
+  fn before_click(
+    &self,
+    session: &auv_driver_macos::MacosDriverSession,
+    window: &auv_driver::Window,
+    point: WindowPoint,
+    label: &str,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    self.mark_point(session, window, point, &format!("{label} before"))
+  }
+
+  fn after_click(
+    &self,
+    session: &auv_driver_macos::MacosDriverSession,
+    window: &auv_driver::Window,
+    point: WindowPoint,
+    label: &str,
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    if !self.enabled {
+      return Ok(());
+    }
+    let screen = session.window().to_screen_point(window, point)?.point();
+    auv_overlay_macos::flash_cursor_id(
+      "netease-visible-anchor",
+      screen.x,
+      screen.y,
+      &format!("{label} fired"),
+      350,
+    )?;
+    auv_overlay_macos::pump_events(450)?;
+    Ok(())
+  }
+}
+
+impl Drop for AnchorOverlay {
+  fn drop(&mut self) {
+    if self.enabled {
+      let _ = auv_overlay_macos::hide_cursor_id("netease-visible-anchor");
+      let _ = auv_overlay_macos::pump_events(100);
+    }
+  }
 }
 
 fn record_capture(
@@ -367,4 +462,23 @@ fn expect_text_visible(
   } else {
     Ok(())
   }
+}
+
+fn select_song_result<'a>(
+  recognition: &'a TextRecognition,
+  title: &str,
+  index: usize,
+) -> Result<&'a RecognizedText, Box<dyn std::error::Error>> {
+  let song_section_y = recognition
+    .best_contains("单曲")
+    .map(|section| section.bounds.origin.y)
+    .unwrap_or(f64::NEG_INFINITY);
+  let title_matches = recognition
+    .find_contains(title)
+    .into_iter()
+    .filter(|candidate| candidate.bounds.origin.y > song_section_y)
+    .collect::<Vec<_>>();
+  title_matches.get(index).copied().ok_or_else(|| {
+    format!("song result title was not visible for playback activation at index {index}").into()
+  })
 }
