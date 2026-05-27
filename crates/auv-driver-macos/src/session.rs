@@ -10,7 +10,7 @@ use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint,
 use auv_driver::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
   InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
-  TextSubmit, TypeTextOptions, WaitOptions,
+  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::vision::{RecognizedText, TextRecognition};
@@ -219,6 +219,10 @@ impl WindowApi<'_> {
     let screen = screen_point.point();
     let window_point = point.point();
     let (click_count, click_interval_ms) = click_parts(&options.click)?;
+    let window_strategy_code = match options.window_strategy {
+      WindowClickStrategy::ChromiumCompatible => 0,
+      WindowClickStrategy::PidTargeted => 1,
+    };
     let background_result = crate::native::input::click_window_point(
       pid,
       number,
@@ -229,6 +233,7 @@ impl WindowApi<'_> {
       0,
       click_count,
       click_interval_ms,
+      window_strategy_code,
     )
     .map_err(backend);
 

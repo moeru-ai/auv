@@ -17,6 +17,7 @@ pub fn click_window_point(
   button_code: i32,
   click_count: i64,
   click_interval_ms: u64,
+  window_strategy_code: i32,
 ) -> AuvResult<()> {
   action_result(
     "click_window_point",
@@ -30,6 +31,7 @@ pub fn click_window_point(
       button_code,
       click_count,
       click_interval_ms,
+      window_strategy_code,
     ),
   )
 }
@@ -45,6 +47,7 @@ pub fn click_window_point(
   _button_code: i32,
   _click_count: i64,
   _click_interval_ms: u64,
+  _window_strategy_code: i32,
 ) -> AuvResult<()> {
   Err("macOS native window-targeted click is unsupported on this target".to_string())
 }

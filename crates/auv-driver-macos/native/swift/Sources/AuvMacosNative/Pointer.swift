@@ -8,6 +8,11 @@ private typealias CGEventSetWindowLocationFn = @convention(c) (
   CGPoint
 ) -> Void
 
+private typealias SLEventPostToPidFn = @convention(c) (
+  pid_t,
+  CGEvent
+) -> Void
+
 private let cgEventSetWindowLocation: CGEventSetWindowLocationFn? = {
   let symbolName = "CGEventSetWindowLocation"
   let globalHandle = UnsafeMutableRawPointer(bitPattern: -2)
@@ -24,6 +29,22 @@ private let cgEventSetWindowLocation: CGEventSetWindowLocationFn? = {
   }
   return unsafeBitCast(symbol, to: CGEventSetWindowLocationFn.self)
 }()
+
+private let slEventPostToPid: SLEventPostToPidFn? = {
+  let symbolName = "SLEventPostToPid"
+  let skyLightPath = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
+  _ = dlopen(skyLightPath, RTLD_LAZY | RTLD_GLOBAL)
+  let globalHandle = UnsafeMutableRawPointer(bitPattern: -2)
+  guard let symbol = dlsym(globalHandle, symbolName) else {
+    return nil
+  }
+  return unsafeBitCast(symbol, to: SLEventPostToPidFn.self)
+}()
+
+private enum WindowClickStrategyCode: Int32 {
+  case chromiumCompatible = 0
+  case pidTargeted = 1
+}
 
 private func mouseButton(_ value: Int32) -> CGMouseButton {
   switch value {
@@ -49,23 +70,272 @@ private func mouseUpType(_ button: CGMouseButton) -> CGEventType {
   }
 }
 
-private func stampWindowTarget(
+private func setRawIntegerField(_ event: CGEvent, _ raw: UInt32, _ value: Int64) {
+  if let field = CGEventField(rawValue: raw) {
+    event.setIntegerValueField(field, value: value)
+  }
+}
+
+private func stampCompatibilityMouseEvent(
   _ event: CGEvent,
   pid: Int64,
   windowNumber: Int64,
   windowLocation: CGPoint,
+  clickGroupId: Int64,
+  clickState: Int64,
+  phase: Int64,
+  buttonNumber: Int64,
+  setWindowLocation: CGEventSetWindowLocationFn
+) {
+  setRawIntegerField(event, 0, phase)
+  setRawIntegerField(event, 1, clickState)
+  setRawIntegerField(event, 3, buttonNumber)
+  setRawIntegerField(event, 7, 3)
+  setRawIntegerField(event, 40, pid)
+  setRawIntegerField(event, 51, windowNumber)
+  setRawIntegerField(event, 58, clickGroupId)
+  setRawIntegerField(event, 91, windowNumber)
+  setRawIntegerField(event, 92, windowNumber)
+  setWindowLocation(event, windowLocation)
+}
+
+private func postCompatibilityMouseEvent(_ event: CGEvent, pid: Int64) {
+  slEventPostToPid?(pid_t(pid), event)
+  event.postToPid(pid_t(pid))
+}
+
+private func stampPidTargetedMouseEvent(
+  _ event: CGEvent,
+  pid: Int64,
+  windowNumber: Int64,
+  windowLocation: CGPoint,
+  clickState: Int64,
+  buttonNumber: Int64,
   setWindowLocation: CGEventSetWindowLocationFn
 ) {
   event.setIntegerValueField(.eventTargetUnixProcessID, value: pid)
+  event.setIntegerValueField(.mouseEventClickState, value: clickState)
   event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: windowNumber)
   event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: windowNumber)
-  if let eventWindowNumber = CGEventField(rawValue: 51) {
-    event.setIntegerValueField(eventWindowNumber, value: windowNumber)
-  }
-  if let eventWindowId = CGEventField(rawValue: 40) {
-    event.setIntegerValueField(eventWindowId, value: windowNumber)
-  }
+  setRawIntegerField(event, 3, buttonNumber)
+  setRawIntegerField(event, 40, pid)
+  setRawIntegerField(event, 51, windowNumber)
+  setRawIntegerField(event, 91, windowNumber)
+  setRawIntegerField(event, 92, windowNumber)
   setWindowLocation(event, windowLocation)
+}
+
+private func runPidTargetedWindowClick(
+  source: CGEventSource?,
+  pid: Int64,
+  windowNumber: Int64,
+  button: CGMouseButton,
+  screenLocation: CGPoint,
+  windowLocation: CGPoint,
+  clickCount: Int64,
+  clickIntervalMicros: useconds_t,
+  setWindowLocation: CGEventSetWindowLocationFn
+) -> NativeActionResponse {
+  let buttonNumber: Int64 = switch button {
+  case .right: 1
+  case .center: 2
+  default: 0
+  }
+
+  for clickNumber in 1...clickCount {
+    guard
+      let down = CGEvent(
+        mouseEventSource: source,
+        mouseType: mouseDownType(button),
+        mouseCursorPosition: screenLocation,
+        mouseButton: button
+      ),
+      let up = CGEvent(
+        mouseEventSource: source,
+        mouseType: mouseUpType(button),
+        mouseCursorPosition: screenLocation,
+        mouseButton: button
+      )
+    else {
+      return nativeActionError(
+        "failed to create window-targeted mouse click event",
+        "grant Accessibility permission and retry"
+      )
+    }
+    stampPidTargetedMouseEvent(
+      down,
+      pid: pid,
+      windowNumber: windowNumber,
+      windowLocation: windowLocation,
+      clickState: clickNumber,
+      buttonNumber: buttonNumber,
+      setWindowLocation: setWindowLocation
+    )
+    stampPidTargetedMouseEvent(
+      up,
+      pid: pid,
+      windowNumber: windowNumber,
+      windowLocation: windowLocation,
+      clickState: clickNumber,
+      buttonNumber: buttonNumber,
+      setWindowLocation: setWindowLocation
+    )
+    down.postToPid(pid_t(pid))
+    up.postToPid(pid_t(pid))
+    if clickNumber < clickCount {
+      usleep(clickIntervalMicros)
+    }
+  }
+
+  return nativeActionOk()
+}
+
+private func runCompatibilityWindowClick(
+  source: CGEventSource?,
+  pid: Int64,
+  windowNumber: Int64,
+  button: CGMouseButton,
+  screenLocation: CGPoint,
+  windowLocation: CGPoint,
+  clickCount: Int,
+  clickIntervalMicros: useconds_t,
+  setWindowLocation: CGEventSetWindowLocationFn
+) -> NativeActionResponse {
+  let clickGroupId = Int64(Date().timeIntervalSince1970 * 1_000_000) & 0x7fff_ffff
+  let offscreen = CGPoint(x: -1, y: -1)
+  let offscreenLocal = CGPoint(x: -1, y: -1)
+  let clickPairs = min(max(clickCount, 1), 2)
+  let buttonNumber: Int64 = switch button {
+  case .right: 1
+  case .center: 2
+  default: 0
+  }
+
+  guard
+    let move = CGEvent(
+      mouseEventSource: source,
+      mouseType: .mouseMoved,
+      mouseCursorPosition: screenLocation,
+      mouseButton: button
+    )
+  else {
+    return nativeActionError(
+      "failed to create compatibility mouse move event",
+      "grant Accessibility permission and retry"
+    )
+  }
+  stampCompatibilityMouseEvent(
+    move,
+    pid: pid,
+    windowNumber: windowNumber,
+    windowLocation: windowLocation,
+    clickGroupId: clickGroupId,
+    clickState: 0,
+    phase: 2,
+    buttonNumber: buttonNumber,
+    setWindowLocation: setWindowLocation
+  )
+  postCompatibilityMouseEvent(move, pid: pid)
+  usleep(15_000)
+
+  guard
+    let primerDown = CGEvent(
+      mouseEventSource: source,
+      mouseType: mouseDownType(button),
+      mouseCursorPosition: offscreen,
+      mouseButton: button
+    ),
+    let primerUp = CGEvent(
+      mouseEventSource: source,
+      mouseType: mouseUpType(button),
+      mouseCursorPosition: offscreen,
+      mouseButton: button
+    )
+  else {
+    return nativeActionError(
+      "failed to create compatibility primer click events",
+      "grant Accessibility permission and retry"
+    )
+  }
+  stampCompatibilityMouseEvent(
+    primerDown,
+    pid: pid,
+    windowNumber: windowNumber,
+    windowLocation: offscreenLocal,
+    clickGroupId: clickGroupId,
+    clickState: 1,
+    phase: 1,
+    buttonNumber: buttonNumber,
+    setWindowLocation: setWindowLocation
+  )
+  stampCompatibilityMouseEvent(
+    primerUp,
+    pid: pid,
+    windowNumber: windowNumber,
+    windowLocation: offscreenLocal,
+    clickGroupId: clickGroupId,
+    clickState: 1,
+    phase: 2,
+    buttonNumber: buttonNumber,
+    setWindowLocation: setWindowLocation
+  )
+  postCompatibilityMouseEvent(primerDown, pid: pid)
+  usleep(1_000)
+  postCompatibilityMouseEvent(primerUp, pid: pid)
+  usleep(100_000)
+
+  for pairIndex in 1...clickPairs {
+    guard
+      let down = CGEvent(
+        mouseEventSource: source,
+        mouseType: mouseDownType(button),
+        mouseCursorPosition: screenLocation,
+        mouseButton: button
+      ),
+      let up = CGEvent(
+        mouseEventSource: source,
+        mouseType: mouseUpType(button),
+        mouseCursorPosition: screenLocation,
+        mouseButton: button
+      )
+    else {
+      return nativeActionError(
+        "failed to create compatibility target click events",
+        "grant Accessibility permission and retry"
+      )
+    }
+    let clickState = Int64(pairIndex)
+    stampCompatibilityMouseEvent(
+      down,
+      pid: pid,
+      windowNumber: windowNumber,
+      windowLocation: windowLocation,
+      clickGroupId: clickGroupId,
+      clickState: clickState,
+      phase: 3,
+      buttonNumber: buttonNumber,
+      setWindowLocation: setWindowLocation
+    )
+    stampCompatibilityMouseEvent(
+      up,
+      pid: pid,
+      windowNumber: windowNumber,
+      windowLocation: windowLocation,
+      clickGroupId: clickGroupId,
+      clickState: clickState,
+      phase: 3,
+      buttonNumber: buttonNumber,
+      setWindowLocation: setWindowLocation
+    )
+    postCompatibilityMouseEvent(down, pid: pid)
+    usleep(1_000)
+    postCompatibilityMouseEvent(up, pid: pid)
+    if pairIndex < clickPairs {
+      usleep(clickIntervalMicros)
+    }
+  }
+
+  return nativeActionOk()
 }
 
 func click_point(
@@ -127,12 +397,29 @@ func click_window_point(
   window_y: Double,
   button_code: Int32,
   click_count: Int64,
-  click_interval_ms: UInt64
+  click_interval_ms: UInt64,
+  window_strategy_code: Int32
 ) -> NativeActionResponse {
   let button = mouseButton(button_code)
   let clickCount = max(click_count, 1)
-  let clickIntervalSeconds = Double(click_interval_ms) / 1000.0
+  guard let strategy = WindowClickStrategyCode(rawValue: window_strategy_code) else {
+    return nativeActionError(
+      "unsupported window click strategy",
+      "use a WindowClickStrategy value supported by this macOS driver build"
+    )
+  }
+  let clickIntervalMicros = useconds_t(min(click_interval_ms, UInt64(useconds_t.max) / 1000) * 1000)
   let screenLocation = CGPoint(x: screen_x, y: screen_y)
+  // NOTICE: `CGEventSetWindowLocation` is used here as a routing hint for
+  // background window delivery. AUV's `WindowPoint` and CUA's macOS pixel path
+  // both use screenshot/window-local coordinates with a top-left origin, so keep
+  // that y value intact when stamping the event. Flipping to `windowHeight - y`
+  // makes canvas-style apps such as NetEase Cloud Music consume the click near
+  // the bottom of the window even when the event's screen point is visually on
+  // the search box.
+  //
+  // References:
+  // https://github.com/trycua/cua/blob/a3448588286b6373013a5fa9072ac8bafb6681d6/libs/cua-driver-rs/crates/platform-macos/src/input/mouse.rs#L388-L413
   let windowLocation = CGPoint(x: window_x, y: window_y)
   guard let setWindowLocation = cgEventSetWindowLocation else {
     return nativeActionError(
@@ -141,56 +428,52 @@ func click_window_point(
     )
   }
 
-  for clickNumber in 1...clickCount {
-    guard
-      let down = CGEvent(
-        mouseEventSource: nil,
-        mouseType: mouseDownType(button),
-        mouseCursorPosition: screenLocation,
-        mouseButton: button
-      ),
-      let up = CGEvent(
-        mouseEventSource: nil,
-        mouseType: mouseUpType(button),
-        mouseCursorPosition: screenLocation,
-        mouseButton: button
-      )
-    else {
-      return nativeActionError(
-        "failed to create window-targeted mouse click event",
-        "grant Accessibility permission and retry"
-      )
-    }
-
-    down.setIntegerValueField(.mouseEventClickState, value: clickNumber)
-    up.setIntegerValueField(.mouseEventClickState, value: clickNumber)
-
-    // Provenance: CUA mouse and KWWK mouse background dispatch patterns.
+  if strategy == .chromiumCompatible {
+    // NOTICE: Chromium/WebView/Catalyst targets can ignore plain
+    // `CGEvent.postToPid` mouse pairs even when AppKit receives them. Keep this
+    // strategy explicit at the Rust API layer because it is more invasive than a
+    // direct pid-targeted click: it posts a move, an off-screen primer click,
+    // then the target click pair(s).
+    //
+    // WORKAROUND: NetEase Cloud Music accepts this CUA-style Chromium sequence
+    // but did not react to plain `postToPid`, `cghidEventTap`, or pid+HID
+    // variants during `2026-05-27` live testing. The primer and raw event fields
+    // keep Chromium's user-activation and synthetic-event filters satisfied
+    // without foregrounding the target app.
+    //
+    // References:
+    // https://github.com/trycua/cua/blob/a3448588286b6373013a5fa9072ac8bafb6681d6/libs/cua-driver-rs/crates/platform-macos/src/input/mouse.rs#L103-L224
     // https://github.com/trycua/cua/blob/a3448588286b6373013a5fa9072ac8bafb6681d6/libs/cua-driver-rs/crates/platform-macos/src/input/mouse.rs#L383-L438
-    // https://github.com/EYHN/kwwk-computer-use-core/blob/eddd9e5475095de58bcb81cafbad79d1f5c5495d/Sources/KWWKComputerUseCore/BackgroundInputDispatcher.swift#L130-L162
-    stampWindowTarget(
-      down,
+    return runCompatibilityWindowClick(
+      source: nil,
       pid: pid,
       windowNumber: window_number,
+      button: button,
+      screenLocation: screenLocation,
       windowLocation: windowLocation,
+      clickCount: Int(clickCount),
+      clickIntervalMicros: clickIntervalMicros,
       setWindowLocation: setWindowLocation
     )
-    stampWindowTarget(
-      up,
-      pid: pid,
-      windowNumber: window_number,
-      windowLocation: windowLocation,
-      setWindowLocation: setWindowLocation
-    )
-
-    down.postToPid(pid_t(pid))
-    up.postToPid(pid_t(pid))
-    if clickNumber < clickCount && clickIntervalSeconds > 0 {
-      Thread.sleep(forTimeInterval: clickIntervalSeconds)
-    }
   }
 
-  return nativeActionOk()
+  // NOTICE: This is the narrower public pid-targeted route. It is useful for
+  // AppKit targets and for comparing delivery behavior, but Chromium/WebView
+  // apps may ignore it while still reporting native post success.
+  //
+  // References:
+  // https://github.com/EYHN/kwwk-computer-use-core/blob/eddd9e5475095de58bcb81cafbad79d1f5c5495d/Sources/KWWKComputerUseCore/BackgroundInputDispatcher.swift#L130-L162
+  return runPidTargetedWindowClick(
+    source: nil,
+    pid: pid,
+    windowNumber: window_number,
+    button: button,
+    screenLocation: screenLocation,
+    windowLocation: windowLocation,
+    clickCount: clickCount,
+    clickIntervalMicros: clickIntervalMicros,
+    setWindowLocation: setWindowLocation
+  )
 }
 
 func current_mouse_location() -> NativeMouseLocationResponse {
