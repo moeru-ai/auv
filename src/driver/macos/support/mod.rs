@@ -11,6 +11,7 @@ mod overlay_evidence;
 mod recognition;
 mod runtime;
 mod scripts;
+mod typed_capture;
 
 pub(crate) mod template_match {
   pub(crate) use auv_driver_macos::support::template_match::*;
@@ -40,3 +41,4 @@ pub(crate) use self::overlay_evidence::*;
 pub(crate) use self::recognition::*;
 pub(crate) use self::runtime::*;
 pub(crate) use self::scripts::*;
+pub(crate) use self::typed_capture::*;

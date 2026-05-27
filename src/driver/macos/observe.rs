@@ -677,6 +677,9 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     screenshot_path: screenshot_path.clone(),
     capture_contract,
     dimensions: dimensions.clone(),
+    image: None,
+    backend: Some("xcap.macos".to_string()),
+    fallback_reason: None,
   };
   let exact = optional_bool(call, "exact")?.unwrap_or(false);
   let case_sensitive = optional_bool(call, "case_sensitive")?.unwrap_or(false);

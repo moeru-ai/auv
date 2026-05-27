@@ -8,20 +8,18 @@
 //! Boundary: this is about coordinate correctness + capture provenance, not UI
 //! interpretation (OCR/AX) or action semantics.
 
-use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use auv_driver_macos::capture::geometry::{
-  display_index_for_window, project_capture_pixel_to_global_logical, resolve_display_index,
-  resolve_region, scale_from_logical_and_physical,
+  project_capture_pixel_to_global_logical, resolve_display_index, resolve_region,
+  scale_from_logical_and_physical,
 };
 
 use super::types::{
-  CaptureBackend, CaptureContract, CaptureSource, DisplayDescriptor, Rect, Scale2D, Size,
-  WindowDescriptor, capture_error,
+  CaptureBackend, CaptureContract, CaptureSource, DisplayDescriptor, Rect, Size, capture_error,
 };
 use crate::model::AuvResult;
 
@@ -132,322 +130,6 @@ pub fn capture_display_to_path(
   Ok((path, contract))
 }
 
-pub fn descriptor_from_window(
-  index: usize,
-  window: &xcap::Window,
-  displays: &[DisplayDescriptor],
-  bundle_ids: &HashMap<u32, String>,
-) -> AuvResult<WindowDescriptor> {
-  let owner_pid = window.pid().map_err(backend_failed)?;
-  let bounds = Rect {
-    x: window.x().map_err(backend_failed)? as f64,
-    y: window.y().map_err(backend_failed)? as f64,
-    width: window.width().map_err(backend_failed)? as f64,
-    height: window.height().map_err(backend_failed)? as f64,
-  };
-  let display_ref = display_index_for_window(displays, &bounds)
-    .ok()
-    .map(|display_index| displays[display_index].display_ref.clone());
-
-  Ok(WindowDescriptor {
-    window_ref: format!("window_{index}"),
-    title: window.title().map_err(backend_failed)?,
-    app_name: window.app_name().map_err(backend_failed)?,
-    owner_bundle_id: bundle_ids.get(&owner_pid).cloned(),
-    owner_pid: Some(owner_pid),
-    z_order: Some(window.z().map_err(backend_failed)?),
-    is_focused: Some(window.is_focused().map_err(backend_failed)?),
-    is_minimized: Some(window.is_minimized().map_err(backend_failed)?),
-    global_logical_bounds: bounds,
-    display_ref,
-    native_window_id: window.id().map_err(backend_failed)?.to_string(),
-    capture_backend: CaptureBackend::XcapMacos,
-  })
-}
-
-pub fn capture_window_native_id_to_path(
-  label: &str,
-  native_window_id: &str,
-  window_number: i64,
-) -> AuvResult<(PathBuf, CaptureContract, WindowDescriptor)> {
-  let displays = list_displays()?;
-  let windows = xcap::Window::all().map_err(|error| {
-    format!(
-      "{}: failed to re-enumerate windows before capture: {error}",
-      capture_error::BACKEND_FAILED
-    )
-  })?;
-  for window in &windows {
-    let Ok(id) = window.id() else {
-      continue;
-    };
-    if id.to_string() != native_window_id {
-      continue;
-    }
-
-    let pids = [window.pid().map_err(|error| {
-      format!(
-        "{}: failed to read refreshed window pid: {error}",
-        capture_error::STALE_WINDOW_REF
-      )
-    })?]
-    .into_iter()
-    .collect::<HashSet<_>>();
-    let bundle_ids = bundle_ids_by_pid(&pids).unwrap_or_else(|_| HashMap::new());
-    let selected = descriptor_from_window(
-      window_number.max(0) as usize,
-      window,
-      &displays,
-      &bundle_ids,
-    )
-    .map_err(|error| {
-      format!(
-        "{}: failed to refresh selected window descriptor: {error}",
-        capture_error::STALE_WINDOW_REF
-      )
-    })?;
-    let display_ref = selected.display_ref.clone().ok_or_else(|| {
-      format!(
-        "{}: refreshed window is not fully contained by one display",
-        capture_error::STALE_WINDOW_REF
-      )
-    })?;
-    let display = displays
-      .iter()
-      .find(|display| display.display_ref == display_ref)
-      .ok_or_else(|| {
-        format!(
-          "{}: refreshed window display {} is missing from the display list",
-          capture_error::STALE_DISPLAY_REF,
-          display_ref
-        )
-      })?;
-    let image = window.capture_image().map_err(map_xcap_capture_error)?;
-    let path = screenshot_temp_path(label);
-    let screenshot_pixel_size = save_rgba_image(image, &path)?;
-    let pixel_to_logical_scale = Scale2D {
-      x: selected.global_logical_bounds.width / screenshot_pixel_size.width,
-      y: selected.global_logical_bounds.height / screenshot_pixel_size.height,
-    };
-    let logical_to_pixel_scale = Scale2D {
-      x: screenshot_pixel_size.width / selected.global_logical_bounds.width,
-      y: screenshot_pixel_size.height / selected.global_logical_bounds.height,
-    };
-    let contract = CaptureContract {
-      coordinate_contract_version: 1,
-      capture_source: CaptureSource::Window {
-        window_ref: selected.window_ref.clone(),
-        display_ref: display_ref.clone(),
-        native_window_id: selected.native_window_id.clone(),
-        native_display_id: display.native_display_id.clone(),
-      },
-      capture_backend: CaptureBackend::XcapMacos,
-      include_shadow: false,
-      source_global_logical_bounds: selected.global_logical_bounds.clone(),
-      source_physical_pixel_bounds: Rect {
-        x: (selected.global_logical_bounds.x - display.global_logical_bounds.x)
-          * display.logical_to_pixel_scale.x,
-        y: (selected.global_logical_bounds.y - display.global_logical_bounds.y)
-          * display.logical_to_pixel_scale.y,
-        width: screenshot_pixel_size.width,
-        height: screenshot_pixel_size.height,
-      },
-      screenshot_pixel_size,
-      pixel_to_logical_scale,
-      logical_to_pixel_scale,
-      captured_at_unix_ms: now_millis(),
-    };
-    return Ok((path, contract, selected));
-  }
-
-  Err(format!(
-    "{}: selected window {} disappeared before capture",
-    capture_error::STALE_WINDOW_REF,
-    native_window_id
-  ))
-}
-
-/// Fallback window capture for windows where `kCGWindowSharingState == 0`.
-///
-/// xcap filters those out during enumeration, but `CGWindowListCreateImage` can
-/// still capture them when Screen Recording is granted.  We call the CoreGraphics
-/// API directly (in-process) so the TCC permission from the auv-cli process applies.
-///
-/// `logical_bounds` must be in global macOS screen coordinates (y=0 at top), the
-/// same coordinate space that `kCGWindowBounds` returns.
-pub fn capture_window_cg_to_path(
-  label: &str,
-  window_number: i64,
-  logical_bounds: &Rect,
-  displays: &[DisplayDescriptor],
-) -> AuvResult<(PathBuf, CaptureContract, WindowDescriptor)> {
-  #[cfg(target_os = "macos")]
-  {
-    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
-    #[allow(deprecated)]
-    use objc2_core_graphics::CGWindowListCreateImage;
-    use objc2_core_graphics::{
-      CGDataProvider, CGImage, CGWindowID, CGWindowImageOption, CGWindowListOption,
-    };
-
-    let cg_rect = CGRect {
-      origin: CGPoint {
-        x: logical_bounds.x,
-        y: logical_bounds.y,
-      },
-      size: CGSize {
-        width: logical_bounds.width,
-        height: logical_bounds.height,
-      },
-    };
-    let window_id = window_number.max(0) as CGWindowID;
-
-    #[allow(deprecated)]
-    let image = CGWindowListCreateImage(
-      cg_rect,
-      CGWindowListOption::OptionIncludingWindow,
-      window_id,
-      CGWindowImageOption::Default,
-    )
-    .ok_or_else(|| {
-      format!(
-        "{}: CGWindowListCreateImage returned nil for window {}",
-        capture_error::BACKEND_FAILED,
-        window_number
-      )
-    })?;
-
-    let (pixel_width, pixel_height, rgba) = {
-      let w = CGImage::width(Some(&image));
-      let h = CGImage::height(Some(&image));
-      let data_provider = CGImage::data_provider(Some(&image));
-      let data = CGDataProvider::data(data_provider.as_deref())
-        .ok_or_else(|| {
-          format!(
-            "{}: failed to get pixel data for window {}",
-            capture_error::BACKEND_FAILED,
-            window_number
-          )
-        })?
-        .to_vec();
-      let bytes_per_row = CGImage::bytes_per_row(Some(&image));
-      let mut buffer = Vec::with_capacity(w * h * 4);
-      for row in data.chunks_exact(bytes_per_row) {
-        buffer.extend_from_slice(&row[..w * 4]);
-      }
-      for bgra in buffer.chunks_exact_mut(4) {
-        bgra.swap(0, 2);
-      }
-      let img = image::RgbaImage::from_raw(w as u32, h as u32, buffer).ok_or_else(|| {
-        format!(
-          "{}: failed to build RgbaImage from CG data for window {}",
-          capture_error::BACKEND_FAILED,
-          window_number
-        )
-      })?;
-      (w as f64, h as f64, img)
-    };
-
-    if pixel_width <= 0.0 || pixel_height <= 0.0 {
-      return Err(format!(
-        "{}: CGWindowListCreateImage returned zero-size image for window {}",
-        capture_error::BACKEND_FAILED,
-        window_number
-      ));
-    }
-
-    let path = screenshot_temp_path(label);
-    save_rgba_image(rgba, &path)?;
-
-    let screenshot_pixel_size = Size {
-      width: pixel_width,
-      height: pixel_height,
-    };
-    let source_global_logical_bounds = logical_bounds.clone();
-    let logical_x = logical_bounds.x;
-    let logical_y = logical_bounds.y;
-    let logical_width = logical_bounds.width;
-    let logical_height = logical_bounds.height;
-    let pixel_to_logical_scale = Scale2D {
-      x: logical_width / pixel_width,
-      y: logical_height / pixel_height,
-    };
-    let logical_to_pixel_scale = Scale2D {
-      x: pixel_width / logical_width,
-      y: pixel_height / logical_height,
-    };
-
-    let display_ref = display_index_for_window(displays, &source_global_logical_bounds)
-      .ok()
-      .map(|idx| displays[idx].display_ref.clone());
-    let native_display_id = display_ref
-      .as_ref()
-      .and_then(|dref| displays.iter().find(|d| &d.display_ref == dref))
-      .map(|d| d.native_display_id.clone());
-
-    let source_physical_pixel_bounds = display_ref
-      .as_ref()
-      .and_then(|dref| displays.iter().find(|d| &d.display_ref == dref))
-      .map(|display| Rect {
-        x: (logical_x - display.global_logical_bounds.x) * display.logical_to_pixel_scale.x,
-        y: (logical_y - display.global_logical_bounds.y) * display.logical_to_pixel_scale.y,
-        width: pixel_width,
-        height: pixel_height,
-      })
-      .unwrap_or(Rect {
-        x: 0.0,
-        y: 0.0,
-        width: pixel_width,
-        height: pixel_height,
-      });
-
-    let window_ref = format!("window_{}", window_number.max(0));
-    let capture_source = CaptureSource::Window {
-      window_ref: window_ref.clone(),
-      display_ref: display_ref.clone().unwrap_or_default(),
-      native_window_id: window_number.to_string(),
-      native_display_id: native_display_id.clone().unwrap_or_default(),
-    };
-    let contract = CaptureContract {
-      coordinate_contract_version: 1,
-      capture_source,
-      capture_backend: CaptureBackend::XcapMacos,
-      include_shadow: false,
-      source_global_logical_bounds: source_global_logical_bounds.clone(),
-      source_physical_pixel_bounds,
-      screenshot_pixel_size,
-      pixel_to_logical_scale,
-      logical_to_pixel_scale,
-      captured_at_unix_ms: now_millis(),
-    };
-    let descriptor = WindowDescriptor {
-      window_ref,
-      title: String::new(),
-      app_name: String::new(),
-      owner_bundle_id: None,
-      owner_pid: None,
-      z_order: None,
-      is_focused: None,
-      is_minimized: None,
-      global_logical_bounds: source_global_logical_bounds,
-      display_ref,
-      native_window_id: window_number.to_string(),
-      capture_backend: CaptureBackend::XcapMacos,
-    };
-
-    return Ok((path, contract, descriptor));
-  }
-  #[cfg(not(target_os = "macos"))]
-  Err(format!(
-    "{}: CG window capture is only supported on macOS",
-    capture_error::BACKEND_FAILED
-  ))
-}
-
-pub fn bundle_ids_by_pid(pids: &HashSet<u32>) -> AuvResult<HashMap<u32, String>> {
-  crate::driver::macos::native::window::bundle_ids_by_pid(pids).map_err(backend_failed)
-}
-
 pub fn descriptors_from_monitors(monitors: &[xcap::Monitor]) -> AuvResult<Vec<DisplayDescriptor>> {
   if monitors.is_empty() {
     return Err(format!(
@@ -534,7 +216,10 @@ pub fn save_rgba_image(image: image::RgbaImage, path: &Path) -> AuvResult<Size> 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use auv_driver_macos::capture::geometry::display_index_for_window;
+
   use crate::driver::macos::capture::types::CoordinateSpace;
+  use crate::driver::macos::capture::types::Scale2D;
 
   fn test_display(display_ref: &str, native_display_id: &str, is_main: bool) -> DisplayDescriptor {
     test_display_with_bounds(

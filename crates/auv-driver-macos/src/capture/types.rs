@@ -25,6 +25,7 @@ pub struct Scale2D {
 #[serde(rename_all = "snake_case")]
 pub enum CaptureBackend {
   XcapMacos,
+  ScreenCaptureKitMacos,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

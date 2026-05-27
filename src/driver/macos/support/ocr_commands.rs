@@ -1,6 +1,8 @@
 // File: src/driver/macos/support/ocr_commands.rs
 use std::path::PathBuf;
 
+use image::RgbaImage;
+
 use super::super::*;
 use crate::driver::macos::capture::types::CaptureContract;
 
@@ -24,6 +26,9 @@ pub(crate) struct CapturedObservation {
   pub(crate) screenshot_path: PathBuf,
   pub(crate) capture_contract: CaptureContract,
   pub(crate) dimensions: ScreenshotDimensions,
+  pub(crate) image: Option<RgbaImage>,
+  pub(crate) backend: Option<String>,
+  pub(crate) fallback_reason: Option<String>,
 }
 
 pub(crate) fn render_text_match_command_json(report: &TextMatchCommandReport) -> AuvResult<String> {
@@ -72,14 +77,27 @@ pub(crate) fn run_text_match_on_capture(
   }
   let region =
     parse_ocr_region_constraint(call, capture.dimensions.width, capture.dimensions.height)?;
-  let ocr_capture = crate::driver::macos::native::ocr::find_text(
-    capture.screenshot_path.as_path(),
-    query,
-    exact,
-    case_sensitive,
-    max_observations,
-    region.as_ref(),
-  )?;
+  let ocr_capture = if let Some(image) = &capture.image {
+    crate::driver::macos::native::ocr::find_text_in_rgba(
+      image.clone().into_raw(),
+      i64::from(image.width()),
+      i64::from(image.height()),
+      query,
+      exact,
+      case_sensitive,
+      max_observations,
+      region.as_ref(),
+    )?
+  } else {
+    crate::driver::macos::native::ocr::find_text(
+      capture.screenshot_path.as_path(),
+      query,
+      exact,
+      case_sensitive,
+      max_observations,
+      region.as_ref(),
+    )?
+  };
   let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
   let snapshot = ocr_capture.snapshot;
   let filtered = filter_ocr_matches(&snapshot.matches, min_confidence, region.as_ref())

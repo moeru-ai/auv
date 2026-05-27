@@ -706,61 +706,21 @@ pub(super) fn capture_resolved_window_observation(
   call: &DriverCall,
   label: &str,
 ) -> AuvResult<CapturedObservation> {
-  let app = app_identifier(call)
-    .filter(|value| !value.is_empty())
-    .ok_or_else(|| {
-      "operation requires --target <application-id> or --app <application-id>".to_string()
-    })?;
-  let selection = parse_window_selection(call)?;
-  let _ = maybe_activate_target_app_for_observation(call)?;
-  let selector = parse_app_selector(&app)?;
-  let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
-  let (screenshot_path, capture_contract, selected) = retry_window_capture_operation(|| {
-    let snapshot = crate::driver::macos::observe::observe_windows_snapshot(128, &app)?;
-    let resolved_app = resolve_app_ref(&snapshot, &selector)?;
-    let candidate = resolve_window_candidate(&snapshot, &resolved_app, &displays, &selection)?;
-    if selection.has_selector() && !candidate.is_fully_contained_in_display {
-      return Err(window_capture_readiness_diagnostic(&candidate, &displays));
-    }
-    let native_window_id = candidate.native_window_id.as_deref().ok_or_else(|| {
-      "resolved window candidate has no native window id; inspect `debug.listWindows`".to_string()
-    })?;
-    let result = crate::driver::macos::capture::xcap_backend::capture_window_native_id_to_path(
-      label,
-      native_window_id,
-      candidate.window_ref.window_number,
-    );
-    match result {
-      Ok(x) => Ok(x),
-      Err(ref e)
-        if e.contains(crate::driver::macos::capture::types::capture_error::STALE_WINDOW_REF) =>
-      {
-        // xcap skips windows with kCGWindowSharingState==0 during enumeration.
-        // Fall back to direct CGWindowListCreateImage which respects Screen Recording permission
-        // regardless of sharing state.
-        let logical_bounds = crate::driver::macos::capture::types::Rect {
-          x: candidate.window_ref.bounds.x as f64,
-          y: candidate.window_ref.bounds.y as f64,
-          width: candidate.window_ref.bounds.width as f64,
-          height: candidate.window_ref.bounds.height as f64,
-        };
-        crate::driver::macos::capture::xcap_backend::capture_window_cg_to_path(
-          label,
-          candidate.window_ref.window_number,
-          &logical_bounds,
-          &displays,
-        )
-      }
-      Err(e) => Err(e),
-    }
-  })?;
-  let dimensions = read_png_dimensions(&screenshot_path)?;
+  let observation = capture_window_with_typed_session(call, label)?;
+  let screenshot_path = screenshot_temp_path(label);
+  crate::driver::macos::capture::xcap_backend::save_rgba_image(
+    observation.capture.image.clone(),
+    &screenshot_path,
+  )?;
   Ok(CapturedObservation {
     scope: "window".to_string(),
-    capture_source: selected.window_ref,
+    capture_source: format!("window_{}", observation.candidate.window_ref.window_number),
     screenshot_path,
-    capture_contract,
-    dimensions,
+    capture_contract: observation.contract,
+    dimensions: observation.dimensions,
+    image: Some(observation.capture.image),
+    backend: Some(observation.capture.backend),
+    fallback_reason: observation.capture.fallback_reason,
   })
 }
 
@@ -796,7 +756,7 @@ fn text_notes(
   snapshot: &OcrTextSnapshot,
   filtered_count: usize,
 ) -> Vec<String> {
-  vec![
+  let mut notes = vec![
     "scope=window".to_string(),
     format!("windowRef={}", capture.capture_source),
     format!("query={query}"),
@@ -806,7 +766,14 @@ fn text_notes(
       "screenshotPixels={}x{}",
       snapshot.image_width, snapshot.image_height
     ),
-  ]
+  ];
+  if let Some(backend) = &capture.backend {
+    notes.push(format!("captureBackend={backend}"));
+  }
+  if let Some(reason) = &capture.fallback_reason {
+    notes.push(format!("fallbackReason={reason}"));
+  }
+  notes
 }
 
 fn row_notes(
@@ -814,7 +781,7 @@ fn row_notes(
   detection: &DetectedScreenRows,
   row_count: usize,
 ) -> Vec<String> {
-  vec![
+  let mut notes = vec![
     "scope=window".to_string(),
     format!("windowRef={}", capture.capture_source),
     format!("rowStrategy={}", detection.strategy),
@@ -825,7 +792,14 @@ fn row_notes(
       "screenshotPixels={}x{}",
       capture.dimensions.width, capture.dimensions.height
     ),
-  ]
+  ];
+  if let Some(backend) = &capture.backend {
+    notes.push(format!("captureBackend={backend}"));
+  }
+  if let Some(reason) = &capture.fallback_reason {
+    notes.push(format!("fallbackReason={reason}"));
+  }
+  notes
 }
 
 pub(super) fn logical_point_for_match(
