@@ -10,10 +10,13 @@ opening the view parser docs for the first time.
 
 ## What this is
 
-The view parser v0 is defined by **11 documents** in `docs/ai/references/`,
+The view parser v0 is defined by **14 documents** in `docs/ai/references/`,
 written between 2026-05-28 and 2026-05-29. This overview is the entry
 point. It does **not** restate the specs; it tells you which to read
 in which order for the task at hand.
+
+> This overview was revised on 2026-05-29 after the three algorithm
+> specs (region detection, item parsing, scroll loop) landed.
 
 ## The corpus
 
@@ -30,6 +33,9 @@ in which order for the task at hand.
 | 9 | `2026-05-29-view-parser-layer-contracts-v0.md` | Trait signatures for the four parser layers + adapter rules (driver outputs → `ViewEvidenceNode`) |
 | 10 | `2026-05-29-view-parser-cli-rendering-v0.md` | `netease-playlist-ls` rendering modes, exit codes, stream discipline |
 | 11 | `2026-05-29-view-parser-v0-overview.md` (this doc) | Reading order + cross-references |
+| 12 | `2026-05-29-netease-sidebar-region-detection-v0.md` | NetEase sidebar detection cascade (AX → OCR anchor → geometry) with `REVIEW(...)` markers on every threshold |
+| 13 | `2026-05-29-netease-playlist-item-parsing-v0.md` | NetEase playlist row grouping, section taxonomy, section assignment, clip detection, confidence mapping |
+| 14 | `2026-05-29-view-parser-scroll-loop-v0.md` | Observation loop control flow, scroll step policy, hard / soft / repeat boundary detection, 5 stop conditions |
 
 ## Dependency map
 
@@ -61,13 +67,21 @@ their definitions:
                                             │
                                             ▼
                                     10. CLI rendering
+                                            │
+                              ┌─────────────┼─────────────┐
+                              ▼             ▼             ▼
+                       12. region    13. item    14. scroll
+                        detection    parsing       loop
+                       (NetEase)    (NetEase)    (algorithm)
 ```
 
 Doc 1 is the rationale; 2 is the consumed surface model. 3 sets the
 no-parallel-schemas rule. 4 defines the IR types every later doc
 references. 5, 6, 7 are siblings that pin behavior, tests, and trace
 respectively. 8 → 9 → 10 are the implementation-near specs that
-require everything above.
+require everything above. 12, 13, 14 are the algorithm specs that
+fill in `RegionParser`, `ItemParser`, and the `ViewParser` loop with
+v0 defaults whose every threshold is marked `REVIEW(...)`.
 
 ## Reading order by task
 
@@ -105,11 +119,19 @@ Read in this order:
 4. `view-parser-diagnostic-policy-v0.md` (5) — when to fire what
 5. `view-parser-trace-layout-v0.md` (7) — spans you emit + signals
    you set
-6. `view-parser-cli-rendering-v0.md` (10) — what the binary prints
-7. `view-parser-ir-netease-playlist-example-design.md` (1) — NetEase-
-   specific framing, sidebar / scroll requirements
+6. `netease-sidebar-region-detection-v0.md` (12) — region cascade
+   you implement for `SidebarRegionParser`
+7. `netease-playlist-item-parsing-v0.md` (13) — row grouping +
+   section taxonomy + clip detection for `PlaylistSidebarItemParser`
+8. `view-parser-scroll-loop-v0.md` (14) — loop control flow you
+   implement inside `NeteaseSidebarViewParser::parse_view`
+9. `view-parser-cli-rendering-v0.md` (10) — what the binary prints
+10. `view-parser-ir-netease-playlist-example-design.md` (1) — NetEase-
+    specific framing, sidebar / scroll requirements
 
-You can skim 2, 3, 6 unless you change framework-side code.
+You can skim 2, 3, 9 unless you change framework-side code. Docs 12,
+13, 14 are the meat of the example's parser implementation work; their
+`REVIEW(...)` markers are the v0 tuning surface.
 
 ### "I'm writing tests"
 
@@ -125,6 +147,16 @@ Read in this order:
    4 root-span signals
 5. `view-parser-cli-rendering-v0.md` (10) — exit codes + stream
    discipline tests
+6. `netease-sidebar-region-detection-v0.md` (12) — recorded-fixture
+   coverage for AX / OCR-anchor / geometry / absent / collapsed /
+   resized branches
+7. `netease-playlist-item-parsing-v0.md` (13) — at least 9 distinct
+   scenarios (full section / item before header / past carry-forward
+   limit / clipped top / clipped bottom / unknown header / pseudo-
+   section / OCR-only / OCR + icon)
+8. `view-parser-scroll-loop-v0.md` (14) — boundary detection
+   coverage (hard / likely with grace / repeat / stuck / modal /
+   max_steps ceiling)
 
 ### "I'm reviewing a view parser PR"
 
@@ -166,7 +198,7 @@ The single source of truth for each deferral is the spec where it is
 listed. Consolidated below for one-glance review:
 
 - `ViewMemory` persistence (4, 7)
-- Anchor reacquisition algorithm (4)
+- Anchor reacquisition algorithm (4, 13)
 - DOM / CDP / CV / YOLO backends (2, 4)
 - Inspect viewer panels (3, 7, 9)
 - Cross-app reconstruction (3, 9)
@@ -178,6 +210,13 @@ listed. Consolidated below for one-glance review:
 - Schema migration policy (deferred; v0 is the first version)
 - Mixed CLI modes / subcommands / progress on stdout (10)
 - Cross-platform variants of the example (8)
+- Cross-version baseline registry for region detection (12)
+- Localized section header lists beyond Simplified Chinese (12, 13)
+- AX-direct item parsing (13)
+- Bidirectional / reverse / mid-loop direction changes in the scroll
+  loop (14)
+- Adaptive `should_stop` based on item count or section count (14)
+- Interruptible / async parse runs (14)
 
 When implementing, treat these as wall, not gap. The spec where each
 is listed names the condition under which it may be lifted.
