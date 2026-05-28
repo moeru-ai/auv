@@ -1592,6 +1592,143 @@ mod tests {
   }
 
   #[test]
+  fn recommended_surface_strategy_projects_to_direct_candidate_shape() {
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 100,
+          y: 200,
+          width: 800,
+          height: 600,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec!["primaryWindow=100,200,800,600".to_string()],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "window-primary-region".to_string(),
+        area: "window.primary".to_string(),
+        kind: "region".to_string(),
+        source: "window".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "Example".to_string(),
+        secondary_text: "com.example.App".to_string(),
+        query_value: "100,200,800,600".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 100,
+          y: 200,
+          width: 800,
+          height: 600,
+        }),
+        click_point: Some(AppPoint { x: 500, y: 500 }),
+        confidence: None,
+        evidence_step_id: "list-windows".to_string(),
+        candidate_query: None,
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0002"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::DistillStrategyOnly,
+          missing_gates: Vec::new(),
+          notes: vec!["Window region can seed a known distillation strategy.".to_string()],
+        }),
+        input_bindings: BTreeMap::from([
+          ("window_bounds".to_string(), "100,200,800,600".to_string()),
+          ("relative_x".to_string(), "0.500000".to_string()),
+          ("relative_y".to_string(), "0.500000".to_string()),
+        ]),
+        compatibility: candidate_compatibility(
+          &["window-action.window-point.pointer-click.capture-evidence"],
+          &[],
+        ),
+        notes: vec!["sample window region".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![AppRecommendedStrategy {
+        taxonomy_id: "window-action.window-point.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+      }],
+    };
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "window-action.window-point.pointer-click.capture-evidence",
+    );
+
+    assert_eq!(
+      candidate_shape.direct_candidate_ids,
+      vec!["window-primary-region".to_string()]
+    );
+    assert!(candidate_shape.context_candidate_ids.is_empty());
+    assert!(candidate_shape.notes.is_empty());
+  }
+
+  #[test]
   fn build_distilled_candidate_shape_projects_direct_inputs() {
     let mut analysis =
       sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
