@@ -1751,6 +1751,25 @@ mod tests {
   }
 
   #[test]
+  fn distill_candidate_shape_records_note_when_strategy_has_no_direct_surface_candidate() {
+    let analysis =
+      sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+    );
+
+    assert!(candidate_shape.direct_candidate_ids.is_empty());
+    assert!(
+      candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("No direct candidate shape was available"))
+    );
+  }
+
+  #[test]
   fn build_distilled_candidate_shape_projects_direct_inputs() {
     let mut analysis =
       sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
