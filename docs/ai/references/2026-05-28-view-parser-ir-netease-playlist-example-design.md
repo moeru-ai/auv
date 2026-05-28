@@ -397,6 +397,10 @@ These should be answered during implementation, not guessed in the spec:
   hybrid?
 - Which generic types should be promoted from the example after the first
   parser works?
+- 2026-05-28 implementation note: `auv-driver-macos WindowApi` did not expose
+  `a public typed region/window scroll method`. The NetEase example keeps parser
+  logic in `examples/` and records this as a framework gap instead of adding
+  NetEase-specific code to core.
 
 ## Follow-Ups
 
