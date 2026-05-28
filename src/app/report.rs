@@ -210,6 +210,20 @@ pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
         "  - evidenceStep: `{}`",
         candidate.evidence_step_id
       ));
+      if !candidate.evidence_refs.is_empty() {
+        lines.push("  - evidenceRefs:".to_string());
+        for reference in &candidate.evidence_refs {
+          let event = reference
+            .captured_event_id
+            .as_ref()
+            .map(|value| value.as_str())
+            .unwrap_or("none");
+          lines.push(format!(
+            "    - run=`{}` span=`{}` artifact=`{}` event=`{}`",
+            reference.run_id, reference.span_id, reference.artifact_id, event
+          ));
+        }
+      }
       if !candidate.input_bindings.is_empty() {
         lines.push("  - inputBindings:".to_string());
         for (key, value) in &candidate.input_bindings {

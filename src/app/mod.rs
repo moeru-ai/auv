@@ -375,6 +375,8 @@ pub struct AppSurfaceCandidate {
   pub evidence_step_id: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub candidate_query: Option<crate::contract::CandidateQuery>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub evidence_refs: Vec<crate::contract::ArtifactRef>,
   #[serde(default)]
   pub input_bindings: BTreeMap<String, String>,
   #[serde(default)]
@@ -1120,7 +1122,8 @@ fn default_distill_output_dir(analysis_path: &Path, analysis: &AppAnalysis) -> P
 mod tests {
   use super::analysis::{
     apply_candidate_grounding, build_annotation_candidates, build_app_analysis,
-    build_distilled_candidate_shape, candidate_compatibility, recommended_strategy,
+    build_distilled_candidate_shape, build_probe_evidence_refs, candidate_compatibility,
+    recommended_strategy,
   };
   use super::infra::{
     invoke_probe_step, read_json, resolve_distillation_path, resolve_probe_path, write_pretty_json,
@@ -1132,7 +1135,9 @@ mod tests {
   };
   use super::*;
   use crate::catalog::CommandCatalog;
-  use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
+  use crate::contract::{
+    ArtifactRef, CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause,
+  };
   use crate::driver::{Driver, DriverRegistry};
   use crate::driver::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect, OcrTextSnapshot};
   use crate::model::RunStatus;
@@ -1447,6 +1452,12 @@ mod tests {
           output_kind: Some("focus-query".to_string()),
           known_limits: vec!["test query".to_string()],
         }),
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
         input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
         compatibility: candidate_compatibility(
           &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
@@ -1476,6 +1487,7 @@ mod tests {
     assert!(report.contains("coordinateSpace"));
     assert!(report.contains("candidateQuery"));
     assert!(report.contains("sources=`ax`"));
+    assert!(report.contains("evidenceRefs"));
     assert!(report.contains("inputBindings"));
     assert!(report.contains("## 5. Control Strategy"));
     assert!(report.contains("## 6. Verification Assessment"));
@@ -1568,6 +1580,7 @@ mod tests {
       confidence: None,
       evidence_step_id: "observe-window-tree".to_string(),
       candidate_query: None,
+      evidence_refs: Vec::new(),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1646,6 +1659,7 @@ mod tests {
       confidence: None,
       evidence_step_id: "capture-ax-tree".to_string(),
       candidate_query: None,
+      evidence_refs: Vec::new(),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1891,6 +1905,7 @@ mod tests {
       confidence: None,
       evidence_step_id: "capture-ax-tree".to_string(),
       candidate_query: None,
+      evidence_refs: Vec::new(),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -2237,8 +2252,24 @@ mod tests {
       ],
     };
 
-    let candidates =
-      build_annotation_candidates(&app, None, None, &ax_snapshot, &ocr_snapshot, true);
+    let evidence_refs = BTreeMap::from([(
+      "ocr-sample".to_string(),
+      vec![ArtifactRef {
+        run_id: crate::trace::RunId::new("run_probe"),
+        span_id: crate::trace::SpanId::new("span_probe"),
+        artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+        captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+      }],
+    )]);
+    let candidates = build_annotation_candidates(
+      &app,
+      None,
+      None,
+      &ax_snapshot,
+      &ocr_snapshot,
+      true,
+      &evidence_refs,
+    );
     let ocr_candidates = candidates
       .iter()
       .filter(|candidate| candidate.source == "ocr" && candidate.kind == "anchor-text")
@@ -2247,6 +2278,7 @@ mod tests {
     for candidate in ocr_candidates {
       assert_eq!(candidate.area, "ocr-visible-text");
       assert!(candidate.compatibility.direct_taxonomy_ids.is_empty());
+      assert_eq!(candidate.evidence_refs, evidence_refs["ocr-sample"]);
       assert!(
         candidate
           .notes
@@ -2273,6 +2305,7 @@ mod tests {
       .candidate_query
       .as_ref()
       .expect("row candidate should expose selector query");
+    assert_eq!(row_candidates[0].evidence_refs, evidence_refs["ocr-sample"]);
     assert!(matches!(
       row_query.selector.any_of.as_slice(),
       [SurfaceSelectorClause::Row {
@@ -2280,6 +2313,76 @@ mod tests {
         ..
       }]
     ));
+  }
+
+  #[test]
+  fn build_probe_evidence_refs_resolves_artifact_records_from_probe_steps() {
+    let root = temp_dir("probe-evidence-refs");
+    let run_dir = root.join(".auv").join("runs").join("run_fixture");
+    let artifact_dir = run_dir.join("artifacts");
+    fs::create_dir_all(&artifact_dir).expect("artifact dir should be creatable");
+    let artifact_path = artifact_dir.join("artifact_0001_ocr-sample.txt");
+    fs::write(&artifact_path, "query=Cure For Me\nmatchCount=0\n").expect("artifact should write");
+    let artifact_record = crate::trace::ArtifactRecordV1Alpha1 {
+      api_version: crate::trace::ARTIFACT_API_VERSION.to_string(),
+      artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+      span_id: crate::trace::SpanId::new("span_probe"),
+      event_id: Some(crate::trace::EventId::new("event_probe")),
+      role: "text".to_string(),
+      mime_type: "text/plain".to_string(),
+      path: "artifacts/artifact_0001_ocr-sample.txt".to_string(),
+      sha256: None,
+      attributes: BTreeMap::new(),
+      summary: Some("OCR sample".to_string()),
+    };
+    fs::write(
+      run_dir.join("artifacts.jsonl"),
+      format!(
+        "{}\n",
+        serde_json::to_string(&artifact_record).expect("record should serialize")
+      ),
+    )
+    .expect("artifacts jsonl should write");
+
+    let probe = AppProbe {
+      probe_version: APP_PROBE_VERSION.to_string(),
+      created_at_millis: 0,
+      project_root: root.clone(),
+      output_dir: root.clone(),
+      app: AppIdentity {
+        bundle_id: "com.example.music".to_string(),
+        app_name: "ExampleMusic".to_string(),
+        app_path: None,
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: Vec::new(),
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: Vec::new(),
+      },
+      steps: vec![probe_step_fixture(
+        "ocr-sample",
+        "debug.findWindowText",
+        vec![artifact_path],
+      )],
+    };
+
+    let refs = build_probe_evidence_refs(&probe);
+    assert_eq!(refs["ocr-sample"].len(), 1);
+    let reference = &refs["ocr-sample"][0];
+    assert_eq!(reference.run_id.as_str(), "run_fixture");
+    assert_eq!(reference.span_id.as_str(), "span_probe");
+    assert_eq!(reference.artifact_id.as_str(), "artifact_0001");
+    assert_eq!(
+      reference
+        .captured_event_id
+        .as_ref()
+        .map(|event| event.as_str()),
+      Some("event_probe")
+    );
+
+    let _ = fs::remove_dir_all(root);
   }
 
   #[test]
