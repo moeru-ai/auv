@@ -55,18 +55,18 @@ Use the `View*` prefix for the view parsing and reconstruction layer.
 | `ViewScope` | The app/view scope being parsed, such as a NetEase main window sidebar. |
 | `ViewRegion` | A named region inside a scope, such as a sidebar body or search results body. |
 | `ViewViewport` | The currently visible slice of a scrollable region. |
-| `ViewObservation` | One observation pass over a viewport or region, including evidence. |
-| `ViewTree` | The structured tree projected from one observation. It is evidence-local and not a complete view. |
-| `ViewNode` | A generic node in a `ViewTree`, from AX, OCR, icon matching, visual segmentation, or parser logic. |
+| `ViewObservation` | One observation pass over a viewport or region. It is parser input and evidence IR, not the final view model. |
+| `ViewEvidenceNode` | A normalized evidence record from OCR, AX, icon matching, capture geometry, or visual detection. |
 | `ViewCandidate` | A parser-local candidate found in one viewport, before cross-viewport merge or rejection. |
-| `ViewSection` | A reconstructed section, such as feature navigation, playlist navigation, created playlists, or favorited playlists. |
-| `ViewItem` | A reconstructed stable item, such as one playlist row. |
-| `ViewReconstruction` | A scan result stitched from multiple observations. This is not a hash map or generic mapping table. |
+| `ViewNode` | A generic node in the reconstructed view tree. Nodes can represent containers, collections, sections, items, text, icons, or unknown evidence. |
+| `ViewReconstruction` | The parser output stitched from multiple observations. This is the operable view model, not a hash map or generic mapping table. |
+| `ViewProjection` | A domain-specific view over a reconstruction, such as NetEase playlist sections and items. |
 | `ViewAnchor` | A reference attached to a node, section, or item that can later be reacquired when it is not currently visible. |
 | `ViewLandmark` | A derived relocation signal used for viewport pose and reacquisition, such as a section header or nearby item label. |
 | `ViewMemory` | Optional saved reconstruction, anchors, and landmarks for later commands. |
 | `ViewAction` | A semantic action supported by a node or item. |
 | `ViewActionTarget` | The concrete target for a view action, such as an AX path or window-local point. |
+| `ViewScrollable` | A node capability describing scroll axis, viewport observations, and boundary evidence. |
 
 Layering:
 
@@ -75,53 +75,67 @@ ViewScope
   ViewRegion
     ViewViewport
       ViewObservation
-        ViewTree
-          ViewNode
+        evidence_nodes[]
+        evidence_regions[]
+        source_artifacts[]
+        parser_inputs
         ViewCandidate[]
   ViewReconstruction
-    root_layout
-      ViewSection
-        section_anchor
-        section_layout
-          ViewItem
-            item_layout
-            item_anchors[]
-            item_actions[]
-    anchor_index
-    landmark_index
+    root: ViewNode
+      children: ViewNode[]
+      anchors[]
+      landmarks[]
+      scrollable?
+    indexes
+      anchor_index
+      landmark_index
+  ViewProjection
+    domain records referencing ViewNode ids
   ViewMemory
 ```
 
-`ViewTree` is one observed structure. `ViewReconstruction` is a scan-level
-result. `ViewMemory` is optional reuse across commands. `anchor_index` and
-`landmark_index` are lookup indexes over anchors and landmarks already attached
-to layout, section, item, or evidence records; they are not the main business
-hierarchy.
+`ViewObservation` is the intermediate evidence state, similar to parser input
+or a compiler's pre-AST facts. `ViewReconstruction` is the operable parser
+output exposed to example code, CLI renderers, and future agent APIs.
+`ViewProjection` is optional domain-specific convenience data over the generic
+reconstruction. `ViewMemory` is optional reuse across commands.
+
+Anchors and landmarks are properties of reconstructed nodes and, when useful,
+evidence records. `anchor_index` and `landmark_index` are lookup indexes over
+those attached values; they do not own anchor or landmark semantics.
 
 ## V0 Layout And Node Taxonomy
 
 V0 intentionally keeps the taxonomy small. The goal is to support the NetEase
-sidebar example and leave room for later parsers without designing a complete
-UI ontology.
+sidebar example and leave room for later parsers without designing a complete UI
+ontology. The generic reconstruction is a tree: `VStack`, `HStack`, and
+scrollable nodes may nest arbitrarily.
 
-Initial layout kinds:
-
-| Kind | Meaning |
-|---|---|
-| `ScrollBody` | A scrollable view region that emits viewport observations. |
-| `VStack` | A vertical stack, such as the sidebar list body. |
-| `HStack` | A horizontal stack, such as one row's icon plus text. |
-| `Group` | A fallback container when the parser has evidence for grouping but not a stronger layout. |
-
-Initial semantic kinds:
+Initial node kinds:
 
 | Kind | Meaning |
 |---|---|
+| `Container` | A generic grouping node. |
+| `Collection` | An ordered or grouped collection of items. It may be scrollable. |
+| `Section` | A section inside a collection or container. |
+| `Item` | A stable item such as one playlist row. |
 | `Text` | Text evidence from OCR, AX, or parser projection. |
-| `SectionHeader` | A visible or reconstructed section boundary. |
-| `ActionItem` | A row or item that can be selected or opened. |
 | `Icon` | Optional visual/icon evidence. |
 | `Unknown` | Evidence exists, but the parser cannot assign stronger semantics. |
+
+Initial layout values:
+
+| Kind | Meaning |
+|---|---|
+| `VStack` | A vertical stack, such as the sidebar list body. |
+| `HStack` | A horizontal stack, such as one row's icon plus text. |
+| `Group` | A fallback layout when the parser has evidence for grouping but not a stronger layout. |
+
+Initial node capabilities:
+
+| Capability | Meaning |
+|---|---|
+| `ViewScrollable` | The node can be scrolled. It records axis, viewport observations, and boundary evidence. |
 
 Initial actions:
 
@@ -129,7 +143,7 @@ Initial actions:
 |---|---|
 | `Open` | Open or activate an item. |
 | `Select` | Select an item or navigation row. |
-| `Scroll` | Scroll a `ScrollBody`. |
+| `Scroll` | Scroll a node with `ViewScrollable`. |
 | `ObserveOnly` | No action is declared; the node exists as evidence. |
 
 Additional roles and layouts such as `Button`, `Link`, `Input`, `Dialog`,
@@ -140,22 +154,25 @@ them.
 A NetEase playlist row should therefore be expressible as:
 
 ```text
-ViewItem(domain_kind=netease.playlist_item, semantic_kind=ActionItem)
-  item_layout: HStack
-    ViewNode(semantic_kind=Icon)?
-    ViewNode(semantic_kind=Text, label=playlist_name)
-  item_anchors[]
-  item_actions[Open, Select]
+ViewNode(kind=Item, domain_kind=netease.playlist_item, layout=HStack)
+  children:
+    ViewNode(kind=Icon)?
+    ViewNode(kind=Text, label=playlist_name)
+  anchors[]
+  landmarks[]
+  actions[Open, Select]
 ```
 
-A section should own its layout and may also have an anchor:
+The sidebar reconstruction should be expressible as a generic tree:
 
 ```text
-ViewSection(kind=my_playlists)
-  section_anchor?
-  section_layout: VStack
-    ViewItem(...)
-    ViewItem(...)
+ViewReconstruction
+  root: ViewNode(kind=Collection, layout=VStack, scrollable=vertical)
+    ViewNode(kind=Section, domain_kind=netease.my_playlists, layout=VStack)
+      anchors[]
+      landmarks[]
+      ViewNode(kind=Item, domain_kind=netease.playlist_item, layout=HStack)
+      ViewNode(kind=Item, domain_kind=netease.playlist_item, layout=HStack)
 ```
 
 `ViewLandmark` is not a native UI property. It is a reconstruction-level signal
@@ -226,8 +243,8 @@ pub struct PlaylistSidebarScan {
   pub window: ScanWindowContext,
   pub sidebar_region: Option<ViewRegionRecord>,
   pub observations: Vec<SidebarViewportObservation>,
-  pub sections: Vec<SidebarSection>,
-  pub items: Vec<PlaylistSidebarItem>,
+  pub reconstruction: ViewReconstructionRecord,
+  pub projection: PlaylistSidebarProjection,
   pub boundary: ScrollBoundarySummary,
   pub diagnostics: Vec<ParserDiagnostic>,
   pub known_limits: Vec<String>,
@@ -242,7 +259,13 @@ pub struct SidebarViewportObservation {
   pub parser_notes: Vec<String>,
 }
 
+pub struct PlaylistSidebarProjection {
+  pub sections: Vec<SidebarSection>,
+  pub items: Vec<PlaylistSidebarItem>,
+}
+
 pub struct PlaylistSidebarItem {
+  pub node_id: String,
   pub item_id: String,
   pub label: String,
   pub section_hint: Option<SidebarSectionKind>,
