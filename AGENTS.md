@@ -25,6 +25,92 @@ view.
 > communicate with users frequently and clearly to avoid misunderstandings,
 > premature naming decisions, and avoidable rework.
 
+## Project Phase: Converge The Core Contract
+
+AUV is currently converging its core contract. The important work is to make
+observation, action, verification, trace data, artifacts, and inspection agree
+on the same model. Prefer changes that reduce ambiguity in that model. Avoid
+changes that merely make a local file look cleaner.
+
+Good convergence work usually has one of these shapes:
+
+- Defines or tightens a shared contract in `docs/TERMS_AND_CONCEPTS.md`,
+  `src/contract.rs`, run records, artifacts, or command signals.
+- Connects an existing producer to an existing consumer with typed evidence,
+  for example `RecognitionResult -> CandidateRef -> action -> VerificationResult`.
+- Aligns action-selection metadata with typed driver results, for example
+  `ActionResolverDecision -> InputActionResult -> trace/artifact signals`.
+- Fixes a reproduced bug in a narrow path and adds a regression test.
+- Turns a known boundary into explicit metadata, failure layers, fallback
+  reasons, or validation errors.
+- Finishes an owner-approved slice without expanding it into adjacent roadmap
+  work.
+
+Poor convergence work looks like broad cleanup, TODO chasing, opportunistic
+helper extraction, speculative backends, or implementing future APIs just
+because a doc mentions them. If the change adds new surface area, it needs an
+explicit reason tied to the current contract.
+
+## Scope Discipline
+
+Before editing, classify the change as one of: bug fix, test-only, docs-only,
+narrow refactor, or approved feature. If none fits, ask for a smaller slice.
+
+Some missing pieces are intentional deferrals, some are incomplete work, and
+some are real bugs. Do not guess which one you are looking at. Classify the
+gap from evidence, failing tests, owner instructions, or existing reference
+docs before implementing anything.
+
+Scope rules:
+
+- Do not implement TODOs, roadmap notes, or future-phase designs unless the
+  owner names that slice.
+- Do not run broad repository scans and turn the findings into drive-by
+  changes. Search only to understand the assigned slice.
+- Do not mix unrelated cleanup into behavior changes. Mention cleanup
+  opportunities as follow-up candidates instead.
+- Cross-layer changes are allowed when they are the approved contract slice,
+  but the dependency direction must be clear. Example: contract type -> driver
+  artifact -> read-side inspector test.
+- Avoid ad-hoc compatibility shims. Versioned read compatibility for existing
+  run artifacts, recipes, or public records is allowed when the migration
+  boundary and tests are explicit.
+
+Owner approval means the owner named the function/module/behavior, accepted a
+concrete proposal, or asked for a specific next slice. A doc mentioning a
+future feature, a TODO marker, or a change that feels like "the obvious next
+thing" is not approval.
+
+When a good idea appears mid-task, do not implement it inline. Record it as a
+candidate next slice with one sentence explaining why it matters, then finish
+the current slice.
+
+## Current Contract Seam
+
+The active macOS automation seam is:
+
+```text
+recognition / AX / candidates
+  -> ActionResolver
+  -> auv-driver InputActionResult
+  -> OperationResult / VerificationResult / trace artifacts
+```
+
+Keep visual presentation separate from input delivery:
+
+- `auv-overlay-macos` is a visual trust/debug layer. It may show an AUV cursor,
+  a user cursor, movement, or click ripples, but it does not prove semantic
+  success and must not be treated as the input backend.
+- `auv-driver` / `auv-driver-macos` owns typed input delivery such as
+  `WindowTargetedMouse`, `WindowTargetedKeyboard`, foreground fallback,
+  disturbance metadata, attempts, and fallback reasons.
+- `ActionResolver` should choose and explain the method, then consume or map
+  typed driver results. Do not grow a parallel action-result schema unless a
+  concrete gap is first documented.
+- Verification remains separate from activation. A successful click, AX press,
+  or overlay animation is not semantic success without a verification result or
+  an explicit `activation_only` boundary.
+
 ## Architecture Surfaces
 
 - **Runtime**: Owns execution semantics, implicit run recording, artifact
