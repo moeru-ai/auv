@@ -88,6 +88,12 @@ Hash function: SHA-256 truncated to 16 hex chars, prefixed with a short
 type tag (e.g. `node-`, `cand-`, `evi-`). Implementation may choose a
 cheaper hash for `ViewCandidateId` since it is parser-internal.
 
+> **NOTICE(unknown-node-id):** `ViewNodeId` for `Unknown` is intentionally
+> not stable across runs. Stabilizing it would require classifying the
+> evidence first; doing so silently would turn `Unknown` into a misleading
+> bucket that hides classification uncertainty. Implementations must
+> surface unknowns rather than re-stabilize them.
+
 ## Coordinate space and bounds
 
 ```rust
@@ -174,6 +180,10 @@ pub enum EvidenceSource {
   IconMatch,
   WindowGeometry,
   ScrollPose,
+  // TODO(evidence-source-v1): Dom, CdpAccessibility, VisualSegmentation,
+  // VisionLanguageModel are reserved future variants. Per bridge spec,
+  // adding any requires owner approval and a corresponding row in
+  // surface-analyze-v0.md's kind table. Do not silently extend.
 }
 ```
 
@@ -277,6 +287,11 @@ pub enum BoundaryState {
   Unknown,
   Contradicted,
 }
+// TODO(boundary-promotion-rules-v1): the rules for promoting Likely to
+// Confirmed (or demoting either to Contradicted) are deferred. v0
+// carries the enum tag plus repeated_viewport_fingerprints evidence;
+// the promotion algorithm is a separate slice that should not be
+// embedded in the IR types.
 ```
 
 `BoundaryState` mirrors the four-value confidence in the design doc
@@ -302,6 +317,11 @@ pub enum ReacquireStrategy {
   AxPath,
   Mixed,
 }
+// TODO(reacquisition-algorithm-v1): the matching algorithm behind each
+// strategy is deferred. v0 IR carries only the enum tag + hint fields;
+// runtime reacquisition logic is a separate slice. Do not embed
+// selection heuristics in the IR types — keep the IR descriptive, not
+// procedural.
 
 pub struct ViewLandmark {
   pub landmark_id: String,
@@ -343,6 +363,11 @@ pub enum ViewActionTargetKind {
   AxPath,
   WindowPoint,
   CandidateQuery,  // serialized contract::CandidateQuery from src/contract.rs
+  // NOTICE(closed-action-target-kinds): the variant set is intentionally
+  // limited to forms that already exist in the contract surface or that
+  // the bridge spec endorses. RegionScroll, MenuShortcut, KeyboardCombo,
+  // and similar are reserved for owner-approved future expansions and
+  // must not be added silently.
 }
 ```
 
@@ -403,6 +428,13 @@ pub struct ViewProjection<P> {
   pub records: P,                             // domain-typed
   pub diagnostics: Vec<ParserDiagnostic>,
 }
+// NOTICE(generic-projection-envelope): `P` is parameterized on purpose.
+// Domain projection records (e.g. NetEase `PlaylistSidebarProjection`)
+// live with the example, not in the generic IR. The envelope here is
+// the only piece the IR owns; the `records` type is owner-approved per
+// domain. Do not promote a domain record into the IR crate to make
+// imports easier — that path collapses the boundary the design doc
+// drew between framework and example.
 ```
 
 `P` is domain-typed and lives with the example (NetEase
@@ -418,6 +450,10 @@ Two `ViewCandidate`s from observations N and N+1 merge into one
    internal whitespace, trim. Empty labels never auto-merge.
 3. Bounds overlap after translating both candidates' bounds to
    `WindowLocal`. v0 threshold: IoU ≥ 0.5 along the merge axis.
+   **REVIEW(merge-iou-threshold-v1):** 0.5 is a v0 placeholder. Tune
+   against NetEase sidebar fixtures and record measured precision /
+   recall in the example tests before promoting it to a stable
+   default. Treat the constant as instrumentable, not load-bearing.
 4. Compatible section context. If both have a `section_hint`, they must
    match. If only one has a hint, the other must not have evidence of a
    different section.
@@ -448,6 +484,16 @@ right by `observation_index`.
 | `ViewReconstruction` | `view-reconstruction` | parse run |
 | `ViewProjection<P>` | `view-projection-<domain>` | domain projection |
 | `ViewMemory` (deferred) | `view-memory` (reserved) | — |
+
+```rust
+// TODO(view-memory-v1): ViewMemory persistence is reserved, not
+// implemented. No struct is defined in v0; the `view-memory` artifact
+// role is reserved here so downstream readers do not collide with it.
+// A separate, owner-approved spec must cover reacquisition algorithm,
+// eviction policy, cross-run identity, and on-disk vs in-process
+// scope before any ViewMemory type lands. Until then there is no
+// type and no migration path.
+```
 
 Serialization rules:
 
