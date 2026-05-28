@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use auv_driver::vision::TextRecognition;
+use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "macos")]
@@ -13,6 +14,7 @@ use auv_driver::{Driver, RatioRect, Size};
 use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
 const DEFAULT_APP_ID: &str = "com.netease.163music";
+const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
 #[cfg(target_os = "macos")]
 const LIVE_SCROLL_SETTLE_MS: u64 = 500;
 
@@ -20,6 +22,7 @@ const LIVE_SCROLL_SETTLE_MS: u64 = 500;
 struct Inputs {
   app_id: String,
   json_out: Option<PathBuf>,
+  artifact_dir: PathBuf,
   max_pages: usize,
   max_scrolls: usize,
   scroll_amount: f64,
@@ -376,6 +379,7 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
   let mut inputs = Inputs {
     app_id: DEFAULT_APP_ID.to_string(),
     json_out: None,
+    artifact_dir: PathBuf::from(DEFAULT_ARTIFACT_DIR),
     max_pages: 24,
     max_scrolls: 48,
     scroll_amount: 6.0,
@@ -391,6 +395,9 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
       }
       "--json-out" => {
         inputs.json_out = Some(PathBuf::from(next_value(&mut args, "--json-out")?));
+      }
+      "--artifact-dir" => {
+        inputs.artifact_dir = PathBuf::from(next_value(&mut args, "--artifact-dir")?);
       }
       "--max-pages" => {
         inputs.max_pages = parse_usize("--max-pages", next_value(&mut args, "--max-pages")?)?;
@@ -704,6 +711,8 @@ fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     window: window.clone(),
     sidebar_bounds,
     sidebar_ratio,
+    artifact_dir: inputs.artifact_dir.clone(),
+    pending_artifacts: Vec::new(),
     scroll_amount: inputs.scroll_amount,
   };
   let mut scan = scan_sidebar_with_observer(
@@ -713,6 +722,7 @@ fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       max_scrolls: inputs.max_scrolls,
     },
   );
+  scan.diagnostics.extend(observer.finish_artifacts());
   scan.app = app_context;
   scan.window = window_context;
   scan.sidebar_region = sidebar_region;
@@ -1328,7 +1338,84 @@ struct LiveSidebarObserver {
   window: auv_driver::Window,
   sidebar_bounds: ViewBounds,
   sidebar_ratio: RatioRect,
+  artifact_dir: PathBuf,
+  pending_artifacts: Vec<std::thread::JoinHandle<Result<(), String>>>,
   scroll_amount: f64,
+}
+
+#[cfg(target_os = "macos")]
+impl LiveSidebarObserver {
+  fn write_observation_artifacts(
+    &mut self,
+    observation_index: usize,
+    image: RgbaImage,
+    recognition: TextRecognition,
+    observation: SidebarViewportObservation,
+  ) -> Vec<String> {
+    let base = format!("obs-{observation_index:04}");
+    let screenshot = self.artifact_dir.join(format!("{base}-window.png"));
+    let overlay = self.artifact_dir.join(format!("{base}-overlay.png"));
+    let recognition_json = self.artifact_dir.join(format!("{base}-recognition.json"));
+    let observation_json = self.artifact_dir.join(format!("{base}-observation.json"));
+    let paths = vec![
+      screenshot.clone(),
+      overlay.clone(),
+      recognition_json.clone(),
+      observation_json.clone(),
+    ];
+    let artifact_dir = self.artifact_dir.clone();
+    let sidebar_bounds = self.sidebar_bounds;
+    self.pending_artifacts.push(std::thread::spawn(move || {
+      std::fs::create_dir_all(&artifact_dir)
+        .map_err(|error| format!("failed to create {}: {error}", artifact_dir.display()))?;
+      image
+        .save(&screenshot)
+        .map_err(|error| format!("failed to save {}: {error}", screenshot.display()))?;
+
+      let mut overlay_image = image.clone();
+      draw_overlay(&mut overlay_image, sidebar_bounds, &observation);
+      overlay_image
+        .save(&overlay)
+        .map_err(|error| format!("failed to save {}: {error}", overlay.display()))?;
+
+      let recognition_payload = serde_json::to_string_pretty(&recognition)
+        .map_err(|error| format!("failed to serialize recognition: {error}"))?;
+      std::fs::write(&recognition_json, recognition_payload)
+        .map_err(|error| format!("failed to write {}: {error}", recognition_json.display()))?;
+
+      let observation_payload = serde_json::to_string_pretty(&observation)
+        .map_err(|error| format!("failed to serialize observation: {error}"))?;
+      std::fs::write(&observation_json, observation_payload)
+        .map_err(|error| format!("failed to write {}: {error}", observation_json.display()))?;
+
+      Ok(())
+    }));
+
+    paths
+      .into_iter()
+      .map(|path| path.display().to_string())
+      .collect()
+  }
+
+  fn finish_artifacts(self) -> Vec<ParserDiagnostic> {
+    self
+      .pending_artifacts
+      .into_iter()
+      .filter_map(|handle| match handle.join() {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(ParserDiagnostic {
+          code: "artifact_write_failed".to_string(),
+          message: error,
+          node_id: None,
+        }),
+        Err(_) => Some(ParserDiagnostic {
+          code: "artifact_write_panicked".to_string(),
+          message: "background artifact writer panicked".to_string(),
+          node_id: None,
+        }),
+      })
+      .collect()
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -1356,23 +1443,27 @@ impl SidebarObserver for LiveSidebarObserver {
         node_id: None,
       })?;
 
-    Ok(parse_sidebar_viewport(
+    let window_recognition = recognition_in_window_space(recognition, &capture);
+    let mut observation =
+      parse_sidebar_viewport(observation_index, self.sidebar_bounds, &window_recognition);
+    observation.source_artifacts = self.write_observation_artifacts(
       observation_index,
-      self.sidebar_bounds,
-      &recognition_in_window_space(recognition, &capture),
-    ))
+      capture.image.clone(),
+      window_recognition,
+      observation.clone(),
+    );
+
+    Ok(observation)
   }
 
   fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
+    let anchor = scroll_anchor_for_bounds(self.sidebar_bounds);
     let screen_point = self
       .session
       .window()
       .to_screen_point(
         &self.window,
-        auv_driver::WindowPoint::new(
-          self.sidebar_bounds.x + self.sidebar_bounds.width / 2.0,
-          self.sidebar_bounds.y + self.sidebar_bounds.height / 2.0,
-        ),
+        auv_driver::WindowPoint::new(anchor.x, anchor.y),
       )
       .map_err(|error| ParserDiagnostic {
         code: "sidebar_scroll_point_failed".to_string(),
@@ -1392,6 +1483,14 @@ impl SidebarObserver for LiveSidebarObserver {
 }
 
 #[cfg(target_os = "macos")]
+fn scroll_anchor_for_bounds(bounds: ViewBounds) -> auv_driver::Point {
+  auv_driver::Point::new(
+    bounds.x + bounds.width * 0.5,
+    bounds.y + bounds.height * 0.75,
+  )
+}
+
+#[cfg(target_os = "macos")]
 fn recognition_in_window_space(
   mut recognition: TextRecognition,
   capture: &Capture,
@@ -1401,6 +1500,78 @@ fn recognition_in_window_space(
     region.bounds.origin.y -= capture.bounds.origin.y;
   }
   recognition
+}
+
+#[cfg(target_os = "macos")]
+fn draw_overlay(
+  image: &mut RgbaImage,
+  sidebar_bounds: ViewBounds,
+  observation: &SidebarViewportObservation,
+) {
+  draw_rect(image, sidebar_bounds, Rgba([255, 64, 64, 255]), 3);
+  for evidence in &observation.evidence_nodes {
+    if let Some(bounds) = evidence.bounds {
+      draw_rect(image, bounds, Rgba([64, 160, 255, 255]), 2);
+    }
+  }
+  for candidate in &observation.candidates {
+    if let Some(bounds) = candidate.bounds {
+      let color = match candidate.kind {
+        SidebarCandidateKind::SectionHeader => Rgba([255, 210, 64, 255]),
+        SidebarCandidateKind::PlaylistItem => Rgba([64, 230, 120, 255]),
+        SidebarCandidateKind::NavigationItem => Rgba([200, 120, 255, 255]),
+        SidebarCandidateKind::Unknown => Rgba([160, 160, 160, 255]),
+      };
+      draw_rect(image, bounds, color, 3);
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn draw_rect(image: &mut RgbaImage, bounds: ViewBounds, color: Rgba<u8>, stroke: i64) {
+  let x0 = bounds.x.round() as i64;
+  let y0 = bounds.y.round() as i64;
+  let x1 = (bounds.x + bounds.width).round() as i64;
+  let y1 = (bounds.y + bounds.height).round() as i64;
+  for offset in 0..stroke {
+    draw_line(image, x0, y0 + offset, x1, y0 + offset, color);
+    draw_line(image, x0, y1 - offset, x1, y1 - offset, color);
+    draw_line(image, x0 + offset, y0, x0 + offset, y1, color);
+    draw_line(image, x1 - offset, y0, x1 - offset, y1, color);
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn draw_line(image: &mut RgbaImage, mut x0: i64, mut y0: i64, x1: i64, y1: i64, color: Rgba<u8>) {
+  let dx = (x1 - x0).abs();
+  let sx = if x0 < x1 { 1 } else { -1 };
+  let dy = -(y1 - y0).abs();
+  let sy = if y0 < y1 { 1 } else { -1 };
+  let mut error = dx + dy;
+
+  loop {
+    put_pixel(image, x0, y0, color);
+    if x0 == x1 && y0 == y1 {
+      break;
+    }
+    let doubled = error * 2;
+    if doubled >= dy {
+      error += dy;
+      x0 += sx;
+    }
+    if doubled <= dx {
+      error += dx;
+      y0 += sy;
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn put_pixel(image: &mut RgbaImage, x: i64, y: i64, color: Rgba<u8>) {
+  if x < 0 || y < 0 || x >= image.width() as i64 || y >= image.height() as i64 {
+    return;
+  }
+  image.put_pixel(x as u32, y as u32, color);
 }
 
 #[cfg(target_os = "macos")]
@@ -1649,6 +1820,7 @@ mod tests {
 
     assert_eq!(inputs.app_id, DEFAULT_APP_ID);
     assert_eq!(inputs.json_out, None);
+    assert_eq!(inputs.artifact_dir, PathBuf::from(DEFAULT_ARTIFACT_DIR));
     assert_eq!(inputs.max_pages, 24);
     assert_eq!(inputs.max_scrolls, 48);
     assert_eq!(inputs.scroll_amount, 6.0);
@@ -1663,6 +1835,8 @@ mod tests {
       "com.example.music".to_string(),
       "--json-out".to_string(),
       "/tmp/scan.json".to_string(),
+      "--artifact-dir".to_string(),
+      "/tmp/scan-artifacts".to_string(),
       "--max-pages".to_string(),
       "7".to_string(),
       "--max-scrolls".to_string(),
@@ -1677,6 +1851,7 @@ mod tests {
 
     assert_eq!(inputs.app_id, "com.example.music");
     assert_eq!(inputs.json_out, Some(PathBuf::from("/tmp/scan.json")));
+    assert_eq!(inputs.artifact_dir, PathBuf::from("/tmp/scan-artifacts"));
     assert_eq!(inputs.max_pages, 7);
     assert_eq!(inputs.max_scrolls, 9);
     assert_eq!(inputs.scroll_amount, 3.5);
@@ -1941,6 +2116,15 @@ mod tests {
     .expect("open dialog markers should be reported as blocking modal");
 
     assert_eq!(diagnostic.code, "blocking_modal_dialog");
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn scroll_anchor_uses_lower_playlist_body_hit_area() {
+    let anchor = scroll_anchor_for_bounds(ViewBounds::new(0.0, 146.0, 344.0, 908.0));
+
+    assert_eq!(anchor.x, 172.0);
+    assert_eq!(anchor.y, 827.0);
   }
 
   #[test]
