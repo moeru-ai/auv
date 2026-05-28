@@ -511,13 +511,23 @@ fn candidate_from_evidence(
   }
 
   Some(SidebarViewportCandidate {
-    id: format!("obs{observation_index}.candidate.{}", slug(label)),
+    id: format!(
+      "obs{observation_index}.candidate.{}.{}",
+      candidate_source_component(observation_index, &node.id),
+      slug(label)
+    ),
     kind,
     label: Some(label.to_string()),
     bounds: Some(bounds),
     evidence_ids: vec![node.id.clone()],
     confidence: node.confidence,
   })
+}
+
+fn candidate_source_component(observation_index: usize, evidence_id: &str) -> &str {
+  evidence_id
+    .strip_prefix(&format!("obs{observation_index}."))
+    .unwrap_or(evidence_id)
 }
 
 fn classify_sidebar_text(label: &str, x: f64) -> SidebarCandidateKind {
@@ -832,6 +842,37 @@ mod tests {
       observation.candidates[0].kind,
       SidebarCandidateKind::SectionHeader
     );
+  }
+
+  #[test]
+  fn parse_viewport_assigns_unique_candidate_ids_for_duplicate_cjk_labels() {
+    let recognition = fake_recognition(vec![
+      ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+      ("中文歌单", 32.0, 74.0, 120.0, 20.0),
+      ("中文歌单", 32.0, 106.0, 120.0, 20.0),
+    ]);
+    let observation =
+      parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &recognition);
+    let candidate_ids = observation
+      .candidates
+      .iter()
+      .map(|candidate| candidate.id.as_str())
+      .collect::<Vec<_>>();
+    let unique_candidate_ids = candidate_ids
+      .iter()
+      .copied()
+      .collect::<std::collections::HashSet<_>>();
+
+    assert_eq!(observation.candidates.len(), 3);
+    assert_eq!(
+      candidate_ids,
+      vec![
+        "obs0.candidate.ocr0._____",
+        "obs0.candidate.ocr1.____",
+        "obs0.candidate.ocr2.____"
+      ]
+    );
+    assert_eq!(unique_candidate_ids.len(), observation.candidates.len());
   }
 
   fn fake_recognition(
