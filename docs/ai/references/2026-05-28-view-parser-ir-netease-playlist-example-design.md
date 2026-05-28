@@ -62,8 +62,8 @@ Use the `View*` prefix for the view parsing and reconstruction layer.
 | `ViewSection` | A reconstructed section, such as feature navigation, playlist navigation, created playlists, or favorited playlists. |
 | `ViewItem` | A reconstructed stable item, such as one playlist row. |
 | `ViewReconstruction` | A scan result stitched from multiple observations. This is not a hash map or generic mapping table. |
-| `ViewAnchor` | A reference that can later be reacquired when the item is not currently visible. |
-| `ViewLandmark` | A stable signal used for viewport pose and reacquisition, such as a section header or nearby item label. |
+| `ViewAnchor` | A reference attached to a node, section, or item that can later be reacquired when it is not currently visible. |
+| `ViewLandmark` | A derived relocation signal used for viewport pose and reacquisition, such as a section header or nearby item label. |
 | `ViewMemory` | Optional saved reconstruction, anchors, and landmarks for later commands. |
 | `ViewAction` | A semantic action supported by a node or item. |
 | `ViewActionTarget` | The concrete target for a view action, such as an AX path or window-local point. |
@@ -79,15 +79,89 @@ ViewScope
           ViewNode
         ViewCandidate[]
   ViewReconstruction
-    ViewSection[]
-    ViewItem[]
-    ViewAnchor[]
-    ViewLandmark[]
+    root_layout
+      ViewSection
+        section_anchor
+        section_layout
+          ViewItem
+            item_layout
+            item_anchors[]
+            item_actions[]
+    anchor_index
+    landmark_index
   ViewMemory
 ```
 
 `ViewTree` is one observed structure. `ViewReconstruction` is a scan-level
-result. `ViewMemory` is optional reuse across commands.
+result. `ViewMemory` is optional reuse across commands. `anchor_index` and
+`landmark_index` are lookup indexes over anchors and landmarks already attached
+to layout, section, item, or evidence records; they are not the main business
+hierarchy.
+
+## V0 Layout And Node Taxonomy
+
+V0 intentionally keeps the taxonomy small. The goal is to support the NetEase
+sidebar example and leave room for later parsers without designing a complete
+UI ontology.
+
+Initial layout kinds:
+
+| Kind | Meaning |
+|---|---|
+| `ScrollBody` | A scrollable view region that emits viewport observations. |
+| `VStack` | A vertical stack, such as the sidebar list body. |
+| `HStack` | A horizontal stack, such as one row's icon plus text. |
+| `Group` | A fallback container when the parser has evidence for grouping but not a stronger layout. |
+
+Initial semantic kinds:
+
+| Kind | Meaning |
+|---|---|
+| `Text` | Text evidence from OCR, AX, or parser projection. |
+| `SectionHeader` | A visible or reconstructed section boundary. |
+| `ActionItem` | A row or item that can be selected or opened. |
+| `Icon` | Optional visual/icon evidence. |
+| `Unknown` | Evidence exists, but the parser cannot assign stronger semantics. |
+
+Initial actions:
+
+| Action | Meaning |
+|---|---|
+| `Open` | Open or activate an item. |
+| `Select` | Select an item or navigation row. |
+| `Scroll` | Scroll a `ScrollBody`. |
+| `ObserveOnly` | No action is declared; the node exists as evidence. |
+
+Additional roles and layouts such as `Button`, `Link`, `Input`, `Dialog`,
+`FileDialog`, `Grid`, `Canvas`, `Table`, and modal/system surfaces are
+follow-up work. They should be added only when a real parser or command needs
+them.
+
+A NetEase playlist row should therefore be expressible as:
+
+```text
+ViewItem(domain_kind=netease.playlist_item, semantic_kind=ActionItem)
+  item_layout: HStack
+    ViewNode(semantic_kind=Icon)?
+    ViewNode(semantic_kind=Text, label=playlist_name)
+  item_anchors[]
+  item_actions[Open, Select]
+```
+
+A section should own its layout and may also have an anchor:
+
+```text
+ViewSection(kind=my_playlists)
+  section_anchor?
+  section_layout: VStack
+    ViewItem(...)
+    ViewItem(...)
+```
+
+`ViewLandmark` is not a native UI property. It is a reconstruction-level signal
+derived from evidence, such as a stable section header, stable item label,
+unique icon, viewport fingerprint, or first/last visible item sequence. One
+node may be both an anchor target and a landmark.
 
 ## Framework Boundary
 
@@ -230,6 +304,7 @@ stale last-seen bounds directly.
 The example should return structured errors for:
 
 - target window not found
+- blocking modal or system dialog present
 - sidebar region not found
 - sidebar collapsed or too narrow to parse
 - capture failure
@@ -239,6 +314,24 @@ The example should return structured errors for:
 
 Human CLI output may summarize these errors, but the structured artifact or
 result should retain machine-readable diagnostics.
+
+## Modal And System Surfaces
+
+Modal and system surfaces are future work and should not be folded into the
+NetEase sidebar v0 taxonomy.
+
+Examples include:
+
+- file open/save dialogs
+- permission dialogs
+- login dialogs
+- context menus
+- popovers
+
+These surfaces should become separate `ViewScope`s or specialized parsers later,
+often with AX-first behavior and stricter action safety. If the NetEase sidebar
+example detects a modal or system dialog in v0, it should return a structured
+blocker error instead of trying to continue the sidebar scan.
 
 ## Implementation Phases
 
