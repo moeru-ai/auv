@@ -170,6 +170,33 @@ impl Default for TypeTextOptions {
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Scroll {
+  pub delta_x: f64,
+  pub delta_y: f64,
+}
+
+impl Scroll {
+  pub const fn new(delta_x: f64, delta_y: f64) -> Self {
+    Self { delta_x, delta_y }
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScrollOptions {
+  pub policy: InputPolicy,
+  pub settle: Duration,
+}
+
+impl Default for ScrollOptions {
+  fn default() -> Self {
+    Self {
+      policy: InputPolicy::BackgroundPreferred,
+      settle: Duration::ZERO,
+    }
+  }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InputDeliveryPath {
@@ -273,6 +300,24 @@ mod tests {
     let encoded = serde_json::to_string(&options).expect("serialize click options");
     let decoded: ClickOptions = serde_json::from_str(&encoded).expect("deserialize click options");
     assert_eq!(decoded, options);
+  }
+
+  #[test]
+  fn scroll_serde_roundtrip() {
+    let scroll = Scroll::new(12.5, -42.0);
+
+    let encoded = serde_json::to_string(&scroll).expect("serialize scroll");
+    let decoded: Scroll = serde_json::from_str(&encoded).expect("deserialize scroll");
+
+    assert_eq!(decoded, scroll);
+  }
+
+  #[test]
+  fn scroll_options_default_to_background_preferred() {
+    let options = ScrollOptions::default();
+
+    assert_eq!(options.policy, InputPolicy::BackgroundPreferred);
+    assert_eq!(options.settle, Duration::ZERO);
   }
 
   #[test]

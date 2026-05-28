@@ -9,7 +9,7 @@ use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
-use auv_driver::{Driver, RatioRect, Size};
+use auv_driver::{Driver, InputPolicy, RatioRect, Scroll, ScrollOptions, Size};
 #[cfg(target_os = "macos")]
 use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
@@ -289,6 +289,7 @@ struct SidebarSection {
 #[serde(rename_all = "snake_case")]
 enum SidebarSectionKind {
   FeatureNav,
+  LibraryNav,
   PlaylistNav,
   MyPlaylists,
   FavoritedPlaylists,
@@ -327,6 +328,8 @@ trait SidebarObserver {
     &mut self,
     observation_index: usize,
   ) -> Result<SidebarViewportObservation, ParserDiagnostic>;
+  fn observe_probe(&mut self) -> Result<SidebarViewportObservation, ParserDiagnostic>;
+  fn scroll_up(&mut self) -> Result<(), ParserDiagnostic>;
   fn scroll_down(&mut self) -> Result<(), ParserDiagnostic>;
 }
 
@@ -586,7 +589,7 @@ fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     name: None,
     version: None,
   };
-  let session = match driver.open_local() {
+  let mut session = match driver.open_local() {
     Ok(session) => session,
     Err(error) => {
       return Ok(empty_diagnostic_scan(
@@ -641,7 +644,10 @@ fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       window.frame.size.height,
     )),
   };
-  let capture = match session.window().capture(&window) {
+  let mut pre_scan_diagnostics = Vec::new();
+  let mut pre_scan_known_limits = Vec::new();
+
+  let mut capture = match session.window().capture(&window) {
     Ok(capture) => capture,
     Err(error) => {
       return Ok(empty_diagnostic_scan(
@@ -658,7 +664,7 @@ fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     }
   };
   let full_window = RatioRect::new(0.0, 0.0, 1.0, 1.0);
-  let full_recognition = match session
+  let mut full_recognition = match session
     .vision()
     .recognize_text_in_capture(&capture, full_window)
   {
@@ -686,6 +692,64 @@ fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       diagnostic,
       "scan stopped before sidebar observation because a blocking modal was detected",
     ));
+  }
+
+  if inputs.sidebar_region.is_none() {
+    let broad_sidebar_bounds = broad_sidebar_probe_bounds(window_size);
+    let broad_sidebar_ratio = bounds_to_ratio(broad_sidebar_bounds, &capture);
+    let mut top_probe = LiveSidebarObserver {
+      session,
+      window: window.clone(),
+      sidebar_bounds: broad_sidebar_bounds,
+      sidebar_ratio: broad_sidebar_ratio,
+      artifact_dir: inputs.artifact_dir.clone(),
+      pending_artifacts: Vec::new(),
+      scroll_amount: inputs.scroll_amount,
+    };
+    let top_seek = scroll_observer_to_top(&mut top_probe, inputs.max_scrolls);
+    pre_scan_diagnostics.extend(top_seek.diagnostics);
+    pre_scan_known_limits.extend(top_seek.known_limits);
+    let LiveSidebarObserver {
+      session: probe_session,
+      ..
+    } = top_probe;
+    session = probe_session;
+
+    capture = match session.window().capture(&window) {
+      Ok(capture) => capture,
+      Err(error) => {
+        return Ok(empty_diagnostic_scan(
+          app_context,
+          window_context,
+          ViewRegionRecord::default(),
+          ParserDiagnostic {
+            code: "window_capture_failed".to_string(),
+            message: error.to_string(),
+            node_id: None,
+          },
+          "scan stopped before sidebar observation because the target window could not be captured after top seek",
+        ));
+      }
+    };
+    full_recognition = match session
+      .vision()
+      .recognize_text_in_capture(&capture, full_window)
+    {
+      Ok(recognition) => recognition_in_window_space(recognition, &capture),
+      Err(error) => {
+        return Ok(empty_diagnostic_scan(
+          app_context,
+          window_context,
+          ViewRegionRecord::default(),
+          ParserDiagnostic {
+            code: "full_window_ocr_failed".to_string(),
+            message: error.to_string(),
+            node_id: None,
+          },
+          "scan stopped before sidebar observation because full-window OCR failed after top seek",
+        ));
+      }
+    };
   }
 
   let sidebar_region = match detect_sidebar_region(
@@ -722,6 +786,8 @@ fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       max_scrolls: inputs.max_scrolls,
     },
   );
+  scan.diagnostics.extend(pre_scan_diagnostics);
+  scan.known_limits.extend(pre_scan_known_limits);
   scan.diagnostics.extend(observer.finish_artifacts());
   scan.app = app_context;
   scan.window = window_context;
@@ -825,7 +891,7 @@ fn detect_sidebar_region(
     0.0,
     y,
     max_x + 48.0,
-    window_size.height - y,
+    playlist_sidebar_bottom(window_size) - y,
   )))
 }
 
@@ -864,8 +930,19 @@ fn infer_visible_playlist_body_region(
     0.0,
     min_y,
     max_x + 48.0,
-    window_size.height - min_y,
+    playlist_sidebar_bottom(window_size) - min_y,
   ))
+}
+
+fn playlist_sidebar_bottom(window_size: auv_driver::Size) -> f64 {
+  (window_size.height - 82.0).clamp(0.0, window_size.height)
+}
+
+fn broad_sidebar_probe_bounds(window_size: auv_driver::Size) -> ViewBounds {
+  let width = (window_size.width * 0.24)
+    .max(280.0)
+    .min(window_size.width * 0.42);
+  ViewBounds::new(0.0, 0.0, width, playlist_sidebar_bottom(window_size))
 }
 
 fn sidebar_region_record(bounds: ViewBounds) -> ViewRegionRecord {
@@ -892,7 +969,8 @@ fn is_sidebar_marker(label: &str) -> bool {
 }
 
 fn is_playlist_section_marker(label: &str) -> bool {
-  label.contains("创建") || label.contains("我的歌单") || label.contains("收藏")
+  section_kind_from_label(label) == SidebarSectionKind::MyPlaylists
+    || section_kind_from_label(label) == SidebarSectionKind::FavoritedPlaylists
 }
 
 fn detect_blocking_modal(recognition: &TextRecognition) -> Option<ParserDiagnostic> {
@@ -916,6 +994,17 @@ fn parse_sidebar_viewport(
     .regions
     .iter()
     .enumerate()
+    .filter(|(_, region)| {
+      viewport_contains_center(
+        viewport_bounds,
+        ViewBounds::new(
+          region.bounds.origin.x,
+          region.bounds.origin.y,
+          region.bounds.size.width,
+          region.bounds.size.height,
+        ),
+      )
+    })
     .map(|(index, region)| ViewEvidenceNode {
       id: format!("obs{observation_index}.ocr{index}"),
       source: ViewEvidenceSource::OcrText,
@@ -965,6 +1054,15 @@ fn parse_sidebar_viewport(
     candidates,
     parser_notes: Vec::new(),
   }
+}
+
+fn viewport_contains_center(viewport: ViewBounds, bounds: ViewBounds) -> bool {
+  let center_x = bounds.x + bounds.width * 0.5;
+  let center_y = bounds.y + bounds.height * 0.5;
+  center_x >= viewport.x
+    && center_x <= viewport.x + viewport.width
+    && center_y >= viewport.y
+    && center_y <= viewport.y + viewport.height
 }
 
 fn confidence_from_ocr(confidence: Option<f32>) -> Confidence {
@@ -1025,17 +1123,37 @@ fn classify_sidebar_text(label: &str, x: f64) -> SidebarCandidateKind {
 }
 
 fn section_kind_from_label(label: &str) -> SidebarSectionKind {
-  if label.contains("创建") || label.contains("我的歌单") {
+  let label = normalize_section_label(label);
+  if label.contains("创建的歌单") || label.contains("我的歌单") {
     SidebarSectionKind::MyPlaylists
-  } else if label.contains("收藏") {
+  } else if label.contains("收藏的歌单") {
     SidebarSectionKind::FavoritedPlaylists
-  } else if label.contains("歌单") {
-    SidebarSectionKind::PlaylistNav
-  } else if matches!(label, "推荐" | "音乐服务") {
+  } else if label == "我的收藏" {
+    SidebarSectionKind::LibraryNav
+  } else if matches!(label.as_str(), "推荐" | "音乐服务") {
     SidebarSectionKind::FeatureNav
   } else {
     SidebarSectionKind::Unknown
   }
+}
+
+fn normalize_section_label(label: &str) -> String {
+  let label = label
+    .trim()
+    .trim_end_matches(|char: char| char.is_ascii_digit() || char.is_whitespace())
+    .trim_end_matches(|char| matches!(char, '⌃' | '⌄' | '˄' | '˅' | '^' | '∨' | '⌵' | '入'))
+    .trim_end_matches(|char: char| char.is_ascii_digit() || char.is_whitespace())
+    .trim()
+    .to_string();
+
+  strip_leading_icon_noise(label)
+}
+
+fn strip_leading_icon_noise(label: String) -> String {
+  if label.ends_with("我的收藏") && label != "我的收藏" {
+    return "我的收藏".to_string();
+  }
+  label
 }
 
 fn viewport_fingerprint(nodes: &[ViewEvidenceNode]) -> String {
@@ -1249,6 +1367,9 @@ fn scan_sidebar_with_observer(
   let mut observations = Vec::new();
   let mut diagnostics = Vec::new();
   let mut known_limits = Vec::new();
+  let top_seek = scroll_observer_to_top(observer, options.max_scrolls);
+  diagnostics.extend(top_seek.diagnostics);
+  known_limits.extend(top_seek.known_limits);
   let mut previous_fingerprint = None;
   let mut scrolls = 0;
 
@@ -1309,7 +1430,63 @@ fn scan_sidebar_with_observer(
   );
   scan.diagnostics.extend(diagnostics);
   scan.known_limits.extend(known_limits);
+  if top_seek.boundary == BoundaryConfidence::Likely {
+    apply_top_boundary(&mut scan, top_seek.boundary);
+  }
   scan
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct TopSeekOutcome {
+  boundary: BoundaryConfidence,
+  diagnostics: Vec<ParserDiagnostic>,
+  known_limits: Vec<String>,
+}
+
+fn scroll_observer_to_top(
+  observer: &mut impl SidebarObserver,
+  max_scrolls: usize,
+) -> TopSeekOutcome {
+  let mut outcome = TopSeekOutcome::default();
+  let mut previous_fingerprint = match observer.observe_probe() {
+    Ok(observation) => observation.viewport_fingerprint,
+    Err(diagnostic) => {
+      outcome.diagnostics.push(diagnostic);
+      return outcome;
+    }
+  };
+
+  for _ in 0..max_scrolls {
+    if let Err(diagnostic) = observer.scroll_up() {
+      outcome.diagnostics.push(diagnostic);
+      return outcome;
+    }
+
+    let observation = match observer.observe_probe() {
+      Ok(observation) => observation,
+      Err(diagnostic) => {
+        outcome.diagnostics.push(diagnostic);
+        return outcome;
+      }
+    };
+    if observation.viewport_fingerprint == previous_fingerprint {
+      outcome.boundary = BoundaryConfidence::Likely;
+      return outcome;
+    }
+    previous_fingerprint = observation.viewport_fingerprint;
+  }
+
+  outcome
+    .known_limits
+    .push(format!("top seek stopped after max_scrolls={max_scrolls}"));
+  outcome
+}
+
+fn apply_top_boundary(scan: &mut PlaylistSidebarScan, top: BoundaryConfidence) {
+  scan.boundary.top = top;
+  if let Some(scrollable) = scan.reconstruction.root.scrollable.as_mut() {
+    scrollable.boundary.top = top;
+  }
 }
 
 fn empty_root() -> ViewNodeRecord {
@@ -1345,6 +1522,36 @@ struct LiveSidebarObserver {
 
 #[cfg(target_os = "macos")]
 impl LiveSidebarObserver {
+  fn capture_observation(
+    &mut self,
+    observation_index: usize,
+  ) -> Result<(RgbaImage, TextRecognition, SidebarViewportObservation), ParserDiagnostic> {
+    let capture = self
+      .session
+      .window()
+      .capture(&self.window)
+      .map_err(|error| ParserDiagnostic {
+        code: "window_capture_failed".to_string(),
+        message: error.to_string(),
+        node_id: None,
+      })?;
+    let recognition = self
+      .session
+      .vision()
+      .recognize_text_in_capture(&capture, self.sidebar_ratio)
+      .map_err(|error| ParserDiagnostic {
+        code: "sidebar_ocr_failed".to_string(),
+        message: error.to_string(),
+        node_id: None,
+      })?;
+
+    let window_recognition = recognition_in_window_space(recognition, &capture);
+    let observation =
+      parse_sidebar_viewport(observation_index, self.sidebar_bounds, &window_recognition);
+
+    Ok((capture.image.clone(), window_recognition, observation))
+  }
+
   fn write_observation_artifacts(
     &mut self,
     observation_index: usize,
@@ -1424,31 +1631,11 @@ impl SidebarObserver for LiveSidebarObserver {
     &mut self,
     observation_index: usize,
   ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
-    let capture = self
-      .session
-      .window()
-      .capture(&self.window)
-      .map_err(|error| ParserDiagnostic {
-        code: "window_capture_failed".to_string(),
-        message: error.to_string(),
-        node_id: None,
-      })?;
-    let recognition = self
-      .session
-      .vision()
-      .recognize_text_in_capture(&capture, self.sidebar_ratio)
-      .map_err(|error| ParserDiagnostic {
-        code: "sidebar_ocr_failed".to_string(),
-        message: error.to_string(),
-        node_id: None,
-      })?;
-
-    let window_recognition = recognition_in_window_space(recognition, &capture);
-    let mut observation =
-      parse_sidebar_viewport(observation_index, self.sidebar_bounds, &window_recognition);
+    let (image, window_recognition, mut observation) =
+      self.capture_observation(observation_index)?;
     observation.source_artifacts = self.write_observation_artifacts(
       observation_index,
-      capture.image.clone(),
+      image,
       window_recognition,
       observation.clone(),
     );
@@ -1456,7 +1643,23 @@ impl SidebarObserver for LiveSidebarObserver {
     Ok(observation)
   }
 
+  fn observe_probe(&mut self) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+    let (_, _, observation) = self.capture_observation(0)?;
+    Ok(observation)
+  }
+
+  fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {
+    self.scroll_by(self.scroll_amount)
+  }
+
   fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
+    self.scroll_by(-self.scroll_amount)
+  }
+}
+
+#[cfg(target_os = "macos")]
+impl LiveSidebarObserver {
+  fn scroll_by(&mut self, vertical_delta: f64) -> Result<(), ParserDiagnostic> {
     let anchor = scroll_anchor_for_bounds(self.sidebar_bounds);
     let screen_point = self
       .session
@@ -1471,13 +1674,22 @@ impl SidebarObserver for LiveSidebarObserver {
         node_id: None,
       })?;
     let point = screen_point.point();
-    auv_driver_macos::native::pointer::scroll_point(point.x, point.y, 0.0, -self.scroll_amount)
+    self
+      .session
+      .input()
+      .scroll_at(
+        point,
+        Scroll::new(0.0, vertical_delta),
+        ScrollOptions {
+          policy: InputPolicy::BackgroundPreferred,
+          settle: std::time::Duration::from_millis(LIVE_SCROLL_SETTLE_MS),
+        },
+      )
       .map_err(|error| ParserDiagnostic {
         code: "sidebar_scroll_failed".to_string(),
         message: error.to_string(),
         node_id: None,
       })?;
-    std::thread::sleep(std::time::Duration::from_millis(LIVE_SCROLL_SETTLE_MS));
     Ok(())
   }
 }
@@ -1717,97 +1929,13 @@ fn candidate_evidence(
 fn domain_kind_for_section(kind: SidebarSectionKind) -> String {
   match kind {
     SidebarSectionKind::FeatureNav => "netease.feature_nav",
+    SidebarSectionKind::LibraryNav => "netease.library_nav",
     SidebarSectionKind::PlaylistNav => "netease.playlist_nav",
     SidebarSectionKind::MyPlaylists => "netease.my_playlists",
     SidebarSectionKind::FavoritedPlaylists => "netease.favorited_playlists",
     SidebarSectionKind::Unknown => "netease.sidebar_section",
   }
   .to_string()
-}
-
-#[cfg(test)]
-fn sample_reconstruction() -> ViewReconstructionRecord {
-  let anchor = ViewAnchor {
-    id: "anchor.coding".to_string(),
-    label: "Coding BGM".to_string(),
-    strength: AnchorStrength::Strong,
-    bounds: ViewBounds::new(0.0, 50.0, 240.0, 32.0),
-    evidence_ids: vec!["ocr.coding".to_string()],
-  };
-  let landmark = ViewLandmark {
-    id: "landmark.my".to_string(),
-    label: "创建的歌单".to_string(),
-    landmark_use: LandmarkUse::SectionAssignment,
-    bounds: ViewBounds::new(0.0, 20.0, 240.0, 32.0),
-    evidence_ids: Vec::new(),
-  };
-
-  ViewReconstructionRecord {
-    root: ViewNodeRecord {
-      id: "root.sidebar".to_string(),
-      kind: ViewNodeKind::Collection,
-      domain_kind: Some("netease.sidebar_playlist_collection".to_string()),
-      layout: Some(ViewLayout::VStack),
-      label: None,
-      bounds: ViewBounds::new(0.0, 0.0, 240.0, 700.0),
-      scrollable: Some(ViewScrollable {
-        axis: ViewAxis::Vertical,
-        boundary: ScrollBoundarySummary::default(),
-      }),
-      anchors: Vec::new(),
-      landmarks: Vec::new(),
-      actions: vec![ViewAction::Scroll],
-      evidence: Vec::new(),
-      children: vec![ViewNodeRecord {
-        id: "section.my".to_string(),
-        kind: ViewNodeKind::Section,
-        domain_kind: Some("netease.my_playlists".to_string()),
-        layout: Some(ViewLayout::VStack),
-        label: Some("创建的歌单".to_string()),
-        bounds: ViewBounds::new(0.0, 20.0, 240.0, 32.0),
-        scrollable: None,
-        anchors: Vec::new(),
-        landmarks: vec![landmark.clone()],
-        actions: vec![ViewAction::ObserveOnly],
-        evidence: Vec::new(),
-        children: vec![ViewNodeRecord {
-          id: "item.coding".to_string(),
-          kind: ViewNodeKind::Item,
-          domain_kind: Some("netease.playlist_item".to_string()),
-          layout: Some(ViewLayout::HStack),
-          label: Some("Coding BGM".to_string()),
-          bounds: ViewBounds::new(0.0, 50.0, 240.0, 32.0),
-          scrollable: None,
-          anchors: vec![anchor.clone()],
-          landmarks: Vec::new(),
-          actions: vec![ViewAction::Open, ViewAction::Select],
-          evidence: Vec::new(),
-          children: vec![ViewNodeRecord {
-            id: "item.coding.text".to_string(),
-            kind: ViewNodeKind::Text,
-            domain_kind: None,
-            layout: None,
-            label: Some("Coding BGM".to_string()),
-            bounds: ViewBounds::new(30.0, 56.0, 120.0, 20.0),
-            scrollable: None,
-            anchors: Vec::new(),
-            landmarks: Vec::new(),
-            actions: vec![ViewAction::ObserveOnly],
-            evidence: vec![ViewEvidenceNode {
-              id: "ocr.coding".to_string(),
-              source: ViewEvidenceSource::OcrText,
-              label: Some("Coding BGM".to_string()),
-              bounds: Some(ViewBounds::new(30.0, 56.0, 120.0, 20.0)),
-              confidence: Confidence::High,
-            }],
-            children: Vec::new(),
-          }],
-        }],
-      }],
-    },
-    anchor_index: vec![anchor],
-    landmark_index: vec![landmark],
-  }
 }
 
 #[cfg(test)]
@@ -1863,113 +1991,26 @@ mod tests {
   }
 
   #[test]
-  fn parse_inputs_rejects_unknown_flag() {
-    let error = parse_inputs(vec!["--bogus".to_string()]).expect_err("unknown flag should fail");
-    assert!(error.contains("unknown argument --bogus"));
-  }
+  fn parse_inputs_rejects_invalid_values() {
+    let cases = [
+      (vec!["--bogus".to_string()], "unknown argument --bogus"),
+      (
+        vec!["--scroll-amount".to_string(), "NaN".to_string()],
+        "--scroll-amount must be greater than 0",
+      ),
+      (
+        vec![
+          "--sidebar-region".to_string(),
+          "0.0,NaN,0.25,0.8".to_string(),
+        ],
+        "--sidebar-region expects finite x,y,width,height",
+      ),
+    ];
 
-  #[test]
-  fn parse_inputs_rejects_non_finite_scroll_amount() {
-    let error = parse_inputs(vec!["--scroll-amount".to_string(), "NaN".to_string()])
-      .expect_err("non-finite scroll amount should fail");
-
-    assert!(error.contains("--scroll-amount must be greater than 0"));
-  }
-
-  #[test]
-  fn parse_inputs_rejects_non_finite_sidebar_region_component() {
-    let error = parse_inputs(vec![
-      "--sidebar-region".to_string(),
-      "0.0,NaN,0.25,0.8".to_string(),
-    ])
-    .expect_err("non-finite sidebar region component should fail");
-
-    assert!(error.contains("--sidebar-region expects finite x,y,width,height"));
-  }
-
-  #[test]
-  fn view_reconstruction_serializes_tree_with_scrollable_collection() {
-    let reconstruction = sample_reconstruction();
-    let value = serde_json::to_value(&reconstruction).expect("reconstruction should serialize");
-
-    assert_eq!(value["root"]["kind"], "collection");
-    assert_eq!(value["root"]["layout"], "v_stack");
-    assert_eq!(value["root"]["scrollable"]["axis"], "vertical");
-    assert_eq!(value["root"]["children"][0]["kind"], "section");
-    assert_eq!(value["root"]["children"][0]["children"][0]["kind"], "item");
-    assert_eq!(
-      value["root"]["children"][0]["children"][0]["children"][0]["kind"],
-      "text"
-    );
-    assert_eq!(value["anchor_index"][0]["label"], "Coding BGM");
-  }
-
-  #[test]
-  fn playlist_sidebar_scan_uses_reconstruction_plus_projection() {
-    let reconstruction = sample_reconstruction();
-    let scan = PlaylistSidebarScan {
-      app: ScanAppContext::default(),
-      window: ScanWindowContext::default(),
-      sidebar_region: ViewRegionRecord::default(),
-      observations: Vec::new(),
-      reconstruction,
-      projection: PlaylistSidebarProjection {
-        sections: vec![SidebarSection {
-          id: "section.my".to_string(),
-          kind: SidebarSectionKind::MyPlaylists,
-          label: Some("创建的歌单".to_string()),
-          items: vec![PlaylistSidebarItem {
-            id: "item.coding".to_string(),
-            label: "Coding BGM".to_string(),
-            section_hint: None,
-            confidence: Confidence::High,
-            candidate_id: Some("candidate.coding".to_string()),
-            anchor_id: Some("anchor.coding".to_string()),
-          }],
-        }],
-      },
-      boundary: ScrollBoundarySummary::default(),
-      diagnostics: Vec::new(),
-      known_limits: Vec::new(),
-    };
-
-    let json = serde_json::to_string_pretty(&scan).expect("scan should serialize");
-
-    assert!(json.contains("\"reconstruction\""));
-    assert!(json.contains("\"projection\""));
-    assert!(json.contains("Coding BGM"));
-  }
-
-  #[test]
-  fn render_human_summary_groups_items_by_section() {
-    let observation = parse_sidebar_viewport(
-      0,
-      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-      &fake_recognition(vec![
-        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
-        ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
-      ]),
-    );
-    let scan = reconstruct_playlist_sidebar(
-      ScanAppContext {
-        app_id: Some(DEFAULT_APP_ID.to_string()),
-        name: Some("网易云音乐".to_string()),
-        version: None,
-      },
-      ScanWindowContext {
-        id: Some("window.1".to_string()),
-        title: Some("网易云音乐".to_string()),
-        bounds: Some(ViewBounds::new(0.0, 0.0, 800.0, 600.0)),
-      },
-      sidebar_region_record(ViewBounds::new(0.0, 0.0, 240.0, 600.0)),
-      vec![observation],
-    );
-
-    let rendered = render_human_summary(&scan);
-
-    assert!(rendered.contains("创建的歌单"));
-    assert!(rendered.contains("Coding BGM"));
-    assert!(rendered.contains("boundary"));
+    for (args, expected) in cases {
+      let error = parse_inputs(args).expect_err("invalid inputs should fail");
+      assert!(error.contains(expected));
+    }
   }
 
   #[test]
@@ -2027,18 +2068,52 @@ mod tests {
   fn detect_sidebar_region_starts_at_playlist_marker() {
     let region = detect_sidebar_region(
       None,
-      auv_driver::Size::new(1000.0, 800.0),
+      auv_driver::Size::new(1646.0, 1053.0),
       &fake_recognition(vec![
         ("推荐", 8.0, 20.0, 40.0, 20.0),
-        ("创建的歌单", 8.0, 160.0, 110.0, 20.0),
-        ("Coding BGM", 32.0, 192.0, 120.0, 20.0),
+        ("创建的歌单", 8.0, 443.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 485.0, 120.0, 20.0),
+        ("Reverberation", 98.0, 994.0, 160.0, 20.0),
       ]),
     )
     .expect("playlist marker should define the scroll body");
 
     assert_eq!(
       region.bounds,
-      Some(ViewBounds::new(0.0, 160.0, 228.0, 640.0))
+      Some(ViewBounds::new(0.0, 443.0, 344.28, 528.0))
+    );
+  }
+
+  #[test]
+  fn parse_viewport_ignores_bottom_player_bar_outside_sidebar_bounds() {
+    let recognition = fake_recognition(vec![
+      ("创建的歌单", 8.0, 443.0, 110.0, 20.0),
+      ("Coding BGM", 72.0, 485.0, 120.0, 20.0),
+      ("Reverberation", 98.0, 994.0, 160.0, 20.0),
+      ("1w+", 322.0, 1003.0, 19.0, 9.0),
+      ("伊藤賢", 98.0, 1018.0, 45.0, 17.0),
+    ]);
+
+    let observation =
+      parse_sidebar_viewport(0, ViewBounds::new(0.0, 443.0, 344.0, 528.0), &recognition);
+
+    assert!(
+      observation
+        .candidates
+        .iter()
+        .any(|candidate| candidate.label.as_deref() == Some("Coding BGM"))
+    );
+    assert!(
+      observation
+        .candidates
+        .iter()
+        .all(|candidate| candidate.label.as_deref() != Some("Reverberation"))
+    );
+    assert!(
+      observation
+        .candidates
+        .iter()
+        .all(|candidate| candidate.label.as_deref() != Some("1w+"))
     );
   }
 
@@ -2051,7 +2126,7 @@ mod tests {
     )
     .expect("navigation marker should preserve full sidebar fallback");
 
-    assert_eq!(region.bounds, Some(ViewBounds::new(0.0, 0.0, 228.0, 800.0)));
+    assert_eq!(region.bounds, Some(ViewBounds::new(0.0, 0.0, 228.0, 718.0)));
   }
 
   #[test]
@@ -2069,7 +2144,7 @@ mod tests {
 
     assert_eq!(
       region.bounds,
-      Some(ViewBounds::new(0.0, 300.0, 290.0, 500.0))
+      Some(ViewBounds::new(0.0, 300.0, 290.0, 418.0))
     );
   }
 
@@ -2091,7 +2166,7 @@ mod tests {
 
     assert_eq!(
       region.bounds,
-      Some(ViewBounds::new(0.0, 300.0, 290.0, 500.0))
+      Some(ViewBounds::new(0.0, 300.0, 290.0, 418.0))
     );
   }
 
@@ -2173,6 +2248,62 @@ mod tests {
       ]
     );
     assert_eq!(unique_candidate_ids.len(), observation.candidates.len());
+  }
+
+  #[test]
+  fn parse_viewport_treats_playlist_named_rows_as_items_not_sections() {
+    let recognition = fake_recognition(vec![
+      ("创建的歌单 215", 8.0, 42.0, 120.0, 20.0),
+      ("绚香猫的2025年度歌单", 72.0, 74.0, 180.0, 20.0),
+      ("猫音歌单", 72.0, 106.0, 120.0, 20.0),
+    ]);
+    let observation =
+      parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 280.0, 400.0), &recognition);
+
+    assert_eq!(
+      observation.candidates[0].kind,
+      SidebarCandidateKind::SectionHeader
+    );
+    assert_eq!(
+      observation.candidates[1].kind,
+      SidebarCandidateKind::PlaylistItem
+    );
+    assert_eq!(
+      observation.candidates[2].kind,
+      SidebarCandidateKind::PlaylistItem
+    );
+  }
+
+  #[test]
+  fn section_classification_uses_normalized_exact_labels() {
+    assert_eq!(
+      section_kind_from_label("创建的歌单 215"),
+      SidebarSectionKind::MyPlaylists
+    );
+    assert_eq!(
+      section_kind_from_label("收藏的歌单 12"),
+      SidebarSectionKind::FavoritedPlaylists
+    );
+    assert_eq!(
+      section_kind_from_label("我的收藏"),
+      SidebarSectionKind::LibraryNav
+    );
+    assert_eq!(
+      section_kind_from_label("食我的收藏"),
+      SidebarSectionKind::LibraryNav
+    );
+    assert_eq!(
+      section_kind_from_label("创建的歌单 215 入"),
+      SidebarSectionKind::MyPlaylists
+    );
+    assert_eq!(
+      section_kind_from_label("绚香猫的2025年度歌单"),
+      SidebarSectionKind::Unknown
+    );
+    assert_eq!(
+      section_kind_from_label("我的收藏夹"),
+      SidebarSectionKind::Unknown
+    );
   }
 
   #[test]
@@ -2412,6 +2543,38 @@ mod tests {
     );
   }
 
+  #[test]
+  fn scan_loop_rewinds_to_top_before_collecting_pages() {
+    let observations = vec![
+      parse_sidebar_viewport(
+        0,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)]),
+      ),
+      parse_sidebar_viewport(
+        1,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![("Middle Playlist", 32.0, 42.0, 120.0, 20.0)]),
+      ),
+    ];
+    let mut observer = FakeSidebarObserver::new_at(observations, 1);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 1,
+        max_scrolls: 10,
+      },
+    );
+
+    assert_eq!(scan.observations.len(), 1);
+    assert_eq!(
+      scan.observations[0].candidates[0].label.as_deref(),
+      Some("创建的歌单")
+    );
+    assert_eq!(scan.boundary.top, BoundaryConfidence::Likely);
+  }
+
   struct FakeSidebarObserver {
     observations: Vec<SidebarViewportObservation>,
     cursor: usize,
@@ -2422,6 +2585,13 @@ mod tests {
       Self {
         observations,
         cursor: 0,
+      }
+    }
+
+    fn new_at(observations: Vec<SidebarViewportObservation>, cursor: usize) -> Self {
+      Self {
+        observations,
+        cursor,
       }
     }
   }
@@ -2444,6 +2614,23 @@ mod tests {
       observation.observation_index = observation_index;
       observation.viewport.page_index = observation_index;
       Ok(observation)
+    }
+
+    fn observe_probe(&mut self) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+      self
+        .observations
+        .get(self.cursor)
+        .cloned()
+        .ok_or_else(|| ParserDiagnostic {
+          code: "no_more_fake_observations".to_string(),
+          message: "fake sidebar observer has no more observations".to_string(),
+          node_id: None,
+        })
+    }
+
+    fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {
+      self.cursor = self.cursor.saturating_sub(1);
+      Ok(())
     }
 
     fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {

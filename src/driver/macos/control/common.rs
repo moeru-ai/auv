@@ -25,6 +25,26 @@ pub(super) fn activate_app_if_needed(app: &str) -> AuvResult<()> {
   Ok(())
 }
 
+pub(crate) fn parse_input_policy(call: &DriverCall) -> AuvResult<auv_driver::InputPolicy> {
+  match optional_string(call, "policy")
+    .unwrap_or_else(|| "foreground_preferred".to_string())
+    .trim()
+    .to_ascii_lowercase()
+    .as_str()
+  {
+    "background_only" | "background-only" => Ok(auv_driver::InputPolicy::BackgroundOnly),
+    "background_preferred" | "background-preferred" => {
+      Ok(auv_driver::InputPolicy::BackgroundPreferred)
+    }
+    "foreground_preferred" | "foreground-preferred" => {
+      Ok(auv_driver::InputPolicy::ForegroundPreferred)
+    }
+    other => Err(format!(
+      "invalid --policy value {other:?}; expected background_only, background_preferred, or foreground_preferred"
+    )),
+  }
+}
+
 pub(crate) fn resolve_click_interval_ms(call: &DriverCall) -> AuvResult<u64> {
   let value =
     optional_positive_u64(call, "click_interval_ms")?.unwrap_or(DEFAULT_CLICK_INTERVAL_MS);

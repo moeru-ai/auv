@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 
 use super::super::*;
+use super::common::parse_input_policy;
 
 pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "window-region-observe".to_string());
@@ -210,14 +211,17 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
   let direction = normalize_scroll_direction(&raw_direction)?.to_string();
   let amount = optional_f64(call, "amount")?.unwrap_or(6.0).max(1.0);
   let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(250);
+  let input_policy = parse_input_policy(call)?;
   let region = region_ratios_from_call(call)?;
-  activate_target_app(&app)?;
+  if input_policy == auv_driver::InputPolicy::ForegroundPreferred {
+    activate_target_app(&app)?;
+  }
   let snapshot = super::super::observe::observe_windows_snapshot(24, &app)?;
   let xcap_displays = super::super::capture::xcap_backend::list_displays()?;
   let display_snapshot = enumerate_displays()?;
   let selector = parse_app_selector(&app)?;
   let resolved_app = resolve_app_ref(&snapshot, &selector)?;
-  let candidate = resolve_window_candidate(
+  let candidate = resolve_window_candidate_for_input(
     &snapshot,
     &resolved_app,
     &xcap_displays,
@@ -232,10 +236,14 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
     format!("resolved scroll point ({x:.3}, {y:.3}) is outside all connected displays")
   })?;
   let (delta_x, delta_y) = scan_scroll_delta(&direction, amount)?;
-  crate::driver::macos::native::pointer::scroll_point(x, y, delta_x, delta_y)?;
-  if settle_ms > 0 {
-    std::thread::sleep(std::time::Duration::from_millis(settle_ms));
-  }
+  let scroll_outcome = crate::driver::macos::typed::session::scroll_point_bridge(
+    x,
+    y,
+    delta_x,
+    delta_y,
+    input_policy,
+    settle_ms,
+  )?;
 
   let report = [
     "coordinateSpace=global-logical".to_string(),
@@ -292,6 +300,9 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
     format!("amount={amount:.3}"),
     format!("deltaX={delta_x:.0}"),
     format!("deltaY={delta_y:.0}"),
+    format!("inputPolicy={}", scroll_outcome.input_policy),
+    format!("inputBridge={}", scroll_outcome.input_bridge),
+    format!("selectedPath={}", scroll_outcome.selected_path),
     format!("settleMs={settle_ms}"),
   ]
   .join("\n");
@@ -305,7 +316,7 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
 
   Ok(DriverResponse {
     summary: format!("Scrolled window region {direction} by amount {amount:.3}."),
-    backend: Some("macos.swift.quartz-scroll-window-region".to_string()),
+    backend: Some("macos.typed.input.scroll-window-region".to_string()),
     signals: BTreeMap::from([
       ("scroll.direction".to_string(), direction),
       ("scroll.amount".to_string(), format!("{amount:.3}")),
@@ -328,6 +339,9 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
       format!("selectionReason={}", candidate.selection_reason),
       format!("deltaX={delta_x:.0}"),
       format!("deltaY={delta_y:.0}"),
+      format!("inputPolicy={}", scroll_outcome.input_policy),
+      format!("inputBridge={}", scroll_outcome.input_bridge),
+      format!("selectedPath={}", scroll_outcome.selected_path),
       format!("settleMs={settle_ms}"),
     ],
     artifacts: vec![artifact],

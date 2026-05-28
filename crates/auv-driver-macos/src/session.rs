@@ -10,7 +10,7 @@ use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint,
 use auv_driver::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
   InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
-  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  Scroll, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::vision::{RecognizedText, TextRecognition};
@@ -370,6 +370,26 @@ impl InputApi<'_> {
       Click::Double { interval } => (2, duration_millis(interval)?),
     };
     crate::native::pointer::click_point(point.x, point.y, 0, count, interval).map_err(backend)
+  }
+
+  pub fn scroll_at(
+    &self,
+    point: Point,
+    scroll: Scroll,
+    options: ScrollOptions,
+  ) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    if options.policy == InputPolicy::BackgroundOnly {
+      return Err(DriverError::unsupported("background_scroll"));
+    }
+    crate::native::pointer::scroll_point(point.x, point.y, scroll.delta_x, scroll.delta_y)
+      .map_err(backend)?;
+    if !options.settle.is_zero() {
+      thread::sleep(options.settle);
+    }
+    Ok(InputActionResult::single_success(
+      InputDeliveryPath::ForegroundSystemEvents,
+    ))
   }
 
   pub fn copy(&self) -> DriverResult<()> {

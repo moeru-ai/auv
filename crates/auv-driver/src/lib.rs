@@ -15,7 +15,7 @@ pub use geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, W
 pub use input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
   InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
-  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  Scroll, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
@@ -29,7 +29,7 @@ mod tests {
   use crate::{
     ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
     InputDeliveryPath, InputPolicy, InputPreparationLease, PrepareForInputOptions, ScreenPoint,
-    TextSubmit, TypeTextOptions, WindowClickStrategy, WindowPoint,
+    Scroll, ScrollOptions, TextSubmit, TypeTextOptions, WindowClickStrategy, WindowPoint,
     capture::{Activation, Capture, CaptureOptions, ImageView},
     display::{Display, ObservedDisplays},
     error::{DriverError, DriverResult},
@@ -82,6 +82,8 @@ mod tests {
     let _lease = InputPreparationLease::noop();
     let _attempt = InputAttempt::success(InputDeliveryPath::WindowTargetedKeyboard);
     let _result = InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard);
+    let _scroll = Scroll::new(0.0, -120.0);
+    let _scroll_options = ScrollOptions::default();
     let _ = DisturbanceLevel::None;
     let _ = ActivationPolicy::Background;
     let _ = ActivationPolicy::FocusWithoutRaise;
@@ -103,6 +105,8 @@ mod tests {
     let _ = std::any::type_name::<Rect>();
     let _ = std::any::type_name::<Size>();
     let _ = std::any::type_name::<PasteTextOptions>();
+    let _ = std::any::type_name::<Scroll>();
+    let _ = std::any::type_name::<ScrollOptions>();
     let _ = std::any::type_name::<TextSubmit>();
     let _ = std::any::type_name::<WaitOptions>();
     let _ = std::any::type_name::<AppSelector>();

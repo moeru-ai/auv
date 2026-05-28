@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use super::{
   OcrTextMatch, ScreenshotDimensions,
+  control::common::parse_input_policy,
   control::common::{ClickPointCallOptions, build_click_point_call},
   support::{
     TextMatchCommandReport, app_contains_window, assess_coordinate_readiness,
@@ -156,6 +157,36 @@ fn resolve_scroll_deltas_accepts_explicit_deltas() {
   assert_eq!(delta_x, 40.0);
   assert_eq!(delta_y, -120.0);
   assert!(summary.contains("delta_x=40"));
+}
+
+#[test]
+fn parse_input_policy_defaults_to_foreground_preferred() {
+  let call = build_call([]);
+
+  assert_eq!(
+    parse_input_policy(&call).expect("policy"),
+    auv_driver::InputPolicy::ForegroundPreferred
+  );
+}
+
+#[test]
+fn parse_input_policy_accepts_all_shared_policy_values() {
+  let cases = [
+    ("background_only", auv_driver::InputPolicy::BackgroundOnly),
+    (
+      "background-preferred",
+      auv_driver::InputPolicy::BackgroundPreferred,
+    ),
+    (
+      "foreground_preferred",
+      auv_driver::InputPolicy::ForegroundPreferred,
+    ),
+  ];
+
+  for (raw, expected) in cases {
+    let call = build_call([("policy", raw)]);
+    assert_eq!(parse_input_policy(&call).expect(raw), expected);
+  }
 }
 
 #[test]
