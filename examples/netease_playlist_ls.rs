@@ -572,25 +572,48 @@ fn run_live_scan(_inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
 #[cfg(target_os = "macos")]
 fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   let driver = MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let default_app_context = ScanAppContext {
+    app_id: Some(inputs.app_id.clone()),
+    name: None,
+    version: None,
+  };
+  let session = match driver.open_local() {
+    Ok(session) => session,
+    Err(error) => {
+      return Ok(empty_diagnostic_scan(
+        default_app_context,
+        ScanWindowContext::default(),
+        ViewRegionRecord::default(),
+        ParserDiagnostic {
+          code: "driver_open_failed".to_string(),
+          message: error.to_string(),
+          node_id: None,
+        },
+        "scan stopped before sidebar observation because the macOS driver could not be opened",
+      ));
+    }
+  };
   let app = App::bundle(inputs.app_id.clone());
-  let window = session
+  let window = match session
     .window()
     .resolve(Window::main_visible().owned_by(app))
-    .map_err(|error| error.to_string())?;
-  let capture = session
-    .window()
-    .capture(&window)
-    .map_err(|error| error.to_string())?;
+  {
+    Ok(window) => window,
+    Err(error) => {
+      return Ok(empty_diagnostic_scan(
+        default_app_context,
+        ScanWindowContext::default(),
+        ViewRegionRecord::default(),
+        ParserDiagnostic {
+          code: "target_window_not_found".to_string(),
+          message: error.to_string(),
+          node_id: None,
+        },
+        "scan stopped before sidebar observation because the target window could not be resolved",
+      ));
+    }
+  };
   let window_size = Size::new(window.frame.size.width, window.frame.size.height);
-  let full_window = RatioRect::new(0.0, 0.0, 1.0, 1.0);
-  let full_recognition = recognition_in_window_space(
-    session
-      .vision()
-      .recognize_text_in_capture(&capture, full_window)
-      .map_err(|error| error.to_string())?,
-    &capture,
-  );
   let app_context = ScanAppContext {
     app_id: window
       .app_bundle_id
@@ -609,29 +632,69 @@ fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       window.frame.size.height,
     )),
   };
+  let capture = match session.window().capture(&window) {
+    Ok(capture) => capture,
+    Err(error) => {
+      return Ok(empty_diagnostic_scan(
+        app_context,
+        window_context,
+        ViewRegionRecord::default(),
+        ParserDiagnostic {
+          code: "window_capture_failed".to_string(),
+          message: error.to_string(),
+          node_id: None,
+        },
+        "scan stopped before sidebar observation because the target window could not be captured",
+      ));
+    }
+  };
+  let full_window = RatioRect::new(0.0, 0.0, 1.0, 1.0);
+  let full_recognition = match session
+    .vision()
+    .recognize_text_in_capture(&capture, full_window)
+  {
+    Ok(recognition) => recognition_in_window_space(recognition, &capture),
+    Err(error) => {
+      return Ok(empty_diagnostic_scan(
+        app_context,
+        window_context,
+        ViewRegionRecord::default(),
+        ParserDiagnostic {
+          code: "full_window_ocr_failed".to_string(),
+          message: error.to_string(),
+          node_id: None,
+        },
+        "scan stopped before sidebar observation because full-window OCR failed",
+      ));
+    }
+  };
 
   if let Some(diagnostic) = detect_blocking_modal(&full_recognition) {
-    return Ok(PlaylistSidebarScan {
-      app: app_context,
-      window: window_context,
-      sidebar_region: ViewRegionRecord::default(),
-      observations: Vec::new(),
-      reconstruction: ViewReconstructionRecord {
-        root: empty_root(),
-        anchor_index: Vec::new(),
-        landmark_index: Vec::new(),
-      },
-      projection: PlaylistSidebarProjection::default(),
-      boundary: ScrollBoundarySummary::default(),
-      diagnostics: vec![diagnostic],
-      known_limits: vec![
-        "scan stopped before sidebar observation because a blocking modal was detected".to_string(),
-      ],
-    });
+    return Ok(empty_diagnostic_scan(
+      app_context,
+      window_context,
+      ViewRegionRecord::default(),
+      diagnostic,
+      "scan stopped before sidebar observation because a blocking modal was detected",
+    ));
   }
 
-  let sidebar_region = detect_sidebar_region(inputs.sidebar_region, window_size, &full_recognition)
-    .map_err(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message))?;
+  let sidebar_region = match detect_sidebar_region(
+    inputs.sidebar_region,
+    window_size,
+    &full_recognition,
+  ) {
+    Ok(sidebar_region) => sidebar_region,
+    Err(diagnostic) => {
+      return Ok(empty_diagnostic_scan(
+        app_context,
+        window_context,
+        ViewRegionRecord::default(),
+        diagnostic,
+        "scan stopped before sidebar observation because the sidebar region could not be detected",
+      ));
+    }
+  };
   let sidebar_bounds = sidebar_region.bounds.unwrap_or_default();
   let sidebar_ratio = bounds_to_ratio(sidebar_bounds, &capture);
   let mut observer = LiveSidebarObserver {
@@ -654,6 +717,35 @@ fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   scan.reconstruction.root.bounds = sidebar_bounds;
 
   Ok(scan)
+}
+
+fn empty_diagnostic_scan(
+  app: ScanAppContext,
+  window: ScanWindowContext,
+  sidebar_region: ViewRegionRecord,
+  diagnostic: ParserDiagnostic,
+  known_limit: &str,
+) -> PlaylistSidebarScan {
+  let mut root = empty_root();
+  if let Some(bounds) = sidebar_region.bounds {
+    root.bounds = bounds;
+  }
+
+  PlaylistSidebarScan {
+    app,
+    window,
+    sidebar_region,
+    observations: Vec::new(),
+    reconstruction: ViewReconstructionRecord {
+      root,
+      anchor_index: Vec::new(),
+      landmark_index: Vec::new(),
+    },
+    projection: PlaylistSidebarProjection::default(),
+    boundary: ScrollBoundarySummary::default(),
+    diagnostics: vec![diagnostic],
+    known_limits: vec![known_limit.to_string()],
+  }
 }
 
 fn detect_sidebar_region(
@@ -1016,6 +1108,21 @@ fn reconstruct_playlist_sidebar(
     }
   }
 
+  let has_evidence = observations
+    .iter()
+    .any(|observation| !observation.evidence_nodes.is_empty());
+  let has_candidates = observations
+    .iter()
+    .any(|observation| !observation.candidates.is_empty());
+  if has_evidence && !has_candidates && projection_sections.is_empty() {
+    diagnostics.push(ParserDiagnostic {
+      code: "parser_no_reliable_candidates".to_string(),
+      message: "OCR evidence was observed but no reliable sidebar candidates were accepted"
+        .to_string(),
+      node_id: None,
+    });
+  }
+
   let root = ViewNodeRecord {
     id: "root.sidebar".to_string(),
     kind: ViewNodeKind::Collection,
@@ -1210,7 +1317,9 @@ impl SidebarObserver for LiveSidebarObserver {
         code: "sidebar_scroll_failed".to_string(),
         message: error.to_string(),
         node_id: None,
-      })
+      })?;
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    Ok(())
   }
 }
 
@@ -1821,6 +1930,37 @@ mod tests {
         .diagnostics
         .iter()
         .any(|diagnostic| diagnostic.code == "deduplicated_item")
+    );
+  }
+
+  #[test]
+  fn reconstruct_sidebar_reports_ocr_evidence_without_reliable_candidates() {
+    // ROOT CAUSE:
+    //
+    // If OCR produced evidence but every node was rejected as an unreliable
+    // sidebar candidate, reconstruction returned a clean empty projection.
+    //
+    // Before the fix, JSON consumers could not distinguish an empty sidebar
+    // from a parser rejection. The fix keeps that boundary explicit.
+    let observation = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("搜索框占位", 8.0, 42.0, 120.0, 20.0)]),
+    );
+
+    let scan = reconstruct_playlist_sidebar(
+      ScanAppContext::default(),
+      ScanWindowContext::default(),
+      ViewRegionRecord::default(),
+      vec![observation],
+    );
+
+    assert!(scan.projection.sections.is_empty());
+    assert!(
+      scan
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == "parser_no_reliable_candidates")
     );
   }
 
