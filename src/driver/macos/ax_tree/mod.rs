@@ -2,6 +2,7 @@
 use std::thread;
 use std::time::Duration;
 
+use super::support::runtime::{activate_target_app, send_shortcut};
 use super::*;
 
 pub(crate) fn capture_ax_tree(call: &DriverCall) -> AuvResult<DriverResponse> {

@@ -1,4 +1,5 @@
 // File: src/driver/macos/control/window.rs
+use super::super::support::runtime::activate_target_app;
 use super::super::*;
 use super::common::{ClickPointCallOptions, build_click_point_call, resolve_click_interval_ms};
 use super::pointer::click_point;

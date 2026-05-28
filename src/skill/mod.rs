@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::driver::macos::{clear_stale_lock_file, describe_lock_owner};
+use crate::driver::macos::support::runtime::{clear_stale_lock_file, describe_lock_owner};
 use crate::model::{
   AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest, InvokeResult, now_millis,
 };

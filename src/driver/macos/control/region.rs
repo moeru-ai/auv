@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 
+use super::super::support::runtime::activate_target_app;
 use super::super::*;
 
 pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverResponse> {

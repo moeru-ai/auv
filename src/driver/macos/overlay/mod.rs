@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+use super::support::runtime::activate_target_app;
 use super::*;
 
 const DEFAULT_PREVIEW_MS: u64 = 250;

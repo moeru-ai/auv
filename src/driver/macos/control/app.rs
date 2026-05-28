@@ -2,6 +2,7 @@
 use std::thread;
 use std::time::Duration;
 
+use super::super::support::runtime::activate_target_app;
 use super::super::*;
 
 pub(crate) fn activate_app(call: &DriverCall) -> AuvResult<DriverResponse> {

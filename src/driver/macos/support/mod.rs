@@ -9,7 +9,7 @@ mod ocr;
 mod ocr_commands;
 mod overlay_evidence;
 mod recognition;
-mod runtime;
+pub(crate) mod runtime;
 mod scripts;
 mod typed_capture;
 
@@ -26,8 +26,8 @@ pub(crate) use auv_driver_macos::support::{
 
 #[cfg(test)]
 pub(crate) use auv_driver_macos::support::{
-  filter_windows_for_app, is_retryable_window_capture_error, parse_bool_flag, parse_f64,
-  parse_observed_ax_tree, parse_ocr_text_snapshot, parse_u32,
+  filter_windows_for_app, is_retryable_window_capture_error, parse_observed_ax_tree,
+  parse_ocr_text_snapshot,
 };
 
 pub(crate) use self::artifacts::*;
@@ -39,6 +39,5 @@ pub(crate) use self::ocr::*;
 pub(crate) use self::ocr_commands::*;
 pub(crate) use self::overlay_evidence::*;
 pub(crate) use self::recognition::*;
-pub(crate) use self::runtime::*;
 pub(crate) use self::scripts::*;
 pub(crate) use self::typed_capture::*;

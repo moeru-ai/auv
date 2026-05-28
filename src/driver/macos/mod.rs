@@ -22,7 +22,7 @@ mod descriptor;
 mod dispatch;
 mod observe;
 mod overlay;
-mod support;
+pub(crate) mod support;
 #[cfg(test)]
 mod tests;
 mod typed;

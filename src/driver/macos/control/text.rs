@@ -1,6 +1,9 @@
 // File: src/driver/macos/control/text.rs
 use auv_driver::TextSubmit;
 
+use super::super::support::runtime::{
+  paste_text_preserving_clipboard, send_key_input, type_text_via_system_events,
+};
 use super::super::*;
 use super::common::activate_app_if_needed;
 

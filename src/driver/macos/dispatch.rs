@@ -20,9 +20,9 @@ use super::overlay::{
   overlay_move_cursor_by_id, overlay_set_cursor, overlay_show_cursor, overlay_show_dual_cursor,
   overlay_shutdown,
 };
+use super::support::runtime::require_macos;
 use super::{
   Driver, DriverCall, DriverDescriptor, DriverResponse, LegacyMacosCommandDriver, descriptor,
-  require_macos,
 };
 use crate::model::AuvResult;
 
