@@ -11,7 +11,7 @@ use super::{
 };
 
 pub(crate) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
-  crate::driver::macos::native::window::enumerate_displays()
+  auv_driver_macos::native::window::enumerate_displays()
 }
 
 pub(crate) fn maybe_activate_target_app_for_observation(

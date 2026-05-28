@@ -164,15 +164,15 @@ pub(crate) fn process_is_alive(pid: u32) -> bool {
 }
 
 pub(crate) fn capture_clipboard_snapshot() -> AuvResult<String> {
-  crate::driver::macos::native::clipboard::capture_clipboard_snapshot()
+  auv_driver_macos::native::clipboard::capture_clipboard_snapshot()
 }
 
 pub(crate) fn restore_clipboard_snapshot(snapshot_payload: &str) -> AuvResult<()> {
-  crate::driver::macos::native::clipboard::restore_clipboard_snapshot(snapshot_payload)
+  auv_driver_macos::native::clipboard::restore_clipboard_snapshot(snapshot_payload)
 }
 
 pub(crate) fn set_clipboard_text(text: &str) -> AuvResult<()> {
-  crate::driver::macos::native::clipboard::set_clipboard_text(text)
+  auv_driver_macos::native::clipboard::set_clipboard_text(text)
 }
 
 pub(crate) fn type_text_via_system_events(

@@ -20,9 +20,9 @@ pub(crate) fn capture_ax_tree(call: &DriverCall) -> AuvResult<DriverResponse> {
     thread::sleep(Duration::from_millis(reveal_settle_ms));
   }
   let capture =
-    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?;
+    auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?;
   let snapshot = &capture.snapshot;
-  let report = crate::driver::macos::native::ax_tree::render_ax_tree_report(&capture);
+  let report = auv_driver_macos::native::ax_tree::render_ax_tree_report(&capture);
   let app_name = snapshot.app_name.clone();
   let bundle_id = snapshot.bundle_id.clone();
   let window_title = snapshot.window_title.clone();

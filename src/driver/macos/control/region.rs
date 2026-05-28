@@ -232,7 +232,7 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
     format!("resolved scroll point ({x:.3}, {y:.3}) is outside all connected displays")
   })?;
   let (delta_x, delta_y) = scan_scroll_delta(&direction, amount)?;
-  crate::driver::macos::native::pointer::scroll_point(x, y, delta_x, delta_y)?;
+  auv_driver_macos::native::pointer::scroll_point(x, y, delta_x, delta_y)?;
   if settle_ms > 0 {
     std::thread::sleep(std::time::Duration::from_millis(settle_ms));
   }

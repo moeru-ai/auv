@@ -78,7 +78,7 @@ pub(crate) fn run_text_match_on_capture(
   let region =
     parse_ocr_region_constraint(call, capture.dimensions.width, capture.dimensions.height)?;
   let ocr_capture = if let Some(image) = &capture.image {
-    crate::driver::macos::native::ocr::find_text_in_rgba(
+    auv_driver_macos::native::ocr::find_text_in_rgba(
       image.clone().into_raw(),
       i64::from(image.width()),
       i64::from(image.height()),
@@ -89,7 +89,7 @@ pub(crate) fn run_text_match_on_capture(
       region.as_ref(),
     )?
   } else {
-    crate::driver::macos::native::ocr::find_text(
+    auv_driver_macos::native::ocr::find_text(
       capture.screenshot_path.as_path(),
       query,
       exact,
@@ -98,7 +98,7 @@ pub(crate) fn run_text_match_on_capture(
       region.as_ref(),
     )?
   };
-  let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
+  let ocr_report = auv_driver_macos::native::ocr::render_ocr_text_report(&ocr_capture);
   let snapshot = ocr_capture.snapshot;
   let filtered = filter_ocr_matches(&snapshot.matches, min_confidence, region.as_ref())
     .into_iter()

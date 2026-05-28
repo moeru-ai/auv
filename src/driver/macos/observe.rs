@@ -14,8 +14,6 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
-#[cfg(test)]
-use super::ResolvedAppRef;
 pub(super) use super::typed::observe::{
   find_ax_text_node, ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
   render_window_list_json, render_window_snapshot_report, row_detection_signals,
@@ -28,6 +26,8 @@ use crate::contract::{
   VerificationResult,
 };
 use crate::trace::RunId;
+#[cfg(test)]
+use auv_driver_macos::types::ResolvedAppRef;
 
 const VERIFY_AX_TEXT_OPERATION_ID: &str = "verify.axText";
 const VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID: &str = "verify.musicNowPlaying";
@@ -193,7 +193,7 @@ pub(super) fn observe_windows_snapshot(
   limit: i64,
   app_filter: &str,
 ) -> AuvResult<ObservedWindowSnapshot> {
-  crate::driver::macos::native::window::observe_windows_snapshot(limit, app_filter)
+  auv_driver_macos::native::window::observe_windows_snapshot(limit, app_filter)
 }
 
 /// Exposed for unit-tests only — wraps the private impl so tests can call it
@@ -261,7 +261,7 @@ pub(super) fn verify_now_playing_title(call: &DriverCall) -> AuvResult<DriverRes
   }
 
   let snapshot =
-    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+    auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
       .snapshot;
 
   // Reserve slots up front so the OperationResult evidence list can cite the
@@ -568,7 +568,7 @@ pub(super) fn verify_ax_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   }
 
   let snapshot =
-    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+    auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
       .snapshot;
   let scope_path_prefix = scope_path_prefix
     .as_deref()
@@ -1076,7 +1076,7 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
       )?;
     let dimensions = read_png_dimensions(&screenshot_path)?;
     let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
-    let ocr_capture = crate::driver::macos::native::ocr::find_text(
+    let ocr_capture = auv_driver_macos::native::ocr::find_text(
       screenshot_path.as_path(),
       &query,
       exact,
@@ -1084,7 +1084,7 @@ pub(super) fn wait_for_screen_text(call: &DriverCall) -> AuvResult<DriverRespons
       max_observations,
       region.as_ref(),
     )?;
-    let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
+    let ocr_report = auv_driver_macos::native::ocr::render_ocr_text_report(&ocr_capture);
     let ocr_snapshot = ocr_capture.snapshot;
     let filtered_matches =
       filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref())
@@ -1543,7 +1543,7 @@ pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     ));
   }
   let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
-  let ocr_capture = crate::driver::macos::native::ocr::find_text(
+  let ocr_capture = auv_driver_macos::native::ocr::find_text(
     image_path.as_path(),
     &query,
     exact,
@@ -1551,7 +1551,7 @@ pub(super) fn find_image_text(call: &DriverCall) -> AuvResult<DriverResponse> {
     max_observations,
     region.as_ref(),
   )?;
-  let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
+  let ocr_report = auv_driver_macos::native::ocr::render_ocr_text_report(&ocr_capture);
   let ocr_snapshot = ocr_capture.snapshot;
   let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region.as_ref());
   let report_artifact = build_text_artifact(
@@ -1673,7 +1673,7 @@ pub(super) fn identify_point(call: &DriverCall) -> AuvResult<DriverResponse> {
 }
 
 pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse> {
-  let native_permissions = crate::driver::macos::native::permission::probe_native_permissions()?;
+  let native_permissions = auv_driver_macos::native::permission::probe_native_permissions()?;
   let screen_recording = native_permissions.screen_recording.to_string();
   let screen_capture_kit = native_permissions.screen_capture_kit.to_string();
   let accessibility = native_permissions.accessibility.to_string();

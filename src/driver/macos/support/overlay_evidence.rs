@@ -16,7 +16,7 @@ use serde::Serialize;
 use super::super::*;
 use crate::driver::macos::capture::types::CaptureContract;
 use crate::driver::macos::capture::xcap_backend::save_rgba_image;
-use crate::driver::macos::native::pointer::current_mouse_logical_point;
+use auv_driver_macos::native::pointer::current_mouse_logical_point;
 
 const AUV_OUTLINE: [u8; 4] = [21, 23, 26, 255];
 const AUV_BODY: [u8; 4] = [0, 196, 210, 255];

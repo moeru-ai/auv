@@ -17,22 +17,22 @@ use crate::model::{
 // selectively re-exposed here through narrow command adapters when needed.
 mod ax_tree;
 pub(crate) mod capture;
-mod constants;
 mod control;
 mod descriptor;
 mod dispatch;
-mod native;
 mod observe;
 mod overlay;
 mod support;
 #[cfg(test)]
 mod tests;
 mod typed;
-
-mod types;
-
-pub(crate) use self::constants::*;
 pub(crate) use self::support::*;
-pub(crate) use self::types::*;
+pub(crate) use auv_driver_macos::constants::*;
+pub(crate) use auv_driver_macos::types::{
+  CoordinateReadinessAssessment, DetectedScreenRows, ObservedAxNode, ObservedAxTreeSnapshot,
+  ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow, ObservedPointResolution, ObservedRect,
+  ObservedWindow, ObservedWindowSnapshot, OcrTextMatch, OcrTextSnapshot, ScreenshotDimensions,
+  WindowCandidate, WindowRef, WindowSelection,
+};
 
 pub(crate) struct LegacyMacosCommandDriver;

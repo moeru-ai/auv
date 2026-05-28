@@ -34,12 +34,12 @@ pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
   send_reveal_shortcut_if_needed(reveal_shortcut.as_deref(), reveal_settle_ms)?;
 
   let snapshot =
-    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+    auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
       .snapshot;
   let matched = find_best_ax_node(&snapshot, &query)
     .ok_or_else(|| no_matching_ax_node_error(&snapshot, &query, "text input-like"))?;
   let (center_x, center_y) = ax_node_center(matched);
-  crate::driver::macos::native::pointer::click_point(
+  auv_driver_macos::native::pointer::click_point(
     center_x,
     center_y,
     0,
@@ -122,7 +122,7 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
   send_reveal_shortcut_if_needed(reveal_shortcut.as_deref(), reveal_settle_ms)?;
 
   let capture =
-    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?;
+    auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?;
   let snapshot = &capture.snapshot;
   if capture.pid <= 0 {
     return Err(format!(
@@ -137,22 +137,22 @@ pub(crate) fn ax_focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse
   let (focus_result, overlay_outcome) = if overlay {
     let (result, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
       if preview_ms > 0 {
-        crate::driver::macos::native::overlay::pump_events(preview_ms)?;
+        auv_overlay_macos::pump_events(preview_ms)?;
       }
-      let result = crate::driver::macos::native::ax_tree::set_ax_focused_path(
+      let result = auv_driver_macos::native::ax_tree::set_ax_focused_path(
         capture.pid as i32,
         &matched.path,
         &matched.role,
       )?;
       if settle_ms > 0 {
-        crate::driver::macos::native::overlay::pump_events(settle_ms)?;
+        auv_overlay_macos::pump_events(settle_ms)?;
       }
       Ok(result)
     })?;
     (result, Some(outcome))
   } else {
     (
-      crate::driver::macos::native::ax_tree::set_ax_focused_path(
+      auv_driver_macos::native::ax_tree::set_ax_focused_path(
         capture.pid as i32,
         &matched.path,
         &matched.role,
@@ -336,7 +336,7 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   send_reveal_shortcut_if_needed(reveal_shortcut.as_deref(), reveal_settle_ms)?;
 
   let snapshot =
-    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+    auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
       .snapshot;
   if snapshot.pid <= 0 {
     return Err(format!(
@@ -351,23 +351,23 @@ pub(crate) fn ax_press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   let (press_action, overlay_outcome) = if overlay {
     let (action, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
       if preview_ms > 0 {
-        crate::driver::macos::native::overlay::pump_events(preview_ms)?;
+        auv_overlay_macos::pump_events(preview_ms)?;
       }
-      let action = crate::driver::macos::native::ax_tree::perform_ax_path_action(
+      let action = auv_driver_macos::native::ax_tree::perform_ax_path_action(
         snapshot.pid,
         &matched.path,
         &matched.role,
         &action_name,
       )?;
       if settle_ms > 0 {
-        crate::driver::macos::native::overlay::pump_events(settle_ms)?;
+        auv_overlay_macos::pump_events(settle_ms)?;
       }
       Ok(action)
     })?;
     (action, Some(outcome))
   } else {
     (
-      crate::driver::macos::native::ax_tree::perform_ax_path_action(
+      auv_driver_macos::native::ax_tree::perform_ax_path_action(
         snapshot.pid,
         &matched.path,
         &matched.role,
@@ -535,12 +535,12 @@ pub(crate) fn press_button(call: &DriverCall) -> AuvResult<DriverResponse> {
   send_reveal_shortcut_if_needed(reveal_shortcut.as_deref(), reveal_settle_ms)?;
 
   let snapshot =
-    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
+    auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?
       .snapshot;
   let matched = find_best_ax_node(&snapshot, &query)
     .ok_or_else(|| no_matching_ax_node_error(&snapshot, &query, "button-like"))?;
   let (center_x, center_y) = ax_node_center(matched);
-  crate::driver::macos::native::pointer::click_point(
+  auv_driver_macos::native::pointer::click_point(
     center_x,
     center_y,
     0,
@@ -640,7 +640,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
   // 2. Observe AX tree and resolve the pressable node under the OCR anchor.
   // Activation already happened inside capture_resolved_window_observation.
   let ax_capture =
-    crate::driver::macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?;
+    auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&app, max_depth, max_children)?;
   let ax_snapshot = &ax_capture.snapshot;
   if ax_capture.pid <= 0 {
     return Err(format!(
@@ -660,23 +660,23 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
   let (press_action, overlay_outcome) = if overlay {
     let (action, outcome) = with_overlay_cursor(center_x, center_y, &overlay_label, || {
       if preview_ms > 0 {
-        crate::driver::macos::native::overlay::pump_events(preview_ms)?;
+        auv_overlay_macos::pump_events(preview_ms)?;
       }
-      let action = crate::driver::macos::native::ax_tree::perform_ax_path_action(
+      let action = auv_driver_macos::native::ax_tree::perform_ax_path_action(
         ax_capture.pid as i32,
         &ax_node.path,
         &ax_node.role,
         &action_name,
       )?;
       if settle_ms > 0 {
-        crate::driver::macos::native::overlay::pump_events(settle_ms)?;
+        auv_overlay_macos::pump_events(settle_ms)?;
       }
       Ok(action)
     })?;
     (action, Some(outcome))
   } else {
     (
-      crate::driver::macos::native::ax_tree::perform_ax_path_action(
+      auv_driver_macos::native::ax_tree::perform_ax_path_action(
         ax_capture.pid as i32,
         &ax_node.path,
         &ax_node.role,

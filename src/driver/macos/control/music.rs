@@ -894,7 +894,7 @@ fn check_music_candidate_liveness(
       .map_err(|error| {
         format!("candidate {candidate_local_id} liveness failed: window capture failed: {error}")
       })?;
-    let ocr_result = crate::driver::macos::native::ocr::find_text(
+    let ocr_result = auv_driver_macos::native::ocr::find_text(
       &capture.screenshot_path,
       &anchor_recheck.text,
       false,

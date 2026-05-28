@@ -45,11 +45,11 @@ pub(crate) fn overlay_show_cursor(call: &DriverCall) -> AuvResult<DriverResponse
   let label =
     optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · replay".to_string());
   let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
-  crate::driver::macos::native::overlay::show_cursor(x, y, &label)?;
+  auv_overlay_macos::show_cursor(x, y, &label)?;
   let controller_pid = std::process::id();
 
   if hold_ms > 0 {
-    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+    auv_overlay_macos::pump_events(hold_ms)?;
   }
 
   let report = overlay_report([
@@ -102,11 +102,11 @@ pub(crate) fn overlay_show_dual_cursor(call: &DriverCall) -> AuvResult<DriverRes
   let user_label =
     optional_non_empty_string(call, "user_label").unwrap_or_else(|| "you".to_string());
   let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
-  crate::driver::macos::native::overlay::show_dual_cursor(x, y, &label, &user_label)?;
+  auv_overlay_macos::show_dual_cursor(x, y, &label, &user_label)?;
   let controller_pid = std::process::id();
 
   if hold_ms > 0 {
-    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+    auv_overlay_macos::pump_events(hold_ms)?;
   }
 
   let report = overlay_report([
@@ -196,7 +196,7 @@ pub(crate) fn overlay_apply_cursor_batch(call: &DriverCall) -> AuvResult<DriverR
         let label = batch_label(op, &cursor_id, &variant);
         let x = required_batch_f64(op.x, index, "x")?;
         let y = required_batch_f64(op.y, index, "y")?;
-        crate::driver::macos::native::overlay::set_cursor(&cursor_id, x, y, &label, &variant)?;
+        auv_overlay_macos::set_cursor(&cursor_id, x, y, &label, &variant)?;
         pump_batch_hold(op)?;
         touched_cursor_ids.push(cursor_id.clone());
         report_lines.push(format!(
@@ -210,14 +210,7 @@ pub(crate) fn overlay_apply_cursor_batch(call: &DriverCall) -> AuvResult<DriverR
         let x = required_batch_f64(op.x, index, "x")?;
         let y = required_batch_f64(op.y, index, "y")?;
         let duration_ms = op.duration_ms.unwrap_or(DEFAULT_MOVE_MS);
-        crate::driver::macos::native::overlay::move_cursor(
-          &cursor_id,
-          x,
-          y,
-          &label,
-          &variant,
-          duration_ms,
-        )?;
+        auv_overlay_macos::move_cursor(&cursor_id, x, y, &label, &variant, duration_ms)?;
         pump_batch_hold(op)?;
         touched_cursor_ids.push(cursor_id.clone());
         report_lines.push(format!(
@@ -236,13 +229,7 @@ pub(crate) fn overlay_apply_cursor_batch(call: &DriverCall) -> AuvResult<DriverR
         let x = required_batch_f64(op.x, index, "x")?;
         let y = required_batch_f64(op.y, index, "y")?;
         let duration_ms = op.duration_ms.unwrap_or(DEFAULT_FLASH_MS);
-        crate::driver::macos::native::overlay::flash_cursor_id(
-          &cursor_id,
-          x,
-          y,
-          &label,
-          duration_ms,
-        )?;
+        auv_overlay_macos::flash_cursor_id(&cursor_id, x, y, &label, duration_ms)?;
         pump_batch_hold(op)?;
         touched_cursor_ids.push(cursor_id.clone());
         report_lines.push(format!(
@@ -251,13 +238,13 @@ pub(crate) fn overlay_apply_cursor_batch(call: &DriverCall) -> AuvResult<DriverR
       }
       "hide" => {
         let cursor_id = batch_cursor_id(op);
-        crate::driver::macos::native::overlay::hide_cursor_id(&cursor_id)?;
+        auv_overlay_macos::hide_cursor_id(&cursor_id)?;
         pump_batch_hold(op)?;
         touched_cursor_ids.push(cursor_id.clone());
         report_lines.push(format!("op[{index}]=hide cursorId={cursor_id}"));
       }
       "hide_all" => {
-        crate::driver::macos::native::overlay::hide_cursor()?;
+        auv_overlay_macos::hide_cursor()?;
         pump_batch_hold(op)?;
         report_lines.push(format!("op[{index}]=hide_all"));
       }
@@ -320,11 +307,11 @@ pub(crate) fn overlay_set_cursor(call: &DriverCall) -> AuvResult<DriverResponse>
   let label = optional_non_empty_string(call, "label")
     .unwrap_or_else(|| default_cursor_label(&cursor_id, &variant));
   let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
-  crate::driver::macos::native::overlay::set_cursor(&cursor_id, x, y, &label, &variant)?;
+  auv_overlay_macos::set_cursor(&cursor_id, x, y, &label, &variant)?;
   let controller_pid = std::process::id();
 
   if hold_ms > 0 {
-    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+    auv_overlay_macos::pump_events(hold_ms)?;
   }
 
   let report = overlay_report([
@@ -382,18 +369,11 @@ pub(crate) fn overlay_move_cursor_by_id(call: &DriverCall) -> AuvResult<DriverRe
     .unwrap_or_else(|| default_cursor_label(&cursor_id, &variant));
   let duration_ms = optional_positive_u64(call, "duration_ms")?.unwrap_or(DEFAULT_MOVE_MS);
   let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
-  crate::driver::macos::native::overlay::move_cursor(
-    &cursor_id,
-    x,
-    y,
-    &label,
-    &variant,
-    duration_ms,
-  )?;
+  auv_overlay_macos::move_cursor(&cursor_id, x, y, &label, &variant, duration_ms)?;
   let controller_pid = std::process::id();
 
   if hold_ms > 0 {
-    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+    auv_overlay_macos::pump_events(hold_ms)?;
   }
 
   let report = overlay_report([
@@ -457,11 +437,11 @@ pub(crate) fn overlay_move_cursor(call: &DriverCall) -> AuvResult<DriverResponse
     optional_non_empty_string(call, "user_label").unwrap_or_else(|| "you".to_string());
   let duration_ms = optional_positive_u64(call, "duration_ms")?.unwrap_or(DEFAULT_MOVE_MS);
   let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
-  crate::driver::macos::native::overlay::move_dual_cursor(x, y, &label, &user_label, duration_ms)?;
+  auv_overlay_macos::move_dual_cursor(x, y, &label, &user_label, duration_ms)?;
   let controller_pid = std::process::id();
 
   if hold_ms > 0 {
-    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+    auv_overlay_macos::pump_events(hold_ms)?;
   }
 
   let report = overlay_report([
@@ -531,11 +511,11 @@ pub(crate) fn overlay_flash_cursor_by_id(call: &DriverCall) -> AuvResult<DriverR
   let label = optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · click".to_string());
   let duration_ms = optional_positive_u64(call, "duration_ms")?.unwrap_or(DEFAULT_FLASH_MS);
   let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
-  crate::driver::macos::native::overlay::flash_cursor_id(&cursor_id, x, y, &label, duration_ms)?;
+  auv_overlay_macos::flash_cursor_id(&cursor_id, x, y, &label, duration_ms)?;
   let controller_pid = std::process::id();
 
   if hold_ms > 0 {
-    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+    auv_overlay_macos::pump_events(hold_ms)?;
   }
 
   let report = overlay_report([
@@ -594,11 +574,11 @@ pub(crate) fn overlay_flash_cursor(call: &DriverCall) -> AuvResult<DriverRespons
   let label = optional_non_empty_string(call, "label").unwrap_or_else(|| "auv · click".to_string());
   let duration_ms = optional_positive_u64(call, "duration_ms")?.unwrap_or(DEFAULT_FLASH_MS);
   let hold_ms = optional_positive_u64(call, "hold_ms")?.unwrap_or(0);
-  crate::driver::macos::native::overlay::flash_cursor(x, y, &label, duration_ms)?;
+  auv_overlay_macos::flash_cursor(x, y, &label, duration_ms)?;
   let controller_pid = std::process::id();
 
   if hold_ms > 0 {
-    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+    auv_overlay_macos::pump_events(hold_ms)?;
   }
 
   let report = overlay_report([
@@ -654,7 +634,7 @@ pub(crate) fn overlay_flash_cursor(call: &DriverCall) -> AuvResult<DriverRespons
 
 pub(crate) fn overlay_hide_cursor_id(call: &DriverCall) -> AuvResult<DriverResponse> {
   let cursor_id = optional_non_empty_string(call, "cursor_id").unwrap_or_else(|| "auv".to_string());
-  crate::driver::macos::native::overlay::hide_cursor_id(&cursor_id)?;
+  auv_overlay_macos::hide_cursor_id(&cursor_id)?;
   let controller_pid = std::process::id();
   let report = overlay_report([
     ("operation", "hide_cursor_id".to_string()),
@@ -694,7 +674,7 @@ pub(crate) fn overlay_hide_cursor_id(call: &DriverCall) -> AuvResult<DriverRespo
 }
 
 pub(crate) fn overlay_hide_cursor(_call: &DriverCall) -> AuvResult<DriverResponse> {
-  crate::driver::macos::native::overlay::hide_cursor()?;
+  auv_overlay_macos::hide_cursor()?;
   let controller_pid = std::process::id();
   let report = overlay_report([
     ("operation", "hide_cursor".to_string()),
@@ -755,17 +735,17 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
   }
 
   // 1. Animate AUV overlay cursor from the current hardware cursor toward the target.
-  crate::driver::macos::native::overlay::move_dual_cursor(x, y, &label, "you", move_ms)?;
+  auv_overlay_macos::move_dual_cursor(x, y, &label, "you", move_ms)?;
   let controller_pid = std::process::id();
   let show_event = "moved".to_string();
 
   // 2. Hold overlay for preview visibility before the click.
   if preview_ms > 0 {
-    crate::driver::macos::native::overlay::pump_events(preview_ms)?;
+    auv_overlay_macos::pump_events(preview_ms)?;
   }
 
   // 3. Click. Native pointer bridge handles warp-to-target + CGEvent + warp-restore internally.
-  let click_result = crate::driver::macos::native::pointer::click_point(
+  let click_result = auv_driver_macos::native::pointer::click_point(
     x,
     y,
     button_code,
@@ -773,18 +753,17 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
     click_interval_ms,
   );
 
-  let flash_result = crate::driver::macos::native::overlay::flash_cursor(x, y, &label, flash_ms);
+  let flash_result = auv_overlay_macos::flash_cursor(x, y, &label, flash_ms);
 
   if settle_ms > 0 {
-    crate::driver::macos::native::overlay::pump_events(settle_ms)?;
+    auv_overlay_macos::pump_events(settle_ms)?;
   }
 
   // 4. Hide overlay cursor regardless of click success.
-  let hide_event =
-    match crate::driver::macos::native::overlay::hide_cursor().map(|_| "hidden".to_string()) {
-      Ok(event) => event,
-      Err(_) => "hide_failed".to_string(),
-    };
+  let hide_event = match auv_overlay_macos::hide_cursor().map(|_| "hidden".to_string()) {
+    Ok(event) => event,
+    Err(_) => "hide_failed".to_string(),
+  };
 
   // Propagate click errors after overlay cleanup.
   click_result?;
@@ -875,7 +854,7 @@ pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse
 }
 
 pub(crate) fn overlay_shutdown(_call: &DriverCall) -> AuvResult<DriverResponse> {
-  crate::driver::macos::native::overlay::shutdown()?;
+  auv_overlay_macos::shutdown()?;
   let controller_pid = std::process::id();
 
   Ok(DriverResponse {
@@ -914,19 +893,18 @@ pub(crate) fn with_overlay_cursor<R, F>(
 where
   F: FnOnce() -> AuvResult<R>,
 {
-  crate::driver::macos::native::overlay::move_dual_cursor(x, y, label, "you", DEFAULT_MOVE_MS)?;
+  auv_overlay_macos::move_dual_cursor(x, y, label, "you", DEFAULT_MOVE_MS)?;
   let show_event = "moved".to_string();
   let controller_pid = std::process::id();
 
   let body_result = body();
 
-  let _ = crate::driver::macos::native::overlay::flash_cursor(x, y, label, DEFAULT_FLASH_MS);
+  let _ = auv_overlay_macos::flash_cursor(x, y, label, DEFAULT_FLASH_MS);
 
-  let hide_event =
-    match crate::driver::macos::native::overlay::hide_cursor().map(|_| "hidden".to_string()) {
-      Ok(event) => event,
-      Err(_) => "hide_failed".to_string(),
-    };
+  let hide_event = match auv_overlay_macos::hide_cursor().map(|_| "hidden".to_string()) {
+    Ok(event) => event,
+    Err(_) => "hide_failed".to_string(),
+  };
 
   let outcome = OverlayWrapperOutcome {
     show_event,
@@ -1045,7 +1023,7 @@ fn pump_batch_hold(op: &OverlayBatchOp) -> AuvResult<()> {
   if let Some(hold_ms) = op.hold_ms
     && hold_ms > 0
   {
-    crate::driver::macos::native::overlay::pump_events(hold_ms)?;
+    auv_overlay_macos::pump_events(hold_ms)?;
   }
   Ok(())
 }

@@ -194,7 +194,7 @@ pub(crate) fn detect_screen_rows(
   max_observations: i64,
   region: Option<&ObservedRect>,
 ) -> AuvResult<DetectedScreenRows> {
-  let ocr_capture = crate::driver::macos::native::ocr::find_text(
+  let ocr_capture = auv_driver_macos::native::ocr::find_text(
     image_path,
     "",
     false,
@@ -202,12 +202,12 @@ pub(crate) fn detect_screen_rows(
     max_observations,
     region,
   )?;
-  let ocr_report = crate::driver::macos::native::ocr::render_ocr_text_report(&ocr_capture);
+  let ocr_report = auv_driver_macos::native::ocr::render_ocr_text_report(&ocr_capture);
   let ocr_snapshot = ocr_capture.snapshot;
   let filtered_matches = filter_ocr_matches(&ocr_snapshot.matches, min_confidence, region);
   let ocr_rows = group_ocr_matches_into_rows(&filtered_matches);
 
-  let mut visual_detection = crate::driver::macos::native::ocr::find_rows(image_path, region)?.rows;
+  let mut visual_detection = auv_driver_macos::native::ocr::find_rows(image_path, region)?.rows;
   if visual_detection.rows.is_empty() && !ocr_rows.is_empty() {
     return Ok(DetectedScreenRows {
       strategy: "ocr-text".to_string(),
@@ -251,7 +251,7 @@ pub(crate) fn ocr_text_fragments_in_image(
   min_confidence: f64,
   max_observations: i64,
 ) -> AuvResult<Vec<String>> {
-  let capture = crate::driver::macos::native::ocr::find_text(
+  let capture = auv_driver_macos::native::ocr::find_text(
     image_path,
     "",
     false,
@@ -366,7 +366,7 @@ fn attach_row_crop_ocr_fragments(
       continue;
     }
     let row_region = expand_rect(&row.bounds, 12, 8, image_width, image_height);
-    let row_capture = crate::driver::macos::native::ocr::find_text(
+    let row_capture = auv_driver_macos::native::ocr::find_text(
       image_path,
       "",
       false,

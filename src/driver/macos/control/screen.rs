@@ -49,7 +49,7 @@ pub(crate) fn click_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     ));
   }
   let region = parse_ocr_region_constraint(call, dimensions.width, dimensions.height)?;
-  let ocr_capture = crate::driver::macos::native::ocr::find_text(
+  let ocr_capture = auv_driver_macos::native::ocr::find_text(
     screenshot_path.as_path(),
     &query,
     exact,
