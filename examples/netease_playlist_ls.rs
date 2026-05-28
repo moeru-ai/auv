@@ -3,6 +3,15 @@ use std::path::PathBuf;
 use auv_driver::vision::TextRecognition;
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "macos")]
+use auv_driver::capture::Capture;
+#[cfg(target_os = "macos")]
+use auv_driver::selector::{App, Window};
+#[cfg(target_os = "macos")]
+use auv_driver::{Driver, RatioRect, Size};
+#[cfg(target_os = "macos")]
+use auv_driver_macos::{MacosDriver, MacosDriverSession};
+
 const DEFAULT_APP_ID: &str = "com.netease.163music";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -343,8 +352,22 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-  let _inputs = parse_inputs(std::env::args().skip(1).collect())?;
-  Err("live implementation is added in later tasks".to_string())
+  let inputs = parse_inputs(std::env::args().skip(1).collect())?;
+  let scan = run_live_scan(&inputs)?;
+  let json = serde_json::to_string_pretty(&scan).map_err(|error| error.to_string())?;
+
+  if let Some(path) = &inputs.json_out {
+    std::fs::write(path, &json)
+      .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+  }
+
+  if inputs.print_json {
+    println!("{json}");
+  } else {
+    println!("{}", render_human_summary(&scan));
+  }
+
+  Ok(())
 }
 
 fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
@@ -444,6 +467,193 @@ fn parse_ratio_region(value: String) -> Result<RatioRegion, String> {
   }
 
   Ok(RatioRegion::new(parts[0], parts[1], parts[2], parts[3]))
+}
+
+fn render_human_summary(scan: &PlaylistSidebarScan) -> String {
+  let mut lines = Vec::new();
+  lines.push("NetEase playlist sidebar scan".to_string());
+  lines.push(format!(
+    "app: id={} name={} version={}",
+    optional(scan.app.app_id.as_deref()),
+    optional(scan.app.name.as_deref()),
+    optional(scan.app.version.as_deref())
+  ));
+  lines.push(format!(
+    "window: id={} title={} bounds={}",
+    optional(scan.window.id.as_deref()),
+    optional(scan.window.title.as_deref()),
+    render_optional_bounds(scan.window.bounds)
+  ));
+  lines.push(format!(
+    "sidebar_region: name={} bounds={}",
+    optional(scan.sidebar_region.name.as_deref()),
+    render_optional_bounds(scan.sidebar_region.bounds)
+  ));
+  lines.push(format!(
+    "boundary: top={:?} bottom={:?} left={:?} right={:?}",
+    scan.boundary.top, scan.boundary.bottom, scan.boundary.left, scan.boundary.right
+  ));
+  lines.push(format!("observations: {}", scan.observations.len()));
+  lines.push("sections:".to_string());
+  if scan.projection.sections.is_empty() {
+    lines.push("  (none)".to_string());
+  } else {
+    for section in &scan.projection.sections {
+      lines.push(format!(
+        "  - {} [{:?}]",
+        optional(section.label.as_deref()),
+        section.kind
+      ));
+      if section.items.is_empty() {
+        lines.push("    (no items)".to_string());
+      } else {
+        for item in &section.items {
+          lines.push(format!(
+            "    - {} confidence={:?} anchor={}",
+            item.label,
+            item.confidence,
+            optional(item.anchor_id.as_deref())
+          ));
+        }
+      }
+    }
+  }
+  lines.push("diagnostics:".to_string());
+  if scan.diagnostics.is_empty() {
+    lines.push("  (none)".to_string());
+  } else {
+    for diagnostic in &scan.diagnostics {
+      lines.push(format!(
+        "  - {}: {}{}",
+        diagnostic.code,
+        diagnostic.message,
+        diagnostic
+          .node_id
+          .as_deref()
+          .map(|node_id| format!(" node={node_id}"))
+          .unwrap_or_default()
+      ));
+    }
+  }
+  lines.push("known_limits:".to_string());
+  if scan.known_limits.is_empty() {
+    lines.push("  (none)".to_string());
+  } else {
+    for limit in &scan.known_limits {
+      lines.push(format!("  - {limit}"));
+    }
+  }
+
+  lines.join("\n")
+}
+
+fn optional(value: Option<&str>) -> &str {
+  value
+    .filter(|value| !value.trim().is_empty())
+    .unwrap_or("-")
+}
+
+fn render_optional_bounds(bounds: Option<ViewBounds>) -> String {
+  bounds
+    .map(|bounds| {
+      format!(
+        "x={:.1},y={:.1},w={:.1},h={:.1}",
+        bounds.x, bounds.y, bounds.width, bounds.height
+      )
+    })
+    .unwrap_or_else(|| "-".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn run_live_scan(_inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
+  Err("live NetEase playlist sidebar scan is only supported on macOS".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
+  let driver = MacosDriver::new();
+  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let app = App::bundle(inputs.app_id.clone());
+  let window = session
+    .window()
+    .resolve(Window::main_visible().owned_by(app))
+    .map_err(|error| error.to_string())?;
+  let capture = session
+    .window()
+    .capture(&window)
+    .map_err(|error| error.to_string())?;
+  let window_size = Size::new(window.frame.size.width, window.frame.size.height);
+  let full_window = RatioRect::new(0.0, 0.0, 1.0, 1.0);
+  let full_recognition = recognition_in_window_space(
+    session
+      .vision()
+      .recognize_text_in_capture(&capture, full_window)
+      .map_err(|error| error.to_string())?,
+    &capture,
+  );
+  let app_context = ScanAppContext {
+    app_id: window
+      .app_bundle_id
+      .clone()
+      .or_else(|| Some(inputs.app_id.clone())),
+    name: window.app_name.clone(),
+    version: None,
+  };
+  let window_context = ScanWindowContext {
+    id: Some(window.reference.id.clone()),
+    title: window.title.clone(),
+    bounds: Some(ViewBounds::new(
+      0.0,
+      0.0,
+      window.frame.size.width,
+      window.frame.size.height,
+    )),
+  };
+
+  if let Some(diagnostic) = detect_blocking_modal(&full_recognition) {
+    return Ok(PlaylistSidebarScan {
+      app: app_context,
+      window: window_context,
+      sidebar_region: ViewRegionRecord::default(),
+      observations: Vec::new(),
+      reconstruction: ViewReconstructionRecord {
+        root: empty_root(),
+        anchor_index: Vec::new(),
+        landmark_index: Vec::new(),
+      },
+      projection: PlaylistSidebarProjection::default(),
+      boundary: ScrollBoundarySummary::default(),
+      diagnostics: vec![diagnostic],
+      known_limits: vec![
+        "scan stopped before sidebar observation because a blocking modal was detected".to_string(),
+      ],
+    });
+  }
+
+  let sidebar_region = detect_sidebar_region(inputs.sidebar_region, window_size, &full_recognition)
+    .map_err(|diagnostic| format!("{}: {}", diagnostic.code, diagnostic.message))?;
+  let sidebar_bounds = sidebar_region.bounds.unwrap_or_default();
+  let sidebar_ratio = bounds_to_ratio(sidebar_bounds, &capture);
+  let mut observer = LiveSidebarObserver {
+    session,
+    window: window.clone(),
+    sidebar_bounds,
+    sidebar_ratio,
+    scroll_amount: inputs.scroll_amount,
+  };
+  let mut scan = scan_sidebar_with_observer(
+    &mut observer,
+    ScanOptions {
+      max_pages: inputs.max_pages,
+      max_scrolls: inputs.max_scrolls,
+    },
+  );
+  scan.app = app_context;
+  scan.window = window_context;
+  scan.sidebar_region = sidebar_region;
+  scan.reconstruction.root.bounds = sidebar_bounds;
+
+  Ok(scan)
 }
 
 fn detect_sidebar_region(
@@ -917,6 +1127,117 @@ fn scan_sidebar_with_observer(
   scan
 }
 
+fn empty_root() -> ViewNodeRecord {
+  ViewNodeRecord {
+    id: "root.sidebar".to_string(),
+    kind: ViewNodeKind::Collection,
+    domain_kind: Some("netease.sidebar_playlist_collection".to_string()),
+    layout: Some(ViewLayout::VStack),
+    label: None,
+    bounds: ViewBounds::default(),
+    scrollable: Some(ViewScrollable {
+      axis: ViewAxis::Vertical,
+      boundary: ScrollBoundarySummary::default(),
+    }),
+    anchors: Vec::new(),
+    landmarks: Vec::new(),
+    actions: vec![ViewAction::Scroll],
+    evidence: Vec::new(),
+    children: Vec::new(),
+  }
+}
+
+#[cfg(target_os = "macos")]
+struct LiveSidebarObserver {
+  session: MacosDriverSession,
+  window: auv_driver::Window,
+  sidebar_bounds: ViewBounds,
+  sidebar_ratio: RatioRect,
+  scroll_amount: f64,
+}
+
+#[cfg(target_os = "macos")]
+impl SidebarObserver for LiveSidebarObserver {
+  fn observe(
+    &mut self,
+    observation_index: usize,
+  ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+    let capture = self
+      .session
+      .window()
+      .capture(&self.window)
+      .map_err(|error| ParserDiagnostic {
+        code: "window_capture_failed".to_string(),
+        message: error.to_string(),
+        node_id: None,
+      })?;
+    let recognition = self
+      .session
+      .vision()
+      .recognize_text_in_capture(&capture, self.sidebar_ratio)
+      .map_err(|error| ParserDiagnostic {
+        code: "sidebar_ocr_failed".to_string(),
+        message: error.to_string(),
+        node_id: None,
+      })?;
+
+    Ok(parse_sidebar_viewport(
+      observation_index,
+      self.sidebar_bounds,
+      &recognition_in_window_space(recognition, &capture),
+    ))
+  }
+
+  fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
+    let screen_point = self
+      .session
+      .window()
+      .to_screen_point(
+        &self.window,
+        auv_driver::WindowPoint::new(
+          self.sidebar_bounds.x + self.sidebar_bounds.width / 2.0,
+          self.sidebar_bounds.y + self.sidebar_bounds.height / 2.0,
+        ),
+      )
+      .map_err(|error| ParserDiagnostic {
+        code: "sidebar_scroll_point_failed".to_string(),
+        message: error.to_string(),
+        node_id: None,
+      })?;
+    let point = screen_point.point();
+    auv_driver_macos::native::pointer::scroll_point(point.x, point.y, 0.0, -self.scroll_amount)
+      .map_err(|error| ParserDiagnostic {
+        code: "sidebar_scroll_failed".to_string(),
+        message: error.to_string(),
+        node_id: None,
+      })
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn recognition_in_window_space(
+  mut recognition: TextRecognition,
+  capture: &Capture,
+) -> TextRecognition {
+  for region in &mut recognition.regions {
+    region.bounds.origin.x -= capture.bounds.origin.x;
+    region.bounds.origin.y -= capture.bounds.origin.y;
+  }
+  recognition
+}
+
+#[cfg(target_os = "macos")]
+fn bounds_to_ratio(bounds: ViewBounds, capture: &Capture) -> RatioRect {
+  let width = capture.bounds.size.width.max(1.0);
+  let height = capture.bounds.size.height.max(1.0);
+  RatioRect::new(
+    bounds.x / width,
+    bounds.y / height,
+    bounds.width / width,
+    bounds.height / height,
+  )
+}
+
 fn section_node(
   id: &str,
   kind: SidebarSectionKind,
@@ -1056,6 +1377,7 @@ fn domain_kind_for_section(kind: SidebarSectionKind) -> String {
   .to_string()
 }
 
+#[cfg(test)]
 fn sample_reconstruction() -> ViewReconstructionRecord {
   let anchor = ViewAnchor {
     id: "anchor.coding".to_string(),
@@ -1264,6 +1586,38 @@ mod tests {
     assert!(json.contains("\"reconstruction\""));
     assert!(json.contains("\"projection\""));
     assert!(json.contains("Coding BGM"));
+  }
+
+  #[test]
+  fn render_human_summary_groups_items_by_section() {
+    let observation = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+      ]),
+    );
+    let scan = reconstruct_playlist_sidebar(
+      ScanAppContext {
+        app_id: Some(DEFAULT_APP_ID.to_string()),
+        name: Some("网易云音乐".to_string()),
+        version: None,
+      },
+      ScanWindowContext {
+        id: Some("window.1".to_string()),
+        title: Some("网易云音乐".to_string()),
+        bounds: Some(ViewBounds::new(0.0, 0.0, 800.0, 600.0)),
+      },
+      sidebar_region_record(ViewBounds::new(0.0, 0.0, 240.0, 600.0)),
+      vec![observation],
+    );
+
+    let rendered = render_human_summary(&scan);
+
+    assert!(rendered.contains("创建的歌单"));
+    assert!(rendered.contains("Coding BGM"));
+    assert!(rendered.contains("boundary"));
   }
 
   #[test]
