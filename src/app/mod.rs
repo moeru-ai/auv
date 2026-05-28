@@ -1771,6 +1771,162 @@ mod tests {
   }
 
   #[test]
+  fn row_surface_candidates_stay_context_only_in_distilled_shape() {
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec![],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "visible-row-1".to_string(),
+        area: "result-selection".to_string(),
+        kind: "row".to_string(),
+        source: "ocr-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "AURORA | Playlist".to_string(),
+        secondary_text: "rowIndex=1".to_string(),
+        query_value: "1".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 10,
+          y: 20,
+          width: 120,
+          height: 24,
+        }),
+        click_point: Some(AppPoint { x: 70, y: 32 }),
+        confidence: None,
+        evidence_step_id: "ocr-sample".to_string(),
+        candidate_query: Some(CandidateQuery {
+          query_id: "visible-row-1".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Row {
+              row_index: Some(1),
+              contains_text: Some("AURORA".to_string()),
+              region_hint: None,
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("row".to_string()),
+          known_limits: vec!["row only".to_string()],
+        }),
+        evidence_refs: Vec::new(),
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::Blocked,
+          missing_gates: vec![
+            "row_action_contract".to_string(),
+            "semantic_verification_contract".to_string(),
+          ],
+          notes: vec!["row candidate stays structural".to_string()],
+        }),
+        input_bindings: BTreeMap::from([("row_index".to_string(), "1".to_string())]),
+        compatibility: candidate_compatibility(
+          &[],
+          &["result-selection.ocr-anchor.pointer-click.capture-evidence"],
+        ),
+        notes: vec!["sample row candidate".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![AppRecommendedStrategy {
+        taxonomy_id: "result-selection.ocr-anchor.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "row candidates stay review-only until a row action exists".to_string(),
+      }],
+    };
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "result-selection.ocr-anchor.pointer-click.capture-evidence",
+    );
+
+    assert!(candidate_shape.direct_candidate_ids.is_empty());
+    assert_eq!(
+      candidate_shape.context_candidate_ids,
+      vec!["visible-row-1".to_string()]
+    );
+    assert!(candidate_shape.provided_inputs.is_empty());
+    assert!(
+      candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("No direct candidate shape was available"))
+    );
+    assert!(
+      candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("Context-only candidates were recorded"))
+    );
+  }
+
+  #[test]
   fn result_selection_grounding_ignores_row_only_candidates() {
     let analysis = AppAnalysis {
       analysis_version: APP_ANALYSIS_VERSION.to_string(),
