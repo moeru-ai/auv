@@ -3071,6 +3071,24 @@ mod tests {
     assert!(error.contains("test.recorded.skill"));
     assert!(error.contains("focus_query"));
 
+    let validation: AppValidation =
+      read_json(&root.join("validation.json")).expect("validation output should still write");
+    assert_eq!(
+      validation.candidates[0].status,
+      AppValidationStatus::Rejected
+    );
+    assert!(validation.candidates[0].used_annotation_ids.is_empty());
+    assert_eq!(
+      validation.candidates[0].unresolved_inputs,
+      vec!["focus_query".to_string()]
+    );
+    assert!(
+      validation.candidates[0]
+        .failure_message
+        .as_deref()
+        .is_some_and(|message| message.contains("grounding left unresolved inputs"))
+    );
+
     let _ = fs::remove_dir_all(root);
   }
 
