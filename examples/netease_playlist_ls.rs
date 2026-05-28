@@ -16,6 +16,12 @@ struct Inputs {
   print_json: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ScanOptions {
+  max_pages: usize,
+  max_scrolls: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct RatioRegion {
   x: f64,
@@ -57,6 +63,7 @@ struct ScanAppContext {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct ScanWindowContext {
+  id: Option<String>,
   title: Option<String>,
   bounds: Option<ViewBounds>,
 }
@@ -299,6 +306,14 @@ struct ParserDiagnostic {
   code: String,
   message: String,
   node_id: Option<String>,
+}
+
+trait SidebarObserver {
+  fn observe(
+    &mut self,
+    observation_index: usize,
+  ) -> Result<SidebarViewportObservation, ParserDiagnostic>;
+  fn scroll_down(&mut self) -> Result<(), ParserDiagnostic>;
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -830,6 +845,76 @@ fn reconstruct_playlist_sidebar(
     diagnostics,
     known_limits: Vec::new(),
   }
+}
+
+fn scan_sidebar_with_observer(
+  observer: &mut impl SidebarObserver,
+  options: ScanOptions,
+) -> PlaylistSidebarScan {
+  let mut observations = Vec::new();
+  let mut diagnostics = Vec::new();
+  let mut known_limits = Vec::new();
+  let mut previous_fingerprint = None;
+  let mut scrolls = 0;
+
+  loop {
+    if observations.len() >= options.max_pages {
+      known_limits.push(format!("stopped after max_pages={}", options.max_pages));
+      break;
+    }
+
+    let observation_index = observations.len();
+    let observation = match observer.observe(observation_index) {
+      Ok(observation) => observation,
+      Err(diagnostic) => {
+        diagnostics.push(diagnostic);
+        break;
+      }
+    };
+    let repeated_fingerprint = previous_fingerprint
+      .as_deref()
+      .is_some_and(|fingerprint| fingerprint == observation.viewport_fingerprint);
+    previous_fingerprint = Some(observation.viewport_fingerprint.clone());
+    observations.push(observation);
+
+    if repeated_fingerprint {
+      break;
+    }
+
+    if observations.len() >= options.max_pages {
+      known_limits.push(format!("stopped after max_pages={}", options.max_pages));
+      break;
+    }
+
+    if scrolls >= options.max_scrolls {
+      known_limits.push(format!("stopped after max_scrolls={}", options.max_scrolls));
+      break;
+    }
+
+    if let Err(diagnostic) = observer.scroll_down() {
+      diagnostics.push(diagnostic);
+      break;
+    }
+    scrolls += 1;
+  }
+
+  let mut scan = reconstruct_playlist_sidebar(
+    ScanAppContext {
+      app_id: Some(DEFAULT_APP_ID.to_string()),
+      name: None,
+      version: None,
+    },
+    ScanWindowContext {
+      id: Some("fake-sidebar-window".to_string()),
+      title: None,
+      bounds: None,
+    },
+    ViewRegionRecord::default(),
+    observations,
+  );
+  scan.diagnostics.extend(diagnostics);
+  scan.known_limits.extend(known_limits);
+  scan
 }
 
 fn section_node(
@@ -1437,6 +1522,115 @@ mod tests {
         .count(),
       1
     );
+  }
+
+  #[test]
+  fn scan_loop_stops_on_repeated_viewport_fingerprint() {
+    let observations = vec![
+      parse_sidebar_viewport(
+        0,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![
+          ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+          ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+        ]),
+      ),
+      parse_sidebar_viewport(
+        1,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)]),
+      ),
+      parse_sidebar_viewport(
+        2,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)]),
+      ),
+    ];
+    let mut observer = FakeSidebarObserver::new(observations);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 10,
+        max_scrolls: 10,
+      },
+    );
+
+    assert_eq!(scan.observations.len(), 3);
+    assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
+  }
+
+  #[test]
+  fn scan_loop_respects_page_budget() {
+    let observations = vec![
+      parse_sidebar_viewport(
+        0,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
+      ),
+      parse_sidebar_viewport(
+        1,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![("B", 32.0, 42.0, 80.0, 20.0)]),
+      ),
+    ];
+    let mut observer = FakeSidebarObserver::new(observations);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 1,
+        max_scrolls: 10,
+      },
+    );
+
+    assert_eq!(scan.observations.len(), 1);
+    assert!(
+      scan
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("max_pages"))
+    );
+  }
+
+  struct FakeSidebarObserver {
+    observations: Vec<SidebarViewportObservation>,
+    cursor: usize,
+  }
+
+  impl FakeSidebarObserver {
+    fn new(observations: Vec<SidebarViewportObservation>) -> Self {
+      Self {
+        observations,
+        cursor: 0,
+      }
+    }
+  }
+
+  impl SidebarObserver for FakeSidebarObserver {
+    fn observe(
+      &mut self,
+      observation_index: usize,
+    ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+      let mut observation =
+        self
+          .observations
+          .get(self.cursor)
+          .cloned()
+          .ok_or_else(|| ParserDiagnostic {
+            code: "no_more_fake_observations".to_string(),
+            message: "fake sidebar observer has no more observations".to_string(),
+            node_id: None,
+          })?;
+      observation.observation_index = observation_index;
+      observation.viewport.page_index = observation_index;
+      Ok(observation)
+    }
+
+    fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
+      self.cursor += 1;
+      Ok(())
+    }
   }
 
   fn fake_recognition(
