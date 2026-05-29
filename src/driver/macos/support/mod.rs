@@ -3,11 +3,11 @@
 pub(crate) mod artifacts;
 pub(crate) mod call;
 pub(crate) mod display;
-mod geometry;
-mod observation;
-mod ocr;
+pub(crate) mod geometry;
+pub(crate) mod observation;
+pub(crate) mod ocr;
 mod ocr_commands;
-mod overlay_evidence;
+pub(crate) mod overlay_evidence;
 mod recognition;
 pub(crate) mod runtime;
 mod scripts;

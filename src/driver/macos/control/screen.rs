@@ -1,7 +1,25 @@
 // File: src/driver/macos/control/screen.rs
-use super::super::*;
+use super::super::support::{
+  artifacts::{build_text_artifact, sanitize_file_component},
+  call::{
+    optional_bool, optional_f64, optional_i64, optional_positive_u64, optional_string,
+    required_non_empty_string,
+  },
+  display::{maybe_activate_target_app_for_observation, read_png_dimensions},
+  geometry::{ocr_match_center, render_rect_compact},
+  observation::{parse_display_selection, resolve_screen_capture_source},
+  ocr::{
+    detect_screen_rows, filter_ocr_matches, parse_ocr_region_constraint, render_ocr_region_note,
+  },
+  overlay_evidence::{
+    OverlayEvidenceMatch, OverlayEvidenceRequest, OverlayEvidenceRow,
+    build_overlay_evidence_artifacts, capture_pixel_to_logical, logical_to_capture_pixel,
+  },
+};
+use super::super::{DriverCall, DriverResponse};
 use super::common::{ClickPointCallOptions, build_click_point_call, resolve_click_interval_ms};
 use super::pointer::click_point;
+use crate::model::{AuvResult, ProducedArtifact};
 
 pub(super) fn click_screen_text_signals(text: &str) -> std::collections::BTreeMap<String, String> {
   std::collections::BTreeMap::from([("click.resolved_text".to_string(), text.to_string())])
