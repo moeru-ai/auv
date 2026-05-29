@@ -394,6 +394,13 @@ fn scan_window_region_into_run(
   root: &crate::run_builder::SpanRef,
   options: ScanWindowRegionOptions,
 ) -> AuvResult<String> {
+  // TODO(controller): This scan loop is still a script-shaped orchestration
+  // function that mixes observe, evidence accumulation, stop-policy
+  // evaluation, hook handling, and scroll progression inline. Refactor it
+  // into a replaceable evidence-driven controller whose input is page
+  // observations / boundary evidence / hook decisions and whose output is the
+  // next controller action (continue, stop, retry, adjust region, adjust
+  // scroll) instead of hardcoding one control-flow policy here.
   let mut state = ScanWindowRegionState::default();
   let mut scroll_count = 0;
   let mut consecutive_no_progress = 0;
