@@ -14,18 +14,52 @@ use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 
-use super::support::runtime::activate_target_app;
+use super::support::{
+  artifacts::{
+    DriverArtifactBuilder, build_text_artifact, launch_host_process, looks_like_bundle_identifier,
+    sanitize_file_component,
+  },
+  call::{
+    app_identifier, optional_bool, optional_f64, optional_i64, optional_non_empty_string,
+    optional_positive_u64, optional_string, required_f64, required_non_empty_string,
+  },
+  display::{
+    assess_coordinate_readiness, enumerate_displays, maybe_activate_target_app_for_observation,
+    read_png_dimensions, render_coordinate_readiness_report, render_display_note,
+    render_point_identification_report,
+  },
+  geometry::{
+    ocr_match_center, project_main_screenshot_point, render_rect_compact, resolve_display_point,
+  },
+  observation::{parse_display_selection, resolve_screen_capture_source},
+  ocr::{
+    detect_screen_rows, filter_ocr_matches, parse_ocr_region_constraint, render_ocr_region_note,
+    render_ocr_row_note,
+  },
+  ocr_commands::{CapturedObservation, render_text_match_command_json, run_text_match_on_capture},
+  recognition::{
+    RowRecognitionArtifactRequest, observed_rect_to_ratio_region, recognition_source_for_rows,
+    row_recognition_artifact,
+  },
+  runtime::activate_target_app,
+  scripts::probe_automation_to_system_events,
+};
 pub(super) use super::typed::observe::{
   find_ax_text_node, ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
   render_window_list_json, render_window_snapshot_report, row_detection_signals,
   verify_ax_text_signals, verify_now_playing_title_signals, wait_ocr_detection_signals,
   wait_row_detection_signals,
 };
-use super::*;
+use super::{DriverCall, DriverResponse, ObservedAxNode, ObservedWindowSnapshot, ProducedArtifact};
 use crate::contract::{
   ArtifactRef, FailureLayer, OperationOutput, OperationResult, OperationStatus, VerificationMethod,
   VerificationResult,
 };
+use crate::driver::macos::support::{
+  build_window_candidates, find_now_playing_ax_node, parse_app_selector,
+  render_ax_interaction_report, resolve_app_ref,
+};
+use crate::model::AuvResult;
 use crate::trace::RunId;
 #[cfg(test)]
 use auv_driver_macos::types::{ObservedWindow, ResolvedAppRef};
@@ -1712,8 +1746,8 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
 #[cfg(test)]
 mod tests {
   use super::{
-    ObservedAxNode, ObservedRect, VERIFY_AX_TEXT_OPERATION_ID,
-    VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID, build_verify_ax_text_no_match_verification,
+    VERIFY_AX_TEXT_OPERATION_ID, VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID,
+    build_verify_ax_text_no_match_verification,
     build_verify_ax_text_operation_result, build_verify_ax_text_verification,
     build_verify_now_playing_title_no_match_verification,
     build_verify_now_playing_title_operation_result, build_verify_now_playing_title_verification,
@@ -1724,6 +1758,7 @@ mod tests {
   use crate::contract::{
     ArtifactRef, FailureLayer, OperationOutput, OperationStatus, VerificationMethod,
   };
+  use crate::driver::macos::{ObservedAxNode, ObservedRect};
   use crate::model::{DriverCall, DriverRunContext, ExecutionTarget};
   use crate::trace::{ArtifactId, RunId, SpanId};
   use std::collections::BTreeMap;

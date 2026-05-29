@@ -10,7 +10,7 @@ pub(crate) mod ocr_commands;
 pub(crate) mod overlay_evidence;
 pub(crate) mod recognition;
 pub(crate) mod runtime;
-mod scripts;
+pub(crate) mod scripts;
 pub(crate) mod typed_capture;
 
 pub(crate) mod template_match {
@@ -34,9 +34,7 @@ pub(crate) use self::artifacts::*;
 pub(crate) use self::call::*;
 pub(crate) use self::display::*;
 pub(crate) use self::geometry::*;
-pub(crate) use self::observation::*;
 pub(crate) use self::ocr::*;
 pub(crate) use self::ocr_commands::*;
 pub(crate) use self::overlay_evidence::*;
 pub(crate) use self::recognition::*;
-pub(crate) use self::scripts::*;

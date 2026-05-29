@@ -8,6 +8,7 @@ use auv_driver_macos::types::ObservedWindow;
 use super::{
   OcrTextMatch, ScreenshotDimensions,
   control::common::{ClickPointCallOptions, build_click_point_call},
+  observation::DisplaySelection,
   support::runtime::{
     parse_shortcut, process_is_alive, push_text_keystroke_lines, read_lock_owner_pid,
     special_key_code,
@@ -16,14 +17,14 @@ use super::{
     TextMatchCommandReport, app_contains_window, assess_coordinate_readiness,
     build_window_candidates, filter_ocr_matches, filter_windows_for_app, find_ax_node_at_point,
     find_now_playing_ax_node, group_ocr_matches_into_rows, optional_bool, optional_f64,
-    parse_app_selector, parse_display_selection, parse_display_snapshot, parse_mouse_button,
-    parse_observed_ax_tree, parse_ocr_region_constraint, parse_ocr_text_snapshot,
-    parse_visual_rows_snapshot, parse_window_selection, project_main_screenshot_point,
-    read_png_dimensions, render_rect_compact, render_text_match_command_json, resolve_app_ref,
-    resolve_display_point, resolve_screen_capture_source, resolve_scroll_deltas,
-    resolve_window_candidate, resolve_window_point, sanitize_file_component, swift_string_literal,
-    temp_file_path, window_area,
+    parse_app_selector, parse_display_snapshot, parse_mouse_button, parse_observed_ax_tree,
+    parse_ocr_region_constraint, parse_ocr_text_snapshot, parse_visual_rows_snapshot,
+    parse_window_selection, project_main_screenshot_point, read_png_dimensions,
+    render_rect_compact, render_text_match_command_json, resolve_app_ref, resolve_display_point,
+    resolve_scroll_deltas, resolve_window_candidate, resolve_window_point,
+    sanitize_file_component, swift_string_literal, temp_file_path, window_area,
   },
+  support::observation::{parse_display_selection, resolve_screen_capture_source},
 };
 use crate::{
   driver::{Driver, DriverRegistry, fixture::FixtureObserveDriver},
@@ -682,7 +683,7 @@ fn resolve_window_candidate_rejects_stale_explicit_selector() {
 #[test]
 fn resolve_screen_capture_source_prefers_explicit_display() {
   let displays = sample_display_descriptors_for_windows();
-  let selection = super::DisplaySelection {
+  let selection = DisplaySelection {
     display_ref: Some("display_1".to_string()),
     native_display_id: None,
     main: false,
