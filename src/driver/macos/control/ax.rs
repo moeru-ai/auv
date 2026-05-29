@@ -9,7 +9,24 @@
 //! generic retained UI node runtime; any references are re-resolved per action.
 
 use super::super::overlay::with_overlay_cursor;
-use super::super::*;
+use super::super::{
+  DriverCall, DriverResponse, ObservedAxNode, ProducedArtifact,
+};
+use super::super::support::{
+  artifacts::{build_text_artifact, sanitize_file_component},
+  call::{
+    app_identifier, optional_bool, optional_f64, optional_i64, optional_non_empty_string,
+    optional_positive_u64, required_non_empty_string,
+  },
+  geometry::render_rect_compact,
+  ocr_commands::{run_text_match_on_capture, screenshot_artifact},
+  overlay_evidence::{
+    OverlayEvidenceAxTarget, OverlayEvidenceMatch, OverlayEvidenceRequest,
+    build_overlay_evidence_artifacts, logical_to_capture_pixel,
+  },
+  ax_node_center, find_ax_node_at_point, find_best_ax_node, no_matching_ax_node_error,
+  render_ax_interaction_report,
+};
 use super::action_resolver::{ActionResolverDecision, ResolvedActionMethod};
 use super::common::{
   DEFAULT_CLICK_INTERVAL_MS, activate_app_if_needed, build_ax_click_notes,
@@ -18,6 +35,7 @@ use super::common::{
 use super::window_ocr::{
   capture_resolved_window_observation, click_window_text, logical_point_for_match,
 };
+use crate::model::AuvResult;
 use std::fs;
 
 pub(crate) fn focus_text_input(call: &DriverCall) -> AuvResult<DriverResponse> {
