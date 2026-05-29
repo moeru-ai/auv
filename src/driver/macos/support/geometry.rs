@@ -1,12 +1,12 @@
 // File: src/driver/macos/support/geometry.rs
 use super::super::{
-  DriverCall, OcrTextMatch, ObservedDisplaySnapshot, ObservedPointResolution, ObservedRect,
+  DriverCall, ObservedDisplaySnapshot, ObservedPointResolution, ObservedRect, OcrTextMatch,
   WindowRef,
 };
 use super::call::optional_f64;
+use crate::model::AuvResult;
 #[cfg(test)]
 use auv_driver_macos::types::ObservedWindow;
-use crate::model::AuvResult;
 
 #[cfg(test)]
 pub(crate) fn app_contains_window(app_identifier: &str, app_name: &str) -> bool {

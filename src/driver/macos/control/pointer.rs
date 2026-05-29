@@ -2,7 +2,6 @@
 use std::thread;
 use std::time::Duration;
 
-use super::super::{DriverCall, DriverResponse};
 use super::super::support::{
   artifacts::{build_text_artifact, sanitize_file_component},
   call::{
@@ -12,6 +11,7 @@ use super::super::support::{
   display::{enumerate_displays, render_display_note},
   geometry::resolve_display_point,
 };
+use super::super::{DriverCall, DriverResponse};
 use super::common::{activate_app_if_needed, parse_input_policy, resolve_click_interval_ms};
 use crate::model::AuvResult;
 

@@ -223,6 +223,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-netease-music"
+version = "0.0.1"
+dependencies = [
+ "auv-driver",
+ "auv-driver-macos",
+ "image",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "auv-overlay-macos"
 version = "0.0.1"
 dependencies = [

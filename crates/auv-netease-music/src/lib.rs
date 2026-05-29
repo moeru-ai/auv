@@ -1,3 +1,8 @@
+//! NetEase Music product CLI library: sidebar playlist scan + agent-callable output.
+
+pub mod cli;
+pub mod output;
+
 use std::path::PathBuf;
 
 use auv_driver::vision::TextRecognition;
@@ -13,8 +18,8 @@ use auv_driver::{Driver, InputPolicy, RatioRect, Scroll, ScrollOptions, Size};
 #[cfg(target_os = "macos")]
 use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
-const DEFAULT_APP_ID: &str = "com.netease.163music";
-const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
+pub const DEFAULT_APP_ID: &str = "com.netease.163music";
+pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
 /// Wire-shape contract for `PlaylistSidebarScan` JSON output. Readers must
 /// reject artifacts whose `schema_version` is not understood. Bump the value
 /// only when the on-wire shape changes in a non-additive way.
@@ -23,15 +28,30 @@ const VIEW_IR_SCHEMA_VERSION: &str = "view-ir-v0";
 const LIVE_SCROLL_SETTLE_MS: u64 = 500;
 
 #[derive(Clone, Debug, PartialEq)]
-struct Inputs {
-  app_id: String,
-  json_out: Option<PathBuf>,
-  artifact_dir: PathBuf,
-  max_pages: usize,
-  max_scrolls: usize,
-  scroll_amount: f64,
-  sidebar_region: Option<RatioRegion>,
-  print_json: bool,
+pub struct Inputs {
+  pub app_id: String,
+  pub json_out: Option<PathBuf>,
+  pub artifact_dir: PathBuf,
+  pub max_pages: usize,
+  pub max_scrolls: usize,
+  pub scroll_amount: f64,
+  pub sidebar_region: Option<RatioRegion>,
+  pub print_json: bool,
+}
+
+impl Inputs {
+  pub fn with_defaults() -> Self {
+    Self {
+      app_id: DEFAULT_APP_ID.to_string(),
+      json_out: None,
+      artifact_dir: std::path::PathBuf::from(DEFAULT_ARTIFACT_DIR),
+      max_pages: 24,
+      max_scrolls: 48,
+      scroll_amount: 6.0,
+      sidebar_region: None,
+      print_json: false,
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,15 +61,15 @@ struct ScanOptions {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct RatioRegion {
-  x: f64,
-  y: f64,
-  width: f64,
-  height: f64,
+pub struct RatioRegion {
+  pub x: f64,
+  pub y: f64,
+  pub width: f64,
+  pub height: f64,
 }
 
 impl RatioRegion {
-  const fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
+  pub const fn new(x: f64, y: f64, width: f64, height: f64) -> Self {
     Self {
       x,
       y,
@@ -69,7 +89,7 @@ impl RatioRegion {
 /// (e.g. a future `playlist get <anchor_id>`) must not rely on these as
 /// durable identifiers without first introducing content-derived IDs.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-struct PlaylistSidebarScan {
+pub struct PlaylistSidebarScan {
   /// Wire-shape version of this artifact. See `VIEW_IR_SCHEMA_VERSION`.
   schema_version: String,
   app: ScanAppContext,
@@ -77,7 +97,7 @@ struct PlaylistSidebarScan {
   sidebar_region: ViewRegionRecord,
   observations: Vec<SidebarViewportObservation>,
   reconstruction: ViewReconstructionRecord,
-  projection: PlaylistSidebarProjection,
+  pub(crate) projection: PlaylistSidebarProjection,
   boundary: ScrollBoundarySummary,
   diagnostics: Vec<ParserDiagnostic>,
   known_limits: Vec<String>,
@@ -288,21 +308,21 @@ enum BoundaryConfidence {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct PlaylistSidebarProjection {
-  sections: Vec<SidebarSection>,
+pub struct PlaylistSidebarProjection {
+  pub sections: Vec<SidebarSection>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct SidebarSection {
-  id: String,
-  kind: SidebarSectionKind,
-  label: Option<String>,
-  items: Vec<PlaylistSidebarItem>,
+pub struct SidebarSection {
+  pub id: String,
+  pub kind: SidebarSectionKind,
+  pub label: Option<String>,
+  pub items: Vec<PlaylistSidebarItem>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum SidebarSectionKind {
+pub enum SidebarSectionKind {
   FeatureNav,
   LibraryNav,
   PlaylistNav,
@@ -313,18 +333,18 @@ enum SidebarSectionKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct PlaylistSidebarItem {
-  id: String,
-  label: String,
-  section_hint: Option<SidebarSectionKind>,
-  confidence: Confidence,
-  candidate_id: Option<String>,
-  anchor_id: Option<String>,
+pub struct PlaylistSidebarItem {
+  pub id: String,
+  pub label: String,
+  pub section_hint: Option<SidebarSectionKind>,
+  pub confidence: Confidence,
+  pub candidate_id: Option<String>,
+  pub anchor_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Confidence {
+pub enum Confidence {
   High,
   Medium,
   #[default]
@@ -367,43 +387,13 @@ impl ViewBounds {
   }
 }
 
-fn main() {
-  if let Err(error) = run() {
-    eprintln!("{error}");
-    std::process::exit(1);
-  }
-}
-
-fn run() -> Result<(), String> {
-  let inputs = parse_inputs(std::env::args().skip(1).collect())?;
-  let scan = run_live_scan(&inputs)?;
-  let json = serde_json::to_string_pretty(&scan).map_err(|error| error.to_string())?;
-
-  if let Some(path) = &inputs.json_out {
-    std::fs::write(path, &json)
-      .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-  }
-
-  if inputs.print_json {
-    println!("{json}");
-  } else {
-    println!("{}", render_human_summary(&scan));
-  }
-
-  Ok(())
+/// Parse the legacy flat flag list (no subcommand). Used by the demo example.
+pub fn parse_inputs_public(args: Vec<String>) -> Result<Inputs, String> {
+  parse_inputs(args)
 }
 
 fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
-  let mut inputs = Inputs {
-    app_id: DEFAULT_APP_ID.to_string(),
-    json_out: None,
-    artifact_dir: PathBuf::from(DEFAULT_ARTIFACT_DIR),
-    max_pages: 24,
-    max_scrolls: 48,
-    scroll_amount: 6.0,
-    sidebar_region: None,
-    print_json: false,
-  };
+  let mut inputs = Inputs::with_defaults();
 
   let mut args = args.into_iter();
   while let Some(arg) = args.next() {
@@ -470,7 +460,7 @@ fn parse_f64(flag: &str, value: String) -> Result<f64, String> {
     .map_err(|_| format!("{flag} expects a number"))
 }
 
-fn parse_ratio_region(value: String) -> Result<RatioRegion, String> {
+pub(crate) fn parse_ratio_region(value: String) -> Result<RatioRegion, String> {
   let parts = value
     .split(',')
     .map(str::trim)
@@ -496,7 +486,7 @@ fn parse_ratio_region(value: String) -> Result<RatioRegion, String> {
   Ok(RatioRegion::new(parts[0], parts[1], parts[2], parts[3]))
 }
 
-fn render_human_summary(scan: &PlaylistSidebarScan) -> String {
+pub fn render_human_summary(scan: &PlaylistSidebarScan) -> String {
   let mut lines = Vec::new();
   lines.push("NetEase playlist sidebar scan".to_string());
   lines.push(format!(
@@ -592,12 +582,12 @@ fn render_optional_bounds(bounds: Option<ViewBounds>) -> String {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn run_live_scan(_inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
+pub fn run_live_scan(_inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   Err("live NetEase playlist sidebar scan is only supported on macOS".to_string())
 }
 
 #[cfg(target_os = "macos")]
-fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
+pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   let driver = MacosDriver::new();
   let default_app_context = ScanAppContext {
     app_id: Some(inputs.app_id.clone()),
@@ -1181,7 +1171,7 @@ fn viewport_fingerprint(nodes: &[ViewEvidenceNode]) -> String {
     .join("|")
 }
 
-fn normalize_identity(value: &str) -> String {
+pub fn normalize_identity(value: &str) -> String {
   value
     .trim()
     .to_lowercase()

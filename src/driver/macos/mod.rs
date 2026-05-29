@@ -1,8 +1,6 @@
 // File: src/driver/macos/mod.rs
 use super::Driver;
-use crate::model::{
-  DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact, now_millis,
-};
+use crate::model::{DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact, now_millis};
 
 // Legacy command adapter for the shared runtime/catalog surface.
 //

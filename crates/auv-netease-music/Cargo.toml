@@ -1,0 +1,21 @@
+[package]
+name = "auv-netease-music"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+auv-driver = { path = "../auv-driver" }
+serde.workspace = true
+serde_json.workspace = true
+image.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+auv-driver-macos = { path = "../auv-driver-macos" }

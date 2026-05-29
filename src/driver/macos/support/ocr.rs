@@ -4,7 +4,7 @@ use std::path::Path;
 #[cfg(test)]
 use auv_driver_macos::support::{parse_i64, report_value};
 
-use super::super::{DetectedScreenRows, DriverCall, OcrTextMatch, ObservedOcrRow};
+use super::super::{DetectedScreenRows, DriverCall, ObservedOcrRow, OcrTextMatch};
 use super::call::optional_f64;
 use super::geometry::{ocr_match_center, render_rect_compact};
 use crate::model::AuvResult;

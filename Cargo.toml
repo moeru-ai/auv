@@ -3,6 +3,7 @@ members = [
   ".",
   "crates/auv-driver",
   "crates/auv-driver-macos",
+  "crates/auv-netease-music",
   "crates/auv-overlay-macos",
 ]
 

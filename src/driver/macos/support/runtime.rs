@@ -8,10 +8,10 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
+use super::super::{OSASCRIPT_BINARY, now_millis};
 use super::artifacts::{
   CommandOutput, looks_like_bundle_identifier, osascript_string_literal, run_command,
 };
-use super::super::{OSASCRIPT_BINARY, now_millis};
 use crate::model::AuvResult;
 
 pub(crate) fn require_macos() -> AuvResult<()> {

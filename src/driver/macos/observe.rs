@@ -1753,9 +1753,8 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
 mod tests {
   use super::{
     VERIFY_AX_TEXT_OPERATION_ID, VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID,
-    build_verify_ax_text_no_match_verification,
-    build_verify_ax_text_operation_result, build_verify_ax_text_verification,
-    build_verify_now_playing_title_no_match_verification,
+    build_verify_ax_text_no_match_verification, build_verify_ax_text_operation_result,
+    build_verify_ax_text_verification, build_verify_now_playing_title_no_match_verification,
     build_verify_now_playing_title_operation_result, build_verify_now_playing_title_verification,
     ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
     row_detection_signals, verify_ax_text_signals, verify_now_playing_title_signals,

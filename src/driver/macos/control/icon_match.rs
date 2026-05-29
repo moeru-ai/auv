@@ -1,11 +1,14 @@
 // File: src/driver/macos/control/icon_match.rs
-use super::super::{DriverCall, DriverResponse, ProducedArtifact};
 use super::super::support::{
-  artifacts::{DriverArtifactBuilder, build_text_artifact, looks_like_bundle_identifier, sanitize_file_component},
+  artifacts::{
+    DriverArtifactBuilder, build_text_artifact, looks_like_bundle_identifier,
+    sanitize_file_component,
+  },
   call::{app_identifier, optional_f64, optional_string},
   ocr::parse_ocr_region_constraint,
   recognition::window_number_from_ref,
 };
+use super::super::{DriverCall, DriverResponse, ProducedArtifact};
 use crate::contract::{
   RatioRegion, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
   RecognitionSurface, RecognizedItem,
