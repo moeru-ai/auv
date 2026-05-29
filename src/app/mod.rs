@@ -389,16 +389,45 @@ pub struct AppSurfaceCandidate {
   pub click_point: Option<AppPoint>,
   pub confidence: Option<f64>,
   pub evidence_step_id: String,
-  #[serde(default)]
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub evidence_refs: Vec<ArtifactRef>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub candidate_query: Option<crate::contract::CandidateQuery>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub promotion_gate: Option<AppCandidatePromotionGate>,
   #[serde(default)]
   pub input_bindings: BTreeMap<String, String>,
   #[serde(default)]
   pub compatibility: AppCandidateCompatibility,
   #[serde(default)]
   pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppCandidatePromotionGate {
+  pub status: AppCandidatePromotionStatus,
+  #[serde(default)]
+  pub missing_gates: Vec<String>,
+  #[serde(default)]
+  pub notes: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AppCandidatePromotionStatus {
+  Blocked,
+  DistillStrategyOnly,
+  ActionGradeCandidate,
+}
+
+impl AppCandidatePromotionStatus {
+  pub(crate) fn as_str(&self) -> &'static str {
+    match self {
+      Self::Blocked => "blocked",
+      Self::DistillStrategyOnly => "distill_strategy_only",
+      Self::ActionGradeCandidate => "action_grade_candidate",
+    }
+  }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1139,6 +1168,7 @@ mod tests {
   use super::analysis::{
     apply_candidate_grounding, build_annotation_candidates, build_app_analysis,
     build_distilled_candidate_shape, candidate_compatibility, recommended_strategy,
+    suggested_annotation_ids_for_candidate_shape,
   };
   use super::infra::{
     invoke_probe_step, read_json, resolve_distillation_path, resolve_probe_path, write_pretty_json,
@@ -1160,8 +1190,9 @@ mod tests {
   };
   use crate::recording::{MemoryRunRecorder, RunUpdate};
   use crate::run_builder::RunSpec;
+  use crate::skill::SkillCase;
   use crate::store::LocalStore;
-  use crate::trace::{ArtifactId, RunId, RunType, SpanId};
+  use crate::trace::RunType;
   use auv_driver_macos::types::{
     ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect, OcrTextMatch, OcrTextSnapshot,
   };
@@ -1526,7 +1557,6 @@ mod tests {
         click_point: Some(AppPoint { x: 50, y: 20 }),
         confidence: None,
         evidence_step_id: "capture-ax-tree".to_string(),
-        evidence_refs: vec![artifact_ref("run_fixture", "span_fixture", "artifact_0001")],
         candidate_query: Some(CandidateQuery {
           query_id: "search-entry-focus-ax".to_string(),
           selector: SurfaceSelector {
@@ -1542,6 +1572,17 @@ mod tests {
           },
           output_kind: Some("focus-query".to_string()),
           known_limits: vec!["test query".to_string()],
+        }),
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::DistillStrategyOnly,
+          missing_gates: Vec::new(),
+          notes: vec!["Sample candidate can seed a known distillation strategy.".to_string()],
         }),
         input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
         compatibility: candidate_compatibility(
@@ -1572,6 +1613,8 @@ mod tests {
     assert!(report.contains("coordinateSpace"));
     assert!(report.contains("candidateQuery"));
     assert!(report.contains("sources=`ax`"));
+    assert!(report.contains("evidenceRefs"));
+    assert!(report.contains("promotionGate: `distill_strategy_only`"));
     assert!(report.contains("inputBindings"));
     assert!(report.contains("## 5. Control Strategy"));
     assert!(report.contains("## 6. Verification Assessment"));
@@ -1641,6 +1684,641 @@ mod tests {
   }
 
   #[test]
+  fn recommended_surface_strategy_projects_to_direct_candidate_shape() {
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 100,
+          y: 200,
+          width: 800,
+          height: 600,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec!["primaryWindow=100,200,800,600".to_string()],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "window-primary-region".to_string(),
+        area: "window.primary".to_string(),
+        kind: "region".to_string(),
+        source: "window".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "Example".to_string(),
+        secondary_text: "com.example.App".to_string(),
+        query_value: "100,200,800,600".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 100,
+          y: 200,
+          width: 800,
+          height: 600,
+        }),
+        click_point: Some(AppPoint { x: 500, y: 500 }),
+        confidence: None,
+        evidence_step_id: "list-windows".to_string(),
+        candidate_query: None,
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0002"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::DistillStrategyOnly,
+          missing_gates: Vec::new(),
+          notes: vec!["Window region can seed a known distillation strategy.".to_string()],
+        }),
+        input_bindings: BTreeMap::from([
+          ("window_bounds".to_string(), "100,200,800,600".to_string()),
+          ("relative_x".to_string(), "0.500000".to_string()),
+          ("relative_y".to_string(), "0.500000".to_string()),
+        ]),
+        compatibility: candidate_compatibility(
+          &["window-action.window-point.pointer-click.capture-evidence"],
+          &[],
+        ),
+        notes: vec!["sample window region".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![AppRecommendedStrategy {
+        taxonomy_id: "window-action.window-point.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+      }],
+    };
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "window-action.window-point.pointer-click.capture-evidence",
+    );
+
+    assert_eq!(
+      candidate_shape.direct_candidate_ids,
+      vec!["window-primary-region".to_string()]
+    );
+    assert!(candidate_shape.context_candidate_ids.is_empty());
+    assert!(candidate_shape.notes.is_empty());
+  }
+
+  #[test]
+  fn suggested_annotation_ids_preserve_direct_then_context_candidates() {
+    let candidate_shape = AppDistilledCandidateShape {
+      direct_candidate_ids: vec![
+        "window-primary-region".to_string(),
+        "search-entry-focus-ax".to_string(),
+      ],
+      context_candidate_ids: vec!["visible-row-1".to_string()],
+      provided_inputs: BTreeMap::new(),
+      notes: vec![],
+    };
+
+    assert_eq!(
+      suggested_annotation_ids_for_candidate_shape(&candidate_shape),
+      vec![
+        "window-primary-region".to_string(),
+        "search-entry-focus-ax".to_string(),
+        "visible-row-1".to_string(),
+      ]
+    );
+  }
+
+  #[test]
+  fn distill_candidate_shape_records_note_when_strategy_has_no_direct_surface_candidate() {
+    let analysis =
+      sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+    );
+
+    assert!(candidate_shape.direct_candidate_ids.is_empty());
+    assert!(
+      candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("No direct candidate shape was available"))
+    );
+  }
+
+  #[test]
+  fn row_surface_candidates_stay_context_only_in_distilled_shape() {
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec![],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "visible-row-1".to_string(),
+        area: "result-selection".to_string(),
+        kind: "row".to_string(),
+        source: "ocr-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "AURORA | Playlist".to_string(),
+        secondary_text: "rowIndex=1".to_string(),
+        query_value: "1".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 10,
+          y: 20,
+          width: 120,
+          height: 24,
+        }),
+        click_point: Some(AppPoint { x: 70, y: 32 }),
+        confidence: None,
+        evidence_step_id: "ocr-sample".to_string(),
+        candidate_query: Some(CandidateQuery {
+          query_id: "visible-row-1".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Row {
+              row_index: Some(1),
+              contains_text: Some("AURORA".to_string()),
+              region_hint: None,
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("row".to_string()),
+          known_limits: vec!["row only".to_string()],
+        }),
+        evidence_refs: Vec::new(),
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::Blocked,
+          missing_gates: vec![
+            "row_action_contract".to_string(),
+            "semantic_verification_contract".to_string(),
+          ],
+          notes: vec!["row candidate stays structural".to_string()],
+        }),
+        input_bindings: BTreeMap::from([("row_index".to_string(), "1".to_string())]),
+        compatibility: candidate_compatibility(
+          &[],
+          &["result-selection.ocr-anchor.pointer-click.capture-evidence"],
+        ),
+        notes: vec!["sample row candidate".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![AppRecommendedStrategy {
+        taxonomy_id: "result-selection.ocr-anchor.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "row candidates stay review-only until a row action exists".to_string(),
+      }],
+    };
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "result-selection.ocr-anchor.pointer-click.capture-evidence",
+    );
+
+    assert!(candidate_shape.direct_candidate_ids.is_empty());
+    assert_eq!(
+      candidate_shape.context_candidate_ids,
+      vec!["visible-row-1".to_string()]
+    );
+    assert!(candidate_shape.provided_inputs.is_empty());
+    assert!(
+      candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("No direct candidate shape was available"))
+    );
+    assert!(
+      candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("Context-only candidates were recorded"))
+    );
+  }
+
+  #[test]
+  fn analysis_report_surfaces_row_context_and_blocked_promotion() {
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec![],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "visible-row-1".to_string(),
+        area: "result-selection".to_string(),
+        kind: "row".to_string(),
+        source: "ocr-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "AURORA | Playlist".to_string(),
+        secondary_text: "rowIndex=1".to_string(),
+        query_value: "1".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 10,
+          y: 20,
+          width: 120,
+          height: 24,
+        }),
+        click_point: Some(AppPoint { x: 70, y: 32 }),
+        confidence: None,
+        evidence_step_id: "ocr-sample".to_string(),
+        candidate_query: Some(CandidateQuery {
+          query_id: "visible-row-1".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Row {
+              row_index: Some(1),
+              contains_text: Some("AURORA".to_string()),
+              region_hint: None,
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("row".to_string()),
+          known_limits: vec!["row only".to_string()],
+        }),
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::Blocked,
+          missing_gates: vec![
+            "row_action_contract".to_string(),
+            "semantic_verification_contract".to_string(),
+          ],
+          notes: vec!["row candidate stays structural".to_string()],
+        }),
+        input_bindings: BTreeMap::from([("row_index".to_string(), "1".to_string())]),
+        compatibility: candidate_compatibility(
+          &[],
+          &["result-selection.ocr-anchor.pointer-click.capture-evidence"],
+        ),
+        notes: vec!["sample row candidate".to_string()],
+      }],
+      known_boundaries: vec![
+        "Grouped visible rows remain surface candidates until a row action exists.".to_string(),
+      ],
+      recommended_strategies: vec![],
+    };
+
+    let report = render_app_analysis_report(&analysis);
+
+    assert!(report.contains("`visible-row-1`: area=`result-selection`, kind=`row`"));
+    assert!(report.contains("candidateQuery: `visible-row-1` sources=`row`"));
+    assert!(report.contains("evidenceRefs:"));
+    assert!(report.contains("promotionGate: `blocked`"));
+    assert!(report.contains("`row_action_contract`"));
+    assert!(report.contains("`semantic_verification_contract`"));
+    assert!(report.contains("contextTaxonomyIds:"));
+    assert!(report.contains("`result-selection.ocr-anchor.pointer-click.capture-evidence`"));
+    assert!(report.contains("Grouped visible rows remain surface candidates"));
+  }
+
+  #[test]
+  fn result_selection_grounding_ignores_row_only_candidates() {
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec![],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "visible-row-1".to_string(),
+        area: "result-selection".to_string(),
+        kind: "row".to_string(),
+        source: "ocr-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "AURORA | Playlist".to_string(),
+        secondary_text: "rowIndex=1".to_string(),
+        query_value: "1".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 10,
+          y: 20,
+          width: 120,
+          height: 24,
+        }),
+        click_point: Some(AppPoint { x: 70, y: 32 }),
+        confidence: None,
+        evidence_step_id: "ocr-sample".to_string(),
+        candidate_query: Some(CandidateQuery {
+          query_id: "visible-row-1".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Row {
+              row_index: Some(1),
+              contains_text: Some("AURORA".to_string()),
+              region_hint: None,
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("row".to_string()),
+          known_limits: vec!["row only".to_string()],
+        }),
+        evidence_refs: Vec::new(),
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::Blocked,
+          missing_gates: vec![
+            "row_action_contract".to_string(),
+            "semantic_verification_contract".to_string(),
+          ],
+          notes: vec!["row candidate stays structural".to_string()],
+        }),
+        input_bindings: BTreeMap::from([("row_index".to_string(), "1".to_string())]),
+        compatibility: candidate_compatibility(
+          &[],
+          &["result-selection.ocr-anchor.pointer-click.capture-evidence"],
+        ),
+        notes: vec!["sample row candidate".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![],
+    };
+    let mut matrix = SkillCaseMatrix {
+      version: "0.1.0".to_string(),
+      skill_id: "test.result.selection".to_string(),
+      status: "validated".to_string(),
+      cases: vec![SkillCase {
+        case_id: "row-only".to_string(),
+        status: "validated".to_string(),
+        inputs: BTreeMap::from([("anchor_text".to_string(), "TODO_ANCHOR_TEXT".to_string())]),
+        disturbance: String::new(),
+        notes: Vec::new(),
+      }],
+    };
+    let mut resolved = BTreeMap::new();
+
+    let (unresolved, used_annotations) = apply_candidate_grounding(
+      &analysis,
+      None,
+      "result-selection.ocr-anchor.pointer-click.capture-evidence",
+      &mut matrix,
+      &mut resolved,
+    )
+    .expect("known taxonomy should ground");
+
+    assert!(used_annotations.is_empty());
+    assert!(unresolved.iter().any(|key| key == "anchor_text"));
+    assert!(!resolved.contains_key("anchor_text"));
+  }
+
+  #[test]
   fn build_distilled_candidate_shape_projects_direct_inputs() {
     let mut analysis =
       sample_analysis_with_strategy("window-action.window-point.pointer-click.capture-evidence");
@@ -1663,8 +2341,16 @@ mod tests {
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
       evidence_step_id: "observe-window-tree".to_string(),
-      evidence_refs: vec![artifact_ref("run_fixture", "span_fixture", "artifact_0001")],
       candidate_query: None,
+      evidence_refs: Vec::new(),
+      promotion_gate: Some(AppCandidatePromotionGate {
+        status: AppCandidatePromotionStatus::DistillStrategyOnly,
+        missing_gates: vec!["artifact_ref".to_string()],
+        notes: vec![
+          "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values.".to_string(),
+          "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
+        ],
+      }),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1694,6 +2380,24 @@ mod tests {
       Some(&"0.500000".to_string())
     );
     assert!(candidate_shape.notes.is_empty());
+    let promotion_gate = analysis
+      .annotation_candidates
+      .iter()
+      .find(|candidate| candidate.candidate_id == "window-primary-region")
+      .expect("window candidate should exist")
+      .promotion_gate
+      .as_ref()
+      .expect("window candidate should expose promotion gate");
+    assert_eq!(
+      promotion_gate.status,
+      AppCandidatePromotionStatus::DistillStrategyOnly
+    );
+    assert!(
+      promotion_gate
+        .missing_gates
+        .iter()
+        .any(|item| item == "artifact_ref")
+    );
   }
 
   #[test]
@@ -1742,8 +2446,16 @@ mod tests {
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
       evidence_step_id: "capture-ax-tree".to_string(),
-      evidence_refs: vec![artifact_ref("run_fixture", "span_fixture", "artifact_0001")],
       candidate_query: None,
+      evidence_refs: Vec::new(),
+      promotion_gate: Some(AppCandidatePromotionGate {
+        status: AppCandidatePromotionStatus::DistillStrategyOnly,
+        missing_gates: vec!["artifact_ref".to_string()],
+        notes: vec![
+          "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values.".to_string(),
+          "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
+        ],
+      }),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -1777,6 +2489,7 @@ mod tests {
         .iter()
         .any(|candidate_id| candidate_id == "window-primary-region")
     );
+    assert_eq!(used_annotations.len(), 1);
     assert_eq!(
       matrix.cases[0].inputs.get("relative_x"),
       Some(&"0.500000".to_string())
@@ -1988,8 +2701,16 @@ mod tests {
       click_point: Some(AppPoint { x: 500, y: 500 }),
       confidence: None,
       evidence_step_id: "capture-ax-tree".to_string(),
-      evidence_refs: vec![artifact_ref("run_fixture", "span_fixture", "artifact_0001")],
       candidate_query: None,
+      evidence_refs: Vec::new(),
+      promotion_gate: Some(AppCandidatePromotionGate {
+        status: AppCandidatePromotionStatus::DistillStrategyOnly,
+        missing_gates: vec!["artifact_ref".to_string()],
+        notes: vec![
+          "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values.".to_string(),
+          "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain.".to_string(),
+        ],
+      }),
       input_bindings: BTreeMap::from([
         ("window_bounds".to_string(), "100,200,800,600".to_string()),
         ("relative_x".to_string(), "0.500000".to_string()),
@@ -2226,6 +2947,390 @@ mod tests {
   }
 
   #[test]
+  fn validate_app_distillation_keeps_row_context_candidates_review_only() {
+    let root = temp_dir("app-validate-row-context-only");
+    let runtime = test_runtime(root.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("result-selection.recipe.json");
+    let case_matrix_path = root.join("result-selection.cases.json");
+
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: root.join("missing-probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec![],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "visible-row-1".to_string(),
+        area: "result-selection".to_string(),
+        kind: "row".to_string(),
+        source: "ocr-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "AURORA | Playlist".to_string(),
+        secondary_text: "rowIndex=1".to_string(),
+        query_value: "1".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 10,
+          y: 20,
+          width: 120,
+          height: 24,
+        }),
+        click_point: Some(AppPoint { x: 70, y: 32 }),
+        confidence: None,
+        evidence_step_id: "ocr-sample".to_string(),
+        candidate_query: Some(CandidateQuery {
+          query_id: "visible-row-1".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Row {
+              row_index: Some(1),
+              contains_text: Some("AURORA".to_string()),
+              region_hint: None,
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("row".to_string()),
+          known_limits: vec!["row only".to_string()],
+        }),
+        evidence_refs: Vec::new(),
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::Blocked,
+          missing_gates: vec![
+            "row_action_contract".to_string(),
+            "semantic_verification_contract".to_string(),
+          ],
+          notes: vec!["row candidate stays structural".to_string()],
+        }),
+        input_bindings: BTreeMap::from([("row_index".to_string(), "1".to_string())]),
+        compatibility: candidate_compatibility(
+          &[],
+          &["result-selection.ocr-anchor.pointer-click.capture-evidence"],
+        ),
+        notes: vec!["sample row candidate".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![],
+    };
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    let strategy = recommended_strategy(
+      "native-text",
+      "ax-text",
+      "pointer-focus-clipboard-paste",
+      "verifyAxText",
+      AssessmentStatus::Candidate,
+      "test",
+    )
+    .expect("strategy should render");
+    let candidate_shape = AppDistilledCandidateShape {
+      direct_candidate_ids: Vec::new(),
+      context_candidate_ids: vec!["visible-row-1".to_string()],
+      provided_inputs: BTreeMap::new(),
+      notes: vec![
+        "No direct candidate shape was available for taxonomy native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text during distill.".to_string(),
+        "Context-only candidates were recorded for later review, but they did not project directly into recipe inputs.".to_string(),
+      ],
+    };
+    write_pretty_json(
+      &recipe_path,
+      &render_candidate_recipe(&analysis, &strategy, &candidate_shape)
+        .expect("candidate recipe should render"),
+    )
+    .expect("candidate recipe should write");
+    write_pretty_json(
+      &case_matrix_path,
+      &render_candidate_case_matrix(&analysis, &strategy, &candidate_shape)
+        .expect("candidate matrix should render"),
+    )
+    .expect("candidate matrix should write");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.recorded.skill".to_string(),
+        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        suggested_annotation_ids: vec!["visible-row-1".to_string()],
+        candidate_shape: candidate_shape.clone(),
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let error = validate_app_distillation(&runtime, &distillation_path)
+      .expect_err("row context-only distillation should fail validation");
+    assert!(error.contains("candidate grounding left unresolved inputs"));
+    assert!(error.contains("test.recorded.skill"));
+    assert!(error.contains("focus_query"));
+
+    let validation: AppValidation =
+      read_json(&root.join("validation.json")).expect("validation output should still write");
+    assert_eq!(
+      validation.candidates[0].status,
+      AppValidationStatus::Rejected
+    );
+    assert!(validation.candidates[0].used_annotation_ids.is_empty());
+    assert_eq!(
+      validation.candidates[0].unresolved_inputs,
+      vec!["focus_query".to_string()]
+    );
+    assert!(
+      validation.candidates[0]
+        .failure_message
+        .as_deref()
+        .is_some_and(|message| message.contains("grounding left unresolved inputs"))
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn distillation_report_keeps_row_suggestions_review_only() {
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec![],
+        stable_region_candidates: vec![],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![],
+      known_boundaries: vec![
+        "Grouped visible rows remain surface candidates until a row action exists.".to_string(),
+      ],
+      recommended_strategies: vec![],
+    };
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: PathBuf::from("/tmp/analysis.json"),
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.result.selection".to_string(),
+        taxonomy_id: "result-selection.ocr-anchor.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "row suggestions stay review-only".to_string(),
+        suggested_annotation_ids: vec!["visible-row-1".to_string()],
+        candidate_shape: AppDistilledCandidateShape {
+          direct_candidate_ids: Vec::new(),
+          context_candidate_ids: vec!["visible-row-1".to_string()],
+          provided_inputs: BTreeMap::new(),
+          notes: vec![
+            "No direct candidate shape was available for taxonomy result-selection.ocr-anchor.pointer-click.capture-evidence during distill.".to_string(),
+            "Context-only candidates were recorded for later review, but they did not project directly into recipe inputs.".to_string(),
+          ],
+        },
+        recipe_path: PathBuf::from("/tmp/result-selection.recipe.json"),
+        case_matrix_path: PathBuf::from("/tmp/result-selection.cases.json"),
+      }],
+      known_boundaries: analysis.known_boundaries.clone(),
+    };
+
+    let report = render_app_distillation_report(&analysis, &distillation);
+
+    assert!(report.contains("suggested annotations:"));
+    assert!(report.contains("`visible-row-1`"));
+    assert!(report.contains("context candidate ids:"));
+    assert!(!report.contains("direct candidate ids:"));
+    assert!(!report.contains("candidate shape inputs:"));
+    assert!(report.contains("shape note: No direct candidate shape was available"));
+    assert!(report.contains("shape note: Context-only candidates were recorded"));
+    assert!(report.contains("Grouped visible rows remain surface candidates"));
+  }
+
+  #[test]
+  fn validation_report_keeps_row_context_failures_review_only() {
+    let validation = AppValidation {
+      validate_version: APP_VALIDATE_VERSION.to_string(),
+      created_at_millis: 0,
+      source_distillation_path: PathBuf::from("/tmp/distillation.json"),
+      source_analysis_path: PathBuf::from("/tmp/analysis.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      candidates: vec![AppValidatedCandidate {
+        recipe_id: "test.recorded.skill".to_string(),
+        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text"
+          .to_string(),
+        status: AppValidationStatus::Rejected,
+        verification_mode: AppVerificationMode::MachineAsserted,
+        rationale: "row context-only suggestions must not become executable".to_string(),
+        selected_case_count: 1,
+        recipe_path: PathBuf::from("/tmp/native-text.recipe.json"),
+        case_matrix_path: PathBuf::from("/tmp/native-text.cases.json"),
+        used_annotation_ids: Vec::new(),
+        resolved_inputs: BTreeMap::new(),
+        unresolved_inputs: vec!["focus_query".to_string()],
+        failure_message: Some(
+          "Validation could not execute test.recorded.skill because grounding left unresolved inputs: focus_query."
+            .to_string(),
+        ),
+      }],
+      known_boundaries: vec![
+        "Grouped visible rows remain surface candidates until a row action exists."
+          .to_string(),
+      ],
+    };
+
+    let report = render_app_validation_report(&validation);
+
+    assert!(report.contains("manual review required: `no`"));
+    assert!(report.contains("- unresolved inputs:"));
+    assert!(report.contains("`focus_query`"));
+    assert!(report.contains("- failure:"));
+    assert!(report.contains("grounding left unresolved inputs"));
+    assert!(report.contains("Grouped visible rows remain surface candidates"));
+    assert!(!report.contains("- used annotations:"));
+    assert!(!report.contains("`visible-row-1`"));
+  }
+
+  #[test]
   fn build_annotation_candidates_keeps_raw_ocr_as_visible_text_and_adds_selectors() {
     let app = AppIdentity {
       bundle_id: "com.example.music".to_string(),
@@ -2365,6 +3470,23 @@ mod tests {
     for candidate in ocr_candidates {
       assert_eq!(candidate.area, "ocr-visible-text");
       assert!(candidate.compatibility.direct_taxonomy_ids.is_empty());
+      let gate = candidate
+        .promotion_gate
+        .as_ref()
+        .expect("OCR candidate should expose promotion gate");
+      assert_eq!(gate.status, AppCandidatePromotionStatus::Blocked);
+      assert!(
+        gate
+          .missing_gates
+          .iter()
+          .any(|item| item == "action_contract")
+      );
+      assert!(
+        gate
+          .missing_gates
+          .iter()
+          .any(|item| item == "semantic_verification_contract")
+      );
       assert!(
         candidate
           .notes
@@ -2396,6 +3518,17 @@ mod tests {
       .candidate_query
       .as_ref()
       .expect("row candidate should expose selector query");
+    let row_gate = row_candidates[0]
+      .promotion_gate
+      .as_ref()
+      .expect("row candidate should expose promotion gate");
+    assert_eq!(row_gate.status, AppCandidatePromotionStatus::Blocked);
+    assert!(
+      row_gate
+        .missing_gates
+        .iter()
+        .any(|item| item == "row_action_contract")
+    );
     assert!(matches!(
       row_query.selector.any_of.as_slice(),
       [SurfaceSelectorClause::Row {
@@ -2408,6 +3541,301 @@ mod tests {
       row_candidates[0].evidence_refs[0].artifact_id.as_str(),
       "artifact_0001"
     );
+  }
+
+  #[test]
+  fn app_surface_candidate_serializes_promotion_gate_for_machine_consumers() {
+    let candidate = AppSurfaceCandidate {
+      candidate_id: "candidate_ocr_0".to_string(),
+      area: "ocr-visible-text".to_string(),
+      kind: "anchor-text".to_string(),
+      source: "ocr".to_string(),
+      status: AssessmentStatus::Available,
+      primary_text: "AURORA".to_string(),
+      secondary_text: String::new(),
+      query_value: "AURORA".to_string(),
+      coordinate_space: "target-window".to_string(),
+      bounds: Some(AppRect {
+        x: 120,
+        y: 80,
+        width: 90,
+        height: 24,
+      }),
+      click_point: None,
+      confidence: Some(0.95),
+      evidence_step_id: "ocr-sample".to_string(),
+      candidate_query: None,
+      evidence_refs: Vec::new(),
+      compatibility: AppCandidateCompatibility {
+        direct_taxonomy_ids: Vec::new(),
+        context_taxonomy_ids: Vec::new(),
+      },
+      input_bindings: BTreeMap::new(),
+      notes: vec!["visible OCR text only".to_string()],
+      promotion_gate: Some(AppCandidatePromotionGate {
+        status: AppCandidatePromotionStatus::Blocked,
+        missing_gates: vec![
+          "action_contract".to_string(),
+          "semantic_verification_contract".to_string(),
+        ],
+        notes: Vec::new(),
+      }),
+    };
+
+    let value = serde_json::to_value(&candidate).expect("candidate should serialize");
+    let promotion_gate = value
+      .get("promotion_gate")
+      .expect("promotion gate should exist in JSON");
+    assert_eq!(
+      promotion_gate.get("status"),
+      Some(&serde_json::json!("blocked"))
+    );
+    assert_eq!(
+      promotion_gate.get("missing_gates"),
+      Some(&serde_json::json!([
+        "action_contract",
+        "semantic_verification_contract"
+      ]))
+    );
+  }
+
+  #[test]
+  fn app_analysis_json_round_trip_preserves_surface_contract_fields() {
+    let root = temp_dir("app-analysis-round-trip");
+    let analysis_path = root.join("analysis.json");
+    let analysis = AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Available,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Available,
+        url_scheme_surface: AssessmentStatus::Available,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Example".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec!["appName: Example".to_string()],
+        stable_region_candidates: vec!["primaryWindow=0,0,100,100".to_string()],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "search-entry-focus-ax".to_string(),
+        area: "search-entry".to_string(),
+        kind: "focus-query".to_string(),
+        source: "ax".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "Search".to_string(),
+        secondary_text: "role=AXTextField path=0.1".to_string(),
+        query_value: "Search".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 10,
+          y: 10,
+          width: 80,
+          height: 20,
+        }),
+        click_point: Some(AppPoint { x: 50, y: 20 }),
+        confidence: None,
+        evidence_step_id: "capture-ax-tree".to_string(),
+        candidate_query: Some(CandidateQuery {
+          query_id: "search-entry-focus-ax".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Ax {
+              role: Some("AXTextField".to_string()),
+              label: Some("Search".to_string()),
+              path: Some("0.1".to_string()),
+              enabled: None,
+              visible: Some(true),
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("focus-query".to_string()),
+          known_limits: vec!["test query".to_string()],
+        }),
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::DistillStrategyOnly,
+          missing_gates: Vec::new(),
+          notes: vec!["Sample candidate can seed a known distillation strategy.".to_string()],
+        }),
+        input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
+        compatibility: candidate_compatibility(
+          &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
+          &[],
+        ),
+        notes: vec!["sample note".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![],
+    };
+
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+    let loaded: AppAnalysis = read_json(&analysis_path).expect("analysis should read");
+
+    let candidate = loaded
+      .annotation_candidates
+      .first()
+      .expect("sample analysis should carry one candidate");
+    assert!(candidate.candidate_query.is_some());
+    assert_eq!(candidate.evidence_refs.len(), 1);
+    let promotion_gate = candidate
+      .promotion_gate
+      .as_ref()
+      .expect("promotion gate should survive round trip");
+    assert_eq!(
+      promotion_gate.status,
+      AppCandidatePromotionStatus::DistillStrategyOnly
+    );
+    assert!(promotion_gate.missing_gates.is_empty());
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn app_distillation_json_round_trip_preserves_row_review_only_fields() {
+    let root = temp_dir("app-distillation-round-trip");
+    let distillation_path = root.join("distillation.json");
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: PathBuf::from("/tmp/analysis.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.result.selection".to_string(),
+        taxonomy_id: "result-selection.ocr-anchor.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "row suggestions stay review-only".to_string(),
+        suggested_annotation_ids: vec!["visible-row-1".to_string()],
+        candidate_shape: AppDistilledCandidateShape {
+          direct_candidate_ids: Vec::new(),
+          context_candidate_ids: vec!["visible-row-1".to_string()],
+          provided_inputs: BTreeMap::new(),
+          notes: vec![
+            "No direct candidate shape was available for taxonomy result-selection.ocr-anchor.pointer-click.capture-evidence during distill.".to_string(),
+            "Context-only candidates were recorded for later review, but they did not project directly into recipe inputs.".to_string(),
+          ],
+        },
+        recipe_path: PathBuf::from("/tmp/result-selection.recipe.json"),
+        case_matrix_path: PathBuf::from("/tmp/result-selection.cases.json"),
+      }],
+      known_boundaries: vec![
+        "Grouped visible rows remain surface candidates until a row action exists."
+          .to_string(),
+      ],
+    };
+
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let reloaded: AppDistillation =
+      read_json(&distillation_path).expect("distillation should read");
+    let candidate = &reloaded.candidates[0];
+
+    assert_eq!(
+      candidate.suggested_annotation_ids,
+      vec!["visible-row-1".to_string()]
+    );
+    assert!(candidate.candidate_shape.direct_candidate_ids.is_empty());
+    assert_eq!(
+      candidate.candidate_shape.context_candidate_ids,
+      vec!["visible-row-1".to_string()]
+    );
+    assert!(candidate.candidate_shape.provided_inputs.is_empty());
+    assert!(
+      candidate
+        .candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("No direct candidate shape was available"))
+    );
+    assert!(
+      candidate
+        .candidate_shape
+        .notes
+        .iter()
+        .any(|note| note.contains("Context-only candidates were recorded"))
+    );
+    assert!(
+      reloaded
+        .known_boundaries
+        .iter()
+        .any(|note| note.contains("Grouped visible rows remain surface candidates"))
+    );
+
+    let _ = fs::remove_dir_all(root);
   }
 
   #[test]
@@ -2625,6 +4053,20 @@ mod tests {
       window_candidate.input_bindings.get("relative_y"),
       Some(&"0.500000".to_string())
     );
+    let promotion_gate = window_candidate
+      .promotion_gate
+      .as_ref()
+      .expect("window candidate should expose promotion gate");
+    assert_eq!(
+      promotion_gate.status,
+      AppCandidatePromotionStatus::DistillStrategyOnly
+    );
+    assert!(
+      !promotion_gate
+        .missing_gates
+        .iter()
+        .any(|item| item == "artifact_ref")
+    );
     assert!(analysis.recommended_strategies.iter().any(|strategy| {
       strategy.taxonomy_id == "window-action.window-point.pointer-click.capture-evidence"
     }));
@@ -2760,15 +4202,6 @@ mod tests {
       artifact_paths: Vec::new(),
       artifacts: Vec::new(),
       failure_message: Some(error.to_string()),
-    }
-  }
-
-  fn artifact_ref(run_id: &str, span_id: &str, artifact_id: &str) -> ArtifactRef {
-    ArtifactRef {
-      run_id: RunId::new(run_id),
-      artifact_id: ArtifactId::new(artifact_id),
-      span_id: SpanId::new(span_id),
-      captured_event_id: None,
     }
   }
 

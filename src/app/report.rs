@@ -206,19 +206,36 @@ pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
           query.query_id, sources
         ));
       }
-      if !candidate.evidence_refs.is_empty() {
-        lines.push("  - evidenceRefs:".to_string());
-        for reference in &candidate.evidence_refs {
-          lines.push(format!(
-            "    - run=`{}` span=`{}` artifact=`{}`",
-            reference.run_id, reference.span_id, reference.artifact_id
-          ));
-        }
-      }
       lines.push(format!(
         "  - evidenceStep: `{}`",
         candidate.evidence_step_id
       ));
+      if !candidate.evidence_refs.is_empty() {
+        lines.push("  - evidenceRefs:".to_string());
+        for reference in &candidate.evidence_refs {
+          let event = reference
+            .captured_event_id
+            .as_ref()
+            .map(|value| value.as_str())
+            .unwrap_or("none");
+          lines.push(format!(
+            "    - run=`{}` span=`{}` artifact=`{}` event=`{}`",
+            reference.run_id, reference.span_id, reference.artifact_id, event
+          ));
+        }
+      }
+      if let Some(gate) = &candidate.promotion_gate {
+        lines.push(format!("  - promotionGate: `{}`", gate.status.as_str()));
+        if !gate.missing_gates.is_empty() {
+          lines.push("    - missing:".to_string());
+          for item in &gate.missing_gates {
+            lines.push(format!("      - `{item}`"));
+          }
+        }
+        for note in &gate.notes {
+          lines.push(format!("    - note: {note}"));
+        }
+      }
       if !candidate.input_bindings.is_empty() {
         lines.push("  - inputBindings:".to_string());
         for (key, value) in &candidate.input_bindings {

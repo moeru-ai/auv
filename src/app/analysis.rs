@@ -13,6 +13,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
+use crate::model::{AuvResult, RunStatus, now_millis};
+use crate::skill::{SkillCaseMatrix, SkillStrategy};
+use crate::trace::{ArtifactId, EventId, RunId, SpanId};
 use auv_driver_macos::support::{
   group_ocr_matches_into_rows, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
   report_value,
@@ -23,19 +27,15 @@ use auv_driver_macos::types::{
 };
 use serde_json::Value;
 
-use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
-use crate::model::{AuvResult, RunStatus, now_millis};
-use crate::skill::{SkillCaseMatrix, SkillStrategy};
-use crate::trace::{ArtifactId, EventId, RunId, SpanId};
-
 use super::infra::first_non_empty_string;
 use super::recipe::recipe_app_slug;
 use super::{
   APP_ANALYSIS_VERSION, AppAnalysis, AppAvailableSurfaces, AppCandidateCompatibility,
-  AppCandidateGroundingTaxonomy, AppControlAssessment, AppDistilledCandidateShape,
-  AppDisturbanceProfile, AppGroundingAssessment, AppIdentity, AppPermissionState, AppPoint,
-  AppProbe, AppProbeArtifact, AppProbeStep, AppRecommendedStrategy, AppRect, AppSurfaceCandidate,
-  AppVerificationAssessment, AppVerificationMode, AppWindowContext, AssessmentStatus,
+  AppCandidateGroundingTaxonomy, AppCandidatePromotionGate, AppCandidatePromotionStatus,
+  AppControlAssessment, AppDistilledCandidateShape, AppDisturbanceProfile, AppGroundingAssessment,
+  AppIdentity, AppPermissionState, AppPoint, AppProbe, AppProbeArtifact, AppProbeStep,
+  AppRecommendedStrategy, AppRect, AppSurfaceCandidate, AppVerificationAssessment,
+  AppVerificationMode, AppWindowContext, AssessmentStatus,
 };
 
 #[derive(Clone, Debug)]
@@ -561,7 +561,7 @@ pub(crate) fn build_annotation_candidates(
     } else {
       "Primary window bounds inferred from the AX root window because the window snapshot did not expose a visible window."
     };
-    candidates.push(AppSurfaceCandidate {
+    let mut candidate = AppSurfaceCandidate {
       candidate_id: "window-primary-region".to_string(),
       area: "window.primary".to_string(),
       kind: "region".to_string(),
@@ -582,15 +582,18 @@ pub(crate) fn build_annotation_candidates(
       bounds: Some(bounds),
       confidence: None,
       evidence_step_id: evidence_step_id.to_string(),
-      evidence_refs,
       candidate_query: None,
+      evidence_refs,
+      promotion_gate: None,
       input_bindings,
       compatibility: candidate_compatibility(
         &["window-action.window-point.pointer-click.capture-evidence"],
         &[],
       ),
       notes: vec![note.to_string()],
-    });
+    };
+    candidate.promotion_gate = Some(promotion_gate_for_candidate(&candidate));
+    candidates.push(candidate);
   }
 
   if let Some(node) = find_search_entry_node(ax_snapshot)
@@ -645,7 +648,7 @@ pub(crate) fn build_annotation_candidates(
           .to_string(),
       );
     }
-    candidates.push(AppSurfaceCandidate {
+    let mut candidate = AppSurfaceCandidate {
       candidate_id: format!("ocr-anchor-{}", matched.match_index),
       area: area.to_string(),
       kind: "anchor-text".to_string(),
@@ -663,16 +666,19 @@ pub(crate) fn build_annotation_candidates(
       bounds: Some(bounds),
       confidence: Some(matched.confidence),
       evidence_step_id: "ocr-sample".to_string(),
-      evidence_refs: artifact_refs_for_probe_step(probe_steps, "ocr-sample"),
       candidate_query: Some(ocr_candidate_query(
         &format!("ocr-anchor-{}", matched.match_index),
         &matched.text,
         Some(matched.confidence),
       )),
+      evidence_refs: artifact_refs_for_probe_step(probe_steps, "ocr-sample"),
+      promotion_gate: None,
       input_bindings: BTreeMap::from([("anchor_text".to_string(), matched.text.clone())]),
       compatibility: AppCandidateCompatibility::default(),
       notes,
-    });
+    };
+    candidate.promotion_gate = Some(promotion_gate_for_candidate(&candidate));
+    candidates.push(candidate);
   }
 
   if has_collection_surface && ocr_snapshot.matches.len() >= 2 {
@@ -714,7 +720,7 @@ fn ax_focus_candidate(
 ) -> AppSurfaceCandidate {
   let bounds = AppRect::from_observed(&node.bounds);
   let focus_query = query_value.clone();
-  AppSurfaceCandidate {
+  let mut candidate = AppSurfaceCandidate {
     candidate_id: candidate_id.to_string(),
     area: area.to_string(),
     kind: kind.to_string(),
@@ -728,12 +734,15 @@ fn ax_focus_candidate(
     bounds: Some(bounds),
     confidence: None,
     evidence_step_id: evidence_step_id.to_string(),
-    evidence_refs,
     candidate_query: Some(ax_candidate_query(candidate_id, node, &query_value, kind)),
+    evidence_refs,
+    promotion_gate: None,
     input_bindings: BTreeMap::from([("focus_query".to_string(), focus_query)]),
     compatibility,
     notes: vec![note.to_string()],
-  }
+  };
+  candidate.promotion_gate = Some(promotion_gate_for_candidate(&candidate));
+  candidate
 }
 
 fn group_ocr_rows_from_ocr_snapshot(snapshot: &OcrTextSnapshot) -> Vec<ObservedOcrRow> {
@@ -746,7 +755,7 @@ fn row_candidate(
   evidence_refs: Vec<crate::contract::ArtifactRef>,
 ) -> AppSurfaceCandidate {
   let bounds = AppRect::from_observed(&row.bounds);
-  AppSurfaceCandidate {
+  let mut candidate = AppSurfaceCandidate {
     candidate_id: format!("visible-row-{}", row.row_index + 1),
     area: "result-selection".to_string(),
     kind: "row".to_string(),
@@ -766,6 +775,7 @@ fn row_candidate(
       row.row_index + 1,
       &row.text_fragments.join(" "),
     )),
+    promotion_gate: None,
     input_bindings: BTreeMap::from([("row_index".to_string(), format!("{}", row.row_index + 1))]),
     compatibility: candidate_compatibility(
       &[],
@@ -775,6 +785,76 @@ fn row_candidate(
       "Visible row candidate grouped from OCR observations; useful for list-like UI targets."
         .to_string(),
     ],
+  };
+  candidate.promotion_gate = Some(promotion_gate_for_candidate(&candidate));
+  candidate
+}
+
+fn promotion_gate_for_candidate(candidate: &AppSurfaceCandidate) -> AppCandidatePromotionGate {
+  let mut missing_gates = Vec::new();
+  let mut notes = Vec::new();
+
+  if candidate.evidence_refs.is_empty() {
+    missing_gates.push("artifact_ref".to_string());
+    notes.push(
+      "Candidate has no ArtifactRef; action consumers cannot reconstruct the source evidence chain."
+        .to_string(),
+    );
+  }
+
+  if candidate.candidate_query.is_none() && candidate.input_bindings.is_empty() {
+    missing_gates.push("relocation_query_or_inputs".to_string());
+    notes.push(
+      "Candidate has neither a surface selector query nor recipe input bindings for re-grounding."
+        .to_string(),
+    );
+  }
+
+  let status = match (candidate.area.as_str(), candidate.kind.as_str()) {
+    ("ocr-visible-text", _) => {
+      push_unique(&mut missing_gates, "semantic_verification_contract");
+      push_unique(&mut missing_gates, "action_contract");
+      notes.push(
+        "OCR visible text remains evidence only; it is not a validated semantic target."
+          .to_string(),
+      );
+      AppCandidatePromotionStatus::Blocked
+    }
+    ("result-selection", "row") => {
+      push_unique(&mut missing_gates, "row_action_contract");
+      push_unique(&mut missing_gates, "semantic_verification_contract");
+      notes.push(
+        "Row/list grouping is a surface candidate; it needs a row action and semantic verifier before action-grade promotion."
+          .to_string(),
+      );
+      AppCandidatePromotionStatus::Blocked
+    }
+    _ if !candidate.compatibility.direct_taxonomy_ids.is_empty() => {
+      notes.push(
+        "Candidate can seed a known distillation strategy, but analyze does not mint action-grade contract::Candidate values."
+          .to_string(),
+      );
+      AppCandidatePromotionStatus::DistillStrategyOnly
+    }
+    _ => {
+      push_unique(&mut missing_gates, "promotion_path");
+      notes.push(
+        "No direct taxonomy or action contract currently consumes this candidate.".to_string(),
+      );
+      AppCandidatePromotionStatus::Blocked
+    }
+  };
+
+  AppCandidatePromotionGate {
+    status,
+    missing_gates,
+    notes,
+  }
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+  if !values.iter().any(|existing| existing == value) {
+    values.push(value.to_string());
   }
 }
 

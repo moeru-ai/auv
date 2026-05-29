@@ -134,7 +134,9 @@ Promotion is allowed only when all required gates are satisfied:
 | Failure layer | Failure can be classified as grounding, candidate expiration, control, verification, or semantic mismatch. |
 
 If any gate is missing, keep the item as a surface candidate and record the
-missing gate in `known_limits`.
+blocker in `AppSurfaceCandidate.promotion_gate.missing_gates`. Use candidate
+notes or known boundaries for prose context, but do not rely on Markdown-only
+text as the machine-readable gate.
 
 This gate is the seam between `app analyze` and `ActionResolver`. Do not bypass
 it by letting a driver action consume `AppSurfaceCandidate` directly.
@@ -219,15 +221,29 @@ distillation decisions; operation results are for machine consumption and replay
 Anything beyond this, including full DOM selectors, YOLO, broad visual
 segmentation, or a new orchestration language, is outside v0.
 
-## Immediate Next Slice
+## Implementation Status
 
-The next code slice should be evidence closure, not new surface kinds:
+The `surface analyze v0` evidence/promotion boundary is now partially
+implemented on top of the `b702be0` selector baseline:
 
-1. Add evidence references to `AppSurfaceCandidate` using `ArtifactRef` where
-   current probe/run data makes that possible.
-2. Keep coordinate and capture context as candidate fields or candidate detail.
-3. Add regression tests showing OCR and row candidates have evidence refs but do
-   not auto-promote to semantic result selection.
-4. Only after this should a promotion implementation convert selected analyze
-   candidates into `contract::Candidate`.
+1. Evidence references on `AppSurfaceCandidate` landed in `6e0c7fd`.
+   Candidates derived from current probe artifacts may now carry durable
+   `ArtifactRef` values instead of Markdown-only evidence prose.
+2. Promotion blockers on `AppSurfaceCandidate.promotion_gate` landed in
+   `899ac79`. Blocked OCR/row candidates and strategy-only candidates are now
+   explicit in the analyze report contract instead of being inferred from
+   reviewer notes.
+3. OCR visible text and row/list grouping remain surface candidates, not
+   action-grade runtime candidates. The v0 boundary still treats them as
+   observable evidence unless a later slice provides the missing action,
+   liveness, and verification contracts.
+4. Coordinate and capture context remain candidate-side detail rather than being
+   pushed into a separate evidence-ref schema.
 
+The remaining future step is still the same seam:
+
+```text
+AppSurfaceCandidate -> contract::Candidate
+```
+
+That promotion work is intentionally outside the current v0 analyze closure.
