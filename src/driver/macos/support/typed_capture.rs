@@ -2,12 +2,18 @@ use auv_driver::Driver as _;
 use auv_driver::geometry::{CoordinateSpace as TypedCoordinateSpace, Rect as TypedRect};
 use auv_driver::window::{Window as TypedWindow, WindowRef as TypedWindowRef};
 
-use super::super::*;
+use super::super::{DriverCall, WindowCandidate, now_millis};
 use super::call::{app_identifier, parse_window_selection};
 use super::display::maybe_activate_target_app_for_observation;
 use crate::driver::macos::capture::types::{
   CaptureBackend, CaptureContract, CaptureSource, DisplayDescriptor, Rect, Scale2D, Size,
 };
+use crate::driver::macos::support::{
+  parse_app_selector, resolve_app_ref, resolve_window_candidate, retry_window_capture_operation,
+  window_capture_readiness_diagnostic,
+};
+use crate::model::AuvResult;
+use auv_driver_macos::types::ScreenshotDimensions;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypedWindowCaptureObservation {

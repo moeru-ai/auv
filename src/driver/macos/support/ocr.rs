@@ -4,8 +4,12 @@ use std::path::Path;
 #[cfg(test)]
 use auv_driver_macos::support::{parse_i64, report_value};
 
-use super::super::*;
-use super::{group_ocr_matches_into_rows, ocr_match_center, optional_f64, render_rect_compact};
+use super::super::{DetectedScreenRows, DriverCall, OcrTextMatch, ObservedOcrRow};
+use super::call::optional_f64;
+use super::geometry::{ocr_match_center, render_rect_compact};
+use crate::model::AuvResult;
+use auv_driver_macos::support::group_ocr_matches_into_rows;
+use auv_driver_macos::types::ObservedRect;
 
 #[cfg(test)]
 pub(crate) fn parse_visual_rows_snapshot(report: &str) -> AuvResult<DetectedScreenRows> {

@@ -13,10 +13,13 @@ use std::fs;
 use image::{Rgba, RgbaImage};
 use serde::Serialize;
 
-use super::super::*;
+use super::super::{ProducedArtifact, ScreenshotDimensions};
+use super::artifacts::{build_text_artifact, sanitize_file_component, temp_file_path};
 use crate::driver::macos::capture::types::CaptureContract;
 use crate::driver::macos::capture::xcap_backend::save_rgba_image;
+use crate::model::AuvResult;
 use auv_driver_macos::native::pointer::current_mouse_logical_point;
+use auv_driver_macos::types::ObservedRect;
 
 const AUV_OUTLINE: [u8; 4] = [21, 23, 26, 255];
 const AUV_BODY: [u8; 4] = [0, 196, 210, 255];

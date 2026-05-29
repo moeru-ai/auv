@@ -3,13 +3,15 @@ use std::path::Path;
 
 use serde_json::json;
 
-use super::super::*;
+use super::super::{ObservedOcrRow, ProducedArtifact, ScreenshotDimensions};
+use super::artifacts::build_text_artifact;
 use crate::contract::{
   ArtifactRef, RatioRegion, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
   RecognitionSurface, RecognizedItem,
 };
 use crate::driver::macos::capture::types::{CaptureContract, CaptureSource};
 use crate::model::AuvResult;
+use auv_driver_macos::types::ObservedRect;
 
 #[derive(Clone, Debug)]
 pub(crate) struct RowRecognitionArtifactRequest<'a> {

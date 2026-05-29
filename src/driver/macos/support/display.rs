@@ -6,10 +6,14 @@ use std::path::Path;
 #[cfg(test)]
 use auv_driver_macos::support::{parse_bool_flag, parse_f64, parse_i64, parse_u32, report_value};
 
-use super::super::*;
+use super::super::{DriverCall, ObservedDisplay, ObservedDisplaySnapshot, ObservedPointResolution};
 use super::call::{app_identifier, optional_bool, optional_positive_u64};
 use super::geometry::render_rect_compact;
 use super::runtime::activate_target_app;
+use crate::model::AuvResult;
+#[cfg(test)]
+use auv_driver_macos::types::ObservedRect;
+use auv_driver_macos::types::{CoordinateReadinessAssessment, ScreenshotDimensions};
 
 pub(crate) fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
   auv_driver_macos::native::window::enumerate_displays()

@@ -29,10 +29,9 @@ mod typed;
 pub(crate) use self::support::*;
 pub(crate) use auv_driver_macos::constants::*;
 pub(crate) use auv_driver_macos::types::{
-  CoordinateReadinessAssessment, DetectedScreenRows, ObservedAxNode, ObservedDisplay,
-  ObservedDisplaySnapshot, ObservedOcrRow, ObservedPointResolution, ObservedRect,
-  ObservedWindowSnapshot, OcrTextMatch, OcrTextSnapshot, ScreenshotDimensions, WindowCandidate,
-  WindowRef, WindowSelection,
+  DetectedScreenRows, ObservedAxNode, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow,
+  ObservedPointResolution, ObservedRect, ObservedWindowSnapshot, OcrTextMatch, OcrTextSnapshot,
+  ScreenshotDimensions, WindowCandidate, WindowRef, WindowSelection,
 };
 
 pub(crate) struct LegacyMacosCommandDriver;

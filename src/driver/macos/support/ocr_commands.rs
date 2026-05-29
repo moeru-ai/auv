@@ -3,8 +3,14 @@ use std::path::PathBuf;
 
 use image::RgbaImage;
 
-use super::super::*;
+use super::super::{DriverCall, OcrTextMatch, OcrTextSnapshot, ProducedArtifact, ScreenshotDimensions};
+use super::call::{optional_bool, optional_f64, optional_i64};
+use super::geometry::ocr_match_center;
+use super::ocr::{filter_ocr_matches, parse_ocr_region_constraint};
+use crate::model::AuvResult;
+use auv_driver_macos::types::ObservedRect;
 use crate::driver::macos::capture::types::CaptureContract;
+use crate::driver::macos::support::artifacts::sanitize_file_component;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct TextMatchCommandReport {
