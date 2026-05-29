@@ -288,15 +288,17 @@ The trace layout is v0-complete when:
 
 Intentionally deferred:
 
-- Inspect viewer panel layout for view parser runs. The viewer reads
-  span attributes and artifacts per this spec, but the panel UI is
-  out of scope here.
+- (Inspect viewer panel layout for view parser runs — covered by
+  `2026-05-29-view-parser-inspect-viewer-v0.md`. The viewer reads
+  span attributes and artifacts per this spec; the panel UI lives
+  there.)
 - Cross-run trace aggregation (e.g. "what NetEase parses ran today").
 - Performance budgets per span.
 - Span sampling / truncation policy for long scroll loops. v0 emits
   every span; sampling is a future concern.
-- `view-memory` artifact owning span. Deferred until the persistence
-  spec exists.
+- (`view-memory` artifact owning span — pinned by view-memory-v0 as
+  `view.parse.memory_write`; the table at the top of this spec was
+  refreshed accordingly.)
 
 ## How to use this spec
 

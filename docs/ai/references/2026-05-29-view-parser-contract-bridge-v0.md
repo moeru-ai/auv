@@ -175,7 +175,7 @@ defines.
   `AppSurfaceCandidate`.
 - A view-parser-specific promotion gate or evidence schema.
 - `ViewMemory` persistence, anchor reacquisition, and viewport pose memory.
-- Inspect viewer integration for view parser artifacts.
+- (Inspect viewer integration for view parser artifacts — covered by `2026-05-29-view-parser-inspect-viewer-v0.md`.)
 - Promotion of NetEase-specific types into `src/contract.rs`.
 - Cross-app view composition.
 

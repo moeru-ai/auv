@@ -10,7 +10,7 @@ opening the view parser docs for the first time.
 
 ## What this is
 
-The view parser v0 is defined by **16 documents** in `docs/ai/references/`,
+The view parser v0 is defined by **17 documents** in `docs/ai/references/`,
 written between 2026-05-28 and 2026-05-29. This overview is the entry
 point. It does **not** restate the specs; it tells you which to read
 in which order for the task at hand.
@@ -18,7 +18,8 @@ in which order for the task at hand.
 > This overview was revised on 2026-05-29 — first after the three
 > algorithm specs (region detection, item parsing, scroll loop)
 > landed, then again after ViewMemory persistence and anchor
-> reacquisition landed.
+> reacquisition landed, then again after inspect viewer integration
+> landed.
 
 ## The corpus
 
@@ -40,6 +41,7 @@ in which order for the task at hand.
 | 14 | `2026-05-29-view-parser-scroll-loop-v0.md` | Observation loop control flow, scroll step policy, hard / soft / repeat boundary detection, 5 stop conditions |
 | 15 | `2026-05-29-view-parser-view-memory-v0.md` | `ViewMemory` persistence shape (memory_id keying, freshness rules, eviction, owning span `view.parse.memory_write`) |
 | 16 | `2026-05-29-view-parser-anchor-reacquisition-v0.md` | 6-stage cascade for re-finding a node from `ViewMemory` with bounded scroll / wall-clock budgets and `view.reacquire.*` trace namespace |
+| 17 | `2026-05-29-view-parser-inspect-viewer-v0.md` | `Runtime::list_view_*` methods, HTTP envelope `view_parser` field, viewer HTML tab, color / severity mapping (no severity on wire) |
 
 ## Dependency map
 
@@ -85,6 +87,11 @@ their definitions:
                                             ▼
                                     16. anchor
                                        reacquisition
+                                            │
+                                            ▼
+                                    17. inspect
+                                        viewer
+                                       integration
 ```
 
 Doc 1 is the rationale; 2 is the consumed surface model. 3 sets the
@@ -96,6 +103,9 @@ fill in `RegionParser`, `ItemParser`, and the `ViewParser` loop
 with v0 defaults whose every threshold is marked `REVIEW(...)`.
 15 → 16 close the persistence + read-side reacquisition loop that
 turns single-parse `playlist ls` into follow-up-able `playlist get`.
+17 surfaces all of the above through `Runtime::list_view_*`, the
+HTTP envelope, and the viewer HTML so reviewers can open a run and
+see what the parser saw.
 
 ## Reading order by task
 
@@ -146,6 +156,22 @@ Read in this order:
 You can skim 2, 3, 9 unless you change framework-side code. Docs 12,
 13, 14 are the meat of the example's parser implementation work; their
 `REVIEW(...)` markers are the v0 tuning surface.
+
+### "I'm extending inspect read-side / viewer for view parser data"
+
+Read in this order:
+
+1. `view-parser-inspect-viewer-v0.md` (17) — the new
+   `Runtime::list_view_*`, HTTP envelope additions, viewer tab and
+   forbidden surface changes
+2. `view-parser-trace-layout-v0.md` (7) — span attributes the
+   viewer filters on
+3. `view-parser-diagnostic-policy-v0.md` (5) — severity table the
+   viewer reads (severity stays kind-implied, never on the wire)
+4. `view-parser-anchor-reacquisition-v0.md` (16) — span tree for
+   the span-derived reacquisitions sub-view
+
+Skip 4, 6, 8, 12–14 unless you change the underlying data.
 
 ### "I'm implementing `playlist get` or any follow-up command"
 
@@ -232,7 +258,7 @@ listed. Consolidated below for one-glance review:
 - (`ViewMemory` persistence — moved into v0 via doc 15)
 - (Anchor reacquisition algorithm — moved into v0 via doc 16)
 - DOM / CDP / CV / YOLO backends (2, 4)
-- Inspect viewer panels (3, 7, 9)
+- (Inspect viewer integration — moved into v0 via doc 17)
 - Cross-app reconstruction (3, 9)
 - Promotion of `ViewNode` to `contract::Candidate` without
   `AppSurfaceCandidate` (3, 9)

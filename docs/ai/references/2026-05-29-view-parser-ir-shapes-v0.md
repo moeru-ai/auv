@@ -51,8 +51,8 @@ In scope:
 
 Out of scope:
 
-- `ViewMemory` persistence — reserve the shape, do not implement.
-- Inspect viewer rendering of these types.
+- (`ViewMemory` persistence — covered by view-memory-v0.)
+- (Inspect viewer rendering of these types — covered by inspect-viewer-v0.)
 - Domain-specific projection record shapes (e.g. NetEase
   `PlaylistSidebarProjection`) — those live with the example, not the
   generic IR.
@@ -574,9 +574,9 @@ The IR is v0-complete when:
 - Generic visual segmentation backend integration (`Future CV/YOLO`
   remains a reserved row in `surface-analyze-v0.md`).
 - DOM / CDP backend (`Future DOM/CDP` likewise reserved).
-- Inspect viewer panels.
-- Anchor reacquisition algorithm — design doc lists strategies; v0
-  IR carries only the strategy enum and hint fields.
+- (Inspect viewer panels — covered by inspect-viewer-v0.)
+- (Anchor reacquisition algorithm — covered by anchor-reacquisition-v0;
+  the IR continues to carry only the strategy enum and hint fields.)
 
 ## How to use this spec
 

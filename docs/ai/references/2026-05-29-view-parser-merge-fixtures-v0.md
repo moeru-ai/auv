@@ -336,8 +336,10 @@ For v0:
   live in a shared module; each fixture stays focused on what it
   varies.
 - JSON-serialized variants of the fixtures (round-trip artifacts) are
-  out of scope for v0; revisit when the JSON shape is exercised by
-  the inspect viewer.
+  out of scope for v0. The inspect viewer integration spec
+  (`2026-05-29-view-parser-inspect-viewer-v0.md`) exercises the JSON
+  shape via `Runtime::list_view_*` round-trips; if those tests reveal
+  a need for parallel JSON merge fixtures, revisit here.
 
 ## Test runner contract
 
