@@ -2,8 +2,16 @@
 use std::thread;
 use std::time::Duration;
 
-use super::super::*;
+use super::super::{DriverCall, DriverResponse};
+use super::super::support::{
+  artifacts::{build_text_artifact, sanitize_file_component},
+  call::{app_identifier, optional_i64, optional_positive_u64, parse_mouse_button, required_f64},
+  display::{enumerate_displays, render_display_note},
+  geometry::resolve_display_point,
+  resolve_scroll_deltas,
+};
 use super::common::{activate_app_if_needed, resolve_click_interval_ms};
+use crate::model::AuvResult;
 
 pub(crate) fn click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;

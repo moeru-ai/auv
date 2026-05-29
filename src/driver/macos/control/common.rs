@@ -2,9 +2,11 @@
 use std::thread;
 use std::time::Duration;
 
+use super::super::{DriverCall, ObservedAxNode};
 use super::super::support::runtime::{activate_target_app, send_shortcut};
-use super::super::*;
+use super::super::{optional_positive_u64, render_rect_compact};
 use crate::model::{DriverRunContext, ExecutionTarget};
+use crate::model::AuvResult;
 
 pub(crate) const DEFAULT_CLICK_INTERVAL_MS: u64 = 80;
 pub(crate) const MAX_CLICK_INTERVAL_MS: u64 = 1000;
