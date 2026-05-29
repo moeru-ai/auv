@@ -15,6 +15,10 @@ use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
 const DEFAULT_APP_ID: &str = "com.netease.163music";
 const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
+/// Wire-shape contract for `PlaylistSidebarScan` JSON output. Readers must
+/// reject artifacts whose `schema_version` is not understood. Bump the value
+/// only when the on-wire shape changes in a non-additive way.
+const VIEW_IR_SCHEMA_VERSION: &str = "view-ir-v0";
 #[cfg(target_os = "macos")]
 const LIVE_SCROLL_SETTLE_MS: u64 = 500;
 
@@ -55,8 +59,19 @@ impl RatioRegion {
   }
 }
 
+/// Top-level scan artifact for one `netease_playlist_ls` run.
+///
+/// Every `id` field reachable from this struct (on `ViewNodeRecord`,
+/// `ViewAnchor`, `ViewLandmark`, `SidebarSection`, `PlaylistSidebarItem`,
+/// and the `candidate_id` / `anchor_id` references on items) is
+/// **parse-scoped**: it is unique within this single scan only and is not
+/// guaranteed to be stable across runs or app versions. Cross-run lookups
+/// (e.g. a future `playlist get <anchor_id>`) must not rely on these as
+/// durable identifiers without first introducing content-derived IDs.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct PlaylistSidebarScan {
+  /// Wire-shape version of this artifact. See `VIEW_IR_SCHEMA_VERSION`.
+  schema_version: String,
   app: ScanAppContext,
   window: ScanWindowContext,
   sidebar_region: ViewRegionRecord,
@@ -810,6 +825,7 @@ fn empty_diagnostic_scan(
   }
 
   PlaylistSidebarScan {
+    schema_version: VIEW_IR_SCHEMA_VERSION.to_string(),
     app,
     window,
     sidebar_region,
@@ -1342,6 +1358,7 @@ fn reconstruct_playlist_sidebar(
   collect_landmarks(&root, &mut landmark_index);
 
   PlaylistSidebarScan {
+    schema_version: VIEW_IR_SCHEMA_VERSION.to_string(),
     app,
     window,
     sidebar_region,
