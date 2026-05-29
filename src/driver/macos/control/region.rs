@@ -11,7 +11,26 @@
 use std::collections::BTreeMap;
 
 use super::super::support::runtime::activate_target_app;
-use super::super::*;
+use super::super::{DriverCall, DriverResponse, ObservedOcrRow, ObservedRect, ProducedArtifact, ScreenshotDimensions};
+use super::super::support::{
+  artifacts::{DriverArtifactBuilder, build_text_artifact, looks_like_bundle_identifier, sanitize_file_component},
+  call::{
+    app_identifier, optional_f64, optional_i64, optional_positive_u64, optional_string,
+    parse_window_selection,
+  },
+  display::enumerate_displays,
+  geometry::{render_rect_compact, resolve_display_point},
+  ocr::detect_screen_rows,
+  overlay_evidence::{
+    OverlayEvidenceRow, RowObservationOverlayRequest, build_row_observation_overlay_artifacts,
+  },
+  recognition::{
+    RowRecognitionArtifactRequest, observed_rect_to_ratio_region, recognition_source_for_rows,
+    row_recognition_artifact, window_number_from_ref,
+  },
+  parse_app_selector, resolve_app_ref, resolve_window_candidate,
+};
+use crate::model::AuvResult;
 
 pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverResponse> {
   let label = optional_string(call, "label").unwrap_or_else(|| "window-region-observe".to_string());

@@ -32,8 +32,5 @@ pub(crate) use auv_driver_macos::support::{
 
 pub(crate) use self::artifacts::*;
 pub(crate) use self::call::*;
-pub(crate) use self::display::*;
 pub(crate) use self::geometry::*;
 pub(crate) use self::ocr::*;
-pub(crate) use self::overlay_evidence::*;
-pub(crate) use self::recognition::*;
