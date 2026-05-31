@@ -261,6 +261,25 @@ pub(crate) fn parse_ratio_region(value: String) -> Result<RatioRect, String> {
   Ok(RatioRect::new(parts[0], parts[1], parts[2], parts[3]))
 }
 
+/// Decode a stored playlist sidebar scan artifact and reject unknown wire
+/// shapes before interpreting the app-specific fields.
+pub fn decode_playlist_sidebar_scan_json(input: &str) -> Result<PlaylistSidebarScan, String> {
+  let value: serde_json::Value = serde_json::from_str(input)
+    .map_err(|error| format!("invalid playlist sidebar scan JSON: {error}"))?;
+  let schema_version = value
+    .get("schema_version")
+    .and_then(serde_json::Value::as_str)
+    .ok_or_else(|| "playlist sidebar scan JSON is missing schema_version".to_string())?;
+  if schema_version != VIEW_IR_SCHEMA_VERSION {
+    return Err(format!(
+      "unsupported playlist sidebar scan schema_version {schema_version:?}; expected {VIEW_IR_SCHEMA_VERSION:?}"
+    ));
+  }
+
+  serde_json::from_value(value)
+    .map_err(|error| format!("invalid playlist sidebar scan shape: {error}"))
+}
+
 pub fn render_human_summary(scan: &PlaylistSidebarScan) -> String {
   let mut lines = Vec::new();
   lines.push("NetEase playlist sidebar scan".to_string());
@@ -1931,6 +1950,42 @@ mod tests {
     );
     assert_eq!(scan.reconstruction.root.kind, ViewNodeKind::Collection);
     assert_eq!(scan.reconstruction.root.children.len(), 2);
+  }
+
+  #[test]
+  fn decode_playlist_sidebar_scan_json_accepts_current_schema() {
+    let page0 = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+      ]),
+    );
+    let scan = reconstruct_playlist_sidebar(
+      ScanAppContext::default(),
+      ScanWindowContext::default(),
+      ViewRegionRecord::default(),
+      vec![page0],
+    );
+
+    let json = serde_json::to_string(&scan).expect("scan should serialize");
+    let decoded = decode_playlist_sidebar_scan_json(&json).expect("current schema should decode");
+
+    assert_eq!(decoded, scan);
+  }
+
+  #[test]
+  fn decode_playlist_sidebar_scan_json_rejects_missing_or_unknown_schema() {
+    let missing = r#"{"projection":{"sections":[]}}"#;
+    let missing_error = decode_playlist_sidebar_scan_json(missing)
+      .expect_err("missing schema version should be rejected");
+    assert!(missing_error.contains("missing schema_version"));
+
+    let unknown = r#"{"schema_version":"view-ir-v999","projection":{"sections":[]}}"#;
+    let unknown_error = decode_playlist_sidebar_scan_json(unknown)
+      .expect_err("unknown schema version should be rejected");
+    assert!(unknown_error.contains("unsupported playlist sidebar scan schema_version"));
   }
 
   #[test]
