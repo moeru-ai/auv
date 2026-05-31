@@ -14,12 +14,12 @@ use auv_driver::vision::TextRecognition;
 // crate because they consume NetEase-shaped observations.
 use auv_view::{
   AnchorStrength, BoundaryConfidence, Confidence, LandmarkUse, ParserDiagnostic, ScanAppContext,
-  ScanOptions, ScanWindowContext, ScrollBoundarySummary, ViewAction, ViewAnchor, ViewAxis,
-  ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind,
-  ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord, ViewRegionRecord,
-  ViewScrollable, ViewViewportRecord, boundary_summary_from_observations, collect_anchors,
-  collect_landmarks, confidence_from_ocr, draw_rect, normalize_identity, scan_with_observer,
-  scroll_to_top, slug, viewport_contains_center, viewport_fingerprint,
+  ScanOptions, ScanWindowContext, ScrollBoundarySummary, VIEW_IR_SCHEMA_VERSION, ViewAction,
+  ViewAnchor, ViewAxis, ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout,
+  ViewNodeKind, ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord,
+  ViewRegionRecord, ViewScrollable, ViewViewportRecord, boundary_summary_from_observations,
+  collect_anchors, collect_landmarks, confidence_from_ocr, draw_rect, normalize_identity,
+  scan_with_observer, scroll_to_top, slug, viewport_contains_center, viewport_fingerprint,
 };
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
@@ -35,10 +35,6 @@ use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
 pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
-/// Wire-shape contract for `PlaylistSidebarScan` JSON output. Readers must
-/// reject artifacts whose `schema_version` is not understood. Bump the value
-/// only when the on-wire shape changes in a non-additive way.
-const VIEW_IR_SCHEMA_VERSION: &str = "view-ir-v0";
 #[cfg(target_os = "macos")]
 const LIVE_SCROLL_SETTLE_MS: u64 = 500;
 

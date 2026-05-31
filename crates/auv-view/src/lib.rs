@@ -27,6 +27,12 @@
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
+/// Current wire-shape version for view-parser IR artifacts.
+///
+/// Product crates must use this value when emitting top-level view IR JSON so
+/// readers can reject unknown shapes before interpreting app-specific fields.
+pub const VIEW_IR_SCHEMA_VERSION: &str = "view-ir-v0";
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanAppContext {
   pub app_id: Option<String>,
