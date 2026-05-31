@@ -90,10 +90,50 @@ pub struct PlaylistSidebarScan {
   known_limits: Vec<String>,
 }
 
+impl PlaylistSidebarScan {
+  pub fn app(&self) -> &ScanAppContext {
+    &self.app
+  }
+
+  pub fn window(&self) -> &ScanWindowContext {
+    &self.window
+  }
+
+  pub fn sidebar_region(&self) -> &ViewRegionRecord {
+    &self.sidebar_region
+  }
+
+  pub fn observations_len(&self) -> usize {
+    self.observations.len()
+  }
+
+  pub fn projection(&self) -> &PlaylistSidebarProjection {
+    &self.projection
+  }
+
+  pub fn boundary(&self) -> &ScrollBoundarySummary {
+    &self.boundary
+  }
+
+  pub fn diagnostics(&self) -> &[ParserDiagnostic] {
+    &self.diagnostics
+  }
+
+  pub fn known_limits(&self) -> &[String] {
+    &self.known_limits
+  }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct SidebarViewportObservation {
   observation_index: usize,
   viewport: ViewViewportRecord,
+  /// Local artifact paths written by the standalone NetEase CLI.
+  ///
+  /// TODO(view-artifact-ref-v1): replace these path strings with
+  /// `contract::ArtifactRef` only after this crate writes through AUV run
+  /// storage. Pulling the root contract into this app crate now would invert
+  /// the intended crate boundary.
   source_artifacts: Vec<String>,
   viewport_fingerprint: String,
   evidence_nodes: Vec<ViewEvidenceNode>,

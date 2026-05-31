@@ -217,6 +217,13 @@ pub enum Confidence {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParserDiagnostic {
+  /// Machine-readable diagnostic code.
+  ///
+  /// TODO(view-diagnostic-kind-v1): keep this as a string until actual
+  /// NetEase/parser emissions are classified against
+  /// `view-parser-diagnostic-policy-v0.md`. Promote to a typed kind only
+  /// after infra errors, parser diagnostics, and test fakes have distinct
+  /// lanes; forcing them into one enum now would encode the wrong policy.
   pub code: String,
   pub message: String,
   pub node_id: Option<String>,

@@ -152,8 +152,8 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
       return ExitCode::from(1);
     }
   };
-  let matches = collect_matches(&scan.projection, cmd.keyword.as_deref());
-  let item_count = collect_matches(&scan.projection, None).len();
+  let matches = collect_matches(scan.projection(), cmd.keyword.as_deref());
+  let item_count = collect_matches(scan.projection(), None).len();
   let envelope = PlaylistEnvelope {
     command: "playlist",
     query: cmd.keyword.clone(),
