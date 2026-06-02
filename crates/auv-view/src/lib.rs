@@ -392,11 +392,28 @@ pub trait ViewObserver {
 }
 
 /// Minimum surface a domain observation type must expose so the framework
-/// scan loops can run against it without naming the per-app shape. v0 only
-/// needs `viewport_fingerprint` (drives repeated-viewport detection); add
-/// methods here only when a generic loop actually needs them.
+/// scan loops can run against it without naming the per-app shape. v0
+/// needs `viewport_fingerprint` (drives repeated-viewport detection) plus
+/// `parser_notes` and `has_evidence` (drive `reconstruct`'s diagnostic
+/// aggregation and the "evidence-but-no-candidates" detector). Default
+/// impls keep existing consumers backwards-compatible.
 pub trait ViewObservation {
   fn viewport_fingerprint(&self) -> &str;
+
+  /// Parser notes raised during this observation, forwarded into the
+  /// reconstruction's `diagnostics`. Default: empty slice.
+  fn parser_notes(&self) -> &[ParserDiagnostic] {
+    &[]
+  }
+
+  /// Whether the observation gathered any evidence at all. Used by
+  /// `reconstruct` to decide whether to raise a
+  /// `parser_no_reliable_candidates` diagnostic when no candidates were
+  /// accepted. Default: false (an observation type with no evidence
+  /// notion never participates in that detector).
+  fn has_evidence(&self) -> bool {
+    false
+  }
 }
 
 /// Knobs the scan loop reads to decide when to stop. Cap on observation
@@ -559,6 +576,239 @@ where
     summary.bottom = BoundaryConfidence::Likely;
   }
   summary
+}
+
+// --------------------------------------------------------------------------
+// Reconstruction policy seam. The framework owns the loop, the per-section
+// item dedup, the section indexing, and the anchor/landmark collection. The
+// app crate provides a `ReconstructionPolicy` impl that knows how to:
+//   - classify candidates (header vs item vs unknown),
+//   - derive a section key for header dedup,
+//   - construct domain section / item nodes and projection records,
+//   - build the root container.
+// This lets a second app (future QQ Music, etc.) reuse the reconstruction
+// pipeline without duplicating the ~150-line walk that lived in NetEase.
+// --------------------------------------------------------------------------
+
+/// What the framework should do with a candidate after `classify` reads it.
+///
+/// `Header` opens (or merges into) a section identified by `section_key`.
+/// `Item` lands inside the current section; `dedupe_key` is checked against
+/// items previously added to that section.
+/// `Unknown` is silently skipped.
+pub enum CandidateRole<SectionKey> {
+  Header { section_key: SectionKey },
+  Item { dedupe_key: String },
+  Unknown,
+}
+
+/// What `reconstruct` returns. `sections` is the app's projection record
+/// list in declaration order; `root` is the tree the app's policy built.
+pub struct ReconstructionOutput<SectionProjection> {
+  pub root: ViewNodeRecord,
+  pub anchor_index: Vec<ViewAnchor>,
+  pub landmark_index: Vec<ViewLandmark>,
+  pub sections: Vec<SectionProjection>,
+  pub diagnostics: Vec<ParserDiagnostic>,
+  pub boundary: ScrollBoundarySummary,
+}
+
+/// Policy injected by an app crate into `reconstruct`. Associated types
+/// keep the framework crate from naming the app's candidate / projection
+/// records.
+///
+/// Method-call discipline: `build_section` / `build_item` /
+/// `build_unassigned_section` / `build_root` are called by the framework
+/// at well-defined moments. Don't call them yourself from inside the
+/// policy. `emit_dedup_diagnostic` is invoked once per de-duplicated item
+/// so the app keeps control of the diagnostic message text.
+pub trait ReconstructionPolicy {
+  type Candidate;
+  type SectionKey: std::hash::Hash + Eq + Clone;
+  type SectionProjection;
+  type ItemProjection;
+  type Observation: ViewObservation;
+
+  /// Iterate the candidates carried by one observation. Order is
+  /// observation order (the policy must not re-sort).
+  fn candidates<'a>(
+    &self,
+    observation: &'a Self::Observation,
+  ) -> Box<dyn Iterator<Item = &'a Self::Candidate> + 'a>;
+
+  /// Decide whether a candidate is a section header, a section item, or
+  /// neither. The returned `SectionKey` (for headers) is used to dedup
+  /// across observations; two headers with equal keys merge into one
+  /// section.
+  fn classify(&self, candidate: &Self::Candidate) -> CandidateRole<Self::SectionKey>;
+
+  /// Build the section node + the section projection record for a
+  /// newly-encountered header candidate. Called the first time a given
+  /// section key is seen.
+  fn build_section(
+    &self,
+    observation: &Self::Observation,
+    candidate: &Self::Candidate,
+  ) -> (ViewNodeRecord, Self::SectionProjection);
+
+  /// Build the fallback section that absorbs items appearing before any
+  /// header. Called at most once per `reconstruct`, lazily.
+  fn build_unassigned_section(&self) -> (ViewNodeRecord, Self::SectionProjection);
+
+  /// Build the item node + the item projection record for a candidate
+  /// that has passed the per-section dedup check. The current section's
+  /// projection is provided read-only so the policy can compute fields
+  /// like `section_hint`.
+  fn build_item(
+    &self,
+    observation: &Self::Observation,
+    candidate: &Self::Candidate,
+    section: &Self::SectionProjection,
+  ) -> (ViewNodeRecord, Self::ItemProjection);
+
+  /// Attach the item node to its parent section node. Default impl appends
+  /// to `section_node.children`.
+  fn attach_item_to_section_node(
+    &self,
+    section_node: &mut ViewNodeRecord,
+    item_node: ViewNodeRecord,
+  ) {
+    section_node.children.push(item_node);
+  }
+
+  /// Append the item projection to the section projection. Apps with
+  /// `items: Vec<_>` on their section type implement this with a push;
+  /// apps with non-`Vec` containers replace the strategy.
+  fn append_item_to_section_projection(
+    &self,
+    section: &mut Self::SectionProjection,
+    item: Self::ItemProjection,
+  );
+
+  /// Build the root container that holds every section node. Called once
+  /// at the end of `reconstruct`. The app picks the root id, domain_kind,
+  /// layout, scroll axis, and bounds.
+  fn build_root(
+    &self,
+    sidebar_bounds: ViewBounds,
+    boundary: ScrollBoundarySummary,
+    section_children: Vec<ViewNodeRecord>,
+  ) -> ViewNodeRecord;
+
+  /// Emit the diagnostic when an item duplicate is detected. The policy
+  /// owns the wording (NetEase uses `"deduplicated repeated sidebar item
+  /// {label:?} in section {section_hint:?}"`); the framework owns the
+  /// detection.
+  fn emit_dedup_diagnostic(
+    &self,
+    candidate: &Self::Candidate,
+    section: &Self::SectionProjection,
+  ) -> ParserDiagnostic;
+}
+
+/// Run the framework reconstruction loop against the policy. The loop:
+///
+/// 1. Carries forward each observation's `parser_notes` into diagnostics.
+/// 2. Walks every candidate in observation order. Headers create or merge
+///    into a section keyed by `policy.classify().section_key`. Items land
+///    under the current section (or a lazily-built unassigned section if
+///    no header has appeared yet) after passing a per-section dedup check.
+/// 3. Emits one `parser_no_reliable_candidates` diagnostic if any
+///    observation had evidence but the whole scan produced no projection
+///    sections.
+/// 4. Asks the policy to build the root, then walks the resulting tree to
+///    collect anchors and landmarks in pre-order.
+///
+/// The boundary returned is `boundary_summary_from_observations(observations)`.
+pub fn reconstruct<P>(
+  policy: &P,
+  observations: &[P::Observation],
+  sidebar_bounds: ViewBounds,
+) -> ReconstructionOutput<P::SectionProjection>
+where
+  P: ReconstructionPolicy,
+{
+  use std::collections::{HashMap, HashSet};
+
+  let boundary = boundary_summary_from_observations(observations);
+  let mut section_nodes: Vec<ViewNodeRecord> = Vec::new();
+  let mut section_projections: Vec<P::SectionProjection> = Vec::new();
+  let mut diagnostics: Vec<ParserDiagnostic> = observations
+    .iter()
+    .flat_map(|observation| observation.parser_notes().iter().cloned())
+    .collect();
+  let mut current_section_index: Option<usize> = None;
+  let mut section_indices: HashMap<P::SectionKey, usize> = HashMap::new();
+  let mut seen_items_by_section: Vec<HashSet<String>> = Vec::new();
+
+  for observation in observations {
+    for candidate in policy.candidates(observation) {
+      match policy.classify(candidate) {
+        CandidateRole::Header { section_key } => {
+          if let Some(&idx) = section_indices.get(&section_key) {
+            current_section_index = Some(idx);
+          } else {
+            let (node, projection) = policy.build_section(observation, candidate);
+            section_nodes.push(node);
+            section_projections.push(projection);
+            seen_items_by_section.push(HashSet::new());
+            let idx = section_nodes.len() - 1;
+            section_indices.insert(section_key, idx);
+            current_section_index = Some(idx);
+          }
+        }
+        CandidateRole::Item { dedupe_key } => {
+          let section_index = *current_section_index.get_or_insert_with(|| {
+            let (node, projection) = policy.build_unassigned_section();
+            section_nodes.push(node);
+            section_projections.push(projection);
+            seen_items_by_section.push(HashSet::new());
+            section_nodes.len() - 1
+          });
+          if !seen_items_by_section[section_index].insert(dedupe_key) {
+            diagnostics
+              .push(policy.emit_dedup_diagnostic(candidate, &section_projections[section_index]));
+            continue;
+          }
+          let (item_node, item_projection) =
+            policy.build_item(observation, candidate, &section_projections[section_index]);
+          policy.attach_item_to_section_node(&mut section_nodes[section_index], item_node);
+          policy.append_item_to_section_projection(
+            &mut section_projections[section_index],
+            item_projection,
+          );
+        }
+        CandidateRole::Unknown => {}
+      }
+    }
+  }
+
+  let any_evidence = observations
+    .iter()
+    .any(|observation| observation.has_evidence());
+  if any_evidence && section_projections.is_empty() {
+    diagnostics.push(ParserDiagnostic {
+      code: "parser_no_reliable_candidates".to_string(),
+      message: "OCR evidence was observed but no reliable sidebar candidates were accepted"
+        .to_string(),
+      node_id: None,
+    });
+  }
+
+  let root = policy.build_root(sidebar_bounds, boundary.clone(), section_nodes);
+  let mut anchor_index = Vec::new();
+  let mut landmark_index = Vec::new();
+  collect_anchors(&root, &mut anchor_index);
+  collect_landmarks(&root, &mut landmark_index);
+
+  ReconstructionOutput {
+    root,
+    anchor_index,
+    landmark_index,
+    sections: section_projections,
+    diagnostics,
+    boundary,
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -1100,5 +1350,374 @@ mod tests {
     // Outside is not painted.
     assert_eq!(img.get_pixel(1, 1), &Rgba([0, 0, 0, 0]));
     assert_eq!(img.get_pixel(9, 9), &Rgba([0, 0, 0, 0]));
+  }
+
+  // ------------------------------------------------------------------------
+  // Reconstruction policy coverage. A minimal FakePolicy + Fake records
+  // drive `reconstruct` through every branch: section dedup by key, item
+  // dedup within section, unassigned-section fallback, evidence-but-no-
+  // candidates diagnostic, and anchor/landmark collection. These tests
+  // lock the contract the framework promises to NeteasePolicy and any
+  // future app policy.
+  // ------------------------------------------------------------------------
+
+  #[derive(Clone, Debug)]
+  enum FakeCandidateKind {
+    Header,
+    Item,
+    Unknown,
+  }
+
+  #[derive(Clone, Debug)]
+  struct FakeCandidate {
+    id: String,
+    label: String,
+    kind: FakeCandidateKind,
+    /// Section key when kind == Header.
+    section_key: Option<String>,
+  }
+
+  #[derive(Debug)]
+  struct FakeReconstructObservation {
+    fingerprint: String,
+    candidates: Vec<FakeCandidate>,
+    parser_notes_vec: Vec<ParserDiagnostic>,
+    evidence_present: bool,
+  }
+
+  impl ViewObservation for FakeReconstructObservation {
+    fn viewport_fingerprint(&self) -> &str {
+      &self.fingerprint
+    }
+    fn parser_notes(&self) -> &[ParserDiagnostic] {
+      &self.parser_notes_vec
+    }
+    fn has_evidence(&self) -> bool {
+      self.evidence_present
+    }
+  }
+
+  #[derive(Debug, PartialEq, Eq)]
+  struct FakeSection {
+    id: String,
+    label: String,
+    items: Vec<FakeItem>,
+  }
+
+  #[derive(Debug, PartialEq, Eq)]
+  struct FakeItem {
+    id: String,
+    label: String,
+  }
+
+  struct FakePolicy;
+
+  impl ReconstructionPolicy for FakePolicy {
+    type Candidate = FakeCandidate;
+    type SectionKey = String;
+    type SectionProjection = FakeSection;
+    type ItemProjection = FakeItem;
+    type Observation = FakeReconstructObservation;
+
+    fn candidates<'a>(
+      &self,
+      observation: &'a Self::Observation,
+    ) -> Box<dyn Iterator<Item = &'a Self::Candidate> + 'a> {
+      Box::new(observation.candidates.iter())
+    }
+
+    fn classify(&self, candidate: &Self::Candidate) -> CandidateRole<Self::SectionKey> {
+      match candidate.kind {
+        FakeCandidateKind::Header => CandidateRole::Header {
+          section_key: candidate.section_key.clone().unwrap_or_default(),
+        },
+        FakeCandidateKind::Item => CandidateRole::Item {
+          dedupe_key: candidate.label.to_lowercase(),
+        },
+        FakeCandidateKind::Unknown => CandidateRole::Unknown,
+      }
+    }
+
+    fn build_section(
+      &self,
+      _observation: &Self::Observation,
+      candidate: &Self::Candidate,
+    ) -> (ViewNodeRecord, Self::SectionProjection) {
+      let id = format!("section.{}", candidate.id);
+      let node = ViewNodeRecord {
+        id: id.clone(),
+        kind: ViewNodeKind::Section,
+        label: Some(candidate.label.clone()),
+        anchors: vec![ViewAnchor {
+          id: format!("anchor.{id}"),
+          label: candidate.label.clone(),
+          strength: AnchorStrength::Medium,
+          bounds: ViewBounds::default(),
+          evidence_ids: Vec::new(),
+        }],
+        ..Default::default()
+      };
+      let section = FakeSection {
+        id,
+        label: candidate.label.clone(),
+        items: Vec::new(),
+      };
+      (node, section)
+    }
+
+    fn build_unassigned_section(&self) -> (ViewNodeRecord, Self::SectionProjection) {
+      let node = ViewNodeRecord {
+        id: "section.unassigned".into(),
+        kind: ViewNodeKind::Section,
+        ..Default::default()
+      };
+      let section = FakeSection {
+        id: "section.unassigned".into(),
+        label: "unassigned".into(),
+        items: Vec::new(),
+      };
+      (node, section)
+    }
+
+    fn build_item(
+      &self,
+      _observation: &Self::Observation,
+      candidate: &Self::Candidate,
+      _section: &Self::SectionProjection,
+    ) -> (ViewNodeRecord, Self::ItemProjection) {
+      let id = format!("item.{}", candidate.id);
+      let anchor_id = format!("anchor.{id}");
+      let node = ViewNodeRecord {
+        id: id.clone(),
+        kind: ViewNodeKind::Item,
+        label: Some(candidate.label.clone()),
+        anchors: vec![ViewAnchor {
+          id: anchor_id,
+          label: candidate.label.clone(),
+          strength: AnchorStrength::Strong,
+          bounds: ViewBounds::default(),
+          evidence_ids: Vec::new(),
+        }],
+        landmarks: vec![ViewLandmark {
+          id: format!("landmark.{id}"),
+          label: candidate.label.clone(),
+          landmark_use: LandmarkUse::AnchorReacquire,
+          bounds: ViewBounds::default(),
+          evidence_ids: Vec::new(),
+        }],
+        ..Default::default()
+      };
+      let item = FakeItem {
+        id,
+        label: candidate.label.clone(),
+      };
+      (node, item)
+    }
+
+    fn append_item_to_section_projection(
+      &self,
+      section: &mut Self::SectionProjection,
+      item: Self::ItemProjection,
+    ) {
+      section.items.push(item);
+    }
+
+    fn build_root(
+      &self,
+      _bounds: ViewBounds,
+      _boundary: ScrollBoundarySummary,
+      section_children: Vec<ViewNodeRecord>,
+    ) -> ViewNodeRecord {
+      ViewNodeRecord {
+        id: "root".into(),
+        kind: ViewNodeKind::Collection,
+        children: section_children,
+        ..Default::default()
+      }
+    }
+
+    fn emit_dedup_diagnostic(
+      &self,
+      candidate: &Self::Candidate,
+      section: &Self::SectionProjection,
+    ) -> ParserDiagnostic {
+      ParserDiagnostic {
+        code: "deduplicated_item".into(),
+        message: format!("dup {} under {}", candidate.label, section.label),
+        node_id: Some(candidate.id.clone()),
+      }
+    }
+  }
+
+  fn header(id: &str, label: &str, section_key: &str) -> FakeCandidate {
+    FakeCandidate {
+      id: id.into(),
+      label: label.into(),
+      kind: FakeCandidateKind::Header,
+      section_key: Some(section_key.into()),
+    }
+  }
+
+  fn item(id: &str, label: &str) -> FakeCandidate {
+    FakeCandidate {
+      id: id.into(),
+      label: label.into(),
+      kind: FakeCandidateKind::Item,
+      section_key: None,
+    }
+  }
+
+  fn obs(fingerprint: &str, candidates: Vec<FakeCandidate>) -> FakeReconstructObservation {
+    FakeReconstructObservation {
+      fingerprint: fingerprint.into(),
+      candidates,
+      parser_notes_vec: Vec::new(),
+      evidence_present: true,
+    }
+  }
+
+  #[test]
+  fn reconstruct_dedups_sections_by_key_across_observations() {
+    // Same section header label appears in obs 0 and obs 1; only one section
+    // should be produced.
+    let observations = vec![
+      obs(
+        "fp-0",
+        vec![
+          header("h0", "My Playlists", "my_playlists"),
+          item("i0", "Liked Songs"),
+        ],
+      ),
+      obs(
+        "fp-1",
+        vec![
+          header("h1", "My Playlists", "my_playlists"),
+          item("i1", "Daily Mix 1"),
+        ],
+      ),
+    ];
+    let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+    assert_eq!(
+      out.sections.len(),
+      1,
+      "second header with same key must merge"
+    );
+    assert_eq!(out.sections[0].items.len(), 2);
+    assert_eq!(out.sections[0].items[0].label, "Liked Songs");
+    assert_eq!(out.sections[0].items[1].label, "Daily Mix 1");
+  }
+
+  #[test]
+  fn reconstruct_dedups_items_within_section_and_emits_diagnostic() {
+    // Same item label appears twice under the same section; the second
+    // attempt emits a diagnostic and is not appended.
+    let observations = vec![obs(
+      "fp",
+      vec![
+        header("h", "Recommended", "recommended"),
+        item("i0", "Discover Weekly"),
+        item("i1", "Discover Weekly"),
+      ],
+    )];
+    let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+    assert_eq!(out.sections.len(), 1);
+    assert_eq!(out.sections[0].items.len(), 1);
+    let dedup = out
+      .diagnostics
+      .iter()
+      .find(|d| d.code == "deduplicated_item")
+      .expect("dedup diagnostic must fire");
+    assert!(dedup.message.contains("Discover Weekly"));
+    assert_eq!(dedup.node_id.as_deref(), Some("i1"));
+  }
+
+  #[test]
+  fn reconstruct_builds_unassigned_section_for_items_before_any_header() {
+    // Item appears before any header; framework creates an unassigned
+    // section lazily.
+    let observations = vec![obs("fp", vec![item("i0", "Orphan Track")])];
+    let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+    assert_eq!(out.sections.len(), 1);
+    assert_eq!(out.sections[0].id, "section.unassigned");
+    assert_eq!(out.sections[0].items.len(), 1);
+  }
+
+  #[test]
+  fn reconstruct_raises_no_reliable_candidates_when_evidence_but_no_sections() {
+    // Observation has evidence but the only candidates are Unknown — no
+    // sections, framework raises the parser_no_reliable_candidates note.
+    let observations = vec![obs(
+      "fp",
+      vec![FakeCandidate {
+        id: "u".into(),
+        label: "".into(),
+        kind: FakeCandidateKind::Unknown,
+        section_key: None,
+      }],
+    )];
+    let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+    assert_eq!(out.sections.len(), 0);
+    assert!(
+      out
+        .diagnostics
+        .iter()
+        .any(|d| d.code == "parser_no_reliable_candidates"),
+      "evidence + no sections must raise parser_no_reliable_candidates"
+    );
+  }
+
+  #[test]
+  fn reconstruct_does_not_raise_no_reliable_candidates_when_no_evidence() {
+    // No evidence at all → silent (don't double-complain).
+    let mut o = obs("fp", vec![]);
+    o.evidence_present = false;
+    let out = reconstruct(&FakePolicy, &[o], ViewBounds::default());
+    assert!(
+      out
+        .diagnostics
+        .iter()
+        .all(|d| d.code != "parser_no_reliable_candidates")
+    );
+  }
+
+  #[test]
+  fn reconstruct_forwards_observation_parser_notes_into_diagnostics() {
+    let mut o = obs("fp", vec![]);
+    o.parser_notes_vec = vec![ParserDiagnostic {
+      code: "preview".into(),
+      message: "from observation".into(),
+      node_id: None,
+    }];
+    o.evidence_present = false;
+    let out = reconstruct(&FakePolicy, &[o], ViewBounds::default());
+    assert!(out.diagnostics.iter().any(|d| d.code == "preview"));
+  }
+
+  #[test]
+  fn reconstruct_collects_anchors_and_landmarks_in_preorder() {
+    // Section node has an anchor; each item has an anchor + landmark.
+    // Pre-order walk: root has no anchor, section.anchor first, then per-item
+    // anchors in declaration order.
+    let observations = vec![obs(
+      "fp",
+      vec![header("h", "S", "s"), item("i0", "A"), item("i1", "B")],
+    )];
+    let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+    let anchor_ids: Vec<&str> = out.anchor_index.iter().map(|a| a.id.as_str()).collect();
+    assert_eq!(
+      anchor_ids,
+      vec!["anchor.section.h", "anchor.item.i0", "anchor.item.i1"]
+    );
+    let landmark_ids: Vec<&str> = out.landmark_index.iter().map(|l| l.id.as_str()).collect();
+    assert_eq!(landmark_ids, vec!["landmark.item.i0", "landmark.item.i1"]);
+  }
+
+  #[test]
+  fn reconstruct_boundary_summary_reports_likely_on_adjacent_repeat() {
+    // Same fingerprint twice in a row → boundary.bottom = Likely (inherited
+    // from boundary_summary_from_observations).
+    let observations = vec![obs("fp-a", vec![]), obs("fp-a", vec![])];
+    let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
+    assert_eq!(out.boundary.bottom, BoundaryConfidence::Likely);
   }
 }

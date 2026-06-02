@@ -15,12 +15,12 @@ use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 // crate because they consume NetEase-shaped observations.
 use auv_driver::RatioRect;
 use auv_view::{
-  AnchorStrength, BoundaryConfidence, Confidence, LandmarkUse, ParserDiagnostic, ScanAppContext,
-  ScanOptions, ScanWindowContext, ScrollBoundarySummary, VIEW_IR_SCHEMA_VERSION, ViewAction,
-  ViewAnchor, ViewAxis, ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout,
-  ViewNodeKind, ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord,
-  ViewRegionRecord, ViewScrollable, ViewViewportRecord, boundary_summary_from_observations,
-  collect_anchors, collect_landmarks, confidence_from_ocr, draw_rect, normalize_identity,
+  AnchorStrength, BoundaryConfidence, CandidateRole, Confidence, LandmarkUse, ParserDiagnostic,
+  ReconstructionOutput, ReconstructionPolicy, ScanAppContext, ScanOptions, ScanWindowContext,
+  ScrollBoundarySummary, VIEW_IR_SCHEMA_VERSION, ViewAction, ViewAnchor, ViewAxis, ViewBounds,
+  ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind, ViewNodeRecord,
+  ViewObservation, ViewObserver, ViewReconstructionRecord, ViewRegionRecord, ViewScrollable,
+  ViewViewportRecord, confidence_from_ocr, draw_rect, normalize_identity, reconstruct,
   scroll_to_top, slug, viewport_contains_center, viewport_fingerprint,
 };
 use clap::ValueEnum;
@@ -326,6 +326,12 @@ struct SidebarViewportObservation {
 impl ViewObservation for SidebarViewportObservation {
   fn viewport_fingerprint(&self) -> &str {
     &self.viewport_fingerprint
+  }
+  fn parser_notes(&self) -> &[ParserDiagnostic] {
+    &self.parser_notes
+  }
+  fn has_evidence(&self) -> bool {
+    !self.evidence_nodes.is_empty()
   }
 }
 
@@ -1076,159 +1082,15 @@ fn reconstruct_playlist_sidebar(
   sidebar_region: ViewRegionRecord,
   observations: Vec<SidebarViewportObservation>,
 ) -> PlaylistSidebarScan {
-  let boundary = boundary_summary_from_observations(&observations);
-  let mut section_nodes = Vec::new();
-  let mut projection_sections = Vec::new();
-  let mut diagnostics = observations
-    .iter()
-    .flat_map(|observation| observation.parser_notes.clone())
-    .collect::<Vec<_>>();
-  let mut current_section_index = None;
-  let mut section_indices = std::collections::HashMap::new();
-  let mut seen_items_by_section = Vec::<std::collections::HashSet<String>>::new();
-
-  for observation in &observations {
-    for candidate in &observation.candidates {
-      match candidate.kind {
-        SidebarCandidateKind::SectionHeader => {
-          let Some(label) = candidate.label.as_deref().map(str::trim) else {
-            continue;
-          };
-          let kind = SidebarSectionKind::from_label(label);
-          let section_id = format!(
-            "section.obs{}.{}.{}",
-            observation.observation_index,
-            candidate.id,
-            slug(label)
-          );
-          let section_key = (kind, normalize_identity(label));
-          if let Some(section_index) = section_indices.get(&section_key).copied() {
-            current_section_index = Some(section_index);
-          } else {
-            section_nodes.push(section_node(
-              &section_id,
-              kind,
-              label,
-              candidate,
-              observation,
-            ));
-            projection_sections.push(SidebarSection {
-              id: section_id,
-              kind,
-              label: Some(label.to_string()),
-              items: Vec::new(),
-            });
-            seen_items_by_section.push(std::collections::HashSet::new());
-            let section_index = section_nodes.len() - 1;
-            section_indices.insert(section_key, section_index);
-            current_section_index = Some(section_index);
-          }
-        }
-        SidebarCandidateKind::PlaylistItem | SidebarCandidateKind::NavigationItem => {
-          let Some(label) = candidate.label.as_deref().map(str::trim) else {
-            continue;
-          };
-          let section_index = current_section_index.get_or_insert_with(|| {
-            let section_id = "section.unassigned".to_string();
-            section_nodes.push(ViewNodeRecord {
-              id: section_id.clone(),
-              kind: ViewNodeKind::Section,
-              domain_kind: Some(SidebarSectionKind::Unknown.domain_kind().to_string()),
-              layout: Some(ViewLayout::VStack),
-              label: None,
-              bounds: ViewBounds::default(),
-              scrollable: None,
-              anchors: Vec::new(),
-              landmarks: Vec::new(),
-              actions: vec![ViewAction::ObserveOnly],
-              evidence: Vec::new(),
-              children: Vec::new(),
-            });
-            projection_sections.push(SidebarSection {
-              id: section_id,
-              kind: SidebarSectionKind::Unknown,
-              label: None,
-              items: Vec::new(),
-            });
-            seen_items_by_section.push(std::collections::HashSet::new());
-            section_nodes.len() - 1
-          });
-          let section_hint = projection_sections[*section_index].kind;
-          let dedupe_key = normalize_identity(label);
-
-          if !seen_items_by_section[*section_index].insert(dedupe_key) {
-            diagnostics.push(ParserDiagnostic {
-              code: "deduplicated_item".to_string(),
-              message: format!(
-                "deduplicated repeated sidebar item {label:?} in section {:?}",
-                section_hint
-              ),
-              node_id: Some(candidate.id.clone()),
-            });
-            continue;
-          }
-
-          let item_id = format!(
-            "item.obs{}.{}.{}",
-            observation.observation_index,
-            candidate.id,
-            slug(label)
-          );
-          let anchor_id = format!("anchor.{item_id}");
-          let node = item_node(&item_id, &anchor_id, label, candidate, observation);
-          attach_item_node(&mut section_nodes[*section_index], node);
-          projection_sections[*section_index]
-            .items
-            .push(PlaylistSidebarItem {
-              id: item_id,
-              label: label.to_string(),
-              section_hint: Some(section_hint),
-              confidence: candidate.confidence,
-              candidate_id: Some(candidate.id.clone()),
-              anchor_id: Some(anchor_id),
-            });
-        }
-        SidebarCandidateKind::Unknown => {}
-      }
-    }
-  }
-
-  let has_evidence = observations
-    .iter()
-    .any(|observation| !observation.evidence_nodes.is_empty());
-  let has_candidates = observations
-    .iter()
-    .any(|observation| !observation.candidates.is_empty());
-  if has_evidence && !has_candidates && projection_sections.is_empty() {
-    diagnostics.push(ParserDiagnostic {
-      code: "parser_no_reliable_candidates".to_string(),
-      message: "OCR evidence was observed but no reliable sidebar candidates were accepted"
-        .to_string(),
-      node_id: None,
-    });
-  }
-
-  let root = ViewNodeRecord {
-    id: "root.sidebar".to_string(),
-    kind: ViewNodeKind::Collection,
-    domain_kind: Some("netease.sidebar_playlist_collection".to_string()),
-    layout: Some(ViewLayout::VStack),
-    label: None,
-    bounds: sidebar_region.bounds.unwrap_or_default(),
-    scrollable: Some(ViewScrollable {
-      axis: ViewAxis::Vertical,
-      boundary: boundary.clone(),
-    }),
-    anchors: Vec::new(),
-    landmarks: Vec::new(),
-    actions: vec![ViewAction::Scroll],
-    evidence: Vec::new(),
-    children: section_nodes,
-  };
-  let mut anchor_index = Vec::new();
-  let mut landmark_index = Vec::new();
-  collect_anchors(&root, &mut anchor_index);
-  collect_landmarks(&root, &mut landmark_index);
+  let sidebar_bounds = sidebar_region.bounds.unwrap_or_default();
+  let ReconstructionOutput {
+    root,
+    anchor_index,
+    landmark_index,
+    sections,
+    diagnostics,
+    boundary,
+  } = reconstruct(&NeteasePolicy, &observations, sidebar_bounds);
 
   PlaylistSidebarScan {
     schema_version: VIEW_IR_SCHEMA_VERSION.to_string(),
@@ -1241,13 +1103,184 @@ fn reconstruct_playlist_sidebar(
       anchor_index,
       landmark_index,
     },
-    projection: PlaylistSidebarProjection {
-      sections: projection_sections,
-    },
+    projection: PlaylistSidebarProjection { sections },
     boundary,
     interaction_events: Vec::new(),
     diagnostics,
     known_limits: Vec::new(),
+  }
+}
+
+/// `ReconstructionPolicy` impl that injects NetEase's classification +
+/// node/projection construction into the framework's generic reconstruct
+/// loop. All node id formats, anchor id formats, the section-header /
+/// item / unknown classification, the root container's domain_kind, and
+/// the dedup diagnostic wording live here — `auv-view` knows none of it.
+struct NeteasePolicy;
+
+impl ReconstructionPolicy for NeteasePolicy {
+  type Candidate = SidebarViewportCandidate;
+  type SectionKey = (SidebarSectionKind, String);
+  type SectionProjection = SidebarSection;
+  type ItemProjection = PlaylistSidebarItem;
+  type Observation = SidebarViewportObservation;
+
+  fn candidates<'a>(
+    &self,
+    observation: &'a Self::Observation,
+  ) -> Box<dyn Iterator<Item = &'a Self::Candidate> + 'a> {
+    Box::new(observation.candidates.iter())
+  }
+
+  fn classify(&self, candidate: &Self::Candidate) -> CandidateRole<Self::SectionKey> {
+    let Some(label) = candidate.label.as_deref().map(str::trim) else {
+      return CandidateRole::Unknown;
+    };
+    match candidate.kind {
+      SidebarCandidateKind::SectionHeader => {
+        let kind = SidebarSectionKind::from_label(label);
+        CandidateRole::Header {
+          section_key: (kind, normalize_identity(label)),
+        }
+      }
+      SidebarCandidateKind::PlaylistItem | SidebarCandidateKind::NavigationItem => {
+        CandidateRole::Item {
+          dedupe_key: normalize_identity(label),
+        }
+      }
+      SidebarCandidateKind::Unknown => CandidateRole::Unknown,
+    }
+  }
+
+  fn build_section(
+    &self,
+    observation: &Self::Observation,
+    candidate: &Self::Candidate,
+  ) -> (ViewNodeRecord, Self::SectionProjection) {
+    let label = candidate
+      .label
+      .as_deref()
+      .map(str::trim)
+      .unwrap_or_default();
+    let kind = SidebarSectionKind::from_label(label);
+    let section_id = format!(
+      "section.obs{}.{}.{}",
+      observation.observation_index,
+      candidate.id,
+      slug(label)
+    );
+    let node = section_node(&section_id, kind, label, candidate, observation);
+    let projection = SidebarSection {
+      id: section_id,
+      kind,
+      label: Some(label.to_string()),
+      items: Vec::new(),
+    };
+    (node, projection)
+  }
+
+  fn build_unassigned_section(&self) -> (ViewNodeRecord, Self::SectionProjection) {
+    let section_id = "section.unassigned".to_string();
+    let node = ViewNodeRecord {
+      id: section_id.clone(),
+      kind: ViewNodeKind::Section,
+      domain_kind: Some(SidebarSectionKind::Unknown.domain_kind().to_string()),
+      layout: Some(ViewLayout::VStack),
+      label: None,
+      bounds: ViewBounds::default(),
+      scrollable: None,
+      anchors: Vec::new(),
+      landmarks: Vec::new(),
+      actions: vec![ViewAction::ObserveOnly],
+      evidence: Vec::new(),
+      children: Vec::new(),
+    };
+    let projection = SidebarSection {
+      id: section_id,
+      kind: SidebarSectionKind::Unknown,
+      label: None,
+      items: Vec::new(),
+    };
+    (node, projection)
+  }
+
+  fn build_item(
+    &self,
+    observation: &Self::Observation,
+    candidate: &Self::Candidate,
+    section: &Self::SectionProjection,
+  ) -> (ViewNodeRecord, Self::ItemProjection) {
+    let label = candidate
+      .label
+      .as_deref()
+      .map(str::trim)
+      .unwrap_or_default();
+    let item_id = format!(
+      "item.obs{}.{}.{}",
+      observation.observation_index,
+      candidate.id,
+      slug(label)
+    );
+    let anchor_id = format!("anchor.{item_id}");
+    let node = item_node(&item_id, &anchor_id, label, candidate, observation);
+    let projection = PlaylistSidebarItem {
+      id: item_id,
+      label: label.to_string(),
+      section_hint: Some(section.kind),
+      confidence: candidate.confidence,
+      candidate_id: Some(candidate.id.clone()),
+      anchor_id: Some(anchor_id),
+    };
+    (node, projection)
+  }
+
+  fn append_item_to_section_projection(
+    &self,
+    section: &mut Self::SectionProjection,
+    item: Self::ItemProjection,
+  ) {
+    section.items.push(item);
+  }
+
+  fn build_root(
+    &self,
+    sidebar_bounds: ViewBounds,
+    boundary: ScrollBoundarySummary,
+    section_children: Vec<ViewNodeRecord>,
+  ) -> ViewNodeRecord {
+    ViewNodeRecord {
+      id: "root.sidebar".to_string(),
+      kind: ViewNodeKind::Collection,
+      domain_kind: Some("netease.sidebar_playlist_collection".to_string()),
+      layout: Some(ViewLayout::VStack),
+      label: None,
+      bounds: sidebar_bounds,
+      scrollable: Some(ViewScrollable {
+        axis: ViewAxis::Vertical,
+        boundary,
+      }),
+      anchors: Vec::new(),
+      landmarks: Vec::new(),
+      actions: vec![ViewAction::Scroll],
+      evidence: Vec::new(),
+      children: section_children,
+    }
+  }
+
+  fn emit_dedup_diagnostic(
+    &self,
+    candidate: &Self::Candidate,
+    section: &Self::SectionProjection,
+  ) -> ParserDiagnostic {
+    let label = candidate.label.as_deref().unwrap_or("");
+    ParserDiagnostic {
+      code: "deduplicated_item".to_string(),
+      message: format!(
+        "deduplicated repeated sidebar item {label:?} in section {:?}",
+        section.kind
+      ),
+      node_id: Some(candidate.id.clone()),
+    }
   }
 }
 
@@ -1878,10 +1911,6 @@ fn item_node(
       children: Vec::new(),
     }],
   }
-}
-
-fn attach_item_node(section: &mut ViewNodeRecord, item: ViewNodeRecord) {
-  section.children.push(item);
 }
 
 fn candidate_evidence(
