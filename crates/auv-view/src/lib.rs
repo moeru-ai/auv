@@ -229,6 +229,32 @@ pub struct ParserDiagnostic {
   pub node_id: Option<String>,
 }
 
+/// NOTICE(view-bounds-rect-duplication-v0):
+///
+/// `ViewBounds` and `auv_driver::geometry::Rect` carry the same concept
+/// (axis-aligned rectangle in some coordinate space) with the same f64
+/// shape, which the workspace primitive-reuse guideline (AGENTS.md,
+/// commit 7b520c0) calls out as a duplicate that should normally be
+/// collapsed onto the existing primitive.
+///
+/// v0 keeps both because their **wire shapes differ**:
+///
+/// - `ViewBounds` serializes flat: `{"x":…,"y":…,"width":…,"height":…}`.
+///   Stored NetEase scan JSON (`PlaylistSidebarScan`) is full of this
+///   shape, and `auv-netease-music` schema-version rejection (commit
+///   0ff745d) locks readers into the current layout.
+/// - `auv_driver::geometry::Rect` serializes nested:
+///   `{"origin":{"x":…,"y":…},"size":{"width":…,"height":…}}`.
+///   It is used by driver capture / window geometry where the
+///   `Point` / `Size` typed wrappers (`ScreenPoint`, `WindowPoint`)
+///   matter at construction sites.
+///
+/// Unification therefore needs a wire-shape migration plan (versioned
+/// reader, fixture re-records, possibly a serde adapter) before the
+/// duplicate type can be deleted. Until that lands, do not "fix" this
+/// by adding a `From<Rect>` or by inverting the dep direction —
+/// `auv-view` must stay free of `auv-driver` so platform-agnostic
+/// crates can keep depending on it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ViewBounds {
   pub x: f64,
