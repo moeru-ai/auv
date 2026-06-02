@@ -1308,13 +1308,14 @@ impl ReconstructionPolicy for NeteasePolicy {
 }
 
 fn scan_sidebar_with_observer(
-  observer: &mut impl ViewObserver<Observation = SidebarViewportObservation>,
+  observer: &mut impl SidebarScanObserver,
   options: ScanOptions,
   category: PlaylistCategory,
   scroll_amount: f64,
   scroll_settle_ms: u64,
 ) -> PlaylistSidebarScan {
   let top_seek = scroll_to_top(observer, options.max_scrolls);
+  observer.reset_collection_phase();
   let loop_outcome = scan_with_collection_policy(observer, options, category);
   let interaction_events = build_standalone_interaction_events(
     &loop_outcome.observations,
@@ -1349,6 +1350,10 @@ fn scan_sidebar_with_observer(
     apply_bottom_boundary(&mut scan, BoundaryConfidence::Likely);
   }
   scan
+}
+
+trait SidebarScanObserver: ViewObserver<Observation = SidebarViewportObservation> {
+  fn reset_collection_phase(&mut self) {}
 }
 
 struct CollectionLoopOutcome {
@@ -1817,6 +1822,18 @@ impl ViewObserver for LiveSidebarObserver {
 
   fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
     self.scroll_by(-self.scroll_amount)
+  }
+}
+
+#[cfg(target_os = "macos")]
+impl SidebarScanObserver for LiveSidebarObserver {
+  fn reset_collection_phase(&mut self) {
+    // NOTICE(netease-scroll-phase-state): top-seek rewind and collection reuse
+    // the same observer instance. Clear transient scroll/crop state so the
+    // first collected observation does not inherit rewind-phase motion
+    // metadata.
+    self.pending_scroll_delivery_path = None;
+    self.previous_sidebar_crop = None;
   }
 }
 
@@ -2830,9 +2847,42 @@ mod tests {
     assert_eq!(scan.boundary.top, BoundaryConfidence::Likely);
   }
 
+  #[test]
+  fn scan_loop_clears_top_seek_scroll_metadata_before_collection() {
+    let observations = vec![
+      parse_sidebar_viewport(
+        0,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)]),
+      ),
+      parse_sidebar_viewport(
+        1,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![("Middle Playlist", 32.0, 42.0, 120.0, 20.0)]),
+      ),
+    ];
+    let mut observer = FakeSidebarObserver::new_at(observations, 1);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 1,
+        max_scrolls: 10,
+      },
+      PlaylistCategory::All,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
+    );
+
+    assert_eq!(scan.observations.len(), 2);
+    assert_eq!(scan.boundary.top, BoundaryConfidence::Likely);
+    assert_eq!(scan.observations[0].incoming_scroll_delivery_path, None);
+  }
+
   struct FakeSidebarObserver {
     observations: Vec<SidebarViewportObservation>,
     cursor: usize,
+    pending_scroll_delivery_path: Option<String>,
   }
 
   impl FakeSidebarObserver {
@@ -2840,6 +2890,7 @@ mod tests {
       Self {
         observations,
         cursor: 0,
+        pending_scroll_delivery_path: None,
       }
     }
 
@@ -2847,7 +2898,14 @@ mod tests {
       Self {
         observations,
         cursor,
+        pending_scroll_delivery_path: None,
       }
+    }
+  }
+
+  impl SidebarScanObserver for FakeSidebarObserver {
+    fn reset_collection_phase(&mut self) {
+      self.pending_scroll_delivery_path = None;
     }
   }
 
@@ -2868,6 +2926,10 @@ mod tests {
             message: "fake sidebar observer has no more observations".to_string(),
             node_id: None,
           })?;
+      let pending_scroll_delivery_path = self.pending_scroll_delivery_path.take();
+      if observation.incoming_scroll_delivery_path.is_none() {
+        observation.incoming_scroll_delivery_path = pending_scroll_delivery_path;
+      }
       observation.observation_index = observation_index;
       observation.viewport.page_index = observation_index;
       Ok(observation)
@@ -2887,11 +2949,13 @@ mod tests {
 
     fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {
       self.cursor = self.cursor.saturating_sub(1);
+      self.pending_scroll_delivery_path = Some("fake_scroll_up".to_string());
       Ok(())
     }
 
     fn scroll_down(&mut self) -> Result<(), ParserDiagnostic> {
       self.cursor += 1;
+      self.pending_scroll_delivery_path = Some("fake_scroll_down".to_string());
       Ok(())
     }
   }
