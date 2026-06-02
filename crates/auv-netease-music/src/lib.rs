@@ -20,7 +20,7 @@ use auv_view::{
   ViewNodeKind, ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord,
   ViewRegionRecord, ViewScrollable, ViewViewportRecord, boundary_summary_from_observations,
   collect_anchors, collect_landmarks, confidence_from_ocr, draw_rect, normalize_identity,
-  scan_with_observer, scroll_to_top, slug, viewport_contains_center, viewport_fingerprint,
+  scroll_to_top, slug, viewport_contains_center, viewport_fingerprint,
 };
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
@@ -36,19 +36,43 @@ use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
 pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
-#[cfg(target_os = "macos")]
-const LIVE_SCROLL_SETTLE_MS: u64 = 500;
+// NOTICE(netease-scroll-settle): NetEase sidebar scrolls settle quickly in
+// observed captures. Keep the default below generic desktop-action waits so
+// playlist listing remains interactive; raise via --scroll-settle-ms if OCR
+// evidence becomes unstable on slower machines.
+pub const DEFAULT_SCROLL_SETTLE_MS: u64 = 250;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistCategory {
+  #[default]
+  All,
+  Created,
+  Favorited,
+}
+
+impl PlaylistCategory {
+  pub fn parse(raw: &str) -> Result<Self, String> {
+    match raw.trim() {
+      "all" => Ok(Self::All),
+      "created" => Ok(Self::Created),
+      "favorited" => Ok(Self::Favorited),
+      _ => Err("--category expects one of all, created, favorited".to_string()),
+    }
+  }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Inputs {
   pub app_id: String,
   pub json_out: Option<PathBuf>,
   pub artifact_dir: PathBuf,
-  pub max_pages: usize,
   pub max_scrolls: usize,
   pub scroll_amount: f64,
+  pub scroll_settle_ms: u64,
   pub sidebar_region: Option<RatioRect>,
   pub ocr_options: TextRecognitionOptions,
+  pub category: PlaylistCategory,
   pub print_json: bool,
 }
 
@@ -58,11 +82,12 @@ impl Inputs {
       app_id: DEFAULT_APP_ID.to_string(),
       json_out: None,
       artifact_dir: std::path::PathBuf::from(DEFAULT_ARTIFACT_DIR),
-      max_pages: 24,
       max_scrolls: 48,
       scroll_amount: 300.0,
+      scroll_settle_ms: DEFAULT_SCROLL_SETTLE_MS,
       sidebar_region: None,
       ocr_options: TextRecognitionOptions::default(),
+      category: PlaylistCategory::All,
       print_json: false,
     }
   }
@@ -88,6 +113,14 @@ pub struct PlaylistSidebarScan {
   reconstruction: ViewReconstructionRecord,
   projection: PlaylistSidebarProjection,
   boundary: ScrollBoundarySummary,
+  /// Standalone interaction evidence for the product CLI.
+  ///
+  /// TODO(view-parser-trace-layout-v0): once this crate writes through AUV run
+  /// storage, migrate these local events to `view.parse.observe.<index>` and
+  /// `view.parse.scroll.<index>` spans instead of treating this field as the
+  /// durable trace contract.
+  #[serde(default)]
+  interaction_events: Vec<InteractionEvent>,
   diagnostics: Vec<ParserDiagnostic>,
   known_limits: Vec<String>,
 }
@@ -136,6 +169,7 @@ impl PlaylistSidebarScan {
       reconstruction: ViewReconstructionRecord::default(),
       projection,
       boundary: ScrollBoundarySummary::default(),
+      interaction_events: Vec::new(),
       diagnostics: Vec::new(),
       known_limits: Vec::new(),
     }
@@ -220,6 +254,57 @@ pub struct PlaylistSidebarItem {
   pub anchor_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InteractionEvent {
+  pub event_index: usize,
+  pub phase: InteractionPhase,
+  pub kind: InteractionEventKind,
+  pub observation_index: Option<usize>,
+  pub from_observation: Option<usize>,
+  pub to_observation: Option<usize>,
+  pub viewport_fingerprint: Option<String>,
+  pub scroll: Option<ScrollInteraction>,
+  pub artifacts: Vec<String>,
+  pub note: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionPhase {
+  TopSeek,
+  #[default]
+  Collect,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionEventKind {
+  Probe,
+  #[default]
+  Observe,
+  InputScroll,
+  StopDecision,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ScrollInteraction {
+  pub axis: ViewAxis,
+  pub direction: ScrollDirection,
+  pub requested_delta: f64,
+  pub policy: String,
+  pub settle_ms: u64,
+  pub anchor: Option<ViewBounds>,
+  pub detected_boundary: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollDirection {
+  Up,
+  #[default]
+  Down,
+}
+
 /// Parse the legacy flat flag list (no subcommand). Used by the demo example.
 pub fn parse_inputs_public(args: Vec<String>) -> Result<Inputs, String> {
   parse_inputs(args)
@@ -240,12 +325,6 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
       "--artifact-dir" => {
         inputs.artifact_dir = PathBuf::from(next_value(&mut args, "--artifact-dir")?);
       }
-      "--max-pages" => {
-        inputs.max_pages = parse_usize("--max-pages", next_value(&mut args, "--max-pages")?)?;
-        if inputs.max_pages == 0 {
-          return Err("--max-pages must be greater than 0".to_string());
-        }
-      }
       "--max-scrolls" => {
         inputs.max_scrolls = parse_usize("--max-scrolls", next_value(&mut args, "--max-scrolls")?)?;
         if inputs.max_scrolls == 0 {
@@ -258,6 +337,18 @@ fn parse_inputs(args: Vec<String>) -> Result<Inputs, String> {
         if !inputs.scroll_amount.is_finite() || inputs.scroll_amount <= 0.0 {
           return Err("--scroll-amount must be greater than 0".to_string());
         }
+      }
+      "--scroll-settle-ms" => {
+        inputs.scroll_settle_ms = parse_u64(
+          "--scroll-settle-ms",
+          next_value(&mut args, "--scroll-settle-ms")?,
+        )?;
+        if inputs.scroll_settle_ms == 0 {
+          return Err("--scroll-settle-ms must be greater than 0".to_string());
+        }
+      }
+      "--category" => {
+        inputs.category = PlaylistCategory::parse(&next_value(&mut args, "--category")?)?;
       }
       "--sidebar-region" => {
         inputs.sidebar_region = Some(parse_ratio_region(next_value(
@@ -368,6 +459,12 @@ fn parse_f64(flag: &str, value: String) -> Result<f64, String> {
   value
     .parse()
     .map_err(|_| format!("{flag} expects a number"))
+}
+
+fn parse_u64(flag: &str, value: String) -> Result<u64, String> {
+  value
+    .parse()
+    .map_err(|_| format!("{flag} expects a positive integer"))
 }
 
 pub(crate) fn parse_ratio_region(value: String) -> Result<RatioRect, String> {
@@ -641,6 +738,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       artifact_dir: inputs.artifact_dir.clone(),
       pending_artifacts: Vec::new(),
       scroll_amount: inputs.scroll_amount,
+      scroll_settle_ms: inputs.scroll_settle_ms,
     };
     let top_seek = scroll_to_top(&mut top_probe, inputs.max_scrolls);
     pre_scan_diagnostics.extend(top_seek.diagnostics);
@@ -716,13 +814,21 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     artifact_dir: inputs.artifact_dir.clone(),
     pending_artifacts: Vec::new(),
     scroll_amount: inputs.scroll_amount,
+    scroll_settle_ms: inputs.scroll_settle_ms,
   };
   let mut scan = scan_sidebar_with_observer(
     &mut observer,
     ScanOptions {
-      max_pages: inputs.max_pages,
+      // NOTICE: NetEase playlist listing no longer has a page completion
+      // model. This shared `auv-view::ScanOptions` field remains for other
+      // scan loops, but this crate's collection policy intentionally ignores
+      // it and stops at section landmarks or scroll boundaries.
+      max_pages: 0,
       max_scrolls: inputs.max_scrolls,
     },
+    inputs.category,
+    inputs.scroll_amount,
+    inputs.scroll_settle_ms,
   );
   scan.diagnostics.extend(pre_scan_diagnostics);
   scan.known_limits.extend(pre_scan_known_limits);
@@ -760,6 +866,7 @@ fn empty_diagnostic_scan(
     },
     projection: PlaylistSidebarProjection::default(),
     boundary: ScrollBoundarySummary::default(),
+    interaction_events: Vec::new(),
     diagnostics: vec![diagnostic],
     known_limits: vec![known_limit.to_string()],
   }
@@ -796,12 +903,9 @@ fn detect_sidebar_region(
     .collect::<Vec<_>>();
 
   if markers.is_empty() {
-    if let Some(region) = infer_visible_playlist_body_region(&left_regions, window_size) {
-      return Ok(sidebar_region_record(region));
-    }
     return Err(ParserDiagnostic {
       code: "sidebar_region_not_found".to_string(),
-      message: "sidebar markers could not be identified on the left side".to_string(),
+      message: "sidebar markers could not be identified on the left side; refusing to infer sidebar bounds from unanchored list rows".to_string(),
       node_id: None,
     });
   }
@@ -832,45 +936,6 @@ fn detect_sidebar_region(
     max_x + 48.0,
     playlist_sidebar_bottom(window_size) - y,
   )))
-}
-
-fn infer_visible_playlist_body_region(
-  left_regions: &[&auv_driver::vision::RecognizedText],
-  window_size: auv_driver::Size,
-) -> Option<ViewBounds> {
-  let rows = left_regions
-    .iter()
-    .filter(|region| {
-      let label = region.text.trim();
-      label.chars().count() >= 2
-        && region.bounds.origin.x >= 48.0
-        && region.bounds.origin.x <= window_size.width * 0.24
-        && region.bounds.origin.y >= window_size.height * 0.25
-    })
-    .collect::<Vec<_>>();
-  if rows.len() < 3 {
-    return None;
-  }
-
-  let min_y = (rows
-    .iter()
-    .map(|region| region.bounds.origin.y)
-    .fold(f64::INFINITY, f64::min)
-    - 20.0)
-    .clamp(0.0, window_size.height);
-  let max_x = rows
-    .iter()
-    .map(|region| region.bounds.origin.x + region.bounds.size.width)
-    .fold(0.0, f64::max)
-    .max(window_size.width * 0.18)
-    .min(window_size.width * 0.42);
-
-  Some(ViewBounds::new(
-    0.0,
-    min_y,
-    max_x + 48.0,
-    playlist_sidebar_bottom(window_size) - min_y,
-  ))
 }
 
 fn playlist_sidebar_bottom(window_size: auv_driver::Size) -> f64 {
@@ -1253,6 +1318,7 @@ fn reconstruct_playlist_sidebar(
       sections: projection_sections,
     },
     boundary,
+    interaction_events: Vec::new(),
     diagnostics,
     known_limits: Vec::new(),
   }
@@ -1261,9 +1327,18 @@ fn reconstruct_playlist_sidebar(
 fn scan_sidebar_with_observer(
   observer: &mut impl ViewObserver<Observation = SidebarViewportObservation>,
   options: ScanOptions,
+  category: PlaylistCategory,
+  scroll_amount: f64,
+  scroll_settle_ms: u64,
 ) -> PlaylistSidebarScan {
   let top_seek = scroll_to_top(observer, options.max_scrolls);
-  let loop_outcome = scan_with_observer(observer, options);
+  let loop_outcome = scan_with_collection_policy(observer, options, category);
+  let interaction_events = build_standalone_interaction_events(
+    &loop_outcome.observations,
+    scroll_amount,
+    scroll_settle_ms,
+    loop_outcome.stop_reason.as_deref(),
+  );
 
   let mut scan = reconstruct_playlist_sidebar(
     ScanAppContext {
@@ -1283,10 +1358,243 @@ fn scan_sidebar_with_observer(
   scan.diagnostics.extend(loop_outcome.diagnostics);
   scan.known_limits.extend(top_seek.known_limits);
   scan.known_limits.extend(loop_outcome.known_limits);
+  scan.interaction_events = interaction_events;
   if top_seek.boundary == BoundaryConfidence::Likely {
     apply_top_boundary(&mut scan, top_seek.boundary);
   }
   scan
+}
+
+struct CollectionLoopOutcome {
+  observations: Vec<SidebarViewportObservation>,
+  diagnostics: Vec<ParserDiagnostic>,
+  known_limits: Vec<String>,
+  stop_reason: Option<String>,
+}
+
+fn scan_with_collection_policy(
+  observer: &mut impl ViewObserver<Observation = SidebarViewportObservation>,
+  options: ScanOptions,
+  category: PlaylistCategory,
+) -> CollectionLoopOutcome {
+  let mut policy = CollectionPolicy::new(category);
+  let mut observations = Vec::new();
+  let mut diagnostics = Vec::new();
+  let mut known_limits = Vec::new();
+  let mut previous_fingerprint: Option<String> = None;
+  let mut scrolls = 0;
+  let mut stop_reason = None;
+
+  loop {
+    let observation_index = observations.len();
+    let observation = match observer.observe(observation_index) {
+      Ok(observation) => observation,
+      Err(diagnostic) => {
+        diagnostics.push(diagnostic);
+        break;
+      }
+    };
+    let fingerprint = observation.viewport_fingerprint().to_string();
+    let repeated_fingerprint = previous_fingerprint
+      .as_deref()
+      .is_some_and(|prev| prev == fingerprint.as_str());
+    previous_fingerprint = Some(fingerprint);
+    let observation = policy.apply(observation);
+    let reached_stop_landmark = policy.reached_stop_landmark();
+    observations.push(observation);
+
+    if reached_stop_landmark {
+      stop_reason = Some("reached_stop_landmark".to_string());
+      break;
+    }
+
+    if repeated_fingerprint {
+      stop_reason = Some("repeated_viewport_fingerprint".to_string());
+      break;
+    }
+
+    if scrolls >= options.max_scrolls {
+      known_limits.push(format!("stopped after max_scrolls={}", options.max_scrolls));
+      break;
+    }
+
+    if let Err(diagnostic) = observer.scroll_down() {
+      diagnostics.push(diagnostic);
+      break;
+    }
+    scrolls += 1;
+  }
+
+  if !policy.start_seen() {
+    if let Some(limit) = policy.missing_start_limit() {
+      known_limits.push(limit);
+    }
+  }
+
+  CollectionLoopOutcome {
+    observations,
+    diagnostics,
+    known_limits,
+    stop_reason,
+  }
+}
+
+struct CollectionPolicy {
+  category: PlaylistCategory,
+  started: bool,
+  stopped: bool,
+}
+
+impl CollectionPolicy {
+  fn new(category: PlaylistCategory) -> Self {
+    Self {
+      category,
+      started: category == PlaylistCategory::All,
+      stopped: false,
+    }
+  }
+
+  fn apply(&mut self, mut observation: SidebarViewportObservation) -> SidebarViewportObservation {
+    if self.category == PlaylistCategory::All {
+      return observation;
+    }
+
+    let mut accepted = Vec::new();
+    for candidate in observation.candidates {
+      if self.stopped {
+        break;
+      }
+
+      let section_kind = candidate
+        .label
+        .as_deref()
+        .map(section_kind_from_label)
+        .unwrap_or(SidebarSectionKind::Unknown);
+
+      if candidate.kind == SidebarCandidateKind::SectionHeader {
+        match self.category {
+          PlaylistCategory::Created if section_kind == SidebarSectionKind::MyPlaylists => {
+            self.started = true;
+            accepted.push(candidate);
+          }
+          PlaylistCategory::Created
+            if self.started && section_kind == SidebarSectionKind::FavoritedPlaylists =>
+          {
+            self.stopped = true;
+            break;
+          }
+          PlaylistCategory::Favorited if section_kind == SidebarSectionKind::FavoritedPlaylists => {
+            self.started = true;
+            accepted.push(candidate);
+          }
+          PlaylistCategory::Favorited if self.started => {
+            accepted.push(candidate);
+          }
+          _ => {}
+        }
+      } else if self.started {
+        accepted.push(candidate);
+      }
+    }
+    observation.candidates = accepted;
+    observation
+  }
+
+  fn reached_stop_landmark(&self) -> bool {
+    self.stopped
+  }
+
+  fn start_seen(&self) -> bool {
+    self.started
+  }
+
+  fn missing_start_limit(&self) -> Option<String> {
+    match self.category {
+      PlaylistCategory::All => None,
+      PlaylistCategory::Created => {
+        Some("category created scan ended without seeing created playlist landmark".to_string())
+      }
+      PlaylistCategory::Favorited => {
+        Some("category favorited scan ended without seeing favorited playlist landmark".to_string())
+      }
+    }
+  }
+}
+
+fn build_standalone_interaction_events(
+  observations: &[SidebarViewportObservation],
+  scroll_amount: f64,
+  scroll_settle_ms: u64,
+  stop_reason: Option<&str>,
+) -> Vec<InteractionEvent> {
+  let mut events = Vec::new();
+  for (index, observation) in observations.iter().enumerate() {
+    events.push(InteractionEvent {
+      event_index: events.len(),
+      phase: InteractionPhase::Collect,
+      kind: InteractionEventKind::Observe,
+      observation_index: Some(observation.observation_index),
+      from_observation: None,
+      to_observation: None,
+      viewport_fingerprint: Some(observation.viewport_fingerprint.clone()),
+      scroll: None,
+      artifacts: observation.source_artifacts.clone(),
+      note: None,
+    });
+
+    if index + 1 < observations.len() {
+      let mut artifacts = observation.source_artifacts.clone();
+      for artifact in &observations[index + 1].source_artifacts {
+        if !artifacts.iter().any(|existing| existing == artifact) {
+          artifacts.push(artifact.clone());
+        }
+      }
+      events.push(InteractionEvent {
+        event_index: events.len(),
+        phase: InteractionPhase::Collect,
+        kind: InteractionEventKind::InputScroll,
+        observation_index: None,
+        from_observation: Some(observation.observation_index),
+        to_observation: Some(observations[index + 1].observation_index),
+        viewport_fingerprint: None,
+        scroll: Some(ScrollInteraction {
+          axis: ViewAxis::Vertical,
+          direction: ScrollDirection::Down,
+          requested_delta: -scroll_amount,
+          policy: "background_preferred".to_string(),
+          settle_ms: scroll_settle_ms,
+          anchor: None,
+          detected_boundary: "unknown".to_string(),
+        }),
+        artifacts,
+        note: Some(
+          "standalone event; durable trace should use view.parse.scroll.<index> spans".to_string(),
+        ),
+      });
+    }
+  }
+  if let Some(stop_reason) = stop_reason {
+    events.push(InteractionEvent {
+      event_index: events.len(),
+      phase: InteractionPhase::Collect,
+      kind: InteractionEventKind::StopDecision,
+      observation_index: observations
+        .last()
+        .map(|observation| observation.observation_index),
+      from_observation: None,
+      to_observation: None,
+      viewport_fingerprint: observations
+        .last()
+        .map(|observation| observation.viewport_fingerprint.clone()),
+      scroll: None,
+      artifacts: observations
+        .last()
+        .map(|observation| observation.source_artifacts.clone())
+        .unwrap_or_default(),
+      note: Some(stop_reason.to_string()),
+    });
+  }
+  events
 }
 
 fn apply_top_boundary(scan: &mut PlaylistSidebarScan, top: BoundaryConfidence) {
@@ -1326,6 +1634,7 @@ struct LiveSidebarObserver {
   artifact_dir: PathBuf,
   pending_artifacts: Vec<std::thread::JoinHandle<Result<(), String>>>,
   scroll_amount: f64,
+  scroll_settle_ms: u64,
 }
 
 #[cfg(target_os = "macos")]
@@ -1496,7 +1805,7 @@ impl LiveSidebarObserver {
         Scroll::new(0.0, vertical_delta),
         ScrollOptions {
           policy: InputPolicy::BackgroundPreferred,
-          settle: std::time::Duration::from_millis(LIVE_SCROLL_SETTLE_MS),
+          settle: std::time::Duration::from_millis(self.scroll_settle_ms),
         },
       )
       .map_err(|error| ParserDiagnostic {
@@ -1689,10 +1998,11 @@ mod tests {
     assert_eq!(inputs.app_id, DEFAULT_APP_ID);
     assert_eq!(inputs.json_out, None);
     assert_eq!(inputs.artifact_dir, PathBuf::from(DEFAULT_ARTIFACT_DIR));
-    assert_eq!(inputs.max_pages, 24);
     assert_eq!(inputs.max_scrolls, 48);
     assert_eq!(inputs.scroll_amount, 300.0);
+    assert_eq!(inputs.scroll_settle_ms, DEFAULT_SCROLL_SETTLE_MS);
     assert_eq!(inputs.sidebar_region, None);
+    assert_eq!(inputs.category, PlaylistCategory::All);
     assert!(!inputs.print_json);
   }
 
@@ -1705,12 +2015,14 @@ mod tests {
       "/tmp/scan.json".to_string(),
       "--artifact-dir".to_string(),
       "/tmp/scan-artifacts".to_string(),
-      "--max-pages".to_string(),
-      "7".to_string(),
       "--max-scrolls".to_string(),
       "9".to_string(),
       "--scroll-amount".to_string(),
       "3.5".to_string(),
+      "--scroll-settle-ms".to_string(),
+      "250".to_string(),
+      "--category".to_string(),
+      "favorited".to_string(),
       "--sidebar-region".to_string(),
       "0.0,0.1,0.25,0.8".to_string(),
       "--print-json".to_string(),
@@ -1720,9 +2032,10 @@ mod tests {
     assert_eq!(inputs.app_id, "com.example.music");
     assert_eq!(inputs.json_out, Some(PathBuf::from("/tmp/scan.json")));
     assert_eq!(inputs.artifact_dir, PathBuf::from("/tmp/scan-artifacts"));
-    assert_eq!(inputs.max_pages, 7);
     assert_eq!(inputs.max_scrolls, 9);
     assert_eq!(inputs.scroll_amount, 3.5);
+    assert_eq!(inputs.scroll_settle_ms, 250);
+    assert_eq!(inputs.category, PlaylistCategory::Favorited);
     assert_eq!(
       inputs.sidebar_region,
       Some(RatioRect::new(0.0, 0.1, 0.25, 0.8))
@@ -1737,6 +2050,14 @@ mod tests {
       (
         vec!["--scroll-amount".to_string(), "NaN".to_string()],
         "--scroll-amount must be greater than 0",
+      ),
+      (
+        vec!["--scroll-settle-ms".to_string(), "0".to_string()],
+        "--scroll-settle-ms must be greater than 0",
+      ),
+      (
+        vec!["--category".to_string(), "recent".to_string()],
+        "--category expects one of all, created, favorited",
       ),
       (
         vec![
@@ -1870,8 +2191,8 @@ mod tests {
   }
 
   #[test]
-  fn detect_sidebar_region_infers_visible_playlist_body_without_section_marker() {
-    let region = detect_sidebar_region(
+  fn detect_sidebar_region_rejects_unanchored_playlist_like_rows() {
+    let error = detect_sidebar_region(
       None,
       auv_driver::Size::new(1000.0, 800.0),
       &fake_recognition(vec![
@@ -1880,17 +2201,14 @@ mod tests {
         ("Trance", 72.0, 412.0, 80.0, 20.0),
       ]),
     )
-    .expect("visible playlist rows should infer the scroll body");
+    .expect_err("playlist-like rows without a sidebar marker should not anchor the sidebar");
 
-    assert_eq!(
-      region.bounds,
-      Some(ViewBounds::new(0.0, 300.0, 290.0, 418.0))
-    );
+    assert_eq!(error.code, "sidebar_region_not_found");
   }
 
   #[test]
-  fn detect_sidebar_region_ignores_main_content_when_inferring_playlist_body() {
-    let region = detect_sidebar_region(
+  fn detect_sidebar_region_ignores_main_content_without_sidebar_marker() {
+    let error = detect_sidebar_region(
       None,
       auv_driver::Size::new(1000.0, 800.0),
       &fake_recognition(vec![
@@ -1902,12 +2220,9 @@ mod tests {
         ("推荐歌单", 520.0, 520.0, 150.0, 30.0),
       ]),
     )
-    .expect("visible playlist rows should infer the scroll body");
+    .expect_err("main content rows should not anchor the sidebar");
 
-    assert_eq!(
-      region.bounds,
-      Some(ViewBounds::new(0.0, 300.0, 290.0, 418.0))
-    );
+    assert_eq!(error.code, "sidebar_region_not_found");
   }
 
   #[test]
@@ -1994,7 +2309,7 @@ mod tests {
   fn parse_viewport_treats_playlist_named_rows_as_items_not_sections() {
     let recognition = fake_recognition(vec![
       ("创建的歌单 215", 8.0, 42.0, 120.0, 20.0),
-      ("绚香猫的2025年度歌单", 72.0, 74.0, 180.0, 20.0),
+      ("年度精选歌单", 72.0, 74.0, 180.0, 20.0),
       ("猫音歌单", 72.0, 106.0, 120.0, 20.0),
     ]);
     let observation =
@@ -2037,7 +2352,7 @@ mod tests {
       SidebarSectionKind::MyPlaylists
     );
     assert_eq!(
-      section_kind_from_label("绚香猫的2025年度歌单"),
+      section_kind_from_label("年度精选歌单"),
       SidebarSectionKind::Unknown
     );
     assert_eq!(
@@ -2094,6 +2409,152 @@ mod tests {
     );
     assert_eq!(scan.reconstruction.root.kind, ViewNodeKind::Collection);
     assert_eq!(scan.reconstruction.root.children.len(), 2);
+  }
+
+  #[test]
+  fn created_category_scan_stops_at_favorited_landmark_before_scrolling_again() {
+    let observations = vec![
+      parse_sidebar_viewport(
+        0,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![
+          ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+          ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+        ]),
+      ),
+      parse_sidebar_viewport(
+        1,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![
+          ("收藏的歌单", 8.0, 42.0, 110.0, 20.0),
+          ("Road Trip", 32.0, 74.0, 120.0, 20.0),
+        ]),
+      ),
+      parse_sidebar_viewport(
+        2,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![("Should Not Scan", 32.0, 42.0, 140.0, 20.0)]),
+      ),
+    ];
+    let mut observer = FakeSidebarObserver::new(observations);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 10,
+        max_scrolls: 10,
+      },
+      PlaylistCategory::Created,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
+    );
+
+    assert_eq!(scan.observations.len(), 2);
+    assert_eq!(observer.cursor, 1);
+    assert_eq!(scan.projection.sections.len(), 1);
+    assert_eq!(
+      scan.projection.sections[0].kind,
+      SidebarSectionKind::MyPlaylists
+    );
+    assert_eq!(scan.projection.sections[0].items.len(), 1);
+    assert_eq!(scan.projection.sections[0].items[0].label, "Coding BGM");
+    assert!(scan.interaction_events.iter().any(|event| {
+      event.kind == InteractionEventKind::StopDecision
+        && event.note.as_deref() == Some("reached_stop_landmark")
+    }));
+  }
+
+  #[test]
+  fn favorited_category_starts_collecting_at_favorited_landmark() {
+    let observations = vec![
+      parse_sidebar_viewport(
+        0,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![
+          ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+          ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+        ]),
+      ),
+      parse_sidebar_viewport(
+        1,
+        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+        &fake_recognition(vec![
+          ("收藏的歌单", 8.0, 42.0, 110.0, 20.0),
+          ("Road Trip", 32.0, 74.0, 120.0, 20.0),
+        ]),
+      ),
+    ];
+    let mut observer = FakeSidebarObserver::new(observations);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 10,
+        max_scrolls: 10,
+      },
+      PlaylistCategory::Favorited,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
+    );
+
+    assert_eq!(scan.projection.sections.len(), 1);
+    assert_eq!(
+      scan.projection.sections[0].kind,
+      SidebarSectionKind::FavoritedPlaylists
+    );
+    assert_eq!(scan.projection.sections[0].items.len(), 1);
+    assert_eq!(scan.projection.sections[0].items[0].label, "Road Trip");
+  }
+
+  #[test]
+  fn reconstruct_sidebar_records_observe_and_scroll_interaction_events() {
+    let mut first = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+      ]),
+    );
+    first.source_artifacts = vec!["obs-0000-window.png".to_string()];
+    let mut second = parse_sidebar_viewport(
+      1,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)]),
+    );
+    second.source_artifacts = vec!["obs-0001-window.png".to_string()];
+    let mut observer = FakeSidebarObserver::new(vec![first, second]);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 2,
+        max_scrolls: 10,
+      },
+      PlaylistCategory::All,
+      300.0,
+      250,
+    );
+
+    assert!(scan.interaction_events.iter().any(|event| {
+      event.kind == InteractionEventKind::Observe
+        && event.observation_index == Some(0)
+        && event.artifacts == vec!["obs-0000-window.png"]
+    }));
+    assert!(scan.interaction_events.iter().any(|event| {
+      event.kind == InteractionEventKind::InputScroll
+        && event.from_observation == Some(0)
+        && event.to_observation == Some(1)
+        && event.artifacts
+          == vec![
+            "obs-0000-window.png".to_string(),
+            "obs-0001-window.png".to_string(),
+          ]
+        && event
+          .scroll
+          .as_ref()
+          .is_some_and(|scroll| scroll.settle_ms == 250)
+    }));
   }
 
   #[test]
@@ -2279,6 +2740,9 @@ mod tests {
         max_pages: 10,
         max_scrolls: 10,
       },
+      PlaylistCategory::All,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
     );
 
     assert_eq!(scan.window.id, Some("fake".to_string()));
@@ -2287,7 +2751,7 @@ mod tests {
   }
 
   #[test]
-  fn scan_loop_respects_page_budget() {
+  fn scan_loop_ignores_shared_page_budget_and_scans_until_boundary() {
     let observations = vec![
       parse_sidebar_viewport(
         0,
@@ -2308,14 +2772,23 @@ mod tests {
         max_pages: 1,
         max_scrolls: 10,
       },
+      PlaylistCategory::All,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
     );
 
-    assert_eq!(scan.observations.len(), 1);
+    assert_eq!(scan.observations.len(), 2);
     assert!(
-      scan
+      !scan
         .known_limits
         .iter()
         .any(|limit| limit.contains("max_pages"))
+    );
+    assert!(
+      scan
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == "no_more_fake_observations")
     );
   }
 
@@ -2341,12 +2814,19 @@ mod tests {
         max_pages: 1,
         max_scrolls: 10,
       },
+      PlaylistCategory::All,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
     );
 
-    assert_eq!(scan.observations.len(), 1);
+    assert_eq!(scan.observations.len(), 2);
     assert_eq!(
       scan.observations[0].candidates[0].label.as_deref(),
       Some("创建的歌单")
+    );
+    assert_eq!(
+      scan.observations[1].candidates[0].label.as_deref(),
+      Some("Middle Playlist")
     );
     assert_eq!(scan.boundary.top, BoundaryConfidence::Likely);
   }

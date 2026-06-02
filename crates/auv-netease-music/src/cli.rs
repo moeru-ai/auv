@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::output::build_playlist_json_output;
-use crate::{Inputs, render_human_summary, run_live_scan};
+use crate::{Inputs, PlaylistCategory, render_human_summary, run_live_scan};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum OutputMode {
@@ -20,10 +20,16 @@ pub(crate) struct PlaylistCommand {
   pub output: OutputMode,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HelpTopic {
+  General,
+  Playlist,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Command {
   Playlist(PlaylistCommand),
-  Help,
+  Help(HelpTopic),
 }
 
 fn next(iter: &mut impl Iterator<Item = String>, flag: &str) -> Result<String, String> {
@@ -52,14 +58,29 @@ fn parse_amount(value: String) -> Result<f64, String> {
   Ok(parsed)
 }
 
+fn parse_millis(value: String, flag: &str) -> Result<u64, String> {
+  let parsed: u64 = value
+    .parse()
+    .map_err(|_| format!("{flag} expects a positive integer"))?;
+  if parsed == 0 {
+    return Err(format!("{flag} must be greater than 0"));
+  }
+  Ok(parsed)
+}
+
 pub(crate) fn parse_command(args: Vec<String>) -> Result<Command, String> {
   let mut iter = args.into_iter();
   let Some(sub) = iter.next() else {
-    return Ok(Command::Help);
+    return Ok(Command::Help(HelpTopic::General));
   };
   match sub.as_str() {
     "playlist" => parse_playlist(iter.collect()),
-    "help" | "-h" | "--help" => Ok(Command::Help),
+    "help" => match iter.next().as_deref() {
+      Some("playlist") => Ok(Command::Help(HelpTopic::Playlist)),
+      None => Ok(Command::Help(HelpTopic::General)),
+      Some(other) => Err(format!("unknown help topic {other:?}; try `playlist`")),
+    },
+    "-h" | "--help" => Ok(Command::Help(HelpTopic::General)),
     other => Err(format!("unknown command {other:?}; try `playlist`")),
   }
 }
@@ -74,18 +95,23 @@ fn parse_playlist(args: Vec<String>) -> Result<Command, String> {
   let mut iter = args.into_iter();
   while let Some(arg) = iter.next() {
     match arg.as_str() {
+      "help" | "-h" | "--help" => return Ok(Command::Help(HelpTopic::Playlist)),
       "--json" => json = true,
       "--json-out" => json_out = Some(PathBuf::from(next(&mut iter, "--json-out")?)),
       "--app-id" => inputs.app_id = next(&mut iter, "--app-id")?,
       "--artifact-dir" => inputs.artifact_dir = PathBuf::from(next(&mut iter, "--artifact-dir")?),
-      "--max-pages" => {
-        inputs.max_pages = parse_pos(next(&mut iter, "--max-pages")?, "--max-pages")?
-      }
       "--max-scrolls" => {
         inputs.max_scrolls = parse_pos(next(&mut iter, "--max-scrolls")?, "--max-scrolls")?
       }
       "--scroll-amount" => {
         inputs.scroll_amount = parse_amount(next(&mut iter, "--scroll-amount")?)?
+      }
+      "--scroll-settle-ms" => {
+        inputs.scroll_settle_ms =
+          parse_millis(next(&mut iter, "--scroll-settle-ms")?, "--scroll-settle-ms")?
+      }
+      "--category" => {
+        inputs.category = PlaylistCategory::parse(&next(&mut iter, "--category")?)?;
       }
       "--filter" => {
         if filter.is_some() {
@@ -162,7 +188,7 @@ fn print_usage() {
      \n\
      USAGE:\n\
      \x20 auv-netease-music playlist [ls] [--filter <text>] [--json | --json-out <path>]\n\
-     \x20   [--app-id <bundle>] [--artifact-dir <path>] [--max-pages <n>]\n\
+     \x20   [--app-id <bundle>] [--artifact-dir <path>]\n\
      \x20   [--max-scrolls <n>] [--scroll-amount <f>]\n\
      \x20   [--sidebar-region x,y,width,height]\n\
      \x20   [--hint-ocr-custom-word <word>] [--hint-ocr-custom-words <a,b>]\n\
@@ -173,11 +199,32 @@ fn print_usage() {
   );
 }
 
+fn print_playlist_usage() {
+  eprintln!(
+    "auv-netease-music playlist — list NetEase Cloud Music sidebar playlists\n\
+     \n\
+     USAGE:\n\
+     \x20 auv-netease-music playlist [ls] [keyword] [--filter <text>]\n\
+     \x20   [--category all|created|favorited]\n\
+     \x20   [--json | --json-out <path>]\n\
+     \x20   [--app-id <bundle>] [--artifact-dir <path>]\n\
+     \x20   [--max-scrolls <n>]\n\
+     \x20   [--scroll-amount <f>] [--scroll-settle-ms <ms>]\n\
+     \x20   [--sidebar-region x,y,width,height]\n\
+     \x20   [--hint-ocr-custom-word <word>] [--hint-ocr-custom-words <a,b>]\n\
+     \x20   [--hint-ocr-custom-words-file <path>]\n\
+     \x20   [--hint-ocr-language <tag>] [--hint-ocr-languages <a,b>]"
+  );
+}
+
 /// Entry point for the `auv-netease-music` binary.
 pub fn run() -> ExitCode {
   match parse_command(std::env::args().skip(1).collect()) {
-    Ok(Command::Help) => {
-      print_usage();
+    Ok(Command::Help(topic)) => {
+      match topic {
+        HelpTopic::General => print_usage(),
+        HelpTopic::Playlist => print_playlist_usage(),
+      }
       ExitCode::SUCCESS
     }
     Ok(Command::Playlist(cmd)) => run_playlist(cmd),
@@ -241,7 +288,26 @@ mod tests {
 
   #[test]
   fn empty_args_is_help() {
-    assert_eq!(parse_command(args(&[])).unwrap(), Command::Help);
+    assert_eq!(
+      parse_command(args(&[])).unwrap(),
+      Command::Help(HelpTopic::General)
+    );
+  }
+
+  #[test]
+  fn playlist_help_forms_route_to_playlist_help() {
+    assert_eq!(
+      parse_command(args(&["help", "playlist"])).unwrap(),
+      Command::Help(HelpTopic::Playlist)
+    );
+    assert_eq!(
+      parse_command(args(&["playlist", "--help"])).unwrap(),
+      Command::Help(HelpTopic::Playlist)
+    );
+    assert_eq!(
+      parse_command(args(&["playlist", "ls", "--help"])).unwrap(),
+      Command::Help(HelpTopic::Playlist)
+    );
   }
 
   #[test]
@@ -252,7 +318,8 @@ mod tests {
     assert_eq!(cmd.keyword, None);
     assert_eq!(cmd.output, OutputMode::Human);
     assert_eq!(cmd.inputs.app_id, crate::DEFAULT_APP_ID);
-    assert_eq!(cmd.inputs.max_pages, 24);
+    assert_eq!(cmd.inputs.scroll_settle_ms, crate::DEFAULT_SCROLL_SETTLE_MS);
+    assert_eq!(cmd.inputs.category, crate::PlaylistCategory::All);
   }
 
   #[test]
@@ -350,5 +417,29 @@ mod tests {
       panic!("expected playlist command");
     };
     assert_eq!(cmd.inputs.artifact_dir, PathBuf::from("/tmp/foo"));
+  }
+
+  #[test]
+  fn playlist_accepts_category_and_scroll_settle_ms() {
+    let Command::Playlist(cmd) = parse_command(args(&[
+      "playlist",
+      "ls",
+      "--category",
+      "created",
+      "--scroll-settle-ms",
+      "250",
+    ]))
+    .unwrap() else {
+      panic!("expected playlist command");
+    };
+
+    assert_eq!(cmd.inputs.category, crate::PlaylistCategory::Created);
+    assert_eq!(cmd.inputs.scroll_settle_ms, 250);
+  }
+
+  #[test]
+  fn playlist_rejects_unknown_category_and_zero_settle() {
+    assert!(parse_command(args(&["playlist", "--category", "recent"])).is_err());
+    assert!(parse_command(args(&["playlist", "--scroll-settle-ms", "0"])).is_err());
   }
 }

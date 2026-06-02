@@ -462,6 +462,8 @@ Use this root-cause block format in regression tests when relevant:
 - Use concise Conventional Commit-style subjects, such as `chore: init` and
   `chore(README.md): added`.
 - Prefer `type(scope): summary` when a scope is useful.
+- When a commit primarily changes one crate, use the exact crate name as the
+  Conventional Commit scope, for example `feat(auv-netease-music): ...`.
 - Pull requests should include:
   - A short description.
   - Relevant design or issue links.
