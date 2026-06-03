@@ -8,6 +8,36 @@
 //! Intentionally data-only: these structs describe what was observed or
 //! verified, but do not execute actions. A `NodeRef` existing here does *not*
 //! mean AUV has a generic node-aware action runtime.
+//!
+//! # Seam map
+//!
+//! These records terminate the v0 execution seam called out in `CLAUDE.md`:
+//!
+//! ```text
+//! recognition / AX / candidates
+//!   -> ActionResolver
+//!        (src/driver/macos/control/action_resolver.rs;
+//!         `ActionResolverDecision`, pub(crate), serialize-only,
+//!         records WHICH input method got picked + fallback policy)
+//!   -> auv-driver InputActionResult
+//!        (crates/auv-driver/src/input.rs;
+//!         `InputActionResult`, pub, full serde,
+//!         records the actual delivery attempts + disturbance levels)
+//!   -> OperationResult / VerificationResult / ObservationSnapshot
+//!        (this file; the persisted, reader-consumable records)
+//!   -> trace artifacts
+//!        (src/run_read.rs reads them back via `extract_verifications`
+//!         and `extract_observation_snapshots`; src/recorded_operation.rs
+//!         is the orchestration bridge, not a contract record)
+//! ```
+//!
+//! `ActionResolverDecision` and `InputActionResult` are the only two
+//! action-result schemas in v0. Per CLAUDE.md, a third action-result
+//! schema must not be introduced beside them — extend one or escalate
+//! to the owner before adding another.
+//!
+//! Reader-side `api_version` rejection is deferred; see
+//! `NOTICE(contract-api-version-reader-check)` immediately below.
 
 use serde::{Deserialize, Serialize};
 
@@ -73,6 +103,24 @@ pub enum OperationStatus {
   Failed,
 }
 
+/// Persisted, reader-consumable record of one typed command's outcome.
+///
+/// # Seam role
+///
+/// - **Produced by** typed driver / runtime command handlers via
+///   `Runtime::record_operation` (see [`crate::recorded_operation`]).
+///   Action commands record the `InputActionResult` from
+///   `crates/auv-driver` through the macos `ActionResolverDecision`
+///   layer, then attach the resulting `OperationResult` here.
+/// - **Consumed by** `run_read::extract_verifications` (which scans
+///   `operation-result` JSON artifacts and lifts both top-level
+///   `verifications` and the legacy `OperationOutput::Verification`),
+///   and by the inspect HTTP/viewer surface that reads the same
+///   artifacts.
+///
+/// Wire `api_version` is stamped on write but readers do not reject
+/// unknown values yet — see `NOTICE(contract-api-version-reader-check)`
+/// at the top of this file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct OperationResult {
   /// Wire-shape version. See [`OPERATION_RESULT_API_VERSION`]. Defaults so
@@ -327,6 +375,25 @@ pub struct ControlRequirements {
   pub requires_window_focus: bool,
 }
 
+/// First-class claim that the observed world matches an asserted state.
+///
+/// # Seam role
+///
+/// - **Produced by** any operation that wants to record a verification
+///   claim — `verify.*` commands, action commands that succeeded
+///   semantically, or observe commands that incidentally confirmed a
+///   property. Producers attach claims to
+///   [`OperationResult::verifications`] (preferred) or wrap a single
+///   claim into [`OperationOutput::Verification`] (legacy single-claim
+///   shape).
+/// - **Consumed by** `run_read::extract_verifications`, the inspect
+///   server's verification panel, and the trace viewer's per-run
+///   verification list.
+///
+/// The verification is identity-agnostic: it carries the
+/// [`VerificationMethod`] taxonomy and observed-label hints, but does
+/// not own the candidate or node that was verified — provenance lives
+/// in the optional `consumed_*` fields.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VerificationResult {
   /// Wire-shape version. See [`VERIFICATION_RESULT_API_VERSION`]. Defaults so
@@ -450,6 +517,17 @@ pub enum ObservationSource {
 /// those producers can converge on one stable observed-UI projection rather
 /// than diverging per producer. Field set and semantics may still shift before
 /// this is marked stable.
+///
+/// # Seam role
+///
+/// - **Produced by** `scroll_scan` per page; wrapped inside the
+///   `ScrollScanArtifact.snapshots` field. New producers should emit
+///   `ObservationSnapshot` directly so consumers can read evidence
+///   without knowing the producer.
+/// - **Consumed by** `run_read::extract_observation_snapshots`, which
+///   scans `scroll-scan`-role JSON artifacts and flattens their
+///   `snapshots` list. The inspect HTTP/viewer surface reads from
+///   that same path.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ObservationSnapshot {
   /// Wire-shape version. See [`OBSERVATION_SNAPSHOT_API_VERSION`]. Defaults so
