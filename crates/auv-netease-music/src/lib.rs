@@ -20,11 +20,11 @@ use auv_driver::RatioRect;
 use auv_view::{
   AnchorStrength, BoundaryConfidence, CandidateRole, Confidence, LandmarkUse, ParserDiagnostic,
   ReconstructionOutput, ReconstructionPolicy, ScanAppContext, ScanOptions, ScanWindowContext,
-  ScrollBoundarySummary, VIEW_IR_SCHEMA_VERSION, ViewAction, ViewAnchor, ViewAxis, ViewBounds,
-  ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind, ViewNodeRecord,
-  ViewObservation, ViewObserver, ViewReconstructionRecord, ViewRegionRecord, ViewScrollable,
-  ViewViewportRecord, confidence_from_ocr, draw_rect, normalize_identity, reconstruct,
-  scroll_to_top, slug, viewport_contains_center, viewport_fingerprint,
+  ScrollBoundarySummary, TopSeekOutcome, VIEW_IR_SCHEMA_VERSION, ViewAction, ViewAnchor, ViewAxis,
+  ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind,
+  ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord, ViewRegionRecord,
+  ViewScrollable, ViewViewportRecord, confidence_from_ocr, draw_rect, normalize_identity,
+  reconstruct, slug, viewport_contains_center, viewport_fingerprint,
 };
 use clap::ValueEnum;
 use image::{Rgba, RgbaImage};
@@ -1598,10 +1598,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
       previous_sidebar_crop: None,
       motion_policy: MotionDetectionPolicy::default(),
     };
-    // TODO(netease-scroll-top-seek): this shared top seek still relies on exact
-    // viewport fingerprints and max_scrolls. Move it to scroll motion/count
-    // evidence once the collection stop policy has a reliable completion model.
-    let top_seek = scroll_to_top(&mut top_probe, inputs.max_scrolls);
+    let top_seek = scroll_to_top_by_motion(&mut top_probe, inputs.max_scrolls);
     pre_scan_diagnostics.extend(top_seek.diagnostics);
     pre_scan_known_limits.extend(top_seek.known_limits);
     let LiveSidebarObserver {
@@ -2335,7 +2332,7 @@ fn scan_sidebar_with_observer(
   scroll_amount: f64,
   scroll_settle_ms: u64,
 ) -> PlaylistSidebarScan {
-  let top_seek = scroll_to_top(observer, options.max_scrolls);
+  let top_seek = scroll_to_top_by_motion(observer, options.max_scrolls);
   observer.reset_collection_phase();
   let loop_outcome = scan_with_collection_policy(observer, options, category);
   let interaction_events = build_standalone_interaction_events(
@@ -2407,6 +2404,57 @@ fn repeated_fingerprint_stop_reason(
 
 trait SidebarScanObserver: ViewObserver<Observation = SidebarViewportObservation> {
   fn reset_collection_phase(&mut self) {}
+
+  fn observe_scroll_seek(
+    &mut self,
+    observation_index: usize,
+  ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+    self.observe(observation_index)
+  }
+}
+
+fn scroll_to_top_by_motion(
+  observer: &mut impl SidebarScanObserver,
+  max_scrolls: usize,
+) -> TopSeekOutcome {
+  let mut outcome = TopSeekOutcome::default();
+  observer.reset_collection_phase();
+
+  if let Err(diagnostic) = observer.observe_scroll_seek(0) {
+    outcome.diagnostics.push(diagnostic);
+    return outcome;
+  }
+
+  for scroll_index in 0..max_scrolls {
+    if let Err(diagnostic) = observer.scroll_up() {
+      outcome.diagnostics.push(diagnostic);
+      return outcome;
+    }
+
+    let observation = match observer.observe_scroll_seek(scroll_index + 1) {
+      Ok(observation) => observation,
+      Err(diagnostic) => {
+        outcome.diagnostics.push(diagnostic);
+        return outcome;
+      }
+    };
+
+    if successful_scroll_delivery_path(observation.incoming_scroll_delivery_path.as_deref()) {
+      if observation
+        .scroll_motion
+        .as_ref()
+        .is_some_and(|motion| motion.no_motion)
+      {
+        outcome.boundary = BoundaryConfidence::Likely;
+        return outcome;
+      }
+    }
+  }
+
+  outcome.known_limits.push(format!(
+    "top seek stopped after max_scrolls={max_scrolls} without repeated sidebar pixels"
+  ));
+  outcome
 }
 
 struct CollectionLoopOutcome {
@@ -3075,6 +3123,23 @@ impl SidebarScanObserver for LiveSidebarObserver {
     // metadata.
     self.pending_scroll_delivery_path = None;
     self.previous_sidebar_crop = None;
+  }
+
+  fn observe_scroll_seek(
+    &mut self,
+    observation_index: usize,
+  ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+    let (image, scale_factor, _, mut observation) = self.capture_observation(observation_index)?;
+    observation.ax_scrollbar_boundary = self.capture_ax_scrollbar_boundary();
+    let sidebar_crop = crop_image(&image, self.sidebar_bounds, scale_factor);
+    let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
+    observation.scroll_motion = incoming_scroll_delivery_path
+      .as_ref()
+      .and(self.previous_sidebar_crop.as_ref())
+      .map(|previous| self.motion_policy.compare(previous, &sidebar_crop));
+    self.previous_sidebar_crop = Some(sidebar_crop);
+    observation.incoming_scroll_delivery_path = incoming_scroll_delivery_path;
+    Ok(observation)
   }
 }
 
@@ -4588,6 +4653,7 @@ mod tests {
     observations: Vec<SidebarViewportObservation>,
     cursor: usize,
     pending_scroll_delivery_path: Option<String>,
+    last_scroll_seek_cursor: Option<usize>,
   }
 
   impl FakeSidebarObserver {
@@ -4596,6 +4662,7 @@ mod tests {
         observations,
         cursor: 0,
         pending_scroll_delivery_path: None,
+        last_scroll_seek_cursor: None,
       }
     }
 
@@ -4604,6 +4671,7 @@ mod tests {
         observations,
         cursor,
         pending_scroll_delivery_path: None,
+        last_scroll_seek_cursor: None,
       }
     }
   }
@@ -4611,6 +4679,29 @@ mod tests {
   impl SidebarScanObserver for FakeSidebarObserver {
     fn reset_collection_phase(&mut self) {
       self.pending_scroll_delivery_path = None;
+      self.last_scroll_seek_cursor = None;
+    }
+
+    fn observe_scroll_seek(
+      &mut self,
+      observation_index: usize,
+    ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+      let cursor = self.cursor;
+      let mut observation = self.observe(observation_index)?;
+      if observation.scroll_motion.is_none() {
+        if let Some(previous_cursor) = self.last_scroll_seek_cursor {
+          if observation.incoming_scroll_delivery_path.is_some() {
+            let no_motion = cursor == previous_cursor;
+            observation.scroll_motion = Some(MotionEvidence {
+              estimated_shift_y: if no_motion { 0 } else { 1 },
+              normalized_diff: if no_motion { 0.0 } else { 0.2 },
+              no_motion,
+            });
+          }
+        }
+      }
+      self.last_scroll_seek_cursor = Some(cursor);
+      Ok(observation)
     }
   }
 
