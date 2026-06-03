@@ -286,6 +286,32 @@ impl InputAttempt {
   }
 }
 
+/// Persisted record of one driver input delivery — clicks, scrolls,
+/// text submission, etc. Captures the attempt sequence, the path that
+/// ultimately succeeded (or the failure mode), and the disturbance
+/// levels the delivery caused on user-visible state (mouse, focus,
+/// clipboard).
+///
+/// # Seam role
+///
+/// Lower / "what actually happened" half of the v0 action-result pair
+/// (per CLAUDE.md). Sibling: `ActionResolverDecision` in
+/// `src/driver/macos/control/action_resolver.rs` (`pub(crate)`), which
+/// records the upstream method-selection decision.
+///
+/// - **Upstream**: AUV's macOS smart-press path produces an
+///   `ActionResolverDecision` alongside this struct. Direct driver-
+///   API consumers (recipes, typed commands invoking driver primitives
+///   without a resolver) construct `InputActionResult` without a peer
+///   decision record.
+/// - **Downstream**: action-bearing operations attach this (and any
+///   peer `ActionResolverDecision`) to the resulting `OperationResult`
+///   artifact (`src/contract.rs`) as delivery evidence — typically
+///   through evidence artifacts or signal flattening.
+///
+/// Per CLAUDE.md, this is one of the two action-result schemas in v0;
+/// `ActionResolverDecision` is the other. Do not introduce a third
+/// action-result schema beside these two.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputActionResult {
   pub selected_path: InputDeliveryPath,

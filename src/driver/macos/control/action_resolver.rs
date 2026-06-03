@@ -34,6 +34,34 @@ impl ResolvedActionMethod {
   }
 }
 
+/// Persisted record of which input method the macOS smart-press
+/// pipeline picked for one operation, why it picked that method, and
+/// whether the chosen path was a fallback from the primary AX action.
+///
+/// # Seam role
+///
+/// Upper / "what method got chosen" half of the v0 action-result pair
+/// (per CLAUDE.md). Sibling: [`InputActionResult`] in
+/// `crates/auv-driver/src/input.rs` (fully `pub`), which records the
+/// actual delivery attempts that resulted from this decision.
+///
+/// - **Upstream**: typed macOS command handlers (e.g.
+///   `debug.smartPress`) call into `crates/auv-driver`; the smart-
+///   press recorder wraps that call to produce one of these decisions.
+/// - **Downstream**: action-bearing operations attach this decision
+///   (and the peer `InputActionResult`) to the resulting
+///   `OperationResult` artifact (`src/contract.rs`); the
+///   [`ActionResolverDecision::signals`] method flattens it into the
+///   operation's signal map.
+///
+/// `pub(crate)` is intentional: this decision schema is private to the
+/// `auv-cli` macOS driver subtree. Cross-crate consumers should observe
+/// the decision indirectly through operation signals, not by importing
+/// the struct directly. Per CLAUDE.md, this is one of the two action-
+/// result schemas in v0; `InputActionResult` is the other. Do not
+/// introduce a third action-result schema beside these two.
+///
+/// [`InputActionResult`]: auv_driver::InputActionResult
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ActionResolverDecision {
   pub(crate) version: &'static str,
