@@ -2429,6 +2429,7 @@ fn scan_with_collection_policy(
   let mut seen_semantic_candidates = HashSet::new();
   let mut consecutive_no_new_semantic_candidates_after_scroll = 0usize;
   let mut consecutive_no_motion_after_scroll = 0usize;
+  let mut observed_scroll_motion_after_successful_input = false;
   let mut scrolls = 0;
   let mut stop_reason = None;
 
@@ -2452,10 +2453,9 @@ fn scan_with_collection_policy(
       record_page_semantic_candidates(&observation, &mut seen_semantic_candidates);
     let reached_stop_landmark = policy.reached_stop_landmark();
     let started = policy.start_seen();
-    if started
-      && !seen_semantic_candidates.is_empty()
-      && observation.incoming_scroll_delivery_path.is_some()
-    {
+    let successful_scroll_input =
+      successful_scroll_delivery_path(observation.incoming_scroll_delivery_path.as_deref());
+    if started && !seen_semantic_candidates.is_empty() && successful_scroll_input {
       if introduced_new_semantic_candidates {
         consecutive_no_new_semantic_candidates_after_scroll = 0;
       } else {
@@ -2464,12 +2464,21 @@ fn scan_with_collection_policy(
     } else {
       consecutive_no_new_semantic_candidates_after_scroll = 0;
     }
-    if let Some(motion) = observation.scroll_motion.as_ref() {
-      if motion.no_motion {
-        consecutive_no_motion_after_scroll += 1;
+    if successful_scroll_input {
+      if let Some(motion) = observation.scroll_motion.as_ref() {
+        if motion.no_motion && observed_scroll_motion_after_successful_input {
+          consecutive_no_motion_after_scroll += 1;
+        } else if motion.no_motion {
+          consecutive_no_motion_after_scroll = 0;
+        } else {
+          observed_scroll_motion_after_successful_input = true;
+          consecutive_no_motion_after_scroll = 0;
+        }
       } else {
         consecutive_no_motion_after_scroll = 0;
       }
+    } else {
+      consecutive_no_motion_after_scroll = 0;
     }
     observations.push(observation);
 
@@ -2502,11 +2511,11 @@ fn scan_with_collection_policy(
       }
     }
 
-    // REVIEW(netease-scroll-motion): live NetEase testing on 2026-06-03 showed
-    // that crop motion detection alone did not stop the large playlist scan
-    // before the default max_scrolls cap. Keep it as a fallback signal beside
-    // semantic no-progress until a future slice adds scroll-bar or AX scroll
-    // state corroboration.
+    // NOTICE(netease-scroll-motion-boundary): identical sidebar pixels only
+    // count as bottom evidence after a successful scroll delivery path and at
+    // least one prior post-scroll motion observation. This prevents launch
+    // state, failed/noop input, or already-stuck captures from being promoted
+    // into a false bottom boundary.
     if consecutive_no_motion_after_scroll >= 2 {
       if let Some(reason) = heuristic_stop_reason_with_ax_corroboration(
         "scroll_no_motion_after_input",
@@ -2541,6 +2550,10 @@ fn scan_with_collection_policy(
     known_limits,
     stop_reason,
   }
+}
+
+fn successful_scroll_delivery_path(path: Option<&str>) -> bool {
+  !matches!(path, None | Some("noop" | "unsupported"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -3967,9 +3980,9 @@ mod tests {
     );
     second.viewport_fingerprint = "page-b".to_string();
     second.scroll_motion = Some(MotionEvidence {
-      estimated_shift_y: 0,
-      normalized_diff: 0.0,
-      no_motion: true,
+      estimated_shift_y: 9,
+      normalized_diff: 0.24,
+      no_motion: false,
     });
     let mut third = parse_sidebar_viewport(
       2,
@@ -3988,6 +4001,11 @@ mod tests {
       &fake_recognition(vec![("D", 32.0, 42.0, 80.0, 20.0)]),
     );
     fourth.viewport_fingerprint = "page-d".to_string();
+    fourth.scroll_motion = Some(MotionEvidence {
+      estimated_shift_y: 0,
+      normalized_diff: 0.0,
+      no_motion: true,
+    });
     let mut observer = FakeSidebarObserver::new(vec![first, second, third, fourth]);
 
     let scan = scan_sidebar_with_observer(
@@ -4001,7 +4019,7 @@ mod tests {
       DEFAULT_SCROLL_SETTLE_MS,
     );
 
-    assert_eq!(scan.observations.len(), 3);
+    assert_eq!(scan.observations.len(), 4);
     assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
     assert!(
       scan
@@ -4015,6 +4033,101 @@ mod tests {
         .known_limits
         .iter()
         .any(|limit| limit.contains("max_scrolls"))
+    );
+  }
+
+  #[test]
+  fn scan_loop_does_not_stop_scroll_on_no_motion_without_prior_motion() {
+    let observations = (0..4)
+      .map(|index| {
+        let mut observation = parse_sidebar_viewport(
+          index,
+          ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+          &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
+        );
+        observation.viewport_fingerprint = format!("page-{index}");
+        if index > 0 {
+          observation.scroll_motion = Some(MotionEvidence {
+            estimated_shift_y: 0,
+            normalized_diff: 0.0,
+            no_motion: true,
+          });
+        }
+        observation
+      })
+      .collect::<Vec<_>>();
+    let mut observer = FakeSidebarObserver::new(observations);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 10,
+        max_scrolls: 3,
+      },
+      PlaylistCategory::All,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
+    );
+
+    assert_eq!(scan.observations.len(), 4);
+    assert_eq!(scan.boundary.bottom, BoundaryConfidence::Unknown);
+    assert!(
+      !scan
+        .interaction_events
+        .iter()
+        .any(|event| event.kind == InteractionEventKind::StopDecision
+          && event.note.as_deref() == Some("scroll_no_motion_after_input"))
+    );
+    assert!(
+      scan
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("max_scrolls=3"))
+    );
+  }
+
+  #[test]
+  fn scan_loop_does_not_stop_scroll_on_no_motion_from_noop_delivery() {
+    let observations = (0..4)
+      .map(|index| {
+        let mut observation = parse_sidebar_viewport(
+          index,
+          ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+          &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
+        );
+        observation.viewport_fingerprint = format!("page-{index}");
+        if index > 0 {
+          observation.incoming_scroll_delivery_path = Some("noop".to_string());
+          observation.scroll_motion = Some(MotionEvidence {
+            estimated_shift_y: 0,
+            normalized_diff: 0.0,
+            no_motion: true,
+          });
+        }
+        observation
+      })
+      .collect::<Vec<_>>();
+    let mut observer = FakeSidebarObserver::new(observations);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 10,
+        max_scrolls: 3,
+      },
+      PlaylistCategory::All,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
+    );
+
+    assert_eq!(scan.observations.len(), 4);
+    assert_eq!(scan.boundary.bottom, BoundaryConfidence::Unknown);
+    assert!(
+      !scan
+        .interaction_events
+        .iter()
+        .any(|event| event.kind == InteractionEventKind::StopDecision
+          && event.note.as_deref() == Some("scroll_no_motion_after_input"))
     );
   }
 
@@ -4084,6 +4197,69 @@ mod tests {
         .known_limits
         .iter()
         .any(|limit| limit.contains("max_scrolls"))
+    );
+  }
+
+  #[test]
+  fn scan_loop_ignores_scroll_no_new_semantic_candidates_from_noop_delivery() {
+    let mut first = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+      ]),
+    );
+    first.viewport_fingerprint = "page-a".to_string();
+    let mut second = parse_sidebar_viewport(
+      1,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 106.0, 120.0, 20.0),
+      ]),
+    );
+    second.viewport_fingerprint = "page-b".to_string();
+    second.incoming_scroll_delivery_path = Some("noop".to_string());
+    let mut third = parse_sidebar_viewport(
+      2,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Coding BGM", 32.0, 138.0, 120.0, 20.0),
+      ]),
+    );
+    third.viewport_fingerprint = "page-c".to_string();
+    third.incoming_scroll_delivery_path = Some("noop".to_string());
+    let mut fourth = parse_sidebar_viewport(
+      3,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(vec![
+        ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+        ("Fresh Playlist", 32.0, 170.0, 120.0, 20.0),
+      ]),
+    );
+    fourth.viewport_fingerprint = "page-d".to_string();
+    let mut observer = FakeSidebarObserver::new(vec![first, second, third, fourth]);
+
+    let scan = scan_sidebar_with_observer(
+      &mut observer,
+      ScanOptions {
+        max_pages: 10,
+        max_scrolls: 10,
+      },
+      PlaylistCategory::All,
+      300.0,
+      DEFAULT_SCROLL_SETTLE_MS,
+    );
+
+    assert_eq!(scan.observations.len(), 4);
+    assert!(
+      !scan
+        .interaction_events
+        .iter()
+        .any(|event| event.kind == InteractionEventKind::StopDecision
+          && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input"))
     );
   }
 
