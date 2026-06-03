@@ -1,5 +1,5 @@
 use crate::{BoundingBox, ImageFrame};
-use image::{Rgb, RgbImage, imageops::FilterType};
+use image::{Rgb, RgbImage};
 use ndarray::Array4;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -29,12 +29,7 @@ pub fn prepare_input(frame: &ImageFrame, input_size: u32) -> (Array4<f32>, Lette
   let pad_left = (input_size - resized_width) / 2;
   let pad_top = (input_size - resized_height) / 2;
 
-  let resized = image::imageops::resize(
-    &frame.image,
-    resized_width,
-    resized_height,
-    FilterType::Triangle,
-  );
+  let resized = resize_linear(&frame.image, resized_width, resized_height);
   let mut padded = RgbImage::from_pixel(input_size, input_size, Rgb([114, 114, 114]));
   for y in 0..resized_height {
     for x in 0..resized_width {
@@ -62,6 +57,79 @@ pub fn prepare_input(frame: &ImageFrame, input_size: u32) -> (Array4<f32>, Lette
       pad_top,
     },
   )
+}
+
+fn resize_linear(image: &RgbImage, width: u32, height: u32) -> RgbImage {
+  let source_width = image.width();
+  let source_height = image.height();
+  let scale_x = source_width as f32 / width as f32;
+  let scale_y = source_height as f32 / height as f32;
+  RgbImage::from_fn(width, height, |x, y| {
+    let source_x = (x as f32 + 0.5) * scale_x - 0.5;
+    let source_y = (y as f32 + 0.5) * scale_y - 0.5;
+    interpolate(image, source_x, source_y)
+  })
+}
+
+// NOTICE: The fixture generator uses OpenCV `INTER_LINEAR`. `image::resize`
+// uses different downsampling semantics, which changes low-confidence YOLO
+// candidates enough to break Balatro parity.
+fn interpolate(image: &RgbImage, x: f32, y: f32) -> Rgb<u8> {
+  let x0_raw = x.floor();
+  let y0_raw = y.floor();
+  let x0 = clamp_index(x0_raw as i32, image.width());
+  let y0 = clamp_index(y0_raw as i32, image.height());
+  let x1 = clamp_index(x0_raw as i32 + 1, image.width());
+  let y1 = clamp_index(y0_raw as i32 + 1, image.height());
+  let x_weight = x - x0_raw;
+  let y_weight = y - y0_raw;
+  let top_left = image.get_pixel(x0, y0);
+  let top_right = image.get_pixel(x1, y0);
+  let bottom_left = image.get_pixel(x0, y1);
+  let bottom_right = image.get_pixel(x1, y1);
+  Rgb([
+    interpolate_channel(
+      top_left[0],
+      top_right[0],
+      bottom_left[0],
+      bottom_right[0],
+      x_weight,
+      y_weight,
+    ),
+    interpolate_channel(
+      top_left[1],
+      top_right[1],
+      bottom_left[1],
+      bottom_right[1],
+      x_weight,
+      y_weight,
+    ),
+    interpolate_channel(
+      top_left[2],
+      top_right[2],
+      bottom_left[2],
+      bottom_right[2],
+      x_weight,
+      y_weight,
+    ),
+  ])
+}
+
+fn clamp_index(index: i32, len: u32) -> u32 {
+  index.clamp(0, len as i32 - 1) as u32
+}
+
+fn interpolate_channel(
+  top_left: u8,
+  top_right: u8,
+  bottom_left: u8,
+  bottom_right: u8,
+  x_weight: f32,
+  y_weight: f32,
+) -> u8 {
+  let top = top_left as f32 * (1.0 - x_weight) + top_right as f32 * x_weight;
+  let bottom = bottom_left as f32 * (1.0 - x_weight) + bottom_right as f32 * x_weight;
+  (top * (1.0 - y_weight) + bottom * y_weight).round() as u8
 }
 
 pub fn project_model_bbox_to_source(bbox: BoundingBox, letterbox: Letterbox) -> BoundingBox {
@@ -118,6 +186,22 @@ mod tests {
     assert_eq!(tensor[[0, 0, 0, 0]], 1.0);
     assert_eq!(tensor[[0, 1, 0, 0]], 128.0 / 255.0);
     assert_eq!(tensor[[0, 2, 0, 0]], 0.0);
+  }
+
+  #[test]
+  fn resize_uses_replicated_border_for_tiny_source_images() {
+    let frame = ImageFrame::new(RgbImage::from_pixel(1, 1, Rgb([7, 11, 13])));
+
+    let (tensor, letterbox) = prepare_input(&frame, 4);
+
+    assert_eq!(letterbox.scale, 4.0);
+    for y in 0..4 {
+      for x in 0..4 {
+        assert_eq!(tensor[[0, 0, y, x]], 7.0 / 255.0);
+        assert_eq!(tensor[[0, 1, y, x]], 11.0 / 255.0);
+        assert_eq!(tensor[[0, 2, y, x]], 13.0 / 255.0);
+      }
+    }
   }
 
   #[test]
