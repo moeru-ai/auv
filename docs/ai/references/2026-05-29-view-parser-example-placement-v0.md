@@ -214,7 +214,7 @@ live in `auv-example-netease-playlist/src/projection/mod.rs`. They
 **do not** appear in `auv-view`.
 
 When the projection is serialized as a `view-projection-netease`
-artifact, the generic envelope (`ViewProjection<P>`) comes from
+artifact, the generic record (`ViewProjection<P>`) comes from
 `auv-view` and the type parameter `P` resolves to the NetEase-side
 type. Serialization works through `serde` without `auv-view` ever
 naming the NetEase type.

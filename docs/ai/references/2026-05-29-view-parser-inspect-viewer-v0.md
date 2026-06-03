@@ -64,7 +64,7 @@ pub struct RawViewProjection {
 `RawViewProjection` keeps the records as `serde_json::Value` because
 the viewer is platform- and domain-agnostic — it cannot statically
 name `PlaylistSidebarProjection`. Per the bridge spec, this is **not**
-a third candidate / projection schema; it is a viewer-only envelope
+a third candidate / projection schema; it is a viewer-only record
 mirror.
 
 Reading rules:

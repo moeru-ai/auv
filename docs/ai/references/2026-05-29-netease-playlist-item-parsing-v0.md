@@ -367,7 +367,7 @@ Intentionally deferred:
   (v0 uses the static mapping table).
 - Domain-typed projection logic — that lives in
   `auv-example-netease-playlist/src/projection/` and feeds the
-  generic `ViewProjection<PlaylistSidebarProjection>` envelope.
+  generic `ViewProjection<PlaylistSidebarProjection>` record.
 
 ## How to use this spec
 

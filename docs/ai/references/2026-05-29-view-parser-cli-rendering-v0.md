@@ -49,7 +49,7 @@ the artifact JSON sees the same outcome the CLI rendered.
 | Mode | Flag | Audience | Shape |
 |---|---|---|---|
 | Default (human) | (none) | terminal reader | sectioned text |
-| JSON | `--json` | scripts, agents | one JSON document = the full `ViewProjection` envelope |
+| JSON | `--json` | scripts, agents | one JSON document = the full `ViewProjection` record |
 | Verbose | `--verbose` | debugger | default text + per-observation summary + diagnostic table |
 
 Modes are mutually exclusive. `--json --verbose` errors before the
@@ -127,8 +127,8 @@ stdout:
 ```
 
 This wrapper is **not** itself a new artifact — it is a CLI-output
-envelope only. The structured artifact (`view-projection-<domain>`)
-remains the source of truth in run storage. The CLI envelope merely
+record only. The structured artifact (`view-projection-<domain>`)
+remains the source of truth in run storage. The CLI record merely
 collects the four root-span signals next to the projection for
 convenience.
 
@@ -171,7 +171,7 @@ expands what is printed.
 | Mode | What surfaces |
 |---|---|
 | Default | Outcome line; if Fatal, the Fatal kind name in parentheses; total diagnostic count only when ≥ 1 |
-| `--json` | Full diagnostics carried inside the projection envelope; reader gets everything |
+| `--json` | Full diagnostics carried inside the projection record; reader gets everything |
 | `--verbose` | Default content + the diagnostic table |
 
 Reader-side severity comes from the diagnostic policy spec; the CLI

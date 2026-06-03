@@ -430,7 +430,7 @@ pub struct ViewProjection<P> {
 }
 // NOTICE(generic-projection-envelope): `P` is parameterized on purpose.
 // Domain projection records (e.g. NetEase `PlaylistSidebarProjection`)
-// live with the example, not in the generic IR. The envelope here is
+// live with the example, not in the generic IR. The record here is
 // the only piece the IR owns; the `records` type is owner-approved per
 // domain. Do not promote a domain record into the IR crate to make
 // imports easier — that path collapses the boundary the design doc
@@ -438,7 +438,7 @@ pub struct ViewProjection<P> {
 ```
 
 `P` is domain-typed and lives with the example (NetEase
-`PlaylistSidebarProjection`). The generic IR provides the envelope only.
+`PlaylistSidebarProjection`). The generic IR provides the record only.
 
 ## Cross-viewport merge (candidate → node)
 
