@@ -37,6 +37,10 @@ use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
 use auv_driver::{Driver, InputPolicy, Scroll, ScrollOptions, Size, WindowPoint};
 #[cfg(target_os = "macos")]
+use auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot;
+#[cfg(target_os = "macos")]
+use auv_driver_macos::types::ObservedAxNode;
+#[cfg(target_os = "macos")]
 use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
@@ -331,6 +335,13 @@ struct SidebarViewportObservation {
   evidence_nodes: Vec<ViewEvidenceNode>,
   candidates: Vec<SidebarViewportCandidate>,
   parser_notes: Vec<ParserDiagnostic>,
+  /// Transient live-only AX corroboration for scroll completion.
+  ///
+  /// `PlaylistSidebarScan` does not persist this yet; it only helps the
+  /// collection loop decide whether a heuristic stop is being contradicted or
+  /// corroborated by the app's visible scroll state.
+  #[serde(skip, default)]
+  ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>,
 }
 
 impl ViewObservation for SidebarViewportObservation {
@@ -488,6 +499,13 @@ pub enum ScrollDirection {
   Up,
   #[default]
   Down,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarScrollbarBoundary {
+  Top,
+  Bottom,
+  Interior,
 }
 
 pub(crate) fn split_csv(value: &str) -> Vec<String> {
@@ -1029,6 +1047,7 @@ fn parse_sidebar_viewport(
     evidence_nodes,
     candidates,
     parser_notes: Vec::new(),
+    ax_scrollbar_boundary: None,
   }
 }
 
@@ -1359,6 +1378,35 @@ fn scan_sidebar_with_observer(
   scan
 }
 
+fn heuristic_stop_reason_with_ax_corroboration(
+  base_reason: &'static str,
+  ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>,
+) -> Option<&'static str> {
+  match (base_reason, ax_scrollbar_boundary) {
+    ("scroll_no_new_semantic_candidates_after_input", Some(SidebarScrollbarBoundary::Bottom)) => {
+      Some("scroll_no_new_semantic_candidates_with_ax_scrollbar_bottom")
+    }
+    ("scroll_no_motion_after_input", Some(SidebarScrollbarBoundary::Bottom)) => {
+      Some("scroll_no_motion_with_ax_scrollbar_bottom")
+    }
+    (
+      "scroll_no_new_semantic_candidates_after_input" | "scroll_no_motion_after_input",
+      Some(SidebarScrollbarBoundary::Top | SidebarScrollbarBoundary::Interior),
+    ) => None,
+    _ => Some(base_reason),
+  }
+}
+
+fn repeated_fingerprint_stop_reason(
+  ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>,
+) -> &'static str {
+  if ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom) {
+    "repeated_viewport_fingerprint_with_ax_scrollbar_bottom"
+  } else {
+    "repeated_viewport_fingerprint"
+  }
+}
+
 trait SidebarScanObserver: ViewObserver<Observation = SidebarViewportObservation> {
   fn reset_collection_phase(&mut self) {}
 }
@@ -1400,6 +1448,7 @@ fn scan_with_collection_policy(
       .as_deref()
       .is_some_and(|prev| prev == fingerprint.as_str());
     previous_fingerprint = Some(fingerprint);
+    let ax_scrollbar_boundary = observation.ax_scrollbar_boundary;
     let observation = policy.apply(observation);
     let introduced_new_semantic_candidates =
       record_page_semantic_candidates(&observation, &mut seen_semantic_candidates);
@@ -1436,7 +1485,7 @@ fn scan_with_collection_policy(
     // scroll stop detector. Motion evidence covers the real NetEase case where
     // OCR text drifts enough that exact fingerprints do not repeat at bottom.
     if repeated_fingerprint {
-      stop_reason = Some("repeated_viewport_fingerprint".to_string());
+      stop_reason = Some(repeated_fingerprint_stop_reason(ax_scrollbar_boundary).to_string());
       break;
     }
 
@@ -1446,8 +1495,13 @@ fn scan_with_collection_policy(
     // crate exports. It remains heuristic until a future slice corroborates it
     // with scroll-bar, AX scroll-state, or provider-reported bounds.
     if consecutive_no_new_semantic_candidates_after_scroll >= 2 {
-      stop_reason = Some("scroll_no_new_semantic_candidates_after_input".to_string());
-      break;
+      if let Some(reason) = heuristic_stop_reason_with_ax_corroboration(
+        "scroll_no_new_semantic_candidates_after_input",
+        ax_scrollbar_boundary,
+      ) {
+        stop_reason = Some(reason.to_string());
+        break;
+      }
     }
 
     // REVIEW(netease-scroll-motion): live NetEase testing on 2026-06-03 showed
@@ -1456,8 +1510,13 @@ fn scan_with_collection_policy(
     // semantic no-progress until a future slice adds scroll-bar or AX scroll
     // state corroboration.
     if consecutive_no_motion_after_scroll >= 2 {
-      stop_reason = Some("scroll_no_motion_after_input".to_string());
-      break;
+      if let Some(reason) = heuristic_stop_reason_with_ax_corroboration(
+        "scroll_no_motion_after_input",
+        ax_scrollbar_boundary,
+      ) {
+        stop_reason = Some(reason.to_string());
+        break;
+      }
     }
 
     if scrolls >= options.max_scrolls {
@@ -1713,6 +1772,91 @@ fn apply_bottom_boundary(scan: &mut PlaylistSidebarScan, bottom: BoundaryConfide
   }
 }
 
+#[cfg(target_os = "macos")]
+fn sidebar_ax_scrollbar_boundary(
+  nodes: &[ObservedAxNode],
+  window: &auv_driver::Window,
+  sidebar_bounds: ViewBounds,
+) -> Option<SidebarScrollbarBoundary> {
+  let sidebar_screen_bounds = ViewBounds::new(
+    window.frame.origin.x + sidebar_bounds.x,
+    window.frame.origin.y + sidebar_bounds.y,
+    sidebar_bounds.width,
+    sidebar_bounds.height,
+  );
+  let sidebar_right = sidebar_screen_bounds.x + sidebar_screen_bounds.width;
+  let sidebar_bottom = sidebar_screen_bounds.y + sidebar_screen_bounds.height;
+
+  let scrollbar = nodes
+    .iter()
+    .filter(|node| {
+      node.role == "AXScrollBar"
+        && node.bounds.width > 0
+        && node.bounds.height > 0
+        && node.bounds.height > node.bounds.width
+    })
+    .filter(|node| {
+      let node_top = node.bounds.y as f64;
+      let node_bottom = node_top + node.bounds.height as f64;
+      let vertical_overlap =
+        (node_bottom.min(sidebar_bottom) - node_top.max(sidebar_screen_bounds.y)).max(0.0);
+      let overlap_ratio = vertical_overlap / node.bounds.height as f64;
+      let center_x = node.bounds.x as f64 + (node.bounds.width as f64 / 2.0);
+      overlap_ratio >= 0.5
+        && center_x >= sidebar_screen_bounds.x
+        && center_x <= sidebar_right + 20.0
+    })
+    .max_by(|left, right| {
+      let left_overlap = scrollbar_overlap_score(left, sidebar_screen_bounds);
+      let right_overlap = scrollbar_overlap_score(right, sidebar_screen_bounds);
+      left_overlap.total_cmp(&right_overlap)
+    })?;
+
+  vertical_scrollbar_boundary_from_nodes(nodes, scrollbar)
+}
+
+#[cfg(target_os = "macos")]
+fn scrollbar_overlap_score(node: &ObservedAxNode, sidebar_screen_bounds: ViewBounds) -> f64 {
+  let sidebar_right = sidebar_screen_bounds.x + sidebar_screen_bounds.width;
+  let sidebar_bottom = sidebar_screen_bounds.y + sidebar_screen_bounds.height;
+  let node_top = node.bounds.y as f64;
+  let node_bottom = node_top + node.bounds.height as f64;
+  let vertical_overlap =
+    (node_bottom.min(sidebar_bottom) - node_top.max(sidebar_screen_bounds.y)).max(0.0);
+  let overlap_ratio = vertical_overlap / node.bounds.height as f64;
+  let node_right = node.bounds.x as f64 + node.bounds.width as f64;
+  let right_edge_distance = (sidebar_right - node_right).abs();
+  overlap_ratio * 1000.0 - right_edge_distance
+}
+
+#[cfg(target_os = "macos")]
+fn vertical_scrollbar_boundary_from_nodes(
+  nodes: &[ObservedAxNode],
+  scrollbar: &ObservedAxNode,
+) -> Option<SidebarScrollbarBoundary> {
+  let path_prefix = format!("{}.", scrollbar.path);
+  let mut increment_page_height = None;
+  let mut decrement_page_height = None;
+
+  for node in nodes
+    .iter()
+    .filter(|node| node.path.starts_with(path_prefix.as_str()))
+  {
+    match node.subrole.as_str() {
+      "AXIncrementPage" => increment_page_height = Some(node.bounds.height),
+      "AXDecrementPage" => decrement_page_height = Some(node.bounds.height),
+      _ => {}
+    }
+  }
+
+  match (increment_page_height, decrement_page_height) {
+    (Some(height), _) if height <= 1 => Some(SidebarScrollbarBoundary::Bottom),
+    (_, Some(height)) if height <= 1 => Some(SidebarScrollbarBoundary::Top),
+    (Some(_), Some(_)) => Some(SidebarScrollbarBoundary::Interior),
+    _ => None,
+  }
+}
+
 fn empty_root() -> ViewNodeRecord {
   ViewNodeRecord {
     id: "root.sidebar".to_string(),
@@ -1873,6 +2017,12 @@ impl ViewObserver for LiveSidebarObserver {
   ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
     let (image, scale_factor, window_recognition, mut observation) =
       self.capture_observation(observation_index)?;
+    // NOTICE(netease-scroll-ax-window-targeting): corroboration currently asks
+    // macOS for the app's focused/first AX window because the typed AX capture
+    // API does not yet accept a concrete native window ref. Re-open this only
+    // if NetEase starts surfacing multiple competing windows during playlist
+    // scans.
+    observation.ax_scrollbar_boundary = self.capture_ax_scrollbar_boundary();
     let sidebar_crop = crop_image(&image, self.sidebar_bounds, scale_factor);
     let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
     observation.scroll_motion = incoming_scroll_delivery_path
@@ -1919,6 +2069,17 @@ impl SidebarScanObserver for LiveSidebarObserver {
 
 #[cfg(target_os = "macos")]
 impl LiveSidebarObserver {
+  fn capture_ax_scrollbar_boundary(&self) -> Option<SidebarScrollbarBoundary> {
+    let app = self
+      .window
+      .app_bundle_id
+      .as_deref()
+      .filter(|bundle_id| !bundle_id.trim().is_empty())
+      .unwrap_or(DEFAULT_APP_ID);
+    let snapshot = capture_ax_tree_snapshot(app, 8, 64).ok()?;
+    sidebar_ax_scrollbar_boundary(&snapshot.snapshot.nodes, &self.window, self.sidebar_bounds)
+  }
+
   fn scroll_anchor(&self) -> auv_driver::Point {
     auv_driver::Point::new(
       self.sidebar_bounds.x + self.sidebar_bounds.width * 0.5,
@@ -3080,6 +3241,86 @@ mod tests {
     assert_eq!(scan.observations.len(), 2);
     assert_eq!(scan.boundary.top, BoundaryConfidence::Likely);
     assert_eq!(scan.observations[0].incoming_scroll_delivery_path, None);
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn vertical_scrollbar_boundary_prefers_page_button_height_over_plain_scrollbar_geometry() {
+    let window = auv_driver::Window {
+      reference: auv_driver::WindowRef {
+        id: "42".to_string(),
+      },
+      title: Some("网易云音乐".to_string()),
+      app_name: Some("网易云音乐".to_string()),
+      app_bundle_id: Some("com.netease.163music".to_string()),
+      process_id: Some(42),
+      frame: auv_driver::Rect::new(100.0, 200.0, 400.0, 600.0),
+      coordinate_space: auv_driver::geometry::CoordinateSpace::Screen,
+      is_main: true,
+      is_visible: true,
+    };
+    let sidebar_bounds = ViewBounds::new(20.0, 30.0, 160.0, 520.0);
+    let nodes = vec![
+      auv_driver_macos::types::ObservedAxNode {
+        depth: 2,
+        path: "0.0.1".to_string(),
+        role: "AXScrollBar".to_string(),
+        subrole: String::new(),
+        title: String::new(),
+        description: String::new(),
+        help: String::new(),
+        identifier: "_NS:1".to_string(),
+        placeholder: String::new(),
+        value: "0.6".to_string(),
+        bounds: auv_driver_macos::types::ObservedRect {
+          x: 272,
+          y: 260,
+          width: 18,
+          height: 480,
+        },
+      },
+      auv_driver_macos::types::ObservedAxNode {
+        depth: 3,
+        path: "0.0.1.3".to_string(),
+        role: "AXButton".to_string(),
+        subrole: "AXIncrementPage".to_string(),
+        title: String::new(),
+        description: String::new(),
+        help: String::new(),
+        identifier: String::new(),
+        placeholder: String::new(),
+        value: String::new(),
+        bounds: auv_driver_macos::types::ObservedRect {
+          x: 272,
+          y: 260,
+          width: 18,
+          height: 0,
+        },
+      },
+      auv_driver_macos::types::ObservedAxNode {
+        depth: 3,
+        path: "0.0.1.4".to_string(),
+        role: "AXButton".to_string(),
+        subrole: "AXDecrementPage".to_string(),
+        title: String::new(),
+        description: String::new(),
+        help: String::new(),
+        identifier: String::new(),
+        placeholder: String::new(),
+        value: String::new(),
+        bounds: auv_driver_macos::types::ObservedRect {
+          x: 272,
+          y: 740,
+          width: 18,
+          height: 24,
+        },
+      },
+    ];
+
+    assert_eq!(
+      sidebar_ax_scrollbar_boundary(&nodes, &window, sidebar_bounds),
+      Some(SidebarScrollbarBoundary::Bottom)
+    );
   }
 
   struct FakeSidebarObserver {
