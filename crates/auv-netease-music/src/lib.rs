@@ -1721,13 +1721,16 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
         match detect_sidebar_region(None, window_size, &full_recognition) {
           Ok(sidebar_region) => sidebar_region,
           Err(diagnostic) => {
-            return Ok(PlaylistSidebarScan::empty_with_diagnostic(
-              app_context,
-              window_context,
-              ViewRegionRecord::default(),
-              diagnostic,
-              "scan stopped before sidebar observation because the sidebar region could not be detected after default screen restore",
-            ));
+            let fallback = fallback_playlist_sidebar_region(window_size);
+            pre_scan_diagnostics.push(diagnostic);
+            pre_scan_diagnostics.push(ParserDiagnostic {
+              code: "sidebar_region_fallback_used".to_string(),
+              message:
+                "sidebar markers were not recognized after default screen restore; using conservative playlist sidebar bounds"
+                  .to_string(),
+              node_id: None,
+            });
+            fallback
           }
         }
       } else {
@@ -1931,6 +1934,25 @@ fn broad_sidebar_probe_bounds(window_size: auv_driver::Size) -> ViewBounds {
     .max(280.0)
     .min(window_size.width * 0.42);
   ViewBounds::new(0.0, 0.0, width, playlist_sidebar_bottom(window_size))
+}
+
+fn fallback_playlist_sidebar_region(window_size: auv_driver::Size) -> ViewRegionRecord {
+  // NOTICE(netease-sidebar-fallback): if OCR misses section headers, avoid the
+  // full left rail because it can target library/navigation rows such as "我喜欢的音乐".
+  // Start near the observed playlist section band instead; replace this with
+  // AX/sidebar-scrollbar evidence when that preflight contract is approved.
+  let y = (window_size.height * 0.30)
+    .max(220.0)
+    .min(window_size.height * 0.55);
+  let width = (window_size.width * 0.24)
+    .max(280.0)
+    .min(window_size.width * 0.42);
+  sidebar_region_record(ViewBounds::new(
+    0.0,
+    y,
+    width,
+    playlist_sidebar_bottom(window_size) - y,
+  ))
 }
 
 fn sidebar_region_record(bounds: ViewBounds) -> ViewRegionRecord {
@@ -3535,6 +3557,18 @@ mod tests {
     .expect_err("main content rows should not anchor the sidebar");
 
     assert_eq!(error.code, "sidebar_region_not_found");
+  }
+
+  #[test]
+  fn fallback_playlist_sidebar_region_starts_below_library_rows() {
+    let region = fallback_playlist_sidebar_region(auv_driver::Size::new(1418.0, 1002.0));
+    let bounds = region.bounds.expect("fallback should carry bounds");
+
+    assert_eq!(region.name, Some("playlist_sidebar".to_string()));
+    assert!(bounds.y >= 220.0);
+    assert!(bounds.y > 0.0);
+    assert!(bounds.height > 0.0);
+    assert!(bounds.width >= 280.0);
   }
 
   #[test]
