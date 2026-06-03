@@ -1,0 +1,171 @@
+{
+  "classes": {
+    "balatro_asset": "data/datasets/games-balatro-2024-entities-detection/data/train/yolo/classes.txt",
+    "count": 10,
+    "labels": [
+      "card_description",
+      "card_pack",
+      "joker_card",
+      "planet_card",
+      "poker_card_back",
+      "poker_card_description",
+      "poker_card_front",
+      "poker_card_stack",
+      "spectral_card",
+      "tarot_card"
+    ]
+  },
+  "detection_count": 11,
+  "detections": [
+    {
+      "bbox": [
+        799.005,
+        213.767,
+        963.193,
+        350.79
+      ],
+      "class_id": 0,
+      "confidence": 0.970611,
+      "label": "card_description"
+    },
+    {
+      "bbox": [
+        605.806,
+        387.392,
+        693.051,
+        527.67
+      ],
+      "class_id": 6,
+      "confidence": 0.962,
+      "label": "poker_card_front"
+    },
+    {
+      "bbox": [
+        1015.718,
+        478.34,
+        1130.092,
+        647.639
+      ],
+      "class_id": 7,
+      "confidence": 0.961535,
+      "label": "poker_card_stack"
+    },
+    {
+      "bbox": [
+        528.972,
+        388.186,
+        614.725,
+        527.372
+      ],
+      "class_id": 6,
+      "confidence": 0.958046,
+      "label": "poker_card_front"
+    },
+    {
+      "bbox": [
+        576.593,
+        32.656,
+        682.914,
+        179.667
+      ],
+      "class_id": 2,
+      "confidence": 0.957945,
+      "label": "joker_card"
+    },
+    {
+      "bbox": [
+        902.044,
+        397.521,
+        1021.404,
+        537.727
+      ],
+      "class_id": 6,
+      "confidence": 0.956312,
+      "label": "poker_card_front"
+    },
+    {
+      "bbox": [
+        368.861,
+        393.739,
+        484.183,
+        536.094
+      ],
+      "class_id": 6,
+      "confidence": 0.949282,
+      "label": "poker_card_front"
+    },
+    {
+      "bbox": [
+        827.143,
+        355.184,
+        950.407,
+        501.611
+      ],
+      "class_id": 6,
+      "confidence": 0.947165,
+      "label": "poker_card_front"
+    },
+    {
+      "bbox": [
+        754.544,
+        358.046,
+        856.59,
+        499.403
+      ],
+      "class_id": 6,
+      "confidence": 0.945371,
+      "label": "poker_card_front"
+    },
+    {
+      "bbox": [
+        453.337,
+        390.766,
+        543.99,
+        524.605
+      ],
+      "class_id": 6,
+      "confidence": 0.940867,
+      "label": "poker_card_front"
+    },
+    {
+      "bbox": [
+        683.463,
+        389.84,
+        784.292,
+        524.229
+      ],
+      "class_id": 6,
+      "confidence": 0.938444,
+      "label": "poker_card_front"
+    }
+  ],
+  "image": {
+    "height": 660,
+    "path": "crates/auv-inference-yolo/tests/fixtures/balatro/balatro.jpg",
+    "source_balatro_asset": "data/datasets/games-balatro-2024-entities-detection/data/val/yolo/images/out_01707.jpg",
+    "width": 1280
+  },
+  "model": {
+    "balatro_asset": "models/games-balatro-2024-yolo-entities-detection/onnx/model.onnx",
+    "name": "games-balatro-2024-yolo-entities-detection"
+  },
+  "output_shape": [
+    1,
+    14,
+    8400
+  ],
+  "preprocess": {
+    "color": "RGB",
+    "letterbox": {
+      "input_height": 640,
+      "input_width": 640,
+      "pad_left": 0.0,
+      "pad_top": 155.0,
+      "ratio": 0.5
+    }
+  },
+  "thresholds": {
+    "confidence": 0.25,
+    "iou": 0.45
+  }
+}

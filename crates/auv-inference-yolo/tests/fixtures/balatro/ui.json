@@ -1,0 +1,249 @@
+{
+  "classes": {
+    "balatro_asset": "data/datasets/games-balatro-2024-ui-detection/data/train/yolo/classes.txt",
+    "count": 33,
+    "labels": [
+      "button_back",
+      "button_card_pack_skip",
+      "button_cash_out",
+      "button_discard",
+      "button_level_select",
+      "button_level_skip",
+      "button_main_menu",
+      "button_main_menu_play",
+      "button_new_run",
+      "button_new_run_play",
+      "button_options",
+      "button_play",
+      "button_purchase",
+      "button_run_info",
+      "button_sell",
+      "button_sort_hand_rank",
+      "button_sort_hand_suits",
+      "button_store_next_round",
+      "button_store_reroll",
+      "button_use",
+      "ui_card_value",
+      "ui_data_cash",
+      "ui_data_discards_left",
+      "ui_data_hands_left",
+      "ui_round_ante_current",
+      "ui_round_ante_left",
+      "ui_round_round_current",
+      "ui_round_round_left",
+      "ui_score_chips",
+      "ui_score_current",
+      "ui_score_mult",
+      "ui_score_round_score",
+      "ui_score_target_score"
+    ]
+  },
+  "detection_count": 16,
+  "detections": [
+    {
+      "bbox": [
+        108.66,
+        357.704,
+        213.184,
+        411.445
+      ],
+      "class_id": 28,
+      "confidence": 0.986698,
+      "label": "ui_score_chips"
+    },
+    {
+      "bbox": [
+        209.759,
+        504.535,
+        350.638,
+        560.698
+      ],
+      "class_id": 21,
+      "confidence": 0.982981,
+      "label": "ui_data_cash"
+    },
+    {
+      "bbox": [
+        113.868,
+        534.809,
+        191.884,
+        625.626
+      ],
+      "class_id": 10,
+      "confidence": 0.982965,
+      "label": "button_options"
+    },
+    {
+      "bbox": [
+        243.197,
+        359.413,
+        345.409,
+        412.478
+      ],
+      "class_id": 30,
+      "confidence": 0.981771,
+      "label": "ui_score_mult"
+    },
+    {
+      "bbox": [
+        758.911,
+        549.013,
+        890.047,
+        621.634
+      ],
+      "class_id": 3,
+      "confidence": 0.979984,
+      "label": "button_discard"
+    },
+    {
+      "bbox": [
+        205.189,
+        454.7,
+        270.809,
+        489.911
+      ],
+      "class_id": 23,
+      "confidence": 0.978625,
+      "label": "ui_data_hands_left"
+    },
+    {
+      "bbox": [
+        111.596,
+        436.514,
+        189.579,
+        524.315
+      ],
+      "class_id": 13,
+      "confidence": 0.976952,
+      "label": "button_run_info"
+    },
+    {
+      "bbox": [
+        646.515,
+        575.318,
+        690.497,
+        613.079
+      ],
+      "class_id": 15,
+      "confidence": 0.975356,
+      "label": "button_sort_hand_rank"
+    },
+    {
+      "bbox": [
+        289.689,
+        591.111,
+        349.894,
+        624.439
+      ],
+      "class_id": 26,
+      "confidence": 0.972371,
+      "label": "ui_round_round_current"
+    },
+    {
+      "bbox": [
+        284.322,
+        452.461,
+        351.685,
+        489.454
+      ],
+      "class_id": 22,
+      "confidence": 0.971006,
+      "label": "ui_data_discards_left"
+    },
+    {
+      "bbox": [
+        180.16,
+        248.973,
+        348.073,
+        286.984
+      ],
+      "class_id": 31,
+      "confidence": 0.961057,
+      "label": "ui_score_round_score"
+    },
+    {
+      "bbox": [
+        216.642,
+        591.494,
+        240.826,
+        625.443
+      ],
+      "class_id": 24,
+      "confidence": 0.942507,
+      "label": "ui_round_ante_current"
+    },
+    {
+      "bbox": [
+        500.384,
+        552.048,
+        630.551,
+        624.064
+      ],
+      "class_id": 11,
+      "confidence": 0.935655,
+      "label": "button_play"
+    },
+    {
+      "bbox": [
+        696.733,
+        578.489,
+        741.352,
+        613.498
+      ],
+      "class_id": 16,
+      "confidence": 0.918906,
+      "label": "button_sort_hand_suits"
+    },
+    {
+      "bbox": [
+        202.409,
+        164.816,
+        343.718,
+        197.286
+      ],
+      "class_id": 32,
+      "confidence": 0.900973,
+      "label": "ui_score_target_score"
+    },
+    {
+      "bbox": [
+        248.901,
+        592.403,
+        265.309,
+        622.292
+      ],
+      "class_id": 25,
+      "confidence": 0.598554,
+      "label": "ui_round_ante_left"
+    }
+  ],
+  "image": {
+    "height": 660,
+    "path": "crates/auv-inference-yolo/tests/fixtures/balatro/balatro.jpg",
+    "source_balatro_asset": "data/datasets/games-balatro-2024-entities-detection/data/val/yolo/images/out_01707.jpg",
+    "width": 1280
+  },
+  "model": {
+    "balatro_asset": "models/games-balatro-2024-yolo-ui-detection/onnx/model.onnx",
+    "name": "games-balatro-2024-yolo-ui-detection"
+  },
+  "output_shape": [
+    1,
+    37,
+    8400
+  ],
+  "preprocess": {
+    "color": "RGB",
+    "letterbox": {
+      "input_height": 640,
+      "input_width": 640,
+      "pad_left": 0.0,
+      "pad_top": 155.0,
+      "ratio": 0.5
+    }
+  },
+  "thresholds": {
+    "confidence": 0.25,
+    "iou": 0.45
+  }
+}
