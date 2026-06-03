@@ -22,8 +22,13 @@ pub enum YoloError {
   #[error("unsupported YOLO output tensor shape: {shape:?}")]
   UnsupportedOutputShape { shape: Vec<usize> },
 
-  #[error("YOLO class count mismatch: expected {expected}, got {actual}")]
-  ClassCountMismatch { expected: usize, actual: usize },
+  #[error(
+    "YOLO class count mismatch: expected {expected_channels} channels, got {actual_channels}"
+  )]
+  ClassCountMismatch {
+    expected_channels: usize,
+    actual_channels: usize,
+  },
 
   #[error("ONNX Runtime error: {source}")]
   Ort {
