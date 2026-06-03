@@ -505,6 +505,11 @@ func click_point(
     CGWarpMouseCursorPosition(originalLocation)
   }
 
+  // NOTICE: Some apps or canvas-backed controls ignore a down/up pair posted
+  // immediately after a cursor warp because they have not observed pointer
+  // motion into the hit target yet. If a click reports success but the UI does
+  // not react, posting a real move event and giving the event tap a short
+  // settle is a useful first mitigation to try.
   if let move = CGEvent(
     mouseEventSource: nil,
     mouseType: .mouseMoved,

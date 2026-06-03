@@ -21,6 +21,7 @@ use image::RgbaImage;
 use crate::driver::MacosDriverSession;
 use crate::native::ocr::NativeOcrTextCapture;
 use crate::native::types::{ObservedRect, ObservedWindow, ObservedWindowSnapshot};
+use crate::native::window::ListWindowsOptions;
 use crate::support::{build_window_candidates, parse_app_selector, resolve_app_ref};
 use crate::types::{WindowRef as NativeWindowRef, WindowSelection};
 
@@ -93,7 +94,8 @@ impl MacosDriverSession {
 impl WindowApi<'_> {
   pub fn list(&self) -> DriverResult<Vec<Window>> {
     let _ = self.session;
-    let snapshot = crate::native::window::observe_windows_snapshot(256, "").map_err(backend)?;
+    let snapshot =
+      crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
     Ok(
       snapshot
         .windows
@@ -104,7 +106,8 @@ impl WindowApi<'_> {
   }
 
   pub fn resolve(&self, selector: WindowSelector) -> DriverResult<Window> {
-    let mut snapshot = crate::native::window::observe_windows_snapshot(256, "").map_err(backend)?;
+    let mut snapshot =
+      crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
     if selector.app.as_ref().is_some_and(|app| app.frontmost) {
       let Some(window) = resolve_frontmost_window(&snapshot, &selector) else {
         return Err(not_found("frontmost window"));
@@ -123,8 +126,12 @@ impl WindowApi<'_> {
       let resolved_app = match resolve_app_ref(&snapshot, &parsed_app_selector) {
         Ok(resolved_app) => resolved_app,
         Err(_) => {
+          // NOTICE: The unfiltered WindowServer snapshot can omit windows that
+          // an app-filtered query returns. Retry with the explicit app selector
+          // before reporting target_window_not_found.
           let filtered_snapshot =
-            crate::native::window::observe_windows_snapshot(256, &app_selector).map_err(backend)?;
+            crate::native::window::list_windows(ListWindowsOptions::app(256, &app_selector))
+              .map_err(backend)?;
           let resolved_app =
             resolve_app_ref(&filtered_snapshot, &parsed_app_selector).map_err(backend)?;
           snapshot = filtered_snapshot;

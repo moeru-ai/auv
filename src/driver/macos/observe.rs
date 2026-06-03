@@ -149,7 +149,14 @@ pub(super) fn probe_coordinate_readiness(call: &DriverCall) -> AuvResult<DriverR
 pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   let limit = optional_i64(call, "limit")?.unwrap_or(12).max(1);
   let app_filter = app_identifier(call).unwrap_or_default();
-  let snapshot = observe_windows_snapshot(limit, &app_filter)?;
+  let snapshot = if app_filter.trim().is_empty() {
+    list_windows_snapshot(auv_driver_macos::native::window::ListWindowsOptions::all_visible(limit))?
+  } else {
+    list_windows_snapshot(auv_driver_macos::native::window::ListWindowsOptions::app(
+      limit,
+      app_filter.trim(),
+    ))?
+  };
   let report = render_window_snapshot_report(&snapshot);
   let window_count = snapshot.windows.len();
   let frontmost_app = snapshot.frontmost_app_name.clone();
@@ -224,11 +231,10 @@ pub(super) fn list_windows(call: &DriverCall) -> AuvResult<DriverResponse> {
   })
 }
 
-pub(super) fn observe_windows_snapshot(
-  limit: i64,
-  app_filter: &str,
+pub(super) fn list_windows_snapshot(
+  options: auv_driver_macos::native::window::ListWindowsOptions,
 ) -> AuvResult<ObservedWindowSnapshot> {
-  auv_driver_macos::native::window::observe_windows_snapshot(limit, app_filter)
+  auv_driver_macos::native::window::list_windows(options)
 }
 
 /// Exposed for unit-tests only — wraps the private impl so tests can call it

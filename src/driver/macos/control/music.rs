@@ -880,8 +880,9 @@ fn check_music_candidate_liveness(
   candidate_local_id: &str,
 ) -> AuvResult<CandidateLivenessCheck> {
   if let Some(window_ref) = &candidate.liveness.preconditions.window_ref {
-    let snapshot =
-      crate::driver::macos::observe::observe_windows_snapshot(128, &window_ref.app_bundle_id)?;
+    let snapshot = crate::driver::macos::observe::list_windows_snapshot(
+      auv_driver_macos::native::window::ListWindowsOptions::app(128, &window_ref.app_bundle_id),
+    )?;
     let selector = parse_app_selector(&window_ref.app_bundle_id)?;
     resolve_app_ref(&snapshot, &selector).map_err(|_| {
       format!(
@@ -1303,7 +1304,9 @@ fn press_music_play_button(call: &DriverCall, app_id: &str) -> AuvResult<DriverR
   // click_screen_text (full-display OCR) instead, converting the window-relative
   // search region to screen-relative ratios so the OCR search stays anchored to
   // the visible QQ音乐 window rather than scanning the whole display.
-  let snapshot = super::super::observe::observe_windows_snapshot(24, app_id)?;
+  let snapshot = super::super::observe::list_windows_snapshot(
+    auv_driver_macos::native::window::ListWindowsOptions::app(24, app_id),
+  )?;
   let selector = parse_app_selector(app_id)?;
   let resolved_app = resolve_app_ref(&snapshot, &selector)?;
   let xcap_displays = super::super::capture::xcap_backend::list_displays()?;

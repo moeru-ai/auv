@@ -241,7 +241,9 @@ pub(crate) fn scroll_window_region(call: &DriverCall) -> AuvResult<DriverRespons
   if input_policy == auv_driver::InputPolicy::ForegroundPreferred {
     activate_target_app(&app)?;
   }
-  let snapshot = super::super::observe::observe_windows_snapshot(24, &app)?;
+  let snapshot = super::super::observe::list_windows_snapshot(
+    auv_driver_macos::native::window::ListWindowsOptions::app(24, &app),
+  )?;
   let xcap_displays = super::super::capture::xcap_backend::list_displays()?;
   let display_snapshot = enumerate_displays()?;
   let selector = parse_app_selector(&app)?;

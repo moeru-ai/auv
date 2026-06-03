@@ -31,7 +31,9 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
   let selection = parse_window_selection(call)?;
 
   let displays = super::super::capture::xcap_backend::list_displays().unwrap_or_default();
-  let snapshot = super::super::observe::observe_windows_snapshot(128, &app)?;
+  let snapshot = super::super::observe::list_windows_snapshot(
+    auv_driver_macos::native::window::ListWindowsOptions::app(128, &app),
+  )?;
   let resolved_app = resolve_app_ref(&snapshot, &selector)?;
   let selected =
     resolve_window_candidate_for_input(&snapshot, &resolved_app, &displays, &selection)?;
@@ -72,6 +74,10 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
             .to_string(),
         );
       }
+      // NOTICE: This path intentionally uses the global HID click primitive.
+      // Some app-rendered or canvas-backed affordances need the mouse-move +
+      // settle behavior in `click_point`; use this as a mitigation when a
+      // window-targeted click reports success but the UI does not react.
       let nested_call = build_click_point_call(
         &call.target,
         call.working_directory.as_path(),

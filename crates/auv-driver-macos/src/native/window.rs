@@ -3,7 +3,7 @@
 use super::binding::ffi::{
   NativeBundleIdsByPidRequest, NativeBundleIdsByPidResponse, NativeDisplayListResponse,
   NativeWindowListRequest, NativeWindowListResponse, bundle_ids_by_pid as native_bundle_ids_by_pid,
-  list_displays, list_windows,
+  list_displays, list_windows as native_list_windows,
 };
 use super::types::{
   AuvResult, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow,
@@ -21,21 +21,58 @@ pub fn enumerate_displays() -> AuvResult<ObservedDisplaySnapshot> {
   Err("macOS native display enumeration is unsupported on this target".to_string())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListWindowsOptions {
+  pub limit: i64,
+  pub scope: WindowListScope,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WindowListScope {
+  /// Best-effort global enumeration. On some macOS/app combinations this is
+  /// not guaranteed to be a superset of app-scoped queries.
+  AllVisible,
+  /// App-scoped query for resolving or inspecting a known target application.
+  App(String),
+}
+
+impl ListWindowsOptions {
+  pub fn all_visible(limit: i64) -> Self {
+    Self {
+      limit,
+      scope: WindowListScope::AllVisible,
+    }
+  }
+
+  pub fn app(limit: i64, app: impl Into<String>) -> Self {
+    Self {
+      limit,
+      scope: WindowListScope::App(app.into()),
+    }
+  }
+}
+
 #[cfg(target_os = "macos")]
-pub fn observe_windows_snapshot(limit: i64, app_filter: &str) -> AuvResult<ObservedWindowSnapshot> {
-  let response = list_windows(NativeWindowListRequest {
-    limit,
-    app_filter: app_filter.to_string(),
+pub fn list_windows(options: ListWindowsOptions) -> AuvResult<ObservedWindowSnapshot> {
+  let response = native_list_windows(NativeWindowListRequest {
+    limit: options.limit,
+    app_filter: options.scope.app_filter(),
   });
   decode_window_response(DecodedWindowListResponse::from(response))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn observe_windows_snapshot(
-  _limit: i64,
-  _app_filter: &str,
-) -> AuvResult<ObservedWindowSnapshot> {
+pub fn list_windows(_options: ListWindowsOptions) -> AuvResult<ObservedWindowSnapshot> {
   Err("macOS native window listing is unsupported on this target".to_string())
+}
+
+impl WindowListScope {
+  fn app_filter(&self) -> String {
+    match self {
+      Self::AllVisible => String::new(),
+      Self::App(app) => app.clone(),
+    }
+  }
 }
 
 pub fn decode_display_response(
@@ -320,6 +357,15 @@ impl From<NativeBundleIdsByPidResponse> for DecodedBundleIdsByPidResponse {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn list_window_scope_maps_to_native_app_filter_explicitly() {
+    assert_eq!(WindowListScope::AllVisible.app_filter(), "");
+    assert_eq!(
+      WindowListScope::App("com.example.App".to_string()).app_filter(),
+      "com.example.App"
+    );
+  }
 
   #[test]
   fn decode_display_response_rejects_mismatched_vectors() {

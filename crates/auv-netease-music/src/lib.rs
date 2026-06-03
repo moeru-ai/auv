@@ -1886,6 +1886,9 @@ fn detect_default_screen_restore(
 }
 
 fn song_detail_restore_point(_window_size: auv_driver::Size) -> auv_driver::Point {
+  // NOTICE: This is a learned window-local logical point for the song-detail
+  // back affordance. The older heuristic point `(40, 48)` landed left and below
+  // the actual clickable target in the live macOS client.
   auv_driver::Point::new(82.602, 16.336)
 }
 
@@ -1911,6 +1914,10 @@ fn click_default_screen_restore(
     .map_err(|error| format!("foreground preparation failed: {error}"))?;
   let global_x = window.frame.origin.x + point.x;
   let global_y = window.frame.origin.y + point.y;
+  // NOTICE: Route this restore through the foreground global HID path. Some
+  // app-rendered affordances do not reliably react to typed/window-targeted
+  // clicks; `click_point` carries the mouse-move + settle behavior that makes
+  // this class of click observable to those controls.
   let click_result = auv_driver_macos::native::pointer::click_point(global_x, global_y, 0, 1, 80);
   let restore_result = session.window().restore_input(lease);
   click_result.map_err(|error| format!("foreground restore click failed: {error}"))?;

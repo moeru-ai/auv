@@ -38,7 +38,9 @@ pub(crate) fn capture_window_with_typed_session(
   let selector = parse_app_selector(&app)?;
   let displays = crate::driver::macos::capture::xcap_backend::list_displays()?;
   retry_window_capture_operation(|| {
-    let snapshot = crate::driver::macos::observe::observe_windows_snapshot(128, &app)?;
+    let snapshot = crate::driver::macos::observe::list_windows_snapshot(
+      auv_driver_macos::native::window::ListWindowsOptions::app(128, &app),
+    )?;
     let resolved_app = resolve_app_ref(&snapshot, &selector)?;
     let candidate = resolve_window_candidate(&snapshot, &resolved_app, &displays, &selection)?;
     if selection.has_selector() && !candidate.is_fully_contained_in_display {
