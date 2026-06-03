@@ -17,8 +17,8 @@ mod report;
 use analysis::{
   apply_candidate_grounding, apply_distilled_candidate_shape_inputs, build_app_analysis,
   build_distilled_candidate_shape, parse_ax_snapshot, resolve_probe_ocr_sample_query,
-  suggested_annotation_ids_for_candidate_shape, validated_candidate_rationale,
-  verification_mode_for_strategy,
+  source_evidence_refs_for_candidate_shape, suggested_annotation_ids_for_candidate_shape,
+  validated_candidate_rationale, verification_mode_for_strategy,
 };
 use infra::{
   app_span_record, default_probe_output_dir, finish_failed_app_run, invoke_probe_step, read_json,
@@ -155,6 +155,8 @@ pub struct AppDistilledCandidate {
   pub status: AssessmentStatus,
   pub rationale: String,
   pub suggested_annotation_ids: Vec<String>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub source_evidence_refs: Vec<ArtifactRef>,
   #[serde(default)]
   pub candidate_shape: AppDistilledCandidateShape,
   pub recipe_path: PathBuf,
@@ -866,6 +868,7 @@ fn distill_app_analysis_into_run(
       status: strategy.status,
       rationale: strategy.rationale.clone(),
       suggested_annotation_ids: suggested_annotation_ids_for_candidate_shape(&candidate_shape),
+      source_evidence_refs: source_evidence_refs_for_candidate_shape(&analysis, &candidate_shape),
       candidate_shape,
       recipe_path,
       case_matrix_path,
@@ -2401,6 +2404,59 @@ mod tests {
   }
 
   #[test]
+  fn distilled_candidates_preserve_source_evidence_refs_from_analysis() {
+    let mut analysis =
+      sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
+    analysis.annotation_candidates.push(AppSurfaceCandidate {
+      candidate_id: "search-entry-focus-ax".to_string(),
+      area: "search-entry".to_string(),
+      kind: "focus-query".to_string(),
+      source: "ax".to_string(),
+      status: AssessmentStatus::Candidate,
+      primary_text: "Search".to_string(),
+      secondary_text: "role=AXTextField path=0.1".to_string(),
+      query_value: "Search".to_string(),
+      coordinate_space: "global-logical".to_string(),
+      bounds: Some(AppRect {
+        x: 10,
+        y: 10,
+        width: 80,
+        height: 20,
+      }),
+      click_point: Some(AppPoint { x: 50, y: 20 }),
+      confidence: None,
+      evidence_step_id: "capture-ax-tree".to_string(),
+      candidate_query: None,
+      evidence_refs: vec![ArtifactRef {
+        run_id: crate::trace::RunId::new("run_probe"),
+        span_id: crate::trace::SpanId::new("span_probe"),
+        artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+        captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+      }],
+      promotion_gate: Some(AppCandidatePromotionGate {
+        status: AppCandidatePromotionStatus::DistillStrategyOnly,
+        missing_gates: Vec::new(),
+        notes: vec!["test candidate".to_string()],
+      }),
+      input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
+      compatibility: candidate_compatibility(
+        &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
+        &[],
+      ),
+      notes: vec!["sample note".to_string()],
+    });
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "search-entry.ax-text-input.clipboard-submit.capture-evidence",
+    );
+    let evidence_refs = source_evidence_refs_for_candidate_shape(&analysis, &candidate_shape);
+
+    assert_eq!(evidence_refs.len(), 1);
+    assert_eq!(evidence_refs[0].artifact_id.as_str(), "artifact_0001");
+    assert_eq!(evidence_refs[0].span_id.as_str(), "span_probe");
+  }
+
+  #[test]
   fn apply_candidate_grounding_marks_unresolved_search_entry_without_search_signal() {
     let analysis =
       sample_analysis_with_strategy("search-entry.ax-text-input.clipboard-submit.capture-evidence");
@@ -2552,6 +2608,12 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: Vec::new(),
+        source_evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
         candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
@@ -2624,6 +2686,7 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: Vec::new(),
+        source_evidence_refs: Vec::new(),
         candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
@@ -2742,6 +2805,7 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["window-primary-region".to_string()],
+        source_evidence_refs: Vec::new(),
         candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
@@ -2834,6 +2898,7 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: Vec::new(),
+        source_evidence_refs: Vec::new(),
         candidate_shape: AppDistilledCandidateShape::default(),
         recipe_path,
         case_matrix_path,
@@ -2899,6 +2964,7 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["window-primary-region".to_string()],
+        source_evidence_refs: Vec::new(),
         candidate_shape: AppDistilledCandidateShape {
           direct_candidate_ids: vec!["window-primary-region".to_string()],
           context_candidate_ids: Vec::new(),
@@ -3122,6 +3188,7 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
         suggested_annotation_ids: vec!["visible-row-1".to_string()],
+        source_evidence_refs: Vec::new(),
         candidate_shape: candidate_shape.clone(),
         recipe_path,
         case_matrix_path,
@@ -3248,6 +3315,12 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "row suggestions stay review-only".to_string(),
         suggested_annotation_ids: vec!["visible-row-1".to_string()],
+        source_evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
         candidate_shape: AppDistilledCandidateShape {
           direct_candidate_ids: Vec::new(),
           context_candidate_ids: vec!["visible-row-1".to_string()],
@@ -3267,6 +3340,7 @@ mod tests {
 
     assert!(report.contains("suggested annotations:"));
     assert!(report.contains("`visible-row-1`"));
+    assert!(report.contains("source evidence refs:"));
     assert!(report.contains("context candidate ids:"));
     assert!(!report.contains("direct candidate ids:"));
     assert!(!report.contains("candidate shape inputs:"));
@@ -3780,6 +3854,12 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "row suggestions stay review-only".to_string(),
         suggested_annotation_ids: vec!["visible-row-1".to_string()],
+        source_evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
         candidate_shape: AppDistilledCandidateShape {
           direct_candidate_ids: Vec::new(),
           context_candidate_ids: vec!["visible-row-1".to_string()],
@@ -3827,6 +3907,11 @@ mod tests {
         .notes
         .iter()
         .any(|note| note.contains("Context-only candidates were recorded"))
+    );
+    assert_eq!(candidate.source_evidence_refs.len(), 1);
+    assert_eq!(
+      candidate.source_evidence_refs[0].artifact_id.as_str(),
+      "artifact_0001"
     );
     assert!(
       reloaded

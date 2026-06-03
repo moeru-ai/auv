@@ -389,6 +389,20 @@ pub(crate) fn render_app_distillation_report(
           lines.push(format!("    - `{candidate_id}`"));
         }
       }
+      if !candidate.source_evidence_refs.is_empty() {
+        lines.push("  - source evidence refs:".to_string());
+        for reference in &candidate.source_evidence_refs {
+          let event = reference
+            .captured_event_id
+            .as_ref()
+            .map(|value| value.as_str())
+            .unwrap_or("none");
+          lines.push(format!(
+            "    - run=`{}` span=`{}` artifact=`{}` event=`{}`",
+            reference.run_id, reference.span_id, reference.artifact_id, event
+          ));
+        }
+      }
       if !candidate.candidate_shape.direct_candidate_ids.is_empty() {
         lines.push("  - direct candidate ids:".to_string());
         for candidate_id in &candidate.candidate_shape.direct_candidate_ids {

@@ -1085,6 +1085,44 @@ pub(crate) fn suggested_annotation_ids_for_candidate_shape(
     .collect()
 }
 
+pub(crate) fn source_evidence_refs_for_candidate_shape(
+  analysis: &AppAnalysis,
+  candidate_shape: &AppDistilledCandidateShape,
+) -> Vec<crate::contract::ArtifactRef> {
+  let mut evidence_refs = Vec::new();
+  let mut seen = BTreeSet::new();
+  for candidate_id in candidate_shape
+    .direct_candidate_ids
+    .iter()
+    .chain(candidate_shape.context_candidate_ids.iter())
+  {
+    let Some(candidate) = analysis
+      .annotation_candidates
+      .iter()
+      .find(|candidate| candidate.candidate_id == *candidate_id)
+    else {
+      continue;
+    };
+    for reference in &candidate.evidence_refs {
+      let key = format!(
+        "{}:{}:{}:{}",
+        reference.run_id,
+        reference.span_id,
+        reference.artifact_id,
+        reference
+          .captured_event_id
+          .as_ref()
+          .map(|event_id| event_id.as_str())
+          .unwrap_or("none")
+      );
+      if seen.insert(key) {
+        evidence_refs.push(reference.clone());
+      }
+    }
+  }
+  evidence_refs
+}
+
 fn find_annotation_candidate<'a>(
   analysis: &'a AppAnalysis,
   area: &str,
