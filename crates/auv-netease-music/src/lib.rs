@@ -35,7 +35,10 @@ use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
-use auv_driver::{Driver, InputPolicy, Scroll, ScrollOptions, Size, WindowPoint};
+use auv_driver::{
+  ActivationPolicy, Click, ClickOptions, Driver, InputPolicy, PrepareForInputOptions, Scroll,
+  ScrollOptions, Size, WindowClickStrategy, WindowPoint,
+};
 #[cfg(target_os = "macos")]
 use auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot;
 #[cfg(target_os = "macos")]
@@ -45,6 +48,8 @@ use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
 pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
+pub const DEFAULT_DAILY_RECOMMENDED_ARTIFACT_DIR: &str =
+  "/tmp/auv-netease-play-daily-recommended-artifacts";
 // TODO(netease-scroll-completion): this conservative default is only a
 // product-agnostic safety cap, not an account-size estimate or completion
 // policy. Full playlist enumeration should derive its budget from section
@@ -75,6 +80,16 @@ pub(crate) fn positive_scroll_amount(raw: &str) -> Result<f64, String> {
   Ok(parsed)
 }
 
+pub(crate) fn zero_to_one(raw: &str) -> Result<f64, String> {
+  let parsed = raw
+    .parse::<f64>()
+    .map_err(|_| "expects a number".to_string())?;
+  if !parsed.is_finite() || !(0.0..=1.0).contains(&parsed) {
+    return Err("must be between 0 and 1".to_string());
+  }
+  Ok(parsed)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Inputs {
   pub app_id: String,
@@ -100,6 +115,136 @@ impl Inputs {
       category: PlaylistCategory::All,
     }
   }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DailyRecommendedPlayInputs {
+  pub app_id: String,
+  pub artifact_dir: PathBuf,
+  pub max_top_scrolls: usize,
+  pub top_scroll_amount: f64,
+  pub settle_ms: u64,
+  // TODO(netease-daily-artifact-discovery): automatic template/artifact
+  // discovery is deferred until an owner-approved invoke/run-storage read-side
+  // slice defines how product commands should consume prior AUV artifacts.
+  pub play_icon_template: Option<PathBuf>,
+  pub play_icon_threshold: f64,
+  pub ocr_options: TextRecognitionOptions,
+}
+
+impl DailyRecommendedPlayInputs {
+  pub fn with_defaults() -> Self {
+    Self {
+      app_id: DEFAULT_APP_ID.to_string(),
+      artifact_dir: PathBuf::from(DEFAULT_DAILY_RECOMMENDED_ARTIFACT_DIR),
+      max_top_scrolls: 8,
+      top_scroll_amount: 420.0,
+      settle_ms: 350,
+      play_icon_template: None,
+      play_icon_threshold: 0.72,
+      ocr_options: TextRecognitionOptions::default(),
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DailyRecommendedPlayResult {
+  pub command: String,
+  pub app: ScanAppContext,
+  pub window: ScanWindowContext,
+  pub steps: Vec<DailyRecommendedPlayStep>,
+  pub verification: DailyRecommendedVerification,
+  pub artifacts: Vec<String>,
+  pub diagnostics: Vec<ParserDiagnostic>,
+  pub known_limits: Vec<String>,
+}
+
+impl DailyRecommendedPlayResult {
+  pub fn human_summary(&self) -> DailyRecommendedHumanSummary<'_> {
+    DailyRecommendedHumanSummary { result: self }
+  }
+}
+
+pub struct DailyRecommendedHumanSummary<'a> {
+  result: &'a DailyRecommendedPlayResult,
+}
+
+impl fmt::Display for DailyRecommendedHumanSummary<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let result = self.result;
+    writeln!(f, "NetEase daily recommended play")?;
+    writeln!(
+      f,
+      "app: id={} name={}",
+      optional(result.app.app_id.as_deref()),
+      optional(result.app.name.as_deref())
+    )?;
+    writeln!(
+      f,
+      "window: title={}",
+      optional(result.window.title.as_deref())
+    )?;
+    writeln!(f, "steps:")?;
+    for step in &result.steps {
+      writeln!(
+        f,
+        "  - {} target={} delivery={}",
+        step.name,
+        optional(step.target_label.as_deref()),
+        optional(step.delivery_path.as_deref())
+      )?;
+    }
+    writeln!(
+      f,
+      "verification: {}{}",
+      result.verification.status,
+      result
+        .verification
+        .best_score
+        .map(|score| format!(" best_score={score:.3}"))
+        .unwrap_or_default()
+    )?;
+    if result.diagnostics.is_empty() {
+      write!(f, "diagnostics: (none)")
+    } else {
+      writeln!(f, "diagnostics:")?;
+      for diagnostic in &result.diagnostics {
+        writeln!(f, "  - {}: {}", diagnostic.code, diagnostic.message)?;
+      }
+      Ok(())
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DailyRecommendedPlayStep {
+  pub name: String,
+  pub target_label: Option<String>,
+  pub target_bounds: Option<ViewBounds>,
+  pub delivery_path: Option<String>,
+  pub fallback_reason: Option<String>,
+  pub artifact: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DailyRecommendedVerification {
+  pub status: String,
+  pub method: String,
+  pub template: Option<String>,
+  pub control_state: Option<PlaybackControlState>,
+  pub observed_bottom_text: Option<String>,
+  pub match_count: usize,
+  pub best_score: Option<f64>,
+  pub artifact: Option<String>,
+  pub note: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackControlState {
+  PlayVisible,
+  PauseVisible,
+  Unknown,
 }
 
 /// Top-level scan artifact for one `netease_playlist_ls` run.
@@ -621,6 +766,645 @@ fn render_optional_bounds(bounds: Option<ViewBounds>) -> String {
 #[cfg(not(target_os = "macos"))]
 pub fn run_live_scan(_inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   Err("live NetEase playlist sidebar scan is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn run_daily_recommended_play(
+  _inputs: &DailyRecommendedPlayInputs,
+) -> Result<DailyRecommendedPlayResult, String> {
+  Err("live NetEase daily recommended play is only supported on macOS".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn run_daily_recommended_play(
+  inputs: &DailyRecommendedPlayInputs,
+) -> Result<DailyRecommendedPlayResult, String> {
+  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| {
+    format!(
+      "failed to create {}: {error}",
+      inputs.artifact_dir.display()
+    )
+  })?;
+
+  let driver = MacosDriver::new();
+  let session = driver
+    .open_local()
+    .map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let app = App::bundle(inputs.app_id.clone());
+  let window = session
+    .window()
+    .resolve(Window::main_visible().owned_by(app))
+    .map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
+
+  let app_context = ScanAppContext {
+    app_id: window
+      .app_bundle_id
+      .clone()
+      .or_else(|| Some(inputs.app_id.clone())),
+    name: window.app_name.clone(),
+    version: None,
+  };
+  let window_context = ScanWindowContext {
+    id: Some(window.reference.id.clone()),
+    title: window.title.clone(),
+    bounds: Some(ViewBounds::new(
+      0.0,
+      0.0,
+      window.frame.size.width,
+      window.frame.size.height,
+    )),
+  };
+
+  let mut run = DailyRecommendedRun {
+    session,
+    window,
+    inputs,
+    steps: Vec::new(),
+    artifacts: Vec::new(),
+    diagnostics: Vec::new(),
+    known_limits: Vec::new(),
+  };
+
+  run.scroll_sidebar_to_top();
+  run.click_text("select-sidebar-recommend", "推荐", |bounds, size| {
+    bounds.x < size.width * 0.28
+  })?;
+  run.open_daily_recommended()?;
+  run.click_text("click-play-all", "播放全部", |bounds, _| bounds.y > 0.0)?;
+  let mut verification = run.verify_play_icon()?;
+  if verification.status != "passed" {
+    run.known_limits.push(
+      "window-targeted Play All click did not verify playback; retried with foreground click"
+        .to_string(),
+    );
+    run.click_text_foreground(
+      "click-play-all-foreground-retry",
+      "播放全部",
+      |bounds, _| bounds.y > 0.0,
+    )?;
+    verification = run.verify_play_icon()?;
+  }
+
+  Ok(DailyRecommendedPlayResult {
+    command: "playlist.play.daily-recommended".to_string(),
+    app: app_context,
+    window: window_context,
+    steps: run.steps,
+    verification,
+    artifacts: run.artifacts,
+    diagnostics: run.diagnostics,
+    known_limits: run.known_limits,
+  })
+}
+
+#[cfg(target_os = "macos")]
+struct DailyRecommendedRun<'a> {
+  session: MacosDriverSession,
+  window: auv_driver::Window,
+  inputs: &'a DailyRecommendedPlayInputs,
+  steps: Vec<DailyRecommendedPlayStep>,
+  artifacts: Vec<String>,
+  diagnostics: Vec<ParserDiagnostic>,
+  known_limits: Vec<String>,
+}
+
+#[cfg(target_os = "macos")]
+impl DailyRecommendedRun<'_> {
+  fn scroll_sidebar_to_top(&mut self) {
+    let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
+    let bounds = broad_sidebar_probe_bounds(window_size);
+    let anchor = WindowPoint::new(
+      bounds.x + bounds.width * 0.5,
+      bounds.y + bounds.height * 0.45,
+    );
+    for index in 0..self.inputs.max_top_scrolls {
+      match self.session.window().scroll(
+        &self.window,
+        anchor,
+        Scroll::new(0.0, self.inputs.top_scroll_amount),
+        ScrollOptions {
+          policy: InputPolicy::BackgroundPreferred,
+          settle: std::time::Duration::from_millis(self.inputs.settle_ms),
+          ..ScrollOptions::default()
+        },
+      ) {
+        Ok(result) => self.steps.push(DailyRecommendedPlayStep {
+          name: format!("scroll-sidebar-top-{index}"),
+          target_label: None,
+          target_bounds: Some(bounds),
+          delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
+          fallback_reason: result.fallback_reason,
+          artifact: None,
+        }),
+        Err(error) => {
+          self.diagnostics.push(ParserDiagnostic {
+            code: "daily_recommended_top_scroll_failed".to_string(),
+            message: error.to_string(),
+            node_id: None,
+          });
+          self
+            .known_limits
+            .push("top seek stopped early after a typed scroll failure".to_string());
+          break;
+        }
+      }
+    }
+  }
+
+  fn click_text(
+    &mut self,
+    step_name: &str,
+    query: &str,
+    guard: impl Fn(ViewBounds, Size) -> bool,
+  ) -> Result<(), String> {
+    let capture = self
+      .session
+      .window()
+      .capture(&self.window)
+      .map_err(|error| format!("{step_name}: capture failed: {error}"))?;
+    let artifact = self.write_capture_artifact(step_name, &capture)?;
+    let recognition = self
+      .session
+      .vision()
+      .recognize_text_in_capture_with_options(
+        &capture,
+        RatioRect::new(0.0, 0.0, 1.0, 1.0),
+        self.inputs.ocr_options.clone(),
+      )
+      .map_err(|error| format!("{step_name}: OCR failed: {error}"))?;
+    let recognition = recognition_in_window_space(recognition, &capture);
+    let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
+    let Some(target) = best_text_match(&recognition, query, window_size, guard) else {
+      return Err(format!("{step_name}: text {query:?} was not found"));
+    };
+    let bounds = ViewBounds::new(
+      target.bounds.origin.x,
+      target.bounds.origin.y,
+      target.bounds.size.width,
+      target.bounds.size.height,
+    );
+    let point = target.action_point();
+    let result = self
+      .session
+      .window()
+      .click(
+        &self.window,
+        WindowPoint::new(point.x, point.y),
+        ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          click: Click::Single,
+          window_strategy: WindowClickStrategy::ChromiumCompatible,
+        },
+      )
+      .map_err(|error| format!("{step_name}: click failed: {error}"))?;
+    if self.inputs.settle_ms > 0 {
+      std::thread::sleep(std::time::Duration::from_millis(self.inputs.settle_ms));
+    }
+    self.steps.push(DailyRecommendedPlayStep {
+      name: step_name.to_string(),
+      target_label: Some(target.text.clone()),
+      target_bounds: Some(bounds),
+      delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
+      fallback_reason: result.fallback_reason,
+      artifact: Some(artifact),
+    });
+    Ok(())
+  }
+
+  fn click_text_foreground(
+    &mut self,
+    step_name: &str,
+    query: &str,
+    guard: impl Fn(ViewBounds, Size) -> bool,
+  ) -> Result<(), String> {
+    let capture = self
+      .session
+      .window()
+      .capture(&self.window)
+      .map_err(|error| format!("{step_name}: capture failed: {error}"))?;
+    let artifact = self.write_capture_artifact(step_name, &capture)?;
+    let recognition = self
+      .session
+      .vision()
+      .recognize_text_in_capture_with_options(
+        &capture,
+        RatioRect::new(0.0, 0.0, 1.0, 1.0),
+        self.inputs.ocr_options.clone(),
+      )
+      .map_err(|error| format!("{step_name}: OCR failed: {error}"))?;
+    let recognition = recognition_in_window_space(recognition, &capture);
+    let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
+    let Some(target) = best_text_match(&recognition, query, window_size, guard) else {
+      return Err(format!("{step_name}: text {query:?} was not found"));
+    };
+    let bounds = ViewBounds::new(
+      target.bounds.origin.x,
+      target.bounds.origin.y,
+      target.bounds.size.width,
+      target.bounds.size.height,
+    );
+    let point = target.action_point();
+    let screen_point = self
+      .session
+      .window()
+      .to_screen_point(&self.window, WindowPoint::new(point.x, point.y))
+      .map_err(|error| format!("{step_name}: screen point projection failed: {error}"))?;
+    let lease = self
+      .session
+      .window()
+      .prepare_for_input(
+        &self.window,
+        PrepareForInputOptions {
+          activation: ActivationPolicy::Foreground {
+            settle: std::time::Duration::from_millis(self.inputs.settle_ms),
+          },
+          preserve_frontmost: false,
+          install_focus_guard: false,
+          settle: std::time::Duration::from_millis(0),
+        },
+      )
+      .map_err(|error| format!("{step_name}: foreground preparation failed: {error}"))?;
+    let click_result = self
+      .session
+      .input()
+      .click_at(screen_point.point(), Click::Single);
+    let restore_result = self.session.window().restore_input(lease);
+    click_result.map_err(|error| format!("{step_name}: foreground click failed: {error}"))?;
+    restore_result.map_err(|error| format!("{step_name}: foreground restore failed: {error}"))?;
+    if self.inputs.settle_ms > 0 {
+      std::thread::sleep(std::time::Duration::from_millis(self.inputs.settle_ms));
+    }
+    self.steps.push(DailyRecommendedPlayStep {
+      name: step_name.to_string(),
+      target_label: Some(target.text),
+      target_bounds: Some(bounds),
+      delivery_path: Some("foreground_system_events".to_string()),
+      fallback_reason: Some("window-targeted click did not verify playback".to_string()),
+      artifact: Some(artifact),
+    });
+    Ok(())
+  }
+
+  fn open_daily_recommended(&mut self) -> Result<(), String> {
+    if self.play_all_is_visible(false)? {
+      return Ok(());
+    }
+
+    self.click_daily_recommended_card_body()
+  }
+
+  fn click_daily_recommended_card_body(&mut self) -> Result<(), String> {
+    let capture = self
+      .session
+      .window()
+      .capture(&self.window)
+      .map_err(|error| format!("daily recommended card capture failed: {error}"))?;
+    let artifact = self.write_capture_artifact("open-daily-recommended-card-body", &capture)?;
+    let recognition = self
+      .session
+      .vision()
+      .recognize_text_in_capture_with_options(
+        &capture,
+        RatioRect::new(0.0, 0.0, 1.0, 1.0),
+        self.inputs.ocr_options.clone(),
+      )
+      .map_err(|error| format!("daily recommended card OCR failed: {error}"))?;
+    let recognition = recognition_in_window_space(recognition, &capture);
+    let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
+    let Some(target) =
+      best_text_match(&recognition, "每日推荐", window_size, |bounds, size| {
+        bounds.x > size.width * 0.18 && bounds.y < size.height * 0.35
+      })
+    else {
+      return Err("daily recommended card title was not found on recommendation home".to_string());
+    };
+    let bounds = ViewBounds::new(
+      target.bounds.origin.x,
+      target.bounds.origin.y,
+      target.bounds.size.width,
+      target.bounds.size.height,
+    );
+    let point = daily_recommended_card_click_point(bounds);
+    let result = self
+      .session
+      .window()
+      .click(
+        &self.window,
+        WindowPoint::new(point.x, point.y),
+        ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          click: Click::Single,
+          window_strategy: WindowClickStrategy::ChromiumCompatible,
+        },
+      )
+      .map_err(|error| format!("daily recommended card body click failed: {error}"))?;
+    if self.inputs.settle_ms > 0 {
+      std::thread::sleep(std::time::Duration::from_millis(self.inputs.settle_ms));
+    }
+    self.steps.push(DailyRecommendedPlayStep {
+      name: "open-daily-recommended-card-body".to_string(),
+      target_label: Some(target.text),
+      target_bounds: Some(bounds),
+      delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
+      fallback_reason: result.fallback_reason,
+      artifact: Some(artifact),
+    });
+    if self.play_all_is_visible(true)? {
+      Ok(())
+    } else {
+      Err("daily recommended card body click did not reveal 播放全部".to_string())
+    }
+  }
+
+  fn play_all_is_visible(&mut self, record_absent_diagnostic: bool) -> Result<bool, String> {
+    let capture = self
+      .session
+      .window()
+      .capture(&self.window)
+      .map_err(|error| format!("daily recommended fallback capture failed: {error}"))?;
+    let artifact = self.write_capture_artifact("open-daily-recommended-fallback", &capture)?;
+    let recognition = self
+      .session
+      .vision()
+      .recognize_text_in_capture_with_options(
+        &capture,
+        RatioRect::new(0.0, 0.0, 1.0, 1.0),
+        self.inputs.ocr_options.clone(),
+      )
+      .map_err(|error| format!("daily recommended fallback OCR failed: {error}"))?;
+    let recognition = recognition_in_window_space(recognition, &capture);
+    let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
+    let visible = best_text_match(&recognition, "播放全部", window_size, |bounds, size| {
+      bounds.x > size.width * 0.18
+    })
+    .is_some();
+    if visible {
+      self
+        .known_limits
+        .push("Play All was visible while opening Daily Recommended".to_string());
+    } else if record_absent_diagnostic {
+      self.diagnostics.push(ParserDiagnostic {
+        code: "daily_recommended_fallback_not_visible".to_string(),
+        message: "neither 每日推荐 nor 播放全部 could be detected".to_string(),
+        node_id: None,
+      });
+    }
+    self.steps.push(DailyRecommendedPlayStep {
+      name: "open-daily-recommended-fallback-observe".to_string(),
+      target_label: Some("播放全部".to_string()),
+      target_bounds: None,
+      delivery_path: None,
+      fallback_reason: None,
+      artifact: Some(artifact),
+    });
+    Ok(visible)
+  }
+
+  fn write_capture_artifact(
+    &mut self,
+    step_name: &str,
+    capture: &Capture,
+  ) -> Result<String, String> {
+    let path = self.inputs.artifact_dir.join(format!("{step_name}.png"));
+    capture
+      .image
+      .save(&path)
+      .map_err(|error| format!("failed to save {}: {error}", path.display()))?;
+    let rendered = path.display().to_string();
+    self.artifacts.push(rendered.clone());
+    Ok(rendered)
+  }
+
+  fn verify_play_icon(&mut self) -> Result<DailyRecommendedVerification, String> {
+    let Some(template) = self.inputs.play_icon_template.as_ref() else {
+      return self.verify_bottom_playback_control();
+    };
+    if !template.exists() {
+      return Err(format!("icon template not found: {}", template.display()));
+    }
+
+    let capture = self
+      .session
+      .window()
+      .capture(&self.window)
+      .map_err(|error| format!("post-click icon capture failed: {error}"))?;
+    let screenshot = self.write_capture_artifact("post-click-icon-match", &capture)?;
+    let scale = if capture.scale_factor.is_finite() && capture.scale_factor > 0.0 {
+      capture.scale_factor
+    } else {
+      1.0
+    };
+    let region = auv_driver_macos::types::ObservedRect {
+      x: ((capture.image.width() as f64) * 0.30).round() as i64,
+      y: ((capture.image.height() as f64) * 0.72).round() as i64,
+      width: ((capture.image.width() as f64) * 0.40).round() as i64,
+      height: ((capture.image.height() as f64) * 0.24).round() as i64,
+    };
+    let output = auv_driver_macos::support::template_match::match_template(
+      std::path::Path::new(&screenshot),
+      template,
+      Some(&region),
+      self.inputs.play_icon_threshold,
+    )?;
+    let best_score = output.matches.first().map(|item| item.score);
+    let match_count = output.matches.len();
+    let verification_json = self.inputs.artifact_dir.join("post-click-icon-match.json");
+    let payload = serde_json::json!({
+      "template": template.display().to_string(),
+      "threshold": self.inputs.play_icon_threshold,
+      "match_count": match_count,
+      "best_score": best_score,
+      "window_scale_factor": scale,
+      "search_region_pixels": {
+        "x": region.x,
+        "y": region.y,
+        "width": region.width,
+        "height": region.height,
+      },
+    });
+    std::fs::write(
+      &verification_json,
+      serde_json::to_string_pretty(&payload)
+        .map_err(|error| format!("failed to serialize icon verification: {error}"))?,
+    )
+    .map_err(|error| format!("failed to write {}: {error}", verification_json.display()))?;
+    let verification_artifact = verification_json.display().to_string();
+    self.artifacts.push(verification_artifact.clone());
+
+    Ok(DailyRecommendedVerification {
+      status: if match_count > 0 { "passed" } else { "failed" }.to_string(),
+      method: "icon_match".to_string(),
+      template: Some(template.display().to_string()),
+      control_state: None,
+      observed_bottom_text: None,
+      match_count,
+      best_score,
+      artifact: Some(verification_artifact),
+      note: Some(
+        "icon match searches the bottom-center playback-control region after Play All".to_string(),
+      ),
+    })
+  }
+
+  fn verify_bottom_playback_control(&mut self) -> Result<DailyRecommendedVerification, String> {
+    let capture = self
+      .session
+      .window()
+      .capture(&self.window)
+      .map_err(|error| format!("post-click playback-state capture failed: {error}"))?;
+    let screenshot = self.write_capture_artifact("post-click-playback-state", &capture)?;
+    let control_state = classify_bottom_playback_control_state(&capture.image);
+    let bottom_text = self
+      .session
+      .vision()
+      .recognize_text_in_capture_with_options(
+        &capture,
+        RatioRect::new(0.0, 0.88, 0.46, 0.12),
+        self.inputs.ocr_options.clone(),
+      )
+      .ok()
+      .map(|recognition| recognition.text.trim().to_string())
+      .filter(|text| !text.is_empty());
+    let verification_json = self
+      .inputs
+      .artifact_dir
+      .join("post-click-playback-state.json");
+    let payload = serde_json::json!({
+      "method": "bottom_control_icon",
+      "control_state": control_state,
+      "observed_bottom_text": bottom_text,
+      "screenshot": screenshot,
+    });
+    std::fs::write(
+      &verification_json,
+      serde_json::to_string_pretty(&payload)
+        .map_err(|error| format!("failed to serialize playback-state verification: {error}"))?,
+    )
+    .map_err(|error| format!("failed to write {}: {error}", verification_json.display()))?;
+    let verification_artifact = verification_json.display().to_string();
+    self.artifacts.push(verification_artifact.clone());
+
+    Ok(DailyRecommendedVerification {
+      status: if control_state == PlaybackControlState::PauseVisible {
+        "passed"
+      } else {
+        "failed"
+      }
+      .to_string(),
+      method: "bottom_control_icon".to_string(),
+      template: None,
+      control_state: Some(control_state),
+      observed_bottom_text: bottom_text,
+      match_count: 0,
+      best_score: None,
+      artifact: Some(verification_artifact),
+      note: Some(
+        "default verification checks the bottom playback control for a pause icon, which is title-independent under shuffle/random playback".to_string(),
+      ),
+    })
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn best_text_match(
+  recognition: &TextRecognition,
+  query: &str,
+  window_size: Size,
+  guard: impl Fn(ViewBounds, Size) -> bool,
+) -> Option<auv_driver::vision::RecognizedText> {
+  recognition
+    .regions
+    .iter()
+    .filter(|region| normalize_identity(&region.text).contains(&normalize_identity(query)))
+    .filter(|region| {
+      guard(
+        ViewBounds::new(
+          region.bounds.origin.x,
+          region.bounds.origin.y,
+          region.bounds.size.width,
+          region.bounds.size.height,
+        ),
+        window_size,
+      )
+    })
+    .min_by(|left, right| {
+      left
+        .bounds
+        .origin
+        .y
+        .partial_cmp(&right.bounds.origin.y)
+        .unwrap_or(std::cmp::Ordering::Equal)
+    })
+    .cloned()
+}
+
+fn classify_bottom_playback_control_state(image: &RgbaImage) -> PlaybackControlState {
+  if image.width() < 80 || image.height() < 80 {
+    return PlaybackControlState::Unknown;
+  }
+
+  let center_x = image.width() as i32 / 2;
+  let center_y = image.height() as i32 - 38;
+  let half_width = 24i32;
+  let half_height = 22i32;
+  let left = (center_x - half_width).max(0);
+  let right = (center_x + half_width).min(image.width() as i32 - 1);
+  let top = (center_y - half_height).max(0);
+  let bottom = (center_y + half_height).min(image.height() as i32 - 1);
+  let width = (right - left + 1).max(0) as usize;
+  if width == 0 {
+    return PlaybackControlState::Unknown;
+  }
+
+  let mut occupied_columns = vec![false; width];
+  for y in top..=bottom {
+    for x in left..=right {
+      let pixel = image.get_pixel(x as u32, y as u32);
+      if pixel[3] > 120 && pixel[0] > 220 && pixel[1] > 220 && pixel[2] > 220 {
+        occupied_columns[(x - left) as usize] = true;
+      }
+    }
+  }
+
+  let mut clusters = Vec::new();
+  let mut start = None;
+  for (index, occupied) in occupied_columns.iter().copied().enumerate() {
+    match (start, occupied) {
+      (None, true) => start = Some(index),
+      (Some(first), false) => {
+        if index.saturating_sub(first) >= 2 {
+          clusters.push((first, index - 1));
+        }
+        start = None;
+      }
+      _ => {}
+    }
+  }
+  if let Some(first) = start {
+    let last = occupied_columns.len() - 1;
+    if last.saturating_sub(first) + 1 >= 2 {
+      clusters.push((first, last));
+    }
+  }
+
+  match clusters.len() {
+    0 => PlaybackControlState::Unknown,
+    1 => PlaybackControlState::PlayVisible,
+    _ => PlaybackControlState::PauseVisible,
+  }
+}
+
+fn daily_recommended_card_click_point(title_bounds: ViewBounds) -> auv_driver::Point {
+  // NOTICE(netease-daily-card-hit-target): live NetEase testing showed the
+  // OCR title text and bottom title strip on the recommendation card may not
+  // activate navigation reliably. Target the cover/body area derived from the
+  // title anchor until an owner-approved card geometry detector replaces this
+  // local product policy.
+  if title_bounds.y < 180.0 {
+    auv_driver::Point::new(title_bounds.x + 55.0, title_bounds.y + 80.0)
+  } else {
+    auv_driver::Point::new(title_bounds.x + 70.0, title_bounds.y - 95.0)
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -3128,6 +3912,63 @@ mod tests {
     assert_eq!(cropped.height(), 10);
     assert_eq!(cropped.get_pixel(0, 0), &Rgba([4, 6, 0, 255]));
     assert_eq!(cropped.get_pixel(7, 9), &Rgba([11, 15, 0, 255]));
+  }
+
+  #[test]
+  fn daily_recommended_card_click_point_targets_card_body_from_title_bounds() {
+    let bounds = ViewBounds::new(430.0, 102.0, 72.0, 20.0);
+
+    let point = daily_recommended_card_click_point(bounds);
+
+    assert_eq!(point, auv_driver::Point::new(485.0, 182.0));
+  }
+
+  #[test]
+  fn daily_recommended_card_click_point_handles_bottom_title_bounds() {
+    let bounds = ViewBounds::new(430.0, 278.0, 145.0, 36.0);
+
+    let point = daily_recommended_card_click_point(bounds);
+
+    assert_eq!(point, auv_driver::Point::new(500.0, 183.0));
+  }
+
+  #[test]
+  fn classify_playback_control_state_distinguishes_pause_from_play_icon() {
+    let pause = playback_control_fixture(PlaybackControlState::PauseVisible);
+    let play = playback_control_fixture(PlaybackControlState::PlayVisible);
+
+    assert_eq!(
+      classify_bottom_playback_control_state(&pause),
+      PlaybackControlState::PauseVisible
+    );
+    assert_eq!(
+      classify_bottom_playback_control_state(&play),
+      PlaybackControlState::PlayVisible
+    );
+  }
+
+  fn playback_control_fixture(state: PlaybackControlState) -> RgbaImage {
+    let mut image = RgbaImage::from_pixel(200, 120, Rgba([14, 15, 24, 255]));
+    match state {
+      PlaybackControlState::PauseVisible => {
+        paint_control_columns(&mut image, &[92..=96, 104..=108]);
+      }
+      PlaybackControlState::PlayVisible => {
+        paint_control_columns(&mut image, &[96..=108]);
+      }
+      PlaybackControlState::Unknown => {}
+    }
+    image
+  }
+
+  fn paint_control_columns(image: &mut RgbaImage, columns: &[std::ops::RangeInclusive<u32>]) {
+    for column in columns {
+      for x in column.clone() {
+        for y in 72..=94 {
+          image.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+        }
+      }
+    }
   }
 
   #[test]
