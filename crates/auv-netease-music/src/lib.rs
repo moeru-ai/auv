@@ -1522,6 +1522,74 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   }
 
   if inputs.sidebar_region.is_none() {
+    if let Some(restore) = detect_default_screen_restore(&full_recognition, window_size) {
+      if let Err(error) = session.window().click(
+        &window,
+        WindowPoint::new(restore.point.x, restore.point.y),
+        ClickOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          click: Click::Single,
+          window_strategy: WindowClickStrategy::ChromiumCompatible,
+        },
+      ) {
+        return Ok(PlaylistSidebarScan::empty_with_diagnostic(
+          app_context,
+          window_context,
+          ViewRegionRecord::default(),
+          ParserDiagnostic {
+            code: "default_screen_restore_failed".to_string(),
+            message: format!(
+              "failed to restore NetEase default sidebar screen from {:?}: {error}",
+              restore.reason
+            ),
+            node_id: None,
+          },
+          "scan stopped before sidebar observation because the default screen restore click failed",
+        ));
+      }
+      if inputs.scroll_settle_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
+      }
+      capture = match session.window().capture(&window) {
+        Ok(capture) => capture,
+        Err(error) => {
+          return Ok(PlaylistSidebarScan::empty_with_diagnostic(
+            app_context,
+            window_context,
+            ViewRegionRecord::default(),
+            ParserDiagnostic {
+              code: "window_capture_failed".to_string(),
+              message: error.to_string(),
+              node_id: None,
+            },
+            "scan stopped before sidebar observation because the target window could not be captured after default screen restore",
+          ));
+        }
+      };
+      full_recognition = match session.vision().recognize_text_in_capture_with_options(
+        &capture,
+        full_window,
+        inputs.ocr_options.clone(),
+      ) {
+        Ok(recognition) => recognition_in_window_space(recognition, &capture),
+        Err(error) => {
+          return Ok(PlaylistSidebarScan::empty_with_diagnostic(
+            app_context,
+            window_context,
+            ViewRegionRecord::default(),
+            ParserDiagnostic {
+              code: "full_window_ocr_failed".to_string(),
+              message: error.to_string(),
+              node_id: None,
+            },
+            "scan stopped before sidebar observation because full-window OCR failed after default screen restore",
+          ));
+        }
+      };
+    }
+  }
+
+  if inputs.sidebar_region.is_none() {
     let broad_sidebar_bounds = broad_sidebar_probe_bounds(window_size);
     let broad_sidebar_ratio = bounds_to_ratio(broad_sidebar_bounds, &capture);
     let mut top_probe = LiveSidebarObserver {
@@ -1595,13 +1663,101 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   ) {
     Ok(sidebar_region) => sidebar_region,
     Err(diagnostic) => {
-      return Ok(PlaylistSidebarScan::empty_with_diagnostic(
-        app_context,
-        window_context,
-        ViewRegionRecord::default(),
-        diagnostic,
-        "scan stopped before sidebar observation because the sidebar region could not be detected",
-      ));
+      if inputs.sidebar_region.is_none() && diagnostic.code == "sidebar_region_not_found" {
+        // NOTICE(netease-default-screen-restore): song-detail and similar
+        // transient NetEase surfaces hide the left sidebar. `playlist ls`
+        // cannot proceed from that state, so this fallback uses the app's
+        // top-left restore affordance once before giving up on sidebar
+        // detection. Broader surface classification is deferred until the
+        // NetEase preflight contract is owner-approved.
+        let restore = DefaultScreenRestore {
+          reason: DefaultScreenRestoreReason::MissingSidebarRegion,
+          point: song_detail_restore_point(window_size),
+        };
+        if let Err(error) = session.window().click(
+          &window,
+          WindowPoint::new(restore.point.x, restore.point.y),
+          ClickOptions {
+            policy: InputPolicy::ForegroundPreferred,
+            click: Click::Single,
+            window_strategy: WindowClickStrategy::ChromiumCompatible,
+          },
+        ) {
+          return Ok(PlaylistSidebarScan::empty_with_diagnostic(
+            app_context,
+            window_context,
+            ViewRegionRecord::default(),
+            ParserDiagnostic {
+              code: "default_screen_restore_failed".to_string(),
+              message: format!(
+                "failed to restore NetEase default sidebar screen from {:?}: {error}",
+                restore.reason
+              ),
+              node_id: None,
+            },
+            "scan stopped before sidebar observation because the default screen restore click failed",
+          ));
+        }
+        if inputs.scroll_settle_ms > 0 {
+          std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
+        }
+        capture = match session.window().capture(&window) {
+          Ok(capture) => capture,
+          Err(error) => {
+            return Ok(PlaylistSidebarScan::empty_with_diagnostic(
+              app_context,
+              window_context,
+              ViewRegionRecord::default(),
+              ParserDiagnostic {
+                code: "window_capture_failed".to_string(),
+                message: error.to_string(),
+                node_id: None,
+              },
+              "scan stopped before sidebar observation because the target window could not be captured after sidebar restore fallback",
+            ));
+          }
+        };
+        full_recognition = match session.vision().recognize_text_in_capture_with_options(
+          &capture,
+          full_window,
+          inputs.ocr_options.clone(),
+        ) {
+          Ok(recognition) => recognition_in_window_space(recognition, &capture),
+          Err(error) => {
+            return Ok(PlaylistSidebarScan::empty_with_diagnostic(
+              app_context,
+              window_context,
+              ViewRegionRecord::default(),
+              ParserDiagnostic {
+                code: "full_window_ocr_failed".to_string(),
+                message: error.to_string(),
+                node_id: None,
+              },
+              "scan stopped before sidebar observation because full-window OCR failed after sidebar restore fallback",
+            ));
+          }
+        };
+        match detect_sidebar_region(None, window_size, &full_recognition) {
+          Ok(sidebar_region) => sidebar_region,
+          Err(diagnostic) => {
+            return Ok(PlaylistSidebarScan::empty_with_diagnostic(
+              app_context,
+              window_context,
+              ViewRegionRecord::default(),
+              diagnostic,
+              "scan stopped before sidebar observation because the sidebar region could not be detected after default screen restore",
+            ));
+          }
+        }
+      } else {
+        return Ok(PlaylistSidebarScan::empty_with_diagnostic(
+          app_context,
+          window_context,
+          ViewRegionRecord::default(),
+          diagnostic,
+          "scan stopped before sidebar observation because the sidebar region could not be detected",
+        ));
+      }
     }
   };
   let sidebar_bounds = sidebar_region.bounds.unwrap_or_default();
@@ -1709,6 +1865,44 @@ fn detect_sidebar_region(
     max_x + 48.0,
     playlist_sidebar_bottom(window_size) - y,
   )))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DefaultScreenRestoreReason {
+  SongDetailScreen,
+  MissingSidebarRegion,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DefaultScreenRestore {
+  reason: DefaultScreenRestoreReason,
+  point: auv_driver::Point,
+}
+
+fn detect_default_screen_restore(
+  recognition: &TextRecognition,
+  window_size: auv_driver::Size,
+) -> Option<DefaultScreenRestore> {
+  if recognition.regions.iter().any(|region| {
+    region.bounds.origin.x < window_size.width * 0.38 && is_sidebar_marker(region.text.trim())
+  }) {
+    return None;
+  }
+
+  let has_song_detail_controls =
+    recognition.best_contains("评论").is_some() && recognition.best_contains("收藏").is_some();
+  if !has_song_detail_controls {
+    return None;
+  }
+
+  Some(DefaultScreenRestore {
+    reason: DefaultScreenRestoreReason::SongDetailScreen,
+    point: song_detail_restore_point(window_size),
+  })
+}
+
+fn song_detail_restore_point(_window_size: auv_driver::Size) -> auv_driver::Point {
+  auv_driver::Point::new(40.0, 48.0)
 }
 
 fn playlist_sidebar_bottom(window_size: auv_driver::Size) -> f64 {
@@ -3243,6 +3437,36 @@ mod tests {
     .expect_err("main content rows should not anchor the sidebar");
 
     assert_eq!(error.code, "sidebar_region_not_found");
+  }
+
+  #[test]
+  fn detect_default_screen_restore_targets_song_detail_back_affordance() {
+    let restore = detect_default_screen_restore(
+      &fake_recognition(vec![
+        ("私藏推荐", 90.0, 86.0, 120.0, 28.0),
+        ("评论", 760.0, 182.0, 80.0, 28.0),
+        ("收藏", 880.0, 182.0, 80.0, 28.0),
+      ]),
+      auv_driver::Size::new(1646.0, 1053.0),
+    )
+    .expect("song detail screen should expose a restore click");
+
+    assert_eq!(restore.reason, DefaultScreenRestoreReason::SongDetailScreen);
+    assert_eq!(restore.point, auv_driver::Point::new(40.0, 48.0));
+  }
+
+  #[test]
+  fn detect_default_screen_restore_ignores_normal_sidebar_screen() {
+    let restore = detect_default_screen_restore(
+      &fake_recognition(vec![
+        ("推荐", 8.0, 20.0, 40.0, 20.0),
+        ("评论", 760.0, 182.0, 80.0, 28.0),
+        ("收藏", 880.0, 182.0, 80.0, 28.0),
+      ]),
+      auv_driver::Size::new(1646.0, 1053.0),
+    );
+
+    assert_eq!(restore, None);
   }
 
   #[test]
