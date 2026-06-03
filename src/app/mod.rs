@@ -1210,6 +1210,12 @@ fn inject_promoted_candidate_runtime_inputs(
       None,
       "",
     ),
+    "result-selection.ocr-anchor.pointer-click.capture-evidence" => (
+      "click_candidate",
+      "Validate injects the promoted result-selection contract::Candidate here so debug.clickWindowText can consume the typed OCR anchor target without reopening app-only schema.",
+      Some("anchor_text"),
+      "Legacy fallback for result-selection validate. TODO(app-result-selection-anchor-fallback-removal): remove once the query-only path is no longer needed by existing recipes.",
+    ),
     _ => return Ok(()),
   };
 
@@ -1321,7 +1327,9 @@ mod tests {
   use super::*;
   use crate::catalog::CommandCatalog;
   use crate::contract::{
-    ArtifactRef, CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause,
+    AnchorRecheckPrecondition, ArtifactRef, CandidateEvidence, CandidateLiveness, CandidateQuery,
+    ControlRequirements, LivenessPreconditions, RatioRegion, SelectorScope, SurfaceSelector,
+    SurfaceSelectorClause, TargetSpec, WindowRefPrecondition,
   };
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::RunStatus;
@@ -1405,6 +1413,37 @@ mod tests {
         if candidate.target_spec.anchor_text.as_deref() != Some(expected_query.as_str()) {
           return Err(format!(
             "focus_candidate anchor_text {:?} did not match focus_query {}",
+            candidate.target_spec.anchor_text, expected_query
+          ));
+        }
+      }
+
+      if call.operation == "test_operation"
+        && call
+          .inputs
+          .get("require_click_candidate")
+          .map(String::as_str)
+          == Some("true")
+      {
+        let raw_candidate = call
+          .inputs
+          .get("click_candidate")
+          .ok_or_else(|| "expected click_candidate input".to_string())?;
+        let candidate: crate::contract::Candidate = serde_json::from_str(raw_candidate)
+          .map_err(|error| format!("click_candidate was not valid Candidate JSON: {error}"))?;
+        if candidate.target_spec.grounding != crate::contract::TargetGrounding::OcrAnchor {
+          return Err(format!(
+            "expected OcrAnchor click_candidate grounding, got {:?}",
+            candidate.target_spec.grounding
+          ));
+        }
+        let expected_query = call
+          .inputs
+          .get("anchor_text")
+          .ok_or_else(|| "expected anchor_text fallback input".to_string())?;
+        if candidate.target_spec.anchor_text.as_deref() != Some(expected_query.as_str()) {
+          return Err(format!(
+            "click_candidate anchor_text {:?} did not match anchor_text {}",
             candidate.target_spec.anchor_text, expected_query
           ));
         }
@@ -1862,6 +1901,38 @@ mod tests {
       manifest.steps[1].args.get("candidate"),
       Some(&serde_json::json!("${click_candidate}"))
     );
+  }
+
+  #[test]
+  fn result_selection_distillation_template_validates() {
+    let analysis =
+      sample_analysis_with_strategy("result-selection.ocr-anchor.pointer-click.capture-evidence");
+    let recipe = render_candidate_recipe(
+      &analysis,
+      &analysis.recommended_strategies[0],
+      &AppDistilledCandidateShape::default(),
+    )
+    .expect("candidate recipe should render");
+    let manifest: SkillManifest =
+      serde_json::from_value(recipe).expect("candidate recipe should parse");
+    validate_skill_manifest(&manifest).expect("candidate recipe should validate");
+    let matrix_value = render_candidate_case_matrix(
+      &analysis,
+      &analysis.recommended_strategies[0],
+      &AppDistilledCandidateShape::default(),
+    )
+    .expect("candidate matrix should render");
+    let matrix: SkillCaseMatrix =
+      serde_json::from_value(matrix_value).expect("candidate matrix should parse");
+    validate_case_matrix_manifest(&matrix).expect("candidate matrix should validate");
+    validate_case_matrix_against_skill(&manifest, &matrix).expect("candidate matrix should align");
+    assert!(manifest.inputs.contains_key("click_candidate"));
+    assert_eq!(manifest.steps[1].command_id, "debug.clickWindowText");
+    assert_eq!(
+      manifest.steps[1].args.get("candidate"),
+      Some(&serde_json::json!("${click_candidate}"))
+    );
+    assert_eq!(manifest.steps[2].command_id, "debug.captureWindow");
   }
 
   #[test]
@@ -3519,6 +3590,145 @@ mod tests {
   }
 
   #[test]
+  fn validate_app_distillation_injects_result_selection_promoted_candidate_into_runtime_inputs() {
+    let root = temp_dir("app-validate-result-selection-promoted-consumer");
+    let runtime = test_runtime(root.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("result-selection.recipe.json");
+    let case_matrix_path = root.join("result-selection.cases.json");
+
+    let analysis = sample_promotable_result_selection_analysis();
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    write_pretty_json(
+      &recipe_path,
+      &serde_json::json!({
+        "recipe_id": "test.result.selection",
+        "version": "0.1.0",
+        "status": "candidate-recipe",
+        "platform": "macOS",
+        "target_app": { "bundle_id": "fixture.app", "display_mode": "fixture" },
+        "strategy": {
+          "family": "result-selection",
+          "grounding": "ocr-anchor",
+          "activation": "pointer-click",
+          "verificationContract": "captureEvidence"
+        },
+        "objective": "test result selection validation",
+        "disturbance_policy": {
+          "max_disturbance": "none",
+          "declared_classes": ["none"]
+        },
+        "inputs": {
+          "click_candidate": { "type": "string", "default": "" },
+          "anchor_text": { "type": "string", "default": "" },
+          "require_click_candidate": { "type": "string", "default": "false" }
+        },
+        "steps": [{
+          "id": "first",
+          "command_id": "test.skill.invoke",
+          "disturbance": {
+            "classes": ["none"],
+            "max": "none"
+          },
+          "args": {
+            "click_candidate": "${click_candidate}",
+            "anchor_text": "${anchor_text}",
+            "require_click_candidate": "${require_click_candidate}"
+          },
+          "expect": {
+            "output_must_contain": ["outcome=ok"]
+          }
+        }],
+        "verification": {
+          "expected_signals": ["signal"],
+          "success_criteria": ["criteria"]
+        }
+      }),
+    )
+    .expect("candidate recipe should write");
+    write_pretty_json(
+      &case_matrix_path,
+      &serde_json::json!({
+        "skill_id": "test.result.selection",
+        "version": "0.1.0",
+        "status": "active-case-matrix",
+        "cases": [{
+          "case_id": "baseline",
+          "status": "validated",
+          "inputs": {
+            "require_click_candidate": "true"
+          },
+          "disturbance": "none"
+        }]
+      }),
+    )
+    .expect("candidate matrix should write");
+
+    let candidate_shape = build_distilled_candidate_shape(
+      &analysis,
+      "result-selection.ocr-anchor.pointer-click.capture-evidence",
+    );
+    let promoted_candidate = sample_result_selection_promoted_candidate();
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.result.selection".to_string(),
+        taxonomy_id: "result-selection.ocr-anchor.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        suggested_annotation_ids: vec!["result-selection-anchor-ax".to_string()],
+        source_evidence_refs: Vec::new(),
+        promoted_candidate: Some(promoted_candidate),
+        candidate_shape,
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let output =
+      validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
+    assert_eq!(
+      output.validation.candidates[0].status,
+      AppValidationStatus::Validated
+    );
+    assert!(
+      output.validation.candidates[0]
+        .used_annotation_ids
+        .iter()
+        .any(|candidate_id| candidate_id == "result-selection-anchor-ax")
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .resolved_inputs
+        .get("anchor_text"),
+      Some(&"Play Now".to_string())
+    );
+    let click_candidate = output.validation.candidates[0]
+      .resolved_inputs
+      .get("click_candidate")
+      .expect("validate should inject click_candidate");
+    let parsed_candidate: crate::contract::Candidate = serde_json::from_str(click_candidate)
+      .expect("click_candidate should stay valid candidate JSON");
+    assert_eq!(
+      parsed_candidate.candidate_local_id,
+      "result-selection-anchor-ax"
+    );
+    assert_eq!(
+      parsed_candidate.target_spec.grounding,
+      crate::contract::TargetGrounding::OcrAnchor
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
   fn validate_app_distillation_keeps_row_context_candidates_review_only() {
     let root = temp_dir("app-validate-row-context-only");
     let runtime = test_runtime(root.clone());
@@ -5003,6 +5213,227 @@ mod tests {
         status: AssessmentStatus::Candidate,
         rationale: "test".to_string(),
       }],
+    }
+  }
+
+  fn sample_promotable_result_selection_analysis() -> AppAnalysis {
+    AppAnalysis {
+      analysis_version: APP_ANALYSIS_VERSION.to_string(),
+      created_at_millis: 0,
+      probe_path: PathBuf::from("/tmp/probe.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      window_context: AppWindowContext {
+        observed_window_count: 1,
+        observed_at: "2026-05-18T00:00:00Z".to_string(),
+        frontmost_app_name: "Example".to_string(),
+        frontmost_window_title: "Example".to_string(),
+        primary_window_title: "Example".to_string(),
+        primary_window_bounds: Some(AppRect {
+          x: 100,
+          y: 200,
+          width: 800,
+          height: 600,
+        }),
+        primary_window_display_scale: Some(2.0),
+      },
+      permissions: AppPermissionState {
+        screen_recording: "granted".to_string(),
+        accessibility: "granted".to_string(),
+        automation_to_system_events: "granted".to_string(),
+        launch_host_process: "Atlas".to_string(),
+      },
+      available_surfaces: AppAvailableSurfaces {
+        accessibility_tree: AssessmentStatus::Candidate,
+        menu_surface: AssessmentStatus::Unknown,
+        shortcut_surface: AssessmentStatus::Candidate,
+        apple_script_surface: AssessmentStatus::Unavailable,
+        url_scheme_surface: AssessmentStatus::Unavailable,
+        keyboard_first_surface: AssessmentStatus::Candidate,
+        pointer_fallback_surface: AssessmentStatus::Likely,
+      },
+      grounding_assessment: AppGroundingAssessment {
+        ocr_sample_query: "Play Now".to_string(),
+        ocr_sample_status: AssessmentStatus::Candidate,
+        ocr_sample_match_count: 1,
+        stable_anchor_candidates: vec!["appName: Example".to_string()],
+        stable_region_candidates: vec!["primaryWindow=100,200,800,600".to_string()],
+        overlay_debug_artifacts_recommended: false,
+      },
+      control_assessment: AppControlAssessment {
+        preferred_path: "non-pointer first".to_string(),
+        non_pointer_path: AssessmentStatus::Candidate,
+        keyboard_path: AssessmentStatus::Candidate,
+        pointer_fallback: AssessmentStatus::Likely,
+        notes: vec![],
+      },
+      verification_assessment: AppVerificationAssessment {
+        ax_verify: AssessmentStatus::Candidate,
+        image_verify: AssessmentStatus::Candidate,
+        ui_state_verify: AssessmentStatus::Candidate,
+        semantic_success: AssessmentStatus::Unknown,
+        notes: vec![],
+      },
+      disturbance_profile: AppDisturbanceProfile {
+        observation: vec!["none".to_string()],
+        non_pointer_control: vec!["keyboard".to_string()],
+        pointer_fallback: vec!["pointer".to_string()],
+      },
+      annotation_candidates: vec![AppSurfaceCandidate {
+        candidate_id: "result-selection-anchor-ax".to_string(),
+        area: "result-selection".to_string(),
+        kind: "anchor-text".to_string(),
+        source: "ocr".to_string(),
+        status: AssessmentStatus::Candidate,
+        primary_text: "Play Now".to_string(),
+        secondary_text: "visible result anchor".to_string(),
+        query_value: "Play Now".to_string(),
+        coordinate_space: "global-logical".to_string(),
+        bounds: Some(AppRect {
+          x: 180,
+          y: 260,
+          width: 160,
+          height: 32,
+        }),
+        click_point: Some(AppPoint { x: 260, y: 276 }),
+        confidence: Some(0.97),
+        evidence_step_id: "ocr-sample".to_string(),
+        candidate_query: Some(CandidateQuery {
+          query_id: "result-selection-anchor-ax".to_string(),
+          selector: SurfaceSelector {
+            any_of: vec![SurfaceSelectorClause::Ocr {
+              text: "Play Now".to_string(),
+              region_hint: Some(crate::contract::RatioRegion {
+                left: 0.10,
+                top: 0.10,
+                right: 0.35,
+                bottom: 0.25,
+              }),
+              min_provider_score: Some(0.97),
+            }],
+            within: SelectorScope::TargetWindow,
+            require_visible: true,
+          },
+          output_kind: Some("anchor-text".to_string()),
+          known_limits: vec!["test query".to_string()],
+        }),
+        evidence_refs: vec![ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0003"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        }],
+        promotion_gate: Some(AppCandidatePromotionGate {
+          status: AppCandidatePromotionStatus::ActionGradeCandidate,
+          missing_gates: Vec::new(),
+          notes: vec![
+            "Sample candidate satisfies the v0 result-selection promotion seam.".to_string(),
+          ],
+        }),
+        input_bindings: BTreeMap::from([("anchor_text".to_string(), "Play Now".to_string())]),
+        compatibility: candidate_compatibility(
+          &["result-selection.ocr-anchor.pointer-click.capture-evidence"],
+          &[],
+        ),
+        notes: vec!["sample note".to_string()],
+      }],
+      known_boundaries: vec![],
+      recommended_strategies: vec![AppRecommendedStrategy {
+        taxonomy_id: "result-selection.ocr-anchor.pointer-click.capture-evidence".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+      }],
+    }
+  }
+
+  fn sample_result_selection_promoted_candidate() -> crate::contract::Candidate {
+    crate::contract::Candidate {
+      candidate_local_id: "result-selection-anchor-ax".to_string(),
+      kind: "result_selection".to_string(),
+      label: Some("Play Now".to_string()),
+      target_spec: TargetSpec {
+        grounding: crate::contract::TargetGrounding::OcrAnchor,
+        anchor_text: Some("Play Now".to_string()),
+        region_hint: Some(RatioRegion {
+          left: 0.10,
+          top: 0.10,
+          right: 0.35,
+          bottom: 0.25,
+        }),
+        row_index: None,
+      },
+      evidence: CandidateEvidence {
+        artifact_ref: ArtifactRef {
+          run_id: crate::trace::RunId::new("run_probe"),
+          span_id: crate::trace::SpanId::new("span_probe"),
+          artifact_id: crate::trace::ArtifactId::new("artifact_0003"),
+          captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        },
+        observation: serde_json::json!({
+          "source": "ocr",
+          "surface_candidate_id": "result-selection-anchor-ax",
+          "evidence_step_id": "ocr-sample",
+          "query": {
+            "query_id": "result-selection-anchor-ax",
+            "output_kind": "anchor-text",
+            "selector_within": "target_window",
+            "require_visible": true,
+            "ocr": {
+              "text": "Play Now",
+              "region_hint": {
+                "left": 0.10,
+                "top": 0.10,
+                "right": 0.35,
+                "bottom": 0.25
+              },
+              "min_provider_score": 0.97
+            }
+          },
+          "match_index": 1,
+          "window_context": {
+            "app_bundle_id": "com.example.App",
+            "window_title": "Example"
+          }
+        }),
+      },
+      liveness: CandidateLiveness {
+        preconditions: LivenessPreconditions {
+          window_ref: Some(WindowRefPrecondition {
+            app_bundle_id: "com.example.App".to_string(),
+            window_title_substring: Some("Example".to_string()),
+            window_number: None,
+          }),
+          anchor_recheck: Some(AnchorRecheckPrecondition {
+            text: "Play Now".to_string(),
+            region_hint: Some(RatioRegion {
+              left: 0.10,
+              top: 0.10,
+              right: 0.35,
+              bottom: 0.25,
+            }),
+            expected_min_confidence: 0.97,
+            max_pixel_distance: 48.0,
+          }),
+        },
+        ttl_hint_ms: Some(5_000),
+      },
+      control: ControlRequirements {
+        requires_app_frontmost: true,
+        requires_window_focus: true,
+      },
+      known_limits: vec![
+        "Promotion only covers refinding the OCR anchor surface; semantic success still relies on later verification.".to_string(),
+      ],
     }
   }
 

@@ -308,6 +308,7 @@ pub(crate) fn render_result_selection_candidate_recipe(analysis: &AppAnalysis) -
     "inputs": {
       "app_id": { "type": "string", "default": analysis.app_identity.bundle_id },
       "anchor_text": { "type": "string", "note": "Replace with a visible OCR anchor when validating this candidate." },
+      "click_candidate": { "type": "string", "default": "", "note": "Optional serialized contract::Candidate injected during validate when an action-grade OCR-anchor promotion exists." },
       "match_index": { "type": "integer", "default": 0 },
       "post_click_settle_ms": { "type": "integer", "default": 700 }
     },
@@ -334,16 +335,16 @@ pub(crate) fn render_result_selection_candidate_recipe(analysis: &AppAnalysis) -
       },
       {
         "id": "click-anchor",
-        "command_id": "debug.clickScreenText",
+        "command_id": "debug.clickWindowText",
         "disturbance": { "classes": ["pointer"], "max": "pointer" },
-        "args": { "target": "${app_id}", "query": "${anchor_text}", "match_index": "${match_index}" },
+        "args": { "target": "${app_id}", "query": "${anchor_text}", "candidate": "${click_candidate}", "match_index": "${match_index}" },
         "purpose": "Click a visible OCR anchor as the candidate result-selection path."
       },
       {
         "id": "capture-evidence",
-        "command_id": "debug.captureDisplay",
-        "disturbance": { "classes": ["none"], "max": "none" },
-        "args": { "target": "${app_id}", "activate_target_before_capture": true, "label": format!("{app_slug}-result-selection-${{anchor_text}}") },
+        "command_id": "debug.captureWindow",
+        "disturbance": { "classes": ["foreground_app"], "max": "foreground_app" },
+        "args": { "target": "${app_id}", "activate_target_before_capture": true, "label": format!("{app_slug}-result-selection-window-${{anchor_text}}") },
         "expect": { "artifact_count_at_least": 1 },
         "purpose": "Capture post-selection evidence for later validation."
       }
@@ -352,11 +353,11 @@ pub(crate) fn render_result_selection_candidate_recipe(analysis: &AppAnalysis) -
       "expected_signals": [
         "A visible OCR anchor can be resolved.",
         "The pointer click succeeds.",
-        "A post-click screenshot artifact exists."
+        "A post-click window artifact exists."
       ],
       "success_criteria": [
         "The candidate anchor can be clicked through the runtime.",
-        "A post-click screenshot artifact exists."
+        "A post-click window artifact exists."
       ],
       "non_goals": [
         "This candidate does not prove semantic success.",

@@ -43,6 +43,7 @@ use super::super::{
 };
 use super::common::{ClickPointCallOptions, build_click_point_call, resolve_click_interval_ms};
 use super::pointer::click_point;
+use crate::contract::{Candidate, TargetGrounding};
 use crate::model::AuvResult;
 
 pub(super) fn click_window_text_signals(text: &str) -> std::collections::BTreeMap<String, String> {
@@ -216,12 +217,28 @@ pub(crate) fn wait_for_window_text(call: &DriverCall) -> AuvResult<DriverRespons
 }
 
 pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> {
-  let query = required_non_empty_string(call, "query")?;
+  let candidate_json = optional_non_empty_string(call, "candidate");
+  let resolved_candidate = candidate_json
+    .as_deref()
+    .map(parse_window_text_candidate)
+    .transpose()?;
+  let query = if let Some(candidate) = resolved_candidate.as_ref() {
+    candidate.query.clone()
+  } else {
+    required_non_empty_string(call, "query")?
+  };
   let label = format!("window-text-click-{}", sanitize_file_component(&query));
   let capture = capture_resolved_window_observation(call, &label)?;
+  if let Some(candidate) = resolved_candidate.as_ref() {
+    ensure_window_text_candidate_matches_capture(candidate, &capture)?;
+  }
+  let effective_call = build_window_text_effective_call(call, &query, resolved_candidate.as_ref());
   let (snapshot, filtered, ocr_report, command_report) =
-    run_text_match_on_capture(call, &capture, &query)?;
-  let match_index = optional_i64(call, "match_index")?.unwrap_or(0).max(0) as usize;
+    run_text_match_on_capture(&effective_call, &capture, &query)?;
+  let match_index = resolved_candidate
+    .as_ref()
+    .and_then(|candidate| candidate.match_index)
+    .unwrap_or(optional_i64(call, "match_index")?.unwrap_or(0).max(0) as usize);
   let matched = filtered.get(match_index).ok_or_else(|| {
     format!(
       "no filtered OCR text match at index {} for query {} inside resolved window; inspect `debug.findWindowText`",
@@ -323,6 +340,12 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     auv_cursor_variant: "auv-click",
   })?;
   let mut notes = text_notes(&capture, &query, &snapshot, filtered.len());
+  if let Some(candidate) = resolved_candidate.as_ref() {
+    notes.push(format!(
+      "consumedCandidateLocalId={}",
+      candidate.candidate_local_id
+    ));
+  }
   notes.extend([
     format!("matchIndex={match_index}"),
     format!("matchText={}", matched.text),
@@ -344,6 +367,12 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
   }
 
   let mut signals = click_window_text_signals(&matched.text);
+  if let Some(candidate) = resolved_candidate.as_ref() {
+    signals.insert(
+      "clickWindowText.candidateLocalId".to_string(),
+      candidate.candidate_local_id.clone(),
+    );
+  }
   signals.insert("pressMechanism".to_string(), "pointer-click".to_string());
   signals.insert("cursorDisturbance".to_string(), "warp-visible".to_string());
   if overlay {
@@ -375,6 +404,184 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
       }
     },
   })
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ResolvedWindowTextCandidate {
+  candidate_local_id: String,
+  query: String,
+  expected_window: Option<crate::contract::WindowRefPrecondition>,
+  region_hint: Option<crate::contract::RatioRegion>,
+  min_provider_score: Option<f64>,
+  match_index: Option<usize>,
+}
+
+fn parse_window_text_candidate(raw_candidate: &str) -> AuvResult<ResolvedWindowTextCandidate> {
+  let candidate: Candidate = serde_json::from_str(raw_candidate)
+    .map_err(|error| format!("invalid --candidate JSON: {error}"))?;
+  if candidate.target_spec.grounding != TargetGrounding::OcrAnchor {
+    return Err(format!(
+      "click_window_text only accepts OcrAnchor candidates; got {:?}",
+      candidate.target_spec.grounding
+    ));
+  }
+  let query = candidate
+    .target_spec
+    .anchor_text
+    .as_deref()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+    .ok_or_else(|| "click_window_text candidate is missing target_spec.anchor_text".to_string())?;
+  let query_detail = candidate
+    .evidence
+    .observation
+    .get("query")
+    .and_then(|value| value.as_object());
+  let ocr_detail = query_detail
+    .and_then(|query| query.get("ocr"))
+    .and_then(|value| value.as_object());
+  let min_provider_score = ocr_detail
+    .and_then(|detail| detail.get("min_provider_score"))
+    .and_then(|value| value.as_f64());
+  let match_index = candidate
+    .evidence
+    .observation
+    .get("match_index")
+    .and_then(|value| value.as_u64())
+    .and_then(|value| usize::try_from(value).ok());
+
+  Ok(ResolvedWindowTextCandidate {
+    candidate_local_id: candidate.candidate_local_id,
+    query,
+    expected_window: candidate.liveness.preconditions.window_ref,
+    region_hint: ocr_detail
+      .and_then(|detail| detail.get("region_hint"))
+      .cloned()
+      .and_then(|value| serde_json::from_value(value).ok())
+      .or(
+        candidate
+          .liveness
+          .preconditions
+          .anchor_recheck
+          .and_then(|recheck| recheck.region_hint),
+      ),
+    min_provider_score,
+    match_index,
+  })
+}
+
+fn build_window_text_effective_call(
+  call: &DriverCall,
+  query: &str,
+  candidate: Option<&ResolvedWindowTextCandidate>,
+) -> DriverCall {
+  let mut effective_call = call.clone();
+  effective_call
+    .inputs
+    .insert("query".to_string(), query.to_string());
+
+  if let Some(candidate) = candidate {
+    if !effective_call.inputs.contains_key("min_confidence")
+      && let Some(min_provider_score) = candidate.min_provider_score
+    {
+      effective_call.inputs.insert(
+        "min_confidence".to_string(),
+        format!("{min_provider_score:.6}"),
+      );
+    }
+    if !effective_call.inputs.contains_key("match_index")
+      && let Some(match_index) = candidate.match_index
+    {
+      effective_call
+        .inputs
+        .insert("match_index".to_string(), match_index.to_string());
+    }
+    if !has_explicit_region_constraint(call)
+      && let Some(region_hint) = candidate.region_hint
+    {
+      effective_call.inputs.insert(
+        "region_left_ratio".to_string(),
+        format!("{:.6}", region_hint.left),
+      );
+      effective_call.inputs.insert(
+        "region_top_ratio".to_string(),
+        format!("{:.6}", region_hint.top),
+      );
+      effective_call.inputs.insert(
+        "region_right_ratio".to_string(),
+        format!("{:.6}", region_hint.right),
+      );
+      effective_call.inputs.insert(
+        "region_bottom_ratio".to_string(),
+        format!("{:.6}", region_hint.bottom),
+      );
+    }
+  }
+
+  effective_call
+}
+
+fn has_explicit_region_constraint(call: &DriverCall) -> bool {
+  [
+    "region_left_ratio",
+    "region_top_ratio",
+    "region_right_ratio",
+    "region_bottom_ratio",
+  ]
+  .iter()
+  .any(|key| optional_non_empty_string(call, key).is_some())
+}
+
+fn ensure_window_text_candidate_matches_capture(
+  candidate: &ResolvedWindowTextCandidate,
+  capture: &CapturedObservation,
+) -> AuvResult<()> {
+  let Some(expected_window) = candidate.expected_window.as_ref() else {
+    return Ok(());
+  };
+
+  if !expected_window.app_bundle_id.trim().is_empty() {
+    let expected_bundle = expected_window.app_bundle_id.trim();
+    let actual_bundle = capture.owner_bundle_id.as_deref().unwrap_or_default();
+    if !actual_bundle.trim().is_empty() && !actual_bundle.eq_ignore_ascii_case(expected_bundle) {
+      return Err(format!(
+        "click_window_text candidate {} expected app bundle {} but resolved window belonged to {}",
+        candidate.candidate_local_id, expected_bundle, actual_bundle
+      ));
+    }
+  }
+
+  if let Some(expected_title) = expected_window.window_title_substring.as_deref() {
+    let expected_title = expected_title.trim();
+    let actual_title = capture.window_title.as_deref().unwrap_or_default();
+    if !expected_title.is_empty()
+      && (actual_title.is_empty() || !actual_title.contains(expected_title))
+    {
+      return Err(format!(
+        "click_window_text candidate {} expected window title containing {:?} but resolved window title was {:?}",
+        candidate.candidate_local_id, expected_title, actual_title
+      ));
+    }
+  }
+
+  if let Some(expected_window_number) = expected_window.window_number {
+    let actual_window_number = window_number_from_ref(&capture.capture_source)
+      .ok_or_else(|| {
+        format!(
+          "click_window_text candidate {} expected window number {} but capture source had no window number",
+          candidate.candidate_local_id, expected_window_number
+        )
+      })?;
+    if actual_window_number != expected_window_number {
+      return Err(format!(
+        "click_window_text candidate {} expected window number {} but resolved {}",
+        candidate.candidate_local_id, expected_window_number, actual_window_number
+      ));
+    }
+  }
+
+  Ok(())
 }
 
 pub(crate) fn find_window_rows(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -743,6 +950,10 @@ pub(super) fn capture_resolved_window_observation(
   Ok(CapturedObservation {
     scope: "window".to_string(),
     capture_source: format!("window_{}", observation.candidate.window_ref.window_number),
+    owner_bundle_id: (!observation.candidate.window_ref.owner_bundle_id.is_empty())
+      .then(|| observation.candidate.window_ref.owner_bundle_id.clone()),
+    window_title: (!observation.candidate.window_ref.title.is_empty())
+      .then(|| observation.candidate.window_ref.title.clone()),
     screenshot_path,
     capture_contract: observation.contract,
     dimensions: observation.dimensions,
@@ -844,7 +1055,142 @@ pub(super) fn logical_point_for_match(
 
 #[cfg(test)]
 mod tests {
-  use super::{click_window_row_signals, click_window_text_signals};
+  use super::{
+    ResolvedWindowTextCandidate, click_window_row_signals, click_window_text_signals,
+    ensure_window_text_candidate_matches_capture, parse_window_text_candidate,
+  };
+  use crate::contract::{
+    AnchorRecheckPrecondition, ArtifactRef, Candidate, CandidateEvidence, CandidateLiveness,
+    ControlRequirements, LivenessPreconditions, RatioRegion, TargetGrounding, TargetSpec,
+    WindowRefPrecondition,
+  };
+  use crate::driver::macos::ScreenshotDimensions;
+  use crate::driver::macos::capture::types::{
+    CaptureBackend, CaptureContract, CaptureSource, Rect, Scale2D, Size,
+  };
+  use crate::driver::macos::support::ocr_commands::CapturedObservation;
+  use crate::trace::{ArtifactId, RunId, SpanId};
+  use serde_json::json;
+  use std::path::PathBuf;
+
+  fn sample_capture_contract() -> CaptureContract {
+    CaptureContract {
+      coordinate_contract_version: 1,
+      capture_source: CaptureSource::Window {
+        display_ref: "display-main".to_string(),
+        native_display_id: "69733248".to_string(),
+        window_ref: "window_7".to_string(),
+        native_window_id: "window-native-7".to_string(),
+      },
+      capture_backend: CaptureBackend::XcapMacos,
+      include_shadow: false,
+      source_global_logical_bounds: Rect {
+        x: 100.0,
+        y: 200.0,
+        width: 640.0,
+        height: 480.0,
+      },
+      source_physical_pixel_bounds: Rect {
+        x: 0.0,
+        y: 0.0,
+        width: 1280.0,
+        height: 960.0,
+      },
+      screenshot_pixel_size: Size {
+        width: 1280.0,
+        height: 960.0,
+      },
+      pixel_to_logical_scale: Scale2D { x: 0.5, y: 0.5 },
+      logical_to_pixel_scale: Scale2D { x: 2.0, y: 2.0 },
+      captured_at_unix_ms: 1_717_000_000_000,
+    }
+  }
+
+  fn sample_captured_observation() -> CapturedObservation {
+    CapturedObservation {
+      scope: "window".to_string(),
+      capture_source: "window_7".to_string(),
+      owner_bundle_id: Some("com.example.editor".to_string()),
+      window_title: Some("Untitled".to_string()),
+      screenshot_path: PathBuf::from("/tmp/window_ocr_test.png"),
+      capture_contract: sample_capture_contract(),
+      dimensions: ScreenshotDimensions {
+        width: 1280,
+        height: 960,
+      },
+      image: None,
+      backend: Some("xcap.macos".to_string()),
+      fallback_reason: None,
+    }
+  }
+
+  fn sample_window_text_candidate_json(grounding: TargetGrounding) -> String {
+    serde_json::to_string(&Candidate {
+      candidate_local_id: "result-selection-anchor-ax".to_string(),
+      kind: "result_selection".to_string(),
+      label: Some("Play Now".to_string()),
+      target_spec: TargetSpec {
+        grounding,
+        anchor_text: Some("Play Now".to_string()),
+        region_hint: Some(RatioRegion {
+          left: 0.10,
+          top: 0.10,
+          right: 0.35,
+          bottom: 0.25,
+        }),
+        row_index: None,
+      },
+      evidence: CandidateEvidence {
+        artifact_ref: ArtifactRef {
+          run_id: RunId::new("run_probe"),
+          span_id: SpanId::new("span_probe"),
+          artifact_id: ArtifactId::new("artifact_0003"),
+          captured_event_id: None,
+        },
+        observation: json!({
+          "query": {
+            "ocr": {
+              "region_hint": {
+                "left": 0.10,
+                "top": 0.10,
+                "right": 0.35,
+                "bottom": 0.25
+              },
+              "min_provider_score": 0.97
+            }
+          },
+          "match_index": 1
+        }),
+      },
+      liveness: CandidateLiveness {
+        preconditions: LivenessPreconditions {
+          window_ref: Some(WindowRefPrecondition {
+            app_bundle_id: "com.example.editor".to_string(),
+            window_title_substring: Some("Untitled".to_string()),
+            window_number: Some(7),
+          }),
+          anchor_recheck: Some(AnchorRecheckPrecondition {
+            text: "Play Now".to_string(),
+            region_hint: Some(RatioRegion {
+              left: 0.10,
+              top: 0.10,
+              right: 0.35,
+              bottom: 0.25,
+            }),
+            expected_min_confidence: 0.97,
+            max_pixel_distance: 48.0,
+          }),
+        },
+        ttl_hint_ms: Some(5000),
+      },
+      control: ControlRequirements {
+        requires_app_frontmost: true,
+        requires_window_focus: true,
+      },
+      known_limits: Vec::new(),
+    })
+    .expect("sample candidate should serialize")
+  }
 
   #[test]
   fn click_window_text_signals_exposes_resolved_text() {
@@ -862,5 +1208,70 @@ mod tests {
 
     assert_eq!(signals.get("rows.clicked_index"), Some(&"2".to_string()));
     assert_eq!(signals.get("rows.count"), Some(&"5".to_string()));
+  }
+
+  #[test]
+  fn parse_window_text_candidate_accepts_ocr_anchor_candidate() {
+    let candidate = parse_window_text_candidate(
+      sample_window_text_candidate_json(TargetGrounding::OcrAnchor).as_str(),
+    )
+    .expect("ocr-anchor candidate should parse");
+
+    assert_eq!(
+      candidate,
+      ResolvedWindowTextCandidate {
+        candidate_local_id: "result-selection-anchor-ax".to_string(),
+        query: "Play Now".to_string(),
+        expected_window: Some(WindowRefPrecondition {
+          app_bundle_id: "com.example.editor".to_string(),
+          window_title_substring: Some("Untitled".to_string()),
+          window_number: Some(7),
+        }),
+        region_hint: Some(RatioRegion {
+          left: 0.10,
+          top: 0.10,
+          right: 0.35,
+          bottom: 0.25,
+        }),
+        min_provider_score: Some(0.97),
+        match_index: Some(1),
+      }
+    );
+  }
+
+  #[test]
+  fn parse_window_text_candidate_rejects_non_ocr_anchor_candidate() {
+    let error = parse_window_text_candidate(
+      sample_window_text_candidate_json(TargetGrounding::Coordinate).as_str(),
+    )
+    .expect_err("non-ocr-anchor candidate should fail");
+
+    assert!(error.contains("only accepts OcrAnchor candidates"));
+  }
+
+  #[test]
+  fn ensure_window_text_candidate_matches_capture_accepts_matching_window() {
+    let candidate = parse_window_text_candidate(
+      sample_window_text_candidate_json(TargetGrounding::OcrAnchor).as_str(),
+    )
+    .expect("candidate should parse");
+
+    ensure_window_text_candidate_matches_capture(&candidate, &sample_captured_observation())
+      .expect("matching capture should validate");
+  }
+
+  #[test]
+  fn ensure_window_text_candidate_matches_capture_rejects_mismatched_bundle() {
+    let mut capture = sample_captured_observation();
+    capture.owner_bundle_id = Some("com.other.app".to_string());
+    let candidate = parse_window_text_candidate(
+      sample_window_text_candidate_json(TargetGrounding::OcrAnchor).as_str(),
+    )
+    .expect("candidate should parse");
+
+    let error = ensure_window_text_candidate_matches_capture(&candidate, &capture)
+      .expect_err("mismatched bundle should fail");
+
+    assert!(error.contains("expected app bundle"));
   }
 }

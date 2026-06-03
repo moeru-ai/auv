@@ -983,6 +983,8 @@ pub(super) fn find_screen_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let capture = CapturedObservation {
     scope: "screen".to_string(),
     capture_source: capture_source.display_ref.clone(),
+    owner_bundle_id: None,
+    window_title: None,
     screenshot_path: screenshot_path.clone(),
     capture_contract,
     dimensions: dimensions.clone(),

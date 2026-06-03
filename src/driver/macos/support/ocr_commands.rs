@@ -31,6 +31,8 @@ pub(crate) struct TextMatchCommandReport {
 pub(crate) struct CapturedObservation {
   pub(crate) scope: String,
   pub(crate) capture_source: String,
+  pub(crate) owner_bundle_id: Option<String>,
+  pub(crate) window_title: Option<String>,
   pub(crate) screenshot_path: PathBuf,
   pub(crate) capture_contract: CaptureContract,
   pub(crate) dimensions: ScreenshotDimensions,
