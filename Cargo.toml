@@ -3,6 +3,7 @@ members = [
   ".",
   "crates/auv-driver",
   "crates/auv-driver-macos",
+  "crates/auv-inference-yolo",
   "crates/auv-netease-music",
   "crates/auv-overlay-macos",
   "crates/auv-view",
@@ -37,7 +38,10 @@ repository.workspace = true
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+thiserror = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
+ndarray = "0.17"
+ort = "2.0.0-rc.10"
 xcap = "0.6"
 swift-bridge = "0.1.59"
 swift-bridge-build = "0.1.59"
