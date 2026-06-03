@@ -22,6 +22,9 @@ driver capture changes.
   confidence filtering, and NMS.
 - Produce typed detections with bounds, class id, label, confidence, model id,
   and source image size.
+- Provide a minimal callable example that accepts model, image, classes, and
+  threshold parameters, writes detections JSON, and can write an annotated PNG
+  artifact.
 - Validate against Balatro entities and UI ONNX models using a real image and a
   Python-generated fixture.
 
@@ -32,6 +35,12 @@ driver capture changes.
 - No generic `auv-shared` crate unless implementation proves it is needed for
   this slice.
 - No macOS driver API changes.
+- No `auv invoke` command catalog integration in this slice because that would
+  touch `src/catalog.rs` and runtime dispatch surfaces that currently have live
+  Collabi intent conflicts. The example binary is the minimum callable API for
+  this slice.
+- No Steam/Balatro launch automation or Swift overlay visualization in this
+  slice; those belong to later `auv-game-balatro` and visual overlay slices.
 - No YOLO segmentation, pose, oriented boxes, tracking, or built-in model-NMS
   exports.
 - No long-term public contract commitment for every internal YOLO raw type.
@@ -52,6 +61,7 @@ The crate should expose a compact API:
 - `DetectionSet`
 - `Detection`
 - `BoundingBox`
+- `render_annotated_image`
 
 Internally the crate keeps YOLO-specific concepts:
 
@@ -76,6 +86,7 @@ image file
   -> reverse letterbox to source image pixels
   -> class-aware NMS
   -> DetectionSet
+  -> optional JSON output and annotated PNG artifact
 ```
 
 The Python fixture should be generated before Rust implementation using the
@@ -125,6 +136,7 @@ Add focused Rust tests for:
 - confidence filtering
 - NMS suppression and class-aware behavior
 - Balatro fixture parity for entities and UI models
+- example invocation that writes JSON and an annotated image artifact
 
 Parity tests should compare class id, label, confidence within tolerance, and
 bbox coordinates within a small pixel tolerance. Exact equality is not required
@@ -139,3 +151,8 @@ because backend numerical details may vary.
   driver/media design work.
 - Balatro state/action/RL episode integration is deferred to
   `auv-game-balatro`.
+- `auv invoke` integration is deferred until the active Collabi conflicts around
+  command catalog/runtime surfaces are cleared and the owner approves that
+  runtime-facing slice.
+- Swift transparent overlay visualization is deferred until after the inference
+  crate can produce stable detections and annotated artifacts.
