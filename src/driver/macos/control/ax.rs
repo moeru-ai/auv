@@ -187,6 +187,7 @@ struct ResolvedFocusTextCandidate {
   label: Option<String>,
   path: Option<String>,
   observed_bounds: Option<FocusTextObservedBounds>,
+  expected_window: Option<crate::contract::WindowRefPrecondition>,
 }
 
 fn resolve_focus_text_target<'a>(
@@ -278,6 +279,7 @@ fn parse_focus_text_candidate(raw_candidate: &str) -> AuvResult<ResolvedFocusTex
     label,
     path,
     observed_bounds: observation.bounds,
+    expected_window: candidate.liveness.preconditions.window_ref,
   })
 }
 
@@ -285,6 +287,10 @@ fn resolve_focus_text_candidate<'a>(
   snapshot: &'a auv_driver_macos::types::ObservedAxTreeSnapshot,
   candidate: &ResolvedFocusTextCandidate,
 ) -> Option<&'a ObservedAxNode> {
+  if !focus_text_candidate_matches_window(snapshot, candidate.expected_window.as_ref()) {
+    return None;
+  }
+
   snapshot
     .nodes
     .iter()
@@ -374,6 +380,43 @@ fn normalize_focus_text_value(raw: &str) -> String {
     .filter(|character| !character.is_whitespace())
     .collect::<String>()
     .to_lowercase()
+}
+
+fn focus_text_candidate_matches_window(
+  snapshot: &auv_driver_macos::types::ObservedAxTreeSnapshot,
+  expected_window: Option<&crate::contract::WindowRefPrecondition>,
+) -> bool {
+  let Some(expected_window) = expected_window else {
+    return true;
+  };
+
+  if !expected_window.app_bundle_id.trim().is_empty()
+    && !snapshot.bundle_id.trim().is_empty()
+    && !snapshot
+      .bundle_id
+      .eq_ignore_ascii_case(expected_window.app_bundle_id.as_str())
+  {
+    return false;
+  }
+
+  if let Some(expected_title) = expected_window.window_title_substring.as_deref()
+    && let Some(expected_title) = non_empty_trimmed(expected_title)
+  {
+    let normalized_expected = normalize_focus_text_value(&expected_title);
+    let normalized_actual = normalize_focus_text_value(&snapshot.window_title);
+    if normalized_actual.is_empty() || !normalized_actual.contains(&normalized_expected) {
+      return false;
+    }
+  }
+
+  if expected_window.window_number.is_some() {
+    // TODO(app-candidate-window-number-v1): enforce exact AX window identity once
+    // AX snapshots carry a stable window number. Current AX snapshot contract has
+    // bundle/title only, so window_number remains a declared-but-unchecked part of
+    // the precondition for this slice.
+  }
+
+  true
 }
 
 fn non_empty_trimmed(raw: &str) -> Option<String> {
@@ -1711,6 +1754,40 @@ mod tests {
   }
 
   #[test]
+  fn resolve_focus_text_target_rejects_candidate_when_window_ref_bundle_mismatches_snapshot() {
+    let snapshot = sample_focus_snapshot();
+    let candidate_json = sample_focus_candidate_json_with_bundle_id(
+      "search-entry-focus-ax",
+      "search_entry",
+      "Search",
+      "com.other.App",
+      Some("Example"),
+    );
+
+    let error = resolve_focus_text_target(&snapshot, Some(&candidate_json), None)
+      .expect_err("mismatched window_ref bundle should reject candidate");
+
+    assert!(error.contains("no matching text input-like node found"));
+  }
+
+  #[test]
+  fn resolve_focus_text_target_rejects_candidate_when_window_ref_title_mismatches_snapshot() {
+    let snapshot = sample_focus_snapshot();
+    let candidate_json = sample_focus_candidate_json_with_bundle_id(
+      "search-entry-focus-ax",
+      "search_entry",
+      "Search",
+      "com.example.App",
+      Some("Other Window"),
+    );
+
+    let error = resolve_focus_text_target(&snapshot, Some(&candidate_json), None)
+      .expect_err("mismatched window_ref title should reject candidate");
+
+    assert!(error.contains("no matching text input-like node found"));
+  }
+
+  #[test]
   fn parse_focus_text_candidate_rejects_non_ax_grounding() {
     let candidate_json = serde_json::to_string(&Candidate {
       candidate_local_id: "ocr-anchor".to_string(),
@@ -1749,5 +1826,82 @@ mod tests {
     let error =
       parse_focus_text_candidate(&candidate_json).expect_err("non-AxNode candidate should reject");
     assert!(error.contains("only accepts AxNode candidates"));
+  }
+
+  fn sample_focus_candidate_json_with_bundle_id(
+    candidate_local_id: &str,
+    kind: &str,
+    label: &str,
+    app_bundle_id: &str,
+    window_title_substring: Option<&str>,
+  ) -> String {
+    serde_json::to_string(&Candidate {
+      candidate_local_id: candidate_local_id.to_string(),
+      kind: kind.to_string(),
+      label: Some(label.to_string()),
+      target_spec: TargetSpec {
+        grounding: TargetGrounding::AxNode,
+        anchor_text: Some(label.to_string()),
+        region_hint: Some(RatioRegion {
+          left: 0.1,
+          top: 0.1,
+          right: 0.3,
+          bottom: 0.2,
+        }),
+        row_index: None,
+      },
+      evidence: CandidateEvidence {
+        artifact_ref: ArtifactRef {
+          run_id: RunId::new("run_probe"),
+          span_id: SpanId::new("span_probe"),
+          artifact_id: ArtifactId::new("artifact_0001"),
+          captured_event_id: None,
+        },
+        observation: serde_json::json!({
+          "source": "ax",
+          "surface_candidate_id": candidate_local_id,
+          "query": {
+            "query_id": candidate_local_id,
+            "output_kind": "focus-query",
+            "selector_within": "target_window",
+            "require_visible": true,
+            "ax": {
+              "role": "AXTextField",
+              "label": label,
+              "path": "0.3",
+              "visible": true
+            }
+          },
+          "bounds": {
+            "x": 120,
+            "y": 64,
+            "width": 220,
+            "height": 36
+          }
+        }),
+      },
+      liveness: CandidateLiveness {
+        preconditions: LivenessPreconditions {
+          window_ref: Some(WindowRefPrecondition {
+            app_bundle_id: app_bundle_id.to_string(),
+            window_title_substring: window_title_substring.map(str::to_string),
+            window_number: None,
+          }),
+          anchor_recheck: Some(AnchorRecheckPrecondition {
+            text: label.to_string(),
+            region_hint: None,
+            expected_min_confidence: 0.0,
+            max_pixel_distance: 48.0,
+          }),
+        },
+        ttl_hint_ms: Some(5000),
+      },
+      control: ControlRequirements {
+        requires_app_frontmost: true,
+        requires_window_focus: true,
+      },
+      known_limits: Vec::new(),
+    })
+    .expect("sample candidate should serialize")
   }
 }
