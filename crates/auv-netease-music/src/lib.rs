@@ -1523,15 +1523,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
 
   if inputs.sidebar_region.is_none() {
     if let Some(restore) = detect_default_screen_restore(&full_recognition, window_size) {
-      if let Err(error) = session.window().click(
-        &window,
-        WindowPoint::new(restore.point.x, restore.point.y),
-        ClickOptions {
-          policy: InputPolicy::ForegroundPreferred,
-          click: Click::Single,
-          window_strategy: WindowClickStrategy::ChromiumCompatible,
-        },
-      ) {
+      if let Err(error) = click_default_screen_restore(&session, &window, restore.point) {
         return Ok(PlaylistSidebarScan::empty_with_diagnostic(
           app_context,
           window_context,
@@ -1674,15 +1666,7 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
           reason: DefaultScreenRestoreReason::MissingSidebarRegion,
           point: song_detail_restore_point(window_size),
         };
-        if let Err(error) = session.window().click(
-          &window,
-          WindowPoint::new(restore.point.x, restore.point.y),
-          ClickOptions {
-            policy: InputPolicy::ForegroundPreferred,
-            click: Click::Single,
-            window_strategy: WindowClickStrategy::ChromiumCompatible,
-          },
-        ) {
+        if let Err(error) = click_default_screen_restore(&session, &window, restore.point) {
           return Ok(PlaylistSidebarScan::empty_with_diagnostic(
             app_context,
             window_context,
@@ -1902,7 +1886,36 @@ fn detect_default_screen_restore(
 }
 
 fn song_detail_restore_point(_window_size: auv_driver::Size) -> auv_driver::Point {
-  auv_driver::Point::new(40.0, 48.0)
+  auv_driver::Point::new(82.602, 16.336)
+}
+
+#[cfg(target_os = "macos")]
+fn click_default_screen_restore(
+  session: &MacosDriverSession,
+  window: &auv_driver::Window,
+  point: auv_driver::Point,
+) -> Result<(), String> {
+  let lease = session
+    .window()
+    .prepare_for_input(
+      window,
+      PrepareForInputOptions {
+        activation: ActivationPolicy::Foreground {
+          settle: std::time::Duration::ZERO,
+        },
+        preserve_frontmost: false,
+        install_focus_guard: false,
+        settle: std::time::Duration::ZERO,
+      },
+    )
+    .map_err(|error| format!("foreground preparation failed: {error}"))?;
+  let global_x = window.frame.origin.x + point.x;
+  let global_y = window.frame.origin.y + point.y;
+  let click_result = auv_driver_macos::native::pointer::click_point(global_x, global_y, 0, 1, 80);
+  let restore_result = session.window().restore_input(lease);
+  click_result.map_err(|error| format!("foreground restore click failed: {error}"))?;
+  restore_result.map_err(|error| format!("foreground restore cleanup failed: {error}"))?;
+  Ok(())
 }
 
 fn playlist_sidebar_bottom(window_size: auv_driver::Size) -> f64 {
@@ -3452,7 +3465,7 @@ mod tests {
     .expect("song detail screen should expose a restore click");
 
     assert_eq!(restore.reason, DefaultScreenRestoreReason::SongDetailScreen);
-    assert_eq!(restore.point, auv_driver::Point::new(40.0, 48.0));
+    assert_eq!(restore.point, auv_driver::Point::new(82.602, 16.336));
   }
 
   #[test]

@@ -30,7 +30,8 @@ pub(super) fn activate_app_if_needed(app: &str) -> AuvResult<()> {
 }
 
 pub(crate) fn parse_input_policy(call: &DriverCall) -> AuvResult<auv_driver::InputPolicy> {
-  match optional_string(call, "policy")
+  match optional_string(call, "input_policy")
+    .or_else(|| optional_string(call, "policy"))
     .unwrap_or_else(|| "foreground_preferred".to_string())
     .trim()
     .to_ascii_lowercase()

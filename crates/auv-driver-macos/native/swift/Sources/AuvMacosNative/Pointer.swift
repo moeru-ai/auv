@@ -505,6 +505,16 @@ func click_point(
     CGWarpMouseCursorPosition(originalLocation)
   }
 
+  if let move = CGEvent(
+    mouseEventSource: nil,
+    mouseType: .mouseMoved,
+    mouseCursorPosition: location,
+    mouseButton: button
+  ) {
+    move.post(tap: .cghidEventTap)
+    usleep(15_000)
+  }
+
   for clickNumber in 1...clickCount {
     guard
       let down = CGEvent(

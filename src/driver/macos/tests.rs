@@ -9,6 +9,9 @@ use super::{
   OcrTextMatch, ScreenshotDimensions,
   control::common::parse_input_policy,
   control::common::{ClickPointCallOptions, build_click_point_call},
+  control::window::{
+    parse_window_click, parse_window_click_delivery_path, parse_window_click_strategy,
+  },
   observation::DisplaySelection,
   support::ax::{find_ax_node_at_point, find_now_playing_ax_node},
   support::display::{assess_coordinate_readiness, parse_display_snapshot, read_png_dimensions},
@@ -209,6 +212,38 @@ fn parse_input_policy_accepts_all_shared_policy_values() {
     let call = build_call([("policy", raw)]);
     assert_eq!(parse_input_policy(&call).expect(raw), expected);
   }
+}
+
+#[test]
+fn parse_window_click_strategy_accepts_typed_strategy_values() {
+  let call = build_call([("window_click_strategy", "pid_targeted")]);
+  assert_eq!(
+    parse_window_click_strategy(&call).expect("strategy"),
+    auv_driver::WindowClickStrategy::PidTargeted
+  );
+
+  let call = build_call([("window_click_strategy", "chromium-compatible")]);
+  assert_eq!(
+    parse_window_click_strategy(&call).expect("strategy"),
+    auv_driver::WindowClickStrategy::ChromiumCompatible
+  );
+}
+
+#[test]
+fn parse_window_click_delivery_path_accepts_foreground_global_hid() {
+  let call = build_call([("delivery_path", "foreground_global_hid")]);
+  assert_eq!(
+    parse_window_click_delivery_path(&call).expect("delivery path"),
+    super::control::window::WindowClickDeliveryPath::ForegroundGlobalHid
+  );
+}
+
+#[test]
+fn parse_window_click_rejects_counts_not_supported_by_typed_click() {
+  let call = build_call([("click_count", "3")]);
+  let error = parse_window_click(&call, 80).expect_err("triple click should be explicit");
+
+  assert!(error.contains("typed window click supports only click_count 1 or 2"));
 }
 
 #[test]

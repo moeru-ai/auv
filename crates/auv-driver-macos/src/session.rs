@@ -104,7 +104,7 @@ impl WindowApi<'_> {
   }
 
   pub fn resolve(&self, selector: WindowSelector) -> DriverResult<Window> {
-    let snapshot = crate::native::window::observe_windows_snapshot(256, "").map_err(backend)?;
+    let mut snapshot = crate::native::window::observe_windows_snapshot(256, "").map_err(backend)?;
     if selector.app.as_ref().is_some_and(|app| app.frontmost) {
       let Some(window) = resolve_frontmost_window(&snapshot, &selector) else {
         return Err(not_found("frontmost window"));
@@ -119,23 +119,35 @@ impl WindowApi<'_> {
       let app_selector = app_selector_string(app).ok_or_else(|| {
         invalid_input("window selector app must use bundle, name, pid, or frontmost")
       })?;
-      let resolved_app = resolve_app_ref(
-        &snapshot,
-        &parse_app_selector(&app_selector).map_err(invalid_input)?,
-      )
-      .map_err(backend)?;
+      let parsed_app_selector = parse_app_selector(&app_selector).map_err(invalid_input)?;
+      let resolved_app = match resolve_app_ref(&snapshot, &parsed_app_selector) {
+        Ok(resolved_app) => resolved_app,
+        Err(_) => {
+          let filtered_snapshot =
+            crate::native::window::observe_windows_snapshot(256, &app_selector).map_err(backend)?;
+          let resolved_app =
+            resolve_app_ref(&filtered_snapshot, &parsed_app_selector).map_err(backend)?;
+          snapshot = filtered_snapshot;
+          resolved_app
+        }
+      };
       let displays = Vec::new();
       let candidate = if selector.main_visible && selector.title.is_none() {
-        build_window_candidates(&snapshot, &resolved_app, &displays)
+        let candidates = build_window_candidates(&snapshot, &resolved_app, &displays)
           .map_err(backend)?
+          .into_iter()
+          .collect::<Vec<_>>();
+        candidates
           .into_iter()
           .find(|candidate| candidate.is_main_candidate)
       } else {
         let selection = window_selection_from_selector(&selector);
         crate::support::resolve_window_candidate(&snapshot, &resolved_app, &displays, &selection)
           .ok()
-      }
-      .ok_or_else(|| not_found("window selector"))?;
+      };
+      let Some(candidate) = candidate else {
+        return resolve_from_observed_windows(&snapshot, &selector);
+      };
       return Ok(window_from_native_ref(
         &candidate.window_ref,
         Some(candidate.is_main_candidate),
@@ -1488,6 +1500,24 @@ mod tests {
     let resolved = resolve_from_observed_windows(&snapshot, &selector).unwrap();
 
     assert_eq!(resolved.reference.id, "1");
+  }
+
+  #[test]
+  fn main_visible_owned_by_bundle_picks_visible_window_without_candidate_display_context() {
+    let snapshot = observed_windows(vec![observed_window(
+      307,
+      15679,
+      "com.netease.163music",
+      "NetEaseMusic",
+      "",
+      1389,
+      1050,
+    )]);
+    let selector = SelectWindow::main_visible().owned_by(App::bundle("com.netease.163music"));
+
+    let resolved = resolve_from_observed_windows(&snapshot, &selector).unwrap();
+
+    assert_eq!(resolved.reference.id, "307");
   }
 
   fn observed_windows(windows: Vec<ObservedWindow>) -> ObservedWindowSnapshot {

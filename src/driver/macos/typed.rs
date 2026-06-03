@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use auv_driver::{
-  Driver as TypedDriver, InputPolicy, PasteTextOptions, Point, Scroll, ScrollOptions, TextSubmit,
-  WindowPoint,
+  ClickOptions, Driver as TypedDriver, InputPolicy, PasteTextOptions, Point, Scroll, ScrollOptions,
+  TextSubmit, WindowClickStrategy, WindowPoint,
 };
 
 use crate::model::AuvResult;
@@ -46,12 +46,32 @@ pub(crate) mod session {
     pub(crate) input_policy: &'static str,
   }
 
-  impl ScrollPointBridgeOutcome {
+  #[derive(Clone, Debug, PartialEq, Eq)]
+  pub(crate) struct InputActionBridgeOutcome {
+    pub(crate) input_bridge: &'static str,
+    pub(crate) selected_path: &'static str,
+    pub(crate) input_policy: &'static str,
+    pub(crate) fallback_reason: Option<String>,
+  }
+
+  impl InputActionBridgeOutcome {
     pub(crate) fn from_result(policy: InputPolicy, result: &auv_driver::InputActionResult) -> Self {
       Self {
         input_bridge: "typed-session",
         selected_path: selected_path_name(result.selected_path),
         input_policy: input_policy_name(policy),
+        fallback_reason: result.fallback_reason.clone(),
+      }
+    }
+  }
+
+  impl ScrollPointBridgeOutcome {
+    pub(crate) fn from_result(policy: InputPolicy, result: &auv_driver::InputActionResult) -> Self {
+      let outcome = InputActionBridgeOutcome::from_result(policy, result);
+      Self {
+        input_bridge: outcome.input_bridge,
+        selected_path: outcome.selected_path,
+        input_policy: outcome.input_policy,
       }
     }
   }
@@ -153,6 +173,33 @@ pub(crate) mod session {
       )
       .map_err(|error| format!("typed macOS window scroll adapter failed: {error}"))?;
     Ok(ScrollPointBridgeOutcome::from_result(policy, &result))
+  }
+
+  pub(crate) fn click_window_point_bridge(
+    window: auv_driver::Window,
+    window_x: f64,
+    window_y: f64,
+    policy: InputPolicy,
+    click: auv_driver::Click,
+    window_strategy: WindowClickStrategy,
+  ) -> AuvResult<InputActionBridgeOutcome> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    let result = session
+      .window()
+      .click(
+        &window,
+        WindowPoint::new(window_x, window_y),
+        ClickOptions {
+          policy,
+          click,
+          window_strategy,
+        },
+      )
+      .map_err(|error| format!("typed macOS window click adapter failed: {error}"))?;
+    Ok(InputActionBridgeOutcome::from_result(policy, &result))
   }
 
   pub(crate) fn input_policy_name(policy: InputPolicy) -> &'static str {

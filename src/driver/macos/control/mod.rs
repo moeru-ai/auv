@@ -10,7 +10,7 @@ mod region;
 mod screen;
 mod teach;
 mod text;
-mod window;
+pub(crate) mod window;
 mod window_ocr;
 
 pub(crate) use self::app::activate_app;
