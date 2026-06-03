@@ -10,6 +10,15 @@ pub enum YoloError {
   #[error("{name} threshold must be between 0.0 and 1.0, got {value}")]
   InvalidThreshold { name: &'static str, value: f32 },
 
+  #[error("YOLO model input size must be greater than zero, got {input_size}")]
+  InvalidInputSize { input_size: u32 },
+
+  #[error("YOLO image size must be non-zero, got {width}x{height}")]
+  InvalidImageSize { width: u32, height: u32 },
+
+  #[error("YOLO detector session is unavailable because the session lock is poisoned")]
+  SessionUnavailable,
+
   #[error("YOLO model file does not exist: {}", path.display())]
   MissingModel { path: PathBuf },
 
