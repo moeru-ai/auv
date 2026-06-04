@@ -5,10 +5,20 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::output::{build_now_playing_output, render_human_summary};
 use crate::{MediaCommand, now_playing, seek, send_command};
+
+/// Output format for the now-playing read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+enum Format {
+  /// One-line human summary.
+  #[default]
+  Summary,
+  /// The `now-playing-v0` JSON object.
+  Json,
+}
 
 #[derive(Parser)]
 #[command(
@@ -41,10 +51,10 @@ enum Command {
 
 #[derive(Args)]
 struct NowPlayingArgs {
-  /// Emit the now-playing-v0 JSON object to stdout (default: human summary).
-  #[arg(long, conflicts_with = "json_out")]
-  json: bool,
-  /// Write the now-playing-v0 JSON object to a file.
+  /// Output format on stdout.
+  #[arg(long, value_enum, default_value_t = Format::Summary)]
+  format: Format,
+  /// Write the now-playing-v0 JSON object to a file (overrides --format).
   #[arg(long, value_name = "path")]
   json_out: Option<PathBuf>,
 }
@@ -75,7 +85,7 @@ fn run_now_playing(args: NowPlayingArgs) -> ExitCode {
     }
   };
 
-  if args.json || args.json_out.is_some() {
+  if args.format == Format::Json || args.json_out.is_some() {
     let output = build_now_playing_output(&state);
     let json = match serde_json::to_string_pretty(&output) {
       Ok(json) => json,

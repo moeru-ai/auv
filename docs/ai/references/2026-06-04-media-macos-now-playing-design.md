@@ -183,15 +183,18 @@ identical `now-playing-v0` contract built in `auv-media-macos::output`.
 
 ```text
 # the crate's own binary (read + transport controls)
-auv-media-macos now-playing [--json | --json-out <path>]
+auv-media-macos now-playing [--format summary|json] [--json-out <path>]
 auv-media-macos play | pause | toggle | next | previous
 auv-media-macos seek <seconds>
 
 # the netease-music subcommands (delegate to the crate, scoped to one app)
-auv-netease-music now-playing [--json | --json-out <path>] [--app-id <bundle>]   (auv-wyy = identical)
+auv-netease-music now-playing [--format summary|json] [--json-out <path>] [--app-id <bundle>]   (auv-wyy = identical)
 auv-netease-music play | pause | toggle | next | previous [--app-id <bundle>]
 auv-netease-music seek <seconds> [--app-id <bundle>]
 ```
+
+`--format` (default `summary`) selects the stdout rendering; `--json-out <path>`
+writes the JSON object to a file (and takes precedence over `--format`).
 
 **Contract divergence (intentional).** The two now-playing JSON outputs are *not*
 byte-identical: `auv-media-macos` includes the like fields
@@ -236,8 +239,8 @@ non-zero. `auv-netease-music` depends on `auv-media-macos` as a
 
 ## Output contract (agent-facing)
 
-- `--json` / `--json-out` produce a stable object carrying
-  `schema_version: "now-playing-v0"` plus the `NowPlayingState` fields.
+- `--format json` (or `--json-out <path>` to a file) produces a stable object
+  carrying `schema_version: "now-playing-v0"` plus the `NowPlayingState` fields.
   `auv-media-macos::output` owns the full contract (with like fields);
   `auv-netease-music::output` owns its like-less subset (see Contract divergence
   above).
@@ -271,10 +274,10 @@ existing live-driver procedures are gated while their pure logic is unit-tested.
 
 Behavior change, so on completion run: `cargo fmt --check`, `cargo check`,
 `cargo test`, `git diff --check`, plus CLI smoke checks on **both** front doors
-(`auv-media-macos now-playing` and `auv-netease-music now-playing`, human +
-`--json`, `--help` listing subcommands) — confirming the media-macos JSON
-carries the like fields and the netease JSON omits them, and that
-`auv-media-macos play`/`pause` flip playback (polling to settle).
+(`auv-media-macos now-playing` and `auv-netease-music now-playing`, `--format
+summary` and `--format json`, `--help` listing subcommands) — confirming the
+media-macos JSON carries the like fields and the netease JSON omits them, and
+that `auv-media-macos play`/`pause` flip playback (polling to settle).
 
 ## Scope
 

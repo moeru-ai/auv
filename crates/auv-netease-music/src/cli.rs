@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use auv_driver::RatioRect;
 use auv_driver::vision::TextRecognitionOptions;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::output::build_playlist_json_output;
 use crate::{
@@ -114,6 +114,16 @@ pub(crate) enum OutputMode {
   JsonFile(PathBuf),
 }
 
+/// Output format for the now-playing read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum Format {
+  /// One-line human summary.
+  #[default]
+  Summary,
+  /// JSON object on stdout.
+  Json,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PlaylistCommand {
   pub inputs: Inputs,
@@ -212,8 +222,9 @@ enum CliSubcommand {
 
 #[derive(Clone, Debug, Args)]
 struct NowPlayingArgs {
-  #[arg(long = "json")]
-  json: bool,
+  /// Output format on stdout.
+  #[arg(long = "format", value_enum, default_value_t = Format::Summary)]
+  format: Format,
   #[arg(long = "json-out")]
   json_out: Option<PathBuf>,
   /// Only report now-playing when this app owns the slot (default: NetEase).
@@ -408,8 +419,10 @@ fn control(control: TransportControl, args: ControlArgs) -> Command {
 fn parse_now_playing(args: NowPlayingArgs) -> Result<Command, String> {
   let output = match args.json_out {
     Some(path) => OutputMode::JsonFile(path),
-    None if args.json => OutputMode::Json,
-    None => OutputMode::Human,
+    None => match args.format {
+      Format::Json => OutputMode::Json,
+      Format::Summary => OutputMode::Human,
+    },
   };
   Ok(Command::NowPlaying(NowPlayingCommand {
     output,
