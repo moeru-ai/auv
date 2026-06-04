@@ -377,6 +377,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-media-macos"
+version = "0.0.1"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "auv-netease-music"
 version = "0.0.1"
 dependencies = [
