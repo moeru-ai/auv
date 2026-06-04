@@ -85,6 +85,11 @@
         "max_depth": 6,
         "max_children": 40
       },
+      "expect": {
+        "signal_equals": {
+          "focusTextInput.consumer": "query"
+        }
+      },
       "purpose": "Focus the main TextEdit body through AX."
     },
     {

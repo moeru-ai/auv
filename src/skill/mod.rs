@@ -2011,6 +2011,116 @@ mod tests {
   }
 
   #[test]
+  fn textedit_create_and_verify_text_recipe_requires_query_focus_consumer() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/textedit/create-and-verify-text.v0.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-body")
+      .expect("focus-body step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"query".to_string())
+    );
+  }
+
+  #[test]
+  fn notes_create_and_verify_note_v0_recipe_requires_query_focus_consumer() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/notes/create-and-verify-note.v0.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-body")
+      .expect("focus-body step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"query".to_string())
+    );
+  }
+
+  #[test]
+  fn notes_create_and_verify_note_v1_recipe_requires_query_focus_consumer() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/notes/create-and-verify-note.v1.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-body")
+      .expect("focus-body step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"query".to_string())
+    );
+  }
+
+  #[test]
+  fn qqmusic_search_ocr_anchor_recipe_requires_query_focus_consumer() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/qqmusic/search-ocr-anchor.v0.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-search-input")
+      .expect("focus-search-input step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"query".to_string())
+    );
+  }
+
+  #[test]
+  fn netease_play_visible_anchor_recipe_requires_expected_consumer_signals() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/netease-cloud-music/play-visible-anchor.v0.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    let click_search_box = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "click-search-box")
+      .expect("click-search-box step should exist");
+    assert_eq!(
+      click_search_box
+        .expect
+        .signal_equals
+        .get("clickWindowPoint.consumer"),
+      Some(&"relative-point".to_string())
+    );
+    let double_click_result = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "double-click-result")
+      .expect("double-click-result step should exist");
+    assert_eq!(
+      double_click_result
+        .expect
+        .signal_equals
+        .get("clickWindowText.consumer"),
+      Some(&"query".to_string())
+    );
+  }
+
+  #[test]
   fn enforce_step_expectations_reads_structured_signals() {
     let step: SkillStep = serde_json::from_value(json!({
       "id": "verify-text",

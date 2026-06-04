@@ -108,6 +108,11 @@
         "max_depth": 7,
         "max_children": 40
       },
+      "expect": {
+        "signal_equals": {
+          "focusTextInput.consumer": "query"
+        }
+      },
       "purpose": "Focus the note body text area through AX."
     },
     {

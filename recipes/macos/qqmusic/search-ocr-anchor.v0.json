@@ -149,6 +149,11 @@
         "max_depth": "${max_depth}",
         "max_children": "${max_children}"
       },
+      "expect": {
+        "signal_equals": {
+          "focusTextInput.consumer": "query"
+        }
+      },
       "purpose": "Reveal and focus the QQ音乐 search surface through the known shortcut plus AX click."
     },
     {

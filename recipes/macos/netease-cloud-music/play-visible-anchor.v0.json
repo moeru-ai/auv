@@ -179,6 +179,11 @@
         "click_count": 1,
         "click_interval_ms": "${click_interval_ms}",
         "settle_ms": "${search_click_settle_ms}"
+      },
+      "expect": {
+        "signal_equals": {
+          "clickWindowPoint.consumer": "relative-point"
+        }
       }
     },
     {
@@ -325,6 +330,11 @@
         "click_count": 2,
         "click_interval_ms": "${click_interval_ms}",
         "settle_ms": "${activation_settle_ms}"
+      },
+      "expect": {
+        "signal_equals": {
+          "clickWindowText.consumer": "query"
+        }
       }
     },
     {
