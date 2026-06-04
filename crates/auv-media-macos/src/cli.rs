@@ -10,9 +10,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use crate::output::{build_now_playing_output, render_human_summary};
 use crate::{MediaCommand, now_playing, seek, send_command};
 
-/// Output format for the now-playing read.
+/// Output format for the now-playing read. Shared with embedding CLIs (e.g.
+/// `auv-netease-music`) via the crate root re-export.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-enum Format {
+pub enum OutputFormat {
   /// One-line human summary.
   #[default]
   Summary,
@@ -52,8 +53,8 @@ enum Command {
 #[derive(Args)]
 struct NowPlayingArgs {
   /// Output format on stdout.
-  #[arg(long, value_enum, default_value_t = Format::Summary)]
-  format: Format,
+  #[arg(long, value_enum, default_value_t = OutputFormat::Summary)]
+  format: OutputFormat,
   /// Write the now-playing-v0 JSON object to a file (overrides --format).
   #[arg(long, value_name = "path")]
   json_out: Option<PathBuf>,
@@ -85,7 +86,7 @@ fn run_now_playing(args: NowPlayingArgs) -> ExitCode {
     }
   };
 
-  if args.format == Format::Json || args.json_out.is_some() {
+  if args.format == OutputFormat::Json || args.json_out.is_some() {
     let output = build_now_playing_output(&state);
     let json = match serde_json::to_string_pretty(&output) {
       Ok(json) => json,

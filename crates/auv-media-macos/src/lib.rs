@@ -14,6 +14,7 @@ pub mod cli;
 mod error;
 pub mod output;
 
+pub use cli::OutputFormat;
 pub use error::MediaError;
 
 /// A structured snapshot of the system now-playing state.
