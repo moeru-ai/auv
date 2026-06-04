@@ -23,11 +23,19 @@ pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
 pub use vision::{
   ImageMatch, ImageMatchResult, RecognizedText, TextRecognition, TextRecognitionOptions,
 };
-pub use window::{ObservedWindows, Window, WindowRef};
+pub use window::{
+  ObservedWindows, Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind,
+  WindowMutationOptions, WindowMutationPath, WindowMutationPolicy, WindowMutationResult,
+  WindowMutationStrategy, WindowMutationVerification, WindowRef, WindowState,
+};
 
 #[cfg(test)]
 mod tests {
-  use crate::{Driver, DriverDescriptor, DriverResult, DriverSession, PlatformKind};
+  use crate::{
+    Driver, DriverDescriptor, DriverResult, DriverSession, PlatformKind, WindowMutationAttempt,
+    WindowMutationCandidate, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
+    WindowMutationPolicy, WindowMutationResult, WindowState,
+  };
 
   #[derive(Clone, Copy)]
   struct TestDriver;
@@ -79,5 +87,17 @@ mod tests {
     let _ = PlatformKind::Remote;
 
     Ok(())
+  }
+
+  #[test]
+  fn public_api_exports_agreed_driver_names() {
+    let _window_mutation_options = WindowMutationOptions::default();
+    let _window_mutation_attempt =
+      WindowMutationAttempt::success(WindowMutationPath::AxWindowAttribute, "ok");
+    let _ = std::any::type_name::<WindowMutationCandidate>();
+    let _ = std::any::type_name::<WindowMutationKind>();
+    let _ = std::any::type_name::<WindowMutationPolicy>();
+    let _ = std::any::type_name::<WindowMutationResult>();
+    let _ = std::any::type_name::<WindowState>();
   }
 }
