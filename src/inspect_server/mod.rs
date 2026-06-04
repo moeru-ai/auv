@@ -34,6 +34,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 use crate::contract::{ObservationSnapshot, VerificationResult};
 use crate::model::AuvResult;
 use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
+use crate::run_read::AppValidationLineage;
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::{RunId, RunRecordV1Alpha1, TraceState};
 
@@ -318,11 +319,15 @@ async fn get_run(
   let observation_snapshots =
     crate::run_read::extract_observation_snapshots(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
+  let validation_lineage =
+    crate::run_read::extract_app_validation_lineage(state.store.as_ref(), &run)
+      .map_err(InspectHttpError::from_store)?;
   Ok(
     Json(InspectRunResponse {
       run: run.run,
       verifications,
       observation_snapshots,
+      validation_lineage,
     })
     .into_response(),
   )
@@ -496,6 +501,8 @@ struct InspectRunResponse {
   verifications: Vec<VerificationResult>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   observation_snapshots: Vec<ObservationSnapshot>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  validation_lineage: Vec<AppValidationLineage>,
 }
 
 #[allow(clippy::result_large_err)]
@@ -864,6 +871,9 @@ mod tests {
   use tower::ServiceExt;
 
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
+  use crate::app::{
+    AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
+  };
   use crate::contract::{
     OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot,
     ObservationSource, OperationOutput, OperationResult, OperationStatus, RecognitionScope,
@@ -882,6 +892,9 @@ mod tests {
     EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
     SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
+
+  const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str =
+    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text";
 
   #[test]
   fn write_config_rejects_no_token_on_non_loopback() {
@@ -1795,6 +1808,19 @@ mod tests {
       run["observation_snapshots"][0]["snapshot_id"],
       "snapshot_server_test"
     );
+    assert_eq!(
+      run["validation_lineage"][0]["canonical_taxonomy_id"],
+      "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text"
+    );
+    assert_eq!(run["validation_lineage"][0]["legacy_taxonomy_alias"], true);
+    assert_eq!(
+      run["validation_lineage"][0]["observed_consumer"],
+      "contract-candidate"
+    );
+    assert_eq!(
+      run["validation_lineage"][0]["observed_candidate_local_id"],
+      "native-text-focus-ax"
+    );
     assert!(
       run.get("spans").is_none(),
       "/runs/{run_id} should not inline spans even when enriched"
@@ -2642,6 +2668,50 @@ mod tests {
         "scroll-scan",
         "scroll-scan.json",
         &scroll_scan_artifact,
+      ),
+      stage_json_artifact(
+        store,
+        root,
+        &run_id,
+        &span_id,
+        2,
+        "validation.output",
+        "validation.json",
+        &AppValidation {
+          validate_version: "v0".to_string(),
+          created_at_millis: 0,
+          source_distillation_path: "/tmp/distillation.json".into(),
+          source_analysis_path: "/tmp/analysis.json".into(),
+          app_identity: AppIdentity {
+            bundle_id: "com.example.music".to_string(),
+            app_name: "Example Music".to_string(),
+            app_path: None,
+            main_executable_path: None,
+            version: "1.0".to_string(),
+            build_version: "100".to_string(),
+            url_schemes: Vec::new(),
+            apple_script_addressable: false,
+            launch_services_resolved: true,
+            resolution_notes: Vec::new(),
+          },
+          candidates: vec![AppValidatedCandidate {
+            recipe_id: "macos.textedit.native_text_candidate.v0".to_string(),
+            taxonomy_id: NATIVE_TEXT_LEGACY_TAXONOMY_ID.to_string(),
+            status: AppValidationStatus::Validated,
+            verification_mode: AppVerificationMode::MachineAsserted,
+            rationale: "test".to_string(),
+            used_annotation_ids: Vec::new(),
+            recipe_path: "/tmp/native-text.recipe.json".into(),
+            case_matrix_path: "/tmp/native-text.cases.json".into(),
+            selected_case_count: 1,
+            observed_consumer: Some("contract-candidate".to_string()),
+            observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
+            unresolved_inputs: Vec::new(),
+            failure_message: None,
+            resolved_inputs: BTreeMap::new(),
+          }],
+          known_boundaries: Vec::new(),
+        },
       ),
     ];
 

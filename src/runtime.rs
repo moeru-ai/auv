@@ -65,10 +65,13 @@ impl Runtime {
     let verifications = crate::run_read::extract_verifications(self.recording.store(), &canonical)?;
     let observation_snapshots =
       crate::run_read::extract_observation_snapshots(self.recording.store(), &canonical)?;
+    let validation_lineage =
+      crate::run_read::extract_app_validation_lineage(self.recording.store(), &canonical)?;
     Ok(crate::inspect::render_text(
       &canonical,
       &verifications,
       &observation_snapshots,
+      &validation_lineage,
     ))
   }
 
@@ -88,6 +91,13 @@ impl Runtime {
     run_id: &str,
   ) -> AuvResult<Vec<crate::contract::ObservationSnapshot>> {
     crate::run_read::list_observation_snapshots(self.recording.store(), run_id)
+  }
+
+  pub fn list_app_validation_lineage(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::run_read::AppValidationLineage>> {
+    crate::run_read::list_app_validation_lineage(self.recording.store(), run_id)
   }
 
   pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {

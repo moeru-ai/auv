@@ -8,12 +8,14 @@
 use crate::contract::{
   FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult,
 };
+use crate::run_read::AppValidationLineage;
 use crate::store::CanonicalRun;
 
 pub fn render_text(
   run: &CanonicalRun,
   verifications: &[VerificationResult],
   observation_snapshots: &[ObservationSnapshot],
+  validation_lineage: &[AppValidationLineage],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -105,6 +107,27 @@ pub fn render_text(
     }
   }
 
+  output.push_str("\nValidation Lineage:\n");
+  if validation_lineage.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for lineage in validation_lineage {
+      output.push_str(&format!(
+        "- recipe={} taxonomy={} canonical={} legacy_alias={} consumer={} candidate_local_id={} source={}\n",
+        lineage.recipe_id,
+        lineage.taxonomy_id,
+        lineage.canonical_taxonomy_id,
+        lineage.legacy_taxonomy_alias,
+        lineage.observed_consumer.as_deref().unwrap_or("n/a"),
+        lineage
+          .observed_candidate_local_id
+          .as_deref()
+          .unwrap_or("n/a"),
+        lineage.candidate_source.as_deref().unwrap_or("n/a")
+      ));
+    }
+  }
+
   output
 }
 
@@ -158,6 +181,7 @@ mod tests {
     OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope,
     RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
+  use crate::run_read::AppValidationLineage;
   use crate::store::CanonicalRun;
   use crate::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
@@ -261,8 +285,23 @@ mod tests {
       detail: serde_json::json!({"producer": "scroll_scan"}),
       known_limits: vec!["visual only".to_string()],
     }];
+    let validation_lineage = vec![AppValidationLineage {
+      recipe_id: "macos.textedit.native_text_candidate.v0".to_string(),
+      taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+      canonical_taxonomy_id: "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text"
+        .to_string(),
+      legacy_taxonomy_alias: true,
+      observed_consumer: Some("contract-candidate".to_string()),
+      observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
+      candidate_source: Some("promoted_focus_candidate".to_string()),
+    }];
 
-    let output = render_text(&run, &verifications, &observation_snapshots);
+    let output = render_text(
+      &run,
+      &verifications,
+      &observation_snapshots,
+      &validation_lineage,
+    );
 
     assert!(output.contains("Run run_inspect_test"));
     assert!(output.contains("Type: command"));
@@ -274,5 +313,12 @@ mod tests {
     assert!(output.contains("method=semantic_match"));
     assert!(output.contains("Observations:"));
     assert!(output.contains("snapshot_1"));
+    assert!(output.contains("Validation Lineage:"));
+    assert!(
+      output
+        .contains("canonical=native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text")
+    );
+    assert!(output.contains("legacy_alias=true"));
+    assert!(output.contains("consumer=contract-candidate"));
   }
 }

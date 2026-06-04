@@ -4845,8 +4845,13 @@ mod tests {
     let report = render_app_validation_report(&validation);
 
     assert!(report.contains("manual review required: `no`"));
+    assert!(report.contains(
+      "- canonical taxonomy: `native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text`"
+    ));
+    assert!(report.contains("- legacy taxonomy alias: `yes`"));
     assert!(report.contains("- observed consumer: `contract-candidate`"));
     assert!(report.contains("- observed candidate local id: `native-text-focus-ax`"));
+    assert!(report.contains("- candidate source: `promoted_focus_candidate`"));
     assert!(report.contains("- unresolved inputs:"));
     assert!(report.contains("`focus_query`"));
     assert!(report.contains("- failure:"));
@@ -4900,7 +4905,12 @@ mod tests {
     assert!(report.contains("- `candidate` means the live run succeeded"));
     assert!(report.contains("review boundary"));
     assert!(report.contains("### test.recorded.skill [candidate]"));
+    assert!(report.contains(
+      "- canonical taxonomy: `native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text`"
+    ));
+    assert!(report.contains("- legacy taxonomy alias: `yes`"));
     assert!(report.contains("- observed consumer: `query`"));
+    assert!(report.contains("- candidate source: `query_fallback`"));
   }
 
   #[test]
