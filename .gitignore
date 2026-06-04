@@ -41,6 +41,7 @@ benchmarks/longmemeval/results/
 # Claude Code / Codex
 .claude
 .codex
+.codex-live-revalidate/
 .superpowers
 .worktrees
 .worktrees/
