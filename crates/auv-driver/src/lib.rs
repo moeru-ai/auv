@@ -14,9 +14,9 @@ pub use error::{DriverError, DriverResult};
 pub use geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
 pub use input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
-  InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
-  Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions, TextSubmit,
-  TypeTextOptions, WaitOptions, WindowClickStrategy,
+  InputDeliveryPath, InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions,
+  PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions,
+  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};

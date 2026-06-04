@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use auv_driver::{
-  ClickOptions, Driver as TypedDriver, InputPolicy, PasteTextOptions, Point, Scroll, ScrollOptions,
-  TextSubmit, WindowClickStrategy, WindowPoint,
+  ClickOptions, Driver as TypedDriver, InputPolicy, KeyPressOptions, PasteTextOptions, Point,
+  Scroll, ScrollOptions, TextSubmit, TypeTextOptions, WindowClickStrategy, WindowPoint,
 };
 
 use crate::model::AuvResult;
@@ -125,6 +125,70 @@ pub(crate) mod session {
       })
       .map_err(|error| format!("typed macOS paste_text adapter failed: {error}"))?;
     Ok(PasteTextBridgeOutcome::UsedTypedSession)
+  }
+
+  pub(crate) fn type_text_bridge(
+    text: &str,
+    replace_existing: bool,
+    submit_key: Option<&str>,
+    submit_settle_ms: u64,
+  ) -> AuvResult<InputActionBridgeOutcome> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    let type_settle = if submit_key.is_none() {
+      Duration::from_millis(submit_settle_ms)
+    } else {
+      Duration::ZERO
+    };
+    let result = session
+      .input()
+      .type_text(
+        text,
+        TypeTextOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          replace_existing,
+          submit: TextSubmit::No,
+          inter_char_delay: Duration::from_millis(20),
+          allow_clipboard_fallback: false,
+          settle: type_settle,
+        },
+      )
+      .map_err(|error| format!("typed macOS type_text adapter failed: {error}"))?;
+    if let Some(submit_key) = submit_key {
+      session
+        .input()
+        .press_key(KeyPressOptions {
+          key: submit_key.to_string(),
+          settle: Duration::from_millis(submit_settle_ms),
+        })
+        .map_err(|error| format!("typed macOS submit key adapter failed: {error}"))?;
+    }
+
+    Ok(InputActionBridgeOutcome::from_result(
+      InputPolicy::ForegroundPreferred,
+      &result,
+    ))
+  }
+
+  pub(crate) fn press_key_bridge(key: &str, settle_ms: u64) -> AuvResult<InputActionBridgeOutcome> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    let result = session
+      .input()
+      .press_key(KeyPressOptions {
+        key: key.to_string(),
+        settle: Duration::from_millis(settle_ms),
+      })
+      .map_err(|error| format!("typed macOS press_key adapter failed: {error}"))?;
+
+    Ok(InputActionBridgeOutcome::from_result(
+      InputPolicy::ForegroundPreferred,
+      &result,
+    ))
   }
 
   pub(crate) fn list_windows_bridge() -> AuvResult<Vec<auv_driver::Window>> {

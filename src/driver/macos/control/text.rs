@@ -1,9 +1,7 @@
 // File: src/driver/macos/control/text.rs
 use auv_driver::TextSubmit;
 
-use super::super::support::runtime::{
-  paste_text_preserving_clipboard, send_key_input, type_text_via_system_events,
-};
+use super::super::support::runtime::paste_text_preserving_clipboard;
 use super::super::support::{
   artifacts::{build_text_artifact, render_type_text_report, sanitize_file_component},
   call::{
@@ -35,6 +33,25 @@ fn paste_text_signals(
   signals
 }
 
+fn input_action_signals(
+  outcome: &super::super::typed::session::InputActionBridgeOutcome,
+) -> std::collections::BTreeMap<String, String> {
+  let mut signals = std::collections::BTreeMap::new();
+  signals.insert("input.bridge".to_string(), outcome.input_bridge.to_string());
+  signals.insert(
+    "input.bridge.selectedPath".to_string(),
+    outcome.selected_path.to_string(),
+  );
+  signals.insert(
+    "input.bridge.policy".to_string(),
+    outcome.input_policy.to_string(),
+  );
+  if let Some(reason) = &outcome.fallback_reason {
+    signals.insert("input.bridge.fallbackReason".to_string(), reason.clone());
+  }
+  signals
+}
+
 pub(crate) fn type_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   let app = app_identifier(call).unwrap_or_default();
   let text = required_non_empty_string(call, "text")?;
@@ -46,7 +63,7 @@ pub(crate) fn type_text(call: &DriverCall) -> AuvResult<DriverResponse> {
   if activate {
     activate_app_if_needed(&app)?;
   }
-  type_text_via_system_events(
+  let bridge_outcome = super::super::typed::session::type_text_bridge(
     &text,
     replace_existing,
     submit_key.as_deref(),
@@ -100,8 +117,11 @@ pub(crate) fn type_text(call: &DriverCall) -> AuvResult<DriverResponse> {
         }
       ),
     },
-    backend: Some("macos.system-events.type-text".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    backend: Some(format!(
+      "macos.input.type-text.{}",
+      bridge_outcome.input_bridge
+    )),
+    signals: input_action_signals(&bridge_outcome),
     notes,
     artifacts: vec![artifact],
   })
@@ -218,7 +238,7 @@ pub(crate) fn press_key(call: &DriverCall) -> AuvResult<DriverResponse> {
   if activate {
     activate_app_if_needed(&app)?;
   }
-  send_key_input(&key, settle_ms)?;
+  let bridge_outcome = super::super::typed::session::press_key_bridge(&key, settle_ms)?;
 
   let artifact = build_text_artifact(
     "press-key",
@@ -244,8 +264,11 @@ pub(crate) fn press_key(call: &DriverCall) -> AuvResult<DriverResponse> {
         &app
       }
     ),
-    backend: Some("macos.system-events.press-key".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    backend: Some(format!(
+      "macos.input.press-key.{}",
+      bridge_outcome.input_bridge
+    )),
+    signals: input_action_signals(&bridge_outcome),
     notes: vec![
       format!("key={key}"),
       format!("settleMs={settle_ms}"),
@@ -274,8 +297,8 @@ mod tests {
   use auv_driver::TextSubmit;
 
   use super::{
-    clipboard_restore_signals, paste_text_signals, should_activate_text_input,
-    typed_submit_for_legacy_submit_key,
+    clipboard_restore_signals, input_action_signals, paste_text_signals,
+    should_activate_text_input, typed_submit_for_legacy_submit_key,
   };
   use crate::model::{DriverCall, ExecutionTarget};
   use std::collections::BTreeMap;
@@ -301,6 +324,32 @@ mod tests {
       signals.get("input.bridge.reason"),
       Some(&"typed-submit-supported".to_string())
     );
+  }
+
+  #[test]
+  fn input_action_signals_include_typed_bridge_metadata() {
+    let outcome = crate::driver::macos::typed::session::InputActionBridgeOutcome {
+      input_bridge: "typed-session",
+      selected_path: "foreground_system_events",
+      input_policy: "foreground_preferred",
+      fallback_reason: None,
+    };
+
+    let signals = input_action_signals(&outcome);
+
+    assert_eq!(
+      signals.get("input.bridge"),
+      Some(&"typed-session".to_string())
+    );
+    assert_eq!(
+      signals.get("input.bridge.selectedPath"),
+      Some(&"foreground_system_events".to_string())
+    );
+    assert_eq!(
+      signals.get("input.bridge.policy"),
+      Some(&"foreground_preferred".to_string())
+    );
+    assert!(!signals.contains_key("input.bridge.fallbackReason"));
   }
 
   #[test]

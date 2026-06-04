@@ -3,6 +3,9 @@ use auv_inference_common::{
 };
 use ultralytics_inference::Results;
 
+// NOTICE: Upstream `ultralytics-inference` owns model load, preprocessing,
+// postprocessing, and NMS. This adapter only converts upstream detection
+// results into AUV-owned inference output types.
 pub fn detection_set_from_result(
   model_id: &ModelId,
   result: &Results,
@@ -92,6 +95,66 @@ mod tests {
       error,
       InferenceError::MissingClassLabel { class_id: 1 }
     ));
+  }
+
+  #[test]
+  fn uses_override_label_when_present() {
+    let mut result = result_with_box_for_class(1);
+    result.names = Arc::new(HashMap::from([(1, "backend-one".to_string())]));
+    let override_names = vec!["override-zero".to_string(), "override-one".to_string()];
+
+    let detections = detection_set_from_result(
+      &ModelId("test-model".to_string()),
+      &result,
+      Some(&override_names),
+    )
+    .expect("override label should be accepted");
+
+    assert_eq!(
+      detections.detections[0],
+      Detection {
+        class_id: 1,
+        label: "override-one".to_string(),
+        confidence: 0.9,
+        bbox: BoundingBox {
+          x1: 1.0,
+          y1: 2.0,
+          x2: 3.0,
+          y2: 4.0,
+        },
+      }
+    );
+  }
+
+  #[test]
+  fn uses_backend_names_and_source_image_shape_without_override() {
+    let mut result = result_with_box_for_class(1);
+    result.names = Arc::new(HashMap::from([(1, "backend-one".to_string())]));
+
+    let detections =
+      detection_set_from_result(&ModelId("test-model".to_string()), &result, None).unwrap();
+
+    assert_eq!(
+      detections,
+      DetectionSet {
+        model_id: ModelId("test-model".to_string()),
+        image_size: ImageSize {
+          width: 8,
+          height: 8,
+        },
+        detections: vec![Detection {
+          class_id: 1,
+          label: "backend-one".to_string(),
+          confidence: 0.9,
+          bbox: BoundingBox {
+            x1: 1.0,
+            y1: 2.0,
+            x2: 3.0,
+            y2: 4.0,
+          },
+        }],
+      }
+    );
   }
 
   fn result_with_box_for_class(class_id: usize) -> Results {

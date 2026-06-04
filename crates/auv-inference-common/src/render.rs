@@ -1,6 +1,10 @@
 use crate::{BoundingBox, Detection};
 use image::{Rgb, RgbImage};
 
+/// Draws detection boxes into an RGB image for local inspection/debug artifacts.
+///
+/// NOTICE: The rendered image is a debug aid. `DetectionSet` remains the
+/// authoritative structured output for inference consumers.
 pub fn render_annotated_image(image: &RgbImage, detections: &[Detection]) -> RgbImage {
   let mut annotated = image.clone();
   if annotated.width() == 0 || annotated.height() == 0 {

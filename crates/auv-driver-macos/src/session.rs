@@ -12,9 +12,9 @@ use auv_driver::geometry::{
 };
 use auv_driver::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
-  InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
-  Scroll, ScrollDeliveryCandidate, ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions,
-  WindowClickStrategy,
+  InputDeliveryPath, InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions,
+  PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions, TextSubmit,
+  TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
@@ -712,6 +712,32 @@ impl InputApi<'_> {
     run_osascript(&["tell application \"System Events\" to keystroke \"v\" using command down"])
   }
 
+  pub fn type_text(&self, text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    // TODO(foreground-input-target-lease): target-aware foreground typing is
+    // deferred until an owner-approved slice connects active-control input to
+    // window preparation/restoration leases; this API intentionally types into
+    // the current foreground control.
+    type_text_foreground(text, options)?;
+    Ok(foreground_system_events_result(
+      DisturbanceLevel::None,
+      DisturbanceLevel::Unknown,
+      DisturbanceLevel::None,
+    ))
+  }
+
+  pub fn press_key(&self, options: KeyPressOptions) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    // TODO(foreground-input-target-lease): see `type_text`; key presses share
+    // the same active-control foreground boundary in this slice.
+    press_key_foreground(&options)?;
+    Ok(foreground_system_events_result(
+      DisturbanceLevel::None,
+      DisturbanceLevel::Unknown,
+      DisturbanceLevel::None,
+    ))
+  }
+
   pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<()> {
     let _ = self.session;
     let _lock = acquire_clipboard_lock(Duration::from_millis(5_000))?;
@@ -1084,6 +1110,186 @@ fn type_text_in_window(
     thread::sleep(options.settle);
   }
   Ok(())
+}
+
+fn type_text_foreground(text: &str, options: TypeTextOptions) -> DriverResult<()> {
+  if matches!(options.policy, InputPolicy::BackgroundOnly) {
+    return Err(invalid_input(
+      "foreground type_text cannot use background_only input policy",
+    ));
+  }
+
+  let submit_key_code = text_submit_key_code(options.submit)?;
+  let inter_char_delay = duration_millis(options.inter_char_delay)?;
+  let mut lines = vec!["tell application \"System Events\"".to_string()];
+  if options.replace_existing {
+    lines.push("keystroke \"a\" using {command down}".to_string());
+    lines.push("delay 0.05".to_string());
+    lines.push("key code 51".to_string());
+    lines.push("delay 0.05".to_string());
+  }
+  push_text_keystroke_lines(&mut lines, text, inter_char_delay);
+  if let Some(key_code) = submit_key_code {
+    lines.push("delay 0.05".to_string());
+    lines.push(format!("key code {key_code}"));
+  }
+  lines.push("end tell".to_string());
+  run_osascript_lines(&lines)?;
+  if !options.settle.is_zero() {
+    thread::sleep(options.settle);
+  }
+  Ok(())
+}
+
+fn push_text_keystroke_lines(lines: &mut Vec<String>, text: &str, inter_char_delay_ms: u64) {
+  for character in text.chars() {
+    lines.push(text_keystroke_line(character));
+    if inter_char_delay_ms > 0 {
+      lines.push(format_delay_millis(inter_char_delay_ms));
+    }
+  }
+}
+
+fn text_keystroke_line(character: char) -> String {
+  match character {
+    // NOTICE(macos-system-events-underscore): `keystroke "_"` is layout/input
+    // source sensitive and was observed to emit ` a ` on this smoke host.
+    // Keep the workaround until foreground typing moves to a native Unicode
+    // event path instead of System Events.
+    '_' => "key code 27 using {shift down}".to_string(),
+    _ => format!(
+      "keystroke {}",
+      osascript_string_literal(&character.to_string())
+    ),
+  }
+}
+
+fn press_key_foreground(options: &KeyPressOptions) -> DriverResult<()> {
+  let key = options.key.trim();
+  if key.is_empty() {
+    return Err(invalid_input("key must not be empty"));
+  }
+
+  if key.contains('+') {
+    press_shortcut_foreground(key)?;
+  } else if let Ok(key_code) = special_key_code(key) {
+    run_osascript_lines(&[
+      "tell application \"System Events\"".to_string(),
+      format!("key code {key_code}"),
+      "end tell".to_string(),
+    ])?;
+  } else if key.chars().count() == 1 {
+    run_osascript(&[&format!(
+      "tell application \"System Events\" to keystroke {}",
+      osascript_string_literal(key)
+    )])?;
+  } else {
+    return Err(invalid_input(format!(
+      "invalid key {key}; use a special key like Return, a shortcut like cmd+f, or type_text for multi-character text"
+    )));
+  }
+
+  if !options.settle.is_zero() {
+    thread::sleep(options.settle);
+  }
+  Ok(())
+}
+
+fn press_shortcut_foreground(shortcut: &str) -> DriverResult<()> {
+  let parsed = parse_shortcut(shortcut)?;
+  let line = if parsed.modifiers.is_empty() {
+    format!(
+      "tell application \"System Events\" to keystroke {}",
+      osascript_string_literal(&parsed.key)
+    )
+  } else {
+    format!(
+      "tell application \"System Events\" to keystroke {} using {{{}}}",
+      osascript_string_literal(&parsed.key),
+      parsed.modifiers.join(", ")
+    )
+  };
+  run_osascript(&[&line])
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedShortcut {
+  key: String,
+  modifiers: Vec<&'static str>,
+}
+
+fn parse_shortcut(shortcut: &str) -> DriverResult<ParsedShortcut> {
+  let raw_parts = shortcut
+    .split('+')
+    .map(str::trim)
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>();
+  if raw_parts.len() < 2 {
+    return Err(invalid_input(format!(
+      "invalid shortcut {shortcut}; expected a form like cmd+f or cmd+shift+p"
+    )));
+  }
+
+  let key = raw_parts
+    .last()
+    .map(|value| value.to_ascii_lowercase())
+    .ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; missing key")))?;
+  if key.chars().count() != 1 {
+    return Err(invalid_input(format!(
+      "invalid shortcut {shortcut}; only single-character keys are currently supported"
+    )));
+  }
+
+  let mut modifiers = Vec::new();
+  for raw_modifier in &raw_parts[..raw_parts.len() - 1] {
+    let modifier = match raw_modifier.to_ascii_lowercase().as_str() {
+      "cmd" | "command" => "command down",
+      "shift" => "shift down",
+      "alt" | "option" => "option down",
+      "ctrl" | "control" => "control down",
+      other => {
+        return Err(invalid_input(format!(
+          "invalid shortcut {shortcut}; unsupported modifier {other}"
+        )));
+      }
+    };
+    if !modifiers.contains(&modifier) {
+      modifiers.push(modifier);
+    }
+  }
+
+  Ok(ParsedShortcut { key, modifiers })
+}
+
+fn special_key_code(raw: &str) -> DriverResult<i32> {
+  match raw.trim().to_ascii_lowercase().as_str() {
+    "return" => Ok(36),
+    "enter" => Ok(76),
+    "tab" => Ok(48),
+    "delete" | "backspace" => Ok(51),
+    "escape" | "esc" => Ok(53),
+    "space" => Ok(49),
+    other => Err(invalid_input(format!(
+      "invalid submit key {other}; supported values are return, enter, tab, delete, backspace, escape, and space"
+    ))),
+  }
+}
+
+fn foreground_system_events_result(
+  mouse_disturbance: DisturbanceLevel,
+  focus_disturbance: DisturbanceLevel,
+  clipboard_disturbance: DisturbanceLevel,
+) -> InputActionResult {
+  InputActionResult {
+    selected_path: InputDeliveryPath::ForegroundSystemEvents,
+    attempts: vec![InputAttempt::success(
+      InputDeliveryPath::ForegroundSystemEvents,
+    )],
+    fallback_reason: None,
+    mouse_disturbance,
+    focus_disturbance,
+    clipboard_disturbance,
+  }
 }
 
 fn type_text_parts(options: TypeTextOptions) -> DriverResult<(Option<i32>, u64)> {
@@ -1983,6 +2189,15 @@ fn escape_applescript(value: &str) -> String {
   value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+fn osascript_string_literal(value: &str) -> String {
+  format!("\"{}\"", escape_applescript(value))
+}
+
+fn format_delay_millis(milliseconds: u64) -> String {
+  let seconds = milliseconds as f64 / 1_000.0;
+  format!("delay {seconds:.3}")
+}
+
 fn backend(message: impl std::fmt::Display) -> DriverError {
   DriverError::Backend {
     message: message.to_string(),
@@ -2118,6 +2333,75 @@ mod no_steal_tests {
   }
 
   #[test]
+  fn foreground_type_text_rejects_background_only_policy() {
+    let error = type_text_foreground(
+      "hello",
+      TypeTextOptions {
+        policy: InputPolicy::BackgroundOnly,
+        ..TypeTextOptions::default()
+      },
+    )
+    .expect_err("background-only foreground typing should be invalid");
+
+    assert!(matches!(error, DriverError::InvalidInput { .. }));
+  }
+
+  #[test]
+  fn special_key_code_supports_legacy_foreground_keys() {
+    assert_eq!(special_key_code("return").expect("return"), 36);
+    assert_eq!(special_key_code("enter").expect("enter"), 76);
+    assert_eq!(special_key_code("tab").expect("tab"), 48);
+    assert_eq!(special_key_code("backspace").expect("backspace"), 51);
+    assert_eq!(special_key_code("esc").expect("esc"), 53);
+    assert_eq!(special_key_code("space").expect("space"), 49);
+  }
+
+  #[test]
+  fn foreground_text_keystroke_lines_keep_spaces_as_separate_events() {
+    let mut lines = Vec::new();
+    push_text_keystroke_lines(&mut lines, "For_Me", 20);
+
+    assert_eq!(
+      lines,
+      vec![
+        "keystroke \"F\"",
+        "delay 0.020",
+        "keystroke \"o\"",
+        "delay 0.020",
+        "keystroke \"r\"",
+        "delay 0.020",
+        "key code 27 using {shift down}",
+        "delay 0.020",
+        "keystroke \"M\"",
+        "delay 0.020",
+        "keystroke \"e\"",
+        "delay 0.020",
+      ]
+    );
+  }
+
+  #[test]
+  fn parse_shortcut_normalizes_supported_modifiers() {
+    let parsed = parse_shortcut("cmd+shift+p").expect("shortcut");
+
+    assert_eq!(
+      parsed,
+      ParsedShortcut {
+        key: "p".to_string(),
+        modifiers: vec!["command down", "shift down"],
+      }
+    );
+  }
+
+  #[test]
+  fn parse_shortcut_rejects_multi_character_key() {
+    assert!(matches!(
+      parse_shortcut("cmd+return"),
+      Err(DriverError::InvalidInput { .. })
+    ));
+  }
+
+  #[test]
   fn input_api_exposes_explicit_global_hid_scroll_method() {
     if false {
       let session = MacosDriverSession { _private: () };
@@ -2126,6 +2410,24 @@ mod no_steal_tests {
         Scroll::new(0.0, -120.0),
         Duration::ZERO,
       );
+    }
+  }
+
+  #[test]
+  fn input_api_exposes_foreground_text_and_key_methods() {
+    if false {
+      let session = MacosDriverSession { _private: () };
+      let _ = session.input().type_text(
+        "hello",
+        TypeTextOptions {
+          policy: InputPolicy::ForegroundPreferred,
+          ..TypeTextOptions::default()
+        },
+      );
+      let _ = session.input().press_key(KeyPressOptions {
+        key: "return".to_string(),
+        settle: Duration::ZERO,
+      });
     }
   }
 

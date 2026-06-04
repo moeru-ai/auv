@@ -179,43 +179,6 @@ pub(crate) fn set_clipboard_text(text: &str) -> AuvResult<()> {
   auv_driver_macos::native::clipboard::set_clipboard_text(text)
 }
 
-pub(crate) fn type_text_via_system_events(
-  text: &str,
-  replace_existing: bool,
-  submit_key: Option<&str>,
-  submit_settle_ms: u64,
-) -> AuvResult<()> {
-  let mut lines = vec!["tell application \"System Events\"".to_string()];
-  if replace_existing {
-    lines.push("keystroke \"a\" using {command down}".to_string());
-    lines.push("delay 0.05".to_string());
-    lines.push("key code 51".to_string());
-    lines.push("delay 0.05".to_string());
-  }
-  push_text_keystroke_lines(&mut lines, text);
-  if let Some(submit_key) = submit_key {
-    let key_code = special_key_code(submit_key)?;
-    lines.push("delay 0.05".to_string());
-    lines.push(format!("key code {key_code}"));
-  }
-  lines.push("end tell".to_string());
-  run_osascript_lines(&lines)?;
-  if submit_settle_ms > 0 {
-    thread::sleep(Duration::from_millis(submit_settle_ms));
-  }
-  Ok(())
-}
-
-pub(crate) fn push_text_keystroke_lines(lines: &mut Vec<String>, text: &str) {
-  for character in text.chars() {
-    lines.push(format!(
-      "keystroke {}",
-      osascript_string_literal(&character.to_string())
-    ));
-    lines.push("delay 0.02".to_string());
-  }
-}
-
 pub(crate) fn paste_text_preserving_clipboard(
   text: &str,
   replace_existing: bool,
@@ -283,33 +246,6 @@ pub(crate) fn run_osascript_lines(lines: &[String]) -> AuvResult<CommandOutput> 
     args.push(line.clone());
   }
   run_command(OSASCRIPT_BINARY, &args)
-}
-
-pub(crate) fn send_key_input(key: &str, settle_ms: u64) -> AuvResult<()> {
-  if key.contains('+') {
-    send_shortcut(key)?;
-  } else if let Ok(key_code) = special_key_code(key) {
-    run_osascript_lines(&[
-      "tell application \"System Events\"".to_string(),
-      format!("key code {key_code}"),
-      "end tell".to_string(),
-    ])?;
-  } else if key.chars().count() == 1 {
-    run_osascript_lines(&[format!(
-      "tell application \"System Events\" to keystroke {}",
-      osascript_string_literal(key)
-    )])?;
-  } else {
-    return Err(format!(
-      "invalid key {}; use a special key like Return, a shortcut like cmd+f, or debug.typeText for multi-character text",
-      key
-    ));
-  }
-
-  if settle_ms > 0 {
-    thread::sleep(Duration::from_millis(settle_ms));
-  }
-  Ok(())
 }
 
 pub(crate) fn send_shortcut(shortcut: &str) -> AuvResult<()> {

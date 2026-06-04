@@ -9,6 +9,20 @@ keeping AUV-owned inference result types for consumers.
 This slice should remove the current custom ONNX YOLO preprocessing, decoding,
 and NMS implementation instead of maintaining it as a parallel backend.
 
+## Current Route Freeze
+
+This document describes the current implemented route on `main`.
+
+- `ultralytics-inference` owns model loading, preprocessing, postprocessing,
+  and NMS.
+- AUV owns conversion from upstream `Results` into `DetectionSet`.
+- `DetectionSet` is inference-crate output only. It is not
+  `contract::Candidate`, not `OperationResult`, and not an action contract.
+- No runtime, driver, app, `src/contract.rs`, or action-consumer integration
+  exists in this phase.
+- The older self-owned raw decode / letterbox / NMS route is a deferred
+  alternative, not the current implementation path.
+
 ## Goals
 
 - Add `crates/auv-inference-common` for stable AUV inference result types.
@@ -32,6 +46,8 @@ and NMS implementation instead of maintaining it as a parallel backend.
 - No capture, MediaStream, Swift overlay, Steam launch automation, or macOS
   driver API changes.
 - No attempt to preserve the current custom YOLO decoder as a fallback backend.
+- No `DetectionSet -> contract::Candidate` adapter.
+- No app validation, runtime recording, or driver capture integration.
 - No AUV core terminology change in `docs/TERMS_AND_CONCEPTS.md`.
 
 ## Licensing Decision
@@ -47,6 +63,13 @@ not block on licensing concerns in this implementation slice.
 Owns common inference domain types that can be consumed by future Balatro,
 runtime artifact, or CLI surfaces without importing backend-specific crates.
 
+Current boundary:
+
+- `auv-inference-common` is currently scoped to inference crates.
+- It is not a general AUV media, geometry, or shared runtime contract crate.
+- `DetectionSet` is structured detection output only and carries no action
+  semantics.
+
 Public types:
 
 - `ModelId(pub String)`
@@ -57,6 +80,14 @@ Public types:
 - `DetectionSet { model_id: ModelId, image_size: ImageSize, detections: Vec<Detection> }`
 - `DetectionOptions { confidence_threshold: f32, iou_threshold: f32, max_detections: usize }`
 - `InferenceError` and `InferenceResult<T>`
+
+Bounding-box semantics:
+
+- detection bbox coordinates are source-image pixel coordinates after upstream
+  preprocessing/postprocessing
+- they are not normalized coordinates
+- they are not 640x640 model-input coordinates
+- they are not screen or window coordinates
 
 The common crate should contain renderer support if it only depends on common
 types and `image`. A simple `render_annotated_image` helper may live here so
@@ -104,6 +135,10 @@ image path or image frame
 Upper-level AUV consumers should only see `DetectionSet` and related common
 types. They should not import `ultralytics_inference::Results`, `Boxes`, or
 `YOLOModel`.
+
+They should also not treat `DetectionSet` as a runtime action target in this
+phase. Any future bridge into `RecognitionResult`, `Candidate`, or other AUV
+runtime contracts must land as a separate approved slice.
 
 ## Dependency Notes
 
@@ -192,6 +227,10 @@ Default Balatro usage should remain CPU/basic artifact output. Hardware features
 such as `vision-coreml` or `vision-cuda` should be opt-in so the default build
 does not require platform-specific GPU dependencies.
 
+Provider passthrough features are not a current support guarantee and are not a
+validated CI matrix in this milestone. The required baseline is the default CPU
+adapter path.
+
 ## Balatro Parity
 
 The existing Balatro fixture strategy should survive the refactor:
@@ -206,6 +245,14 @@ If Ultralytics official preprocessing/NMS differs from the Python fixture
 generator, prefer updating fixture generation to reflect the community backend
 behavior instead of reintroducing custom YOLO postprocessing. Only adjust the
 adapter if the difference is a conversion bug.
+
+Balatro parity is a local/gated smoke path, not the default CI baseline. The
+default test suite must stay meaningful without local Balatro models or a local
+Balatro checkout.
+
+The local smoke entry point should use `AUV_BALATRO_ROOT` to locate the Balatro
+checkout. If the env var is absent or points to a missing directory, tests must
+skip explicitly and report that the real-model smoke was not exercised.
 
 ## Example Artifact
 
@@ -248,6 +295,15 @@ Required focused validation:
 - `cargo test -p auv-inference-ultralytics --test fixture_parity -- --nocapture`
 - `cargo run -p auv-inference-ultralytics --example detect -- ...`
 
+Validation meaning:
+
+- default `cargo test` proves compile-time wiring, conversion behavior, and
+  small deterministic adapter invariants
+- local Balatro fixture parity proves real-model smoke only when the local
+  Balatro repo and model assets are available
+- focused validation in this slice does not prove runtime, driver, app, or
+  action-consumer integration
+
 Required workspace validation:
 
 - `cargo fmt --check`
@@ -268,3 +324,5 @@ Use the AUV inventory commands after the refactor:
   slice is explicitly approved and Collabi conflicts are clear.
 - OCR/RapidOCR remains deferred to an OCR-specific inference adapter.
 - Realtime capture and Swift overlay visualization remain deferred.
+- `DetectionSet -> Candidate` or `DetectionSet -> RecognitionResult` bridges
+  remain deferred to a separate contract slice.

@@ -11,6 +11,10 @@ pub struct ImageSize {
   pub height: u32,
 }
 
+/// Inference-scoped RGB frame input.
+///
+/// NOTICE: This is currently an image-backed helper for inference crates, not a
+/// general AUV media/shared-contract type.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageFrame {
   pub image: RgbImage,
@@ -56,9 +60,20 @@ pub struct Detection {
   pub class_id: usize,
   pub label: String,
   pub confidence: f32,
+  /// Bounding box in source-image pixel coordinates after upstream
+  /// preprocessing/postprocessing has already been applied.
   pub bbox: BoundingBox,
 }
 
+/// Structured inference output produced by inference crates.
+///
+/// NOTICE: `DetectionSet` is not `contract::Candidate`, not
+/// `OperationResult`, and does not carry action semantics, freshness,
+/// liveness, or screen/window coordinate projection.
+///
+/// TODO(inference-candidate-bridge): If detections later need a runtime bridge,
+/// add it as a separate contract slice instead of growing action semantics
+/// directly into this type.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct DetectionSet {
   pub model_id: ModelId,

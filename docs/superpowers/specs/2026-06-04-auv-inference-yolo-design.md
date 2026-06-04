@@ -1,5 +1,11 @@
 # AUV Inference YOLO Design
 
+> NOTICE: This document now describes a deferred alternative route:
+> an AUV-owned raw YOLO decode / letterbox / NMS pipeline.
+> It is not the current implementation path on `main`.
+> The current implemented route is `auv-inference-common` plus
+> `auv-inference-ultralytics`.
+
 ## Scope
 
 Build a narrow Rust YOLO ONNX inference crate for AUV and verify it against

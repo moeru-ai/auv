@@ -17,10 +17,7 @@ use super::{
   support::display::{assess_coordinate_readiness, parse_display_snapshot, read_png_dimensions},
   support::observation::{parse_display_selection, resolve_screen_capture_source},
   support::ocr_commands::{TextMatchCommandReport, render_text_match_command_json},
-  support::runtime::{
-    parse_shortcut, process_is_alive, push_text_keystroke_lines, read_lock_owner_pid,
-    special_key_code,
-  },
+  support::runtime::{parse_shortcut, process_is_alive, read_lock_owner_pid, special_key_code},
   support::selector::{
     build_window_candidates, parse_app_selector, resolve_app_ref, resolve_window_candidate,
     window_capture_readiness_diagnostic,
@@ -137,30 +134,6 @@ fn special_key_code_maps_delete_aliases() {
   assert_eq!(
     special_key_code("backspace").expect("backspace should map"),
     51
-  );
-}
-
-#[test]
-fn push_text_keystroke_lines_keeps_spaces_as_separate_events() {
-  let mut lines = Vec::new();
-  push_text_keystroke_lines(&mut lines, "For Me");
-
-  assert_eq!(
-    lines,
-    vec![
-      "keystroke \"F\"",
-      "delay 0.02",
-      "keystroke \"o\"",
-      "delay 0.02",
-      "keystroke \"r\"",
-      "delay 0.02",
-      "keystroke \" \"",
-      "delay 0.02",
-      "keystroke \"M\"",
-      "delay 0.02",
-      "keystroke \"e\"",
-      "delay 0.02",
-    ]
   );
 }
 

@@ -170,6 +170,12 @@ impl Default for TypeTextOptions {
   }
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyPressOptions {
+  pub key: String,
+  pub settle: Duration,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Scroll {
   pub delta_x: f64,

@@ -17,6 +17,9 @@ repository.workspace = true
 # feature set. Additional upstream provider passthroughs such as acl, armnn,
 # azure, cann, nnapi, qnn, rknpu, tvm, and all are deferred until
 # owner-approved need.
+# NOTICE: These are compile-time passthroughs, not a current AUV support
+# guarantee or CI validation matrix. The default validation baseline is the CPU
+# adapter path only.
 default = ["cpu"]
 cpu = []
 xnnpack = ["ultralytics-inference/xnnpack"]

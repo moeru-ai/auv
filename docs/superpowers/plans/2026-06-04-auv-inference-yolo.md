@@ -1,5 +1,9 @@
 # AUV Inference YOLO Implementation Plan
 
+> NOTICE: This plan is a deferred alternative route for an AUV-owned raw YOLO
+> decode pipeline. It is not the current implemented path on `main`, which uses
+> `auv-inference-common` plus `auv-inference-ultralytics`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build `crates/auv-inference-yolo`, a narrow Rust ONNX YOLO detector, validate it against real Balatro YOLO models and images, and provide a callable example that writes JSON plus annotated image artifacts.
