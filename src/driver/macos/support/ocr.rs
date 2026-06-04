@@ -280,6 +280,14 @@ fn expand_rect(
   image_width: i64,
   image_height: i64,
 ) -> ObservedRect {
+  // Guard against a non-positive image size before clamping. With i64,
+  // `image_width.saturating_sub(1)` is -1 when image_width is 0, which
+  // makes `clamp(_, 0, -1)` panic (min > max). Skip expansion in that
+  // case and return the original rect — the caller's rect is already
+  // a well-formed observation.
+  if image_width <= 0 || image_height <= 0 {
+    return rect.clone();
+  }
   let x = (rect.x - pad_x).clamp(0, image_width.saturating_sub(1));
   let y = (rect.y - pad_y).clamp(0, image_height.saturating_sub(1));
   let max_x = (rect.x + rect.width + pad_x).clamp(x + 1, image_width);
@@ -393,5 +401,49 @@ mod tests {
     assert_eq!(rows[0].source, "visual-bands+ocr-text");
     assert_eq!(rows[0].text_fragments, vec!["Song A"]);
     assert_eq!(rows[1].text_fragments, vec!["Artist B"]);
+  }
+
+  #[test]
+  fn expand_rect_returns_input_when_image_dimensions_are_zero() {
+    let rect = ObservedRect {
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+    };
+    let expanded = expand_rect(&rect, 12, 8, 0, 0);
+    assert_eq!(expanded, rect);
+  }
+
+  #[test]
+  fn expand_rect_returns_input_when_image_dimensions_are_negative() {
+    let rect = ObservedRect {
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+    };
+    let expanded = expand_rect(&rect, 12, 8, -1, -1);
+    assert_eq!(expanded, rect);
+  }
+
+  #[test]
+  fn expand_rect_pads_within_image_bounds() {
+    let rect = ObservedRect {
+      x: 100,
+      y: 200,
+      width: 400,
+      height: 80,
+    };
+    let expanded = expand_rect(&rect, 12, 8, 1024, 768);
+    assert_eq!(
+      expanded,
+      ObservedRect {
+        x: 88,
+        y: 192,
+        width: 424,
+        height: 96,
+      }
+    );
   }
 }
