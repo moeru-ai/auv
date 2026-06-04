@@ -25,4 +25,6 @@ pub use descriptor::{MacosDriverDescriptor, macos_driver_descriptor};
 #[doc(hidden)]
 pub use descriptor::{MacosLegacyDescriptorMetadata, macos_legacy_descriptor_metadata};
 pub use driver::{MacosDriver, MacosDriverSession};
-pub use session::{ClipboardApi, InputApi, OcrMatch, OcrMatches, VisionApi, WindowApi};
+pub use session::{
+  ClipboardApi, InputApi, OcrMatch, OcrMatches, PermissionApi, VisionApi, WindowApi,
+};

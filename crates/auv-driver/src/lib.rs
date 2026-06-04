@@ -3,6 +3,7 @@ pub mod display;
 pub mod error;
 pub mod geometry;
 pub mod input;
+pub mod permission;
 pub mod selector;
 pub mod traits;
 pub mod vision;
@@ -18,6 +19,7 @@ pub use input::{
   PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions,
   TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
+pub use permission::{PermissionProbe, PermissionStatus};
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
 pub use vision::{

@@ -42,7 +42,6 @@ use super::support::{
     row_recognition_artifact,
   },
   runtime::activate_target_app,
-  scripts::probe_automation_to_system_events,
 };
 pub(super) use super::typed::observe::{
   find_ax_text_node, ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
@@ -1836,11 +1835,11 @@ pub(super) fn identify_point(call: &DriverCall) -> AuvResult<DriverResponse> {
 }
 
 pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse> {
-  let native_permissions = auv_driver_macos::native::permission::probe_native_permissions()?;
-  let screen_recording = native_permissions.screen_recording.to_string();
-  let screen_capture_kit = native_permissions.screen_capture_kit.to_string();
-  let accessibility = native_permissions.accessibility.to_string();
-  let automation = probe_automation_to_system_events();
+  let permissions = super::typed::session::probe_permissions_bridge()?;
+  let screen_recording = permissions.screen_recording.as_str();
+  let screen_capture_kit = permissions.screen_capture_kit.as_str();
+  let accessibility = permissions.accessibility.as_str();
+  let automation = permissions.automation_to_system_events.as_str();
   let launch_host = launch_host_process();
 
   let report = permission_probe_report(
@@ -1864,11 +1863,34 @@ pub(super) fn probe_permissions(_call: &DriverCall) -> AuvResult<DriverResponse>
       "Permission probe: screenRecording={}, screenCaptureKit={}, accessibility={}, automationToSystemEvents={}.",
       screen_recording, screen_capture_kit, accessibility, automation
     ),
-    backend: Some("macos.swift-and-osascript".to_string()),
-    signals: std::collections::BTreeMap::new(),
+    backend: Some("macos.permission.typed-session".to_string()),
+    signals: permission_probe_signals(&permissions),
     notes: report.lines().map(str::to_string).collect(),
     artifacts: vec![artifact],
   })
+}
+
+fn permission_probe_signals(
+  permissions: &auv_driver::PermissionProbe,
+) -> std::collections::BTreeMap<String, String> {
+  std::collections::BTreeMap::from([
+    (
+      "permission.screen_recording".to_string(),
+      permissions.screen_recording.as_str().to_string(),
+    ),
+    (
+      "permission.screen_capture_kit".to_string(),
+      permissions.screen_capture_kit.as_str().to_string(),
+    ),
+    (
+      "permission.accessibility".to_string(),
+      permissions.accessibility.as_str().to_string(),
+    ),
+    (
+      "permission.automation_to_system_events".to_string(),
+      permissions.automation_to_system_events.as_str().to_string(),
+    ),
+  ])
 }
 
 #[cfg(test)]
@@ -1878,9 +1900,10 @@ mod tests {
     build_verify_ax_text_no_match_verification, build_verify_ax_text_operation_result,
     build_verify_ax_text_verification, build_verify_now_playing_title_no_match_verification,
     build_verify_now_playing_title_operation_result, build_verify_now_playing_title_verification,
-    ocr_detection_signals, permission_probe_report, preferred_ax_signal_text,
-    render_typed_window_list_report, row_detection_signals, verify_ax_text_signals,
-    verify_now_playing_title_signals, wait_ocr_detection_signals, wait_row_detection_signals,
+    ocr_detection_signals, permission_probe_report, permission_probe_signals,
+    preferred_ax_signal_text, render_typed_window_list_report, row_detection_signals,
+    verify_ax_text_signals, verify_now_playing_title_signals, wait_ocr_detection_signals,
+    wait_row_detection_signals,
   };
   use crate::contract::{
     ArtifactRef, FailureLayer, OperationOutput, OperationStatus, VerificationMethod,
@@ -1929,6 +1952,33 @@ mod tests {
     assert_eq!(
       report,
       "screenRecording=granted\nscreenCaptureKit=granted\naccessibility=missing\nautomationToSystemEvents=granted\nlaunchHostProcess=current-process\n"
+    );
+  }
+
+  #[test]
+  fn permission_probe_signals_use_typed_permission_contract() {
+    let signals = permission_probe_signals(&auv_driver::PermissionProbe {
+      screen_recording: auv_driver::PermissionStatus::Granted,
+      screen_capture_kit: auv_driver::PermissionStatus::Granted,
+      accessibility: auv_driver::PermissionStatus::Missing,
+      automation_to_system_events: auv_driver::PermissionStatus::Unknown,
+    });
+
+    assert_eq!(
+      signals.get("permission.screen_recording"),
+      Some(&"granted".to_string())
+    );
+    assert_eq!(
+      signals.get("permission.screen_capture_kit"),
+      Some(&"granted".to_string())
+    );
+    assert_eq!(
+      signals.get("permission.accessibility"),
+      Some(&"missing".to_string())
+    );
+    assert_eq!(
+      signals.get("permission.automation_to_system_events"),
+      Some(&"unknown".to_string())
     );
   }
 

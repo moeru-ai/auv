@@ -10,7 +10,6 @@ pub(crate) mod ocr_commands;
 pub(crate) mod overlay_evidence;
 pub(crate) mod recognition;
 pub(crate) mod runtime;
-pub(crate) mod scripts;
 pub(crate) mod typed_capture;
 
 pub(crate) mod template_match {
