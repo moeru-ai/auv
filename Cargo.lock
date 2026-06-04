@@ -273,6 +273,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-inference-common"
+version = "0.0.1"
+dependencies = [
+ "image",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "auv-inference-yolo"
 version = "0.0.1"
 dependencies = [
