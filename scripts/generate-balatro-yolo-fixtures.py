@@ -247,7 +247,7 @@ def run_model(
 
 SOURCE_IMAGE_ASSET = 'data/datasets/games-balatro-2024-entities-detection/data/val/yolo/images/out_01707.jpg'
 SOURCE_IMAGE = balatro_path(SOURCE_IMAGE_ASSET)
-FIXTURE_DIR = auv_root() / 'crates/auv-inference-yolo/tests/fixtures/balatro'
+FIXTURE_DIR = auv_root() / 'crates/auv-inference-ultralytics/tests/fixtures/balatro'
 
 
 def main() -> None:
