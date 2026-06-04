@@ -2,42 +2,8 @@ use image::RgbImage;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-// NOTICE: YOLO-local result/config primitives intentionally remain during the
-// transition. Migration to `auv-inference-common` is deferred because
-// `auv-inference-yolo` is scheduled for removal/replacement in Task 7 of
-// `docs/superpowers/plans/2026-06-04-ultralytics-inference-adapter.md`;
-// remove this duplication after the Ultralytics adapter replacement lands.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct ModelId(pub String);
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum YoloFamily {
-  UltralyticsV8Like,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct YoloModelConfig {
-  pub model_id: ModelId,
-  pub model_path: PathBuf,
-  pub class_names: Vec<String>,
-  pub input_size: u32,
-  pub family: YoloFamily,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-pub struct DetectionOptions {
-  pub confidence_threshold: f32,
-  pub iou_threshold: f32,
-}
-
-impl Default for DetectionOptions {
-  fn default() -> Self {
-    Self {
-      confidence_threshold: 0.25,
-      iou_threshold: 0.45,
-    }
-  }
-}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ImageSize {
@@ -81,7 +47,7 @@ impl BoundingBox {
   }
 
   pub fn area(&self) -> f32 {
-    self.width() * self.height()
+    self.width().max(0.0) * self.height().max(0.0)
   }
 }
 
@@ -98,4 +64,28 @@ pub struct DetectionSet {
   pub model_id: ModelId,
   pub image_size: ImageSize,
   pub detections: Vec<Detection>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct DetectionOptions {
+  pub confidence_threshold: f32,
+  pub iou_threshold: f32,
+  pub max_detections: usize,
+}
+
+impl Default for DetectionOptions {
+  fn default() -> Self {
+    Self {
+      confidence_threshold: 0.25,
+      iou_threshold: 0.45,
+      max_detections: 300,
+    }
+  }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ModelConfig {
+  pub model_id: ModelId,
+  pub model_path: PathBuf,
+  pub input_size: Option<u32>,
 }

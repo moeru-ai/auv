@@ -3,6 +3,7 @@ members = [
   ".",
   "crates/auv-driver",
   "crates/auv-driver-macos",
+  "crates/auv-inference-common",
   "crates/auv-inference-yolo",
   "crates/auv-netease-music",
   "crates/auv-overlay-macos",
