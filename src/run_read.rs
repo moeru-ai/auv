@@ -115,15 +115,6 @@ pub(crate) fn extract_app_validation_lineage(
     lineage.extend(validation.candidates.into_iter().map(|candidate| {
       let canonical_taxonomy_id = canonicalize_taxonomy_id(&candidate.taxonomy_id).to_string();
       let legacy_taxonomy_alias = candidate.taxonomy_id.trim() != canonical_taxonomy_id;
-      let candidate_source =
-        candidate
-          .observed_consumer
-          .as_deref()
-          .map(|consumer| match consumer {
-            "contract-candidate" => "promoted_focus_candidate".to_string(),
-            "query" => "query_fallback".to_string(),
-            other => format!("consumer:{other}"),
-          });
       AppValidationLineage {
         recipe_id: candidate.recipe_id,
         taxonomy_id: candidate.taxonomy_id,
@@ -131,7 +122,7 @@ pub(crate) fn extract_app_validation_lineage(
         legacy_taxonomy_alias,
         observed_consumer: candidate.observed_consumer,
         observed_candidate_local_id: candidate.observed_candidate_local_id,
-        candidate_source,
+        candidate_source: candidate.candidate_source,
       }
     }));
   }
@@ -360,6 +351,7 @@ mod tests {
             selected_case_count: 1,
             observed_consumer: Some("contract-candidate".to_string()),
             observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
+            candidate_source: Some("promoted_candidate".to_string()),
             unresolved_inputs: Vec::new(),
             failure_message: None,
             resolved_inputs: BTreeMap::new(),
@@ -413,7 +405,7 @@ mod tests {
     );
     assert_eq!(
       extracted_lineage[0].candidate_source.as_deref(),
-      Some("promoted_focus_candidate")
+      Some("promoted_candidate")
     );
     let listed_lineage = list_app_validation_lineage(&store, "run_read_contracts")
       .expect("validation lineage should list");

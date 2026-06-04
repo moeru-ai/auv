@@ -17,20 +17,6 @@ fn canonicalize_taxonomy_id(raw: &str) -> &str {
   }
 }
 
-fn candidate_source_label(
-  observed_consumer: Option<&str>,
-  observed_candidate_local_id: Option<&str>,
-) -> Option<String> {
-  match observed_consumer {
-    Some("contract-candidate") if observed_candidate_local_id.is_some() => {
-      Some("promoted_focus_candidate".to_string())
-    }
-    Some("query") => Some("query_fallback".to_string()),
-    Some(other) => Some(format!("consumer:{other}")),
-    None => None,
-  }
-}
-
 pub(crate) fn render_app_analysis_report(analysis: &AppAnalysis) -> String {
   let mut lines = vec![
     format!(
@@ -610,10 +596,7 @@ pub(crate) fn render_app_validation_report(validation: &AppValidation) -> String
           "- observed candidate local id: `{candidate_local_id}`"
         ));
       }
-      if let Some(source) = candidate_source_label(
-        candidate.observed_consumer.as_deref(),
-        candidate.observed_candidate_local_id.as_deref(),
-      ) {
+      if let Some(source) = &candidate.candidate_source {
         lines.push(format!("- candidate source: `{source}`"));
       }
       if !candidate.used_annotation_ids.is_empty() {

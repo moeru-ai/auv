@@ -1821,6 +1821,10 @@ mod tests {
       run["validation_lineage"][0]["observed_candidate_local_id"],
       "native-text-focus-ax"
     );
+    assert_eq!(
+      run["validation_lineage"][0]["candidate_source"],
+      "promoted_candidate"
+    );
     assert!(
       run.get("spans").is_none(),
       "/runs/{run_id} should not inline spans even when enriched"
@@ -2706,6 +2710,7 @@ mod tests {
             selected_case_count: 1,
             observed_consumer: Some("contract-candidate".to_string()),
             observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
+            candidate_source: Some("promoted_candidate".to_string()),
             unresolved_inputs: Vec::new(),
             failure_message: None,
             resolved_inputs: BTreeMap::new(),

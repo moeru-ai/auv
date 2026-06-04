@@ -183,6 +183,8 @@ pub struct AppValidatedCandidate {
   pub observed_consumer: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub observed_candidate_local_id: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub candidate_source: Option<String>,
   pub unresolved_inputs: Vec<String>,
   pub failure_message: Option<String>,
   pub resolved_inputs: BTreeMap<String, String>,
@@ -1088,6 +1090,10 @@ fn validate_app_distillation_into_run(
                 contract.candidate_id_signal_key,
               )
             });
+          let candidate_source = candidate_source_from_validation_observation(
+            observed_consumer.as_deref(),
+            observed_candidate_local_id.as_deref(),
+          );
           let success_outcome = classify_successful_validation_outcome(
             &candidate.taxonomy_id,
             selected_case_count,
@@ -1115,6 +1121,7 @@ fn validate_app_distillation_into_run(
             selected_case_count,
             observed_consumer,
             observed_candidate_local_id,
+            candidate_source,
             unresolved_inputs,
             failure_message: None,
             resolved_inputs,
@@ -1144,6 +1151,7 @@ fn validate_app_distillation_into_run(
             selected_case_count,
             observed_consumer: None,
             observed_candidate_local_id: None,
+            candidate_source: None,
             unresolved_inputs,
             failure_message: Some(error),
             resolved_inputs,
@@ -1170,6 +1178,7 @@ fn validate_app_distillation_into_run(
         selected_case_count,
         observed_consumer: None,
         observed_candidate_local_id: None,
+        candidate_source: None,
         unresolved_inputs,
         failure_message: Some(unresolved_summary),
         resolved_inputs,
@@ -1404,6 +1413,20 @@ fn observed_signal_from_exported_variables(
   signal_key: &str,
 ) -> Option<String> {
   observed_signal_from_resolved_inputs(exported_variables, signal_key)
+}
+
+fn candidate_source_from_validation_observation(
+  observed_consumer: Option<&str>,
+  observed_candidate_local_id: Option<&str>,
+) -> Option<String> {
+  match observed_consumer {
+    Some("contract-candidate") if observed_candidate_local_id.is_some() => {
+      Some("promoted_candidate".to_string())
+    }
+    Some("query") => Some("query_fallback".to_string()),
+    Some(other) => Some(format!("consumer:{other}")),
+    None => None,
+  }
 }
 
 fn sanitize_validation_signal_component(raw: &str) -> String {
@@ -4049,6 +4072,10 @@ mod tests {
       output.validation.candidates[0].status,
       AppValidationStatus::Validated
     );
+    assert_eq!(
+      output.validation.candidates[0].candidate_source.as_deref(),
+      Some("promoted_candidate")
+    );
     assert!(
       output.validation.candidates[0]
         .used_annotation_ids
@@ -4155,6 +4182,10 @@ mod tests {
       output.validation.candidates[0].status,
       AppValidationStatus::Validated
     );
+    assert_eq!(
+      output.validation.candidates[0].candidate_source.as_deref(),
+      Some("promoted_candidate")
+    );
     assert!(
       output.validation.candidates[0]
         .used_annotation_ids
@@ -4253,6 +4284,10 @@ mod tests {
     assert_eq!(
       output.validation.candidates[0].status,
       AppValidationStatus::Candidate
+    );
+    assert_eq!(
+      output.validation.candidates[0].candidate_source.as_deref(),
+      Some("query_fallback")
     );
     assert_eq!(
       output.validation.candidates[0]
@@ -4829,6 +4864,7 @@ mod tests {
         used_annotation_ids: Vec::new(),
         observed_consumer: Some("contract-candidate".to_string()),
         observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
+        candidate_source: Some("promoted_candidate".to_string()),
         resolved_inputs: BTreeMap::new(),
         unresolved_inputs: vec!["focus_query".to_string()],
         failure_message: Some(
@@ -4851,7 +4887,7 @@ mod tests {
     assert!(report.contains("- legacy taxonomy alias: `yes`"));
     assert!(report.contains("- observed consumer: `contract-candidate`"));
     assert!(report.contains("- observed candidate local id: `native-text-focus-ax`"));
-    assert!(report.contains("- candidate source: `promoted_focus_candidate`"));
+    assert!(report.contains("- candidate source: `promoted_candidate`"));
     assert!(report.contains("- unresolved inputs:"));
     assert!(report.contains("`focus_query`"));
     assert!(report.contains("- failure:"));
@@ -4893,6 +4929,7 @@ mod tests {
         used_annotation_ids: vec!["native-text-focus-ax".to_string()],
         observed_consumer: Some("query".to_string()),
         observed_candidate_local_id: None,
+        candidate_source: Some("query_fallback".to_string()),
         resolved_inputs: BTreeMap::from([("focus_query".to_string(), "Editor".to_string())]),
         unresolved_inputs: Vec::new(),
         failure_message: None,
@@ -5660,6 +5697,194 @@ mod tests {
     assert!(promotion_gate.missing_gates.is_empty());
     assert!(analysis.recommended_strategies.iter().any(|strategy| {
       strategy.taxonomy_id == "window-action.window-point.pointer-click.capture-evidence"
+    }));
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn build_app_analysis_keeps_plain_text_editor_out_of_search_entry_recommendations() {
+    let root = temp_dir("plain-text-editor-app-probe");
+    let probe_path = root.join("probe.json");
+    let permissions_path = root.join("artifact_probe-permissions.txt");
+    let displays_path = root.join("artifact_display-list.json");
+    let readiness_path = root.join("artifact_coordinate-readiness-report.txt");
+    let windows_path = root.join("artifact_window-list.txt");
+    let ax_path = root.join("artifact_ax-tree.txt");
+
+    fs::write(
+      &permissions_path,
+      "screenRecording=granted\naccessibility=granted\nautomationToSystemEvents=granted\nlaunchHostProcess=Atlas\n",
+    )
+    .expect("permissions artifact should write");
+    fs::write(
+      &displays_path,
+      serde_json::to_string(&vec![serde_json::json!({
+        "display_ref": "display_0",
+        "native_display_id": "1",
+        "is_main": true,
+        "is_builtin": true,
+        "global_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+        "visible_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+        "scale_factor": 2.0,
+        "physical_pixel_size": {"width": 3024, "height": 1964}
+      })])
+      .expect("display artifact should serialize"),
+    )
+    .expect("display artifact should write");
+    fs::write(
+      &readiness_path,
+      "readyForLogicalInput=true\nreason=logical input is aligned\n",
+    )
+    .expect("readiness artifact should write");
+    fs::write(
+      &windows_path,
+      "observedAt=2026-06-04T00:00:00Z\nfrontmostAppName=TextEdit\nfrontmostWindowTitle=Untitled\nwindowCount=1\nwindow\t0\tTextEdit\tUntitled\t200\t180\t900\t640\n",
+    )
+    .expect("windows artifact should write");
+    fs::write(
+      &ax_path,
+      "observedAt=2026-06-04T00:00:00Z\nappName=TextEdit\nbundleId=com.apple.TextEdit\npid=12345\nwindowTitle=Untitled\nrootRole=AXWindow\nnode\t0\t0\tAXWindow\tAXStandardWindow\t\t\t\t\t\t\t200\t180\t900\t640\nnode\t1\t0.0\tAXScrollArea\t\t\t\t\t\t\t\t210\t220\t860\t560\nnode\t2\t0.0.0\tAXTextArea\t\t\t\t\t\tFirst Text View\tbody text\t220\t230\t840\t520\nnodeCount=3\n",
+    )
+    .expect("ax artifact should write");
+
+    let probe = AppProbe {
+      probe_version: APP_PROBE_VERSION.to_string(),
+      created_at_millis: 0,
+      project_root: root.clone(),
+      output_dir: root.clone(),
+      app: AppIdentity {
+        bundle_id: "com.apple.TextEdit".to_string(),
+        app_name: "TextEdit".to_string(),
+        app_path: Some(PathBuf::from("/Applications/TextEdit.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "1".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: true,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      steps: vec![
+        probe_step_fixture(
+          "probe-permissions",
+          "debug.probePermissions",
+          vec![permissions_path],
+        ),
+        probe_step_fixture("list-displays", "debug.listDisplays", vec![displays_path]),
+        probe_step_fixture(
+          "probe-coordinate-readiness",
+          "debug.probeCoordinateReadiness",
+          vec![readiness_path],
+        ),
+        probe_step_fixture("list-windows", "debug.listWindows", vec![windows_path]),
+        probe_step_fixture("capture-ax-tree", "debug.captureAxTree", vec![ax_path]),
+      ],
+    };
+
+    let analysis = build_app_analysis(&probe_path, &probe).expect("analysis should still build");
+    assert!(analysis.annotation_candidates.iter().any(|candidate| {
+      candidate.candidate_id == "native-text-focus-ax" && candidate.area == "native-text"
+    }));
+    assert!(!analysis.recommended_strategies.iter().any(|strategy| {
+      strategy.taxonomy_id == "search-entry.ax-text-input.clipboard-submit.capture-evidence"
+    }));
+    assert!(
+      analysis
+        .recommended_strategies
+        .iter()
+        .any(|strategy| { strategy.taxonomy_id == NATIVE_TEXT_CANONICAL_TAXONOMY_ID })
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn build_app_analysis_recommends_search_entry_for_real_search_field() {
+    let root = temp_dir("search-entry-app-probe");
+    let probe_path = root.join("probe.json");
+    let permissions_path = root.join("artifact_probe-permissions.txt");
+    let displays_path = root.join("artifact_display-list.json");
+    let readiness_path = root.join("artifact_coordinate-readiness-report.txt");
+    let windows_path = root.join("artifact_window-list.txt");
+    let ax_path = root.join("artifact_ax-tree.txt");
+
+    fs::write(
+      &permissions_path,
+      "screenRecording=granted\naccessibility=granted\nautomationToSystemEvents=granted\nlaunchHostProcess=Atlas\n",
+    )
+    .expect("permissions artifact should write");
+    fs::write(
+      &displays_path,
+      serde_json::to_string(&vec![serde_json::json!({
+        "display_ref": "display_0",
+        "native_display_id": "1",
+        "is_main": true,
+        "is_builtin": true,
+        "global_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+        "visible_logical_bounds": {"x": 0, "y": 0, "width": 1512, "height": 982},
+        "scale_factor": 2.0,
+        "physical_pixel_size": {"width": 3024, "height": 1964}
+      })])
+      .expect("display artifact should serialize"),
+    )
+    .expect("display artifact should write");
+    fs::write(
+      &readiness_path,
+      "readyForLogicalInput=true\nreason=logical input is aligned\n",
+    )
+    .expect("readiness artifact should write");
+    fs::write(
+      &windows_path,
+      "observedAt=2026-06-04T00:00:00Z\nfrontmostAppName=Notes\nfrontmostWindowTitle=Notes\nwindowCount=1\nwindow\t0\tNotes\tNotes\t160\t40\t1200\t900\n",
+    )
+    .expect("windows artifact should write");
+    fs::write(
+      &ax_path,
+      "observedAt=2026-06-04T00:00:00Z\nappName=Notes\nbundleId=com.apple.Notes\npid=22334\nwindowTitle=Notes\nrootRole=AXWindow\nnode\t0\t0\tAXWindow\tAXStandardWindow\t\t\t\t\t\t\t160\t40\t1200\t900\nnode\t1\t0.0\tAXGroup\t\t\t\t\t\t\t\t170\t50\t1180\t880\nnode\t2\t0.0.0\tAXTextField\tAXSearchField\t\t\t\tSearch\t\t\t880\t60\t280\t36\nnode\t2\t0.0.1\tAXTextArea\t\t\t\t\t\tNote Body Text View\tbody\t240\t120\t880\t760\nnodeCount=4\n",
+    )
+    .expect("ax artifact should write");
+
+    let probe = AppProbe {
+      probe_version: APP_PROBE_VERSION.to_string(),
+      created_at_millis: 0,
+      project_root: root.clone(),
+      output_dir: root.clone(),
+      app: AppIdentity {
+        bundle_id: "com.apple.Notes".to_string(),
+        app_name: "Notes".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Notes.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "1".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: true,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      steps: vec![
+        probe_step_fixture(
+          "probe-permissions",
+          "debug.probePermissions",
+          vec![permissions_path],
+        ),
+        probe_step_fixture("list-displays", "debug.listDisplays", vec![displays_path]),
+        probe_step_fixture(
+          "probe-coordinate-readiness",
+          "debug.probeCoordinateReadiness",
+          vec![readiness_path],
+        ),
+        probe_step_fixture("list-windows", "debug.listWindows", vec![windows_path]),
+        probe_step_fixture("capture-ax-tree", "debug.captureAxTree", vec![ax_path]),
+      ],
+    };
+
+    let analysis = build_app_analysis(&probe_path, &probe).expect("analysis should still build");
+    assert!(analysis.annotation_candidates.iter().any(|candidate| {
+      candidate.candidate_id == "search-entry-focus-ax" && candidate.area == "search-entry"
+    }));
+    assert!(analysis.recommended_strategies.iter().any(|strategy| {
+      strategy.taxonomy_id == "search-entry.ax-text-input.clipboard-submit.capture-evidence"
     }));
 
     let _ = fs::remove_dir_all(root);

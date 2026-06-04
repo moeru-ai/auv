@@ -293,7 +293,7 @@ mod tests {
       legacy_taxonomy_alias: true,
       observed_consumer: Some("contract-candidate".to_string()),
       observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
-      candidate_source: Some("promoted_focus_candidate".to_string()),
+      candidate_source: Some("promoted_candidate".to_string()),
     }];
 
     let output = render_text(

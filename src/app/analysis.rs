@@ -322,15 +322,17 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
     );
   }
 
+  let has_search_entry_surface = find_search_entry_node(&ax_snapshot).is_some();
+
   let mut recommended_strategies = Vec::new();
-  if text_input_count > 0 {
+  if has_search_entry_surface {
     recommended_strategies.push(recommended_strategy(
       "search-entry",
       "ax-text-input",
       "clipboard-submit",
       "captureEvidence",
       AssessmentStatus::Candidate,
-      "The sampled AX surface exposed text-input-like nodes, so a keyboard/clipboard search-entry path is worth validating before escalating to pointer control.",
+      "The sampled AX surface exposed a search-like text input, so a keyboard/clipboard search-entry path is worth validating before escalating to pointer control.",
     )?);
   }
   if text_bearing_count > 0 {
