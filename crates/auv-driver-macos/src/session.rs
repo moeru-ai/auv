@@ -14,6 +14,7 @@ use auv_driver::input::{
   PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions, TextSubmit,
   TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
+use auv_driver::permission::{PermissionProbe, PermissionStatus};
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
 use auv_driver::window::{Window, WindowRef};
@@ -75,6 +76,11 @@ pub struct VisionApi<'a> {
   session: &'a MacosDriverSession,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PermissionApi<'a> {
+  session: &'a MacosDriverSession,
+}
+
 impl MacosDriverSession {
   // Session APIs are grouped by automation target, not by native backend
   // mechanism. Window operations are relative to an application window;
@@ -98,6 +104,23 @@ impl MacosDriverSession {
 
   pub fn vision(&self) -> VisionApi<'_> {
     VisionApi { session: self }
+  }
+
+  pub fn permission(&self) -> PermissionApi<'_> {
+    PermissionApi { session: self }
+  }
+}
+
+impl PermissionApi<'_> {
+  pub fn probe(&self) -> DriverResult<PermissionProbe> {
+    let _ = self.session;
+    let native = crate::native::permission::probe_native_permissions().map_err(backend)?;
+    Ok(PermissionProbe {
+      screen_recording: permission_status_from_label(native.screen_recording),
+      screen_capture_kit: permission_status_from_label(native.screen_capture_kit),
+      accessibility: permission_status_from_label(native.accessibility),
+      automation_to_system_events: probe_automation_to_system_events(),
+    })
   }
 }
 
@@ -1633,6 +1656,25 @@ fn run_osascript_lines(lines: &[String]) -> DriverResult<()> {
   }
 }
 
+fn permission_status_from_label(label: &str) -> PermissionStatus {
+  match label {
+    "granted" => PermissionStatus::Granted,
+    "missing" => PermissionStatus::Missing,
+    _ => PermissionStatus::Unknown,
+  }
+}
+
+fn probe_automation_to_system_events() -> PermissionStatus {
+  match run_osascript(&[
+    "tell application \"System Events\"",
+    "return name of first application process whose frontmost is true",
+    "end tell",
+  ]) {
+    Ok(()) => PermissionStatus::Granted,
+    Err(_) => PermissionStatus::Missing,
+  }
+}
+
 fn text_submit_key_code(submit: TextSubmit) -> DriverResult<Option<i32>> {
   match submit {
     TextSubmit::No => Ok(None),
@@ -1890,6 +1932,22 @@ mod no_steal_tests {
   }
 
   #[test]
+  fn permission_status_from_label_handles_native_labels() {
+    assert_eq!(
+      permission_status_from_label("granted"),
+      PermissionStatus::Granted
+    );
+    assert_eq!(
+      permission_status_from_label("missing"),
+      PermissionStatus::Missing
+    );
+    assert_eq!(
+      permission_status_from_label("new-native-status"),
+      PermissionStatus::Unknown
+    );
+  }
+
+  #[test]
   fn foreground_text_keystroke_lines_keep_spaces_as_separate_events() {
     let mut lines = Vec::new();
     push_text_keystroke_lines(&mut lines, "For_Me", 20);
@@ -1961,6 +2019,14 @@ mod no_steal_tests {
         key: "return".to_string(),
         settle: Duration::ZERO,
       });
+    }
+  }
+
+  #[test]
+  fn permission_api_exposes_probe_method() {
+    if false {
+      let session = MacosDriverSession { _private: () };
+      let _ = session.permission().probe();
     }
   }
 

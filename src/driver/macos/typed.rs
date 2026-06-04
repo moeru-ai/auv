@@ -247,6 +247,17 @@ pub(crate) mod session {
       .map_err(|error| format!("typed macOS region capture adapter failed: {error}"))
   }
 
+  pub(crate) fn probe_permissions_bridge() -> AuvResult<auv_driver::PermissionProbe> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    session
+      .permission()
+      .probe()
+      .map_err(|error| format!("typed macOS permission probe adapter failed: {error}"))
+  }
+
   pub(crate) fn scroll_global_hid_bridge(
     x: f64,
     y: f64,
