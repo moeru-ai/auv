@@ -514,6 +514,10 @@ pub(crate) fn render_app_validation_report(validation: &AppValidation) -> String
       .to_string(),
   );
   lines.push(
+    "- `candidate` means the live run succeeded but the result still stopped at a review boundary, such as a legacy fallback consumer instead of the promoted contract seam."
+      .to_string(),
+  );
+  lines.push(
     "- `machine-asserted` means the verification contract includes a machine-readable assertion step such as AX or OCR verification."
       .to_string(),
   );

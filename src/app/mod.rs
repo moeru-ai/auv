@@ -1068,6 +1068,13 @@ fn validate_app_distillation_into_run(
                 contract.candidate_id_signal_key,
               )
             });
+          let success_outcome = classify_successful_validation_outcome(
+            &candidate.taxonomy_id,
+            selected_case_count,
+            verification_mode,
+            observed_consumer.as_deref(),
+            candidate.promoted_candidate.is_some(),
+          );
           run.finish_span(
             &candidate_span,
             SpanFinish {
@@ -1079,9 +1086,9 @@ fn validate_app_distillation_into_run(
           AppValidatedCandidate {
             recipe_id: candidate.recipe_id.clone(),
             taxonomy_id: candidate.taxonomy_id.clone(),
-            status: AppValidationStatus::Validated,
+            status: success_outcome.status,
             verification_mode,
-            rationale: validated_candidate_rationale(selected_case_count, verification_mode),
+            rationale: success_outcome.rationale,
             used_annotation_ids: used_annotation_ids.clone(),
             recipe_path: candidate.recipe_path.clone(),
             case_matrix_path: candidate.case_matrix_path.clone(),
@@ -1406,6 +1413,69 @@ fn sanitize_validation_signal_component(raw: &str) -> String {
     .filter(|segment| !segment.is_empty())
     .collect::<Vec<_>>()
     .join("_")
+}
+
+struct SuccessfulValidationOutcome {
+  status: AppValidationStatus,
+  rationale: String,
+}
+
+fn classify_successful_validation_outcome(
+  taxonomy_id: &str,
+  selected_case_count: usize,
+  verification_mode: AppVerificationMode,
+  observed_consumer: Option<&str>,
+  has_promoted_candidate: bool,
+) -> SuccessfulValidationOutcome {
+  // TODO(app-validate-consumer-status-v1): extend consumer-aware success
+  // classification to the other promoted consumer seams once the owner asks for
+  // the same tightening beyond native-text.
+  if taxonomy_id == "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" {
+    return match observed_consumer {
+      Some("contract-candidate") => SuccessfulValidationOutcome {
+        status: AppValidationStatus::Validated,
+        rationale: validated_candidate_rationale(selected_case_count, verification_mode),
+      },
+      Some("query") => SuccessfulValidationOutcome {
+        status: AppValidationStatus::Candidate,
+        rationale: if has_promoted_candidate {
+          format!(
+            "All {} candidate case(s) executed successfully through the shared runtime and {} verification passed, but validate still observed the legacy `query` consumer instead of `contract-candidate`. Keep this native-text slice as candidate until the promoted consumer seam is exercised end-to-end.",
+            selected_case_count,
+            verification_mode.as_str(),
+          )
+        } else {
+          format!(
+            "All {} candidate case(s) executed successfully through the shared runtime and {} verification passed, but validate only exercised the legacy `query` fallback for native-text. Keep this slice as candidate until the promoted consumer seam is exercised end-to-end.",
+            selected_case_count,
+            verification_mode.as_str(),
+          )
+        },
+      },
+      Some(other) => SuccessfulValidationOutcome {
+        status: AppValidationStatus::Candidate,
+        rationale: format!(
+          "All {} candidate case(s) executed successfully through the shared runtime and {} verification passed, but validate observed unexpected native-text consumer `{}`. Keep this slice as candidate until the promoted consumer seam is explicit and stable.",
+          selected_case_count,
+          verification_mode.as_str(),
+          other,
+        ),
+      },
+      None => SuccessfulValidationOutcome {
+        status: AppValidationStatus::Candidate,
+        rationale: format!(
+          "All {} candidate case(s) executed successfully through the shared runtime and {} verification passed, but validate did not observe a native-text consumer signal. Keep this slice as candidate until the promoted consumer seam is explicit and stable.",
+          selected_case_count,
+          verification_mode.as_str(),
+        ),
+      },
+    };
+  }
+
+  SuccessfulValidationOutcome {
+    status: AppValidationStatus::Validated,
+    rationale: validated_candidate_rationale(selected_case_count, verification_mode),
+  }
 }
 
 fn ensure_manifest_string_input(
@@ -3894,7 +3964,7 @@ mod tests {
       validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
     assert_eq!(
       output.validation.candidates[0].status,
-      AppValidationStatus::Validated
+      AppValidationStatus::Candidate
     );
     assert_eq!(
       output.validation.candidates[0]
@@ -3916,6 +3986,11 @@ mod tests {
         .observed_candidate_local_id
         .as_deref(),
       None
+    );
+    assert!(
+      output.validation.candidates[0]
+        .rationale
+        .contains("legacy `query` fallback")
     );
 
     let _ = fs::remove_dir_all(root);
@@ -4456,6 +4531,53 @@ mod tests {
     assert!(report.contains("Grouped visible rows remain surface candidates"));
     assert!(!report.contains("- used annotations:"));
     assert!(!report.contains("`visible-row-1`"));
+  }
+
+  #[test]
+  fn validation_report_explains_candidate_status_as_review_boundary() {
+    let validation = AppValidation {
+      validate_version: APP_VALIDATE_VERSION.to_string(),
+      created_at_millis: 0,
+      source_distillation_path: PathBuf::from("/tmp/distillation.json"),
+      source_analysis_path: PathBuf::from("/tmp/analysis.json"),
+      app_identity: AppIdentity {
+        bundle_id: "com.example.App".to_string(),
+        app_name: "Example".to_string(),
+        app_path: Some(PathBuf::from("/Applications/Example.app")),
+        main_executable_path: None,
+        version: "1.0".to_string(),
+        build_version: "100".to_string(),
+        url_schemes: vec![],
+        apple_script_addressable: false,
+        launch_services_resolved: true,
+        resolution_notes: vec![],
+      },
+      candidates: vec![AppValidatedCandidate {
+        recipe_id: "test.recorded.skill".to_string(),
+        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        status: AppValidationStatus::Candidate,
+        verification_mode: AppVerificationMode::MachineAsserted,
+        rationale: "validate observed the legacy query fallback instead of contract-candidate"
+          .to_string(),
+        selected_case_count: 1,
+        recipe_path: PathBuf::from("/tmp/native-text.recipe.json"),
+        case_matrix_path: PathBuf::from("/tmp/native-text.cases.json"),
+        used_annotation_ids: vec!["native-text-focus-ax".to_string()],
+        observed_consumer: Some("query".to_string()),
+        observed_candidate_local_id: None,
+        resolved_inputs: BTreeMap::from([("focus_query".to_string(), "Editor".to_string())]),
+        unresolved_inputs: Vec::new(),
+        failure_message: None,
+      }],
+      known_boundaries: Vec::new(),
+    };
+
+    let report = render_app_validation_report(&validation);
+
+    assert!(report.contains("- `candidate` means the live run succeeded"));
+    assert!(report.contains("review boundary"));
+    assert!(report.contains("### test.recorded.skill [candidate]"));
+    assert!(report.contains("- observed consumer: `query`"));
   }
 
   #[test]
