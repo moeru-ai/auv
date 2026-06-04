@@ -1,7 +1,8 @@
 use std::str::FromStr;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum InferenceDevice {
+  #[default]
   Cpu,
   Cuda(usize),
   CoreMl,
@@ -10,12 +11,6 @@ pub enum InferenceDevice {
   Xnnpack,
   TensorRt(usize),
   Rocm(usize),
-}
-
-impl Default for InferenceDevice {
-  fn default() -> Self {
-    Self::Cpu
-  }
 }
 
 impl FromStr for InferenceDevice {
