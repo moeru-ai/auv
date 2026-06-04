@@ -1,0 +1,47 @@
+[package]
+name = "auv-inference-ultralytics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+# NOTICE: Initial adapter exposes the currently planned desktop/provider
+# feature set. Additional upstream provider passthroughs such as acl, armnn,
+# azure, cann, nnapi, qnn, rknpu, tvm, and all are deferred until
+# owner-approved need.
+default = ["cpu"]
+cpu = []
+xnnpack = ["ultralytics-inference/xnnpack"]
+coreml = ["ultralytics-inference/coreml"]
+cuda = ["ultralytics-inference/cuda"]
+tensorrt = ["ultralytics-inference/tensorrt"]
+nvidia = ["ultralytics-inference/nvidia"]
+cuda-preprocess = ["ultralytics-inference/cuda-preprocess"]
+directml = ["ultralytics-inference/directml"]
+openvino = ["ultralytics-inference/openvino"]
+onednn = ["ultralytics-inference/onednn"]
+intel = ["ultralytics-inference/intel"]
+rocm = ["ultralytics-inference/rocm"]
+migraphx = ["ultralytics-inference/migraphx"]
+amd = ["ultralytics-inference/amd"]
+webgpu = ["ultralytics-inference/webgpu"]
+mobile = ["ultralytics-inference/mobile"]
+annotate = ["ultralytics-inference/annotate"]
+visualize = ["ultralytics-inference/visualize"]
+video = ["ultralytics-inference/video"]
+
+[dependencies]
+auv-inference-common = { path = "../auv-inference-common" }
+image = { workspace = true, features = ["jpeg"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+ultralytics-inference.workspace = true

@@ -4,6 +4,7 @@ members = [
   "crates/auv-driver",
   "crates/auv-driver-macos",
   "crates/auv-inference-common",
+  "crates/auv-inference-ultralytics",
   "crates/auv-inference-yolo",
   "crates/auv-netease-music",
   "crates/auv-overlay-macos",
@@ -43,6 +44,7 @@ thiserror = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 ndarray = "0.17"
 ort = "2.0.0-rc.10"
+ultralytics-inference = { version = "0.0.18", default-features = false }
 xcap = "0.6"
 swift-bridge = "0.1.59"
 swift-bridge-build = "0.1.59"
