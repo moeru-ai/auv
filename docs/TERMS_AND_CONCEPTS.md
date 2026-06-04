@@ -162,6 +162,23 @@ commands agree about which window they are using. When the resolver cannot make
 a clear choice, it should return an ambiguity error that points users to the
 window-listing API instead of silently selecting an arbitrary candidate.
 
+## Window Mutation
+
+A window mutation changes a resolved window's geometry or coarse window state,
+such as moving, resizing, setting a frame, minimizing, restoring, or zooming a
+window.
+
+Window mutation is a driver-level window management capability. It is not an
+input delivery result and should not be reported as `InputActionResult`.
+Drivers should report the selected mutation path, attempts, before/after frame
+or state evidence when available, and verification outcome separately from
+pointer, keyboard, or overlay presentation.
+
+On macOS, the first implementation is AX-backed and best-effort across
+applications. When a native window id is available, it should be treated as the
+authoritative target identity; title matching is only a fallback when no native
+window id was requested.
+
 ## Region
 
 A region is a crop or filter applied inside an observation scope.
