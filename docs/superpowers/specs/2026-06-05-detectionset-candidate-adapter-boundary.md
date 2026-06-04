@@ -148,6 +148,7 @@ The safest future route is still two-step:
 
 ```text
 DetectionSet
+  -> DetectionEvidenceManifest
   -> recognition evidence record
   -> Candidate only when action/liveness/projection gates are satisfied
 ```
@@ -176,3 +177,20 @@ Boundary tests in this phase should only lock:
 - roundtrip does not require action/runtime metadata
 
 Tests in this slice should **not** pretend to prove candidate readiness.
+
+## Follow-Up
+
+The next inference-scoped step after this boundary is
+`DetectionEvidenceManifest` v0:
+
+```text
+DetectionSet
+  + source image evidence
+  + explicit coordinate space
+  + explicit projection availability
+  + model run metadata
+  + known limits
+```
+
+That remains inference-only and still does not authorize a runtime or Candidate
+bridge by itself.

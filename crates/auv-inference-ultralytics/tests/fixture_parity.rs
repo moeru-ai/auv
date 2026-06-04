@@ -1,5 +1,7 @@
 use auv_inference_common::{
-  BoundingBox, Detection, DetectionOptions, DetectionSet, ModelId, render_annotated_image,
+  render_annotated_image, BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace,
+  DetectionEvidenceManifest, DetectionOptions, DetectionSet, ModelId, ModelRunMetadata,
+  ProjectionBasis, SourceImageEvidence, SourceImageRef,
 };
 use auv_inference_ultralytics::{InferenceDevice, UltralyticsDetector, UltralyticsModelConfig};
 use image::ImageReader;
@@ -172,6 +174,8 @@ fn assert_fixture_matches_detector(
     fixture_name,
     &source_image_path,
     &result,
+    &class_path,
+    &fixture.thresholds,
     &config.output_dir,
   )?;
 
@@ -286,9 +290,12 @@ fn write_smoke_evidence(
   fixture_name: &str,
   source_image_path: &Path,
   result: &DetectionSet,
+  class_path: &Path,
+  thresholds: &FixtureThresholds,
   output_dir: &Path,
 ) -> Result<(), Box<dyn Error>> {
   let json_path = output_dir.join(format!("{fixture_name}-detections.json"));
+  let manifest_path = output_dir.join(format!("{fixture_name}-manifest.json"));
   let image_path = output_dir.join(format!("{fixture_name}-annotated.png"));
 
   let file = File::create(&json_path)?;
@@ -296,13 +303,46 @@ fn write_smoke_evidence(
   serde_json::to_writer_pretty(&mut writer, result)?;
   writer.write_all(b"\n")?;
 
+  let manifest = DetectionEvidenceManifest {
+    detection_set: result.clone(),
+    source_image: SourceImageEvidence {
+      source_image_ref: SourceImageRef::LocalPath {
+        path: source_image_path.to_path_buf(),
+      },
+      coordinate_space: DetectionCoordinateSpace::SourceImagePixels,
+      projection_basis: ProjectionBasis::Unavailable {
+        reason: "local Balatro smoke does not capture display/window projection".to_string(),
+      },
+    },
+    model_run: ModelRunMetadata {
+      backend: "ultralytics-inference".to_string(),
+      model_id: result.model_id.clone(),
+      confidence_threshold: thresholds.confidence,
+      iou_threshold: thresholds.iou,
+      class_label_source: ClassLabelSource::OverrideFile {
+        path: class_path.to_path_buf(),
+      },
+      execution_provider: Some("cpu".to_string()),
+    },
+    known_limits: vec![
+      "source image reference is inference-scoped, not a runtime artifact".to_string(),
+      "projection basis is unavailable in local Balatro smoke".to_string(),
+      "annotated image is a debug aid only".to_string(),
+    ],
+  };
+  let manifest_file = File::create(&manifest_path)?;
+  let mut manifest_writer = BufWriter::new(manifest_file);
+  serde_json::to_writer_pretty(&mut manifest_writer, &manifest)?;
+  manifest_writer.write_all(b"\n")?;
+
   let source_image = ImageReader::open(source_image_path)?.decode()?.to_rgb8();
   let annotated = render_annotated_image(&source_image, &result.detections);
   annotated.save(&image_path)?;
 
   eprintln!(
-    "{fixture_name}: wrote smoke evidence json={} annotated={}",
+    "{fixture_name}: wrote smoke evidence json={} manifest={} annotated={}",
     json_path.display(),
+    manifest_path.display(),
     image_path.display()
   );
 

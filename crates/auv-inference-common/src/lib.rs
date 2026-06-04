@@ -5,8 +5,9 @@ pub mod types;
 pub use error::{InferenceError, InferenceResult};
 pub use render::render_annotated_image;
 pub use types::{
-  BoundingBox, Detection, DetectionOptions, DetectionSet, ImageFrame, ImageSize, ModelConfig,
-  ModelId,
+  BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest,
+  DetectionOptions, DetectionSet, ImageFrame, ImageSize, ModelConfig, ModelId, ModelRunMetadata,
+  ProjectionBasis, SourceImageEvidence, SourceImageRef,
 };
 
 #[cfg(test)]
