@@ -1973,6 +1973,25 @@ mod tests {
   }
 
   #[test]
+  fn qqmusic_open_search_submit_query_recipe_requires_query_focus_consumer() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/qqmusic/open-search-submit-query.v0.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-search-input")
+      .expect("focus-search-input step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"query".to_string())
+    );
+  }
+
+  #[test]
   fn enforce_step_expectations_reads_structured_signals() {
     let step: SkillStep = serde_json::from_value(json!({
       "id": "verify-text",
