@@ -3451,12 +3451,9 @@ mod tests {
     analysis.window_context.frontmost_window_title = "Untitled 5".to_string();
     analysis.window_context.primary_window_title = "未命名3".to_string();
     let candidate_shape = build_distilled_candidate_shape(&analysis, SEARCH_ENTRY_TAXONOMY_ID);
-    let promoted = promoted_candidate_for_candidate_shape(
-      &analysis,
-      SEARCH_ENTRY_TAXONOMY_ID,
-      &candidate_shape,
-    )
-    .expect("search-entry candidate should promote");
+    let promoted =
+      promoted_candidate_for_candidate_shape(&analysis, SEARCH_ENTRY_TAXONOMY_ID, &candidate_shape)
+        .expect("search-entry candidate should promote");
 
     let window_ref = promoted
       .liveness

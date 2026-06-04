@@ -122,7 +122,10 @@ fn detection_set_roundtrip_does_not_require_runtime_bridge_fields() {
   let parsed: DetectionSet =
     serde_json::from_value(value).expect("DetectionSet JSON should parse without bridge fields");
 
-  assert_eq!(parsed.model_id.0, "games-balatro-2024-yolo-entities-detection");
+  assert_eq!(
+    parsed.model_id.0,
+    "games-balatro-2024-yolo-entities-detection"
+  );
   assert_eq!(parsed.image_size.width, 1280);
   assert_eq!(parsed.image_size.height, 660);
   assert_eq!(parsed.detections.len(), 1);

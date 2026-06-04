@@ -1,5 +1,5 @@
 use auv_inference_common::{
-  render_annotated_image, BoundingBox, Detection, DetectionOptions, DetectionSet, ModelId,
+  BoundingBox, Detection, DetectionOptions, DetectionSet, ModelId, render_annotated_image,
 };
 use auv_inference_ultralytics::{InferenceDevice, UltralyticsDetector, UltralyticsModelConfig};
 use image::ImageReader;
@@ -454,10 +454,10 @@ fn summarize_actual_detections(detections: &[Detection]) -> String {
 #[test]
 fn local_smoke_skips_when_env_is_missing_or_path_is_missing() -> Result<(), Box<dyn Error>> {
   assert!(balatro_root_from_env_value(None).is_none());
-  assert!(balatro_root_from_env_value(Some(OsString::from(
-    "/definitely-missing-auv-balatro-root"
-  )))
-  .is_none());
+  assert!(
+    balatro_root_from_env_value(Some(OsString::from("/definitely-missing-auv-balatro-root")))
+      .is_none()
+  );
   let temp_dir = std::env::temp_dir().join("auv-inference-ultralytics-existing-dir-check");
   fs::create_dir_all(&temp_dir)?;
   assert!(balatro_root_from_env_value(Some(temp_dir.into_os_string())).is_some());

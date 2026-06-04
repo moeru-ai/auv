@@ -168,12 +168,8 @@ pub(crate) fn fallback_playlist_sidebar_region(window_size: auv_driver::Size) ->
   // width values when the underlying dimension is negative.
   let usable_height = window_size.height.max(0.0);
   let usable_width = window_size.width.max(0.0);
-  let y = (usable_height * 0.30)
-    .max(220.0)
-    .min(usable_height * 0.55);
-  let width = (usable_width * 0.24)
-    .max(280.0)
-    .min(usable_width * 0.42);
+  let y = (usable_height * 0.30).max(220.0).min(usable_height * 0.55);
+  let width = (usable_width * 0.24).max(280.0).min(usable_width * 0.42);
   sidebar_region_record(ViewBounds::new(
     0.0,
     y,
