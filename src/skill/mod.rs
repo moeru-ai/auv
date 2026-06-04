@@ -523,6 +523,12 @@ pub(crate) struct SkillRunSummary {
 }
 
 #[derive(Clone, Debug, Default)]
+pub(crate) struct SkillCaseMatrixRunSummary {
+  pub selected_case_count: usize,
+  pub exported_variables: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct SkillCaseRunOptions {
   pub dry_run: bool,
   pub max_disturbance: Option<DisturbanceClass>,
@@ -2509,6 +2515,57 @@ mod tests {
         .iter()
         .filter(|span| span.name == "auv.recipe.step")
         .all(|span| span.parent_span_id.as_ref() == Some(&execute_span.span_id))
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn run_skill_case_matrix_summary_keeps_last_case_exported_variables() {
+    let project_root = temp_dir("recorded-case-summary-project");
+    let store_root = temp_dir("recorded-case-summary-store");
+    let runtime = skill_test_runtime(project_root.clone(), store_root.clone());
+    let manifest = two_step_manifest();
+    let matrix: SkillCaseMatrix = serde_json::from_value(json!({
+      "skill_id": "test.recorded.skill",
+      "version": "0.1.0",
+      "status": "active-case-matrix",
+      "cases": [{
+        "case_id": "baseline",
+        "status": "validated",
+        "inputs": {},
+        "disturbance": "none"
+      }]
+    }))
+    .expect("matrix should deserialize");
+    let mut run = runtime
+      .start_run(crate::run_builder::RunSpec::new(
+        crate::trace::RunType::Validate,
+        "auv.validate",
+      ))
+      .expect("run should start");
+    let root = run.root_span();
+
+    let summary = super::case_matrix::run_skill_case_matrix_into_run(
+      &runtime,
+      &mut run,
+      &root,
+      &manifest,
+      &matrix,
+      super::SkillCaseRunOptions::default(),
+    )
+    .expect("case matrix should run");
+
+    assert_eq!(summary.selected_case_count, 1);
+    assert_eq!(
+      summary.exported_variables.get("step_first_signal_query"),
+      Some(&"driver query".to_string())
+    );
+    assert!(
+      summary
+        .exported_variables
+        .contains_key("step_first_signal_last_scan_hook_decision")
     );
 
     let _ = fs::remove_dir_all(project_root);

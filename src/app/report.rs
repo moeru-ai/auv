@@ -563,6 +563,14 @@ pub(crate) fn render_app_validation_report(validation: &AppValidation) -> String
         }
       ));
       lines.push(format!("- rationale: {}", candidate.rationale));
+      if let Some(consumer) = &candidate.observed_consumer {
+        lines.push(format!("- observed consumer: `{consumer}`"));
+      }
+      if let Some(candidate_local_id) = &candidate.observed_candidate_local_id {
+        lines.push(format!(
+          "- observed candidate local id: `{candidate_local_id}`"
+        ));
+      }
       if !candidate.used_annotation_ids.is_empty() {
         lines.push("- used annotations:".to_string());
         for candidate_id in &candidate.used_annotation_ids {

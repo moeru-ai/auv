@@ -8,8 +8,8 @@ use crate::trace::{RunId, TraceStatusCode, string_attr};
 
 use super::validate::validate_case_matrix_against_skill_with_commands;
 use super::{
-  SkillCase, SkillCaseMatrix, SkillCaseMatrixEntry, SkillCaseRunOptions, SkillCatalog,
-  SkillCatalogEntry, SkillManifest, SkillRunOptions, finish_failed_recorded_run,
+  SkillCase, SkillCaseMatrix, SkillCaseMatrixEntry, SkillCaseMatrixRunSummary, SkillCaseRunOptions,
+  SkillCatalog, SkillCatalogEntry, SkillManifest, SkillRunOptions, finish_failed_recorded_run,
   run_skill_manifest_into_run, span_record,
 };
 
@@ -55,13 +55,13 @@ pub(crate) fn run_skill_case_matrix_recorded(
   let root = run.root_span();
 
   match run_skill_case_matrix_into_run(runtime, &mut run, &root, manifest, matrix, options) {
-    Ok(selected_case_count) => runtime.finish_run(
+    Ok(summary) => runtime.finish_run(
       run,
       crate::run_builder::RunFinish {
         status_code: TraceStatusCode::Ok,
         summary: Some(format!(
           "Validated {} selected case(s) for {}",
-          selected_case_count, matrix.skill_id
+          summary.selected_case_count, matrix.skill_id
         )),
         failure: None,
       },
@@ -82,10 +82,11 @@ pub(crate) fn run_skill_case_matrix_into_run(
   manifest: &SkillManifest,
   matrix: &SkillCaseMatrix,
   options: SkillCaseRunOptions,
-) -> AuvResult<usize> {
+) -> AuvResult<SkillCaseMatrixRunSummary> {
   validate_case_matrix_against_skill_with_commands(manifest, matrix, runtime.list_commands())?;
   let cases = select_cases(matrix, &options)?;
   let selected_case_count = cases.len();
+  let mut last_exported_variables = BTreeMap::new();
 
   println!("case-matrix: {}", matrix.skill_id);
   println!("version: {}", matrix.version);
@@ -129,7 +130,8 @@ pub(crate) fn run_skill_case_matrix_into_run(
     );
 
     match case_result {
-      Ok(_summary) => {
+      Ok(summary) => {
+        last_exported_variables = summary.exported_variables;
         run.finish_span(
           &execute_span,
           crate::run_builder::SpanFinish {
@@ -177,7 +179,10 @@ pub(crate) fn run_skill_case_matrix_into_run(
     ));
   }
 
-  Ok(selected_case_count)
+  Ok(SkillCaseMatrixRunSummary {
+    selected_case_count,
+    exported_variables: last_exported_variables,
+  })
 }
 
 pub fn render_skill_case_matrix_report(

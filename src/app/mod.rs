@@ -179,6 +179,10 @@ pub struct AppValidatedCandidate {
   pub recipe_path: PathBuf,
   pub case_matrix_path: PathBuf,
   pub selected_case_count: usize,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub observed_consumer: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub observed_candidate_local_id: Option<String>,
   pub unresolved_inputs: Vec<String>,
   pub failure_message: Option<String>,
   pub resolved_inputs: BTreeMap<String, String>,
@@ -1023,7 +1027,6 @@ fn validate_app_distillation_into_run(
       }
     }
     let selected_case_count = matrix.cases.len();
-
     let validated = if unresolved_inputs.is_empty() {
       let candidate_span = run.start_span(
         span,
@@ -1049,7 +1052,22 @@ fn validate_app_distillation_into_run(
         },
       );
       match case_matrix_result {
-        Ok(_) => {
+        Ok(case_summary) => {
+          let promoted_runtime_contract =
+            promoted_candidate_runtime_contract(&candidate.taxonomy_id);
+          let observed_consumer = promoted_runtime_contract.as_ref().and_then(|contract| {
+            observed_signal_from_exported_variables(
+              &case_summary.exported_variables,
+              contract.consumer_signal_key,
+            )
+          });
+          let observed_candidate_local_id =
+            promoted_runtime_contract.as_ref().and_then(|contract| {
+              observed_signal_from_exported_variables(
+                &case_summary.exported_variables,
+                contract.candidate_id_signal_key,
+              )
+            });
           run.finish_span(
             &candidate_span,
             SpanFinish {
@@ -1068,6 +1086,8 @@ fn validate_app_distillation_into_run(
             recipe_path: candidate.recipe_path.clone(),
             case_matrix_path: candidate.case_matrix_path.clone(),
             selected_case_count,
+            observed_consumer,
+            observed_candidate_local_id,
             unresolved_inputs,
             failure_message: None,
             resolved_inputs,
@@ -1095,6 +1115,8 @@ fn validate_app_distillation_into_run(
             recipe_path: candidate.recipe_path.clone(),
             case_matrix_path: candidate.case_matrix_path.clone(),
             selected_case_count,
+            observed_consumer: None,
+            observed_candidate_local_id: None,
             unresolved_inputs,
             failure_message: Some(error),
             resolved_inputs,
@@ -1119,6 +1141,8 @@ fn validate_app_distillation_into_run(
         recipe_path: candidate.recipe_path.clone(),
         case_matrix_path: candidate.case_matrix_path.clone(),
         selected_case_count,
+        observed_consumer: None,
+        observed_candidate_local_id: None,
         unresolved_inputs,
         failure_message: Some(unresolved_summary),
         resolved_inputs,
@@ -1345,6 +1369,45 @@ fn value_references_input(value: &Value, input_key: &str) -> bool {
   }
 }
 
+fn observed_signal_from_resolved_inputs(
+  resolved_inputs: &BTreeMap<String, String>,
+  signal_key: &str,
+) -> Option<String> {
+  let suffix = format!(
+    "_signal_{}",
+    sanitize_validation_signal_component(signal_key)
+  );
+  resolved_inputs
+    .iter()
+    .find_map(|(key, value)| key.ends_with(&suffix).then(|| value.clone()))
+}
+
+fn observed_signal_from_exported_variables(
+  exported_variables: &BTreeMap<String, String>,
+  signal_key: &str,
+) -> Option<String> {
+  observed_signal_from_resolved_inputs(exported_variables, signal_key)
+}
+
+fn sanitize_validation_signal_component(raw: &str) -> String {
+  let lowered = raw.trim().to_lowercase().replace('-', "_");
+  let collapsed = lowered
+    .chars()
+    .map(|character| {
+      if character.is_ascii_alphanumeric() || character == '_' {
+        character
+      } else {
+        '_'
+      }
+    })
+    .collect::<String>();
+  collapsed
+    .split('_')
+    .filter(|segment| !segment.is_empty())
+    .collect::<Vec<_>>()
+    .join("_")
+}
+
 fn ensure_manifest_string_input(
   manifest: &mut SkillManifest,
   input_key: &str,
@@ -1505,6 +1568,25 @@ mod tests {
               "focusTextInput.candidateLocalId".to_string(),
               candidate.candidate_local_id,
             ),
+          ]),
+          backend: None,
+        });
+      }
+
+      if call.operation == "test_operation"
+        && call
+          .inputs
+          .get("focus_query")
+          .map(|query| !query.is_empty())
+          .unwrap_or(false)
+      {
+        return Ok(DriverResponse {
+          summary: format!("{} ok", call.operation),
+          artifacts: Vec::new(),
+          notes: Vec::new(),
+          signals: BTreeMap::from([
+            ("outcome".to_string(), "ok".to_string()),
+            ("focusTextInput.consumer".to_string(), "query".to_string()),
           ]),
           backend: None,
         });
@@ -3626,6 +3708,16 @@ mod tests {
     let parsed_candidate: crate::contract::Candidate = serde_json::from_str(focus_candidate)
       .expect("focus_candidate should stay valid candidate JSON");
     assert_eq!(parsed_candidate.candidate_local_id, "search-entry-focus-ax");
+    assert_eq!(
+      output.validation.candidates[0].observed_consumer.as_deref(),
+      Some("contract-candidate")
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .observed_candidate_local_id
+        .as_deref(),
+      Some("search-entry-focus-ax")
+    );
 
     let _ = fs::remove_dir_all(root);
   }
@@ -3724,6 +3816,107 @@ mod tests {
     let parsed_candidate: crate::contract::Candidate = serde_json::from_str(focus_candidate)
       .expect("focus_candidate should stay valid candidate JSON");
     assert_eq!(parsed_candidate.candidate_local_id, "native-text-focus-ax");
+    assert_eq!(
+      output.validation.candidates[0].observed_consumer.as_deref(),
+      Some("contract-candidate")
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .observed_candidate_local_id
+        .as_deref(),
+      Some("native-text-focus-ax")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn validate_app_distillation_keeps_native_text_query_consumer_without_promoted_candidate() {
+    let root = temp_dir("app-validate-native-text-query-consumer");
+    let runtime = test_runtime(root.clone());
+    let analysis_path = root.join("analysis.json");
+    let distillation_path = root.join("distillation.json");
+    let recipe_path = root.join("native-text.recipe.json");
+    let case_matrix_path = root.join("native-text.cases.json");
+
+    let analysis = sample_promotable_ax_focus_analysis(
+      "native-text",
+      "native-text-focus-ax",
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      "Editor",
+      "Sample candidate satisfies the v0 native-text promotion seam.",
+    );
+    write_pretty_json(&analysis_path, &analysis).expect("analysis should write");
+
+    write_pretty_json(&recipe_path, &test_candidate_manifest_value())
+      .expect("candidate recipe should write");
+    write_pretty_json(
+      &case_matrix_path,
+      &serde_json::json!({
+        "skill_id": "test.recorded.skill",
+        "version": "0.1.0",
+        "status": "active-case-matrix",
+        "cases": [{
+          "case_id": "baseline",
+          "status": "validated",
+          "inputs": {
+            "focus_query": "Editor",
+            "require_focus_candidate": "false"
+          },
+          "disturbance": "none"
+        }]
+      }),
+    )
+    .expect("candidate matrix should write");
+
+    let distillation = AppDistillation {
+      distill_version: APP_DISTILL_VERSION.to_string(),
+      created_at_millis: 0,
+      source_analysis_path: analysis_path,
+      app_identity: analysis.app_identity.clone(),
+      candidates: vec![AppDistilledCandidate {
+        recipe_id: "test.recorded.skill".to_string(),
+        taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
+        status: AssessmentStatus::Candidate,
+        rationale: "test".to_string(),
+        suggested_annotation_ids: vec!["native-text-focus-ax".to_string()],
+        source_evidence_refs: Vec::new(),
+        promoted_candidate: None,
+        candidate_shape: AppDistilledCandidateShape::default(),
+        recipe_path,
+        case_matrix_path,
+      }],
+      known_boundaries: Vec::new(),
+    };
+    write_pretty_json(&distillation_path, &distillation).expect("distillation should write");
+
+    let output =
+      validate_app_distillation(&runtime, &distillation_path).expect("validation should complete");
+    assert_eq!(
+      output.validation.candidates[0].status,
+      AppValidationStatus::Validated
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .resolved_inputs
+        .get("focus_query"),
+      Some(&"Editor".to_string())
+    );
+    assert!(
+      !output.validation.candidates[0]
+        .resolved_inputs
+        .contains_key("focus_candidate")
+    );
+    assert_eq!(
+      output.validation.candidates[0].observed_consumer.as_deref(),
+      Some("query")
+    );
+    assert_eq!(
+      output.validation.candidates[0]
+        .observed_candidate_local_id
+        .as_deref(),
+      None
+    );
 
     let _ = fs::remove_dir_all(root);
   }
@@ -4236,6 +4429,8 @@ mod tests {
         recipe_path: PathBuf::from("/tmp/native-text.recipe.json"),
         case_matrix_path: PathBuf::from("/tmp/native-text.cases.json"),
         used_annotation_ids: Vec::new(),
+        observed_consumer: Some("contract-candidate".to_string()),
+        observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
         resolved_inputs: BTreeMap::new(),
         unresolved_inputs: vec!["focus_query".to_string()],
         failure_message: Some(
@@ -4252,6 +4447,8 @@ mod tests {
     let report = render_app_validation_report(&validation);
 
     assert!(report.contains("manual review required: `no`"));
+    assert!(report.contains("- observed consumer: `contract-candidate`"));
+    assert!(report.contains("- observed candidate local id: `native-text-focus-ax`"));
     assert!(report.contains("- unresolved inputs:"));
     assert!(report.contains("`focus_query`"));
     assert!(report.contains("- failure:"));
@@ -5090,7 +5287,6 @@ mod tests {
       }],
     }
   }
-
   fn sample_promotable_ax_focus_analysis(
     area: &str,
     candidate_id: &str,
