@@ -229,6 +229,23 @@ the contract. On non-macOS it prints "only available on macOS" and exits
 non-zero. `auv-netease-music` depends on `auv-media-macos` as a
 `cfg(target_os = "macos")` dependency.
 
+### Interim NetEase Visual Status Probe
+
+As of 2026-06-05, `auv-netease-music playback status` is an interim
+NetEase-specific visual probe. It captures the NetEase window, checks the
+bottom playback bar, opens or recognizes the song-detail screen, and OCRs the
+right-side `来源` label. Its output is intentionally local and experimental:
+`playback_exists`, `was_playing`, `control_state`, `detail_screen_detected`,
+`source`, artifacts, diagnostics, and known limits.
+
+This probe is **not** the `now-playing-v0` contract and should not be expanded
+into a parallel generic now-playing surface. When `auv-media-macos` lands,
+`auv-netease-music now-playing` should delegate to that crate exactly as this
+design specifies. The visual `playback status` command may remain as a
+NetEase-only fallback for app-specific context that MediaRemote cannot provide,
+such as the in-app playlist/source label, but generic title/artist/album/rate
+fields belong to `auv-media-macos`.
+
 ### Human output (default)
 
 - Playing: `▶ <title> — <artist> [<album>]  (<source_bundle_id>)`

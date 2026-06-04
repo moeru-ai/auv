@@ -10,8 +10,9 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::output::build_playlist_json_output;
 use crate::{
-  DailyRecommendedPlayInputs, Inputs, PlaylistCategory, SongListInputs, run_daily_recommended_play,
-  run_daily_recommended_songs_scan, run_live_scan,
+  DailyRecommendedPlayInputs, Inputs, PlaybackStatusInputs, PlaylistCategory, SongListInputs,
+  run_daily_recommended_play, run_daily_recommended_songs_scan, run_live_scan,
+  run_playback_status_probe,
 };
 
 pub(crate) fn positive_scroll_amount(raw: &str) -> Result<f64, String> {
@@ -129,6 +130,13 @@ pub(crate) struct DailyRecommendedPlayCommand {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PlaybackStatusCommand {
+  pub inputs: PlaybackStatusInputs,
+  pub output: OutputMode,
+  pub wide: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SongsLsCommand {
   pub inputs: SongListInputs,
   pub target: SongsLsTarget,
@@ -166,6 +174,7 @@ pub(crate) enum Command {
   PlaylistLs(PlaylistCommand),
   PlaylistPlayDailyRecommended(DailyRecommendedPlayCommand),
   PlaylistSongsLs(SongsLsCommand),
+  PlaybackStatus(PlaybackStatusCommand),
   NowPlaying(NowPlayingCommand),
   Control(ControlCommand),
   Seek(SeekCommand),
@@ -186,6 +195,46 @@ struct CliArgs {
 enum CliSubcommand {
   /// Work with NetEase Cloud Music playlists.
   Playlist(PlaylistArgs),
+  /// Experimental current playback probes.
+  Playback(PlaybackArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct PlaybackArgs {
+  #[command(subcommand)]
+  command: PlaybackSubcommand,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+enum PlaybackSubcommand {
+  /// Open the current song detail view and read the source label.
+  Status(PlaybackStatusArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct PlaybackStatusArgs {
+  #[arg(long = "json")]
+  json: bool,
+  #[arg(long = "json-out")]
+  json_out: Option<PathBuf>,
+  #[arg(long = "app-id")]
+  app_id: Option<String>,
+  #[arg(long = "artifact-dir")]
+  artifact_dir: Option<PathBuf>,
+  #[arg(long = "settle-ms")]
+  settle_ms: Option<u64>,
+  #[arg(long = "wide", alias = "detailed")]
+  wide: bool,
+  #[arg(long = "hint-ocr-custom-word")]
+  custom_words: Vec<String>,
+  #[arg(long = "hint-ocr-custom-words")]
+  custom_word_csvs: Vec<String>,
+  #[arg(long = "hint-ocr-custom-words-file")]
+  custom_word_files: Vec<PathBuf>,
+  #[arg(long = "hint-ocr-language")]
+  ocr_languages: Vec<String>,
+  #[arg(long = "hint-ocr-languages")]
+  ocr_language_csvs: Vec<String>,
   /// Read the system now-playing state (via the macOS media API).
   #[command(name = "now-playing")]
   NowPlaying(NowPlayingArgs),
@@ -377,6 +426,13 @@ struct PlaylistLsArgs {
 fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
   match parsed.command {
     CliSubcommand::Playlist(args) => parse_playlist(args),
+    CliSubcommand::Playback(args) => parse_playback(args),
+  }
+}
+
+fn parse_playback(args: PlaybackArgs) -> Result<Command, String> {
+  match args.command {
+    PlaybackSubcommand::Status(args) => parse_playback_status(args).map(Command::PlaybackStatus),
     CliSubcommand::NowPlaying(args) => parse_now_playing(args),
     CliSubcommand::Play(args) => Ok(control(auv_media_macos::MediaCommand::Play, args)),
     CliSubcommand::Pause(args) => Ok(control(auv_media_macos::MediaCommand::Pause, args)),
@@ -622,6 +678,47 @@ fn parse_daily_recommended(
   Ok(DailyRecommendedPlayCommand { inputs, output })
 }
 
+fn parse_playback_status(args: PlaybackStatusArgs) -> Result<PlaybackStatusCommand, String> {
+  let mut inputs = PlaybackStatusInputs::with_defaults();
+  if let Some(app_id) = args.app_id {
+    inputs.app_id = app_id;
+  }
+  if let Some(artifact_dir) = args.artifact_dir {
+    inputs.artifact_dir = artifact_dir;
+  }
+  if let Some(settle_ms) = args.settle_ms {
+    inputs.settle_ms = settle_ms;
+  }
+  for word in args.custom_words {
+    push_trimmed(&mut inputs.ocr_options.custom_words, word);
+  }
+  for csv in args.custom_word_csvs {
+    push_csv(&mut inputs.ocr_options.custom_words, &csv);
+  }
+  for path in args.custom_word_files {
+    load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
+  }
+  for language in args.ocr_languages {
+    push_ocr_language(&mut inputs.ocr_options, language);
+  }
+  for csv in args.ocr_language_csvs {
+    for language in split_csv(&csv) {
+      push_ocr_language(&mut inputs.ocr_options, language);
+    }
+  }
+
+  let output = match args.json_out {
+    Some(path) => OutputMode::JsonFile(path),
+    None if args.json => OutputMode::Json,
+    None => OutputMode::Human,
+  };
+  Ok(PlaybackStatusCommand {
+    inputs,
+    output,
+    wide: args.wide,
+  })
+}
+
 /// Entry point for the `auv-netease-music` binary.
 pub fn run() -> ExitCode {
   let parsed = match CliArgs::try_parse_from(std::env::args()) {
@@ -641,6 +738,7 @@ pub fn run() -> ExitCode {
     Ok(Command::PlaylistLs(cmd)) => run_playlist(cmd),
     Ok(Command::PlaylistPlayDailyRecommended(cmd)) => run_daily_recommended(cmd),
     Ok(Command::PlaylistSongsLs(cmd)) => run_songs_ls(cmd),
+    Ok(Command::PlaybackStatus(cmd)) => run_playback_status(cmd),
     Ok(Command::NowPlaying(cmd)) => run_now_playing(cmd),
     Ok(Command::Control(cmd)) => run_control(cmd),
     Ok(Command::Seek(cmd)) => run_seek(cmd),
@@ -711,6 +809,14 @@ mod tests {
     match command_from_args(parsed).expect("songs ls command should parse") {
       Command::PlaylistSongsLs(command) => command,
       other => panic!("expected songs ls command, got {other:?}"),
+    }
+  }
+
+  fn parse_playback_status_command(argv: &[&str]) -> PlaybackStatusCommand {
+    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
+    match command_from_args(parsed).expect("playback status command should parse") {
+      Command::PlaybackStatus(command) => command,
+      other => panic!("expected playback status command, got {other:?}"),
     }
   }
 
@@ -972,6 +1078,35 @@ mod tests {
   }
 
   #[test]
+  fn clap_playback_status_maps_flags() {
+    let command = parse_playback_status_command(&[
+      "auv-netease-music",
+      "playback",
+      "status",
+      "--json-out",
+      "/tmp/playback-status.json",
+      "--settle-ms",
+      "250",
+      "--wide",
+    ]);
+
+    assert_eq!(
+      command.output,
+      OutputMode::JsonFile(PathBuf::from("/tmp/playback-status.json"))
+    );
+    assert_eq!(command.inputs.settle_ms, 250);
+    assert!(command.wide);
+  }
+
+  #[test]
+  fn clap_playback_status_accepts_detailed_alias_for_wide_output() {
+    let command =
+      parse_playback_status_command(&["auv-netease-music", "playback", "status", "--detailed"]);
+
+    assert!(command.wide);
+  }
+
+  #[test]
   fn playlist_songs_ls_rejects_unknown_target() {
     let parsed =
       CliArgs::try_parse_from(["auv-netease-music", "playlist", "songs", "ls", "current"])
@@ -1057,7 +1192,7 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
 
   match &cmd.output {
     OutputMode::Human => {
-      println!("{}", scan.human_summary());
+      println!("{}", scan.to_human_readable());
       ExitCode::SUCCESS
     }
     OutputMode::Json => match serde_json::to_string_pretty(&output) {
@@ -1237,7 +1372,7 @@ fn run_daily_recommended(cmd: DailyRecommendedPlayCommand) -> ExitCode {
 
   match &cmd.output {
     OutputMode::Human => {
-      println!("{}", result.human_summary());
+      println!("{}", result.to_human_readable());
       ExitCode::SUCCESS
     }
     OutputMode::Json => match serde_json::to_string_pretty(&result) {
@@ -1252,6 +1387,47 @@ fn run_daily_recommended(cmd: DailyRecommendedPlayCommand) -> ExitCode {
     },
     OutputMode::JsonFile(path) => {
       let json = match serde_json::to_string_pretty(&result) {
+        Ok(json) => json,
+        Err(error) => {
+          eprintln!("encode failed: {error}");
+          return ExitCode::from(1);
+        }
+      };
+      if let Err(error) = std::fs::write(path, json) {
+        eprintln!("failed to write {}: {error}", path.display());
+        return ExitCode::from(1);
+      }
+      ExitCode::SUCCESS
+    }
+  }
+}
+
+fn run_playback_status(cmd: PlaybackStatusCommand) -> ExitCode {
+  let result = match run_playback_status_probe(&cmd.inputs) {
+    Ok(result) => result,
+    Err(error) => {
+      eprintln!("playback status probe failed: {error}");
+      return ExitCode::from(1);
+    }
+  };
+
+  match &cmd.output {
+    OutputMode::Human => {
+      println!("{}", result.to_human_readable(cmd.wide));
+      ExitCode::SUCCESS
+    }
+    OutputMode::Json => match serde_json::to_string_pretty(&result.to_json()) {
+      Ok(json) => {
+        println!("{json}");
+        ExitCode::SUCCESS
+      }
+      Err(error) => {
+        eprintln!("encode failed: {error}");
+        ExitCode::from(1)
+      }
+    },
+    OutputMode::JsonFile(path) => {
+      let json = match serde_json::to_string_pretty(&result.to_json()) {
         Ok(json) => json,
         Err(error) => {
           eprintln!("encode failed: {error}");

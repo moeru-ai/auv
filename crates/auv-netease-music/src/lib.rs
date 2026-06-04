@@ -12,6 +12,10 @@ pub mod views;
 pub use commands::daily_recommended::{
   run_daily_recommended_play, run_daily_recommended_songs_scan,
 };
+pub use commands::playback::{
+  PlaybackStatus, PlaybackStatusHumanReadable, PlaybackStatusInputs, PlaybackStatusJson,
+  run_playback_status_probe,
+};
 pub use interaction::{
   InteractionEvent, InteractionEventKind, InteractionPhase, ScrollDirection, ScrollInteraction,
 };
@@ -164,7 +168,7 @@ pub struct DailyRecommendedPlayResult {
 }
 
 impl DailyRecommendedPlayResult {
-  pub fn human_summary(&self) -> DailyRecommendedHumanSummary<'_> {
+  pub fn to_human_readable(&self) -> DailyRecommendedHumanSummary<'_> {
     DailyRecommendedHumanSummary { result: self }
   }
 }
@@ -406,7 +410,7 @@ impl PlaylistSidebarScan {
     &self.known_limits
   }
 
-  pub fn human_summary(&self) -> PlaylistSidebarHumanSummary<'_> {
+  pub fn to_human_readable(&self) -> PlaylistSidebarHumanSummary<'_> {
     PlaylistSidebarHumanSummary { scan: self }
   }
 

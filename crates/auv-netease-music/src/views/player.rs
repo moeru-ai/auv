@@ -59,6 +59,19 @@ impl PlayerView {
     }
   }
 
+  pub fn from_bottom_bar_text(observed_text: impl Into<String>) -> Self {
+    let observed_text = observed_text.into();
+    if observed_text.trim().is_empty() {
+      return Self::unknown();
+    }
+
+    Self {
+      state: PlayerState::Present,
+      control_state: None,
+      observed_text: Some(observed_text),
+    }
+  }
+
   /// Attach optional OCR text observed around the player bar.
   pub fn with_observed_text(mut self, observed_text: impl Into<String>) -> Self {
     self.observed_text = Some(observed_text.into());
@@ -84,6 +97,25 @@ impl PlayerView {
 
   pub fn observed_text(&self) -> Option<&str> {
     self.observed_text.as_deref()
+  }
+
+  /// Return a window-local point that should open the current song detail view.
+  pub fn song_detail_click_point(
+    &self,
+    window_size: auv_driver::Size,
+  ) -> Option<auv_driver::Point> {
+    if !self.exists() {
+      return None;
+    }
+
+    // NOTICE(netease-playback-bar-open-detail): click the artwork/title hot
+    // zone on the left side of the bottom playback bar. Wider blank areas in
+    // the bar do not open the song detail view, and centered controls toggle
+    // playback instead.
+    Some(auv_driver::Point::new(
+      window_size.width * 0.075,
+      window_size.height - 38.0,
+    ))
   }
 }
 
@@ -190,6 +222,42 @@ mod tests {
 
     assert_eq!(view.state(), PlayerState::Absent);
     assert_eq!(view.control_state(), None);
+  }
+
+  #[test]
+  fn present_player_exposes_song_detail_click_point() {
+    let view = PlayerView::from_control_state(PlaybackControlState::PauseVisible);
+
+    assert_eq!(
+      view.song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)),
+      Some(auv_driver::Point::new(90.0, 762.0))
+    );
+  }
+
+  #[test]
+  fn absent_or_unknown_player_has_no_song_detail_click_point() {
+    assert_eq!(
+      PlayerView::absent().song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)),
+      None
+    );
+    assert_eq!(
+      PlayerView::unknown().song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)),
+      None
+    );
+  }
+
+  #[test]
+  fn bottom_bar_text_marks_player_present_without_control_state() {
+    let view = PlayerView::from_bottom_bar_text("Eos\nginkinha");
+
+    assert!(view.exists());
+    assert!(!view.is_playing());
+    assert_eq!(view.control_state(), None);
+    assert_eq!(view.observed_text(), Some("Eos\nginkinha"));
+    assert_eq!(
+      view.song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)),
+      Some(auv_driver::Point::new(90.0, 762.0))
+    );
   }
 
   #[test]
