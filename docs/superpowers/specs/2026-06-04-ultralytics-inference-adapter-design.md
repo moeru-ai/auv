@@ -117,6 +117,81 @@ needed and avoid enabling windowed visualization unless required.
 `thiserror`. It must not depend on `ultralytics-inference`, `ort`, AUV macOS
 drivers, runtime, overlay, or Balatro-specific crates.
 
+## Feature Mapping
+
+`ultralytics-inference` exposes hardware execution provider features such as
+`cuda`, `tensorrt`, `coreml`, `directml`, `openvino`, `onednn`, `xnnpack`,
+`rocm`, `migraphx`, `webgpu`, `mobile`, and grouped features such as `nvidia`,
+`amd`, and `intel`. These should be mapped in the adapter crate, but upper-level
+Balatro consumers should see AUV/Balatro semantic feature names rather than
+third-party dependency paths.
+
+`auv-inference-ultralytics` should expose direct adapter features:
+
+```toml
+[features]
+default = ["cpu"]
+
+cpu = []
+xnnpack = ["ultralytics-inference/xnnpack"]
+
+coreml = ["ultralytics-inference/coreml"]
+
+cuda = ["ultralytics-inference/cuda"]
+tensorrt = ["ultralytics-inference/tensorrt"]
+nvidia = ["ultralytics-inference/nvidia"]
+cuda-preprocess = ["ultralytics-inference/cuda-preprocess"]
+
+directml = ["ultralytics-inference/directml"]
+
+openvino = ["ultralytics-inference/openvino"]
+onednn = ["ultralytics-inference/onednn"]
+intel = ["ultralytics-inference/intel"]
+
+rocm = ["ultralytics-inference/rocm"]
+migraphx = ["ultralytics-inference/migraphx"]
+amd = ["ultralytics-inference/amd"]
+
+webgpu = ["ultralytics-inference/webgpu"]
+mobile = ["ultralytics-inference/mobile"]
+
+annotate = ["ultralytics-inference/annotate"]
+visualize = ["ultralytics-inference/visualize"]
+video = ["ultralytics-inference/video"]
+```
+
+`auv-game-balatro` should not directly expose upstream feature names. It should
+use AUV/Balatro semantic features and map them to the adapter:
+
+```toml
+[features]
+default = ["vision-yolo", "vision-artifacts"]
+
+vision-yolo = ["dep:auv-inference-ultralytics"]
+vision-artifacts = ["auv-inference-common/render"]
+
+vision-coreml = ["vision-yolo", "auv-inference-ultralytics/coreml"]
+vision-cuda = ["vision-yolo", "auv-inference-ultralytics/cuda"]
+vision-tensorrt = ["vision-yolo", "auv-inference-ultralytics/tensorrt"]
+vision-nvidia = ["vision-yolo", "auv-inference-ultralytics/nvidia"]
+vision-directml = ["vision-yolo", "auv-inference-ultralytics/directml"]
+vision-openvino = ["vision-yolo", "auv-inference-ultralytics/openvino"]
+vision-xnnpack = ["vision-yolo", "auv-inference-ultralytics/xnnpack"]
+
+vision-debug-window = ["vision-yolo", "auv-inference-ultralytics/visualize"]
+vision-video = ["vision-yolo", "auv-inference-ultralytics/video"]
+```
+
+Feature flags should control what execution providers are compiled in. Runtime
+configuration should choose which compiled provider to use for a run. The
+adapter should provide an AUV-owned device enum or parser with values such as
+`cpu`, `coreml`, `cuda:0`, `tensorrt:0`, `directml:0`, `openvino`, `xnnpack`,
+and `rocm:0`, then map it to `ultralytics_inference::Device`.
+
+Default Balatro usage should remain CPU/basic artifact output. Hardware features
+such as `vision-coreml` or `vision-cuda` should be opt-in so the default build
+does not require platform-specific GPU dependencies.
+
 ## Balatro Parity
 
 The existing Balatro fixture strategy should survive the refactor:
