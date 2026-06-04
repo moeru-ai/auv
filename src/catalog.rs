@@ -396,6 +396,18 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::Pointer,
     },
     CommandSpec {
+      id: "debug.windowManagement",
+      namespace: ACTION,
+      summary: "Mutate a resolved macOS window via the typed window management API. Supports --action move_to, resize, set_frame, minimize, restore, or zoom.",
+      driver_id: "macos.desktop",
+      operation: "window_management",
+      // TODO(window-disturbance-class): catalog has no window geometry/state
+      // disturbance class yet; add one when the owner approves widening the
+      // disturbance taxonomy beyond focus/foreground/keyboard/clipboard/pointer.
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "debug.teachClick",
       namespace: ACTION,
       summary: "Capture a target window before and after a human-taught click, recording global and window-local click coordinates for automation debugging.",
@@ -692,6 +704,7 @@ mod tests {
     assert!(catalog.resolve("debug.pressKey").is_some());
     assert!(catalog.resolve("debug.clickPoint").is_some());
     assert!(catalog.resolve("debug.clickWindowPoint").is_some());
+    assert!(catalog.resolve("debug.windowManagement").is_some());
     assert!(catalog.resolve("debug.teachClick").is_some());
     assert!(catalog.resolve("debug.clickScreenText").is_some());
     assert!(catalog.resolve("debug.scrollPoint").is_some());

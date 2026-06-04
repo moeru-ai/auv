@@ -2,8 +2,8 @@
 use super::super::support::{
   artifacts::{build_text_artifact, sanitize_file_component},
   call::{
-    app_identifier, optional_i64, optional_non_empty_string, optional_string, parse_mouse_button,
-    parse_window_selection,
+    app_identifier, optional_i64, optional_non_empty_string, optional_positive_u64,
+    optional_string, parse_mouse_button, parse_window_selection, required_f64,
   },
   geometry::{render_rect_compact, resolve_window_point},
   selector::{parse_app_selector, resolve_app_ref, resolve_window_candidate_for_input},
@@ -15,6 +15,7 @@ use super::common::{
 use super::pointer::click_point;
 use crate::contract::{Candidate, TargetGrounding};
 use crate::model::AuvResult;
+use auv_driver::{Point, Rect, Size, WindowMutationKind, WindowMutationPolicy};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -22,6 +23,12 @@ use std::time::Duration;
 pub(crate) enum WindowClickDeliveryPath {
   WindowTargetedMouse,
   ForegroundGlobalHid,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct WindowMutationAction {
+  pub(crate) name: &'static str,
+  pub(crate) kind: WindowMutationKind,
 }
 
 pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse> {
@@ -218,6 +225,124 @@ pub(crate) fn click_window_point(call: &DriverCall) -> AuvResult<DriverResponse>
   })
 }
 
+pub(crate) fn window_management(call: &DriverCall) -> AuvResult<DriverResponse> {
+  let app = app_identifier(call)
+    .filter(|value| !value.is_empty())
+    .ok_or_else(|| {
+      "operation requires --target <application-id> or --app <application-id>".to_string()
+    })?;
+  let selector = parse_app_selector(&app)?;
+  let selection = parse_window_selection(call)?;
+
+  let displays = super::super::capture::xcap_backend::list_displays().unwrap_or_default();
+  let snapshot = super::super::observe::list_windows_snapshot(
+    auv_driver_macos::native::window::ListWindowsOptions::app(128, &app),
+  )?;
+  let resolved_app = resolve_app_ref(&snapshot, &selector)?;
+  let selected =
+    resolve_window_candidate_for_input(&snapshot, &resolved_app, &displays, &selection)?;
+  let window = &selected.window_ref;
+  let action = parse_window_mutation_action(call)?;
+  let policy = parse_window_mutation_policy(call)?;
+  let settle_ms = optional_positive_u64(call, "settle_ms")?.unwrap_or(100);
+  let typed_window = typed_window_from_ref(&selected);
+  let mutation_outcome = crate::driver::macos::typed::session::window_mutation_bridge(
+    typed_window,
+    action.kind,
+    policy,
+    settle_ms,
+  )?;
+
+  let artifact = build_text_artifact(
+    "window-management",
+    "txt",
+    &format!("window-management-{}", sanitize_file_component(&app)),
+    [
+      format!("app={app}"),
+      format!("appSelector={}", resolved_app.selector.raw),
+      format!("matchStrategy={}", resolved_app.match_strategy),
+      format!("resolvedAppName={}", resolved_app.resolved_app_name),
+      format!("windowRef={}", window.window_number),
+      format!("windowTitle={}", window.title),
+      format!("windowBounds={}", render_rect_compact(&window.bounds)),
+      format!("ownerBundleId={}", window.owner_bundle_id),
+      format!("ownerPid={}", window.owner_pid),
+      format!("candidateIndex={}", selected.candidate_index),
+      format!("selectionReason={}", selected.selection_reason),
+      format!("action={}", action.name),
+      format!("mutationPolicy={}", mutation_outcome.mutation_policy),
+      format!("selectedPath={}", mutation_outcome.selected_path),
+      format!("inputBridge={}", mutation_outcome.input_bridge),
+      format!("settleMs={settle_ms}"),
+      format!(
+        "fallbackReason={}",
+        mutation_outcome.fallback_reason.as_deref().unwrap_or("-")
+      ),
+      format!(
+        "beforeFrame={}",
+        mutation_outcome
+          .before_frame
+          .map(render_driver_rect_compact)
+          .unwrap_or_else(|| "-".to_string())
+      ),
+      format!(
+        "afterFrame={}",
+        mutation_outcome
+          .after_frame
+          .map(render_driver_rect_compact)
+          .unwrap_or_else(|| "-".to_string())
+      ),
+      format!(
+        "beforeMinimized={}",
+        render_optional_bool(
+          mutation_outcome
+            .before_state
+            .as_ref()
+            .and_then(|state| state.is_minimized)
+        )
+      ),
+      format!(
+        "afterMinimized={}",
+        render_optional_bool(
+          mutation_outcome
+            .after_state
+            .as_ref()
+            .and_then(|state| state.is_minimized)
+        )
+      ),
+    ]
+    .join("\n"),
+    "Mutated a resolved macOS app window through the typed window management API.",
+  )?;
+
+  let notes = vec![
+    format!("app={app}"),
+    format!("appSelector={}", resolved_app.selector.raw),
+    format!("matchStrategy={}", resolved_app.match_strategy),
+    format!("windowRef={}", window.window_number),
+    format!("windowTitle={}", window.title),
+    format!("windowBounds={}", render_rect_compact(&window.bounds)),
+    format!("candidateIndex={}", selected.candidate_index),
+    format!("selectionReason={}", selected.selection_reason),
+    format!("action={}", action.name),
+    format!("mutationPolicy={}", mutation_outcome.mutation_policy),
+    format!("selectedPath={}", mutation_outcome.selected_path),
+    format!("inputBridge={}", mutation_outcome.input_bridge),
+    format!("settleMs={settle_ms}"),
+  ];
+
+  Ok(DriverResponse {
+    summary: format!(
+      "Applied {} to {} window {} via {}.",
+      action.name, app, window.window_number, mutation_outcome.selected_path
+    ),
+    backend: Some("macos.typed.window.management".to_string()),
+    signals: window_management_signals(&action, &mutation_outcome),
+    notes,
+    artifacts: vec![artifact],
+  })
+}
+
 fn click_window_point_signals(
   consumed_candidate_local_id: Option<&str>,
 ) -> BTreeMap<String, String> {
@@ -241,6 +366,115 @@ fn click_window_point_signals(
     }
   }
   signals
+}
+
+fn window_management_signals(
+  action: &WindowMutationAction,
+  outcome: &crate::driver::macos::typed::session::WindowMutationBridgeOutcome,
+) -> BTreeMap<String, String> {
+  let mut signals = BTreeMap::new();
+  signals.insert(
+    "windowManagement.action".to_string(),
+    action.name.to_string(),
+  );
+  signals.insert(
+    "windowManagement.inputBridge".to_string(),
+    outcome.input_bridge.to_string(),
+  );
+  signals.insert(
+    "windowManagement.selectedPath".to_string(),
+    outcome.selected_path.to_string(),
+  );
+  signals.insert(
+    "windowManagement.mutationPolicy".to_string(),
+    outcome.mutation_policy.to_string(),
+  );
+  if let Some(fallback_reason) = &outcome.fallback_reason {
+    signals.insert(
+      "windowManagement.fallbackReason".to_string(),
+      fallback_reason.clone(),
+    );
+  }
+  signals
+}
+
+pub(crate) fn parse_window_mutation_action(call: &DriverCall) -> AuvResult<WindowMutationAction> {
+  let action = optional_non_empty_string(call, "action")
+    .unwrap_or_else(|| "set_frame".to_string())
+    .to_ascii_lowercase();
+  match action.replace('-', "_").as_str() {
+    "move_to" | "move" => Ok(WindowMutationAction {
+      name: "move_to",
+      kind: WindowMutationKind::MoveTo {
+        point: Point::new(required_f64(call, "x")?, required_f64(call, "y")?),
+      },
+    }),
+    "resize" => Ok(WindowMutationAction {
+      name: "resize",
+      kind: WindowMutationKind::Resize {
+        size: Size::new(required_f64(call, "width")?, required_f64(call, "height")?),
+      },
+    }),
+    "set_frame" | "frame" => Ok(WindowMutationAction {
+      name: "set_frame",
+      kind: WindowMutationKind::SetFrame {
+        frame: Rect::new(
+          required_f64(call, "x")?,
+          required_f64(call, "y")?,
+          required_f64(call, "width")?,
+          required_f64(call, "height")?,
+        ),
+      },
+    }),
+    "minimize" => Ok(WindowMutationAction {
+      name: "minimize",
+      kind: WindowMutationKind::Minimize,
+    }),
+    "restore" => Ok(WindowMutationAction {
+      name: "restore",
+      kind: WindowMutationKind::Restore,
+    }),
+    "zoom" => Ok(WindowMutationAction {
+      name: "zoom",
+      kind: WindowMutationKind::Zoom,
+    }),
+    other => Err(format!(
+      "invalid --action value {other:?}; expected move_to, resize, set_frame, minimize, restore, or zoom"
+    )),
+  }
+}
+
+pub(crate) fn parse_window_mutation_policy(call: &DriverCall) -> AuvResult<WindowMutationPolicy> {
+  match optional_string(call, "mutation_policy")
+    .or_else(|| optional_string(call, "window_mutation_policy"))
+    .unwrap_or_else(|| "native_preferred".to_string())
+    .trim()
+    .to_ascii_lowercase()
+    .replace('-', "_")
+    .as_str()
+  {
+    "native_only" => Ok(WindowMutationPolicy::NativeOnly),
+    "native_preferred" => Ok(WindowMutationPolicy::NativePreferred),
+    "foreground_preferred" => Ok(WindowMutationPolicy::ForegroundPreferred),
+    other => Err(format!(
+      "invalid --mutation_policy value {other:?}; expected native_only, native_preferred, or foreground_preferred"
+    )),
+  }
+}
+
+fn render_driver_rect_compact(rect: auv_driver::Rect) -> String {
+  format!(
+    "{:.3},{:.3},{:.3},{:.3}",
+    rect.origin.x, rect.origin.y, rect.size.width, rect.size.height
+  )
+}
+
+fn render_optional_bool(value: Option<bool>) -> &'static str {
+  match value {
+    Some(true) => "true",
+    Some(false) => "false",
+    None => "-",
+  }
 }
 
 fn optional_non_empty_window_click_candidate(call: &DriverCall) -> AuvResult<Option<String>> {

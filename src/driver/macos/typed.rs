@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use auv_driver::{
   ClickOptions, Driver as TypedDriver, InputPolicy, PasteTextOptions, Point, Scroll, ScrollOptions,
-  TextSubmit, WindowClickStrategy, WindowPoint,
+  TextSubmit, WindowClickStrategy, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
+  WindowMutationPolicy, WindowPoint,
 };
 
 use crate::model::AuvResult;
@@ -56,6 +57,36 @@ pub(crate) mod session {
     pub(crate) selected_path: &'static str,
     pub(crate) input_policy: &'static str,
     pub(crate) fallback_reason: Option<String>,
+  }
+
+  #[derive(Clone, Debug, PartialEq)]
+  pub(crate) struct WindowMutationBridgeOutcome {
+    pub(crate) input_bridge: &'static str,
+    pub(crate) selected_path: &'static str,
+    pub(crate) mutation_policy: &'static str,
+    pub(crate) fallback_reason: Option<String>,
+    pub(crate) before_frame: Option<auv_driver::Rect>,
+    pub(crate) after_frame: Option<auv_driver::Rect>,
+    pub(crate) before_state: Option<auv_driver::WindowState>,
+    pub(crate) after_state: Option<auv_driver::WindowState>,
+  }
+
+  impl WindowMutationBridgeOutcome {
+    pub(crate) fn from_result(
+      policy: WindowMutationPolicy,
+      result: &auv_driver::WindowMutationResult,
+    ) -> Self {
+      Self {
+        input_bridge: "typed-session",
+        selected_path: window_mutation_path_name(result.selected_path),
+        mutation_policy: window_mutation_policy_name(policy),
+        fallback_reason: result.fallback_reason.clone(),
+        before_frame: result.before_frame,
+        after_frame: result.after_frame,
+        before_state: result.before_state.clone(),
+        after_state: result.after_state.clone(),
+      }
+    }
   }
 
   impl InputActionBridgeOutcome {
@@ -262,11 +293,96 @@ pub(crate) mod session {
     Ok(InputActionBridgeOutcome::from_result(policy, &result))
   }
 
+  pub(crate) fn window_mutation_bridge(
+    window: auv_driver::Window,
+    kind: WindowMutationKind,
+    policy: WindowMutationPolicy,
+    settle_ms: u64,
+  ) -> AuvResult<WindowMutationBridgeOutcome> {
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    let result = match kind {
+      WindowMutationKind::MoveTo { point } => session.window().move_to(
+        &window,
+        point,
+        WindowMutationOptions {
+          policy,
+          settle: Duration::from_millis(settle_ms),
+          ..WindowMutationOptions::default()
+        },
+      ),
+      WindowMutationKind::Resize { size } => session.window().resize(
+        &window,
+        size,
+        WindowMutationOptions {
+          policy,
+          settle: Duration::from_millis(settle_ms),
+          ..WindowMutationOptions::default()
+        },
+      ),
+      WindowMutationKind::SetFrame { frame } => session.window().set_frame(
+        &window,
+        frame,
+        WindowMutationOptions {
+          policy,
+          settle: Duration::from_millis(settle_ms),
+          ..WindowMutationOptions::default()
+        },
+      ),
+      WindowMutationKind::Minimize => session.window().minimize(
+        &window,
+        WindowMutationOptions {
+          policy,
+          settle: Duration::from_millis(settle_ms),
+          ..WindowMutationOptions::default()
+        },
+      ),
+      WindowMutationKind::Restore => session.window().restore(
+        &window,
+        WindowMutationOptions {
+          policy,
+          settle: Duration::from_millis(settle_ms),
+          ..WindowMutationOptions::default()
+        },
+      ),
+      WindowMutationKind::Zoom => session.window().zoom(
+        &window,
+        WindowMutationOptions {
+          policy,
+          settle: Duration::from_millis(settle_ms),
+          ..WindowMutationOptions::default()
+        },
+      ),
+    }
+    .map_err(|error| format!("typed macOS window mutation adapter failed: {error}"))?;
+    Ok(WindowMutationBridgeOutcome::from_result(policy, &result))
+  }
+
   pub(crate) fn input_policy_name(policy: InputPolicy) -> &'static str {
     match policy {
       InputPolicy::BackgroundOnly => "background_only",
       InputPolicy::BackgroundPreferred => "background_preferred",
       InputPolicy::ForegroundPreferred => "foreground_preferred",
+    }
+  }
+
+  pub(crate) fn window_mutation_policy_name(policy: WindowMutationPolicy) -> &'static str {
+    match policy {
+      WindowMutationPolicy::NativeOnly => "native_only",
+      WindowMutationPolicy::NativePreferred => "native_preferred",
+      WindowMutationPolicy::ForegroundPreferred => "foreground_preferred",
+    }
+  }
+
+  pub(crate) fn window_mutation_path_name(path: WindowMutationPath) -> &'static str {
+    match path {
+      WindowMutationPath::AxWindowAttribute => "ax_window_attribute",
+      WindowMutationPath::AxWindowAction => "ax_window_action",
+      WindowMutationPath::PlatformNative => "platform_native",
+      WindowMutationPath::ForegroundSystemEvents => "foreground_system_events",
+      WindowMutationPath::Unsupported => "unsupported",
     }
   }
 
