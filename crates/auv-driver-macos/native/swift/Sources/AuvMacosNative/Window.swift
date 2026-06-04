@@ -1,5 +1,7 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
+import Darwin
 import Foundation
 
 private func boundsDict(_ value: NSDictionary?) -> [String: Int64]? {
@@ -160,6 +162,341 @@ func list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse 
     y_values: nativeVec(yValues),
     width_values: nativeVec(widthValues),
     height_values: nativeVec(heightValues),
+    error_message: nil,
+    recovery_hint: nil
+  )
+}
+
+private struct NativeWindowFrame {
+  let x: Int64
+  let y: Int64
+  let width: Int64
+  let height: Int64
+}
+
+private typealias AXUIElementGetWindowFn = @convention(c) (
+  AXUIElement,
+  UnsafeMutablePointer<CGWindowID>
+) -> AXError
+
+// NOTICE: macOS does not expose a public AX attribute that reliably maps an
+// `AXUIElement` window to the `kCGWindowNumber` captured by WindowServer.
+// `_AXUIElementGetWindow` is a private ApplicationServices symbol used here at
+// the native boundary so typed window mutation can target the resolved window
+// id without falling back to ambiguous titles. Remove this once an
+// owner-approved public mapping strategy replaces CGWindowID-targeted mutation.
+private let axUIElementGetWindow: AXUIElementGetWindowFn? = {
+  let symbolName = "_AXUIElementGetWindow"
+  let globalHandle = UnsafeMutableRawPointer(bitPattern: -2)
+  guard let symbol = dlsym(globalHandle, symbolName) else {
+    return nil
+  }
+  return unsafeBitCast(symbol, to: AXUIElementGetWindowFn.self)
+}()
+
+private func windowAxAttributeValue(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+  var value: CFTypeRef?
+  let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+  guard result == .success else { return nil }
+  return value
+}
+
+private func windowAxElementAttribute(_ element: AXUIElement, _ attribute: String) -> AXUIElement? {
+  guard let rawValue = windowAxAttributeValue(element, attribute) else { return nil }
+  guard CFGetTypeID(rawValue) == AXUIElementGetTypeID() else { return nil }
+  return unsafeBitCast(rawValue, to: AXUIElement.self)
+}
+
+private func windowAxElementArrayAttribute(_ element: AXUIElement, _ attribute: String) -> [AXUIElement] {
+  guard let rawValue = windowAxAttributeValue(element, attribute) else { return [] }
+  guard let array = rawValue as? NSArray else { return [] }
+  return array.compactMap { item in
+    let value = item as CFTypeRef
+    guard CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+    return unsafeBitCast(value, to: AXUIElement.self)
+  }
+}
+
+private func windowAxStringAttribute(_ element: AXUIElement, _ attribute: String) -> String {
+  if let stringValue = windowAxAttributeValue(element, attribute) as? String {
+    return nativeSanitize(stringValue)
+  }
+  if let numberValue = windowAxAttributeValue(element, attribute) as? NSNumber {
+    return numberValue.stringValue
+  }
+  return ""
+}
+
+private func windowAxIntAttribute(_ element: AXUIElement, _ attribute: String) -> Int64? {
+  if let numberValue = windowAxAttributeValue(element, attribute) as? NSNumber {
+    return numberValue.int64Value
+  }
+  return nil
+}
+
+private func windowAxCgWindowId(_ element: AXUIElement) -> Int64? {
+  guard let axUIElementGetWindow else { return nil }
+  var windowId = CGWindowID(0)
+  let result = axUIElementGetWindow(element, &windowId)
+  guard result == .success, windowId > 0 else { return nil }
+  return Int64(windowId)
+}
+
+private func windowAxBoolAttribute(_ element: AXUIElement, _ attribute: String) -> Bool {
+  guard let value = windowAxAttributeValue(element, attribute) else { return false }
+  if CFGetTypeID(value) == CFBooleanGetTypeID() {
+    return CFBooleanGetValue((value as! CFBoolean))
+  }
+  if let number = value as? NSNumber {
+    return number.boolValue
+  }
+  return false
+}
+
+private func windowAxValueAttribute(_ element: AXUIElement, _ attribute: String) -> AXValue? {
+  guard let rawValue = windowAxAttributeValue(element, attribute) else { return nil }
+  guard CFGetTypeID(rawValue) == AXValueGetTypeID() else { return nil }
+  return unsafeBitCast(rawValue, to: AXValue.self)
+}
+
+private func windowAxPointAttribute(_ element: AXUIElement, _ attribute: String) -> CGPoint? {
+  guard let value = windowAxValueAttribute(element, attribute) else { return nil }
+  guard AXValueGetType(value) == .cgPoint else { return nil }
+  var point = CGPoint.zero
+  guard AXValueGetValue(value, .cgPoint, &point) else { return nil }
+  return point
+}
+
+private func windowAxSizeAttribute(_ element: AXUIElement, _ attribute: String) -> CGSize? {
+  guard let value = windowAxValueAttribute(element, attribute) else { return nil }
+  guard AXValueGetType(value) == .cgSize else { return nil }
+  var size = CGSize.zero
+  guard AXValueGetValue(value, .cgSize, &size) else { return nil }
+  return size
+}
+
+private func windowAxFrame(_ element: AXUIElement) -> NativeWindowFrame {
+  let point = windowAxPointAttribute(element, kAXPositionAttribute as String) ?? .zero
+  let size = windowAxSizeAttribute(element, kAXSizeAttribute as String) ?? .zero
+  return NativeWindowFrame(
+    x: Int64(point.x.rounded()),
+    y: Int64(point.y.rounded()),
+    width: Int64(size.width.rounded()),
+    height: Int64(size.height.rounded())
+  )
+}
+
+private func emptyWindowMutationResponse(
+  message: String,
+  recovery: String,
+  before: NativeWindowFrame = NativeWindowFrame(x: 0, y: 0, width: 0, height: 0),
+  after: NativeWindowFrame = NativeWindowFrame(x: 0, y: 0, width: 0, height: 0),
+  wasMinimized: Bool = false,
+  isMinimized: Bool = false
+) -> NativeWindowMutationResponse {
+  NativeWindowMutationResponse(
+    performed_action: "".intoRustString(),
+    path: "".intoRustString(),
+    before_x: before.x,
+    before_y: before.y,
+    before_width: before.width,
+    before_height: before.height,
+    after_x: after.x,
+    after_y: after.y,
+    after_width: after.width,
+    after_height: after.height,
+    was_minimized: wasMinimized,
+    is_minimized: isMinimized,
+    error_message: message.intoRustString(),
+    recovery_hint: recovery.intoRustString()
+  )
+}
+
+private func resolveWindowMutationTarget(
+  request: NativeWindowMutationRequest
+) -> (window: AXUIElement, path: String)? {
+  let appElement = AXUIElementCreateApplication(pid_t(request.pid))
+  let windows = windowAxElementArrayAttribute(appElement, kAXWindowsAttribute as String)
+  let requestedWindowNumber = request.window_number
+  if requestedWindowNumber > 0 {
+    for (index, window) in windows.enumerated() {
+      if windowAxCgWindowId(window) == requestedWindowNumber {
+        return (window, "pid=\(request.pid) window_number=\(requestedWindowNumber) ax_window_index=\(index)")
+      }
+    }
+    return nil
+  }
+
+  let requestedTitle = request.title.toString().trimmingCharacters(in: .whitespacesAndNewlines)
+  if !requestedTitle.isEmpty {
+    for (index, window) in windows.enumerated() {
+      if windowAxStringAttribute(window, kAXTitleAttribute as String) == requestedTitle {
+        return (window, "pid=\(request.pid) title=\(requestedTitle) ax_window_index=\(index)")
+      }
+    }
+  }
+
+  if requestedWindowNumber <= 0 && requestedTitle.isEmpty,
+     let focusedWindow = windowAxElementAttribute(appElement, kAXFocusedWindowAttribute as String) {
+    return (focusedWindow, "pid=\(request.pid) focused_window")
+  }
+
+  return nil
+}
+
+private func setWindowPosition(_ window: AXUIElement, x: Int64, y: Int64) -> AXError {
+  var point = CGPoint(x: CGFloat(x), y: CGFloat(y))
+  guard let value = AXValueCreate(.cgPoint, &point) else { return .failure }
+  return AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+}
+
+private func setWindowSize(_ window: AXUIElement, width: Int64, height: Int64) -> AXError {
+  var size = CGSize(width: CGFloat(width), height: CGFloat(height))
+  guard let value = AXValueCreate(.cgSize, &size) else { return .failure }
+  return AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
+}
+
+func mutate_window(request: NativeWindowMutationRequest) -> NativeWindowMutationResponse {
+  // TODO(window-management-api-task3): pointer and foreground fallback are
+  // deferred because this task exposes only the native AX bridge; add fallback
+  // policy when WindowApi dispatch is introduced.
+  guard request.pid >= 0 && request.pid <= Int64(Int32.max),
+        NSRunningApplication(processIdentifier: pid_t(request.pid)) != nil else {
+    return emptyWindowMutationResponse(
+      message: "could not resolve target AX app for pid \(request.pid)",
+      recovery: "verify the app is still running, refresh the window list, and retry with a current pid"
+    )
+  }
+
+  guard let target = resolveWindowMutationTarget(request: request) else {
+    return emptyWindowMutationResponse(
+      message: "could not resolve target AX window for pid \(request.pid), window_number \(request.window_number), title \(request.title.toString())",
+      recovery: "verify Accessibility permission, refresh the window list, and retry with pid plus window_number or title"
+    )
+  }
+
+  let window = target.window
+  let before = windowAxFrame(window)
+  let wasMinimized = windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+  var action = ""
+
+  switch request.kind {
+  case .MoveTo:
+    let result = setWindowPosition(window, x: request.x, y: request.y)
+    guard result == .success else {
+      return emptyWindowMutationResponse(
+        message: "AXUIElementSetAttributeValue(kAXPositionAttribute) returned \(result.rawValue)",
+        recovery: "verify the target window accepts AXPosition mutations and retry",
+        before: before,
+        after: windowAxFrame(window),
+        wasMinimized: wasMinimized,
+        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+      )
+    }
+    action = "move_to"
+  case .Resize:
+    let result = setWindowSize(window, width: request.width, height: request.height)
+    guard result == .success else {
+      return emptyWindowMutationResponse(
+        message: "AXUIElementSetAttributeValue(kAXSizeAttribute) returned \(result.rawValue)",
+        recovery: "verify the target window accepts AXSize mutations and retry",
+        before: before,
+        after: windowAxFrame(window),
+        wasMinimized: wasMinimized,
+        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+      )
+    }
+    action = "resize"
+  case .SetFrame:
+    let positionResult = setWindowPosition(window, x: request.x, y: request.y)
+    guard positionResult == .success else {
+      return emptyWindowMutationResponse(
+        message: "AXUIElementSetAttributeValue(kAXPositionAttribute) returned \(positionResult.rawValue)",
+        recovery: "verify the target window accepts AXPosition mutations and retry",
+        before: before,
+        after: windowAxFrame(window),
+        wasMinimized: wasMinimized,
+        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+      )
+    }
+    let sizeResult = setWindowSize(window, width: request.width, height: request.height)
+    guard sizeResult == .success else {
+      return emptyWindowMutationResponse(
+        message: "AXUIElementSetAttributeValue(kAXSizeAttribute) returned \(sizeResult.rawValue)",
+        recovery: "verify the target window accepts AXSize mutations and retry",
+        before: before,
+        after: windowAxFrame(window),
+        wasMinimized: wasMinimized,
+        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+      )
+    }
+    action = "set_frame"
+  case .Minimize:
+    let result = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
+    guard result == .success else {
+      return emptyWindowMutationResponse(
+        message: "AXUIElementSetAttributeValue(kAXMinimizedAttribute=true) returned \(result.rawValue)",
+        recovery: "verify the target window accepts AXMinimized mutations and retry",
+        before: before,
+        after: windowAxFrame(window),
+        wasMinimized: wasMinimized,
+        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+      )
+    }
+    action = "minimize"
+  case .Restore:
+    let result = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+    guard result == .success else {
+      return emptyWindowMutationResponse(
+        message: "AXUIElementSetAttributeValue(kAXMinimizedAttribute=false) returned \(result.rawValue)",
+        recovery: "verify the target window accepts AXMinimized mutations and retry",
+        before: before,
+        after: windowAxFrame(window),
+        wasMinimized: wasMinimized,
+        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+      )
+    }
+    action = "restore"
+  case .Zoom:
+    guard let zoomButton = windowAxElementAttribute(window, kAXZoomButtonAttribute as String) else {
+      return emptyWindowMutationResponse(
+        message: "target AX window does not expose kAXZoomButtonAttribute",
+        recovery: "choose a window that exposes a zoom button or use move/resize/set_frame instead",
+        before: before,
+        after: before,
+        wasMinimized: wasMinimized,
+        isMinimized: wasMinimized
+      )
+    }
+    let result = AXUIElementPerformAction(zoomButton, kAXPressAction as CFString)
+    guard result == .success else {
+      return emptyWindowMutationResponse(
+        message: "AXUIElementPerformAction(kAXPressAction) on kAXZoomButtonAttribute returned \(result.rawValue)",
+        recovery: "verify the target window zoom button accepts AXPress and retry",
+        before: before,
+        after: windowAxFrame(window),
+        wasMinimized: wasMinimized,
+        isMinimized: windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+      )
+    }
+    action = "zoom"
+  }
+
+  let after = windowAxFrame(window)
+  let isMinimized = windowAxBoolAttribute(window, kAXMinimizedAttribute as String)
+  return NativeWindowMutationResponse(
+    performed_action: action.intoRustString(),
+    path: target.path.intoRustString(),
+    before_x: before.x,
+    before_y: before.y,
+    before_width: before.width,
+    before_height: before.height,
+    after_x: after.x,
+    after_y: after.y,
+    after_width: after.width,
+    after_height: after.height,
+    was_minimized: wasMinimized,
+    is_minimized: isMinimized,
     error_message: nil,
     recovery_hint: nil
   )

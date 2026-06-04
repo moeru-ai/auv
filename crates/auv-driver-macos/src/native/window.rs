@@ -2,8 +2,10 @@
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
   NativeBundleIdsByPidRequest, NativeBundleIdsByPidResponse, NativeDisplayListResponse,
-  NativeWindowListRequest, NativeWindowListResponse, bundle_ids_by_pid as native_bundle_ids_by_pid,
-  list_displays, list_windows as native_list_windows,
+  NativeWindowListRequest, NativeWindowListResponse, NativeWindowMutationKind,
+  NativeWindowMutationRequest, NativeWindowMutationResponse,
+  bundle_ids_by_pid as native_bundle_ids_by_pid, list_displays,
+  list_windows as native_list_windows, mutate_window as native_mutate_window,
 };
 use super::types::{
   AuvResult, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow,
@@ -64,6 +66,33 @@ pub fn list_windows(options: ListWindowsOptions) -> AuvResult<ObservedWindowSnap
 #[cfg(not(target_os = "macos"))]
 pub fn list_windows(_options: ListWindowsOptions) -> AuvResult<ObservedWindowSnapshot> {
   Err("macOS native window listing is unsupported on this target".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn mutate_window(
+  request: DecodedWindowMutationRequest,
+) -> AuvResult<DecodedWindowMutationResponse> {
+  // TODO(window-management-api-task3): pointer or foreground fallback is deferred
+  // because Task 2 owns only the native AX bridge; add it when WindowApi dispatch
+  // chooses fallback policy.
+  let response = native_mutate_window(NativeWindowMutationRequest {
+    pid: request.pid,
+    window_number: request.window_number,
+    title: request.title,
+    kind: NativeWindowMutationKind::from(request.kind),
+    x: request.x,
+    y: request.y,
+    width: request.width,
+    height: request.height,
+  });
+  decode_window_mutation_response(DecodedWindowMutationResponse::from(response))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn mutate_window(
+  _request: DecodedWindowMutationRequest,
+) -> AuvResult<DecodedWindowMutationResponse> {
+  Err("macOS native window mutation is unsupported on this target".to_string())
 }
 
 impl WindowListScope {
@@ -244,6 +273,20 @@ pub fn decode_bundle_ids_by_pid_response(
   Ok(bundle_ids)
 }
 
+pub fn decode_window_mutation_response(
+  response: DecodedWindowMutationResponse,
+) -> AuvResult<DecodedWindowMutationResponse> {
+  if response.error_message.is_some() {
+    return super::error::native_result(
+      "mutate_window",
+      None,
+      response.error_message,
+      response.recovery_hint,
+    );
+  }
+  Ok(response)
+}
+
 #[derive(Clone, Debug)]
 pub struct DecodedDisplayListResponse {
   pub captured_at: String,
@@ -291,6 +334,60 @@ pub struct DecodedBundleIdsByPidResponse {
   pub bundle_ids: Vec<String>,
   pub error_message: Option<String>,
   pub recovery_hint: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodedWindowMutationKind {
+  MoveTo,
+  Resize,
+  SetFrame,
+  Minimize,
+  Restore,
+  Zoom,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodedWindowMutationRequest {
+  pub pid: i64,
+  pub window_number: i64,
+  pub title: String,
+  pub kind: DecodedWindowMutationKind,
+  pub x: i64,
+  pub y: i64,
+  pub width: i64,
+  pub height: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecodedWindowMutationResponse {
+  pub performed_action: String,
+  pub path: String,
+  pub before_x: i64,
+  pub before_y: i64,
+  pub before_width: i64,
+  pub before_height: i64,
+  pub after_x: i64,
+  pub after_y: i64,
+  pub after_width: i64,
+  pub after_height: i64,
+  pub was_minimized: bool,
+  pub is_minimized: bool,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+impl From<DecodedWindowMutationKind> for NativeWindowMutationKind {
+  fn from(value: DecodedWindowMutationKind) -> Self {
+    match value {
+      DecodedWindowMutationKind::MoveTo => Self::MoveTo,
+      DecodedWindowMutationKind::Resize => Self::Resize,
+      DecodedWindowMutationKind::SetFrame => Self::SetFrame,
+      DecodedWindowMutationKind::Minimize => Self::Minimize,
+      DecodedWindowMutationKind::Restore => Self::Restore,
+      DecodedWindowMutationKind::Zoom => Self::Zoom,
+    }
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -354,9 +451,50 @@ impl From<NativeBundleIdsByPidResponse> for DecodedBundleIdsByPidResponse {
   }
 }
 
+#[cfg(target_os = "macos")]
+impl From<NativeWindowMutationResponse> for DecodedWindowMutationResponse {
+  fn from(value: NativeWindowMutationResponse) -> Self {
+    Self {
+      performed_action: value.performed_action,
+      path: value.path,
+      before_x: value.before_x,
+      before_y: value.before_y,
+      before_width: value.before_width,
+      before_height: value.before_height,
+      after_x: value.after_x,
+      after_y: value.after_y,
+      after_width: value.after_width,
+      after_height: value.after_height,
+      was_minimized: value.was_minimized,
+      is_minimized: value.is_minimized,
+      error_message: value.error_message,
+      recovery_hint: value.recovery_hint,
+    }
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn base_mutation_response() -> DecodedWindowMutationResponse {
+    DecodedWindowMutationResponse {
+      performed_action: "move_to".to_string(),
+      path: "pid=42 window_number=7".to_string(),
+      before_x: 10,
+      before_y: 20,
+      before_width: 800,
+      before_height: 600,
+      after_x: 30,
+      after_y: 40,
+      after_width: 800,
+      after_height: 600,
+      was_minimized: false,
+      is_minimized: false,
+      error_message: None,
+      recovery_hint: None,
+    }
+  }
 
   #[test]
   fn list_window_scope_maps_to_native_app_filter_explicitly() {
@@ -429,5 +567,37 @@ mod tests {
     .unwrap_err();
 
     assert!(error.contains("mismatched vector lengths"));
+  }
+
+  #[test]
+  fn decode_window_mutation_response_preserves_bridge_fields() {
+    let response = decode_window_mutation_response(base_mutation_response()).unwrap();
+
+    assert_eq!(response.performed_action, "move_to");
+    assert_eq!(response.path, "pid=42 window_number=7");
+    assert_eq!(response.before_x, 10);
+    assert_eq!(response.before_y, 20);
+    assert_eq!(response.before_width, 800);
+    assert_eq!(response.before_height, 600);
+    assert_eq!(response.after_x, 30);
+    assert_eq!(response.after_y, 40);
+    assert_eq!(response.after_width, 800);
+    assert_eq!(response.after_height, 600);
+    assert!(!response.was_minimized);
+    assert!(!response.is_minimized);
+  }
+
+  #[test]
+  fn decode_window_mutation_response_maps_native_error() {
+    let mut response = base_mutation_response();
+    response.error_message = Some("target AX window was not found".to_string());
+    response.recovery_hint = Some("refresh the window list and retry".to_string());
+
+    let error = decode_window_mutation_response(response).unwrap_err();
+
+    assert_eq!(
+      error,
+      "macos native mutate_window failed: target AX window was not found; recovery=refresh the window list and retry"
+    );
   }
 }

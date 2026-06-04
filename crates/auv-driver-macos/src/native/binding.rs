@@ -44,6 +44,45 @@ pub(crate) mod ffi {
     app_filter: String,
   }
 
+  enum NativeWindowMutationKind {
+    MoveTo,
+    Resize,
+    SetFrame,
+    Minimize,
+    Restore,
+    Zoom,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeWindowMutationRequest {
+    pid: i64,
+    window_number: i64,
+    title: String,
+    kind: NativeWindowMutationKind,
+    x: i64,
+    y: i64,
+    width: i64,
+    height: i64,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeWindowMutationResponse {
+    performed_action: String,
+    path: String,
+    before_x: i64,
+    before_y: i64,
+    before_width: i64,
+    before_height: i64,
+    after_x: i64,
+    after_y: i64,
+    after_width: i64,
+    after_height: i64,
+    was_minimized: bool,
+    is_minimized: bool,
+    error_message: Option<String>,
+    recovery_hint: Option<String>,
+  }
+
   #[swift_bridge(swift_repr = "struct")]
   struct NativeWindowListResponse {
     observed_at: String,
@@ -302,6 +341,7 @@ pub(crate) mod ffi {
     fn probe_permissions() -> NativePermissionProbeResponse;
     fn list_displays() -> NativeDisplayListResponse;
     fn list_windows(request: NativeWindowListRequest) -> NativeWindowListResponse;
+    fn mutate_window(request: NativeWindowMutationRequest) -> NativeWindowMutationResponse;
     fn bundle_ids_by_pid(request: NativeBundleIdsByPidRequest) -> NativeBundleIdsByPidResponse;
     fn capture_ax_tree(request: NativeAxTreeRequest) -> NativeAxTreeResponse;
     fn perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse;
