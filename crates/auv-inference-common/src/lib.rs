@@ -1,7 +1,9 @@
 pub mod error;
+pub mod render;
 pub mod types;
 
 pub use error::{InferenceError, InferenceResult};
+pub use render::render_annotated_image;
 pub use types::{
   BoundingBox, Detection, DetectionOptions, DetectionSet, ImageFrame, ImageSize, ModelConfig,
   ModelId,
