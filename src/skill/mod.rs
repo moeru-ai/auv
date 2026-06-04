@@ -1954,6 +1954,25 @@ mod tests {
   }
 
   #[test]
+  fn qqmusic_music_result_play_recipe_requires_structured_candidate_ref_consumer() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("recipes/macos/qqmusic/music.result.play.v0.json");
+    let raw = fs::read_to_string(&path).expect("recipe file should read");
+    let manifest: SkillManifest = serde_json::from_str(&raw).expect("recipe should parse");
+
+    validate_skill_manifest(&manifest).expect("recipe should validate");
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "play-candidate")
+      .expect("play-candidate step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("candidate.input_mode"),
+      Some(&"candidate_ref".to_string())
+    );
+  }
+
+  #[test]
   fn enforce_step_expectations_reads_structured_signals() {
     let step: SkillStep = serde_json::from_value(json!({
       "id": "verify-text",

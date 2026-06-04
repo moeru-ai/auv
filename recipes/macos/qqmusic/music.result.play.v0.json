@@ -165,7 +165,8 @@
       },
       "expect": {
         "signal_equals": {
-          "music.result.semantic_matched": "true"
+          "music.result.semantic_matched": "true",
+          "candidate.input_mode": "candidate_ref"
         },
         "artifact_count_at_least": 1
       }
