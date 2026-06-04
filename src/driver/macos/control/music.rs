@@ -1522,7 +1522,7 @@ fn music_result_play_operation_result(
     operation_id: MUSIC_RESULT_PLAY_OPERATION_ID.to_string(),
     evidence_artifacts,
     output: OperationOutput::Verification {
-      verification: verification.clone(),
+      verification: Box::new(verification.clone()),
     },
     verifications: vec![verification],
     freshness_basis: None,

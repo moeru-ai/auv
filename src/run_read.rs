@@ -42,7 +42,7 @@ pub(crate) fn extract_verifications(
       continue;
     }
     if let OperationOutput::Verification { verification } = operation_result.output {
-      verifications.push(verification);
+      verifications.push(*verification);
     }
   }
   Ok(verifications)
@@ -161,7 +161,7 @@ mod tests {
       operation_id: "verify.legacy".to_string(),
       evidence_artifacts: Vec::new(),
       output: OperationOutput::Verification {
-        verification: legacy_verification.clone(),
+        verification: Box::new(legacy_verification.clone()),
       },
       verifications: Vec::new(),
       freshness_basis: None,
@@ -174,7 +174,7 @@ mod tests {
       operation_id: "music.result.play".to_string(),
       evidence_artifacts: Vec::new(),
       output: OperationOutput::Verification {
-        verification: duplicate_legacy_verification,
+        verification: Box::new(duplicate_legacy_verification),
       },
       verifications: vec![top_level_verification.clone()],
       freshness_basis: None,

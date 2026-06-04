@@ -152,9 +152,20 @@ pub struct OperationResult {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperationOutput {
-  Candidates { candidates: Vec<Candidate> },
-  Verification { verification: VerificationResult },
-  Acknowledged { message: Option<String> },
+  Candidates {
+    candidates: Vec<Candidate>,
+  },
+  // `VerificationResult` is the largest variant by far (~440 B vs. ~24 B for
+  // `Candidates`), and `OperationOutput` / `OperationResult` move across the
+  // seam by value, so leaving it unboxed inflates every sibling. `Box<T>` is
+  // serde-transparent (serializes exactly as `T`), so the wire shape on
+  // `OperationResult.output` stays identical.
+  Verification {
+    verification: Box<VerificationResult>,
+  },
+  Acknowledged {
+    message: Option<String>,
+  },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

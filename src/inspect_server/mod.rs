@@ -2560,7 +2560,7 @@ mod tests {
       operation_id: "music.result.play".to_string(),
       evidence_artifacts: Vec::new(),
       output: OperationOutput::Verification {
-        verification: verification.clone(),
+        verification: Box::new(verification.clone()),
       },
       verifications: vec![verification],
       freshness_basis: None,
