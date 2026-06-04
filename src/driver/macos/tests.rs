@@ -11,7 +11,6 @@ use super::{
   control::common::{ClickPointCallOptions, build_click_point_call},
   control::window::{
     parse_window_click, parse_window_click_delivery_path, parse_window_click_strategy,
-    parse_window_mutation_action, parse_window_mutation_policy,
   },
   observation::DisplaySelection,
   support::ax::{find_ax_node_at_point, find_now_playing_ax_node},
@@ -245,49 +244,6 @@ fn parse_window_click_rejects_counts_not_supported_by_typed_click() {
   let error = parse_window_click(&call, 80).expect_err("triple click should be explicit");
 
   assert!(error.contains("typed window click supports only click_count 1 or 2"));
-}
-
-#[test]
-fn parse_window_mutation_action_accepts_frame_geometry() {
-  let call = build_call([
-    ("action", "set-frame"),
-    ("x", "10"),
-    ("y", "20.5"),
-    ("width", "800"),
-    ("height", "600"),
-  ]);
-  let action = parse_window_mutation_action(&call).expect("window mutation action");
-
-  assert_eq!(action.name, "set_frame");
-  assert_eq!(
-    action.kind,
-    auv_driver::WindowMutationKind::SetFrame {
-      frame: auv_driver::Rect::new(10.0, 20.5, 800.0, 600.0),
-    }
-  );
-}
-
-#[test]
-fn parse_window_mutation_action_rejects_missing_required_geometry() {
-  let call = build_call([("action", "resize"), ("width", "800")]);
-  let error = parse_window_mutation_action(&call).expect_err("height is required");
-
-  assert!(error.contains("operation requires --height"));
-}
-
-#[test]
-fn parse_window_mutation_policy_accepts_native_and_foreground_values() {
-  let call = build_call([("mutation_policy", "native-only")]);
-  assert_eq!(
-    parse_window_mutation_policy(&call).expect("native policy"),
-    auv_driver::WindowMutationPolicy::NativeOnly
-  );
-
-  let call = build_call([("window_mutation_policy", "foreground_preferred")]);
-  assert_eq!(
-    parse_window_mutation_policy(&call).expect("foreground policy"),
-    auv_driver::WindowMutationPolicy::ForegroundPreferred
-  );
 }
 
 #[test]

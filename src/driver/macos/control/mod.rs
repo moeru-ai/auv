@@ -27,7 +27,7 @@ pub(crate) use self::region::{observe_window_region, scroll_window_region};
 pub(crate) use self::screen::{click_screen_row, click_screen_text};
 pub(crate) use self::teach::teach_click;
 pub(crate) use self::text::{paste_text_preserve_clipboard, press_key, type_text};
-pub(crate) use self::window::{click_window_point, window_management};
+pub(crate) use self::window::click_window_point;
 pub(crate) use self::window_ocr::{
   click_window_row, click_window_text, find_window_rows, find_window_text, wait_for_window_rows,
   wait_for_window_text,
