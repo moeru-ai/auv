@@ -250,6 +250,10 @@ Balatro parity is a local/gated smoke path, not the default CI baseline. The
 default test suite must stay meaningful without local Balatro models or a local
 Balatro checkout.
 
+The local smoke entry point should use `AUV_BALATRO_ROOT` to locate the Balatro
+checkout. If the env var is absent or points to a missing directory, tests must
+skip explicitly and report that the real-model smoke was not exercised.
+
 ## Example Artifact
 
 Replace the current `auv-inference-yolo` example with an
