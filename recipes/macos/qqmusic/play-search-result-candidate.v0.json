@@ -299,6 +299,7 @@
         "signal_equals": {
           "music.result.play.resolved": "true",
           "music.result.semantic_matched": "true",
+          "candidate.input_mode": "candidate_ref",
           "music.result.consumed_candidate_source_operation_id": "music.search.results",
           "music.result.consumed_candidate_local_id": "${step_search_results_signal_music_search_results_selected_candidate_local_id}"
         },

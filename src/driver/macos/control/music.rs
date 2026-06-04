@@ -68,6 +68,16 @@ struct MusicCandidateInput {
   structured_candidate_ref: Option<CandidateRef>,
 }
 
+impl MusicCandidateInput {
+  fn input_mode(&self) -> &'static str {
+    if self.structured_candidate_ref.is_some() {
+      "candidate_ref"
+    } else {
+      "legacy_locator"
+    }
+  }
+}
+
 #[derive(Clone, Debug)]
 struct ResolvedCandidateProvenance {
   candidate_ref: CandidateRef,
@@ -395,11 +405,16 @@ pub(crate) fn music_validate_candidate_liveness(call: &DriverCall) -> AuvResult<
         "candidate.anchor_recheck_ran".to_string(),
         liveness.anchor_recheck_ran.to_string(),
       ),
+      (
+        "candidate.input_mode".to_string(),
+        candidate_input.input_mode().to_string(),
+      ),
     ]),
     notes: vec![
       format!("sourceRunId={}", candidate_input.source_run_id),
       format!("sourceArtifactId={}", candidate_input.source_artifact_id),
       format!("candidateLocalId={}", candidate_input.candidate_local_id),
+      format!("candidateInputMode={}", candidate_input.input_mode()),
       format!("operationId={}", resolved.operation_result.operation_id),
     ],
     artifacts: Vec::new(),
@@ -714,6 +729,10 @@ pub(crate) fn music_result_play(call: &DriverCall) -> AuvResult<DriverResponse> 
     (
       "candidate.anchor_recheck_ran".to_string(),
       liveness.anchor_recheck_ran.to_string(),
+    ),
+    (
+      "candidate.input_mode".to_string(),
+      candidate_input.input_mode().to_string(),
     ),
     ("target.title".to_string(), target_title.clone()),
     ("smartPress.strategy".to_string(), smart_press_strategy),
@@ -1770,6 +1789,30 @@ mod tests {
     );
     assert_eq!(resolved.candidate_local_id, "row#9");
     assert!(resolved.structured_candidate_ref.is_none());
+  }
+
+  #[test]
+  fn music_candidate_input_mode_reports_structured_candidate_ref() {
+    let resolved = MusicCandidateInput {
+      source_run_id: "run_test".to_string(),
+      source_artifact_id: MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string(),
+      candidate_local_id: "row#1".to_string(),
+      structured_candidate_ref: Some(sample_candidate_ref()),
+    };
+
+    assert_eq!(resolved.input_mode(), "candidate_ref");
+  }
+
+  #[test]
+  fn music_candidate_input_mode_reports_legacy_locator_fallback() {
+    let resolved = MusicCandidateInput {
+      source_run_id: "run_test".to_string(),
+      source_artifact_id: MUSIC_SEARCH_RESULTS_DEFAULT_OPERATION_RESULT_ARTIFACT_ID.to_string(),
+      candidate_local_id: "row#1".to_string(),
+      structured_candidate_ref: None,
+    };
+
+    assert_eq!(resolved.input_mode(), "legacy_locator");
   }
 
   #[test]
