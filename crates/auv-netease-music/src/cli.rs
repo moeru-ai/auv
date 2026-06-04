@@ -156,19 +156,11 @@ pub(crate) struct NowPlayingCommand {
   pub app_id: String,
 }
 
-/// A transport command, scoped to act only when `app_id` owns the now-playing slot.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TransportControl {
-  Play,
-  Pause,
-  Toggle,
-  Next,
-  Previous,
-}
-
+/// A transport command, scoped to act only when `app_id` owns the now-playing
+/// slot. Reuses `auv_media_macos::MediaCommand` rather than a local mirror.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ControlCommand {
-  pub control: TransportControl,
+  pub control: auv_media_macos::MediaCommand,
   pub app_id: String,
 }
 
@@ -395,11 +387,16 @@ fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
   match parsed.command {
     CliSubcommand::Playlist(args) => parse_playlist(args),
     CliSubcommand::NowPlaying(args) => parse_now_playing(args),
-    CliSubcommand::Play(args) => Ok(control(TransportControl::Play, args)),
-    CliSubcommand::Pause(args) => Ok(control(TransportControl::Pause, args)),
-    CliSubcommand::Toggle(args) => Ok(control(TransportControl::Toggle, args)),
-    CliSubcommand::Next(args) => Ok(control(TransportControl::Next, args)),
-    CliSubcommand::Previous(args) => Ok(control(TransportControl::Previous, args)),
+    CliSubcommand::Play(args) => Ok(control(auv_media_macos::MediaCommand::Play, args)),
+    CliSubcommand::Pause(args) => Ok(control(auv_media_macos::MediaCommand::Pause, args)),
+    CliSubcommand::Toggle(args) => Ok(control(
+      auv_media_macos::MediaCommand::TogglePlayPause,
+      args,
+    )),
+    CliSubcommand::Next(args) => Ok(control(auv_media_macos::MediaCommand::NextTrack, args)),
+    CliSubcommand::Previous(args) => {
+      Ok(control(auv_media_macos::MediaCommand::PreviousTrack, args))
+    }
     CliSubcommand::Seek(args) => parse_seek(args),
   }
 }
@@ -409,7 +406,7 @@ fn resolve_app_id(app_id: Option<String>) -> String {
   app_id.unwrap_or_else(|| crate::DEFAULT_APP_ID.to_string())
 }
 
-fn control(control: TransportControl, args: ControlArgs) -> Command {
+fn control(control: auv_media_macos::MediaCommand, args: ControlArgs) -> Command {
   Command::Control(ControlCommand {
     control,
     app_id: resolve_app_id(args.app_id),
@@ -1142,16 +1139,9 @@ fn run_control(cmd: ControlCommand) -> ExitCode {
   if let Err(code) = require_owner(&cmd.app_id) {
     return code;
   }
-  let command = match cmd.control {
-    TransportControl::Play => auv_media_macos::MediaCommand::Play,
-    TransportControl::Pause => auv_media_macos::MediaCommand::Pause,
-    TransportControl::Toggle => auv_media_macos::MediaCommand::TogglePlayPause,
-    TransportControl::Next => auv_media_macos::MediaCommand::NextTrack,
-    TransportControl::Previous => auv_media_macos::MediaCommand::PreviousTrack,
-  };
-  match auv_media_macos::send_command(command) {
+  match auv_media_macos::send_command(cmd.control) {
     Ok(()) => {
-      println!("ok: {}", control_label(cmd.control));
+      println!("ok: {}", cmd.control.label());
       ExitCode::SUCCESS
     }
     Err(error) => {
@@ -1188,16 +1178,6 @@ fn run_seek(cmd: SeekCommand) -> ExitCode {
 fn run_seek(_cmd: SeekCommand) -> ExitCode {
   eprintln!("media controls are only available on macOS");
   ExitCode::from(1)
-}
-
-fn control_label(control: TransportControl) -> &'static str {
-  match control {
-    TransportControl::Play => "play",
-    TransportControl::Pause => "pause",
-    TransportControl::Toggle => "toggle",
-    TransportControl::Next => "next",
-    TransportControl::Previous => "previous",
-  }
 }
 
 fn run_daily_recommended(cmd: DailyRecommendedPlayCommand) -> ExitCode {

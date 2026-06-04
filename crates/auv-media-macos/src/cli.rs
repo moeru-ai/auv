@@ -113,7 +113,7 @@ fn run_now_playing(args: NowPlayingArgs) -> ExitCode {
 fn run_send(command: MediaCommand) -> ExitCode {
   match send_command(command) {
     Ok(()) => {
-      println!("ok: {}", command_label(command));
+      println!("ok: {}", command.label());
       ExitCode::SUCCESS
     }
     Err(error) => {
@@ -138,15 +138,5 @@ fn run_seek(seconds: f64) -> ExitCode {
       eprintln!("{error}");
       ExitCode::FAILURE
     }
-  }
-}
-
-fn command_label(command: MediaCommand) -> &'static str {
-  match command {
-    MediaCommand::Play => "play",
-    MediaCommand::Pause => "pause",
-    MediaCommand::TogglePlayPause => "toggle",
-    MediaCommand::NextTrack => "next",
-    MediaCommand::PreviousTrack => "previous",
   }
 }

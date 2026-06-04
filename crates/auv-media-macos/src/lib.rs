@@ -123,6 +123,18 @@ pub enum MediaCommand {
 }
 
 impl MediaCommand {
+  /// A short stable label for this command (`"play"`, `"pause"`, `"toggle"`,
+  /// `"next"`, `"previous"`).
+  pub fn label(self) -> &'static str {
+    match self {
+      MediaCommand::Play => "play",
+      MediaCommand::Pause => "pause",
+      MediaCommand::TogglePlayPause => "toggle",
+      MediaCommand::NextTrack => "next",
+      MediaCommand::PreviousTrack => "previous",
+    }
+  }
+
   /// The numeric MRCommand id understood by mediaremote-adapter's `send`.
   /// (See `vendor/mediaremote-adapter/include/MediaRemoteAdapter.h`.)
   fn command_id(self) -> u8 {
