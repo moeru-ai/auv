@@ -7,7 +7,9 @@ use std::time::Duration;
 use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver::display::{Display, ObservedDisplays};
 use auv_driver::error::{DriverError, DriverResult};
-use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, WindowPoint};
+use auv_driver::geometry::{
+  CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint,
+};
 use auv_driver::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
   InputDeliveryPath, InputPolicy, InputPreparationLease, PasteTextOptions, PrepareForInputOptions,
@@ -16,7 +18,11 @@ use auv_driver::input::{
 };
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
-use auv_driver::window::{Window, WindowRef};
+use auv_driver::window::{
+  Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind,
+  WindowMutationOptions, WindowMutationPath, WindowMutationPolicy, WindowMutationResult,
+  WindowMutationVerification, WindowRef, WindowState,
+};
 use image::RgbaImage;
 
 use crate::driver::MacosDriverSession;
@@ -280,6 +286,57 @@ impl WindowApi<'_> {
     Ok(window_point_for_screen_point(window, point))
   }
 
+  pub fn move_to(
+    &self,
+    window: &Window,
+    point: Point,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    self.mutate(window, WindowMutationKind::MoveTo { point }, options)
+  }
+
+  pub fn resize(
+    &self,
+    window: &Window,
+    size: Size,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    self.mutate(window, WindowMutationKind::Resize { size }, options)
+  }
+
+  pub fn set_frame(
+    &self,
+    window: &Window,
+    frame: Rect,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    self.mutate(window, WindowMutationKind::SetFrame { frame }, options)
+  }
+
+  pub fn minimize(
+    &self,
+    window: &Window,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    self.mutate(window, WindowMutationKind::Minimize, options)
+  }
+
+  pub fn restore(
+    &self,
+    window: &Window,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    self.mutate(window, WindowMutationKind::Restore, options)
+  }
+
+  pub fn zoom(
+    &self,
+    window: &Window,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    self.mutate(window, WindowMutationKind::Zoom, options)
+  }
+
   pub fn click(
     &self,
     window: &Window,
@@ -475,6 +532,71 @@ impl WindowApi<'_> {
     }
 
     Err(DriverError::unsupported("background_scroll"))
+  }
+
+  fn mutate(
+    &self,
+    window: &Window,
+    kind: WindowMutationKind,
+    options: WindowMutationOptions,
+  ) -> DriverResult<WindowMutationResult> {
+    let _ = self.session;
+    validate_window_mutation_kind(kind)?;
+    let pid = window_pid(window)?;
+    let number = window_number(window)?;
+    let title = window.title.clone().unwrap_or_default();
+    let mut attempts = Vec::new();
+    let mut fallback_reason = None;
+
+    for candidate in window_mutation_candidates(&options) {
+      let path = window_mutation_path(candidate);
+      if candidate == WindowMutationCandidate::ForegroundSystemEvents {
+        // TODO(window-management-foreground-fallback): pointer/system-events
+        // fallback is deferred because this slice wires only the native AX
+        // bridge; enable when the owner approves foreground repositioning.
+        let message = "foreground window mutation fallback is not implemented in this slice";
+        attempts.push(WindowMutationAttempt::failure(path, message));
+        fallback_reason.get_or_insert_with(|| message.to_string());
+        continue;
+      }
+
+      if !candidate_supports_window_mutation(candidate, kind) {
+        let message = format!(
+          "{} does not support {}",
+          window_mutation_candidate_name(candidate),
+          window_mutation_kind_name(kind)
+        );
+        attempts.push(WindowMutationAttempt::failure(path, message.clone()));
+        fallback_reason.get_or_insert(message);
+        continue;
+      }
+
+      let request = decoded_window_mutation_request(pid, number, title.clone(), kind)?;
+      match crate::native::window::mutate_window(request).map_err(backend) {
+        Ok(response) => {
+          attempts.push(WindowMutationAttempt::success(
+            path,
+            format!("{} via {}", response.performed_action, response.path),
+          ));
+          if !options.settle.is_zero() {
+            thread::sleep(options.settle);
+          }
+          let result = window_mutation_result(path, attempts, fallback_reason, response);
+          verify_window_mutation(kind, &options.verification, &result)?;
+          return Ok(result);
+        }
+        Err(error) => {
+          let message = error.to_string();
+          attempts.push(WindowMutationAttempt::failure(path, message.clone()));
+          fallback_reason.get_or_insert(message);
+          if options.policy == WindowMutationPolicy::NativeOnly {
+            break;
+          }
+        }
+      }
+    }
+
+    Err(window_mutation_failure(attempts, fallback_reason))
   }
 
   pub fn prepare_for_input(
@@ -982,6 +1104,348 @@ fn scroll_attempt_candidates(options: &ScrollOptions) -> Vec<ScrollDeliveryCandi
       .collect(),
     InputPolicy::BackgroundPreferred => options.delivery_strategy.candidates.clone(),
   }
+}
+
+fn window_mutation_candidates(options: &WindowMutationOptions) -> Vec<WindowMutationCandidate> {
+  match options.policy {
+    WindowMutationPolicy::ForegroundPreferred => {
+      vec![WindowMutationCandidate::ForegroundSystemEvents]
+    }
+    WindowMutationPolicy::NativeOnly | WindowMutationPolicy::NativePreferred => {
+      options.strategy.candidates.iter().copied().collect()
+    }
+  }
+}
+
+fn candidate_supports_window_mutation(
+  candidate: WindowMutationCandidate,
+  kind: WindowMutationKind,
+) -> bool {
+  matches!(
+    (candidate, kind),
+    (
+      WindowMutationCandidate::AxWindowAttribute | WindowMutationCandidate::PlatformNative,
+      WindowMutationKind::MoveTo { .. }
+        | WindowMutationKind::Resize { .. }
+        | WindowMutationKind::SetFrame { .. }
+    ) | (
+      WindowMutationCandidate::AxWindowAction | WindowMutationCandidate::PlatformNative,
+      WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom
+    )
+  )
+}
+
+fn window_mutation_path(candidate: WindowMutationCandidate) -> WindowMutationPath {
+  match candidate {
+    WindowMutationCandidate::AxWindowAttribute => WindowMutationPath::AxWindowAttribute,
+    WindowMutationCandidate::AxWindowAction => WindowMutationPath::AxWindowAction,
+    WindowMutationCandidate::PlatformNative => WindowMutationPath::PlatformNative,
+    WindowMutationCandidate::ForegroundSystemEvents => WindowMutationPath::ForegroundSystemEvents,
+  }
+}
+
+fn window_mutation_candidate_name(candidate: WindowMutationCandidate) -> &'static str {
+  match candidate {
+    WindowMutationCandidate::AxWindowAttribute => "ax_window_attribute",
+    WindowMutationCandidate::AxWindowAction => "ax_window_action",
+    WindowMutationCandidate::PlatformNative => "platform_native",
+    WindowMutationCandidate::ForegroundSystemEvents => "foreground_system_events",
+  }
+}
+
+fn window_mutation_kind_name(kind: WindowMutationKind) -> &'static str {
+  match kind {
+    WindowMutationKind::MoveTo { .. } => "move_to",
+    WindowMutationKind::Resize { .. } => "resize",
+    WindowMutationKind::SetFrame { .. } => "set_frame",
+    WindowMutationKind::Minimize => "minimize",
+    WindowMutationKind::Restore => "restore",
+    WindowMutationKind::Zoom => "zoom",
+  }
+}
+
+fn decoded_window_mutation_request(
+  pid: i64,
+  window_number: i64,
+  title: String,
+  kind: WindowMutationKind,
+) -> DriverResult<crate::native::window::DecodedWindowMutationRequest> {
+  let (native_kind, x, y, width, height) = match kind {
+    WindowMutationKind::MoveTo { point } => (
+      crate::native::window::DecodedWindowMutationKind::MoveTo,
+      rounded_i64(point.x, "point.x")?,
+      rounded_i64(point.y, "point.y")?,
+      0,
+      0,
+    ),
+    WindowMutationKind::Resize { size } => (
+      crate::native::window::DecodedWindowMutationKind::Resize,
+      0,
+      0,
+      rounded_positive_i64(size.width, "size.width")?,
+      rounded_positive_i64(size.height, "size.height")?,
+    ),
+    WindowMutationKind::SetFrame { frame } => (
+      crate::native::window::DecodedWindowMutationKind::SetFrame,
+      rounded_i64(frame.origin.x, "frame.origin.x")?,
+      rounded_i64(frame.origin.y, "frame.origin.y")?,
+      rounded_positive_i64(frame.size.width, "frame.size.width")?,
+      rounded_positive_i64(frame.size.height, "frame.size.height")?,
+    ),
+    WindowMutationKind::Minimize => (
+      crate::native::window::DecodedWindowMutationKind::Minimize,
+      0,
+      0,
+      0,
+      0,
+    ),
+    WindowMutationKind::Restore => (
+      crate::native::window::DecodedWindowMutationKind::Restore,
+      0,
+      0,
+      0,
+      0,
+    ),
+    WindowMutationKind::Zoom => (
+      crate::native::window::DecodedWindowMutationKind::Zoom,
+      0,
+      0,
+      0,
+      0,
+    ),
+  };
+
+  Ok(crate::native::window::DecodedWindowMutationRequest {
+    pid,
+    window_number,
+    title,
+    kind: native_kind,
+    x,
+    y,
+    width,
+    height,
+  })
+}
+
+fn validate_window_mutation_kind(kind: WindowMutationKind) -> DriverResult<()> {
+  match kind {
+    WindowMutationKind::MoveTo { point } => {
+      let _ = rounded_i64(point.x, "point.x")?;
+      let _ = rounded_i64(point.y, "point.y")?;
+    }
+    WindowMutationKind::Resize { size } => {
+      let _ = rounded_positive_i64(size.width, "size.width")?;
+      let _ = rounded_positive_i64(size.height, "size.height")?;
+    }
+    WindowMutationKind::SetFrame { frame } => {
+      let _ = rounded_i64(frame.origin.x, "frame.origin.x")?;
+      let _ = rounded_i64(frame.origin.y, "frame.origin.y")?;
+      let _ = rounded_positive_i64(frame.size.width, "frame.size.width")?;
+      let _ = rounded_positive_i64(frame.size.height, "frame.size.height")?;
+    }
+    WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => {}
+  }
+  Ok(())
+}
+
+fn rounded_i64(value: f64, field: &str) -> DriverResult<i64> {
+  if !value.is_finite() || value < i64::MIN as f64 || value > i64::MAX as f64 {
+    return Err(invalid_input(format!(
+      "{field} must be a finite i64-sized value"
+    )));
+  }
+  Ok(value.round() as i64)
+}
+
+fn rounded_positive_i64(value: f64, field: &str) -> DriverResult<i64> {
+  let rounded = rounded_i64(value, field)?;
+  if rounded <= 0 {
+    return Err(invalid_input(format!("{field} must be greater than zero")));
+  }
+  Ok(rounded)
+}
+
+fn window_mutation_result(
+  selected_path: WindowMutationPath,
+  attempts: Vec<WindowMutationAttempt>,
+  fallback_reason: Option<String>,
+  response: crate::native::window::DecodedWindowMutationResponse,
+) -> WindowMutationResult {
+  WindowMutationResult {
+    selected_path,
+    attempts,
+    fallback_reason,
+    before_frame: Some(Rect::new(
+      response.before_x as f64,
+      response.before_y as f64,
+      response.before_width as f64,
+      response.before_height as f64,
+    )),
+    after_frame: Some(Rect::new(
+      response.after_x as f64,
+      response.after_y as f64,
+      response.after_width as f64,
+      response.after_height as f64,
+    )),
+    before_state: Some(WindowState {
+      is_minimized: Some(response.was_minimized),
+      is_visible: Some(!response.was_minimized),
+    }),
+    after_state: Some(WindowState {
+      is_minimized: Some(response.is_minimized),
+      is_visible: Some(!response.is_minimized),
+    }),
+    focus_disturbance: DisturbanceLevel::None,
+    mouse_disturbance: DisturbanceLevel::None,
+  }
+}
+
+fn verify_window_mutation(
+  kind: WindowMutationKind,
+  verification: &WindowMutationVerification,
+  result: &WindowMutationResult,
+) -> DriverResult<()> {
+  match verification {
+    WindowMutationVerification::BestEffortState => verify_window_state(kind, result),
+    WindowMutationVerification::FrameTolerance { points } => {
+      verify_window_frame(kind, result, *points)?;
+      verify_window_state(kind, result)
+    }
+  }
+}
+
+fn verify_window_frame(
+  kind: WindowMutationKind,
+  result: &WindowMutationResult,
+  tolerance: f64,
+) -> DriverResult<()> {
+  if !tolerance.is_finite() || tolerance < 0.0 {
+    return Err(invalid_input(
+      "window mutation frame tolerance must be a finite non-negative value",
+    ));
+  }
+  let Some(after_frame) = result.after_frame else {
+    return Err(backend("window mutation did not report an after frame"));
+  };
+  match kind {
+    WindowMutationKind::MoveTo { point } => {
+      verify_close(after_frame.origin.x, point.x, tolerance, "frame.origin.x")?;
+      verify_close(after_frame.origin.y, point.y, tolerance, "frame.origin.y")?;
+    }
+    WindowMutationKind::Resize { size } => {
+      verify_close(
+        after_frame.size.width,
+        size.width,
+        tolerance,
+        "frame.size.width",
+      )?;
+      verify_close(
+        after_frame.size.height,
+        size.height,
+        tolerance,
+        "frame.size.height",
+      )?;
+    }
+    WindowMutationKind::SetFrame { frame } => {
+      verify_close(
+        after_frame.origin.x,
+        frame.origin.x,
+        tolerance,
+        "frame.origin.x",
+      )?;
+      verify_close(
+        after_frame.origin.y,
+        frame.origin.y,
+        tolerance,
+        "frame.origin.y",
+      )?;
+      verify_close(
+        after_frame.size.width,
+        frame.size.width,
+        tolerance,
+        "frame.size.width",
+      )?;
+      verify_close(
+        after_frame.size.height,
+        frame.size.height,
+        tolerance,
+        "frame.size.height",
+      )?;
+    }
+    WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => {}
+  }
+  Ok(())
+}
+
+fn verify_window_state(
+  kind: WindowMutationKind,
+  result: &WindowMutationResult,
+) -> DriverResult<()> {
+  match kind {
+    WindowMutationKind::Minimize => {
+      let minimized = result
+        .after_state
+        .as_ref()
+        .and_then(|state| state.is_minimized);
+      if minimized != Some(true) {
+        return Err(backend(
+          "window mutation verification failed: window was not minimized",
+        ));
+      }
+    }
+    WindowMutationKind::Restore => {
+      let minimized = result
+        .after_state
+        .as_ref()
+        .and_then(|state| state.is_minimized);
+      if minimized != Some(false) {
+        return Err(backend(
+          "window mutation verification failed: window was still minimized",
+        ));
+      }
+    }
+    WindowMutationKind::MoveTo { .. }
+    | WindowMutationKind::Resize { .. }
+    | WindowMutationKind::SetFrame { .. }
+    | WindowMutationKind::Zoom => {}
+  }
+  Ok(())
+}
+
+fn verify_close(actual: f64, expected: f64, tolerance: f64, field: &str) -> DriverResult<()> {
+  if (actual - expected).abs() <= tolerance {
+    return Ok(());
+  }
+  Err(backend(format!(
+    "window mutation verification failed: {field} expected {expected:.3} got {actual:.3} tolerance {tolerance:.3}"
+  )))
+}
+
+fn window_mutation_failure(
+  attempts: Vec<WindowMutationAttempt>,
+  fallback_reason: Option<String>,
+) -> DriverError {
+  let mut parts = attempts
+    .into_iter()
+    .filter_map(|attempt| {
+      attempt
+        .message
+        .map(|message| format!("{:?}: {message}", attempt.path))
+    })
+    .collect::<Vec<_>>();
+  if parts.is_empty() {
+    if let Some(reason) = fallback_reason {
+      parts.push(reason);
+    }
+  }
+  if parts.is_empty() {
+    return DriverError::unsupported("window_mutation");
+  }
+  backend(format!(
+    "window mutation failed after {} attempt(s): {}",
+    parts.len(),
+    parts.join("; ")
+  ))
 }
 
 fn foreground_prepare_options(settle: Duration) -> PrepareForInputOptions {
@@ -1742,6 +2206,232 @@ mod no_steal_tests {
         operation: "foreground_restore"
       })
     ));
+  }
+
+  #[test]
+  fn window_mutation_candidates_use_native_candidate_for_kind() {
+    let candidates = window_mutation_candidates(&WindowMutationOptions::default());
+
+    assert_eq!(
+      candidates,
+      vec![
+        WindowMutationCandidate::AxWindowAttribute,
+        WindowMutationCandidate::AxWindowAction,
+      ]
+    );
+    assert!(candidate_supports_window_mutation(
+      candidates[0],
+      WindowMutationKind::MoveTo {
+        point: Point::new(10.0, 20.0),
+      }
+    ));
+    assert!(!candidate_supports_window_mutation(
+      candidates[1],
+      WindowMutationKind::MoveTo {
+        point: Point::new(10.0, 20.0),
+      }
+    ));
+
+    assert!(candidate_supports_window_mutation(
+      candidates[1],
+      WindowMutationKind::Minimize,
+    ));
+  }
+
+  #[test]
+  fn window_mutation_foreground_policy_is_explicit_deferred_candidate() {
+    let candidates = window_mutation_candidates(&WindowMutationOptions {
+      policy: WindowMutationPolicy::ForegroundPreferred,
+      ..WindowMutationOptions::default()
+    });
+
+    assert_eq!(
+      candidates,
+      vec![WindowMutationCandidate::ForegroundSystemEvents]
+    );
+  }
+
+  #[test]
+  fn window_mutation_native_only_preserves_explicit_foreground_candidate() {
+    let candidates = window_mutation_candidates(&WindowMutationOptions {
+      policy: WindowMutationPolicy::NativeOnly,
+      strategy: auv_driver::WindowMutationStrategy {
+        candidates: vec![WindowMutationCandidate::ForegroundSystemEvents],
+      },
+      ..WindowMutationOptions::default()
+    });
+
+    assert_eq!(
+      candidates,
+      vec![WindowMutationCandidate::ForegroundSystemEvents]
+    );
+  }
+
+  #[test]
+  fn decoded_window_mutation_request_rounds_geometry_for_native_bridge() {
+    let request = decoded_window_mutation_request(
+      123,
+      42,
+      "Library".to_string(),
+      WindowMutationKind::SetFrame {
+        frame: Rect::new(10.4, 20.5, 800.2, 600.8),
+      },
+    )
+    .expect("request");
+
+    assert_eq!(request.pid, 123);
+    assert_eq!(request.window_number, 42);
+    assert_eq!(request.title, "Library");
+    assert_eq!(
+      request.kind,
+      crate::native::window::DecodedWindowMutationKind::SetFrame
+    );
+    assert_eq!(
+      (request.x, request.y, request.width, request.height),
+      (10, 21, 800, 601)
+    );
+  }
+
+  #[test]
+  fn decoded_window_mutation_request_rejects_non_positive_size() {
+    let result = decoded_window_mutation_request(
+      123,
+      42,
+      String::new(),
+      WindowMutationKind::Resize {
+        size: Size::new(0.0, 100.0),
+      },
+    );
+
+    assert!(matches!(result, Err(DriverError::InvalidInput { .. })));
+  }
+
+  #[test]
+  fn window_mutation_result_maps_native_frames_and_disturbance() {
+    let result = window_mutation_result(
+      WindowMutationPath::AxWindowAttribute,
+      vec![WindowMutationAttempt::success(
+        WindowMutationPath::AxWindowAttribute,
+        "set AXPosition",
+      )],
+      None,
+      crate::native::window::DecodedWindowMutationResponse {
+        performed_action: "move_to".to_string(),
+        path: "pid=123 window_number=42".to_string(),
+        before_x: 10,
+        before_y: 20,
+        before_width: 800,
+        before_height: 600,
+        after_x: 30,
+        after_y: 40,
+        after_width: 800,
+        after_height: 600,
+        was_minimized: false,
+        is_minimized: false,
+        error_message: None,
+        recovery_hint: None,
+      },
+    );
+
+    assert_eq!(result.selected_path, WindowMutationPath::AxWindowAttribute);
+    assert_eq!(
+      result.before_frame,
+      Some(Rect::new(10.0, 20.0, 800.0, 600.0))
+    );
+    assert_eq!(
+      result.after_frame,
+      Some(Rect::new(30.0, 40.0, 800.0, 600.0))
+    );
+    assert_eq!(result.focus_disturbance, DisturbanceLevel::None);
+    assert_eq!(result.mouse_disturbance, DisturbanceLevel::None);
+  }
+
+  #[test]
+  fn window_mutation_frame_verification_rejects_clamped_frame() {
+    let result = window_mutation_result(
+      WindowMutationPath::AxWindowAttribute,
+      Vec::new(),
+      None,
+      crate::native::window::DecodedWindowMutationResponse {
+        performed_action: "resize".to_string(),
+        path: "pid=123 window_number=42".to_string(),
+        before_x: 10,
+        before_y: 20,
+        before_width: 800,
+        before_height: 600,
+        after_x: 10,
+        after_y: 20,
+        after_width: 400,
+        after_height: 300,
+        was_minimized: false,
+        is_minimized: false,
+        error_message: None,
+        recovery_hint: None,
+      },
+    );
+
+    let error = verify_window_mutation(
+      WindowMutationKind::Resize {
+        size: Size::new(800.0, 600.0),
+      },
+      &WindowMutationVerification::FrameTolerance { points: 2.0 },
+      &result,
+    )
+    .expect_err("clamped frame should fail verification");
+
+    assert!(error.to_string().contains("frame.size.width"));
+  }
+
+  #[test]
+  fn window_mutation_state_verification_rejects_failed_minimize() {
+    let result = window_mutation_result(
+      WindowMutationPath::AxWindowAction,
+      Vec::new(),
+      None,
+      crate::native::window::DecodedWindowMutationResponse {
+        performed_action: "minimize".to_string(),
+        path: "pid=123 window_number=42".to_string(),
+        before_x: 10,
+        before_y: 20,
+        before_width: 800,
+        before_height: 600,
+        after_x: 10,
+        after_y: 20,
+        after_width: 800,
+        after_height: 600,
+        was_minimized: false,
+        is_minimized: false,
+        error_message: None,
+        recovery_hint: None,
+      },
+    );
+
+    let error = verify_window_mutation(
+      WindowMutationKind::Minimize,
+      &WindowMutationVerification::BestEffortState,
+      &result,
+    )
+    .expect_err("failed minimize should fail verification");
+
+    assert!(error.to_string().contains("not minimized"));
+  }
+
+  #[test]
+  fn window_mutation_failure_preserves_attempt_messages() {
+    let error = window_mutation_failure(
+      vec![
+        WindowMutationAttempt::failure(WindowMutationPath::AxWindowAttribute, "stale window"),
+        WindowMutationAttempt::failure(
+          WindowMutationPath::ForegroundSystemEvents,
+          "foreground fallback deferred",
+        ),
+      ],
+      Some("stale window".to_string()),
+    );
+
+    let message = error.to_string();
+    assert!(message.contains("stale window"));
+    assert!(message.contains("foreground fallback deferred"));
   }
 }
 
