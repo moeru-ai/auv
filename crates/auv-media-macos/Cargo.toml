@@ -13,8 +13,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "auv-now-playing"
-path = "src/bin/auv-now-playing.rs"
+name = "auv-media-macos"
+path = "src/bin/auv-media-macos.rs"
 
 [dependencies]
 serde.workspace = true

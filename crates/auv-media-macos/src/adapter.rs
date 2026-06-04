@@ -97,14 +97,14 @@ fn ensure_unpacked() -> Result<(PathBuf, PathBuf), MediaError> {
   Ok((script, framework))
 }
 
-/// Run the adapter `get` command, returning its raw JSON stdout (`null` when
-/// nothing is playing).
-pub(crate) fn run_now_playing_get() -> Result<String, MediaError> {
+/// Run the adapter with `args` (after the script + framework path), returning
+/// its trimmed stdout. Shared by `get`, `send`, and `seek`.
+fn run_adapter(args: &[&str]) -> Result<String, MediaError> {
   let (script, framework) = ensure_unpacked()?;
   let output = Command::new(PERL)
     .arg(&script)
     .arg(&framework)
-    .arg("get")
+    .args(args)
     .output()
     .map_err(|error| {
       MediaError::native(
@@ -119,10 +119,26 @@ pub(crate) fn run_now_playing_get() -> Result<String, MediaError> {
         "mediaremote-adapter exited with {}: {stderr}",
         output.status
       ),
-      Some("the adapter may not be entitled to read MediaRemote on this macOS".to_string()),
+      Some("the adapter may not be entitled to use MediaRemote on this macOS".to_string()),
     ));
   }
   Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Run the adapter `get` command, returning its raw JSON stdout (`null` when
+/// nothing is playing).
+pub(crate) fn run_now_playing_get() -> Result<String, MediaError> {
+  run_adapter(&["get"])
+}
+
+/// Send a MediaRemote command by its numeric MRCommand id.
+pub(crate) fn send_command(command_id: u8) -> Result<(), MediaError> {
+  run_adapter(&["send", &command_id.to_string()]).map(|_| ())
+}
+
+/// Seek the now-playing app to `position_micros` microseconds.
+pub(crate) fn seek(position_micros: u128) -> Result<(), MediaError> {
+  run_adapter(&["seek", &position_micros.to_string()]).map(|_| ())
 }
 
 fn fs_err<T>(result: std::io::Result<T>, what: &str) -> Result<T, MediaError> {

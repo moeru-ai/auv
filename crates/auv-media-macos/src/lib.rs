@@ -105,6 +105,57 @@ pub fn now_playing() -> Result<NowPlayingState, MediaError> {
   Err(MediaError::Unsupported)
 }
 
+/// A transport command sent to whichever app owns the system now-playing slot.
+///
+/// Like the read, this is system-wide and app-agnostic — it acts on the
+/// current now-playing app, not a specific one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaCommand {
+  Play,
+  Pause,
+  TogglePlayPause,
+  NextTrack,
+  PreviousTrack,
+}
+
+impl MediaCommand {
+  /// The numeric MRCommand id understood by mediaremote-adapter's `send`.
+  /// (See `vendor/mediaremote-adapter/include/MediaRemoteAdapter.h`.)
+  fn command_id(self) -> u8 {
+    match self {
+      MediaCommand::Play => 0,
+      MediaCommand::Pause => 1,
+      MediaCommand::TogglePlayPause => 2,
+      MediaCommand::NextTrack => 4,
+      MediaCommand::PreviousTrack => 5,
+    }
+  }
+}
+
+/// Send a transport command to the current now-playing app.
+#[cfg(target_os = "macos")]
+pub fn send_command(command: MediaCommand) -> Result<(), MediaError> {
+  adapter::send_command(command.command_id())
+}
+
+/// Send a transport command to the current now-playing app (non-macOS stub).
+#[cfg(not(target_os = "macos"))]
+pub fn send_command(_command: MediaCommand) -> Result<(), MediaError> {
+  Err(MediaError::Unsupported)
+}
+
+/// Seek the current now-playing app to `position` from the start of the track.
+#[cfg(target_os = "macos")]
+pub fn seek(position: std::time::Duration) -> Result<(), MediaError> {
+  adapter::seek(position.as_micros())
+}
+
+/// Seek the current now-playing app (non-macOS stub).
+#[cfg(not(target_os = "macos"))]
+pub fn seek(_position: std::time::Duration) -> Result<(), MediaError> {
+  Err(MediaError::Unsupported)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -158,5 +209,14 @@ mod tests {
   #[test]
   fn parse_get_rejects_garbage() {
     assert!(parse_get("not json").is_err());
+  }
+
+  #[test]
+  fn media_command_ids_match_adapter_table() {
+    assert_eq!(MediaCommand::Play.command_id(), 0);
+    assert_eq!(MediaCommand::Pause.command_id(), 1);
+    assert_eq!(MediaCommand::TogglePlayPause.command_id(), 2);
+    assert_eq!(MediaCommand::NextTrack.command_id(), 4);
+    assert_eq!(MediaCommand::PreviousTrack.command_id(), 5);
   }
 }
