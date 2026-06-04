@@ -477,6 +477,9 @@ impl From<NativeWindowMutationResponse> for DecodedWindowMutationResponse {
 mod tests {
   use super::*;
 
+  // TODO(window-management-live-tests): live macOS mutation tests are deferred
+  // because this slice keeps CI-safe decoder/unit coverage only; add app-backed
+  // move/resize/minimize/zoom tests when a stable GUI fixture is approved.
   fn base_mutation_response() -> DecodedWindowMutationResponse {
     DecodedWindowMutationResponse {
       performed_action: "move_to".to_string(),

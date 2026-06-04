@@ -408,6 +408,9 @@ func mutate_window(request: NativeWindowMutationRequest) -> NativeWindowMutation
     }
     action = "resize"
   case .SetFrame:
+    // TODO(window-set-frame-transaction): rollback is deferred because this
+    // slice only exposes native AX mutation and verification; add transactional
+    // recovery when owner approves rollback policy for partially moved windows.
     let positionResult = setWindowPosition(window, x: request.x, y: request.y)
     guard positionResult == .success else {
       return emptyWindowMutationResponse(

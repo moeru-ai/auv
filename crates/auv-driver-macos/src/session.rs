@@ -1407,6 +1407,9 @@ fn verify_window_state(
     WindowMutationKind::MoveTo { .. }
     | WindowMutationKind::Resize { .. }
     | WindowMutationKind::SetFrame { .. }
+    // TODO(window-zoom-verification): zoom state verification is deferred
+    // because apps expose zoom/full-screen state inconsistently through AX;
+    // add a stricter state check when an owner-approved cross-app signal exists.
     | WindowMutationKind::Zoom => {}
   }
   Ok(())
