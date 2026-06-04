@@ -144,12 +144,24 @@ pub(crate) struct NowPlayingCommand {
   pub output: OutputMode,
 }
 
+/// A transport command sent to whichever app owns the system now-playing slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TransportControl {
+  Play,
+  Pause,
+  Toggle,
+  Next,
+  Previous,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Command {
   PlaylistLs(PlaylistCommand),
   PlaylistPlayDailyRecommended(DailyRecommendedPlayCommand),
   PlaylistSongsLs(SongsLsCommand),
   NowPlaying(NowPlayingCommand),
+  Control(TransportControl),
+  Seek(f64),
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -170,6 +182,18 @@ enum CliSubcommand {
   /// Read the system now-playing state (via the macOS media API).
   #[command(name = "now-playing")]
   NowPlaying(NowPlayingArgs),
+  /// Start playback of the system now-playing app.
+  Play,
+  /// Pause the system now-playing app.
+  Pause,
+  /// Toggle play/pause on the system now-playing app.
+  Toggle,
+  /// Skip to the next track.
+  Next,
+  /// Return to the previous track.
+  Previous,
+  /// Seek the now-playing app to a position, in seconds from the track start.
+  Seek(SeekArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -178,6 +202,12 @@ struct NowPlayingArgs {
   json: bool,
   #[arg(long = "json-out")]
   json_out: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Args)]
+struct SeekArgs {
+  #[arg(value_name = "seconds")]
+  seconds: f64,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -327,6 +357,12 @@ fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
   match parsed.command {
     CliSubcommand::Playlist(args) => parse_playlist(args),
     CliSubcommand::NowPlaying(args) => parse_now_playing(args),
+    CliSubcommand::Play => Ok(Command::Control(TransportControl::Play)),
+    CliSubcommand::Pause => Ok(Command::Control(TransportControl::Pause)),
+    CliSubcommand::Toggle => Ok(Command::Control(TransportControl::Toggle)),
+    CliSubcommand::Next => Ok(Command::Control(TransportControl::Next)),
+    CliSubcommand::Previous => Ok(Command::Control(TransportControl::Previous)),
+    CliSubcommand::Seek(args) => parse_seek(args),
   }
 }
 
@@ -337,6 +373,13 @@ fn parse_now_playing(args: NowPlayingArgs) -> Result<Command, String> {
     None => OutputMode::Human,
   };
   Ok(Command::NowPlaying(NowPlayingCommand { output }))
+}
+
+fn parse_seek(args: SeekArgs) -> Result<Command, String> {
+  if !args.seconds.is_finite() || args.seconds < 0.0 {
+    return Err("seek position must be a non-negative number of seconds".to_string());
+  }
+  Ok(Command::Seek(args.seconds))
 }
 
 fn parse_playlist(args: PlaylistArgs) -> Result<Command, String> {
@@ -547,6 +590,8 @@ pub fn run() -> ExitCode {
     Ok(Command::PlaylistPlayDailyRecommended(cmd)) => run_daily_recommended(cmd),
     Ok(Command::PlaylistSongsLs(cmd)) => run_songs_ls(cmd),
     Ok(Command::NowPlaying(cmd)) => run_now_playing(cmd),
+    Ok(Command::Control(control)) => run_control(control),
+    Ok(Command::Seek(seconds)) => run_seek(seconds),
     Err(error) => {
       if error.starts_with("error:") {
         eprint!("{error}");
@@ -1001,6 +1046,63 @@ fn run_now_playing(cmd: NowPlayingCommand) -> ExitCode {
 fn run_now_playing(_cmd: NowPlayingCommand) -> ExitCode {
   eprintln!("now-playing is only available on macOS");
   ExitCode::from(1)
+}
+
+#[cfg(target_os = "macos")]
+fn run_control(control: TransportControl) -> ExitCode {
+  let command = match control {
+    TransportControl::Play => auv_media_macos::MediaCommand::Play,
+    TransportControl::Pause => auv_media_macos::MediaCommand::Pause,
+    TransportControl::Toggle => auv_media_macos::MediaCommand::TogglePlayPause,
+    TransportControl::Next => auv_media_macos::MediaCommand::NextTrack,
+    TransportControl::Previous => auv_media_macos::MediaCommand::PreviousTrack,
+  };
+  match auv_media_macos::send_command(command) {
+    Ok(()) => {
+      println!("ok: {}", control_label(control));
+      ExitCode::SUCCESS
+    }
+    Err(error) => {
+      eprintln!("control failed: {error}");
+      ExitCode::from(1)
+    }
+  }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn run_control(_control: TransportControl) -> ExitCode {
+  eprintln!("media controls are only available on macOS");
+  ExitCode::from(1)
+}
+
+#[cfg(target_os = "macos")]
+fn run_seek(seconds: f64) -> ExitCode {
+  match auv_media_macos::seek(std::time::Duration::from_secs_f64(seconds)) {
+    Ok(()) => {
+      println!("ok: seek {seconds}s");
+      ExitCode::SUCCESS
+    }
+    Err(error) => {
+      eprintln!("seek failed: {error}");
+      ExitCode::from(1)
+    }
+  }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn run_seek(_seconds: f64) -> ExitCode {
+  eprintln!("media controls are only available on macOS");
+  ExitCode::from(1)
+}
+
+fn control_label(control: TransportControl) -> &'static str {
+  match control {
+    TransportControl::Play => "play",
+    TransportControl::Pause => "pause",
+    TransportControl::Toggle => "toggle",
+    TransportControl::Next => "next",
+    TransportControl::Previous => "previous",
+  }
 }
 
 fn run_daily_recommended(cmd: DailyRecommendedPlayCommand) -> ExitCode {

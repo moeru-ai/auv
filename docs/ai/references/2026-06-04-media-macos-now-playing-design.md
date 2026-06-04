@@ -185,13 +185,17 @@ auv-media-macos now-playing [--json | --json-out <path>]
 auv-media-macos play | pause | toggle | next | previous
 auv-media-macos seek <seconds>
 
-# the netease-music subcommand (read only; delegates to the crate)
+# the netease-music subcommands (delegate to the crate)
 auv-netease-music now-playing [--json | --json-out <path>]   (auv-wyy = identical)
+auv-netease-music play | pause | toggle | next | previous
+auv-netease-music seek <seconds>
 ```
 
 Transport/seek subcommands print `ok: <command>` and exit `0` on a successful
-send, non-zero on failure. The netease CLI exposes only the read (controls are
-generic, not NetEase-specific).
+send, non-zero on failure. Both front doors expose the same read + transport
+controls; the netease CLI delegates to `auv_media_macos::{send_command, seek}`.
+Note these controls act on the **system** now-playing app (not necessarily
+NetEase) — the same app-agnostic semantics as the read.
 
 The netease subcommand calls `auv_media_macos::now_playing()` then the crate's
 `build_now_playing_output` / `render_human_summary` — it does **not** reshape
