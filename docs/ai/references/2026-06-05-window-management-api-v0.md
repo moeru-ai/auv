@@ -33,9 +33,11 @@ drag or interaction dragging.
   - `minimize(&window, options)`
   - `restore(&window, options)`
   - `zoom(&window, options)`
-- Legacy debug command:
-  - `debug.windowManagement`
-  - operation: `window_management`
+
+No legacy `src/driver/macos` debug command surface is part of this slice.
+Window management callers should use `auv-driver-macos::WindowApi` directly
+until the legacy command layer is retired or a new non-legacy frontend is
+approved.
   - actions: `move_to`, `resize`, `set_frame`, `minimize`, `restore`, `zoom`
 
 ## macOS Backend
@@ -81,9 +83,6 @@ and recovery hints are not collapsed into a generic unsupported error.
   before pointer or foreground repositioning is added.
 - Drag-to-screen, drag-for-repositioning, and interaction drag remain outside
   this slice.
-- There is no dedicated catalog disturbance class for window geometry/state
-  mutation yet. `debug.windowManagement` is marked with `none` and an inline
-  TODO until the disturbance taxonomy is widened.
 - No public AX-facing API was introduced. AX remains an internal macOS delivery
   path for this slice.
 
@@ -93,9 +92,6 @@ and recovery hints are not collapsed into a generic unsupported error.
 - `cargo test -p auv-driver`
 - `cargo test -p auv-driver-macos`
 - `cargo check`
-- `cargo run --quiet -- list-commands`
-- `cargo run --quiet -- skill cases list`
-- `cargo run --quiet -- skill bundle list`
 - `hack/generate-swift-bridge`
 - `swift build` in `crates/auv-driver-macos/native/swift`
 - `git diff --check`
