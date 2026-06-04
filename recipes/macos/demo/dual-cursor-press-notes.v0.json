@@ -144,6 +144,7 @@
       },
       "expect": {
         "signal_equals": {
+          "focusTextInput.consumer": "query",
           "cursorDisturbance": "none",
           "focusMechanism": "ax-attribute",
           "setAttribute": "AXFocused",

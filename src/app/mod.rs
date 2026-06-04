@@ -1342,16 +1342,14 @@ fn enforce_promoted_candidate_consumer_expectations(
     if !step_references_input(step, contract.candidate_input_key) {
       continue;
     }
-    step
-      .expect
-      .signal_equals
-      .entry(contract.consumer_signal_key.to_string())
-      .or_insert_with(|| "contract-candidate".to_string());
-    step
-      .expect
-      .signal_equals
-      .entry(contract.candidate_id_signal_key.to_string())
-      .or_insert_with(|| promoted_candidate.candidate_local_id.clone());
+    step.expect.signal_equals.insert(
+      contract.consumer_signal_key.to_string(),
+      "contract-candidate".to_string(),
+    );
+    step.expect.signal_equals.insert(
+      contract.candidate_id_signal_key.to_string(),
+      promoted_candidate.candidate_local_id.clone(),
+    );
   }
 }
 
@@ -2181,6 +2179,51 @@ mod tests {
     assert_eq!(
       step.expect.signal_equals.get("focusTextInput.consumer"),
       Some(&"query".to_string())
+    );
+  }
+
+  #[test]
+  fn promoted_candidate_consumer_expectations_override_legacy_query_focus_consumer() {
+    let analysis = sample_promotable_ax_focus_analysis(
+      "native-text",
+      "native-text-focus-ax",
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      "Editor",
+      "Sample candidate satisfies the v0 native-text promotion seam.",
+    );
+    let candidate_shape =
+      build_distilled_candidate_shape(&analysis, &analysis.recommended_strategies[0].taxonomy_id);
+    let promoted_candidate = promoted_candidate_for_candidate_shape(
+      &analysis,
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+      &candidate_shape,
+    )
+    .expect("native-text candidate should promote");
+    let mut manifest: SkillManifest =
+      serde_json::from_value(render_native_text_candidate_recipe(&analysis))
+        .expect("candidate recipe should parse");
+    let contract = promoted_candidate_runtime_contract(
+      "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text",
+    )
+    .expect("native-text contract should exist");
+
+    enforce_promoted_candidate_consumer_expectations(&mut manifest, &contract, &promoted_candidate);
+
+    let step = manifest
+      .steps
+      .iter()
+      .find(|step| step.id == "focus-text-surface")
+      .expect("focus-text-surface step should exist");
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"contract-candidate".to_string())
+    );
+    assert_eq!(
+      step
+        .expect
+        .signal_equals
+        .get("focusTextInput.candidateLocalId"),
+      Some(&promoted_candidate.candidate_local_id)
     );
   }
 

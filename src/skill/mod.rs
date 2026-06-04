@@ -2030,6 +2030,17 @@ mod tests {
       .find(|step| step.id == "focus-body")
       .expect("focus-body step should exist");
     assert_eq!(
+      manifest
+        .inputs
+        .get("focus_candidate")
+        .and_then(|input| input.default.as_ref()),
+      Some(&serde_json::json!(""))
+    );
+    assert_eq!(
+      step.args.get("candidate"),
+      Some(&serde_json::json!("${focus_candidate}"))
+    );
+    assert_eq!(
       step.expect.signal_equals.get("focusTextInput.consumer"),
       Some(&"query".to_string())
     );
@@ -2049,6 +2060,17 @@ mod tests {
       .find(|step| step.id == "focus-body")
       .expect("focus-body step should exist");
     assert_eq!(
+      manifest
+        .inputs
+        .get("focus_candidate")
+        .and_then(|input| input.default.as_ref()),
+      Some(&serde_json::json!(""))
+    );
+    assert_eq!(
+      step.args.get("candidate"),
+      Some(&serde_json::json!("${focus_candidate}"))
+    );
+    assert_eq!(
       step.expect.signal_equals.get("focusTextInput.consumer"),
       Some(&"query".to_string())
     );
@@ -2067,6 +2089,17 @@ mod tests {
       .iter()
       .find(|step| step.id == "focus-body")
       .expect("focus-body step should exist");
+    assert_eq!(
+      manifest
+        .inputs
+        .get("focus_candidate")
+        .and_then(|input| input.default.as_ref()),
+      Some(&serde_json::json!(""))
+    );
+    assert_eq!(
+      step.args.get("candidate"),
+      Some(&serde_json::json!("${focus_candidate}"))
+    );
     assert_eq!(
       step.expect.signal_equals.get("focusTextInput.consumer"),
       Some(&"query".to_string())
@@ -2104,6 +2137,10 @@ mod tests {
     assert_eq!(
       step.expect.signal_equals.get("focusMechanism"),
       Some(&"ax-attribute".to_string())
+    );
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"query".to_string())
     );
     assert_eq!(
       step.expect.signal_equals.get("setAttribute"),
@@ -2195,6 +2232,10 @@ mod tests {
     assert_eq!(
       step.expect.signal_equals.get("focusMechanism"),
       Some(&"ax-attribute".to_string())
+    );
+    assert_eq!(
+      step.expect.signal_equals.get("focusTextInput.consumer"),
+      Some(&"query".to_string())
     );
     assert_eq!(
       step.expect.signal_equals.get("setAttribute"),

@@ -24,6 +24,11 @@
       "type": "string",
       "default": "AUV_NOTE_MARKER_2026_05_16"
     },
+    "focus_candidate": {
+      "type": "string",
+      "default": "",
+      "note": "Optional serialized contract::Candidate for promoted native-text validation. Falls back to the hard-coded query when empty."
+    },
     "activate_settle_ms": {
       "type": "integer",
       "default": 250
@@ -105,6 +110,7 @@
       "args": {
         "target": "${app_id}",
         "query": "Note Body Text View",
+        "candidate": "${focus_candidate}",
         "max_depth": 7,
         "max_children": 40
       },
