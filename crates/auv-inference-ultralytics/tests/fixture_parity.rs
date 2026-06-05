@@ -328,6 +328,7 @@ fn write_smoke_evidence(
   let mut writer = BufWriter::new(file);
   serde_json::to_writer_pretty(&mut writer, result)?;
   writer.write_all(b"\n")?;
+  writer.flush()?;
 
   let manifest = DetectionEvidenceManifest {
     detection_set: result.clone(),
@@ -360,6 +361,7 @@ fn write_smoke_evidence(
   let mut manifest_writer = BufWriter::new(manifest_file);
   serde_json::to_writer_pretty(&mut manifest_writer, &manifest)?;
   manifest_writer.write_all(b"\n")?;
+  manifest_writer.flush()?;
 
   let recognition = map_detector_manifest_to_recognition_result(
     &manifest,
@@ -373,6 +375,7 @@ fn write_smoke_evidence(
   let mut recognition_writer = BufWriter::new(recognition_file);
   serde_json::to_writer_pretty(&mut recognition_writer, &recognition)?;
   recognition_writer.write_all(b"\n")?;
+  recognition_writer.flush()?;
 
   let source_image = ImageReader::open(source_image_path)?.decode()?.to_rgb8();
   let annotated = render_annotated_image(&source_image, &result.detections);

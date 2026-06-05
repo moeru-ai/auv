@@ -135,6 +135,10 @@ fn write_json(path: &Path, detections: &auv_inference_common::DetectionSet) -> E
   let mut writer = BufWriter::new(file);
   serde_json::to_writer_pretty(&mut writer, detections)?;
   writer.write_all(b"\n")?;
+  // BufWriter::drop silently swallows flush errors, which would let this CLI
+  // exit 0 with truncated JSON on the rare write-on-drop failure. Flush
+  // explicitly so the error surfaces.
+  writer.flush()?;
   Ok(())
 }
 
