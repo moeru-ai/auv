@@ -67,6 +67,13 @@ struct LocalSmokeConfig {
   output_dir: PathBuf,
 }
 
+#[derive(Debug)]
+struct SmokeEvidencePaths {
+  detection_json: PathBuf,
+  manifest_json: PathBuf,
+  annotated_image: PathBuf,
+}
+
 #[test]
 fn balatro_golden_fixtures_are_well_formed() -> Result<(), Box<dyn Error>> {
   let fixture_dir = balatro_fixture_dir();
@@ -170,13 +177,21 @@ fn assert_fixture_matches_detector(
   })?;
 
   let result = detector.detect_path(&source_image_path)?;
-  write_smoke_evidence(
+  let evidence_paths = write_smoke_evidence(
     fixture_name,
     &source_image_path,
     &result,
     &class_path,
     &fixture.thresholds,
     &config.output_dir,
+  )?;
+  assert_smoke_evidence_outputs(
+    fixture_name,
+    &evidence_paths,
+    &result,
+    &source_image_path,
+    &class_path,
+    &fixture.thresholds,
   )?;
 
   let decoded_image = ImageReader::open(&source_image_path)?.decode()?.to_rgb8();
@@ -293,7 +308,7 @@ fn write_smoke_evidence(
   class_path: &Path,
   thresholds: &FixtureThresholds,
   output_dir: &Path,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<SmokeEvidencePaths, Box<dyn Error>> {
   let json_path = output_dir.join(format!("{fixture_name}-detections.json"));
   let manifest_path = output_dir.join(format!("{fixture_name}-manifest.json"));
   let image_path = output_dir.join(format!("{fixture_name}-annotated.png"));
@@ -344,6 +359,150 @@ fn write_smoke_evidence(
     json_path.display(),
     manifest_path.display(),
     image_path.display()
+  );
+
+  Ok(SmokeEvidencePaths {
+    detection_json: json_path,
+    manifest_json: manifest_path,
+    annotated_image: image_path,
+  })
+}
+
+fn assert_smoke_evidence_outputs(
+  fixture_name: &str,
+  evidence_paths: &SmokeEvidencePaths,
+  result: &DetectionSet,
+  source_image_path: &Path,
+  class_path: &Path,
+  thresholds: &FixtureThresholds,
+) -> Result<(), Box<dyn Error>> {
+  let detections_name = format!("{fixture_name}-detections.json");
+  let manifest_name = format!("{fixture_name}-manifest.json");
+  let annotated_name = format!("{fixture_name}-annotated.png");
+
+  assert_eq!(
+    evidence_paths
+      .detection_json
+      .file_name()
+      .and_then(|name| name.to_str()),
+    Some(detections_name.as_str()),
+    "{fixture_name}: detections evidence path should use the expected file name"
+  );
+  assert_eq!(
+    evidence_paths
+      .manifest_json
+      .file_name()
+      .and_then(|name| name.to_str()),
+    Some(manifest_name.as_str()),
+    "{fixture_name}: manifest evidence path should use the expected file name"
+  );
+  assert_eq!(
+    evidence_paths
+      .annotated_image
+      .file_name()
+      .and_then(|name| name.to_str()),
+    Some(annotated_name.as_str()),
+    "{fixture_name}: annotated evidence path should use the expected file name"
+  );
+
+  assert!(
+    evidence_paths.detection_json.is_file(),
+    "{fixture_name}: detections evidence file was not written: {}",
+    evidence_paths.detection_json.display()
+  );
+  assert!(
+    evidence_paths.manifest_json.is_file(),
+    "{fixture_name}: manifest evidence file was not written: {}",
+    evidence_paths.manifest_json.display()
+  );
+  assert!(
+    evidence_paths.annotated_image.is_file(),
+    "{fixture_name}: annotated image evidence file was not written: {}",
+    evidence_paths.annotated_image.display()
+  );
+
+  let written_detections: DetectionSet =
+    serde_json::from_str(&fs::read_to_string(&evidence_paths.detection_json)?)?;
+  assert_eq!(
+    written_detections, *result,
+    "{fixture_name}: detections evidence JSON should round-trip back to the detector result"
+  );
+
+  let manifest: DetectionEvidenceManifest =
+    serde_json::from_str(&fs::read_to_string(&evidence_paths.manifest_json)?)?;
+  assert_eq!(
+    manifest.detection_set, *result,
+    "{fixture_name}: manifest must embed the same DetectionSet written to detections JSON"
+  );
+  assert_eq!(
+    manifest.source_image.source_image_ref,
+    SourceImageRef::LocalPath {
+      path: source_image_path.to_path_buf()
+    },
+    "{fixture_name}: manifest must point at the source image used for smoke"
+  );
+  assert_eq!(
+    manifest.source_image.coordinate_space,
+    DetectionCoordinateSpace::SourceImagePixels,
+    "{fixture_name}: manifest coordinate space must stay in source-image pixels"
+  );
+  assert_eq!(
+    manifest.source_image.projection_basis,
+    ProjectionBasis::Unavailable {
+      reason: "local Balatro smoke does not capture display/window projection".to_string()
+    },
+    "{fixture_name}: manifest projection basis must stay unavailable for local smoke"
+  );
+  assert_eq!(
+    manifest.model_run.backend, "ultralytics-inference",
+    "{fixture_name}: manifest backend must identify the ultralytics adapter"
+  );
+  assert_eq!(
+    manifest.model_run.model_id, result.model_id,
+    "{fixture_name}: manifest model_id must match the DetectionSet model_id"
+  );
+  assert_eq!(
+    manifest.model_run.confidence_threshold, thresholds.confidence,
+    "{fixture_name}: manifest confidence threshold must match the fixture thresholds"
+  );
+  assert_eq!(
+    manifest.model_run.iou_threshold, thresholds.iou,
+    "{fixture_name}: manifest IoU threshold must match the fixture thresholds"
+  );
+  assert_eq!(
+    manifest.model_run.class_label_source,
+    ClassLabelSource::OverrideFile {
+      path: class_path.to_path_buf()
+    },
+    "{fixture_name}: manifest must record override-file label provenance"
+  );
+  assert_eq!(
+    manifest.model_run.execution_provider.as_deref(),
+    Some("cpu"),
+    "{fixture_name}: manifest must record the CPU execution provider used by the smoke"
+  );
+  assert_eq!(
+    manifest.known_limits,
+    vec![
+      "source image reference is inference-scoped, not a runtime artifact".to_string(),
+      "projection basis is unavailable in local Balatro smoke".to_string(),
+      "annotated image is a debug aid only".to_string(),
+    ],
+    "{fixture_name}: manifest known limits should stay explicit and inference-scoped"
+  );
+
+  let annotated = ImageReader::open(&evidence_paths.annotated_image)?
+    .decode()?
+    .to_rgb8();
+  assert_eq!(
+    annotated.width(),
+    result.image_size.width,
+    "{fixture_name}: annotated image width must match the source image width"
+  );
+  assert_eq!(
+    annotated.height(),
+    result.image_size.height,
+    "{fixture_name}: annotated image height must match the source image height"
   );
 
   Ok(())
