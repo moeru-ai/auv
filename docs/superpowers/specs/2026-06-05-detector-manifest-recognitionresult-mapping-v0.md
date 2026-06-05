@@ -2,7 +2,7 @@
 
 Date: 2026-06-05
 
-Status: docs-only mapping boundary
+Status: partial implementation landed
 
 Base: `origin/main` after `1dff479`
 
@@ -31,6 +31,37 @@ This slice does **not** implement:
 It only defines the mapping questions and preferred semantics so later work can
 converge on `RecognitionResult` instead of inventing a parallel detector-side
 runtime schema.
+
+## Implementation Status
+
+`main` now contains a narrow root-crate mapper that proves the smallest honest
+bridge shape:
+
+```text
+DetectionEvidenceManifest
+  + runtime RecognitionScope
+  + runtime ArtifactRef evidence
+  + explicit runtime projection context
+  -> RecognitionResult
+```
+
+Implemented in this slice:
+
+- pure mapping function only
+- explicit rejection for missing runtime evidence
+- explicit rejection for missing `scope.capture_artifact`
+- explicit rejection for source-image size mismatch
+- `RecognitionSource::Custom` bridge policy
+- carry-forward of detector-side `known_limits`
+- synthetic tests for failure and success cases
+
+Still not implemented:
+
+- runtime capture production
+- display/window projection beyond caller-declared identity mapping
+- Candidate promotion
+- runtime artifact recording
+- driver/app/runtime integration
 
 ## Convergence Rule
 

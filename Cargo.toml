@@ -51,6 +51,7 @@ objc2-core-graphics = { version = "0.3", features = ["CGWindow", "CGImage", "CGD
 objc2-core-foundation = "0.3"
 
 [dependencies]
+auv-inference-common = { path = "crates/auv-inference-common" }
 auv-driver = { path = "crates/auv-driver" }
 axum = { version = "0.8", features = ["ws"] }
 semver = "1"

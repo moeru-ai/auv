@@ -4,6 +4,7 @@ pub mod bundle;
 pub mod catalog;
 pub mod contract;
 pub mod driver;
+pub mod inference_recognition;
 pub mod inspect;
 pub mod inspect_server;
 pub mod model;

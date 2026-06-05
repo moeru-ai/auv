@@ -313,6 +313,7 @@ version = "0.0.1"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
+ "auv-inference-common",
  "auv-overlay-macos",
  "axum",
  "image",
