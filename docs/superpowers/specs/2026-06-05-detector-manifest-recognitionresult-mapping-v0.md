@@ -54,6 +54,7 @@ Implemented in this slice:
 - `RecognitionSource::Custom` bridge policy
 - carry-forward of detector-side `known_limits`
 - synthetic tests for failure and success cases
+- gated Balatro smoke now proves `DetectionEvidenceManifest -> RecognitionResult -> JSON evidence`
 
 Still not implemented:
 

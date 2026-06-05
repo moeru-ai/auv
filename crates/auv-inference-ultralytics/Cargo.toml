@@ -50,4 +50,5 @@ thiserror.workspace = true
 ultralytics-inference.workspace = true
 
 [dev-dependencies]
+auv-cli = { path = "../.." }
 ndarray.workspace = true

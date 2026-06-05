@@ -103,6 +103,8 @@ impl std::fmt::Display for DetectorRecognitionMappingError {
   }
 }
 
+impl std::error::Error for DetectorRecognitionMappingError {}
+
 pub fn map_detector_manifest_to_recognition_result(
   manifest: &DetectionEvidenceManifest,
   context: &DetectorRecognitionRuntimeContext,
@@ -581,5 +583,21 @@ mod tests {
       result.best.as_ref().map(|item| item.item_id.as_str()),
       Some("detector:games-balatro-2024-yolo-ui-detection:0")
     );
+  }
+
+  #[test]
+  fn default_policy_keeps_filtered_aligned_with_all_and_best_empty() {
+    let manifest = sample_manifest();
+    let context = sample_context();
+
+    let result = map_detector_manifest_to_recognition_result(
+      &manifest,
+      &context,
+      &DetectorRecognitionBridgePolicy::default(),
+    )
+    .expect("default pass-through policy should map");
+
+    assert!(result.best.is_none());
+    assert_eq!(result.filtered, result.all);
   }
 }

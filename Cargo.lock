@@ -368,6 +368,7 @@ dependencies = [
 name = "auv-inference-ultralytics"
 version = "0.0.1"
 dependencies = [
+ "auv-cli",
  "auv-inference-common",
  "image",
  "ndarray",
