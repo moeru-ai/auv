@@ -1548,6 +1548,7 @@ mod tests {
           identifier: String::new(),
           placeholder: "Other".to_string(),
           value: String::new(),
+          focused: false,
           bounds: auv_driver_macos::types::ObservedRect {
             x: 20,
             y: 20,
@@ -1566,6 +1567,7 @@ mod tests {
           identifier: "search-field".to_string(),
           placeholder: "Search".to_string(),
           value: String::new(),
+          focused: false,
           bounds: auv_driver_macos::types::ObservedRect {
             x: 120,
             y: 64,

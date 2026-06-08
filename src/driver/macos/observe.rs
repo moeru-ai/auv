@@ -2093,6 +2093,7 @@ mod tests {
       identifier: String::new(),
       placeholder: "Placeholder".to_string(),
       value: "Value".to_string(),
+      focused: false,
       bounds: ObservedRect {
         x: 0,
         y: 0,
@@ -2125,6 +2126,7 @@ mod tests {
       identifier: String::new(),
       placeholder: String::new(),
       value: "已粘贴完成".to_string(),
+      focused: false,
       bounds: ObservedRect {
         x: 100,
         y: 200,

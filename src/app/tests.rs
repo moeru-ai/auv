@@ -3539,6 +3539,7 @@ fn build_annotation_candidates_keeps_raw_ocr_as_visible_text_and_adds_selectors(
         identifier: String::new(),
         placeholder: String::new(),
         value: String::new(),
+        focused: false,
         bounds: ObservedRect {
           x: 0,
           y: 0,
@@ -3557,6 +3558,7 @@ fn build_annotation_candidates_keeps_raw_ocr_as_visible_text_and_adds_selectors(
         identifier: String::new(),
         placeholder: String::new(),
         value: String::new(),
+        focused: false,
         bounds: ObservedRect {
           x: 100,
           y: 190,
@@ -3575,6 +3577,7 @@ fn build_annotation_candidates_keeps_raw_ocr_as_visible_text_and_adds_selectors(
         identifier: String::new(),
         placeholder: String::new(),
         value: String::new(),
+        focused: false,
         bounds: ObservedRect {
           x: 100,
           y: 250,

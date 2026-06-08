@@ -309,6 +309,7 @@ fn recognized_ax_item(index: usize, node: &ObservedAxNode, score: i64) -> Recogn
       "identifier": node.identifier,
       "placeholder": node.placeholder,
       "value": node.value,
+      "focused": node.focused,
       "depth": node.depth,
       "coordinate_basis": "ax_frame_bounds",
       "projection_candidate": "identity_window_addressable",
@@ -467,6 +468,7 @@ mod tests {
       identifier: String::new(),
       placeholder: String::new(),
       value: String::new(),
+      focused: false,
       bounds: ObservedRect {
         x,
         y,

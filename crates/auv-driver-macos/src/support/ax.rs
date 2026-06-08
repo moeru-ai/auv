@@ -36,13 +36,14 @@ pub fn parse_observed_ax_tree(report: &str) -> AuvResult<ObservedAxTreeSnapshot>
 
 pub fn parse_observed_ax_node_line(line: &str) -> AuvResult<ObservedAxNode> {
   let columns = line.split('\t').collect::<Vec<_>>();
-  if columns.len() != 15 {
+  if !matches!(columns.len(), 15 | 16) {
     return Err(format!(
-      "invalid AX node report line; expected 15 columns but got {}: {}",
+      "invalid AX node report line; expected 15 or 16 columns but got {}: {}",
       columns.len(),
       line
     ));
   }
+  let focused_offset = usize::from(columns.len() == 16);
 
   Ok(ObservedAxNode {
     depth: columns[1]
@@ -57,11 +58,12 @@ pub fn parse_observed_ax_node_line(line: &str) -> AuvResult<ObservedAxNode> {
     identifier: columns[8].to_string(),
     placeholder: columns[9].to_string(),
     value: columns[10].to_string(),
+    focused: columns.get(11).is_some_and(|value| *value == "true") && columns.len() == 16,
     bounds: ObservedRect {
-      x: parse_i64(columns[11], "ax.bounds.x")?,
-      y: parse_i64(columns[12], "ax.bounds.y")?,
-      width: parse_i64(columns[13], "ax.bounds.width")?,
-      height: parse_i64(columns[14], "ax.bounds.height")?,
+      x: parse_i64(columns[11 + focused_offset], "ax.bounds.x")?,
+      y: parse_i64(columns[12 + focused_offset], "ax.bounds.y")?,
+      width: parse_i64(columns[13 + focused_offset], "ax.bounds.width")?,
+      height: parse_i64(columns[14 + focused_offset], "ax.bounds.height")?,
     },
   })
 }

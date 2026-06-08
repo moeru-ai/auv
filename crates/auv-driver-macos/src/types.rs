@@ -182,6 +182,7 @@ pub struct ObservedAxNode {
   pub identifier: String,
   pub placeholder: String,
   pub value: String,
+  pub focused: bool,
   pub bounds: ObservedRect,
 }
 

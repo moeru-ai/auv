@@ -124,6 +124,7 @@ pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<Nat
     response.identifiers.len(),
     response.placeholders.len(),
     response.values.len(),
+    response.focused_values.len(),
     response.x_values.len(),
     response.y_values.len(),
     response.width_values.len(),
@@ -152,6 +153,7 @@ pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<Nat
         identifier: response.identifiers[index].clone(),
         placeholder: response.placeholders[index].clone(),
         value: response.values[index].clone(),
+        focused: response.focused_values[index],
         bounds: ObservedRect {
           x: response.x_values[index],
           y: response.y_values[index],
@@ -243,7 +245,7 @@ pub fn render_ax_tree_report(capture: &NativeAxTreeCapture) -> String {
   ];
   for node in &snapshot.nodes {
     lines.push(format!(
-      "node\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+      "node\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
       node.depth,
       node.path,
       node.role,
@@ -254,6 +256,7 @@ pub fn render_ax_tree_report(capture: &NativeAxTreeCapture) -> String {
       node.identifier,
       node.placeholder,
       node.value,
+      node.focused,
       node.bounds.x,
       node.bounds.y,
       node.bounds.width,
@@ -282,6 +285,7 @@ pub struct DecodedAxTreeResponse {
   pub identifiers: Vec<String>,
   pub placeholders: Vec<String>,
   pub values: Vec<String>,
+  pub focused_values: Vec<bool>,
   pub x_values: Vec<i64>,
   pub y_values: Vec<i64>,
   pub width_values: Vec<i64>,
@@ -336,6 +340,7 @@ impl From<NativeAxTreeResponse> for DecodedAxTreeResponse {
       identifiers: value.identifiers,
       placeholders: value.placeholders,
       values: value.values,
+      focused_values: value.focused_values,
       x_values: value.x_values,
       y_values: value.y_values,
       width_values: value.width_values,
@@ -402,6 +407,7 @@ mod tests {
       identifiers: vec!["".to_string()],
       placeholders: vec!["".to_string()],
       values: vec!["Value".to_string()],
+      focused_values: vec![false],
       x_values: vec![10],
       y_values: vec![20],
       width_values: vec![100],

@@ -83,6 +83,8 @@ pub struct CandidateActionExecutionRequest {
   pub(crate) consent: Option<CandidateActionExecutionConsent>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub(crate) readiness: Option<auv_driver::ReadinessReport>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub(crate) post_action_probe: Option<CandidateActionPostActionProbe>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub(crate) post_action_verifications: Vec<VerificationResult>,
   pub(crate) artifact_role: String,
@@ -98,6 +100,7 @@ impl CandidateActionExecutionRequest {
       source_candidate_action_decision_artifact: None,
       consent: None,
       readiness: None,
+      post_action_probe: None,
       post_action_verifications: Vec::new(),
       artifact_role: CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE.to_string(),
       artifact_label: artifact_label.into(),
@@ -120,10 +123,38 @@ impl CandidateActionExecutionRequest {
     self
   }
 
+  pub fn with_post_action_probe(mut self, probe: CandidateActionPostActionProbe) -> Self {
+    self.post_action_probe = Some(probe);
+    self
+  }
+
   pub fn with_post_action_verification(mut self, verification: VerificationResult) -> Self {
     self.post_action_verifications.push(verification);
     self
   }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CandidateActionPostActionProbe {
+  pub kind: CandidateActionPostActionProbeKind,
+  pub require_frontmost: bool,
+  pub bounds_tolerance_px: f64,
+}
+
+impl CandidateActionPostActionProbe {
+  pub fn focused_ax_node_reobserved() -> Self {
+    Self {
+      kind: CandidateActionPostActionProbeKind::FocusedAxNodeReobserved,
+      require_frontmost: true,
+      bounds_tolerance_px: 2.0,
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateActionPostActionProbeKind {
+  FocusedAxNodeReobserved,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,6 +235,29 @@ pub trait CandidateActionExecutor {
     &mut self,
     plan: &CandidateActionDeliveryPlan,
   ) -> AuvResult<auv_driver::InputActionResult>;
+
+  // TODO(l8b-post-action-evidence-artifact): this hook returns
+  // `VerificationResult`s only. A separate post-action observation artifact is
+  // deferred until the recorder passes artifact staging into this boundary.
+  fn verify_after_execution(
+    &mut self,
+    plan: &CandidateActionDeliveryPlan,
+    probe: Option<&CandidateActionPostActionProbe>,
+    candidate: &Candidate,
+    candidate_ref: Option<&CandidateRef>,
+    input_action_result: &auv_driver::InputActionResult,
+    evidence_artifacts: &[ArtifactRef],
+  ) -> AuvResult<Vec<VerificationResult>> {
+    let _ = (
+      plan,
+      probe,
+      candidate,
+      candidate_ref,
+      input_action_result,
+      evidence_artifacts,
+    );
+    Ok(Vec::new())
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -421,11 +475,8 @@ pub fn build_candidate_action_execution_artifact(
     &promotion.promotion_id,
     &candidate.candidate_local_id,
   );
-  let mut evidence_artifacts = Vec::new();
-  evidence_artifacts.push(source_candidate_action_decision_artifact.clone());
-  if let Some(source_promotion) = decision.source_candidate_promotion_artifact.clone() {
-    evidence_artifacts.push(source_promotion);
-  }
+  let evidence_artifacts =
+    execution_evidence_artifacts(&source_candidate_action_decision_artifact, decision);
   let verification_result = activation_only_verification(
     succeeded,
     candidate,
@@ -484,6 +535,7 @@ pub fn build_candidate_action_execution_artifact(
     "verification": verification_summary,
     "verification_count": 1 + request.post_action_verifications.len(),
     "post_action_verification_count": request.post_action_verifications.len(),
+    "post_action_verifications": post_action_verification_summaries(&request.post_action_verifications),
     "semantic_matched": serde_json::to_value(semantic_matched).unwrap_or(serde_json::Value::Null),
     "source_promotion_id": promotion.promotion_id,
     "source_decision_id": decision.decision_id,
@@ -574,7 +626,14 @@ pub fn execute_and_record_single_candidate_action<E: CandidateActionExecutor>(
     context.run_id().clone(),
   )
   .map_err(|error| format!("failed to execute single candidate action: {error}"))?;
-  let request = request.clone().with_readiness(artifact.readiness.clone());
+  let mut request = request.clone().with_readiness(artifact.readiness.clone());
+  request.post_action_verifications = artifact
+    .operation_result
+    .verifications
+    .iter()
+    .skip(1)
+    .cloned()
+    .collect();
   record_candidate_action_execution_artifact(
     context,
     promotion,
@@ -645,6 +704,40 @@ pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
       .map_err(|error| CandidateActionDecisionError::ExecutionFailed {
         reason: error.to_string(),
       })?;
+  let request =
+    if input_action_succeeded(&input_action_result) && request.post_action_probe.is_some() {
+      let candidate_ref = candidate_ref_from_source(
+        decision.source_candidate_promotion_artifact.as_ref(),
+        &promotion.promotion_id,
+        &candidate.candidate_local_id,
+      );
+      let evidence_artifacts =
+        execution_evidence_artifacts(source_candidate_action_decision_artifact, decision);
+      let post_action_verifications = executor
+        .verify_after_execution(
+          &plan,
+          request.post_action_probe.as_ref(),
+          candidate,
+          candidate_ref.as_ref(),
+          &input_action_result,
+          &evidence_artifacts,
+        )
+        .unwrap_or_else(|error| {
+          vec![post_action_observation_error_verification(
+            candidate,
+            candidate_ref.as_ref(),
+            &evidence_artifacts,
+            format!("post-action verification failed after input delivery: {error}"),
+          )]
+        });
+      let mut request = request;
+      request
+        .post_action_verifications
+        .extend(post_action_verifications);
+      request
+    } else {
+      request
+    };
   build_candidate_action_execution_artifact(
     promotion,
     decision,
@@ -877,6 +970,78 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
       )
       .map_err(|error| format!("typed macOS window click failed: {error}"))
   }
+
+  fn verify_after_execution(
+    &mut self,
+    plan: &CandidateActionDeliveryPlan,
+    probe: Option<&CandidateActionPostActionProbe>,
+    candidate: &Candidate,
+    candidate_ref: Option<&CandidateRef>,
+    input_action_result: &auv_driver::InputActionResult,
+    evidence_artifacts: &[ArtifactRef],
+  ) -> AuvResult<Vec<VerificationResult>> {
+    use auv_driver::Driver;
+
+    if !input_action_succeeded(input_action_result) {
+      return Ok(Vec::new());
+    }
+    let Some(probe) = probe else {
+      return Ok(Vec::new());
+    };
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = match driver.open_local() {
+      Ok(session) => session,
+      Err(error) => {
+        return Ok(vec![post_action_observation_error_verification(
+          candidate,
+          candidate_ref,
+          evidence_artifacts,
+          format!("failed to open typed macOS driver session after execution: {error}"),
+        )]);
+      }
+    };
+    let windows = match session.window().list() {
+      Ok(windows) => windows,
+      Err(error) => {
+        return Ok(vec![post_action_observation_error_verification(
+          candidate,
+          candidate_ref,
+          evidence_artifacts,
+          format!("failed to list macOS windows after execution: {error}"),
+        )]);
+      }
+    };
+    let frontmost = session
+      .window()
+      .resolve(auv_driver::WindowSelector {
+        app: Some(auv_driver::App::frontmost()),
+        title: None,
+        main_visible: true,
+      })
+      .ok();
+    let target = windows
+      .iter()
+      .find(|window| window_matches_plan(window, plan));
+    let window_alive = post_action_window_alive(
+      plan,
+      target,
+      frontmost.as_ref(),
+      probe.require_frontmost,
+      probe.bounds_tolerance_px,
+    );
+    match probe.kind {
+      CandidateActionPostActionProbeKind::FocusedAxNodeReobserved => {
+        Ok(vec![post_action_focused_ax_node_verification(
+          plan,
+          candidate,
+          candidate_ref,
+          evidence_artifacts,
+          &window_alive,
+          probe.bounds_tolerance_px,
+        )])
+      }
+    }
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -1082,6 +1247,24 @@ fn blocked_input_action_result(reason: &str) -> auv_driver::InputActionResult {
   }
 }
 
+fn input_action_succeeded(input_action_result: &auv_driver::InputActionResult) -> bool {
+  input_action_result
+    .attempts
+    .iter()
+    .any(|attempt| attempt.succeeded)
+}
+
+fn execution_evidence_artifacts(
+  source_candidate_action_decision_artifact: &ArtifactRef,
+  decision: &CandidateActionDecisionArtifact,
+) -> Vec<ArtifactRef> {
+  let mut evidence_artifacts = vec![source_candidate_action_decision_artifact.clone()];
+  if let Some(source_promotion) = decision.source_candidate_promotion_artifact.clone() {
+    evidence_artifacts.push(source_promotion);
+  }
+  evidence_artifacts
+}
+
 fn primary_execution_verification(
   activation_only: &VerificationResult,
   post_action_verifications: &[VerificationResult],
@@ -1108,6 +1291,25 @@ fn execution_verification_summary(
       verification_method_label(&primary.method),
     )
   }
+}
+
+fn post_action_verification_summaries(
+  verifications: &[VerificationResult],
+) -> Vec<serde_json::Value> {
+  verifications
+    .iter()
+    .map(|verification| {
+      json!({
+        "method": verification_method_label(&verification.method),
+        "executed": verification.executed,
+        "state_changed": verification.state_changed,
+        "semantic_matched": serde_json::to_value(verification.semantic_matched).unwrap_or(serde_json::Value::Null),
+        "failure_layer": verification.failure_layer.as_ref().map(failure_layer_label),
+        "observed_label": verification.observed_label,
+        "evidence_count": verification.evidence.len(),
+      })
+    })
+    .collect()
 }
 
 fn execution_message(
@@ -1166,6 +1368,359 @@ fn verification_method_label(method: &VerificationMethod) -> String {
     VerificationMethod::NoProgressBoundary => "no_progress_boundary".to_string(),
     VerificationMethod::Custom { name } => name.clone(),
   }
+}
+
+fn failure_layer_label(layer: &FailureLayer) -> &'static str {
+  match layer {
+    FailureLayer::GroundingFailed => "grounding_failed",
+    FailureLayer::CandidateExpired => "candidate_expired",
+    FailureLayer::ControlFailed => "control_failed",
+    FailureLayer::VerificationUnreliable => "verification_unreliable",
+    FailureLayer::StateChangedNoMatch => "state_changed_no_match",
+    FailureLayer::SemanticMismatch => "semantic_mismatch",
+  }
+}
+
+fn post_action_observation_error_verification(
+  candidate: &Candidate,
+  candidate_ref: Option<&CandidateRef>,
+  evidence_artifacts: &[ArtifactRef],
+  reason: impl Into<String>,
+) -> VerificationResult {
+  post_action_verification(
+    candidate,
+    candidate_ref,
+    evidence_artifacts,
+    VerificationMethod::SemanticMatch,
+    false,
+    Some(FailureLayer::VerificationUnreliable),
+    reason.into(),
+  )
+}
+
+fn post_action_verification(
+  candidate: &Candidate,
+  candidate_ref: Option<&CandidateRef>,
+  evidence_artifacts: &[ArtifactRef],
+  method: VerificationMethod,
+  semantic_matched: bool,
+  failure_layer: Option<FailureLayer>,
+  observed_label: String,
+) -> VerificationResult {
+  VerificationResult {
+    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+    method,
+    executed: true,
+    state_changed: semantic_matched,
+    semantic_matched: Some(semantic_matched),
+    failure_layer,
+    evidence: evidence_artifacts.to_vec(),
+    consumed_candidate_ref: candidate_ref.cloned(),
+    consumed_node_ref: None,
+    consumed_recognition_artifact_ref: Some(candidate.evidence.artifact_ref.clone()),
+    consumed_recognition_id: None,
+    consumed_recognized_item_id: candidate
+      .evidence
+      .observation
+      .get("item_id")
+      .and_then(|value| value.as_str())
+      .map(str::to_string),
+    observed_label: Some(observed_label),
+  }
+}
+
+struct PostActionWindowAlive {
+  target_present: bool,
+  target_frontmost: bool,
+  bounds_stable: bool,
+  point_inside: bool,
+  target_app_bundle_id: Option<String>,
+}
+
+impl PostActionWindowAlive {
+  fn is_alive(&self) -> bool {
+    self.target_present && self.target_frontmost && self.bounds_stable && self.point_inside
+  }
+
+  fn summary(&self) -> String {
+    format!(
+      "target_present={} target_frontmost={} bounds_stable={} point_inside={}",
+      self.target_present, self.target_frontmost, self.bounds_stable, self.point_inside
+    )
+  }
+}
+
+fn post_action_window_alive(
+  plan: &CandidateActionDeliveryPlan,
+  target: Option<&auv_driver::Window>,
+  frontmost: Option<&auv_driver::Window>,
+  require_frontmost: bool,
+  bounds_tolerance_px: f64,
+) -> PostActionWindowAlive {
+  let target_present = target.is_some();
+  let target_frontmost = if require_frontmost {
+    target
+      .zip(frontmost)
+      .is_some_and(|(target, frontmost)| target.reference.id == frontmost.reference.id)
+  } else {
+    true
+  };
+  let bounds_stable = target
+    .and_then(|window| {
+      plan
+        .expected_window_frame
+        .map(|expected| (window.frame, expected))
+    })
+    .map(|(observed, expected)| rect_drift_px(observed, expected) <= bounds_tolerance_px)
+    .unwrap_or(true);
+  let point_inside = target
+    .map(|window| window_contains_point(window, plan.window_x, plan.window_y))
+    .unwrap_or(false);
+  PostActionWindowAlive {
+    target_present,
+    target_frontmost,
+    bounds_stable,
+    point_inside,
+    target_app_bundle_id: target.and_then(|window| window.app_bundle_id.clone()),
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn post_action_focused_ax_node_verification(
+  plan: &CandidateActionDeliveryPlan,
+  candidate: &Candidate,
+  candidate_ref: Option<&CandidateRef>,
+  evidence_artifacts: &[ArtifactRef],
+  window_alive: &PostActionWindowAlive,
+  bounds_tolerance_px: f64,
+) -> VerificationResult {
+  let Some(app_bundle_id) = window_alive
+    .target_app_bundle_id
+    .as_deref()
+    .or(plan.app_bundle_id.as_deref())
+  else {
+    return post_action_verification(
+      candidate,
+      candidate_ref,
+      evidence_artifacts,
+      VerificationMethod::SemanticMatch,
+      false,
+      Some(FailureLayer::VerificationUnreliable),
+      format!(
+        "post-action focused AX reobserve failed: missing target app bundle id; {}",
+        window_alive.summary()
+      ),
+    );
+  };
+  let capture =
+    match auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80) {
+      Ok(capture) => capture,
+      Err(error) => {
+        return post_action_verification(
+          candidate,
+          candidate_ref,
+          evidence_artifacts,
+          VerificationMethod::SemanticMatch,
+          false,
+          Some(FailureLayer::VerificationUnreliable),
+          format!(
+            "post-action focused AX reobserve failed: {error}; {}",
+            window_alive.summary()
+          ),
+        );
+      }
+    };
+  let expected = expected_ax_focus_target(candidate);
+  let focused = capture.snapshot.nodes.iter().find(|node| node.focused);
+  let focused_matches = focused
+    .zip(expected.as_ref())
+    .is_some_and(|(focused, expected)| {
+      ax_node_matches_expected(focused, expected, bounds_tolerance_px)
+    });
+  let semantic_matched = window_alive.is_alive() && focused_matches;
+  let observed_label = format!(
+    "post-action focused_ax_node_reobserved={} focused_path={} focused_role={} expected_role={} expected_text={} {}",
+    focused_matches,
+    focused.map(|node| node.path.as_str()).unwrap_or("none"),
+    focused.map(|node| node.role.as_str()).unwrap_or("none"),
+    expected
+      .as_ref()
+      .and_then(|expected| expected.role.as_deref())
+      .unwrap_or("none"),
+    expected
+      .as_ref()
+      .and_then(|expected| expected.text.as_deref())
+      .unwrap_or("none"),
+    window_alive.summary()
+  );
+  post_action_verification(
+    candidate,
+    candidate_ref,
+    evidence_artifacts,
+    VerificationMethod::SemanticMatch,
+    semantic_matched,
+    (!semantic_matched).then_some(FailureLayer::SemanticMismatch),
+    observed_label,
+  )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn post_action_focused_ax_node_verification(
+  _plan: &CandidateActionDeliveryPlan,
+  candidate: &Candidate,
+  candidate_ref: Option<&CandidateRef>,
+  evidence_artifacts: &[ArtifactRef],
+  window_alive: &PostActionWindowAlive,
+  _bounds_tolerance_px: f64,
+) -> VerificationResult {
+  post_action_verification(
+    candidate,
+    candidate_ref,
+    evidence_artifacts,
+    VerificationMethod::SemanticMatch,
+    false,
+    Some(FailureLayer::VerificationUnreliable),
+    format!(
+      "post-action focused AX reobserve is unavailable on this target; {}",
+      window_alive.summary()
+    ),
+  )
+}
+
+fn window_matches_plan(window: &auv_driver::Window, plan: &CandidateActionDeliveryPlan) -> bool {
+  plan
+    .window_number
+    .is_none_or(|number| window.reference.id == number.to_string())
+    && plan
+      .app_bundle_id
+      .as_ref()
+      .is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
+    && plan.window_title.as_ref().is_none_or(|expected| {
+      window
+        .title
+        .as_deref()
+        .is_some_and(|title| title.contains(expected))
+    })
+}
+
+fn window_contains_point(window: &auv_driver::Window, window_x: f64, window_y: f64) -> bool {
+  window_x >= 0.0
+    && window_y >= 0.0
+    && window_x <= window.frame.size.width
+    && window_y <= window.frame.size.height
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ExpectedAxFocusTarget {
+  role: Option<String>,
+  text: Option<String>,
+  bounds: Option<auv_driver::Rect>,
+}
+
+fn expected_ax_focus_target(candidate: &Candidate) -> Option<ExpectedAxFocusTarget> {
+  let observation = &candidate.evidence.observation;
+  let role = observation
+    .pointer("/detail/role")
+    .and_then(|value| value.as_str())
+    .map(str::to_string);
+  let text = observation
+    .get("text")
+    .and_then(|value| value.as_str())
+    .or_else(|| {
+      observation
+        .pointer("/detail/title")
+        .and_then(|value| value.as_str())
+    })
+    .or_else(|| {
+      observation
+        .pointer("/detail/value")
+        .and_then(|value| value.as_str())
+    })
+    .or_else(|| {
+      observation
+        .pointer("/detail/description")
+        .and_then(|value| value.as_str())
+    })
+    .or(candidate.label.as_deref())
+    .map(str::to_string)
+    .filter(|value| !value.trim().is_empty());
+  let bounds = rect_from_value(observation.pointer("/detail/source_global_logical_bounds"))
+    .or_else(|| rect_from_value(observation.pointer("/detail/bounds")))
+    .or_else(|| {
+      rect_from_recognition_box(observation.get("box").or_else(|| observation.get("box_")))
+    });
+  if role.is_none() && text.is_none() && bounds.is_none() {
+    None
+  } else {
+    Some(ExpectedAxFocusTarget { role, text, bounds })
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn ax_node_matches_expected(
+  node: &auv_driver_macos::types::ObservedAxNode,
+  expected: &ExpectedAxFocusTarget,
+  bounds_tolerance_px: f64,
+) -> bool {
+  let role_matches = expected.role.as_ref().is_none_or(|role| node.role == *role);
+  let text_matches = expected
+    .text
+    .as_ref()
+    .is_none_or(|text| ax_node_searchable_text(node).contains(&normalize_ax_text(text)));
+  let bounds_matches = expected.bounds.is_none_or(|bounds| {
+    rect_drift_px(observed_ax_rect(&node.bounds), bounds) <= bounds_tolerance_px
+  });
+  role_matches && text_matches && bounds_matches
+}
+
+#[cfg(target_os = "macos")]
+fn ax_node_searchable_text(node: &auv_driver_macos::types::ObservedAxNode) -> String {
+  normalize_ax_text(
+    &[
+      node.title.as_str(),
+      node.description.as_str(),
+      node.value.as_str(),
+      node.placeholder.as_str(),
+      node.identifier.as_str(),
+    ]
+    .join(" "),
+  )
+}
+
+fn normalize_ax_text(raw: &str) -> String {
+  raw
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ")
+    .to_lowercase()
+}
+
+#[cfg(target_os = "macos")]
+fn observed_ax_rect(rect: &auv_driver_macos::types::ObservedRect) -> auv_driver::Rect {
+  auv_driver::Rect::new(
+    rect.x as f64,
+    rect.y as f64,
+    rect.width as f64,
+    rect.height as f64,
+  )
+}
+
+fn rect_from_recognition_box(value: Option<&serde_json::Value>) -> Option<auv_driver::Rect> {
+  let value = value?;
+  Some(auv_driver::Rect::new(
+    number_field(value, "x")?,
+    number_field(value, "y")?,
+    number_field(value, "width")?,
+    number_field(value, "height")?,
+  ))
+}
+
+fn rect_drift_px(left: auv_driver::Rect, right: auv_driver::Rect) -> f64 {
+  (left.origin.x - right.origin.x)
+    .abs()
+    .max((left.origin.y - right.origin.y).abs())
+    .max((left.size.width - right.size.width).abs())
+    .max((left.size.height - right.size.height).abs())
 }
 
 fn execution_known_limits(
@@ -1298,7 +1853,7 @@ mod tests {
     CandidateActionDecisionArtifact, CandidateActionDecisionError, CandidateActionDecisionRequest,
     CandidateActionDeliveryPlan, CandidateActionExecutionConsent,
     CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
-    CandidateActionExecutionSideEffect, CandidateActionExecutor,
+    CandidateActionExecutionSideEffect, CandidateActionExecutor, CandidateActionPostActionProbe,
     build_candidate_action_decision_artifact, build_candidate_action_execution_artifact,
     execute_and_record_single_candidate_action, execute_single_candidate_action,
     record_candidate_action_decision_artifact, record_candidate_action_execution_artifact,
@@ -1524,6 +2079,69 @@ mod tests {
       self.observed_plan = Some(plan.clone());
       self.executed = true;
       Ok(self.result.clone())
+    }
+  }
+
+  struct FakeVerifyingExecutor {
+    result: auv_driver::InputActionResult,
+    readiness: auv_driver::ReadinessReport,
+    observed_plan: Option<CandidateActionDeliveryPlan>,
+    executed: bool,
+    verification_calls: usize,
+    verification: crate::contract::VerificationResult,
+    verification_error: Option<String>,
+  }
+
+  impl CandidateActionExecutor for FakeVerifyingExecutor {
+    fn readiness(
+      &mut self,
+      plan: &CandidateActionDeliveryPlan,
+    ) -> AuvResult<auv_driver::ReadinessReport> {
+      self.observed_plan = Some(plan.clone());
+      Ok(self.readiness.clone())
+    }
+
+    fn execute(
+      &mut self,
+      plan: &CandidateActionDeliveryPlan,
+    ) -> AuvResult<auv_driver::InputActionResult> {
+      self.observed_plan = Some(plan.clone());
+      self.executed = true;
+      Ok(self.result.clone())
+    }
+
+    fn verify_after_execution(
+      &mut self,
+      plan: &CandidateActionDeliveryPlan,
+      probe: Option<&CandidateActionPostActionProbe>,
+      candidate: &crate::contract::Candidate,
+      candidate_ref: Option<&crate::contract::CandidateRef>,
+      input_action_result: &auv_driver::InputActionResult,
+      evidence_artifacts: &[crate::contract::ArtifactRef],
+    ) -> AuvResult<Vec<crate::contract::VerificationResult>> {
+      self.verification_calls += 1;
+      assert!(
+        self.executed,
+        "post-action verification must run after input delivery"
+      );
+      assert_eq!(
+        probe,
+        Some(&CandidateActionPostActionProbe::focused_ax_node_reobserved())
+      );
+      assert_eq!(plan.window_number, Some(11));
+      assert_eq!(candidate.candidate_local_id, "promoted-item_text_area");
+      assert!(candidate_ref.is_some());
+      assert!(
+        input_action_result
+          .attempts
+          .iter()
+          .any(|attempt| attempt.succeeded)
+      );
+      assert_eq!(evidence_artifacts.len(), 2);
+      if let Some(error) = self.verification_error.clone() {
+        return Err(error);
+      }
+      Ok(vec![self.verification.clone()])
     }
   }
 
@@ -2114,6 +2732,107 @@ mod tests {
   }
 
   #[test]
+  fn recorded_operation_keeps_post_action_semantic_verification_from_execute_path() {
+    let project_root = temp_dir("candidate-action-execute-post-action-record-project");
+    let store_root = temp_dir("candidate-action-execute-post-action-record-store");
+    fs::create_dir_all(&project_root).expect("project root should exist");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let mut executor = FakeVerifyingExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+      readiness: ready_report(),
+      observed_plan: None,
+      executed: false,
+      verification_calls: 0,
+      verification: semantic_verification(true),
+      verification_error: None,
+    };
+
+    let output = runtime
+      .run_recorded_operation(
+        RunSpec::new(RunType::Execute, "auv.candidate.action.execute_single"),
+        "Candidate action execute-and-record post-action verification fixture",
+        |context| {
+          let decision_source_path = project_root.join("candidate-action-decision-source.json");
+          fs::write(&decision_source_path, "{\"fixture\":true}\n")
+            .expect("decision source should write");
+          let (_, source_decision_ref) = context
+            .stage_artifact_file_with_ref(
+              "candidate-action-decision",
+              &decision_source_path,
+              "candidate-action-decision-source.json",
+              Some("Recorded source action decision artifact.".to_string()),
+            )
+            .expect("source decision artifact should stage");
+
+          let request = CandidateActionExecutionRequest::new(
+            "execution_text_area",
+            "text-area-action-execution",
+          )
+          .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
+          .with_consent(CandidateActionExecutionConsent {
+            run_id: source_decision_ref.run_id.as_str().to_string(),
+            ..execution_consent()
+          })
+          .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
+          execute_and_record_single_candidate_action(
+            context,
+            &mut executor,
+            &promotion,
+            &decision,
+            &request,
+          )
+        },
+      )
+      .expect("execute-and-record operation with post-action verification should succeed");
+
+    assert!(executor.observed_plan.is_some());
+    assert!(executor.executed);
+    assert_eq!(executor.verification_calls, 1);
+    let run = runtime
+      .read_run(output.run_id.as_str())
+      .expect("recorded run should persist");
+    assert_eq!(run.artifacts.len(), 3);
+    let (_artifact_ref, artifact) = output.value;
+    assert_eq!(artifact.operation_result.status, OperationStatus::Completed);
+    assert_eq!(artifact.operation_result.verifications.len(), 2);
+    assert_eq!(
+      artifact.verification_result.method,
+      VerificationMethod::SemanticMatch
+    );
+    assert_eq!(artifact.verification_result.semantic_matched, Some(true));
+    assert_eq!(
+      artifact.detail["verification"],
+      json!("activation_only+post_action:semantic_match")
+    );
+    assert_eq!(artifact.detail["post_action_verification_count"], json!(1));
+    let verifications = runtime
+      .list_verifications(output.run_id.as_str())
+      .expect("recorded run verifications should read");
+    assert_eq!(verifications.len(), 2);
+    assert_eq!(
+      verifications[0].method,
+      VerificationMethod::Custom {
+        name: "activation_only".to_string()
+      }
+    );
+    assert_eq!(verifications[1].method, VerificationMethod::SemanticMatch);
+    assert_eq!(verifications[1].semantic_matched, Some(true));
+    let inspect = runtime
+      .inspect(output.run_id.as_str())
+      .expect("execute-and-record run should inspect");
+    assert!(inspect.contains("verification=activation_only+post_action:semantic_match"));
+    assert!(inspect.contains("semantic_matched=true"));
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
   fn execute_single_candidate_action_uses_executor_once_and_records_activation_only() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
@@ -2157,6 +2876,143 @@ mod tests {
       VerificationMethod::Custom {
         name: "activation_only".to_string()
       }
+    );
+  }
+
+  #[test]
+  fn execute_single_candidate_action_runs_explicit_post_action_probe_after_delivery() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_consent(execution_consent())
+        .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
+    let mut executor = FakeVerifyingExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+      readiness: ready_report(),
+      observed_plan: None,
+      executed: false,
+      verification_calls: 0,
+      verification: semantic_verification(true),
+      verification_error: None,
+    };
+
+    let artifact = execute_single_candidate_action(
+      &mut executor,
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+    )
+    .expect("explicit post-action probe should produce execution artifact");
+
+    assert!(executor.executed);
+    assert_eq!(executor.verification_calls, 1);
+    assert_eq!(artifact.operation_result.status, OperationStatus::Completed);
+    assert_eq!(artifact.operation_result.verifications.len(), 2);
+    assert_eq!(
+      artifact.verification_result.method,
+      VerificationMethod::SemanticMatch
+    );
+    assert_eq!(artifact.verification_result.semantic_matched, Some(true));
+    assert_eq!(
+      artifact.detail["verification"],
+      json!("activation_only+post_action:semantic_match")
+    );
+    assert_eq!(artifact.detail["semantic_matched"], json!(true));
+  }
+
+  #[test]
+  fn execute_single_candidate_action_does_not_run_post_action_probe_when_not_requested() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_consent(execution_consent());
+    let mut executor = FakeVerifyingExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+      readiness: ready_report(),
+      observed_plan: None,
+      executed: false,
+      verification_calls: 0,
+      verification: semantic_verification(true),
+      verification_error: None,
+    };
+
+    let artifact = execute_single_candidate_action(
+      &mut executor,
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+    )
+    .expect("execution without explicit post-action probe should still succeed");
+
+    assert!(executor.executed);
+    assert_eq!(executor.verification_calls, 0);
+    assert_eq!(artifact.operation_result.verifications.len(), 1);
+    assert_eq!(
+      artifact.verification_result.method,
+      VerificationMethod::Custom {
+        name: "activation_only".to_string()
+      }
+    );
+    assert_eq!(artifact.verification_result.semantic_matched, None);
+    assert_eq!(artifact.detail["verification"], json!("activation_only"));
+  }
+
+  #[test]
+  fn execute_single_candidate_action_records_artifact_when_post_action_probe_fails_after_delivery()
+  {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_consent(execution_consent())
+        .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
+    let mut executor = FakeVerifyingExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+      readiness: ready_report(),
+      observed_plan: None,
+      executed: false,
+      verification_calls: 0,
+      verification: semantic_verification(true),
+      verification_error: Some("post observe failed".to_string()),
+    };
+
+    let artifact = execute_single_candidate_action(
+      &mut executor,
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+    )
+    .expect("post-action verification failure after delivery must still record execution");
+
+    assert!(executor.executed);
+    assert_eq!(executor.verification_calls, 1);
+    assert_eq!(artifact.detail["input_delivery"], json!("attempted"));
+    assert_eq!(artifact.operation_result.status, OperationStatus::Failed);
+    assert_eq!(artifact.verification_result.semantic_matched, Some(false));
+    assert_eq!(
+      artifact.verification_result.failure_layer,
+      Some(FailureLayer::VerificationUnreliable)
+    );
+    assert!(
+      artifact
+        .verification_result
+        .observed_label
+        .as_deref()
+        .is_some_and(|label| label.contains("post-action verification failed after input delivery"))
     );
   }
 
@@ -2342,6 +3198,7 @@ mod tests {
             "text-area-action-execution-smoke",
           )
           .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
+          .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved())
           .with_consent(CandidateActionExecutionConsent {
             consent_id: "consent_execute_text_area_smoke".to_string(),
             granted_by: "human-review".to_string(),
@@ -2370,8 +3227,8 @@ mod tests {
       .expect("recorded L8b smoke should inspect");
     assert!(inspect.contains("Candidate Action Execution Lineage:"));
     assert!(inspect.contains("input_delivery=attempted"));
-    assert!(inspect.contains("verification=activation_only"));
-    assert!(inspect.contains("semantic_matched=n/a"));
+    assert!(inspect.contains("verification=activation_only+post_action:semantic_match"));
+    assert!(inspect.contains("semantic_matched=true"));
     eprintln!(
       "L8b recorded smoke run_id={} store={}",
       output.run_id.as_str(),

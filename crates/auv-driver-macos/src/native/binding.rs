@@ -141,6 +141,7 @@ pub(crate) mod ffi {
     identifiers: Vec<String>,
     placeholders: Vec<String>,
     values: Vec<String>,
+    focused_values: Vec<bool>,
     x_values: Vec<i64>,
     y_values: Vec<i64>,
     width_values: Vec<i64>,

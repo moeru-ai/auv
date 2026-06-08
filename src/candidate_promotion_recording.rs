@@ -680,6 +680,7 @@ mod tests {
         identifier: String::new(),
         placeholder: String::new(),
         value: String::new(),
+        focused: false,
         bounds: ObservedRect {
           x,
           y,

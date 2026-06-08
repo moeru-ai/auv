@@ -20,6 +20,7 @@ private func emptyAxTreeResponse(message: String, recovery: String) -> NativeAxT
     identifiers: RustVec<RustString>(),
     placeholders: RustVec<RustString>(),
     values: RustVec<RustString>(),
+    focused_values: RustVec<Bool>(),
     x_values: RustVec<Int64>(),
     y_values: RustVec<Int64>(),
     width_values: RustVec<Int64>(),
@@ -80,6 +81,17 @@ private func axStringAttribute(_ element: AXUIElement, _ attribute: String) -> S
     return numberValue.stringValue
   }
   return ""
+}
+
+private func axBoolAttribute(_ element: AXUIElement, _ attribute: String) -> Bool {
+  guard let rawValue = axAttributeValue(element, attribute) else { return false }
+  if CFGetTypeID(rawValue) == CFBooleanGetTypeID() {
+    return CFBooleanGetValue((rawValue as! CFBoolean))
+  }
+  if let numberValue = rawValue as? NSNumber {
+    return numberValue.boolValue
+  }
+  return false
 }
 
 private func axChildren(_ element: AXUIElement) -> [AXUIElement] {
@@ -147,6 +159,7 @@ func capture_ax_tree(request: NativeAxTreeRequest) -> NativeAxTreeResponse {
   var identifiers: [String] = []
   var placeholders: [String] = []
   var values: [String] = []
+  var focusedValues: [Bool] = []
   var xValues: [Int64] = []
   var yValues: [Int64] = []
   var widthValues: [Int64] = []
@@ -164,6 +177,7 @@ func capture_ax_tree(request: NativeAxTreeRequest) -> NativeAxTreeResponse {
     identifiers.append(axStringAttribute(element, kAXIdentifierAttribute as String))
     placeholders.append(axStringAttribute(element, "AXPlaceholderValue"))
     values.append(axStringAttribute(element, kAXValueAttribute as String))
+    focusedValues.append(axBoolAttribute(element, kAXFocusedAttribute as String))
     xValues.append(frame.0)
     yValues.append(frame.1)
     widthValues.append(frame.2)
@@ -201,6 +215,7 @@ func capture_ax_tree(request: NativeAxTreeRequest) -> NativeAxTreeResponse {
     identifiers: nativeStringVec(identifiers),
     placeholders: nativeStringVec(placeholders),
     values: nativeStringVec(values),
+    focused_values: nativeVec(focusedValues),
     x_values: nativeVec(xValues),
     y_values: nativeVec(yValues),
     width_values: nativeVec(widthValues),
