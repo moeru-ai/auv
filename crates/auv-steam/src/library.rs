@@ -82,17 +82,6 @@ pub enum SteamError {
   NotFound,
 }
 
-impl LibrarySource {
-  pub fn as_str(self) -> &'static str {
-    match self {
-      Self::Auto => "auto",
-      Self::Local => "local",
-      Self::Web => "web",
-      Self::Ui => "ui",
-    }
-  }
-}
-
 impl LibraryDiagnostic {
   fn error(code: impl Into<String>, message: impl Into<String>, path: Option<String>) -> Self {
     Self {
@@ -103,7 +92,6 @@ impl LibraryDiagnostic {
     }
   }
 
-  #[allow(dead_code)]
   fn warning(code: impl Into<String>, message: impl Into<String>, path: Option<String>) -> Self {
     Self {
       severity: LibraryDiagnosticSeverity::Warning,
@@ -471,7 +459,7 @@ mod tests {
 
   #[test]
   fn web_and_ui_sources_are_explicitly_unsupported_in_v0() {
-    for source in [LibrarySource::Web, LibrarySource::Ui] {
+    for (source, expected_name) in [(LibrarySource::Web, "web"), (LibrarySource::Ui, "ui")] {
       let query = LibraryQuery {
         name: None,
         status: LibraryStatus::Installed,
@@ -481,7 +469,7 @@ mod tests {
       let diagnostic = resolve_scope(&query).expect_err("web/ui should be deferred");
 
       assert_eq!(diagnostic.code, "unsupported_library_source");
-      assert!(diagnostic.message.contains(source.as_str()));
+      assert!(diagnostic.message.contains(expected_name));
     }
   }
 

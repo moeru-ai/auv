@@ -53,13 +53,6 @@ enum OutputFormat {
   Json,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum LibraryLsOutputKind {
-  Summary,
-  StdoutJson,
-  JsonOut(PathBuf),
-}
-
 pub fn run() -> ExitCode {
   match Cli::try_parse().map_err(CliError::from).and_then(dispatch) {
     Ok(()) => ExitCode::SUCCESS,
@@ -78,30 +71,22 @@ fn dispatch(cli: Cli) -> Result<(), CliError> {
 
 fn run_library_ls(args: LibraryLsArgs) -> Result<(), CliError> {
   let query = args.library_query();
-  preflight_library_query(&query)?;
+  resolve_scope(&query)?;
   let steam = Steam::locate()?;
   let result = steam.library_apps(query)?;
 
-  match args.output_kind() {
-    LibraryLsOutputKind::Summary => {
-      println!("{}", render_library_summary(&result));
-    }
-    LibraryLsOutputKind::StdoutJson => {
-      let output = build_library_ls_json_output(&result);
-      println!("{}", serde_json::to_string_pretty(&output)?);
-    }
-    LibraryLsOutputKind::JsonOut(path) => {
-      let output = build_library_ls_json_output(&result);
-      let json = serde_json::to_string_pretty(&output)?;
-      fs::write(path, format!("{json}\n"))?;
-    }
+  if let Some(path) = args.json_out {
+    let output = build_library_ls_json_output(&result);
+    let json = serde_json::to_string_pretty(&output)?;
+    fs::write(path, format!("{json}\n"))?;
+  } else if args.format == OutputFormat::Json {
+    let output = build_library_ls_json_output(&result);
+    println!("{}", serde_json::to_string_pretty(&output)?);
+  } else {
+    println!("{}", render_library_summary(&result));
   }
 
   Ok(())
-}
-
-fn preflight_library_query(query: &LibraryQuery) -> Result<(), LibraryDiagnostic> {
-  resolve_scope(query).map(|_| ())
 }
 
 impl LibraryLsArgs {
@@ -110,17 +95,6 @@ impl LibraryLsArgs {
       name: self.name.clone(),
       status: self.status,
       source: self.source,
-    }
-  }
-
-  fn output_kind(&self) -> LibraryLsOutputKind {
-    if let Some(path) = &self.json_out {
-      return LibraryLsOutputKind::JsonOut(path.clone());
-    }
-
-    match self.format {
-      OutputFormat::Summary => LibraryLsOutputKind::Summary,
-      OutputFormat::Json => LibraryLsOutputKind::StdoutJson,
     }
   }
 }
@@ -207,7 +181,7 @@ mod tests {
       }
     );
     assert_eq!(args.format, OutputFormat::Summary);
-    assert_eq!(args.output_kind(), LibraryLsOutputKind::Summary);
+    assert_eq!(args.json_out, None);
   }
 
   #[test]
@@ -237,7 +211,7 @@ mod tests {
       }
     );
     assert_eq!(args.format, OutputFormat::Json);
-    assert_eq!(args.output_kind(), LibraryLsOutputKind::StdoutJson);
+    assert_eq!(args.json_out, None);
   }
 
   #[test]
@@ -260,10 +234,7 @@ mod tests {
 
     let Command::Library(LibraryCommand::Ls(args)) = cli.command;
     assert_eq!(args.json_out, Some(PathBuf::from("library.json")));
-    assert_eq!(
-      args.output_kind(),
-      LibraryLsOutputKind::JsonOut(PathBuf::from("library.json"))
-    );
+    assert_eq!(args.format, OutputFormat::Summary);
   }
 
   #[test]
@@ -272,7 +243,7 @@ mod tests {
       .expect("valid command shape");
     let Command::Library(LibraryCommand::Ls(args)) = cli.command;
 
-    let diagnostic = preflight_library_query(&args.library_query())
+    let diagnostic = resolve_scope(&args.library_query())
       .expect_err("owned status should fail before Steam discovery");
 
     assert_eq!(diagnostic.code, "unsupported_library_status");

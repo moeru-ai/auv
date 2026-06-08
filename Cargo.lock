@@ -418,6 +418,7 @@ name = "auv-steam"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "comfy-table",
  "serde",
  "serde_json",
  "steamlocate",
