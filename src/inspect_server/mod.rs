@@ -889,7 +889,8 @@ mod tests {
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::candidate_promotion::{
-    ActionPermission, CandidatePromotion, PromotionContext, PromotionProjection, StabilityInput,
+    ActionConsentRecord, ActionConsentScope, ActionPermission, CandidatePromotion, PromotionAudit,
+    PromotionContext, PromotionFreshness, PromotionProjection, StabilityInput,
   };
   use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
@@ -2908,7 +2909,7 @@ mod tests {
             stability: StabilityInput::Proven {
               observed_frames: 2,
             },
-            freshness: Some(crate::contract::FreshnessBasis {
+            freshness: Some(PromotionFreshness {
               source_artifact: Some(ArtifactRef {
                 run_id: run_id.clone(),
                 artifact_id: ArtifactId::new("artifact_0004"),
@@ -2916,12 +2917,31 @@ mod tests {
                 captured_event_id: None,
               }),
               source_operation_id: Some("observe.window.capture".to_string()),
+              observed_at_millis: Some(2_000),
+              max_age_ms: Some(500),
               notes: vec!["fixture freshness".to_string()],
             }),
             permission: Some(ActionPermission {
               granted_by: "human-review".to_string(),
               scope_note: "single end-turn action".to_string(),
+              consent: ActionConsentRecord {
+                consent_id: "consent_end_turn".to_string(),
+                recognition_id: "recognition_detector_server_test".to_string(),
+                run_id: run_id.clone(),
+                scope: ActionConsentScope {
+                  surface: RecognitionSurface::Region,
+                  app_bundle_id: Some("com.playstack.balatro".to_string()),
+                  window_title: Some("Balatro".to_string()),
+                  window_number: Some(7),
+                },
+                approved_action: "candidate_promotion".to_string(),
+                target_item_id: "item_end_turn".to_string(),
+                approved_at_millis: 2_000,
+                expires_at_millis: Some(2_500),
+                evidence_note: "fixture consent".to_string(),
+              },
             }),
+            checked_at_millis: 2_100,
           },
           decision: CandidatePromotion::Promoted {
             candidates: vec![crate::contract::Candidate {
@@ -2961,6 +2981,25 @@ mod tests {
               known_limits: vec!["fixture-backed candidate".to_string()],
             }],
             residual_known_limits: vec!["fixture-backed candidate".to_string()],
+            audit: PromotionAudit {
+              freshness_source_artifact: Some(ArtifactRef {
+                run_id: run_id.clone(),
+                artifact_id: ArtifactId::new("artifact_0004"),
+                span_id: span_id.clone(),
+                captured_event_id: None,
+              }),
+              freshness_source_operation_id: Some("observe.window.capture".to_string()),
+              consent_id: "consent_end_turn".to_string(),
+              consent_scope: ActionConsentScope {
+                surface: RecognitionSurface::Region,
+                app_bundle_id: Some("com.playstack.balatro".to_string()),
+                window_title: Some("Balatro".to_string()),
+                window_number: Some(7),
+              },
+              consent_granted_by: "human-review".to_string(),
+              projection_kind: "identity_window_addressable".to_string(),
+              stability_observed_frames: Some(2),
+            },
           },
           recognition: RecognitionResult {
             recognition_id: "recognition_detector_server_test".to_string(),

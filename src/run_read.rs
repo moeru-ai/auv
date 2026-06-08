@@ -707,7 +707,9 @@ fn promotion_refusal_string(reason: &PromotionRefusal) -> String {
       format!("stability_unproven: {reason}")
     }
     PromotionRefusal::FreshnessUnknown => "freshness_unknown".to_string(),
+    PromotionRefusal::FreshnessStale { reason } => format!("freshness_stale: {reason}"),
     PromotionRefusal::PermissionMissing => "permission_missing".to_string(),
+    PromotionRefusal::PermissionInvalid { reason } => format!("permission_invalid: {reason}"),
   }
 }
 
@@ -771,8 +773,8 @@ mod tests {
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::candidate_promotion::{
-    ActionPermission, CandidatePromotion, PromotionContext, PromotionProjection, PromotionRefusal,
-    StabilityInput,
+    ActionConsentRecord, ActionConsentScope, ActionPermission, CandidatePromotion, PromotionAudit,
+    PromotionContext, PromotionFreshness, PromotionProjection, PromotionRefusal, StabilityInput,
   };
   use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
@@ -1269,6 +1271,25 @@ mod tests {
           "promoted-item_end_turn",
         )],
         residual_known_limits: vec!["fixture-backed candidate".to_string()],
+        audit: PromotionAudit {
+          freshness_source_artifact: Some(ArtifactRef {
+            run_id: run.run_id.clone(),
+            artifact_id: capture_artifact.artifact_id.clone(),
+            span_id: span.span_id.clone(),
+            captured_event_id: capture_artifact.event_id.clone(),
+          }),
+          freshness_source_operation_id: Some("observe.window.capture".to_string()),
+          consent_id: "consent_promotion_ready".to_string(),
+          consent_scope: ActionConsentScope {
+            surface: RecognitionSurface::Window,
+            app_bundle_id: Some("com.megacrit.cardcrawl".to_string()),
+            window_title: Some("Slay the Spire".to_string()),
+            window_number: Some(7),
+          },
+          consent_granted_by: "human-review".to_string(),
+          projection_kind: "identity_window_addressable".to_string(),
+          stability_observed_frames: Some(2),
+        },
       },
       "promotion_ready",
     );
@@ -1806,15 +1827,34 @@ mod tests {
       promotion_context: PromotionContext {
         projection,
         stability: stability_input,
-        freshness: Some(crate::contract::FreshnessBasis {
+        freshness: Some(PromotionFreshness {
           source_artifact: capture_artifact.clone(),
           source_operation_id: Some("observe.window.capture".to_string()),
+          observed_at_millis: Some(2_000),
+          max_age_ms: Some(500),
           notes: vec!["fixture freshness".to_string()],
         }),
         permission: Some(ActionPermission {
           granted_by: "human-review".to_string(),
           scope_note: "fixture promotion".to_string(),
+          consent: ActionConsentRecord {
+            consent_id: format!("consent_{promotion_id}"),
+            recognition_id: format!("{promotion_id}_frame_1"),
+            run_id: run_id.clone(),
+            scope: ActionConsentScope {
+              surface: RecognitionSurface::Window,
+              app_bundle_id: Some("com.megacrit.cardcrawl".to_string()),
+              window_title: Some("Slay the Spire".to_string()),
+              window_number: Some(7),
+            },
+            approved_action: "candidate_promotion".to_string(),
+            target_item_id: "item_end_turn".to_string(),
+            approved_at_millis: 2_000,
+            expires_at_millis: Some(2_500),
+            evidence_note: "fixture consent".to_string(),
+          },
         }),
+        checked_at_millis: 2_100,
       },
       decision,
       recognition: RecognitionResult {

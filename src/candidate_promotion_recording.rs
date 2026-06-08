@@ -4,10 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::candidate_promotion::{
-  ActionPermission, CandidatePromotion, PromotionContext, PromotionProjection,
+  ActionPermission, CandidatePromotion, PromotionContext, PromotionFreshness, PromotionProjection,
   promote_recognition_to_candidates,
 };
-use crate::contract::{ArtifactRef, FreshnessBasis, RecognitionResult};
+use crate::contract::{ArtifactRef, RecognitionResult};
 use crate::model::{AuvResult, now_millis};
 use crate::recorded_operation::RecordedOperationContext;
 use crate::stability::{StabilityAssessment, StabilityPolicy, assess_stability};
@@ -21,8 +21,9 @@ pub struct CandidatePromotionArtifactRequest {
   pub source_recognition_artifact: Option<ArtifactRef>,
   pub stability_policy: StabilityPolicy,
   pub projection: PromotionProjection,
-  pub freshness: Option<FreshnessBasis>,
+  pub freshness: Option<PromotionFreshness>,
   pub permission: Option<ActionPermission>,
+  pub checked_at_millis: u64,
   pub artifact_role: String,
   pub artifact_label: String,
   pub artifact_note: String,
@@ -44,6 +45,7 @@ impl CandidatePromotionArtifactRequest {
       },
       freshness: None,
       permission: None,
+      checked_at_millis: now_millis(),
       artifact_role: CANDIDATE_PROMOTION_ARTIFACT_ROLE.to_string(),
       artifact_label: artifact_label.into(),
       artifact_note: "Candidate-promotion gate decision runtime artifact.".to_string(),
@@ -103,6 +105,7 @@ pub fn build_candidate_promotion_artifact(
     stability: stability_assessment.to_promotion_stability_input(),
     freshness: request.freshness.clone(),
     permission: request.permission.clone(),
+    checked_at_millis: request.checked_at_millis,
   };
   let decision = promote_recognition_to_candidates(recognition, &promotion_context);
 
@@ -284,11 +287,12 @@ mod tests {
   };
   use crate::build_runtime_with_store_root;
   use crate::candidate_promotion::{
-    ActionPermission, CandidatePromotion, PromotionProjection, PromotionRefusal,
+    ActionConsentRecord, ActionConsentScope, ActionPermission, CandidatePromotion,
+    PromotionFreshness, PromotionProjection,
   };
   use crate::contract::{
-    ArtifactRef, FreshnessBasis, RecognitionBox, RecognitionResult, RecognitionScope,
-    RecognitionSource, RecognitionSurface, RecognizedItem,
+    ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
+    RecognitionSurface, RecognizedItem,
   };
   use crate::run_builder::RunSpec;
   use crate::stability::StabilityPolicy;
@@ -401,15 +405,34 @@ mod tests {
         require_stable_text: true,
       },
       projection: PromotionProjection::IdentityWindowAddressable,
-      freshness: Some(FreshnessBasis {
+      freshness: Some(PromotionFreshness {
         source_artifact: Some(sample_artifact_ref()),
         source_operation_id: Some("observe.window.capture".to_string()),
+        observed_at_millis: Some(2_000),
+        max_age_ms: Some(500),
         notes: vec!["fixture freshness seed".to_string()],
       }),
       permission: Some(ActionPermission {
         granted_by: "human-review".to_string(),
         scope_note: "single end-turn action".to_string(),
+        consent: ActionConsentRecord {
+          consent_id: "consent_end_turn".to_string(),
+          recognition_id: "recognition_frame_3".to_string(),
+          run_id: sample_artifact_ref().run_id,
+          scope: ActionConsentScope {
+            surface: RecognitionSurface::Window,
+            app_bundle_id: Some("com.megacrit.cardcrawl".to_string()),
+            window_title: Some("Slay the Spire".to_string()),
+            window_number: Some(7),
+          },
+          approved_action: "candidate_promotion".to_string(),
+          target_item_id: "item_end_turn".to_string(),
+          approved_at_millis: 2_000,
+          expires_at_millis: Some(2_500),
+          evidence_note: "fixture approval".to_string(),
+        },
       }),
+      checked_at_millis: 2_100,
       artifact_role: "candidate-promotion".to_string(),
       artifact_label: "slay-the-spire-end-turn-promotion".to_string(),
       artifact_note: "Candidate-promotion gate decision for Slay the Spire fixture.".to_string(),
@@ -625,21 +648,24 @@ mod tests {
     match artifact.decision {
       CandidatePromotion::Refused { reasons } => {
         assert!(
-          !reasons
-            .iter()
-            .any(|reason| matches!(reason, PromotionRefusal::ProjectionUnavailable { .. })),
+          !reasons.iter().any(|reason| matches!(
+            reason,
+            crate::candidate_promotion::PromotionRefusal::ProjectionUnavailable { .. }
+          )),
           "AX projection should not remain refused: {reasons:?}"
         );
         assert!(
-          reasons
-            .iter()
-            .any(|reason| matches!(reason, PromotionRefusal::FreshnessUnknown)),
+          reasons.iter().any(|reason| matches!(
+            reason,
+            crate::candidate_promotion::PromotionRefusal::FreshnessUnknown
+          )),
           "freshness remains intentionally deferred for the next slice"
         );
         assert!(
-          reasons
-            .iter()
-            .any(|reason| matches!(reason, PromotionRefusal::PermissionMissing)),
+          reasons.iter().any(|reason| matches!(
+            reason,
+            crate::candidate_promotion::PromotionRefusal::PermissionMissing
+          )),
           "permission remains intentionally deferred for the next slice"
         );
       }
