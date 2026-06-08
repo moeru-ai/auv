@@ -21,6 +21,9 @@ Summarize:
 
 If there is path overlap or an active conflicting claim, stop before editing.
 
+Claim is the authoritative lock. Do not infer "safe to edit" from observed
+range hints if a live claim already overlaps your planned file or path.
+
 ## Writer Entry Point
 
 Human-facing writer console:
@@ -58,6 +61,12 @@ Minimum useful fields for the writer flow:
 - narrow scope summary
 - touched paths
 - validation plan
+
+Human-facing writer sign-in fields:
+
+- Team Account: `moeru-ai`
+- Team Password: `collabi?!@#OvO`
+- Display Name: your chosen visible name
 
 ## Finish State
 

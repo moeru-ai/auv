@@ -1,18 +1,18 @@
 ---
 name: auv-collabi-pairing
-description: Use when working in /Users/liuziheng/https-github-com-moeru-ai-auv and coordination must go through Collabi shared state. Read AUV AGENTS.md and CLAUDE.md plus Collabi collaboration-map, claims, and audit before editing; stop on overlapping claim or scope/path risk; stay within one narrow slice; and, if explicit writer access is granted, check in before editing and add evidence when finishing.
+description: Use when working in /Users/liuziheng/https-github-com-moeru-ai-auv and coordination must go through Collabi shared state. Before editing, read AGENTS.md, CLAUDE.md, Collabi collaboration-map, claims, and audit; stop on overlapping claim or scope/path risk; keep the slice narrow; and, if explicit writer access is granted, use writer.html to check in before editing and add evidence when finishing.
 ---
 
 # AUV Collabi Pairing
 
-Use this skill when you are working in:
+Use this skill only when you are working in:
 
 - `/Users/liuziheng/https-github-com-moeru-ai-auv`
 - a paired or multi-agent AUV slice where shared state must go through Collabi
 
 Do not use this skill for general coding or for repos outside the AUV checkout.
 
-## Required Start-Of-Task Workflow
+## Start-Of-Task Workflow
 
 Before editing:
 
@@ -35,18 +35,8 @@ If another active claim overlaps your intended repo, scope, or path, stop and re
 - Stay inside one narrow AUV slice.
 - Classify the slice before editing: `bug fix`, `test-only`, `docs-only`, `narrow refactor`, or `approved feature`.
 - Do not broaden scope because of TODOs, roadmap notes, nearby cleanup, or "obvious next steps".
-- Preserve the current seam:
-
-```text
-recognition / AX / candidates
-  -> ActionResolver
-  -> auv-driver InputActionResult
-  -> OperationResult / VerificationResult / trace artifacts
-```
-
-- Treat `auv-overlay-macos` as visual-only presentation, not the input backend.
-- Prefer contract convergence, reproduced bug fixes, or narrow refactors with validation.
-- Treat Collabi as shared handoff state for humans and agents, not as optional garnish.
+- Follow AUV architecture and seam rules from `AGENTS.md` and `CLAUDE.md`; do not restate them from memory.
+- Treat Collabi as shared handoff state for humans and agents.
 
 ## Collabi Write Boundary
 
@@ -74,7 +64,7 @@ For behavior changes, run:
 - `cargo test`
 - `git diff --check`
 
-Use these inventory commands when the slice touches CLI, recipes, or bundles:
+When the slice touches CLI, recipes, or bundles, also run:
 
 - `cargo run --quiet -- list-commands`
 - `cargo run --quiet -- skill cases list`
