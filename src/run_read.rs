@@ -866,7 +866,9 @@ fn candidate_action_execution_lineage_entry(
     semantic_matched: execution
       .operation_result
       .verifications
-      .first()
+      .iter()
+      .find(|verification| verification.semantic_matched.is_some())
+      .or_else(|| execution.operation_result.verifications.first())
       .and_then(|verification| verification.semantic_matched),
     consent_id: Some(execution.consent.consent_id),
     consent_granted_by: Some(execution.consent.granted_by),
@@ -2209,6 +2211,21 @@ mod tests {
       }),
       "execution_unresolved_source",
     );
+    let semantic_execution = candidate_action_execution_with_semantic_artifact(
+      ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_decision_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_decision_artifact.event_id.clone(),
+      },
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: operation_result_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: operation_result_artifact.event_id.clone(),
+      }),
+      "execution_semantic",
+    );
 
     let artifacts = vec![
       source_decision_artifact,
@@ -2243,12 +2260,22 @@ mod tests {
         "candidate-action-execution-unresolved-source.json",
         &unresolved_source_execution,
       ),
-      stage_text_artifact(
+      stage_json_artifact(
         &store,
         &root,
         &run.run_id,
         &span.span_id,
         5,
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        "candidate-action-execution-semantic.json",
+        &semantic_execution,
+      ),
+      stage_text_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        6,
         CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
         "candidate-action-execution-malformed.json",
         "{ not valid json",
@@ -2269,7 +2296,7 @@ mod tests {
       .expect("run should read back");
     let extracted = extract_candidate_action_execution_lineage(&store, &canonical)
       .expect("candidate action execution lineage should extract");
-    assert_eq!(extracted.len(), 4);
+    assert_eq!(extracted.len(), 5);
     assert_eq!(
       extracted[0].status,
       CandidateActionExecutionLineageStatus::Ready
@@ -2301,6 +2328,15 @@ mod tests {
     );
     assert_eq!(
       extracted[3].status,
+      CandidateActionExecutionLineageStatus::Ready
+    );
+    assert_eq!(
+      extracted[3].verification.as_deref(),
+      Some("activation_only+post_action:semantic_match")
+    );
+    assert_eq!(extracted[3].semantic_matched, Some(true));
+    assert_eq!(
+      extracted[4].status,
       CandidateActionExecutionLineageStatus::Malformed
     );
 
@@ -2583,6 +2619,36 @@ mod tests {
     }
   }
 
+  fn candidate_action_execution_with_semantic_artifact(
+    source_candidate_action_decision_artifact: ArtifactRef,
+    operation_result_artifact: Option<ArtifactRef>,
+    execution_id: &str,
+  ) -> CandidateActionExecutionArtifact {
+    let mut artifact = candidate_action_execution_artifact(
+      source_candidate_action_decision_artifact,
+      operation_result_artifact,
+      execution_id,
+    );
+    let semantic = candidate_action_semantic_verification();
+    artifact
+      .operation_result
+      .verifications
+      .push(semantic.clone());
+    artifact.verification_result = semantic;
+    artifact.detail = json!({
+      "input_delivery": "attempted",
+      "selected_path": "window_targeted_mouse",
+      "attempt_count": 1,
+      "attempts_succeeded": 1,
+      "operation_status": "completed",
+      "verification": "activation_only+post_action:semantic_match",
+      "verification_count": 2,
+      "post_action_verification_count": 1,
+      "semantic_matched": true,
+    });
+    artifact
+  }
+
   fn candidate_action_activation_verification(
     method: VerificationMethod,
     evidence: Vec<ArtifactRef>,
@@ -2602,6 +2668,24 @@ mod tests {
       consumed_recognition_id: None,
       consumed_recognized_item_id: Some("item_end_turn".to_string()),
       observed_label: observed_label.map(str::to_string),
+    }
+  }
+
+  fn candidate_action_semantic_verification() -> VerificationResult {
+    VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+      method: VerificationMethod::SemanticMatch,
+      executed: true,
+      state_changed: true,
+      semantic_matched: Some(true),
+      failure_layer: None,
+      evidence: Vec::new(),
+      consumed_candidate_ref: None,
+      consumed_node_ref: None,
+      consumed_recognition_artifact_ref: None,
+      consumed_recognition_id: Some("recognition_after_action".to_string()),
+      consumed_recognized_item_id: Some("item_end_turn".to_string()),
+      observed_label: Some("End Turn activated".to_string()),
     }
   }
 
