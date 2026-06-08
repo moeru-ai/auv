@@ -211,6 +211,30 @@ pub fn render_text(
       if let Some(stability_reason) = &lineage.stability_reason {
         output.push_str(&format!("  stability_reason={stability_reason}\n"));
       }
+      if lineage.freshness_source_operation_id.is_some()
+        || lineage.consent_id.is_some()
+        || lineage.consent_granted_by.is_some()
+      {
+        output.push_str(&format!(
+          "  audit freshness_operation={} freshness_artifact={} consent_id={} consent_granted_by={} consent_scope_window={}\n",
+          lineage
+            .freshness_source_operation_id
+            .as_deref()
+            .unwrap_or("n/a"),
+          lineage
+            .freshness_source_artifact
+            .as_ref()
+            .and_then(|artifact| artifact.path.as_deref())
+            .unwrap_or("n/a"),
+          lineage.consent_id.as_deref().unwrap_or("n/a"),
+          lineage.consent_granted_by.as_deref().unwrap_or("n/a"),
+          lineage
+            .consent_scope
+            .as_ref()
+            .and_then(|scope| scope.window_title.as_deref())
+            .unwrap_or("n/a")
+        ));
+      }
       if !lineage.known_limits.is_empty() {
         output.push_str(&format!(
           "  known_limits={}\n",
@@ -333,6 +357,7 @@ mod tests {
   use std::collections::BTreeMap;
 
   use super::render_text;
+  use crate::candidate_promotion::ActionConsentScope;
   use crate::contract::{
     OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope,
     RecognitionSource, RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
@@ -571,7 +596,26 @@ mod tests {
       stability_observed_frames: Some(2),
       stability_reason: None,
       freshness_present: Some(true),
+      freshness_source_artifact: Some(ArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_capture"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_capture")),
+        role: Some("capture-image".to_string()),
+        path: Some("artifacts/capture.png".to_string()),
+        summary: Some("capture".to_string()),
+        resolved: true,
+      }),
+      freshness_source_operation_id: Some("observe.window.capture".to_string()),
       permission_granted: Some(true),
+      consent_id: Some("consent_end_turn".to_string()),
+      consent_scope: Some(ActionConsentScope {
+        surface: RecognitionSurface::Window,
+        app_bundle_id: Some("com.megacrit.cardcrawl".to_string()),
+        window_title: Some("Slay the Spire".to_string()),
+        window_number: Some(7),
+      }),
+      consent_granted_by: Some("human-review".to_string()),
       decision_kind: Some("promoted".to_string()),
       refusal_reasons: Vec::new(),
       promoted_candidate_local_ids: vec!["promoted-item_end_turn".to_string()],
@@ -613,6 +657,9 @@ mod tests {
     assert!(output.contains("decision=promoted"));
     assert!(output.contains("projection=identity_window_addressable"));
     assert!(output.contains("source_recognition=artifacts/detector-recognition.json"));
+    assert!(output.contains("freshness_operation=observe.window.capture"));
+    assert!(output.contains("consent_id=consent_end_turn"));
+    assert!(output.contains("consent_granted_by=human-review"));
     assert!(output.contains("Validation Lineage:"));
     assert!(
       output

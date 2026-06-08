@@ -287,8 +287,8 @@ mod tests {
   };
   use crate::build_runtime_with_store_root;
   use crate::candidate_promotion::{
-    ActionConsentRecord, ActionConsentScope, ActionPermission, CandidatePromotion,
-    PromotionFreshness, PromotionProjection,
+    ActionConsentAction, ActionConsentRecord, ActionConsentScope, ActionPermission,
+    CandidatePromotion, PromotionFreshness, PromotionProjection,
   };
   use crate::contract::{
     ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
@@ -425,7 +425,7 @@ mod tests {
             window_title: Some("Slay the Spire".to_string()),
             window_number: Some(7),
           },
-          approved_action: "candidate_promotion".to_string(),
+          approved_action: ActionConsentAction::CandidatePromotion,
           target_item_id: "item_end_turn".to_string(),
           approved_at_millis: 2_000,
           expires_at_millis: Some(2_500),

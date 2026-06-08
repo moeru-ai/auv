@@ -889,8 +889,9 @@ mod tests {
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::candidate_promotion::{
-    ActionConsentRecord, ActionConsentScope, ActionPermission, CandidatePromotion, PromotionAudit,
-    PromotionContext, PromotionFreshness, PromotionProjection, StabilityInput,
+    ActionConsentAction, ActionConsentRecord, ActionConsentScope, ActionPermission,
+    CandidatePromotion, PromotionAudit, PromotionContext, PromotionFreshness, PromotionProjection,
+    StabilityInput,
   };
   use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
@@ -1879,6 +1880,22 @@ mod tests {
     assert_eq!(
       run["candidate_promotion_lineage"][0]["promoted_candidate_local_ids"][0],
       "promoted-item_end_turn"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["freshness_source_operation_id"],
+      "observe.window.capture"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["consent_id"],
+      "consent_end_turn"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["consent_granted_by"],
+      "human-review"
+    );
+    assert_eq!(
+      run["candidate_promotion_lineage"][0]["consent_scope"]["window_title"],
+      "Balatro"
     );
     assert!(
       run.get("spans").is_none(),
@@ -2934,7 +2951,7 @@ mod tests {
                   window_title: Some("Balatro".to_string()),
                   window_number: Some(7),
                 },
-                approved_action: "candidate_promotion".to_string(),
+                approved_action: ActionConsentAction::CandidatePromotion,
                 target_item_id: "item_end_turn".to_string(),
                 approved_at_millis: 2_000,
                 expires_at_millis: Some(2_500),

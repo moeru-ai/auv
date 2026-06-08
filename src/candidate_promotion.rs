@@ -70,11 +70,17 @@ pub struct ActionConsentRecord {
   pub recognition_id: String,
   pub run_id: crate::trace::RunId,
   pub scope: ActionConsentScope,
-  pub approved_action: String,
+  pub approved_action: ActionConsentAction,
   pub target_item_id: String,
   pub approved_at_millis: u64,
   pub expires_at_millis: Option<u64>,
   pub evidence_note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionConsentAction {
+  CandidatePromotion,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,8 +101,6 @@ pub struct PromotionAudit {
   pub projection_kind: String,
   pub stability_observed_frames: Option<u32>,
 }
-
-const APPROVED_ACTION_CANDIDATE_PROMOTION: &str = "candidate_promotion";
 
 /// 闸门决定。不是 action-result schema。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -241,7 +245,9 @@ fn validate_freshness(
     });
   };
   let Some(capture_artifact) = recognition.scope.capture_artifact.as_ref() else {
-    return Ok(());
+    return Err(PromotionRefusal::FreshnessStale {
+      reason: "recognition capture_artifact is missing".to_string(),
+    });
   };
   if source_artifact != capture_artifact {
     return Err(PromotionRefusal::FreshnessStale {
@@ -295,10 +301,20 @@ fn validate_permission(
       reason: "permission granted_by is missing".to_string(),
     });
   }
+  if permission.scope_note.trim().is_empty() {
+    return Err(PromotionRefusal::PermissionInvalid {
+      reason: "permission scope_note is missing".to_string(),
+    });
+  }
   let consent = &permission.consent;
   if consent.consent_id.trim().is_empty() {
     return Err(PromotionRefusal::PermissionInvalid {
       reason: "consent_id is missing".to_string(),
+    });
+  }
+  if consent.evidence_note.trim().is_empty() {
+    return Err(PromotionRefusal::PermissionInvalid {
+      reason: "consent evidence_note is missing".to_string(),
     });
   }
   if consent.recognition_id != recognition.recognition_id {
@@ -307,7 +323,9 @@ fn validate_permission(
     });
   }
   let Some(capture_artifact) = recognition.scope.capture_artifact.as_ref() else {
-    return Ok(());
+    return Err(PromotionRefusal::PermissionInvalid {
+      reason: "recognition capture_artifact is missing".to_string(),
+    });
   };
   if consent.run_id != capture_artifact.run_id {
     return Err(PromotionRefusal::PermissionInvalid {
@@ -319,7 +337,7 @@ fn validate_permission(
       reason: "consent scope does not match recognition scope".to_string(),
     });
   }
-  if consent.approved_action != APPROVED_ACTION_CANDIDATE_PROMOTION {
+  if consent.approved_action != ActionConsentAction::CandidatePromotion {
     return Err(PromotionRefusal::PermissionInvalid {
       reason: "consent approved_action is not candidate_promotion".to_string(),
     });
@@ -409,9 +427,9 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    ActionConsentRecord, ActionConsentScope, ActionPermission, CandidatePromotion,
-    PromotionContext, PromotionFreshness, PromotionProjection, PromotionRefusal, StabilityInput,
-    promote_recognition_to_candidates,
+    ActionConsentAction, ActionConsentRecord, ActionConsentScope, ActionPermission,
+    CandidatePromotion, PromotionContext, PromotionFreshness, PromotionProjection,
+    PromotionRefusal, StabilityInput, promote_recognition_to_candidates,
   };
   use crate::contract::{
     ArtifactRef, Candidate, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
@@ -527,7 +545,7 @@ mod tests {
           window_title: Some("Slay the Spire".to_string()),
           window_number: Some(7),
         },
-        approved_action: "candidate_promotion".to_string(),
+        approved_action: ActionConsentAction::CandidatePromotion,
         target_item_id: "item_1".to_string(),
         approved_at_millis: 1_000,
         expires_at_millis: Some(1_500),
@@ -812,6 +830,68 @@ mod tests {
       ),
       PromotionRefusal::PermissionInvalid {
         reason: "consent scope does not match recognition scope".to_string(),
+      },
+    );
+  }
+
+  #[test]
+  fn permission_without_scope_note_refuses() {
+    let recognition = sample_recognition();
+    let mut permission = sample_permission();
+    permission.scope_note = "   ".to_string();
+
+    assert_refusal_contains(
+      promote_recognition_to_candidates(
+        &recognition,
+        &PromotionContext {
+          permission: Some(permission),
+          ..sample_context()
+        },
+      ),
+      PromotionRefusal::PermissionInvalid {
+        reason: "permission scope_note is missing".to_string(),
+      },
+    );
+  }
+
+  #[test]
+  fn consent_without_evidence_note_refuses() {
+    let recognition = sample_recognition();
+    let mut permission = sample_permission();
+    permission.consent.evidence_note = "   ".to_string();
+
+    assert_refusal_contains(
+      promote_recognition_to_candidates(
+        &recognition,
+        &PromotionContext {
+          permission: Some(permission),
+          ..sample_context()
+        },
+      ),
+      PromotionRefusal::PermissionInvalid {
+        reason: "consent evidence_note is missing".to_string(),
+      },
+    );
+  }
+
+  #[test]
+  fn missing_capture_does_not_make_freshness_or_permission_valid() {
+    let mut recognition = sample_recognition();
+    recognition.scope.capture_artifact = None;
+
+    let decision = promote_recognition_to_candidates(&recognition, &sample_context());
+
+    assert_refusal_contains(decision.clone(), PromotionRefusal::MissingCaptureArtifact);
+    assert_refusal_contains(
+      decision.clone(),
+      PromotionRefusal::FreshnessStale {
+        reason: "recognition capture_artifact is missing".to_string(),
+      },
+    );
+    assert_refusal_contains(
+      decision,
+      PromotionRefusal::PermissionInvalid {
+        reason: "recognition capture_artifact is missing".to_string(),
       },
     );
   }

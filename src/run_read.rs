@@ -14,7 +14,9 @@ use std::path::PathBuf;
 use serde::de::DeserializeOwned;
 
 use crate::app::AppValidation;
-use crate::candidate_promotion::{CandidatePromotion, PromotionProjection, PromotionRefusal};
+use crate::candidate_promotion::{
+  ActionConsentScope, CandidatePromotion, PromotionProjection, PromotionRefusal,
+};
 use crate::candidate_promotion_recording::CandidatePromotionArtifact;
 use crate::contract::{
   ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, RecognitionResult,
@@ -116,7 +118,12 @@ pub struct CandidatePromotionLineage {
   pub stability_observed_frames: Option<u32>,
   pub stability_reason: Option<String>,
   pub freshness_present: Option<bool>,
+  pub freshness_source_artifact: Option<ArtifactRefLineage>,
+  pub freshness_source_operation_id: Option<String>,
   pub permission_granted: Option<bool>,
+  pub consent_id: Option<String>,
+  pub consent_scope: Option<ActionConsentScope>,
+  pub consent_granted_by: Option<String>,
   pub decision_kind: Option<String>,
   pub refusal_reasons: Vec<String>,
   pub promoted_candidate_local_ids: Vec<String>,
@@ -344,7 +351,12 @@ pub(crate) fn extract_candidate_promotion_lineage(
         stability_observed_frames: None,
         stability_reason: None,
         freshness_present: None,
+        freshness_source_artifact: None,
+        freshness_source_operation_id: None,
         permission_granted: None,
+        consent_id: None,
+        consent_scope: None,
+        consent_granted_by: None,
         decision_kind: None,
         refusal_reasons: Vec::new(),
         promoted_candidate_local_ids: Vec::new(),
@@ -390,7 +402,12 @@ pub(crate) fn extract_candidate_promotion_lineage(
         stability_observed_frames: None,
         stability_reason: None,
         freshness_present: None,
+        freshness_source_artifact: None,
+        freshness_source_operation_id: None,
         permission_granted: None,
+        consent_id: None,
+        consent_scope: None,
+        consent_granted_by: None,
         decision_kind: None,
         refusal_reasons: Vec::new(),
         promoted_candidate_local_ids: Vec::new(),
@@ -481,6 +498,13 @@ fn candidate_promotion_lineage_entry(
   );
   let (decision_kind, refusal_reasons, promoted_candidate_local_ids) =
     promotion_decision_summary(&promotion.decision);
+  let (
+    freshness_source_artifact,
+    freshness_source_operation_id,
+    consent_id,
+    consent_scope,
+    consent_granted_by,
+  ) = promotion_audit_summary(run, &promotion.decision);
   let (stability_kind, stability_observed_frames, stability_reason) =
     stability_summary(&promotion.stability_assessment);
 
@@ -498,7 +522,12 @@ fn candidate_promotion_lineage_entry(
     stability_observed_frames,
     stability_reason,
     freshness_present: Some(promotion.promotion_context.freshness.is_some()),
+    freshness_source_artifact,
+    freshness_source_operation_id,
     permission_granted: Some(promotion.promotion_context.permission.is_some()),
+    consent_id,
+    consent_scope,
+    consent_granted_by,
     decision_kind: Some(decision_kind),
     refusal_reasons,
     promoted_candidate_local_ids,
@@ -676,6 +705,31 @@ fn stability_rejection_string(reason: &StabilityRejection) -> String {
   }
 }
 
+fn promotion_audit_summary(
+  run: &CanonicalRun,
+  decision: &CandidatePromotion,
+) -> (
+  Option<ArtifactRefLineage>,
+  Option<String>,
+  Option<String>,
+  Option<ActionConsentScope>,
+  Option<String>,
+) {
+  match decision {
+    CandidatePromotion::Promoted { audit, .. } => (
+      audit
+        .freshness_source_artifact
+        .as_ref()
+        .map(|reference| resolve_artifact_ref(run, reference)),
+      audit.freshness_source_operation_id.clone(),
+      Some(audit.consent_id.clone()),
+      Some(audit.consent_scope.clone()),
+      Some(audit.consent_granted_by.clone()),
+    ),
+    CandidatePromotion::Refused { .. } => (None, None, None, None, None),
+  }
+}
+
 fn promotion_decision_summary(decision: &CandidatePromotion) -> (String, Vec<String>, Vec<String>) {
   match decision {
     CandidatePromotion::Refused { reasons } => (
@@ -773,8 +827,9 @@ mod tests {
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::candidate_promotion::{
-    ActionConsentRecord, ActionConsentScope, ActionPermission, CandidatePromotion, PromotionAudit,
-    PromotionContext, PromotionFreshness, PromotionProjection, PromotionRefusal, StabilityInput,
+    ActionConsentAction, ActionConsentRecord, ActionConsentScope, ActionPermission,
+    CandidatePromotion, PromotionAudit, PromotionContext, PromotionFreshness, PromotionProjection,
+    PromotionRefusal, StabilityInput,
   };
   use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
@@ -1447,6 +1502,32 @@ mod tests {
       extracted[0].promoted_candidate_local_ids,
       vec!["promoted-item_end_turn".to_string()]
     );
+    assert_eq!(
+      extracted[0].freshness_source_operation_id.as_deref(),
+      Some("observe.window.capture")
+    );
+    assert_eq!(
+      extracted[0]
+        .freshness_source_artifact
+        .as_ref()
+        .and_then(|artifact| artifact.role.as_deref()),
+      Some("capture-image")
+    );
+    assert_eq!(
+      extracted[0].consent_id.as_deref(),
+      Some("consent_promotion_ready")
+    );
+    assert_eq!(
+      extracted[0].consent_granted_by.as_deref(),
+      Some("human-review")
+    );
+    assert_eq!(
+      extracted[0]
+        .consent_scope
+        .as_ref()
+        .and_then(|scope| scope.window_title.as_deref()),
+      Some("Slay the Spire")
+    );
     assert_eq!(extracted[1].status, CandidatePromotionLineageStatus::Ready);
     assert_eq!(extracted[1].decision_kind.as_deref(), Some("refused"));
     assert_eq!(
@@ -1847,7 +1928,7 @@ mod tests {
               window_title: Some("Slay the Spire".to_string()),
               window_number: Some(7),
             },
-            approved_action: "candidate_promotion".to_string(),
+            approved_action: ActionConsentAction::CandidatePromotion,
             target_item_id: "item_end_turn".to_string(),
             approved_at_millis: 2_000,
             expires_at_millis: Some(2_500),
