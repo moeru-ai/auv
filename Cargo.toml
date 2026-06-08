@@ -8,6 +8,7 @@ members = [
   "crates/auv-media-macos",
   "crates/auv-netease-music",
   "crates/auv-overlay-macos",
+  "crates/auv-steam",
   "crates/auv-view",
 ]
 
