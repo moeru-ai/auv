@@ -1,6 +1,6 @@
 ---
 name: auv-collabi-pairing
-description: Use when working in /Users/liuziheng/https-github-com-moeru-ai-auv and coordination must go through Collabi shared state. Before editing, read AGENTS.md, CLAUDE.md, Collabi collaboration-map, claims, and audit; stop on overlapping claim or scope/path risk; keep the slice narrow; and, if explicit writer access is granted, use writer.html to check in before editing and add evidence when finishing.
+description: Use when working in /Users/liuziheng/https-github-com-moeru-ai-auv and coordination must go through Collabi shared state. Before editing, read AGENTS.md, CLAUDE.md, Collabi overview, claims, and audit; stop on overlapping claim or scope/path risk; keep the slice narrow; and, if explicit writer access is granted, use writer.html to check in before editing and add evidence when finishing.
 ---
 
 # AUV Collabi Pairing
@@ -20,9 +20,10 @@ Before editing:
    - `/Users/liuziheng/https-github-com-moeru-ai-auv/AGENTS.md`
    - `/Users/liuziheng/https-github-com-moeru-ai-auv/CLAUDE.md`
 2. Read the current shared state:
-   - `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/collaboration-map`
+   - `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/overview`
    - `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/claims`
    - `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/audit?limit=20&order=desc`
+   - relevant `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/sessions/<id>` details if the overview or audit already points at one
 3. Summarize three things before you propose edits:
    - active work already in progress
    - whether your intended repo, scope, or path overlaps another active slice

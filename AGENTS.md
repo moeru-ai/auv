@@ -140,8 +140,10 @@ Hard rules:
 - Default Collabi mode is read-only.
 - Do not claim, check in, or pretend a slice was recorded unless the human
   explicitly granted writer access for the current task.
-- If the Collabi gate was not completed for the current slice, do not edit
-  tracked files. Read-only investigation is allowed; file edits are not.
+- If the Collabi gate was not completed for the current slice, stop and report
+  why before editing tracked files unless the human explicitly told you to
+  proceed in a local or offline mode. Read-only investigation is always
+  allowed.
 
 ## Current Contract Seam
 

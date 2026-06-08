@@ -9,9 +9,10 @@ Review:
 
 - `AGENTS.md`
 - `CLAUDE.md`
-- `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/collaboration-map`
+- `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/overview`
 - `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/claims`
 - `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/audit?limit=20&order=desc`
+- relevant `https://collabi-airi-cu-free-01.koreacentral.cloudapp.azure.com/api/sessions/<id>` details if the overview or audit already points at one
 
 Summarize:
 
@@ -62,11 +63,8 @@ Minimum useful fields for the writer flow:
 - touched paths
 - validation plan
 
-Human-facing writer sign-in fields:
-
-- Team Account: `moeru-ai`
-- Team Password: `collabi?!@#OvO`
-- Display Name: your chosen visible name
+Human-facing writer sign-in fields come from the human or an out-of-band team
+channel. Do not hardcode shared credentials into repo docs.
 
 ## Finish State
 
