@@ -75,7 +75,7 @@ pub struct LibraryQueryResult {
   pub diagnostics: Vec<LibraryDiagnostic>,
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum SteamError {
   #[error("Steam could not be located")]
   NotFound,
@@ -191,6 +191,112 @@ pub fn query_installed_apps(
   })
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct InstalledAppRead {
+  pub apps: Vec<SteamInstalledApp>,
+  pub diagnostics: Vec<LibraryDiagnostic>,
+}
+
+pub trait InstalledAppSource {
+  fn installed_apps(&self) -> Result<InstalledAppRead, SteamError>;
+}
+
+pub struct SteamLibraryStore<S> {
+  source: S,
+}
+
+impl<S> SteamLibraryStore<S>
+where
+  S: InstalledAppSource,
+{
+  pub fn new(source: S) -> Self {
+    Self { source }
+  }
+
+  pub fn query(&self, query: LibraryQuery) -> Result<LibraryQueryResult, LibraryDiagnostic> {
+    resolve_scope(&query)?;
+    let read = self
+      .source
+      .installed_apps()
+      .map_err(|error| LibraryDiagnostic::error("steam_not_found", error.to_string(), None))?;
+    query_installed_apps(query, read.apps, read.diagnostics)
+  }
+}
+
+pub struct SteamlocateSource {
+  steam_dir: steamlocate::SteamDir,
+}
+
+impl SteamlocateSource {
+  pub fn locate() -> Result<Self, SteamError> {
+    let steam_dir = steamlocate::SteamDir::locate().map_err(|_| SteamError::NotFound)?;
+    Ok(Self { steam_dir })
+  }
+}
+
+impl InstalledAppSource for SteamlocateSource {
+  fn installed_apps(&self) -> Result<InstalledAppRead, SteamError> {
+    // NOTICE(steam-library-manifest-parser): Steam library discovery is
+    // delegated to `steamlocate`, which already handles platform-specific Steam
+    // directory lookup and parses Steam KeyValues/VDF app manifests through
+    // `keyvalues-serde`. Keep AUV's layer focused on domain resolution,
+    // diagnostics, launch evidence, and verification instead of carrying a
+    // local VDF parser.
+    let mut apps = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for library in self
+      .steam_dir
+      .libraries()
+      .map_err(|_| SteamError::NotFound)?
+    {
+      let library = match library {
+        Ok(library) => library,
+        Err(error) => {
+          diagnostics.push(LibraryDiagnostic::warning(
+            "library_folder_unreadable",
+            format!("failed to read Steam library folder: {error}"),
+            None,
+          ));
+          continue;
+        }
+      };
+
+      for app in library.apps() {
+        let app = match app {
+          Ok(app) => app,
+          Err(error) => {
+            diagnostics.push(LibraryDiagnostic::warning(
+              "manifest_parse_failed",
+              format!("failed to parse Steam app manifest: {error}"),
+              Some(library.path().display().to_string()),
+            ));
+            continue;
+          }
+        };
+        let manifest_path = library
+          .path()
+          .join("steamapps")
+          .join(format!("appmanifest_{}.acf", app.app_id));
+        apps.push(SteamInstalledApp {
+          appid: app.app_id,
+          name: app
+            .name
+            .unwrap_or_else(|| format!("Steam App {}", app.app_id)),
+          install_dir: app.install_dir,
+          library_path: library.path().display().to_string(),
+          manifest_path: manifest_path.display().to_string(),
+          install_state: "installed".to_string(),
+          source: "local_appmanifest".to_string(),
+          grounding: Grounding::Strong,
+        });
+      }
+    }
+
+    Ok(InstalledAppRead { apps, diagnostics })
+  }
+}
+
 fn normalize_match_text(value: &str) -> String {
   value
     .split_whitespace()
@@ -203,6 +309,25 @@ fn normalize_match_text(value: &str) -> String {
 mod tests {
   use super::*;
 
+  #[derive(Default)]
+  struct FakeInstalledAppSource {
+    apps: Vec<SteamInstalledApp>,
+    diagnostics: Vec<LibraryDiagnostic>,
+    error: Option<SteamError>,
+  }
+
+  impl InstalledAppSource for FakeInstalledAppSource {
+    fn installed_apps(&self) -> Result<InstalledAppRead, SteamError> {
+      if let Some(error) = &self.error {
+        return Err(error.clone());
+      }
+      Ok(InstalledAppRead {
+        apps: self.apps.clone(),
+        diagnostics: self.diagnostics.clone(),
+      })
+    }
+  }
+
   fn fake_app(appid: u32, name: &str) -> SteamInstalledApp {
     SteamInstalledApp {
       appid,
@@ -214,6 +339,70 @@ mod tests {
       source: "local_appmanifest".to_string(),
       grounding: Grounding::Strong,
     }
+  }
+
+  #[test]
+  fn store_reads_source_and_applies_query() {
+    let source = FakeInstalledAppSource {
+      apps: vec![
+        fake_app(2379780, "Balatro"),
+        fake_app(220200, "Kerbal Space Program"),
+      ],
+      diagnostics: Vec::new(),
+      error: None,
+    };
+    let store = SteamLibraryStore::new(source);
+    let query = LibraryQuery {
+      name: Some("lat".to_string()),
+      status: LibraryStatus::Installed,
+      source: LibrarySource::Auto,
+    };
+
+    let result = store.query(query).expect("query should succeed");
+
+    assert_eq!(result.apps.len(), 1);
+    assert_eq!(result.apps[0].appid, 2379780);
+  }
+
+  #[test]
+  fn store_rejects_unsupported_scope_before_reading_source() {
+    let source = FakeInstalledAppSource {
+      apps: vec![fake_app(2379780, "Balatro")],
+      diagnostics: Vec::new(),
+      error: Some(SteamError::NotFound),
+    };
+    let store = SteamLibraryStore::new(source);
+    let query = LibraryQuery {
+      name: None,
+      status: LibraryStatus::Owned,
+      source: LibrarySource::Auto,
+    };
+
+    let diagnostic = store.query(query).expect_err("owned is unsupported");
+
+    assert_eq!(diagnostic.code, "unsupported_library_status");
+  }
+
+  #[test]
+  fn store_maps_source_failure_to_steam_not_found() {
+    let source = FakeInstalledAppSource {
+      apps: Vec::new(),
+      diagnostics: Vec::new(),
+      error: Some(SteamError::NotFound),
+    };
+    let store = SteamLibraryStore::new(source);
+    let query = LibraryQuery {
+      name: None,
+      status: LibraryStatus::Installed,
+      source: LibrarySource::Auto,
+    };
+
+    let diagnostic = store
+      .query(query)
+      .expect_err("source failure should map to diagnostic");
+
+    assert_eq!(diagnostic.code, "steam_not_found");
+    assert_eq!(diagnostic.severity, LibraryDiagnosticSeverity::Error);
   }
 
   #[test]
