@@ -14,7 +14,9 @@ use std::path::PathBuf;
 use serde::de::DeserializeOwned;
 
 use crate::app::AppValidation;
-use crate::candidate_action_decision::CandidateActionDecisionArtifact;
+use crate::candidate_action_decision::{
+  CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
+};
 use crate::candidate_promotion::{CandidatePromotion, PromotionProjection, PromotionRefusal};
 use crate::candidate_promotion_recording::CandidatePromotionArtifact;
 use crate::contract::{
@@ -34,6 +36,7 @@ const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str =
 const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
 const CANDIDATE_PROMOTION_ARTIFACT_ROLE: &str = "candidate-promotion";
 const CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE: &str = "candidate-action-decision";
+const CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE: &str = "candidate-action-execution";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct AppValidationLineage {
@@ -168,6 +171,44 @@ pub struct CandidateActionDecisionLineage {
   pub issue: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateActionExecutionLineageStatus {
+  Ready,
+  MissingSourceCandidateActionDecisionArtifact,
+  SourceCandidateActionDecisionArtifactUnresolved,
+  MissingOperationResultArtifact,
+  OperationResultArtifactUnresolved,
+  Malformed,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct CandidateActionExecutionLineage {
+  pub artifact: ArtifactRefLineage,
+  pub status: CandidateActionExecutionLineageStatus,
+  pub execution_id: Option<String>,
+  pub source_candidate_action_decision_artifact: Option<ArtifactRefLineage>,
+  pub source_candidate_promotion_artifact: Option<ArtifactRefLineage>,
+  pub operation_result_artifact: Option<ArtifactRefLineage>,
+  pub source_promotion_id: Option<String>,
+  pub source_decision_id: Option<String>,
+  pub candidate_local_id: Option<String>,
+  pub resolver_operation: Option<String>,
+  pub selected_method: Option<String>,
+  pub input_delivery: Option<String>,
+  pub selected_path: Option<String>,
+  pub attempts: Option<usize>,
+  pub attempts_succeeded: Option<usize>,
+  pub operation_status: Option<String>,
+  pub verification: Option<String>,
+  pub semantic_matched: Option<bool>,
+  pub consent_id: Option<String>,
+  pub consent_granted_by: Option<String>,
+  pub side_effect: Option<String>,
+  pub known_limits: Vec<String>,
+  pub issue: Option<String>,
+}
+
 pub(crate) fn list_verifications(
   store: &LocalStore,
   run_id: &str,
@@ -252,6 +293,14 @@ pub(crate) fn list_candidate_action_decision_lineage(
 ) -> AuvResult<Vec<CandidateActionDecisionLineage>> {
   let run = store.read_run(run_id)?;
   extract_candidate_action_decision_lineage(store, &run)
+}
+
+pub(crate) fn list_candidate_action_execution_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_candidate_action_execution_lineage(store, &run)
 }
 
 pub(crate) fn extract_app_validation_lineage(
@@ -522,6 +571,58 @@ pub(crate) fn extract_candidate_action_decision_lineage(
   Ok(lineage)
 }
 
+pub(crate) fn extract_candidate_action_execution_lineage(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
+  let mut lineage = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let execution_artifact = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      lineage.push(malformed_candidate_action_execution_lineage(
+        execution_artifact,
+        format!(
+          "candidate-action-execution artifact mime_type {} is not JSON",
+          artifact.mime_type
+        ),
+      ));
+      continue;
+    }
+
+    let parsed = read_artifact_bytes(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+    )
+    .and_then(|(bytes, artifact_path)| {
+      serde_json::from_slice::<CandidateActionExecutionArtifact>(&bytes).map_err(|error| {
+        format!(
+          "failed to parse candidate-action-execution artifact {} for run {} from {}: {error}",
+          artifact.artifact_id,
+          run.run.run_id,
+          artifact_path.display()
+        )
+      })
+    });
+
+    match parsed {
+      Ok(execution) => lineage.push(candidate_action_execution_lineage_entry(
+        run, artifact, execution,
+      )),
+      Err(error) => lineage.push(malformed_candidate_action_execution_lineage(
+        execution_artifact,
+        error,
+      )),
+    }
+  }
+  Ok(lineage)
+}
+
 fn is_json_mime(mime_type: &str) -> bool {
   mime_type == "application/json" || mime_type.ends_with("+json")
 }
@@ -715,6 +816,99 @@ fn malformed_candidate_action_decision_lineage(
   }
 }
 
+fn candidate_action_execution_lineage_entry(
+  run: &CanonicalRun,
+  artifact: &ArtifactRecordV1Alpha1,
+  execution: CandidateActionExecutionArtifact,
+) -> CandidateActionExecutionLineage {
+  let source_candidate_action_decision_artifact = Some(resolve_artifact_ref(
+    run,
+    &execution.source_candidate_action_decision_artifact,
+  ));
+  let source_candidate_promotion_artifact = execution
+    .source_candidate_promotion_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let operation_result_artifact = execution
+    .operation_result_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let (status, issue) = classify_candidate_action_execution_lineage(
+    &execution,
+    source_candidate_action_decision_artifact.as_ref(),
+    operation_result_artifact.as_ref(),
+  );
+
+  CandidateActionExecutionLineage {
+    artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
+    status,
+    execution_id: Some(execution.execution_id),
+    source_candidate_action_decision_artifact,
+    source_candidate_promotion_artifact,
+    operation_result_artifact,
+    source_promotion_id: Some(execution.source_promotion_id),
+    source_decision_id: Some(execution.source_decision_id),
+    candidate_local_id: Some(execution.candidate_local_id),
+    resolver_operation: Some(execution.action_resolver_decision.operation),
+    selected_method: Some(execution.action_resolver_decision.selected_method),
+    input_delivery: detail_string(&execution.detail, &["input_delivery"]),
+    selected_path: detail_string(&execution.detail, &["selected_path"]),
+    attempts: execution
+      .detail
+      .get("attempt_count")
+      .and_then(|value| value.as_u64().and_then(|count| usize::try_from(count).ok())),
+    attempts_succeeded: execution
+      .detail
+      .get("attempts_succeeded")
+      .and_then(|value| value.as_u64().and_then(|count| usize::try_from(count).ok())),
+    operation_status: detail_string(&execution.detail, &["operation_status"]),
+    verification: detail_string(&execution.detail, &["verification"]),
+    semantic_matched: execution
+      .operation_result
+      .verifications
+      .first()
+      .and_then(|verification| verification.semantic_matched),
+    consent_id: Some(execution.consent.consent_id),
+    consent_granted_by: Some(execution.consent.granted_by),
+    side_effect: Some(candidate_action_execution_side_effect_string(
+      &execution.side_effect,
+    )),
+    known_limits: execution.known_limits,
+    issue,
+  }
+}
+
+fn malformed_candidate_action_execution_lineage(
+  artifact: ArtifactRefLineage,
+  issue: String,
+) -> CandidateActionExecutionLineage {
+  CandidateActionExecutionLineage {
+    artifact,
+    status: CandidateActionExecutionLineageStatus::Malformed,
+    execution_id: None,
+    source_candidate_action_decision_artifact: None,
+    source_candidate_promotion_artifact: None,
+    operation_result_artifact: None,
+    source_promotion_id: None,
+    source_decision_id: None,
+    candidate_local_id: None,
+    resolver_operation: None,
+    selected_method: None,
+    input_delivery: None,
+    selected_path: None,
+    attempts: None,
+    attempts_succeeded: None,
+    operation_status: None,
+    verification: None,
+    semantic_matched: None,
+    consent_id: None,
+    consent_granted_by: None,
+    side_effect: None,
+    known_limits: Vec::new(),
+    issue: Some(issue),
+  }
+}
+
 fn classify_detector_recognition_lineage(
   recognition: &RecognitionResult,
   capture_artifact: Option<&DetectorRecognitionArtifactRefLineage>,
@@ -813,6 +1007,39 @@ fn classify_candidate_action_decision_lineage(
   (CandidateActionDecisionLineageStatus::Ready, None)
 }
 
+fn classify_candidate_action_execution_lineage(
+  execution: &CandidateActionExecutionArtifact,
+  source_candidate_action_decision_artifact: Option<&ArtifactRefLineage>,
+  operation_result_artifact: Option<&ArtifactRefLineage>,
+) -> (CandidateActionExecutionLineageStatus, Option<String>) {
+  if !source_candidate_action_decision_artifact.is_some_and(|artifact| artifact.resolved) {
+    return (
+      CandidateActionExecutionLineageStatus::SourceCandidateActionDecisionArtifactUnresolved,
+      Some(
+        "source_candidate_action_decision_artifact could not be resolved from recorded run artifacts"
+          .to_string(),
+      ),
+    );
+  }
+  if execution.operation_result_artifact.is_none() {
+    return (
+      CandidateActionExecutionLineageStatus::MissingOperationResultArtifact,
+      Some("operation_result_artifact is missing".to_string()),
+    );
+  }
+  if let Some(operation_result_artifact) = operation_result_artifact
+    && !operation_result_artifact.resolved
+  {
+    return (
+      CandidateActionExecutionLineageStatus::OperationResultArtifactUnresolved,
+      Some(
+        "operation_result_artifact could not be resolved from recorded run artifacts".to_string(),
+      ),
+    );
+  }
+  (CandidateActionExecutionLineageStatus::Ready, None)
+}
+
 fn artifact_record_lineage(
   run_id: crate::trace::RunId,
   artifact: &ArtifactRecordV1Alpha1,
@@ -890,6 +1117,16 @@ fn candidate_action_side_effect_string(
   match side_effect {
     crate::candidate_action_decision::CandidateActionSideEffect::NoneDecideOnly => {
       "none_decide_only".to_string()
+    }
+  }
+}
+
+fn candidate_action_execution_side_effect_string(
+  side_effect: &crate::candidate_action_decision::CandidateActionExecutionSideEffect,
+) -> String {
+  match side_effect {
+    crate::candidate_action_decision::CandidateActionExecutionSideEffect::SingleInputDelivered => {
+      "single_input_delivered".to_string()
     }
   }
 }
@@ -1017,14 +1254,16 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE, CANDIDATE_PROMOTION_ARTIFACT_ROLE,
-    CandidateActionDecisionLineageStatus, CandidatePromotionLineageStatus,
+    CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE, CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+    CANDIDATE_PROMOTION_ARTIFACT_ROLE, CandidateActionDecisionLineageStatus,
+    CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus,
     DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
     NATIVE_TEXT_CANONICAL_TAXONOMY_ID, NATIVE_TEXT_LEGACY_TAXONOMY_ID,
     extract_app_validation_lineage, extract_candidate_action_decision_lineage,
-    extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
-    extract_observation_snapshots, extract_verifications, list_app_validation_lineage,
-    list_candidate_action_decision_lineage, list_candidate_promotion_lineage,
+    extract_candidate_action_execution_lineage, extract_candidate_promotion_lineage,
+    extract_detector_recognition_lineage, extract_observation_snapshots, extract_verifications,
+    list_app_validation_lineage, list_candidate_action_decision_lineage,
+    list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
     list_detector_recognition_lineage, list_observation_snapshots, list_verifications,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
@@ -1032,7 +1271,9 @@ mod tests {
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::candidate_action_decision::{
-    CandidateActionDecisionArtifact, CandidateActionSideEffect,
+    CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
+    CandidateActionExecutionConsent, CandidateActionExecutionConsentAction,
+    CandidateActionExecutionSideEffect, CandidateActionSideEffect,
   };
   use crate::candidate_promotion::{
     ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
@@ -1901,6 +2142,176 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[test]
+  fn candidate_action_execution_lineage_extracts_activation_only_and_error_states() {
+    let root = temp_dir("run-read-candidate-action-execution");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_candidate_action_execution");
+    let span = dummy_span(&run.root_span_id);
+    let source_decision_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+      "candidate-action-decision-source.json",
+      &serde_json::json!({"fixture": "candidate-action-decision"}),
+    );
+    let operation_result_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      1,
+      "operation-result",
+      "candidate-action-operation-result.json",
+      &serde_json::json!({"fixture": "operation-result"}),
+    );
+
+    let ready_execution = candidate_action_execution_artifact(
+      ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_decision_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_decision_artifact.event_id.clone(),
+      },
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: operation_result_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: operation_result_artifact.event_id.clone(),
+      }),
+      "execution_ready",
+    );
+    let missing_operation_result_execution = candidate_action_execution_artifact(
+      ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_decision_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_decision_artifact.event_id.clone(),
+      },
+      None,
+      "execution_missing_operation",
+    );
+    let unresolved_source_execution = candidate_action_execution_artifact(
+      ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_missing_decision"),
+        span_id: span.span_id.clone(),
+        captured_event_id: Some(EventId::new("event_missing_decision")),
+      },
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: operation_result_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: operation_result_artifact.event_id.clone(),
+      }),
+      "execution_unresolved_source",
+    );
+
+    let artifacts = vec![
+      source_decision_artifact,
+      operation_result_artifact,
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        2,
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        "candidate-action-execution-ready.json",
+        &ready_execution,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        3,
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        "candidate-action-execution-missing-operation.json",
+        &missing_operation_result_execution,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        4,
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        "candidate-action-execution-unresolved-source.json",
+        &unresolved_source_execution,
+      ),
+      stage_text_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        5,
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        "candidate-action-execution-malformed.json",
+        "{ not valid json",
+      ),
+    ];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_candidate_action_execution")
+      .expect("run should read back");
+    let extracted = extract_candidate_action_execution_lineage(&store, &canonical)
+      .expect("candidate action execution lineage should extract");
+    assert_eq!(extracted.len(), 4);
+    assert_eq!(
+      extracted[0].status,
+      CandidateActionExecutionLineageStatus::Ready
+    );
+    assert_eq!(
+      extracted[0].execution_id.as_deref(),
+      Some("execution_ready")
+    );
+    assert_eq!(extracted[0].input_delivery.as_deref(), Some("attempted"));
+    assert_eq!(
+      extracted[0].selected_path.as_deref(),
+      Some("window_targeted_mouse")
+    );
+    assert_eq!(extracted[0].operation_status.as_deref(), Some("completed"));
+    assert_eq!(
+      extracted[0].verification.as_deref(),
+      Some("activation_only")
+    );
+    assert_eq!(extracted[0].semantic_matched, None);
+    assert_eq!(extracted[0].attempts, Some(1));
+    assert_eq!(extracted[0].attempts_succeeded, Some(1));
+    assert_eq!(
+      extracted[1].status,
+      CandidateActionExecutionLineageStatus::MissingOperationResultArtifact
+    );
+    assert_eq!(
+      extracted[2].status,
+      CandidateActionExecutionLineageStatus::SourceCandidateActionDecisionArtifactUnresolved
+    );
+    assert_eq!(
+      extracted[3].status,
+      CandidateActionExecutionLineageStatus::Malformed
+    );
+
+    let listed =
+      list_candidate_action_execution_lineage(&store, "run_read_candidate_action_execution")
+        .expect("candidate action execution lineage should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
   fn temp_dir(label: &str) -> PathBuf {
     let path = env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()));
     let _ = fs::remove_dir_all(&path);
@@ -2081,6 +2492,116 @@ mod tests {
       known_limits: vec![
         "L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string(),
       ],
+    }
+  }
+
+  fn candidate_action_execution_artifact(
+    source_candidate_action_decision_artifact: ArtifactRef,
+    operation_result_artifact: Option<ArtifactRef>,
+    execution_id: &str,
+  ) -> CandidateActionExecutionArtifact {
+    CandidateActionExecutionArtifact {
+      artifact_version: "candidate_action_execution_artifact_v0".to_string(),
+      execution_id: execution_id.to_string(),
+      source_candidate_action_decision_artifact,
+      source_candidate_promotion_artifact: None,
+      operation_result_artifact,
+      source_promotion_id: "promotion_ready".to_string(),
+      source_decision_id: "decision_ready".to_string(),
+      candidate_local_id: "promoted-item_end_turn".to_string(),
+      action_resolver_decision: ActionResolverDecision::new(ActionResolverDecisionInput {
+        operation: "candidate.action.decide_only",
+        target_query: "End Turn",
+        primary_method: "pointer-click",
+        selected_method: "pointer-click",
+        fallback_allowed: false,
+        fallback_used: false,
+        fallback_reason: None,
+        policy: "candidate-coordinate-pointer",
+        cursor_disturbance: "warp-visible",
+        press_mechanism: "pointer-click",
+      }),
+      consent: CandidateActionExecutionConsent {
+        consent_id: "consent_execute_end_turn".to_string(),
+        granted_by: "human-review".to_string(),
+        scope_note: "execute exactly one approved candidate action".to_string(),
+        run_id: "run_read_candidate_action_execution".to_string(),
+        source_promotion_id: "promotion_ready".to_string(),
+        source_decision_id: "decision_ready".to_string(),
+        candidate_local_id: "promoted-item_end_turn".to_string(),
+        approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+        approved_at_millis: 2,
+        evidence_note: "unit test execution consent".to_string(),
+      },
+      input_action_result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+      operation_result: OperationResult {
+        api_version: OPERATION_RESULT_API_VERSION.to_string(),
+        run_id: RunId::new("run_read_candidate_action_execution"),
+        status: OperationStatus::Completed,
+        operation_id: "candidate.action.execute_single".to_string(),
+        evidence_artifacts: Vec::new(),
+        output: OperationOutput::Acknowledged {
+          message: Some(
+            "single candidate action activated; semantic verification remains activation_only"
+              .to_string(),
+          ),
+        },
+        verifications: vec![candidate_action_activation_verification(
+          VerificationMethod::Custom {
+            name: "activation_only".to_string(),
+          },
+          Vec::new(),
+          Some("End Turn"),
+        )],
+        freshness_basis: None,
+        known_limits: vec![
+          "activation_only verification records input delivery, not semantic success".to_string(),
+        ],
+      },
+      verification_result: candidate_action_activation_verification(
+        VerificationMethod::Custom {
+          name: "activation_only".to_string(),
+        },
+        Vec::new(),
+        Some("End Turn"),
+      ),
+      side_effect: CandidateActionExecutionSideEffect::SingleInputDelivered,
+      detail: json!({
+        "input_delivery": "attempted",
+        "selected_path": "window_targeted_mouse",
+        "attempt_count": 1,
+        "attempts_succeeded": 1,
+        "operation_status": "completed",
+        "verification": "activation_only",
+        "semantic_matched": null,
+      }),
+      known_limits: vec![
+        "activation_only verification records input delivery, not semantic success".to_string(),
+      ],
+    }
+  }
+
+  fn candidate_action_activation_verification(
+    method: VerificationMethod,
+    evidence: Vec<ArtifactRef>,
+    observed_label: Option<&str>,
+  ) -> VerificationResult {
+    VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+      method,
+      executed: true,
+      state_changed: false,
+      semantic_matched: None,
+      failure_layer: None,
+      evidence,
+      consumed_candidate_ref: None,
+      consumed_node_ref: None,
+      consumed_recognition_artifact_ref: None,
+      consumed_recognition_id: None,
+      consumed_recognized_item_id: Some("item_end_turn".to_string()),
+      observed_label: observed_label.map(str::to_string),
     }
   }
 

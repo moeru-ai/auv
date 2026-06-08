@@ -6,12 +6,20 @@ use serde_json::json;
 use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
 use crate::candidate_promotion::CandidatePromotion;
 use crate::candidate_promotion_recording::CandidatePromotionArtifact;
-use crate::contract::{ArtifactRef, Candidate, TargetGrounding};
+use crate::contract::{
+  ArtifactRef, Candidate, CandidateRef, FailureLayer, OperationOutput, OperationResult,
+  OperationStatus, TargetGrounding, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
+  VerificationResult,
+};
 use crate::model::{AuvResult, now_millis};
 use crate::recorded_operation::RecordedOperationContext;
+use crate::trace::RunId;
 
 pub const CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE: &str = "candidate-action-decision";
+pub const CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE: &str = "candidate-action-execution";
 const CANDIDATE_ACTION_DECISION_ARTIFACT_VERSION: &str = "candidate_action_decision_artifact_v0";
+const CANDIDATE_ACTION_EXECUTION_ARTIFACT_VERSION: &str = "candidate_action_execution_artifact_v0";
+const OPERATION_RESULT_ARTIFACT_ROLE: &str = "operation-result";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CandidateActionDecisionRequest {
@@ -66,12 +74,118 @@ pub enum CandidateActionSideEffect {
   NoneDecideOnly,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateActionExecutionRequest {
+  pub(crate) execution_id: String,
+  pub(crate) source_candidate_action_decision_artifact: Option<ArtifactRef>,
+  pub(crate) consent: Option<CandidateActionExecutionConsent>,
+  pub(crate) artifact_role: String,
+  pub(crate) artifact_label: String,
+  pub(crate) artifact_note: String,
+}
+
+impl CandidateActionExecutionRequest {
+  pub fn new(execution_id: impl Into<String>, artifact_label: impl Into<String>) -> Self {
+    let execution_id = execution_id.into();
+    Self {
+      execution_id: execution_id.clone(),
+      source_candidate_action_decision_artifact: None,
+      consent: None,
+      artifact_role: CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE.to_string(),
+      artifact_label: artifact_label.into(),
+      artifact_note: "Single-action candidate execution artifact.".to_string(),
+    }
+  }
+
+  pub fn with_source_candidate_action_decision_artifact(mut self, artifact: ArtifactRef) -> Self {
+    self.source_candidate_action_decision_artifact = Some(artifact);
+    self
+  }
+
+  pub fn with_consent(mut self, consent: CandidateActionExecutionConsent) -> Self {
+    self.consent = Some(consent);
+    self
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateActionExecutionConsent {
+  pub consent_id: String,
+  pub granted_by: String,
+  pub scope_note: String,
+  pub run_id: String,
+  pub source_promotion_id: String,
+  pub source_decision_id: String,
+  pub candidate_local_id: String,
+  pub approved_action: CandidateActionExecutionConsentAction,
+  pub approved_at_millis: u64,
+  pub evidence_note: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateActionExecutionConsentAction {
+  ExecuteSingleCandidateAction,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CandidateActionExecutionArtifact {
+  pub(crate) artifact_version: String,
+  pub(crate) execution_id: String,
+  pub(crate) source_candidate_action_decision_artifact: ArtifactRef,
+  pub(crate) source_candidate_promotion_artifact: Option<ArtifactRef>,
+  pub(crate) operation_result_artifact: Option<ArtifactRef>,
+  pub(crate) source_promotion_id: String,
+  pub(crate) source_decision_id: String,
+  pub(crate) candidate_local_id: String,
+  pub(crate) action_resolver_decision: ActionResolverDecision,
+  pub(crate) consent: CandidateActionExecutionConsent,
+  pub(crate) input_action_result: auv_driver::InputActionResult,
+  pub(crate) operation_result: OperationResult,
+  pub(crate) verification_result: VerificationResult,
+  pub(crate) side_effect: CandidateActionExecutionSideEffect,
+  pub(crate) detail: serde_json::Value,
+  pub(crate) known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateActionExecutionSideEffect {
+  SingleInputDelivered,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CandidateActionDeliveryPlan {
+  pub selected_method: String,
+  pub target_grounding: TargetGrounding,
+  pub target_query: String,
+  pub window_number: Option<i64>,
+  pub window_title: Option<String>,
+  pub app_bundle_id: Option<String>,
+  pub window_x: f64,
+  pub window_y: f64,
+  pub click_count: u32,
+}
+
+pub trait CandidateActionExecutor {
+  fn execute(
+    &mut self,
+    plan: &CandidateActionDeliveryPlan,
+  ) -> AuvResult<auv_driver::InputActionResult>;
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CandidateActionDecisionError {
   PromotionDidNotPromote,
   NoPromotedCandidates,
   CandidateNotFound { candidate_local_id: String },
   UnsupportedTargetGrounding { grounding: TargetGrounding },
+  MissingWindowReference,
+  MissingCandidateBox,
+  MissingSourceCandidateActionDecisionArtifact,
+  MissingExecutionConsent,
+  ExecutionConsentMismatch { reason: String },
+  ExecutionFailed { reason: String },
 }
 
 impl std::fmt::Display for CandidateActionDecisionError {
@@ -95,6 +209,34 @@ impl std::fmt::Display for CandidateActionDecisionError {
         write!(
           f,
           "candidate target grounding {grounding:?} is not supported by L8a decide-only"
+        )
+      }
+      Self::MissingWindowReference => {
+        write!(f, "candidate action execution requires a window reference")
+      }
+      Self::MissingCandidateBox => {
+        write!(
+          f,
+          "candidate action execution requires a candidate evidence box"
+        )
+      }
+      Self::MissingSourceCandidateActionDecisionArtifact => write!(
+        f,
+        "candidate action execution requires a recorded L8a candidate-action-decision artifact"
+      ),
+      Self::MissingExecutionConsent => {
+        write!(
+          f,
+          "candidate action execution requires explicit L8b consent"
+        )
+      }
+      Self::ExecutionConsentMismatch { reason } => {
+        write!(f, "candidate action execution consent mismatch: {reason}")
+      }
+      Self::ExecutionFailed { reason } => {
+        write!(
+          f,
+          "candidate action execution failed before artifact recording: {reason}"
         )
       }
     }
@@ -183,6 +325,346 @@ pub fn record_candidate_action_decision_artifact(
   Ok((artifact_ref, artifact))
 }
 
+pub fn build_candidate_action_execution_artifact(
+  promotion: &CandidatePromotionArtifact,
+  decision: &CandidateActionDecisionArtifact,
+  request: &CandidateActionExecutionRequest,
+  execution_run_id: RunId,
+  input_action_result: auv_driver::InputActionResult,
+) -> Result<CandidateActionExecutionArtifact, CandidateActionDecisionError> {
+  let source_candidate_action_decision_artifact = request
+    .source_candidate_action_decision_artifact
+    .clone()
+    .ok_or(CandidateActionDecisionError::MissingSourceCandidateActionDecisionArtifact)?;
+  let candidates = match &promotion.decision {
+    CandidatePromotion::Promoted { candidates, .. } => candidates,
+    CandidatePromotion::Refused { .. } => {
+      return Err(CandidateActionDecisionError::PromotionDidNotPromote);
+    }
+  };
+  let candidate = candidates
+    .iter()
+    .find(|candidate| candidate.candidate_local_id == decision.candidate_local_id)
+    .ok_or_else(|| CandidateActionDecisionError::CandidateNotFound {
+      candidate_local_id: decision.candidate_local_id.clone(),
+    })?;
+  let consent = request
+    .consent
+    .clone()
+    .ok_or(CandidateActionDecisionError::MissingExecutionConsent)?;
+  validate_execution_consent(
+    &consent,
+    promotion,
+    decision,
+    &source_candidate_action_decision_artifact,
+  )?;
+
+  let succeeded = input_action_result
+    .attempts
+    .iter()
+    .any(|attempt| attempt.succeeded);
+  let candidate_ref = candidate_ref_from_source(
+    decision.source_candidate_promotion_artifact.as_ref(),
+    &promotion.promotion_id,
+    &candidate.candidate_local_id,
+  );
+  let mut evidence_artifacts = Vec::new();
+  evidence_artifacts.push(source_candidate_action_decision_artifact.clone());
+  if let Some(source_promotion) = decision.source_candidate_promotion_artifact.clone() {
+    evidence_artifacts.push(source_promotion);
+  }
+  let verification_result = activation_only_verification(
+    succeeded,
+    candidate,
+    candidate_ref.clone(),
+    &evidence_artifacts,
+  );
+  let operation_result = OperationResult {
+    api_version: crate::contract::OPERATION_RESULT_API_VERSION.to_string(),
+    run_id: execution_run_id,
+    status: if succeeded {
+      OperationStatus::Completed
+    } else {
+      OperationStatus::Failed
+    },
+    operation_id: "candidate.action.execute_single".to_string(),
+    evidence_artifacts: evidence_artifacts.clone(),
+    output: OperationOutput::Acknowledged {
+      message: Some(if succeeded {
+        "single candidate action activated; semantic verification remains activation_only"
+          .to_string()
+      } else {
+        "single candidate action delivery failed".to_string()
+      }),
+    },
+    verifications: vec![verification_result.clone()],
+    freshness_basis: promotion.promotion_context.freshness.clone(),
+    known_limits: execution_known_limits(promotion, candidate),
+  };
+  let selected_path =
+    serde_json::to_value(input_action_result.selected_path).unwrap_or(serde_json::Value::Null);
+  let attempts_succeeded = input_action_result
+    .attempts
+    .iter()
+    .filter(|attempt| attempt.succeeded)
+    .count();
+  let detail = json!({
+    "artifact_version": CANDIDATE_ACTION_EXECUTION_ARTIFACT_VERSION,
+    "producer": "candidate_action_execution",
+    "mode": "execute_single",
+    "input_delivery": if succeeded { "attempted" } else { "failed" },
+    "selected_path": selected_path,
+    "attempt_count": input_action_result.attempts.len(),
+    "attempts_succeeded": attempts_succeeded,
+    "operation_status": if succeeded { "completed" } else { "failed" },
+    "verification": "activation_only",
+    "semantic_matched": serde_json::Value::Null,
+    "source_promotion_id": promotion.promotion_id,
+    "source_decision_id": decision.decision_id,
+    "candidate_local_id": candidate.candidate_local_id,
+  });
+
+  Ok(CandidateActionExecutionArtifact {
+    artifact_version: CANDIDATE_ACTION_EXECUTION_ARTIFACT_VERSION.to_string(),
+    execution_id: request.execution_id.clone(),
+    source_candidate_action_decision_artifact,
+    source_candidate_promotion_artifact: decision.source_candidate_promotion_artifact.clone(),
+    operation_result_artifact: None,
+    source_promotion_id: promotion.promotion_id.clone(),
+    source_decision_id: decision.decision_id.clone(),
+    candidate_local_id: candidate.candidate_local_id.clone(),
+    action_resolver_decision: decision.action_resolver_decision.clone(),
+    consent,
+    input_action_result,
+    operation_result,
+    verification_result,
+    side_effect: CandidateActionExecutionSideEffect::SingleInputDelivered,
+    detail,
+    known_limits: execution_known_limits(promotion, candidate),
+  })
+}
+
+pub fn record_candidate_action_execution_artifact(
+  context: &mut RecordedOperationContext<'_>,
+  promotion: &CandidatePromotionArtifact,
+  decision: &CandidateActionDecisionArtifact,
+  request: &CandidateActionExecutionRequest,
+  input_action_result: auv_driver::InputActionResult,
+) -> AuvResult<(ArtifactRef, CandidateActionExecutionArtifact)> {
+  let mut artifact = build_candidate_action_execution_artifact(
+    promotion,
+    decision,
+    request,
+    context.run_id().clone(),
+    input_action_result,
+  )
+  .map_err(|error| format!("failed to build candidate action execution artifact: {error}"))?;
+
+  let operation_result_ref = stage_json_artifact(
+    context,
+    OPERATION_RESULT_ARTIFACT_ROLE,
+    &format!("{}-operation-result", request.artifact_label),
+    "Candidate action execution OperationResult.",
+    &artifact.operation_result,
+  )?;
+  artifact.operation_result_artifact = Some(operation_result_ref);
+
+  let artifact_ref = stage_json_artifact(
+    context,
+    &request.artifact_role,
+    &request.artifact_label,
+    &request.artifact_note,
+    &artifact,
+  )?;
+
+  context.record_event(
+    "candidate.action.execution.artifact_recorded",
+    Some(format!(
+      "recorded single-action execution {} for candidate {}",
+      artifact_ref.artifact_id, artifact.candidate_local_id
+    )),
+  );
+
+  Ok((artifact_ref, artifact))
+}
+
+pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
+  executor: &mut E,
+  promotion: &CandidatePromotionArtifact,
+  decision: &CandidateActionDecisionArtifact,
+  request: &CandidateActionExecutionRequest,
+  execution_run_id: RunId,
+) -> Result<CandidateActionExecutionArtifact, CandidateActionDecisionError> {
+  let candidates = match &promotion.decision {
+    CandidatePromotion::Promoted { candidates, .. } => candidates,
+    CandidatePromotion::Refused { .. } => {
+      return Err(CandidateActionDecisionError::PromotionDidNotPromote);
+    }
+  };
+  let candidate = candidates
+    .iter()
+    .find(|candidate| candidate.candidate_local_id == decision.candidate_local_id)
+    .ok_or_else(|| CandidateActionDecisionError::CandidateNotFound {
+      candidate_local_id: decision.candidate_local_id.clone(),
+    })?;
+  let source_candidate_action_decision_artifact = request
+    .source_candidate_action_decision_artifact
+    .as_ref()
+    .ok_or(CandidateActionDecisionError::MissingSourceCandidateActionDecisionArtifact)?;
+  let consent = request
+    .consent
+    .as_ref()
+    .ok_or(CandidateActionDecisionError::MissingExecutionConsent)?;
+  validate_execution_consent(
+    consent,
+    promotion,
+    decision,
+    source_candidate_action_decision_artifact,
+  )?;
+  let plan = delivery_plan(candidate, decision)?;
+  let input_action_result =
+    executor
+      .execute(&plan)
+      .map_err(|error| CandidateActionDecisionError::ExecutionFailed {
+        reason: error.to_string(),
+      })?;
+  build_candidate_action_execution_artifact(
+    promotion,
+    decision,
+    request,
+    execution_run_id,
+    input_action_result,
+  )
+}
+
+pub fn delivery_plan(
+  candidate: &Candidate,
+  decision: &CandidateActionDecisionArtifact,
+) -> Result<CandidateActionDeliveryPlan, CandidateActionDecisionError> {
+  if decision.candidate_local_id != candidate.candidate_local_id {
+    return Err(CandidateActionDecisionError::CandidateNotFound {
+      candidate_local_id: decision.candidate_local_id.clone(),
+    });
+  }
+  let window_ref = candidate
+    .liveness
+    .preconditions
+    .window_ref
+    .as_ref()
+    .ok_or(CandidateActionDecisionError::MissingWindowReference)?;
+  let (window_x, window_y) = candidate_box_center(candidate)?;
+
+  Ok(CandidateActionDeliveryPlan {
+    selected_method: decision.action_resolver_decision.selected_method.clone(),
+    target_grounding: candidate.target_spec.grounding,
+    target_query: decision.action_resolver_decision.target_query.clone(),
+    window_number: window_ref.window_number,
+    window_title: window_ref.window_title_substring.clone(),
+    app_bundle_id: Some(window_ref.app_bundle_id.clone()),
+    window_x,
+    window_y,
+    click_count: 1,
+  })
+}
+
+fn candidate_box_center(candidate: &Candidate) -> Result<(f64, f64), CandidateActionDecisionError> {
+  let Some(best_box) = candidate
+    .evidence
+    .observation
+    .get("box")
+    .or_else(|| candidate.evidence.observation.get("box_"))
+  else {
+    return Err(CandidateActionDecisionError::MissingCandidateBox);
+  };
+  let Some(x) = best_box.get("x").and_then(|value| value.as_i64()) else {
+    return Err(CandidateActionDecisionError::MissingCandidateBox);
+  };
+  let Some(y) = best_box.get("y").and_then(|value| value.as_i64()) else {
+    return Err(CandidateActionDecisionError::MissingCandidateBox);
+  };
+  let Some(width) = best_box.get("width").and_then(|value| value.as_i64()) else {
+    return Err(CandidateActionDecisionError::MissingCandidateBox);
+  };
+  let Some(height) = best_box.get("height").and_then(|value| value.as_i64()) else {
+    return Err(CandidateActionDecisionError::MissingCandidateBox);
+  };
+  Ok((
+    x as f64 + width as f64 / 2.0,
+    y as f64 + height as f64 / 2.0,
+  ))
+}
+
+#[cfg(target_os = "macos")]
+pub struct MacosCandidateActionExecutor;
+
+#[cfg(target_os = "macos")]
+impl CandidateActionExecutor for MacosCandidateActionExecutor {
+  fn execute(
+    &mut self,
+    plan: &CandidateActionDeliveryPlan,
+  ) -> AuvResult<auv_driver::InputActionResult> {
+    use auv_driver::Driver;
+
+    if plan.target_grounding != TargetGrounding::Coordinate
+      || plan.selected_method.as_str() != "pointer-click"
+    {
+      return Err(
+        "L8b macOS executor currently supports coordinate pointer-click plans only".to_string(),
+      );
+    }
+    let Some(window_number) = plan.window_number else {
+      return Err("L8b macOS executor requires window_number".to_string());
+    };
+    let driver = auv_driver_macos::MacosDriver::new();
+    let session = driver
+      .open_local()
+      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    let windows = session
+      .window()
+      .list()
+      .map_err(|error| format!("failed to list macOS windows for L8b execution: {error}"))?;
+    let window = windows
+      .into_iter()
+      .find(|window| {
+        window.reference.id == window_number.to_string()
+          && plan
+            .app_bundle_id
+            .as_ref()
+            .is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
+          && plan.window_title.as_ref().is_none_or(|expected| {
+            window
+              .title
+              .as_deref()
+              .is_some_and(|title| title.contains(expected))
+          })
+      })
+      .ok_or_else(|| {
+        format!(
+          "could not resolve macOS window {} for L8b execution",
+          window_number
+        )
+      })?;
+    session
+      .window()
+      .click(
+        &window,
+        auv_driver::WindowPoint::new(plan.window_x, plan.window_y),
+        auv_driver::ClickOptions {
+          policy: auv_driver::InputPolicy::BackgroundPreferred,
+          click: if plan.click_count == 2 {
+            auv_driver::Click::Double {
+              interval: std::time::Duration::from_millis(100),
+            }
+          } else {
+            auv_driver::Click::Single
+          },
+          window_strategy: auv_driver::WindowClickStrategy::PidTargeted,
+        },
+      )
+      .map_err(|error| format!("typed macOS window click failed: {error}"))
+  }
+}
+
 fn select_candidate<'a>(
   candidates: &'a [Candidate],
   request: &CandidateActionDecisionRequest,
@@ -246,6 +728,117 @@ fn target_query(candidate: &Candidate) -> String {
     .unwrap_or_else(|| candidate.candidate_local_id.clone())
 }
 
+fn validate_execution_consent(
+  consent: &CandidateActionExecutionConsent,
+  promotion: &CandidatePromotionArtifact,
+  decision: &CandidateActionDecisionArtifact,
+  source_decision_artifact: &ArtifactRef,
+) -> Result<(), CandidateActionDecisionError> {
+  if consent.consent_id.trim().is_empty() {
+    return Err(consent_mismatch("consent_id is empty"));
+  }
+  if consent.granted_by.trim().is_empty() {
+    return Err(consent_mismatch("granted_by is empty"));
+  }
+  if consent.scope_note.trim().is_empty() {
+    return Err(consent_mismatch("scope_note is empty"));
+  }
+  if consent.source_promotion_id != promotion.promotion_id {
+    return Err(consent_mismatch(
+      "source_promotion_id does not match promotion",
+    ));
+  }
+  if consent.source_decision_id != decision.decision_id {
+    return Err(consent_mismatch(
+      "source_decision_id does not match decision",
+    ));
+  }
+  if consent.candidate_local_id != decision.candidate_local_id {
+    return Err(consent_mismatch(
+      "candidate_local_id does not match decision",
+    ));
+  }
+  if consent.run_id != source_decision_artifact.run_id.as_str() {
+    return Err(consent_mismatch(
+      "run_id does not match source candidate-action-decision artifact",
+    ));
+  }
+  if consent.approved_action != CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction
+  {
+    return Err(consent_mismatch("approved_action is not execute_single"));
+  }
+  Ok(())
+}
+
+fn consent_mismatch(reason: impl Into<String>) -> CandidateActionDecisionError {
+  CandidateActionDecisionError::ExecutionConsentMismatch {
+    reason: reason.into(),
+  }
+}
+
+fn candidate_ref_from_source(
+  source_candidate_promotion_artifact: Option<&ArtifactRef>,
+  source_promotion_id: &str,
+  candidate_local_id: &str,
+) -> Option<CandidateRef> {
+  source_candidate_promotion_artifact.map(|artifact| CandidateRef {
+    source_run_id: artifact.run_id.clone(),
+    source_span_id: artifact.span_id.clone(),
+    source_operation_id: source_promotion_id.to_string(),
+    source_artifact_id: artifact.artifact_id.clone(),
+    candidate_local_id: candidate_local_id.to_string(),
+  })
+}
+
+fn activation_only_verification(
+  succeeded: bool,
+  candidate: &Candidate,
+  candidate_ref: Option<CandidateRef>,
+  evidence_artifacts: &[ArtifactRef],
+) -> VerificationResult {
+  VerificationResult {
+    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+    method: VerificationMethod::Custom {
+      name: "activation_only".to_string(),
+    },
+    executed: succeeded,
+    state_changed: false,
+    semantic_matched: None,
+    failure_layer: (!succeeded).then_some(FailureLayer::ControlFailed),
+    evidence: evidence_artifacts.to_vec(),
+    consumed_candidate_ref: candidate_ref,
+    consumed_node_ref: None,
+    consumed_recognition_artifact_ref: Some(candidate.evidence.artifact_ref.clone()),
+    consumed_recognition_id: None,
+    consumed_recognized_item_id: candidate
+      .evidence
+      .observation
+      .get("item_id")
+      .and_then(|value| value.as_str())
+      .map(str::to_string),
+    observed_label: candidate.label.clone(),
+  }
+}
+
+fn execution_known_limits(
+  promotion: &CandidatePromotionArtifact,
+  candidate: &Candidate,
+) -> Vec<String> {
+  let mut known_limits = promotion.known_limits.clone();
+  for limit in &candidate.known_limits {
+    push_known_limit(&mut known_limits, limit);
+  }
+  push_known_limit(
+    &mut known_limits,
+    "L8b executes one candidate action only after explicit execution consent",
+  );
+  push_known_limit(
+    &mut known_limits,
+    "activation_only verification records input delivery, not semantic success",
+  );
+  known_limits
+}
+
 fn artifact_known_limits(
   promotion: &CandidatePromotionArtifact,
   candidate: &Candidate,
@@ -290,6 +883,37 @@ fn temp_json_path(label: &str) -> std::path::PathBuf {
   ))
 }
 
+fn stage_json_artifact<T: Serialize>(
+  context: &mut RecordedOperationContext<'_>,
+  role: &str,
+  label: &str,
+  note: &str,
+  value: &T,
+) -> AuvResult<ArtifactRef> {
+  let rendered = serde_json::to_string_pretty(value)
+    .map(|mut rendered| {
+      rendered.push('\n');
+      rendered
+    })
+    .map_err(|error| format!("failed to encode {role} artifact JSON: {error}"))?;
+  let artifact_source_path = temp_json_path(label);
+  fs::write(&artifact_source_path, rendered).map_err(|error| {
+    format!(
+      "failed to write {role} temp artifact {}: {error}",
+      artifact_source_path.display()
+    )
+  })?;
+
+  let (_, artifact_ref) = context.stage_artifact_file_with_ref(
+    role,
+    &artifact_source_path,
+    format!("{}.json", sanitize_artifact_label(label)),
+    Some(note.to_string()),
+  )?;
+  let _ = fs::remove_file(&artifact_source_path);
+  Ok(artifact_ref)
+}
+
 fn sanitize_artifact_label(raw: &str) -> String {
   let sanitized = raw
     .chars()
@@ -314,10 +938,17 @@ mod tests {
 
   use serde_json::json;
 
+  #[cfg(target_os = "macos")]
+  use super::MacosCandidateActionExecutor;
   use super::{
-    CandidateActionDecisionError, CandidateActionDecisionRequest,
-    build_candidate_action_decision_artifact, record_candidate_action_decision_artifact,
+    CandidateActionDecisionArtifact, CandidateActionDecisionError, CandidateActionDecisionRequest,
+    CandidateActionDeliveryPlan, CandidateActionExecutionConsent,
+    CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
+    CandidateActionExecutor, build_candidate_action_decision_artifact,
+    build_candidate_action_execution_artifact, execute_single_candidate_action,
+    record_candidate_action_decision_artifact, record_candidate_action_execution_artifact,
   };
+  use crate::AuvResult;
   use crate::build_runtime_with_store_root;
   use crate::candidate_promotion::CandidatePromotion;
   use crate::candidate_promotion_recording::{
@@ -326,8 +957,9 @@ mod tests {
     freshness_from_capture_backed_recognition,
   };
   use crate::contract::{
-    ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
-    RecognitionSurface, RecognizedItem,
+    ArtifactRef, FailureLayer, OperationOutput, OperationStatus, RecognitionBox, RecognitionResult,
+    RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem, TargetGrounding,
+    VerificationMethod,
   };
   use crate::run_builder::RunSpec;
   use crate::stability::StabilityPolicy;
@@ -442,6 +1074,59 @@ mod tests {
     );
     build_candidate_promotion_artifact(&observations, &request)
       .expect("promotion artifact should build")
+  }
+
+  fn source_decision_ref() -> ArtifactRef {
+    ArtifactRef {
+      run_id: RunId::new("run_candidate_action_decision_source"),
+      artifact_id: ArtifactId::new("artifact_decision"),
+      span_id: SpanId::new("span_candidate_action_decision_source"),
+      captured_event_id: Some(EventId::new("event_decision")),
+    }
+  }
+
+  fn execution_consent() -> CandidateActionExecutionConsent {
+    CandidateActionExecutionConsent {
+      consent_id: "consent_execute_text_area".to_string(),
+      granted_by: "human-review".to_string(),
+      scope_note: "execute exactly one approved candidate action".to_string(),
+      run_id: "run_candidate_action_decision_source".to_string(),
+      source_promotion_id: "promotion_text_area".to_string(),
+      source_decision_id: "decision_text_area".to_string(),
+      candidate_local_id: "promoted-item_text_area".to_string(),
+      approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+      approved_at_millis: 2,
+      evidence_note: "unit test execution consent".to_string(),
+    }
+  }
+
+  struct FakeExecutor {
+    result: auv_driver::InputActionResult,
+    observed_plan: Option<CandidateActionDeliveryPlan>,
+  }
+
+  impl CandidateActionExecutor for FakeExecutor {
+    fn execute(
+      &mut self,
+      plan: &CandidateActionDeliveryPlan,
+    ) -> AuvResult<auv_driver::InputActionResult> {
+      self.observed_plan = Some(plan.clone());
+      Ok(self.result.clone())
+    }
+  }
+
+  fn decision_artifact() -> CandidateActionDecisionArtifact {
+    let promotion = promoted_artifact();
+    let request =
+      CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision")
+        .with_source_candidate_promotion_artifact(ArtifactRef {
+          run_id: RunId::new("run_candidate_action_decision_source"),
+          artifact_id: ArtifactId::new("artifact_promotion"),
+          span_id: SpanId::new("span_candidate_action_decision_source"),
+          captured_event_id: Some(EventId::new("event_promotion")),
+        });
+    build_candidate_action_decision_artifact(&promotion, &request)
+      .expect("decision artifact should build")
   }
 
   #[test]
@@ -563,6 +1248,342 @@ mod tests {
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn build_execution_artifact_requires_fresh_execution_consent() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref());
+
+    let error = build_candidate_action_execution_artifact(
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+      auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxPress),
+    )
+    .expect_err("missing L8b consent must refuse execution");
+
+    assert_eq!(error, CandidateActionDecisionError::MissingExecutionConsent);
+  }
+
+  #[test]
+  fn build_execution_artifact_records_input_result_and_activation_only_verification() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_consent(execution_consent());
+
+    let artifact = build_candidate_action_execution_artifact(
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+      auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+    )
+    .expect("approved execution should build");
+
+    assert_eq!(artifact.execution_id, "execution_text_area");
+    assert_eq!(artifact.source_decision_id, "decision_text_area");
+    assert_eq!(artifact.candidate_local_id, "promoted-item_text_area");
+    assert_eq!(
+      artifact.input_action_result.selected_path,
+      auv_driver::InputDeliveryPath::WindowTargetedMouse
+    );
+    assert_eq!(artifact.operation_result.status, OperationStatus::Completed);
+    assert_eq!(
+      artifact.operation_result.output,
+      OperationOutput::Acknowledged {
+        message: Some(
+          "single candidate action activated; semantic verification remains activation_only"
+            .to_string()
+        )
+      }
+    );
+    assert_eq!(artifact.operation_result.verifications.len(), 1);
+    assert!(artifact.verification_result.executed);
+    assert!(!artifact.verification_result.state_changed);
+    assert_eq!(artifact.verification_result.semantic_matched, None);
+    assert_eq!(
+      artifact.verification_result.method,
+      VerificationMethod::Custom {
+        name: "activation_only".to_string()
+      }
+    );
+    assert_eq!(artifact.detail["input_delivery"], json!("attempted"));
+    assert_eq!(artifact.detail["verification"], json!("activation_only"));
+    let rendered = serde_json::to_value(&artifact).expect("execution artifact should serialize");
+    assert!(rendered.get("input_action_result").is_some());
+    assert!(rendered.get("operation_result").is_some());
+    assert!(rendered.get("verification_result").is_some());
+    assert!(
+      artifact
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("activation_only verification"))
+    );
+  }
+
+  #[test]
+  fn failed_execution_artifact_records_control_failed_activation_only() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_consent(execution_consent());
+
+    let artifact = build_candidate_action_execution_artifact(
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+      auv_driver::InputActionResult {
+        selected_path: auv_driver::InputDeliveryPath::Unsupported,
+        attempts: vec![auv_driver::InputAttempt::failure(
+          auv_driver::InputDeliveryPath::Unsupported,
+          "fixture failure",
+        )],
+        fallback_reason: Some("fixture failure".to_string()),
+        mouse_disturbance: auv_driver::DisturbanceLevel::Unknown,
+        focus_disturbance: auv_driver::DisturbanceLevel::Unknown,
+        clipboard_disturbance: auv_driver::DisturbanceLevel::None,
+      },
+    )
+    .expect("failed delivery should still produce audit artifact");
+
+    assert_eq!(artifact.operation_result.status, OperationStatus::Failed);
+    assert!(!artifact.verification_result.executed);
+    assert_eq!(
+      artifact.verification_result.failure_layer,
+      Some(FailureLayer::ControlFailed)
+    );
+    assert_eq!(artifact.detail["input_delivery"], json!("failed"));
+  }
+
+  #[test]
+  fn execution_consent_must_match_decision_and_candidate() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let mut consent = execution_consent();
+    consent.candidate_local_id = "wrong_candidate".to_string();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_consent(consent);
+
+    let error = build_candidate_action_execution_artifact(
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+      auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxPress),
+    )
+    .expect_err("mismatched consent must refuse execution");
+
+    assert!(matches!(
+      error,
+      CandidateActionDecisionError::ExecutionConsentMismatch { .. }
+    ));
+  }
+
+  #[test]
+  fn execute_single_candidate_action_refuses_before_executor_without_consent() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref());
+    let mut executor = FakeExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+      observed_plan: None,
+    };
+
+    let error = execute_single_candidate_action(
+      &mut executor,
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+    )
+    .expect_err("missing L8b consent must refuse before input delivery");
+
+    assert_eq!(error, CandidateActionDecisionError::MissingExecutionConsent);
+    assert!(
+      executor.observed_plan.is_none(),
+      "executor must not be called before L8b consent is validated"
+    );
+  }
+
+  #[test]
+  fn recorded_operation_persists_execution_and_operation_result_artifacts() {
+    let project_root = temp_dir("candidate-action-execution-record-project");
+    let store_root = temp_dir("candidate-action-execution-record-store");
+    fs::create_dir_all(&project_root).expect("project root should exist");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+
+    let output = runtime
+      .run_recorded_operation(
+        RunSpec::new(RunType::Execute, "auv.candidate.action.execute_single"),
+        "Candidate action execution artifact recording",
+        |context| {
+          let decision_source_path = project_root.join("candidate-action-decision-source.json");
+          fs::write(&decision_source_path, "{\"fixture\":true}\n")
+            .expect("decision source should write");
+          let (_, source_decision_ref) = context
+            .stage_artifact_file_with_ref(
+              "candidate-action-decision",
+              &decision_source_path,
+              "candidate-action-decision-source.json",
+              Some("Recorded source action decision artifact.".to_string()),
+            )
+            .expect("source decision artifact should stage");
+
+          let request = CandidateActionExecutionRequest::new(
+            "execution_text_area",
+            "text-area-action-execution",
+          )
+          .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
+          .with_consent(CandidateActionExecutionConsent {
+            run_id: source_decision_ref.run_id.as_str().to_string(),
+            ..execution_consent()
+          });
+          record_candidate_action_execution_artifact(
+            context,
+            &promotion,
+            &decision,
+            &request,
+            auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::AxPress),
+          )
+        },
+      )
+      .expect("recorded execution operation should succeed");
+
+    let run = runtime
+      .read_run(output.run_id.as_str())
+      .expect("recorded run should persist");
+    assert_eq!(run.run.status_code, TraceStatusCode::Ok);
+    assert_eq!(run.artifacts.len(), 3);
+    assert_eq!(run.artifacts[0].role, "candidate-action-decision");
+    assert_eq!(run.artifacts[1].role, "operation-result");
+    assert_eq!(run.artifacts[2].role, "candidate-action-execution");
+    let (_artifact_ref, artifact) = output.value;
+    assert!(artifact.operation_result_artifact.is_some());
+    assert_eq!(
+      artifact.input_action_result.selected_path,
+      auv_driver::InputDeliveryPath::AxPress
+    );
+    let verifications = runtime
+      .list_verifications(output.run_id.as_str())
+      .expect("operation-result verification should read");
+    assert_eq!(verifications.len(), 1);
+    assert_eq!(
+      verifications[0].method,
+      VerificationMethod::Custom {
+        name: "activation_only".to_string()
+      }
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn execute_single_candidate_action_uses_executor_once_and_records_activation_only() {
+    let promotion = promoted_artifact();
+    let decision = decision_artifact();
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_consent(execution_consent());
+    let mut executor = FakeExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+      observed_plan: None,
+    };
+
+    let artifact = execute_single_candidate_action(
+      &mut executor,
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+    )
+    .expect("fake executor should produce execution artifact");
+
+    let plan = executor
+      .observed_plan
+      .expect("executor should observe plan");
+    assert_eq!(plan.selected_method, "pointer-click");
+    assert_eq!(plan.target_grounding, TargetGrounding::Coordinate);
+    assert_eq!(plan.window_number, Some(11));
+    assert_eq!(plan.window_x, 161.0);
+    assert_eq!(plan.window_y, 60.0);
+    assert_eq!(
+      artifact.input_action_result.selected_path,
+      auv_driver::InputDeliveryPath::WindowTargetedMouse
+    );
+    assert_eq!(
+      artifact.verification_result.method,
+      VerificationMethod::Custom {
+        name: "activation_only".to_string()
+      }
+    );
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn gated_macos_executor_smoke_is_env_gated() {
+    if std::env::var("AUV_L8B_EXECUTE_SMOKE").ok().as_deref() != Some("1") {
+      eprintln!("skip: set AUV_L8B_EXECUTE_SMOKE=1 to run the side-effecting L8b smoke");
+      return;
+    }
+
+    let window_number = match std::env::var("AUV_L8B_WINDOW_NUMBER")
+      .ok()
+      .and_then(|value| value.parse::<i64>().ok())
+    {
+      Some(window_number) => window_number,
+      None => {
+        eprintln!("skip: AUV_L8B_WINDOW_NUMBER is required for L8b smoke");
+        return;
+      }
+    };
+    let window_x = std::env::var("AUV_L8B_WINDOW_X")
+      .ok()
+      .and_then(|value| value.parse::<f64>().ok())
+      .unwrap_or(10.0);
+    let window_y = std::env::var("AUV_L8B_WINDOW_Y")
+      .ok()
+      .and_then(|value| value.parse::<f64>().ok())
+      .unwrap_or(10.0);
+    let mut executor = MacosCandidateActionExecutor;
+    let result = executor.execute(&CandidateActionDeliveryPlan {
+      selected_method: "pointer-click".to_string(),
+      target_grounding: TargetGrounding::Coordinate,
+      target_query: "env-gated-smoke".to_string(),
+      window_number: Some(window_number),
+      window_title: std::env::var("AUV_L8B_WINDOW_TITLE").ok(),
+      app_bundle_id: std::env::var("AUV_L8B_APP_BUNDLE_ID").ok(),
+      window_x,
+      window_y,
+      click_count: 1,
+    });
+
+    assert!(result.is_ok(), "L8b smoke delivery failed: {result:?}");
   }
 
   fn temp_dir(label: &str) -> PathBuf {

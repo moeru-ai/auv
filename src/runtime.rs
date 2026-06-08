@@ -75,6 +75,11 @@ impl Runtime {
         self.recording.store(),
         &canonical,
       )?;
+    let candidate_action_execution_lineage =
+      crate::run_read::extract_candidate_action_execution_lineage(
+        self.recording.store(),
+        &canonical,
+      )?;
     let validation_lineage =
       crate::run_read::extract_app_validation_lineage(self.recording.store(), &canonical)?;
     Ok(crate::inspect::render_text(
@@ -84,6 +89,7 @@ impl Runtime {
       &detector_recognition_lineage,
       &candidate_promotion_lineage,
       &candidate_action_decision_lineage,
+      &candidate_action_execution_lineage,
       &validation_lineage,
     ))
   }
@@ -150,6 +156,40 @@ impl Runtime {
       |context| {
         crate::candidate_action_decision::record_candidate_action_decision_artifact(
           context, promotion, &request,
+        )
+      },
+    )
+  }
+
+  pub fn list_candidate_action_execution_lineage(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::run_read::CandidateActionExecutionLineage>> {
+    crate::run_read::list_candidate_action_execution_lineage(self.recording.store(), run_id)
+  }
+
+  pub fn record_candidate_action_execution(
+    &self,
+    promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,
+    decision: &crate::candidate_action_decision::CandidateActionDecisionArtifact,
+    request: crate::candidate_action_decision::CandidateActionExecutionRequest,
+    input_action_result: auv_driver::InputActionResult,
+  ) -> AuvResult<
+    crate::recorded_operation::RecordedOperationOutput<(
+      ArtifactRef,
+      crate::candidate_action_decision::CandidateActionExecutionArtifact,
+    )>,
+  > {
+    self.run_recorded_operation(
+      crate::run_builder::RunSpec::new(RunType::Execute, "auv.candidate.action.execute_single"),
+      "Candidate action execution artifact recording",
+      |context| {
+        crate::candidate_action_decision::record_candidate_action_execution_artifact(
+          context,
+          promotion,
+          decision,
+          &request,
+          input_action_result,
         )
       },
     )

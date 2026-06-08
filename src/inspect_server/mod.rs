@@ -330,6 +330,9 @@ async fn get_run(
   let candidate_action_decision_lineage =
     crate::run_read::extract_candidate_action_decision_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
+  let candidate_action_execution_lineage =
+    crate::run_read::extract_candidate_action_execution_lineage(state.store.as_ref(), &run)
+      .map_err(InspectHttpError::from_store)?;
   let validation_lineage =
     crate::run_read::extract_app_validation_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
@@ -341,6 +344,7 @@ async fn get_run(
       detector_recognition_lineage,
       candidate_promotion_lineage,
       candidate_action_decision_lineage,
+      candidate_action_execution_lineage,
       validation_lineage,
     })
     .into_response(),
@@ -521,6 +525,8 @@ struct InspectRunResponse {
   candidate_promotion_lineage: Vec<CandidatePromotionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   candidate_action_decision_lineage: Vec<crate::run_read::CandidateActionDecisionLineage>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  candidate_action_execution_lineage: Vec<crate::run_read::CandidateActionExecutionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   validation_lineage: Vec<AppValidationLineage>,
 }
@@ -896,7 +902,9 @@ mod tests {
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
   };
   use crate::candidate_action_decision::{
-    CandidateActionDecisionArtifact, CandidateActionSideEffect,
+    CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
+    CandidateActionExecutionConsent, CandidateActionExecutionConsentAction,
+    CandidateActionExecutionSideEffect, CandidateActionSideEffect,
   };
   use crate::candidate_promotion::{
     ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
@@ -1949,6 +1957,54 @@ mod tests {
     assert_eq!(
       run["candidate_action_decision_lineage"][0]["verification_result"],
       "not_produced"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["status"],
+      "ready"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["execution_id"],
+      "execution_end_turn"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["source_candidate_action_decision_artifact"]["role"],
+      "candidate-action-decision"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["operation_result_artifact"]["role"],
+      "operation-result"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["candidate_local_id"],
+      "promoted-item_end_turn"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["input_delivery"],
+      "attempted"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["selected_path"],
+      "window_targeted_mouse"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["operation_status"],
+      "completed"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["verification"],
+      "activation_only"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["semantic_matched"],
+      serde_json::Value::Null
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["side_effect"],
+      "single_input_delivered"
+    );
+    assert_eq!(
+      run["candidate_action_execution_lineage"][0]["consent_id"],
+      "consent_execute_end_turn"
     );
     assert!(
       run.get("spans").is_none(),
@@ -3162,6 +3218,178 @@ mod tests {
           }),
           known_limits: vec![
             "L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string(),
+          ],
+        },
+      ),
+      stage_json_artifact(
+        store,
+        root,
+        &run_id,
+        &span_id,
+        7,
+        "operation-result",
+        "candidate-action-operation-result.json",
+        &OperationResult {
+          api_version: OPERATION_RESULT_API_VERSION.to_string(),
+          run_id: run_id.clone(),
+          status: OperationStatus::Completed,
+          operation_id: "candidate.action.execute_single".to_string(),
+          evidence_artifacts: vec![ArtifactRef {
+            run_id: run_id.clone(),
+            artifact_id: ArtifactId::new("artifact_0008"),
+            span_id: span_id.clone(),
+            captured_event_id: None,
+          }],
+          output: OperationOutput::Acknowledged {
+            message: Some(
+              "single candidate action activated; semantic verification remains activation_only"
+                .to_string(),
+            ),
+          },
+          verifications: vec![VerificationResult {
+            api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+            method: VerificationMethod::Custom {
+              name: "activation_only".to_string(),
+            },
+            executed: true,
+            state_changed: false,
+            semantic_matched: None,
+            failure_layer: None,
+            evidence: vec![ArtifactRef {
+              run_id: run_id.clone(),
+              artifact_id: ArtifactId::new("artifact_0008"),
+              span_id: span_id.clone(),
+              captured_event_id: None,
+            }],
+            consumed_candidate_ref: None,
+            consumed_node_ref: None,
+            consumed_recognition_artifact_ref: None,
+            consumed_recognition_id: None,
+            consumed_recognized_item_id: Some("item_end_turn".to_string()),
+            observed_label: Some("End Turn".to_string()),
+          }],
+          freshness_basis: None,
+          known_limits: vec![
+            "activation_only verification records input delivery, not semantic success".to_string(),
+          ],
+        },
+      ),
+      stage_json_artifact(
+        store,
+        root,
+        &run_id,
+        &span_id,
+        8,
+        "candidate-action-execution",
+        "candidate-action-execution.json",
+        &CandidateActionExecutionArtifact {
+          artifact_version: "candidate_action_execution_artifact_v0".to_string(),
+          execution_id: "execution_end_turn".to_string(),
+          source_candidate_action_decision_artifact: ArtifactRef {
+            run_id: run_id.clone(),
+            artifact_id: ArtifactId::new("artifact_0007"),
+            span_id: span_id.clone(),
+            captured_event_id: None,
+          },
+          source_candidate_promotion_artifact: Some(ArtifactRef {
+            run_id: run_id.clone(),
+            artifact_id: ArtifactId::new("artifact_0006"),
+            span_id: span_id.clone(),
+            captured_event_id: None,
+          }),
+          operation_result_artifact: Some(ArtifactRef {
+            run_id: run_id.clone(),
+            artifact_id: ArtifactId::new("artifact_0008"),
+            span_id: span_id.clone(),
+            captured_event_id: None,
+          }),
+          source_promotion_id: "promotion_end_turn".to_string(),
+          source_decision_id: "decision_end_turn".to_string(),
+          candidate_local_id: "promoted-item_end_turn".to_string(),
+          action_resolver_decision: ActionResolverDecision::new(ActionResolverDecisionInput {
+            operation: "candidate.action.decide_only",
+            target_query: "End Turn",
+            primary_method: "pointer-click",
+            selected_method: "pointer-click",
+            fallback_allowed: false,
+            fallback_used: false,
+            fallback_reason: None,
+            policy: "candidate-coordinate-pointer",
+            cursor_disturbance: "warp-visible",
+            press_mechanism: "pointer-click",
+          }),
+          consent: CandidateActionExecutionConsent {
+            consent_id: "consent_execute_end_turn".to_string(),
+            granted_by: "human-review".to_string(),
+            scope_note: "execute exactly one approved candidate action".to_string(),
+            run_id: run_id.as_str().to_string(),
+            source_promotion_id: "promotion_end_turn".to_string(),
+            source_decision_id: "decision_end_turn".to_string(),
+            candidate_local_id: "promoted-item_end_turn".to_string(),
+            approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+            approved_at_millis: 2,
+            evidence_note: "server fixture execution consent".to_string(),
+          },
+          input_action_result: auv_driver::InputActionResult::single_success(
+            auv_driver::InputDeliveryPath::WindowTargetedMouse,
+          ),
+          operation_result: OperationResult {
+            api_version: OPERATION_RESULT_API_VERSION.to_string(),
+            run_id: run_id.clone(),
+            status: OperationStatus::Completed,
+            operation_id: "candidate.action.execute_single".to_string(),
+            evidence_artifacts: vec![ArtifactRef {
+              run_id: run_id.clone(),
+              artifact_id: ArtifactId::new("artifact_0008"),
+              span_id: span_id.clone(),
+              captured_event_id: None,
+            }],
+            output: OperationOutput::Acknowledged {
+              message: Some(
+                "single candidate action activated; semantic verification remains activation_only"
+                  .to_string(),
+              ),
+            },
+            verifications: Vec::new(),
+            freshness_basis: None,
+            known_limits: vec![
+              "activation_only verification records input delivery, not semantic success".to_string(),
+            ],
+          },
+          verification_result: VerificationResult {
+            api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+            method: VerificationMethod::Custom {
+              name: "activation_only".to_string(),
+            },
+            executed: true,
+            state_changed: false,
+            semantic_matched: None,
+            failure_layer: None,
+            evidence: vec![ArtifactRef {
+              run_id: run_id.clone(),
+              artifact_id: ArtifactId::new("artifact_0008"),
+              span_id: span_id.clone(),
+              captured_event_id: None,
+            }],
+            consumed_candidate_ref: None,
+            consumed_node_ref: None,
+            consumed_recognition_artifact_ref: None,
+            consumed_recognition_id: None,
+            consumed_recognized_item_id: Some("item_end_turn".to_string()),
+            observed_label: Some("End Turn".to_string()),
+          },
+          side_effect: CandidateActionExecutionSideEffect::SingleInputDelivered,
+          detail: serde_json::json!({
+            "input_delivery": "attempted",
+            "selected_path": "window_targeted_mouse",
+            "attempt_count": 1,
+            "attempts_succeeded": 1,
+            "operation_status": "completed",
+            "verification": "activation_only",
+            "semantic_matched": null,
+          }),
+          known_limits: vec![
+            "activation_only verification records input delivery, not semantic success".to_string(),
           ],
         },
       ),
