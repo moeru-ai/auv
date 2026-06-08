@@ -1885,10 +1885,14 @@ mod tests {
   }
 
   fn sample_frame(recognition_id: &str, x: i64, y: i64) -> RecognitionResult {
-    sample_frame_with_window_frame(
+    sample_frame_with_box_and_window_frame(
       recognition_id,
-      x,
-      y,
+      RecognitionBox {
+        x,
+        y,
+        width: 300,
+        height: 80,
+      },
       serde_json::json!({
         "x": 0.0,
         "y": 0.0,
@@ -1898,13 +1902,18 @@ mod tests {
     )
   }
 
-  fn sample_frame_with_window_frame(
+  fn sample_frame_with_box_and_window_frame(
     recognition_id: &str,
-    x: i64,
-    y: i64,
-    source_global_logical_bounds: serde_json::Value,
+    box_: RecognitionBox,
+    window_frame: serde_json::Value,
   ) -> RecognitionResult {
     let capture_artifact = sample_artifact_ref();
+    let target_bounds = serde_json::json!({
+      "x": box_.x,
+      "y": box_.y,
+      "width": box_.width,
+      "height": box_.height
+    });
     RecognitionResult {
       recognition_id: recognition_id.to_string(),
       source: RecognitionSource::Custom,
@@ -1922,49 +1931,37 @@ mod tests {
       best: Some(RecognizedItem {
         item_id: "item_text_area".to_string(),
         kind: "text_area".to_string(),
-        box_: RecognitionBox {
-          x,
-          y,
-          width: 300,
-          height: 80,
-        },
+        box_: box_.clone(),
         text: Some("Text Area".to_string()),
         provider_score: Some(0.99),
         detail: json!({
           "backend": "ax-fixture",
-          "source_global_logical_bounds": source_global_logical_bounds,
+          "window_frame": window_frame,
+          "source_global_logical_bounds": target_bounds,
         }),
       }),
       filtered: vec![RecognizedItem {
         item_id: "item_text_area".to_string(),
         kind: "text_area".to_string(),
-        box_: RecognitionBox {
-          x,
-          y,
-          width: 300,
-          height: 80,
-        },
+        box_: box_.clone(),
         text: Some("Text Area".to_string()),
         provider_score: Some(0.99),
         detail: json!({
           "backend": "ax-fixture",
-          "source_global_logical_bounds": source_global_logical_bounds,
+          "window_frame": window_frame,
+          "source_global_logical_bounds": target_bounds,
         }),
       }],
       all: vec![RecognizedItem {
         item_id: "item_text_area".to_string(),
         kind: "text_area".to_string(),
-        box_: RecognitionBox {
-          x,
-          y,
-          width: 300,
-          height: 80,
-        },
+        box_,
         text: Some("Text Area".to_string()),
         provider_score: Some(0.99),
         detail: json!({
           "backend": "ax-fixture",
-          "source_global_logical_bounds": source_global_logical_bounds,
+          "window_frame": window_frame,
+          "source_global_logical_bounds": target_bounds,
         }),
       }],
       detail: json!({"backend": "ax-fixture"}),
@@ -3091,14 +3088,6 @@ mod tests {
     let window_title = std::env::var("AUV_L8B_WINDOW_TITLE").ok();
     let app_bundle_id =
       std::env::var("AUV_L8B_APP_BUNDLE_ID").unwrap_or_else(|_| "com.apple.TextEdit".to_string());
-    let window_x = std::env::var("AUV_L8B_WINDOW_X")
-      .ok()
-      .and_then(|value| value.parse::<i64>().ok())
-      .unwrap_or(161);
-    let window_y = std::env::var("AUV_L8B_WINDOW_Y")
-      .ok()
-      .and_then(|value| value.parse::<i64>().ok())
-      .unwrap_or(60);
     let Some(expected_window_frame) = smoke_expected_window_frame() else {
       eprintln!(
         "skip: AUV_L8B_WINDOW_FRAME_X/Y/WIDTH/HEIGHT are required for readiness-gated recorded L8b smoke"
@@ -3111,22 +3100,24 @@ mod tests {
       "width": expected_window_frame.size.width,
       "height": expected_window_frame.size.height,
     });
+    let Some(target_box) = smoke_focused_target_box(&app_bundle_id) else {
+      eprintln!("skip: unable to capture focused AX target bounds for recorded L8b smoke");
+      return;
+    };
 
     let project_root = temp_dir("candidate-action-execute-recorded-smoke-project");
     let store_root = temp_dir("candidate-action-execute-recorded-smoke-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
     let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
       .expect("runtime should build");
-    let mut recognition_1 = sample_frame_with_window_frame(
+    let mut recognition_1 = sample_frame_with_box_and_window_frame(
       "recognition_frame_1",
-      window_x,
-      window_y,
+      target_box.clone(),
       expected_window_frame.clone(),
     );
-    let mut recognition_2 = sample_frame_with_window_frame(
+    let mut recognition_2 = sample_frame_with_box_and_window_frame(
       "recognition_frame_2",
-      window_x,
-      window_y,
+      target_box,
       expected_window_frame,
     );
     for recognition in [&mut recognition_1, &mut recognition_2] {
@@ -3238,6 +3229,19 @@ mod tests {
 
   fn temp_dir(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()))
+  }
+
+  #[cfg(target_os = "macos")]
+  fn smoke_focused_target_box(app_bundle_id: &str) -> Option<RecognitionBox> {
+    let capture =
+      auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80).ok()?;
+    let focused = capture.snapshot.nodes.iter().find(|node| node.focused)?;
+    Some(RecognitionBox {
+      x: focused.bounds.x,
+      y: focused.bounds.y,
+      width: focused.bounds.width,
+      height: focused.bounds.height,
+    })
   }
 
   #[cfg(target_os = "macos")]
