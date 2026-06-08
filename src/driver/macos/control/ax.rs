@@ -1398,11 +1398,11 @@ fn mark_smart_press_response(
     fallback_allowed,
     primary_error.as_deref(),
   );
-  let strategy = decision.selected_method;
+  let strategy = decision.selected_method.clone();
   let fallback_used = decision.fallback_used;
   augment_smart_press_overlay_annotation(
     &mut response,
-    strategy,
+    &strategy,
     fallback_used,
     primary_error.as_deref(),
   )?;
@@ -1518,8 +1518,8 @@ fn report_value(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::super::action_resolver::ACTION_RESOLVER_VERSION;
   use super::*;
+  use crate::action_resolver_decision::ACTION_RESOLVER_VERSION;
   use crate::contract::{
     AnchorRecheckPrecondition, ArtifactRef, Candidate, CandidateEvidence, CandidateLiveness,
     ControlRequirements, LivenessPreconditions, RatioRegion, TargetGrounding, TargetSpec,

@@ -9,8 +9,8 @@ use crate::contract::{
   FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult,
 };
 use crate::run_read::{
-  AppValidationLineage, CandidatePromotionLineage, CandidatePromotionLineageStatus,
-  DetectorRecognitionLineage,
+  AppValidationLineage, CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
+  CandidatePromotionLineage, CandidatePromotionLineageStatus, DetectorRecognitionLineage,
 };
 use crate::store::CanonicalRun;
 
@@ -20,6 +20,7 @@ pub fn render_text(
   observation_snapshots: &[ObservationSnapshot],
   detector_recognition_lineage: &[DetectorRecognitionLineage],
   candidate_promotion_lineage: &[CandidatePromotionLineage],
+  candidate_action_decision_lineage: &[CandidateActionDecisionLineage],
   validation_lineage: &[AppValidationLineage],
 ) -> String {
   let mut output = format!(
@@ -228,6 +229,55 @@ pub fn render_text(
     }
   }
 
+  output.push_str("\nCandidate Action Decision Lineage:\n");
+  if candidate_action_decision_lineage.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for lineage in candidate_action_decision_lineage {
+      output.push_str(&format!(
+        "- artifact={} status={} decision_id={} source_promotion={} candidate={} resolver={} selected={} side_effect={} input_delivery={} operation_result={} verification_result={}\n",
+        lineage.artifact.artifact_id,
+        render_candidate_action_decision_status(&lineage.status),
+        lineage.decision_id.as_deref().unwrap_or("n/a"),
+        lineage
+          .source_candidate_promotion_artifact
+          .as_ref()
+          .and_then(|artifact| artifact.path.as_deref())
+          .unwrap_or("n/a"),
+        lineage.candidate_local_id.as_deref().unwrap_or("n/a"),
+        lineage.resolver_operation.as_deref().unwrap_or("n/a"),
+        lineage.selected_method.as_deref().unwrap_or("n/a"),
+        lineage.side_effect.as_deref().unwrap_or("n/a"),
+        lineage.input_delivery.as_deref().unwrap_or("n/a"),
+        lineage.operation_result.as_deref().unwrap_or("n/a"),
+        lineage.verification_result.as_deref().unwrap_or("n/a"),
+      ));
+      output.push_str(&format!(
+        "  primary={} fallback_allowed={} fallback_used={} fallback_reason={} policy={} cursor={} press={} issue={}\n",
+        lineage.primary_method.as_deref().unwrap_or("n/a"),
+        lineage
+          .fallback_allowed
+          .map(|value| if value { "true" } else { "false" })
+          .unwrap_or("n/a"),
+        lineage
+          .fallback_used
+          .map(|value| if value { "true" } else { "false" })
+          .unwrap_or("n/a"),
+        lineage.fallback_reason.as_deref().unwrap_or("none"),
+        lineage.policy.as_deref().unwrap_or("n/a"),
+        lineage.cursor_disturbance.as_deref().unwrap_or("n/a"),
+        lineage.press_mechanism.as_deref().unwrap_or("n/a"),
+        lineage.issue.as_deref().unwrap_or("n/a"),
+      ));
+      if !lineage.known_limits.is_empty() {
+        output.push_str(&format!(
+          "  known_limits={}\n",
+          lineage.known_limits.join(" | ")
+        ));
+      }
+    }
+  }
+
   output.push_str("\nValidation Lineage:\n");
   if validation_lineage.is_empty() {
     output.push_str("- none\n");
@@ -281,6 +331,21 @@ fn render_candidate_promotion_status(status: &CandidatePromotionLineageStatus) -
     CandidatePromotionLineageStatus::CaptureArtifactUnresolved => "capture_artifact_unresolved",
     CandidatePromotionLineageStatus::MissingRecognitionEvidence => "missing_recognition_evidence",
     CandidatePromotionLineageStatus::Malformed => "malformed",
+  }
+}
+
+fn render_candidate_action_decision_status(
+  status: &CandidateActionDecisionLineageStatus,
+) -> &'static str {
+  match status {
+    CandidateActionDecisionLineageStatus::Ready => "ready",
+    CandidateActionDecisionLineageStatus::MissingSourceCandidatePromotionArtifact => {
+      "missing_source_candidate_promotion_artifact"
+    }
+    CandidateActionDecisionLineageStatus::SourceCandidatePromotionArtifactUnresolved => {
+      "source_candidate_promotion_artifact_unresolved"
+    }
+    CandidateActionDecisionLineageStatus::Malformed => "malformed",
   }
 }
 
@@ -347,7 +412,8 @@ mod tests {
     VerificationResult,
   };
   use crate::run_read::{
-    AppValidationLineage, ArtifactRefLineage, CandidatePromotionLineage,
+    AppValidationLineage, ArtifactRefLineage, CandidateActionDecisionLineage,
+    CandidateActionDecisionLineageStatus, CandidatePromotionLineage,
     CandidatePromotionLineageStatus, DetectorRecognitionArtifactRefLineage,
     DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
   };
@@ -605,6 +671,49 @@ mod tests {
       ],
       issue: None,
     }];
+    let candidate_action_decision_lineage = vec![CandidateActionDecisionLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_candidate_action_decision"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_candidate_action_decision")),
+        role: Some("candidate-action-decision".to_string()),
+        path: Some("artifacts/candidate-action-decision.json".to_string()),
+        summary: Some("candidate action decision".to_string()),
+        resolved: true,
+      },
+      status: CandidateActionDecisionLineageStatus::Ready,
+      decision_id: Some("decision_end_turn".to_string()),
+      source_candidate_promotion_artifact: Some(ArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_candidate_promotion"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_candidate_promotion")),
+        role: Some("candidate-promotion".to_string()),
+        path: Some("artifacts/candidate-promotion.json".to_string()),
+        summary: Some("candidate promotion".to_string()),
+        resolved: true,
+      }),
+      source_promotion_id: Some("promotion_end_turn".to_string()),
+      candidate_local_id: Some("promoted-item_end_turn".to_string()),
+      resolver_operation: Some("candidate.action.decide_only".to_string()),
+      selected_method: Some("pointer-click".to_string()),
+      primary_method: Some("pointer-click".to_string()),
+      fallback_allowed: Some(false),
+      fallback_used: Some(false),
+      fallback_reason: None,
+      policy: Some("candidate-coordinate-pointer".to_string()),
+      cursor_disturbance: Some("warp-visible".to_string()),
+      press_mechanism: Some("pointer-click".to_string()),
+      side_effect: Some("none_decide_only".to_string()),
+      input_delivery: Some("not_attempted".to_string()),
+      operation_result: Some("not_produced".to_string()),
+      verification_result: Some("not_produced".to_string()),
+      known_limits: vec![
+        "L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string(),
+      ],
+      issue: None,
+    }];
 
     let output = render_text(
       &run,
@@ -612,6 +721,7 @@ mod tests {
       &observation_snapshots,
       &detector_recognition_lineage,
       &candidate_promotion_lineage,
+      &candidate_action_decision_lineage,
       &validation_lineage,
     );
 
@@ -641,6 +751,16 @@ mod tests {
     assert!(output.contains("freshness_source=artifacts/capture.png"));
     assert!(output.contains("consent_scope=candidate_promotion_only"));
     assert!(output.contains("permission_by=human-review"));
+    assert!(output.contains("Candidate Action Decision Lineage:"));
+    assert!(output.contains("artifact=artifact_candidate_action_decision"));
+    assert!(output.contains("decision_id=decision_end_turn"));
+    assert!(output.contains("resolver=candidate.action.decide_only"));
+    assert!(output.contains("selected=pointer-click"));
+    assert!(output.contains("side_effect=none_decide_only"));
+    assert!(output.contains("input_delivery=not_attempted"));
+    assert!(output.contains("operation_result=not_produced"));
+    assert!(output.contains("verification_result=not_produced"));
+    assert!(output.contains("cursor=warp-visible"));
     assert!(output.contains("Validation Lineage:"));
     assert!(
       output

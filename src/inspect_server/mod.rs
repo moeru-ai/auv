@@ -327,6 +327,9 @@ async fn get_run(
   let candidate_promotion_lineage =
     crate::run_read::extract_candidate_promotion_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
+  let candidate_action_decision_lineage =
+    crate::run_read::extract_candidate_action_decision_lineage(state.store.as_ref(), &run)
+      .map_err(InspectHttpError::from_store)?;
   let validation_lineage =
     crate::run_read::extract_app_validation_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
@@ -337,6 +340,7 @@ async fn get_run(
       observation_snapshots,
       detector_recognition_lineage,
       candidate_promotion_lineage,
+      candidate_action_decision_lineage,
       validation_lineage,
     })
     .into_response(),
@@ -515,6 +519,8 @@ struct InspectRunResponse {
   detector_recognition_lineage: Vec<DetectorRecognitionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   candidate_promotion_lineage: Vec<CandidatePromotionLineage>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  candidate_action_decision_lineage: Vec<crate::run_read::CandidateActionDecisionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   validation_lineage: Vec<AppValidationLineage>,
 }
@@ -885,8 +891,12 @@ mod tests {
   use tower::ServiceExt;
 
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
+  use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::app::{
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
+  };
+  use crate::candidate_action_decision::{
+    CandidateActionDecisionArtifact, CandidateActionSideEffect,
   };
   use crate::candidate_promotion::{
     ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
@@ -1899,6 +1909,46 @@ mod tests {
     assert_eq!(
       run["candidate_promotion_lineage"][0]["permission_granted_by"],
       "human-review"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["status"],
+      "ready"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["decision_id"],
+      "decision_end_turn"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["source_candidate_promotion_artifact"]["role"],
+      "candidate-promotion"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["candidate_local_id"],
+      "promoted-item_end_turn"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["resolver_operation"],
+      "candidate.action.decide_only"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["selected_method"],
+      "pointer-click"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["side_effect"],
+      "none_decide_only"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["input_delivery"],
+      "not_attempted"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["operation_result"],
+      "not_produced"
+    );
+    assert_eq!(
+      run["candidate_action_decision_lineage"][0]["verification_result"],
+      "not_produced"
     );
     assert!(
       run.get("spans").is_none(),
@@ -3070,6 +3120,48 @@ mod tests {
           }),
           known_limits: vec![
             "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
+          ],
+        },
+      ),
+      stage_json_artifact(
+        store,
+        root,
+        &run_id,
+        &span_id,
+        6,
+        "candidate-action-decision",
+        "candidate-action-decision.json",
+        &CandidateActionDecisionArtifact {
+          artifact_version: "candidate_action_decision_artifact_v0".to_string(),
+          decision_id: "decision_end_turn".to_string(),
+          source_candidate_promotion_artifact: Some(ArtifactRef {
+            run_id: run_id.clone(),
+            artifact_id: ArtifactId::new("artifact_0006"),
+            span_id: span_id.clone(),
+            captured_event_id: None,
+          }),
+          source_promotion_id: "promotion_end_turn".to_string(),
+          candidate_local_id: "promoted-item_end_turn".to_string(),
+          action_resolver_decision: ActionResolverDecision::new(ActionResolverDecisionInput {
+            operation: "candidate.action.decide_only",
+            target_query: "End Turn",
+            primary_method: "pointer-click",
+            selected_method: "pointer-click",
+            fallback_allowed: false,
+            fallback_used: false,
+            fallback_reason: None,
+            policy: "candidate-coordinate-pointer",
+            cursor_disturbance: "warp-visible",
+            press_mechanism: "pointer-click",
+          }),
+          side_effect: CandidateActionSideEffect::NoneDecideOnly,
+          detail: serde_json::json!({
+            "input_delivery": "not_attempted",
+            "operation_result": "not_produced",
+            "verification_result": "not_produced",
+          }),
+          known_limits: vec![
+            "L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string(),
           ],
         },
       ),

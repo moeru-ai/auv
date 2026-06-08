@@ -70,6 +70,11 @@ impl Runtime {
       crate::run_read::extract_detector_recognition_lineage(self.recording.store(), &canonical)?;
     let candidate_promotion_lineage =
       crate::run_read::extract_candidate_promotion_lineage(self.recording.store(), &canonical)?;
+    let candidate_action_decision_lineage =
+      crate::run_read::extract_candidate_action_decision_lineage(
+        self.recording.store(),
+        &canonical,
+      )?;
     let validation_lineage =
       crate::run_read::extract_app_validation_lineage(self.recording.store(), &canonical)?;
     Ok(crate::inspect::render_text(
@@ -78,6 +83,7 @@ impl Runtime {
       &observation_snapshots,
       &detector_recognition_lineage,
       &candidate_promotion_lineage,
+      &candidate_action_decision_lineage,
       &validation_lineage,
     ))
   }
@@ -119,6 +125,34 @@ impl Runtime {
     run_id: &str,
   ) -> AuvResult<Vec<crate::run_read::CandidatePromotionLineage>> {
     crate::run_read::list_candidate_promotion_lineage(self.recording.store(), run_id)
+  }
+
+  pub fn list_candidate_action_decision_lineage(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::run_read::CandidateActionDecisionLineage>> {
+    crate::run_read::list_candidate_action_decision_lineage(self.recording.store(), run_id)
+  }
+
+  pub fn record_candidate_action_decision(
+    &self,
+    promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,
+    request: crate::candidate_action_decision::CandidateActionDecisionRequest,
+  ) -> AuvResult<
+    crate::recorded_operation::RecordedOperationOutput<(
+      ArtifactRef,
+      crate::candidate_action_decision::CandidateActionDecisionArtifact,
+    )>,
+  > {
+    self.run_recorded_operation(
+      crate::run_builder::RunSpec::new(RunType::Execute, "auv.candidate.action.decide_only"),
+      "Candidate action decide-only artifact recording",
+      |context| {
+        crate::candidate_action_decision::record_candidate_action_decision_artifact(
+          context, promotion, &request,
+        )
+      },
+    )
   }
 
   pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {

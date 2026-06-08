@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use serde::de::DeserializeOwned;
 
 use crate::app::AppValidation;
+use crate::candidate_action_decision::CandidateActionDecisionArtifact;
 use crate::candidate_promotion::{CandidatePromotion, PromotionProjection, PromotionRefusal};
 use crate::candidate_promotion_recording::CandidatePromotionArtifact;
 use crate::contract::{
@@ -32,6 +33,7 @@ const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str =
   "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text";
 const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
 const CANDIDATE_PROMOTION_ARTIFACT_ROLE: &str = "candidate-promotion";
+const CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE: &str = "candidate-action-decision";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct AppValidationLineage {
@@ -132,6 +134,40 @@ pub struct CandidatePromotionLineage {
   pub issue: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateActionDecisionLineageStatus {
+  Ready,
+  MissingSourceCandidatePromotionArtifact,
+  SourceCandidatePromotionArtifactUnresolved,
+  Malformed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct CandidateActionDecisionLineage {
+  pub artifact: ArtifactRefLineage,
+  pub status: CandidateActionDecisionLineageStatus,
+  pub decision_id: Option<String>,
+  pub source_candidate_promotion_artifact: Option<ArtifactRefLineage>,
+  pub source_promotion_id: Option<String>,
+  pub candidate_local_id: Option<String>,
+  pub resolver_operation: Option<String>,
+  pub selected_method: Option<String>,
+  pub primary_method: Option<String>,
+  pub fallback_allowed: Option<bool>,
+  pub fallback_used: Option<bool>,
+  pub fallback_reason: Option<String>,
+  pub policy: Option<String>,
+  pub cursor_disturbance: Option<String>,
+  pub press_mechanism: Option<String>,
+  pub side_effect: Option<String>,
+  pub input_delivery: Option<String>,
+  pub operation_result: Option<String>,
+  pub verification_result: Option<String>,
+  pub known_limits: Vec<String>,
+  pub issue: Option<String>,
+}
+
 pub(crate) fn list_verifications(
   store: &LocalStore,
   run_id: &str,
@@ -208,6 +244,14 @@ pub(crate) fn list_candidate_promotion_lineage(
 ) -> AuvResult<Vec<CandidatePromotionLineage>> {
   let run = store.read_run(run_id)?;
   extract_candidate_promotion_lineage(store, &run)
+}
+
+pub(crate) fn list_candidate_action_decision_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<CandidateActionDecisionLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_candidate_action_decision_lineage(store, &run)
 }
 
 pub(crate) fn extract_app_validation_lineage(
@@ -426,6 +470,58 @@ pub(crate) fn extract_candidate_promotion_lineage(
   Ok(lineage)
 }
 
+pub(crate) fn extract_candidate_action_decision_lineage(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<CandidateActionDecisionLineage>> {
+  let mut lineage = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let decision_artifact = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      lineage.push(malformed_candidate_action_decision_lineage(
+        decision_artifact,
+        format!(
+          "candidate-action-decision artifact mime_type {} is not JSON",
+          artifact.mime_type
+        ),
+      ));
+      continue;
+    }
+
+    let parsed = read_artifact_bytes(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+    )
+    .and_then(|(bytes, artifact_path)| {
+      serde_json::from_slice::<CandidateActionDecisionArtifact>(&bytes).map_err(|error| {
+        format!(
+          "failed to parse candidate-action-decision artifact {} for run {} from {}: {error}",
+          artifact.artifact_id,
+          run.run.run_id,
+          artifact_path.display()
+        )
+      })
+    });
+
+    match parsed {
+      Ok(decision) => lineage.push(candidate_action_decision_lineage_entry(
+        run, artifact, decision,
+      )),
+      Err(error) => lineage.push(malformed_candidate_action_decision_lineage(
+        decision_artifact,
+        error,
+      )),
+    }
+  }
+  Ok(lineage)
+}
+
 fn is_json_mime(mime_type: &str) -> bool {
   mime_type == "application/json" || mime_type.ends_with("+json")
 }
@@ -551,6 +647,74 @@ fn candidate_promotion_lineage_entry(
   }
 }
 
+fn candidate_action_decision_lineage_entry(
+  run: &CanonicalRun,
+  artifact: &ArtifactRecordV1Alpha1,
+  decision: CandidateActionDecisionArtifact,
+) -> CandidateActionDecisionLineage {
+  let source_candidate_promotion_artifact = decision
+    .source_candidate_promotion_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let (status, issue) = classify_candidate_action_decision_lineage(
+    &decision,
+    source_candidate_promotion_artifact.as_ref(),
+  );
+
+  CandidateActionDecisionLineage {
+    artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
+    status,
+    decision_id: Some(decision.decision_id),
+    source_candidate_promotion_artifact,
+    source_promotion_id: Some(decision.source_promotion_id),
+    candidate_local_id: Some(decision.candidate_local_id),
+    resolver_operation: Some(decision.action_resolver_decision.operation),
+    selected_method: Some(decision.action_resolver_decision.selected_method),
+    primary_method: Some(decision.action_resolver_decision.primary_method),
+    fallback_allowed: Some(decision.action_resolver_decision.fallback_allowed),
+    fallback_used: Some(decision.action_resolver_decision.fallback_used),
+    fallback_reason: decision.action_resolver_decision.fallback_reason,
+    policy: Some(decision.action_resolver_decision.policy),
+    cursor_disturbance: Some(decision.action_resolver_decision.cursor_disturbance),
+    press_mechanism: Some(decision.action_resolver_decision.press_mechanism),
+    side_effect: Some(candidate_action_side_effect_string(&decision.side_effect)),
+    input_delivery: detail_string(&decision.detail, &["input_delivery"]),
+    operation_result: detail_string(&decision.detail, &["operation_result"]),
+    verification_result: detail_string(&decision.detail, &["verification_result"]),
+    known_limits: decision.known_limits,
+    issue,
+  }
+}
+
+fn malformed_candidate_action_decision_lineage(
+  artifact: ArtifactRefLineage,
+  issue: String,
+) -> CandidateActionDecisionLineage {
+  CandidateActionDecisionLineage {
+    artifact,
+    status: CandidateActionDecisionLineageStatus::Malformed,
+    decision_id: None,
+    source_candidate_promotion_artifact: None,
+    source_promotion_id: None,
+    candidate_local_id: None,
+    resolver_operation: None,
+    selected_method: None,
+    primary_method: None,
+    fallback_allowed: None,
+    fallback_used: None,
+    fallback_reason: None,
+    policy: None,
+    cursor_disturbance: None,
+    press_mechanism: None,
+    side_effect: None,
+    input_delivery: None,
+    operation_result: None,
+    verification_result: None,
+    known_limits: Vec::new(),
+    issue: Some(issue),
+  }
+}
+
 fn classify_detector_recognition_lineage(
   recognition: &RecognitionResult,
   capture_artifact: Option<&DetectorRecognitionArtifactRefLineage>,
@@ -625,6 +789,30 @@ fn classify_candidate_promotion_lineage(
   (CandidatePromotionLineageStatus::Ready, None)
 }
 
+fn classify_candidate_action_decision_lineage(
+  decision: &CandidateActionDecisionArtifact,
+  source_candidate_promotion_artifact: Option<&ArtifactRefLineage>,
+) -> (CandidateActionDecisionLineageStatus, Option<String>) {
+  if decision.source_candidate_promotion_artifact.is_none() {
+    return (
+      CandidateActionDecisionLineageStatus::MissingSourceCandidatePromotionArtifact,
+      Some("source_candidate_promotion_artifact is missing".to_string()),
+    );
+  }
+  if let Some(source_candidate_promotion_artifact) = source_candidate_promotion_artifact
+    && !source_candidate_promotion_artifact.resolved
+  {
+    return (
+      CandidateActionDecisionLineageStatus::SourceCandidatePromotionArtifactUnresolved,
+      Some(
+        "source_candidate_promotion_artifact could not be resolved from recorded run artifacts"
+          .to_string(),
+      ),
+    );
+  }
+  (CandidateActionDecisionLineageStatus::Ready, None)
+}
+
 fn artifact_record_lineage(
   run_id: crate::trace::RunId,
   artifact: &ArtifactRecordV1Alpha1,
@@ -692,6 +880,16 @@ fn consent_action_string(action: &crate::candidate_promotion::ConsentAction) -> 
   match action {
     crate::candidate_promotion::ConsentAction::PromoteRecognitionToCandidate => {
       "promote_recognition_to_candidate".to_string()
+    }
+  }
+}
+
+fn candidate_action_side_effect_string(
+  side_effect: &crate::candidate_action_decision::CandidateActionSideEffect,
+) -> String {
+  match side_effect {
+    crate::candidate_action_decision::CandidateActionSideEffect::NoneDecideOnly => {
+      "none_decide_only".to_string()
     }
   }
 }
@@ -819,16 +1017,22 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    CANDIDATE_PROMOTION_ARTIFACT_ROLE, CandidatePromotionLineageStatus,
+    CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE, CANDIDATE_PROMOTION_ARTIFACT_ROLE,
+    CandidateActionDecisionLineageStatus, CandidatePromotionLineageStatus,
     DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
     NATIVE_TEXT_CANONICAL_TAXONOMY_ID, NATIVE_TEXT_LEGACY_TAXONOMY_ID,
-    extract_app_validation_lineage, extract_candidate_promotion_lineage,
-    extract_detector_recognition_lineage, extract_observation_snapshots, extract_verifications,
-    list_app_validation_lineage, list_candidate_promotion_lineage,
+    extract_app_validation_lineage, extract_candidate_action_decision_lineage,
+    extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
+    extract_observation_snapshots, extract_verifications, list_app_validation_lineage,
+    list_candidate_action_decision_lineage, list_candidate_promotion_lineage,
     list_detector_recognition_lineage, list_observation_snapshots, list_verifications,
   };
+  use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::app::{
     AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
+  };
+  use crate::candidate_action_decision::{
+    CandidateActionDecisionArtifact, CandidateActionSideEffect,
   };
   use crate::candidate_promotion::{
     ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
@@ -1535,6 +1739,168 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[test]
+  fn candidate_action_decision_lineage_extracts_decide_only_and_error_states() {
+    let root = temp_dir("run-read-candidate-action-decision");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_candidate_action_decision");
+    let span = dummy_span(&run.root_span_id);
+    let source_promotion_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      CANDIDATE_PROMOTION_ARTIFACT_ROLE,
+      "candidate-promotion-source.json",
+      &serde_json::json!({"fixture": "candidate-promotion"}),
+    );
+
+    let ready_decision = candidate_action_decision_artifact(
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_promotion_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_promotion_artifact.event_id.clone(),
+      }),
+      "decision_ready",
+      "promotion_ready",
+      "promoted-item_end_turn",
+    );
+    let missing_source_decision = candidate_action_decision_artifact(
+      None,
+      "decision_missing_source",
+      "promotion_ready",
+      "promoted-item_end_turn",
+    );
+    let unresolved_source_decision = candidate_action_decision_artifact(
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_missing_promotion"),
+        span_id: span.span_id.clone(),
+        captured_event_id: Some(EventId::new("event_missing_promotion")),
+      }),
+      "decision_unresolved_source",
+      "promotion_ready",
+      "promoted-item_end_turn",
+    );
+
+    let artifacts = vec![
+      source_promotion_artifact,
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        1,
+        CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+        "candidate-action-decision-ready.json",
+        &ready_decision,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        2,
+        CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+        "candidate-action-decision-missing-source.json",
+        &missing_source_decision,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        3,
+        CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+        "candidate-action-decision-unresolved-source.json",
+        &unresolved_source_decision,
+      ),
+      stage_text_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        4,
+        CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+        "candidate-action-decision-malformed.json",
+        "{ not valid json",
+      ),
+    ];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_candidate_action_decision")
+      .expect("run should read back");
+    let extracted = extract_candidate_action_decision_lineage(&store, &canonical)
+      .expect("candidate action decision lineage should extract");
+    assert_eq!(extracted.len(), 4);
+    assert_eq!(
+      extracted[0].status,
+      CandidateActionDecisionLineageStatus::Ready
+    );
+    assert_eq!(extracted[0].decision_id.as_deref(), Some("decision_ready"));
+    assert_eq!(
+      extracted[0].resolver_operation.as_deref(),
+      Some("candidate.action.decide_only")
+    );
+    assert_eq!(
+      extracted[0].selected_method.as_deref(),
+      Some("pointer-click")
+    );
+    assert_eq!(
+      extracted[0].side_effect.as_deref(),
+      Some("none_decide_only")
+    );
+    assert_eq!(
+      extracted[0].input_delivery.as_deref(),
+      Some("not_attempted")
+    );
+    assert_eq!(
+      extracted[0].operation_result.as_deref(),
+      Some("not_produced")
+    );
+    assert_eq!(
+      extracted[0].verification_result.as_deref(),
+      Some("not_produced")
+    );
+    assert_eq!(
+      extracted[1].status,
+      CandidateActionDecisionLineageStatus::MissingSourceCandidatePromotionArtifact
+    );
+    assert_eq!(
+      extracted[2].status,
+      CandidateActionDecisionLineageStatus::SourceCandidatePromotionArtifactUnresolved
+    );
+    assert_eq!(
+      extracted[3].status,
+      CandidateActionDecisionLineageStatus::Malformed
+    );
+    assert!(
+      extracted[3]
+        .issue
+        .as_deref()
+        .unwrap_or_default()
+        .contains("failed to parse candidate-action-decision artifact")
+    );
+
+    let listed =
+      list_candidate_action_decision_lineage(&store, "run_read_candidate_action_decision")
+        .expect("candidate action decision lineage should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
   fn temp_dir(label: &str) -> PathBuf {
     let path = env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()));
     let _ = fs::remove_dir_all(&path);
@@ -1680,6 +2046,42 @@ mod tests {
         },
       )
       .expect("artifact should stage")
+  }
+
+  fn candidate_action_decision_artifact(
+    source_candidate_promotion_artifact: Option<ArtifactRef>,
+    decision_id: &str,
+    source_promotion_id: &str,
+    candidate_local_id: &str,
+  ) -> CandidateActionDecisionArtifact {
+    CandidateActionDecisionArtifact {
+      artifact_version: "candidate_action_decision_artifact_v0".to_string(),
+      decision_id: decision_id.to_string(),
+      source_candidate_promotion_artifact,
+      source_promotion_id: source_promotion_id.to_string(),
+      candidate_local_id: candidate_local_id.to_string(),
+      action_resolver_decision: ActionResolverDecision::new(ActionResolverDecisionInput {
+        operation: "candidate.action.decide_only",
+        target_query: "End Turn",
+        primary_method: "pointer-click",
+        selected_method: "pointer-click",
+        fallback_allowed: false,
+        fallback_used: false,
+        fallback_reason: None,
+        policy: "candidate-coordinate-pointer",
+        cursor_disturbance: "warp-visible",
+        press_mechanism: "pointer-click",
+      }),
+      side_effect: CandidateActionSideEffect::NoneDecideOnly,
+      detail: json!({
+        "input_delivery": "not_attempted",
+        "operation_result": "not_produced",
+        "verification_result": "not_produced",
+      }),
+      known_limits: vec![
+        "L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string(),
+      ],
+    }
   }
 
   fn detector_recognition_result(
