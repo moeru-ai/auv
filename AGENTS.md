@@ -121,6 +121,34 @@ A deferral marker is not approval to implement the deferred work later
 without owner involvement. It is documentation of an existing decision so
 the decision survives the next read of the code.
 
+## Collabi Hard Gate
+
+When working in `/Users/liuziheng/https-github-com-moeru-ai-auv`, humans and
+agents must treat Collabi coordination as a hard pre-edit gate, not a polite
+reminder.
+
+Before editing tracked files, first read:
+
+- `CLAUDE.md`
+- `skills/auv-collabi-pairing/SKILL.md`
+
+Then follow the skill's start-of-task workflow:
+
+- inspect the current Collabi shared state
+- summarize overlap risk
+- choose one narrow slice
+
+If the intended repo, scope, or path overlaps an active claim, stop before
+editing and report the conflict.
+
+Default Collabi mode is read-only. Do not claim, check in, or pretend a slice
+was recorded unless the human explicitly granted writer access for the current
+task. If writer access was granted, use the human-facing writer console
+documented by the skill and its workflow reference.
+
+If the Collabi gate was not completed for the current slice, do not edit
+tracked files. Read-only investigation is allowed; file edits are not.
+
 ## Current Contract Seam
 
 The active macOS automation seam is:
