@@ -1,12 +1,9 @@
-use std::fmt::Write as _;
-
+use comfy_table::{Cell, Table, presets::NOTHING};
 use serde::Serialize;
 
 use crate::library::{
   Grounding, LibraryQuery, LibraryQueryResult, ResolvedLibraryScope, SteamInstalledApp,
 };
-
-const LIBRARY_SUMMARY_HEADER: &str = "APPID    NAME     INSTALL DIR  SOURCE             GROUNDING";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct LibraryLsJsonOutput<'a> {
@@ -28,33 +25,42 @@ pub fn build_library_ls_json_output(result: &LibraryQueryResult) -> LibraryLsJso
 }
 
 pub fn render_library_summary(result: &LibraryQueryResult) -> String {
-  let mut summary = LIBRARY_SUMMARY_HEADER.to_string();
+  let mut table = Table::new();
+  table.load_preset(NOTHING);
+  table.set_header(["APPID", "NAME", "INSTALL DIR", "SOURCE", "GROUNDING"]);
 
   if result.apps.is_empty() {
+    let mut summary = render_table(table);
     summary.push_str("\n(no matching installed Steam apps)");
     return summary;
   }
 
   for app in &result.apps {
-    write!(
-      summary,
-      "\n{:<9}{:<9}{:<13}{:<19}{}",
-      app.appid,
-      app.name,
-      app.install_dir,
-      app.source,
-      grounding_label(app.grounding)
-    )
-    .expect("writing to String should not fail");
+    table.add_row([
+      Cell::new(app.appid),
+      Cell::new(&app.name),
+      Cell::new(&app.install_dir),
+      Cell::new(&app.source),
+      Cell::new(grounding_label(app.grounding)),
+    ]);
   }
 
-  summary
+  render_table(table)
 }
 
 fn grounding_label(grounding: Grounding) -> &'static str {
   match grounding {
     Grounding::Strong => "strong",
   }
+}
+
+fn render_table(table: Table) -> String {
+  table
+    .to_string()
+    .lines()
+    .map(str::trim)
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 #[cfg(test)]
@@ -114,6 +120,23 @@ mod tests {
   }
 
   #[test]
+  fn summary_output_expands_columns_for_long_values() {
+    let mut result = result();
+    result.apps[0].name = "A Very Long Steam Game".to_string();
+    result.apps[0].install_dir = "A Very Long Steam Game".to_string();
+
+    let summary = render_library_summary(&result);
+
+    assert_eq!(
+      summary,
+      concat!(
+        "APPID    NAME                    INSTALL DIR             SOURCE             GROUNDING\n",
+        "2379780  A Very Long Steam Game  A Very Long Steam Game  local_appmanifest  strong",
+      )
+    );
+  }
+
+  #[test]
   fn summary_output_reports_empty_matches() {
     let mut result = result();
     result.apps.clear();
@@ -122,7 +145,7 @@ mod tests {
 
     assert_eq!(
       summary,
-      "APPID    NAME     INSTALL DIR  SOURCE             GROUNDING\n(no matching installed Steam apps)"
+      "APPID  NAME  INSTALL DIR  SOURCE  GROUNDING\n(no matching installed Steam apps)"
     );
   }
 }
