@@ -24,10 +24,27 @@ const OPERATION_RESULT_ARTIFACT_ROLE: &str = "operation-result";
 static TEMP_JSON_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CandidateActionKind {
+  Click,
+  TypeText { text: String },
+}
+
+impl CandidateActionKind {
+  pub fn label(&self) -> &'static str {
+    match self {
+      Self::Click => "click",
+      Self::TypeText { .. } => "type-text",
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CandidateActionDecisionRequest {
   pub(crate) decision_id: String,
   pub(crate) source_candidate_promotion_artifact: Option<ArtifactRef>,
   pub(crate) candidate_local_id: Option<String>,
+  pub(crate) action: CandidateActionKind,
   pub(crate) artifact_role: String,
   pub(crate) artifact_label: String,
   pub(crate) artifact_note: String,
@@ -40,6 +57,7 @@ impl CandidateActionDecisionRequest {
       decision_id: decision_id.clone(),
       source_candidate_promotion_artifact: None,
       candidate_local_id: None,
+      action: CandidateActionKind::Click,
       artifact_role: CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE.to_string(),
       artifact_label: artifact_label.into(),
       artifact_note: "Decide-only candidate action resolver decision artifact.".to_string(),
@@ -53,6 +71,11 @@ impl CandidateActionDecisionRequest {
 
   pub fn with_candidate_local_id(mut self, candidate_local_id: impl Into<String>) -> Self {
     self.candidate_local_id = Some(candidate_local_id.into());
+    self
+  }
+
+  pub fn with_action(mut self, action: CandidateActionKind) -> Self {
+    self.action = action;
     self
   }
 }
@@ -91,6 +114,7 @@ pub struct CandidateActionExecutionRequest {
   pub(crate) post_action_probe: Option<CandidateActionPostActionProbe>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub(crate) post_action_verifications: Vec<VerificationResult>,
+  pub(crate) action: CandidateActionKind,
   pub(crate) artifact_role: String,
   pub(crate) artifact_label: String,
   pub(crate) artifact_note: String,
@@ -108,6 +132,7 @@ impl CandidateActionExecutionRequest {
       readiness_debug: None,
       post_action_probe: None,
       post_action_verifications: Vec::new(),
+      action: CandidateActionKind::Click,
       artifact_role: CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE.to_string(),
       artifact_label: artifact_label.into(),
       artifact_note: "Single-action candidate execution artifact.".to_string(),
@@ -146,6 +171,11 @@ impl CandidateActionExecutionRequest {
 
   pub fn with_post_action_verification(mut self, verification: VerificationResult) -> Self {
     self.post_action_verifications.push(verification);
+    self
+  }
+
+  pub fn with_action(mut self, action: CandidateActionKind) -> Self {
+    self.action = action;
     self
   }
 }
@@ -194,6 +224,27 @@ pub struct CandidateActionExecutionConsent {
 #[serde(rename_all = "snake_case")]
 pub enum CandidateActionExecutionConsentAction {
   ExecuteSingleCandidateAction,
+  Click,
+  TypeText { text: String },
+}
+
+impl CandidateActionExecutionConsentAction {
+  pub(crate) fn from_action(action: &CandidateActionKind) -> Self {
+    match action {
+      CandidateActionKind::Click => Self::Click,
+      CandidateActionKind::TypeText { text } => Self::TypeText { text: text.clone() },
+    }
+  }
+
+  fn matches_action(&self, action: &CandidateActionKind) -> bool {
+    match self {
+      Self::ExecuteSingleCandidateAction => matches!(action, CandidateActionKind::Click),
+      Self::Click => matches!(action, CandidateActionKind::Click),
+      Self::TypeText { text } => {
+        matches!(action, CandidateActionKind::TypeText { text: expected } if expected == text)
+      }
+    }
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -227,9 +278,11 @@ pub enum CandidateActionExecutionSideEffect {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CandidateActionDeliveryPlan {
+  pub action: CandidateActionKind,
   pub selected_method: String,
   pub target_grounding: TargetGrounding,
   pub target_query: String,
+  pub focused_target: bool,
   pub window_number: Option<i64>,
   pub window_title: Option<String>,
   pub app_bundle_id: Option<String>,
@@ -372,7 +425,7 @@ pub fn build_candidate_action_decision_artifact(
     }
   };
   let candidate = select_candidate(candidates, request)?;
-  let action_resolver_decision = decide_candidate_action(candidate)?;
+  let action_resolver_decision = decide_candidate_action(candidate, &request.action)?;
   let known_limits = artifact_known_limits(promotion, candidate);
 
   Ok(CandidateActionDecisionArtifact {
@@ -393,6 +446,7 @@ pub fn build_candidate_action_decision_artifact(
       "source_promotion_decision": "promoted",
       "source_promotion_id": promotion.promotion_id,
       "candidate_local_id": candidate.candidate_local_id,
+      "action": request.action,
       "target_grounding": target_grounding_kind(candidate.target_spec.grounding),
     }),
     known_limits,
@@ -565,6 +619,7 @@ pub fn build_candidate_action_execution_artifact(
     "source_promotion_id": promotion.promotion_id,
     "source_decision_id": decision.decision_id,
     "candidate_local_id": candidate.candidate_local_id,
+    "action": decision_action(decision),
     "readiness_debug": request.readiness_debug.clone().unwrap_or(serde_json::Value::Null),
   });
 
@@ -716,6 +771,7 @@ pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
       .map_err(|error| CandidateActionDecisionError::NotReady {
         reason: error.to_string(),
       })?;
+  let readiness = enforce_action_specific_readiness(&plan, readiness);
   let mut request = request.clone().with_readiness(readiness.clone());
   if let Some(debug) = executor.readiness_debug() {
     request = request.with_readiness_debug(debug);
@@ -800,11 +856,14 @@ pub fn delivery_plan(
     .ok_or(CandidateActionDecisionError::MissingWindowReference)?;
   let (window_x, window_y) = candidate_box_center(candidate)?;
   let expected_window_frame = candidate_expected_window_frame(candidate);
+  let action = decision_action(decision);
 
   Ok(CandidateActionDeliveryPlan {
+    action,
     selected_method: decision.action_resolver_decision.selected_method.clone(),
     target_grounding: candidate.target_spec.grounding,
     target_query: decision.action_resolver_decision.target_query.clone(),
+    focused_target: candidate_is_focused_target(candidate),
     window_number: window_ref.window_number,
     window_title: window_ref.window_title_substring.clone(),
     app_bundle_id: Some(window_ref.app_bundle_id.clone()),
@@ -840,6 +899,15 @@ fn candidate_box_center(candidate: &Candidate) -> Result<(f64, f64), CandidateAc
     x as f64 + width as f64 / 2.0,
     y as f64 + height as f64 / 2.0,
   ))
+}
+
+fn candidate_is_focused_target(candidate: &Candidate) -> bool {
+  candidate
+    .evidence
+    .observation
+    .pointer("/detail/focused")
+    .and_then(|value| value.as_bool())
+    .unwrap_or(false)
 }
 
 fn candidate_expected_window_frame(candidate: &Candidate) -> Option<auv_driver::Rect> {
@@ -891,6 +959,15 @@ fn number_field(value: &serde_json::Value, key: &str) -> Option<f64> {
       .as_f64()
       .or_else(|| value.as_i64().map(|value| value as f64))
   })
+}
+
+fn decision_action(decision: &CandidateActionDecisionArtifact) -> CandidateActionKind {
+  decision
+    .detail
+    .get("action")
+    .cloned()
+    .and_then(|value| serde_json::from_value::<CandidateActionKind>(value).ok())
+    .unwrap_or(CandidateActionKind::Click)
 }
 
 #[cfg(target_os = "macos")]
@@ -945,12 +1022,9 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
       "windows": windows.iter().map(render_window_debug).collect::<Vec<_>>(),
       "readiness_probe_input": input,
     }));
-    Ok(auv_driver_macos::assess_readiness(
-      &permissions,
-      &windows,
-      frontmost.as_ref(),
-      &input,
-    ))
+    let report =
+      auv_driver_macos::assess_readiness(&permissions, &windows, frontmost.as_ref(), &input);
+    Ok(report)
   }
 
   fn execute(
@@ -959,13 +1033,6 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
   ) -> AuvResult<auv_driver::InputActionResult> {
     use auv_driver::Driver;
 
-    if plan.target_grounding != TargetGrounding::Coordinate
-      || plan.selected_method.as_str() != "pointer-click"
-    {
-      return Err(
-        "L8b macOS executor currently supports coordinate pointer-click plans only".to_string(),
-      );
-    }
     let Some(window_number) = plan.window_number else {
       return Err("L8b macOS executor requires window_number".to_string());
     };
@@ -1000,24 +1067,47 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
         )
       })?
       .clone();
-    session
-      .window()
-      .click(
-        &window,
-        auv_driver::WindowPoint::new(plan.window_x, plan.window_y),
-        auv_driver::ClickOptions {
-          policy: auv_driver::InputPolicy::BackgroundPreferred,
-          click: if plan.click_count == 2 {
-            auv_driver::Click::Double {
-              interval: std::time::Duration::from_millis(100),
-            }
-          } else {
-            auv_driver::Click::Single
+    match &plan.action {
+      CandidateActionKind::Click => {
+        if plan.target_grounding != TargetGrounding::Coordinate
+          || plan.selected_method.as_str() != "pointer-click"
+        {
+          return Err(
+            "L8b macOS executor currently supports coordinate pointer-click plans only".to_string(),
+          );
+        }
+        session
+          .window()
+          .click(
+            &window,
+            auv_driver::WindowPoint::new(plan.window_x, plan.window_y),
+            auv_driver::ClickOptions {
+              policy: auv_driver::InputPolicy::BackgroundPreferred,
+              click: if plan.click_count == 2 {
+                auv_driver::Click::Double {
+                  interval: std::time::Duration::from_millis(100),
+                }
+              } else {
+                auv_driver::Click::Single
+              },
+              window_strategy: auv_driver::WindowClickStrategy::PidTargeted,
+            },
+          )
+          .map_err(|error| format!("typed macOS window click failed: {error}"))
+      }
+      CandidateActionKind::TypeText { text } => session
+        .window()
+        .type_text(
+          &window,
+          text,
+          auv_driver::TypeTextOptions {
+            policy: auv_driver::InputPolicy::BackgroundPreferred,
+            replace_existing: true,
+            ..auv_driver::TypeTextOptions::default()
           },
-          window_strategy: auv_driver::WindowClickStrategy::PidTargeted,
-        },
-      )
-      .map_err(|error| format!("typed macOS window click failed: {error}"))
+        )
+        .map_err(|error| format!("typed macOS window type_text failed: {error}")),
+    }
   }
 
   fn verify_after_execution(
@@ -1144,36 +1234,53 @@ fn select_candidate<'a>(
 
 fn decide_candidate_action(
   candidate: &Candidate,
+  action: &CandidateActionKind,
 ) -> Result<ActionResolverDecision, CandidateActionDecisionError> {
-  match candidate.target_spec.grounding {
-    TargetGrounding::AxNode => Ok(ActionResolverDecision::new(ActionResolverDecisionInput {
-      operation: "candidate.action.decide_only",
-      target_query: &target_query(candidate),
-      primary_method: "ax-action",
-      selected_method: "ax-action",
-      fallback_allowed: false,
-      fallback_used: false,
-      fallback_reason: None,
-      policy: "candidate-ax-node",
-      cursor_disturbance: "none",
-      press_mechanism: "ax-action",
-    })),
-    TargetGrounding::Coordinate => Ok(ActionResolverDecision::new(ActionResolverDecisionInput {
-      operation: "candidate.action.decide_only",
-      target_query: &target_query(candidate),
-      primary_method: "pointer-click",
-      selected_method: "pointer-click",
-      fallback_allowed: false,
-      fallback_used: false,
-      fallback_reason: None,
-      policy: "candidate-coordinate-pointer",
-      cursor_disturbance: "warp-visible",
-      press_mechanism: "pointer-click",
-    })),
-    TargetGrounding::OcrAnchor | TargetGrounding::VisualRow => {
-      Err(CandidateActionDecisionError::UnsupportedTargetGrounding {
-        grounding: candidate.target_spec.grounding,
-      })
+  match action {
+    CandidateActionKind::Click => match candidate.target_spec.grounding {
+      TargetGrounding::AxNode => Ok(ActionResolverDecision::new(ActionResolverDecisionInput {
+        operation: "candidate.action.decide_only",
+        target_query: &target_query(candidate),
+        primary_method: "ax-action",
+        selected_method: "ax-action",
+        fallback_allowed: false,
+        fallback_used: false,
+        fallback_reason: None,
+        policy: "candidate-ax-node",
+        cursor_disturbance: "none",
+        press_mechanism: "ax-action",
+      })),
+      TargetGrounding::Coordinate => Ok(ActionResolverDecision::new(ActionResolverDecisionInput {
+        operation: "candidate.action.decide_only",
+        target_query: &target_query(candidate),
+        primary_method: "pointer-click",
+        selected_method: "pointer-click",
+        fallback_allowed: false,
+        fallback_used: false,
+        fallback_reason: None,
+        policy: "candidate-coordinate-pointer",
+        cursor_disturbance: "warp-visible",
+        press_mechanism: "pointer-click",
+      })),
+      TargetGrounding::OcrAnchor | TargetGrounding::VisualRow => {
+        Err(CandidateActionDecisionError::UnsupportedTargetGrounding {
+          grounding: candidate.target_spec.grounding,
+        })
+      }
+    },
+    CandidateActionKind::TypeText { .. } => {
+      Ok(ActionResolverDecision::new(ActionResolverDecisionInput {
+        operation: "candidate.action.decide_only",
+        target_query: &target_query(candidate),
+        primary_method: "window-targeted-type-text",
+        selected_method: "window-targeted-type-text",
+        fallback_allowed: false,
+        fallback_used: false,
+        fallback_reason: None,
+        policy: "candidate-window-targeted-type-text",
+        cursor_disturbance: "none",
+        press_mechanism: "window-targeted-type-text",
+      }))
     }
   }
 }
@@ -1229,9 +1336,13 @@ fn validate_execution_consent(
       "run_id does not match source candidate-action-decision artifact",
     ));
   }
-  if consent.approved_action != CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction
+  if !consent
+    .approved_action
+    .matches_action(&decision_action(decision))
   {
-    return Err(consent_mismatch("approved_action is not execute_single"));
+    return Err(consent_mismatch(
+      "approved_action does not match decision action",
+    ));
   }
   if consent.grade != consent.provenance.expected_grade() {
     return Err(consent_mismatch("consent grade does not match provenance"));
@@ -1421,9 +1532,11 @@ fn input_delivery_summary(readiness_ready: bool, delivery_succeeded: bool) -> &'
 
 fn render_delivery_plan_debug(plan: &CandidateActionDeliveryPlan) -> serde_json::Value {
   json!({
+    "action": plan.action,
     "selected_method": plan.selected_method,
     "target_grounding": plan.target_grounding,
     "target_query": plan.target_query,
+    "focused_target": plan.focused_target,
     "window_number": plan.window_number,
     "window_title": plan.window_title,
     "app_bundle_id": plan.app_bundle_id,
@@ -1535,8 +1648,12 @@ struct PostActionWindowAlive {
 }
 
 impl PostActionWindowAlive {
-  fn is_alive(&self) -> bool {
-    self.target_present && self.target_frontmost && self.bounds_stable && self.point_inside
+  fn is_alive_for_action(&self, action: &CandidateActionKind) -> bool {
+    let point_requirement_met = match action {
+      CandidateActionKind::Click => self.point_inside,
+      CandidateActionKind::TypeText { .. } => true,
+    };
+    self.target_present && self.target_frontmost && self.bounds_stable && point_requirement_met
   }
 
   fn summary(&self) -> String {
@@ -1627,16 +1744,18 @@ fn post_action_focused_ax_node_verification(
         );
       }
     };
-  let expected = expected_ax_focus_target(candidate);
+  let expected = expected_ax_focus_target(candidate, &plan.action);
   let focused = capture.snapshot.nodes.iter().find(|node| node.focused);
   let focused_matches = focused
     .zip(expected.as_ref())
     .is_some_and(|(focused, expected)| {
-      ax_node_matches_expected(focused, expected, bounds_tolerance_px)
+      ax_node_matches_expected(focused, expected, bounds_tolerance_px, &plan.action)
     });
-  let semantic_matched = window_alive.is_alive() && focused_matches;
+  let semantic_matched = window_alive.is_alive_for_action(&plan.action) && focused_matches;
+  let observed_preferred_text = focused.map(ax_node_preferred_text).unwrap_or_default();
+  let observed_searchable_text = focused.map(ax_node_searchable_text).unwrap_or_default();
   let observed_label = format!(
-    "post-action focused_ax_node_reobserved={} focused_path={} focused_role={} expected_role={} expected_text={} {}",
+    "post-action focused_ax_node_reobserved={} focused_path={} focused_role={} expected_role={} expected_text={} observed_preferred_text={} observed_searchable_text={} {}",
     focused_matches,
     focused.map(|node| node.path.as_str()).unwrap_or("none"),
     focused.map(|node| node.role.as_str()).unwrap_or("none"),
@@ -1648,6 +1767,8 @@ fn post_action_focused_ax_node_verification(
       .as_ref()
       .and_then(|expected| expected.text.as_deref())
       .unwrap_or("none"),
+    observed_preferred_text,
+    observed_searchable_text,
     window_alive.summary()
   );
   post_action_verification(
@@ -1685,19 +1806,66 @@ fn post_action_focused_ax_node_verification(
 }
 
 fn window_matches_plan(window: &auv_driver::Window, plan: &CandidateActionDeliveryPlan) -> bool {
-  plan
-    .window_number
-    .is_none_or(|number| window.reference.id == number.to_string())
-    && plan
+  if let Some(number) = plan.window_number {
+    window.reference.id == number.to_string()
+      && plan.window_title.as_ref().is_none_or(|expected| {
+        window
+          .title
+          .as_deref()
+          .is_some_and(|title| title.contains(expected))
+      })
+  } else {
+    plan
       .app_bundle_id
       .as_ref()
       .is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
-    && plan.window_title.as_ref().is_none_or(|expected| {
-      window
-        .title
-        .as_deref()
-        .is_some_and(|title| title.contains(expected))
-    })
+      && plan.window_title.as_ref().is_none_or(|expected| {
+        window
+          .title
+          .as_deref()
+          .is_some_and(|title| title.contains(expected))
+      })
+  }
+}
+
+fn plan_requires_focused_target(plan: &CandidateActionDeliveryPlan) -> bool {
+  match plan.action {
+    CandidateActionKind::Click => true,
+    CandidateActionKind::TypeText { .. } => plan.focused_target,
+  }
+}
+
+fn enforce_action_specific_readiness(
+  plan: &CandidateActionDeliveryPlan,
+  report: auv_driver::ReadinessReport,
+) -> auv_driver::ReadinessReport {
+  if !matches!(plan.action, CandidateActionKind::TypeText { .. }) {
+    return report;
+  }
+
+  let mut checks = report
+    .checks
+    .into_iter()
+    .filter(|check| check.name != "input_injection_target")
+    .collect::<Vec<_>>();
+  if !plan_requires_focused_target(plan) {
+    checks.push(auv_driver::ReadinessCheck::fail(
+      "focused_target_required",
+      "window-targeted type-text requires the promoted AX candidate itself to already be focused",
+    ));
+    return auv_driver::ReadinessReport::from_checks(
+      checks,
+      report.target_window_ref,
+      report.target_window_frame,
+      Some("window-targeted type-text requires focused target".to_string()),
+    );
+  }
+  auv_driver::ReadinessReport::from_checks(
+    checks,
+    report.target_window_ref,
+    report.target_window_frame,
+    None,
+  )
 }
 
 fn window_contains_point(window: &auv_driver::Window, window_x: f64, window_y: f64) -> bool {
@@ -1714,33 +1882,41 @@ struct ExpectedAxFocusTarget {
   bounds: Option<auv_driver::Rect>,
 }
 
-fn expected_ax_focus_target(candidate: &Candidate) -> Option<ExpectedAxFocusTarget> {
+fn expected_ax_focus_target(
+  candidate: &Candidate,
+  action: &CandidateActionKind,
+) -> Option<ExpectedAxFocusTarget> {
   let observation = &candidate.evidence.observation;
   let role = observation
     .pointer("/detail/role")
     .and_then(|value| value.as_str())
     .map(str::to_string);
-  let text = observation
-    .get("text")
-    .and_then(|value| value.as_str())
-    .or_else(|| {
-      observation
-        .pointer("/detail/title")
-        .and_then(|value| value.as_str())
-    })
-    .or_else(|| {
-      observation
-        .pointer("/detail/value")
-        .and_then(|value| value.as_str())
-    })
-    .or_else(|| {
-      observation
-        .pointer("/detail/description")
-        .and_then(|value| value.as_str())
-    })
-    .or(candidate.label.as_deref())
-    .map(str::to_string)
-    .filter(|value| !value.trim().is_empty());
+  let text = match action {
+    CandidateActionKind::Click => observation
+      .get("text")
+      .and_then(|value| value.as_str())
+      .or_else(|| {
+        observation
+          .pointer("/detail/title")
+          .and_then(|value| value.as_str())
+      })
+      .or_else(|| {
+        observation
+          .pointer("/detail/value")
+          .and_then(|value| value.as_str())
+      })
+      .or_else(|| {
+        observation
+          .pointer("/detail/description")
+          .and_then(|value| value.as_str())
+      })
+      .or(candidate.label.as_deref())
+      .map(str::to_string)
+      .filter(|value| !value.trim().is_empty()),
+    CandidateActionKind::TypeText { text } => {
+      Some(text.clone()).filter(|value| !value.trim().is_empty())
+    }
+  };
   let bounds = rect_from_value(observation.pointer("/detail/source_global_logical_bounds"))
     .or_else(|| rect_from_value(observation.pointer("/detail/bounds")))
     .or_else(|| {
@@ -1758,12 +1934,20 @@ fn ax_node_matches_expected(
   node: &auv_driver_macos::types::ObservedAxNode,
   expected: &ExpectedAxFocusTarget,
   bounds_tolerance_px: f64,
+  action: &CandidateActionKind,
 ) -> bool {
   let role_matches = expected.role.as_ref().is_none_or(|role| node.role == *role);
-  let text_matches = expected
-    .text
-    .as_ref()
-    .is_none_or(|text| ax_node_searchable_text(node).contains(&normalize_ax_text(text)));
+  let actual_text = ax_node_searchable_text(node);
+  let text_matches = match action {
+    CandidateActionKind::Click => expected
+      .text
+      .as_ref()
+      .is_none_or(|text| actual_text.contains(&normalize_ax_text(text))),
+    CandidateActionKind::TypeText { text } => {
+      let actual_text = ax_node_preferred_text(node);
+      !actual_text.is_empty() && actual_text == normalize_ax_text(text)
+    }
+  };
   let bounds_matches = expected.bounds.is_none_or(|bounds| {
     rect_drift_px(observed_ax_rect(&node.bounds), bounds) <= bounds_tolerance_px
   });
@@ -1782,6 +1966,23 @@ fn ax_node_searchable_text(node: &auv_driver_macos::types::ObservedAxNode) -> St
     ]
     .join(" "),
   )
+}
+
+#[cfg(target_os = "macos")]
+fn ax_node_preferred_text(node: &auv_driver_macos::types::ObservedAxNode) -> String {
+  for value in [
+    node.value.as_str(),
+    node.title.as_str(),
+    node.description.as_str(),
+    node.help.as_str(),
+    node.placeholder.as_str(),
+  ] {
+    let normalized = normalize_ax_text(value);
+    if !normalized.is_empty() {
+      return normalized;
+    }
+  }
+  String::new()
 }
 
 fn normalize_ax_text(raw: &str) -> String {
@@ -1944,17 +2145,20 @@ mod tests {
 
   use serde_json::json;
 
-  #[cfg(target_os = "macos")]
-  use super::MacosCandidateActionExecutor;
   use super::{
     CandidateActionDecisionArtifact, CandidateActionDecisionError, CandidateActionDecisionRequest,
     CandidateActionDeliveryPlan, CandidateActionExecutionConsent,
     CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
-    CandidateActionExecutionSideEffect, CandidateActionExecutor, CandidateActionPostActionProbe,
+    CandidateActionExecutionSideEffect, CandidateActionExecutor, CandidateActionKind,
+    CandidateActionPostActionProbe, PostActionWindowAlive,
     build_candidate_action_decision_artifact, build_candidate_action_execution_artifact,
-    execute_and_record_single_candidate_action, execute_single_candidate_action,
+    enforce_action_specific_readiness, execute_and_record_single_candidate_action,
+    execute_single_candidate_action, expected_ax_focus_target,
     record_candidate_action_decision_artifact, record_candidate_action_execution_artifact,
+    window_matches_plan,
   };
+  #[cfg(target_os = "macos")]
+  use super::{ExpectedAxFocusTarget, MacosCandidateActionExecutor, ax_node_matches_expected};
   use crate::AuvResult;
   use crate::build_runtime_with_store_root;
   use crate::candidate_promotion::{CandidatePromotion, ConsentGrade, ConsentProvenance};
@@ -1996,6 +2200,7 @@ mod tests {
         "width": 500.0,
         "height": 300.0
       }),
+      false,
     )
   }
 
@@ -2003,6 +2208,7 @@ mod tests {
     recognition_id: &str,
     box_: RecognitionBox,
     window_frame: serde_json::Value,
+    focused: bool,
   ) -> RecognitionResult {
     let capture_artifact = sample_artifact_ref();
     let target_bounds = serde_json::json!({
@@ -2033,6 +2239,7 @@ mod tests {
         provider_score: Some(0.99),
         detail: json!({
           "backend": "ax-fixture",
+          "focused": focused,
           "window_frame": window_frame,
           "source_global_logical_bounds": target_bounds,
         }),
@@ -2045,6 +2252,7 @@ mod tests {
         provider_score: Some(0.99),
         detail: json!({
           "backend": "ax-fixture",
+          "focused": focused,
           "window_frame": window_frame,
           "source_global_logical_bounds": target_bounds,
         }),
@@ -2057,6 +2265,7 @@ mod tests {
         provider_score: Some(0.99),
         detail: json!({
           "backend": "ax-fixture",
+          "focused": focused,
           "window_frame": window_frame,
           "source_global_logical_bounds": target_bounds,
         }),
@@ -2071,6 +2280,80 @@ mod tests {
     let observations = vec![
       sample_frame("recognition_frame_1", 10, 20),
       sample_frame("recognition_frame_2", 11, 20),
+    ];
+    let latest = observations.last().expect("latest frame exists");
+    let mut request =
+      CandidatePromotionArtifactRequest::new("promotion_text_area", "promotion-text-area");
+    request.source_recognition_artifact = Some(ArtifactRef {
+      run_id: RunId::new("run_candidate_action_decision_source"),
+      artifact_id: ArtifactId::new("artifact_recognition"),
+      span_id: SpanId::new("span_candidate_action_decision_source"),
+      captured_event_id: Some(EventId::new("event_recognition")),
+    });
+    request.stability_policy = StabilityPolicy {
+      min_frames: 2,
+      max_centroid_drift_px: 4.0,
+      require_stable_text: true,
+    };
+    request.projection = crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
+    request.freshness = Some(
+      freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
+        .expect("latest recognition is capture-backed"),
+    );
+    request.permission = Some(
+      explicit_consent_for_candidate_promotion(
+        &request.promotion_id,
+        latest,
+        CandidatePromotionConsentInput {
+          granted_by: "human-review".to_string(),
+          scope_note: "candidate promotion only, no action execution".to_string(),
+          evidence_note: "unit test consent".to_string(),
+          approved_at_millis: 1,
+          provenance: ConsentProvenance::HumanGesture,
+        },
+      )
+      .expect("latest recognition is capture-backed"),
+    );
+    build_candidate_promotion_artifact(&observations, &request)
+      .expect("promotion artifact should build")
+  }
+
+  fn promoted_artifact_with_focused_target(
+    focused: bool,
+  ) -> crate::candidate_promotion_recording::CandidatePromotionArtifact {
+    let observations = vec![
+      sample_frame_with_box_and_window_frame(
+        "recognition_frame_1",
+        RecognitionBox {
+          x: 10,
+          y: 20,
+          width: 300,
+          height: 80,
+        },
+        serde_json::json!({
+          "x": 0.0,
+          "y": 0.0,
+          "width": 500.0,
+          "height": 300.0
+        }),
+        focused,
+      ),
+      sample_frame_with_box_and_window_frame(
+        "recognition_frame_2",
+        RecognitionBox {
+          x: 11,
+          y: 20,
+          width: 300,
+          height: 80,
+        },
+        serde_json::json!({
+          "x": 0.0,
+          "y": 0.0,
+          "width": 500.0,
+          "height": 300.0
+        }),
+        focused,
+      ),
     ];
     let latest = observations.last().expect("latest frame exists");
     let mut request =
@@ -2128,7 +2411,7 @@ mod tests {
       source_promotion_id: "promotion_text_area".to_string(),
       source_decision_id: "decision_text_area".to_string(),
       candidate_local_id: "promoted-item_text_area".to_string(),
-      approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+      approved_action: CandidateActionExecutionConsentAction::Click,
       provenance: ConsentProvenance::HumanGesture,
       grade: ConsentGrade::HumanApproved,
       approved_at_millis: 2,
@@ -2275,6 +2558,23 @@ mod tests {
       .expect("decision artifact should build")
   }
 
+  fn type_text_decision_artifact(text: &str, focused: bool) -> CandidateActionDecisionArtifact {
+    let promotion = promoted_artifact_with_focused_target(focused);
+    let request =
+      CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision")
+        .with_action(CandidateActionKind::TypeText {
+          text: text.to_string(),
+        })
+        .with_source_candidate_promotion_artifact(ArtifactRef {
+          run_id: RunId::new("run_candidate_action_decision_source"),
+          artifact_id: ArtifactId::new("artifact_promotion"),
+          span_id: SpanId::new("span_candidate_action_decision_source"),
+          captured_event_id: Some(EventId::new("event_promotion")),
+        });
+    build_candidate_action_decision_artifact(&promotion, &request)
+      .expect("type-text decision artifact should build")
+  }
+
   #[test]
   fn build_decide_only_artifact_from_promoted_candidate_without_input_delivery() {
     let promotion = promoted_artifact();
@@ -2313,6 +2613,25 @@ mod tests {
         .iter()
         .any(|limit| limit.contains("does not call auv-driver"))
     );
+  }
+
+  #[test]
+  fn build_decide_only_artifact_for_type_text_records_typed_action() {
+    let promotion = promoted_artifact_with_focused_target(true);
+    let request =
+      CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision")
+        .with_action(CandidateActionKind::TypeText {
+          text: "hello from auv".to_string(),
+        });
+    let artifact = build_candidate_action_decision_artifact(&promotion, &request)
+      .expect("type-text candidate should produce decide-only artifact");
+
+    assert_eq!(
+      artifact.action_resolver_decision.selected_method,
+      "window-targeted-type-text"
+    );
+    assert_eq!(artifact.detail["action"]["kind"], json!("type_text"));
+    assert_eq!(artifact.detail["action"]["text"], json!("hello from auv"));
   }
 
   #[test]
@@ -3122,6 +3441,303 @@ mod tests {
   }
 
   #[test]
+  fn execute_single_candidate_action_rejects_type_text_consent_for_different_text() {
+    let promotion = promoted_artifact_with_focused_target(true);
+    let decision = type_text_decision_artifact("hello from auv", true);
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_action(CandidateActionKind::TypeText {
+          text: "hello from auv".to_string(),
+        })
+        .with_consent(CandidateActionExecutionConsent {
+          approved_action: CandidateActionExecutionConsentAction::TypeText {
+            text: "different text".to_string(),
+          },
+          ..execution_consent()
+        });
+    let mut executor = FakeExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedKeyboard,
+      ),
+      readiness: ready_report(),
+      observed_plan: None,
+      executed: false,
+    };
+
+    let error = execute_single_candidate_action(
+      &mut executor,
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+    )
+    .expect_err("type-text consent must bind the typed content");
+
+    assert_eq!(
+      error,
+      CandidateActionDecisionError::ExecutionConsentMismatch {
+        reason: "approved_action does not match decision action".to_string(),
+      }
+    );
+  }
+
+  #[test]
+  fn execute_single_candidate_action_uses_type_text_plan_and_keyboard_delivery() {
+    let promotion = promoted_artifact_with_focused_target(true);
+    let decision = type_text_decision_artifact("hello from auv", true);
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_action(CandidateActionKind::TypeText {
+          text: "hello from auv".to_string(),
+        })
+        .with_consent(CandidateActionExecutionConsent {
+          approved_action: CandidateActionExecutionConsentAction::TypeText {
+            text: "hello from auv".to_string(),
+          },
+          ..execution_consent()
+        });
+    let mut executor = FakeExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedKeyboard,
+      ),
+      readiness: ready_report(),
+      observed_plan: None,
+      executed: false,
+    };
+
+    let artifact = execute_single_candidate_action(
+      &mut executor,
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+    )
+    .expect("type-text fake executor should produce execution artifact");
+
+    let plan = executor
+      .observed_plan
+      .expect("executor should observe type-text plan");
+    assert_eq!(
+      plan.action,
+      CandidateActionKind::TypeText {
+        text: "hello from auv".to_string(),
+      }
+    );
+    assert!(plan.focused_target);
+    assert_eq!(
+      artifact.input_action_result.selected_path,
+      auv_driver::InputDeliveryPath::WindowTargetedKeyboard
+    );
+  }
+
+  #[test]
+  fn type_text_expected_ax_focus_target_uses_action_text_instead_of_candidate_label() {
+    let promotion = promoted_artifact_with_focused_target(true);
+    let CandidatePromotion::Promoted { candidates, .. } = &promotion.decision else {
+      panic!("promotion should produce one promoted candidate");
+    };
+    let candidate = candidates.first().expect("promoted candidate should exist");
+
+    let expected = expected_ax_focus_target(
+      candidate,
+      &CandidateActionKind::TypeText {
+        text: "AUV_TYPE_TEXT_MARKER_2026_06_09_V5".to_string(),
+      },
+    )
+    .expect("type-text expected focus target should build");
+
+    assert_eq!(
+      expected.text.as_deref(),
+      Some("AUV_TYPE_TEXT_MARKER_2026_06_09_V5")
+    );
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn type_text_semantic_match_uses_preferred_text_not_static_identifier() {
+    let expected = ExpectedAxFocusTarget {
+      role: Some("AXTextArea".to_string()),
+      text: Some("AUV_TYPE_TEXT_MARKER_2026_06_09_V5".to_string()),
+      bounds: Some(auv_driver::Rect::new(181.0, 202.0, 586.0, 382.0)),
+    };
+    let node = auv_driver_macos::types::ObservedAxNode {
+      depth: 2,
+      path: "0.0.0".to_string(),
+      role: "AXTextArea".to_string(),
+      subrole: String::new(),
+      title: String::new(),
+      description: String::new(),
+      help: String::new(),
+      identifier: "First Text View".to_string(),
+      placeholder: String::new(),
+      value: "AUV_TYPE_TEXT_MARKER_2026_06_09_V5".to_string(),
+      focused: true,
+      bounds: auv_driver_macos::types::ObservedRect {
+        x: 181,
+        y: 202,
+        width: 586,
+        height: 382,
+      },
+    };
+
+    assert!(ax_node_matches_expected(
+      &node,
+      &expected,
+      2.0,
+      &CandidateActionKind::TypeText {
+        text: "AUV_TYPE_TEXT_MARKER_2026_06_09_V5".to_string(),
+      }
+    ));
+  }
+
+  #[test]
+  fn execute_single_candidate_action_blocks_type_text_when_target_was_not_focused() {
+    let promotion = promoted_artifact_with_focused_target(false);
+    let decision = type_text_decision_artifact("hello from auv", false);
+    let request =
+      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+        .with_source_candidate_action_decision_artifact(source_decision_ref())
+        .with_action(CandidateActionKind::TypeText {
+          text: "hello from auv".to_string(),
+        })
+        .with_consent(CandidateActionExecutionConsent {
+          approved_action: CandidateActionExecutionConsentAction::TypeText {
+            text: "hello from auv".to_string(),
+          },
+          ..execution_consent()
+        });
+    let mut executor = FakeExecutor {
+      result: auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedKeyboard,
+      ),
+      readiness: ready_report(),
+      observed_plan: None,
+      executed: false,
+    };
+
+    let artifact = execute_single_candidate_action(
+      &mut executor,
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_execution"),
+    )
+    .expect("non-focused type-text should still record blocked execution artifact");
+
+    assert!(!executor.executed);
+    assert_eq!(artifact.detail["input_delivery"], json!("not_attempted"));
+    assert_eq!(
+      artifact.side_effect,
+      CandidateActionExecutionSideEffect::BlockedNotReady
+    );
+    assert_eq!(
+      artifact.readiness.selected_blocker.as_deref(),
+      Some("window-targeted type-text requires focused target")
+    );
+  }
+
+  #[test]
+  fn type_text_readiness_ignores_pointer_injection_check_when_target_is_focused() {
+    let plan = CandidateActionDeliveryPlan {
+      action: CandidateActionKind::TypeText {
+        text: "hello from auv".to_string(),
+      },
+      selected_method: "window-targeted-type-text".to_string(),
+      target_grounding: TargetGrounding::Coordinate,
+      target_query: "First Text View".to_string(),
+      focused_target: true,
+      window_number: Some(33460),
+      window_title: Some("Untitled 5".to_string()),
+      app_bundle_id: Some("com.apple.TextEdit".to_string()),
+      expected_window_frame: Some(auv_driver::Rect::new(49.0, -945.0, 586.0, 488.0)),
+      window_x: 342.0,
+      window_y: -654.0,
+      click_count: 1,
+    };
+    let report = auv_driver::ReadinessReport::from_checks(
+      vec![
+        auv_driver::ReadinessCheck::pass("accessibility", "accessibility permission granted"),
+        auv_driver::ReadinessCheck::pass("target_window_present", "target window 33460 is present"),
+        auv_driver::ReadinessCheck::pass("target_app_frontmost", "target app/window is frontmost"),
+        auv_driver::ReadinessCheck::pass(
+          "window_bounds_stable",
+          "window frame drift 0.00px within tolerance",
+        ),
+        auv_driver::ReadinessCheck::fail(
+          "input_injection_target",
+          "target point is outside the current target window bounds",
+        ),
+      ],
+      Some("33460".to_string()),
+      Some(auv_driver::Rect::new(49.0, -945.0, 586.0, 488.0)),
+      None,
+    );
+
+    let readiness = enforce_action_specific_readiness(&plan, report);
+
+    assert!(readiness.is_ready());
+    assert!(
+      readiness
+        .checks
+        .iter()
+        .all(|check| check.name != "input_injection_target")
+    );
+  }
+
+  #[test]
+  fn post_action_window_alive_ignores_point_inside_for_type_text() {
+    let alive = PostActionWindowAlive {
+      target_present: true,
+      target_frontmost: true,
+      bounds_stable: true,
+      point_inside: false,
+      target_app_bundle_id: Some("com.apple.TextEdit".to_string()),
+    };
+
+    assert!(alive.is_alive_for_action(&CandidateActionKind::TypeText {
+      text: "hello from auv".to_string(),
+    }));
+    assert!(!alive.is_alive_for_action(&CandidateActionKind::Click));
+  }
+
+  #[test]
+  fn window_matches_plan_prefers_window_number_when_bundle_metadata_is_missing() {
+    let window = auv_driver::Window {
+      reference: auv_driver::WindowRef {
+        id: "33460".to_string(),
+      },
+      title: Some("Untitled 5".to_string()),
+      app_name: Some("TextEdit".to_string()),
+      app_bundle_id: None,
+      process_id: Some(13903),
+      frame: auv_driver::Rect::new(49.0, -945.0, 586.0, 488.0),
+      coordinate_space: auv_driver::CoordinateSpace::Screen,
+      is_main: false,
+      is_visible: true,
+    };
+    let plan = CandidateActionDeliveryPlan {
+      action: CandidateActionKind::TypeText {
+        text: "AUV_TYPE_TEXT_MARKER_2026_06_09".to_string(),
+      },
+      selected_method: "window-targeted-type-text".to_string(),
+      target_grounding: TargetGrounding::Coordinate,
+      target_query: "First Text View".to_string(),
+      focused_target: true,
+      window_number: Some(33460),
+      window_title: Some("Untitled 5".to_string()),
+      app_bundle_id: Some("com.apple.TextEdit".to_string()),
+      expected_window_frame: Some(auv_driver::Rect::new(49.0, -945.0, 586.0, 488.0)),
+      window_x: 342.0,
+      window_y: -654.0,
+      click_count: 1,
+    };
+
+    assert!(window_matches_plan(&window, &plan));
+  }
+
+  #[test]
   fn execute_single_candidate_action_does_not_run_post_action_probe_when_not_requested() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
@@ -3246,9 +3862,11 @@ mod tests {
       return;
     };
     let plan = CandidateActionDeliveryPlan {
+      action: CandidateActionKind::Click,
       selected_method: "pointer-click".to_string(),
       target_grounding: TargetGrounding::Coordinate,
       target_query: "env-gated-smoke".to_string(),
+      focused_target: true,
       window_number: Some(window_number),
       window_title: std::env::var("AUV_L8B_WINDOW_TITLE").ok(),
       app_bundle_id: std::env::var("AUV_L8B_APP_BUNDLE_ID").ok(),
@@ -3313,11 +3931,13 @@ mod tests {
       "recognition_frame_1",
       target_box.clone(),
       expected_window_frame.clone(),
+      true,
     );
     let mut recognition_2 = sample_frame_with_box_and_window_frame(
       "recognition_frame_2",
       target_box,
       expected_window_frame,
+      true,
     );
     for recognition in [&mut recognition_1, &mut recognition_2] {
       recognition.scope.app_bundle_id = Some(app_bundle_id.clone());

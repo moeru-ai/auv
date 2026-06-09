@@ -8,6 +8,7 @@ pub(crate) const ACTION_RESOLVER_VERSION: &str = "v0";
 pub(crate) enum ResolvedActionMethod {
   AxAction,
   PointerClick,
+  WindowTargetedTypeText,
 }
 
 impl ResolvedActionMethod {
@@ -15,6 +16,7 @@ impl ResolvedActionMethod {
     match self {
       Self::AxAction => "ax-action",
       Self::PointerClick => "pointer-click",
+      Self::WindowTargetedTypeText => "window-targeted-type-text",
     }
   }
 
@@ -22,6 +24,7 @@ impl ResolvedActionMethod {
     match self {
       Self::AxAction => "none",
       Self::PointerClick => "warp-visible",
+      Self::WindowTargetedTypeText => "none",
     }
   }
 
@@ -254,5 +257,21 @@ mod tests {
     assert!(notes.contains(&"actionResolverSelectedMethod=pointer-click".to_string()));
     assert!(notes.contains(&"actionResolverFallbackUsed=true".to_string()));
     assert!(notes.contains(&"actionResolverFallbackReason=AX target\\nhad no action".to_string()));
+  }
+
+  #[test]
+  fn type_text_method_reports_non_pointer_disturbance() {
+    assert_eq!(
+      ResolvedActionMethod::WindowTargetedTypeText.as_str(),
+      "window-targeted-type-text"
+    );
+    assert_eq!(
+      ResolvedActionMethod::WindowTargetedTypeText.cursor_disturbance(),
+      "none"
+    );
+    assert_eq!(
+      ResolvedActionMethod::WindowTargetedTypeText.press_mechanism(),
+      "window-targeted-type-text"
+    );
   }
 }

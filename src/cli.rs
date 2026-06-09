@@ -1,6 +1,7 @@
 // File: src/cli.rs
 use std::collections::BTreeMap;
 
+use auv_cli::candidate_action_decision::CandidateActionKind;
 use auv_cli::model::{AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +163,7 @@ pub struct CandidateActionCommandRequest {
   pub app_bundle_id: String,
   pub query: String,
   pub role: String,
+  pub action: CandidateActionKind,
   pub reveal_shortcut: Option<String>,
   pub reveal_settle_ms: u64,
   pub stable_frames: u32,
@@ -298,13 +300,14 @@ fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 || arguments[1] != "run" {
-    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
+    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> --query <text> --role <ax-role> [--action click|type-text] [--text <content>] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
   }
 
   let mut request = CandidateActionCommandRequest {
     app_bundle_id: String::new(),
     query: String::new(),
     role: String::new(),
+    action: CandidateActionKind::Click,
     reveal_shortcut: None,
     reveal_settle_ms: 250,
     stable_frames: 3,
@@ -347,6 +350,31 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
       }
       "--role" => {
         request.role = required_flag_value(arguments, index, "--role")?;
+        index += 2;
+      }
+      "--action" => {
+        let value = required_flag_value(arguments, index, "--action")?;
+        request.action = match value.as_str() {
+          "click" => CandidateActionKind::Click,
+          "type-text" => CandidateActionKind::TypeText {
+            text: String::new(),
+          },
+          other => {
+            return Err(format!(
+              "invalid --action {other:?}; expected click or type-text"
+            ));
+          }
+        };
+        index += 2;
+      }
+      "--text" => {
+        let value = required_flag_value(arguments, index, "--text")?;
+        match &mut request.action {
+          CandidateActionKind::Click => {
+            request.action = CandidateActionKind::TypeText { text: value };
+          }
+          CandidateActionKind::TypeText { text } => *text = value,
+        }
         index += 2;
       }
       "--granted-by" => {
@@ -460,6 +488,11 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   }
   if request.human_gesture_timeout_ms == 0 {
     return Err("--human-gesture-timeout-ms must be greater than 0".to_string());
+  }
+  if let CandidateActionKind::TypeText { text } = &request.action
+    && text.trim().is_empty()
+  {
+    return Err("--text must not be empty when --action type-text".to_string());
   }
 
   Ok(CliCommand::CandidateActionRun { request, inspect })
@@ -1592,6 +1625,37 @@ mod tests {
         assert!(request.human_gesture_consent);
         assert!(!request.dev_self_minted_consent);
         assert_eq!(request.human_gesture_timeout_ms, 4200);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_candidate_action_run_command_with_type_text_action() {
+    let command = parse_cli(&[
+      "candidate-action".to_string(),
+      "run".to_string(),
+      "--target-app".to_string(),
+      "com.apple.TextEdit".to_string(),
+      "--query".to_string(),
+      "Body".to_string(),
+      "--role".to_string(),
+      "AXTextArea".to_string(),
+      "--action".to_string(),
+      "type-text".to_string(),
+      "--text".to_string(),
+      "hello from auv".to_string(),
+    ])
+    .expect("candidate-action run with type-text should parse");
+
+    match command {
+      CliCommand::CandidateActionRun { request, .. } => {
+        assert_eq!(
+          request.action,
+          auv_cli::candidate_action_decision::CandidateActionKind::TypeText {
+            text: "hello from auv".to_string(),
+          }
+        );
       }
       other => panic!("unexpected command: {other:?}"),
     }

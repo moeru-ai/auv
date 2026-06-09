@@ -93,6 +93,7 @@ async fn run() -> Result<(), String> {
           app_bundle_id: request.app_bundle_id,
           query: request.query,
           role: request.role,
+          action: request.action,
           reveal_shortcut: request.reveal_shortcut,
           reveal_settle_ms: request.reveal_settle_ms,
           stable_frames: request.stable_frames,

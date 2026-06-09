@@ -97,19 +97,26 @@ pub fn resolve_target_window<'a>(
   input: &ReadinessProbeInput,
 ) -> Option<&'a Window> {
   windows.iter().find(|window| {
-    input
-      .window_number
-      .is_none_or(|expected| window.reference.id == expected.to_string())
-      && input
+    if let Some(expected) = input.window_number {
+      window.reference.id == expected.to_string()
+        && input.window_title.as_ref().is_none_or(|expected_title| {
+          window
+            .title
+            .as_deref()
+            .is_some_and(|title| title.contains(expected_title))
+        })
+    } else {
+      input
         .app_bundle_id
         .as_ref()
         .is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
-      && input.window_title.as_ref().is_none_or(|expected| {
-        window
-          .title
-          .as_deref()
-          .is_some_and(|title| title.contains(expected))
-      })
+        && input.window_title.as_ref().is_none_or(|expected| {
+          window
+            .title
+            .as_deref()
+            .is_some_and(|title| title.contains(expected))
+        })
+    }
   })
 }
 
@@ -132,17 +139,6 @@ fn frontmost_check(
       "frontmost window could not be resolved",
     );
   };
-  if let Some(expected_bundle) = input.app_bundle_id.as_deref()
-    && frontmost.app_bundle_id.as_deref() != Some(expected_bundle)
-  {
-    return ReadinessCheck::fail(
-      "target_app_frontmost",
-      format!(
-        "frontmost app {:?} does not match target bundle {expected_bundle}",
-        frontmost.app_bundle_id
-      ),
-    );
-  }
   if let Some(target) = target
     && frontmost.reference.id != target.reference.id
   {
@@ -151,6 +147,18 @@ fn frontmost_check(
       format!(
         "frontmost window {} does not match target window {}",
         frontmost.reference.id, target.reference.id
+      ),
+    );
+  }
+  if target.is_none()
+    && let Some(expected_bundle) = input.app_bundle_id.as_deref()
+    && frontmost.app_bundle_id.as_deref() != Some(expected_bundle)
+  {
+    return ReadinessCheck::fail(
+      "target_app_frontmost",
+      format!(
+        "frontmost app {:?} does not match target bundle {expected_bundle}",
+        frontmost.app_bundle_id
       ),
     );
   }
@@ -314,5 +322,27 @@ mod tests {
         .as_deref()
         .is_some_and(|reason| reason.contains("expected window frame"))
     );
+  }
+
+  #[test]
+  fn readiness_resolves_window_number_even_when_bundle_metadata_is_missing() {
+    let mut target = window(
+      "11",
+      "com.apple.TextEdit",
+      "Untitled",
+      input().expected_window_frame.unwrap(),
+      true,
+    );
+    target.app_bundle_id = None;
+
+    let report = assess_readiness(
+      &permissions(),
+      std::slice::from_ref(&target),
+      Some(&target),
+      &input(),
+    );
+
+    assert!(report.is_ready());
+    assert_eq!(report.target_window_ref.as_deref(), Some("11"));
   }
 }

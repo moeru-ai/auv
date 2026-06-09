@@ -8,8 +8,9 @@ use crate::ax_recognition::{
 use crate::candidate_action_decision::{
   CandidateActionDecisionRequest, CandidateActionExecutionConsent,
   CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
-  CandidateActionPostActionProbe, MacosCandidateActionExecutor,
-  execute_and_record_single_candidate_action, record_candidate_action_decision_artifact,
+  CandidateActionExecutionSideEffect, CandidateActionKind, CandidateActionPostActionProbe,
+  MacosCandidateActionExecutor, execute_and_record_single_candidate_action,
+  record_candidate_action_decision_artifact,
 };
 use crate::candidate_promotion::ConsentProvenance;
 use crate::candidate_promotion::{
@@ -30,6 +31,7 @@ pub struct CandidateActionCommandRequest {
   pub app_bundle_id: String,
   pub query: String,
   pub role: String,
+  pub action: CandidateActionKind,
   pub reveal_shortcut: Option<String>,
   pub reveal_settle_ms: u64,
   pub stable_frames: u32,
@@ -59,6 +61,11 @@ impl CandidateActionCommandRequest {
     }
     if self.role.trim().is_empty() {
       return Err("--role is required".to_string());
+    }
+    if let CandidateActionKind::TypeText { text } = &self.action
+      && text.trim().is_empty()
+    {
+      return Err("--text must not be empty when --action type-text".to_string());
     }
     if self.stable_frames == 0 {
       return Err("--stable-frames must be greater than 0".to_string());
@@ -96,6 +103,7 @@ impl CandidateActionCommandRequest {
 pub enum CandidateActionCommandStatus {
   PromotionRefused,
   ExecutedSingleAction,
+  BlockedNotReady,
 }
 
 impl CandidateActionCommandStatus {
@@ -103,6 +111,7 @@ impl CandidateActionCommandStatus {
     match self {
       Self::PromotionRefused => "promotion_refused",
       Self::ExecutedSingleAction => "executed_single_action",
+      Self::BlockedNotReady => "blocked_not_ready",
     }
   }
 }
@@ -289,6 +298,7 @@ pub fn execute_candidate_action_command(
     request.decision_id.clone(),
     format!("{}-decision", request.decision_id),
   )
+  .with_action(request.action.clone())
   .with_source_candidate_promotion_artifact(promotion_artifact_ref.clone());
   let (decision_artifact_ref, decision) =
     record_candidate_action_decision_artifact(context, &promotion, &decision_request)?;
@@ -306,6 +316,7 @@ pub fn execute_candidate_action_command(
     format!("{}-execution", request.execution_id),
   )
   .with_source_candidate_action_decision_artifact(decision_artifact_ref.clone())
+  .with_action(request.action.clone())
   .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
   let execution_request = match execution_consent_for_request(
     request,
@@ -324,7 +335,7 @@ pub fn execute_candidate_action_command(
   };
 
   let mut executor = MacosCandidateActionExecutor::default();
-  let (execution_artifact_ref, _execution) = execute_and_record_single_candidate_action(
+  let (execution_artifact_ref, execution) = execute_and_record_single_candidate_action(
     context,
     &mut executor,
     &promotion,
@@ -333,12 +344,25 @@ pub fn execute_candidate_action_command(
   )?;
 
   Ok(CandidateActionCommandOutput {
-    status: CandidateActionCommandStatus::ExecutedSingleAction,
+    status: command_status_for_execution_side_effect(&execution.side_effect),
     promotion_artifact_id: promotion_artifact_ref.artifact_id.as_str().to_string(),
     decision_artifact_id: Some(decision_artifact_ref.artifact_id.as_str().to_string()),
     execution_artifact_id: Some(execution_artifact_ref.artifact_id.as_str().to_string()),
     promotion_refusals: Vec::new(),
   })
+}
+
+fn command_status_for_execution_side_effect(
+  side_effect: &CandidateActionExecutionSideEffect,
+) -> CandidateActionCommandStatus {
+  match side_effect {
+    CandidateActionExecutionSideEffect::SingleInputDelivered => {
+      CandidateActionCommandStatus::ExecutedSingleAction
+    }
+    CandidateActionExecutionSideEffect::BlockedNotReady => {
+      CandidateActionCommandStatus::BlockedNotReady
+    }
+  }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -450,7 +474,7 @@ fn self_minted_execution_consent(
     source_promotion_id: promotion.promotion_id.clone(),
     source_decision_id: decision.decision_id.clone(),
     candidate_local_id: decision.candidate_local_id.clone(),
-    approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+    approved_action: CandidateActionExecutionConsentAction::from_action(&request.action),
     provenance: ConsentProvenance::DevSelfMinted,
     grade: crate::candidate_promotion::ConsentGrade::DevOnly,
     approved_at_millis: now_millis(),
@@ -508,7 +532,7 @@ fn human_gesture_execution_consent(
     source_promotion_id: promotion.promotion_id.clone(),
     source_decision_id: decision.decision_id.clone(),
     candidate_local_id: decision.candidate_local_id.clone(),
-    approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+    approved_action: CandidateActionExecutionConsentAction::from_action(&request.action),
     provenance: ConsentProvenance::HumanGesture,
     grade: ConsentGrade::HumanApproved,
     approved_at_millis: approval.approved_at_millis,
@@ -677,13 +701,18 @@ fn activate_app(app_bundle_id: &str) -> AuvResult<()> {
 
 #[cfg(test)]
 mod tests {
-  use super::{CandidateActionCommandRequest, CandidateActionCommandStatus};
+  use super::{
+    CandidateActionCommandRequest, CandidateActionCommandStatus,
+    command_status_for_execution_side_effect,
+  };
+  use crate::candidate_action_decision::{CandidateActionExecutionSideEffect, CandidateActionKind};
 
   fn base_request() -> CandidateActionCommandRequest {
     CandidateActionCommandRequest {
       app_bundle_id: "com.apple.TextEdit".to_string(),
       query: "Body".to_string(),
       role: "AXTextArea".to_string(),
+      action: CandidateActionKind::Click,
       reveal_shortcut: None,
       reveal_settle_ms: 250,
       stable_frames: 3,
@@ -743,6 +772,19 @@ mod tests {
   }
 
   #[test]
+  fn validation_requires_text_for_type_text_action() {
+    let mut request = base_request();
+    request.action = CandidateActionKind::TypeText {
+      text: String::new(),
+    };
+
+    assert_eq!(
+      request.validate(),
+      Err("--text must not be empty when --action type-text".to_string())
+    );
+  }
+
+  #[test]
   fn command_status_strings_are_stable() {
     assert_eq!(
       CandidateActionCommandStatus::PromotionRefused.as_str(),
@@ -751,6 +793,26 @@ mod tests {
     assert_eq!(
       CandidateActionCommandStatus::ExecutedSingleAction.as_str(),
       "executed_single_action"
+    );
+    assert_eq!(
+      CandidateActionCommandStatus::BlockedNotReady.as_str(),
+      "blocked_not_ready"
+    );
+  }
+
+  #[test]
+  fn command_status_tracks_execution_side_effect() {
+    assert_eq!(
+      command_status_for_execution_side_effect(
+        &CandidateActionExecutionSideEffect::SingleInputDelivered
+      ),
+      CandidateActionCommandStatus::ExecutedSingleAction
+    );
+    assert_eq!(
+      command_status_for_execution_side_effect(
+        &CandidateActionExecutionSideEffect::BlockedNotReady
+      ),
+      CandidateActionCommandStatus::BlockedNotReady
     );
   }
 }
