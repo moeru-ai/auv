@@ -1,6 +1,6 @@
 # AUV macOS AX Copilot - MVP Evidence Pack / Handoff Reference
 
-Status: narrow copilot MVP has run end to end on real hardware and been verified. This is a docs-only checkpoint record.
+Status: narrow copilot MVP has run end to end on real hardware and been verified across two real action classes. This is a docs-only checkpoint record.
 
 Date: 2026-06-09
 
@@ -8,14 +8,14 @@ Related main commit: `6fad52b feat(candidate-action): add human gesture consent 
 
 ## 1. One Sentence
 
-AUV has run one real macOS GUI automation copilot vertical with a human in the loop, full auditability, and semantic verification:
+AUV has run a real macOS GUI automation copilot vertical with a human in the loop, full auditability, and semantic verification, and the same spine now holds across both click and keyboard-delivered TypeText:
 
 ```text
 observe -> AX recognition -> stability -> refusal-gated promotion -> human consent
   -> readiness -> decide -> execute(single action) -> deliver -> semantic verify -> trace
 ```
 
-Both the allow path and the refusal path have live evidence.
+Both the allow path and the refusal path have live evidence, and the action seam is no longer proven only for click.
 
 ## 2. Canonical Closed-Loop Proof
 
@@ -99,13 +99,48 @@ This was later disproven as an environment-side disturbance, not a structural co
 
 In practical terms: "copilot, not bot" is enforced by the system, not asserted by convention.
 
-## 5. Honest MVP Boundary
+## 5. Cross-Action Generalization Proof
+
+The same audited spine now holds for a second typed action, not just the original click path.
+
+Generalization run: `run_1781020033303_42222_0`
+
+Command shape:
+
+```text
+candidate-action run --target-app com.apple.TextEdit --query 'First Text View' --role AXTextArea --action type-text --text 'AUV_TYPE_TEXT_MARKER_2026_06_09_V6' --human-gesture-consent
+```
+
+Observed facts:
+
+- promotion consent: `consent_provenance=human_gesture`
+- promotion consent grade: `consent_grade=human_approved`
+- execution consent: `consent_provenance=human_gesture`
+- execution consent grade: `consent_grade=human_approved`
+- action method: `window-targeted-type-text`
+- selected delivery path: `window_targeted_keyboard`
+- readiness: `ready`
+- input delivery: `attempted`
+- operation status: `completed`
+- semantic verification: `semantic_matched=true`
+
+What this proves:
+
+- the contract seam does not collapse outside the original click path
+- the same promotion -> consent -> readiness -> decide -> execute -> verify chain holds for a keyboard-delivered typed action
+- `approved_action` binding is real across action classes, not a click-only special case
+
+This is the first live proof that the AUV copilot spine generalizes beyond "point at a thing and click it once".
+
+## 6. Honest MVP Boundary
 
 This is an MVP checkpoint, not a generalized product surface.
 
 Current scope:
 
-- one action class: window-targeted mouse / single click path
+- two action classes proven live:
+  - window-targeted mouse / single click path
+  - window-targeted keyboard / `TypeText`
 - one app family proven live: TextEdit / AX-addressable targets
 - entrypoint is a dev-grade CLI path: `candidate-action run --human-gesture-consent`
 
@@ -116,7 +151,7 @@ Deferred / not part of this checkpoint:
 - detector / YOLO consumption as the primary path
 - game-state interpretation work
 
-## 6. Known Non-Blocking Items
+## 7. Known Non-Blocking Items
 
 ### Inspect server not running
 
@@ -148,7 +183,7 @@ At the time of capture:
 - `claims = 0`
 - many `sync_required` lanes are old intent-overlap noise rather than active conflicts
 
-## 7. Key Seam Locations
+## 8. Key Seam Locations
 
 - contract seam: `src/contract.rs`
 - AX recognition: `src/ax_recognition.rs`
@@ -166,7 +201,7 @@ At the time of capture:
   - `src/inspect.rs`
   - `src/inspect_server/mod.rs`
 
-## 8. Validation
+## 9. Validation
 
 The implementation and read-side fallout were validated with:
 
@@ -189,13 +224,14 @@ Live evidence additionally includes:
 
 - frontmost clean preflight: `run_1780938092925_12548_0`
 - canonical success path: `run_1780938107439_13406_0`
+- cross-action TypeText success path: `run_1781020033303_42222_0`
 - no-consent refusal: `run_1780936502809_50041_0`
 - timeout refusal: `run_1780936878562_78284_0`
 - readiness refusal after approval: `run_1780936530806_50887_0`
 
-## 9. Decision, Not Slice
+## 10. Decision, Not Slice
 
-This checkpoint closes a narrow but real MVP vertical. The next step is a product decision, not an automatic engineering slice.
+This checkpoint closes a narrow but real MVP vertical. It is still narrow, but it is no longer a one-action proof. The next step is a product decision, not an automatic engineering slice.
 
 Possible directions:
 
