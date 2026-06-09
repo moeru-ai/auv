@@ -5,8 +5,32 @@ pub fn run_live_scan(_inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
   Err("live NetEase playlist sidebar scan is only supported on macOS".to_string())
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn run_live_scan_until_query(
+  _inputs: &Inputs,
+  _query: &str,
+) -> Result<PlaylistSidebarScan, String> {
+  Err("live NetEase playlist sidebar scan is only supported on macOS".to_string())
+}
+
 #[cfg(target_os = "macos")]
 pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
+  run_live_scan_inner(inputs, None)
+}
+
+#[cfg(target_os = "macos")]
+pub fn run_live_scan_until_query(
+  inputs: &Inputs,
+  query: &str,
+) -> Result<PlaylistSidebarScan, String> {
+  run_live_scan_inner(inputs, Some(query))
+}
+
+#[cfg(target_os = "macos")]
+fn run_live_scan_inner(
+  inputs: &Inputs,
+  query: Option<&str>,
+) -> Result<PlaylistSidebarScan, String> {
   let driver = MacosDriver::new();
   let default_app_context = ScanAppContext {
     app_id: Some(inputs.app_id.clone()),
@@ -359,20 +383,31 @@ pub fn run_live_scan(inputs: &Inputs) -> Result<PlaylistSidebarScan, String> {
     previous_sidebar_crop: None,
     motion_policy: MotionDetectionPolicy::default(),
   };
-  let mut scan = scan_sidebar_with_observer(
-    &mut observer,
-    ScanOptions {
-      // NOTICE: NetEase playlist listing no longer has a page completion
-      // model. This shared `auv-view::ScanOptions` field remains for other
-      // scan loops, but this crate's collection policy intentionally ignores
-      // it and stops at section landmarks or scroll boundaries.
-      max_pages: 0,
-      max_scrolls: inputs.max_scrolls,
-    },
-    inputs.category,
-    inputs.scroll_amount,
-    inputs.scroll_settle_ms,
-  );
+  let options = ScanOptions {
+    // NOTICE: NetEase playlist listing no longer has a page completion
+    // model. This shared `auv-view::ScanOptions` field remains for other
+    // scan loops, but this crate's collection policy intentionally ignores
+    // it and stops at section landmarks or scroll boundaries.
+    max_pages: 0,
+    max_scrolls: inputs.max_scrolls,
+  };
+  let mut scan = match query {
+    Some(query) => scan_sidebar_with_observer_until_query(
+      &mut observer,
+      options,
+      inputs.category,
+      inputs.scroll_amount,
+      inputs.scroll_settle_ms,
+      query,
+    ),
+    None => scan_sidebar_with_observer(
+      &mut observer,
+      options,
+      inputs.category,
+      inputs.scroll_amount,
+      inputs.scroll_settle_ms,
+    ),
+  };
   scan.diagnostics.extend(pre_scan_diagnostics);
   scan.known_limits.extend(pre_scan_known_limits);
   scan.diagnostics.extend(observer.finish_artifacts());
@@ -613,6 +648,14 @@ impl SidebarScanObserver for LiveSidebarObserver {
     observation.incoming_scroll_delivery_path = incoming_scroll_delivery_path;
     Ok(observation)
   }
+
+  fn scroll_down_for_query_recovery(&mut self) -> Result<(), ParserDiagnostic> {
+    self.scroll_by_with_policy(
+      -self.scroll_amount,
+      std::time::Duration::from_millis(self.scroll_settle_ms),
+      InputPolicy::ForegroundPreferred,
+    )
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -647,6 +690,15 @@ impl LiveSidebarObserver {
     vertical_delta: f64,
     settle: std::time::Duration,
   ) -> Result<(), ParserDiagnostic> {
+    self.scroll_by_with_policy(vertical_delta, settle, InputPolicy::BackgroundPreferred)
+  }
+
+  fn scroll_by_with_policy(
+    &mut self,
+    vertical_delta: f64,
+    settle: std::time::Duration,
+    policy: InputPolicy,
+  ) -> Result<(), ParserDiagnostic> {
     let anchor = self.scroll_anchor();
     let result = self
       .session
@@ -656,7 +708,7 @@ impl LiveSidebarObserver {
         WindowPoint::new(anchor.x, anchor.y),
         Scroll::new(0.0, vertical_delta),
         ScrollOptions {
-          policy: InputPolicy::BackgroundPreferred,
+          policy,
           settle,
           ..ScrollOptions::default()
         },

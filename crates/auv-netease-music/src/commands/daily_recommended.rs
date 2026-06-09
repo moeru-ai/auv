@@ -640,11 +640,7 @@ impl DailyRecommendedRun<'_> {
       .click(
         &self.window,
         WindowPoint::new(point.x, point.y),
-        ClickOptions {
-          policy: InputPolicy::ForegroundPreferred,
-          click: Click::Single,
-          window_strategy: WindowClickStrategy::ChromiumCompatible,
-        },
+        daily_recommended_window_click_options(),
       )
       .map_err(|error| format!("{step_name}: click failed: {error}"))?;
     if self.inputs.settle_ms > 0 {
@@ -781,11 +777,7 @@ impl DailyRecommendedRun<'_> {
       .click(
         &self.window,
         WindowPoint::new(point.x, point.y),
-        ClickOptions {
-          policy: InputPolicy::ForegroundPreferred,
-          click: Click::Single,
-          window_strategy: WindowClickStrategy::ChromiumCompatible,
-        },
+        daily_recommended_window_click_options(),
       )
       .map_err(|error| format!("daily recommended card body click failed: {error}"))?;
     if self.inputs.settle_ms > 0 {
@@ -1005,7 +997,7 @@ impl DailyRecommendedRun<'_> {
 }
 
 #[cfg(target_os = "macos")]
-fn best_text_match(
+pub(crate) fn best_text_match(
   recognition: &TextRecognition,
   query: &str,
   window_size: Size,
@@ -1050,6 +1042,14 @@ pub(crate) fn daily_recommended_card_click_point(title_bounds: ViewBounds) -> au
   }
 }
 
+fn daily_recommended_window_click_options() -> auv_driver::ClickOptions {
+  auv_driver::ClickOptions {
+    policy: auv_driver::InputPolicy::BackgroundPreferred,
+    click: auv_driver::Click::Single,
+    window_strategy: auv_driver::WindowClickStrategy::ChromiumCompatible,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1070,5 +1070,16 @@ mod tests {
     let point = daily_recommended_card_click_point(bounds);
 
     assert_eq!(point, auv_driver::Point::new(500.0, 183.0));
+  }
+
+  #[test]
+  fn daily_recommended_uses_background_preferred_window_click_by_default() {
+    let options = daily_recommended_window_click_options();
+
+    assert_eq!(options.policy, auv_driver::InputPolicy::BackgroundPreferred);
+    assert_eq!(
+      options.window_strategy,
+      auv_driver::WindowClickStrategy::ChromiumCompatible
+    );
   }
 }

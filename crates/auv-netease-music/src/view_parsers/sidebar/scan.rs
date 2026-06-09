@@ -9,7 +9,32 @@ pub(crate) fn scan_sidebar_with_observer(
 ) -> PlaylistSidebarScan {
   let top_seek = scroll_to_top_by_motion(observer, top_seek_scroll_budget(options.max_scrolls));
   observer.reset_collection_phase();
-  let loop_outcome = scan_with_collection_policy(observer, options, category);
+  let loop_outcome = scan_with_collection_policy_impl(observer, options, category, None);
+  finish_sidebar_scan(top_seek, loop_outcome, scroll_amount, scroll_settle_ms)
+}
+
+pub(crate) fn scan_sidebar_with_observer_until_query(
+  observer: &mut impl SidebarScanObserver,
+  options: ScanOptions,
+  category: PlaylistCategory,
+  scroll_amount: f64,
+  scroll_settle_ms: u64,
+  query: &str,
+) -> PlaylistSidebarScan {
+  let top_seek = scroll_to_top_by_motion(observer, top_seek_scroll_budget(options.max_scrolls));
+  observer.reset_collection_phase();
+  let normalized_query = normalize_identity(query);
+  let loop_outcome =
+    scan_with_collection_policy_impl(observer, options, category, Some(normalized_query.as_str()));
+  finish_sidebar_scan(top_seek, loop_outcome, scroll_amount, scroll_settle_ms)
+}
+
+fn finish_sidebar_scan(
+  top_seek: TopSeekOutcome,
+  loop_outcome: CollectionLoopOutcome,
+  scroll_amount: f64,
+  scroll_settle_ms: u64,
+) -> PlaylistSidebarScan {
   let interaction_events = build_standalone_interaction_events(
     &loop_outcome.observations,
     scroll_amount,
@@ -113,6 +138,10 @@ pub(crate) trait SidebarScanObserver:
   ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
     self.observe(observation_index)
   }
+
+  fn scroll_down_for_query_recovery(&mut self) -> Result<(), ParserDiagnostic> {
+    self.scroll_down()
+  }
 }
 
 pub(crate) fn scroll_to_top_by_motion(
@@ -198,10 +227,11 @@ pub(crate) struct CollectionLoopOutcome {
   stop_reason: Option<String>,
 }
 
-pub(crate) fn scan_with_collection_policy(
-  observer: &mut impl ViewObserver<Observation = SidebarViewportObservation>,
+fn scan_with_collection_policy_impl(
+  observer: &mut impl SidebarScanObserver,
   options: ScanOptions,
   category: PlaylistCategory,
+  normalized_query: Option<&str>,
 ) -> CollectionLoopOutcome {
   let mut policy = CollectionPolicy::new(category);
   let mut observations = Vec::new();
@@ -212,6 +242,7 @@ pub(crate) fn scan_with_collection_policy(
   let mut consecutive_no_new_semantic_candidates_after_scroll = 0usize;
   let mut consecutive_no_motion_after_scroll = 0usize;
   let mut observed_scroll_motion_after_successful_input = false;
+  let mut query_seen = normalized_query.is_none_or(str::is_empty);
   let mut scrolls = 0;
   let mut stop_reason = None;
 
@@ -231,6 +262,11 @@ pub(crate) fn scan_with_collection_policy(
     previous_fingerprint = Some(fingerprint);
     let ax_scrollbar_boundary = observation.ax_scrollbar_boundary;
     let observation = policy.apply(observation);
+    if !query_seen {
+      if let Some(query) = normalized_query {
+        query_seen = observation_contains_query(&observation, query);
+      }
+    }
     let introduced_new_semantic_candidates =
       record_page_semantic_candidates(&observation, &mut seen_semantic_candidates);
     let reached_stop_landmark = policy.reached_stop_landmark();
@@ -273,7 +309,9 @@ pub(crate) fn scan_with_collection_policy(
     // backward-compatible loop-boundary signal, but they are no longer the only
     // scroll stop detector. Motion evidence covers the real NetEase case where
     // OCR text drifts enough that exact fingerprints do not repeat at bottom.
-    if repeated_fingerprint {
+    if repeated_fingerprint
+      && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom))
+    {
       stop_reason = Some(repeated_fingerprint_stop_reason(ax_scrollbar_boundary).to_string());
       break;
     }
@@ -283,7 +321,9 @@ pub(crate) fn scan_with_collection_policy(
     // motion alone because it tracks the actual playlist/sidebar IR that this
     // crate exports. It remains heuristic until a future slice corroborates it
     // with scroll-bar, AX scroll-state, or provider-reported bounds.
-    if consecutive_no_new_semantic_candidates_after_scroll >= 2 {
+    if consecutive_no_new_semantic_candidates_after_scroll >= 2
+      && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom))
+    {
       if let Some(reason) = heuristic_stop_reason_with_ax_corroboration(
         "scroll_no_new_semantic_candidates_after_input",
         ax_scrollbar_boundary,
@@ -298,7 +338,9 @@ pub(crate) fn scan_with_collection_policy(
     // least one prior post-scroll motion observation. This prevents launch
     // state, failed/noop input, or already-stuck captures from being promoted
     // into a false bottom boundary.
-    if consecutive_no_motion_after_scroll >= motion_stop_threshold(ax_scrollbar_boundary) {
+    if consecutive_no_motion_after_scroll >= motion_stop_threshold(ax_scrollbar_boundary)
+      && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom))
+    {
       if let Some(reason) = heuristic_stop_reason_with_ax_corroboration(
         "scroll_no_motion_after_input",
         ax_scrollbar_boundary,
@@ -313,7 +355,15 @@ pub(crate) fn scan_with_collection_policy(
       break;
     }
 
-    if let Err(diagnostic) = observer.scroll_down() {
+    let use_query_recovery_scroll = !query_seen
+      && (consecutive_no_motion_after_scroll > 0
+        || consecutive_no_new_semantic_candidates_after_scroll >= 2);
+    let scroll_result = if use_query_recovery_scroll {
+      observer.scroll_down_for_query_recovery()
+    } else {
+      observer.scroll_down()
+    };
+    if let Err(diagnostic) = scroll_result {
       diagnostics.push(diagnostic);
       break;
     }
@@ -332,6 +382,20 @@ pub(crate) fn scan_with_collection_policy(
     known_limits,
     stop_reason,
   }
+}
+
+fn observation_contains_query(
+  observation: &SidebarViewportObservation,
+  normalized_query: &str,
+) -> bool {
+  observation.candidates.iter().any(|candidate| {
+    candidate.kind == SidebarCandidateKind::PlaylistItem
+      && candidate.label.as_deref().is_some_and(|label| {
+        let normalized_label = normalize_identity(label);
+        normalized_label.contains(normalized_query)
+          || normalized_query.contains(normalized_label.as_str())
+      })
+  })
 }
 
 pub(crate) fn successful_scroll_delivery_path(path: Option<&str>) -> bool {

@@ -16,10 +16,15 @@ pub use commands::playback::{
   PlaybackStatus, PlaybackStatusHumanReadable, PlaybackStatusInputs, PlaybackStatusJson,
   run_playback_status_probe,
 };
+pub use commands::playlist::{
+  PlaylistPlayResult, PlaylistPlayStep, PlaylistPlayVerification, PlaylistSelectResult,
+  PlaylistSelectStep, PlaylistSelectVerification, run_playlist_play,
+  run_playlist_play_candidate_id, run_playlist_select,
+};
 pub use interaction::{
   InteractionEvent, InteractionEventKind, InteractionPhase, ScrollDirection, ScrollInteraction,
 };
-pub use view_parsers::sidebar::live::run_live_scan;
+pub use view_parsers::sidebar::live::{run_live_scan, run_live_scan_until_query};
 pub use views::player::PlaybackControlState;
 pub use views::sidebar::{
   PlaylistSidebarItem, PlaylistSidebarProjection, SidebarSection, SidebarSectionKind,
@@ -60,8 +65,8 @@ use auv_driver::capture::Capture;
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
 use auv_driver::{
-  ActivationPolicy, Click, ClickOptions, Driver, InputPolicy, PrepareForInputOptions, Scroll,
-  ScrollOptions, Size, WindowClickStrategy, WindowPoint,
+  ActivationPolicy, Click, Driver, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions,
+  Size, WindowPoint,
 };
 #[cfg(target_os = "macos")]
 use auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot;
@@ -72,6 +77,7 @@ use auv_driver_macos::{MacosDriver, MacosDriverSession};
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
 pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
+pub const PLAYLIST_SCAN_CACHE_FILE: &str = "playlist-scan-cache.json";
 pub const DEFAULT_DAILY_RECOMMENDED_ARTIFACT_DIR: &str =
   "/tmp/auv-netease-play-daily-recommended-artifacts";
 // TODO(netease-scroll-completion): this conservative default is only a
@@ -335,6 +341,18 @@ pub struct PlaylistSidebarScan {
   known_limits: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PlaylistSelectTarget {
+  pub label: String,
+  pub section_id: String,
+  pub section_kind: SidebarSectionKind,
+  pub item_id: String,
+  pub anchor_id: Option<String>,
+  pub candidate_id: Option<String>,
+  pub observation_index: Option<usize>,
+  pub bounds: Option<ViewBounds>,
+}
+
 impl PlaylistSidebarScan {
   fn empty(
     app: ScanAppContext,
@@ -410,6 +428,84 @@ impl PlaylistSidebarScan {
     &self.known_limits
   }
 
+  pub fn select_target(&self, query: &str) -> Result<PlaylistSelectTarget, String> {
+    let query = query.trim();
+    if query.is_empty() {
+      return Err("playlist select query must not be empty".to_string());
+    }
+
+    let sidebar = crate::views::sidebar::SidebarView::from_projection(self.projection.clone());
+    let matches = sidebar.playlists(Some(query));
+    let [playlist] = matches.as_slice() else {
+      return match matches.len() {
+        0 => Err(format!("no playlist matched {query:?}")),
+        count => Err(format!(
+          "playlist query {query:?} matched {count} items; refine the query"
+        )),
+      };
+    };
+    let (observation_index, bounds) = playlist
+      .item
+      .candidate_id
+      .as_deref()
+      .and_then(|candidate_id| self.candidate_bounds(candidate_id))
+      .map(|(index, bounds)| (Some(index), Some(bounds)))
+      .unwrap_or((None, None));
+
+    Ok(PlaylistSelectTarget {
+      label: playlist.item.label.clone(),
+      section_id: playlist.section.id.clone(),
+      section_kind: playlist.section.kind,
+      item_id: playlist.item.id.clone(),
+      anchor_id: playlist.item.anchor_id.clone(),
+      candidate_id: playlist.item.candidate_id.clone(),
+      observation_index,
+      bounds,
+    })
+  }
+
+  pub fn select_target_by_candidate_id(
+    &self,
+    candidate_id: &str,
+  ) -> Result<PlaylistSelectTarget, String> {
+    let candidate_id = candidate_id.trim();
+    if candidate_id.is_empty() {
+      return Err("playlist candidate_id must not be empty".to_string());
+    }
+
+    for section in &self.projection.sections {
+      if !matches!(
+        section.kind,
+        SidebarSectionKind::MyPlaylists | SidebarSectionKind::FavoritePlaylists
+      ) {
+        continue;
+      }
+      for item in &section.items {
+        if item.candidate_id.as_deref() != Some(candidate_id) {
+          continue;
+        }
+        let (observation_index, bounds) = self
+          .candidate_bounds(candidate_id)
+          .map(|(index, bounds)| (Some(index), Some(bounds)))
+          .unwrap_or((None, None));
+        return Ok(PlaylistSelectTarget {
+          label: item.label.clone(),
+          section_id: section.id.clone(),
+          section_kind: section.kind,
+          item_id: item.id.clone(),
+          anchor_id: item.anchor_id.clone(),
+          candidate_id: item.candidate_id.clone(),
+          observation_index,
+          bounds,
+        });
+      }
+    }
+
+    Err(format!(
+      "no playlist candidate_id matched {candidate_id:?}; run `playlist ls <query> --json` first with the same --artifact-dir"
+    ))
+  }
+
   pub fn to_human_readable(&self) -> PlaylistSidebarHumanSummary<'_> {
     PlaylistSidebarHumanSummary { scan: self }
   }
@@ -423,6 +519,17 @@ impl PlaylistSidebarScan {
     );
     scan.projection = projection;
     scan
+  }
+
+  fn candidate_bounds(&self, candidate_id: &str) -> Option<(usize, ViewBounds)> {
+    self.observations.iter().find_map(|observation| {
+      observation
+        .candidates
+        .iter()
+        .find(|candidate| candidate.id == candidate_id)
+        .and_then(|candidate| candidate.bounds)
+        .map(|bounds| (observation.observation_index, bounds))
+    })
   }
 }
 
@@ -831,4 +938,94 @@ fn candidate_evidence(
         .cloned()
     })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn playlist_select_target_resolves_candidate_bounds_from_scan_observation() {
+    let candidate_id = "obs2.candidate.ocr1.human_machine";
+    let bounds = ViewBounds::new(71.0, 166.0, 72.0, 15.0);
+    let mut scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
+      sections: vec![SidebarSection {
+        id: "section-created".to_string(),
+        kind: SidebarSectionKind::MyPlaylists,
+        label: Some("创建的歌单".to_string()),
+        items: vec![PlaylistSidebarItem {
+          id: "item-human-machine".to_string(),
+          label: "人造器械".to_string(),
+          section_hint: Some(SidebarSectionKind::MyPlaylists),
+          confidence: Confidence::High,
+          candidate_id: Some(candidate_id.to_string()),
+          anchor_id: Some("anchor-human-machine".to_string()),
+        }],
+      }],
+    });
+    scan.observations.push(SidebarViewportObservation {
+      observation_index: 2,
+      candidates: vec![SidebarViewportCandidate {
+        id: candidate_id.to_string(),
+        kind: SidebarCandidateKind::PlaylistItem,
+        label: Some("人造器械".to_string()),
+        bounds: Some(bounds),
+        evidence_ids: Vec::new(),
+        confidence: Confidence::High,
+      }],
+      ..SidebarViewportObservation::default()
+    });
+
+    let target = scan
+      .select_target("人造")
+      .expect("single playlist match should resolve");
+
+    assert_eq!(target.label, "人造器械");
+    assert_eq!(target.item_id, "item-human-machine");
+    assert_eq!(target.anchor_id.as_deref(), Some("anchor-human-machine"));
+    assert_eq!(target.observation_index, Some(2));
+    assert_eq!(target.bounds, Some(bounds));
+  }
+
+  #[test]
+  fn playlist_select_target_resolves_by_candidate_id() {
+    let candidate_id = "obs6.candidate.ocr4.trance_vol_2";
+    let bounds = ViewBounds::new(72.0, 492.0, 148.0, 16.0);
+    let mut scan = PlaylistSidebarScan::from_projection_for_tests(PlaylistSidebarProjection {
+      sections: vec![SidebarSection {
+        id: "section-favorite".to_string(),
+        kind: SidebarSectionKind::FavoritePlaylists,
+        label: Some("收藏的歌单".to_string()),
+        items: vec![PlaylistSidebarItem {
+          id: "item-trance-vol-2".to_string(),
+          label: "我喜欢的风格 | Trance Vol.2".to_string(),
+          section_hint: Some(SidebarSectionKind::FavoritePlaylists),
+          confidence: Confidence::High,
+          candidate_id: Some(candidate_id.to_string()),
+          anchor_id: Some("anchor-trance-vol-2".to_string()),
+        }],
+      }],
+    });
+    scan.observations.push(SidebarViewportObservation {
+      observation_index: 6,
+      candidates: vec![SidebarViewportCandidate {
+        id: candidate_id.to_string(),
+        kind: SidebarCandidateKind::PlaylistItem,
+        label: Some("我喜欢的风格 | Trance Vol.2".to_string()),
+        bounds: Some(bounds),
+        evidence_ids: Vec::new(),
+        confidence: Confidence::High,
+      }],
+      ..SidebarViewportObservation::default()
+    });
+
+    let target = scan
+      .select_target_by_candidate_id(candidate_id)
+      .expect("candidate id should resolve");
+
+    assert_eq!(target.label, "我喜欢的风格 | Trance Vol.2");
+    assert_eq!(target.candidate_id.as_deref(), Some(candidate_id));
+    assert_eq!(target.observation_index, Some(6));
+    assert_eq!(target.bounds, Some(bounds));
+  }
 }

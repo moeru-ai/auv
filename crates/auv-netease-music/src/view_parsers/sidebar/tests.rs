@@ -702,6 +702,82 @@ fn scan_loop_stops_after_two_scrolls_with_no_new_semantic_candidates() {
 }
 
 #[test]
+fn query_scan_continues_past_no_new_candidates_until_query_is_visible() {
+  let mut first = parse_sidebar_viewport(
+    0,
+    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+    &fake_recognition(vec![
+      ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+      ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
+    ]),
+  );
+  first.viewport_fingerprint = "page-a".to_string();
+  let mut second = parse_sidebar_viewport(
+    1,
+    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+    &fake_recognition(vec![
+      ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+      ("Coding BGM", 32.0, 106.0, 120.0, 20.0),
+    ]),
+  );
+  second.viewport_fingerprint = "page-b".to_string();
+  second.incoming_scroll_delivery_path = Some("window_targeted_wheel".to_string());
+  let mut third = parse_sidebar_viewport(
+    2,
+    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+    &fake_recognition(vec![
+      ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+      ("Coding BGM", 32.0, 138.0, 120.0, 20.0),
+    ]),
+  );
+  third.viewport_fingerprint = "page-c".to_string();
+  third.incoming_scroll_delivery_path = Some("window_targeted_wheel".to_string());
+  let mut fourth = parse_sidebar_viewport(
+    3,
+    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+    &fake_recognition(vec![
+      ("创建的歌单", 8.0, 42.0, 110.0, 20.0),
+      ("我喜欢的风格 | Trance Vol.2", 32.0, 170.0, 168.0, 20.0),
+    ]),
+  );
+  fourth.viewport_fingerprint = "page-d".to_string();
+  fourth.incoming_scroll_delivery_path = Some("window_targeted_wheel".to_string());
+  let mut observer = FakeSidebarObserver::new(vec![first, second, third, fourth]);
+
+  let scan = scan_sidebar_with_observer_until_query(
+    &mut observer,
+    ScanOptions {
+      max_pages: 10,
+      max_scrolls: 10,
+    },
+    PlaylistCategory::All,
+    300.0,
+    DEFAULT_SCROLL_SETTLE_MS,
+    "Trance Vol.2",
+  );
+
+  assert_eq!(scan.observations.len(), 4);
+  assert_eq!(scan.boundary.bottom, BoundaryConfidence::Unknown);
+  assert!(
+    !scan
+      .interaction_events
+      .iter()
+      .any(|event| event.kind == InteractionEventKind::StopDecision
+        && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input"))
+  );
+  assert_eq!(
+    scan
+      .projection
+      .sections
+      .iter()
+      .flat_map(|section| section.items.iter())
+      .find(|item| item.label.contains("Trance Vol.2"))
+      .map(|item| item.label.as_str()),
+    Some("我喜欢的风格 | Trance Vol.2")
+  );
+}
+
+#[test]
 fn scan_loop_ignores_scroll_no_new_semantic_candidates_from_noop_delivery() {
   let mut first = parse_sidebar_viewport(
     0,

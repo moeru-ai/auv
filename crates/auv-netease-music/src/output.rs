@@ -10,6 +10,7 @@ pub struct MatchRef {
   pub section_kind: SidebarSectionKind,
   pub item_id: String,
   pub label: String,
+  pub candidate_id: Option<String>,
   pub anchor_id: Option<String>,
 }
 
@@ -63,6 +64,7 @@ fn collect_matches_from_sidebar(sidebar: &SidebarView, keyword: Option<&str>) ->
       section_kind: playlist.section.kind,
       item_id: playlist.item.id.clone(),
       label: playlist.item.label.clone(),
+      candidate_id: playlist.item.candidate_id.clone(),
       anchor_id: playlist.item.anchor_id.clone(),
     })
     .collect()
@@ -121,7 +123,7 @@ mod tests {
             label: "Daily Mix".to_string(),
             section_hint: None,
             confidence: Confidence::High,
-            candidate_id: None,
+            candidate_id: Some("obs1.candidate.daily".to_string()),
             anchor_id: Some("a1".to_string()),
           },
           PlaylistSidebarItem {
@@ -216,6 +218,10 @@ mod tests {
     assert_eq!(output.item_count, 2);
     assert_eq!(output.match_count, 1);
     assert_eq!(output.matches[0].item_id, "i1");
+    assert_eq!(
+      output.matches[0].candidate_id.as_deref(),
+      Some("obs1.candidate.daily")
+    );
     assert!(std::ptr::eq(output.scan, &scan));
   }
 }

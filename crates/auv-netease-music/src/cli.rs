@@ -10,9 +10,10 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::output::build_playlist_json_output;
 use crate::{
-  DailyRecommendedPlayInputs, Inputs, PlaybackStatusInputs, PlaylistCategory, SongListInputs,
-  run_daily_recommended_play, run_daily_recommended_songs_scan, run_live_scan,
-  run_playback_status_probe,
+  DailyRecommendedPlayInputs, Inputs, PlaybackStatusInputs, PlaylistCategory, PlaylistSidebarScan,
+  SongListInputs, run_daily_recommended_play, run_daily_recommended_songs_scan, run_live_scan,
+  run_live_scan_until_query, run_playback_status_probe, run_playlist_play,
+  run_playlist_play_candidate_id, run_playlist_select,
 };
 
 pub(crate) fn positive_scroll_amount(raw: &str) -> Result<f64, String> {
@@ -124,6 +125,26 @@ pub(crate) struct PlaylistCommand {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PlaylistSelectCommand {
+  pub inputs: Inputs,
+  pub query: String,
+  pub output: OutputMode,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PlaylistPlayCommand {
+  pub inputs: Inputs,
+  pub target: PlaylistPlayTarget,
+  pub output: OutputMode,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PlaylistPlayTarget {
+  Query(String),
+  CandidateId(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DailyRecommendedPlayCommand {
   pub inputs: DailyRecommendedPlayInputs,
   pub output: OutputMode,
@@ -172,12 +193,14 @@ pub(crate) struct SeekCommand {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Command {
   PlaylistLs(PlaylistCommand),
+  PlaylistSelect(PlaylistSelectCommand),
+  PlaylistPlay(PlaylistPlayCommand),
   PlaylistPlayDailyRecommended(DailyRecommendedPlayCommand),
   PlaylistSongsLs(SongsLsCommand),
-  PlaybackStatus(PlaybackStatusCommand),
   NowPlaying(NowPlayingCommand),
   Control(ControlCommand),
   Seek(SeekCommand),
+  PlaybackStatus(PlaybackStatusCommand),
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -195,8 +218,51 @@ struct CliArgs {
 enum CliSubcommand {
   /// Work with NetEase Cloud Music playlists.
   Playlist(PlaylistArgs),
+  /// Read the system now-playing state (via the macOS media API).
+  #[command(name = "now-playing")]
+  NowPlaying(NowPlayingArgs),
+  /// Start playback (only when NetEase owns the now-playing slot).
+  Play(ControlArgs),
+  /// Pause (only when NetEase owns the now-playing slot).
+  Pause(ControlArgs),
+  /// Toggle play/pause (only when NetEase owns the now-playing slot).
+  Toggle(ControlArgs),
+  /// Skip to the next track (only when NetEase owns the now-playing slot).
+  Next(ControlArgs),
+  /// Return to the previous track (only when NetEase owns the now-playing slot).
+  Previous(ControlArgs),
+  /// Seek to a position in seconds (only when NetEase owns the now-playing slot).
+  Seek(SeekArgs),
   /// Experimental current playback probes.
   Playback(PlaybackArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct NowPlayingArgs {
+  /// Output format on stdout.
+  #[arg(long = "format", value_enum, default_value_t = OutputFormat::Summary)]
+  format: OutputFormat,
+  #[arg(long = "json-out")]
+  json_out: Option<PathBuf>,
+  /// Only report now-playing when this app owns the slot (default: NetEase).
+  #[arg(long = "app-id")]
+  app_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Args)]
+struct ControlArgs {
+  /// Only act when this app owns the now-playing slot (default: NetEase).
+  #[arg(long = "app-id")]
+  app_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Args)]
+struct SeekArgs {
+  #[arg(value_name = "seconds")]
+  seconds: f64,
+  /// Only act when this app owns the now-playing slot (default: NetEase).
+  #[arg(long = "app-id")]
+  app_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -235,63 +301,20 @@ struct PlaybackStatusArgs {
   ocr_languages: Vec<String>,
   #[arg(long = "hint-ocr-languages")]
   ocr_language_csvs: Vec<String>,
-  /// Read the system now-playing state (via the macOS media API).
-  #[command(name = "now-playing")]
-  NowPlaying(NowPlayingArgs),
-  /// Start playback (only when NetEase owns the now-playing slot).
-  Play(ControlArgs),
-  /// Pause (only when NetEase owns the now-playing slot).
-  Pause(ControlArgs),
-  /// Toggle play/pause (only when NetEase owns the now-playing slot).
-  Toggle(ControlArgs),
-  /// Skip to the next track (only when NetEase owns the now-playing slot).
-  Next(ControlArgs),
-  /// Return to the previous track (only when NetEase owns the now-playing slot).
-  Previous(ControlArgs),
-  /// Seek to a position in seconds (only when NetEase owns the now-playing slot).
-  Seek(SeekArgs),
-}
-
-#[derive(Clone, Debug, Args)]
-struct NowPlayingArgs {
-  /// Output format on stdout.
-  #[arg(long = "format", value_enum, default_value_t = OutputFormat::Summary)]
-  format: OutputFormat,
-  #[arg(long = "json-out")]
-  json_out: Option<PathBuf>,
-  /// Only report now-playing when this app owns the slot (default: NetEase).
-  #[arg(long = "app-id")]
-  app_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Args)]
-struct ControlArgs {
-  /// Only act when this app owns the now-playing slot (default: NetEase).
-  #[arg(long = "app-id")]
-  app_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Args)]
-struct SeekArgs {
-  #[arg(value_name = "seconds")]
-  seconds: f64,
-  /// Only act when this app owns the now-playing slot (default: NetEase).
-  #[arg(long = "app-id")]
-  app_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Args)]
 struct PlaylistArgs {
   #[command(subcommand)]
-  command: Option<PlaylistSubcommand>,
-  #[command(flatten)]
-  ls: PlaylistLsArgs,
+  command: PlaylistSubcommand,
 }
 
 #[derive(Clone, Debug, Subcommand)]
 enum PlaylistSubcommand {
   /// List NetEase Cloud Music sidebar playlists.
   Ls(PlaylistLsArgs),
+  /// Open a playlist from the sidebar without starting playback.
+  Select(PlaylistSelectArgs),
   /// Play a built-in playlist.
   Play(PlaylistPlayArgs),
   /// Scan songs from a playlist-like song table.
@@ -341,20 +364,16 @@ struct SongsLsArgs {
 }
 
 #[derive(Clone, Debug, Args)]
+#[command(
+  after_help = "Recommended playlist flow:\n  auv-netease-music playlist ls \"Trance vol.2\" --json\n  auv-netease-music playlist play --candidate-id <id>\n\n`playlist ls` writes playlist-scan-cache.json under --artifact-dir; `playlist play --candidate-id` reads that cache, so use the same --artifact-dir for both commands."
+)]
 struct PlaylistPlayArgs {
-  #[command(subcommand)]
-  command: PlaylistPlaySubcommand,
-}
-
-#[derive(Clone, Debug, Subcommand)]
-enum PlaylistPlaySubcommand {
-  /// Open Daily Recommended and press Play All.
-  #[command(name = "daily-recommended")]
-  DailyRecommended(DailyRecommendedArgs),
-}
-
-#[derive(Clone, Debug, Args)]
-struct DailyRecommendedArgs {
+  /// Playlist query. Convenience path; prefer --candidate-id after playlist ls --json for agent calls.
+  #[arg(value_name = "query")]
+  target: Option<String>,
+  /// Candidate id from `playlist ls <keyword> --json`.
+  #[arg(long = "candidate-id")]
+  candidate_id: Option<String>,
   #[arg(long = "json")]
   json: bool,
   #[arg(long = "json-out")]
@@ -363,6 +382,14 @@ struct DailyRecommendedArgs {
   app_id: Option<String>,
   #[arg(long = "artifact-dir")]
   artifact_dir: Option<PathBuf>,
+  #[arg(long = "max-scrolls")]
+  max_scrolls: Option<NonZeroUsize>,
+  #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
+  scroll_amount: Option<f64>,
+  #[arg(long = "scroll-settle-ms")]
+  scroll_settle_ms: Option<u64>,
+  #[arg(long = "sidebar-region")]
+  sidebar_region: Option<String>,
   #[arg(long = "max-top-scrolls")]
   max_top_scrolls: Option<NonZeroUsize>,
   #[arg(long = "top-scroll-amount", value_parser = positive_scroll_amount)]
@@ -386,11 +413,13 @@ struct DailyRecommendedArgs {
 }
 
 #[derive(Clone, Debug, Args)]
+#[command(
+  after_help = "Recommended playlist flow:\n  auv-netease-music playlist ls \"Trance vol.2\" --json\n  auv-netease-music playlist play --candidate-id <id>\n\nJSON output includes matches[].candidate_id. The scan is also cached as playlist-scan-cache.json under --artifact-dir for the follow-up play command."
+)]
 struct PlaylistLsArgs {
-  #[arg(value_name = "ls|keyword")]
-  first: Option<String>,
+  /// Optional playlist keyword. When present, scanning continues until the keyword is found or the list boundary is reached.
   #[arg(value_name = "keyword")]
-  second: Option<String>,
+  keyword: Option<String>,
   #[arg(long = "category")]
   category: Option<PlaylistCategory>,
   #[arg(long = "filter")]
@@ -423,16 +452,41 @@ struct PlaylistLsArgs {
   ocr_language_csvs: Vec<String>,
 }
 
+#[derive(Clone, Debug, Args)]
+struct PlaylistSelectArgs {
+  #[arg(value_name = "query")]
+  query: String,
+  #[arg(long = "json")]
+  json: bool,
+  #[arg(long = "json-out")]
+  json_out: Option<PathBuf>,
+  #[arg(long = "app-id")]
+  app_id: Option<String>,
+  #[arg(long = "artifact-dir")]
+  artifact_dir: Option<PathBuf>,
+  #[arg(long = "max-scrolls")]
+  max_scrolls: Option<NonZeroUsize>,
+  #[arg(long = "scroll-amount", value_parser = positive_scroll_amount)]
+  scroll_amount: Option<f64>,
+  #[arg(long = "scroll-settle-ms")]
+  scroll_settle_ms: Option<u64>,
+  #[arg(long = "sidebar-region")]
+  sidebar_region: Option<String>,
+  #[arg(long = "hint-ocr-custom-word")]
+  custom_words: Vec<String>,
+  #[arg(long = "hint-ocr-custom-words")]
+  custom_word_csvs: Vec<String>,
+  #[arg(long = "hint-ocr-custom-words-file")]
+  custom_word_files: Vec<PathBuf>,
+  #[arg(long = "hint-ocr-language")]
+  ocr_languages: Vec<String>,
+  #[arg(long = "hint-ocr-languages")]
+  ocr_language_csvs: Vec<String>,
+}
+
 fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
   match parsed.command {
     CliSubcommand::Playlist(args) => parse_playlist(args),
-    CliSubcommand::Playback(args) => parse_playback(args),
-  }
-}
-
-fn parse_playback(args: PlaybackArgs) -> Result<Command, String> {
-  match args.command {
-    PlaybackSubcommand::Status(args) => parse_playback_status(args).map(Command::PlaybackStatus),
     CliSubcommand::NowPlaying(args) => parse_now_playing(args),
     CliSubcommand::Play(args) => Ok(control(auv_media_macos::MediaCommand::Play, args)),
     CliSubcommand::Pause(args) => Ok(control(auv_media_macos::MediaCommand::Pause, args)),
@@ -445,6 +499,13 @@ fn parse_playback(args: PlaybackArgs) -> Result<Command, String> {
       Ok(control(auv_media_macos::MediaCommand::PreviousTrack, args))
     }
     CliSubcommand::Seek(args) => parse_seek(args),
+    CliSubcommand::Playback(args) => parse_playback(args),
+  }
+}
+
+fn parse_playback(args: PlaybackArgs) -> Result<Command, String> {
+  match args.command {
+    PlaybackSubcommand::Status(args) => parse_playback_status(args).map(Command::PlaybackStatus),
   }
 }
 
@@ -492,23 +553,18 @@ fn parse_seek(args: SeekArgs) -> Result<Command, String> {
 
 fn parse_playlist(args: PlaylistArgs) -> Result<Command, String> {
   match args.command {
-    Some(PlaylistSubcommand::Ls(ls)) => parse_playlist_ls(ls).map(Command::PlaylistLs),
-    Some(PlaylistSubcommand::Play(play)) => parse_playlist_play(play),
-    Some(PlaylistSubcommand::Songs(songs)) => parse_playlist_songs(songs),
-    None => parse_playlist_ls(args.ls).map(Command::PlaylistLs),
+    PlaylistSubcommand::Ls(ls) => parse_playlist_ls(ls).map(Command::PlaylistLs),
+    PlaylistSubcommand::Select(select) => {
+      parse_playlist_select(select).map(Command::PlaylistSelect)
+    }
+    PlaylistSubcommand::Play(play) => parse_playlist_play(play),
+    PlaylistSubcommand::Songs(songs) => parse_playlist_songs(songs),
   }
 }
 
 fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
   let mut inputs = Inputs::with_defaults();
-  let query = match (args.first.as_deref(), args.second.as_deref()) {
-    (None, None) => None,
-    (Some("ls"), None) => None,
-    (Some("ls"), Some(keyword)) => Some(keyword.to_string()),
-    (Some(keyword), None) => Some(keyword.to_string()),
-    (Some(_), Some(extra)) => return Err(format!("unexpected extra argument {extra:?}")),
-    (None, Some(_)) => unreachable!("clap fills positional arguments in order"),
-  };
+  let query = args.keyword;
 
   if let Some(app_id) = args.app_id {
     inputs.app_id = app_id;
@@ -561,12 +617,130 @@ fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
   })
 }
 
-fn parse_playlist_play(args: PlaylistPlayArgs) -> Result<Command, String> {
-  match args.command {
-    PlaylistPlaySubcommand::DailyRecommended(args) => {
-      parse_daily_recommended(args).map(Command::PlaylistPlayDailyRecommended)
+fn parse_playlist_select(args: PlaylistSelectArgs) -> Result<PlaylistSelectCommand, String> {
+  let mut inputs = Inputs::with_defaults();
+  if let Some(app_id) = args.app_id {
+    inputs.app_id = app_id;
+  }
+  if let Some(artifact_dir) = args.artifact_dir {
+    inputs.artifact_dir = artifact_dir;
+  }
+  if let Some(max_scrolls) = args.max_scrolls {
+    inputs.max_scrolls = max_scrolls.get();
+  }
+  if let Some(scroll_amount) = args.scroll_amount {
+    inputs.scroll_amount = scroll_amount;
+  }
+  if let Some(scroll_settle_ms) = args.scroll_settle_ms {
+    inputs.scroll_settle_ms = scroll_settle_ms;
+  }
+  if let Some(sidebar_region) = args.sidebar_region {
+    inputs.sidebar_region = Some(parse_ratio_region(sidebar_region)?);
+  }
+  for word in args.custom_words {
+    push_trimmed(&mut inputs.ocr_options.custom_words, word);
+  }
+  for csv in args.custom_word_csvs {
+    push_csv(&mut inputs.ocr_options.custom_words, &csv);
+  }
+  for path in args.custom_word_files {
+    load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
+  }
+  for language in args.ocr_languages {
+    push_ocr_language(&mut inputs.ocr_options, language);
+  }
+  for csv in args.ocr_language_csvs {
+    for language in split_csv(&csv) {
+      push_ocr_language(&mut inputs.ocr_options, language);
     }
   }
+
+  let output = match args.json_out {
+    Some(path) => OutputMode::JsonFile(path),
+    None if args.json => OutputMode::Json,
+    None => OutputMode::Human,
+  };
+  Ok(PlaylistSelectCommand {
+    inputs,
+    query: args.query,
+    output,
+  })
+}
+
+fn parse_playlist_play(args: PlaylistPlayArgs) -> Result<Command, String> {
+  if args.target.as_deref() == Some("daily-recommended") && args.candidate_id.is_none() {
+    return parse_daily_recommended(args).map(Command::PlaylistPlayDailyRecommended);
+  }
+
+  parse_playlist_play_query(args).map(Command::PlaylistPlay)
+}
+
+fn parse_playlist_play_query(args: PlaylistPlayArgs) -> Result<PlaylistPlayCommand, String> {
+  let target = match (args.target.as_deref(), args.candidate_id.as_deref()) {
+    (Some(_), Some(_)) => {
+      return Err("playlist play accepts either a query or --candidate-id, not both".to_string());
+    }
+    (Some(query), None) if query.trim().is_empty() => {
+      return Err("playlist play query must not be empty".to_string());
+    }
+    (Some(query), None) => PlaylistPlayTarget::Query(query.to_string()),
+    (None, Some(candidate_id)) if candidate_id.trim().is_empty() => {
+      return Err("playlist play --candidate-id must not be empty".to_string());
+    }
+    (None, Some(candidate_id)) => PlaylistPlayTarget::CandidateId(candidate_id.to_string()),
+    (None, None) => {
+      return Err(
+        "playlist play requires a query, daily-recommended, or --candidate-id".to_string(),
+      );
+    }
+  };
+  let mut inputs = Inputs::with_defaults();
+  if let Some(app_id) = args.app_id {
+    inputs.app_id = app_id;
+  }
+  if let Some(artifact_dir) = args.artifact_dir {
+    inputs.artifact_dir = artifact_dir;
+  }
+  if let Some(max_scrolls) = args.max_scrolls {
+    inputs.max_scrolls = max_scrolls.get();
+  }
+  if let Some(scroll_amount) = args.scroll_amount {
+    inputs.scroll_amount = scroll_amount;
+  }
+  if let Some(scroll_settle_ms) = args.scroll_settle_ms {
+    inputs.scroll_settle_ms = scroll_settle_ms;
+  }
+  if let Some(sidebar_region) = args.sidebar_region {
+    inputs.sidebar_region = Some(parse_ratio_region(sidebar_region)?);
+  }
+  for word in args.custom_words {
+    push_trimmed(&mut inputs.ocr_options.custom_words, word);
+  }
+  for csv in args.custom_word_csvs {
+    push_csv(&mut inputs.ocr_options.custom_words, &csv);
+  }
+  for path in args.custom_word_files {
+    load_custom_words_file(&mut inputs.ocr_options.custom_words, path)?;
+  }
+  for language in args.ocr_languages {
+    push_ocr_language(&mut inputs.ocr_options, language);
+  }
+  for csv in args.ocr_language_csvs {
+    for language in split_csv(&csv) {
+      push_ocr_language(&mut inputs.ocr_options, language);
+    }
+  }
+
+  let output = match args.json_out {
+    Some(path) => OutputMode::JsonFile(path),
+    None if args.json => OutputMode::Json,
+    None => OutputMode::Human,
+  };
+  Ok(PlaylistPlayCommand {
+    inputs,
+    target,
+    output,
+  })
 }
 
 fn parse_playlist_songs(args: PlaylistSongsArgs) -> Result<Command, String> {
@@ -629,9 +803,7 @@ fn parse_songs_ls(args: SongsLsArgs) -> Result<SongsLsCommand, String> {
   })
 }
 
-fn parse_daily_recommended(
-  args: DailyRecommendedArgs,
-) -> Result<DailyRecommendedPlayCommand, String> {
+fn parse_daily_recommended(args: PlaylistPlayArgs) -> Result<DailyRecommendedPlayCommand, String> {
   let mut inputs = DailyRecommendedPlayInputs::with_defaults();
   if let Some(app_id) = args.app_id {
     inputs.app_id = app_id;
@@ -736,12 +908,14 @@ pub fn run() -> ExitCode {
 
   match command_from_args(parsed) {
     Ok(Command::PlaylistLs(cmd)) => run_playlist(cmd),
+    Ok(Command::PlaylistSelect(cmd)) => run_playlist_select_command(cmd),
+    Ok(Command::PlaylistPlay(cmd)) => run_playlist_play_command(cmd),
     Ok(Command::PlaylistPlayDailyRecommended(cmd)) => run_daily_recommended(cmd),
     Ok(Command::PlaylistSongsLs(cmd)) => run_songs_ls(cmd),
-    Ok(Command::PlaybackStatus(cmd)) => run_playback_status(cmd),
     Ok(Command::NowPlaying(cmd)) => run_now_playing(cmd),
     Ok(Command::Control(cmd)) => run_control(cmd),
     Ok(Command::Seek(cmd)) => run_seek(cmd),
+    Ok(Command::PlaybackStatus(cmd)) => run_playback_status(cmd),
     Err(error) => {
       if error.starts_with("error:") {
         eprint!("{error}");
@@ -761,15 +935,13 @@ mod tests {
 
   fn playlist_args() -> PlaylistArgs {
     PlaylistArgs {
-      command: None,
-      ls: playlist_ls_args(),
+      command: PlaylistSubcommand::Ls(playlist_ls_args()),
     }
   }
 
   fn playlist_ls_args() -> PlaylistLsArgs {
     PlaylistLsArgs {
-      first: None,
-      second: None,
+      keyword: None,
       category: None,
       filter: None,
       json: false,
@@ -796,11 +968,27 @@ mod tests {
     }
   }
 
+  fn parse_playlist_select_command(argv: &[&str]) -> PlaylistSelectCommand {
+    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
+    match command_from_args(parsed).expect("playlist select command should parse") {
+      Command::PlaylistSelect(command) => command,
+      other => panic!("expected playlist select command, got {other:?}"),
+    }
+  }
+
   fn parse_daily_recommended_command(argv: &[&str]) -> DailyRecommendedPlayCommand {
     let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
     match command_from_args(parsed).expect("daily recommended command should parse") {
       Command::PlaylistPlayDailyRecommended(command) => command,
       other => panic!("expected daily recommended command, got {other:?}"),
+    }
+  }
+
+  fn parse_playlist_play_command(argv: &[&str]) -> PlaylistPlayCommand {
+    let parsed = CliArgs::try_parse_from(argv).expect("CLI args should parse");
+    match command_from_args(parsed).expect("playlist play command should parse") {
+      Command::PlaylistPlay(command) => command,
+      other => panic!("expected playlist play command, got {other:?}"),
     }
   }
 
@@ -863,7 +1051,10 @@ mod tests {
   #[test]
   fn parse_playlist_uses_positional_keyword_as_query() {
     let mut args = playlist_args();
-    args.ls.first = Some("daily".to_string());
+    match &mut args.command {
+      PlaylistSubcommand::Ls(ls) => ls.keyword = Some("daily".to_string()),
+      _ => unreachable!("playlist_args builds ls args"),
+    }
 
     let command = match parse_playlist(args).expect("playlist args should parse") {
       Command::PlaylistLs(command) => command,
@@ -876,8 +1067,13 @@ mod tests {
   #[test]
   fn parse_playlist_prefers_explicit_filter_over_positional_keyword() {
     let mut args = playlist_args();
-    args.ls.first = Some("daily".to_string());
-    args.ls.filter = Some("liked".to_string());
+    match &mut args.command {
+      PlaylistSubcommand::Ls(ls) => {
+        ls.keyword = Some("daily".to_string());
+        ls.filter = Some("liked".to_string());
+      }
+      _ => unreachable!("playlist_args builds ls args"),
+    }
 
     let command = match parse_playlist(args).expect("playlist args should parse") {
       Command::PlaylistLs(command) => command,
@@ -903,10 +1099,42 @@ mod tests {
   }
 
   #[test]
-  fn clap_playlist_legacy_keyword_still_sets_query() {
-    let command = parse_playlist_command(&["auv-netease-music", "playlist", "daily"]);
+  fn clap_playlist_select_maps_query_and_scan_flags() {
+    let command = parse_playlist_select_command(&[
+      "auv-netease-music",
+      "playlist",
+      "select",
+      "人造器械",
+      "--json",
+      "--max-scrolls",
+      "8",
+      "--scroll-settle-ms",
+      "100",
+    ]);
 
-    assert_eq!(command.query.as_deref(), Some("daily"));
+    assert_eq!(command.query, "人造器械");
+    assert_eq!(command.output, OutputMode::Json);
+    assert_eq!(command.inputs.max_scrolls, 8);
+    assert_eq!(command.inputs.scroll_settle_ms, 100);
+  }
+
+  #[test]
+  fn clap_playlist_requires_explicit_subcommand() {
+    let error = CliArgs::try_parse_from(["auv-netease-music", "playlist"])
+      .expect_err("playlist should require an explicit subcommand");
+
+    assert_eq!(
+      error.kind(),
+      clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+    );
+  }
+
+  #[test]
+  fn clap_playlist_rejects_legacy_keyword_without_ls() {
+    let error = CliArgs::try_parse_from(["auv-netease-music", "playlist", "daily"])
+      .expect_err("legacy playlist keyword should require explicit ls");
+
+    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
   }
 
   #[test]
@@ -1053,6 +1281,53 @@ mod tests {
   }
 
   #[test]
+  fn clap_playlist_play_query_maps_scan_and_output_flags() {
+    let command = parse_playlist_play_command(&[
+      "auv-netease-music",
+      "playlist",
+      "play",
+      "Trance vol.2",
+      "--json",
+      "--max-scrolls",
+      "8",
+      "--scroll-settle-ms",
+      "120",
+    ]);
+
+    assert_eq!(
+      command.target,
+      PlaylistPlayTarget::Query("Trance vol.2".to_string())
+    );
+    assert_eq!(command.output, OutputMode::Json);
+    assert_eq!(command.inputs.max_scrolls, 8);
+    assert_eq!(command.inputs.scroll_settle_ms, 120);
+  }
+
+  #[test]
+  fn clap_playlist_play_candidate_id_maps_cache_target() {
+    let command = parse_playlist_play_command(&[
+      "auv-netease-music",
+      "playlist",
+      "play",
+      "--candidate-id",
+      "obs6.candidate.ocr4.trance_vol_2",
+      "--json",
+      "--artifact-dir",
+      "/tmp/netease-playlist-cache",
+    ]);
+
+    assert_eq!(
+      command.target,
+      PlaylistPlayTarget::CandidateId("obs6.candidate.ocr4.trance_vol_2".to_string())
+    );
+    assert_eq!(command.output, OutputMode::Json);
+    assert_eq!(
+      command.inputs.artifact_dir,
+      PathBuf::from("/tmp/netease-playlist-cache")
+    );
+  }
+
+  #[test]
   fn clap_playlist_songs_ls_daily_recommended_maps_flags() {
     let command = parse_songs_ls_command(&[
       "auv-netease-music",
@@ -1136,58 +1411,29 @@ mod tests {
 
   #[test]
   fn clap_playlist_rejects_extra_positional_argument() {
-    let parsed = CliArgs::try_parse_from(["auv-netease-music", "playlist", "ls", "daily", "extra"])
-      .expect("nested ls accepts positionals before semantic parsing");
-    let error = command_from_args(parsed).expect_err("extra positional argument should fail");
+    let error = CliArgs::try_parse_from(["auv-netease-music", "playlist", "ls", "daily", "extra"])
+      .expect_err("nested ls should reject extra positionals");
 
-    assert_eq!(error, "unexpected extra argument \"extra\"");
-  }
-
-  fn seek_args(seconds: f64) -> SeekArgs {
-    SeekArgs {
-      seconds,
-      app_id: None,
-    }
-  }
-
-  #[test]
-  fn parse_seek_accepts_normal_value() {
-    let command = parse_seek(seek_args(12.5)).expect("normal seek seconds should parse");
-    match command {
-      Command::Seek(cmd) => assert_eq!(cmd.seconds, 12.5),
-      other => panic!("expected Command::Seek, got {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_seek_rejects_negative() {
-    parse_seek(seek_args(-1.0)).expect_err("negative seek seconds must be rejected");
-  }
-
-  #[test]
-  fn parse_seek_rejects_nan_and_infinity() {
-    parse_seek(seek_args(f64::NAN)).expect_err("NaN seek seconds must be rejected");
-    parse_seek(seek_args(f64::INFINITY)).expect_err("infinity seek seconds must be rejected");
-  }
-
-  #[test]
-  fn parse_seek_rejects_overflow_past_duration_max() {
-    // `Duration::from_secs_f64` panics on values above `Duration::MAX`
-    // (~1.84e19 seconds). The pre-fix parse_seek did not check overflow,
-    // so a 1e20 input would have hit that panic during run_seek's Duration
-    // construction.
-    parse_seek(seek_args(1e20)).expect_err("overflow seek seconds must be rejected");
+    assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
   }
 }
 
 fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
-  let scan = match run_live_scan(&cmd.inputs) {
+  let scan = match cmd.query.as_deref() {
+    Some(query) => run_live_scan_until_query(&cmd.inputs, query),
+    None => run_live_scan(&cmd.inputs),
+  };
+  let scan = match scan {
     Ok(scan) => scan,
     Err(error) => {
       eprintln!("scan failed: {error}");
       return ExitCode::from(1);
     }
   };
+  if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
+    eprintln!("{error}");
+    return ExitCode::from(1);
+  }
   let output = build_playlist_json_output(&scan, cmd.query.as_deref());
 
   match &cmd.output {
@@ -1222,6 +1468,108 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
   }
 }
 
+fn write_playlist_scan_cache(inputs: &Inputs, scan: &PlaylistSidebarScan) -> Result<(), String> {
+  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| {
+    format!(
+      "failed to create {}: {error}",
+      inputs.artifact_dir.display()
+    )
+  })?;
+  let cache_path = inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE);
+  let json = serde_json::to_string_pretty(scan)
+    .map_err(|error| format!("failed to serialize playlist scan cache: {error}"))?;
+  std::fs::write(&cache_path, json)
+    .map_err(|error| format!("failed to write {}: {error}", cache_path.display()))
+}
+
+fn run_playlist_select_command(cmd: PlaylistSelectCommand) -> ExitCode {
+  let result = match run_playlist_select(&cmd.inputs, &cmd.query) {
+    Ok(result) => result,
+    Err(error) => {
+      eprintln!("playlist select failed: {error}");
+      return ExitCode::from(1);
+    }
+  };
+
+  match &cmd.output {
+    OutputMode::Human => {
+      println!("{}", result.to_human_readable());
+      ExitCode::SUCCESS
+    }
+    OutputMode::Json => match serde_json::to_string_pretty(&result) {
+      Ok(json) => {
+        println!("{json}");
+        ExitCode::SUCCESS
+      }
+      Err(error) => {
+        eprintln!("encode failed: {error}");
+        ExitCode::from(1)
+      }
+    },
+    OutputMode::JsonFile(path) => {
+      let json = match serde_json::to_string_pretty(&result) {
+        Ok(json) => json,
+        Err(error) => {
+          eprintln!("encode failed: {error}");
+          return ExitCode::from(1);
+        }
+      };
+      if let Err(error) = std::fs::write(path, json) {
+        eprintln!("failed to write {}: {error}", path.display());
+        return ExitCode::from(1);
+      }
+      ExitCode::SUCCESS
+    }
+  }
+}
+
+fn run_playlist_play_command(cmd: PlaylistPlayCommand) -> ExitCode {
+  let result = match &cmd.target {
+    PlaylistPlayTarget::Query(query) => run_playlist_play(&cmd.inputs, query),
+    PlaylistPlayTarget::CandidateId(candidate_id) => {
+      run_playlist_play_candidate_id(&cmd.inputs, candidate_id)
+    }
+  };
+  let result = match result {
+    Ok(result) => result,
+    Err(error) => {
+      eprintln!("playlist play failed: {error}");
+      return ExitCode::from(1);
+    }
+  };
+
+  match &cmd.output {
+    OutputMode::Human => {
+      println!("{}", result.to_human_readable());
+      ExitCode::SUCCESS
+    }
+    OutputMode::Json => match serde_json::to_string_pretty(&result) {
+      Ok(json) => {
+        println!("{json}");
+        ExitCode::SUCCESS
+      }
+      Err(error) => {
+        eprintln!("encode failed: {error}");
+        ExitCode::from(1)
+      }
+    },
+    OutputMode::JsonFile(path) => {
+      let json = match serde_json::to_string_pretty(&result) {
+        Ok(json) => json,
+        Err(error) => {
+          eprintln!("encode failed: {error}");
+          return ExitCode::from(1);
+        }
+      };
+      if let Err(error) = std::fs::write(path, json) {
+        eprintln!("failed to write {}: {error}", path.display());
+        return ExitCode::from(1);
+      }
+      ExitCode::SUCCESS
+    }
+  }
+}
+
 #[cfg(target_os = "macos")]
 fn run_now_playing(cmd: NowPlayingCommand) -> ExitCode {
   let state = match auv_media_macos::now_playing() {
@@ -1231,14 +1579,11 @@ fn run_now_playing(cmd: NowPlayingCommand) -> ExitCode {
       return ExitCode::from(1);
     }
   };
-  // Scope to NetEase (or the requested --app-id): when another app owns the
-  // slot, report the idle state rather than that app's track.
   let state = if state.source_bundle_id.as_deref() == Some(cmd.app_id.as_str()) {
     state
   } else {
     auv_media_macos::NowPlayingState::default()
   };
-  // netease's output omits the like fields (NetEase never reports them).
   let output = crate::output::build_now_playing_output(&state);
 
   match &cmd.output {
@@ -1279,9 +1624,6 @@ fn run_now_playing(_cmd: NowPlayingCommand) -> ExitCode {
   ExitCode::from(1)
 }
 
-/// Require that `app_id` currently owns the now-playing slot before acting on
-/// it. Returns `Err(exit_code)` (with a message) when it does not, so controls
-/// never act on some other app that happens to be playing.
 #[cfg(target_os = "macos")]
 fn require_owner(app_id: &str) -> Result<(), ExitCode> {
   let state = match auv_media_macos::now_playing() {
@@ -1330,10 +1672,6 @@ fn run_seek(cmd: SeekCommand) -> ExitCode {
   if let Err(code) = require_owner(&cmd.app_id) {
     return code;
   }
-  // Defense-in-depth: parse_seek already rejects out-of-range seconds, but
-  // a direct SeekCommand construction (tests, future callers) could still
-  // reach run_seek with overflow/NaN. `try_from_secs_f64` avoids the panic
-  // path inside `Duration::from_secs_f64`.
   let duration = match std::time::Duration::try_from_secs_f64(cmd.seconds) {
     Ok(duration) => duration,
     Err(_) => {
