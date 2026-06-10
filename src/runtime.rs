@@ -34,7 +34,6 @@ use crate::trace::{
 pub struct Runtime {
   project_root: PathBuf,
   commands: CommandCatalog,
-  bundles: SkillBundleCatalog,
   skills: SkillCatalog,
   drivers: DriverRegistry,
   recording: RunRecordingBackend,
@@ -47,25 +46,18 @@ impl Runtime {
     drivers: DriverRegistry,
     store: LocalStore,
   ) -> Self {
-    let bundles = SkillBundleCatalog::discover(&project_root).unwrap_or_else(|error| {
-      panic!(
-        "failed to discover bundle catalog from {}: {error}",
-        project_root.display()
-      )
-    });
     let skills = SkillCatalog::discover(&project_root).unwrap_or_else(|error| {
       panic!(
         "failed to discover skill catalog from {}: {error}",
         project_root.display()
       )
     });
-    Self::new_with_catalogs(project_root, commands, bundles, skills, drivers, store)
+    Self::new_with_catalogs(project_root, commands, skills, drivers, store)
   }
 
   pub fn new_with_catalogs(
     project_root: PathBuf,
     commands: CommandCatalog,
-    bundles: SkillBundleCatalog,
     skills: SkillCatalog,
     drivers: DriverRegistry,
     store: LocalStore,
@@ -73,7 +65,6 @@ impl Runtime {
     Self {
       project_root,
       commands,
-      bundles,
       skills,
       drivers,
       recording: RunRecordingBackend::new(store, Arc::new(MemoryRunRecorder::new())),
@@ -631,7 +622,7 @@ impl Runtime {
     run: &mut crate::run_builder::RecordingRun,
     parent: &crate::run_builder::SpanRef,
     request: InvokeRequest,
-    bundle_command: ResolvedBundleCommand<'_>,
+    bundle_command: ResolvedBundleCommand,
   ) -> AuvResult<InvokeResult> {
     let mut command_overrides = request.inputs;
     // NOTICE: bundle-backed invoke currently maps the generic invoke target to
@@ -881,12 +872,10 @@ impl Runtime {
     Ok((staged_path, artifact_ref))
   }
 
-  fn resolve_bundle_command(
-    &self,
-    command_id: &str,
-  ) -> AuvResult<Option<ResolvedBundleCommand<'_>>> {
+  fn resolve_bundle_command(&self, command_id: &str) -> AuvResult<Option<ResolvedBundleCommand>> {
+    let bundles = SkillBundleCatalog::discover(&self.project_root)?;
     let mut matches = Vec::new();
-    for bundle in self.bundles.entries() {
+    for bundle in bundles.entries() {
       for command in &bundle.manifest.commands {
         if command.id != command_id {
           continue;
@@ -901,9 +890,9 @@ impl Runtime {
             )
           })?;
         matches.push(ResolvedBundleCommand {
-          bundle,
-          command,
-          recipe,
+          bundle: bundle.clone(),
+          command: command.clone(),
+          recipe: recipe.clone(),
         });
       }
     }
@@ -923,10 +912,10 @@ impl Runtime {
   }
 }
 
-struct ResolvedBundleCommand<'a> {
-  bundle: &'a SkillBundleCatalogEntry,
-  command: &'a SkillBundleCommand,
-  recipe: &'a crate::skill::SkillCatalogEntry,
+struct ResolvedBundleCommand {
+  bundle: SkillBundleCatalogEntry,
+  command: SkillBundleCommand,
+  recipe: crate::skill::SkillCatalogEntry,
 }
 
 fn span_record(
@@ -1040,7 +1029,7 @@ fn render_artifact_event(artifact: &crate::trace::ArtifactRecordV1Alpha1) -> Str
   )
 }
 
-fn render_bundle_command_match(bundle_command: &ResolvedBundleCommand<'_>) -> String {
+fn render_bundle_command_match(bundle_command: &ResolvedBundleCommand) -> String {
   format!(
     "{}:{} -> {}",
     bundle_command.bundle.manifest.metadata.id,
@@ -1856,14 +1845,66 @@ mod tests {
     bundles: SkillBundleCatalog,
     drivers: DriverRegistry,
   ) -> Runtime {
+    write_bundle_catalog_for_project(&project_root, &bundles);
     Runtime::new_with_catalogs(
       project_root,
       commands,
-      bundles,
       skills,
       drivers,
       LocalStore::new(store_root).expect("store should initialize"),
     )
+  }
+
+  fn write_bundle_catalog_for_project(
+    project_root: &std::path::Path,
+    bundles: &SkillBundleCatalog,
+  ) {
+    let bundles_root = project_root.join("bundles");
+    fs::create_dir_all(&bundles_root).expect("bundle dir should exist");
+    for bundle in bundles.entries() {
+      let manifest = &bundle.manifest;
+      let commands = manifest
+        .commands
+        .iter()
+        .map(|command| {
+          json!({
+            "id": command.id,
+            "recipeId": command.recipe_id,
+            "summary": command.summary,
+          })
+        })
+        .collect::<Vec<_>>();
+      let payload = json!({
+        "apiVersion": manifest.api_version,
+        "kind": manifest.kind,
+        "metadata": {
+          "id": manifest.metadata.id,
+          "name": manifest.metadata.name,
+          "version": manifest.metadata.version,
+          "status": manifest.metadata.status,
+        },
+        "commands": commands,
+        "target": {
+          "applicationFamily": manifest.target.application_family,
+          "platform": manifest.target.platform,
+        },
+        "versions": {
+          "auv": manifest.versions.auv,
+          "targetApplication": manifest.versions.target_application,
+        },
+        "verification": {
+          "expectedSignals": manifest.verification.expected_signals,
+          "successCriteria": manifest.verification.success_criteria,
+          "nonGoals": manifest.verification.non_goals,
+        },
+        "knownLimits": manifest.known_limits,
+      });
+      fs::write(
+        bundles_root.join(format!("{}.json", manifest.metadata.id)),
+        serde_json::to_string_pretty(&payload).expect("bundle manifest should serialize"),
+      )
+      .expect("bundle manifest should write");
+    }
   }
 
   fn runtime_bundle_project_root(label: &str) -> PathBuf {

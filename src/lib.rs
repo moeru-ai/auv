@@ -3,7 +3,7 @@ mod action_resolver_decision;
 pub mod app;
 #[cfg(target_os = "macos")]
 pub mod ax_recognition;
-pub mod bundle;
+mod bundle;
 pub mod candidate_action_command;
 pub mod candidate_action_decision;
 pub mod candidate_promotion;
@@ -29,7 +29,6 @@ pub mod trace;
 
 use std::path::PathBuf;
 
-use bundle::SkillBundleCatalog;
 use catalog::default_command_catalog;
 use driver::default_driver_registry;
 use model::AuvResult;
@@ -48,13 +47,11 @@ pub fn build_runtime_with_store_root(
 ) -> AuvResult<Runtime> {
   let store = LocalStore::new(store_root)?;
   let commands = default_command_catalog();
-  let bundles = SkillBundleCatalog::discover(&project_root)?;
   let skills = SkillCatalog::discover(&project_root)?;
   let drivers = default_driver_registry();
   Ok(Runtime::new_with_catalogs(
     project_root,
     commands,
-    bundles,
     skills,
     drivers,
     store,
