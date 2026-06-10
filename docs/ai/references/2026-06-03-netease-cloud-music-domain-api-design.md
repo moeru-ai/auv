@@ -44,11 +44,7 @@ pub struct NeteaseCloudMusic {
 }
 
 pub struct NeteaseCloudMusicObservation {
-  pub screen: ScreenState,
-  pub sidebar: SidebarState,
-  pub player: PlayerState,
-  pub diagnostics: Vec<ParserDiagnostic>,
-  pub artifacts: Vec<ArtifactRef>,
+  // App-specific read views derived from the same observation/reconstruction.
 }
 ```
 
@@ -68,18 +64,21 @@ if observation.sidebar.exists() {
 ```
 
 `NeteaseCloudMusicObservation` is one immutable observation of the app window at
-a point in time. It may be backed by capture, OCR, AX, reconstruction, and
-domain classifiers, but callers should not need to understand those internals
-for common predicates such as `screen.is_default()` or `sidebar.exists()`.
+a point in time. It is not a general evidence bag. It is an app-specific read
+model derived from capture, OCR, AX, reconstruction, and domain projection data.
+Callers should not need to understand those internals for common predicates such
+as `screen().is_default()` or `sidebar().exists()`.
 
 ## Naming
 
 Use Rust module names for boundaries and state/action names for types:
 
 - `NeteaseCloudMusic`: executable app client/session.
-- `NeteaseCloudMusicObservation`: read-only observation result.
+- `NeteaseCloudMusicObservation`: read-only app view over one observation.
 - `screen`, `sidebar`, `player`: Rust modules.
-- `ScreenState`, `SidebarState`, `PlayerState`: pure state records.
+- `ScreenView`, `SidebarView`, `PlayerView`: domain read facades.
+- `ScreenState`, `SidebarState`, `PlayerState`: compact state records used by
+  those facades.
 
 Do not name public types `ScreenModule` or `SidebarModule`. If action surfaces
 become large enough to split from `NeteaseCloudMusic`, prefer handle names such
@@ -94,17 +93,23 @@ The API should make IO and UI mutation visible in method names and return types.
 Pure observation reads:
 
 ```rust
-observation.screen.is_default();
-observation.screen.is_playing_song_detail();
-observation.sidebar.exists();
-observation.player.exists();
+observation.screen().is_default();
+observation.screen().is_playing_song_detail();
+observation.sidebar().exists();
+observation.sidebar().find_playlist("daily");
+observation.player().exists();
 ```
 
 Fresh observation:
 
 ```rust
 let observation = app.observe()?;
+let refreshed = app.refresh()?;
 ```
+
+`observe()` may reuse a valid cached observation within the current app/window
+generation. `refresh()` is a shortcut for forcing a new capture/OCR/reconstruct
+pass.
 
 Actions:
 
@@ -119,6 +124,46 @@ Action methods must use `auv-driver` / `auv-driver-macos` for input delivery and
 return typed operation evidence. They should not return only `bool`, because
 callers need to inspect delivery path, fallback reason, verification result, and
 evidence artifacts.
+
+## Reconstruction And Cache Reuse
+
+`NeteaseCloudMusicObservation` should be immutable. A new capture/OCR/AX pass
+creates a new observation and, when needed, a new reconstruction. Existing
+observations remain useful as historical evidence but must not be treated as the
+current UI after an action mutates the app.
+
+The app client may cache the latest observation to avoid repeated OCR and
+reconstruction inside one orchestration step. Cache policy should be explicit:
+
+```rust
+pub struct ObserveOptions {
+  pub reuse: ObserveReuseMode,
+}
+
+pub enum ObserveReuseMode {
+  ReuseValidCache,
+  ForceRefresh,
+}
+```
+
+Default behavior may use `ReuseValidCache`. Mutating actions such as
+`restore_default_screen()`, `go_to_recommendation()`, and
+`play_daily_recommended()` must invalidate the cached observation unless they
+return a fresh post-action observation as part of their result.
+
+`SidebarView` should be derived from the reconstructed/projection data rather
+than re-running a parallel OCR heuristic:
+
+```text
+ViewObservation
+  -> ViewReconstruction
+  -> PlaylistSidebarProjection
+  -> SidebarView::exists / find_playlist / created_playlists
+```
+
+This keeps CLI, MCP, and inspect debugging aligned on one source of truth.
+`inspect` can render the underlying reconstruction and artifacts; the domain API
+can expose a smaller NetEase-specific read facade over that same data.
 
 ## Recording Boundary
 
@@ -165,6 +210,8 @@ Scope:
 - introduce `NeteaseCloudMusic` and `NeteaseCloudMusicObservation`
 - introduce `ScreenState::{Default, PlayingSongDetail, BlockingModal, Unknown}`
 - expose pure predicates on `ScreenState`
+- define `ObserveReuseMode::{ReuseValidCache, ForceRefresh}` and cache
+  invalidation rules for mutating actions
 - adapt the existing default-screen/song-detail restore detection logic to
   consume the classifier
 - preserve existing behavior and tests
