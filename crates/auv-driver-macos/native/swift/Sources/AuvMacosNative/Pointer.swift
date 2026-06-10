@@ -552,6 +552,28 @@ func click_point(
   return nativeActionOk()
 }
 
+func move_point(x: Double, y: Double, button_code: Int32) -> NativeActionResponse {
+  let button = mouseButton(button_code)
+  let location = CGPoint(x: x, y: y)
+
+  CGWarpMouseCursorPosition(location)
+  guard
+    let move = CGEvent(
+      mouseEventSource: nil,
+      mouseType: .mouseMoved,
+      mouseCursorPosition: location,
+      mouseButton: button
+    )
+  else {
+    return nativeActionError(
+      "failed to create mouse move event",
+      "grant Accessibility permission and retry"
+    )
+  }
+  move.post(tap: .cghidEventTap)
+  return nativeActionOk()
+}
+
 func click_window_point(
   pid: Int64,
   window_number: Int64,

@@ -3,7 +3,8 @@
 use super::binding::ffi::{
   NativeActionResponse, NativeMouseLocationResponse, NativeTeachClickResponse,
   click_point as native_click_point, current_mouse_location as native_current_mouse_location,
-  scroll_point as native_scroll_point, teach_next_click as native_teach_next_click,
+  move_point as native_move_point, scroll_point as native_scroll_point,
+  teach_next_click as native_teach_next_click,
 };
 use super::types::AuvResult;
 
@@ -38,6 +39,16 @@ pub fn click_point(
   _click_interval_ms: u64,
 ) -> AuvResult<()> {
   Err("macOS native pointer click is unsupported on this target".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn move_point(x: f64, y: f64, button_code: i32) -> AuvResult<()> {
+  action_result("move_point", native_move_point(x, y, button_code))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn move_point(_x: f64, _y: f64, _button_code: i32) -> AuvResult<()> {
+  Err("macOS native pointer move is unsupported on this target".to_string())
 }
 
 #[cfg(target_os = "macos")]

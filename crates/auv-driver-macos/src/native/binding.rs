@@ -375,6 +375,7 @@ pub(crate) mod ffi {
       click_count: i64,
       click_interval_ms: u64,
     ) -> NativeActionResponse;
+    fn move_point(x: f64, y: f64, button_code: i32) -> NativeActionResponse;
     fn click_window_point(
       pid: i64,
       window_number: i64,
