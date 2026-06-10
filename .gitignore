@@ -63,6 +63,8 @@ dist-ssr
 .eslintcache
 
 .auv/
+.runs/
+docs/notes/
 
 # Temporary fixture artifact emitted by scroll-scan tests.
 scan-page-*-observe.json
