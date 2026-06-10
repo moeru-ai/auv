@@ -1,0 +1,34 @@
+[package]
+name = "auv-game-balatro"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+readme.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+card-corner-onnx = ["dep:auv-inference-ort"]
+
+[dependencies]
+auv-driver = { path = "../auv-driver" }
+auv-inference-common = { path = "../auv-inference-common" }
+auv-inference-ort = { path = "../auv-inference-ort", optional = true }
+auv-inference-ultralytics = { path = "../auv-inference-ultralytics" }
+auv-view = { path = "../auv-view" }
+clap = { version = "4.5", features = ["derive"] }
+hf-hub = { version = "1.0.0-rc.1", features = ["blocking", "rustls-tls"] }
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+auv-driver-macos = { path = "../auv-driver-macos" }
