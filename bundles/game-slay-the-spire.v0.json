@@ -1,0 +1,75 @@
+{
+  "apiVersion": "auv.ai/v1alpha1",
+  "kind": "SkillBundle",
+  "metadata": {
+    "id": "game.slay-the-spire.v0",
+    "name": "AUV Zero-AX Game Family: Slay the Spire",
+    "version": "0.1.0",
+    "status": "m2-observe-draft"
+  },
+  "commands": [
+    {
+      "id": "sts.readPlayerHp.v0",
+      "recipeId": "macos.slay_the_spire.read_player_hp.v0",
+      "summary": "Observe the Slay the Spire HUD band and record the player HP reading as RecognitionResult evidence (observe-only, no input delivery)."
+    }
+  ],
+  "target": {
+    "applicationFamily": "zero-ax-games",
+    "platform": "macOS"
+  },
+  "versions": {
+    "auv": ">=0.0.1, <0.1.0",
+    "targetApplication": ""
+  },
+  "members": [
+    {
+      "recipeId": "macos.slay_the_spire.read_player_hp.v0",
+      "caseMatrixId": "macos.slay_the_spire.read_player_hp.v0",
+      "role": "game-observe-read",
+      "validatedCaseIds": [],
+      "candidateCaseIds": [
+        "battle-hud-baseline"
+      ],
+      "contract": "captureEvidence",
+      "appBundleId": "net.java.openjdk.cmd",
+      "targetApplication": "",
+      "coverageSummary": {
+        "activationStatus": "not-applicable",
+        "semanticSelectionStatus": "not-applicable",
+        "validatedClaims": [],
+        "boundaryClaims": [
+          "Observe-only member under the first observe taxonomy combination (observe.visual-row.none.capture-evidence).",
+          "The HP reading is recorded as RecognitionResult artifact evidence; no step signal carries the numeric value yet, so the case stays candidate until a typed read consumer lands.",
+          "No member of this bundle delivers input to the game; clickEndTurn-class commands require the existing promotion/gating and ActionResolver seams in a later owner-approved slice."
+        ]
+      },
+      "evidenceRefs": [
+        "docs/ai/references/2026-06-10-game-recognition-recipe-consumer-seam.md",
+        "docs/ai/references/2026-06-10-sts-zero-ax-observe-probe-evidence.md"
+      ]
+    }
+  ],
+  "verification": {
+    "expectedSignals": [
+      "The bundle lists exactly one observe-only read command for the zero-AX game family.",
+      "sts.readPlayerHp.v0 resolves through bundle-backed invoke into the read-player-hp recipe and records run/span/artifact evidence.",
+      "The recipe validates under the observe.visual-row.none.capture-evidence taxonomy without any action-shaped activation."
+    ],
+    "successCriteria": [
+      "The bundle can be listed, verified, and invoked (including --dry-run) through the CLI.",
+      "Invoking sts.readPlayerHp.v0 on a HUD-bearing live frame records RecognitionResult evidence containing the HP reading.",
+      "Game specifics stay inside this bundle, its recipe, and inputs; AUV core gains no game branch."
+    ],
+    "nonGoals": [
+      "This bundle does not claim card-play strategy, turn planning, game-state modeling, or autonomous play.",
+      "This bundle does not claim the HP numeric format is machine-asserted; that requires the typed read consumer from the M0 consumer-seam note.",
+      "This bundle does not include any click or input-delivering command yet."
+    ]
+  },
+  "knownLimits": [
+    "Single-member draft: readEnergy/listHandCards shapes have observe evidence but no recipes yet; listHandCards needs the detector lane as the stronger signal.",
+    "App identity for the direct-launch Java process is net.java.openjdk.cmd; Steam-launch identity is unverified.",
+    "HUD region ratios assume the V2.3.4 windowed layout; other resolutions are unvalidated."
+  ]
+}

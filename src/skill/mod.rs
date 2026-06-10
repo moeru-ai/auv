@@ -126,6 +126,11 @@ pub enum SkillStrategyFamily {
   Playback,
   NativeText,
   WindowAction,
+  /// Observe-only recipes: every step is observation/verification with no
+  /// activation path. First consumer is the zero-AX game family
+  /// (`docs/ai/references/2026-06-10-sts-zero-ax-observe-probe-evidence.md`),
+  /// where read commands must validate without pretending to click.
+  Observe,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,6 +162,10 @@ pub enum SkillActivation {
   /// (`ax-action` | `pointer-click`); the taxonomy label only says
   /// "this recipe is allowed to take either path".
   SmartPress,
+  /// Observe-only recipes have no activation: steps may capture, OCR,
+  /// or wait, but never deliver input. Only valid with
+  /// `SkillStrategyFamily::Observe`.
+  None,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -247,6 +256,12 @@ impl SkillStrategyTaxonomy {
         activation: SkillActivation::SmartPress,
         verification_contract: SkillVerificationContract::CaptureEvidence,
       },
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::Observe,
+        grounding: SkillGrounding::VisualRow,
+        activation: SkillActivation::None,
+        verification_contract: SkillVerificationContract::CaptureEvidence,
+      },
     ];
     ALLOWED
   }
@@ -272,8 +287,9 @@ impl SkillStrategyFamily {
       "playback" => Ok(Self::Playback),
       "native-text" => Ok(Self::NativeText),
       "window-action" => Ok(Self::WindowAction),
+      "observe" => Ok(Self::Observe),
       other => Err(format!(
-        "strategy.family {} is unsupported; allowed values: search-entry, result-selection, playback, native-text, window-action",
+        "strategy.family {} is unsupported; allowed values: search-entry, result-selection, playback, native-text, window-action, observe",
         other
       )),
     }
@@ -286,6 +302,7 @@ impl SkillStrategyFamily {
       Self::Playback => "playback",
       Self::NativeText => "native-text",
       Self::WindowAction => "window-action",
+      Self::Observe => "observe",
     }
   }
 }
@@ -326,8 +343,9 @@ impl SkillActivation {
       "pointer-focus-clipboard-paste" => Ok(Self::PointerFocusClipboardPaste),
       "ax-perform-action-clipboard-paste" => Ok(Self::AxPerformActionClipboardPaste),
       "smart-press" => Ok(Self::SmartPress),
+      "none" => Ok(Self::None),
       other => Err(format!(
-        "strategy.activation {} is unsupported; allowed values: clipboard-submit, pointer-click, pointer-double-click, pointer-row-activation, pointer-focus-clipboard-paste, ax-perform-action-clipboard-paste, smart-press",
+        "strategy.activation {} is unsupported; allowed values: clipboard-submit, pointer-click, pointer-double-click, pointer-row-activation, pointer-focus-clipboard-paste, ax-perform-action-clipboard-paste, smart-press, none",
         other
       )),
     }
@@ -342,6 +360,7 @@ impl SkillActivation {
       Self::PointerFocusClipboardPaste => "pointer-focus-clipboard-paste",
       Self::AxPerformActionClipboardPaste => "ax-perform-action-clipboard-paste",
       Self::SmartPress => "smart-press",
+      Self::None => "none",
     }
   }
 }
@@ -2892,6 +2911,88 @@ mod tests {
     .expect("manifest should deserialize");
 
     validate_skill_manifest(&manifest).expect("smart-press manifest should validate");
+  }
+
+  #[test]
+  fn validate_skill_manifest_accepts_observe_visual_row_taxonomy() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.observe.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "observe",
+        "grounding": "visual-row",
+        "activation": "none",
+        "verificationContract": "captureEvidence"
+      },
+      "objective": "test",
+      "disturbance_policy": {
+        "max_disturbance": "none",
+        "declared_classes": ["none"]
+      },
+      "steps": [{
+        "id": "observe-region",
+        "command_id": "debug.observeWindowRegion",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        },
+        "args": {
+          "target": "app"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    validate_skill_manifest(&manifest).expect("observe manifest should validate");
+  }
+
+  #[test]
+  fn validate_skill_manifest_rejects_observe_with_pointer_activation() {
+    let manifest: SkillManifest = serde_json::from_value(json!({
+      "recipe_id": "test.observe.pointer.skill",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "app", "display_mode": "live-desktop" },
+      "strategy": {
+        "family": "observe",
+        "grounding": "visual-row",
+        "activation": "pointer-click",
+        "verificationContract": "captureEvidence"
+      },
+      "objective": "test",
+      "disturbance_policy": {
+        "max_disturbance": "pointer",
+        "declared_classes": ["none", "pointer"]
+      },
+      "steps": [{
+        "id": "observe-region",
+        "command_id": "debug.observeWindowRegion",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        },
+        "args": {
+          "target": "app"
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    }))
+    .expect("manifest should deserialize");
+
+    let error = validate_skill_manifest(&manifest)
+      .expect_err("observe family with a pointer activation must stay rejected");
+    assert!(error.contains("strategy combination"), "error was: {error}");
   }
 
   fn smart_press_manifest_template(

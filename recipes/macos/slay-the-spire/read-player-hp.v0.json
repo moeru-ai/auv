@@ -1,0 +1,113 @@
+{
+  "recipe_id": "macos.slay_the_spire.read_player_hp.v0",
+  "version": "0.1.0",
+  "status": "experimental-recipe",
+  "platform": "macOS",
+  "target_app": {
+    "name": "Slay the Spire",
+    "bundle_id": "${app_id}",
+    "display_mode": "live-desktop"
+  },
+  "strategy": {
+    "family": "observe",
+    "grounding": "visual-row",
+    "activation": "none",
+    "verificationContract": "captureEvidence"
+  },
+  "objective": "Observe the Slay the Spire top HUD band and record the player HP reading as RecognitionResult evidence (window capture + region OCR), without delivering any input to the game.",
+  "inputs": {
+    "app_id": {
+      "type": "string",
+      "default": "net.java.openjdk.cmd",
+      "note": "Runtime bundle id of the live LWJGL/Java process. The Info.plist id com.megacrit.slaythespire is not what the running game registers as when launched directly; see docs/ai/references/2026-06-10-sts-zero-ax-observe-probe-evidence.md."
+    },
+    "hud_region_left_ratio": {
+      "type": "number",
+      "default": 0.0
+    },
+    "hud_region_top_ratio": {
+      "type": "number",
+      "default": 0.0
+    },
+    "hud_region_right_ratio": {
+      "type": "number",
+      "default": 0.45
+    },
+    "hud_region_bottom_ratio": {
+      "type": "number",
+      "default": 0.12
+    },
+    "min_confidence": {
+      "type": "number",
+      "default": 0.3
+    },
+    "max_observations": {
+      "type": "integer",
+      "default": 16
+    },
+    "label": {
+      "type": "string",
+      "default": "sts-player-hp"
+    }
+  },
+  "preconditions": [
+    "The host is macOS with Screen Recording permission granted.",
+    "Slay the Spire is running and addressable by ${app_id}.",
+    "A HUD-bearing screen is visible (battle, map, or event): the top band must show the player name and HP."
+  ],
+  "disturbance_policy": {
+    "max_disturbance": "none",
+    "declared_classes": ["none"],
+    "notes": [
+      "Observe-only: the recipe never delivers pointer or keyboard input to the game.",
+      "Window capture works without foregrounding the game; no foreground_app disturbance is declared."
+    ]
+  },
+  "steps": [
+    {
+      "id": "observe-hud",
+      "command_id": "debug.observeWindowRegion",
+      "disturbance": {
+        "classes": ["none"],
+        "max": "none"
+      },
+      "args": {
+        "target": "${app_id}",
+        "label": "${label}",
+        "region_left_ratio": "${hud_region_left_ratio}",
+        "region_top_ratio": "${hud_region_top_ratio}",
+        "region_right_ratio": "${hud_region_right_ratio}",
+        "region_bottom_ratio": "${hud_region_bottom_ratio}",
+        "min_confidence": "${min_confidence}",
+        "max_observations": "${max_observations}"
+      },
+      "expect": {
+        "signal_equals": {
+          "rows.visible": "true"
+        },
+        "artifact_count_at_least": 1
+      }
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "debug.observeWindowRegion reports at least one visible OCR row inside the HUD band (rows.visible=true).",
+      "A window-region-recognition artifact (RecognitionResult) is recorded with the HP reading in its row text and a capture_artifact lineage reference."
+    ],
+    "success_criteria": [
+      "The run records window capture plus RecognitionResult evidence for the HUD band through the standard run/span/artifact pipeline.",
+      "The HP value (for example 88/88) is present in the recognition row text fragments on a HUD-bearing frame."
+    ],
+    "non_goals": [
+      "This recipe does not assert the numeric HP format at expect level; row text is artifact evidence, not a step signal, until a typed read consumer lands (M0 seam note, consumer slice).",
+      "This recipe does not prove stable-frame consistency across repeated captures.",
+      "This recipe does not interpret game state and must never grow an activation step."
+    ]
+  },
+  "known_limits": {
+    "value_not_in_signals": "debug.observeWindowRegion exports rows.count/rows.visible signals only; the HP text lives in the RecognitionResult artifact. Asserting the numeric format requires the typed consumer command planned by the M0 consumer-seam note.",
+    "ocr_fragmentation": "Vision OCR may glue HUD icons into the text fragments (observed: '2 88/88' where 2 is icon noise). Consumers must parse defensively.",
+    "app_identity": "The default app_id targets the direct-launch runtime id. Steam-launched processes may register differently; pass --app_id to override.",
+    "hud_layout": "Region ratios assume the V2.3.4 windowed HUD layout at 1366x768-class window sizes."
+  }
+}
