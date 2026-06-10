@@ -181,6 +181,29 @@ fn playlist_play_click_options() -> auv_driver::ClickOptions {
   }
 }
 
+fn playlist_play_status_from_bottom_probe(
+  control_state: PlaybackControlState,
+  before_bottom_text: Option<&str>,
+  observed_bottom_text: Option<&str>,
+) -> &'static str {
+  if control_state != PlaybackControlState::PauseVisible {
+    return "failed";
+  }
+
+  let before = before_bottom_text.and_then(normalized_non_empty);
+  let observed = observed_bottom_text.and_then(normalized_non_empty);
+  match (before, observed) {
+    (Some(before), Some(observed)) if before == observed => "failed",
+    (Some(_), None) => "failed",
+    _ => "passed",
+  }
+}
+
+fn normalized_non_empty(input: &str) -> Option<String> {
+  let normalized = crate::normalize_identity(input);
+  (!normalized.is_empty()).then_some(normalized)
+}
+
 fn playlist_select_bottom_padding_scroll_needed(
   target_bounds: ViewBounds,
   sidebar_bounds: ViewBounds,
@@ -229,6 +252,17 @@ mod tests {
       safe_target,
       sidebar
     ));
+  }
+
+  #[test]
+  fn playlist_play_verification_rejects_unchanged_existing_playback() {
+    let status = playlist_play_status_from_bottom_probe(
+      PlaybackControlState::PauseVisible,
+      Some("old song"),
+      Some("old song"),
+    );
+
+    assert_eq!(status, "failed");
   }
 }
 
@@ -632,9 +666,10 @@ fn run_playlist_play_resolved(
 ) -> Result<PlaylistPlayResult, String> {
   use crate::commands::daily_recommended::best_text_match;
   use crate::delivery_path_label;
-  use crate::views::player::classify_bottom_playback_control_state;
   use auv_driver::selector::{App, Window};
-  use auv_driver::{Driver, RatioRect, Size, WindowPoint};
+  use auv_driver::{
+    ActivationPolicy, Click, Driver, PrepareForInputOptions, RatioRect, Size, WindowPoint,
+  };
   use auv_driver_macos::MacosDriver;
 
   let select = run_playlist_select_resolved(inputs, query, scan, target)?;
@@ -686,6 +721,7 @@ fn run_playlist_play_resolved(
     )
     .map_err(|error| format!("playlist play-all OCR failed: {error}"))?;
   let recognition = crate::recognition_in_window_space(recognition, &capture);
+  let before_bottom_text = recognize_playlist_bottom_text(&session, &capture, inputs);
   let Some(target) = best_text_match(&recognition, "播放全部", window_size, |bounds, size| {
     bounds.x > size.width * 0.18 && bounds.y > size.height * 0.12 && bounds.y < size.height * 0.55
   }) else {
@@ -718,64 +754,70 @@ fn run_playlist_play_resolved(
     artifact: Some(play_all_artifact.display().to_string()),
   });
 
-  let capture = session
-    .window()
-    .capture(&window)
-    .map_err(|error| format!("playlist play verification capture failed: {error}"))?;
-  let screenshot = inputs
-    .artifact_dir
-    .join("playlist-play-post-click-playback-state.png");
-  capture
-    .image
-    .save(&screenshot)
-    .map_err(|error| format!("failed to save {}: {error}", screenshot.display()))?;
-  artifacts.push(screenshot.display().to_string());
-  let control_state = classify_bottom_playback_control_state(&capture.image);
-  let bottom_text = session
-    .vision()
-    .recognize_text_in_capture_with_options(
-      &capture,
-      RatioRect::new(0.0, 0.88, 0.46, 0.12),
-      inputs.ocr_options.clone(),
-    )
-    .ok()
-    .map(|recognition| recognition.text.trim().to_string())
-    .filter(|text| !text.is_empty());
-  let verification_json = inputs
-    .artifact_dir
-    .join("playlist-play-post-click-playback-state.json");
-  let payload = serde_json::json!({
-    "method": "bottom_control_icon",
-    "control_state": control_state,
-    "observed_bottom_text": bottom_text,
-    "screenshot": screenshot.display().to_string(),
-  });
-  std::fs::write(
-    &verification_json,
-    serde_json::to_string_pretty(&payload)
-      .map_err(|error| format!("failed to serialize playlist play verification: {error}"))?,
-  )
-  .map_err(|error| format!("failed to write {}: {error}", verification_json.display()))?;
-  artifacts.push(verification_json.display().to_string());
-  let verification = PlaylistPlayVerification {
-    status: if control_state == PlaybackControlState::PauseVisible {
-      "passed"
-    } else {
-      known_limits.push(
-        "playlist play-all click did not expose a pause control in the bottom player".to_string(),
-      );
-      "failed"
-    }
-    .to_string(),
-    method: "bottom_control_icon".to_string(),
-    control_state: Some(control_state),
-    observed_bottom_text: bottom_text,
-    artifact: Some(verification_json.display().to_string()),
-    note: Some(
-      "verification checks the bottom playback control after clicking playlist Play All"
+  let mut verification = capture_playlist_play_verification(
+    &session,
+    &window,
+    inputs,
+    &mut artifacts,
+    "playlist-play-post-click-playback-state",
+    before_bottom_text.as_deref(),
+  )?;
+  if verification.status != "passed" {
+    known_limits.push(
+      "window-targeted Play All click did not verify playback; retried with foreground click"
         .to_string(),
-    ),
-  };
+    );
+    let screen_point = session
+      .window()
+      .to_screen_point(&window, WindowPoint::new(point.x, point.y))
+      .map_err(|error| format!("playlist play-all foreground point projection failed: {error}"))?;
+    let lease = session
+      .window()
+      .prepare_for_input(
+        &window,
+        PrepareForInputOptions {
+          activation: ActivationPolicy::Foreground {
+            settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
+          },
+          preserve_frontmost: false,
+          install_focus_guard: false,
+          settle: std::time::Duration::from_millis(0),
+        },
+      )
+      .map_err(|error| format!("playlist play-all foreground preparation failed: {error}"))?;
+    let click_result = session
+      .input()
+      .click_at(screen_point.point(), Click::Single);
+    let restore_result = session.window().restore_input(lease);
+    click_result.map_err(|error| format!("playlist play-all foreground click failed: {error}"))?;
+    restore_result
+      .map_err(|error| format!("playlist play-all foreground restore failed: {error}"))?;
+    if inputs.scroll_settle_ms > 0 {
+      std::thread::sleep(std::time::Duration::from_millis(inputs.scroll_settle_ms));
+    }
+    steps.push(PlaylistPlayStep {
+      name: "click-play-all-foreground-retry".to_string(),
+      target_label: Some("播放全部".to_string()),
+      target_bounds: Some(target_bounds),
+      delivery_path: Some("foreground_system_events".to_string()),
+      fallback_reason: Some("window-targeted click did not verify playback".to_string()),
+      artifact: Some(play_all_artifact.display().to_string()),
+    });
+    verification = capture_playlist_play_verification(
+      &session,
+      &window,
+      inputs,
+      &mut artifacts,
+      "playlist-play-post-foreground-click-playback-state",
+      before_bottom_text.as_deref(),
+    )?;
+  }
+  if verification.status != "passed" {
+    known_limits.push(
+      "playlist play-all click did not change the bottom player from its pre-click state"
+        .to_string(),
+    );
+  }
 
   Ok(PlaylistPlayResult {
     command: "playlist.play".to_string(),
@@ -787,6 +829,84 @@ fn run_playlist_play_resolved(
     known_limits,
     artifacts,
   })
+}
+
+#[cfg(target_os = "macos")]
+fn capture_playlist_play_verification(
+  session: &auv_driver_macos::MacosDriverSession,
+  window: &auv_driver::Window,
+  inputs: &Inputs,
+  artifacts: &mut Vec<String>,
+  artifact_stem: &str,
+  before_bottom_text: Option<&str>,
+) -> Result<PlaylistPlayVerification, String> {
+  use crate::views::player::classify_bottom_playback_control_state;
+
+  let capture = session
+    .window()
+    .capture(window)
+    .map_err(|error| format!("playlist play verification capture failed: {error}"))?;
+  let screenshot = inputs.artifact_dir.join(format!("{artifact_stem}.png"));
+  capture
+    .image
+    .save(&screenshot)
+    .map_err(|error| format!("failed to save {}: {error}", screenshot.display()))?;
+  artifacts.push(screenshot.display().to_string());
+  let control_state = classify_bottom_playback_control_state(&capture.image);
+  let bottom_text = recognize_playlist_bottom_text(session, &capture, inputs);
+  let verification_json = inputs.artifact_dir.join(format!("{artifact_stem}.json"));
+  let status = playlist_play_status_from_bottom_probe(
+    control_state,
+    before_bottom_text,
+    bottom_text.as_deref(),
+  );
+  let payload = serde_json::json!({
+    "method": "bottom_control_icon_with_player_change",
+    "status": status,
+    "control_state": control_state,
+    "before_bottom_text": before_bottom_text,
+    "observed_bottom_text": bottom_text,
+    "screenshot": screenshot.display().to_string(),
+  });
+  std::fs::write(
+    &verification_json,
+    serde_json::to_string_pretty(&payload)
+      .map_err(|error| format!("failed to serialize playlist play verification: {error}"))?,
+  )
+  .map_err(|error| format!("failed to write {}: {error}", verification_json.display()))?;
+  artifacts.push(verification_json.display().to_string());
+
+  Ok(PlaylistPlayVerification {
+    status: status.to_string(),
+    method: "bottom_control_icon_with_player_change".to_string(),
+    control_state: Some(control_state),
+    observed_bottom_text: bottom_text,
+    artifact: Some(verification_json.display().to_string()),
+    note: Some(
+      "verification checks the bottom playback control and rejects unchanged pre-click playback"
+        .to_string(),
+    ),
+  })
+}
+
+#[cfg(target_os = "macos")]
+fn recognize_playlist_bottom_text(
+  session: &auv_driver_macos::MacosDriverSession,
+  capture: &auv_driver::Capture,
+  inputs: &Inputs,
+) -> Option<String> {
+  use auv_driver::RatioRect;
+
+  session
+    .vision()
+    .recognize_text_in_capture_with_options(
+      capture,
+      RatioRect::new(0.0, 0.88, 0.46, 0.12),
+      inputs.ocr_options.clone(),
+    )
+    .ok()
+    .map(|recognition| recognition.text.trim().to_string())
+    .filter(|text| !text.is_empty())
 }
 
 #[cfg(target_os = "macos")]
