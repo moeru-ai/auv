@@ -8,10 +8,6 @@ use std::process;
 use std::sync::Arc;
 
 use auv_cli::app::{analyze_app_probe, distill_app_analysis, probe_app, validate_app_distillation};
-use auv_cli::bundle::{
-  SkillBundleCatalog, export_bundle, render_bundle_package_coverage, verify_bundle,
-  verify_exported_bundle_package_standalone,
-};
 use auv_cli::model::RunStatus;
 use auv_cli::scroll_scan::{
   ScanRegion, ScanTarget, ScanWindowRegionOptions, StopPolicy, scan_window_region,
@@ -79,9 +75,7 @@ async fn run() -> Result<(), String> {
     return Ok(());
   }
 
-  let runtime_version = env!("CARGO_PKG_VERSION").to_string();
   let skill_catalog = SkillCatalog::discover(&project_root)?;
-  let bundle_catalog = SkillBundleCatalog::discover(&project_root)?;
   let case_matrix_catalog = SkillCaseMatrixCatalog::discover(&project_root)?;
 
   match command {
@@ -334,80 +328,6 @@ async fn run() -> Result<(), String> {
           entry.path.display()
         ))?
       );
-    }
-    CliCommand::SkillBundleList => {
-      for entry in bundle_catalog.entries() {
-        println!("{}", entry.manifest.metadata.id);
-        println!("  {}", entry.manifest.metadata.name);
-        if !entry.manifest.metadata.status.is_empty() {
-          println!("  status: {}", entry.manifest.metadata.status);
-        }
-        println!("  path: {}", entry.path.display());
-      }
-    }
-    CliCommand::SkillBundleShow { query } => {
-      let entry = bundle_catalog.resolve(&project_root, &query)?;
-      let raw = std::fs::read_to_string(&entry.path).map_err(|error| {
-        format!(
-          "failed to read bundle manifest {}: {error}",
-          entry.path.display()
-        )
-      })?;
-      let value: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|error| format!("failed to parse {}: {error}", entry.path.display()))?;
-      println!(
-        "{}",
-        serde_json::to_string_pretty(&value).map_err(|error| format!(
-          "failed to render bundle manifest {}: {error}",
-          entry.path.display()
-        ))?
-      );
-    }
-    CliCommand::SkillBundleCoverage { query } => {
-      let entry = bundle_catalog.resolve(&project_root, &query)?;
-      print!(
-        "{}",
-        render_bundle_package_coverage(entry, &skill_catalog, &case_matrix_catalog, &project_root,)?
-      );
-    }
-    CliCommand::SkillBundleVerify { query } => {
-      let entry = bundle_catalog.resolve(&project_root, &query)?;
-      verify_bundle(
-        &project_root,
-        &runtime_version,
-        &skill_catalog,
-        &case_matrix_catalog,
-        entry,
-      )?;
-      println!("bundle: {}", entry.manifest.metadata.id);
-      println!("status: verified");
-      println!("path: {}", entry.path.display());
-    }
-    CliCommand::SkillBundleExport { query, output_dir } => {
-      let entry = bundle_catalog.resolve(&project_root, &query)?;
-      verify_bundle(
-        &project_root,
-        &runtime_version,
-        &skill_catalog,
-        &case_matrix_catalog,
-        entry,
-      )?;
-      export_bundle(
-        &project_root,
-        &skill_catalog,
-        &case_matrix_catalog,
-        entry,
-        PathBuf::from(output_dir),
-      )?;
-      println!("bundle: {}", entry.manifest.metadata.id);
-      println!("status: exported");
-    }
-    CliCommand::SkillBundlePackageVerify { package_dir } => {
-      let package_root = PathBuf::from(package_dir);
-      let bundle_id = verify_exported_bundle_package_standalone(&package_root)?;
-      println!("bundle: {}", bundle_id);
-      println!("status: verified");
-      println!("package: {}", package_root.display());
     }
     CliCommand::SkillCasesList => {
       for entry in case_matrix_catalog.entries() {
