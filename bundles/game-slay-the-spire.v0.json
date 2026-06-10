@@ -11,7 +11,12 @@
     {
       "id": "sts.readPlayerHp.v0",
       "recipeId": "macos.slay_the_spire.read_player_hp.v0",
-      "summary": "Observe the Slay the Spire HUD band and record the player HP reading as RecognitionResult evidence (observe-only, no input delivery)."
+      "summary": "Observe the Slay the Spire HUD band and machine-assert the player HP reading via the recognition.read.ratio consumer (observe-only, no input delivery)."
+    },
+    {
+      "id": "sts.readEnergy.v0",
+      "recipeId": "macos.slay_the_spire.read_energy.v0",
+      "summary": "Observe the Slay the Spire energy orb region and machine-assert the current/max energy reading via the recognition.read.ratio consumer (observe-only, no input delivery)."
     }
   ],
   "target": {
@@ -48,11 +53,36 @@
         "docs/ai/references/2026-06-10-game-recognition-recipe-consumer-seam.md",
         "docs/ai/references/2026-06-10-sts-zero-ax-observe-probe-evidence.md"
       ]
+    },
+    {
+      "recipeId": "macos.slay_the_spire.read_energy.v0",
+      "caseMatrixId": "macos.slay_the_spire.read_energy.v0",
+      "role": "game-observe-read",
+      "validatedCaseIds": [],
+      "candidateCaseIds": [
+        "battle-energy-baseline"
+      ],
+      "contract": "captureEvidence",
+      "appBundleId": "net.java.openjdk.cmd",
+      "targetApplication": "",
+      "coverageSummary": {
+        "activationStatus": "not-applicable",
+        "semanticSelectionStatus": "not-applicable",
+        "validatedClaims": [],
+        "boundaryClaims": [
+          "Same observe taxonomy and recognition.read.ratio consumer seam as the HP member; only the observed region differs.",
+          "The energy orb only exists on battle screens, so this member fails honestly outside battles."
+        ]
+      },
+      "evidenceRefs": [
+        "docs/ai/references/2026-06-10-game-recognition-recipe-consumer-seam.md",
+        "docs/ai/references/2026-06-10-sts-zero-ax-observe-probe-evidence.md"
+      ]
     }
   ],
   "verification": {
     "expectedSignals": [
-      "The bundle lists exactly one observe-only read command for the zero-AX game family.",
+      "The bundle lists two observe-only read commands for the zero-AX game family, both consuming the shared recognition.read.ratio seam.",
       "sts.readPlayerHp.v0 resolves through bundle-backed invoke into the read-player-hp recipe and records run/span/artifact evidence.",
       "The recipe validates under the observe.visual-row.none.capture-evidence taxonomy without any action-shaped activation."
     ],
@@ -68,7 +98,7 @@
     ]
   },
   "knownLimits": [
-    "Single-member draft: readEnergy/listHandCards shapes have observe evidence but no recipes yet; listHandCards needs the detector lane as the stronger signal.",
+    "listHandCards has observe evidence but no recipe: fanned cards defeat row OCR (1 of 5 cards read), so it waits for the detector lane as the stronger signal under the same RecognitionResult contract.",
     "App identity for the direct-launch Java process is net.java.openjdk.cmd; Steam-launch identity is unverified.",
     "HUD region ratios assume the V2.3.4 windowed layout; other resolutions are unvalidated."
   ]
