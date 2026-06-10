@@ -7,6 +7,13 @@
     "version": "0.1.0",
     "status": "phase-1-frozen"
   },
+  "commands": [
+    {
+      "id": "qqmusic.playVisibleAnchor.v0",
+      "recipeId": "macos.qqmusic.play_visible_anchor.v0",
+      "summary": "Run the narrow QQ音乐 visible-anchor playback baseline through the bundle-backed invoke path."
+    }
+  ],
   "target": {
     "applicationFamily": "native-macos-apps",
     "platform": "macOS"

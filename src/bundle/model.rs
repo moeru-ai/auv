@@ -12,6 +12,8 @@ pub struct SkillBundleManifest {
   pub kind: String,
   pub metadata: SkillBundleMetadata,
   #[serde(default)]
+  pub commands: Vec<SkillBundleCommand>,
+  #[serde(default)]
   pub target: SkillBundleTarget,
   #[serde(default)]
   pub versions: SkillBundleVersions,
@@ -33,6 +35,16 @@ pub struct SkillBundleMetadata {
   pub version: String,
   #[serde(default)]
   pub status: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct SkillBundleCommand {
+  #[serde(default)]
+  pub id: String,
+  #[serde(default, rename = "recipeId")]
+  pub recipe_id: String,
+  #[serde(default)]
+  pub summary: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]

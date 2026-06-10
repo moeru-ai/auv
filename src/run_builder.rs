@@ -399,6 +399,15 @@ impl RecordingRun {
     self.artifacts.len()
   }
 
+  pub fn snapshot_preview(&self) -> CanonicalRun {
+    CanonicalRun {
+      run: self.run.clone(),
+      spans: self.spans.clone(),
+      events: self.events.clone(),
+      artifacts: self.artifacts.clone(),
+    }
+  }
+
   pub fn finish(
     mut self,
     status_code: TraceStatusCode,

@@ -10,9 +10,9 @@ use crate::skill::{SkillCaseMatrixCatalog, SkillCatalog};
 use super::catalog::SkillBundleCatalog;
 use super::export::{export_bundle, read_json_file, verify_exported_bundle_package_standalone};
 use super::model::{
-  ExportedBundlePackageManifest, SkillBundleCatalogEntry, SkillBundleManifest, SkillBundleMember,
-  SkillBundleMemberCoverageSummary, SkillBundleMetadata, SkillBundleTarget,
-  SkillBundleVerification, SkillBundleVersions,
+  ExportedBundlePackageManifest, SkillBundleCatalogEntry, SkillBundleCommand,
+  SkillBundleManifest, SkillBundleMember, SkillBundleMemberCoverageSummary,
+  SkillBundleMetadata, SkillBundleTarget, SkillBundleVerification, SkillBundleVersions,
 };
 use super::paths::sanitized_bundle_package_name;
 use super::validate::{
@@ -95,6 +95,11 @@ fn bundle_entry_with(
         application_family: "native-macos-apps".to_string(),
         platform: "macOS".to_string(),
       },
+      commands: vec![SkillBundleCommand {
+        id: "test.bundle.command".to_string(),
+        recipe_id: "test.recipe.0".to_string(),
+        summary: "Bundle command fixture".to_string(),
+      }],
       versions: SkillBundleVersions {
         auv: ">=0.0.1, <0.1.0".to_string(),
         target_application: target_application.to_string(),

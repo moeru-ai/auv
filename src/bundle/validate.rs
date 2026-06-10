@@ -134,6 +134,28 @@ pub fn verify_bundle(
       entry.manifest.metadata.id
     ));
   }
+  for command in &entry.manifest.commands {
+    if command.id.trim().is_empty() {
+      return Err(format!(
+        "bundle {} has a command with empty id",
+        entry.manifest.metadata.id
+      ));
+    }
+    if command.recipe_id.trim().is_empty() {
+      return Err(format!(
+        "bundle {} command {} must declare recipeId",
+        entry.manifest.metadata.id, command.id
+      ));
+    }
+    skill_catalog
+      .resolve_recipe_id(&command.recipe_id)
+      .map_err(|error| {
+        format!(
+          "bundle {} command {} references unknown recipe {}: {error}",
+          entry.manifest.metadata.id, command.id, command.recipe_id
+        )
+      })?;
+  }
 
   let runtime_req = semver::VersionReq::parse(&entry.manifest.versions.auv).map_err(|error| {
     format!(

@@ -519,6 +519,8 @@ pub struct SkillRunOptions {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SkillRunSummary {
   #[allow(dead_code)]
+  pub recipe_id: String,
+  #[allow(dead_code)]
   pub exported_variables: BTreeMap<String, String>,
 }
 
@@ -770,6 +772,7 @@ pub(super) fn run_skill_manifest_into_run_with_reporter(
   }
 
   Ok(SkillRunSummary {
+    recipe_id: manifest.recipe_id.clone(),
     exported_variables: variables,
   })
 }
@@ -1140,6 +1143,7 @@ fn build_invoke_request(
     command_id: step.command_id.clone(),
     target,
     inputs,
+    dry_run: false,
   })
 }
 
@@ -1754,6 +1758,7 @@ mod tests {
   #[test]
   fn skill_run_summary_exposes_exported_variables() {
     let summary = SkillRunSummary {
+      recipe_id: "test.recipe".to_string(),
       exported_variables: BTreeMap::from([(
         "last.scan.hook.action".to_string(),
         "continue".to_string(),

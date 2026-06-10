@@ -96,6 +96,23 @@ impl<'a> SkillRecipeRunner<'a> {
       Err(error) => trace.finish_failure(manifest, error),
     }
   }
+
+  pub(crate) fn run_into_existing_run(
+    &self,
+    recipe: &SkillRecipe,
+    options: SkillRunOptions,
+    run: &mut crate::run_builder::RecordingRun,
+    parent: &crate::run_builder::SpanRef,
+  ) -> AuvResult<super::SkillRunSummary> {
+    run_skill_manifest_into_run_with_reporter(
+      self.runtime,
+      run,
+      parent,
+      recipe.manifest(),
+      options,
+      self.reporter.as_ref(),
+    )
+  }
 }
 
 struct RecipeTraceRecorder<'a> {

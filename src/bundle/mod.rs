@@ -9,7 +9,7 @@ mod validate;
 pub use self::catalog::SkillBundleCatalog;
 pub use self::export::{export_bundle, verify_exported_bundle_package_standalone};
 pub use self::model::{
-  SkillBundleCatalogEntry, SkillBundleManifest, SkillBundleMember,
+  SkillBundleCatalogEntry, SkillBundleCommand, SkillBundleManifest, SkillBundleMember,
   SkillBundleMemberCoverageSummary, SkillBundleMetadata, SkillBundleTarget,
   SkillBundleVerification, SkillBundleVersions,
 };

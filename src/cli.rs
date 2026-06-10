@@ -238,7 +238,7 @@ USAGE
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
   auv-cli app validate <distill-dir-or-distillation-json>
-  auv-cli invoke <command-id> [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
@@ -777,13 +777,14 @@ fn parse_inspect_client_option(
 fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv-cli invoke <command-id> [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string(),
+      "usage: auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string(),
     );
   }
 
   let command_id = arguments[1].clone();
   let mut target = ExecutionTarget::default();
   let mut inputs = BTreeMap::new();
+  let mut dry_run = false;
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
 
@@ -791,6 +792,11 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
     let argument = &arguments[index];
     if !argument.starts_with("--") {
       return Err(format!("unexpected positional argument {argument}"));
+    }
+    if argument == "--dry-run" {
+      dry_run = true;
+      index += 1;
+      continue;
     }
     if let Some(consumed) =
       parse_inspect_client_option(argument.as_str(), arguments.get(index + 1), &mut inspect)?
@@ -824,6 +830,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
       command_id,
       target,
       inputs,
+      dry_run,
     },
     inspect,
   })
@@ -1474,10 +1481,35 @@ mod tests {
     match command {
       CliCommand::Invoke { request, inspect } => {
         assert_eq!(request.command_id, "debug.captureDisplay");
+        assert!(!request.dry_run);
         assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
         assert_eq!(inspect.local_write, InspectWriteSetting::Default);
         assert_eq!(inspect.server_write, InspectWriteSetting::Disabled);
         assert_eq!(inspect.server_token_file.as_deref(), Some("/tmp/token"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_dry_run_flag() {
+    let command = parse_cli(&[
+      "invoke".to_string(),
+      "qqmusic.playVisibleAnchor.v0".to_string(),
+      "--dry-run".to_string(),
+      "--target".to_string(),
+      "com.tencent.QQMusicMac".to_string(),
+    ])
+    .expect("invoke dry-run should parse");
+
+    match command {
+      CliCommand::Invoke { request, .. } => {
+        assert_eq!(request.command_id, "qqmusic.playVisibleAnchor.v0");
+        assert!(request.dry_run);
+        assert_eq!(
+          request.target.application_id.as_deref(),
+          Some("com.tencent.QQMusicMac")
+        );
       }
       other => panic!("unexpected command: {other:?}"),
     }

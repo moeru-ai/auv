@@ -189,6 +189,7 @@ pub(crate) fn invoke_probe_step(
       application_id: target_application_id.clone(),
     },
     inputs: inputs.clone(),
+    dry_run: false,
   };
   let result = match runtime.invoke_in_span(run, &step_span, request) {
     Ok(result) => result,

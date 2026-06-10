@@ -750,6 +750,7 @@ fn observe_request(options: &ScanWindowRegionOptions, page_index: usize) -> Invo
       application_id: options.target.application_id.clone(),
     },
     inputs,
+    dry_run: false,
   }
 }
 
@@ -767,6 +768,7 @@ fn scroll_request(options: &ScanWindowRegionOptions) -> InvokeRequest {
       application_id: options.target.application_id.clone(),
     },
     inputs,
+    dry_run: false,
   }
 }
 

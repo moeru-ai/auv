@@ -72,6 +72,11 @@ impl SkillBundleCatalog {
       .find(|entry| entry.manifest.metadata.id == query)
       .ok_or_else(|| format!("unknown bundle {query}; use `auv-cli skill bundle list`"))
   }
+
+  #[cfg(test)]
+  pub(crate) fn from_entries_for_test(entries: Vec<SkillBundleCatalogEntry>) -> Self {
+    Self { entries }
+  }
 }
 
 fn collect_bundle_entries(

@@ -105,6 +105,7 @@ pub struct InvokeRequest {
   pub command_id: String,
   pub target: ExecutionTarget,
   pub inputs: BTreeMap<String, String>,
+  pub dry_run: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

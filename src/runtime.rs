@@ -12,14 +12,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::bundle::{SkillBundleCatalog, SkillBundleCatalogEntry, SkillBundleCommand};
 use crate::catalog::CommandCatalog;
 use crate::contract::ArtifactRef;
 use crate::driver::DriverRegistry;
 use crate::model::{
-  AuvResult, DriverCall, DriverDescriptor, DriverRunContext, InvokeRequest, InvokeResult,
-  RunStatus, now_millis,
+  AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverRunContext, InvokeRequest,
+  InvokeResult, RunStatus, now_millis,
 };
 use crate::recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend, RunUpdate};
+use crate::skill::{SkillCatalog, SkillRecipe, SkillRecipeOrigin, SkillRecipeRunner, SkillRunOptions};
 use crate::store::{ArtifactFileSource, LocalStore};
 use crate::trace::{
   EVENT_API_VERSION, EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType,
@@ -30,6 +32,8 @@ use crate::trace::{
 pub struct Runtime {
   project_root: PathBuf,
   commands: CommandCatalog,
+  bundles: SkillBundleCatalog,
+  skills: SkillCatalog,
   drivers: DriverRegistry,
   recording: RunRecordingBackend,
 }
@@ -41,9 +45,34 @@ impl Runtime {
     drivers: DriverRegistry,
     store: LocalStore,
   ) -> Self {
+    let bundles = SkillBundleCatalog::discover(&project_root).unwrap_or_else(|error| {
+      panic!(
+        "failed to discover bundle catalog from {}: {error}",
+        project_root.display()
+      )
+    });
+    let skills = SkillCatalog::discover(&project_root).unwrap_or_else(|error| {
+      panic!(
+        "failed to discover skill catalog from {}: {error}",
+        project_root.display()
+      )
+    });
+    Self::new_with_catalogs(project_root, commands, bundles, skills, drivers, store)
+  }
+
+  pub fn new_with_catalogs(
+    project_root: PathBuf,
+    commands: CommandCatalog,
+    bundles: SkillBundleCatalog,
+    skills: SkillCatalog,
+    drivers: DriverRegistry,
+    store: LocalStore,
+  ) -> Self {
     Self {
       project_root,
       commands,
+      bundles,
+      skills,
       drivers,
       recording: RunRecordingBackend::new(store, Arc::new(MemoryRunRecorder::new())),
     }
@@ -358,12 +387,36 @@ impl Runtime {
     parent: &crate::run_builder::SpanRef,
     request: InvokeRequest,
   ) -> AuvResult<InvokeResult> {
-    let command = self.commands.resolve(&request.command_id).ok_or_else(|| {
-      format!(
-        "unknown command {}; use `list-commands` to see available entries",
-        request.command_id
-      )
-    })?;
+    let command_id = request.command_id.clone();
+    let bundle_command = self.resolve_bundle_command(&command_id)?;
+    let direct_command = self.commands.resolve(&command_id);
+
+    match (bundle_command, direct_command) {
+      (Some(bundle_command), Some(direct_command)) => Err(format!(
+        "ambiguous command {command_id}; matched direct command {}.{} and bundle command {}",
+        direct_command.driver_id,
+        direct_command.operation,
+        render_bundle_command_match(&bundle_command)
+      )),
+      (Some(bundle_command), None) => {
+        self.invoke_bundle_command_in_span(run, parent, request, bundle_command)
+      }
+      (None, Some(direct_command)) => {
+        self.invoke_direct_command_in_span(run, parent, request, direct_command)
+      }
+      (None, None) => Err(format!(
+        "unknown command {command_id}; use `list-commands` or `auv-cli skill bundle list` to inspect available entries"
+      )),
+    }
+  }
+
+  fn invoke_direct_command_in_span(
+    &self,
+    run: &mut crate::run_builder::RecordingRun,
+    parent: &crate::run_builder::SpanRef,
+    request: InvokeRequest,
+    command: &CommandSpec,
+  ) -> AuvResult<InvokeResult> {
     let driver = self.drivers.get(command.driver_id).ok_or_else(|| {
       format!(
         "command {} resolved to missing driver {}",
@@ -571,6 +624,164 @@ impl Runtime {
     })
   }
 
+  fn invoke_bundle_command_in_span(
+    &self,
+    run: &mut crate::run_builder::RecordingRun,
+    parent: &crate::run_builder::SpanRef,
+    request: InvokeRequest,
+    bundle_command: ResolvedBundleCommand<'_>,
+  ) -> AuvResult<InvokeResult> {
+    let mut command_overrides = request.inputs;
+    // NOTICE: bundle-backed invoke currently maps the generic invoke target to
+    // the conventional `app_id` recipe input. Broader target schemas are
+    // deferred until owner-approved bundle target metadata exists.
+    if let Some(application_id) = request.target.application_id.as_ref() {
+      command_overrides.insert("app_id".to_string(), application_id.clone());
+    }
+    let target_application_id = command_overrides
+      .get("app_id")
+      .map(String::as_str)
+      .or(request.target.application_id.as_deref());
+
+    let command_span = run.start_span(
+      parent,
+      span_record(
+        "auv.command.invoke",
+        bundle_command_attributes(
+          &request.command_id,
+          &bundle_command.bundle.manifest.metadata.id,
+          &bundle_command.command.recipe_id,
+          target_application_id,
+        ),
+      ),
+    )?;
+    record_event(
+      run,
+      command_span.id(),
+      "command.resolved",
+      Some(format!(
+        "resolved {} -> {}",
+        request.command_id,
+        render_bundle_command_match(&bundle_command)
+      )),
+    );
+
+    let recipe_span = run.start_span(
+      &command_span,
+      span_record(
+        "auv.recipe.invoke",
+        bundle_command_attributes(
+          &request.command_id,
+          &bundle_command.bundle.manifest.metadata.id,
+          &bundle_command.command.recipe_id,
+          target_application_id,
+        ),
+      ),
+    )?;
+    record_event(
+      run,
+      recipe_span.id(),
+      "recipe.invoke",
+      Some(format!(
+        "invoking recipe {} from bundle {}",
+        bundle_command.command.recipe_id, bundle_command.bundle.manifest.metadata.id
+      )),
+    );
+
+    let artifact_start_index = run.artifact_count();
+    let recipe = SkillRecipe::from_manifest(
+      bundle_command.recipe.manifest.clone(),
+      SkillRecipeOrigin::CatalogPath(bundle_command.recipe.path.clone()),
+    );
+    let result = SkillRecipeRunner::new(self).run_into_existing_run(
+      &recipe,
+      SkillRunOptions {
+        dry_run: request.dry_run,
+        max_disturbance: None,
+        overrides: command_overrides,
+        quiet: true,
+      },
+      run,
+      &recipe_span,
+    );
+    let run_dir = self.recording.run_dir(run.id())?;
+    let snapshot = run.snapshot_preview();
+    let new_artifacts = snapshot
+      .artifacts
+      .into_iter()
+      .skip(artifact_start_index)
+      .collect::<Vec<_>>();
+    let artifact_paths = new_artifacts
+      .iter()
+      .map(|artifact| run_dir.join(&artifact.path))
+      .collect::<Vec<_>>();
+
+    let (status, output_summary, failure_message, response_signals) = match result {
+      Ok(summary) => {
+        let output_summary = if request.dry_run {
+          format!(
+            "Dry-ran bundle command {} via {} -> {}",
+            request.command_id,
+            bundle_command.bundle.manifest.metadata.id,
+            bundle_command.command.recipe_id
+          )
+        } else {
+          format!(
+            "Executed bundle command {} via {} -> {}",
+            request.command_id,
+            bundle_command.bundle.manifest.metadata.id,
+            bundle_command.command.recipe_id
+          )
+        };
+        record_event(run, command_span.id(), "run.completed", Some(output_summary.clone()));
+        (RunStatus::Completed, output_summary, None, summary.exported_variables)
+      }
+      Err(error) => {
+        let output_summary = format!(
+          "Bundle command failed after run creation. Inspect {} for the recorded trace.",
+          run.id()
+        );
+        record_event(run, recipe_span.id(), "recipe.failed", Some(error.clone()));
+        record_event(run, command_span.id(), "run.failed", Some(error.clone()));
+        (RunStatus::Failed, output_summary, Some(error), Default::default())
+      }
+    };
+
+    let status_code = if status == RunStatus::Completed {
+      TraceStatusCode::Ok
+    } else {
+      TraceStatusCode::Error
+    };
+    let span_failure = failure_message.clone();
+    run.finish_span(
+      &recipe_span,
+      crate::run_builder::SpanFinish {
+        status_code,
+        summary: Some(output_summary.clone()),
+        failure: span_failure.clone(),
+      },
+    )?;
+    run.finish_span(
+      &command_span,
+      crate::run_builder::SpanFinish {
+        status_code,
+        summary: Some(output_summary.clone()),
+        failure: span_failure,
+      },
+    )?;
+
+    Ok(InvokeResult {
+      run_id: run.id().to_string(),
+      producer_span_id: recipe_span.id().clone(),
+      status,
+      output_summary,
+      signals: response_signals,
+      artifacts: new_artifacts,
+      artifact_paths,
+      failure_message,
+    })
+  }
+
   pub fn stage_artifact_file(
     &self,
     run: &mut crate::run_builder::RecordingRun,
@@ -652,6 +863,47 @@ impl Runtime {
       .record_artifact_bytes(run.id(), &artifact, &staged_path)?;
     Ok((staged_path, artifact_ref))
   }
+
+  fn resolve_bundle_command(&self, command_id: &str) -> AuvResult<Option<ResolvedBundleCommand<'_>>> {
+    let mut matches = Vec::new();
+    for bundle in self.bundles.entries() {
+      for command in &bundle.manifest.commands {
+        if command.id != command_id {
+          continue;
+        }
+        let recipe = self.skills.resolve_recipe_id(&command.recipe_id).map_err(|error| {
+          format!(
+            "bundle {} command {} references unknown recipe {}: {error}",
+            bundle.manifest.metadata.id, command.id, command.recipe_id
+          )
+        })?;
+        matches.push(ResolvedBundleCommand {
+          bundle,
+          command,
+          recipe,
+        });
+      }
+    }
+
+    if matches.len() > 1 {
+      let rendered = matches
+        .iter()
+        .map(render_bundle_command_match)
+        .collect::<Vec<_>>()
+        .join(", ");
+      return Err(format!(
+        "ambiguous command {command_id}; multiple bundle commands matched: {rendered}"
+      ));
+    }
+
+    Ok(matches.pop())
+  }
+}
+
+struct ResolvedBundleCommand<'a> {
+  bundle: &'a SkillBundleCatalogEntry,
+  command: &'a SkillBundleCommand,
+  recipe: &'a crate::skill::SkillCatalogEntry,
 }
 
 fn span_record(
@@ -671,6 +923,32 @@ fn span_record(
     summary: None,
     failure: None,
   }
+}
+
+fn bundle_command_attributes(
+  command_id: &str,
+  bundle_id: &str,
+  recipe_id: &str,
+  target_application_id: Option<&str>,
+) -> crate::run_builder::Attributes {
+  let mut attributes = crate::run_builder::Attributes::new();
+  attributes.insert("command_id".to_string(), string_attr(command_id));
+  attributes.insert("bundle_id".to_string(), string_attr(bundle_id));
+  attributes.insert("recipe_id".to_string(), string_attr(recipe_id));
+  attributes.insert("auv.command.id".to_string(), string_attr(command_id));
+  attributes.insert("auv.bundle.id".to_string(), string_attr(bundle_id));
+  attributes.insert("auv.recipe.id".to_string(), string_attr(recipe_id));
+  if let Some(target_application_id) = target_application_id {
+    attributes.insert(
+      "target_application_id".to_string(),
+      string_attr(target_application_id),
+    );
+    attributes.insert(
+      "auv.target.application_id".to_string(),
+      string_attr(target_application_id),
+    );
+  }
+  attributes
 }
 
 fn command_attributes(
@@ -739,6 +1017,15 @@ fn render_artifact_event(artifact: &crate::trace::ArtifactRecordV1Alpha1) -> Str
   )
 }
 
+fn render_bundle_command_match(bundle_command: &ResolvedBundleCommand<'_>) -> String {
+  format!(
+    "{}:{} -> {}",
+    bundle_command.bundle.manifest.metadata.id,
+    bundle_command.command.id,
+    bundle_command.command.recipe_id
+  )
+}
+
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
@@ -750,6 +1037,7 @@ mod tests {
 
   use serde_json::json;
 
+  use crate::bundle::{SkillBundleCatalog, SkillBundleCommand, SkillBundleManifest, SkillBundleMetadata, SkillBundleTarget, SkillBundleVerification, SkillBundleVersions};
   use super::Runtime;
   use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
@@ -757,6 +1045,7 @@ mod tests {
     AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget,
     InvokeRequest, ProducedArtifact, RunStatus, now_millis,
   };
+  use crate::skill::SkillCatalog;
   use crate::recording::{MemoryRunRecorder, RunRecorder, RunUpdate};
   use crate::store::LocalStore;
 
@@ -929,6 +1218,7 @@ mod tests {
           command_id: "test.invoke".to_string(),
           target: ExecutionTarget::default(),
           inputs: BTreeMap::new(),
+          dry_run: false,
         },
       )
       .expect("recorded invoke should succeed");
@@ -998,6 +1288,7 @@ mod tests {
         command_id: "test.missing".to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
+        dry_run: false,
       })
       .expect_err("unknown command should fail");
 
@@ -1046,6 +1337,7 @@ mod tests {
         command_id: "test.invoke".to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
+        dry_run: false,
       })
       .expect("recorder failure after snapshot write should not fail invoke");
 
@@ -1086,6 +1378,7 @@ mod tests {
         command_id: "test.invoke".to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
+        dry_run: false,
       })
       .expect_err("required initial recording failure should abort invoke");
 
@@ -1108,6 +1401,7 @@ mod tests {
         command_id: "test.invoke".to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
+        dry_run: false,
       })
       .expect_err("required recorder delivery failure should fail invoke");
 
@@ -1141,6 +1435,7 @@ mod tests {
         command_id: "test.invoke".to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
+        dry_run: false,
       })
       .expect("artifact capture should succeed");
 
@@ -1199,6 +1494,7 @@ mod tests {
         command_id: "test.invoke".to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
+        dry_run: false,
       })
       .expect("artifact staging failures should still return an inspectable run");
 
@@ -1348,6 +1644,7 @@ mod tests {
         command_id: "test.invoke".to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
+        dry_run: false,
       })
       .expect("default-target invoke should succeed");
 
@@ -1420,5 +1717,215 @@ mod tests {
       DriverRegistry::new(vec![Box::new(SuccessDriver)]),
       LocalStore::new(store_root).expect("store should initialize"),
     )
+  }
+
+  #[test]
+  fn invoke_rejects_ambiguous_bundle_and_direct_command_id() {
+    let project_root = runtime_bundle_project_root("ambiguous-command");
+    let store_root = temp_dir("runtime-ambiguous-bundle-store");
+    let runtime = runtime_with_bundle_catalog(
+      project_root.clone(),
+      store_root.clone(),
+      CommandCatalog::new(vec![CommandSpec {
+        id: "test.bundle.command".to_string().leak(),
+        namespace: crate::model::CommandNamespace::Test,
+        summary: "Test direct invoke",
+        driver_id: "test.driver",
+        operation: "test_operation",
+        disturbance_classes: &[crate::model::DisturbanceClass::None],
+        max_disturbance: crate::model::DisturbanceClass::None,
+      }]),
+      skill_catalog_for_project(&project_root),
+      bundle_catalog_with_command("test.bundle.command", "test.bundle.recipe"),
+      DriverRegistry::new(vec![Box::new(SuccessDriver)]),
+    );
+
+    let error = runtime
+      .invoke(InvokeRequest {
+        command_id: "test.bundle.command".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: true,
+      })
+      .expect_err("ambiguous command should fail");
+
+    assert!(error.contains("ambiguous command"));
+    assert!(error.contains("direct command"));
+    assert!(error.contains("bundle command"));
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_bundle_command_dry_run_executes_recipe_path() {
+    let project_root = runtime_bundle_project_root("bundle-dry-run");
+    let store_root = temp_dir("runtime-bundle-dry-run-store");
+    let runtime = runtime_with_bundle_catalog(
+      project_root.clone(),
+      store_root.clone(),
+      CommandCatalog::new(vec![CommandSpec {
+        id: "test.skill.invoke",
+        namespace: crate::model::CommandNamespace::Test,
+        summary: "Recipe step command",
+        driver_id: "test.driver",
+        operation: "test_operation",
+        disturbance_classes: &[crate::model::DisturbanceClass::None],
+        max_disturbance: crate::model::DisturbanceClass::None,
+      }]),
+      skill_catalog_for_project(&project_root),
+      bundle_catalog_with_command("test.bundle.command", "test.bundle.recipe"),
+      DriverRegistry::new(vec![Box::new(SuccessDriver)]),
+    );
+
+    let result = runtime
+      .invoke(InvokeRequest {
+        command_id: "test.bundle.command".to_string(),
+        target: ExecutionTarget {
+          application_id: Some("com.example.BundleApp".to_string()),
+        },
+        inputs: BTreeMap::new(),
+        dry_run: true,
+      })
+      .expect("bundle dry-run should succeed");
+
+    assert_eq!(result.status, RunStatus::Completed);
+    assert!(result.output_summary.contains("Dry-ran bundle command"));
+    assert!(result.artifacts.is_empty());
+    let canonical = runtime.read_run(&result.run_id).expect("run should read");
+    assert!(
+      canonical
+        .spans
+        .iter()
+        .any(|span| span.name == "auv.recipe.invoke"),
+      "bundle path should record recipe span"
+    );
+    let command_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.command.invoke")
+      .expect("command span should exist");
+    assert_eq!(
+      command_span.attributes.get("auv.bundle.id"),
+      Some(&json!("test.bundle.v0"))
+    );
+    assert_eq!(
+      command_span.attributes.get("auv.recipe.id"),
+      Some(&json!("test.bundle.recipe"))
+    );
+    assert_eq!(
+      command_span.attributes.get("auv.target.application_id"),
+      Some(&json!("com.example.BundleApp"))
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  fn runtime_with_bundle_catalog(
+    project_root: PathBuf,
+    store_root: PathBuf,
+    commands: CommandCatalog,
+    skills: SkillCatalog,
+    bundles: SkillBundleCatalog,
+    drivers: DriverRegistry,
+  ) -> Runtime {
+    Runtime::new_with_catalogs(
+      project_root,
+      commands,
+      bundles,
+      skills,
+      drivers,
+      LocalStore::new(store_root).expect("store should initialize"),
+    )
+  }
+
+  fn runtime_bundle_project_root(label: &str) -> PathBuf {
+    let project_root = temp_dir(&format!("runtime-bundle-project-{label}"));
+    let recipe_dir = project_root.join("recipes/test");
+    fs::create_dir_all(&recipe_dir).expect("recipe dir should exist");
+    let manifest = json!({
+      "recipe_id": "test.bundle.recipe",
+      "version": "0.1.0",
+      "status": "experimental-recipe",
+      "platform": "macOS",
+      "target_app": { "bundle_id": "${app_id}", "display_mode": "fixture" },
+      "strategy": {
+        "family": "native-text",
+        "grounding": "ax-text",
+        "activation": "pointer-focus-clipboard-paste",
+        "verificationContract": "verifyAxText"
+      },
+      "objective": "test bundle-backed invoke",
+      "inputs": {
+        "app_id": { "type": "string", "default": "com.example.BundleApp" }
+      },
+      "disturbance_policy": {
+        "max_disturbance": "none",
+        "declared_classes": ["none"]
+      },
+      "steps": [{
+        "id": "first",
+        "command_id": "test.skill.invoke",
+        "disturbance": {
+          "classes": ["none"],
+          "max": "none"
+        },
+        "expect": {
+          "output_must_contain": ["outcome=ok"]
+        }
+      }],
+      "verification": {
+        "expected_signals": ["signal"],
+        "success_criteria": ["criteria"]
+      }
+    });
+    fs::write(
+      recipe_dir.join("bundle-recipe.v0.json"),
+      serde_json::to_string_pretty(&manifest).expect("manifest should serialize"),
+    )
+    .expect("manifest should write");
+    project_root
+  }
+
+  fn skill_catalog_for_project(project_root: &std::path::Path) -> SkillCatalog {
+    SkillCatalog::discover(project_root).expect("skill catalog should load")
+  }
+
+  fn bundle_catalog_with_command(command_id: &str, recipe_id: &str) -> SkillBundleCatalog {
+    let manifest = SkillBundleManifest {
+      api_version: "auv.ai/v1alpha1".to_string(),
+      kind: "SkillBundle".to_string(),
+      metadata: SkillBundleMetadata {
+        id: "test.bundle.v0".to_string(),
+        name: "Test Bundle".to_string(),
+        version: "0.1.0".to_string(),
+        status: "working".to_string(),
+      },
+      commands: vec![SkillBundleCommand {
+        id: command_id.to_string(),
+        recipe_id: recipe_id.to_string(),
+        summary: "Test bundle command".to_string(),
+      }],
+      target: SkillBundleTarget {
+        application_family: "native-macos-apps".to_string(),
+        platform: "macOS".to_string(),
+      },
+      versions: SkillBundleVersions {
+        auv: ">=0.0.1, <0.1.0".to_string(),
+        target_application: String::new(),
+      },
+      members: Vec::new(),
+      verification: SkillBundleVerification {
+        expected_signals: vec!["signal".to_string()],
+        success_criteria: vec!["criteria".to_string()],
+        non_goals: Vec::new(),
+      },
+      known_limits: Vec::new(),
+    };
+    SkillBundleCatalog::from_entries_for_test(vec![crate::bundle::SkillBundleCatalogEntry {
+      manifest,
+      path: PathBuf::from("/tmp/test-bundle.v0.json"),
+    }])
   }
 }
