@@ -40,7 +40,7 @@
         "validatedClaims": [],
         "boundaryClaims": [
           "Observe-only member under the first observe taxonomy combination (observe.visual-row.none.capture-evidence).",
-          "The HP reading is recorded as RecognitionResult artifact evidence; no step signal carries the numeric value yet, so the case stays candidate until a typed read consumer lands.",
+          "The HP reading is machine-asserted: the producer exports a recognition.ref handle and recognition.read.ratio reloads the RecognitionResult from run lineage, asserting exactly one current/max reading.",
           "No member of this bundle delivers input to the game; clickEndTurn-class commands require the existing promotion/gating and ActionResolver seams in a later owner-approved slice."
         ]
       },

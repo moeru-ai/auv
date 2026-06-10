@@ -90,12 +90,13 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
   let mut artifacts = DriverArtifactBuilder::new(&call.run_context);
   let screenshot_ref = artifacts.ref_at(0);
 
+  let recognition_id = format!("window_region_{}", sanitize_file_component(&label));
   let recognition_artifact = row_recognition_artifact(
     "window-region-recognition",
     &format!("{}-recognition", sanitize_file_component(&label)),
     "Structured recognition result for OCR row observation in a window region.",
     RowRecognitionArtifactRequest {
-      recognition_id: format!("window_region_{}", sanitize_file_component(&label)),
+      recognition_id: recognition_id.clone(),
       source: recognition_source_for_rows(&detection.strategy, &rows),
       surface: crate::contract::RecognitionSurface::Region,
       rows: &rows,
@@ -210,7 +211,26 @@ pub(crate) fn observe_window_region(call: &DriverCall) -> AuvResult<DriverRespon
       rows.len()
     ),
     backend: Some("macos.vision.observe-window-region".to_string()),
-    signals: crate::driver::macos::observe::row_detection_signals(rows.len()),
+    signals: {
+      let mut signals = crate::driver::macos::observe::row_detection_signals(rows.len());
+      // Export a stable identity handle for downstream typed consumers
+      // (recognition.read.*). The handle deliberately carries no artifact id:
+      // slot-based ids are only valid for the first artifact-producing step
+      // of a run, so consumers resolve by role + recognition_id instead.
+      if !call.run_context.run_id.is_empty() {
+        signals.insert(
+          "recognition.ref".to_string(),
+          serde_json::json!({
+            "source_run_id": call.run_context.run_id,
+            "source_span_id": call.run_context.span_id,
+            "recognition_id": recognition_id,
+            "artifact_role": "window-region-recognition",
+          })
+          .to_string(),
+        );
+      }
+      signals
+    },
     notes: vec![
       format!("scope={}", capture.scope),
       format!("windowRef={}", capture.capture_source),

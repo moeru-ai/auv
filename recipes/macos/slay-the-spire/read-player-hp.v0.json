@@ -87,25 +87,40 @@
         },
         "artifact_count_at_least": 1
       }
+    },
+    {
+      "id": "read-hp",
+      "command_id": "recognition.read.ratio",
+      "disturbance": {
+        "classes": ["none"],
+        "max": "none"
+      },
+      "args": {
+        "recognition_ref": "${step_observe_hud_signal_recognition_ref}"
+      },
+      "expect": {
+        "signal_equals": {
+          "recognition.read.matched": "true"
+        }
+      }
     }
   ],
   "verification": {
     "expected_signals": [
-      "debug.observeWindowRegion reports at least one visible OCR row inside the HUD band (rows.visible=true).",
-      "A window-region-recognition artifact (RecognitionResult) is recorded with the HP reading in its row text and a capture_artifact lineage reference."
+      "debug.observeWindowRegion reports at least one visible OCR row inside the HUD band (rows.visible=true) and exports a recognition.ref handle signal.",
+      "recognition.read.ratio resolves that handle from run/artifact lineage and asserts exactly one current/max reading (recognition.read.matched=true), exporting recognition.read.value/current/max signals."
     ],
     "success_criteria": [
       "The run records window capture plus RecognitionResult evidence for the HUD band through the standard run/span/artifact pipeline.",
-      "The HP value (for example 88/88) is present in the recognition row text fragments on a HUD-bearing frame."
+      "The HP reading (for example 88/88) is machine-asserted by the typed consumer and exported as step signals with provenance back to the producing recognition artifact."
     ],
     "non_goals": [
-      "This recipe does not assert the numeric HP format at expect level; row text is artifact evidence, not a step signal, until a typed read consumer lands (M0 seam note, consumer slice).",
       "This recipe does not prove stable-frame consistency across repeated captures.",
       "This recipe does not interpret game state and must never grow an activation step."
     ]
   },
   "known_limits": {
-    "value_not_in_signals": "debug.observeWindowRegion exports rows.count/rows.visible signals only; the HP text lives in the RecognitionResult artifact. Asserting the numeric format requires the typed consumer command planned by the M0 consumer-seam note.",
+    "single_reading_only": "recognition.read.ratio refuses ambiguous evidence: if the observed region ever contains more than one current/max reading, the recipe fails honestly instead of guessing. Keep the HUD region narrow.",
     "ocr_fragmentation": "Vision OCR may glue HUD icons into the text fragments (observed: '2 88/88' where 2 is icon noise). Consumers must parse defensively.",
     "app_identity": "The default app_id targets the direct-launch runtime id. Steam-launched processes may register differently; pass --app_id to override.",
     "hud_layout": "Region ratios assume the V2.3.4 windowed HUD layout at 1366x768-class window sizes."

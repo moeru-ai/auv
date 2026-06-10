@@ -6,8 +6,9 @@ use super::control::{
   click_screen_row, click_screen_text, click_window_point, click_window_row, click_window_text,
   find_icon_match, find_window_rows, find_window_text, focus_text_input, music_result_play,
   music_search_results, music_validate_candidate_liveness, observe_window_region,
-  paste_text_preserve_clipboard, press_button, press_key, scroll_point, scroll_window_region,
-  smart_press, teach_click, type_text, wait_for_window_rows, wait_for_window_text,
+  paste_text_preserve_clipboard, press_button, press_key, recognition_read_ratio, scroll_point,
+  scroll_window_region, smart_press, teach_click, type_text, wait_for_window_rows,
+  wait_for_window_text,
 };
 use super::observe::{
   find_image_text, find_screen_rows, find_screen_text, identify_point, list_windows,
@@ -85,6 +86,7 @@ fn dispatch_observe_operation(call: &DriverCall) -> Option<AuvResult<DriverRespo
     "music_search_results" => music_search_results(call),
     "music_result_play" => music_result_play(call),
     "music_validate_candidate_liveness" => music_validate_candidate_liveness(call),
+    "recognition_read_ratio" => recognition_read_ratio(call),
     "wait_for_window_rows" => wait_for_window_rows(call),
     "observe_window_region" => observe_window_region(call),
     "find_icon_match" => find_icon_match(call),

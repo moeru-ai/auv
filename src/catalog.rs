@@ -567,6 +567,15 @@ pub fn default_command_catalog() -> CommandCatalog {
       max_disturbance: DisturbanceClass::None,
     },
     CommandSpec {
+      id: "recognition.read.ratio",
+      namespace: DOMAIN,
+      summary: "Resolve a producer-exported recognition handle via --recognition_ref JSON (source_run_id + recognition_id + artifact_role) from run/artifact lineage and assert exactly one current/max numeric reading in the best recognized row, refusing on missing or ambiguous evidence.",
+      driver_id: "macos.desktop",
+      operation: "recognition_read_ratio",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
+    CommandSpec {
       id: "music.validate.candidate.liveness",
       namespace: DOMAIN,
       summary: "Resolve a music.search.results candidate via --candidate_ref JSON (legacy source_run_id + source_artifact_id + candidate_local_id still accepted) and verify its liveness preconditions (window_ref + anchor_recheck).",

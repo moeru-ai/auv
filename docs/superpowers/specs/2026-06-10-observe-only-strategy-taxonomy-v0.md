@@ -47,9 +47,14 @@ step-level `expect` signals. No new contract value, no new schema.
 
 - `observe.ocr-anchor.none.capture-evidence` and detector-grounded observe
   combinations (no consumer yet).
-- A recognition-specific verification contract value (would only matter once
-  a typed read consumer can assert value formats; see the consumer-seam
-  note's deferred `RecognitionItemRef` reasoning).
-- Signal export of row text from `debug.observeWindowRegion` (today the value
-  lives in the RecognitionResult artifact; expects can only see
-  `rows.count`/`rows.visible`).
+- A recognition-specific verification contract value (would only matter if
+  `captureEvidence` plus consumer-side signal expects proves insufficient;
+  see the consumer-seam note's deferred `RecognitionItemRef` reasoning).
+
+Update (same day): the consumer half landed as `recognition.read.ratio` —
+`debug.observeWindowRegion` now exports a `recognition.ref` identity handle
+signal (`source_run_id` + `recognition_id` + `artifact_role`, deliberately no
+artifact id), and the consumer reloads the `RecognitionResult` from lineage
+(artifacts.jsonl when the source run is finished, staged artifact files for
+same-run consumption) and asserts exactly one `current/max` reading into
+`recognition.read.*` signals.

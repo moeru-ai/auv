@@ -6,6 +6,7 @@ pub(crate) mod common;
 mod icon_match;
 mod music;
 mod pointer;
+mod recognition_read;
 mod region;
 mod screen;
 mod teach;
@@ -23,6 +24,7 @@ pub(crate) use self::music::{
   music_result_play, music_search_results, music_validate_candidate_liveness,
 };
 pub(crate) use self::pointer::{click_point, scroll_point};
+pub(crate) use self::recognition_read::recognition_read_ratio;
 pub(crate) use self::region::{observe_window_region, scroll_window_region};
 pub(crate) use self::screen::{click_screen_row, click_screen_text};
 pub(crate) use self::teach::teach_click;
