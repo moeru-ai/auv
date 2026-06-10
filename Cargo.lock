@@ -469,6 +469,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-qqmusic"
+version = "0.0.1"
+dependencies = [
+ "auv-driver",
+ "auv-driver-macos",
+ "clap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "auv-steam"
 version = "0.0.1"
 dependencies = [
