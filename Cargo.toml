@@ -3,6 +3,7 @@ members = [
   ".",
   "crates/auv-driver",
   "crates/auv-driver-macos",
+  "crates/auv-game-balatro",
   "crates/auv-inference-common",
   "crates/auv-inference-ort",
   "crates/auv-inference-ultralytics",
