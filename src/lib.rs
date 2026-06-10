@@ -3,7 +3,6 @@ mod action_resolver_decision;
 pub mod app;
 #[cfg(target_os = "macos")]
 pub mod ax_recognition;
-mod bundle;
 pub mod candidate_action_command;
 pub mod candidate_action_decision;
 pub mod candidate_promotion;
