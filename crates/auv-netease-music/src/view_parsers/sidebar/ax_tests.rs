@@ -30,6 +30,7 @@ fn vertical_scrollbar_boundary_prefers_page_button_height_over_plain_scrollbar_g
       identifier: "_NS:1".to_string(),
       placeholder: String::new(),
       value: "0.6".to_string(),
+      focused: false,
       bounds: auv_driver_macos::types::ObservedRect {
         x: 272,
         y: 260,
@@ -48,6 +49,7 @@ fn vertical_scrollbar_boundary_prefers_page_button_height_over_plain_scrollbar_g
       identifier: String::new(),
       placeholder: String::new(),
       value: String::new(),
+      focused: false,
       bounds: auv_driver_macos::types::ObservedRect {
         x: 272,
         y: 260,
@@ -66,6 +68,7 @@ fn vertical_scrollbar_boundary_prefers_page_button_height_over_plain_scrollbar_g
       identifier: String::new(),
       placeholder: String::new(),
       value: String::new(),
+      focused: false,
       bounds: auv_driver_macos::types::ObservedRect {
         x: 272,
         y: 740,
