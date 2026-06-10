@@ -6,9 +6,10 @@ terms, not stable public API names.
 
 ## Trace
 
-A trace is one complete inspectable workflow. Examples include one recipe
-execution, one app probe, one app distillation, one validation pass, or one
-ad-hoc command invocation.
+A trace is one complete inspectable workflow. Examples include one Rust
+orchestration workflow, one historical/compatibility recipe execution, one app
+probe, one app distillation, one validation pass, or one ad-hoc command
+invocation.
 
 A trace is the unit that inspection tools load as a whole. It should contain
 enough structure to reconstruct what AUV attempted, what happened, what state
@@ -71,10 +72,12 @@ readable `run_id` as the telemetry trace id.
 A span is a timed unit of work inside a run. Spans form a tree through
 `parent_span_id`.
 
-Expected span levels include workflow phases, case-matrix cases, recipe steps,
-command invocations, and driver actions. A single ad-hoc command can be a run
-with one root span and one command span. A recipe execution should be one run
-with child spans for its steps and command invocations.
+Expected span levels include workflow phases, command invocations, driver
+actions, and legacy JSON recipe compatibility spans. A single ad-hoc command
+can be a run with one root span and one command span. Historical recipe
+execution was modeled as one run with child spans for its steps and command
+invocations; active workflow composition is moving toward Rust orchestration
+over typed driver APIs and tracing boundaries.
 
 ## Event
 
@@ -146,10 +149,10 @@ owner pid, title, bounds, display relationship, layer, area, visibility, and the
 reason it appears in the ordered list.
 
 Candidate list order is useful for presentation and fallback heuristics, but it
-is not a stable identity. Recipes should prefer explicit selectors such as a
-window ref from the same observation, a native window id, an owner/title
-predicate, or another documented stable selector over relying on a bare list
-index.
+is not a stable identity. Workflow code and legacy recipe compatibility paths
+should prefer explicit selectors such as a window ref from the same observation,
+a native window id, an owner/title predicate, or another documented stable
+selector over relying on a bare list index.
 
 ## Window Resolver
 
@@ -277,10 +280,11 @@ action explainable and bounded.
 ## Interaction Pipeline
 
 Interaction pipeline is a provisional term for the layer above driver
-primitives and below recipes or frontends. It composes primitive observations
-and input operations into reusable workflows such as candidate extraction,
-candidate parsing, matching, selection, verification, list scan, and
-scroll-until behavior.
+primitives and below frontends or Rust orchestration. It composes primitive
+observations and input operations into reusable workflows such as candidate
+extraction, candidate parsing, matching, selection, verification, list scan,
+and scroll-until behavior. Legacy JSON recipes may call into this layer while
+they remain supported, but they are not the active long-term workflow engine.
 
 The interaction pipeline is not a driver. Drivers expose platform capabilities
 such as capture, OCR, AX tree capture, pointer scroll, keyboard input, and
@@ -297,9 +301,9 @@ surface node refs when available, rejected/filtered reasons, and optional
 collection or page context.
 
 Candidate context should be available as typed Rust data and, when needed, as a
-structured JSON boundary for recipes or external code. Scalar template
-variables may exist as compatibility aliases, but they should not be the main
-parser or matcher contract.
+structured JSON boundary for legacy recipe compatibility or external code.
+Scalar template variables may exist as compatibility aliases, but they should
+not be the main parser or matcher contract.
 
 ## Surface Node
 
@@ -358,8 +362,9 @@ An anchor is a visible or native UI signal used to locate another observation or
 action target. Anchors may come from OCR text, AX text, image features, stable
 window metadata, or previously recorded geometry.
 
-Anchors are evidence, not guarantees. Recipes should record which anchor was
-used and how it resolved to a region, row, item, or action point.
+Anchors are evidence, not guarantees. Workflow code and legacy recipe
+compatibility paths should record which anchor was used and how it resolved to a
+region, row, item, or action point.
 
 ## List Region
 
@@ -392,11 +397,12 @@ inspect what was lost.
 ## List Item Candidate
 
 A list item candidate is a list row candidate that survived row filtering and is
-ready for item-level observation or recipe handling.
+ready for item-level observation or workflow handling.
 
 A list item candidate is still not a parsed domain object. It may have geometry
 and OCR fragments, but it does not become a semantic song, email, file, or table
-record until a recipe or parser interprets it.
+record until Rust orchestration, a parser, or a legacy compatibility path
+interprets it.
 
 ## List Item Observation
 
@@ -458,14 +464,50 @@ APIs remain out of scope for the first inspect-server design.
 
 ## Run Recording Backend
 
-A run recording backend is the runtime dependency that owns run recording
-effects. It combines one store for canonical snapshots and artifact staging
-with one or more run recorders for incremental updates.
+A run recording backend is a dependency of execution surfaces, not of the
+legacy `Runtime` type specifically. It owns run recording effects by combining
+one store for canonical snapshots and artifact staging with one or more run
+recorders for incremental updates.
 
 The backend lets CLI, library calls, and future frontends share the same runtime
 execution model while choosing different recording policies. Examples include
 local-only recording, local plus inspect server reporting, server-required
 reporting, and library-supplied recorders.
+
+## Driver Tracing Boundary
+
+The driver tracing boundary is the provisional home for recording atomic driver
+operations. It owns run/span/event creation, artifact staging, artifact refs,
+and delivery to local stores or recorders while staying independent of command
+catalogs, recipe manifests, and CLI argument parsing.
+
+The working crate name for this boundary is `auv-tracing-driver`. The name is
+provisional until the extraction lands, but the responsibility is not: typed
+driver calls and Rust orchestration should be able to record inspectable
+artifacts without constructing the legacy `Runtime`. This boundary may use a
+run recording backend for store writes, artifact staging, and recorder fan-out.
+
+## Interaction Tracing Boundary
+
+The interaction tracing boundary records macro interactions that compose
+multiple driver operations. Scroll scan is the motivating example: it observes
+a surface, scrolls, observes again, and records merged evidence as one
+interaction-level trace structure.
+
+The working crate name for this boundary is `auv-tracing-interaction`.
+Interaction tracing may call the driver tracing boundary, but it should not
+become a command catalog, recipe runtime, or platform driver implementation.
+
+## CLI Invoke Boundary
+
+The CLI invoke boundary owns ad-hoc command invocation as a frontend capability.
+It parses or receives invoke-style command ids and arguments, preserves legacy
+command compatibility where needed, and routes to typed handlers or temporary
+legacy adapters without owning driver execution or run recording.
+
+The working crate name for this boundary is `auv-cli-invoke`. It is not the
+core runtime and should not own run recording semantics, recipe execution, or
+bundle discovery.
 
 ## Run Recorder
 
@@ -543,12 +585,12 @@ fallback.
 
 The resolver must record the selected method, fallback policy, fallback reason,
 disturbance class, and evidence artifacts. A successful dispatch is not the
-same thing as semantic success; recipes still need verification results for
-the expected state.
+same thing as semantic success; Rust orchestration or legacy recipe
+compatibility paths still need verification results for the expected state.
 
 Status: provisional. The first implementation scope is `debug.smartPress`
 (`ax-action` first, optional `pointer-click` fallback). It is a discovery and
-debug contract, not a production default for validated recipe cases.
+debug contract, not a production default for validated workflows.
 
 ## Verification Method
 
@@ -593,31 +635,41 @@ proved that no additional content exists.
 
 ## Scan Hook
 
-A scan hook is an optional recipe executed at a stable point inside a scroll
-scan. Hooks can annotate observations, request stop, request retry, or adjust
-future scan behavior.
+Status: legacy/pre-PR3.
 
-Hooks are observation-only by default. Hooks that mutate UI must declare their
-disturbance explicitly.
+A scan hook is the historical recipe-manifest hook used by the JSON scroll-scan
+implementation.
+
+New scroll-scan work should use `auv-tracing-interaction` with typed Rust
+context and hook contracts. Do not add new recipe-manifest hook execution unless
+an owner-approved inventory entry explicitly requires a temporary migration
+boundary.
 
 ## Sub Recipe
 
-A sub recipe is a recipe manifest invoked by another runtime workflow instead
-of directly by a user-facing command. The host workflow supplies context from
-its own execution, such as a scan page, list item candidate, or stop candidate.
+Status: legacy/pre-PR3.
 
-Sub recipes should declare their invocation host and stage in the manifest so
-the caller can reject incompatible recipes before execution. Current scan sub
-recipes use a provisional scalar context; typed context artifacts should replace
-that once the hook contract stabilizes.
+A sub recipe is a historical recipe manifest invoked by another runtime
+workflow instead of directly by a user-facing command.
+
+Sub recipes should not be expanded as an active workflow mechanism. During PR3,
+each remaining use should be migrated, archived, or deleted according to the
+owner-approved recipe/bundle inventory.
 
 ## List Scan Hook
 
-A list scan hook is a scan hook that runs while scanning list-like content.
-Depending on where it is attached, it may inspect a segmented region, list row
-candidate, list item candidate, page observation, or stop candidate.
+Status: legacy/pre-PR3.
 
-List scan hooks should make their input stage explicit. A hook that runs after
-row filtering is not the same as a row filter, because it can run recipe logic
-and may produce annotations or decisions rather than only deterministic
-accept/reject results.
+A list scan hook is the historical scan-hook variant used while scanning
+list-like content.
+
+Future list-scan behavior should live in typed Rust orchestration or
+`auv-tracing-interaction`, not recipe logic, unless a specific owner-approved
+migration entry keeps a temporary compatibility boundary.
+
+## Tombstone
+
+A tombstone is a short file or module-level comment left after a path is removed
+or archived. It contains no execution logic, names the removed path, points to
+the replacement owner, and states the exact condition for deleting the
+tombstone.
