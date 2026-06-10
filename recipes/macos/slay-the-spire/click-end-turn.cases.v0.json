@@ -1,0 +1,22 @@
+{
+  "skill_id": "macos.slay_the_spire.click_end_turn.v0",
+  "version": "0.1.0",
+  "status": "active-case-matrix",
+  "cases": [
+    {
+      "case_id": "battle-end-turn-baseline",
+      "status": "candidate",
+      "inputs": {},
+      "disturbance": "pointer",
+      "description": "End Turn button visible in a live player-turn battle; OCR resolves the anchor and the click completes.",
+      "promotion_criteria": "3 hands-off replays must complete with click.resolved_text=End Turn and a post-click screenshot artifact. If OCR misses in >1/3 runs, the region ratios need tuning before promotion.",
+      "evidence_refs": [
+        "docs/ai/references/2026-06-10-sts-zero-ax-observe-probe-evidence.md"
+      ],
+      "notes": [
+        "M1 live evidence confirmed End Turn OCR anchor projected to logical point (1237, 727.5) at confidence >0.70.",
+        "Candidate until 3 hands-off replays validate the full click → post-click screenshot chain."
+      ]
+    }
+  ]
+}

@@ -262,6 +262,14 @@ impl SkillStrategyTaxonomy {
         activation: SkillActivation::None,
         verification_contract: SkillVerificationContract::CaptureEvidence,
       },
+      // window-action: OCR-anchored click on a resolved window (no global
+      // screen capture needed, no AX tree required — zero-AX game family).
+      SkillStrategyTaxonomy {
+        family: SkillStrategyFamily::WindowAction,
+        grounding: SkillGrounding::OcrAnchor,
+        activation: SkillActivation::PointerClick,
+        verification_contract: SkillVerificationContract::CaptureEvidence,
+      },
     ];
     ALLOWED
   }

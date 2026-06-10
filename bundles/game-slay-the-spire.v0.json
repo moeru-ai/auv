@@ -5,7 +5,7 @@
     "id": "game.slay-the-spire.v0",
     "name": "AUV Zero-AX Game Family: Slay the Spire",
     "version": "0.1.0",
-    "status": "m2-observe-draft"
+    "status": "m3-action-draft"
   },
   "commands": [
     {
@@ -17,6 +17,11 @@
       "id": "sts.readEnergy.v0",
       "recipeId": "macos.slay_the_spire.read_energy.v0",
       "summary": "Observe the Slay the Spire energy orb region and machine-assert the current/max energy reading via the recognition.read.ratio consumer (observe-only, no input delivery)."
+    },
+    {
+      "id": "sts.clickEndTurn.v0",
+      "recipeId": "macos.slay_the_spire.click_end_turn.v0",
+      "summary": "Locate the End Turn button via window-scoped OCR anchor in the battle UI and click it once through the standard pointer-click seam. Captures post-click screenshot as semantic evidence."
     }
   ],
   "target": {
@@ -78,23 +83,49 @@
         "docs/ai/references/2026-06-10-game-recognition-recipe-consumer-seam.md",
         "docs/ai/references/2026-06-10-sts-zero-ax-observe-probe-evidence.md"
       ]
+    },
+    {
+      "recipeId": "macos.slay_the_spire.click_end_turn.v0",
+      "caseMatrixId": "macos.slay_the_spire.click_end_turn.v0",
+      "role": "game-action-click",
+      "validatedCaseIds": [],
+      "candidateCaseIds": [
+        "battle-end-turn-baseline"
+      ],
+      "contract": "captureEvidence",
+      "appBundleId": "net.java.openjdk.cmd",
+      "targetApplication": "",
+      "coverageSummary": {
+        "activationStatus": "pointer-click",
+        "semanticSelectionStatus": "candidate",
+        "validatedClaims": [],
+        "boundaryClaims": [
+          "Uses window-action.ocr-anchor.pointer-click.capture-evidence taxonomy — the first action-grade taxonomy for the zero-AX game family.",
+          "The click goes through debug.clickWindowText, which resolves an OCR anchor inside the resolved window and projects it to global logical coordinates before clicking.",
+          "No promotion/gating seam is bypassed: the OCR anchor step must succeed (text.found=true) before the click step runs.",
+          "Post-click screenshot is captured as semantic evidence; the recipe does not assert turn state — that belongs to the caller."
+        ]
+      },
+      "evidenceRefs": [
+        "docs/ai/references/2026-06-10-sts-zero-ax-observe-probe-evidence.md"
+      ]
     }
   ],
   "verification": {
     "expectedSignals": [
-      "The bundle lists two observe-only read commands for the zero-AX game family, both consuming the shared recognition.read.ratio seam.",
-      "sts.readPlayerHp.v0 resolves through bundle-backed invoke into the read-player-hp recipe and records run/span/artifact evidence.",
-      "The recipe validates under the observe.visual-row.none.capture-evidence taxonomy without any action-shaped activation."
+      "The bundle lists two observe-only read commands and one window-action click command for the zero-AX game family.",
+      "sts.readPlayerHp.v0 and sts.readEnergy.v0 resolve through the shared recognition.read.ratio consumer seam.",
+      "sts.clickEndTurn.v0 resolves through bundle-backed invoke into the click-end-turn recipe and records pre/post screenshots and click evidence.",
+      "The click recipe validates under the window-action.ocr-anchor.pointer-click.capture-evidence taxonomy."
     ],
     "successCriteria": [
       "The bundle can be listed, verified, and invoked (including --dry-run) through the CLI.",
-      "Invoking sts.readPlayerHp.v0 on a HUD-bearing live frame records RecognitionResult evidence containing the HP reading.",
-      "Game specifics stay inside this bundle, its recipe, and inputs; AUV core gains no game branch."
+      "All three commands produce run/span/artifact evidence.",
+      "Game specifics stay inside this bundle, its recipes, and inputs; AUV core gains no game branch."
     ],
     "nonGoals": [
       "This bundle does not claim card-play strategy, turn planning, game-state modeling, or autonomous play.",
-      "This bundle does not claim the HP numeric format is machine-asserted; that requires the typed read consumer from the M0 consumer-seam note.",
-      "This bundle does not include any click or input-delivering command yet."
+      "The click command is candidate-grade: 3 hands-off replays are required before promotion."
     ]
   },
   "knownLimits": [

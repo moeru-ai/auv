@@ -1,0 +1,142 @@
+{
+  "recipe_id": "macos.slay_the_spire.click_end_turn.v0",
+  "version": "0.1.0",
+  "status": "candidate-recipe",
+  "platform": "macOS",
+  "target_app": {
+    "name": "Slay the Spire",
+    "bundle_id": "${app_id}",
+    "display_mode": "live-desktop"
+  },
+  "strategy": {
+    "family": "window-action",
+    "grounding": "ocr-anchor",
+    "activation": "pointer-click",
+    "verificationContract": "captureEvidence"
+  },
+  "objective": "Locate the End Turn button in the Slay the Spire battle UI via window-scoped OCR, click it once, and capture post-click evidence. Semantic verification: the post-click screenshot must no longer contain the End Turn text at the same location (turn changed) or the recipe refuses with honest failure.",
+  "inputs": {
+    "app_id": {
+      "type": "string",
+      "default": "net.java.openjdk.cmd"
+    },
+    "anchor_text": {
+      "type": "string",
+      "default": "End Turn"
+    },
+    "region_left_ratio": {
+      "type": "number",
+      "default": 0.70,
+      "note": "End Turn button is in the right portion of the battle screen."
+    },
+    "region_top_ratio": {
+      "type": "number",
+      "default": 0.75
+    },
+    "region_right_ratio": {
+      "type": "number",
+      "default": 1.0
+    },
+    "region_bottom_ratio": {
+      "type": "number",
+      "default": 1.0
+    },
+    "min_confidence": {
+      "type": "number",
+      "default": 0.70
+    },
+    "click_settle_ms": {
+      "type": "integer",
+      "default": 800
+    },
+    "evidence_label": {
+      "type": "string",
+      "default": "sts-click-end-turn"
+    }
+  },
+  "preconditions": [
+    "The host is macOS.",
+    "Slay the Spire is running and showing an active battle screen with the End Turn button visible.",
+    "Screen Recording permission is already granted.",
+    "The recipe will warp the cursor once and restore it."
+  ],
+  "disturbance_policy": {
+    "max_disturbance": "pointer",
+    "declared_classes": ["none", "foreground_app", "pointer"],
+    "notes": [
+      "Only the click step delivers pointer disturbance; observe steps are none.",
+      "The recipe refuses honestly if the End Turn anchor is not found — it does not guess."
+    ]
+  },
+  "steps": [
+    {
+      "id": "find-end-turn-anchor",
+      "command_id": "debug.findWindowText",
+      "disturbance": {"classes": ["none"], "max": "none"},
+      "args": {
+        "target": "${app_id}",
+        "query": "${anchor_text}",
+        "min_confidence": "${min_confidence}",
+        "region_left_ratio": "${region_left_ratio}",
+        "region_top_ratio": "${region_top_ratio}",
+        "region_right_ratio": "${region_right_ratio}",
+        "region_bottom_ratio": "${region_bottom_ratio}"
+      },
+      "expect": {
+        "signal_equals": {
+          "text.found": "true"
+        }
+      },
+      "purpose": "Resolve the End Turn OCR anchor inside the battle UI before committing to a click."
+    },
+    {
+      "id": "click-end-turn",
+      "command_id": "debug.clickWindowText",
+      "disturbance": {"classes": ["foreground_app", "pointer"], "max": "pointer"},
+      "args": {
+        "target": "${app_id}",
+        "query": "${anchor_text}",
+        "min_confidence": "${min_confidence}",
+        "region_left_ratio": "${region_left_ratio}",
+        "region_top_ratio": "${region_top_ratio}",
+        "region_right_ratio": "${region_right_ratio}",
+        "region_bottom_ratio": "${region_bottom_ratio}",
+        "click_count": 1,
+        "settle_ms": "${click_settle_ms}"
+      },
+      "purpose": "Click the resolved End Turn anchor via window-scoped OCR projection."
+    },
+    {
+      "id": "capture-post-click-evidence",
+      "command_id": "debug.captureWindow",
+      "disturbance": {"classes": ["none"], "max": "none"},
+      "args": {
+        "target": "${app_id}",
+        "label": "${evidence_label}"
+      },
+      "purpose": "Capture post-click screenshot for semantic verification and run lineage."
+    }
+  ],
+  "verification": {
+    "expected_signals": [
+      "debug.findWindowText reports text.found=true for End Turn inside the battle region.",
+      "debug.clickWindowText emits click.resolved_text and completes without error.",
+      "A post-click screenshot artifact exists recording the state after the turn ended."
+    ],
+    "success_criteria": [
+      "The End Turn anchor was resolved inside the constrained region before the click.",
+      "The click completed and settle_ms elapsed.",
+      "A post-click screenshot artifact is recorded in the run."
+    ],
+    "non_goals": [
+      "This recipe does not verify enemy-turn animations or card draw.",
+      "This recipe does not plan cards to play before ending the turn.",
+      "This recipe does not claim the next player turn state matches any expectation."
+    ]
+  },
+  "known_limits": {
+    "button_visibility": "The End Turn button is only present on active player-turn battle screens; the recipe will fail honestly outside battles.",
+    "ocr_stability": "The default region ratios assume a windowed 1280x960 layout; other resolutions may need adjusted ratios.",
+    "app_id_drift": "Direct-launch bundle id is net.java.openjdk.cmd; Steam-launched instances may differ."
+  }
+}
