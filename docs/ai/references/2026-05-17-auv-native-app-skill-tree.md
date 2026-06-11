@@ -2,7 +2,8 @@
 
 Date: 2026-05-17
 
-Status: phase 1 frozen skill tree
+Status: historical phase 1 frozen tree; bundle execution was retired on
+2026-06-11
 
 ## Purpose
 
@@ -44,7 +45,7 @@ graph TD
 
   A --> E["Next unlocks"]
   E --> E1["third native app sample"]
-  E --> E2["skill bundle distillation template"]
+  E --> E2["retired bundle distillation template"]
 ```
 
 ## What Is Proven
@@ -65,7 +66,8 @@ graph TD
 - Notes has a validated native-app sample that uses `verifyAxText`.
 - TextEdit has a validated native-app sample that uses the same contract.
 - The same runtime can carry a second native app without screenshot OCR.
-- The first bundle-shaped artifact is `bundles/native-app-skill-tree.v0.json`.
+- The first bundle-shaped artifact was the historical `native-app-skill-tree`
+  manifest; that bundle surface was retired on 2026-06-11.
 
 ## What Is Not Proven
 

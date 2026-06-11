@@ -86,10 +86,10 @@ and artifact kinds `screenshot`, `window-region-observation`,
    (`activation` is mandatory: clipboard/pointer/AX-press variants only), and
    `validate_skill_manifest` enforces the list on every recipe run. An
    observe-only `sts.read*` recipe **cannot validate today**. This blocks M2's
-   "read commands as bundle-backed recipes" and needs an owner-approved
+   historical "read commands as recipe-backed commands" direction and needs an owner-approved
    taxonomy extension (e.g. an observe family with a no-op activation and a
    recognition-evidence verification contract). This is the single biggest
-   gap between the M0 seam note and an invokable `sts.*` bundle.
+   gap between the M0 seam note and an invokable `sts.*` command.
 2. **Java app identity is unstable.** Runtime bundle id
    (`net.java.openjdk.cmd`) differs from the bundle's declared id
    (`com.megacrit.slaythespire`), and may differ again under Steam launch.

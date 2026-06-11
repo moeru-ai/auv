@@ -129,8 +129,8 @@ In rough order:
 3. ~~**Recipe-level disturbance assertion**~~ — DONE
    (`feat(skill): enforce recipe disturbance budget at manifest
    validation`). `validate_skill_disturbance_budget` is now part of
-   `validate_skill_manifest_with_commands`, so `skill list`,
-   `skill cases run --dry-run`, and bundle verify all reject recipes
+   `validate_skill_manifest_with_commands`, so `skill list` and
+   `skill cases run --dry-run` reject recipes
    where any step's `disturbance.max` exceeds the recipe's
    `disturbance_policy.max_disturbance` or where any step's class is
    not in `disturbance_policy.declared_classes`. Test count 200 -> 203.

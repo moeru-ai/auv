@@ -21,8 +21,8 @@ behavior through the JSON recipe compatibility path. The suggested exemplar is
 `recipes/macos/textedit/create-and-verify-text.v0.json` because it has one case
 matrix, a narrow workflow, and existing validation tests. Other recipes remain
 `fallback` until they are migrated or explicitly archived. Bundle execution,
-export, verification, checked-in bundle manifests, and bundle-backed `invoke`
-were removed in the 2026-06-11 bundle retirement slice.
+export, verification, checked-in bundle manifests, and bundle-era invoke
+resolution were removed in the 2026-06-11 bundle retirement slice.
 
 Implementation note, 2026-06-10: `crates/auv-apple-textedit` now owns the
 TextEdit operation contract and a `TextEditDriver` boundary. Its macOS adapter
@@ -46,7 +46,7 @@ App-local replacement commands should use app-domain names:
 
 | Path | Kind | Current entrypoint | Disposition | Replacement Rust owner | Approval |
 | --- | --- | --- | --- | --- | --- |
-| `bundles/native-app-skill-tree.v0.json` | bundle | removed; former `auv-cli skill bundle *` and bundle-backed `invoke` | delete | none; bundle surface retired | owner clarification, 2026-06-10; removed 2026-06-11 |
+| historical `native-app-skill-tree` manifest | bundle | removed; former bundle CLI and bundle-era invoke resolution | delete | none; bundle surface retired | owner clarification, 2026-06-10; removed 2026-06-11 |
 | `recipes/macos/demo/dual-cursor-press-notes.v0.json` | recipe | `auv-cli skill run`, JSON recipe runtime | fallback | later Rust macOS demo orchestration | owner clarification, 2026-06-10 |
 | `recipes/macos/demo/dual-cursor-press-notes.cases.v0.json` | case_matrix | `auv-cli skill cases run` | fallback | later Rust case data | owner clarification, 2026-06-10 |
 | `recipes/macos/demo/smart-press-cross-app.v0.json` | recipe | `auv-cli skill run`, JSON recipe runtime | fallback | later Rust smart-press coverage orchestration | owner clarification, 2026-06-10 |

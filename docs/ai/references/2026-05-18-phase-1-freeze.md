@@ -2,7 +2,8 @@
 
 Date: 2026-05-18
 
-Status: accepted freeze decision
+Status: accepted historical freeze decision; bundle execution was retired on
+2026-06-11
 
 ## Decision
 
@@ -15,13 +16,13 @@ next phase.
 
 ## What Phase 1 Actually Delivered
 
-- macOS runtime / driver / recipe / case-matrix / bundle / package flow is in
-  place.
+- macOS runtime / driver / recipe / case-matrix / bundle / package flow was in
+  place during phase 1. The active bundle command surface was retired later.
 - QQ音乐 has two narrow playback strategies:
   - OCR-anchor playback
   - row-fallback playback
 - Notes and TextEdit exist as native-app AX-text samples.
-- bundle export and package verify now carry coverage truth, not just recipe
+- bundle export and package verify carried coverage truth, not just recipe
   files.
 - member-level coverage summaries now distinguish activation status from
   semantic-selection status.
@@ -35,7 +36,7 @@ Phase 1 is considered complete enough because:
    - `skill run`
    - `skill cases run`
    - `skill cases report`
-   - `skill bundle verify/export/package verify`
+   - historical bundle validation and package commands
 3. The validated sample set is durable and inspectable.
 4. The remaining failures are explicit boundaries, not hidden contradictions.
 

@@ -71,9 +71,9 @@ The distilled output should answer:
 These three samples are enough to drive the next round of controlled
 distillation without starting from raw screenshots or free-form chat logs.
 
-The first bundle-shaped container for those samples is:
+The first bundle-shaped container for those samples was retired on 2026-06-11:
 
-- `bundles/native-app-skill-tree.v0.json`
+- historical `native-app-skill-tree` manifest
 
 ## Practical Next Step
 

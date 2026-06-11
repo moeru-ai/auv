@@ -61,7 +61,7 @@ Anchors:
 - `src/runtime.rs`
 - `src/skill/recipe.rs`
 - `src/skill/mod.rs`
-- `bundles/native-app-skill-tree.v0.json`
+- historical `native-app-skill-tree` bundle manifest, retired 2026-06-11
 
 What is still missing is the middle seam:
 

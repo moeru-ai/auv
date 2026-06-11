@@ -64,8 +64,8 @@ execution remains a compatibility fallback for entries that have not been
 migrated or whose required typed driver surface is still incomplete.
 
 Update, 2026-06-11: the active bundle surface was retired before JSON recipe
-execution. `skill bundle ...`, bundle export/verification, checked-in
-`bundles/**`, and bundle-backed `invoke` are no longer compatibility paths.
+execution. The former bundle CLI, bundle export/verification, checked-in bundle
+manifests, and bundle-era invoke resolution are no longer compatibility paths.
 Fallback now refers only to JSON recipe and case-matrix execution that remains
 temporarily available through `skill run` and `skill cases`.
 
@@ -214,7 +214,7 @@ For the full retirement:
 - Every active recipe entry is migrated, archived, or deleted according to the
   inventory.
 - No active CLI path depends on JSON recipe execution.
-- No active runtime path invokes bundle-backed commands.
+- No active runtime path invokes bundle-era commands.
 - `recipes/` contain only archived reference material, tombstones, or are
   removed according to the approved inventory.
 - Documentation points users and contributors to Rust orchestration and typed

@@ -26,7 +26,7 @@ operation coverage. It is not the broad command migration PR.
 - stages file artifacts and artifact refs
 - resolves command ids through the catalog
 - invokes legacy drivers through `DriverCall`
-- invokes bundle-backed recipe commands
+- previously invoked bundle-era recipe commands, retired 2026-06-11
 - exposes read/inspect helper methods
 - hosts recorded operation helpers through `recorded_operation.rs`
 

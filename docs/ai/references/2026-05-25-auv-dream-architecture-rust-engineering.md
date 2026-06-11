@@ -278,8 +278,9 @@ Current repository facts:
   `src/inspect_server.rs` already implement a real recording/inspection layer:
   `RunRecordingBackend`, `RunRecorder`, local run snapshots, inspect-server
   session discovery, optional HTTP writes, and viewer-facing DTOs.
-- `src/bundle/` is already partially modular with `model`, `catalog`,
-  `validate`, `render`, `paths`, and `export`.
+- The former bundle module was already partially modular with `model`,
+  `catalog`, `validate`, `render`, `paths`, and `export`; it was retired on
+  2026-06-11.
 - `src/driver/macos/` has a useful capability-oriented shape in places:
   `ax_tree`, `capture`, `control`, `descriptor`, `dispatch`, `observe`,
   `overlay`, `native`, `support`, and `types`.
@@ -1280,7 +1281,6 @@ Current documented validation commands are:
 - `git diff --check`
 - `cargo run --quiet -- list-commands`
 - `cargo run --quiet -- skill cases list`
-- `cargo run --quiet -- skill bundle list`
 
 Target CI should add:
 

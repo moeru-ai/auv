@@ -120,7 +120,6 @@ cargo test
 git diff --check
 cargo run --quiet -- list-commands
 cargo run --quiet -- skill cases list
-cargo run --quiet -- skill bundle list
 ```
 
 Observed test count:
@@ -193,7 +192,6 @@ cargo test
 git diff --check
 cargo run --quiet -- list-commands
 cargo run --quiet -- skill cases list
-cargo run --quiet -- skill bundle list
 ```
 
 Then push to the same branch:
