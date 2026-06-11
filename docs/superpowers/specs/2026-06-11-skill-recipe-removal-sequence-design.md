@@ -2,7 +2,7 @@
 
 Date: 2026-06-11
 
-Status: proposed owner-update spec
+Status: implemented by `refactor/remove-skill-recipe-chain`
 
 Scope classification: approved feature sequence adjustment
 
@@ -45,7 +45,7 @@ fallback strategy is no longer the preferred next implementation order.
 
 ## Current Skill Links
 
-The active `skill` chain currently includes:
+Before this PR, the active `skill` chain included:
 
 - CLI parser and dispatch:
   - `auv-cli skill list`
@@ -69,16 +69,17 @@ The active `skill` chain currently includes:
   - `src/app/mod.rs` and `src/app/analysis.rs` use `SkillManifest` and
     `SkillCaseMatrix` for app distillation/validation output.
 
-The first removal PR should try to remove all of these. If one caller cannot be
-converted safely inside the PR, it must be marked with a narrow `TODO:` or
-`NOTICE:` at the call site explaining the temporary residual dependency and the
-exact deletion trigger.
+This PR removed all of these active execution and discovery paths. Historical
+reference documents may still mention recipe manifests as past evidence, but
+production code no longer discovers `recipes/` or executes JSON recipes.
 
 ## Target Order
 
 ### PR2: Remove Active Skill And Recipe Chain
 
 Goal: delete active `skill` execution and discovery in one reviewable PR.
+
+Status: implemented in branch `refactor/remove-skill-recipe-chain`.
 
 Planned changes:
 

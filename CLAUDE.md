@@ -105,6 +105,6 @@ For behavior changes, run:
 - `cargo test`
 - `git diff --check`
 
-Also run command-list smoke checks when command catalog, recipes, runtime
-frontends, or CLI behavior changes. Docs-only edits can skip Cargo validation,
-but say so in the summary.
+Also run command-list smoke checks when command catalog, runtime frontends, or
+CLI behavior changes. Docs-only edits can skip Cargo validation, but say so in
+the summary.

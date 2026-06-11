@@ -2,9 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** implemented on branch `refactor/remove-skill-recipe-chain`.
+
 **Goal:** Remove active `skill`/JSON recipe/case-matrix execution and discovery from the root AUV CLI/MCP/runtime lane.
 
 **Architecture:** This PR removes the old `skill` surface instead of preserving a compatibility registry. User-facing `skill ...`, app distillation/validation recipe generation, scan recipe hooks, `src/skill/**`, and `recipes/**` are removed together so no production path can discover or execute JSON recipes. `app probe`, `app analyze`, `invoke`, inspect, MCP invoke, and candidate-action remain buildable because they are not recipe execution surfaces.
+
+**Implementation commits:**
+
+- `cd7f080` / `860a71e`: remove skill/app recipe CLI surfaces.
+- `2a16f68`: remove root CLI skill dispatch.
+- `4a390c7`: remove MCP skill tools.
+- `5f51eaa`: remove scroll-scan recipe hooks.
+- `d0fbf67`: remove app recipe distillation schema.
+- `37e2e37`: delete `src/skill/**` and `recipes/**`.
 
 **Tech Stack:** Rust 2024, root `auv-cli` crate, `rmcp`, serde JSON, existing CLI parser tests, existing Rust unit tests.
 
