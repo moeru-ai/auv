@@ -46,7 +46,7 @@ Create an `auv-tracing-driver` boundary for driver-level recording:
 - recorder fan-out to local snapshots and inspect server write mode
 
 This boundary records evidence for atomic driver operations. It should not own
-command compatibility, recipe execution, bundle lookup, or UI-specific
+command compatibility, JSON recipe execution, retired bundle lookup, or UI-specific
 interaction loops.
 
 ## API Shape
@@ -90,7 +90,8 @@ recording for atomic observations and input actions.
 ## Non-Goals
 
 - Do not rewrite all command implementations in this PR.
-- Do not remove recipes or bundles in this PR.
+- Do not remove JSON recipes in this PR. Bundles have already been retired and
+  must not be restored.
 - Do not change persisted run record wire shapes unless a compatibility
   boundary is documented and tested.
 - Do not make the inspect server an execution dependency.
@@ -114,7 +115,7 @@ recording for atomic observations and input actions.
    `auv-cli-invoke` to the new recorder only to keep current recording behavior
    working, and add at most one minimal typed proof handler with no
    command-family migration.
-6. Shrink `Runtime` to a temporary facade for recipe/bundle paths that have not
+6. Shrink `Runtime` to a temporary facade for JSON recipe paths that have not
    yet migrated.
 
 ## Exit Criteria
@@ -147,8 +148,8 @@ Focused tests should cover:
 
 ## Deferrals
 
-TODO(runtime-delete): full `runtime.rs` deletion is deferred until recipe and
-bundle execution no longer depend on the compatibility facade.
+TODO(runtime-delete): full `runtime.rs` deletion is deferred until JSON recipe
+execution no longer depends on the compatibility facade.
 
 TODO(tracing-interaction): scroll scan and other macro-operation recording are
 deferred to `auv-tracing-interaction` after driver-level recording is stable.

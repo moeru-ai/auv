@@ -248,10 +248,10 @@ Current repository facts:
 
 - `src/lib.rs` builds a default runtime from `LocalStore`,
   `default_command_catalog()`, and `default_driver_registry()`.
-- `src/lib.rs` currently exposes `app`, `bundle`, `catalog`, `contract`,
-  `driver`, `inspect`, `inspect_server`, `model`, `recording`,
-  `run_recording`, `runtime`, `scroll_scan`, `skill`, `store`, `trace`, and
-  `xtask` as first-class modules.
+- `src/lib.rs` currently exposes `app`, `catalog`, `contract`, `driver`,
+  `inspect`, `inspect_server`, `model`, `recording`, `run_recording`,
+  `runtime`, `scroll_scan`, `skill`, `store`, `trace`, and `xtask` as
+  first-class modules.
 - `src/runtime.rs` owns command invocation, implicit run creation, span/event
   recording, driver dispatch, artifact staging, and local snapshot persistence.
 - `src/catalog.rs` is a static command registry. It mixes command naming,
@@ -289,10 +289,10 @@ Current repository facts:
   SwiftPM-side checks.
 - `default_driver_registry()` registers both the fixture driver and the macOS
   desktop driver today.
-- There is currently one bundle, `native.app.skill-tree.v0`, with status
-  `phase-1-frozen`. Recipes include validated QQ Music paths, experimental
-  Notes/TextEdit/demo paths, experimental `music.result.play`, a
-  needs-revalidation NetEase path, and a prototype scan hook recipe.
+- The former `native.app.skill-tree.v0` bundle was retired on 2026-06-11.
+  Recipes include validated QQ Music paths, experimental Notes/TextEdit/demo
+  paths, experimental `music.result.play`, a needs-revalidation NetEase path,
+  and a prototype scan hook recipe.
 - Row-like producers and icon matching now emit `RecognitionResult` artifacts.
   `scroll_scan` prefers those artifacts over legacy row JSON. ONNX/neural
   detection was reverted and should not be treated as current mainline.
@@ -300,8 +300,8 @@ Current repository facts:
 Current execution chain:
 
 1. CLI parses commands in `src/cli.rs`.
-2. `src/main.rs` dispatches CLI commands and discovers skills, bundles, and
-   case matrices.
+2. `src/main.rs` dispatches CLI commands and discovers skills and case
+   matrices.
 3. `Runtime::invoke` creates a command run.
 4. `Runtime::invoke_in_span` resolves `CommandSpec`, resolves the driver,
    builds `DriverCall`, invokes the driver, stages artifacts, records events,
@@ -470,8 +470,8 @@ not for library, MCP, JS, or WebDriver-compatible callers.
 Target state:
 
 - `auv-core::Error` is a non-exhaustive top-level error.
-- `RuntimeError`, `DriverError`, `RecipeError`, `BundleError`, `StoreError`,
-  and `ProtocolError` are distinguishable.
+- `RuntimeError`, `DriverError`, `RecipeError`, `StoreError`, and
+  `ProtocolError` are distinguishable.
 - driver errors include category, provider, operation, retryability,
   permission hint, stale-ref hint, and evidence refs.
 - CLI can render human text from typed errors.
@@ -559,7 +559,7 @@ Purpose:
 - local and future remote run/artifact storage
 - artifact hashing
 - retention and redaction policy
-- bundle package IO
+- retired bundle package IO only as historical read/import support if owner-approved
 
 Scope:
 
@@ -638,14 +638,14 @@ Scope:
 Recipe execution can be in `auv-runtime` or an `auv-recipe-runtime` adapter, but
 manifest parsing and validation should not depend on live drivers.
 
-### `auv-bundle`
+### Retired `auv-bundle` candidate
 
 Purpose:
 
-- bundle manifests
-- bundle verification
-- export/import/package rendering
-- coverage reports
+This was a proposed crate boundary for bundle manifests, verification,
+export/import/package rendering, and coverage reports. The active bundle
+surface was retired on 2026-06-11, so this crate should not be introduced unless
+the owner approves a purely archival reader.
 
 Scope:
 
@@ -655,7 +655,7 @@ Scope:
 - static verification
 
 Live target-app probing should be a runtime validation capability, not a static
-bundle verifier side effect.
+manifest verifier side effect.
 
 ### `auv-inspect`
 
@@ -815,7 +815,6 @@ auv-core
   <- auv-store
   <- auv-driver-api
   <- auv-recipe
-  <- auv-bundle
   <- auv-runtime
        <- auv-protocol
        <- auv-inspect
@@ -1240,7 +1239,7 @@ Avoid hiding provisional naming behind macros too early.
 
 - parse -> validate -> execute should be separate phases
 - validation returns diagnostics, not only one string
-- static bundle validation must not require live app access
+- static recipe/case validation must not require live app access
 - live validation should be an explicit runtime operation
 - compatibility checks should distinguish spec API, runtime, adapter, provider,
   and target app versions
@@ -1299,7 +1298,7 @@ Target CI should add:
   timeouts, slow-test detection, retries only for known flaky live tests, JUnit
   output, and optional sharding/archive support
 - spell/typo check for docs and schema names
-- JSON schema validation for recipes and bundles
+- JSON schema validation for recipes and case matrices
 - golden trace/artifact verification
 - generated Swift bridge check on macOS when `ffi.rs` changes
 - `swift build` in `src/driver/macos/native/swift` after generating bridge
@@ -1442,8 +1441,9 @@ Under-design risks:
 ## Suggested Migration Order
 
 1. Split `src/skill.rs` into modules inside the current crate.
-2. Add compatibility shims so existing CLI commands, recipes, bundles, and
-   string inputs continue working during typed API migration.
+2. Add compatibility shims so existing CLI commands, recipes, and string inputs
+   continue working during typed API migration. Do not restore bundle execution
+   compatibility.
 3. Split command catalog into generic, fixture, and macOS command slices.
 4. Introduce typed error enums while preserving CLI text rendering.
 5. Introduce native protocol DTOs for device/session/run/operation/artifact
@@ -1455,7 +1455,7 @@ Under-design risks:
 8. Prove the existing recognition consumer chain:
    `RecognitionResult -> CandidateRef -> VerificationResult`.
 9. Add fixture-backed observation graph and virtual AX tree contracts.
-10. Move trace/store/recipe/bundle/driver-api modules toward workspace crates.
+10. Move trace/store/recipe/driver-api modules toward workspace crates.
 11. Add WebDriver and JS adapters over the native runtime/protocol, not over
     CLI commands.
 12. Move macOS implementation into a target-gated driver crate.
