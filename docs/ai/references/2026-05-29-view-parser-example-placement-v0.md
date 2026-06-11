@@ -226,7 +226,7 @@ naming the NetEase type.
 
 - a command in the top-level `auv-cli` catalog
 - a recipe in `recipes/`
-- a bundle in `bundles/`
+- a retired bundle-era manifest
 
 Invocation: `cargo run -p auv-example-netease-playlist --bin
 netease-playlist-ls -- <args>`. v0 does not add a shorter alias.

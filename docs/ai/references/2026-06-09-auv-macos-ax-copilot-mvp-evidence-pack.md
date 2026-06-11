@@ -6,4 +6,5 @@ Reason:
 
 - it records an archived AX copilot vertical proof
 - it is not the active AUV roadmap
-- active references should bias agents toward SkillBundle/recipe/invoke/run-artifact-inspect work instead
+- active references should bias agents toward invoke, run-artifact-inspect, and
+  app-local Rust command work instead

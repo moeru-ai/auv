@@ -39,8 +39,8 @@ pub(crate) fn validate_skill_manifest_with_commands(
 /// the policy's `declared_classes` list.
 ///
 /// Phase 3 #4: this turns the recipe budget from documentation into a
-/// load-time constraint so `skill list`, `skill cases run --dry-run`,
-/// and bundle verify all catch violations before any driver call.
+/// load-time constraint so `skill list` and `skill cases run --dry-run`
+/// catch violations before any driver call.
 pub(crate) fn validate_skill_disturbance_budget(manifest: &SkillManifest) -> AuvResult<()> {
   let recipe_max = if manifest
     .disturbance_policy

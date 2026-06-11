@@ -26,7 +26,7 @@ Legend:
 | `debug.pasteTextPreserveClipboard` | `paste_text_preserve_clipboard` | Input | `already-bridged` | Uses typed paste bridge with legacy fallback. | Add deferral marker for unsupported submit keys. |
 | `debug.captureAxTree` | `capture_ax_tree` | AX | `defer` | Calls `auv-driver-macos::native::ax_tree` directly; first bridge batch is focused on capture/window/input commands. | Leave code marker that AX capture is deferred until owner approves a typed `auv-driver` AX capability. |
 | `debug.findWindowText` | `find_window_text` | Vision | `migrate` | Uses typed window capture path but OCR remains root adapter. | Rewire only through existing `auv-driver-macos` typed OCR/capture capability; do not introduce a new primitive API. |
-| `music.search.results` | `music_search_results` | Domain | `delete` | Root music domain path; NetEase has domain crate. | Delete with old recipe/bundle phase. |
-| `music.result.play` | `music_result_play` | Domain | `delete` | Root music domain path; NetEase has domain crate. | Delete with old recipe/bundle phase. |
-| `music.validate.candidate.liveness` | `music_validate_candidate_liveness` | Domain | `delete` | Root music domain path; NetEase has domain crate. | Delete with old recipe/bundle phase. |
+| `music.search.results` | `music_search_results` | Domain | `delete` | Root music domain path; NetEase has domain crate. | Delete with old recipe phase after app-local music commands cover it. |
+| `music.result.play` | `music_result_play` | Domain | `delete` | Root music domain path; NetEase has domain crate. | Delete with old recipe phase after app-local music commands cover it. |
+| `music.validate.candidate.liveness` | `music_validate_candidate_liveness` | Domain | `delete` | Root music domain path; NetEase has domain crate. | Delete with old recipe phase after app-local music commands cover it. |
 | `debug.overlay*` | `overlay_*` | Overlay | `defer` | Visual-only presentation, not input backend. | Keep separate from `auv-driver` bridge. |

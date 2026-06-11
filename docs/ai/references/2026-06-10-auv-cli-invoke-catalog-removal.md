@@ -76,7 +76,8 @@ must disappear before extraction.
   PR.
 - Do not move run lifecycle, artifact staging, or driver execution ownership
   into `auv-cli-invoke`.
-- Do not remove recipe or bundle execution.
+- Do not remove JSON recipe execution in this PR. Bundle execution has already
+  been retired and must not be reintroduced as compatibility.
 - Do not introduce REPL behavior. `auv-cli-invoke` is a library boundary first.
 
 ## Proposed Steps
@@ -87,10 +88,9 @@ must disappear before extraction.
 3. Move the default command table from `src/catalog.rs` into
    `auv-cli-invoke` as a legacy registry.
 4. Update the CLI `invoke` subcommand to call `auv-cli-invoke`.
-5. Keep legacy recipe/bundle step request/result compatibility types in a
-   neutral root compatibility module until PR3, or re-export them through such
-   a module. Recipe/bundle execution must not depend on the frontend
-   `auv-cli-invoke` crate.
+5. Keep legacy recipe step request/result compatibility types in a neutral root
+   compatibility module until PR3, or re-export them through such a module. JSON
+   recipe execution must not depend on the frontend `auv-cli-invoke` crate.
 6. Let `auv-cli-invoke` translate CLI input into the legacy compatibility
    request and call the current legacy `DriverCall` adapter for unmigrated
    commands without owning driver execution.

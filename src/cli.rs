@@ -101,23 +101,6 @@ pub enum CliCommand {
   SkillShow {
     query: String,
   },
-  SkillBundleList,
-  SkillBundleShow {
-    query: String,
-  },
-  SkillBundleCoverage {
-    query: String,
-  },
-  SkillBundleVerify {
-    query: String,
-  },
-  SkillBundleExport {
-    query: String,
-    output_dir: String,
-  },
-  SkillBundlePackageVerify {
-    package_dir: String,
-  },
   SkillCasesList,
   SkillCasesShow {
     query: String,
@@ -247,12 +230,6 @@ USAGE
   auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
   auv-cli skill list
   auv-cli skill show <skill-id-or-path>
-  auv-cli skill bundle list
-  auv-cli skill bundle show <bundle-id-or-path>
-  auv-cli skill bundle coverage <bundle-id-or-path>
-  auv-cli skill bundle verify <bundle-id-or-path>
-  auv-cli skill bundle export <bundle-id-or-path> <output-dir>
-  auv-cli skill bundle package verify <package-dir>
   auv-cli skill cases list
   auv-cli skill cases show <matrix-id-or-path>
   auv-cli skill cases report <matrix-id-or-path>
@@ -266,7 +243,7 @@ NOTES
   - `debug.captureDisplay`, `debug.listDisplays`, `debug.listWindows`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.captureAxTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `verify.musicNowPlaying`, `verify.axText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
   - `debug.overlayShowCursor`, `debug.overlayHideCursor`, and `debug.overlayShutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
   - `debug.captureAxTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
-  - `skill run`, `skill bundle ...`, and `invoke` are the active AUV core entrypoints. Prefer them when working on product-facing runtime behavior.
+  - `skill run` is a temporary JSON recipe compatibility entrypoint pending runtime legacy retirement; app-local Rust commands are the active workflow direction.
   - `candidate-action run` is a frozen archived macOS AX copilot vertical kept for recovery and reference. It stays buildable, but it is not the active AUV roadmap or the default product path.
   - By default `candidate-action run` does not self-mint consent; without an external consent source it records promotion refusal honestly. `--dev-self-minted-consent` exists only for local development smoke. `--human-gesture-consent` mints one local human-approved consent through a native macOS approval prompt.
   - `candidate-action run --intent ...` remains proposer-only inside that archived vertical: it chooses one observed AX item and one action, records that proposal, then feeds the existing refusal-first candidate-action spine unchanged.
@@ -282,7 +259,6 @@ NOTES
   - `verify.musicNowPlaying` prefers AX tree matching for player-title verification, which is the current direction for native playback disambiguation.
   - `verify.axText` is the generic AX-tree text verification contract for native apps with reliable text-bearing nodes.
   - `debug.clickScreenText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
-  - `skill run` is the product-facing recipe entrypoint: it resolves a recipe manifest from `recipes/`, validates disturbance policy, replays steps through the shared runtime, and carries step artifact paths into later verification steps.
   - `skill cases run` replays validated case-matrix entries serially; this is the current narrow-skill coverage entrypoint for productization.
   - `app probe` is the deterministic raw-facts entrypoint for phase-2 distillation work; it records app identity plus runtime-backed surface probes into `.auv/app-probes/.../probe.json`.
   - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as the input to later candidate-skill distillation instead of free-form chat summaries.
@@ -990,71 +966,12 @@ fn parse_skill(arguments: &[String]) -> AuvResult<CliCommand> {
         query: arguments[2].clone(),
       })
     }
-    "bundle" => parse_skill_bundle(arguments),
+    "bundle" => {
+      Err("skill bundle has been removed; use app-local Rust commands instead".to_string())
+    }
     "run" => parse_skill_run(arguments),
     other => Err(format!(
       "unknown skill subcommand {other}; use `auv-cli skill list` to inspect the current catalog"
-    )),
-  }
-}
-
-fn parse_skill_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 3 {
-    return Err("usage: auv-cli skill bundle <list|show|coverage|verify|export> ...".to_string());
-  }
-
-  match arguments[2].as_str() {
-    "list" => {
-      if arguments.len() != 3 {
-        return Err("usage: auv-cli skill bundle list".to_string());
-      }
-      Ok(CliCommand::SkillBundleList)
-    }
-    "show" => {
-      if arguments.len() != 4 {
-        return Err("usage: auv-cli skill bundle show <bundle-id-or-path>".to_string());
-      }
-      Ok(CliCommand::SkillBundleShow {
-        query: arguments[3].clone(),
-      })
-    }
-    "coverage" => {
-      if arguments.len() != 4 {
-        return Err("usage: auv-cli skill bundle coverage <bundle-id-or-path>".to_string());
-      }
-      Ok(CliCommand::SkillBundleCoverage {
-        query: arguments[3].clone(),
-      })
-    }
-    "verify" => {
-      if arguments.len() != 4 {
-        return Err("usage: auv-cli skill bundle verify <bundle-id-or-path>".to_string());
-      }
-      Ok(CliCommand::SkillBundleVerify {
-        query: arguments[3].clone(),
-      })
-    }
-    "export" => {
-      if arguments.len() != 5 {
-        return Err(
-          "usage: auv-cli skill bundle export <bundle-id-or-path> <output-dir>".to_string(),
-        );
-      }
-      Ok(CliCommand::SkillBundleExport {
-        query: arguments[3].clone(),
-        output_dir: arguments[4].clone(),
-      })
-    }
-    "package" => {
-      if arguments.len() != 5 || arguments[3].as_str() != "verify" {
-        return Err("usage: auv-cli skill bundle package verify <package-dir>".to_string());
-      }
-      Ok(CliCommand::SkillBundlePackageVerify {
-        package_dir: arguments[4].clone(),
-      })
-    }
-    other => Err(format!(
-      "unknown skill bundle subcommand {other}; use `auv-cli skill bundle list`"
     )),
   }
 }
@@ -1228,21 +1145,26 @@ mod tests {
   use super::*;
 
   #[test]
-  fn parse_skill_bundle_coverage_command() {
-    let command = parse_cli(&[
+  fn parse_skill_bundle_commands_are_removed() {
+    let error = parse_cli(&[
       "skill".to_string(),
       "bundle".to_string(),
-      "coverage".to_string(),
-      "native.app.skill-tree.v0".to_string(),
+      "list".to_string(),
     ])
-    .expect("bundle coverage command should parse");
+    .expect_err("skill bundle should be removed");
 
-    match command {
-      CliCommand::SkillBundleCoverage { query } => {
-        assert_eq!(query, "native.app.skill-tree.v0");
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
+    assert!(
+      error.contains("skill bundle has been removed"),
+      "unexpected error: {error}"
+    );
+  }
+
+  #[test]
+  fn help_text_no_longer_lists_skill_bundle_commands() {
+    let help = help_text();
+
+    assert!(!help.contains("skill bundle"));
+    assert!(help.contains("auv-cli skill run"));
   }
 
   #[test]

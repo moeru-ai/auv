@@ -1,8 +1,7 @@
 # AUV Design System
 
 A visual + interaction system for **AUV** — a Rust CLI for turning
-application UI workflows into inspectable, replayable **recipes** and
-**skill bundles**.
+application UI workflows into inspectable, replayable operations.
 
 AUV is **one project among several** under the
 [Moeru AI](https://github.com/moeru-ai) umbrella — an online hobby group
@@ -19,7 +18,7 @@ identity (cyan + lime, pixel-art accents).
 
 Source repos used to build this system:
 
-- [`moeru-ai/auv`](https://github.com/moeru-ai/auv) — primary source of truth (Rust runtime, CLI, recipes, bundles, docs).
+- [`moeru-ai/auv`](https://github.com/moeru-ai/auv) — primary source of truth (Rust runtime, CLI, recipes, app-local commands, docs).
 
 The reader is encouraged to skim those before designing anything substantial
 against AUV. The repository does not ship a UI; the design language here is
@@ -40,7 +39,6 @@ ad-hoc UI automation into:
 |---|---|---|
 | **Recipe** | A JSON manifest of steps against a target app | `recipes/macos/<app>/<recipe>.v0.json` |
 | **Case matrix** | Validated/candidate inputs that exercise a recipe | `recipes/macos/<app>/<recipe>.cases.v0.json` |
-| **Bundle** | A grouped manifest of validated narrow skills | `bundles/<id>.json` |
 | **Trace / Run** | The recording of one workflow execution | `.auv/runs/<run_id>/` |
 | **Span / Event / Artifact** | OTLP-shaped records inside a run | `.auv/runs/<run_id>/{spans,events,artifacts}.jsonl` |
 
@@ -49,7 +47,6 @@ ad-hoc UI automation into:
 1. **`auv-cli`** — the user-facing executable. Subcommands:
    `list-commands`, `list-drivers`, `app probe|analyze|distill|validate`,
    `invoke`, `inspect`, `inspect serve`, `skill list|show|run`,
-   `skill bundle list|show|coverage|verify|export`,
    `skill cases list|show|report|run`.
 2. **`auv-cli inspect serve`** — a read-only HTTP + WebSocket inspect server
    that surfaces stored and live run data. Default endpoint
@@ -62,7 +59,8 @@ ad-hoc UI automation into:
 
 The product is intentionally narrow. Phase-1 is **frozen**:
 
-- macOS runtime + driver + recipe + case-matrix + bundle + package flow exists.
+- macOS runtime + driver + recipe + case-matrix flow exists; the former bundle
+  package flow has been retired.
 - QQ音乐 has two validated narrow playback strategies (OCR-anchor + row fallback).
 - Notes + TextEdit ship as native-app AX-text samples.
 - The unresolved boundary — Chinese requested-title semantic selection in the
@@ -101,24 +99,23 @@ in every artifact this system produces.
   is. The reader is given the failure mode before the success mode.
 - **Provisional naming.** Names like `v1alpha1`, "phase-1", "candidate" are
   used to flag instability. Do not stabilize names too early.
-- **Lowercase command identifiers.** `recipe`, `case matrix`, `bundle`, `run`,
+- **Lowercase command identifiers.** `recipe`, `case matrix`, `run`,
   `span`, `event`, `artifact` are nouns; `probe`, `analyze`, `distill`,
   `validate`, `invoke`, `inspect` are verbs. Reuse them.
 
 ### Casing
 
 - **Headings, prose:** sentence case. Never title case.
-- **CLI commands, recipe IDs, bundle IDs:** lowercase with dots and
-  underscores. `macos.qqmusic.play_visible_anchor.v0`,
-  `native.app.skill-tree.v0`.
+- **CLI commands and recipe IDs:** lowercase with dots and underscores.
+  `macos.qqmusic.play_visible_anchor.v0`.
 - **Run IDs:** literal monospace strings, e.g. `run_1778947574511_68037_4`.
 - **Status vocabulary:** lowercase, hyphenated. `validated`,
   `not-validated`, `candidate`, `phase-1-frozen`, `running`, `failed`, `ok`.
 
 ### Pronouns + register
 
-- **"This recipe does not …"**, **"This bundle does not claim …"** — the
-  artifact is the subject, not the user. Avoid "you".
+- **"This recipe does not …"**, **"This run does not claim …"** — the artifact
+  is the subject, not the user. Avoid "you".
 - Imperatives are reserved for operational instructions
   (`Run formatting and tests before submitting changes that touch Rust code.`).
 
@@ -164,7 +161,7 @@ section *establishes* the system based on the project's culture.
   pixel-art logo's bottom half.
 - **Status-coded everything.** Validated green, candidate amber, boundary
   rose, frozen slate, running cyan-teal, failed red. These map 1:1 onto
-  recipe/case-matrix/bundle JSON fields and the OTLP `status_code`.
+  recipe/case-matrix JSON fields and the OTLP `status_code`.
 
 ### Type
 

@@ -32,7 +32,7 @@ keeps active work tied to:
 
 - scalar template inputs
 - catalog command ids
-- bundle command lookup
+- retired bundle-era command lookup
 - `Runtime` as a central execution object
 
 The desired lane is direct Rust composition over typed driver APIs. The Rust
@@ -62,6 +62,12 @@ may resolve a known recipe id or manifest path to the Rust implementation after
 the app-local operation can execute all required steps through typed APIs. JSON
 execution remains a compatibility fallback for entries that have not been
 migrated or whose required typed driver surface is still incomplete.
+
+Update, 2026-06-11: the active bundle surface was retired before JSON recipe
+execution. The former bundle CLI, bundle export/verification, checked-in bundle
+manifests, and bundle-era invoke resolution are no longer compatibility paths.
+Fallback now refers only to JSON recipe and case-matrix execution that remains
+temporarily available through `skill run` and `skill cases`.
 
 This spec does not require every migrated workflow to wait for a finished
 `auv-tracing-driver` crate. A first Rust operation may land its app-local
@@ -135,8 +141,9 @@ such as `debug.focusTextInput`.
 7. Keep JSON execution as fallback for unmigrated entries.
 8. Repeat by recipe family until the approved inventory no longer needs JSON
    execution.
-9. Retire bundles only after their command coverage is represented by Rust
-   orchestration or explicitly archived.
+9. Retire bundles once the owner approves removing bundle execution/export
+   compatibility. This was completed on 2026-06-11; do not reintroduce bundle
+   compatibility while migrating recipes.
 10. Remove JSON recipe and case matrix execution after no active entrypoint
     depends on it.
 
@@ -150,10 +157,11 @@ The inventory must be checked in before removal work, preferably under
 - replacement Rust owner when applicable
 - approval source/date
 
-`fallback` means the JSON manifest stays executable until its replacement is
-implemented or the owner approves archival. `hold` means the entry needs owner
-review before migration or removal. Neither `fallback` nor `hold` is a long-term
-target state.
+`fallback` means a JSON recipe or case-matrix manifest stays executable until
+its replacement is implemented or the owner approves archival. It no longer
+applies to bundle manifests after the 2026-06-11 bundle retirement slice.
+`hold` means the entry needs owner review before migration or removal. Neither
+`fallback` nor `hold` is a long-term target state.
 
 ## Non-Goals
 
@@ -192,23 +200,23 @@ For the first implementation slice:
 
 - At least one owner-approved `recipes/` workflow has a Rust-owned operation
   equivalent and app-local driver boundary.
-- The existing CLI entrypoint keeps working through the compatibility path until
-  the operation's required typed driver APIs exist.
+- The existing recipe CLI entrypoint keeps working through the compatibility
+  path until the operation's required typed driver APIs exist.
 - The workflow's case matrix is represented by Rust test data or Rust-driven
   cases.
 - The original JSON manifest remains readable for comparison or archival until
   the owner approves deletion.
-- Unmigrated recipes and bundles continue to work through the existing
-  compatibility path.
+- Unmigrated recipes continue to work through the existing JSON compatibility
+  path. Bundles do not; the active bundle surface has been removed.
 
 For the full retirement:
 
 - Every active recipe entry is migrated, archived, or deleted according to the
   inventory.
 - No active CLI path depends on JSON recipe execution.
-- No active runtime path invokes bundle-backed commands.
-- `bundles/` and `recipes/` contain only archived reference material,
-  tombstones, or are removed according to the approved inventory.
+- No active runtime path invokes bundle-era commands.
+- `recipes/` contain only archived reference material, tombstones, or are
+  removed according to the approved inventory.
 - Documentation points users and contributors to Rust orchestration and typed
   driver APIs.
 

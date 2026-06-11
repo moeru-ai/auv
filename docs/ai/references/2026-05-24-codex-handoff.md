@@ -135,8 +135,9 @@ cargo test
 git diff --check
 cargo run --quiet -- list-commands
 cargo run --quiet -- skill cases list
-cargo run --quiet -- skill bundle list
 ```
+
+The former bundle-list validation command was retired on 2026-06-11.
 
 For docs-only changes, at minimum run:
 

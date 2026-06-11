@@ -329,7 +329,6 @@ cargo test
 git diff --check
 cargo run --quiet -- list-commands
 cargo run --quiet -- skill cases list
-cargo run --quiet -- skill bundle list
 ```
 
 For docs-only changes, at minimum run:
@@ -368,5 +367,4 @@ cargo test
 git diff --check
 cargo run --quiet -- list-commands
 cargo run --quiet -- skill cases list
-cargo run --quiet -- skill bundle list
 ```

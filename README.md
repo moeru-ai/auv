@@ -4,16 +4,14 @@
 
 ## What It Is
 
-AUV turns application UI workflows into inspectable, replayable recipes and
-bundle-shaped skill artifacts. Current fact sources live in:
+AUV turns application UI workflows into inspectable, replayable operations.
+Current fact sources live in:
 
 - `src/runtime.rs`
 - `src/catalog.rs`
 - `src/skill.rs`
-- `src/bundle.rs`
 - `src/driver/macos/`
 - `recipes/`
-- `bundles/`
 - `docs/ai/references/`
 
 Current validated native-app samples are narrow:
@@ -31,9 +29,7 @@ Useful CLI entrypoints:
 
 - `cargo run --quiet -- list-commands`
 - `cargo run --quiet -- skill cases list`
-- `cargo run --quiet -- skill bundle list`
-- `cargo run --quiet -- skill bundle coverage native.app.skill-tree.v0`
-- `cargo run --quiet -- scan window-region --target <bundle-id> --region 0.0,0.0,1.0,1.0 --max-pages 3`
+- `cargo run --quiet -- scan window-region --target <application-id> --region 0.0,0.0,1.0,1.0 --max-pages 3`
 
 `scan window-region` is the first scroll-scan workflow. It is OCR-first,
 region-scoped, conservative about duplicate text, and records why scanning

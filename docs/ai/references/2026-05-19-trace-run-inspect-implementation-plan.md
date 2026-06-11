@@ -2478,10 +2478,11 @@ cargo test
 git diff --check
 cargo run --quiet -- list-commands
 cargo run --quiet -- skill cases list
-cargo run --quiet -- skill bundle list
 ```
 
 Expected: every command exits successfully.
+
+Note: the former bundle-list validation command was retired on 2026-06-11.
 
 - [ ] **Step 2: Verify new ad-hoc run layout manually**
 
