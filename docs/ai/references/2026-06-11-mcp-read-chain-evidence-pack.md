@@ -34,6 +34,7 @@ docs/ai/references/evidence/2026-06-11-mcp-read-chain/
 | `codex-auv-read-chain.txt` | Human-readable successful external-agent MCP transcript. |
 | `codex-auv-read-chain-session.jsonl` | Full Codex session JSONL transcript for the successful external-agent run. |
 | `codex-auv-external-consumer-failed.txt` | Earlier failed attempt where the first MCP tool call was cancelled; kept as negative evidence. |
+| `m0-consent-refusal-transcript.txt` | Human-readable MCP transcript for the required no-consent refusal, readiness-blocked validator history, and final human-approved semantic match. |
 
 ## Successful Run
 
@@ -99,44 +100,72 @@ external agent via MCP calls the same class with owner consent
   -> granted execution + semantic verify are recorded
 ```
 
-This is **not yet completed** in this pack.
+This is now completed in this pack.
 
-The blocker is contractual, not accidental:
+The original blocker was contractual, not accidental:
 
 - `docs/ai/references/2026-06-11-mcp-frontend-surface-v0.md` explicitly says
-  MCP V0 does not expose `candidate-action` tools.
+  MCP V0 does not expose general `candidate-action` tools.
 - The current MCP V0 surface exposes generic `invoke`, but command-catalog
   pointer actions such as `debug.clickPoint` do not carry the
   candidate-action consent gate.
 - Therefore using MCP `invoke` on existing pointer commands would not produce
   the required no-consent refusal.
 
-Do not mark M0 complete until this is resolved by an owner-approved surface
-decision. The likely choices are:
+The selected resolution is:
 
-1. Add a narrow consent-gated action command to the shared catalog, then let MCP
-   `invoke` exercise it without creating a candidate-action-specific tool.
-2. Revise the MCP surface note to allow a narrowly scoped archived
-   `candidate-action` recovery tool only for the M0 consent/refusal debt.
-3. Change the M0 acceptance wording so the consent/refusal pair is recorded via
-   CLI/library instead of MCP.
+```text
+Expose MCP candidate_action_run as an archived M0 evidence tool only.
+```
 
-Until one of those is approved, the correct state is:
+This tool maps to `Runtime::run_candidate_action_command`, accepts only direct
+`query` / `role` / `action` targeting, and does not expose the model proposer
+path. It is not a new product lane and must not be used as the route for future
+distillation workflow work.
+
+The archived evidence contains three real MCP calls:
+
+1. `candidate_action_run` without consent:
+   - run: `run_1781166836225_70347_0`
+   - status: `promotion_refused`
+   - refusal: `permission_missing`
+2. `candidate_action_run` with explicit owner-approved consent before the
+   activation-settle fix:
+   - run: `run_1781167666368_87561_0`
+   - status: `blocked_not_ready`
+   - blocker: `frontmost window 4823 does not match target window 19747`
+   - purpose: preserve validator blocker history as evidence
+3. `candidate_action_run` with explicit owner-approved consent after the
+   activation-settle fix:
+   - run: `run_1781167855870_93899_0`
+   - status: `executed_single_action`
+   - verification: `semantic_match executed=true state_changed=true semantic_matched=true`
+
+The final state is:
 
 ```text
 read-chain evidence: complete
-consent/refusal debt: blocked
-M0 overall: incomplete
+consent/refusal surface path: implemented
+consent/refusal run evidence: complete
+M0 debt: complete
 ```
 
 ## Validation
 
-Before this evidence pack was written:
+Before the read-chain evidence pack was first written:
 
 - `cargo fmt --check` passed.
 - `cargo check` passed.
 - `cargo test mcp --quiet` passed.
 - `cargo run --quiet -- list-commands` showed `steam.library.list.v0`.
+
+Before the consent/refusal evidence was added:
+
+- `cargo fmt --check` passed.
+- `git diff --check` passed.
+- `cargo test candidate_action_command::tests:: --quiet` passed.
+- `cargo test mcp --quiet` passed.
+- `cargo build` passed.
 
 Full-suite validation should be rerun before any merge or push that includes
 the MCP frontend code.

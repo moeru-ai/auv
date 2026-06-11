@@ -14,9 +14,11 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::bundle::SkillBundleCatalog;
+use crate::candidate_action_command::CandidateActionCommandRequest;
+use crate::candidate_action_decision::CandidateActionKind;
 use crate::model::{ExecutionTarget, InvokeRequest};
 use crate::skill::SkillCatalog;
-use crate::{build_default_runtime, build_runtime_with_store_root};
+use crate::{build_default_runtime, build_runtime_with_store_root, model::now_millis};
 
 #[derive(Clone)]
 pub struct McpServer {
@@ -181,6 +183,31 @@ impl McpServer {
       "text": text,
     }))
   }
+
+  #[tool(
+    description = "Run the archived consent-gated candidate-action command through the shared runtime. M0 evidence tool only: direct query/role target, no planner, no model proposer, no consent minting by MCP."
+  )]
+  async fn candidate_action_run(
+    &self,
+    Parameters(req): Parameters<CandidateActionRunRequest>,
+  ) -> Result<CallToolResult, McpError> {
+    let runtime = self.runtime(req.inspect.store_root.clone())?;
+    let request = req.into_command_request().map_err(invalid_params)?;
+    let output = runtime
+      .run_candidate_action_command(request)
+      .map_err(invalid_params)?;
+
+    json_result(serde_json::json!({
+      "run_id": output.run_id.as_str(),
+      "run_dir": output.run_dir.display().to_string(),
+      "status": output.value.status.as_str(),
+      "proposal_artifact_id": output.value.proposal_artifact_id,
+      "promotion_artifact_id": output.value.promotion_artifact_id,
+      "decision_artifact_id": output.value.decision_artifact_id,
+      "execution_artifact_id": output.value.execution_artifact_id,
+      "promotion_refusals": output.value.promotion_refusals,
+    }))
+  }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -234,6 +261,117 @@ struct RunInspectRequest {
   run_id: String,
   #[serde(default)]
   store_root: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+struct CandidateActionRunRequest {
+  target_app: String,
+  query: String,
+  role: String,
+  #[serde(default = "default_candidate_action")]
+  action: String,
+  #[serde(default)]
+  text: Option<String>,
+  #[serde(default)]
+  dev_self_minted_consent: bool,
+  #[serde(default)]
+  human_gesture_consent: bool,
+  #[serde(default = "default_human_gesture_timeout_ms")]
+  human_gesture_timeout_ms: u64,
+  #[serde(default)]
+  granted_by: String,
+  #[serde(default)]
+  reveal_shortcut: Option<String>,
+  #[serde(default = "default_reveal_settle_ms")]
+  reveal_settle_ms: u64,
+  #[serde(default = "default_stable_frames")]
+  stable_frames: u32,
+  #[serde(default)]
+  stable_frame_delay_ms: u64,
+  #[serde(default = "default_max_centroid_drift_px")]
+  max_centroid_drift_px: f64,
+  #[serde(default = "default_require_stable_text")]
+  require_stable_text: bool,
+  #[serde(default)]
+  inspect: McpInspectOptions,
+}
+
+impl CandidateActionRunRequest {
+  fn into_command_request(self) -> Result<CandidateActionCommandRequest, String> {
+    let action = parse_candidate_action(&self.action, self.text.as_deref())?;
+    let suffix = format!("mcp-m0-{}", now_millis());
+    let request = CandidateActionCommandRequest {
+      app_bundle_id: self.target_app,
+      query: Some(self.query),
+      role: Some(self.role),
+      action: Some(action),
+      intent: None,
+      proposer_model: None,
+      proposer_base_url: None,
+      reveal_shortcut: self.reveal_shortcut,
+      reveal_settle_ms: self.reveal_settle_ms,
+      stable_frames: self.stable_frames,
+      stable_frame_delay_ms: self.stable_frame_delay_ms,
+      max_centroid_drift_px: self.max_centroid_drift_px,
+      require_stable_text: self.require_stable_text,
+      dev_self_minted_consent: self.dev_self_minted_consent,
+      human_gesture_consent: self.human_gesture_consent,
+      human_gesture_timeout_ms: self.human_gesture_timeout_ms,
+      proposal_id: format!("{suffix}-proposal"),
+      promotion_id: format!("{suffix}-promotion"),
+      decision_id: format!("{suffix}-decision"),
+      execution_id: format!("{suffix}-execution"),
+      granted_by: self.granted_by,
+      promotion_scope_note: "M0 MCP consent/refusal evidence: candidate promotion only".to_string(),
+      promotion_evidence_note: "M0 MCP caller supplied consent state; MCP did not mint consent"
+        .to_string(),
+      execution_scope_note: "M0 MCP consent/refusal evidence: execute one resolved action"
+        .to_string(),
+      execution_evidence_note: "M0 MCP caller supplied consent state; MCP did not mint consent"
+        .to_string(),
+    };
+    request.validate()?;
+    Ok(request)
+  }
+}
+
+fn parse_candidate_action(action: &str, text: Option<&str>) -> Result<CandidateActionKind, String> {
+  match action.trim() {
+    "" | "click" => Ok(CandidateActionKind::Click),
+    "type_text" | "type-text" => {
+      let text = text
+        .ok_or_else(|| "text is required when action is type_text".to_string())?
+        .to_string();
+      Ok(CandidateActionKind::TypeText { text })
+    }
+    other => Err(format!(
+      "unsupported candidate action {other}; expected click or type_text"
+    )),
+  }
+}
+
+fn default_candidate_action() -> String {
+  "click".to_string()
+}
+
+fn default_human_gesture_timeout_ms() -> u64 {
+  15_000
+}
+
+fn default_reveal_settle_ms() -> u64 {
+  250
+}
+
+fn default_stable_frames() -> u32 {
+  1
+}
+
+fn default_max_centroid_drift_px() -> f64 {
+  2.0
+}
+
+fn default_require_stable_text() -> bool {
+  true
 }
 
 fn json_result(value: Value) -> Result<CallToolResult, McpError> {
@@ -309,6 +447,7 @@ mod tests {
     assert!(tool_names.contains(&"bundle_list"));
     assert!(tool_names.contains(&"invoke"));
     assert!(tool_names.contains(&"run_inspect"));
+    assert!(tool_names.contains(&"candidate_action_run"));
 
     let invoke = client
       .call_tool(CallToolRequestParam {
@@ -379,5 +518,64 @@ mod tests {
     client.cancel().await?;
     server_handle.await??;
     Ok(())
+  }
+
+  #[test]
+  fn candidate_action_run_request_preserves_refusal_first_defaults() {
+    let request = CandidateActionRunRequest {
+      target_app: "com.apple.TextEdit".to_string(),
+      query: "body".to_string(),
+      role: "AXTextArea".to_string(),
+      action: "click".to_string(),
+      text: None,
+      dev_self_minted_consent: false,
+      human_gesture_consent: false,
+      human_gesture_timeout_ms: default_human_gesture_timeout_ms(),
+      granted_by: String::new(),
+      reveal_shortcut: None,
+      reveal_settle_ms: default_reveal_settle_ms(),
+      stable_frames: default_stable_frames(),
+      stable_frame_delay_ms: 0,
+      max_centroid_drift_px: default_max_centroid_drift_px(),
+      require_stable_text: default_require_stable_text(),
+      inspect: McpInspectOptions::default(),
+    };
+
+    let command = request
+      .into_command_request()
+      .expect("no-consent request should validate and later refuse at runtime");
+
+    assert_eq!(command.app_bundle_id, "com.apple.TextEdit");
+    assert!(!command.dev_self_minted_consent);
+    assert!(!command.human_gesture_consent);
+    assert!(matches!(command.action, Some(CandidateActionKind::Click)));
+  }
+
+  #[test]
+  fn candidate_action_run_request_does_not_self_mint_without_granted_by() {
+    let request = CandidateActionRunRequest {
+      target_app: "com.apple.TextEdit".to_string(),
+      query: "body".to_string(),
+      role: "AXTextArea".to_string(),
+      action: "type_text".to_string(),
+      text: Some("hello".to_string()),
+      dev_self_minted_consent: true,
+      human_gesture_consent: false,
+      human_gesture_timeout_ms: default_human_gesture_timeout_ms(),
+      granted_by: String::new(),
+      reveal_shortcut: None,
+      reveal_settle_ms: default_reveal_settle_ms(),
+      stable_frames: default_stable_frames(),
+      stable_frame_delay_ms: 0,
+      max_centroid_drift_px: default_max_centroid_drift_px(),
+      require_stable_text: default_require_stable_text(),
+      inspect: McpInspectOptions::default(),
+    };
+
+    let error = request
+      .into_command_request()
+      .expect_err("dev self-minted consent still requires explicit caller identity");
+
+    assert!(error.contains("--granted-by is required"));
   }
 }

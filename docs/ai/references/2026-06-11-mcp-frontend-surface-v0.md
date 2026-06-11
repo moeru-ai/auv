@@ -2,7 +2,7 @@
 
 Date: 2026-06-11
 
-Status: M0 surface note under the goal "同一执行模型从条款变成事实"
+Status: M0 surface note; read-chain and consent/refusal evidence completed.
 
 ## Goal Placement
 
@@ -34,7 +34,7 @@ Why first:
 
 ## First Exposed Tool Surface
 
-Expose only:
+Expose the read-chain tools:
 
 - `bundle_list`
 - `bundle_show`
@@ -43,9 +43,19 @@ Expose only:
 - `invoke`
 - `run_inspect`
 
+Expose one archived M0 evidence tool:
+
+- `candidate_action_run`
+
+This tool exists only to repay the M0 consent/refusal evidence debt. It calls
+the existing `Runtime::run_candidate_action_command` path and accepts only
+direct `query` / `role` / `action` targeting. It does not expose the model
+proposer path, does not parse natural language, and does not mint consent.
+
 Do not expose in V0:
 
-- `candidate-action` tools
+- general-purpose `candidate-action` tooling
+- candidate-action model proposer controls
 - raw driver operations
 - direct store write APIs
 - `app probe` / `app analyze` / `app distill` / `app validate`
@@ -119,6 +129,28 @@ Maps to:
 V0 returns the current text inspect rendering rather than inventing a second
 inspect schema for MCP.
 
+### `candidate_action_run`
+
+Maps to:
+
+- `Runtime::run_candidate_action_command`
+
+This is an archived vertical recovery path exposed only for the M0
+consent/refusal pair. It is not a new product lane and must not be used as the
+route for future distillation workflow work.
+
+Constraints:
+
+- direct target only: `target_app`, `query`, `role`, `action`
+- no `intent` / model proposer inputs
+- no natural-language planning
+- no MCP-side retry or parameter mutation
+- no MCP-side consent minting
+
+No-consent calls must reach the existing refusal-first candidate-promotion
+gate. Consent-granted calls must supply an explicit consent source accepted by
+the existing command path; MCP only transports that request.
+
 ## Consent / Disturbance / Refusal
 
 MCP must not weaken runtime policy.
@@ -173,10 +205,18 @@ This note is done when:
 - each tool maps to an existing runtime/library path
 - consent/refusal behavior is preserved as a hard boundary
 - `steam.library.list.v0` is named as the first required command in the agent read chain
+- `candidate_action_run` is limited to the archived M0 evidence path and does
+  not become a general candidate-action or proposer surface
 
-## Next Slice Candidates
+## Completed Evidence
 
-1. Land `steam.library.list.v0` into the shared core command catalog and runtime.
-2. After that, re-land the stdio MCP server against the now-stable read path.
-3. Run a real agent transcript: list -> invoke `steam.library.list.v0` -> invoke StS read -> inspect.
-4. Add the granted/refusal action pair only after the read chain is stable.
+1. `steam.library.list.v0` landed in the shared core command catalog and runtime.
+2. The stdio MCP server landed as a thin frontend over the shared runtime path.
+3. A real external-consumer transcript invoked `steam.library.list.v0` through
+   MCP and inspected the resulting run.
+4. The granted/refusal action pair ran through `candidate_action_run`:
+   - no consent refused with `permission_missing`
+   - owner-approved consent executed and produced `semantic_match`
+
+The detailed run ids and transcript snippets are in
+`docs/ai/references/2026-06-11-mcp-read-chain-evidence-pack.md`.

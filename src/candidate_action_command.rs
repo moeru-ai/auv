@@ -309,6 +309,22 @@ pub fn execute_candidate_action_command(
   let plan = prepare_candidate_action_plan(context, request)?;
   let human_gesture_approval =
     request_human_gesture_approval(context, request, &plan.approval_target_summary)?;
+  if human_gesture_approval.is_some() {
+    // NOTICE(candidate-action-human-approval-frontmost-restore):
+    // LocalAuthentication can transiently make the approval UI the frontmost
+    // surface. Re-activate the original target after approval so the existing
+    // execution readiness gate can verify the intended app/window instead of
+    // failing on approval UI focus theft. This does not bypass readiness; it
+    // restores the precondition that readiness is meant to check.
+    activate_app(&request.app_bundle_id)?;
+    context.record_event(
+      "candidate.action.command.target.reactivated",
+      Some(format!(
+        "reactivated target app {} after human approval before execution readiness",
+        request.app_bundle_id
+      )),
+    );
+  }
 
   let latest = plan
     .observations
@@ -1445,6 +1461,7 @@ fn promotion_refusal_label(reason: &PromotionRefusal) -> String {
 #[cfg(target_os = "macos")]
 fn activate_app(app_bundle_id: &str) -> AuvResult<()> {
   use auv_driver::Driver;
+  use std::process::Command;
 
   let driver = auv_driver_macos::MacosDriver::new();
   let session = driver
@@ -1472,7 +1489,76 @@ fn activate_app(app_bundle_id: &str) -> AuvResult<()> {
       },
     )
     .map_err(|error| format!("failed to activate target app {app_bundle_id}: {error}"))?;
+  // NOTICE(candidate-action-foreground-activation):
+  // The typed prepare path can focus an input-capable window without making
+  // macOS report the app as frontmost quickly enough for the immediate L8b
+  // readiness gate. Keep the typed prepare call for target/window validation,
+  // then use the same platform foreground activation primitive used by the
+  // macOS driver command before re-checking readiness. Remove this once typed
+  // window input exposes a verified foreground transition result.
+  let output = Command::new("/usr/bin/osascript")
+    .arg("-e")
+    .arg(format!(
+      "tell application id {} to activate",
+      applescript_string_literal(app_bundle_id)
+    ))
+    .output()
+    .map_err(|error| format!("failed to run osascript activation: {error}"))?;
+  if !output.status.success() {
+    return Err(format!(
+      "osascript activation failed with status {}: {}",
+      output.status,
+      String::from_utf8_lossy(&output.stderr).trim()
+    ));
+  }
+  wait_for_frontmost_app(app_bundle_id, Duration::from_millis(1_500))?;
   Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_frontmost_app(app_bundle_id: &str, timeout: Duration) -> AuvResult<()> {
+  let deadline = std::time::Instant::now() + timeout;
+  let mut last_frontmost = current_frontmost_bundle_id()?;
+  loop {
+    if last_frontmost.as_deref() == Some(app_bundle_id) {
+      return Ok(());
+    }
+    if std::time::Instant::now() >= deadline {
+      return Err(format!(
+        "target app {app_bundle_id} did not become frontmost after activation; last_frontmost={}",
+        last_frontmost.as_deref().unwrap_or("unknown")
+      ));
+    }
+    thread::sleep(Duration::from_millis(100));
+    last_frontmost = current_frontmost_bundle_id()?;
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn current_frontmost_bundle_id() -> AuvResult<Option<String>> {
+  use std::process::Command;
+
+  let output = Command::new("/usr/bin/osascript")
+    .arg("-e")
+    .arg(
+      "tell application \"System Events\" to get bundle identifier of first application process whose frontmost is true",
+    )
+    .output()
+    .map_err(|error| format!("failed to query frontmost app bundle id: {error}"))?;
+  if !output.status.success() {
+    return Ok(None);
+  }
+  let frontmost = String::from_utf8_lossy(&output.stdout).trim().to_string();
+  if frontmost.is_empty() {
+    Ok(None)
+  } else {
+    Ok(Some(frontmost))
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_string_literal(value: &str) -> String {
+  format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(test)]

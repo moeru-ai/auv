@@ -1,0 +1,130 @@
+# M0 MCP Consent / Refusal Transcript
+
+Date: 2026-06-11
+
+This file records the MCP-side consent/refusal evidence required before opening
+the next distillation surface.
+
+All calls used the MCP `candidate_action_run` evidence tool. This tool maps to
+`Runtime::run_candidate_action_command` and is limited to the archived M0
+candidate-action consent/refusal recovery path.
+
+## Target
+
+```text
+target_app = com.apple.TextEdit
+query = Hello from local proposer
+role = AXTextArea
+action = click
+stable_frames = 1
+require_stable_text = false
+```
+
+## 1. No Consent: Honest Refusal
+
+MCP call omitted both `human_gesture_consent` and
+`dev_self_minted_consent`.
+
+Result:
+
+```json
+{
+  "run_id": "run_1781166836225_70347_0",
+  "status": "promotion_refused",
+  "promotion_artifact_id": "artifact_0003",
+  "promotion_refusals": ["permission_missing"],
+  "decision_artifact_id": null,
+  "execution_artifact_id": null
+}
+```
+
+Inspect evidence:
+
+```text
+Candidate Promotion Lineage:
+- artifact=artifact_0003 status=ready promotion_id=mcp-m0-1781166836225-promotion decision=refused ... refusals=permission_missing
+  permission_granted=false consent_id=n/a consent_provenance=n/a consent_grade=n/a
+```
+
+This proves the MCP surface did not mint consent and did not bypass the
+candidate-promotion gate.
+
+## 2. Human Consent: Readiness Refusal Kept As Evidence
+
+MCP call supplied:
+
+```json
+{
+  "human_gesture_consent": true,
+  "human_gesture_timeout_ms": 45000,
+  "granted_by": "owner-m0-human-approval"
+}
+```
+
+Result:
+
+```json
+{
+  "run_id": "run_1781167666368_87561_0",
+  "status": "blocked_not_ready",
+  "promotion_artifact_id": "artifact_0003",
+  "decision_artifact_id": "artifact_0004",
+  "execution_artifact_id": "artifact_0006",
+  "promotion_refusals": []
+}
+```
+
+Inspect evidence:
+
+```text
+candidate.action.command.consent.approved human gesture approval granted via local_auth_device_owner_authentication by owner-m0-human-approval
+Candidate Action Execution Lineage:
+- artifact=artifact_0006 status=blocked_not_ready ... readiness=not_ready blocker=frontmost window 4823 does not match target window 19747
+  consent=consent-mcp-m0-1781167666367-execution by=owner-m0-human-approval consent_provenance=human_gesture consent_grade=human_approved
+```
+
+This proves the validator was not loosened for the demo. The run reached
+human-approved execution consent, then readiness blocked input delivery because
+the frontmost window did not match the promoted candidate window.
+
+The follow-up bug fix was not a validator relaxation. It made the
+candidate-action activation helper wait until System Events reports the target
+bundle as frontmost before allowing the existing readiness check to run.
+
+## 3. Human Consent: Granted Execution + Semantic Verification
+
+MCP call supplied the same human-consent fields after the activation settle fix.
+
+Result:
+
+```json
+{
+  "run_id": "run_1781167855870_93899_0",
+  "status": "executed_single_action",
+  "promotion_artifact_id": "artifact_0003",
+  "decision_artifact_id": "artifact_0004",
+  "execution_artifact_id": "artifact_0006",
+  "promotion_refusals": []
+}
+```
+
+Inspect evidence:
+
+```text
+candidate.action.command.consent.approved human gesture approval granted via local_auth_device_owner_authentication by owner-m0-human-approval
+
+Verifications:
+- method=custom:activation_only executed=true state_changed=false semantic_matched=n/a failure_layer=n/a
+- method=semantic_match executed=true state_changed=true semantic_matched=true failure_layer=n/a
+
+Candidate Action Execution Lineage:
+- artifact=artifact_0006 status=ready ... input_delivery=attempted selected_path=window_targeted_mouse operation_status=completed verification=activation_only+post_action:semantic_match semantic_matched=true readiness=ready blocker=n/a side_effect=single_input_delivered
+  consent=consent-mcp-m0-1781167855870-execution by=owner-m0-human-approval consent_provenance=human_gesture consent_grade=human_approved
+```
+
+This satisfies the M0 consent/refusal debt:
+
+- no-consent path refused honestly
+- owner-approved consent path executed
+- semantic verification matched
+- validator blocker history was preserved as evidence
