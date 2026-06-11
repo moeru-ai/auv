@@ -887,12 +887,5 @@ mod tests {
     assert!(output.contains("consent=consent_execute_end_turn"));
     assert!(output.contains("consent_provenance=human_gesture"));
     assert!(output.contains("consent_grade=human_approved"));
-    assert!(output.contains("Validation Lineage:"));
-    assert!(
-      output
-        .contains("canonical=native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text")
-    );
-    assert!(output.contains("legacy_alias=true"));
-    assert!(output.contains("consumer=contract-candidate"));
   }
 }

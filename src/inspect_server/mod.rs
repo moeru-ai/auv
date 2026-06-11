@@ -2836,7 +2836,7 @@ mod tests {
         root,
         &run_id,
         &span_id,
-        2,
+        3,
         "capture-image",
         "capture.json",
         &serde_json::json!({"capture": "artifact"}),
