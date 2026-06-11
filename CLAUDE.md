@@ -6,10 +6,12 @@ phase.
 
 ## Current Mode
 
-AUV is actively returning to its core lane: SkillBundle, recipe, invoke, run
-recording, artifacts, inspection, and distill/compile/run reuse across
-frontends. Do not treat one archived macOS AX proof as the product center, and
-do not spend active roadmap budget polishing the archived vertical.
+AUV is actively returning to its core lane: invoke, run recording, artifacts,
+inspection, app-local Rust commands, and distill/compile/run reuse across
+frontends. The former SkillBundle surface has been retired; do not reintroduce
+bundle execution, export, or verification as compatibility. Do not treat one
+archived macOS AX proof as the product center, and do not spend active roadmap
+budget polishing the archived vertical.
 
 Current validation boundary:
 
@@ -17,8 +19,8 @@ Current validation boundary:
 - That proof is specific to local TextEdit-style execution and remains a
   recoverable reference, not the current AUV roadmap.
 - New work should reconnect or extend the AUV core runtime surfaces, especially
-  SkillBundle/recipe/invoke/run-artifact-inspect, instead of expanding the
-  archived `candidate-action` path.
+  invoke/run-artifact-inspect and app-local Rust command paths, instead of
+  expanding the archived `candidate-action` path.
 
 Convergence evidence:
 
