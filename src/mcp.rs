@@ -16,7 +16,6 @@ use serde_json::Value;
 use crate::candidate_action_command::CandidateActionCommandRequest;
 use crate::candidate_action_decision::CandidateActionKind;
 use crate::model::{ExecutionTarget, InvokeRequest};
-use crate::skill::SkillCatalog;
 use crate::{build_default_runtime, build_runtime_with_store_root, model::now_millis};
 
 #[derive(Clone)]
@@ -40,55 +39,10 @@ impl McpServer {
     };
     runtime.map_err(invalid_params)
   }
-
-  fn skill_catalog(&self) -> Result<SkillCatalog, McpError> {
-    SkillCatalog::discover(&self.project_root).map_err(invalid_params)
-  }
 }
 
 #[tool_router(router = tool_router)]
 impl McpServer {
-  #[tool(description = "List available AUV skills.")]
-  async fn skill_list(&self) -> Result<CallToolResult, McpError> {
-    let catalog = self.skill_catalog()?;
-    let mut skills = Vec::new();
-    for entry in catalog.entries() {
-      let taxonomy_id = entry
-        .manifest
-        .strategy
-        .taxonomy_id()
-        .map_err(invalid_params)?;
-      skills.push(serde_json::json!({
-        "recipe_id": entry.manifest.recipe_id,
-        "objective": entry.manifest.objective,
-        "status": entry.manifest.status,
-        "path": entry.path.display().to_string(),
-        "strategy": {
-          "family": entry.manifest.strategy.family,
-          "grounding": entry.manifest.strategy.grounding,
-          "activation": entry.manifest.strategy.activation,
-          "verification_contract": entry.manifest.strategy.verification_contract,
-          "taxonomy_id": taxonomy_id,
-        }
-      }));
-    }
-    json_result(serde_json::json!({ "skills": skills }))
-  }
-
-  #[tool(description = "Show one AUV skill manifest by id or path.")]
-  async fn skill_show(
-    &self,
-    Parameters(req): Parameters<SkillShowRequest>,
-  ) -> Result<CallToolResult, McpError> {
-    let catalog = self.skill_catalog()?;
-    let entry = catalog
-      .resolve(&self.project_root, &req.query)
-      .map_err(invalid_params)?;
-    json_result(serde_json::json!({
-      "skill": read_manifest_value(&entry.path).map_err(internal_error)?
-    }))
-  }
-
   #[tool(description = "Invoke one explicit AUV command id through the shared runtime.")]
   async fn invoke(
     &self,
@@ -184,11 +138,6 @@ impl ServerHandler for McpServer {
       ..Default::default()
     }
   }
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct SkillShowRequest {
-  query: String,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
@@ -336,19 +285,8 @@ fn json_result(value: Value) -> Result<CallToolResult, McpError> {
   Ok(CallToolResult::success(vec![Content::json(value)?]))
 }
 
-fn read_manifest_value(path: &PathBuf) -> Result<Value, String> {
-  let raw = std::fs::read_to_string(path)
-    .map_err(|error| format!("failed to read manifest {}: {error}", path.display()))?;
-  serde_json::from_str(&raw)
-    .map_err(|error| format!("failed to parse manifest {}: {error}", path.display()))
-}
-
 fn invalid_params(message: impl ToString) -> McpError {
   McpError::invalid_params(message.to_string(), None::<Value>)
-}
-
-fn internal_error(message: impl ToString) -> McpError {
-  McpError::internal_error(message.to_string(), None::<Value>)
 }
 
 pub async fn serve_stdio(project_root: PathBuf) -> Result<(), String> {
@@ -405,6 +343,8 @@ mod tests {
       .collect::<Vec<_>>();
     assert!(!tool_names.contains(&"bundle_list"));
     assert!(!tool_names.contains(&"bundle_show"));
+    assert!(!tool_names.contains(&"skill_list"));
+    assert!(!tool_names.contains(&"skill_show"));
     assert!(tool_names.contains(&"invoke"));
     assert!(tool_names.contains(&"run_inspect"));
     assert!(tool_names.contains(&"candidate_action_run"));
