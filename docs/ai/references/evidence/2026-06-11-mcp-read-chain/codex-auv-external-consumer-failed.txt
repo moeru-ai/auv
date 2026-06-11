@@ -1,0 +1,13 @@
+执行到第 1 步失败，后续步骤没有继续。
+
+1. `mcp__auv_temp.bundle_list`
+   结果：失败，MCP 返回 `user cancelled MCP tool call`
+
+2. `mcp__auv_temp.skill_list`
+   未执行，因为第 1 步失败。
+
+3. `mcp__auv_temp.invoke`
+   未执行。
+
+4. `mcp__auv_temp.run_inspect`
+   未执行。

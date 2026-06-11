@@ -10,3 +10,4 @@ pub use library::{
   Grounding, LibraryDiagnostic, LibraryDiagnosticSeverity, LibraryQuery, LibraryQueryResult,
   LibrarySource, LibraryStatus, ResolvedLibraryScope, SteamInstalledApp,
 };
+pub use output::build_library_ls_json_output;

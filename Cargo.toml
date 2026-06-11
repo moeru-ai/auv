@@ -60,15 +60,18 @@ objc2-core-foundation = "0.3"
 [dependencies]
 auv-inference-common = { path = "crates/auv-inference-common" }
 auv-driver = { path = "crates/auv-driver" }
+auv-steam = { path = "crates/auv-steam" }
 axum = { version = "0.8", features = ["ws"] }
 semver = "1"
 serde.workspace = true
 serde_json.workspace = true
+schemars = "1.2.1"
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync"] }
 xcap.workspace = true
 image.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 libc = "0.2"
+rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "crates/auv-driver-macos" }
@@ -78,4 +81,5 @@ objc2-core-foundation.workspace = true
 swift-bridge-build.workspace = true
 
 [dev-dependencies]
+anyhow = "1"
 tower = { version = "0.5", features = ["util"] }

@@ -96,6 +96,7 @@ pub enum CliCommand {
     store_root: Option<String>,
     write: InspectServeWriteOptions,
   },
+  McpServe,
   SkillList,
   SkillShow {
     query: String,
@@ -202,6 +203,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "list-drivers" => Ok(CliCommand::ListDrivers),
     "app" => parse_app(arguments),
     "inspect" => parse_inspect(arguments),
+    "mcp" => parse_mcp(arguments),
     "invoke" => parse_invoke(arguments),
     "scan" => parse_scan(arguments),
     "skill" => parse_skill(arguments),
@@ -241,6 +243,7 @@ USAGE
   auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
+  auv-cli mcp serve
   auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
   auv-cli skill list
   auv-cli skill show <skill-id-or-path>
@@ -952,6 +955,13 @@ fn parse_scan(arguments: &[String]) -> AuvResult<CliCommand> {
   })
 }
 
+fn parse_mcp(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() != 2 || arguments[1].as_str() != "serve" {
+    return Err("usage: auv-cli mcp serve".to_string());
+  }
+  Ok(CliCommand::McpServe)
+}
+
 fn required_flag_value(arguments: &[String], index: usize, flag: &str) -> AuvResult<String> {
   arguments
     .get(index + 1)
@@ -1309,6 +1319,17 @@ mod tests {
     .expect_err("zero max pages should fail");
 
     assert!(error.contains("--max-pages must be greater than 0"));
+  }
+
+  #[test]
+  fn parse_mcp_command() {
+    let command =
+      parse_cli(&["mcp".to_string(), "serve".to_string()]).expect("mcp serve command should parse");
+
+    match command {
+      CliCommand::McpServe => {}
+      other => panic!("unexpected command: {other:?}"),
+    }
   }
 
   #[test]

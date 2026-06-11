@@ -602,6 +602,15 @@ pub fn default_command_catalog() -> CommandCatalog {
       disturbance_classes: POINTER_WITH_FOREGROUND,
       max_disturbance: DisturbanceClass::Pointer,
     },
+    CommandSpec {
+      id: "steam.library.list.v0",
+      namespace: DOMAIN,
+      summary: "List installed Steam library apps through auv-steam local appmanifest grounding and record the result into the shared run/artifact store.",
+      driver_id: "fixture.observe",
+      operation: "steam_library_list",
+      disturbance_classes: NONE,
+      max_disturbance: DisturbanceClass::None,
+    },
   ];
 
   CommandCatalog::new(commands)
@@ -880,7 +889,11 @@ mod tests {
       );
     }
 
-    let domain_cases = ["music.search.results", "music.result.play"];
+    let domain_cases = [
+      "music.search.results",
+      "music.result.play",
+      "steam.library.list.v0",
+    ];
     for id in domain_cases {
       let command = catalog
         .resolve(id)

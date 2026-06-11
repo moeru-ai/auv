@@ -10,9 +10,9 @@ use crate::skill::{SkillCaseMatrixCatalog, SkillCatalog};
 use super::catalog::SkillBundleCatalog;
 use super::export::{export_bundle, read_json_file, verify_exported_bundle_package_standalone};
 use super::model::{
-  ExportedBundlePackageManifest, SkillBundleCatalogEntry, SkillBundleCommand,
-  SkillBundleManifest, SkillBundleMember, SkillBundleMemberCoverageSummary,
-  SkillBundleMetadata, SkillBundleTarget, SkillBundleVerification, SkillBundleVersions,
+  ExportedBundlePackageManifest, SkillBundleCatalogEntry, SkillBundleCommand, SkillBundleManifest,
+  SkillBundleMember, SkillBundleMemberCoverageSummary, SkillBundleMetadata, SkillBundleTarget,
+  SkillBundleVerification, SkillBundleVersions,
 };
 use super::paths::sanitized_bundle_package_name;
 use super::validate::{

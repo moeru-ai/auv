@@ -21,7 +21,9 @@ use crate::model::{
   InvokeResult, RunStatus, now_millis,
 };
 use crate::recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend, RunUpdate};
-use crate::skill::{SkillCatalog, SkillRecipe, SkillRecipeOrigin, SkillRecipeRunner, SkillRunOptions};
+use crate::skill::{
+  SkillCatalog, SkillRecipe, SkillRecipeOrigin, SkillRecipeRunner, SkillRunOptions,
+};
 use crate::store::{ArtifactFileSource, LocalStore};
 use crate::trace::{
   EVENT_API_VERSION, EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType,
@@ -733,8 +735,18 @@ impl Runtime {
             bundle_command.command.recipe_id
           )
         };
-        record_event(run, command_span.id(), "run.completed", Some(output_summary.clone()));
-        (RunStatus::Completed, output_summary, None, summary.exported_variables)
+        record_event(
+          run,
+          command_span.id(),
+          "run.completed",
+          Some(output_summary.clone()),
+        );
+        (
+          RunStatus::Completed,
+          output_summary,
+          None,
+          summary.exported_variables,
+        )
       }
       Err(error) => {
         let output_summary = format!(
@@ -743,7 +755,12 @@ impl Runtime {
         );
         record_event(run, recipe_span.id(), "recipe.failed", Some(error.clone()));
         record_event(run, command_span.id(), "run.failed", Some(error.clone()));
-        (RunStatus::Failed, output_summary, Some(error), Default::default())
+        (
+          RunStatus::Failed,
+          output_summary,
+          Some(error),
+          Default::default(),
+        )
       }
     };
 
@@ -864,19 +881,25 @@ impl Runtime {
     Ok((staged_path, artifact_ref))
   }
 
-  fn resolve_bundle_command(&self, command_id: &str) -> AuvResult<Option<ResolvedBundleCommand<'_>>> {
+  fn resolve_bundle_command(
+    &self,
+    command_id: &str,
+  ) -> AuvResult<Option<ResolvedBundleCommand<'_>>> {
     let mut matches = Vec::new();
     for bundle in self.bundles.entries() {
       for command in &bundle.manifest.commands {
         if command.id != command_id {
           continue;
         }
-        let recipe = self.skills.resolve_recipe_id(&command.recipe_id).map_err(|error| {
-          format!(
-            "bundle {} command {} references unknown recipe {}: {error}",
-            bundle.manifest.metadata.id, command.id, command.recipe_id
-          )
-        })?;
+        let recipe = self
+          .skills
+          .resolve_recipe_id(&command.recipe_id)
+          .map_err(|error| {
+            format!(
+              "bundle {} command {} references unknown recipe {}: {error}",
+              bundle.manifest.metadata.id, command.id, command.recipe_id
+            )
+          })?;
         matches.push(ResolvedBundleCommand {
           bundle,
           command,
@@ -1037,16 +1060,19 @@ mod tests {
 
   use serde_json::json;
 
-  use crate::bundle::{SkillBundleCatalog, SkillBundleCommand, SkillBundleManifest, SkillBundleMetadata, SkillBundleTarget, SkillBundleVerification, SkillBundleVersions};
   use super::Runtime;
+  use crate::bundle::{
+    SkillBundleCatalog, SkillBundleCommand, SkillBundleManifest, SkillBundleMetadata,
+    SkillBundleTarget, SkillBundleVerification, SkillBundleVersions,
+  };
   use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{
     AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget,
     InvokeRequest, ProducedArtifact, RunStatus, now_millis,
   };
-  use crate::skill::SkillCatalog;
   use crate::recording::{MemoryRunRecorder, RunRecorder, RunUpdate};
+  use crate::skill::SkillCatalog;
   use crate::store::LocalStore;
 
   struct ArtifactFailureDriver;

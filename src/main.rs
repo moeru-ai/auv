@@ -45,6 +45,11 @@ async fn run() -> Result<(), String> {
     return Ok(());
   }
 
+  if let CliCommand::McpServe = &command {
+    auv_cli::mcp::serve_stdio(project_root.clone()).await?;
+    return Ok(());
+  }
+
   if let CliCommand::PermissionCheck { json } = &command {
     return run_permission_check(*json);
   }
@@ -243,6 +248,9 @@ async fn run() -> Result<(), String> {
     }
     CliCommand::InspectServe { .. } => {
       unreachable!("inspect serve is handled before runtime setup")
+    }
+    CliCommand::McpServe => {
+      unreachable!("mcp serve is handled before runtime setup")
     }
     CliCommand::ScanWindowRegion {
       target,

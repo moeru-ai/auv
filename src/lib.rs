@@ -14,6 +14,7 @@ pub mod driver;
 pub mod inference_recognition;
 pub mod inspect;
 pub mod inspect_server;
+pub mod mcp;
 pub mod model;
 pub mod recorded_operation;
 pub mod recording;

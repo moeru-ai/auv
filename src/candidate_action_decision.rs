@@ -1734,8 +1734,16 @@ fn post_action_focused_ax_node_verification(
     expected.as_ref(),
     bounds_tolerance_px,
     || {
-      auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80)
-        .map(|capture| capture.snapshot.nodes.iter().find(|node| node.focused).cloned())
+      auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80).map(
+        |capture| {
+          capture
+            .snapshot
+            .nodes
+            .iter()
+            .find(|node| node.focused)
+            .cloned()
+        },
+      )
     },
   ) {
     Ok(observation) => observation,
@@ -1991,11 +1999,9 @@ fn summarize_focused_ax_observation(
   bounds_tolerance_px: f64,
   action: &CandidateActionKind,
 ) -> FocusedAxObservationSummary {
-  let focused_matches = focused
-    .zip(expected)
-    .is_some_and(|(focused, expected)| {
-      ax_node_matches_expected(focused, expected, bounds_tolerance_px, action)
-    });
+  let focused_matches = focused.zip(expected).is_some_and(|(focused, expected)| {
+    ax_node_matches_expected(focused, expected, bounds_tolerance_px, action)
+  });
   FocusedAxObservationSummary {
     attempts: 0,
     focused_matches,
@@ -2234,8 +2240,7 @@ mod tests {
     CandidateActionPostActionProbe, PostActionWindowAlive,
     build_candidate_action_decision_artifact, build_candidate_action_execution_artifact,
     enforce_action_specific_readiness, execute_and_record_single_candidate_action,
-    execute_single_candidate_action, expected_ax_focus_target,
-    observe_focused_ax_until_settled,
+    execute_single_candidate_action, expected_ax_focus_target, observe_focused_ax_until_settled,
     record_candidate_action_decision_artifact, record_candidate_action_execution_artifact,
     window_matches_plan,
   };
