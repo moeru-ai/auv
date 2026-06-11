@@ -7,9 +7,9 @@ terms, not stable public API names.
 ## Trace
 
 A trace is one complete inspectable workflow. Examples include one Rust
-orchestration workflow, one historical/compatibility recipe execution, one app
-probe, one app distillation, one validation pass, or one ad-hoc command
-invocation.
+orchestration workflow, one app probe, one validation pass, or one ad-hoc
+command invocation. Historical JSON recipe execution produced traces before
+the recipe lane was retired.
 
 A trace is the unit that inspection tools load as a whole. It should contain
 enough structure to reconstruct what AUV attempted, what happened, what state
@@ -73,11 +73,11 @@ A span is a timed unit of work inside a run. Spans form a tree through
 `parent_span_id`.
 
 Expected span levels include workflow phases, command invocations, driver
-actions, and legacy JSON recipe compatibility spans. A single ad-hoc command
-can be a run with one root span and one command span. Historical recipe
-execution was modeled as one run with child spans for its steps and command
-invocations; active workflow composition is moving toward Rust orchestration
-over typed driver APIs and tracing boundaries.
+actions, and historical JSON recipe compatibility spans in older runs. A
+single ad-hoc command can be a run with one root span and one command span.
+Historical recipe execution was modeled as one run with child spans for its
+steps and command invocations; active workflow composition uses Rust
+orchestration over typed driver APIs and tracing boundaries.
 
 ## Event
 
@@ -283,8 +283,8 @@ Interaction pipeline is a provisional term for the layer above driver
 primitives and below frontends or Rust orchestration. It composes primitive
 observations and input operations into reusable workflows such as candidate
 extraction, candidate parsing, matching, selection, verification, list scan,
-and scroll-until behavior. Legacy JSON recipes may call into this layer while
-they remain supported, but they are not the active long-term workflow engine.
+and scroll-until behavior. The retired JSON recipe lane should not be expanded
+as an interaction pipeline frontend.
 
 The interaction pipeline is not a driver. Drivers expose platform capabilities
 such as capture, OCR, AX tree capture, pointer scroll, keyboard input, and
@@ -301,9 +301,9 @@ surface node refs when available, rejected/filtered reasons, and optional
 collection or page context.
 
 Candidate context should be available as typed Rust data and, when needed, as a
-structured JSON boundary for legacy recipe compatibility or external code.
-Scalar template variables may exist as compatibility aliases, but they should
-not be the main parser or matcher contract.
+structured JSON boundary for external code. Scalar template variables may exist
+as compatibility aliases for historical data, but they should not be the main
+parser or matcher contract.
 
 ## Surface Node
 
@@ -479,7 +479,7 @@ reporting, and library-supplied recorders.
 The driver tracing boundary is the provisional home for recording atomic driver
 operations. It owns run/span/event creation, artifact staging, artifact refs,
 and delivery to local stores or recorders while staying independent of command
-catalogs, recipe manifests, and CLI argument parsing.
+catalogs, historical recipe manifests, and CLI argument parsing.
 
 The working crate name for this boundary is `auv-tracing-driver`. The name is
 provisional until the extraction lands, but the responsibility is not: typed
@@ -635,37 +635,34 @@ proved that no additional content exists.
 
 ## Scan Hook
 
-Status: legacy/pre-PR3.
+Status: retired.
 
-A scan hook is the historical recipe-manifest hook used by the JSON scroll-scan
-implementation.
+A scan hook is the historical recipe-manifest hook used by the removed JSON
+scroll-scan implementation.
 
 New scroll-scan work should use `auv-tracing-interaction` with typed Rust
-context and hook contracts. Do not add new recipe-manifest hook execution unless
-an owner-approved inventory entry explicitly requires a temporary migration
-boundary.
+context and hook contracts. Do not add new recipe-manifest hook execution.
 
 ## Sub Recipe
 
-Status: legacy/pre-PR3.
+Status: retired.
 
 A sub recipe is a historical recipe manifest invoked by another runtime
 workflow instead of directly by a user-facing command.
 
-Sub recipes should not be expanded as an active workflow mechanism. During PR3,
-each remaining use should be migrated, archived, or deleted according to the
-owner-approved recipe/bundle inventory.
+Sub recipes must not be expanded as an active workflow mechanism. The checked-in
+recipe lane has been deleted; future composition should use typed Rust
+orchestration.
 
 ## List Scan Hook
 
-Status: legacy/pre-PR3.
+Status: retired.
 
 A list scan hook is the historical scan-hook variant used while scanning
 list-like content.
 
 Future list-scan behavior should live in typed Rust orchestration or
-`auv-tracing-interaction`, not recipe logic, unless a specific owner-approved
-migration entry keeps a temporary compatibility boundary.
+`auv-tracing-interaction`, not recipe logic.
 
 ## Tombstone
 

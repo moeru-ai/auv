@@ -13,7 +13,7 @@ view.
   recording, artifact capture, replay, and inspection.
 - Keep CLI, MCP, library calls, and future UI surfaces on the same execution
   model.
-- Prefer explicit boundaries between runtime, drivers, recipes, command
+- Prefer explicit boundaries between runtime, drivers, Rust command
   frontends, run storage, and reference documentation.
 - Use `docs/TERMS_AND_CONCEPTS.md` as the shared vocabulary for run recording,
   inspection, trace data, artifacts, and viewer-facing APIs.
@@ -45,7 +45,7 @@ Good convergence work usually has one of these shapes:
 
 - Defines or tightens a shared contract in `docs/TERMS_AND_CONCEPTS.md`,
   `src/contract.rs`, run records, artifacts, or command signals.
-- Reconnects recipe/invoke surfaces so CLI, library, MCP, and future UI
+- Reconnects invoke and typed Rust command surfaces so CLI, library, MCP, and future UI
   frontends share the same runtime execution path.
 - Connects an existing producer to an existing consumer with typed evidence,
   for example `RecognitionResult -> CandidateRef -> action -> VerificationResult`.
@@ -85,7 +85,7 @@ Scope rules:
   but the dependency direction must be clear. Example: contract type -> driver
   artifact -> read-side inspector test.
 - Avoid ad-hoc compatibility shims. Versioned read compatibility for existing
-  run artifacts, recipes, or public records is allowed when the migration
+  run artifacts or public records is allowed when the migration
   boundary and tests are explicit.
 
 Owner approval means the owner named the function/module/behavior, accepted a
@@ -170,8 +170,8 @@ while quarantining the archived vertical.
   persistence, and the common model used by all frontends.
 - **Drivers**: Expose platform or application capabilities through narrow,
   capability-oriented APIs.
-- **Recipes**: Describe reusable workflows and case matrices without becoming
-  the only execution model.
+- **Rust operation crates**: Describe reusable app/domain workflows through
+  typed Rust APIs and app-local commands.
 - **Command frontends**: Parse and present user-facing commands; they should
   call shared runtime APIs rather than owning core behavior.
 - **Run storage**: Owns durable records, artifacts, trace data, and replayable
@@ -185,10 +185,8 @@ while quarantining the archived vertical.
 
 - `src/runtime.rs`: implicit run execution and artifact persistence.
 - `src/catalog.rs`: command catalog and default command definitions.
-- `src/skill.rs`: recipe and case-matrix loading, validation, and execution.
 - `src/driver/macos/`: macOS driver implementation, dispatch, support, and
   tests.
-- `recipes/`: executable recipe manifests and case matrices.
 - `docs/TERMS_AND_CONCEPTS.md`: shared vocabulary for core AUV concepts.
 - `docs/ai/references/`: durable reference notes, coverage reports, evidence
   packs, and implementation handoffs.
@@ -219,11 +217,11 @@ while quarantining the archived vertical.
 - Design changes should account for library/runtime calls, CLI frontends, run
   recording, replay, and inspection.
 - Favor clear module boundaries; shared behavior belongs behind runtime,
-  driver, storage, recipe, or inspection boundaries rather than local one-off
+  driver, storage, Rust operation, or inspection boundaries rather than local one-off
   helpers.
 - Keep runtime entrypoints lean; move reusable policy, validation, recording,
   replay, and persistence behavior into the modules that own those decisions.
-- Before planning or writing new utilities, commands, driver helpers, recipe
+- Before planning or writing new utilities, commands, driver helpers, operation
   helpers, or artifact builders, search for existing internal implementations
   first.
 - If the logic could become shared project infrastructure, propose the shared
@@ -303,7 +301,7 @@ while quarantining the archived vertical.
 ## Testing Practices
 
 - Focused unit tests live next to the code they cover with `#[cfg(test)]`.
-- The current repo already has Rust unit coverage for catalog, skill, runtime,
+- The current repo already has Rust unit coverage for catalog, runtime,
   driver, and CLI behavior.
 - Add regression tests for behavior changes and keep them narrow.
 - Use `cargo test` for the full suite and include regression tests for bug
@@ -503,4 +501,3 @@ Use this root-cause block format in regression tests when relevant:
 - `cargo test`
 - `git diff --check`
 - `cargo run --quiet -- list-commands`
-- `cargo run --quiet -- skill cases list`

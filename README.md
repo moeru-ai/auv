@@ -9,10 +9,12 @@ Current fact sources live in:
 
 - `src/runtime.rs`
 - `src/catalog.rs`
-- `src/skill.rs`
 - `src/driver/macos/`
-- `recipes/`
 - `docs/ai/references/`
+
+The former JSON `skill` and checked-in `recipes/` execution lane has been
+removed. App workflows should be modeled as Rust commands or typed driver
+orchestration instead of new recipe manifests.
 
 Current validated native-app samples are narrow:
 
@@ -28,7 +30,6 @@ Stable verification contracts:
 Useful CLI entrypoints:
 
 - `cargo run --quiet -- list-commands`
-- `cargo run --quiet -- skill cases list`
 - `cargo run --quiet -- scan window-region --target <application-id> --region 0.0,0.0,1.0,1.0 --max-pages 3`
 
 `scan window-region` is the first scroll-scan workflow. It is OCR-first,

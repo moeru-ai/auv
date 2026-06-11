@@ -9,7 +9,7 @@ use crate::contract::{
   FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult,
 };
 use crate::run_read::{
-  AppValidationLineage, CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
+  CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
   CandidateActionExecutionLineage, CandidateActionExecutionLineageStatus,
   CandidatePromotionLineage, CandidatePromotionLineageStatus, DetectorRecognitionLineage,
 };
@@ -23,7 +23,6 @@ pub fn render_text(
   candidate_promotion_lineage: &[CandidatePromotionLineage],
   candidate_action_decision_lineage: &[CandidateActionDecisionLineage],
   candidate_action_execution_lineage: &[CandidateActionExecutionLineage],
-  validation_lineage: &[AppValidationLineage],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -339,27 +338,6 @@ pub fn render_text(
     }
   }
 
-  output.push_str("\nValidation Lineage:\n");
-  if validation_lineage.is_empty() {
-    output.push_str("- none\n");
-  } else {
-    for lineage in validation_lineage {
-      output.push_str(&format!(
-        "- recipe={} taxonomy={} canonical={} legacy_alias={} consumer={} candidate_local_id={} source={}\n",
-        lineage.recipe_id,
-        lineage.taxonomy_id,
-        lineage.canonical_taxonomy_id,
-        lineage.legacy_taxonomy_alias,
-        lineage.observed_consumer.as_deref().unwrap_or("n/a"),
-        lineage
-          .observed_candidate_local_id
-          .as_deref()
-          .unwrap_or("n/a"),
-        lineage.candidate_source.as_deref().unwrap_or("n/a")
-      ));
-    }
-  }
-
   output
 }
 
@@ -495,11 +473,11 @@ mod tests {
     VerificationResult,
   };
   use crate::run_read::{
-    AppValidationLineage, ArtifactRefLineage, CandidateActionDecisionLineage,
-    CandidateActionDecisionLineageStatus, CandidateActionExecutionLineage,
-    CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
-    CandidatePromotionLineageStatus, DetectorRecognitionArtifactRefLineage,
-    DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
+    ArtifactRefLineage, CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
+    CandidateActionExecutionLineage, CandidateActionExecutionLineageStatus,
+    CandidatePromotionLineage, CandidatePromotionLineageStatus,
+    DetectorRecognitionArtifactRefLineage, DetectorRecognitionLineage,
+    DetectorRecognitionLineageStatus,
   };
   use crate::store::CanonicalRun;
   use crate::trace::{
@@ -603,16 +581,6 @@ mod tests {
       nodes: Vec::new(),
       detail: serde_json::json!({"producer": "scroll_scan"}),
       known_limits: vec!["visual only".to_string()],
-    }];
-    let validation_lineage = vec![AppValidationLineage {
-      recipe_id: "macos.textedit.native_text_candidate.v0".to_string(),
-      taxonomy_id: "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text".to_string(),
-      canonical_taxonomy_id: "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text"
-        .to_string(),
-      legacy_taxonomy_alias: true,
-      observed_consumer: Some("contract-candidate".to_string()),
-      observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
-      candidate_source: Some("promoted_candidate".to_string()),
     }];
     let detector_recognition_lineage = vec![DetectorRecognitionLineage {
       artifact: DetectorRecognitionArtifactRefLineage {
@@ -867,7 +835,6 @@ mod tests {
       &candidate_promotion_lineage,
       &candidate_action_decision_lineage,
       &candidate_action_execution_lineage,
-      &validation_lineage,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -920,12 +887,5 @@ mod tests {
     assert!(output.contains("consent=consent_execute_end_turn"));
     assert!(output.contains("consent_provenance=human_gesture"));
     assert!(output.contains("consent_grade=human_approved"));
-    assert!(output.contains("Validation Lineage:"));
-    assert!(
-      output
-        .contains("canonical=native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text")
-    );
-    assert!(output.contains("legacy_alias=true"));
-    assert!(output.contains("consumer=contract-candidate"));
   }
 }

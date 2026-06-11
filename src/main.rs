@@ -7,14 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
-use auv_cli::app::{analyze_app_probe, distill_app_analysis, probe_app, validate_app_distillation};
+use auv_cli::app::{analyze_app_probe, probe_app};
 use auv_cli::model::RunStatus;
 use auv_cli::scroll_scan::{
   ScanRegion, ScanTarget, ScanWindowRegionOptions, StopPolicy, scan_window_region,
-};
-use auv_cli::skill::{
-  SkillCaseMatrixCatalog, SkillCatalog, render_skill_case_matrix_report, run_skill,
-  run_skill_case_matrix,
 };
 use auv_cli::{build_default_runtime, build_runtime_with_store_root};
 use cli::{CliCommand, InspectClientOptions, help_text, parse_cli};
@@ -74,9 +70,6 @@ async fn run() -> Result<(), String> {
     auv_cli::inspect_server::serve(store, recorder, config).await?;
     return Ok(());
   }
-
-  let skill_catalog = SkillCatalog::discover(&project_root)?;
-  let case_matrix_catalog = SkillCaseMatrixCatalog::discover(&project_root)?;
 
   match command {
     CliCommand::Help => {
@@ -193,28 +186,6 @@ async fn run() -> Result<(), String> {
         output.analysis.annotation_candidates.len()
       );
     }
-    CliCommand::AppDistill { query, output_dir } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let output = distill_app_analysis(
-        &runtime,
-        &PathBuf::from(query),
-        output_dir.map(PathBuf::from),
-      )?;
-      println!("app: {}", output.distillation.app_identity.bundle_id);
-      println!("status: distilled");
-      println!("distillation: {}", output.distillation_path.display());
-      println!("report: {}", output.report_path.display());
-      println!("candidates: {}", output.distillation.candidates.len());
-    }
-    CliCommand::AppValidate { query } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let output = validate_app_distillation(&runtime, &PathBuf::from(query))?;
-      println!("app: {}", output.validation.app_identity.bundle_id);
-      println!("status: assessed");
-      println!("validation: {}", output.validation_path.display());
-      println!("report: {}", output.report_path.display());
-      println!("candidates: {}", output.validation.candidates.len());
-    }
     CliCommand::Invoke { request, inspect } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let result = runtime.invoke(request)?;
@@ -256,9 +227,6 @@ async fn run() -> Result<(), String> {
       settle_ms,
       min_confidence,
       max_observations,
-      per_page_after_observe_recipe,
-      per_list_item_candidate_recipe,
-      on_stop_candidate_recipe,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
       let region = parse_scan_region_arg(&region)?;
@@ -280,132 +248,10 @@ async fn run() -> Result<(), String> {
           settle_ms,
           min_confidence,
           max_observations,
-          per_page_after_observe_recipe,
-          per_page_after_observe_inline_hook: None,
-          per_list_item_candidate_recipe,
-          per_list_item_candidate_inline_hook: None,
-          on_stop_candidate_recipe,
-          on_stop_candidate_inline_hook: None,
         },
       )?;
       println!("runId: {run_id}");
       println!("status: scanned");
-    }
-    CliCommand::SkillList => {
-      for entry in skill_catalog.entries() {
-        println!("{}", entry.manifest.recipe_id);
-        println!("  {}", entry.manifest.objective);
-        println!(
-          "  strategy: {}/{}/{} -> {}",
-          entry.manifest.strategy.family,
-          entry.manifest.strategy.grounding,
-          entry.manifest.strategy.activation,
-          entry.manifest.strategy.verification_contract
-        );
-        if let Ok(taxonomy_id) = entry.manifest.strategy.taxonomy_id() {
-          println!("  strategy taxonomy: {}", taxonomy_id);
-        }
-        if !entry.manifest.status.is_empty() {
-          println!("  status: {}", entry.manifest.status);
-        }
-        println!("  path: {}", entry.path.display());
-      }
-    }
-    CliCommand::SkillShow { query } => {
-      let entry = skill_catalog.resolve(&project_root, &query)?;
-      let raw = std::fs::read_to_string(&entry.path).map_err(|error| {
-        format!(
-          "failed to read skill manifest {}: {error}",
-          entry.path.display()
-        )
-      })?;
-      let value: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|error| format!("failed to parse {}: {error}", entry.path.display()))?;
-      println!(
-        "{}",
-        serde_json::to_string_pretty(&value).map_err(|error| format!(
-          "failed to render skill manifest {}: {error}",
-          entry.path.display()
-        ))?
-      );
-    }
-    CliCommand::SkillCasesList => {
-      for entry in case_matrix_catalog.entries() {
-        println!("{}", entry.matrix.skill_id);
-        if !entry.matrix.status.is_empty() {
-          println!("  status: {}", entry.matrix.status);
-        }
-        println!("  cases: {}", entry.matrix.cases.len());
-        println!("  path: {}", entry.path.display());
-      }
-    }
-    CliCommand::SkillCasesShow { query } => {
-      let entry = case_matrix_catalog.resolve(&project_root, &query)?;
-      let raw = std::fs::read_to_string(&entry.path).map_err(|error| {
-        format!(
-          "failed to read case-matrix manifest {}: {error}",
-          entry.path.display()
-        )
-      })?;
-      let value: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|error| format!("failed to parse {}: {error}", entry.path.display()))?;
-      println!(
-        "{}",
-        serde_json::to_string_pretty(&value).map_err(|error| format!(
-          "failed to render case-matrix manifest {}: {error}",
-          entry.path.display()
-        ))?
-      );
-    }
-    CliCommand::SkillCasesReport { query } => {
-      let matrix_entry = case_matrix_catalog.resolve(&project_root, &query)?;
-      let skill_entry = skill_catalog.resolve_recipe_id(&matrix_entry.matrix.skill_id)?;
-      print!(
-        "{}",
-        render_skill_case_matrix_report(skill_entry, matrix_entry)?
-      );
-    }
-    CliCommand::SkillCasesRun {
-      query,
-      dry_run,
-      max_disturbance,
-      only_case_ids,
-      include_nonvalidated,
-      inspect,
-    } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let entry = case_matrix_catalog.resolve(&project_root, &query)?;
-      run_skill_case_matrix(
-        &runtime,
-        &skill_catalog,
-        entry,
-        auv_cli::skill::SkillCaseRunOptions {
-          dry_run,
-          max_disturbance,
-          only_case_ids,
-          include_nonvalidated,
-        },
-      )?;
-    }
-    CliCommand::SkillRun {
-      query,
-      dry_run,
-      max_disturbance,
-      overrides,
-      inspect,
-    } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let entry = skill_catalog.resolve(&project_root, &query)?;
-      run_skill(
-        &runtime,
-        entry,
-        auv_cli::skill::SkillRunOptions {
-          dry_run,
-          max_disturbance,
-          overrides,
-          quiet: false,
-        },
-      )?;
     }
   }
 
