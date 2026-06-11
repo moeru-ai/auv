@@ -89,8 +89,6 @@ impl Runtime {
         self.recording.store(),
         &canonical,
       )?;
-    let validation_lineage =
-      crate::run_read::extract_app_validation_lineage(self.recording.store(), &canonical)?;
     Ok(crate::inspect::render_text(
       &canonical,
       &verifications,
@@ -99,7 +97,6 @@ impl Runtime {
       &candidate_promotion_lineage,
       &candidate_action_decision_lineage,
       &candidate_action_execution_lineage,
-      &validation_lineage,
     ))
   }
 
@@ -119,13 +116,6 @@ impl Runtime {
     run_id: &str,
   ) -> AuvResult<Vec<crate::contract::ObservationSnapshot>> {
     crate::run_read::list_observation_snapshots(self.recording.store(), run_id)
-  }
-
-  pub fn list_app_validation_lineage(
-    &self,
-    run_id: &str,
-  ) -> AuvResult<Vec<crate::run_read::AppValidationLineage>> {
-    crate::run_read::list_app_validation_lineage(self.recording.store(), run_id)
   }
 
   pub fn list_detector_recognition_lineage(

@@ -13,7 +13,6 @@ use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
 
-use crate::app::AppValidation;
 use crate::candidate_action_decision::{
   CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
 };
@@ -29,25 +28,10 @@ use crate::stability::{StabilityAssessment, StabilityRejection};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::ArtifactRecordV1Alpha1;
 
-const NATIVE_TEXT_CANONICAL_TAXONOMY_ID: &str =
-  "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text";
-const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str =
-  "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text";
 const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
 const CANDIDATE_PROMOTION_ARTIFACT_ROLE: &str = "candidate-promotion";
 const CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE: &str = "candidate-action-decision";
 const CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE: &str = "candidate-action-execution";
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct AppValidationLineage {
-  pub recipe_id: String,
-  pub taxonomy_id: String,
-  pub canonical_taxonomy_id: String,
-  pub legacy_taxonomy_alias: bool,
-  pub observed_consumer: Option<String>,
-  pub observed_candidate_local_id: Option<String>,
-  pub candidate_source: Option<String>,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -270,14 +254,6 @@ pub(crate) fn extract_observation_snapshots(
   Ok(snapshots)
 }
 
-pub(crate) fn list_app_validation_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<AppValidationLineage>> {
-  let run = store.read_run(run_id)?;
-  extract_app_validation_lineage(store, &run)
-}
-
 pub(crate) fn list_detector_recognition_lineage(
   store: &LocalStore,
   run_id: &str,
@@ -308,38 +284,6 @@ pub(crate) fn list_candidate_action_execution_lineage(
 ) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
   let run = store.read_run(run_id)?;
   extract_candidate_action_execution_lineage(store, &run)
-}
-
-pub(crate) fn extract_app_validation_lineage(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<Vec<AppValidationLineage>> {
-  let mut lineage = Vec::new();
-  for artifact in &run.artifacts {
-    if artifact.role != "validation.output" || !is_json_mime(&artifact.mime_type) {
-      continue;
-    }
-    let validation: AppValidation = read_artifact_json(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      "validation.output",
-    )?;
-    lineage.extend(validation.candidates.into_iter().map(|candidate| {
-      let canonical_taxonomy_id = canonicalize_taxonomy_id(&candidate.taxonomy_id).to_string();
-      let legacy_taxonomy_alias = candidate.taxonomy_id.trim() != canonical_taxonomy_id;
-      AppValidationLineage {
-        recipe_id: candidate.recipe_id,
-        taxonomy_id: candidate.taxonomy_id,
-        canonical_taxonomy_id,
-        legacy_taxonomy_alias,
-        observed_consumer: candidate.observed_consumer,
-        observed_candidate_local_id: candidate.observed_candidate_local_id,
-        candidate_source: candidate.candidate_source,
-      }
-    }));
-  }
-  Ok(lineage)
 }
 
 pub(crate) fn extract_detector_recognition_lineage(
@@ -636,15 +580,6 @@ pub(crate) fn extract_candidate_action_execution_lineage(
 
 fn is_json_mime(mime_type: &str) -> bool {
   mime_type == "application/json" || mime_type.ends_with("+json")
-}
-
-fn canonicalize_taxonomy_id(raw: &str) -> &str {
-  match raw.trim() {
-    NATIVE_TEXT_LEGACY_TAXONOMY_ID | NATIVE_TEXT_CANONICAL_TAXONOMY_ID => {
-      NATIVE_TEXT_CANONICAL_TAXONOMY_ID
-    }
-    other => other,
-  }
 }
 
 fn detector_recognition_lineage_entry(
@@ -1314,18 +1249,13 @@ mod tests {
     CANDIDATE_PROMOTION_ARTIFACT_ROLE, CandidateActionDecisionLineageStatus,
     CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus,
     DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
-    NATIVE_TEXT_CANONICAL_TAXONOMY_ID, NATIVE_TEXT_LEGACY_TAXONOMY_ID,
-    extract_app_validation_lineage, extract_candidate_action_decision_lineage,
-    extract_candidate_action_execution_lineage, extract_candidate_promotion_lineage,
-    extract_detector_recognition_lineage, extract_observation_snapshots, extract_verifications,
-    list_app_validation_lineage, list_candidate_action_decision_lineage,
+    extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
+    extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
+    extract_observation_snapshots, extract_verifications, list_candidate_action_decision_lineage,
     list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
     list_detector_recognition_lineage, list_observation_snapshots, list_verifications,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
-  use crate::app::{
-    AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
-  };
   use crate::candidate_action_decision::{
     CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
     CandidateActionExecutionConsent, CandidateActionExecutionConsentAction,
@@ -1466,51 +1396,6 @@ mod tests {
         "scroll-scan.json",
         &scroll_scan_artifact,
       ),
-      stage_json_artifact(
-        &store,
-        &root,
-        &run.run_id,
-        &span.span_id,
-        3,
-        "validation.output",
-        "validation.json",
-        &AppValidation {
-          validate_version: "v0".to_string(),
-          created_at_millis: 0,
-          source_distillation_path: PathBuf::from("/tmp/distillation.json"),
-          source_analysis_path: PathBuf::from("/tmp/analysis.json"),
-          app_identity: AppIdentity {
-            bundle_id: "com.example.music".to_string(),
-            app_name: "Example Music".to_string(),
-            app_path: None,
-            main_executable_path: None,
-            version: "1.0".to_string(),
-            build_version: "100".to_string(),
-            url_schemes: Vec::new(),
-            apple_script_addressable: false,
-            launch_services_resolved: true,
-            resolution_notes: Vec::new(),
-          },
-          candidates: vec![AppValidatedCandidate {
-            recipe_id: "macos.textedit.native_text_candidate.v0".to_string(),
-            taxonomy_id: NATIVE_TEXT_LEGACY_TAXONOMY_ID.to_string(),
-            status: AppValidationStatus::Validated,
-            verification_mode: AppVerificationMode::MachineAsserted,
-            rationale: "test".to_string(),
-            used_annotation_ids: Vec::new(),
-            recipe_path: PathBuf::from("/tmp/native-text.recipe.json"),
-            case_matrix_path: PathBuf::from("/tmp/native-text.cases.json"),
-            selected_case_count: 1,
-            observed_consumer: Some("contract-candidate".to_string()),
-            observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
-            candidate_source: Some("promoted_candidate".to_string()),
-            unresolved_inputs: Vec::new(),
-            failure_message: None,
-            resolved_inputs: BTreeMap::new(),
-          }],
-          known_boundaries: Vec::new(),
-        },
-      ),
     ];
 
     store
@@ -1542,26 +1427,6 @@ mod tests {
     let listed_snapshots = list_observation_snapshots(&store, "run_read_contracts")
       .expect("observation snapshots should list");
     assert_eq!(listed_snapshots, extracted_snapshots);
-
-    let extracted_lineage = extract_app_validation_lineage(&store, &canonical)
-      .expect("validation lineage should extract");
-    assert_eq!(extracted_lineage.len(), 1);
-    assert_eq!(
-      extracted_lineage[0].canonical_taxonomy_id,
-      NATIVE_TEXT_CANONICAL_TAXONOMY_ID
-    );
-    assert!(extracted_lineage[0].legacy_taxonomy_alias);
-    assert_eq!(
-      extracted_lineage[0].observed_consumer.as_deref(),
-      Some("contract-candidate")
-    );
-    assert_eq!(
-      extracted_lineage[0].candidate_source.as_deref(),
-      Some("promoted_candidate")
-    );
-    let listed_lineage = list_app_validation_lineage(&store, "run_read_contracts")
-      .expect("validation lineage should list");
-    assert_eq!(listed_lineage, extracted_lineage);
 
     let _ = fs::remove_dir_all(root);
   }

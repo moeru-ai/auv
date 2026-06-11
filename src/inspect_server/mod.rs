@@ -34,9 +34,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 use crate::contract::{ObservationSnapshot, VerificationResult};
 use crate::model::AuvResult;
 use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
-use crate::run_read::{
-  AppValidationLineage, CandidatePromotionLineage, DetectorRecognitionLineage,
-};
+use crate::run_read::{CandidatePromotionLineage, DetectorRecognitionLineage};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::{RunId, RunRecordV1Alpha1, TraceState};
 
@@ -333,9 +331,6 @@ async fn get_run(
   let candidate_action_execution_lineage =
     crate::run_read::extract_candidate_action_execution_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
-  let validation_lineage =
-    crate::run_read::extract_app_validation_lineage(state.store.as_ref(), &run)
-      .map_err(InspectHttpError::from_store)?;
   Ok(
     Json(InspectRunResponse {
       run: run.run,
@@ -345,7 +340,6 @@ async fn get_run(
       candidate_promotion_lineage,
       candidate_action_decision_lineage,
       candidate_action_execution_lineage,
-      validation_lineage,
     })
     .into_response(),
   )
@@ -527,8 +521,6 @@ struct InspectRunResponse {
   candidate_action_decision_lineage: Vec<crate::run_read::CandidateActionDecisionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   candidate_action_execution_lineage: Vec<crate::run_read::CandidateActionExecutionLineage>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  validation_lineage: Vec<AppValidationLineage>,
 }
 
 #[allow(clippy::result_large_err)]
@@ -898,9 +890,6 @@ mod tests {
 
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
-  use crate::app::{
-    AppIdentity, AppValidatedCandidate, AppValidation, AppValidationStatus, AppVerificationMode,
-  };
   use crate::candidate_action_decision::{
     CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
     CandidateActionExecutionConsent, CandidateActionExecutionConsentAction,
@@ -932,9 +921,6 @@ mod tests {
     EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
     SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
-
-  const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str =
-    "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text";
 
   #[test]
   fn write_config_rejects_no_token_on_non_loopback() {
@@ -1847,23 +1833,6 @@ mod tests {
     assert_eq!(
       run["observation_snapshots"][0]["snapshot_id"],
       "snapshot_server_test"
-    );
-    assert_eq!(
-      run["validation_lineage"][0]["canonical_taxonomy_id"],
-      "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text"
-    );
-    assert_eq!(run["validation_lineage"][0]["legacy_taxonomy_alias"], true);
-    assert_eq!(
-      run["validation_lineage"][0]["observed_consumer"],
-      "contract-candidate"
-    );
-    assert_eq!(
-      run["validation_lineage"][0]["observed_candidate_local_id"],
-      "native-text-focus-ax"
-    );
-    assert_eq!(
-      run["validation_lineage"][0]["candidate_source"],
-      "promoted_candidate"
     );
     assert_eq!(run["detector_recognition_lineage"][0]["status"], "ready");
     assert_eq!(run["detector_recognition_lineage"][0]["source"], "custom");
@@ -2868,51 +2837,6 @@ mod tests {
         &run_id,
         &span_id,
         2,
-        "validation.output",
-        "validation.json",
-        &AppValidation {
-          validate_version: "v0".to_string(),
-          created_at_millis: 0,
-          source_distillation_path: "/tmp/distillation.json".into(),
-          source_analysis_path: "/tmp/analysis.json".into(),
-          app_identity: AppIdentity {
-            bundle_id: "com.example.music".to_string(),
-            app_name: "Example Music".to_string(),
-            app_path: None,
-            main_executable_path: None,
-            version: "1.0".to_string(),
-            build_version: "100".to_string(),
-            url_schemes: Vec::new(),
-            apple_script_addressable: false,
-            launch_services_resolved: true,
-            resolution_notes: Vec::new(),
-          },
-          candidates: vec![AppValidatedCandidate {
-            recipe_id: "macos.textedit.native_text_candidate.v0".to_string(),
-            taxonomy_id: NATIVE_TEXT_LEGACY_TAXONOMY_ID.to_string(),
-            status: AppValidationStatus::Validated,
-            verification_mode: AppVerificationMode::MachineAsserted,
-            rationale: "test".to_string(),
-            used_annotation_ids: Vec::new(),
-            recipe_path: "/tmp/native-text.recipe.json".into(),
-            case_matrix_path: "/tmp/native-text.cases.json".into(),
-            selected_case_count: 1,
-            observed_consumer: Some("contract-candidate".to_string()),
-            observed_candidate_local_id: Some("native-text-focus-ax".to_string()),
-            candidate_source: Some("promoted_candidate".to_string()),
-            unresolved_inputs: Vec::new(),
-            failure_message: None,
-            resolved_inputs: BTreeMap::new(),
-          }],
-          known_boundaries: Vec::new(),
-        },
-      ),
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        3,
         "capture-image",
         "capture.json",
         &serde_json::json!({"capture": "artifact"}),

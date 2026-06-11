@@ -9,17 +9,12 @@
 //! Boundary: analysis is inference + reporting over evidence; it does not run
 //! automation itself (drivers/runtime do).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::contract::{
-  AnchorRecheckPrecondition, Candidate, CandidateEvidence, CandidateLiveness, CandidateQuery,
-  ControlRequirements, LivenessPreconditions, RatioRegion, SelectorScope, SurfaceSelector,
-  SurfaceSelectorClause, TargetGrounding, TargetSpec, WindowRefPrecondition,
-};
+use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
 use crate::model::{AuvResult, RunStatus, now_millis};
-use crate::skill::{SkillCaseMatrix, SkillStrategy};
 use crate::trace::{ArtifactId, EventId, RunId, SpanId};
 use auv_driver_macos::support::{
   group_ocr_matches_into_rows, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
@@ -32,25 +27,13 @@ use auv_driver_macos::types::{
 use serde_json::Value;
 
 use super::infra::first_non_empty_string;
-use super::recipe::recipe_app_slug;
 use super::{
   APP_ANALYSIS_VERSION, AppAnalysis, AppAvailableSurfaces, AppCandidateCompatibility,
   AppCandidateGroundingTaxonomy, AppCandidatePromotionGate, AppCandidatePromotionStatus,
-  AppControlAssessment, AppDistilledCandidateShape, AppDisturbanceProfile, AppGroundingAssessment,
-  AppIdentity, AppPermissionState, AppPoint, AppProbe, AppProbeArtifact, AppProbeStep,
-  AppRecommendedStrategy, AppRect, AppSurfaceCandidate, AppVerificationAssessment,
-  AppVerificationMode, AppWindowContext, AssessmentStatus,
+  AppControlAssessment, AppDisturbanceProfile, AppGroundingAssessment, AppIdentity,
+  AppPermissionState, AppPoint, AppProbe, AppProbeArtifact, AppProbeStep, AppRecommendedStrategy,
+  AppRect, AppSurfaceCandidate, AppVerificationAssessment, AppWindowContext, AssessmentStatus,
 };
-
-fn normalized_taxonomy_matches(candidate_taxonomy_id: &str, expected_taxonomy_id: &str) -> bool {
-  match (
-    AppCandidateGroundingTaxonomy::parse(candidate_taxonomy_id),
-    AppCandidateGroundingTaxonomy::parse(expected_taxonomy_id),
-  ) {
-    (Ok(candidate_taxonomy), Ok(expected_taxonomy)) => candidate_taxonomy == expected_taxonomy,
-    _ => candidate_taxonomy_id == expected_taxonomy_id,
-  }
-}
 
 #[derive(Clone, Debug)]
 struct CoordinateReadinessReport {
@@ -411,144 +394,6 @@ pub(crate) fn summarize_failed_probe_steps(probe: &AppProbe) -> Vec<String> {
       )
     })
     .collect()
-}
-
-pub(crate) fn apply_distilled_candidate_shape_inputs(
-  candidate_shape: &AppDistilledCandidateShape,
-  matrix: &mut SkillCaseMatrix,
-  resolved_inputs: &mut BTreeMap<String, String>,
-) {
-  for case in &mut matrix.cases {
-    for (key, value) in &mut case.inputs {
-      if !looks_like_placeholder(value) {
-        resolved_inputs
-          .entry(key.clone())
-          .or_insert_with(|| value.clone());
-        continue;
-      }
-      if let Some(shape_value) = candidate_shape.provided_inputs.get(key)
-        && !shape_value.trim().is_empty()
-      {
-        *value = shape_value.clone();
-        resolved_inputs
-          .entry(key.clone())
-          .or_insert_with(|| shape_value.clone());
-      }
-    }
-  }
-}
-
-pub(crate) fn apply_candidate_grounding(
-  analysis: &AppAnalysis,
-  ax_snapshot: Option<&ObservedAxTreeSnapshot>,
-  taxonomy_id: &str,
-  matrix: &mut SkillCaseMatrix,
-  resolved_inputs: &mut BTreeMap<String, String>,
-) -> AuvResult<(Vec<String>, Vec<String>)> {
-  let taxonomy = AppCandidateGroundingTaxonomy::parse(taxonomy_id)?;
-  let mut unresolved = BTreeSet::new();
-  let mut used_annotation_ids = BTreeSet::new();
-  let search_entry_annotation = find_annotation_candidate(analysis, "search-entry", "focus-query");
-  let native_text_annotation = find_annotation_candidate(analysis, "native-text", "focus-query");
-  let result_selection_annotation =
-    find_annotation_candidate(analysis, "result-selection", "anchor-text");
-  let window_primary_region_annotation = analysis
-    .annotation_candidates
-    .iter()
-    .find(|candidate| candidate.candidate_id == "window-primary-region");
-
-  for case in &mut matrix.cases {
-    for (key, value) in &mut case.inputs {
-      if !looks_like_placeholder(value) {
-        resolved_inputs
-          .entry(key.clone())
-          .or_insert_with(|| value.clone());
-        continue;
-      }
-
-      let replacement = match (taxonomy, key.as_str()) {
-        (
-          AppCandidateGroundingTaxonomy::SearchEntryAxTextInputClipboardSubmitCaptureEvidence,
-          "focus_query",
-        ) => {
-          if let Some(candidate) = search_entry_annotation {
-            used_annotation_ids.insert(candidate.candidate_id.clone());
-            Some(candidate.query_value.clone())
-          } else {
-            choose_search_entry_query(ax_snapshot)
-          }
-        }
-        (
-          AppCandidateGroundingTaxonomy::SearchEntryAxTextInputClipboardSubmitCaptureEvidence,
-          "query",
-        ) => Some(format!(
-          "AUV_{}",
-          recipe_app_slug(&analysis.app_identity).to_ascii_uppercase()
-        )),
-        (
-          AppCandidateGroundingTaxonomy::NativeTextAxTextAxPerformActionClipboardPasteVerifyAxText,
-          "focus_query",
-        ) => {
-          if let Some(candidate) = native_text_annotation {
-            used_annotation_ids.insert(candidate.candidate_id.clone());
-            Some(candidate.query_value.clone())
-          } else {
-            choose_native_text_focus_query(ax_snapshot)
-          }
-        }
-        (
-          AppCandidateGroundingTaxonomy::ResultSelectionOcrAnchorPointerClickCaptureEvidence,
-          "anchor_text",
-        ) => {
-          if let Some(candidate) = result_selection_annotation {
-            used_annotation_ids.insert(candidate.candidate_id.clone());
-            Some(candidate.query_value.clone())
-          } else {
-            first_stable_anchor_value(&analysis.grounding_assessment.stable_anchor_candidates)
-          }
-        }
-        (
-          AppCandidateGroundingTaxonomy::WindowActionWindowPointPointerClickCaptureEvidence,
-          "relative_x",
-        ) => {
-          if let Some(candidate) = window_primary_region_annotation {
-            candidate.input_bindings.get("relative_x").map(|value| {
-              used_annotation_ids.insert(candidate.candidate_id.clone());
-              value.clone()
-            })
-          } else {
-            None
-          }
-        }
-        (
-          AppCandidateGroundingTaxonomy::WindowActionWindowPointPointerClickCaptureEvidence,
-          "relative_y",
-        ) => {
-          if let Some(candidate) = window_primary_region_annotation {
-            candidate.input_bindings.get("relative_y").map(|value| {
-              used_annotation_ids.insert(candidate.candidate_id.clone());
-              value.clone()
-            })
-          } else {
-            None
-          }
-        }
-        _ => None,
-      };
-
-      if let Some(replacement) = replacement.filter(|value| !value.trim().is_empty()) {
-        *value = replacement.clone();
-        resolved_inputs.entry(key.clone()).or_insert(replacement);
-      } else {
-        unresolved.insert(key.clone());
-      }
-    }
-  }
-
-  Ok((
-    unresolved.into_iter().collect(),
-    used_annotation_ids.into_iter().collect(),
-  ))
 }
 
 pub(crate) fn build_annotation_candidates(
@@ -994,19 +839,6 @@ fn grouped_result_row_count(candidates: &[AppSurfaceCandidate]) -> usize {
     .count()
 }
 
-fn app_rect_to_ratio_region(window: &AppRect, target: &AppRect) -> Option<RatioRegion> {
-  if window.width <= 0 || window.height <= 0 {
-    return None;
-  }
-
-  Some(RatioRegion {
-    left: (target.x - window.x) as f64 / window.width as f64,
-    top: (target.y - window.y) as f64 / window.height as f64,
-    right: (target.x + target.width - window.x) as f64 / window.width as f64,
-    bottom: (target.y + target.height - window.y) as f64 / window.height as f64,
-  })
-}
-
 fn ax_candidate_query(
   candidate_id: &str,
   node: &ObservedAxNode,
@@ -1081,522 +913,6 @@ fn row_candidate_query(
   }
 }
 
-pub(crate) fn build_distilled_candidate_shape(
-  analysis: &AppAnalysis,
-  taxonomy_id: &str,
-) -> AppDistilledCandidateShape {
-  let mut direct_candidate_ids = Vec::new();
-  let mut context_candidate_ids = Vec::new();
-  let mut provided_inputs = BTreeMap::new();
-  let mut notes = Vec::new();
-
-  for candidate in &analysis.annotation_candidates {
-    if candidate
-      .compatibility
-      .direct_taxonomy_ids
-      .iter()
-      .any(|value| normalized_taxonomy_matches(value, taxonomy_id))
-    {
-      direct_candidate_ids.push(candidate.candidate_id.clone());
-      for (key, value) in &candidate.input_bindings {
-        if !value.trim().is_empty() {
-          provided_inputs
-            .entry(key.clone())
-            .or_insert_with(|| value.clone());
-        }
-      }
-    } else if candidate
-      .compatibility
-      .context_taxonomy_ids
-      .iter()
-      .any(|value| normalized_taxonomy_matches(value, taxonomy_id))
-    {
-      context_candidate_ids.push(candidate.candidate_id.clone());
-    }
-  }
-
-  if direct_candidate_ids.is_empty() {
-    notes.push(format!(
-      "No direct candidate shape was available for taxonomy {} during distill.",
-      taxonomy_id
-    ));
-  }
-  if !context_candidate_ids.is_empty() {
-    notes.push(
-      "Context-only candidates were recorded for later review, but they did not project directly into recipe inputs."
-        .to_string(),
-    );
-  }
-
-  AppDistilledCandidateShape {
-    direct_candidate_ids,
-    context_candidate_ids,
-    provided_inputs,
-    notes,
-  }
-}
-
-pub(crate) fn verification_mode_for_strategy(
-  strategy: &SkillStrategy,
-) -> AuvResult<AppVerificationMode> {
-  match strategy.verification_contract.trim() {
-    "captureEvidence" => Ok(AppVerificationMode::EvidenceOnly),
-    "verifyImageText" | "verifyNowPlayingTitle" | "verifyAxText" => {
-      Ok(AppVerificationMode::MachineAsserted)
-    }
-    other => Err(format!(
-      "strategy.verificationContract {} is unsupported; expected one of captureEvidence, verifyImageText, verifyNowPlayingTitle, verifyAxText",
-      other
-    )),
-  }
-}
-
-pub(crate) fn validated_candidate_rationale(
-  selected_case_count: usize,
-  verification_mode: AppVerificationMode,
-) -> String {
-  match verification_mode {
-    AppVerificationMode::MachineAsserted => format!(
-      "All {} candidate case(s) executed successfully through the shared runtime with machine-asserted verification.",
-      selected_case_count
-    ),
-    AppVerificationMode::EvidenceOnly => format!(
-      "All {} candidate case(s) executed successfully through the shared runtime, but the verification contract is evidence-only and still requires human review.",
-      selected_case_count
-    ),
-  }
-}
-
-pub(crate) fn suggested_annotation_ids_for_candidate_shape(
-  candidate_shape: &AppDistilledCandidateShape,
-) -> Vec<String> {
-  candidate_shape
-    .direct_candidate_ids
-    .iter()
-    .chain(candidate_shape.context_candidate_ids.iter())
-    .take(8)
-    .cloned()
-    .collect()
-}
-
-pub(crate) fn source_evidence_refs_for_candidate_shape(
-  analysis: &AppAnalysis,
-  candidate_shape: &AppDistilledCandidateShape,
-) -> Vec<crate::contract::ArtifactRef> {
-  let mut evidence_refs = Vec::new();
-  let mut seen = BTreeSet::new();
-  for candidate_id in candidate_shape
-    .direct_candidate_ids
-    .iter()
-    .chain(candidate_shape.context_candidate_ids.iter())
-  {
-    let Some(candidate) = analysis
-      .annotation_candidates
-      .iter()
-      .find(|candidate| candidate.candidate_id == *candidate_id)
-    else {
-      continue;
-    };
-    for reference in &candidate.evidence_refs {
-      let key = format!(
-        "{}:{}:{}:{}",
-        reference.run_id,
-        reference.span_id,
-        reference.artifact_id,
-        reference
-          .captured_event_id
-          .as_ref()
-          .map(|event_id| event_id.as_str())
-          .unwrap_or("none")
-      );
-      if seen.insert(key) {
-        evidence_refs.push(reference.clone());
-      }
-    }
-  }
-  evidence_refs
-}
-
-pub(crate) fn promoted_candidate_for_candidate_shape(
-  analysis: &AppAnalysis,
-  taxonomy_id: &str,
-  candidate_shape: &AppDistilledCandidateShape,
-) -> Option<Candidate> {
-  let direct_candidates = candidate_shape
-    .direct_candidate_ids
-    .iter()
-    .filter_map(|candidate_id| {
-      analysis
-        .annotation_candidates
-        .iter()
-        .find(|candidate| candidate.candidate_id == *candidate_id)
-    })
-    .collect::<Vec<_>>();
-
-  if direct_candidates.len() != 1 {
-    return None;
-  }
-
-  match taxonomy_id {
-    "search-entry.ax-text-input.clipboard-submit.capture-evidence" => {
-      promote_search_entry_candidate(analysis, direct_candidates[0])
-    }
-    "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text"
-    | "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text" => {
-      promote_native_text_candidate(analysis, direct_candidates[0])
-    }
-    "window-action.window-point.pointer-click.capture-evidence" => {
-      promote_window_action_candidate(analysis, direct_candidates[0])
-    }
-    _ => None,
-  }
-}
-
-fn observed_window_title(analysis: &AppAnalysis) -> Option<String> {
-  non_empty_trimmed(&analysis.window_context.frontmost_window_title)
-    .or_else(|| non_empty_trimmed(&analysis.window_context.primary_window_title))
-}
-
-fn unenforced_window_title_substring() -> Option<String> {
-  // NOTICE(app-candidate-window-title): Document-style macOS apps (TextEdit,
-  // Pages, browsers with tab-titled windows, etc.) mutate or localize their
-  // window title between probe and validate while the underlying AX target
-  // stays stable at the same role/path/bounds. Enforcing the probe-time title
-  // as a `window_title_substring` precondition then drops the candidate at
-  // `focus_text_candidate_matches_window` and the case-matrix surfaces a
-  // misleading "no structured signals" error. Keep the observed title in
-  // candidate evidence (see `observed_window_title`) but do not enforce it
-  // here until v1 carries a stable AX window identity such as a verified
-  // window number — see the matching TODO at
-  // src/driver/macos/control/ax.rs around `focus_text_candidate_matches_window`.
-  None
-}
-
-fn promote_search_entry_candidate(
-  analysis: &AppAnalysis,
-  candidate: &AppSurfaceCandidate,
-) -> Option<Candidate> {
-  if !search_entry_candidate_is_action_grade(candidate) {
-    return None;
-  }
-
-  let evidence_ref = candidate.evidence_refs.first()?.clone();
-  let query = candidate.candidate_query.as_ref()?;
-  let ax_clause = query
-    .selector
-    .any_of
-    .iter()
-    .find_map(|clause| match clause {
-      SurfaceSelectorClause::Ax {
-        role,
-        label,
-        path,
-        visible,
-        ..
-      } => Some((role.clone(), label.clone(), path.clone(), *visible)),
-      _ => None,
-    })?;
-  let bounds = candidate.bounds.as_ref()?;
-  let primary_window_bounds = analysis.window_context.primary_window_bounds.as_ref()?;
-  let region_hint = app_rect_to_ratio_region(primary_window_bounds, bounds)?;
-  let app_bundle_id = analysis.app_identity.bundle_id.trim();
-  if app_bundle_id.is_empty() {
-    return None;
-  }
-
-  let (role, label, path, visible) = ax_clause;
-  let observation = serde_json::json!({
-    "source": candidate.source,
-    "surface_candidate_id": candidate.candidate_id,
-    "evidence_step_id": candidate.evidence_step_id,
-    "query": {
-      "query_id": query.query_id,
-      "output_kind": query.output_kind,
-      "selector_within": query.selector.within,
-      "require_visible": query.selector.require_visible,
-      "ax": {
-        "role": role,
-        "label": label,
-        "path": path,
-        "visible": visible,
-      }
-    },
-    "bounds": {
-      "x": bounds.x,
-      "y": bounds.y,
-      "width": bounds.width,
-      "height": bounds.height,
-    },
-    "click_point": candidate.click_point.as_ref().map(|point| serde_json::json!({
-      "x": point.x,
-      "y": point.y,
-    })),
-    "window_context": {
-      "app_bundle_id": analysis.app_identity.bundle_id,
-      "window_title": observed_window_title(analysis),
-    }
-  });
-
-  Some(Candidate {
-    candidate_local_id: candidate.candidate_id.clone(),
-    kind: "search_entry".to_string(),
-    label: non_empty_trimmed(&candidate.primary_text),
-    target_spec: TargetSpec {
-      grounding: TargetGrounding::AxNode,
-      anchor_text: non_empty_trimmed(&candidate.query_value),
-      region_hint: Some(region_hint),
-      row_index: None,
-    },
-    evidence: CandidateEvidence {
-      artifact_ref: evidence_ref,
-      observation,
-    },
-    liveness: CandidateLiveness {
-      preconditions: LivenessPreconditions {
-        window_ref: Some(WindowRefPrecondition {
-          app_bundle_id: app_bundle_id.to_string(),
-          window_title_substring: unenforced_window_title_substring(),
-          window_number: None,
-        }),
-        anchor_recheck: Some(AnchorRecheckPrecondition {
-          text: candidate.query_value.clone(),
-          region_hint: Some(region_hint),
-          expected_min_confidence: 0.0,
-          max_pixel_distance: 48.0,
-        }),
-      },
-      ttl_hint_ms: Some(5_000),
-    },
-    control: ControlRequirements {
-      requires_app_frontmost: true,
-      requires_window_focus: true,
-    },
-    known_limits: candidate
-      .notes
-      .iter()
-      .cloned()
-      .chain(query.known_limits.iter().cloned())
-      .chain([
-        "Promotion only covers refinding the search-entry surface; semantic query success still relies on later operation verification.".to_string(),
-      ])
-      .collect(),
-  })
-}
-
-fn promote_native_text_candidate(
-  analysis: &AppAnalysis,
-  candidate: &AppSurfaceCandidate,
-) -> Option<Candidate> {
-  if !native_text_candidate_is_action_grade(candidate) {
-    return None;
-  }
-
-  let evidence_ref = candidate.evidence_refs.first()?.clone();
-  let query = candidate.candidate_query.as_ref()?;
-  let ax_clause = query
-    .selector
-    .any_of
-    .iter()
-    .find_map(|clause| match clause {
-      SurfaceSelectorClause::Ax {
-        role,
-        label,
-        path,
-        visible,
-        ..
-      } => Some((role.clone(), label.clone(), path.clone(), *visible)),
-      _ => None,
-    })?;
-  let bounds = candidate.bounds.as_ref()?;
-  let primary_window_bounds = analysis.window_context.primary_window_bounds.as_ref()?;
-  let region_hint = app_rect_to_ratio_region(primary_window_bounds, bounds)?;
-  let app_bundle_id = analysis.app_identity.bundle_id.trim();
-  if app_bundle_id.is_empty() {
-    return None;
-  }
-
-  let (role, label, path, visible) = ax_clause;
-  let observation = serde_json::json!({
-    "source": candidate.source,
-    "surface_candidate_id": candidate.candidate_id,
-    "evidence_step_id": candidate.evidence_step_id,
-    "query": {
-      "query_id": query.query_id,
-      "output_kind": query.output_kind,
-      "selector_within": query.selector.within,
-      "require_visible": query.selector.require_visible,
-      "ax": {
-        "role": role,
-        "label": label,
-        "path": path,
-        "visible": visible,
-      }
-    },
-    "bounds": {
-      "x": bounds.x,
-      "y": bounds.y,
-      "width": bounds.width,
-      "height": bounds.height,
-    },
-    "click_point": candidate.click_point.as_ref().map(|point| serde_json::json!({
-      "x": point.x,
-      "y": point.y,
-    })),
-    "window_context": {
-      "app_bundle_id": analysis.app_identity.bundle_id,
-      "window_title": observed_window_title(analysis),
-    }
-  });
-
-  Some(Candidate {
-    candidate_local_id: candidate.candidate_id.clone(),
-    kind: "native_text".to_string(),
-    label: non_empty_trimmed(&candidate.primary_text),
-    target_spec: TargetSpec {
-      grounding: TargetGrounding::AxNode,
-      anchor_text: non_empty_trimmed(&candidate.query_value),
-      region_hint: Some(region_hint),
-      row_index: None,
-    },
-    evidence: CandidateEvidence {
-      artifact_ref: evidence_ref,
-      observation,
-    },
-    liveness: CandidateLiveness {
-      preconditions: LivenessPreconditions {
-        window_ref: Some(WindowRefPrecondition {
-          app_bundle_id: app_bundle_id.to_string(),
-          window_title_substring: unenforced_window_title_substring(),
-          window_number: None,
-        }),
-        anchor_recheck: Some(AnchorRecheckPrecondition {
-          text: candidate.query_value.clone(),
-          region_hint: Some(region_hint),
-          expected_min_confidence: 0.0,
-          max_pixel_distance: 48.0,
-        }),
-      },
-      ttl_hint_ms: Some(5_000),
-    },
-    control: ControlRequirements {
-      requires_app_frontmost: true,
-      requires_window_focus: true,
-    },
-    known_limits: candidate
-      .notes
-      .iter()
-      .cloned()
-      .chain(query.known_limits.iter().cloned())
-      .chain([
-        "Promotion only covers refinding the native-text surface; semantic text success still relies on later operation verification.".to_string(),
-      ])
-      .collect(),
-  })
-}
-
-fn promote_window_action_candidate(
-  analysis: &AppAnalysis,
-  candidate: &AppSurfaceCandidate,
-) -> Option<Candidate> {
-  if !window_action_candidate_is_action_grade(candidate) {
-    return None;
-  }
-
-  let evidence_ref = candidate.evidence_refs.first()?.clone();
-  let bounds = candidate.bounds.as_ref()?;
-  let primary_window_bounds = analysis.window_context.primary_window_bounds.as_ref()?;
-  let region_hint = app_rect_to_ratio_region(primary_window_bounds, bounds)?;
-  let app_bundle_id = analysis.app_identity.bundle_id.trim();
-  if app_bundle_id.is_empty() {
-    return None;
-  }
-  let observed_center = candidate.click_point.as_ref()?;
-  let (relative_x, relative_y) = bounds.relative_point(observed_center)?;
-  if !(0.0..=1.0).contains(&relative_x) || !(0.0..=1.0).contains(&relative_y) {
-    return None;
-  }
-
-  let observation = serde_json::json!({
-    "source": candidate.source,
-    "surface_candidate_id": candidate.candidate_id,
-    "evidence_step_id": candidate.evidence_step_id,
-    "coordinate_space": candidate.coordinate_space,
-    "window_region": {
-      "x": bounds.x,
-      "y": bounds.y,
-      "width": bounds.width,
-      "height": bounds.height,
-    },
-    "click_point": {
-      "x": observed_center.x,
-      "y": observed_center.y,
-    },
-    "relative_point": {
-      "x": relative_x,
-      "y": relative_y,
-    },
-    "window_context": {
-      "app_bundle_id": analysis.app_identity.bundle_id,
-      "window_title": observed_window_title(analysis),
-      "primary_window_bounds": {
-        "x": primary_window_bounds.x,
-        "y": primary_window_bounds.y,
-        "width": primary_window_bounds.width,
-        "height": primary_window_bounds.height,
-      }
-    }
-  });
-
-  Some(Candidate {
-    candidate_local_id: candidate.candidate_id.clone(),
-    kind: "window_action".to_string(),
-    label: non_empty_trimmed(&candidate.primary_text),
-    target_spec: TargetSpec {
-      grounding: TargetGrounding::Coordinate,
-      anchor_text: None,
-      region_hint: Some(region_hint),
-      row_index: None,
-    },
-    evidence: CandidateEvidence {
-      artifact_ref: evidence_ref,
-      observation,
-    },
-    liveness: CandidateLiveness {
-      preconditions: LivenessPreconditions {
-        window_ref: Some(WindowRefPrecondition {
-          app_bundle_id: app_bundle_id.to_string(),
-          window_title_substring: unenforced_window_title_substring(),
-          window_number: None,
-        }),
-        anchor_recheck: None,
-      },
-      ttl_hint_ms: Some(5_000),
-    },
-    control: ControlRequirements {
-      requires_app_frontmost: true,
-      requires_window_focus: true,
-    },
-    known_limits: candidate
-      .notes
-      .iter()
-      .cloned()
-      .chain([
-        "Promotion only covers refinding the window-relative action point; semantic success still relies on later verification or evidence review.".to_string(),
-      ])
-      .collect(),
-  })
-}
-
-fn find_annotation_candidate<'a>(
-  analysis: &'a AppAnalysis,
-  area: &str,
-  kind: &str,
-) -> Option<&'a AppSurfaceCandidate> {
-  analysis.annotation_candidates.iter().find(|candidate| {
-    candidate.area == area && candidate.kind == kind && !candidate.query_value.trim().is_empty()
-  })
-}
-
 fn find_search_entry_node(snapshot: &ObservedAxTreeSnapshot) -> Option<&ObservedAxNode> {
   snapshot.nodes.iter().find(|node| {
     node.subrole == "AXSearchField"
@@ -1620,16 +936,6 @@ fn find_native_text_focus_node(snapshot: &ObservedAxTreeSnapshot) -> Option<&Obs
       || subrole == "AXSearchField"
       || !node.placeholder.trim().is_empty()
   })
-}
-
-fn choose_search_entry_query(snapshot: Option<&ObservedAxTreeSnapshot>) -> Option<String> {
-  let snapshot = snapshot?;
-  find_search_entry_node(snapshot).and_then(preferred_ax_query_text)
-}
-
-fn choose_native_text_focus_query(snapshot: Option<&ObservedAxTreeSnapshot>) -> Option<String> {
-  let snapshot = snapshot?;
-  find_native_text_focus_node(snapshot).and_then(preferred_ax_query_text)
 }
 
 fn preferred_ax_query_text(node: &ObservedAxNode) -> Option<String> {
@@ -1659,27 +965,6 @@ fn non_empty_trimmed(value: &str) -> Option<String> {
   } else {
     Some(trimmed.to_string())
   }
-}
-
-fn first_stable_anchor_value(candidates: &[String]) -> Option<String> {
-  candidates.iter().find_map(|value| {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-      return None;
-    }
-    if let Some((_, suffix)) = trimmed.split_once(':') {
-      let suffix = suffix.trim();
-      if !suffix.is_empty() {
-        return Some(suffix.to_string());
-      }
-    }
-    Some(trimmed.to_string())
-  })
-}
-
-fn looks_like_placeholder(value: &str) -> bool {
-  let trimmed = value.trim();
-  trimmed.starts_with("TODO_") || trimmed == "TODO"
 }
 
 fn parse_permission_state(probe: &AppProbe) -> AuvResult<AppPermissionState> {
@@ -2136,15 +1421,22 @@ pub(crate) fn recommended_strategy(
   status: AssessmentStatus,
   rationale: &str,
 ) -> AuvResult<AppRecommendedStrategy> {
-  let strategy = SkillStrategy {
-    family: family.to_string(),
-    grounding: grounding.to_string(),
-    activation: activation.to_string(),
-    verification_contract: verification_contract.to_string(),
-  };
+  let verification_contract = app_verification_contract_taxonomy_id(verification_contract)?;
   Ok(AppRecommendedStrategy {
-    taxonomy_id: strategy.taxonomy_id()?,
+    taxonomy_id: format!("{family}.{grounding}.{activation}.{verification_contract}"),
     status,
     rationale: rationale.to_string(),
   })
+}
+
+fn app_verification_contract_taxonomy_id(raw: &str) -> AuvResult<&'static str> {
+  match raw.trim() {
+    "captureEvidence" => Ok("capture-evidence"),
+    "verifyImageText" => Ok("verify-image-text"),
+    "verifyNowPlayingTitle" => Ok("verify-now-playing-title"),
+    "verifyAxText" => Ok("verify-ax-text"),
+    other => Err(format!(
+      "verification contract {other} is unsupported for app analysis recommendations"
+    )),
+  }
 }
