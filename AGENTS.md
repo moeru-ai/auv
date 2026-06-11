@@ -28,11 +28,12 @@ view.
 ## Project Phase: Restore The AUV Core Lane
 
 AUV is currently pulling its active roadmap back to the Application Use Via
-core: SkillBundle, recipe, invoke, run recording, artifacts, inspection, and
-distill/compile/run reuse across frontends. The important work is to make those
-runtime surfaces agree on one shared execution model. Prefer changes that
-tighten or reconnect the existing core runtime over polishing one archived
-vertical proof.
+core: invoke, run recording, artifacts, inspection, app-local Rust commands,
+and distill/compile/run reuse across frontends. The former SkillBundle surface
+has been retired; do not reintroduce bundle execution, export, or verification
+as compatibility. The important work is to make the remaining runtime surfaces
+agree on one shared execution model. Prefer changes that tighten or reconnect
+the existing core runtime over polishing one archived vertical proof.
 
 The macOS AX copilot work remains valuable, but it is no longer the active
 product lane. Treat `candidate-action` as a frozen archived vertical proof. Do
@@ -44,7 +45,7 @@ Good convergence work usually has one of these shapes:
 
 - Defines or tightens a shared contract in `docs/TERMS_AND_CONCEPTS.md`,
   `src/contract.rs`, run records, artifacts, or command signals.
-- Reconnects bundle/recipe/invoke surfaces so CLI, library, MCP, and future UI
+- Reconnects recipe/invoke surfaces so CLI, library, MCP, and future UI
   frontends share the same runtime execution path.
 - Connects an existing producer to an existing consumer with typed evidence,
   for example `RecognitionResult -> CandidateRef -> action -> VerificationResult`.
@@ -185,12 +186,9 @@ while quarantining the archived vertical.
 - `src/runtime.rs`: implicit run execution and artifact persistence.
 - `src/catalog.rs`: command catalog and default command definitions.
 - `src/skill.rs`: recipe and case-matrix loading, validation, and execution.
-- `src/bundle.rs`: bundle export, bundle verification, and package
-  verification.
 - `src/driver/macos/`: macOS driver implementation, dispatch, support, and
   tests.
 - `recipes/`: executable recipe manifests and case matrices.
-- `bundles/`: bundle manifests.
 - `docs/TERMS_AND_CONCEPTS.md`: shared vocabulary for core AUV concepts.
 - `docs/ai/references/`: durable reference notes, coverage reports, evidence
   packs, and implementation handoffs.
@@ -305,8 +303,8 @@ while quarantining the archived vertical.
 ## Testing Practices
 
 - Focused unit tests live next to the code they cover with `#[cfg(test)]`.
-- The current repo already has Rust unit coverage for catalog, skill, bundle,
-  runtime, driver, and CLI behavior.
+- The current repo already has Rust unit coverage for catalog, skill, runtime,
+  driver, and CLI behavior.
 - Add regression tests for behavior changes and keep them narrow.
 - Use `cargo test` for the full suite and include regression tests for bug
   fixes.
@@ -506,4 +504,3 @@ Use this root-cause block format in regression tests when relevant:
 - `git diff --check`
 - `cargo run --quiet -- list-commands`
 - `cargo run --quiet -- skill cases list`
-- `cargo run --quiet -- skill bundle list`
