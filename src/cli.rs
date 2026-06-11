@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 
 use auv_cli::candidate_action_decision::CandidateActionKind;
-use auv_cli::model::{AuvResult, DisturbanceClass, ExecutionTarget, InvokeRequest};
+use auv_cli::model::{AuvResult, ExecutionTarget, InvokeRequest};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InspectWriteSetting {
@@ -76,13 +76,6 @@ pub enum CliCommand {
   AppAnalyze {
     query: String,
   },
-  AppDistill {
-    query: String,
-    output_dir: Option<String>,
-  },
-  AppValidate {
-    query: String,
-  },
   Invoke {
     request: InvokeRequest,
     inspect: InspectClientOptions,
@@ -97,32 +90,6 @@ pub enum CliCommand {
     write: InspectServeWriteOptions,
   },
   McpServe,
-  SkillList,
-  SkillShow {
-    query: String,
-  },
-  SkillCasesList,
-  SkillCasesShow {
-    query: String,
-  },
-  SkillCasesReport {
-    query: String,
-  },
-  SkillCasesRun {
-    query: String,
-    dry_run: bool,
-    max_disturbance: Option<DisturbanceClass>,
-    only_case_ids: Vec<String>,
-    include_nonvalidated: bool,
-    inspect: InspectClientOptions,
-  },
-  SkillRun {
-    query: String,
-    dry_run: bool,
-    max_disturbance: Option<DisturbanceClass>,
-    overrides: BTreeMap<String, String>,
-    inspect: InspectClientOptions,
-  },
   // REVIEW: `scan window-region` is the first public scan CLI surface; keep
   // the name easy to revisit before treating scan terminology as stable.
   ScanWindowRegion {
@@ -189,7 +156,9 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "mcp" => parse_mcp(arguments),
     "invoke" => parse_invoke(arguments),
     "scan" => parse_scan(arguments),
-    "skill" => parse_skill(arguments),
+    "skill" => {
+      Err("skill commands have been removed; use app-local Rust commands instead".to_string())
+    }
     other => Err(format!(
       "unknown subcommand {other}; use `help` to see supported commands"
     )),
@@ -221,20 +190,11 @@ USAGE
   auv-cli permissions check [--json]
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
-  auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]
-  auv-cli app validate <distill-dir-or-distillation-json>
   auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv-cli mcp serve
   auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
-  auv-cli skill list
-  auv-cli skill show <skill-id-or-path>
-  auv-cli skill cases list
-  auv-cli skill cases show <matrix-id-or-path>
-  auv-cli skill cases report <matrix-id-or-path>
-  auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli skill run <skill-id-or-path> [--dry-run] [--max-disturbance <class>] [--set key=value] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
 
 NOTES
@@ -243,7 +203,6 @@ NOTES
   - `debug.captureDisplay`, `debug.listDisplays`, `debug.listWindows`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.captureAxTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `verify.musicNowPlaying`, `verify.axText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
   - `debug.overlayShowCursor`, `debug.overlayHideCursor`, and `debug.overlayShutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
   - `debug.captureAxTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
-  - `skill run` is a temporary JSON recipe compatibility entrypoint pending runtime legacy retirement; app-local Rust commands are the active workflow direction.
   - `candidate-action run` is a frozen archived macOS AX copilot vertical kept for recovery and reference. It stays buildable, but it is not the active AUV roadmap or the default product path.
   - By default `candidate-action run` does not self-mint consent; without an external consent source it records promotion refusal honestly. `--dev-self-minted-consent` exists only for local development smoke. `--human-gesture-consent` mints one local human-approved consent through a native macOS approval prompt.
   - `candidate-action run --intent ...` remains proposer-only inside that archived vertical: it chooses one observed AX item and one action, records that proposal, then feeds the existing refusal-first candidate-action spine unchanged.
@@ -259,11 +218,8 @@ NOTES
   - `verify.musicNowPlaying` prefers AX tree matching for player-title verification, which is the current direction for native playback disambiguation.
   - `verify.axText` is the generic AX-tree text verification contract for native apps with reliable text-bearing nodes.
   - `debug.clickScreenText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
-  - `skill cases run` replays validated case-matrix entries serially; this is the current narrow-skill coverage entrypoint for productization.
   - `app probe` is the deterministic raw-facts entrypoint for phase-2 distillation work; it records app identity plus runtime-backed surface probes into `.auv/app-probes/.../probe.json`.
-  - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as the input to later candidate-skill distillation instead of free-form chat summaries.
-  - `app distill` turns one analyzed app surface into candidate recipe/case-matrix scaffolds that already pass the current skill validators; they are candidate outputs, not validated skills.
-  - `app validate` turns one distillation directory into `validation.json` and `validation-report.md`; `validated` means the generated case matrix ran live, while `verification_mode=evidence-only` still means human review is required.
+  - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as typed evidence instead of free-form chat summaries.
 ",
   )
 }
@@ -536,7 +492,7 @@ fn parse_permissions(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err("usage: auv-cli app <probe|analyze|distill|validate> ...".to_string());
+    return Err("usage: auv-cli app <probe|analyze> ...".to_string());
   }
 
   match arguments[1].as_str() {
@@ -549,17 +505,11 @@ fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
         query: arguments[2].clone(),
       })
     }
-    "distill" => parse_app_distill(arguments),
-    "validate" => {
-      if arguments.len() != 3 {
-        return Err("usage: auv-cli app validate <distill-dir-or-distillation-json>".to_string());
-      }
-      Ok(CliCommand::AppValidate {
-        query: arguments[2].clone(),
-      })
-    }
+    "distill" | "validate" => Err(
+      "app recipe distillation has been removed; use app-local Rust commands instead".to_string(),
+    ),
     other => Err(format!(
-      "unknown app subcommand {other}; use `auv-cli app probe`, `auv-cli app analyze`, `auv-cli app distill`, or `auv-cli app validate`"
+      "unknown app subcommand {other}; use `auv-cli app probe` or `auv-cli app analyze`"
     )),
   }
 }
@@ -591,32 +541,6 @@ fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
     bundle_id,
     output_dir,
   })
-}
-
-fn parse_app_distill(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 3 {
-    return Err(
-      "usage: auv-cli app distill <analysis-dir-or-analysis-json> [--output-dir <dir>]".to_string(),
-    );
-  }
-  let query = arguments[2].clone();
-  let mut output_dir = None;
-  let mut index = 3;
-  while index < arguments.len() {
-    match arguments[index].as_str() {
-      "--output-dir" => {
-        if index + 1 >= arguments.len() {
-          return Err("--output-dir requires a value".to_string());
-        }
-        output_dir = Some(arguments[index + 1].clone());
-        index += 2;
-      }
-      other => {
-        return Err(format!("unexpected app-distill argument {other}"));
-      }
-    }
-  }
-  Ok(CliCommand::AppDistill { query, output_dir })
 }
 
 fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -945,226 +869,68 @@ fn required_flag_value(arguments: &[String], index: usize, flag: &str) -> AuvRes
     .ok_or_else(|| format!("{flag} requires a value"))
 }
 
-fn parse_skill(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 2 {
-    return Err("usage: auv-cli skill <list|show|run> ...".to_string());
-  }
-
-  match arguments[1].as_str() {
-    "list" => {
-      if arguments.len() != 2 {
-        return Err("usage: auv-cli skill list".to_string());
-      }
-      Ok(CliCommand::SkillList)
-    }
-    "cases" => parse_skill_cases(arguments),
-    "show" => {
-      if arguments.len() != 3 {
-        return Err("usage: auv-cli skill show <skill-id-or-path>".to_string());
-      }
-      Ok(CliCommand::SkillShow {
-        query: arguments[2].clone(),
-      })
-    }
-    "bundle" => {
-      Err("skill bundle has been removed; use app-local Rust commands instead".to_string())
-    }
-    "run" => parse_skill_run(arguments),
-    other => Err(format!(
-      "unknown skill subcommand {other}; use `auv-cli skill list` to inspect the current catalog"
-    )),
-  }
-}
-
-fn parse_skill_cases(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 3 {
-    return Err("usage: auv-cli skill cases <list|show|run> ...".to_string());
-  }
-
-  match arguments[2].as_str() {
-    "list" => {
-      if arguments.len() != 3 {
-        return Err("usage: auv-cli skill cases list".to_string());
-      }
-      Ok(CliCommand::SkillCasesList)
-    }
-    "show" => {
-      if arguments.len() != 4 {
-        return Err("usage: auv-cli skill cases show <matrix-id-or-path>".to_string());
-      }
-      Ok(CliCommand::SkillCasesShow {
-        query: arguments[3].clone(),
-      })
-    }
-    "report" => {
-      if arguments.len() != 4 {
-        return Err("usage: auv-cli skill cases report <matrix-id-or-path>".to_string());
-      }
-      Ok(CliCommand::SkillCasesReport {
-        query: arguments[3].clone(),
-      })
-    }
-    "run" => parse_skill_cases_run(arguments),
-    other => Err(format!(
-      "unknown skill cases subcommand {other}; use `auv-cli skill cases list`"
-    )),
-  }
-}
-
-fn parse_skill_run(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 3 {
-    return Err(
-      "usage: auv-cli skill run <skill-id-or-path> [--dry-run] [--max-disturbance <class>] [--set key=value] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string(),
-    );
-  }
-
-  let query = arguments[2].clone();
-  let mut dry_run = false;
-  let mut max_disturbance = None;
-  let mut overrides = BTreeMap::new();
-  let mut inspect = InspectClientOptions::default();
-  let mut index = 3;
-
-  while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
-      index += consumed;
-      continue;
-    }
-
-    match arguments[index].as_str() {
-      "--dry-run" => {
-        dry_run = true;
-        index += 1;
-      }
-      "--max-disturbance" => {
-        if index + 1 >= arguments.len() {
-          return Err("--max-disturbance requires a value".to_string());
-        }
-        max_disturbance = Some(DisturbanceClass::parse(&arguments[index + 1])?);
-        index += 2;
-      }
-      "--set" => {
-        if index + 1 >= arguments.len() {
-          return Err("--set requires key=value".to_string());
-        }
-        let raw = &arguments[index + 1];
-        let Some((key, value)) = raw.split_once('=') else {
-          return Err(format!("invalid --set value {raw:?}; expected key=value"));
-        };
-        if key.trim().is_empty() {
-          return Err(format!("invalid --set value {raw:?}; missing key"));
-        }
-        overrides.insert(key.trim().to_string(), value.to_string());
-        index += 2;
-      }
-      other => {
-        return Err(format!("unexpected skill-run argument {other}"));
-      }
-    }
-  }
-
-  Ok(CliCommand::SkillRun {
-    query,
-    dry_run,
-    max_disturbance,
-    overrides,
-    inspect,
-  })
-}
-
-fn parse_skill_cases_run(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 4 {
-    return Err(
-      "usage: auv-cli skill cases run <matrix-id-or-path> [--case <case-id>] [--all-statuses] [--dry-run] [--max-disturbance <class>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string(),
-    );
-  }
-
-  let query = arguments[3].clone();
-  let mut dry_run = false;
-  let mut max_disturbance = None;
-  let mut only_case_ids = Vec::new();
-  let mut include_nonvalidated = false;
-  let mut inspect = InspectClientOptions::default();
-  let mut index = 4;
-
-  while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
-      index += consumed;
-      continue;
-    }
-
-    match arguments[index].as_str() {
-      "--dry-run" => {
-        dry_run = true;
-        index += 1;
-      }
-      "--all-statuses" => {
-        include_nonvalidated = true;
-        index += 1;
-      }
-      "--case" => {
-        if index + 1 >= arguments.len() {
-          return Err("--case requires a value".to_string());
-        }
-        only_case_ids.push(arguments[index + 1].clone());
-        index += 2;
-      }
-      "--max-disturbance" => {
-        if index + 1 >= arguments.len() {
-          return Err("--max-disturbance requires a value".to_string());
-        }
-        max_disturbance = Some(DisturbanceClass::parse(&arguments[index + 1])?);
-        index += 2;
-      }
-      other => {
-        return Err(format!("unexpected skill-cases-run argument {other}"));
-      }
-    }
-  }
-
-  Ok(CliCommand::SkillCasesRun {
-    query,
-    dry_run,
-    max_disturbance,
-    only_case_ids,
-    include_nonvalidated,
-    inspect,
-  })
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
 
   #[test]
-  fn parse_skill_bundle_commands_are_removed() {
-    let error = parse_cli(&[
-      "skill".to_string(),
-      "bundle".to_string(),
-      "list".to_string(),
-    ])
-    .expect_err("skill bundle should be removed");
-
-    assert!(
-      error.contains("skill bundle has been removed"),
-      "unexpected error: {error}"
-    );
+  fn parse_skill_commands_are_removed() {
+    for args in [
+      vec!["skill"],
+      vec!["skill", "list"],
+      vec!["skill", "show", "macos.textedit.create_and_verify_text.v0"],
+      vec![
+        "skill",
+        "run",
+        "recipes/macos/textedit/create-and-verify-text.v0.json",
+      ],
+      vec!["skill", "cases", "list"],
+      vec![
+        "skill",
+        "cases",
+        "run",
+        "recipes/macos/textedit/create-and-verify-text.cases.v0.json",
+      ],
+    ] {
+      let args = args.into_iter().map(String::from).collect::<Vec<_>>();
+      let error = parse_cli(&args).expect_err("skill command should be removed");
+      assert!(
+        error.contains("skill commands have been removed"),
+        "unexpected error for {args:?}: {error}"
+      );
+    }
   }
 
   #[test]
-  fn help_text_no_longer_lists_skill_bundle_commands() {
+  fn parse_app_distill_and_validate_are_removed() {
+    for args in [
+      vec!["app", "distill", ".auv/app-probes/example/analysis.json"],
+      vec![
+        "app",
+        "validate",
+        ".auv/app-probes/example/distillation.json",
+      ],
+    ] {
+      let args = args.into_iter().map(String::from).collect::<Vec<_>>();
+      let error = parse_cli(&args).expect_err("recipe-producing app command should be removed");
+      assert!(
+        error.contains("app recipe distillation has been removed"),
+        "unexpected error for {args:?}: {error}"
+      );
+    }
+  }
+
+  #[test]
+  fn help_text_no_longer_lists_skill_or_recipe_app_commands() {
     let help = help_text();
 
-    assert!(!help.contains("skill bundle"));
-    assert!(help.contains("auv-cli skill run"));
+    assert!(!help.contains("auv-cli skill"));
+    assert!(!help.contains("skill run"));
+    assert!(!help.contains("skill cases"));
+    assert!(!help.contains("app distill"));
+    assert!(!help.contains("app validate"));
+    assert!(help.contains("auv-cli app probe"));
+    assert!(help.contains("auv-cli app analyze"));
   }
 
   #[test]
@@ -1278,42 +1044,6 @@ mod tests {
   }
 
   #[test]
-  fn parse_app_distill_command() {
-    let command = parse_cli(&[
-      "app".to_string(),
-      "distill".to_string(),
-      "/tmp/analysis".to_string(),
-      "--output-dir".to_string(),
-      "/tmp/out".to_string(),
-    ])
-    .expect("app distill command should parse");
-
-    match command {
-      CliCommand::AppDistill { query, output_dir } => {
-        assert_eq!(query, "/tmp/analysis");
-        assert_eq!(output_dir.as_deref(), Some("/tmp/out"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_app_validate_command() {
-    let command = parse_cli(&[
-      "app".to_string(),
-      "validate".to_string(),
-      "/tmp/distill".to_string(),
-    ])
-    .expect("app validate command should parse");
-    match command {
-      CliCommand::AppValidate { query } => {
-        assert_eq!(query, "/tmp/distill");
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
   fn parse_inspect_serve_command() {
     let command = parse_cli(&[
       "inspect".to_string(),
@@ -1373,39 +1103,6 @@ mod tests {
   }
 
   #[test]
-  fn parse_skill_run_inspect_write_options() {
-    let command = parse_cli(&[
-      "skill".to_string(),
-      "run".to_string(),
-      "recipe.id".to_string(),
-      "--store-root".to_string(),
-      "/tmp/auv-store".to_string(),
-      "--inspect-local-write".to_string(),
-      "false".to_string(),
-      "--inspect-server-write".to_string(),
-      "true".to_string(),
-      "--require-inspect-server-write".to_string(),
-      "--inspect-server-url".to_string(),
-      "http://127.0.0.1:8765".to_string(),
-      "--inspect-server-token".to_string(),
-      "secret".to_string(),
-    ])
-    .expect("skill run inspect options should parse");
-
-    match command {
-      CliCommand::SkillRun { inspect, .. } => {
-        assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
-        assert_eq!(inspect.local_write, InspectWriteSetting::Disabled);
-        assert_eq!(inspect.server_write, InspectWriteSetting::Enabled);
-        assert!(inspect.require_server_write);
-        assert_eq!(inspect.server_url.as_deref(), Some("http://127.0.0.1:8765"));
-        assert_eq!(inspect.server_token.as_deref(), Some("secret"));
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
   fn parse_invoke_inspect_write_options() {
     let command = parse_cli(&[
       "invoke".to_string(),
@@ -1453,38 +1150,6 @@ mod tests {
           request.target.application_id.as_deref(),
           Some("com.tencent.QQMusicMac")
         );
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_skill_cases_run_inspect_write_options() {
-    let command = parse_cli(&[
-      "skill".to_string(),
-      "cases".to_string(),
-      "run".to_string(),
-      "matrix.id".to_string(),
-      "--case".to_string(),
-      "case-1".to_string(),
-      "--store-root".to_string(),
-      "/tmp/auv-store".to_string(),
-      "--inspect-server-url".to_string(),
-      "http://127.0.0.1:8765".to_string(),
-      "--require-inspect-server-write".to_string(),
-    ])
-    .expect("skill cases run inspect options should parse");
-
-    match command {
-      CliCommand::SkillCasesRun {
-        only_case_ids,
-        inspect,
-        ..
-      } => {
-        assert_eq!(only_case_ids, vec!["case-1"]);
-        assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
-        assert!(inspect.require_server_write);
-        assert_eq!(inspect.server_url.as_deref(), Some("http://127.0.0.1:8765"));
       }
       other => panic!("unexpected command: {other:?}"),
     }
