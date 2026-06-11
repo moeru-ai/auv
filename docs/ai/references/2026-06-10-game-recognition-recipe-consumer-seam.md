@@ -50,7 +50,7 @@ Anchors:
 Top half, runtime-side invoke/recipe execution:
 
 ```text
-bundle command
+historical bundle-era command
   -> Runtime::invoke_in_span(...)
   -> SkillRecipeRunner::run_into_existing_run(...)
   -> run / spans / artifacts / signals
@@ -61,7 +61,7 @@ Anchors:
 - `src/runtime.rs`
 - `src/skill/recipe.rs`
 - `src/skill/mod.rs`
-- historical `native-app-skill-tree` bundle manifest, retired 2026-06-11
+- historical `native-app-skill-tree` manifest, retired 2026-06-11
 
 What is still missing is the middle seam:
 

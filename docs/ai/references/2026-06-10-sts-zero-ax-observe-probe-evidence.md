@@ -131,8 +131,8 @@ and artifact kinds `screenshot`, `window-region-observation`,
 ## Next Slice Candidates (observations, not started)
 
 1. Owner-approved design for an observe-only taxonomy combination (unblocks
-   M2 `sts.read*` recipes through validator + bundle + invoke).
-2. `sts.read*` recipe + bundle + case matrix once (1) lands, reusing
+   M2 `sts.read*` recipes through validator and app-local Rust command paths).
+2. `sts.read*` recipe and case matrix once (1) lands, reusing
    `debug.observeWindowRegion` and signal expects on the numeric formats.
 3. Window-scoped probe OCR sampling and chrome-vs-content AX distinction
    (fixes creaks 3 and 4 for every future app family, not just games).

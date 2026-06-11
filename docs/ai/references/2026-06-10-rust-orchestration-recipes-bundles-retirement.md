@@ -32,7 +32,7 @@ keeps active work tied to:
 
 - scalar template inputs
 - catalog command ids
-- bundle command lookup
+- retired bundle-era command lookup
 - `Runtime` as a central execution object
 
 The desired lane is direct Rust composition over typed driver APIs. The Rust

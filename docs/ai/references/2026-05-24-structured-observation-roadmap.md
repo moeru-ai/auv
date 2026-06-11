@@ -145,7 +145,8 @@ beside them so old recipes and tests keep working.
 - The artifact contains row `box`, row text, provider score when available,
   raw OCR fragments in `detail`, and source screenshot/capture artifact refs.
 - Tests assert JSON markers for `best`, `filtered`, `all`, and row bounds.
-- Existing list, recipe, and bundle commands still pass.
+- Existing list and recipe commands still pass. Bundle commands were retired on
+  2026-06-11.
 - Viewer should not be changed unless needed for a basic artifact preview.
 
 Suggested commit:
