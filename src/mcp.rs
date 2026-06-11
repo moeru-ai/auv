@@ -13,7 +13,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::bundle::SkillBundleCatalog;
 use crate::candidate_action_command::CandidateActionCommandRequest;
 use crate::candidate_action_decision::CandidateActionKind;
 use crate::model::{ExecutionTarget, InvokeRequest};
@@ -42,10 +41,6 @@ impl McpServer {
     runtime.map_err(invalid_params)
   }
 
-  fn bundle_catalog(&self) -> Result<SkillBundleCatalog, McpError> {
-    SkillBundleCatalog::discover(&self.project_root).map_err(invalid_params)
-  }
-
   fn skill_catalog(&self) -> Result<SkillCatalog, McpError> {
     SkillCatalog::discover(&self.project_root).map_err(invalid_params)
   }
@@ -53,38 +48,6 @@ impl McpServer {
 
 #[tool_router(router = tool_router)]
 impl McpServer {
-  #[tool(description = "List available AUV bundles.")]
-  async fn bundle_list(&self) -> Result<CallToolResult, McpError> {
-    let catalog = self.bundle_catalog()?;
-    let bundles = catalog
-      .entries()
-      .iter()
-      .map(|entry| {
-        serde_json::json!({
-          "id": entry.manifest.metadata.id,
-          "name": entry.manifest.metadata.name,
-          "status": entry.manifest.metadata.status,
-          "path": entry.path.display().to_string(),
-        })
-      })
-      .collect::<Vec<_>>();
-    json_result(serde_json::json!({ "bundles": bundles }))
-  }
-
-  #[tool(description = "Show one AUV bundle manifest by id or path.")]
-  async fn bundle_show(
-    &self,
-    Parameters(req): Parameters<BundleShowRequest>,
-  ) -> Result<CallToolResult, McpError> {
-    let catalog = self.bundle_catalog()?;
-    let entry = catalog
-      .resolve(&self.project_root, &req.query)
-      .map_err(invalid_params)?;
-    json_result(serde_json::json!({
-      "bundle": read_manifest_value(&entry.path).map_err(internal_error)?
-    }))
-  }
-
   #[tool(description = "List available AUV skills.")]
   async fn skill_list(&self) -> Result<CallToolResult, McpError> {
     let catalog = self.skill_catalog()?;
@@ -221,11 +184,6 @@ impl ServerHandler for McpServer {
       ..Default::default()
     }
   }
-}
-
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-struct BundleShowRequest {
-  query: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -424,7 +382,8 @@ mod tests {
 
   #[tokio::test]
   async fn mcp_server_lists_and_invokes_shared_runtime() -> anyhow::Result<()> {
-    let project_root = PathBuf::from("/Users/liuziheng/https-github-com-moeru-ai-auv");
+    let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let store_root = temp_dir("mcp-shared-runtime-store");
     let (server_transport, client_transport) = tokio::io::duplex(16384);
 
     let server = McpServer::new(project_root);
@@ -444,7 +403,8 @@ mod tests {
       .iter()
       .map(|tool| tool.name.as_ref())
       .collect::<Vec<_>>();
-    assert!(tool_names.contains(&"bundle_list"));
+    assert!(!tool_names.contains(&"bundle_list"));
+    assert!(!tool_names.contains(&"bundle_show"));
     assert!(tool_names.contains(&"invoke"));
     assert!(tool_names.contains(&"run_inspect"));
     assert!(tool_names.contains(&"candidate_action_run"));
@@ -458,7 +418,9 @@ mod tests {
             "dry_run": false,
             "inputs": {},
             "target": {},
-            "inspect": {}
+            "inspect": {
+              "store_root": store_root.display().to_string()
+            }
           })
           .as_object()
           .unwrap()
@@ -491,7 +453,8 @@ mod tests {
         name: "run_inspect".into(),
         arguments: Some(
           serde_json::json!({
-            "run_id": run_id
+            "run_id": run_id,
+            "store_root": store_root.display().to_string()
           })
           .as_object()
           .unwrap()
@@ -577,5 +540,9 @@ mod tests {
       .expect_err("dev self-minted consent still requires explicit caller identity");
 
     assert!(error.contains("--granted-by is required"));
+  }
+
+  fn temp_dir(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()))
   }
 }
