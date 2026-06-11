@@ -227,9 +227,6 @@ async fn run() -> Result<(), String> {
       settle_ms,
       min_confidence,
       max_observations,
-      per_page_after_observe_recipe,
-      per_list_item_candidate_recipe,
-      on_stop_candidate_recipe,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
       let region = parse_scan_region_arg(&region)?;
@@ -251,12 +248,6 @@ async fn run() -> Result<(), String> {
           settle_ms,
           min_confidence,
           max_observations,
-          per_page_after_observe_recipe,
-          per_page_after_observe_inline_hook: None,
-          per_list_item_candidate_recipe,
-          per_list_item_candidate_inline_hook: None,
-          on_stop_candidate_recipe,
-          on_stop_candidate_inline_hook: None,
         },
       )?;
       println!("runId: {run_id}");
