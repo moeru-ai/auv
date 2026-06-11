@@ -295,43 +295,6 @@ pub(crate) fn resolve_probe_path(query: &Path) -> AuvResult<PathBuf> {
   Err(format!("probe path does not exist: {}", query.display()))
 }
 
-pub(crate) fn resolve_analysis_path(query: &Path) -> AuvResult<PathBuf> {
-  if query.is_file() {
-    return Ok(query.to_path_buf());
-  }
-  if query.is_dir() {
-    let candidate = query.join("analysis.json");
-    if candidate.exists() {
-      return Ok(candidate);
-    }
-    return Err(format!(
-      "analysis directory {} does not contain analysis.json",
-      query.display()
-    ));
-  }
-  Err(format!("analysis path does not exist: {}", query.display()))
-}
-
-pub(crate) fn resolve_distillation_path(query: &Path) -> AuvResult<PathBuf> {
-  if query.is_file() {
-    return Ok(query.to_path_buf());
-  }
-  if query.is_dir() {
-    let candidate = query.join("distillation.json");
-    if candidate.exists() {
-      return Ok(candidate);
-    }
-    return Err(format!(
-      "distillation directory {} does not contain distillation.json",
-      query.display()
-    ));
-  }
-  Err(format!(
-    "distillation path does not exist: {}",
-    query.display()
-  ))
-}
-
 pub(crate) fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> AuvResult<T> {
   let raw = fs::read_to_string(path)
     .map_err(|error| format!("failed to read {}: {error}", path.display()))?;

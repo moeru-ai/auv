@@ -21,7 +21,6 @@ pub mod run_builder;
 mod run_read;
 pub mod runtime;
 pub mod scroll_scan;
-pub mod skill;
 pub mod stability;
 pub mod store;
 pub mod trace;
