@@ -218,7 +218,7 @@ NOTES
   - `verify.musicNowPlaying` prefers AX tree matching for player-title verification, which is the current direction for native playback disambiguation.
   - `verify.axText` is the generic AX-tree text verification contract for native apps with reliable text-bearing nodes.
   - `debug.clickScreenText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
-  - `app probe` is the deterministic raw-facts entrypoint for phase-2 distillation work; it records app identity plus runtime-backed surface probes into `.auv/app-probes/.../probe.json`.
+  - `app probe` is the deterministic raw-facts entrypoint for typed app-surface evidence; it records app identity plus runtime-backed surface probes into `.auv/app-probes/.../probe.json`.
   - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as typed evidence instead of free-form chat summaries.
 ",
   )
