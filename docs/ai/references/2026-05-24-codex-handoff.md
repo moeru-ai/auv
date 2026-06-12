@@ -4,7 +4,7 @@ Date: 2026-06-12
 
 Status: current handoff for the next coding agent before session compaction
 
-Current HEAD when written: `04ef4de`
+Current HEAD when written: `eb04605`
 
 ## Start Here
 
@@ -36,8 +36,8 @@ Current shape of the lane:
 - `P1`: typed macOS window dispatch benchmark mode — **done as merged slice**
 - `P2`: capture / visual verification — **done as merged slice with local real-app smoke verification**
 - `P2.5`: capture timestamp semantics — **done as merged slice with local real-app smoke verification and pushed to main**
-- `P3a`: visual dataset / evaluation harness from beatmap truth + corrected timestamped captures — **done as merged slice with local build/test verification**
-- `P3`: YOLO/CV as independent validation channel — **not started**
+- `P3a`: visual dataset / evaluation harness from beatmap truth + corrected timestamped captures — **done as merged slice with local build/test verification and real-app smoke evidence**
+- `P3`: offline visual eval harness for the vision validation lane — **done as local validated slice with review fixups, pending push**
 
 ## Current Repo State
 
@@ -50,11 +50,11 @@ main...origin/main
 Recent commits that matter:
 
 ```text
+eb04605 fix(osu): score visual eval per capture frame
+582e8c2 feat(osu): add offline visual eval harness for vision validation lane
+979b162 docs(osu): record P3a visual truth manifest slice in handoff
 04ef4de feat(osu): add visual truth manifest from beatmap and capture traces
 7c63900 fix(osu): correct capture timestamp semantics
-33bdabf feat(osu): add capture verification evidence to dispatch benchmark
-4d7f06a feat(osu): add typed dispatch benchmark mode
-54394b4 feat(osu): add beatmap benchmark skeleton
 ```
 
 Before coding again, verify live state:
@@ -188,10 +188,14 @@ Local real-app smoke re-run passed against installed `osu!.app` and a real local
 
 Observed timing on that smoke confirms why P2.5 matters: dispatch itself was late (`scheduled_time_ms = 151`, `actual_dispatch_time_ms = 1283`), so scheduled-relative and dispatch-relative capture semantics must stay separate and explicit.
 
-### P3a implemented locally, not yet pushed
+### P3a merged locally with real-app smoke evidence
 
-P3a landed as local commit `04ef4de` on top of `7c63900`. Validation passed
-but the commit has not been pushed to `origin/main` yet.
+Commits:
+
+```text
+04ef4de feat(osu): add visual truth manifest from beatmap and capture traces
+979b162 docs(osu): record P3a visual truth manifest slice in handoff
+```
 
 What it did:
 
@@ -208,11 +212,67 @@ What it did:
   through the existing recorded-operation artifact path in `src/osu.rs`
 - exports the new types from `crates/auv-game-osu/src/lib.rs`
 
+Real-app smoke rerun passed against installed `osu!.app`:
+
+- run id: `run_1781290429209_99048_0`
+- output dir: `.tmp-osu-dispatch-p3-real`
+- `verificationCapturedActions: 1`
+- `verificationMissingFrames: 0`
+- produced artifacts include:
+  - `visual_truth_manifest.json`
+  - `capture_trace.json`
+  - `verification_summary.json`
+  - `capture-object-0000-before-16ms.png`
+  - `capture-object-0000-after-16ms.png`
+  - `capture-object-0000-after-48ms.png`
+
+Observed manifest shape on that real run confirms why frame-granular eval matters:
+
+- `frames.len() = 3`
+- all 3 frames belong to `object_index = 0`
+- phases were one `before_dispatch` frame plus two `after_dispatch` frames
+
 Boundaries held:
 
 - beatmap truth stays the primary source; the manifest is offline evidence only
 - reuses the existing P2/P2.5 capture artifacts, no parallel evidence path
 - no YOLO control, training, LLM in hit loop, or new core-wide contract
+
+### P3 local slice validated, pending push
+
+Commits:
+
+```text
+582e8c2 feat(osu): add offline visual eval harness for vision validation lane
+eb04605 fix(osu): score visual eval per capture frame
+```
+
+What it did:
+
+- adds `crates/auv-game-osu/src/visual_eval.rs`
+- introduces `evaluate_visual_truth(...)` to score `VisualTruthManifest` frames
+  against per-frame `DetectionSet` inputs using reused
+  `auv-inference-common` detection types
+- splits evaluation into:
+  - label-presence scoring that always runs
+  - spatial scoring that stays `NotScored` when no playfield-to-pixel
+    projection is available
+- after review, fixes the scoring key from bare `object_index` to
+  `FrameKey { object_index, phase, capture_file_name }`
+- introduces `FrameDetections` so before/after frames do not silently share one
+  detection set
+- counts repeated same-label detections as spurious after consuming only one
+  expected match per frame
+- keeps all evaluator logic inside `crates/auv-game-osu`
+
+Validation for the P3 slice passed locally:
+
+- `cargo fmt --check`
+- `cargo check -p auv-game-osu`
+- `cargo test -p auv-game-osu`
+- `cargo build`
+- `git diff --check`
+- unit tests now include frame-separation and repeated-label-spurious regression coverage
 
 ## Verification Already Run
 
@@ -242,11 +302,23 @@ cargo run --quiet -- osu benchmark <local beatmap> --output-dir .tmp-osu-benchma
 cargo run --quiet -- osu dispatch <local beatmap> --target-app "osu!" --dispatch-limit 1 --capture-verify --output-dir .tmp-osu-dispatch-p25
 ```
 
+Additional verification for the local P3a/P3 state:
+
+```bash
+cargo fmt --check
+cargo check -p auv-game-osu
+cargo test -p auv-game-osu
+cargo build
+git diff --check
+cargo run --quiet -- osu dispatch "/Users/liuziheng/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rosu-map-0.2.1/resources/sample-beatmap-osu.osu" --target-app "osu!" --dispatch-limit 1 --capture-verify --output-dir .tmp-osu-dispatch-p3-real
+```
+
 Notes:
 
 - one intermediate dispatch smoke failed only because the `osu!` window was not visible/resolvable at the time of launch
-- the successful rerun produced `run_1781278300171_81552_0`
-- in this shell, `auv-cli inspect` was not on `PATH`; inspect validation for P2.5 should therefore be rerun via the built binary path or `cargo run -- inspect ...` if needed
+- the successful rerun produced `run_1781290429209_99048_0`
+- that rerun confirmed `visual_truth_manifest.json` and all three capture PNG artifacts landed on a real app window
+- the P3 eval harness itself remains library-only in this slice; no detector/control path is wired yet
 
 ## Collabi State
 
@@ -283,18 +355,21 @@ Still true:
 
 Do not open a new goal.
 
-`P3a` is implemented locally and validated but not yet pushed. The immediate
-next step is to push the `P3a` commit to `origin/main`, then stop and let the
-owner choose whether to open `P3`.
+`P3a` and the first `P3` eval slice are now validated locally. Immediate next
+step is to push the local commit stack to `origin/main`, then stop and let the
+owner choose whether the next slice is detector acquisition/training or
+playfield-to-pixel calibration.
 
-After `P3a` is pushed, the candidate next slice is `P3`:
+After push, the likely next slices are:
 
-1. introduce a YOLO/CV detector as an independent validation channel that reads
-   the staged `visual_truth_manifest.json` frames offline
-2. score detector output against beatmap truth instead of replacing it
-3. keep the detector out of the hit loop; it stays an evidence/validation lane
+1. acquire or train a real osu detector model that emits `DetectionSet` labels
+   compatible with the P3 eval harness
+2. add honest playfield-to-pixel calibration so spatial scoring can move from
+   `NotScored` to real matching on captured frames
+3. only after those land, wire a detector-backed offline eval path that feeds
+   `FrameDetections` into `evaluate_visual_truth(...)`
 
-If continuing into `P3`, preserve these rules:
+If continuing past this point, preserve these rules:
 
 - beatmap truth remains the primary source; vision stays a validation lane
 - reuse the P3a manifest + P2/P2.5 capture artifacts instead of inventing a parallel evidence path
