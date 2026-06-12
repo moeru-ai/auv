@@ -37,7 +37,7 @@ Current shape of the lane:
 - `P2`: capture / visual verification — **done as merged slice with local real-app smoke verification**
 - `P2.5`: capture timestamp semantics — **done as merged slice with local real-app smoke verification and pushed to main**
 - `P3a`: visual dataset / evaluation harness from beatmap truth + corrected timestamped captures — **done as merged slice with local build/test verification and real-app smoke evidence**
-- `P3`: offline visual eval harness for the vision validation lane — **done as local validated slice with review fixups, pending push**
+- `P3`: offline visual eval harness for the vision validation lane — **done as merged slice with review fixups and real-app upstream evidence chain**
 
 ## Current Repo State
 
@@ -50,11 +50,11 @@ main...origin/main
 Recent commits that matter:
 
 ```text
+ca96775 docs(osu): refresh handoff after local P3 validation
 eb04605 fix(osu): score visual eval per capture frame
 582e8c2 feat(osu): add offline visual eval harness for vision validation lane
 979b162 docs(osu): record P3a visual truth manifest slice in handoff
 04ef4de feat(osu): add visual truth manifest from beatmap and capture traces
-7c63900 fix(osu): correct capture timestamp semantics
 ```
 
 Before coding again, verify live state:
@@ -238,13 +238,14 @@ Boundaries held:
 - reuses the existing P2/P2.5 capture artifacts, no parallel evidence path
 - no YOLO control, training, LLM in hit loop, or new core-wide contract
 
-### P3 local slice validated, pending push
+### P3 merged with review fixups
 
 Commits:
 
 ```text
 582e8c2 feat(osu): add offline visual eval harness for vision validation lane
 eb04605 fix(osu): score visual eval per capture frame
+ca96775 docs(osu): refresh handoff after local P3 validation
 ```
 
 What it did:
@@ -265,7 +266,7 @@ What it did:
   expected match per frame
 - keeps all evaluator logic inside `crates/auv-game-osu`
 
-Validation for the P3 slice passed locally:
+Validation for the P3 slice passed locally before push:
 
 - `cargo fmt --check`
 - `cargo check -p auv-game-osu`
