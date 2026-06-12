@@ -15,6 +15,7 @@ pub mod inspect;
 pub mod inspect_server;
 pub mod mcp;
 pub mod model;
+pub mod osu;
 pub mod recorded_operation;
 pub mod recording;
 pub mod run_builder;

@@ -76,6 +76,10 @@ pub enum CliCommand {
   AppAnalyze {
     query: String,
   },
+  OsuBenchmark {
+    beatmap_path: String,
+    output_dir: Option<String>,
+  },
   Invoke {
     request: InvokeRequest,
     inspect: InspectClientOptions,
@@ -149,6 +153,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "list-commands" => Ok(CliCommand::ListCommands),
     "list-drivers" => Ok(CliCommand::ListDrivers),
     "app" => parse_app(arguments),
+    "osu" => parse_osu(arguments),
     "inspect" => parse_inspect(arguments),
     "mcp" => parse_mcp(arguments),
     "invoke" => parse_invoke(arguments),
@@ -187,6 +192,7 @@ USAGE
   auv-cli permissions check [--json]
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
+  auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]
   auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
@@ -536,6 +542,48 @@ fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
 
   Ok(CliCommand::AppProbe {
     bundle_id,
+    output_dir,
+  })
+}
+
+fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 2 {
+    return Err("usage: auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]".to_string());
+  }
+
+  match arguments[1].as_str() {
+    "benchmark" => parse_osu_benchmark(arguments),
+    other => Err(format!(
+      "unknown osu subcommand {other}; use `auv-cli osu benchmark <beatmap.osu>`"
+    )),
+  }
+}
+
+fn parse_osu_benchmark(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 3 {
+    return Err("usage: auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]".to_string());
+  }
+
+  let beatmap_path = arguments[2].clone();
+  let mut output_dir = None;
+  let mut index = 3;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--output-dir" => {
+        if index + 1 >= arguments.len() {
+          return Err("--output-dir requires a value".to_string());
+        }
+        output_dir = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      other => {
+        return Err(format!("unexpected osu-benchmark argument {other}"));
+      }
+    }
+  }
+
+  Ok(CliCommand::OsuBenchmark {
+    beatmap_path,
     output_dir,
   })
 }

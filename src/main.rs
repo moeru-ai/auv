@@ -186,6 +186,24 @@ async fn run() -> Result<(), String> {
         output.analysis.annotation_candidates.len()
       );
     }
+    CliCommand::OsuBenchmark {
+      beatmap_path,
+      output_dir,
+    } => {
+      let runtime = build_default_runtime(project_root.clone())?;
+      let beatmap_path = PathBuf::from(beatmap_path);
+      let output_dir = output_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| temp_runtime_store_root().join("osu-benchmark-output"));
+      let output = auv_cli::osu::run_osu_benchmark(&runtime, beatmap_path, output_dir)?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!("beatmap: {}", output.value.map_summary.beatmap_path);
+      println!("objects: {}", output.value.map_summary.total_objects);
+      println!("latencyP95Ms: {}", output.value.latency_report.p95_error_ms);
+      println!("jitterMs: {}", output.value.latency_report.jitter_ms);
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::Invoke { request, inspect } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let result = runtime.invoke(request)?;
