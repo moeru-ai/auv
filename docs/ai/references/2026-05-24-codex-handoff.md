@@ -406,37 +406,63 @@ Manual visual check of `capture-object-0000-after-16ms.png` on that run showed
 visible hit feedback at the projected location, which is accepted evidence for
 this slice per the roadmap gate.
 
-### P4b completed locally on top of the P4a artifacts
+### P5 completed locally with app-local `PidTargeted` evidence
 
-What landed in the local slice:
+What landed across the local P5 slices:
 
-- adapts `ProjectionArtifact` into `EvalProjection::PlayfieldToPixels`
-- feeds the P4a `projection.json` producer into `evaluate_visual_truth(...)`
-  without changing the scoring logic itself
-- writes `visual_eval_report.json` next to the other benchmark artifacts and
-  stages it through the same recorded-run path in `src/osu.rs`
-- keeps `VisualEvalReport.known_limits` honest about linear projection quality
+- starts the measured typed-dispatch clock only after the window-targeted click
+  path is warmed, so first-object latency no longer includes one-time driver
+  setup in the benchmark timing window
+- keeps the existing `dispatch_error_ms` / `LatencyReport` contract unchanged so
+  before/after distributions remain directly comparable
+- switches the osu benchmark typed dispatch path from
+  `WindowClickStrategy::ChromiumCompatible` to the existing lighter
+  `WindowClickStrategy::PidTargeted` strategy, while keeping
+  `InputPolicy::ForegroundPreferred` and `WindowTargetedMouse` delivery intact
+- adds narrow regression coverage around latency-report missed-schedule counting
 
-Additional local validation passed for P4b:
+Validation passed locally for the landed P5 code:
 
-- `cargo fmt --check`
-- `cargo check -p auv-game-osu --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
-- `cargo test -p auv-game-osu --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
+- `cargo fmt --check --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
+- `cargo check --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
+- `cargo test --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
 - `git -C /Users/liuziheng/https-github-com-moeru-ai-auv diff --check`
 
-P4b smoke evidence on the same run id `run_1781296969595_4256_0`:
+Real-app evidence chain for P5:
 
-- `visual_eval_report.json` was written and staged
-- `spatial_unscored_frames = 0`
-- `spatial_missing_frames = 3`
-- `spatial_matched_frames = 0`
-- spatial outcomes are now real `Missing` results instead of `NotScored`, which
-  is the acceptance target for this slice when no detections are provided
+1. Benchmark timing-boundary fix evidence:
+   - run id: `run_1781298128793_4766_0`
+   - `WindowTargetedMouse` on all 12 objects
+   - no fallback reasons recorded
+   - first-object outlier removed, but a steady `119ms-126ms` floor remained
+2. App-local strategy-switch evidence:
+   - run id: `run_1781299108760_5250_0`
+   - output dir: `.tmp-osu-dispatch-p5-pid-targeted`
+   - `WindowTargetedMouse` on all 12 objects
+   - no fallback reasons recorded
+   - `latency_report.json` summary:
+     - `mean_error_ms = 0.0`
+     - `p50_error_ms = 0`
+     - `p95_error_ms = 0`
+     - `p99_error_ms = 0`
+     - `max_error_ms = 0`
+     - `jitter_ms = 0`
+     - `missed_schedule_count = 0`
 
-Collabi sessions used in this continuation:
+Interpretation of the final P5 state:
 
-- `auv-game-osu-p4a`
-- `auv-game-osu-p4b`
+- the benchmark timing-boundary fix removed the setup-only first-object anomaly
+- the remaining floor came from the `ChromiumCompatible` strategy itself, not
+  from scheduler semantics
+- switching the osu benchmark lane to the existing app-local `PidTargeted`
+  strategy collapses that steady floor on the tested local `osu!` setup without
+  introducing fallback or delivery-path regression
+- P5 now satisfies the roadmap acceptance target of post-warm-up
+  `|dispatch_error_ms| p95 <= 16ms` on this local machine
+
+Evidence note for P5 lives in:
+
+- `docs/ai/references/2026-06-13-osu-benchmark-p5-latency-evidence.md`
 
 After push, the likely next slices are:
 

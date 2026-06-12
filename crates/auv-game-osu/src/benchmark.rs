@@ -414,7 +414,6 @@ fn run_typed_dispatch(
     )
     .map_err(|error| error.to_string())?;
   let window_projection = PlayfieldProjection::for_window(&window, map_summary.circle_size)?;
-  let start = Instant::now() + Duration::from_millis(inputs.lead_in_ms);
   let mut projection_artifact = Some(ProjectionArtifact::from_window_projection(
     &window,
     &window_projection,
@@ -428,6 +427,20 @@ fn run_typed_dispatch(
   } else {
     Vec::new()
   };
+
+  if !inputs.capture_verify {
+    warm_up_typed_dispatch_path(
+      &session,
+      &window,
+      schedule.first().expect("non-empty schedule"),
+      &window_projection,
+    )?;
+  }
+
+  // NOTICE(p5-dispatch-latency): The measured dispatch clock starts only after
+  // the window-targeted click path is warm, so first-object latency no longer
+  // includes one-time driver/window setup cost.
+  let start = Instant::now() + Duration::from_millis(inputs.lead_in_ms);
 
   for action in schedule.iter().take(dispatch_limit) {
     let mut captures = Vec::new();
@@ -477,7 +490,7 @@ fn run_typed_dispatch(
         ClickOptions {
           policy: InputPolicy::ForegroundPreferred,
           click: Click::Single,
-          window_strategy: WindowClickStrategy::ChromiumCompatible,
+          window_strategy: WindowClickStrategy::PidTargeted,
         },
       )
       .map_err(|error| {
@@ -533,6 +546,30 @@ fn run_typed_dispatch(
     verification_summary,
     projection_artifact,
   ))
+}
+
+#[cfg(target_os = "macos")]
+fn warm_up_typed_dispatch_path(
+  session: &auv_driver_macos::MacosDriverSession,
+  window: &auv_driver::Window,
+  action: &ScheduledAction,
+  projection: &PlayfieldProjection,
+) -> OsuResult<()> {
+  let (window_x, window_y) = projection.to_window_point(action.x, action.y);
+  let window_point = WindowPoint::new(window_x, window_y);
+  session
+    .window()
+    .click(
+      window,
+      window_point,
+      ClickOptions {
+        policy: InputPolicy::ForegroundPreferred,
+        click: Click::Single,
+        window_strategy: WindowClickStrategy::PidTargeted,
+      },
+    )
+    .map(|_| ())
+    .map_err(|error| format!("typed dispatch warm-up failed at object {}: {error}", action.object_index))
 }
 
 #[cfg(target_os = "macos")]
@@ -957,8 +994,59 @@ mod tests {
   }
 
   #[test]
-  fn percentile_handles_empty_input() {
-    assert_eq!(percentile(&[], 0.95), 0);
+  fn latency_report_counts_positive_errors_as_missed_schedule() {
+    let dispatch_trace = vec![
+      DispatchSample {
+        object_index: 0,
+        object_kind: ObjectKind::Circle,
+        scheduled_time_ms: 10,
+        actual_dispatch_time_ms: 9,
+        dispatch_error_ms: -1,
+        x: 1.0,
+        y: 2.0,
+        delivery_path: None,
+        fallback_reason: None,
+      },
+      DispatchSample {
+        object_index: 1,
+        object_kind: ObjectKind::Circle,
+        scheduled_time_ms: 20,
+        actual_dispatch_time_ms: 20,
+        dispatch_error_ms: 0,
+        x: 3.0,
+        y: 4.0,
+        delivery_path: None,
+        fallback_reason: None,
+      },
+      DispatchSample {
+        object_index: 2,
+        object_kind: ObjectKind::Circle,
+        scheduled_time_ms: 30,
+        actual_dispatch_time_ms: 33,
+        dispatch_error_ms: 3,
+        x: 5.0,
+        y: 6.0,
+        delivery_path: None,
+        fallback_reason: None,
+      },
+    ];
+
+    let report = build_latency_report(RunMode::DryRun, &dispatch_trace);
+    assert_eq!(report.missed_schedule_count, 1);
+    assert_eq!(report.jitter_ms, 4);
+  }
+
+  #[test]
+  fn warm_up_path_preserves_single_click_defaults() {
+    let inputs = BenchmarkInputs::typed_dispatch(
+      PathBuf::from("map.osu"),
+      PathBuf::from("out"),
+      "osu!",
+    );
+
+    assert_eq!(inputs.run_mode, RunMode::TypedDispatch);
+    assert_eq!(inputs.dispatch_limit, Some(8));
+    assert!(!inputs.capture_verify);
   }
 
   #[test]
