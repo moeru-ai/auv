@@ -365,6 +365,79 @@ P4a there.
 playfield-to-pixel calibration as the next slice; it is specified as `P4a`
 in the roadmap document above.
 
+### P4a completed locally with real-app smoke evidence
+
+What landed in the local slice:
+
+- adds `crates/auv-game-osu/src/projection.rs`
+- projects typed dispatch clicks through `PlayfieldProjection` instead of
+  sending raw 512x384 playfield coordinates directly as window coordinates
+- records `projection.json` as a benchmark artifact and stages it through the
+  existing recorded-run path in `src/osu.rs`
+- corrects the P4a artifact semantics so `projection.json` stores capture pixel
+  space parameters when capture evidence exists, instead of incorrectly leaving
+  window-space values in the artifact
+
+Validation passed locally for the landed P4a code:
+
+- `cargo fmt --check`
+- `cargo check -p auv-game-osu --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
+- `cargo test -p auv-game-osu --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
+- `cargo build --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
+- `git -C /Users/liuziheng/https-github-com-moeru-ai-auv diff --check`
+
+Real-app smoke rerun passed against visible local `osu!`:
+
+- run id: `run_1781296969595_4256_0`
+- output dir: `.tmp-osu-dispatch-p4ab-closeout`
+- `verificationCapturedActions: 1`
+- `verificationMissingFrames: 0`
+- staged projection artifact values:
+  - `capture_width = 1512`
+  - `capture_height = 949`
+  - `scale_x = scale_y = 2.4713541666666665`
+  - `offset_x = 123.33333333333337`
+  - `offset_y = 0.0`
+  - `match_radius_px = 79.083336`
+  - `derivation_method = "layout_rule"`
+  - `verification_reference = "before_dispatch capture smoke"`
+
+Manual visual check of `capture-object-0000-after-16ms.png` on that run showed
+visible hit feedback at the projected location, which is accepted evidence for
+this slice per the roadmap gate.
+
+### P4b completed locally on top of the P4a artifacts
+
+What landed in the local slice:
+
+- adapts `ProjectionArtifact` into `EvalProjection::PlayfieldToPixels`
+- feeds the P4a `projection.json` producer into `evaluate_visual_truth(...)`
+  without changing the scoring logic itself
+- writes `visual_eval_report.json` next to the other benchmark artifacts and
+  stages it through the same recorded-run path in `src/osu.rs`
+- keeps `VisualEvalReport.known_limits` honest about linear projection quality
+
+Additional local validation passed for P4b:
+
+- `cargo fmt --check`
+- `cargo check -p auv-game-osu --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
+- `cargo test -p auv-game-osu --manifest-path /Users/liuziheng/https-github-com-moeru-ai-auv/Cargo.toml`
+- `git -C /Users/liuziheng/https-github-com-moeru-ai-auv diff --check`
+
+P4b smoke evidence on the same run id `run_1781296969595_4256_0`:
+
+- `visual_eval_report.json` was written and staged
+- `spatial_unscored_frames = 0`
+- `spatial_missing_frames = 3`
+- `spatial_matched_frames = 0`
+- spatial outcomes are now real `Missing` results instead of `NotScored`, which
+  is the acceptance target for this slice when no detections are provided
+
+Collabi sessions used in this continuation:
+
+- `auv-game-osu-p4a`
+- `auv-game-osu-p4b`
+
 After push, the likely next slices are:
 
 1. acquire or train a real osu detector model that emits `DetectionSet` labels

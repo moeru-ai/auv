@@ -309,7 +309,10 @@ pub fn iou(a: &BoundingBox, b: &BoundingBox) -> f32 {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{CaptureFrame, ExpectedObjectTruth, MapSummary, VisualTruthFrame};
+  use crate::{
+    CaptureFrame, ExpectedObjectTruth, MapSummary, ProjectionArtifact, ProjectionBounds,
+    ProjectionDerivationMethod, VisualTruthFrame,
+  };
   use auv_inference_common::{Detection, ImageSize, ModelId};
 
   fn test_map_summary() -> MapSummary {
@@ -538,6 +541,55 @@ mod tests {
         .iter()
         .any(|limit| limit.contains("spatial scoring skipped"))
     );
+  }
+
+  #[test]
+  fn projection_artifact_adapter_scores_spatial_hit_and_miss() {
+    let manifest = manifest_with(vec![
+      circle_frame(0, CapturePhase::AfterDispatch, "frame-0.png", 100.0, 100.0),
+      circle_frame(1, CapturePhase::AfterDispatch, "frame-1.png", 100.0, 100.0),
+    ]);
+    let projection = ProjectionArtifact {
+      source_window_bounds: ProjectionBounds {
+        x: 0.0,
+        y: 0.0,
+        width: 640.0,
+        height: 480.0,
+      },
+      capture_bounds: None,
+      capture_width: Some(640),
+      capture_height: Some(480),
+      capture_scale_factor: Some(1.0),
+      scale_x: 1.0,
+      scale_y: 1.0,
+      offset_x: 0.0,
+      offset_y: 0.0,
+      match_radius_px: 20.0,
+      derivation_method: ProjectionDerivationMethod::LayoutRule,
+      verification_reference: Some("frame-0.png".to_string()),
+    }
+    .to_eval_projection()
+    .expect("eval projection");
+    let detections = vec![
+      frame_detections(
+        0,
+        CapturePhase::AfterDispatch,
+        "frame-0.png",
+        vec![detection("hit_circle", 90.0, 90.0, 110.0, 110.0)],
+      ),
+      frame_detections(
+        1,
+        CapturePhase::AfterDispatch,
+        "frame-1.png",
+        vec![detection("hit_circle", 290.0, 290.0, 310.0, 310.0)],
+      ),
+    ];
+
+    let report = evaluate_visual_truth(&manifest, &detections, &projection, &LabelMap::default());
+
+    assert_eq!(report.spatial_matched_frames, 1);
+    assert_eq!(report.spatial_missing_frames, 1);
+    assert_eq!(report.spatial_unscored_frames, 0);
   }
 
   #[test]

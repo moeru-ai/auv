@@ -7,6 +7,8 @@ use rosu_map::Beatmap;
 use rosu_map::section::hit_objects::HitObjectKind;
 use serde::{Deserialize, Serialize};
 
+use crate::projection::{PlayfieldProjection, ProjectionArtifact};
+use crate::visual_eval::{FrameDetections, LabelMap, VisualEvalReport, evaluate_visual_truth};
 use crate::visual_truth::{VisualTruthManifest, build_visual_truth_manifest};
 
 #[cfg(target_os = "macos")]
@@ -187,6 +189,8 @@ pub struct BenchmarkOutput {
   pub latency_report: LatencyReport,
   pub verification_summary: Option<VerificationSummary>,
   pub visual_truth_manifest: Option<VisualTruthManifest>,
+  pub projection: Option<ProjectionArtifact>,
+  pub visual_eval_report: Option<VisualEvalReport>,
   pub output_dir: PathBuf,
 }
 
@@ -214,13 +218,14 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
   }
 
   let map_summary = build_map_summary(&inputs.beatmap_path, &beatmap, &schedule);
-  let (dispatch_trace, capture_trace, verification_summary) = match inputs.run_mode {
+  let (dispatch_trace, capture_trace, verification_summary, projection) = match inputs.run_mode {
     RunMode::DryRun => (
       run_dry_schedule(&schedule, inputs.lead_in_ms),
       Vec::new(),
       None,
+      None,
     ),
-    RunMode::TypedDispatch => run_typed_dispatch(schedule.as_slice(), inputs)?,
+    RunMode::TypedDispatch => run_typed_dispatch(schedule.as_slice(), &map_summary, inputs)?,
   };
   let latency_report = build_latency_report(inputs.run_mode.clone(), &dispatch_trace);
   let visual_truth_manifest = if inputs.capture_verify {
@@ -232,6 +237,13 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
     )?)
   } else {
     None
+  };
+
+  let visual_eval_report = match (&visual_truth_manifest, &projection) {
+    (Some(manifest), Some(projection_artifact)) => {
+      Some(build_visual_eval_report(manifest, projection_artifact, &[])? )
+    }
+    _ => None,
   };
 
   write_json(
@@ -260,6 +272,12 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
       )?;
     }
   }
+  if let Some(projection) = &projection {
+    write_json(inputs.output_dir.join("projection.json"), projection)?;
+  }
+  if let Some(report) = &visual_eval_report {
+    write_json(inputs.output_dir.join("visual_eval_report.json"), report)?;
+  }
 
   Ok(BenchmarkOutput {
     map_summary,
@@ -269,8 +287,26 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
     latency_report,
     verification_summary,
     visual_truth_manifest,
+    projection,
+    visual_eval_report,
     output_dir: inputs.output_dir.clone(),
   })
+}
+
+fn build_visual_eval_report(
+  manifest: &VisualTruthManifest,
+  projection_artifact: &ProjectionArtifact,
+  detections_by_frame: &[FrameDetections],
+) -> OsuResult<VisualEvalReport> {
+  let projection = projection_artifact
+    .to_eval_projection()
+    .map_err(|error| format!("failed to adapt projection artifact for visual eval: {error}"))?;
+  Ok(evaluate_visual_truth(
+    manifest,
+    detections_by_frame,
+    &projection,
+    &LabelMap::default(),
+  ))
 }
 
 fn build_schedule(beatmap: &Beatmap) -> Vec<ScheduledAction> {
@@ -354,11 +390,13 @@ fn run_dry_schedule(schedule: &[ScheduledAction], lead_in_ms: u64) -> Vec<Dispat
 #[cfg(target_os = "macos")]
 fn run_typed_dispatch(
   schedule: &[ScheduledAction],
+  map_summary: &MapSummary,
   inputs: &BenchmarkInputs,
 ) -> OsuResult<(
   Vec<DispatchSample>,
   Vec<CaptureTraceSample>,
   Option<VerificationSummary>,
+  Option<ProjectionArtifact>,
 )> {
   let target_app = inputs
     .target_app
@@ -375,7 +413,15 @@ fn run_typed_dispatch(
         .title_contains("osu"),
     )
     .map_err(|error| error.to_string())?;
+  let window_projection = PlayfieldProjection::for_window(&window, map_summary.circle_size)?;
   let start = Instant::now() + Duration::from_millis(inputs.lead_in_ms);
+  let mut projection_artifact = Some(ProjectionArtifact::from_window_projection(
+    &window,
+    &window_projection,
+    inputs
+      .capture_verify
+      .then_some("before_dispatch capture smoke".to_string()),
+  ));
   let mut trace = Vec::with_capacity(dispatch_limit);
   let mut capture_trace = if inputs.capture_verify {
     Vec::with_capacity(dispatch_limit)
@@ -401,9 +447,28 @@ fn run_typed_dispatch(
         None,
         inputs.pre_capture_offset_ms,
       )?);
+      if projection_artifact.as_ref().is_some_and(|artifact| artifact.capture_bounds.is_none()) {
+        if let Some(capture) = captures.last() {
+          let capture_projection = PlayfieldProjection::for_capture(
+            f64::from(capture.width),
+            f64::from(capture.height),
+            map_summary.circle_size,
+          )?;
+          projection_artifact = projection_artifact.take().map(|artifact| {
+            artifact.with_capture(
+              window.frame,
+              capture.width,
+              capture.height,
+              f64::from(capture.width) / window.frame.size.width,
+              &capture_projection,
+            )
+          });
+        }
+      }
     }
     wait_until_due(start, action.scheduled_time_ms);
-    let window_point = WindowPoint::new(f64::from(action.x), f64::from(action.y));
+    let (window_x, window_y) = window_projection.to_window_point(action.x, action.y);
+    let window_point = WindowPoint::new(window_x, window_y);
     let result = session
       .window()
       .click(
@@ -462,7 +527,12 @@ fn run_typed_dispatch(
     .capture_verify
     .then(|| build_verification_summary(dispatch_limit, &capture_trace));
 
-  Ok((trace, capture_trace, verification_summary))
+  Ok((
+    trace,
+    capture_trace,
+    verification_summary,
+    projection_artifact,
+  ))
 }
 
 #[cfg(target_os = "macos")]
@@ -539,11 +609,13 @@ fn capture_to_sample(
 #[cfg(not(target_os = "macos"))]
 fn run_typed_dispatch(
   _schedule: &[ScheduledAction],
+  _map_summary: &MapSummary,
   _inputs: &BenchmarkInputs,
 ) -> OsuResult<(
   Vec<DispatchSample>,
   Vec<CaptureTraceSample>,
   Option<VerificationSummary>,
+  Option<ProjectionArtifact>,
 )> {
   Err("typed dispatch is currently implemented only for macOS".to_string())
 }
@@ -699,6 +771,142 @@ fn default_post_capture_offsets_ms() -> Vec<u64> {
 mod tests {
   use super::*;
   use auv_driver::{InputActionResult, InputDeliveryPath};
+  use auv_inference_common::{BoundingBox, Detection, DetectionSet, ImageSize, ModelId};
+
+  fn sample_visual_truth_manifest() -> VisualTruthManifest {
+    VisualTruthManifest {
+      schema_version: 1,
+      beatmap_path: "map.osu".to_string(),
+      map_summary: MapSummary {
+        beatmap_path: "map.osu".to_string(),
+        mode: 0,
+        total_objects: 1,
+        circle_count: 1,
+        slider_count: 0,
+        spinner_count: 0,
+        hold_count: 0,
+        first_object_time_ms: Some(100),
+        last_object_time_ms: Some(100),
+        approach_rate: 9.0,
+        overall_difficulty: 8.0,
+        circle_size: 4.0,
+        hp_drain_rate: 5.0,
+      },
+      frames: vec![crate::VisualTruthFrame {
+        object_index: 0,
+        scheduled_time_ms: 100,
+        actual_dispatch_time_ms: 104,
+        dispatch_error_ms: 4,
+        capture: crate::CaptureFrame {
+          phase: CapturePhase::AfterDispatch,
+          capture_time_ms: 120,
+          relative_to_scheduled_ms: 20,
+          relative_to_dispatch_ms: 16,
+          file_name: "frame-0.png".to_string(),
+          width: 640,
+          height: 480,
+          backend: "test".to_string(),
+          fallback_reason: None,
+        },
+        expected_object: crate::ExpectedObjectTruth {
+          object_kind: ObjectKind::Circle,
+          expected_playfield_x: 100.0,
+          expected_playfield_y: 100.0,
+          circle_size: 4.0,
+          approach_rate: 9.0,
+          overall_difficulty: 8.0,
+        },
+      }],
+    }
+  }
+
+  fn sample_projection_artifact() -> ProjectionArtifact {
+    ProjectionArtifact {
+      source_window_bounds: crate::ProjectionBounds {
+        x: 0.0,
+        y: 0.0,
+        width: 640.0,
+        height: 480.0,
+      },
+      capture_bounds: None,
+      capture_width: Some(640),
+      capture_height: Some(480),
+      capture_scale_factor: Some(1.0),
+      scale_x: 1.0,
+      scale_y: 1.0,
+      offset_x: 0.0,
+      offset_y: 0.0,
+      match_radius_px: 20.0,
+      derivation_method: crate::ProjectionDerivationMethod::LayoutRule,
+      verification_reference: Some("frame-0.png".to_string()),
+    }
+  }
+
+  fn sample_frame_detections() -> Vec<FrameDetections> {
+    vec![FrameDetections::new(
+      crate::FrameKey::from_parts(0, CapturePhase::AfterDispatch, "frame-0.png"),
+      DetectionSet {
+        model_id: ModelId("test-osu-detector".to_string()),
+        image_size: ImageSize {
+          width: 640,
+          height: 480,
+        },
+        detections: vec![Detection {
+          class_id: 0,
+          label: "hit_circle".to_string(),
+          confidence: 0.9,
+          bbox: BoundingBox {
+            x1: 90.0,
+            y1: 90.0,
+            x2: 110.0,
+            y2: 110.0,
+          },
+        }],
+      },
+    )]
+  }
+
+  #[test]
+  fn build_visual_eval_report_uses_projection_artifact() {
+    let report = build_visual_eval_report(
+      &sample_visual_truth_manifest(),
+      &sample_projection_artifact(),
+      &sample_frame_detections(),
+    )
+    .expect("visual eval report");
+
+    assert_eq!(report.total_frames, 1);
+    assert_eq!(report.label_matched_frames, 1);
+    assert_eq!(report.spatial_matched_frames, 1);
+    assert_eq!(report.spatial_missing_frames, 0);
+    assert_eq!(report.spatial_unscored_frames, 0);
+  }
+
+  #[test]
+  fn benchmark_writes_visual_eval_report_when_capture_verify_and_projection_exist() {
+    let temp_dir = std::env::temp_dir().join(format!(
+      "auv-osu-visual-eval-{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let report = build_visual_eval_report(
+      &sample_visual_truth_manifest(),
+      &sample_projection_artifact(),
+      &sample_frame_detections(),
+    )
+    .expect("visual eval report");
+
+    let report_path = temp_dir.join("visual_eval_report.json");
+    write_json(report_path.clone(), &report).expect("write visual eval report");
+
+    assert!(report_path.exists());
+
+    std::fs::remove_dir_all(&temp_dir).expect("remove temp dir");
+  }
 
   #[test]
   fn latency_report_aggregates_percentiles() {
