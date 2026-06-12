@@ -85,6 +85,7 @@ pub enum CliCommand {
     target_app: String,
     output_dir: Option<String>,
     dispatch_limit: Option<usize>,
+    capture_verify: bool,
   },
   Invoke {
     request: InvokeRequest,
@@ -199,7 +200,7 @@ USAGE
   auv-cli app probe <bundle-id> [--output-dir <dir>]
   auv-cli app analyze <probe-dir-or-probe-json>
   auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]
-  auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>]
+  auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
   auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
@@ -599,7 +600,7 @@ fn parse_osu_benchmark(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_osu_dispatch(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 5 {
     return Err(
-      "usage: auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>]".to_string(),
+      "usage: auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]".to_string(),
     );
   }
 
@@ -607,6 +608,7 @@ fn parse_osu_dispatch(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut target_app = None;
   let mut output_dir = None;
   let mut dispatch_limit = None;
+  let mut capture_verify = false;
   let mut index = 3;
   while index < arguments.len() {
     match arguments[index].as_str() {
@@ -635,6 +637,10 @@ fn parse_osu_dispatch(arguments: &[String]) -> AuvResult<CliCommand> {
         );
         index += 2;
       }
+      "--capture-verify" => {
+        capture_verify = true;
+        index += 1;
+      }
       other => return Err(format!("unexpected osu-dispatch argument {other}")),
     }
   }
@@ -646,6 +652,7 @@ fn parse_osu_dispatch(arguments: &[String]) -> AuvResult<CliCommand> {
     target_app,
     output_dir,
     dispatch_limit,
+    capture_verify,
   })
 }
 
@@ -1267,6 +1274,37 @@ mod tests {
 
     match command {
       CliCommand::PermissionCheck { json } => assert!(json),
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_osu_dispatch_with_capture_verify() {
+    let command = parse_cli(&[
+      "osu".to_string(),
+      "dispatch".to_string(),
+      "map.osu".to_string(),
+      "--target-app".to_string(),
+      "osu!".to_string(),
+      "--dispatch-limit".to_string(),
+      "3".to_string(),
+      "--capture-verify".to_string(),
+    ])
+    .expect("osu dispatch with capture verification should parse");
+
+    match command {
+      CliCommand::OsuBenchmarkDispatch {
+        beatmap_path,
+        target_app,
+        dispatch_limit,
+        capture_verify,
+        ..
+      } => {
+        assert_eq!(beatmap_path, "map.osu");
+        assert_eq!(target_app, "osu!");
+        assert_eq!(dispatch_limit, Some(3));
+        assert!(capture_verify);
+      }
       other => panic!("unexpected command: {other:?}"),
     }
   }

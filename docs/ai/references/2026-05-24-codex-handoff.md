@@ -1,194 +1,239 @@
-# Codex Handoff: Structured Observation Mainline
+# Codex Handoff: osu! Benchmark Mainline
 
-Date: 2026-05-24
+Date: 2026-06-12
 
-Status: current handoff for the next coding agent
+Status: current handoff for the next coding agent before session compaction
 
-Current HEAD when written: `37ff6e2`
+Current HEAD when written: `WORKTREE_DIRTY_P2_PENDING_COMMIT`
 
 ## Start Here
 
 Read these files first, in this order:
 
 1. `AGENTS.md`
-2. `docs/TERMS_AND_CONCEPTS.md`
-3. `docs/ai/references/2026-05-24-structured-observation-roadmap.md`
-4. `docs/ai/references/2026-05-23-surface-selector-contract.md`
-5. `docs/ai/references/2026-05-21-scroll-scan-design.md`
-6. `src/contract.rs`
-7. `src/scroll_scan.rs`
+2. `CLAUDE.md`
+3. `docs/TERMS_AND_CONCEPTS.md`
+4. `crates/auv-game-osu/src/benchmark.rs`
+5. `src/osu.rs`
+6. `src/cli.rs`
+7. `src/main.rs`
+8. `crates/auv-driver/src/input.rs`
+9. `crates/auv-driver-macos/src/session.rs`
 
-The current mainline is not "more OCR chasing". The work is now about making
-observations structured enough that candidates, actions, and verification can
-share one evidence chain.
+## Current Goal
+
+Active goal is still:
+
+```text
+AUV realtime benchmark lane for osu!, benchmark-first rather than YOLO-first
+```
+
+There is no new goal beyond this lane.
+
+Current shape of the lane:
+
+- `P0`: beatmap-driven offline scheduler benchmark — **done as merged skeleton**
+- `P1`: typed macOS window dispatch benchmark mode — **done as merged slice**
+- `P2`: capture / visual verification — **implemented locally and smoke-verified, pending commit**
+- `P3`: YOLO/CV as independent validation channel — **not started**
 
 ## Current Repo State
 
-`main` is expected to be synchronized with `origin/main` at:
+Current branch state when written:
 
 ```text
-37ff6e2 docs: add structured observation roadmap
+main...origin/main
+M crates/auv-game-osu/src/benchmark.rs
+M crates/auv-game-osu/src/lib.rs
+M docs/ai/references/2026-05-24-codex-handoff.md
+M src/cli.rs
+M src/main.rs
+M src/osu.rs
 ```
 
 Recent commits that matter:
 
 ```text
-37ff6e2 docs: add structured observation roadmap
-fa8bdca feat(scroll-scan): add directional boundary candidates
-b79fe78 fix(music): avoid activation before candidate row capture
-6455ace Merge pull request #5 from moeru-ai/scroll-scan-2026-05-21
+4d7f06a feat(osu): add typed dispatch benchmark mode
+54394b4 feat(osu): add beatmap benchmark skeleton
+d394430 fix(auv-game-balatro): accept main menu play restart button
+a8dd2c5 docs: move superpowers specs to references
 ```
 
-Before coding, verify the live state:
+Before coding again, verify live state:
 
 ```bash
 git status --short --branch
 git log --oneline --decorate -5
 ```
 
-If the branch is dirty, inspect the diff before editing. Do not assume the dirt
-belongs to you.
+When this handoff was written, the working tree was clean.
 
-## What Is Already Done
+## What Was Completed In This Session
 
-- `OperationResult`, `Candidate`, `CandidateRef`, `VerificationResult`,
-  `FailureLayer`, and v0 `SurfaceSelector` exist in `src/contract.rs`.
-- `music.search.results` and `music.result.play` form the first real
-  getter/action candidate loop.
-- Scroll scan exists and records page observations, hook decisions,
-  conservative observation clusters, and heuristic directional
-  `scroll_boundary_candidates`.
-- PR #5 is merged. The scroll-scan branch is no longer the active work branch.
-- `docs/TERMS_AND_CONCEPTS.md` now has a provisional `Recognition Result`
-  term.
+### P0 merged
 
-## Immediate Next Task
-
-Implement only this first:
+Commit:
 
 ```text
-feat(contract): add recognition result types
+54394b4 feat(osu): add beatmap benchmark skeleton
 ```
 
-Target file:
+What it did:
+
+- added `crates/auv-game-osu`
+- added `rosu-map` based local `.osu` parsing
+- generated deterministic action schedules from beatmap truth
+- added dry-run timing benchmark output
+- emitted artifacts:
+  - `parsed_map_summary.json`
+  - `action_schedule.json`
+  - `dispatch_trace.json`
+  - `latency_report.json`
+- added CLI entry:
 
 ```text
-src/contract.rs
+auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]
 ```
 
-Add contract-only Rust types and serde round-trip tests. Do not wire live
-drivers in this commit.
+### P1 merged
 
-The intended shape is documented in:
+Commit:
 
 ```text
-docs/ai/references/2026-05-24-structured-observation-roadmap.md
+4d7f06a feat(osu): add typed dispatch benchmark mode
 ```
 
-Important contract constraints:
+What it did:
 
-- `RecognitionResult` must carry `best`, `filtered`, `all`, `detail`,
-  `evidence`, and `known_limits`.
-- `RecognizedItem` must carry a serialized `box` field, provider-native detail,
-  optional text, optional provider score, and a stable item id.
-- Keep provider scores inside recognition detail/items. Do not add top-level
-  `Candidate.confidence`.
-- Keep this independent from live OCR/row commands until the type round trips
-  cleanly.
+- extended `RunMode` beyond `DryRun` to include typed dispatch
+- extended benchmark inputs to carry:
+  - target app
+  - dispatch limit
+- added typed macOS dispatch path through:
 
-## After That
+```text
+MacosDriver::new()
+  -> open_local()
+  -> session.window().resolve(...)
+  -> session.window().click(...)
+```
 
-Recommended commit order:
+- extended dispatch trace records with:
+  - `delivery_path`
+  - `fallback_reason`
+- added CLI entry:
 
-1. `feat(contract): add recognition result types`
-2. `feat(macos): emit recognition result artifacts for row detection`
-3. `feat(music): link candidates to recognition evidence`
-4. `feat(scroll-scan): corroborate boundary candidates with visual stability`
-5. `feat(scan): add structured hook decision parsing`
-6. `feat(skill): allow inline scan hook blocks`
-7. `docs(research): evaluate Maa recognition and pipeline patterns`
+```text
+auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>]
+```
 
-Do not skip straight to region segmentation, icon matching, YOLO, or a new
-orchestration language. That would be architecture cosplay before the evidence
-contract is stable.
+### P2 local and smoke-verified
 
-## Things Not To Do
+Commit:
 
-- Do not replace the recipe system yet.
-- Do not introduce JS orchestration yet.
-- Do not add DOM/CDP selector support in this phase.
-- Do not make scroll scan music-player-specific.
-- Do not claim heuristic scroll boundaries are proven top/bottom detection.
-- Do not remove existing text artifacts or CLI output when adding structured
-  artifacts; add the structured artifact alongside them.
-- Do not reopen the old QQ Music Chinese OCR-anchor fight unless a fresh task
-  explicitly asks for it.
+```text
+pending local commit
+```
 
-## Validation Commands
+What it does:
 
-For Rust-touching changes, run:
+- extends typed dispatch benchmark inputs with `capture_verify`
+- captures window evidence around each dispatched action
+- emits new artifacts:
+  - `capture_trace.json`
+  - `verification_summary.json`
+  - staged `capture-object-*.png` frame evidence
+- stages both JSON and PNG evidence into the normal recorded run artifact layout
+- extends CLI entry:
+
+```text
+auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
+```
+
+Smoke verification completed locally against installed `osu!.app` and a real local beatmap file.
+
+- `src/osu.rs` wraps benchmark execution through `Runtime::run_recorded_operation(...)`
+- artifacts are staged into the normal `.auv/runs/<run_id>/` layout
+- inspect/read surfaces remain reusable without a special osu persistence path
+
+This preserves the active AUV core lane instead of forking a private benchmark recorder.
+
+## Verification Already Run
+
+The following checks passed for the local P2 state:
 
 ```bash
 cargo fmt --check
 cargo check
 cargo test
+cargo build
 git diff --check
-cargo run --quiet -- list-commands
-cargo run --quiet -- skill cases list
+cargo run -- help | rg "osu benchmark|osu dispatch"
+cargo run -- osu benchmark <beatmap.osu> [--output-dir <dir>]
+cargo run -- osu dispatch <local beatmap> --target-app "osu!" --dispatch-limit 1 --capture-verify --output-dir .tmp-osu-dispatch-p2
+auv-cli inspect run_1781276425182_80682_0
 ```
 
-The former bundle-list validation command was retired on 2026-06-11.
+## Collabi State
 
-For docs-only changes, at minimum run:
+Collabi was used during this lane.
 
-```bash
-git diff --check
+Active session:
+
+```text
+auv-game-osu-p0
 ```
+
+Claim used for the owned path set:
+
+```text
+auv-game-osu-p0-impl
+```
+
+The session was updated after both merged slices.
+
+## Current Boundaries
+
+Still true:
+
+- benchmark-first, not YOLO-first
+- strongest available signal wins
+- `.osu` beatmap truth remains the primary source for scheduling
+- no online or ranked automation
+- no memory reader dependency in the merged state
+- capture verification now exists as a separate evidence channel around typed dispatch
+- YOLO/CV control path still does not exist
+- osu-specific logic remains in `crates/auv-game-osu`, not in generic core runtime modules
+
+## Next Single Best Step
+
+Do not open a new goal.
+
+Next step is one of these, with `P2` currently the most direct forward move:
+
+1. `P2`: add timestamped capture / visual verification around typed dispatch
+2. alternatively thicken `P0` reporting/schema without changing the truth model
+
+If continuing with `P2`, preserve these rules:
+
+- capture is a separate evidence channel, not the first truth source
+- keep typed dispatch as the execution path
+- do not turn this into YOLO-first control
 
 ## Useful Mental Model
 
-AUV should return structured state, candidates, and verification results, not
-raw coordinates or pure CLI text.
-
-The target architecture is:
+The lane now proves two different things in sequence:
 
 ```text
-getter:
-  search.results
-  playlists.list
-  resources.snapshot
-
-action:
-  candidate.select
-  song.play
-  panel.open
-
-verification:
-  stateChanged
-  semanticMatched
-  activationOnly
-  failedWithEvidence
+P0: can AUV derive a deterministic action timeline from structured beatmap truth?
+P1: can AUV send real typed macOS window clicks on that timeline and record delivery facts?
 ```
 
-The next implementation work is the observation layer that makes this possible:
+What is still unproven:
 
 ```text
-raw provider output -> RecognitionResult -> Candidate -> CandidateRef
--> action -> VerificationResult
+can AUV capture and correlate visual feedback against those actions?
 ```
 
-## Maa Context
-
-MaaFramework links mentioned in chat are not verified project facts. Treat them
-as research inputs only.
-
-Useful ideas to verify later:
-
-- recognizer output with box + detail
-- runtime cache lookup by id
-- task/pipeline override as scoped execution context
-- wait/stability checks before/after actions
-- debugger/runtime visualization
-
-Do not copy Maa naming or protocol shapes before reading upstream source and
-writing a short research note.
+That is the natural P2 question.

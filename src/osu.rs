@@ -48,14 +48,31 @@ pub fn run_osu_benchmark_with_inputs(
           "action_schedule.json",
           "dispatch_trace.json",
           "latency_report.json",
+          "capture_trace.json",
+          "verification_summary.json",
         ] {
           let artifact_path = result.output_dir.join(artifact_name);
-          context.stage_artifact_file(
-            "osu-benchmark",
-            &artifact_path,
-            artifact_name,
-            Some(format!("osu benchmark artifact {artifact_name}")),
-          )?;
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              "osu-benchmark",
+              &artifact_path,
+              artifact_name,
+              Some(format!("osu benchmark artifact {artifact_name}")),
+            )?;
+          }
+        }
+        for capture in &result.capture_trace {
+          for sample in &capture.captures {
+            let artifact_path = result.output_dir.join(&sample.file_name);
+            if artifact_path.exists() {
+              context.stage_artifact_file(
+                "osu-benchmark-capture",
+                &artifact_path,
+                &sample.file_name,
+                Some(format!("osu benchmark capture {}", sample.file_name)),
+              )?;
+            }
+          }
         }
         Ok::<_, String>(())
       })?;

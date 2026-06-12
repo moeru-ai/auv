@@ -209,6 +209,7 @@ async fn run() -> Result<(), String> {
       target_app,
       output_dir,
       dispatch_limit,
+      capture_verify,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
       let beatmap_path = PathBuf::from(beatmap_path);
@@ -220,10 +221,15 @@ async fn run() -> Result<(), String> {
       if let Some(dispatch_limit) = dispatch_limit {
         inputs.dispatch_limit = Some(dispatch_limit);
       }
+      inputs.capture_verify = capture_verify;
       let output = auv_cli::osu::run_osu_benchmark_with_inputs(
         &runtime,
         inputs,
-        "osu benchmark typed dispatch",
+        if capture_verify {
+          "osu benchmark typed dispatch with capture verification"
+        } else {
+          "osu benchmark typed dispatch"
+        },
       )?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
@@ -231,6 +237,13 @@ async fn run() -> Result<(), String> {
       println!("objects: {}", output.value.map_summary.total_objects);
       println!("latencyP95Ms: {}", output.value.latency_report.p95_error_ms);
       println!("jitterMs: {}", output.value.latency_report.jitter_ms);
+      if let Some(summary) = &output.value.verification_summary {
+        println!(
+          "verificationCapturedActions: {}",
+          summary.captured_action_count
+        );
+        println!("verificationMissingFrames: {}", summary.missing_frame_count);
+      }
       println!("output: {}", output.value.output_dir.display());
     }
     CliCommand::Invoke { request, inspect } => {
