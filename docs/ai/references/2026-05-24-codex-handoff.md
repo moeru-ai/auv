@@ -356,10 +356,14 @@ Still true:
 
 Do not open a new goal.
 
-`P3a` and the first `P3` eval slice are now validated locally. Immediate next
-step is to push the local commit stack to `origin/main`, then stop and let the
-owner choose whether the next slice is detector acquisition/training or
-playfield-to-pixel calibration.
+The owner has approved the post-P3 ladder; per-slice scope, acceptance, and
+gates now live in
+`docs/ai/references/2026-06-13-osu-benchmark-p4-plus-roadmap.md`. Start at
+P4a there.
+
+`P3a` and the first `P3` eval slice are merged and pushed. The owner chose
+playfield-to-pixel calibration as the next slice; it is specified as `P4a`
+in the roadmap document above.
 
 After push, the likely next slices are:
 
