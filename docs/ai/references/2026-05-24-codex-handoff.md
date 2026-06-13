@@ -406,6 +406,62 @@ Manual visual check of `capture-object-0000-after-16ms.png` on that run showed
 visible hit feedback at the projected location, which is accepted evidence for
 this slice per the roadmap gate.
 
+### P8 bounded demo command completed locally
+
+What landed in the local P8 slice:
+
+- adds `auv-cli osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]`
+- routes the command through the existing osu runtime path in `src/main.rs` and `src/osu.rs`
+- reuses `BenchmarkInputs::typed_dispatch(...)` and the existing benchmark/capture/projection artifact path instead of adding a new executor or core contract
+- caps the default demo dispatch scope at a bounded local limit so this slice stays a low-difficulty demo command rather than pretending to be general gameplay automation
+- records demo-specific run metadata under `auv.osu.vision_demo` / `osu.vision_demo.inputs`
+- follow-up refinement keeps the same command surface but now emits a smoke-oriented `evidence_summary.json` artifact and matching stdout evidence fields instead of pretending to be a formal acceptance contract
+
+Validation completed locally so far:
+
+- `cargo fmt --check`
+- `cargo check`
+- `cargo test`
+- `cargo test -p auv-cli parse_osu_vision_demo`
+- `cargo test -p auv-game-osu`
+- `cargo test -p auv-game-osu benchmark_writes_smoke_evidence_summary_without_capture_verify`
+- `git diff --check`
+
+Coordination note:
+
+- Collabi localhost startup was unavailable on `localhost:3000`, so login/check-in was completed against the remote writer API using the configured shared account before code edits continued.
+- Active session id: `auv-game-osu-p8`
+
+Current slice status:
+
+- code path and artifact wiring are complete locally
+- parser/build/test validation passed locally
+- one earlier local runtime smoke failed honestly because selector `"osu!"` could not resolve a visible app window; recorded run id: `run_1781353198422_32066_0`
+- one local runtime smoke then succeeded after the local `osu!` window was visible; recorded run id: `run_1781353335250_32172_0`
+- a second successful bounded smoke also succeeded after stdout refinement; recorded run id: `run_1781354449040_32632_0`
+- the real-app closeout smoke now also succeeded in the current session; recorded run id: `run_1781359194811_47312_0`
+- closeout smoke summary reported:
+  - `dispatchSamples = 2`
+  - `captureArtifacts = 2`
+  - `evidenceNotes = 2 scheduled actions missed their target time`
+  - `hasEvidenceArtifact = true`
+  - `hasProjectionArtifact = true`
+  - `hasVisualTruthManifest = true`
+  - `verificationCapturedActions = 2`
+  - `verificationMissingFrames = 0`
+- this slice still does **not** add detector inference, training, ranked automation, or a new architecture path
+
+Interpretation:
+
+- P8 is completed locally for the bounded demo command
+- this does **not** mean detector-backed live control exists, and it does **not** mean beatmap-truth-free execution exists
+- any broader post-P8 detector/live-control slice still needs separate approval and evidence
+
+Open follow-up observations, not started:
+
+- The closeout smoke still reports `evidenceNotes = 2 scheduled actions missed their target time`, so stronger latency/health goals would need a separate follow-up slice rather than being folded into this bounded demo closeout.
+- If future P8 work removes beatmap-truth scheduling entirely, that must be an explicitly approved follow-up slice rather than being implied by this command wrapper.
+
 ### P7 fixture stage completed locally with offline detection-eval evidence
 
 What landed in the local P7 fixture-stage slice:

@@ -5,10 +5,10 @@ pub mod visual_eval;
 pub mod visual_truth;
 
 pub use benchmark::{
-  BenchmarkInputs, BenchmarkOutput, CapturePhase, CaptureSample, CaptureTraceSample,
-  DetectionEvalInputs, DetectionEvalManifest, DetectionEvalOutput, DispatchSample, LatencyReport,
-  MapSummary, ObjectKind, RunMode, ScheduledAction, VerificationSummary,
-  evaluate_detection_fixture, run_benchmark,
+  BenchmarkEvidenceSummary, BenchmarkInputs, BenchmarkOutput, CapturePhase, CaptureSample,
+  CaptureTraceSample, DetectionEvalInputs, DetectionEvalManifest, DetectionEvalOutput,
+  DispatchSample, LatencyReport, MapSummary, ObjectKind, RunMode, ScheduledAction,
+  VerificationSummary, evaluate_detection_fixture, run_benchmark,
 };
 pub use dataset::{
   DatasetExportInputs, DatasetExportOutput, DatasetFrameRecord, DatasetLabelEntry, DatasetManifest,

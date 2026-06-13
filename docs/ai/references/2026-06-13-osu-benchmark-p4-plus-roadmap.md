@@ -324,14 +324,21 @@ detections into any control path.
 
 Gate: report both stages' status, stop.
 
-## P8: Vision-Only Low-Difficulty Demo (Parked)
+## P8: Vision-Only Low-Difficulty Demo
 
-Not approved by this document. It stays parked until the owner explicitly
-reopens it. If reopened, it is a demo lane: beatmap truth removed, detector
-plus capture drive a low-difficulty local map, with the explicit framing
-that this demonstrates the stack and does not define the architecture.
+Classification: approved feature after explicit owner re-approval in conversation.
 
-Recorded here only so nobody mistakes its absence for an oversight.
+Status: completed locally for the bounded demo command; broader detector/live-control work remains unclaimed and requires separate approval.
+
+This lane is only reopened narrowly for a local, low-difficulty demo command that reuses beatmap-truth scheduling as a bounded test harness. It does not claim detector-driven control, beatmap-truth removal from the loop, or a new product architecture.
+
+For the first slice, keep the scope narrow:
+- reuse the existing osu benchmark/runtime/artifact path
+- add a dedicated demo command surface only
+- keep dispatch bounded by explicit limits
+- do not add detector inference, model training, online/ranked automation, or new core contracts
+
+Any later detector/capture demo work requires separate evidence and explicit owner re-approval; current P8 evidence is limited to the bounded local demo command plus local code/test validation and one successful real-app closeout smoke.
 
 ---
 

@@ -298,6 +298,61 @@ async fn run() -> Result<(), String> {
       );
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::OsuVisionDemo {
+      beatmap_path,
+      target_app,
+      output_dir,
+      dispatch_limit,
+      capture_verify,
+    } => {
+      let runtime = build_default_runtime(project_root.clone())?;
+      let output = auv_cli::osu::run_osu_vision_demo(
+        &runtime,
+        PathBuf::from(beatmap_path),
+        target_app,
+        output_dir
+          .map(PathBuf::from)
+          .unwrap_or_else(|| temp_runtime_store_root().join("osu-vision-demo-output")),
+        dispatch_limit,
+        capture_verify,
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!("beatmap: {}", output.value.map_summary.beatmap_path);
+      println!("objects: {}", output.value.map_summary.total_objects);
+      println!("latencyP95Ms: {}", output.value.latency_report.p95_error_ms);
+      println!("jitterMs: {}", output.value.latency_report.jitter_ms);
+      println!("dispatchSamples: {}", output.value.dispatch_trace.len());
+      println!("captureArtifacts: {}", output.value.capture_trace.len());
+      println!(
+        "evidenceNotes: {}",
+        if output.value.evidence_summary.evidence_notes.is_empty() {
+          "none".to_string()
+        } else {
+          output.value.evidence_summary.evidence_notes.join(" | ")
+        }
+      );
+      println!(
+        "hasEvidenceArtifact: {}",
+        output.value.output_dir.join("evidence_summary.json").exists()
+      );
+      println!(
+        "hasProjectionArtifact: {}",
+        output.value.projection.as_ref().is_some()
+      );
+      println!(
+        "hasVisualTruthManifest: {}",
+        output.value.visual_truth_manifest.as_ref().is_some()
+      );
+      if let Some(summary) = &output.value.verification_summary {
+        println!(
+          "verificationCapturedActions: {}",
+          summary.captured_action_count
+        );
+        println!("verificationMissingFrames: {}", summary.missing_frame_count);
+      }
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::Invoke { request, inspect } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let result = runtime.invoke(request)?;

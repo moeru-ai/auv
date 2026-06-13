@@ -56,6 +56,7 @@ pub fn run_osu_benchmark_with_inputs(
           "verification_summary.json",
           "visual_truth_manifest.json",
           "projection.json",
+          "evidence_summary.json",
         ] {
           let artifact_path = result.output_dir.join(artifact_name);
           if artifact_path.exists() {
@@ -178,6 +179,76 @@ pub fn run_osu_detection_eval(
               artifact_name,
               Some(format!("osu detection eval artifact {artifact_name}")),
             )?;
+          }
+        }
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_osu_vision_demo(
+  runtime: &Runtime,
+  beatmap_path: PathBuf,
+  target_app: String,
+  output_dir: PathBuf,
+  dispatch_limit: Option<usize>,
+  capture_verify: bool,
+) -> AuvResult<RecordedOperationOutput<BenchmarkOutput>> {
+  let mut inputs =
+    BenchmarkInputs::typed_dispatch(beatmap_path.clone(), output_dir, target_app.clone());
+  inputs.dispatch_limit = Some(dispatch_limit.unwrap_or(8).min(8));
+  inputs.capture_verify = capture_verify;
+  // TODO(osu-p8): broader vision-only control policy is deferred until the owner approves a slice beyond this bounded local demo command.
+  runtime.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.osu.vision_demo"),
+    "osu vision-only low-difficulty demo",
+    |context| {
+      context.record_event(
+        "osu.vision_demo.inputs",
+        Some(format!(
+          "beatmap={} target_app={} dispatch_limit={} capture_verify={}",
+          beatmap_path.display(),
+          target_app,
+          inputs.dispatch_limit.unwrap_or(8),
+          inputs.capture_verify
+        )),
+      );
+      let result = run_benchmark(&inputs)?;
+      context.in_span("osu.vision_demo.artifacts", |context| {
+        for artifact_name in [
+          "parsed_map_summary.json",
+          "action_schedule.json",
+          "dispatch_trace.json",
+          "latency_report.json",
+          "capture_trace.json",
+          "verification_summary.json",
+          "visual_truth_manifest.json",
+          "projection.json",
+          "evidence_summary.json",
+        ] {
+          let artifact_path = result.output_dir.join(artifact_name);
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              "osu-vision-demo",
+              &artifact_path,
+              artifact_name,
+              Some(format!("osu vision demo artifact {artifact_name}")),
+            )?;
+          }
+        }
+        for capture in &result.capture_trace {
+          for sample in &capture.captures {
+            let artifact_path = result.output_dir.join(&sample.file_name);
+            if artifact_path.exists() {
+              context.stage_artifact_file(
+                "osu-vision-demo-capture",
+                &artifact_path,
+                &sample.file_name,
+                Some(format!("osu vision demo capture {}", sample.file_name)),
+              )?;
+            }
           }
         }
         Ok::<_, String>(())

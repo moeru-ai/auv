@@ -96,6 +96,13 @@ pub enum CliCommand {
     detections_path: String,
     output_dir: Option<String>,
   },
+  OsuVisionDemo {
+    beatmap_path: String,
+    target_app: String,
+    output_dir: Option<String>,
+    dispatch_limit: Option<usize>,
+    capture_verify: bool,
+  },
   Invoke {
     request: InvokeRequest,
     inspect: InspectClientOptions,
@@ -212,6 +219,7 @@ USAGE
   auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
   auv-cli osu export-dataset <run-artifact-dir> --output-dir <dir>
   auv-cli osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]
+  auv-cli osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
   auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
@@ -567,7 +575,10 @@ fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err("usage: auv-cli osu <benchmark|dispatch> ...".to_string());
+    return Err(
+      "usage: auv-cli osu <benchmark|dispatch|export-dataset|eval-detections|vision-demo> ..."
+        .to_string(),
+    );
   }
 
   match arguments[1].as_str() {
@@ -575,8 +586,9 @@ fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
     "dispatch" => parse_osu_dispatch(arguments),
     "export-dataset" => parse_osu_export_dataset(arguments),
     "eval-detections" => parse_osu_eval_detections(arguments),
+    "vision-demo" => parse_osu_vision_demo(arguments),
     other => Err(format!(
-      "unknown osu subcommand {other}; use `auv-cli osu benchmark`, `auv-cli osu dispatch`, `auv-cli osu export-dataset`, or `auv-cli osu eval-detections`"
+      "unknown osu subcommand {other}; use `auv-cli osu benchmark`, `auv-cli osu dispatch`, `auv-cli osu export-dataset`, `auv-cli osu eval-detections`, or `auv-cli osu vision-demo`"
     )),
   }
 }
@@ -733,6 +745,63 @@ fn parse_osu_eval_detections(arguments: &[String]) -> AuvResult<CliCommand> {
     run_artifact_dir,
     detections_path: detections_path.ok_or_else(|| "--detections is required".to_string())?,
     output_dir,
+  })
+}
+
+fn parse_osu_vision_demo(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 5 {
+    return Err(
+      "usage: auv-cli osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]".to_string(),
+    );
+  }
+
+  let beatmap_path = arguments[2].clone();
+  let mut target_app = None;
+  let mut output_dir = None;
+  let mut dispatch_limit = None;
+  let mut capture_verify = false;
+  let mut index = 3;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--target-app" => {
+        if index + 1 >= arguments.len() {
+          return Err("--target-app requires a value".to_string());
+        }
+        target_app = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      "--output-dir" => {
+        if index + 1 >= arguments.len() {
+          return Err("--output-dir requires a value".to_string());
+        }
+        output_dir = Some(arguments[index + 1].clone());
+        index += 2;
+      }
+      "--dispatch-limit" => {
+        if index + 1 >= arguments.len() {
+          return Err("--dispatch-limit requires a value".to_string());
+        }
+        dispatch_limit = Some(
+          arguments[index + 1]
+            .parse::<usize>()
+            .map_err(|error| format!("invalid --dispatch-limit: {error}"))?,
+        );
+        index += 2;
+      }
+      "--capture-verify" => {
+        capture_verify = true;
+        index += 1;
+      }
+      other => return Err(format!("unexpected osu-vision-demo argument {other}")),
+    }
+  }
+
+  Ok(CliCommand::OsuVisionDemo {
+    beatmap_path,
+    target_app: target_app.ok_or_else(|| "--target-app is required".to_string())?,
+    output_dir,
+    dispatch_limit,
+    capture_verify,
   })
 }
 
@@ -1230,6 +1299,101 @@ mod tests {
     match command {
       CliCommand::OsuEvalDetections { output_dir, .. } => {
         assert_eq!(output_dir, None);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_osu_vision_demo_command() {
+    let command = parse_cli(&[
+      "osu".to_string(),
+      "vision-demo".to_string(),
+      "/tmp/map.osu".to_string(),
+      "--target-app".to_string(),
+      "osu!".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/output".to_string(),
+      "--dispatch-limit".to_string(),
+      "3".to_string(),
+      "--capture-verify".to_string(),
+    ])
+    .expect("osu vision-demo command should parse");
+
+    match command {
+      CliCommand::OsuVisionDemo {
+        beatmap_path,
+        target_app,
+        output_dir,
+        dispatch_limit,
+        capture_verify,
+      } => {
+        assert_eq!(beatmap_path, "/tmp/map.osu");
+        assert_eq!(target_app, "osu!");
+        assert_eq!(output_dir.as_deref(), Some("/tmp/output"));
+        assert_eq!(dispatch_limit, Some(3));
+        assert!(capture_verify);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_osu_vision_demo_caps_dispatch_limit() {
+    let command = parse_cli(&[
+      "osu".to_string(),
+      "vision-demo".to_string(),
+      "/tmp/map.osu".to_string(),
+      "--target-app".to_string(),
+      "osu!".to_string(),
+      "--dispatch-limit".to_string(),
+      "99".to_string(),
+    ])
+    .expect("osu vision-demo command should parse with large dispatch limit");
+
+    match command {
+      CliCommand::OsuVisionDemo { dispatch_limit, .. } => {
+        assert_eq!(dispatch_limit, Some(99));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_osu_vision_demo_requires_target_app() {
+    let error = parse_cli(&[
+      "osu".to_string(),
+      "vision-demo".to_string(),
+      "/tmp/map.osu".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/output".to_string(),
+    ])
+    .expect_err("osu vision-demo should require --target-app");
+
+    assert!(error.contains("--target-app is required") || error.contains("usage:"));
+  }
+
+  #[test]
+  fn parse_osu_vision_demo_accepts_default_output_dir() {
+    let command = parse_cli(&[
+      "osu".to_string(),
+      "vision-demo".to_string(),
+      "/tmp/map.osu".to_string(),
+      "--target-app".to_string(),
+      "osu!".to_string(),
+    ])
+    .expect("osu vision-demo should allow omitted output dir");
+
+    match command {
+      CliCommand::OsuVisionDemo {
+        output_dir,
+        dispatch_limit,
+        capture_verify,
+        ..
+      } => {
+        assert_eq!(output_dir, None);
+        assert_eq!(dispatch_limit, None);
+        assert!(!capture_verify);
       }
       other => panic!("unexpected command: {other:?}"),
     }

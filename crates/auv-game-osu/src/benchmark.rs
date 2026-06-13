@@ -186,6 +186,20 @@ pub struct LatencyReport {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BenchmarkEvidenceSummary {
+  pub dispatch_sample_count: usize,
+  pub capture_artifact_count: usize,
+  pub has_projection_artifact: bool,
+  pub has_visual_truth_manifest: bool,
+  pub has_visual_eval_report: bool,
+  pub missed_schedule_count: usize,
+  pub verification_captured_action_count: usize,
+  pub verification_missing_frame_count: usize,
+  pub verification_suspicious_time_inversion_count: usize,
+  pub evidence_notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BenchmarkOutput {
   pub map_summary: MapSummary,
   pub schedule: Vec<ScheduledAction>,
@@ -196,6 +210,7 @@ pub struct BenchmarkOutput {
   pub visual_truth_manifest: Option<VisualTruthManifest>,
   pub projection: Option<ProjectionArtifact>,
   pub visual_eval_report: Option<VisualEvalReport>,
+  pub evidence_summary: BenchmarkEvidenceSummary,
   pub output_dir: PathBuf,
 }
 
@@ -274,6 +289,16 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
 
   let visual_eval_report = None;
 
+  let evidence_summary = build_evidence_summary(
+    &dispatch_trace,
+    &capture_trace,
+    &latency_report,
+    verification_summary.as_ref(),
+    visual_truth_manifest.as_ref(),
+    projection.as_ref(),
+    visual_eval_report.as_ref(),
+  );
+
   write_json(
     inputs.output_dir.join("parsed_map_summary.json"),
     &map_summary,
@@ -306,6 +331,10 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
   if let Some(report) = &visual_eval_report {
     write_json(inputs.output_dir.join("visual_eval_report.json"), report)?;
   }
+  write_json(
+    inputs.output_dir.join("evidence_summary.json"),
+    &evidence_summary,
+  )?;
 
   Ok(BenchmarkOutput {
     map_summary,
@@ -317,6 +346,7 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
     visual_truth_manifest,
     projection,
     visual_eval_report,
+    evidence_summary,
     output_dir: inputs.output_dir.clone(),
   })
 }
@@ -998,6 +1028,86 @@ fn build_verification_summary(
   }
 }
 
+fn build_evidence_summary(
+  dispatch_trace: &[DispatchSample],
+  capture_trace: &[CaptureTraceSample],
+  latency_report: &LatencyReport,
+  verification_summary: Option<&VerificationSummary>,
+  visual_truth_manifest: Option<&VisualTruthManifest>,
+  projection: Option<&ProjectionArtifact>,
+  visual_eval_report: Option<&VisualEvalReport>,
+) -> BenchmarkEvidenceSummary {
+  let mut evidence_notes = Vec::new();
+
+  if dispatch_trace.is_empty() {
+    evidence_notes.push("no dispatch samples were recorded".to_string());
+  }
+  if capture_trace.is_empty() {
+    evidence_notes.push("no capture artifacts were recorded".to_string());
+  }
+  if projection.is_none() {
+    evidence_notes.push("projection artifact is missing".to_string());
+  }
+  if visual_truth_manifest.is_none() {
+    evidence_notes.push("visual truth manifest is missing".to_string());
+  }
+  if latency_report.missed_schedule_count > 0 {
+    evidence_notes.push(format!(
+      "{} scheduled actions missed their target time",
+      latency_report.missed_schedule_count
+    ));
+  }
+
+  let (
+    verification_captured_action_count,
+    verification_missing_frame_count,
+    verification_suspicious_time_inversion_count,
+  ) = if let Some(summary) = verification_summary {
+    if summary.captured_action_count == 0 {
+      evidence_notes.push("verification captured zero actions".to_string());
+    }
+    if summary.missing_frame_count > 0 {
+      evidence_notes.push(format!(
+        "{} verification frames are missing",
+        summary.missing_frame_count
+      ));
+    }
+    if summary.suspicious_time_inversion_count > 0 {
+      evidence_notes.push(format!(
+        "{} verification captures inverted dispatch timing",
+        summary.suspicious_time_inversion_count
+      ));
+    }
+    (
+      summary.captured_action_count,
+      summary.missing_frame_count,
+      summary.suspicious_time_inversion_count,
+    )
+  } else {
+    evidence_notes.push("verification summary is missing".to_string());
+    (0, 0, 0)
+  };
+
+  if let Some(report) = visual_eval_report {
+    if report.total_frames == 0 {
+      evidence_notes.push("visual eval report contains zero frames".to_string());
+    }
+  }
+
+  BenchmarkEvidenceSummary {
+    dispatch_sample_count: dispatch_trace.len(),
+    capture_artifact_count: capture_trace.len(),
+    has_projection_artifact: projection.is_some(),
+    has_visual_truth_manifest: visual_truth_manifest.is_some(),
+    has_visual_eval_report: visual_eval_report.is_some(),
+    missed_schedule_count: latency_report.missed_schedule_count,
+    verification_captured_action_count,
+    verification_missing_frame_count,
+    verification_suspicious_time_inversion_count,
+    evidence_notes,
+  }
+}
+
 fn percentile(sorted_errors: &[i64], percentile: f64) -> i64 {
   if sorted_errors.is_empty() {
     return 0;
@@ -1232,6 +1342,37 @@ ApproachRate:7
     assert!(!output_dir.join("visual_eval_report.json").exists());
 
     std::fs::remove_file(&beatmap_path).expect("remove beatmap");
+    std::fs::remove_dir_all(&temp_dir).expect("remove temp dir");
+  }
+
+  #[test]
+  fn benchmark_writes_smoke_evidence_summary_without_capture_verify() {
+    let temp_dir = std::env::temp_dir().join(format!(
+      "auv-osu-evidence-summary-{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("unix epoch")
+        .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let beatmap_path = temp_dir.join("fixture.osu");
+    std::fs::write(&beatmap_path, TEST_BEATMAP).expect("write beatmap fixture");
+
+    let output_dir = temp_dir.join("output");
+    let result = run_benchmark(&BenchmarkInputs::new(
+      beatmap_path.clone(),
+      output_dir.clone(),
+    ))
+    .expect("benchmark should succeed");
+
+    assert!(result.verification_summary.is_none());
+    assert!(result.projection.is_none());
+    assert!(!result.evidence_summary.evidence_notes.is_empty());
+    assert!(output_dir.join("evidence_summary.json").exists());
+    assert!(!output_dir.join("verification_summary.json").exists());
+    assert!(!output_dir.join("projection.json").exists());
+
     std::fs::remove_dir_all(&temp_dir).expect("remove temp dir");
   }
 
