@@ -139,6 +139,25 @@ impl Runtime {
     crate::run_read::list_candidate_action_decision_lineage(self.recording.store(), run_id)
   }
 
+  pub fn run_recorded_operation<T, E, F>(
+    &self,
+    spec: crate::run_builder::RunSpec,
+    operation_label: impl Into<String>,
+    operation: F,
+  ) -> AuvResult<crate::recorded_operation::RecordedOperationOutput<T>>
+  where
+    E: std::fmt::Display,
+    F: FnOnce(&mut crate::recorded_operation::RecordedOperationContext<'_>) -> Result<T, E>,
+  {
+    let services = crate::recorded_operation::RecordedOperationServices {
+      recording: self.recording_backend(),
+      start_run: &|spec| self.start_run(spec),
+      finish_run: &|run, finish| self.finish_run(run, finish),
+      run_dir: &|run_id| self.run_dir(run_id),
+    };
+    crate::recorded_operation::run_recorded_operation(&services, spec, operation_label, operation)
+  }
+
   pub fn record_candidate_action_decision(
     &self,
     promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,

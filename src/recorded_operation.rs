@@ -12,7 +12,6 @@ use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, now_millis};
 use crate::recording::RunRecordingBackend;
 use crate::run_builder::{Attributes, RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
-use crate::runtime::Runtime;
 use crate::trace::{
   EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RunId, SPAN_API_VERSION, SpanRecordV1Alpha1,
   TraceState, TraceStatusCode, new_event_id, new_span_id,
@@ -232,87 +231,92 @@ pub struct RecordedOperationOutput<T> {
   pub run_dir: PathBuf,
 }
 
-impl Runtime {
-  pub fn run_recorded_operation<T, E, F>(
-    &self,
-    spec: RunSpec,
-    operation_label: impl Into<String>,
-    operation: F,
-  ) -> AuvResult<RecordedOperationOutput<T>>
-  where
-    E: Display,
-    F: FnOnce(&mut RecordedOperationContext<'_>) -> Result<T, E>,
-  {
-    let operation_label = operation_label.into();
-    let success_summary = format!("{operation_label} completed");
-    let failure_summary = format!("{operation_label} failed");
+pub struct RecordedOperationServices<'a> {
+  pub recording: &'a RunRecordingBackend,
+  pub start_run: &'a dyn Fn(RunSpec) -> AuvResult<RecordingRun>,
+  pub finish_run: &'a dyn Fn(RecordingRun, RunFinish) -> AuvResult<RunId>,
+  pub run_dir: &'a dyn Fn(&str) -> AuvResult<PathBuf>,
+}
 
-    let mut run = self.start_run(spec)?;
-    let root = run.root_span();
-    let run_id = run.id().clone();
-    let run_dir = self.run_dir(run_id.as_str())?;
+pub fn run_recorded_operation<T, E, F>(
+  services: &RecordedOperationServices<'_>,
+  spec: RunSpec,
+  operation_label: impl Into<String>,
+  operation: F,
+) -> AuvResult<RecordedOperationOutput<T>>
+where
+  E: Display,
+  F: FnOnce(&mut RecordedOperationContext<'_>) -> Result<T, E>,
+{
+  let operation_label = operation_label.into();
+  let success_summary = format!("{operation_label} completed");
+  let failure_summary = format!("{operation_label} failed");
 
-    record_operation_event(
-      &mut run,
-      &root,
-      "operation.started".to_string(),
-      Some(format!("recorded operation {operation_label} started")),
-    );
+  let mut run = (services.start_run)(spec)?;
+  let root = run.root_span();
+  let run_id = run.id().clone();
+  let run_dir = (services.run_dir)(run_id.as_str())?;
 
-    let result = {
-      let mut context = RecordedOperationContext {
-        recording: self.recording_backend(),
-        run: &mut run,
-        root: root.clone(),
-        current: root.clone(),
-      };
-      operation(&mut context).map_err(|error| error.to_string())
+  record_operation_event(
+    &mut run,
+    &root,
+    "operation.started".to_string(),
+    Some(format!("recorded operation {operation_label} started")),
+  );
+
+  let result = {
+    let mut context = RecordedOperationContext {
+      recording: services.recording,
+      run: &mut run,
+      root: root.clone(),
+      current: root.clone(),
     };
+    operation(&mut context).map_err(|error| error.to_string())
+  };
 
-    match result {
-      Ok(value) => {
-        record_operation_event(
-          &mut run,
-          &root,
-          "operation.completed".to_string(),
-          Some(success_summary.clone()),
-        );
-        self.finish_run(
-          run,
-          RunFinish {
-            status_code: TraceStatusCode::Ok,
-            summary: Some(success_summary),
-            failure: None,
-          },
-        )?;
-        Ok(RecordedOperationOutput {
-          value,
-          run_id,
-          run_dir,
-        })
+  match result {
+    Ok(value) => {
+      record_operation_event(
+        &mut run,
+        &root,
+        "operation.completed".to_string(),
+        Some(success_summary.clone()),
+      );
+      (services.finish_run)(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some(success_summary),
+          failure: None,
+        },
+      )?;
+      Ok(RecordedOperationOutput {
+        value,
+        run_id,
+        run_dir,
+      })
+    }
+    Err(error) => {
+      record_operation_event(
+        &mut run,
+        &root,
+        "operation.failed".to_string(),
+        Some(format!("{failure_summary}: {error}")),
+      );
+      let finish_result = (services.finish_run)(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Error,
+          summary: Some(failure_summary),
+          failure: Some(error.clone()),
+        },
+      );
+      if let Err(finish_error) = finish_result {
+        return Err(format!(
+          "{error}; additionally failed to persist failed run {run_id}: {finish_error}"
+        ));
       }
-      Err(error) => {
-        record_operation_event(
-          &mut run,
-          &root,
-          "operation.failed".to_string(),
-          Some(format!("{failure_summary}: {error}")),
-        );
-        let finish_result = self.finish_run(
-          run,
-          RunFinish {
-            status_code: TraceStatusCode::Error,
-            summary: Some(failure_summary),
-            failure: Some(error.clone()),
-          },
-        );
-        if let Err(finish_error) = finish_result {
-          return Err(format!(
-            "{error}; additionally failed to persist failed run {run_id}: {finish_error}"
-          ));
-        }
-        Err(format!("{error}; recorded run: {}", run_dir.display()))
-      }
+      Err(format!("{error}; recorded run: {}", run_dir.display()))
     }
   }
 }
