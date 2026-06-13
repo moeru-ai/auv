@@ -67,8 +67,11 @@ pub enum CliCommand {
     request: CandidateActionCommandRequest,
     inspect: InspectClientOptions,
   },
-  ListCommands,
+  ListCommandsTombstone,
   ListDrivers,
+  InvokeHelp {
+    command_id: Option<String>,
+  },
   AppProbe {
     bundle_id: String,
     output_dir: Option<String>,
@@ -173,7 +176,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "permissions" => parse_permissions(arguments),
     "--xtask" => parse_xtask(arguments),
     "candidate-action" => parse_candidate_action(arguments),
-    "list-commands" => Ok(CliCommand::ListCommands),
+    "list-commands" => Ok(CliCommand::ListCommandsTombstone),
     "list-drivers" => Ok(CliCommand::ListDrivers),
     "app" => parse_app(arguments),
     "osu" => parse_osu(arguments),
@@ -209,7 +212,6 @@ pub fn help_text() -> String {
   auv-cli prototype
 
 USAGE
-  auv-cli list-commands
   auv-cli list-drivers
   auv-cli doctor [--json]
   auv-cli permissions check [--json]
@@ -230,24 +232,24 @@ USAGE
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
   - The CLI is a thin frontend over the library runtime in src/lib.rs.
-  - `debug.captureDisplay`, `debug.listDisplays`, `debug.listWindows`, `debug.projectScreenshotPoint`, `debug.identifyPoint`, `debug.probeCoordinateReadiness`, `debug.captureAxTree`, `debug.probePermissions`, `debug.focusTextInput`, `debug.pressButton`, `verify.musicNowPlaying`, `verify.axText`, `debug.clickPoint`, and `debug.scrollPoint` are the current desktop donor entrypoints.
-  - `debug.overlayShowCursor`, `debug.overlayHideCursor`, and `debug.overlayShutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
-  - `debug.captureAxTree`, `debug.focusTextInput`, and `debug.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
+  - `invoke --help` is the discovery surface for canonical invoke commands in the current C1 scaffold.
+  - `overlay.showCursor`, `overlay.hideCursor`, and `overlay.shutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
+  - `window.captureAxTree`, `input.focusText`, and `input.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
   - `candidate-action run` is a frozen archived macOS AX copilot vertical kept for recovery and reference. It stays buildable, but it is not the active AUV roadmap or the default product path.
   - By default `candidate-action run` does not self-mint consent; without an external consent source it records promotion refusal honestly. `--dev-self-minted-consent` exists only for local development smoke. `--human-gesture-consent` mints one local human-approved consent through a native macOS approval prompt.
   - `candidate-action run --intent ...` remains proposer-only inside that archived vertical: it chooses one observed AX item and one action, records that proposal, then feeds the existing refusal-first candidate-action spine unchanged.
   - `--reveal_settle_ms <millis>` can be used to make the reveal step explicit instead of depending on hard-coded timing assumptions.
-  - `debug.typeText` supports `--replace_existing true`, `--submit_key return`, and `--submit_settle_ms 800` for repeatable text-entry flows.
-  - `debug.pressKey` supports both special keys like `Return` and shortcuts like `cmd+f`, with optional `--settle_ms`.
-  - `debug.clickWindowPoint` accepts either `--offset_x/--offset_y` or `--relative_x/--relative_y` against the target window bounds.
-  - `debug.teachClick` captures a target window before a human-taught click, opens a small Ready prompt, records the next click as global/window-local coordinates, then captures follow-up frames at `--first_after_ms` and `--second_after_ms` (defaults 150/250).
-  - `debug.findScreenText` and `debug.clickScreenText` use macOS Vision OCR over a captured screenshot and operate in screenshot-pixel anchors projected back to logical points.
-  - `debug.waitForScreenText` polls that same OCR path until a filtered anchor appears or the timeout expires; use it when result-page readiness is the real problem instead of guessing longer sleeps.
-  - `debug.findScreenRows`, `debug.waitForScreenRows`, and `debug.clickScreenRow` treat OCR observations as grouped visible rows, which is the current fallback direction when exact text anchors are visually present but not OCR-reliable.
-  - `debug.findImageText` runs the same OCR matching over an existing image artifact, which is useful for verifying captured evidence without recapturing the live desktop.
-  - `verify.musicNowPlaying` prefers AX tree matching for player-title verification, which is the current direction for native playback disambiguation.
-  - `verify.axText` is the generic AX-tree text verification contract for native apps with reliable text-bearing nodes.
-  - `debug.clickScreenText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
+  - `input.typeText` supports `--replace_existing true`, `--submit_key return`, and `--submit_settle_ms 800` for repeatable text-entry flows.
+  - `input.key` supports both special keys like `Return` and shortcuts like `cmd+f`, with optional `--settle_ms`.
+  - `input.clickWindowPoint` accepts either `--offset_x/--offset_y` or `--relative_x/--relative_y` against the target window bounds.
+  - `input.teachClick` captures a target window before a human-taught click, opens a small Ready prompt, records the next click as global/window-local coordinates, then captures follow-up frames at `--first_after_ms` and `--second_after_ms` (defaults 150/250).
+  - `screen.findText` and `screen.clickText` use macOS Vision OCR over a captured screenshot and operate in screenshot-pixel anchors projected back to logical points.
+  - `screen.waitForText` polls that same OCR path until a filtered anchor appears or the timeout expires; use it when result-page readiness is the real problem instead of guessing longer sleeps.
+  - `screen.findRows`, `screen.waitForRows`, and `screen.clickRow` treat OCR observations as grouped visible rows, which is the current fallback direction when exact text anchors are visually present but not OCR-reliable.
+  - `screen.findImageText` runs the same OCR matching over an existing image artifact, which is useful for verifying captured evidence without recapturing the live desktop.
+  - `mediaControl.nowPlaying` prefers AX tree matching for player-title verification, which is the current direction for native playback disambiguation.
+  - `window.verifyText` is the generic AX-tree text verification contract for native apps with reliable text-bearing nodes.
+  - `screen.clickText` supports `--match_index` and `--click_count` when the query resolves to multiple OCR anchors.
   - `app probe` is the deterministic raw-facts entrypoint for typed app-surface evidence; it records app identity plus runtime-backed surface probes into `.auv/app-probes/.../probe.json`.
   - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as typed evidence instead of free-form chat summaries.
 ",
@@ -941,12 +943,20 @@ fn parse_inspect_client_option(
 
 fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err(
-      "usage: auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string(),
-    );
+    return Ok(CliCommand::InvokeHelp { command_id: None });
+  }
+
+  if matches!(arguments[1].as_str(), "--help" | "-h" | "help") {
+    return Ok(CliCommand::InvokeHelp { command_id: None });
   }
 
   let command_id = arguments[1].clone();
+  if arguments.len() == 3 && matches!(arguments[2].as_str(), "--help" | "-h") {
+    return Ok(CliCommand::InvokeHelp {
+      command_id: Some(command_id),
+    });
+  }
+
   let mut target = ExecutionTarget::default();
   let mut inputs = BTreeMap::new();
   let mut dry_run = false;
@@ -1493,10 +1503,46 @@ mod tests {
   }
 
   #[test]
+  fn parse_list_commands_tombstone() {
+    let command = parse_cli(&["list-commands".to_string()])
+      .expect("list-commands should parse to tombstone command");
+    match command {
+      CliCommand::ListCommandsTombstone => {}
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_help_without_command_id() {
+    let command =
+      parse_cli(&["invoke".to_string(), "--help".to_string()]).expect("invoke --help should parse");
+    match command {
+      CliCommand::InvokeHelp { command_id } => assert!(command_id.is_none()),
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_help_with_command_id() {
+    let command = parse_cli(&[
+      "invoke".to_string(),
+      "window.capture".to_string(),
+      "--help".to_string(),
+    ])
+    .expect("invoke <command> --help should parse");
+    match command {
+      CliCommand::InvokeHelp { command_id } => {
+        assert_eq!(command_id.as_deref(), Some("window.capture"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
   fn parse_invoke_inspect_write_options() {
     let command = parse_cli(&[
       "invoke".to_string(),
-      "debug.captureDisplay".to_string(),
+      "window.capture".to_string(),
       "--store-root".to_string(),
       "/tmp/auv-store".to_string(),
       "--inspect-local-write".to_string(),
@@ -1510,7 +1556,7 @@ mod tests {
 
     match command {
       CliCommand::Invoke { request, inspect } => {
-        assert_eq!(request.command_id, "debug.captureDisplay");
+        assert_eq!(request.command_id, "window.capture");
         assert!(!request.dry_run);
         assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
         assert_eq!(inspect.local_write, InspectWriteSetting::Default);

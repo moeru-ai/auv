@@ -647,7 +647,7 @@ fn observe_request(options: &ScanWindowRegionOptions, page_index: usize) -> Invo
     options.max_observations.to_string(),
   );
   InvokeRequest {
-    command_id: "debug.observeWindowRegion".to_string(),
+    command_id: "window.observeRegion".to_string(),
     target: ExecutionTarget {
       application_id: options.target.application_id.clone(),
     },
@@ -665,7 +665,7 @@ fn scroll_request(options: &ScanWindowRegionOptions) -> InvokeRequest {
   );
   inputs.insert("settle_ms".to_string(), options.settle_ms.to_string());
   InvokeRequest {
-    command_id: "debug.scrollWindowRegion".to_string(),
+    command_id: "window.scrollRegion".to_string(),
     target: ExecutionTarget {
       application_id: options.target.application_id.clone(),
     },
@@ -3061,7 +3061,7 @@ mod tests {
       project_root,
       CommandCatalog::new(vec![
         CommandSpec {
-          id: "debug.observeWindowRegion",
+          id: "window.observeRegion",
           namespace: crate::model::CommandNamespace::Observe,
           summary: "Observe fixture region",
           driver_id: "test.scroll-scan.driver",
@@ -3070,7 +3070,7 @@ mod tests {
           max_disturbance: DisturbanceClass::None,
         },
         CommandSpec {
-          id: "debug.scrollWindowRegion",
+          id: "window.scrollRegion",
           namespace: crate::model::CommandNamespace::Action,
           summary: "Scroll fixture region",
           driver_id: "test.scroll-scan.driver",
@@ -3079,7 +3079,7 @@ mod tests {
           max_disturbance: DisturbanceClass::Pointer,
         },
         CommandSpec {
-          id: "debug.fixtureObserve",
+          id: "fixture.observe",
           namespace: crate::model::CommandNamespace::Observe,
           summary: "Return fixture hook decision",
           driver_id: "test.scroll-scan.driver",

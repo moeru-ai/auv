@@ -182,11 +182,11 @@ pub fn resolve_window_candidate(
         "selector"
       };
       return Err(format!(
-        "multiple window candidates matched {selector_detail}; inspect `debug.listWindows` and provide --window_ref or --native_window_id"
+        "multiple window candidates matched {selector_detail}; inspect `window.list` and provide --window_ref or --native_window_id"
       ));
     }
     return Err(
-      "no window candidate matched the explicit selector; inspect `debug.listWindows` and refresh --window_ref, --native_window_id, or --title"
+      "no window candidate matched the explicit selector; inspect `window.list` and refresh --window_ref, --native_window_id, or --title"
         .to_string(),
     );
   }
@@ -195,7 +195,7 @@ pub fn resolve_window_candidate(
     .into_iter()
     .find(|candidate| candidate.is_fully_contained_in_display)
     .ok_or_else(|| {
-      "could not resolve a fully contained visible window; inspect `debug.listWindows`".to_string()
+      "could not resolve a fully contained visible window; inspect `window.list`".to_string()
     })
 }
 
@@ -222,17 +222,17 @@ pub fn resolve_window_candidate_for_input(
         "selector"
       };
       return Err(format!(
-        "multiple window candidates matched {selector_detail}; inspect `debug.listWindows` and provide --window_ref or --native_window_id"
+        "multiple window candidates matched {selector_detail}; inspect `window.list` and provide --window_ref or --native_window_id"
       ));
     }
     return Err(
-      "no window candidate matched the explicit selector; inspect `debug.listWindows` and refresh --window_ref, --native_window_id, or --title"
+      "no window candidate matched the explicit selector; inspect `window.list` and refresh --window_ref, --native_window_id, or --title"
         .to_string(),
     );
   }
 
   candidates.into_iter().next().ok_or_else(|| {
-    "could not resolve a visible window for input; inspect `debug.listWindows`".to_string()
+    "could not resolve a visible window for input; inspect `window.list`".to_string()
   })
 }
 
@@ -282,7 +282,7 @@ pub fn window_capture_readiness_diagnostic(
     .collect::<Vec<_>>()
     .join("; ");
   format!(
-    "selected window window_{} is not fully contained by one display; windowBounds={}; displayBounds=[{}]; inspect `debug.listWindows` or choose a fully visible window",
+    "selected window window_{} is not fully contained by one display; windowBounds={}; displayBounds=[{}]; inspect `window.list` or choose a fully visible window",
     candidate.window_ref.window_number,
     render_observed_rect_compact(&candidate.window_ref.bounds),
     display_bounds

@@ -365,7 +365,7 @@ impl Runtime {
         self.invoke_direct_command_in_span(run, parent, request, direct_command)
       }
       None => Err(format!(
-        "unknown command {command_id}; use `list-commands` to inspect available entries"
+        "unknown command {command_id}; use `invoke --help` to inspect available entries"
       )),
     }
   }
@@ -1050,7 +1050,7 @@ mod tests {
   }
 
   #[test]
-  fn invoke_unknown_command_points_to_list_commands_only() {
+  fn invoke_unknown_command_points_to_invoke_help_only() {
     let project_root = temp_dir("unknown-command-no-bundle-hint");
     let runtime = Runtime::new_with_catalogs(
       project_root.clone(),
@@ -1070,7 +1070,8 @@ mod tests {
       .expect_err("unknown command should fail");
 
     assert!(error.contains("unknown command missing.command"));
-    assert!(error.contains("list-commands"));
+    assert!(error.contains("invoke --help"));
+    assert!(!error.contains("list-commands"));
     assert!(!error.contains("skill bundle"));
 
     let _ = fs::remove_dir_all(project_root);

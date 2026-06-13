@@ -47,7 +47,7 @@ pub(crate) fn capture_window_with_typed_session(
       return Err(window_capture_readiness_diagnostic(&candidate, &displays));
     }
     let native_window_id = candidate.native_window_id.as_deref().ok_or_else(|| {
-      "resolved window candidate has no native window id; inspect `debug.listWindows`".to_string()
+      "resolved window candidate has no native window id; inspect `window.list`".to_string()
     })?;
     let display_ref = candidate.display_ref.clone().ok_or_else(|| {
       "resolved window candidate is not fully contained by one display".to_string()

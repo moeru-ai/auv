@@ -261,7 +261,7 @@ pub(crate) fn click_window_text(call: &DriverCall) -> AuvResult<DriverResponse> 
     .unwrap_or(optional_i64(call, "match_index")?.unwrap_or(0).max(0) as usize);
   let matched = filtered.get(match_index).ok_or_else(|| {
     format!(
-      "no filtered OCR text match at index {} for query {} inside resolved window; inspect `debug.findWindowText`",
+      "no filtered OCR text match at index {} for query {} inside resolved window; inspect `window.findText`",
       match_index, query
     )
   })?;

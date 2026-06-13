@@ -3,7 +3,7 @@ use super::analysis::{
 };
 use super::infra::{invoke_probe_step, resolve_probe_path};
 use super::*;
-use crate::catalog::CommandCatalog;
+use crate::catalog::{CommandCatalog, default_command_catalog};
 use crate::contract::{
   ArtifactRef, CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause,
 };
@@ -578,4 +578,31 @@ fn test_runtime(project_root: PathBuf) -> Runtime {
     drivers,
     LocalStore::new(project_root).expect("store should initialize"),
   )
+}
+
+// Mirror of every command id `build_app_probe` invokes through the runtime.
+// `build_app_probe` keys steps by string command id, so a catalog rename that
+// misses these call sites compiles clean but aborts `app probe` at run time.
+// This list must stay in sync with `build_app_probe` in `src/app/mod.rs`.
+const APP_PROBE_COMMAND_IDS: &[&str] = &[
+  "app.probePermissions",
+  "display.list",
+  "display.probeCoordinateReadiness",
+  "app.activate",
+  "window.list",
+  "window.captureAxTree",
+  "window.capture",
+  "window.observeRegion",
+];
+
+#[test]
+fn app_probe_command_ids_resolve_in_default_catalog() {
+  let catalog = default_command_catalog();
+  for command_id in APP_PROBE_COMMAND_IDS {
+    assert!(
+      catalog.resolve(command_id).is_some(),
+      "app probe command id `{command_id}` is not in default_command_catalog(); \
+       a catalog rename left build_app_probe pointing at a removed id"
+    );
+  }
 }

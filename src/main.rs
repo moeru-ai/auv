@@ -8,6 +8,7 @@ use std::process;
 use std::sync::Arc;
 
 use auv_cli::app::{analyze_app_probe, probe_app};
+use auv_cli::catalog::render_invoke_help;
 use auv_cli::model::RunStatus;
 use auv_cli::scroll_scan::{
   ScanRegion, ScanTarget, ScanWindowRegionOptions, StopPolicy, scan_window_region,
@@ -129,25 +130,10 @@ async fn run() -> Result<(), String> {
       }
     }
     CliCommand::XtaskGenerateSwiftBridge => unreachable!("xtask is handled before runtime setup"),
-    CliCommand::ListCommands => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      for command in runtime.list_commands() {
-        println!(
-          "{} -> {}.{}",
-          command.id, command.driver_id, command.operation
-        );
-        println!("  {}", command.summary);
-        println!(
-          "  disturbance: {} (max: {})",
-          command
-            .disturbance_classes
-            .iter()
-            .map(|class| class.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
-          command.max_disturbance.as_str()
-        );
-      }
+    CliCommand::ListCommandsTombstone => {
+      return Err(
+        "`list-commands` has been removed; use `auv-cli invoke --help` instead".to_string(),
+      );
     }
     CliCommand::ListDrivers => {
       let runtime = build_default_runtime(project_root.clone())?;
@@ -157,6 +143,9 @@ async fn run() -> Result<(), String> {
         println!("  capabilities: {}", driver.capabilities.join(", "));
         println!("  donor boundary: {}", driver.donor_boundary);
       }
+    }
+    CliCommand::InvokeHelp { command_id } => {
+      print!("{}", render_invoke_help(command_id.as_deref())?);
     }
     CliCommand::AppProbe {
       bundle_id,
@@ -334,7 +323,11 @@ async fn run() -> Result<(), String> {
       );
       println!(
         "hasEvidenceArtifact: {}",
-        output.value.output_dir.join("evidence_summary.json").exists()
+        output
+          .value
+          .output_dir
+          .join("evidence_summary.json")
+          .exists()
       );
       println!(
         "hasProjectionArtifact: {}",

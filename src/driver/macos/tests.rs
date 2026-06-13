@@ -715,7 +715,7 @@ fn resolve_window_candidate_rejects_ambiguous_title() {
     .expect_err("ambiguous title should fail");
 
   assert!(error.contains("multiple window candidates matched title"));
-  assert!(error.contains("debug.listWindows"));
+  assert!(error.contains("window.list"));
 }
 
 #[test]
@@ -734,7 +734,7 @@ fn resolve_window_candidate_rejects_stale_explicit_selector() {
     .expect_err("stale selector should fail");
 
   assert!(error.contains("no window candidate matched the explicit selector"));
-  assert!(error.contains("debug.listWindows"));
+  assert!(error.contains("window.list"));
 }
 
 #[test]
@@ -850,7 +850,7 @@ fn window_capture_readiness_diagnostic_names_partial_window_and_display_bounds()
 #[test]
 fn retryable_window_capture_error_only_matches_transient_containment_failures() {
   assert!(super::support::is_retryable_window_capture_error(
-    "could not resolve a fully contained visible window; inspect `debug.listWindows`"
+    "could not resolve a fully contained visible window; inspect `window.list`"
   ));
   assert!(super::support::is_retryable_window_capture_error(
     "stale-window-ref: refreshed window is not fully contained by one display"

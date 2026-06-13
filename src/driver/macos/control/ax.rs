@@ -1012,7 +1012,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
     run_text_match_on_capture(call, &capture, &query)?;
   let matched_ocr = filtered.get(match_index).ok_or_else(|| {
     format!(
-      "no OCR text match at index {match_index} for query {query} inside resolved window; observed {} match(es). Inspect `debug.findWindowText`",
+      "no OCR text match at index {match_index} for query {query} inside resolved window; observed {} match(es). Inspect `window.findText`",
       filtered.len()
     )
   })?;
@@ -1033,7 +1033,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
   }
   let ax_node = find_ax_node_at_point(ax_snapshot, logical_x, logical_y).ok_or_else(|| {
     format!(
-      "no AX node found at OCR anchor ({logical_x:.3}, {logical_y:.3}) for text {:?}; the visible text may be canvas-rendered or outside the observed window's AX subtree. Try debug.clickWindowText if you accept cursor warp.",
+      "no AX node found at OCR anchor ({logical_x:.3}, {logical_y:.3}) for text {:?}; the visible text may be canvas-rendered or outside the observed window's AX subtree. Try window.clickText if you accept cursor warp.",
       matched_ocr.text
     )
   })?;
@@ -1137,7 +1137,7 @@ pub(crate) fn ax_click_window_text(call: &DriverCall) -> AuvResult<DriverRespons
       sanitize_file_component(&query)
     ),
     ocr_report,
-    "Vision OCR text-anchor report consumed by debug.axClickWindowText.",
+    "Vision OCR text-anchor report consumed by input.axClickWindowText.",
   )?;
   let screenshot_artifact = screenshot_artifact(&capture, &capture_label, "ax click window text");
   let mut overlay_artifacts = build_overlay_evidence_artifacts(OverlayEvidenceRequest {
