@@ -2,7 +2,7 @@
 
 Date: 2026-06-11
 
-Status: proposed
+Status: implemented for the handler-first invoke command boundary
 
 Scope classification: approved feature design
 
@@ -272,49 +272,65 @@ Do not design the REPL in this slice.
 Do not move run recording into `auv-cli-invoke`; that belongs to the later
 `auv-tracing-driver` split.
 
-## Metadata And Macro
+## Command Declaration Model
 
-Add a metadata-first command declaration model. The exact macro name is
-provisional, but the intended shape is:
+The first extraction introduced a command tree: each capability domain owns its
+subtree and exposes a `group()` function that returns a `CommandGroup`. The
+root registry composes domain groups, recursively flattens commands for lookup,
+and traverses the same tree for help rendering.
+
+The command tree is now handler-first. Each command is declared by annotating
+the function that handles the command, and the attribute generates the
+`*_invoke_command()` export used by the domain group.
+
+Current shape:
 
 ```rust
-invoke_command! {
-  id: "window.capture",
-  namespace: window,
-  driver: "macos.desktop",
-  operation: "capture_window",
-  summary: "Capture a resolved window and emit a coordinate contract.",
-  disturbance: [none, foregroundApp],
-  max_disturbance: foregroundApp,
-  args: [
-    target: string {
-      flag: "--target",
-      required: false,
-      help: "Target application id or bundle id."
-    },
-    windowTitle: string {
-      flag: "--window-title",
-      required: false,
-      help: "Window title substring to select."
-    },
-  ],
-  artifacts: ["window-capture", "capture-contract"],
-  verification: "capture-only; no semantic success claim",
+pub fn group() -> CommandGroup {
+  CommandGroup::new("screen", "SCREEN")
+    .command(capture_region_invoke_command())
+    .command(find_screen_text_invoke_command())
+}
+
+#[invoke_command(
+  id = "screen.captureRegion",
+  group = "screen",
+  summary = "Capture one display-contained region and emit a coordinate contract.",
+  driver = "macos.desktop",
+  operation = "capture_region",
+  args = REGION_ARGS,
+  disturbance = NONE_OR_FOREGROUND,
+  max_disturbance = OperationDisturbance::ForegroundApp,
+  artifacts = ["region-capture", "capture-contract"],
+  signals = [],
+  verification = "capture-only; no semantic success claim",
+)]
+pub fn capture_region(
+  context: InvokeContext<'_>,
+  command: &InvokeCommand,
+) -> InvokeDriverDispatch {
+  default_driver_dispatch(context, command)
 }
 ```
 
-The macro should generate metadata only:
+The attribute generates an `as_invoke_command`-style export as a free function
+named from the handler, for example `capture_region_invoke_command()`. The
+generated `InvokeCommand` carries both:
 
-- `InvokeCommandSpec`
+- `CommandGroup` and `CommandNode`
+- `InvokeCommand`
 - argument descriptors
 - help rendering inputs
 - disturbance metadata
 - optional artifact/signal/verification notes
+- a handler reference or equivalent resolved execution entrypoint
 
-It should not generate execution logic in the first slice. Execution remains
-registered through explicit handlers or the temporary legacy driver adapter.
-This keeps the PR bounded and avoids mixing command rename, typed dispatch,
-recording split, and REPL design.
+The purpose is direct traceability: reading one command module now shows the
+CLI command id, argument contract, driver mapping, artifact/signals contract,
+and the function that handles the command. The first macro slice deliberately
+does not solve typed args comprehensively. Commands still use the existing
+shared `ArgSpec` constants and default driver dispatch. Typed argument structs
+can follow once the handler boundary is stable.
 
 ## Architecture
 
@@ -332,6 +348,8 @@ Responsibilities:
 - render `invoke <command> --help`
 - parse command-specific invoke arguments into the existing request shape for
   commands still using the temporary driver adapter
+- own invoke command handler registration and dispatch once the handler-first
+  boundary lands
 - expose command lookup for CLI and MCP frontend use
 
 Non-responsibilities:
@@ -346,6 +364,12 @@ Non-responsibilities:
 The root runtime should stop owning command registry semantics. If runtime still
 executes the temporary adapter path, it should receive an already-resolved
 command descriptor or execution request from `auv-cli-invoke`.
+
+TODO(invoke-boundary): passing an already-resolved descriptor into runtime is
+deferred until CLI, MCP, app-probe, and scroll-scan share the next typed invoke
+request. The current extraction may still call the `auv-cli-invoke` registry
+from runtime as a temporary adapter, but no legacy command ids or alias tables
+should be reintroduced there.
 
 ## Migration Strategy
 
@@ -363,19 +387,27 @@ ids alive.
 
 Suggested first implementation slice:
 
-1. Add the new `InvokeCommandSpec` metadata model.
+1. Add the new `CommandGroup` / `CommandNode` / `InvokeCommand` metadata model.
 2. Add help rendering for `invoke --help` and `invoke <command> --help`.
 3. Rebuild the current root catalog as the new capability registry with renamed
-   ids, excluding app-specific `music.*`.
+   ids, excluding app-specific `music.*`. Each command domain should register
+   its own group instead of adding commands to one flat root table.
 4. Remove `list-commands` as a first-class command. A parser tombstone is
    acceptable only if it fails and points to `invoke --help`.
 5. Update CLI/MCP/runtime tests to use new ids.
 6. Delete `src/catalog.rs` after callers move to the new boundary.
+7. In a follow-up slice, replace runtime-side string lookup with an
+   already-resolved invoke command descriptor.
+8. Replace string-only `spec(...)` declarations with handler-owned
+   `#[invoke_command]` declarations that generate `as_invoke_command` exports.
 
 Exit criteria:
 
 - `src/catalog.rs` is deleted.
-- Root runtime no longer owns `CommandCatalog` or command id discovery.
+- Root runtime no longer owns `CommandCatalog` or command id discovery. Any
+  remaining runtime call into `auv-cli-invoke::default_registry()` must carry a
+  `TODO(invoke-boundary)` marker and be removed by the resolved-descriptor
+  follow-up.
 - `auv-cli invoke --help` is the command index.
 - `auv-cli invoke <command> --help` renders command-specific arguments,
   disturbance, artifacts/signals, and verification notes.
@@ -383,6 +415,9 @@ Exit criteria:
   help output, or positive tests.
 - `mediaControl.*` contains only generic media session controls and reports
   verified or inconclusive outcomes honestly.
+- A follow-up handler-first PR should make each invoke command traceable from
+  command id to handler function without searching for string operation names
+  through runtime dispatch.
 
 ## Verification
 

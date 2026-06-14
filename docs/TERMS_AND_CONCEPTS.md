@@ -498,16 +498,63 @@ The working crate name for this boundary is `auv-tracing-interaction`.
 Interaction tracing may call the driver tracing boundary, but it should not
 become a command catalog, recipe runtime, or platform driver implementation.
 
+## Operation Spec
+
+An operation spec is driver-owned metadata for one atomic capability that can
+be invoked by a frontend, runtime, or orchestration layer. It names the
+operation id, target driver id, driver operation name, disturbance profile,
+operation namespace, and short summary.
+
+An operation spec is not a CLI command and not a recipe step. CLI invoke may
+wrap an operation spec with argument/help metadata, and Rust orchestration may
+call the same operation contract without going through CLI parsing.
+
+In code, the current type is `auv_driver::OperationSpec`.
+
+## Operation Disturbance
+
+Operation disturbance is the coarse user-visible disturbance profile attached
+to an operation spec. It describes the possible effects of an operation, such
+as no disturbance, focus changes, foreground activation, keyboard input,
+clipboard use, or pointer movement.
+
+Operation disturbance is metadata for planning, help text, review, and future
+policy checks. It does not prove semantic success; the recorded operation
+result and verification evidence carry that.
+
+In code, the current type is `auv_driver::OperationDisturbance`.
+
+## Operation Namespace
+
+Operation namespace is a provisional taxonomy for grouping driver operations
+by execution family, such as observation, action, verification, scan, overlay,
+domain workflow, or test fixture.
+
+The namespace is set explicitly on operation specs rather than inferred from a
+CLI command id. This keeps future RPC, MCP, library, and CLI frontends from
+guessing behavior from string prefixes. The taxonomy is provisional and may
+grow as typed driver APIs replace more legacy string-operation adapters.
+
+In code, the current type is `auv_driver::OperationNamespace`.
+
 ## CLI Invoke Boundary
 
 The CLI invoke boundary owns ad-hoc command invocation as a frontend capability.
-It parses or receives invoke-style command ids and arguments, preserves legacy
-command compatibility where needed, and routes to typed handlers or temporary
-legacy adapters without owning driver execution or run recording.
+It parses or receives invoke-style command ids and arguments, then routes to
+typed handlers or temporary adapters without owning driver execution or run
+recording. The current invoke redesign is intentionally breaking: legacy
+bundle, recipe, skill, `debug.*`, `verify.*`, and app-specific `music.*`
+command ids should not be retained as executable compatibility aliases.
 
-The working crate name for this boundary is `auv-cli-invoke`. It is not the
-core runtime and should not own run recording semantics, recipe execution, or
-bundle discovery.
+The crate for this boundary is `auv-cli-invoke`. It owns invoke command
+registration, argument metadata, and help rendering. Commands are organized as
+a domain-owned command tree: each domain exposes its own group or subtree, while
+the registry composes groups and flattens them for lookup. Command declarations
+are handler-first: the annotated handler function generates the invoke command
+export, so command id, argument metadata, driver mapping, and handler identity
+stay together. It wraps driver operation specs but does not own the operation
+contract itself. It is not the core runtime and should not own run recording
+semantics, recipe execution, or bundle discovery.
 
 ## Run Recorder
 
