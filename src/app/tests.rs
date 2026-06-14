@@ -3,15 +3,12 @@ use super::analysis::{
 };
 use super::infra::{invoke_probe_step, resolve_probe_path};
 use super::*;
-use crate::catalog::{CommandCatalog, default_command_catalog};
 use crate::contract::{
   ArtifactRef, CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause,
 };
 use crate::driver::{Driver, DriverRegistry};
 use crate::model::RunStatus;
-use crate::model::{
-  CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact,
-};
+use crate::model::{DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact};
 use crate::run_builder::RunSpec;
 use crate::store::LocalStore;
 use crate::trace::RunType;
@@ -21,7 +18,7 @@ struct TestProbeDriver;
 impl Driver for TestProbeDriver {
   fn descriptor(&self) -> DriverDescriptor {
     DriverDescriptor {
-      id: "test.probe",
+      id: "fixture.observe",
       summary: "Test probe driver",
       capabilities: &["test"],
       donor_boundary: "test",
@@ -29,7 +26,11 @@ impl Driver for TestProbeDriver {
   }
 
   fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
-    if call.operation == "artifact" {
+    if call
+      .inputs
+      .get("test_mode")
+      .is_some_and(|mode| mode == "artifact")
+    {
       let first_path = call.working_directory.join("probe-first-artifact.txt");
       let second_path = call.working_directory.join("probe-second-artifact.txt");
       fs::write(&first_path, "first artifact").expect("first artifact should write");
@@ -120,7 +121,7 @@ fn invoke_probe_steps_share_parent_probe_run_id() {
     &mut run,
     &root_span,
     "first",
-    "test.first",
+    "fixture.observe",
     None,
     BTreeMap::new(),
     false,
@@ -131,7 +132,7 @@ fn invoke_probe_steps_share_parent_probe_run_id() {
     &mut run,
     &root_span,
     "second",
-    "test.second",
+    "fixture.observe",
     None,
     BTreeMap::new(),
     false,
@@ -185,9 +186,9 @@ fn invoke_probe_step_preserves_artifact_metadata_order() {
     &mut run,
     &root_span,
     "artifact-step",
-    "test.artifact",
+    "fixture.observe",
     None,
-    BTreeMap::new(),
+    BTreeMap::from([("test_mode".to_string(), "artifact".to_string())]),
     false,
   )
   .expect("artifact step should complete");
@@ -233,16 +234,8 @@ fn resolve_probe_ocr_sample_query_prefers_frontmost_window_or_app_name() {
   .expect("ax report should write");
 
   let steps = vec![
-    probe_step_fixture(
-      "observe-windows",
-      "debug.observeWindows",
-      vec![windows_path],
-    ),
-    probe_step_fixture(
-      "observe-window-tree",
-      "debug.observeWindowTree",
-      vec![ax_path],
-    ),
+    probe_step_fixture("observe-windows", "window.list", vec![windows_path]),
+    probe_step_fixture("observe-window-tree", "window.captureAxTree", vec![ax_path]),
   ];
   let app = app_identity_fixture("com.netease.163music", "NeteaseMusic");
 
@@ -288,11 +281,11 @@ fn build_app_analysis_tolerates_partial_probe_failures() {
     steps: vec![
       failed_probe_step_fixture(
         "probe-permissions",
-        "debug.probePermissions",
+        "app.probePermissions",
         "permission denied",
       ),
-      failed_probe_step_fixture("list-displays", "debug.listDisplays", "display unavailable"),
-      failed_probe_step_fixture("capture-ax-tree", "debug.captureAxTree", "AX unavailable"),
+      failed_probe_step_fixture("list-displays", "display.list", "display unavailable"),
+      failed_probe_step_fixture("capture-ax-tree", "window.captureAxTree", "AX unavailable"),
     ],
   };
 
@@ -321,6 +314,8 @@ fn summarize_failed_probe_steps_uses_failure_message() {
     project_root: PathBuf::from("/tmp/project"),
     output_dir: PathBuf::from("/tmp/project/.auv/app-probes/example"),
     app: app_identity_fixture("com.example.App", "Example"),
+    // Historical fixture ids: this test exercises probe report summarization,
+    // not generic invoke command resolution.
     steps: vec![
       probe_step_fixture("ok", "debug.ok", Vec::new()),
       failed_probe_step_fixture("failed", "debug.failed", "explicit failure"),
@@ -542,67 +537,10 @@ fn failed_probe_step_fixture(id: &str, command_id: &str, error: &str) -> AppProb
 }
 
 fn test_runtime(project_root: PathBuf) -> Runtime {
-  let commands = CommandCatalog::new(vec![
-    CommandSpec {
-      id: "test.first",
-      namespace: crate::model::CommandNamespace::Test,
-      summary: "Test first command",
-      driver_id: "test.probe",
-      operation: "first",
-      disturbance_classes: &[DisturbanceClass::None],
-      max_disturbance: DisturbanceClass::None,
-    },
-    CommandSpec {
-      id: "test.second",
-      namespace: crate::model::CommandNamespace::Test,
-      summary: "Test second command",
-      driver_id: "test.probe",
-      operation: "second",
-      disturbance_classes: &[DisturbanceClass::None],
-      max_disturbance: DisturbanceClass::None,
-    },
-    CommandSpec {
-      id: "test.artifact",
-      namespace: crate::model::CommandNamespace::Test,
-      summary: "Test artifact command",
-      driver_id: "test.probe",
-      operation: "artifact",
-      disturbance_classes: &[DisturbanceClass::None],
-      max_disturbance: DisturbanceClass::None,
-    },
-  ]);
   let drivers = DriverRegistry::new(vec![Box::new(TestProbeDriver)]);
   Runtime::new(
     project_root.clone(),
-    commands,
     drivers,
     LocalStore::new(project_root).expect("store should initialize"),
   )
-}
-
-// Mirror of every command id `build_app_probe` invokes through the runtime.
-// `build_app_probe` keys steps by string command id, so a catalog rename that
-// misses these call sites compiles clean but aborts `app probe` at run time.
-// This list must stay in sync with `build_app_probe` in `src/app/mod.rs`.
-const APP_PROBE_COMMAND_IDS: &[&str] = &[
-  "app.probePermissions",
-  "display.list",
-  "display.probeCoordinateReadiness",
-  "app.activate",
-  "window.list",
-  "window.captureAxTree",
-  "window.capture",
-  "window.observeRegion",
-];
-
-#[test]
-fn app_probe_command_ids_resolve_in_default_catalog() {
-  let catalog = default_command_catalog();
-  for command_id in APP_PROBE_COMMAND_IDS {
-    assert!(
-      catalog.resolve(command_id).is_some(),
-      "app probe command id `{command_id}` is not in default_command_catalog(); \
-       a catalog rename left build_app_probe pointing at a removed id"
-    );
-  }
 }

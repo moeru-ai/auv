@@ -427,9 +427,9 @@ pub struct ControlRequirements {
 /// # Seam role
 ///
 /// - **Produced by** any operation that wants to record a verification
-///   claim — `verify.*` commands, action commands that succeeded
-///   semantically, or observe commands that incidentally confirmed a
-///   property. Producers attach claims to
+///   claim — legacy `verify.*` operation-result producers, action commands
+///   that succeeded semantically, or observe commands that incidentally
+///   confirmed a property. Producers attach claims to
 ///   [`OperationResult::verifications`] (preferred) or wrap a single
 ///   claim into [`OperationOutput::Verification`] (legacy single-claim
 ///   shape).

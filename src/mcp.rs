@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use rmcp::{
   ErrorData as McpError, ServerHandler, ServiceExt,
   handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-  model::{CallToolResult, Content, ServerCapabilities, ServerInfo},
+  model::{CallToolResult, Content, JsonObject, ServerCapabilities, ServerInfo},
   tool, tool_handler, tool_router,
   transport::stdio,
 };
@@ -19,6 +20,7 @@ use crate::model::{ExecutionTarget, InvokeRequest};
 use crate::{
   build_default_runtime, build_default_store, build_runtime_with_store_root, model::now_millis,
 };
+use auv_cli_invoke::{ArgSpec, InvokeCommand, default_registry};
 
 #[derive(Clone)]
 pub struct McpServer {
@@ -53,7 +55,10 @@ impl McpServer {
 
 #[tool_router(router = tool_router)]
 impl McpServer {
-  #[tool(description = "Invoke one explicit AUV command id through the shared runtime.")]
+  #[tool(
+    description = "Invoke one explicit registry-backed AUV command id through the shared runtime. See input_schema.x-auv-commands for available command metadata.",
+    input_schema = invoke_tool_input_schema()
+  )]
   async fn invoke(
     &self,
     Parameters(req): Parameters<InvokeToolRequest>,
@@ -64,6 +69,7 @@ impl McpServer {
         command_id: req.command_id,
         target: ExecutionTarget {
           application_id: req.target.application_id,
+          target_label: req.target.target_label,
         },
         inputs: req.inputs,
         dry_run: req.dry_run,
@@ -150,9 +156,86 @@ impl ServerHandler for McpServer {
   }
 }
 
+fn invoke_tool_input_schema() -> Arc<JsonObject> {
+  let mut schema = rmcp::handler::server::common::cached_schema_for_type::<InvokeToolRequest>()
+    .as_ref()
+    .clone();
+  let registry = default_registry();
+  let command_ids = registry
+    .all()
+    .iter()
+    .map(|command| Value::String(command.operation.id.to_string()))
+    .collect::<Vec<_>>();
+
+  if let Some(command_id_schema) = schema
+    .get_mut("properties")
+    .and_then(Value::as_object_mut)
+    .and_then(|properties| properties.get_mut("command_id"))
+    .and_then(Value::as_object_mut)
+  {
+    command_id_schema.insert(
+      "description".to_string(),
+      Value::String(
+        "Registry command id. See x-auv-commands on this schema for summaries and argument metadata."
+          .to_string(),
+      ),
+    );
+    command_id_schema.insert("enum".to_string(), Value::Array(command_ids));
+  }
+
+  schema.insert(
+    "x-auv-commands".to_string(),
+    Value::Array(
+      registry
+        .all()
+        .iter()
+        .map(invoke_command_metadata)
+        .collect::<Vec<_>>(),
+    ),
+  );
+  Arc::new(schema)
+}
+
+fn invoke_command_metadata(command: &InvokeCommand) -> Value {
+  serde_json::json!({
+    "id": command.operation.id,
+    "namespace": command.namespace.as_str(),
+    "summary": command.operation.summary,
+    "driver_id": command.operation.driver_id,
+    "operation": command.operation.operation,
+    "max_disturbance": command.operation.max_disturbance.as_str(),
+    "arguments": command
+      .args
+      .iter()
+      .map(invoke_arg_metadata)
+      .collect::<Vec<_>>(),
+    "artifacts": command.artifacts,
+    "signals": command.signals,
+    "verification": command.verification,
+  })
+}
+
+fn invoke_arg_metadata(arg: &ArgSpec) -> Value {
+  serde_json::json!({
+    "flag": arg.flag,
+    "input_key": invoke_arg_input_key(arg.flag),
+    "value_name": arg.value_name,
+    "required": arg.required,
+    "help": arg.help,
+  })
+}
+
+fn invoke_arg_input_key(flag: &str) -> String {
+  match flag {
+    "--target" => "target.application_id".to_string(),
+    other => other.trim_start_matches("--").to_string(),
+  }
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 struct McpInvokeTarget {
   application_id: Option<String>,
+  target_label: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
@@ -358,6 +441,82 @@ mod tests {
     assert!(tool_names.contains(&"invoke"));
     assert!(tool_names.contains(&"run_inspect"));
     assert!(tool_names.contains(&"candidate_action_run"));
+
+    let invoke_tool = tools
+      .tools
+      .iter()
+      .find(|tool| tool.name.as_ref() == "invoke")
+      .expect("invoke tool should be listed");
+    let invoke_description = invoke_tool
+      .description
+      .as_ref()
+      .expect("invoke tool should have a description");
+    assert!(invoke_description.contains("registry"));
+    let command_id_schema = invoke_tool
+      .input_schema
+      .get("properties")
+      .and_then(|properties| properties.get("command_id"))
+      .expect("invoke schema should describe command_id");
+    let command_ids = command_id_schema
+      .get("enum")
+      .and_then(|value| value.as_array())
+      .expect("command_id schema should enumerate registry command ids");
+    assert!(command_ids.iter().any(|id| id == "fixture.observe"));
+    assert!(command_ids.iter().any(|id| id == "input.pressButton"));
+    assert!(!command_ids.iter().any(|id| id == "debug.captureWindow"));
+    assert!(!command_ids.iter().any(|id| id == "verify.axText"));
+    assert!(!command_ids.iter().any(|id| id == "music.result.play"));
+
+    let command_metadata = invoke_tool
+      .input_schema
+      .get("x-auv-commands")
+      .and_then(|value| value.as_array())
+      .expect("invoke schema should expose registry command metadata");
+    let metadata_ids = command_metadata
+      .iter()
+      .filter_map(|command| command.get("id").and_then(|value| value.as_str()))
+      .collect::<Vec<_>>();
+    assert!(!metadata_ids.iter().any(|id| id.starts_with("debug.")));
+    assert!(!metadata_ids.iter().any(|id| id.starts_with("verify.")));
+    assert!(!metadata_ids.iter().any(|id| id.starts_with("music.")));
+    let press_button_metadata = command_metadata
+      .iter()
+      .find(|command| {
+        command.get("id").and_then(|value| value.as_str()) == Some("input.pressButton")
+      })
+      .expect("input.pressButton metadata should be listed");
+    assert_eq!(
+      press_button_metadata
+        .get("namespace")
+        .and_then(|value| value.as_str()),
+      Some("input")
+    );
+    assert!(
+      press_button_metadata
+        .get("summary")
+        .and_then(|value| value.as_str())
+        .is_some_and(|summary| summary.contains("query"))
+    );
+    let press_button_args = press_button_metadata
+      .get("arguments")
+      .and_then(|value| value.as_array())
+      .expect("command metadata should expose argument specs");
+    assert!(press_button_args.iter().any(|arg| {
+      arg.get("flag").and_then(|value| value.as_str()) == Some("--query")
+        && arg.get("required").and_then(|value| value.as_bool()) == Some(true)
+    }));
+    let now_playing_metadata = command_metadata
+      .iter()
+      .find(|command| {
+        command.get("id").and_then(|value| value.as_str()) == Some("mediaControl.nowPlaying")
+      })
+      .expect("mediaControl.nowPlaying metadata should be listed");
+    assert_eq!(
+      now_playing_metadata
+        .get("namespace")
+        .and_then(|value| value.as_str()),
+      Some("mediaControl")
+    );
 
     let cli_runtime = crate::build_runtime_with_store_root(project_root, store_root.clone())
       .map_err(anyhow::Error::msg)?;

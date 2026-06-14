@@ -8,7 +8,6 @@ use std::process;
 use std::sync::Arc;
 
 use auv_cli::app::{analyze_app_probe, probe_app};
-use auv_cli::catalog::render_invoke_help;
 use auv_cli::model::RunStatus;
 use auv_cli::scroll_scan::{
   ScanRegion, ScanTarget, ScanWindowRegionOptions, StopPolicy, scan_window_region,
@@ -135,6 +134,19 @@ async fn run() -> Result<(), String> {
         "`list-commands` has been removed; use `auv-cli invoke --help` instead".to_string(),
       );
     }
+    CliCommand::InvokeHelp { command_id } => {
+      let registry = auv_cli_invoke::default_registry();
+      if let Some(command_id) = command_id {
+        let command = registry.resolve(&command_id).ok_or_else(|| {
+          format!(
+            "unknown command {command_id}; use `auv-cli invoke --help` to inspect available entries"
+          )
+        })?;
+        print!("{}", auv_cli_invoke::render_command_help(command));
+      } else {
+        print!("{}", auv_cli_invoke::render_help_index(&registry));
+      }
+    }
     CliCommand::ListDrivers => {
       let runtime = build_default_runtime(project_root.clone())?;
       for driver in runtime.list_drivers() {
@@ -143,9 +155,6 @@ async fn run() -> Result<(), String> {
         println!("  capabilities: {}", driver.capabilities.join(", "));
         println!("  donor boundary: {}", driver.donor_boundary);
       }
-    }
-    CliCommand::InvokeHelp { command_id } => {
-      print!("{}", render_invoke_help(command_id.as_deref())?);
     }
     CliCommand::AppProbe {
       bundle_id,
@@ -373,8 +382,8 @@ async fn run() -> Result<(), String> {
       }
     }
     CliCommand::Inspect { run_id } => {
-      let store = auv_cli::build_default_store(project_root.clone())?;
-      print!("{}", auv_cli::inspect::inspect_run(&store, &run_id)?);
+      let runtime = build_default_runtime(project_root.clone())?;
+      print!("{}", runtime.inspect(&run_id)?);
     }
     CliCommand::InspectServe { .. } => {
       unreachable!("inspect serve is handled before runtime setup")

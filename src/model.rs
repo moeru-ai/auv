@@ -11,93 +11,10 @@ pub type AuvResult<T> = Result<T, String>;
 
 static RUN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum DisturbanceClass {
-  None,
-  Focus,
-  ForegroundApp,
-  Keyboard,
-  Clipboard,
-  Pointer,
-}
-
-impl DisturbanceClass {
-  pub fn as_str(&self) -> &'static str {
-    match self {
-      Self::None => "none",
-      Self::Focus => "focus",
-      Self::ForegroundApp => "foreground_app",
-      Self::Keyboard => "keyboard",
-      Self::Clipboard => "clipboard",
-      Self::Pointer => "pointer",
-    }
-  }
-
-  pub fn parse(raw: &str) -> AuvResult<Self> {
-    match raw.trim() {
-      "none" => Ok(Self::None),
-      "focus" => Ok(Self::Focus),
-      "foreground_app" => Ok(Self::ForegroundApp),
-      "keyboard" => Ok(Self::Keyboard),
-      "clipboard" => Ok(Self::Clipboard),
-      "pointer" => Ok(Self::Pointer),
-      other => Err(format!(
-        "unknown disturbance class {other:?}; expected one of none, focus, foreground_app, keyboard, clipboard, pointer"
-      )),
-    }
-  }
-}
-
-#[derive(Clone, Debug)]
-pub struct CommandSpec {
-  pub id: &'static str,
-  pub summary: &'static str,
-  pub driver_id: &'static str,
-  pub operation: &'static str,
-  pub disturbance_classes: &'static [DisturbanceClass],
-  pub max_disturbance: DisturbanceClass,
-  /// Future RPC method family this command projects into. Set explicitly per
-  /// command rather than derived from the id so re-namings don't silently
-  /// reshuffle the protocol surface. See [`CommandNamespace`].
-  pub namespace: CommandNamespace,
-}
-
-/// Future RPC method family for a [`CommandSpec`]. AUV today exposes most
-/// capability through `debug.*` command ids, which is fine for development
-/// but is the wrong long-term surface. The namespace tag is the bridge: each
-/// existing command declares which native RPC family it belongs to, so a
-/// future RPC server can route by namespace + method without rewriting the
-/// catalog or guessing from id prefixes.
-///
-/// **Provisional.** The taxonomy may grow; pure metadata today, no behavior
-/// change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CommandNamespace {
-  /// Read-only observation of the device surface (capture, find, list, probe,
-  /// project, identify, wait, fixture).
-  Observe,
-  /// Mutating input or focus change (click, type, scroll-as-input, press,
-  /// paste, activate, focus).
-  Action,
-  /// Assertion / verification commands.
-  Verify,
-  /// Multi-page structured observation (reserved; today scroll_scan is a
-  /// runtime function, not a catalog command).
-  Scan,
-  /// Visual cursor / overlay presentation. Trust signal only; no semantic
-  /// effect on the target app.
-  Overlay,
-  /// Domain-typed workflow that consumes structured candidates/evidence
-  /// rather than dumping raw artifacts (e.g. `music.result.play`).
-  Domain,
-  /// Test fixture command. Should never appear in a production catalog.
-  Test,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct ExecutionTarget {
   pub application_id: Option<String>,
+  pub target_label: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -214,7 +131,7 @@ pub fn new_run_id() -> String {
 
 #[cfg(test)]
 mod tests {
-  use super::{DisturbanceClass, new_run_id};
+  use super::new_run_id;
 
   #[test]
   fn new_run_id_is_unique_within_process() {
@@ -222,17 +139,5 @@ mod tests {
     let second = new_run_id();
 
     assert_ne!(first, second);
-  }
-
-  #[test]
-  fn disturbance_class_parses_known_values() {
-    assert_eq!(
-      DisturbanceClass::parse("clipboard").expect("clipboard should parse"),
-      DisturbanceClass::Clipboard
-    );
-    assert_eq!(
-      DisturbanceClass::parse("pointer").expect("pointer should parse"),
-      DisturbanceClass::Pointer
-    );
   }
 }

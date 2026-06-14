@@ -656,6 +656,7 @@ fn observe_request(options: &ScanWindowRegionOptions, page_index: usize) -> Invo
     command_id: "window.observeRegion".to_string(),
     target: ExecutionTarget {
       application_id: options.target.application_id.clone(),
+      target_label: None,
     },
     inputs,
     dry_run: false,
@@ -674,6 +675,7 @@ fn scroll_request(options: &ScanWindowRegionOptions) -> InvokeRequest {
     command_id: "window.scrollRegion".to_string(),
     target: ExecutionTarget {
       application_id: options.target.application_id.clone(),
+      target_label: None,
     },
     inputs,
     dry_run: false,
@@ -1682,12 +1684,8 @@ mod tests {
 
   use serde_json::json;
 
-  use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
-  use crate::model::{
-    AuvResult, CommandSpec, DisturbanceClass, DriverCall, DriverDescriptor, DriverResponse,
-    ProducedArtifact,
-  };
+  use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact};
   use crate::store::LocalStore;
 
   static TEST_ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1697,7 +1695,7 @@ mod tests {
   impl Driver for ScrollScanFixtureDriver {
     fn descriptor(&self) -> DriverDescriptor {
       DriverDescriptor {
-        id: "test.scroll-scan.driver",
+        id: "macos.desktop",
         summary: "Fixture scroll-scan driver",
         capabilities: &["test.scroll_scan"],
         donor_boundary: "test-only",
@@ -3073,35 +3071,6 @@ mod tests {
   ) -> crate::runtime::Runtime {
     crate::runtime::Runtime::new(
       project_root,
-      CommandCatalog::new(vec![
-        CommandSpec {
-          id: "window.observeRegion",
-          namespace: crate::model::CommandNamespace::Observe,
-          summary: "Observe fixture region",
-          driver_id: "test.scroll-scan.driver",
-          operation: "observe_window_region",
-          disturbance_classes: &[DisturbanceClass::None],
-          max_disturbance: DisturbanceClass::None,
-        },
-        CommandSpec {
-          id: "window.scrollRegion",
-          namespace: crate::model::CommandNamespace::Action,
-          summary: "Scroll fixture region",
-          driver_id: "test.scroll-scan.driver",
-          operation: "scroll_window_region",
-          disturbance_classes: &[DisturbanceClass::Pointer],
-          max_disturbance: DisturbanceClass::Pointer,
-        },
-        CommandSpec {
-          id: "fixture.observe",
-          namespace: crate::model::CommandNamespace::Observe,
-          summary: "Return fixture hook decision",
-          driver_id: "test.scroll-scan.driver",
-          operation: "observe_fixture_scene",
-          disturbance_classes: &[DisturbanceClass::None],
-          max_disturbance: DisturbanceClass::None,
-        },
-      ]),
       DriverRegistry::new(vec![Box::new(ScrollScanFixtureDriver)]),
       LocalStore::new(store_root).expect("store should initialize"),
     )

@@ -2383,6 +2383,8 @@ mod tests {
       require_stable_text: true,
     };
     request.projection = crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
+    // Historical fixture operation id: this checks capture-backed recognition
+    // freshness, not generic invoke command resolution.
     request.freshness = Some(
       freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
         .expect("latest recognition is capture-backed"),
@@ -2457,6 +2459,8 @@ mod tests {
       require_stable_text: true,
     };
     request.projection = crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
+    // Historical fixture operation id: this checks capture-backed recognition
+    // freshness, not generic invoke command resolution.
     request.freshness = Some(
       freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
         .expect("latest recognition is capture-backed"),
@@ -4103,6 +4107,8 @@ mod tests {
     };
     promotion_request.projection =
       crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
+    // Historical fixture operation id: this checks capture-backed recognition
+    // freshness, not generic invoke command resolution.
     promotion_request.freshness = Some(
       freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
         .expect("latest recognition is capture-backed"),

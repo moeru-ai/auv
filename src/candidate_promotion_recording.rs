@@ -906,6 +906,8 @@ mod tests {
             reason: "smoke starts without caller-supplied projection".to_string(),
           };
           request.freshness = Some(
+            // Historical fixture operation id: freshness validation checks a
+            // capture-backed recognition lineage, not generic invoke lookup.
             freshness_from_capture_backed_recognition(
               &recognition,
               "debug.captureAxTree",
