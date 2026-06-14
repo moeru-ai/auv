@@ -8,6 +8,11 @@
 //!
 //! Boundary: this is intentionally workflow/app-scoped; it is not a generic
 //! cross-app "music automation" layer.
+//!
+//! NOTICE: Generic invoke dispatch no longer exposes these app workflow
+//! operations; the module remains compiled for historical tests until the
+//! app-local migration either moves or deletes it.
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
@@ -1298,6 +1303,7 @@ fn click_music_candidate_row(
     operation: "click_window_row".to_string(),
     target: ExecutionTarget {
       application_id: Some(app_id.to_string()),
+      target_label: None,
     },
     inputs,
     working_directory: call.working_directory.clone(),
@@ -1379,6 +1385,7 @@ fn press_music_play_button(call: &DriverCall, app_id: &str) -> AuvResult<DriverR
     operation: "click_screen_text".to_string(),
     target: ExecutionTarget {
       application_id: Some(app_id.to_string()),
+      target_label: None,
     },
     inputs,
     working_directory: call.working_directory.clone(),
@@ -1409,6 +1416,7 @@ fn verify_music_now_playing(
     operation: "verify_now_playing_title".to_string(),
     target: ExecutionTarget {
       application_id: Some(app_id.to_string()),
+      target_label: None,
     },
     inputs,
     working_directory: call.working_directory.clone(),
@@ -1718,6 +1726,7 @@ mod tests {
       operation: MUSIC_RESULT_PLAY_OPERATION_ID.to_string(),
       target: ExecutionTarget {
         application_id: Some("com.tencent.QQMusicMac".to_string()),
+        target_label: None,
       },
       inputs: BTreeMap::new(),
       working_directory: std::env::temp_dir(),

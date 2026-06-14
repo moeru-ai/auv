@@ -68,6 +68,9 @@ use auv_driver_macos::support::filter_windows_for_app;
 use auv_driver_macos::types::ObservedWindow;
 use auv_driver_macos::types::ResolvedAppRef;
 
+// NOTICE: These are durable OperationResult ids for typed verification
+// artifacts, not generic invoke command ids. The invoke registry no longer
+// exposes `verify.*`; keep these until the recording contract is renamed.
 const VERIFY_AX_TEXT_OPERATION_ID: &str = "verify.axText";
 const VERIFY_MUSIC_NOW_PLAYING_OPERATION_ID: &str = "verify.musicNowPlaying";
 
@@ -2240,6 +2243,7 @@ mod tests {
       operation: "verify_ax_text".to_string(),
       target: ExecutionTarget {
         application_id: Some("com.example.notes".to_string()),
+        target_label: None,
       },
       inputs: BTreeMap::new(),
       working_directory: std::path::PathBuf::from("."),

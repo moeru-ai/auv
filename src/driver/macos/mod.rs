@@ -2,7 +2,7 @@
 use super::Driver;
 use crate::model::{DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact, now_millis};
 
-// Legacy command adapter for the shared runtime/catalog surface.
+// Legacy command adapter for the shared runtime invoke-command surface.
 //
 // Platform-owned data and typed macOS driver/session APIs live in
 // `auv-driver-macos`. This module is intentionally the old compatibility edge:
@@ -18,6 +18,7 @@ pub(crate) mod capture;
 mod control;
 mod descriptor;
 mod dispatch;
+mod media_control;
 mod observe;
 mod overlay;
 pub(crate) mod support;

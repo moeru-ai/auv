@@ -7,6 +7,11 @@
 //! `RecognitionResult` artifact; this command reloads that artifact from
 //! run/artifact lineage, asserts exactly one `current/max` numeric reading in
 //! the best recognized item, and refuses on missing or ambiguous evidence.
+//!
+//! NOTICE: Generic invoke dispatch no longer exposes this recipe-era consumer;
+//! the module remains compiled for historical tests until an app-local
+//! migration either moves or deletes it.
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};

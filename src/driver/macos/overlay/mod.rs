@@ -719,7 +719,7 @@ pub(crate) fn overlay_hide_cursor(_call: &DriverCall) -> AuvResult<DriverRespons
 
 /// Wrapped click: shows overlay cursor, clicks, then hides overlay.
 ///
-/// Does NOT modify `debug.clickPoint` behavior. Flicker acceptability must be
+/// Does NOT modify `input.clickPoint` behavior. Flicker acceptability must be
 /// confirmed by manual observation before this is used on broader command paths.
 pub(crate) fn overlay_click_point(call: &DriverCall) -> AuvResult<DriverResponse> {
   let x = required_f64(call, "x")?;
