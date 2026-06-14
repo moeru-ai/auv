@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::{BlockPosition, MinecraftBlockTarget, MinecraftSpatialFrame};
+use crate::types::{
+  BlockPosition, MinecraftBlockTarget, MinecraftProjectedPoint, MinecraftSpatialFrame,
+  ProjectionVisibility,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -8,6 +11,28 @@ pub enum WorldDiffFailure {
   VerificationUnreliable,
   StateChangedNoMatch,
   SemanticMismatch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MismatchRefusalReason {
+  NotMinecraftWindow,
+  ScreenshotUnavailable,
+  ScreenshotUnbound,
+  CaptureSkewUnreliable,
+  ProjectedOutsideWindow,
+  TargetBehindCamera,
+  TargetOutOfFrustum,
+  TargetOccluded,
+  TelemetryUnreliable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MismatchRefusal {
+  pub refused: bool,
+  pub reason: Option<MismatchRefusalReason>,
+  pub basis_frame_id: Option<String>,
+  pub observed_block_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,6 +75,78 @@ impl WorldDiffVerdict {
       observed_block_id,
       observed_item_delta,
     }
+  }
+}
+
+pub fn evaluate_mismatch_refusal(
+  pre: &MinecraftSpatialFrame,
+  projected: &MinecraftProjectedPoint,
+  expected_target: &MinecraftBlockTarget,
+  screenshot_is_minecraft_window: bool,
+  max_capture_skew_ms: Option<i64>,
+) -> MismatchRefusal {
+  if !screenshot_is_minecraft_window {
+    return MismatchRefusal {
+      refused: true,
+      reason: Some(MismatchRefusalReason::NotMinecraftWindow),
+      basis_frame_id: Some(pre.spatial_frame_id.clone()),
+      observed_block_id: target_block_id(pre, expected_target.block_pos),
+    };
+  }
+
+  if pre.screenshot_artifact_ref.is_none() {
+    return MismatchRefusal {
+      refused: true,
+      reason: Some(MismatchRefusalReason::ScreenshotUnavailable),
+      basis_frame_id: Some(pre.spatial_frame_id.clone()),
+      observed_block_id: target_block_id(pre, expected_target.block_pos),
+    };
+  }
+
+  let Some(capture_skew_ms) = pre.mc_capture_skew_ms else {
+    return MismatchRefusal {
+      refused: true,
+      reason: Some(MismatchRefusalReason::ScreenshotUnbound),
+      basis_frame_id: Some(pre.spatial_frame_id.clone()),
+      observed_block_id: target_block_id(pre, expected_target.block_pos),
+    };
+  };
+
+  if let Some(limit_ms) = max_capture_skew_ms
+    && capture_skew_ms.abs() > limit_ms
+  {
+    return MismatchRefusal {
+      refused: true,
+      reason: Some(MismatchRefusalReason::CaptureSkewUnreliable),
+      basis_frame_id: Some(pre.spatial_frame_id.clone()),
+      observed_block_id: target_block_id(pre, expected_target.block_pos),
+    };
+  }
+
+  let reason = match projected.visibility {
+    ProjectionVisibility::Visible => {
+      if projected.screen_point.is_none() {
+        Some(MismatchRefusalReason::ProjectedOutsideWindow)
+      } else if let Some(hit) = &pre.raycast_hit {
+        if hit.block_pos != expected_target.block_pos {
+          Some(MismatchRefusalReason::TargetOccluded)
+        } else {
+          None
+        }
+      } else {
+        Some(MismatchRefusalReason::TelemetryUnreliable)
+      }
+    }
+    ProjectionVisibility::BehindCamera => Some(MismatchRefusalReason::TargetBehindCamera),
+    ProjectionVisibility::OutOfFrustum => Some(MismatchRefusalReason::TargetOutOfFrustum),
+    ProjectionVisibility::OutsideWindow => Some(MismatchRefusalReason::ProjectedOutsideWindow),
+  };
+
+  MismatchRefusal {
+    refused: reason.is_some(),
+    reason,
+    basis_frame_id: Some(pre.spatial_frame_id.clone()),
+    observed_block_id: target_block_id(pre, expected_target.block_pos),
   }
 }
 
@@ -166,6 +263,8 @@ fn is_air_block_id(block_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+  use auv_driver::geometry::Point;
+
   use super::*;
   use crate::types::{
     BlockFace, BlockPosition, InventorySummaryEntry, NearbyBlock, NearbyEntity, PlayerPose,
@@ -202,8 +301,8 @@ mod tests {
         entity_kind: "minecraft:pig".to_string(),
       }],
       inventory_summary,
-      screenshot_artifact_ref: None,
-      mc_capture_skew_ms: None,
+      screenshot_artifact_ref: Some("artifact://frame.png".to_string()),
+      mc_capture_skew_ms: Some(0),
     }
   }
 
@@ -220,6 +319,119 @@ mod tests {
       face: BlockFace::North,
       block_id: "minecraft:stone".to_string(),
     }
+  }
+
+  fn visible_projection() -> MinecraftProjectedPoint {
+    MinecraftProjectedPoint {
+      screen_point: Some(Point::new(320.0, 240.0)),
+      visibility: ProjectionVisibility::Visible,
+      match_radius_px: 12.0,
+      basis_frame_id: "frame-10".to_string(),
+      confidence: 1.0,
+    }
+  }
+
+  #[test]
+  fn refuses_when_not_minecraft_window() {
+    let refusal = evaluate_mismatch_refusal(
+      &frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]),
+      &visible_projection(),
+      &target(),
+      false,
+      Some(50),
+    );
+
+    assert_eq!(
+      refusal.reason,
+      Some(MismatchRefusalReason::NotMinecraftWindow)
+    );
+    assert!(refusal.refused);
+  }
+
+  #[test]
+  fn refuses_when_screenshot_binding_is_missing() {
+    let mut frame = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
+    frame.screenshot_artifact_ref = None;
+
+    let refusal =
+      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+
+    assert_eq!(
+      refusal.reason,
+      Some(MismatchRefusalReason::ScreenshotUnavailable)
+    );
+    assert!(refusal.refused);
+  }
+
+  #[test]
+  fn refuses_when_capture_skew_exceeds_limit() {
+    let mut frame = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
+    frame.mc_capture_skew_ms = Some(120);
+
+    let refusal =
+      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+
+    assert_eq!(
+      refusal.reason,
+      Some(MismatchRefusalReason::CaptureSkewUnreliable)
+    );
+    assert!(refusal.refused);
+  }
+
+  #[test]
+  fn refuses_when_target_is_occluded_by_other_raycast_hit() {
+    let frame = frame_at(
+      10,
+      1_000,
+      Some(RaycastHit {
+        block_pos: BlockPosition::new(9, 9, 9),
+        face: BlockFace::South,
+        block_id: "minecraft:dirt".to_string(),
+      }),
+      vec![],
+      vec![],
+    );
+
+    let refusal =
+      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::TargetOccluded));
+    assert!(refusal.refused);
+  }
+
+  #[test]
+  fn refuses_when_projection_is_behind_camera() {
+    let mut projected = visible_projection();
+    projected.visibility = ProjectionVisibility::BehindCamera;
+    projected.screen_point = None;
+
+    let refusal = evaluate_mismatch_refusal(
+      &frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]),
+      &projected,
+      &target(),
+      true,
+      Some(50),
+    );
+
+    assert_eq!(
+      refusal.reason,
+      Some(MismatchRefusalReason::TargetBehindCamera)
+    );
+    assert!(refusal.refused);
+  }
+
+  #[test]
+  fn allows_visible_bound_target_with_matching_raycast() {
+    let refusal = evaluate_mismatch_refusal(
+      &frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]),
+      &visible_projection(),
+      &target(),
+      true,
+      Some(50),
+    );
+
+    assert_eq!(refusal.reason, None);
+    assert!(!refusal.refused);
   }
 
   #[test]

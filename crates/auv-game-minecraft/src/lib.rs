@@ -14,8 +14,12 @@ pub use types::{
   MinecraftSpatialFrame, NearbyBlock, NearbyEntity, PlayerPose, ProjectionVisibility, RaycastHit,
   Vec3, Viewport,
 };
-pub use verify::{WorldDiffFailure, WorldDiffRequest, WorldDiffVerdict, evaluate_world_diff};
+pub use verify::{
+  MismatchRefusal, MismatchRefusalReason, WorldDiffFailure, WorldDiffRequest, WorldDiffVerdict,
+  evaluate_mismatch_refusal, evaluate_world_diff,
+};
 
-// NOTICE(mc3-live-binding): offline world-diff verdicts and input-target mapping now live here,
-// but real telemetry reads, capture_skew_ms calibration, runtime/CLI integration, and live driver
-// dispatch still wait on a real MC-1 telemetry sample.
+// NOTICE(mc4-live-refusal): MC-4 refusal logic now closes crate-local mismatch cases that can be
+// proven from projection visibility, telemetry ordering, pre/post witness quality, and screenshot
+// binding metadata already present on `MinecraftSpatialFrame`; real client samples are still required
+// before this can claim live acceptance coverage for occlusion, skew thresholds, or runtime wiring.
