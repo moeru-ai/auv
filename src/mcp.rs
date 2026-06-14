@@ -334,7 +334,7 @@ mod tests {
     let store_root = temp_dir("mcp-shared-runtime-store");
     let (server_transport, client_transport) = tokio::io::duplex(16384);
 
-    let server = McpServer::new(project_root);
+    let server = McpServer::new(project_root.clone());
     let server_handle = tokio::spawn(async move {
       let service = server.serve(server_transport).await?;
       service.waiting().await?;
@@ -358,6 +358,21 @@ mod tests {
     assert!(tool_names.contains(&"invoke"));
     assert!(tool_names.contains(&"run_inspect"));
     assert!(tool_names.contains(&"candidate_action_run"));
+
+    let cli_runtime = crate::build_runtime_with_store_root(project_root, store_root.clone())
+      .map_err(anyhow::Error::msg)?;
+    let cli_result = cli_runtime
+      .invoke(InvokeRequest {
+        command_id: "steam.library.list.v0".to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      })
+      .map_err(anyhow::Error::msg)?;
+    let cli_store =
+      crate::store::LocalStore::new(store_root.clone()).map_err(anyhow::Error::msg)?;
+    let cli_inspect =
+      crate::inspect::inspect_run(&cli_store, &cli_result.run_id).map_err(anyhow::Error::msg)?;
 
     let invoke = client
       .call_tool(CallToolRequestParam {
@@ -396,17 +411,47 @@ mod tests {
       .get("output_summary")
       .and_then(|value| value.as_str())
       .expect("summary should exist");
-    assert!(output_summary.contains("Listed"));
+    assert_eq!(output_summary, cli_result.output_summary);
     let artifacts = invoke_json
       .get("artifacts")
       .and_then(|value| value.as_array())
       .expect("artifacts should exist");
     assert_eq!(artifacts.len(), 1);
     assert_eq!(artifacts[0]["role"], "steam-library-list");
+    assert_eq!(artifacts[0]["role"], cli_result.artifacts[0].role);
     let artifact_path = artifacts[0]["path"]
       .as_str()
       .expect("artifact path should exist");
     assert!(artifact_path.contains("steam-library-list.json"));
+    assert!(
+      cli_result.artifacts[0]
+        .path
+        .contains("steam-library-list.json")
+    );
+    let mcp_artifact_name = std::path::Path::new(artifact_path)
+      .file_name()
+      .and_then(|value| value.to_str())
+      .expect("mcp artifact filename should exist");
+    let cli_artifact_name = std::path::Path::new(&cli_result.artifacts[0].path)
+      .file_name()
+      .and_then(|value| value.to_str())
+      .expect("cli artifact filename should exist");
+    assert_eq!(mcp_artifact_name, cli_artifact_name);
+    let artifact_paths = invoke_json
+      .get("artifact_paths")
+      .and_then(|value| value.as_array())
+      .expect("artifact paths should exist");
+    assert_eq!(artifact_paths.len(), cli_result.artifact_paths.len());
+    let mcp_artifact_output_name = artifact_paths[0]
+      .as_str()
+      .and_then(|value| std::path::Path::new(value).file_name())
+      .and_then(|value| value.to_str())
+      .expect("mcp artifact output filename should exist");
+    let cli_artifact_output_name = cli_result.artifact_paths[0]
+      .file_name()
+      .and_then(|value| value.to_str())
+      .expect("cli artifact output filename should exist");
+    assert_eq!(mcp_artifact_output_name, cli_artifact_output_name);
 
     let inspect = client
       .call_tool(CallToolRequestParam {
@@ -445,6 +490,10 @@ mod tests {
     assert!(inspect_text.contains(artifact_path));
     assert!(inspect_text.contains("resolvedSource=local_appmanifest"));
     assert!(inspect_text.contains("appCount="));
+    assert_eq!(
+      normalize_run_text(inspect_text),
+      normalize_run_text(&cli_inspect)
+    );
 
     client.cancel().await?;
     server_handle.await??;
@@ -512,5 +561,19 @@ mod tests {
 
   fn temp_dir(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()))
+  }
+
+  fn normalize_run_text(raw: &str) -> String {
+    raw
+      .lines()
+      .filter(|line| {
+        !line.starts_with("Run run_")
+          && !line.contains("event_")
+          && !line.contains("span=000000")
+          && !line.contains("parent=000000")
+          && !line.contains("name=auv.command parent=n/a")
+      })
+      .collect::<Vec<_>>()
+      .join("\n")
   }
 }
