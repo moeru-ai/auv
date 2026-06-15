@@ -13,7 +13,7 @@ Why this classification is correct:
 
 ## Purpose
 
-Close the design boundary for the first Minecraft-driven graduation candidates:
+Record the current design boundary for the first Minecraft-driven graduation candidates:
 
 - **G2** frame/action/target/verification correlation key
 - **G3** same-instant timestamped capture binding
@@ -28,7 +28,7 @@ recognition / AX / candidates
   -> OperationResult / VerificationResult / trace artifacts
 ```
 
-This note is intentionally narrow: it decides what *may* graduate later and what *must not* graduate yet. It does not authorize code changes by itself.
+This note is intentionally narrow: it documents current eligibility constraints for what *may* graduate later and what *must not* graduate yet. It does not authorize code changes by itself.
 
 ## Current repo truth
 
@@ -66,7 +66,7 @@ The detector-recognition and game-consumer design notes already establish two re
 - runtime-facing recognition stays on `RecognitionResult`, not a new detector-only contract
 - downstream typed consumers should resolve typed handles from persisted lineage rather than teaching recipes/runtime glue a new schema
 
-MC-5 should follow the same convergence discipline.
+MC-5 should preserve the same convergence discipline if later implementation is approved.
 
 ## Exploration ledger
 
