@@ -13,7 +13,7 @@ use crate::run_read::{
   CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
   CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
   CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
-  CandidatePromotionLineageStatus, DetectorRecognitionLineage,
+  CandidatePromotionLineageStatus, DetectorRecognitionLineage, list_minecraft_projection_artifacts,
 };
 use crate::store::{CanonicalRun, LocalStore};
 
@@ -68,6 +68,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let candidate_promotion_lineage = list_candidate_promotion_lineage(store, run_id)?;
   let candidate_action_decision_lineage = list_candidate_action_decision_lineage(store, run_id)?;
   let candidate_action_execution_lineage = list_candidate_action_execution_lineage(store, run_id)?;
+  let minecraft_projection_artifacts = list_minecraft_projection_artifacts(store, run_id)?;
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -76,6 +77,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &candidate_promotion_lineage,
     &candidate_action_decision_lineage,
     &candidate_action_execution_lineage,
+    &minecraft_projection_artifacts,
   ))
 }
 
@@ -87,6 +89,7 @@ pub fn render_run_text(
   candidate_promotion_lineage: &[CandidatePromotionLineage],
   candidate_action_decision_lineage: &[CandidateActionDecisionLineage],
   candidate_action_execution_lineage: &[CandidateActionExecutionLineage],
+  minecraft_projection_artifacts: &[auv_game_minecraft::artifact::MinecraftProjectionArtifact],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -345,6 +348,28 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nMC-2 Projection Artifacts:\n");
+  if minecraft_projection_artifacts.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for artifact in minecraft_projection_artifacts {
+      output.push_str(&format!(
+        "- frame={} tick={} timestamp_ms={} viewport={}x{}@{},{} visibility={} raycast={} verification_reference={} projected_point={}\n",
+        artifact.spatial_frame_id,
+        artifact.world_tick,
+        artifact.monotonic_timestamp_ms,
+        artifact.viewport_bounds.width,
+        artifact.viewport_bounds.height,
+        artifact.viewport_bounds.x,
+        artifact.viewport_bounds.y,
+        render_projection_visibility(&artifact.visibility),
+        artifact.raycast_block_id.as_deref().unwrap_or("n/a"),
+        artifact.verification_reference.as_deref().unwrap_or("n/a"),
+        render_minecraft_projected_point(artifact.projected_point.as_ref()),
+      ));
+    }
+  }
+
   output.push_str("\nCandidate Action Execution Lineage:\n");
   if candidate_action_execution_lineage.is_empty() {
     output.push_str("- none\n");
@@ -490,6 +515,40 @@ fn render_optional_bool(value: Option<bool>) -> &'static str {
     Some(true) => "true",
     Some(false) => "false",
     None => "n/a",
+  }
+}
+
+fn render_projection_visibility(
+  visibility: &auv_game_minecraft::types::ProjectionVisibility,
+) -> &'static str {
+  match visibility {
+    auv_game_minecraft::types::ProjectionVisibility::Visible => "visible",
+    auv_game_minecraft::types::ProjectionVisibility::BehindCamera => "behind_camera",
+    auv_game_minecraft::types::ProjectionVisibility::OutOfFrustum => "out_of_frustum",
+    auv_game_minecraft::types::ProjectionVisibility::OutsideWindow => "outside_window",
+  }
+}
+
+fn render_minecraft_projected_point(
+  projected_point: Option<&auv_game_minecraft::types::MinecraftProjectedPoint>,
+) -> String {
+  match projected_point {
+    Some(projected_point) => {
+      let screen_point = projected_point
+        .screen_point
+        .as_ref()
+        .map(|point| format!("{},{}", point.x, point.y))
+        .unwrap_or_else(|| "n/a".to_string());
+      format!(
+        "screen={} visibility={} radius_px={} confidence={} basis={}",
+        screen_point,
+        render_projection_visibility(&projected_point.visibility),
+        projected_point.match_radius_px,
+        projected_point.confidence,
+        projected_point.basis_frame_id,
+      )
+    }
+    None => "n/a".to_string(),
   }
 }
 
@@ -903,6 +962,29 @@ mod tests {
       issue: None,
     }];
 
+    let minecraft_projection_artifacts =
+      vec![auv_game_minecraft::artifact::MinecraftProjectionArtifact {
+        spatial_frame_id: "frame-1".to_string(),
+        world_tick: 42,
+        monotonic_timestamp_ms: 1_000,
+        viewport_bounds: auv_game_minecraft::artifact::ProjectionViewportBounds {
+          x: 0.0,
+          y: 0.0,
+          width: 800.0,
+          height: 600.0,
+        },
+        projected_point: Some(auv_game_minecraft::types::MinecraftProjectedPoint {
+          screen_point: Some(auv_driver::geometry::Point::new(320.0, 240.0)),
+          visibility: auv_game_minecraft::types::ProjectionVisibility::Visible,
+          match_radius_px: 12.0,
+          basis_frame_id: "frame-1".to_string(),
+          confidence: 1.0,
+        }),
+        visibility: auv_game_minecraft::types::ProjectionVisibility::Visible,
+        raycast_block_id: Some("minecraft:stone".to_string()),
+        verification_reference: Some("verification-1".to_string()),
+      }];
+
     let output = render_run_text(
       &run,
       &verifications,
@@ -911,6 +993,7 @@ mod tests {
       &candidate_promotion_lineage,
       &candidate_action_decision_lineage,
       &candidate_action_execution_lineage,
+      &minecraft_projection_artifacts,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -951,6 +1034,12 @@ mod tests {
     assert!(output.contains("operation_result=not_produced"));
     assert!(output.contains("verification_result=not_produced"));
     assert!(output.contains("cursor=warp-visible"));
+    assert!(output.contains("MC-2 Projection Artifacts:"));
+    assert!(output.contains("frame=frame-1"));
+    assert!(output.contains("verification_reference=verification-1"));
+    assert!(output.contains(
+      "projected_point=screen=320,240 visibility=visible radius_px=12 confidence=1 basis=frame-1"
+    ));
     assert!(output.contains("Candidate Action Execution Lineage:"));
     assert!(output.contains("artifact=artifact_candidate_action_execution"));
     assert!(output.contains("execution_id=execution_end_turn"));

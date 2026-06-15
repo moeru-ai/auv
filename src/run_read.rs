@@ -27,6 +27,7 @@ use crate::scroll_scan::ScrollScanArtifact;
 use crate::stability::{StabilityAssessment, StabilityRejection};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::ArtifactRecordV1Alpha1;
+use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
 
 pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
   store.read_run(run_id)
@@ -297,6 +298,51 @@ pub(crate) fn list_candidate_action_execution_lineage(
 ) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
   let run = store.read_run(run_id)?;
   extract_candidate_action_execution_lineage(store, &run)
+}
+
+pub(crate) fn list_minecraft_projection_artifacts(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftProjectionArtifact>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_projection_artifacts(store, &run)
+}
+
+pub(crate) fn extract_minecraft_projection_artifacts(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftProjectionArtifact>> {
+  let mut artifacts = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+      || !is_json_mime(&artifact.mime_type)
+    {
+      continue;
+    }
+
+    let parsed = read_artifact_bytes(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+    )
+    .and_then(|(bytes, artifact_path)| {
+      serde_json::from_slice::<MinecraftProjectionArtifact>(&bytes).map_err(|error| {
+        format!(
+          "failed to parse {} artifact {} for run {} from {}: {error}",
+          crate::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+          artifact.artifact_id,
+          run.run.run_id,
+          artifact_path.display()
+        )
+      })
+    });
+
+    if let Ok(projection) = parsed {
+      artifacts.push(projection);
+    }
+  }
+  Ok(artifacts)
 }
 
 pub(crate) fn extract_detector_recognition_lineage(

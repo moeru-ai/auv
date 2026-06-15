@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub const TELEMETRY_SAMPLE_ARTIFACT_ROLE: &str = "telemetry-sample";
+pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
 
 use crate::catalog::CommandCatalog;
 use crate::contract::ArtifactRef;
@@ -168,6 +169,38 @@ impl Runtime {
           &preferred_name,
           Some("durable minecraft telemetry sample".to_string()),
         )?;
+        Ok::<_, String>(artifact_ref)
+      },
+    )
+  }
+
+  pub fn record_minecraft_projection_artifact(
+    &self,
+    projection_artifact: auv_game_minecraft::MinecraftProjectionArtifact,
+  ) -> AuvResult<crate::recorded_operation::RecordedOperationOutput<ArtifactRef>> {
+    projection_artifact.validate()?;
+    let artifact_json = serde_json::to_string_pretty(&projection_artifact)
+      .map_err(|error| format!("failed to serialize minecraft projection artifact: {error}"))?;
+
+    self.run_recorded_operation(
+      crate::run_builder::RunSpec::new(RunType::Execute, "auv.minecraft.projection.artifact"),
+      "Minecraft projection artifact recording",
+      |context| {
+        let temp_root = std::env::temp_dir();
+        let artifact_path = temp_root.join(format!(
+          "auv-minecraft-projection-{}-{}.json",
+          context.run_id(),
+          crate::model::now_millis()
+        ));
+        std::fs::write(&artifact_path, artifact_json.as_bytes())
+          .map_err(|error| format!("failed to write minecraft projection artifact: {error}"))?;
+        let (_, artifact_ref) = context.stage_artifact_file_with_ref(
+          MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+          &artifact_path,
+          "projection-artifact.json",
+          Some("durable minecraft projection artifact".to_string()),
+        )?;
+        let _ = std::fs::remove_file(&artifact_path);
         Ok::<_, String>(artifact_ref)
       },
     )
@@ -818,7 +851,7 @@ mod tests {
 
   use serde_json::json;
 
-  use super::{Runtime, TELEMETRY_SAMPLE_ARTIFACT_ROLE};
+  use super::{MINECRAFT_PROJECTION_ARTIFACT_ROLE, Runtime, TELEMETRY_SAMPLE_ARTIFACT_ROLE};
   use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{
@@ -1028,6 +1061,60 @@ mod tests {
       .expect_err("missing telemetry sample should fail");
 
     assert!(error.contains("is not a readable file"));
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn record_minecraft_projection_artifact_persists_artifact_for_inspect() {
+    let project_root = temp_dir("runtime-minecraft-projection-project");
+    let store_root = temp_dir("runtime-minecraft-projection-store");
+    fs::create_dir_all(&project_root).expect("project root should exist");
+
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+    let projection_artifact = auv_game_minecraft::MinecraftProjectionArtifact {
+      spatial_frame_id: "frame-1".to_string(),
+      world_tick: 42,
+      monotonic_timestamp_ms: 1_000,
+      viewport_bounds: auv_game_minecraft::ProjectionViewportBounds {
+        x: 0.0,
+        y: 0.0,
+        width: 800.0,
+        height: 600.0,
+      },
+      projected_point: Some(auv_game_minecraft::MinecraftProjectedPoint {
+        screen_point: Some(auv_driver::geometry::Point::new(320.0, 240.0)),
+        visibility: auv_game_minecraft::ProjectionVisibility::Visible,
+        match_radius_px: 12.0,
+        basis_frame_id: "frame-1".to_string(),
+        confidence: 1.0,
+      }),
+      visibility: auv_game_minecraft::ProjectionVisibility::Visible,
+      raycast_block_id: Some("minecraft:stone".to_string()),
+      verification_reference: Some("verification-1".to_string()),
+    };
+
+    let output = runtime
+      .record_minecraft_projection_artifact(projection_artifact)
+      .expect("minecraft projection artifact recording should succeed");
+
+    let run = runtime
+      .read_run(output.run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(run.artifacts.len(), 1);
+    assert_eq!(run.artifacts[0].role, MINECRAFT_PROJECTION_ARTIFACT_ROLE);
+    assert_eq!(
+      run.artifacts[0].path,
+      "artifacts/artifact_0001_projection-artifact.json"
+    );
+
+    let inspect_text = runtime
+      .inspect(output.run_id.as_str())
+      .expect("inspect should render run");
+    assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
+    assert!(inspect_text.contains("frame=frame-1"));
+    assert!(inspect_text.contains("verification_reference=verification-1"));
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

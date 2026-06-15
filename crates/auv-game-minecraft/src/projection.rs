@@ -119,6 +119,18 @@ impl MinecraftProjector {
     Ok(radius)
   }
 
+  pub fn build_projection_artifact(
+    &self,
+    projected_point: Option<MinecraftProjectedPoint>,
+    verification_reference: Option<String>,
+  ) -> crate::artifact::MinecraftProjectionArtifact {
+    crate::artifact::MinecraftProjectionArtifact::for_frame(
+      &self.frame,
+      projected_point,
+      verification_reference,
+    )
+  }
+
   fn non_visible_point(&self, visibility: ProjectionVisibility) -> MinecraftProjectedPoint {
     MinecraftProjectedPoint {
       screen_point: None,
@@ -257,6 +269,29 @@ mod tests {
       .expect("projected point");
     assert_eq!(point.visibility, ProjectionVisibility::OutOfFrustum);
     assert!(point.screen_point.is_none());
+  }
+
+  #[test]
+  fn builds_projection_artifact_from_frame() {
+    let projector = MinecraftProjector::new(test_frame(
+      identity_matrix(),
+      identity_matrix(),
+      Viewport::new(800, 600),
+    ))
+    .expect("projector");
+
+    let point = projector
+      .project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0)))
+      .expect("projected point");
+    let artifact =
+      projector.build_projection_artifact(Some(point), Some("verification-1".to_string()));
+
+    assert_eq!(artifact.spatial_frame_id, "frame-1");
+    assert_eq!(
+      artifact.verification_reference.as_deref(),
+      Some("verification-1")
+    );
+    artifact.validate().expect("artifact validates");
   }
 
   #[test]
