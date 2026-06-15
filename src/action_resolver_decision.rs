@@ -42,7 +42,7 @@ impl ResolvedActionMethod {
 /// Sibling: [`InputActionResult`] in `crates/auv-driver/src/input.rs`, which
 /// records actual delivery attempts.
 ///
-/// - `debug.smartPress` records this alongside real input delivery.
+/// - `input.smartPress` records this alongside real input delivery.
 /// - L8a candidate action planning records this as a **decide-only** artifact
 ///   with no `InputActionResult`, no driver call, and no side effect.
 ///
@@ -76,7 +76,7 @@ impl ActionResolverDecision {
   ) -> Self {
     let fallback_used = selected_method != ResolvedActionMethod::AxAction;
     Self::new(ActionResolverDecisionInput {
-      operation: "debug.smartPress",
+      operation: "input.smartPress",
       target_query: query,
       primary_method: ResolvedActionMethod::AxAction.as_str(),
       selected_method: selected_method.as_str(),
@@ -216,6 +216,7 @@ mod tests {
       ActionResolverDecision::smart_press("Run", ResolvedActionMethod::AxAction, true, None);
 
     assert_eq!(decision.version, ACTION_RESOLVER_VERSION);
+    assert_eq!(decision.operation, "input.smartPress");
     assert_eq!(decision.primary_method, "ax-action");
     assert_eq!(decision.selected_method, "ax-action");
     assert!(decision.fallback_allowed);
@@ -225,6 +226,10 @@ mod tests {
     assert_eq!(decision.press_mechanism, "ax-action");
 
     let signals = decision.signals();
+    assert_eq!(
+      signals.get("actionResolver.operation"),
+      Some(&"input.smartPress".to_string())
+    );
     assert_eq!(
       signals.get("actionResolver.selectedMethod"),
       Some(&"ax-action".to_string())

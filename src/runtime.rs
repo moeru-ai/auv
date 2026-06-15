@@ -1,9 +1,9 @@
 // File: src/runtime.rs
 //! Runtime execution engine.
 //!
-//! `Runtime` is the shared core used by CLI and other frontends: it resolves
-//! command IDs via the catalog, invokes drivers, and records runs/spans/events
-//! plus staged artifacts into the store.
+//! `Runtime` is the shared core used by CLI and other frontends: it executes
+//! resolved command specs, invokes drivers, and records runs/spans/events plus
+//! staged artifacts into the store.
 //!
 //! Boundary: this layer executes *given* requests. It is not a planner/LLM
 //! agent, and it does not choose strategies beyond what the request/cmd
@@ -12,11 +12,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::catalog::CommandCatalog;
 use crate::contract::ArtifactRef;
 use crate::driver::DriverRegistry;
 use crate::model::{
-  AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverRunContext, InvokeRequest,
+  AuvResult, DriverCall, DriverDescriptor, DriverRunContext, ExecutionTarget, InvokeRequest,
   InvokeResult, RunStatus, now_millis,
 };
 use crate::recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend, RunUpdate};
@@ -29,63 +28,17 @@ use crate::trace::{
 
 pub struct Runtime {
   project_root: PathBuf,
-  registry: RuntimeCommandRegistry,
   drivers: DriverRegistry,
   recording: RunRecordingBackend,
 }
 
-pub struct RuntimeCommandRegistry {
-  commands: CommandCatalog,
-}
-
-impl RuntimeCommandRegistry {
-  pub fn new(commands: CommandCatalog) -> Self {
-    Self { commands }
-  }
-}
-
-impl From<CommandCatalog> for RuntimeCommandRegistry {
-  fn from(commands: CommandCatalog) -> Self {
-    Self::new(commands)
-  }
-}
-
-impl RuntimeCommandRegistry {
-  pub fn list_commands(&self) -> &[crate::model::CommandSpec] {
-    self.commands.all()
-  }
-
-  pub fn resolve(&self, command_id: &str) -> Option<&CommandSpec> {
-    self.commands.resolve(command_id)
-  }
-}
-
 impl Runtime {
-  pub fn new(
-    project_root: PathBuf,
-    registry: impl Into<RuntimeCommandRegistry>,
-    drivers: DriverRegistry,
-    store: LocalStore,
-  ) -> Self {
-    Self::new_with_catalogs(project_root, registry, drivers, store)
-  }
-
-  pub fn new_with_catalogs(
-    project_root: PathBuf,
-    registry: impl Into<RuntimeCommandRegistry>,
-    drivers: DriverRegistry,
-    store: LocalStore,
-  ) -> Self {
+  pub fn new(project_root: PathBuf, drivers: DriverRegistry, store: LocalStore) -> Self {
     Self {
       project_root,
-      registry: registry.into(),
       drivers,
       recording: RunRecordingBackend::new(store, Arc::new(MemoryRunRecorder::new())),
     }
-  }
-
-  pub fn list_commands(&self) -> &[crate::model::CommandSpec] {
-    self.registry.list_commands()
   }
 
   pub fn project_root(&self) -> &Path {
@@ -101,7 +54,42 @@ impl Runtime {
   }
 
   pub fn read_run(&self, run_id: &str) -> AuvResult<crate::store::CanonicalRun> {
-    crate::run_read::read_run(self.recording.store(), run_id)
+    self.recording.read_run(run_id)
+  }
+
+  pub fn list_verifications(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::contract::VerificationResult>> {
+    crate::run_read::list_verifications(self.recording.store(), run_id)
+  }
+
+  pub fn list_observation_snapshots(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::contract::ObservationSnapshot>> {
+    crate::run_read::list_observation_snapshots(self.recording.store(), run_id)
+  }
+
+  pub fn list_detector_recognition_lineage(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::run_read::DetectorRecognitionLineage>> {
+    crate::run_read::list_detector_recognition_lineage(self.recording.store(), run_id)
+  }
+
+  pub fn list_candidate_promotion_lineage(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::run_read::CandidatePromotionLineage>> {
+    crate::run_read::list_candidate_promotion_lineage(self.recording.store(), run_id)
+  }
+
+  pub fn list_candidate_action_decision_lineage(
+    &self,
+    run_id: &str,
+  ) -> AuvResult<Vec<crate::run_read::CandidateActionDecisionLineage>> {
+    crate::run_read::list_candidate_action_decision_lineage(self.recording.store(), run_id)
   }
 
   pub fn run_recorded_operation<T, E, F>(
@@ -148,7 +136,7 @@ impl Runtime {
     &self,
     run_id: &str,
   ) -> AuvResult<Vec<crate::run_read::CandidateActionExecutionLineage>> {
-    crate::inspect::list_candidate_action_execution_lineage(self.recording.store(), run_id)
+    crate::run_read::list_candidate_action_execution_lineage(self.recording.store(), run_id)
   }
 
   pub fn run_candidate_action_command(
@@ -197,6 +185,10 @@ impl Runtime {
 
   pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {
     self.recording.run_dir(run_id)
+  }
+
+  pub fn recorder(&self) -> Arc<dyn RunRecorder> {
+    self.recording.recorder()
   }
 
   pub(crate) fn recording_backend(&self) -> &RunRecordingBackend {
@@ -298,12 +290,38 @@ impl Runtime {
   }
 
   pub fn invoke(&self, request: InvokeRequest) -> AuvResult<InvokeResult> {
+    self.invoke_in_command_run(|runtime, run, root| runtime.invoke_in_span(run, root, request))
+  }
+
+  pub fn invoke_resolved(
+    &self,
+    request: InvokeRequest,
+    command: &auv_cli_invoke::InvokeCommand,
+  ) -> AuvResult<InvokeResult> {
+    self.invoke_in_command_run(|runtime, run, root| {
+      let dispatch = command.dispatch(auv_cli_invoke::InvokeContext {
+        target_application_id: request.target.application_id.as_deref(),
+        target_label: request.target.target_label.as_deref(),
+        inputs: &request.inputs,
+      });
+      runtime.invoke_direct_command_in_span(run, root, &command.operation, dispatch)
+    })
+  }
+
+  fn invoke_in_command_run(
+    &self,
+    invoke: impl FnOnce(
+      &Self,
+      &mut crate::run_builder::RecordingRun,
+      &crate::run_builder::SpanRef,
+    ) -> AuvResult<InvokeResult>,
+  ) -> AuvResult<InvokeResult> {
     let mut run = self.start_run(crate::run_builder::RunSpec::new(
       RunType::Command,
       "auv.command",
     ))?;
     let root = run.root_span();
-    let result = match self.invoke_in_span(&mut run, &root, request) {
+    let result = match invoke(self, &mut run, &root) {
       Ok(result) => result,
       Err(error) => {
         if let Err(finish_error) = self.finish_run(
@@ -346,29 +364,34 @@ impl Runtime {
     request: InvokeRequest,
   ) -> AuvResult<InvokeResult> {
     let command_id = request.command_id.clone();
-    let direct_command = self.registry.resolve(&command_id);
-
-    match direct_command {
-      Some(direct_command) => {
-        self.invoke_direct_command_in_span(run, parent, request, direct_command)
-      }
-      None => Err(format!(
-        "unknown command {command_id}; use `invoke --help` to inspect available entries"
-      )),
-    }
+    // TODO(invoke-boundary): accept a resolved invoke command descriptor instead
+    // of resolving the CLI registry here. This stays only until CLI, MCP,
+    // app-probe, and scroll-scan callers share the next typed invoke request.
+    let registry = auv_cli_invoke::default_registry();
+    let command = registry.resolve(&command_id).ok_or_else(|| {
+      format!(
+        "unknown command {command_id}; use `auv-cli invoke --help` to inspect available entries"
+      )
+    })?;
+    let dispatch = command.dispatch(auv_cli_invoke::InvokeContext {
+      target_application_id: request.target.application_id.as_deref(),
+      target_label: request.target.target_label.as_deref(),
+      inputs: &request.inputs,
+    });
+    self.invoke_direct_command_in_span(run, parent, &command.operation, dispatch)
   }
 
   fn invoke_direct_command_in_span(
     &self,
     run: &mut crate::run_builder::RecordingRun,
     parent: &crate::run_builder::SpanRef,
-    request: InvokeRequest,
-    command: &CommandSpec,
+    command: &auv_driver::OperationSpec,
+    dispatch: auv_cli_invoke::InvokeDriverDispatch,
   ) -> AuvResult<InvokeResult> {
-    let driver = self.drivers.get(command.driver_id).ok_or_else(|| {
+    let driver = self.drivers.get(dispatch.driver_id).ok_or_else(|| {
       format!(
         "command {} resolved to missing driver {}",
-        command.id, command.driver_id
+        command.id, dispatch.driver_id
       )
     })?;
 
@@ -378,9 +401,9 @@ impl Runtime {
         "auv.command.invoke",
         command_attributes(
           command.id,
-          command.driver_id,
-          command.operation,
-          request.target.application_id.as_deref(),
+          dispatch.driver_id,
+          dispatch.operation,
+          dispatch.target_application_id.as_deref(),
         ),
       ),
     )?;
@@ -390,7 +413,7 @@ impl Runtime {
       "command.resolved",
       Some(format!(
         "resolved {} -> {}.{}",
-        command.id, command.driver_id, command.operation
+        command.id, dispatch.driver_id, dispatch.operation
       )),
     );
 
@@ -400,9 +423,9 @@ impl Runtime {
         "auv.driver.invoke",
         command_attributes(
           command.id,
-          command.driver_id,
-          command.operation,
-          request.target.application_id.as_deref(),
+          dispatch.driver_id,
+          dispatch.operation,
+          dispatch.target_application_id.as_deref(),
         ),
       ),
     )?;
@@ -412,14 +435,17 @@ impl Runtime {
       "driver.invoke",
       Some(format!(
         "invoking {}.{}",
-        command.driver_id, command.operation
+        dispatch.driver_id, dispatch.operation
       )),
     );
 
     let call = DriverCall {
-      operation: command.operation.to_string(),
-      target: request.target,
-      inputs: request.inputs,
+      operation: dispatch.operation.to_string(),
+      target: ExecutionTarget {
+        application_id: dispatch.target_application_id,
+        target_label: dispatch.target_label,
+      },
+      inputs: dispatch.inputs,
       working_directory: self.project_root.clone(),
       run_context: DriverRunContext {
         run_id: run.id().to_string(),
@@ -752,11 +778,10 @@ mod tests {
   use serde_json::json;
 
   use super::Runtime;
-  use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{
-    AuvResult, CommandSpec, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget,
-    InvokeRequest, ProducedArtifact, RunStatus, now_millis,
+    AuvResult, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget, InvokeRequest,
+    ProducedArtifact, RunStatus, now_millis,
   };
   use crate::recording::{MemoryRunRecorder, RunRecorder, RunUpdate};
   use crate::store::LocalStore;
@@ -770,6 +795,10 @@ mod tests {
   struct RequiredFailRunStartedRecorder;
   struct RequiredFailRunFinishedRecorder;
   struct SuccessDriver;
+
+  const TEST_COMMAND_ID: &str = "fixture.observe";
+  const TEST_DRIVER_ID: &str = "fixture.observe";
+  const TEST_OPERATION: &str = "observe_fixture_scene";
 
   impl RunRecorder for FailRunFinishedRecorder {
     fn record(&self, update: RunUpdate) -> AuvResult<()> {
@@ -809,7 +838,7 @@ mod tests {
   impl Driver for ArtifactFailureDriver {
     fn descriptor(&self) -> DriverDescriptor {
       DriverDescriptor {
-        id: "test.driver",
+        id: TEST_DRIVER_ID,
         summary: "Test driver",
         capabilities: &["test.artifact-failure"],
         donor_boundary: "test-only",
@@ -835,7 +864,7 @@ mod tests {
   impl Driver for ArtifactSuccessDriver {
     fn descriptor(&self) -> DriverDescriptor {
       DriverDescriptor {
-        id: "test.driver",
+        id: TEST_DRIVER_ID,
         summary: "Test driver",
         capabilities: &["test.artifact-success"],
         donor_boundary: "test-only",
@@ -865,7 +894,7 @@ mod tests {
   impl Driver for CountingDriver {
     fn descriptor(&self) -> DriverDescriptor {
       DriverDescriptor {
-        id: "test.driver",
+        id: TEST_DRIVER_ID,
         summary: "Counting driver",
         capabilities: &["test.counting"],
         donor_boundary: "test-only",
@@ -887,7 +916,7 @@ mod tests {
   impl Driver for SuccessDriver {
     fn descriptor(&self) -> DriverDescriptor {
       DriverDescriptor {
-        id: "test.driver",
+        id: TEST_DRIVER_ID,
         summary: "Test driver",
         capabilities: &["test.success"],
         donor_boundary: "test-only",
@@ -927,7 +956,7 @@ mod tests {
         &mut run,
         &parent,
         InvokeRequest {
-          command_id: "test.invoke".to_string(),
+          command_id: TEST_COMMAND_ID.to_string(),
           target: ExecutionTarget::default(),
           inputs: BTreeMap::new(),
           dry_run: false,
@@ -966,21 +995,57 @@ mod tests {
       .expect("command span should be recorded");
     assert_eq!(
       command_span.attributes.get("auv.command.id"),
-      Some(&json!("test.invoke"))
+      Some(&json!(TEST_COMMAND_ID))
     );
     assert_eq!(
       command_span.attributes.get("auv.driver.id"),
-      Some(&json!("test.driver"))
+      Some(&json!(TEST_DRIVER_ID))
     );
     assert_eq!(
       command_span.attributes.get("auv.driver.operation"),
-      Some(&json!("test_operation"))
+      Some(&json!(TEST_OPERATION))
     );
     assert!(
       canonical
         .spans
         .iter()
         .any(|span| span.parent_span_id.as_ref() == Some(parent.id()))
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_resolved_executes_fixture_observe_command() {
+    let project_root = temp_dir("runtime-resolved-project");
+    let store_root = temp_dir("runtime-resolved-store");
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+    let registry = auv_cli_invoke::default_registry();
+    let command = registry
+      .resolve(TEST_COMMAND_ID)
+      .expect("fixture command should be registered");
+
+    let result = runtime
+      .invoke_resolved(
+        InvokeRequest {
+          command_id: TEST_COMMAND_ID.to_string(),
+          target: ExecutionTarget::default(),
+          inputs: BTreeMap::new(),
+          dry_run: false,
+        },
+        command,
+      )
+      .expect("resolved fixture invoke should succeed");
+
+    assert_eq!(result.status, RunStatus::Completed);
+    let canonical = runtime.read_run(&result.run_id).expect("run should read");
+    assert_eq!(canonical.run.status_code, crate::trace::TraceStatusCode::Ok);
+    assert!(
+      canonical
+        .spans
+        .iter()
+        .any(|span| span.attributes.get("auv.command.id") == Some(&json!(TEST_COMMAND_ID)))
     );
 
     let _ = fs::remove_dir_all(project_root);
@@ -1040,11 +1105,11 @@ mod tests {
   #[test]
   fn invoke_unknown_command_points_to_invoke_help_only() {
     let project_root = temp_dir("unknown-command-no-bundle-hint");
-    let runtime = Runtime::new_with_catalogs(
+    let store_root = temp_dir("unknown-command-no-bundle-store");
+    let runtime = Runtime::new(
       project_root.clone(),
-      CommandCatalog::new(Vec::new()),
       DriverRegistry::new(Vec::new()),
-      LocalStore::new(temp_dir("unknown-command-no-bundle-store")).expect("store should create"),
+      LocalStore::new(store_root.clone()).expect("store should create"),
     );
     let request = InvokeRequest {
       command_id: "missing.command".to_string(),
@@ -1058,11 +1123,11 @@ mod tests {
       .expect_err("unknown command should fail");
 
     assert!(error.contains("unknown command missing.command"));
-    assert!(error.contains("invoke --help"));
-    assert!(!error.contains("list-commands"));
+    assert!(error.contains("auv-cli invoke --help"));
     assert!(!error.contains("skill bundle"));
 
     let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   #[test]
@@ -1074,7 +1139,7 @@ mod tests {
 
     let result = runtime
       .invoke(InvokeRequest {
-        command_id: "test.invoke".to_string(),
+        command_id: TEST_COMMAND_ID.to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
         dry_run: false,
@@ -1097,15 +1162,6 @@ mod tests {
     let calls = Arc::new(AtomicUsize::new(0));
     let runtime = Runtime::new(
       project_root.clone(),
-      CommandCatalog::new(vec![CommandSpec {
-        id: "test.invoke",
-        namespace: crate::model::CommandNamespace::Test,
-        summary: "Test invoke",
-        driver_id: "test.driver",
-        operation: "test_operation",
-        disturbance_classes: &[crate::model::DisturbanceClass::None],
-        max_disturbance: crate::model::DisturbanceClass::None,
-      }]),
       DriverRegistry::new(vec![Box::new(CountingDriver {
         calls: calls.clone(),
       })]),
@@ -1115,7 +1171,7 @@ mod tests {
 
     let error = runtime
       .invoke(InvokeRequest {
-        command_id: "test.invoke".to_string(),
+        command_id: TEST_COMMAND_ID.to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
         dry_run: false,
@@ -1138,7 +1194,7 @@ mod tests {
 
     let error = runtime
       .invoke(InvokeRequest {
-        command_id: "test.invoke".to_string(),
+        command_id: TEST_COMMAND_ID.to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
         dry_run: false,
@@ -1157,22 +1213,13 @@ mod tests {
     let store_root = temp_dir("runtime-artifact-link-store");
     let runtime = Runtime::new(
       project_root.clone(),
-      CommandCatalog::new(vec![CommandSpec {
-        id: "test.invoke",
-        namespace: crate::model::CommandNamespace::Test,
-        summary: "Test invoke",
-        driver_id: "test.driver",
-        operation: "test_operation",
-        disturbance_classes: &[crate::model::DisturbanceClass::None],
-        max_disturbance: crate::model::DisturbanceClass::None,
-      }]),
       DriverRegistry::new(vec![Box::new(ArtifactSuccessDriver)]),
       LocalStore::new(store_root.clone()).expect("store should initialize"),
     );
 
     let result = runtime
       .invoke(InvokeRequest {
-        command_id: "test.invoke".to_string(),
+        command_id: TEST_COMMAND_ID.to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
         dry_run: false,
@@ -1216,22 +1263,13 @@ mod tests {
     let store_root = temp_dir("runtime-tests-store");
     let runtime = Runtime::new(
       project_root.clone(),
-      CommandCatalog::new(vec![CommandSpec {
-        id: "test.invoke",
-        namespace: crate::model::CommandNamespace::Test,
-        summary: "Test invoke",
-        driver_id: "test.driver",
-        operation: "test_operation",
-        disturbance_classes: &[crate::model::DisturbanceClass::None],
-        max_disturbance: crate::model::DisturbanceClass::None,
-      }]),
       DriverRegistry::new(vec![Box::new(ArtifactFailureDriver)]),
       LocalStore::new(store_root.clone()).expect("store should initialize"),
     );
 
     let result = runtime
       .invoke(InvokeRequest {
-        command_id: "test.invoke".to_string(),
+        command_id: TEST_COMMAND_ID.to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
         dry_run: false,
@@ -1267,7 +1305,7 @@ mod tests {
   impl Driver for ContextCapturingDriver {
     fn descriptor(&self) -> DriverDescriptor {
       DriverDescriptor {
-        id: "test.driver",
+        id: TEST_DRIVER_ID,
         summary: "Captures the driver run context",
         capabilities: &["test.capture"],
         donor_boundary: "test-only",
@@ -1297,15 +1335,6 @@ mod tests {
   ) -> Runtime {
     Runtime::new(
       project_root,
-      CommandCatalog::new(vec![CommandSpec {
-        id: "test.invoke",
-        namespace: crate::model::CommandNamespace::Test,
-        summary: "Test invoke",
-        driver_id: "test.driver",
-        operation: "test_operation",
-        disturbance_classes: &[crate::model::DisturbanceClass::None],
-        max_disturbance: crate::model::DisturbanceClass::None,
-      }]),
       DriverRegistry::new(vec![Box::new(ContextCapturingDriver { contexts })]),
       LocalStore::new(store_root).expect("store should initialize"),
     )
@@ -1381,7 +1410,7 @@ mod tests {
 
     runtime
       .invoke(InvokeRequest {
-        command_id: "test.invoke".to_string(),
+        command_id: TEST_COMMAND_ID.to_string(),
         target: ExecutionTarget::default(),
         inputs: BTreeMap::new(),
         dry_run: false,
@@ -1445,15 +1474,6 @@ mod tests {
   fn runtime_with_success_driver(project_root: PathBuf, store_root: PathBuf) -> Runtime {
     Runtime::new(
       project_root,
-      CommandCatalog::new(vec![CommandSpec {
-        id: "test.invoke",
-        namespace: crate::model::CommandNamespace::Test,
-        summary: "Test invoke",
-        driver_id: "test.driver",
-        operation: "test_operation",
-        disturbance_classes: &[crate::model::DisturbanceClass::None],
-        max_disturbance: crate::model::DisturbanceClass::None,
-      }]),
       DriverRegistry::new(vec![Box::new(SuccessDriver)]),
       LocalStore::new(store_root).expect("store should initialize"),
     )

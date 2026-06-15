@@ -3,6 +3,7 @@ pub mod display;
 pub mod error;
 pub mod geometry;
 pub mod input;
+pub mod operation;
 pub mod permission;
 pub mod readiness;
 pub mod selector;
@@ -20,6 +21,7 @@ pub use input::{
   PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions,
   TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
+pub use operation::{OperationDisturbance, OperationNamespace, OperationSpec};
 pub use permission::{PermissionProbe, PermissionStatus};
 pub use readiness::{
   ReadinessCheck, ReadinessCheckStatus, ReadinessProbeInput, ReadinessReport, ReadinessStatus,

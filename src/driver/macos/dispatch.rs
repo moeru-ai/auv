@@ -4,11 +4,13 @@ use super::capture::commands::{capture_display, capture_region, capture_window, 
 use super::control::{
   activate_app, ax_click_window_text, ax_focus_text_input, ax_press_button, click_point,
   click_screen_row, click_screen_text, click_window_point, click_window_row, click_window_text,
-  find_icon_match, find_window_rows, find_window_text, focus_text_input, music_result_play,
-  music_search_results, music_validate_candidate_liveness, observe_window_region,
-  paste_text_preserve_clipboard, press_button, press_key, recognition_read_ratio, scroll_point,
-  scroll_window_region, smart_press, teach_click, type_text, wait_for_window_rows,
-  wait_for_window_text,
+  find_icon_match, find_window_rows, find_window_text, focus_text_input, observe_window_region,
+  paste_text_preserve_clipboard, press_button, press_key, scroll_point, scroll_window_region,
+  smart_press, teach_click, type_text, wait_for_window_rows, wait_for_window_text,
+};
+use super::media_control::{
+  media_control_next, media_control_now_playing, media_control_pause, media_control_play,
+  media_control_previous, media_control_toggle_play_pause,
 };
 use super::observe::{
   find_image_text, find_screen_rows, find_screen_text, identify_point, list_windows,
@@ -49,6 +51,9 @@ pub(crate) fn invoke_legacy_command_operation(call: &DriverCall) -> AuvResult<Dr
   if let Some(response) = dispatch_control_operation(call) {
     return response;
   }
+  if let Some(response) = dispatch_media_control_operation(call) {
+    return response;
+  }
   if let Some(response) = dispatch_overlay_operation(call) {
     return response;
   }
@@ -83,10 +88,6 @@ fn dispatch_observe_operation(call: &DriverCall) -> Option<AuvResult<DriverRespo
     "find_window_text" => find_window_text(call),
     "wait_for_window_text" => wait_for_window_text(call),
     "find_window_rows" => find_window_rows(call),
-    "music_search_results" => music_search_results(call),
-    "music_result_play" => music_result_play(call),
-    "music_validate_candidate_liveness" => music_validate_candidate_liveness(call),
-    "recognition_read_ratio" => recognition_read_ratio(call),
     "wait_for_window_rows" => wait_for_window_rows(call),
     "observe_window_region" => observe_window_region(call),
     "find_icon_match" => find_icon_match(call),
@@ -123,6 +124,18 @@ fn dispatch_control_operation(call: &DriverCall) -> Option<AuvResult<DriverRespo
   })
 }
 
+fn dispatch_media_control_operation(call: &DriverCall) -> Option<AuvResult<DriverResponse>> {
+  Some(match call.operation.as_str() {
+    "media_control_now_playing" => media_control_now_playing(call),
+    "media_control_play" => media_control_play(call),
+    "media_control_pause" => media_control_pause(call),
+    "media_control_toggle_play_pause" => media_control_toggle_play_pause(call),
+    "media_control_next" => media_control_next(call),
+    "media_control_previous" => media_control_previous(call),
+    _ => return None,
+  })
+}
+
 fn dispatch_overlay_operation(call: &DriverCall) -> Option<AuvResult<DriverResponse>> {
   Some(match call.operation.as_str() {
     "overlay_show_cursor" => overlay_show_cursor(call),
@@ -139,4 +152,44 @@ fn dispatch_overlay_operation(call: &DriverCall) -> Option<AuvResult<DriverRespo
     "overlay_click_point" => overlay_click_point(call),
     _ => return None,
   })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::model::{DriverRunContext, ExecutionTarget};
+
+  fn call(operation: &str) -> DriverCall {
+    DriverCall {
+      operation: operation.to_string(),
+      target: ExecutionTarget::default(),
+      inputs: Default::default(),
+      working_directory: std::path::PathBuf::from("."),
+      run_context: DriverRunContext {
+        run_id: "run_test".to_string(),
+        span_id: "span_test".to_string(),
+        device_id: "device_test".to_string(),
+        session_id: "session_test".to_string(),
+      },
+    }
+  }
+
+  #[test]
+  fn dispatch_does_not_expose_app_workflow_operations() {
+    for operation in [
+      "music_search_results",
+      "music_result_play",
+      "music_validate_candidate_liveness",
+      "recognition_read_ratio",
+    ] {
+      assert!(
+        dispatch_observe_operation(&call(operation)).is_none(),
+        "{operation}"
+      );
+      assert!(
+        dispatch_control_operation(&call(operation)).is_none(),
+        "{operation}"
+      );
+    }
+  }
 }

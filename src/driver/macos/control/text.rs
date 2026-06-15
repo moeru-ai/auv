@@ -394,6 +394,7 @@ mod tests {
       operation: "paste_text_preserve_clipboard".to_string(),
       target: ExecutionTarget {
         application_id: Some("com.netease.163music".to_string()),
+        target_label: None,
       },
       inputs: entries
         .into_iter()

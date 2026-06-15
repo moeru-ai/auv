@@ -188,6 +188,7 @@ pub(crate) fn invoke_probe_step(
     command_id: command_id.to_string(),
     target: ExecutionTarget {
       application_id: target_application_id.clone(),
+      target_label: None,
     },
     inputs: inputs.clone(),
     dry_run: false,

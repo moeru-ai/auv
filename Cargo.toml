@@ -3,6 +3,8 @@ members = [
   ".",
   "crates/auv-apple-notes",
   "crates/auv-apple-textedit",
+  "crates/auv-cli-invoke-macros",
+  "crates/auv-cli-invoke",
   "crates/auv-qqmusic",
   "crates/auv-driver",
   "crates/auv-driver-macos",
@@ -62,6 +64,7 @@ objc2-core-foundation = "0.3"
 auv-game-osu = { path = "crates/auv-game-osu" }
 auv-inference-common = { path = "crates/auv-inference-common" }
 auv-driver = { path = "crates/auv-driver" }
+auv-cli-invoke = { path = "crates/auv-cli-invoke" }
 auv-steam = { path = "crates/auv-steam" }
 axum = { version = "0.8", features = ["ws"] }
 semver = "1"
@@ -77,6 +80,7 @@ rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "crates/auv-driver-macos" }
+auv-media-macos = { path = "crates/auv-media-macos" }
 auv-overlay-macos = { path = "crates/auv-overlay-macos" }
 objc2-core-graphics.workspace = true
 objc2-core-foundation.workspace = true

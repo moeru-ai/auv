@@ -4,8 +4,10 @@ mod app;
 mod ax;
 pub(crate) mod common;
 mod icon_match;
+#[cfg(test)]
 mod music;
 mod pointer;
+#[cfg(test)]
 mod recognition_read;
 mod region;
 mod screen;
@@ -20,11 +22,7 @@ pub(crate) use self::ax::{
   smart_press,
 };
 pub(crate) use self::icon_match::find_icon_match;
-pub(crate) use self::music::{
-  music_result_play, music_search_results, music_validate_candidate_liveness,
-};
 pub(crate) use self::pointer::{click_point, scroll_point};
-pub(crate) use self::recognition_read::recognition_read_ratio;
 pub(crate) use self::region::{observe_window_region, scroll_window_region};
 pub(crate) use self::screen::{click_screen_row, click_screen_text};
 pub(crate) use self::teach::teach_click;
