@@ -18,9 +18,10 @@ The Minecraft lane now has:
 - crate-local MC-3 world-diff verdict logic
 - crate-local MC-4 mismatch-refusal logic
 - a build-gated MC-1 telemetry mod tree
+- a verified real running-client MC-1 durable telemetry sample, imported through the runtime artifact seam into a recorded run (sample is local-only / gitignored, not committed to the repo)
 - a read-side-visible MC-3/MC-4 execution evidence closure in AUV core
 
-What it still does **not** have is a real running-client MC-1 durable sample, live screenshot/telemetry binding, or a full live MC-2/MC-3/MC-4 end-to-end proof.
+What it still does **not** have is a live screenshot/telemetry binding (MC-2 screenshot anchor), or a full live MC-2/MC-3/MC-4 end-to-end proof. The MC-1 real-sample gap is now closed; the remaining live gaps are not.
 
 ## Source documents
 
@@ -48,17 +49,25 @@ Recent wording / bug-fix commits that tightened boundary claims:
 - A sidecar tree exists at `sidecar/minecraft-telemetry/`.
 - The lane already documents append-only JSONL as the intended first persistence shape.
 - The MC-2/MC-3/MC-4 handoff records that the sidecar tree is buildable and includes a telemetry writer shape.
+- A **real running-client telemetry sample now exists and was imported as a durable run artifact.** The dev client (`./gradlew runClient`) was run live and produced `sidecar/minecraft-telemetry/run/auv/telemetry.jsonl`, which was imported through the committed runtime artifact seam (`2407d90 feat(runtime): record mc-1 telemetry sample artifact`) and persisted under the local run store. This closes the MC-1 "a real running-client sample exists as durable evidence" gap.
+
+### MC-1 real-sample closure evidence
+
+- **Source sample**: `sidecar/minecraft-telemetry/run/auv/telemetry.jsonl` (produced by a live `runClient` session, which exited cleanly).
+- **Import run id**: `run_1781537928075_75501_0`
+- **Artifact id**: `artifact_0001`
+- **Durable artifact path**: `.auv/runs/run_1781537928075_75501_0/artifacts/artifact_0001_telemetry.jsonl` — **local-only / gitignored** via `.gitignore` `.auv/`; this sample is durable on disk, not committed to the repo.
+- **Disk-verifiable facts**: artifact size is `263180489` bytes (~263MB); the first JSONL record begins `{"spatial_frame_id":"frame-11-21297606287458","world_tick":11,"monotonic_timestamp_ms":21297606,...}`, so the sample carries the expected MC-1 `SpatialFrame` shape (`spatial_frame_id`, `world_tick`, `monotonic_timestamp_ms`). `git check-ignore` confirms the path is ignored and `git ls-files` confirms it is not tracked.
+- **Caveat — read-side summary is NOT part of this closure**: a telemetry-aware `inspect` summary (line count, first/last tick, timestamp range) was prototyped locally but is **not** committed and is **not** owner-approved per the MC-1 boundary in `2026-06-14-auv-3d-minecraft-spatial-skill-p0.md` (which keeps the sidecar external and defers query-runtime/inspect surfacing). Treat the summary numbers as un-promoted local observations, not durable repo evidence.
 
 ### What is **not** yet true
 
-- No verified real running-client telemetry sample is recorded in-repo as durable evidence.
-- No confirmed end-to-end proof yet shows one flushed sample being consumed through an AUV read-side path.
-- The repo still lacks a completed “real sample exists and can be inspected” closure for MC-1.
+- The durable sample is local-only; it is **not** committed to the repo (gitignored). MC-1 closure is "a real running-client sample exists as a durable run artifact," not "sample is checked into version control."
+- This closure does **not** imply MC-2 screenshot/telemetry binding, nor any live MC-3 / MC-4 end-to-end proof. Those remain open.
 
 ### Current boundary
 
-Treat MC-1 as a producer/sample evidence gap, not as a mere wording issue.
-The next valid MC-1 slice should prove one durable sample path, not redesign telemetry shape.
+MC-1's real-sample / durable-evidence gap is **closed**. The remaining Minecraft live gaps (MC-2 screenshot binding, live MC-3/MC-4 end-to-end) are independent and are **not** discharged by this MC-1 closure.
 
 ### Most relevant files for the next MC-1 slice
 
@@ -122,7 +131,7 @@ This means MC-3/MC-4 execution evidence is now:
 ### What is **not** yet true
 
 - This is not yet a full live-client MC-3/MC-4 closure.
-- The lane still lacks a real MC-1 sample, live screenshot binding, and live driver-on-client proof.
+- The lane still lacks a live screenshot binding and live driver-on-client proof. (The MC-1 real-sample gap is now closed — see the MC-1 section — but that is independent of the MC-3/MC-4 live path.)
 - MC-4 refusal categories are still not backed by a real-client refusal sample matrix recorded through live evidence.
 
 ### Current boundary
@@ -157,7 +166,7 @@ For the completed read-side closure slice, the following passed:
 - G2 is still open.
 - G4 is still open.
 - No full graduation claim is justified yet.
-- Live MC-1 / MC-3 / MC-4 evidence gates still remain.
+- Live MC-3 / MC-4 evidence gates still remain. (The MC-1 real-sample gate is now closed and no longer blocks here.)
 
 ### Current boundary
 
@@ -183,8 +192,7 @@ Remaining issues are now primarily implementation/evidence gaps, not wording bug
 
 If continuing implementation rather than more wording cleanup, the most sensible order is:
 
-1. **MC-1 real telemetry durable sample**
-   - prove one real running-client sample is flushed as durable evidence
+1. ~~**MC-1 real telemetry durable sample**~~ — **done.** A real running-client sample was flushed and imported as a durable run artifact via the committed runtime seam (local-only / gitignored). See the MC-1 section above.
 2. **MC-2 screenshot / projection evidence bridge**
    - make projection/screenshot/overlay evidence persist through the current artifact seam
 3. **MC-3 / MC-4 live-client promotion of the already-closed read-side path**
