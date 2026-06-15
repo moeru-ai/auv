@@ -1,5 +1,6 @@
 pub mod artifact;
 pub mod bind;
+pub mod evidence;
 pub mod ingest;
 pub mod input_target;
 pub mod overlay;
