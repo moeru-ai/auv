@@ -173,6 +173,14 @@ pub enum CandidateActionExecutionLineageStatus {
   Malformed,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateActionExecutionClosureState {
+  EvidenceClosed,
+  SemanticOpen,
+  BlockedByReadiness,
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct CandidateActionExecutionLineage {
   pub artifact: ArtifactRefLineage,
@@ -192,6 +200,7 @@ pub struct CandidateActionExecutionLineage {
   pub attempts_succeeded: Option<usize>,
   pub operation_status: Option<String>,
   pub verification: Option<String>,
+  pub closure_state: CandidateActionExecutionClosureState,
   pub semantic_matched: Option<bool>,
   pub readiness: Option<String>,
   pub readiness_blocker: Option<String>,
@@ -790,6 +799,14 @@ fn candidate_action_execution_lineage_entry(
     source_candidate_action_decision_artifact.as_ref(),
     operation_result_artifact.as_ref(),
   );
+  let semantic_matched = execution
+    .operation_result
+    .verifications
+    .iter()
+    .find(|verification| verification.semantic_matched.is_some())
+    .or_else(|| execution.operation_result.verifications.first())
+    .and_then(|verification| verification.semantic_matched);
+  let closure_state = candidate_action_execution_closure_state(&execution);
 
   CandidateActionExecutionLineage {
     artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
@@ -815,13 +832,8 @@ fn candidate_action_execution_lineage_entry(
       .and_then(|value| value.as_u64().and_then(|count| usize::try_from(count).ok())),
     operation_status: detail_string(&execution.detail, &["operation_status"]),
     verification: detail_string(&execution.detail, &["verification"]),
-    semantic_matched: execution
-      .operation_result
-      .verifications
-      .iter()
-      .find(|verification| verification.semantic_matched.is_some())
-      .or_else(|| execution.operation_result.verifications.first())
-      .and_then(|verification| verification.semantic_matched),
+    closure_state,
+    semantic_matched,
     readiness: detail_string(&execution.detail, &["readiness"]),
     readiness_blocker: detail_string(&execution.detail, &["readiness_blocker"]),
     consent_id: Some(execution.consent.consent_id),
@@ -858,6 +870,7 @@ fn malformed_candidate_action_execution_lineage(
     attempts_succeeded: None,
     operation_status: None,
     verification: None,
+    closure_state: CandidateActionExecutionClosureState::SemanticOpen,
     semantic_matched: None,
     readiness: None,
     readiness_blocker: None,
@@ -868,6 +881,32 @@ fn malformed_candidate_action_execution_lineage(
     side_effect: None,
     known_limits: Vec::new(),
     issue: Some(issue),
+  }
+}
+
+fn candidate_action_execution_closure_state(
+  execution: &CandidateActionExecutionArtifact,
+) -> CandidateActionExecutionClosureState {
+  if execution
+    .detail
+    .get("readiness")
+    .and_then(|value| value.as_str())
+    == Some("not_ready")
+  {
+    return CandidateActionExecutionClosureState::BlockedByReadiness;
+  }
+
+  let semantic_matched = execution
+    .operation_result
+    .verifications
+    .iter()
+    .find(|verification| verification.semantic_matched.is_some())
+    .or_else(|| execution.operation_result.verifications.first())
+    .and_then(|verification| verification.semantic_matched);
+
+  match semantic_matched {
+    Some(false) | None => CandidateActionExecutionClosureState::SemanticOpen,
+    Some(true) => CandidateActionExecutionClosureState::EvidenceClosed,
   }
 }
 
@@ -1251,13 +1290,14 @@ mod tests {
   use super::{
     CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE, CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
     CANDIDATE_PROMOTION_ARTIFACT_ROLE, CandidateActionDecisionLineageStatus,
-    CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus,
-    DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
-    extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
-    extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
-    extract_observation_snapshots, extract_verifications, list_candidate_action_decision_lineage,
-    list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
-    list_detector_recognition_lineage, list_observation_snapshots, list_verifications,
+    CandidateActionExecutionClosureState, CandidateActionExecutionLineageStatus,
+    CandidatePromotionLineageStatus, DETECTOR_RECOGNITION_ARTIFACT_ROLE,
+    DetectorRecognitionLineageStatus, extract_candidate_action_decision_lineage,
+    extract_candidate_action_execution_lineage, extract_candidate_promotion_lineage,
+    extract_detector_recognition_lineage, extract_observation_snapshots, extract_verifications,
+    list_candidate_action_decision_lineage, list_candidate_action_execution_lineage,
+    list_candidate_promotion_lineage, list_detector_recognition_lineage,
+    list_observation_snapshots, list_verifications,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::candidate_action_decision::{
@@ -2238,6 +2278,10 @@ mod tests {
       extracted[0].verification.as_deref(),
       Some("activation_only")
     );
+    assert_eq!(
+      extracted[0].closure_state,
+      CandidateActionExecutionClosureState::SemanticOpen
+    );
     assert_eq!(extracted[0].semantic_matched, None);
     assert_eq!(extracted[0].attempts, Some(1));
     assert_eq!(extracted[0].attempts_succeeded, Some(1));
@@ -2256,6 +2300,10 @@ mod tests {
     assert_eq!(
       extracted[3].verification.as_deref(),
       Some("activation_only+post_action:semantic_match")
+    );
+    assert_eq!(
+      extracted[3].closure_state,
+      CandidateActionExecutionClosureState::EvidenceClosed
     );
     assert_eq!(extracted[3].semantic_matched, Some(true));
     assert_eq!(

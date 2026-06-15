@@ -11,8 +11,9 @@ use crate::contract::{
 use crate::model::AuvResult;
 use crate::run_read::{
   CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
-  CandidateActionExecutionLineage, CandidateActionExecutionLineageStatus,
-  CandidatePromotionLineage, CandidatePromotionLineageStatus, DetectorRecognitionLineage,
+  CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
+  CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
+  CandidatePromotionLineageStatus, DetectorRecognitionLineage,
 };
 use crate::store::{CanonicalRun, LocalStore};
 
@@ -350,9 +351,10 @@ pub fn render_run_text(
   } else {
     for lineage in candidate_action_execution_lineage {
       output.push_str(&format!(
-        "- artifact={} status={} execution_id={} source_decision={} operation_result_artifact={} candidate={} resolver={} selected={} input_delivery={} selected_path={} operation_status={} verification={} semantic_matched={} readiness={} blocker={} side_effect={} consent={} by={} consent_provenance={} consent_grade={} issue={}\n",
+        "- artifact={} status={} closure_state={} execution_id={} source_decision={} operation_result_artifact={} candidate={} resolver={} selected={} input_delivery={} selected_path={} operation_status={} verification={} semantic_matched={} readiness={} blocker={} side_effect={} consent={} by={} consent_provenance={} consent_grade={} issue={}\n",
         lineage.artifact.artifact_id,
         render_candidate_action_execution_status(&lineage.status),
+        render_candidate_action_execution_closure_state(&lineage.closure_state),
         lineage.execution_id.as_deref().unwrap_or("n/a"),
         lineage
           .source_candidate_action_decision_artifact
@@ -473,6 +475,16 @@ fn render_candidate_action_execution_status(
   }
 }
 
+fn render_candidate_action_execution_closure_state(
+  state: &CandidateActionExecutionClosureState,
+) -> &'static str {
+  match state {
+    CandidateActionExecutionClosureState::EvidenceClosed => "evidence_closed",
+    CandidateActionExecutionClosureState::SemanticOpen => "semantic_open",
+    CandidateActionExecutionClosureState::BlockedByReadiness => "blocked_by_readiness",
+  }
+}
+
 fn render_optional_bool(value: Option<bool>) -> &'static str {
   match value {
     Some(true) => "true",
@@ -537,10 +549,10 @@ mod tests {
   };
   use crate::run_read::{
     ArtifactRefLineage, CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
-    CandidateActionExecutionLineage, CandidateActionExecutionLineageStatus,
-    CandidatePromotionLineage, CandidatePromotionLineageStatus,
-    DetectorRecognitionArtifactRefLineage, DetectorRecognitionLineage,
-    DetectorRecognitionLineageStatus,
+    CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
+    CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
+    CandidatePromotionLineageStatus, DetectorRecognitionArtifactRefLineage,
+    DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
   };
   use crate::store::CanonicalRun;
   use crate::trace::{
@@ -876,6 +888,7 @@ mod tests {
       attempts_succeeded: Some(1),
       operation_status: Some("completed".to_string()),
       verification: Some("activation_only".to_string()),
+      closure_state: CandidateActionExecutionClosureState::SemanticOpen,
       semantic_matched: None,
       readiness: Some("ready".to_string()),
       readiness_blocker: None,
@@ -945,6 +958,7 @@ mod tests {
     assert!(output.contains("selected_path=window_targeted_mouse"));
     assert!(output.contains("operation_status=completed"));
     assert!(output.contains("verification=activation_only"));
+    assert!(output.contains("closure_state=semantic_open"));
     assert!(output.contains("semantic_matched=n/a"));
     assert!(output.contains("side_effect=single_input_delivered"));
     assert!(output.contains("consent=consent_execute_end_turn"));
