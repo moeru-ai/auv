@@ -1,11 +1,20 @@
 # auv-tracing-driver Runtime Recording Split Spec
 
-Status: needs refresh after PR #35
+Status: needs refresh after `auv-cli-invoke` merge; reference notes added
+2026-06-16
 
 Update 2026-06-11: the legacy JSON `skill`/recipe/case-matrix lane has been
 removed by PR #35. This document remains useful for the `auv-tracing-driver`
 recording boundary, but any statement that assumes JSON recipes still exist as
 `Runtime` callers is historical and should not guide new implementation.
+
+Update 2026-06-16: `auv-cli-invoke` now owns command metadata and
+`src/catalog.rs` has been removed. The next useful simplification is to extract
+the durable run/span/event/artifact recorder from `Runtime`. The design should
+follow the Rust ecosystem's observability split: library crates may emit
+`tracing` spans/events, while binaries and servers configure subscribers and
+OpenTelemetry exporters. AUV's durable run store remains product state, not a
+best-effort telemetry side effect.
 
 Scope classification: approved feature slice
 
@@ -55,6 +64,45 @@ This boundary records evidence for atomic driver operations. It should not own
 command compatibility, retired JSON recipe execution, retired bundle lookup, or
 UI-specific interaction loops.
 
+## Ecosystem Reference Notes
+
+Local reference clones were captured under `/Users/neko/Git/github.com` on
+2026-06-16. These repositories are references for API shape and layering, not
+implementation dependencies:
+
+- `tokio-rs/tracing` at `d9d4c54`: use as the model for library-side
+  instrumentation. Libraries emit structured spans/events and do not own global
+  subscriber setup.
+- `tokio-rs/console` at `59e23ed`: use as the model for a layer plus consumer
+  architecture. `console_subscriber::init` is convenient for applications,
+  while `ConsoleLayer::builder().spawn()` returns a layer that callers compose
+  into their own subscriber. AUV should prefer this composable shape for any
+  future live-view bridge.
+- `getsentry/sentry-rust` at `e33b7ff`: use `sentry-tracing` as the model for
+  mapping `tracing` spans/events into product-specific records through filters
+  and mappers. This validates a future AUV tracing bridge, but also shows that
+  product semantics should be explicit and configurable.
+- `open-telemetry/opentelemetry-rust` at `8882149`: use as the model for API
+  versus SDK/exporter separation. Instrumentation libraries can use generic
+  tracing APIs and named instrumentation scopes; applications configure
+  providers/exporters.
+
+Design guidance from those references:
+
+- Do not make `auv-tracing-driver` call `tracing::subscriber::set_global_default`
+  or initialize OTel exporters. That belongs in binaries, test harnesses, or
+  inspect/server setup.
+- Do not make durable artifact staging depend on a subscriber being installed.
+  Missing telemetry configuration must not make AUV lose run records.
+- Do emit `tracing` spans/events from the explicit recorder path using stable
+  structured fields such as `auv.run_id`, `auv.span_id`, `auv.driver_id`,
+  `auv.operation`, `auv.artifact_id`, and `auv.artifact_role`.
+- Treat OpenTelemetry export as a bridge/layer around emitted `tracing` data,
+  not as the owner of AUV's persisted run model.
+- If AUV later adds a live inspector layer, follow the `console-subscriber`
+  split: a composable layer for applications that already own a subscriber, and
+  a convenience initializer only in binaries.
+
 ## API Shape
 
 The exact type names are provisional, but the split should expose concepts
@@ -67,6 +115,53 @@ let artifact_ref = run.stage_artifact_file(&span, artifact)?;
 run.finish_span(span, status)?;
 recorder.finish_run(run, finish)?;
 ```
+
+The preferred shape is **explicit durable recording plus `tracing`
+instrumentation**, not a pure tracing-subscriber reconstruction model. A typed
+operation should be able to record without global telemetry setup:
+
+```rust
+let recorder = DriverRecorder::new(store, recorder_sink);
+let mut run = recorder.start_run(DriverRunSpec::new("auv.driver.invoke"))?;
+let span = run.start_span("screen.captureRegion", attrs)?;
+
+let artifact_ref = run.stage_artifact_file(
+  &span,
+  ArtifactFile::new("region-capture", screenshot_path)
+    .preferred_name("capture.png")
+    .summary("Captured region image"),
+)?;
+
+run.event(&span, "artifact.captured", attrs_for(&artifact_ref));
+run.finish_span(span, SpanStatus::ok("capture completed"))?;
+recorder.finish_run(run, RunStatus::ok("driver operation completed"))?;
+```
+
+The same operation may also emit normal Rust tracing instrumentation:
+
+```rust
+let span = tracing::info_span!(
+  "auv.driver.operation",
+  auv.driver_id = "macos.desktop",
+  auv.operation = "capture_region",
+  auv.run_id = tracing::field::Empty,
+  auv.span_id = tracing::field::Empty,
+);
+```
+
+After the durable `DriverRun` and child span exist, the recorder can record the
+actual `run_id` and `span_id` fields on the tracing span. If no subscriber is
+installed, this is a no-op for telemetry but the AUV run still persists.
+
+Do not implement the inverse model in the first PR:
+
+```text
+tracing events -> subscriber/layer -> reconstruct AUV run/artifact store
+```
+
+That model is useful later for a live observer or external telemetry bridge,
+but it is too implicit for AUV's source-of-truth run store and makes artifact
+staging failures hard to surface to callers.
 
 The API should be shaped so future consumers can use it, but PR2 should wire
 only the recorder extraction path and the selected proof for this slice. The
