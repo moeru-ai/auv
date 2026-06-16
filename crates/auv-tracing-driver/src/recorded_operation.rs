@@ -257,6 +257,14 @@ where
   let root = run.root_span();
   let run_id = run.id().clone();
   let run_dir = (services.run_dir)(run_id.as_str())?;
+  let operation_span = tracing::info_span!(
+    target: "auv.tracing_driver",
+    "auv.recorded_operation",
+    auv.run_id = %run_id,
+    auv.root_span_id = %root.id(),
+    auv.operation_label = %operation_label,
+  );
+  let _operation_span_guard = operation_span.enter();
 
   record_operation_event(
     &mut run,

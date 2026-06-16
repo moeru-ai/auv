@@ -169,6 +169,15 @@ impl RecordingHandle {
   pub fn start_run(&self, spec: RunSpec) -> AuvResult<RecordingRun> {
     let run_id = new_run_id();
     let root_span_id = new_span_id();
+    tracing::info!(
+      target: "auv.tracing_driver",
+      {
+        auv.run_id = %run_id,
+        auv.root_span_id = %root_span_id,
+        auv.run_type = %spec.run_type.as_str(),
+      },
+      "AUV run started"
+    );
     let started = now_millis();
     let mut run_attributes = spec.attributes.clone();
     run_attributes.insert(
@@ -220,6 +229,14 @@ impl RecordingHandle {
     let failure = finish.failure.map(|message| TraceFailure { message });
     let recorded = run.finish(finish.status_code, finish.summary, failure);
     let run_id = recorded.snapshot.run.run_id.clone();
+    tracing::info!(
+      target: "auv.tracing_driver",
+      {
+        auv.run_id = %run_id,
+        auv.status = %recorded.snapshot.run.status_code.as_str(),
+      },
+      "AUV run finished"
+    );
     let mut recording_errors = recorded.recording_errors;
     self.recording.write_run_snapshot(&recorded.snapshot)?;
     if let Err(error) = self.recording.record(RunUpdate::RunFinished {
@@ -279,6 +296,16 @@ impl RecordingHandle {
         summary,
       },
     )?;
+    tracing::info!(
+      target: "auv.tracing_driver",
+      {
+        auv.run_id = %run.id(),
+        auv.span_id = %span.id(),
+        auv.artifact_id = %artifact.artifact_id,
+        auv.artifact_role = %artifact.role,
+      },
+      "AUV artifact staged"
+    );
     record_event_with_id(
       run,
       span.id(),
@@ -317,6 +344,16 @@ impl RecordingHandle {
         summary,
       },
     )?;
+    tracing::info!(
+      target: "auv.tracing_driver",
+      {
+        auv.run_id = %run.id(),
+        auv.span_id = %span.id(),
+        auv.artifact_id = %artifact.artifact_id,
+        auv.artifact_role = %artifact.role,
+      },
+      "AUV artifact staged"
+    );
     record_event_with_id(
       run,
       span.id(),
