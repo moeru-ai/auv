@@ -192,6 +192,9 @@ Hooking boundary (research result):
   tick-side fields.
 - Preferred viewport read path: client window/framebuffer size from the window
   abstraction at render time.
+- `view_matrix` and `projection_matrix` must come from a render-time hook with a
+  real world-render context; tick-spine `GL11.glGetFloatv` reads are not
+  acceptable for truth.
 - Do **not** anchor business sampling in deep render internals such as
   `MinecraftClient#render` mid-pipeline, `GameRenderer`/`WorldRenderer` private
   internals, `BufferBuilder`/`VertexConsumer`/`RenderSystem`, or HUD/screen draw

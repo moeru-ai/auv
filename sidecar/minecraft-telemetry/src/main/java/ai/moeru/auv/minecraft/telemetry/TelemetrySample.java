@@ -25,6 +25,42 @@ public final class TelemetrySample {
   public final List<NearbyBlockSample> nearbyBlocks = new ArrayList<>();
   public final List<InventoryEntrySample> inventorySummary = new ArrayList<>();
 
+  public TelemetrySample copy() {
+    TelemetrySample copy = new TelemetrySample();
+    copy.spatialFrameId = spatialFrameId;
+    copy.worldTick = worldTick;
+    copy.monotonicTimestampMs = monotonicTimestampMs;
+    copy.viewportWidth = viewportWidth;
+    copy.viewportHeight = viewportHeight;
+    copy.viewMatrix = viewMatrix.clone();
+    copy.projectionMatrix = projectionMatrix.clone();
+    copy.eyeX = eyeX;
+    copy.eyeY = eyeY;
+    copy.eyeZ = eyeZ;
+    copy.yaw = yaw;
+    copy.pitch = pitch;
+    copy.raycastBlockX = raycastBlockX;
+    copy.raycastBlockY = raycastBlockY;
+    copy.raycastBlockZ = raycastBlockZ;
+    copy.raycastFace = raycastFace;
+    copy.raycastBlockId = raycastBlockId;
+    for (NearbyBlockSample block : nearbyBlocks) {
+      NearbyBlockSample blockCopy = new NearbyBlockSample();
+      blockCopy.x = block.x;
+      blockCopy.y = block.y;
+      blockCopy.z = block.z;
+      blockCopy.blockId = block.blockId;
+      copy.nearbyBlocks.add(blockCopy);
+    }
+    for (InventoryEntrySample entry : inventorySummary) {
+      InventoryEntrySample entryCopy = new InventoryEntrySample();
+      entryCopy.itemId = entry.itemId;
+      entryCopy.count = entry.count;
+      copy.inventorySummary.add(entryCopy);
+    }
+    return copy;
+  }
+
   public String toJsonLine() {
     StringBuilder builder = new StringBuilder();
     builder.append('{');

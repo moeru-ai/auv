@@ -71,3 +71,8 @@ scan-page-*-observe.json
 
 # Local run artifacts & review scratch
 .tmp-*/
+
+# Minecraft telemetry sidecar local build and live run output
+sidecar/minecraft-telemetry/.gradle/
+sidecar/minecraft-telemetry/build/
+sidecar/minecraft-telemetry/run/
