@@ -1,9 +1,9 @@
 // File: src/runtime.rs
 //! Runtime execution engine.
 //!
-//! `Runtime` is the shared core used by CLI and other frontends: it executes
-//! resolved command specs, invokes drivers, and records runs/spans/events plus
-//! staged artifacts into the store.
+//! `Runtime` is the shared invoke facade used by CLI and other frontends: it executes
+//! resolved command specs, invokes drivers, and delegates durable run/span/event
+//! and artifact recording to `auv-tracing-driver`.
 //!
 //! Boundary: this layer executes *given* requests. It is not a planner/LLM
 //! agent, and it does not choose strategies beyond what the request/cmd

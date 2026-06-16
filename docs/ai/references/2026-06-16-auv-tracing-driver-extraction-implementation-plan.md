@@ -410,6 +410,12 @@ git add Cargo.toml Cargo.lock crates/auv-tracing-driver src/trace.rs src/store.r
 git commit -m "refactor(auv-tracing-driver): move durable recording modules"
 ```
 
+> Implementation note: during execution, Task 3 was folded into the Task 2
+> migration commit because moving `ArtifactRef` and `ProducedArtifact` without
+> immediately unifying root `contract`/`model` re-exports made the root crate
+> compile against two incompatible contract types. The separate Task 3 checklist
+> below remains as the design boundary for that type-unification work.
+
 ---
 
 ### Task 3: Re-export Shared Types From Root Compatibility Modules

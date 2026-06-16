@@ -922,6 +922,45 @@ mod tests {
     SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
 
+  fn camel_case_keys_to_snake(value: &mut serde_json::Value) {
+    rename_json_keys(value, camel_to_snake);
+  }
+
+  fn rename_json_keys(value: &mut serde_json::Value, transform: fn(&str) -> String) {
+    match value {
+      serde_json::Value::Object(map) => {
+        let entries: Vec<(String, serde_json::Value)> = std::mem::take(map).into_iter().collect();
+        for (key, mut nested) in entries {
+          if key != "attributes" {
+            rename_json_keys(&mut nested, transform);
+          }
+          map.insert(transform(&key), nested);
+        }
+      }
+      serde_json::Value::Array(items) => {
+        for item in items {
+          rename_json_keys(item, transform);
+        }
+      }
+      _ => {}
+    }
+  }
+
+  fn camel_to_snake(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 4);
+    for (index, ch) in input.chars().enumerate() {
+      if ch.is_ascii_uppercase() {
+        if index > 0 {
+          out.push('_');
+        }
+        out.extend(ch.to_lowercase());
+      } else {
+        out.push(ch);
+      }
+    }
+    out
+  }
+
   #[test]
   fn write_config_rejects_no_token_on_non_loopback() {
     let error = super::InspectServeConfig {
@@ -1362,7 +1401,7 @@ mod tests {
     run["statusCode"] = serde_json::Value::from("ok");
     run["finishedAtMillis"] = serde_json::Value::from(200);
     let mut canonical_run = run.clone();
-    crate::recording::wire::camel_case_keys_to_snake(&mut canonical_run);
+    camel_case_keys_to_snake(&mut canonical_run);
     store
       .write_run_snapshot(&CanonicalRun {
         run: serde_json::from_value(canonical_run).expect("run record should decode"),

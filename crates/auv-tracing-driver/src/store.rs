@@ -10,7 +10,7 @@
 
 use std::fs;
 use std::io::ErrorKind;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::artifact::{ArtifactFileSource, ProducedArtifact};

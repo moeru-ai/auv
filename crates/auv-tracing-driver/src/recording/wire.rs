@@ -54,14 +54,6 @@ fn rename_discriminator(value: &mut Value, transform: fn(&str) -> String) {
   }
 }
 
-/// Recursively rename JSON object keys from camelCase to snake_case in place.
-///
-/// User-defined keys under `attributes` are preserved verbatim. Useful when
-/// decoding camelCase HTTP write fixtures into canonical record types.
-pub fn camel_case_keys_to_snake(value: &mut Value) {
-  rename_keys(value, camel_to_snake);
-}
-
 fn rename_keys(value: &mut Value, transform: fn(&str) -> String) {
   match value {
     Value::Object(map) => {

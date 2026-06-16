@@ -32,20 +32,21 @@ operation coverage. It is not the broad command migration PR.
 
 ## Current State
 
-`src/runtime.rs` currently owns several unrelated responsibilities:
+Before extraction, `src/runtime.rs` still owned several unrelated responsibilities:
 
 - starts and finishes runs
 - records spans and events
 - stages file artifacts and artifact refs
-- resolves command ids through the catalog
+- historically resolved command ids through `src/catalog.rs`; after PR #36 it routes invoke resolution through `auv-cli-invoke`
 - invokes legacy drivers through `DriverCall`
 - previously invoked bundle-era recipe commands, retired 2026-06-11
 - previously invoked JSON skill/recipe/case-matrix commands, retired by PR #35
 - exposes read/inspect helper methods
 - hosts recorded operation helpers through `recorded_operation.rs`
 
-`recorded_operation.rs` already describes itself as the bridge between typed
-Rust driver APIs and AUV run recording, but it still depends on `Runtime`.
+`recorded_operation.rs` described itself as the bridge between typed
+Rust driver APIs and AUV run recording, but before this extraction it still
+depended on `Runtime`.
 
 ## Target Boundary
 
@@ -215,8 +216,8 @@ recording for atomic observations and input actions.
    `auv-cli-invoke` to the new recorder only to keep current recording behavior
    working, and add at most one minimal typed proof handler with no
    command-family migration.
-6. Shrink `Runtime` to a temporary facade only for remaining command/catalog
-   compatibility paths that have not yet moved behind `auv-cli-invoke`.
+6. Shrink `Runtime` to a temporary facade only for remaining invoke/runtime
+   compatibility paths that have not yet moved behind direct typed APIs.
 
 ## Exit Criteria
 
@@ -248,9 +249,9 @@ Focused tests should cover:
 
 ## Deferrals
 
-TODO(runtime-delete): full `runtime.rs` deletion is deferred until command
-catalog compatibility and remaining recording responsibilities move behind
-`auv-cli-invoke` and `auv-tracing-driver`.
+TODO(runtime-delete): full `runtime.rs` deletion is deferred until remaining
+invoke/runtime facade responsibilities move behind direct typed APIs and
+`auv-tracing-driver`.
 
 NOTICE(runtime-facade): `Runtime` still exposes recording facade methods for
 remaining invoke and historical callers. New typed workflows should use
