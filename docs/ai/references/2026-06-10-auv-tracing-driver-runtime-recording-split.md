@@ -1,7 +1,6 @@
 # auv-tracing-driver Runtime Recording Split Spec
 
-Status: needs refresh after `auv-cli-invoke` merge; reference notes added
-2026-06-16
+Status: implementation landed for durable recording extraction; interaction tracing remains deferred
 
 Update 2026-06-11: the legacy JSON `skill`/recipe/case-matrix lane has been
 removed by PR #35. This document remains useful for the `auv-tracing-driver`
@@ -252,6 +251,10 @@ Focused tests should cover:
 TODO(runtime-delete): full `runtime.rs` deletion is deferred until command
 catalog compatibility and remaining recording responsibilities move behind
 `auv-cli-invoke` and `auv-tracing-driver`.
+
+NOTICE(runtime-facade): `Runtime` still exposes recording facade methods for
+remaining invoke and historical callers. New typed workflows should use
+`auv_tracing_driver::RecordingHandle` directly.
 
 TODO(tracing-interaction): scroll scan and other macro-operation recording are
 deferred to `auv-tracing-interaction` after driver-level recording is stable.

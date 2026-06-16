@@ -476,16 +476,15 @@ reporting, and library-supplied recorders.
 
 ## Driver Tracing Boundary
 
-The driver tracing boundary is the provisional home for recording atomic driver
-operations. It owns run/span/event creation, artifact staging, artifact refs,
-and delivery to local stores or recorders while staying independent of command
-catalogs, historical recipe manifests, and CLI argument parsing.
+The driver tracing boundary is implemented by `auv-tracing-driver`. It owns
+durable AUV run/span/event/artifact recording and may emit Rust `tracing`
+spans/events for observability. It does not install global subscribers or
+OpenTelemetry exporters; binaries and servers configure those layers.
 
-The working crate name for this boundary is `auv-tracing-driver`. The name is
-provisional until the extraction lands, but the responsibility is not: typed
-driver calls and Rust orchestration should be able to record inspectable
-artifacts without constructing the legacy `Runtime`. This boundary may use a
-run recording backend for store writes, artifact staging, and recorder fan-out.
+Typed driver calls and Rust orchestration should use this boundary when they
+need inspectable artifacts without depending on command catalog or CLI argument
+parsing code. The root `Runtime` still exposes temporary facade methods for
+remaining invoke and historical callers.
 
 ## Interaction Tracing Boundary
 
