@@ -1,15 +1,13 @@
 use std::path::PathBuf;
 
+use crate::trace::{ArtifactId, EventId, RunId, SpanId};
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactRef {
-  // TODO(auv-tracing-driver-task2): replace string IDs with trace ID newtypes
-  // after `trace` moves into this crate; Task 1 must build without placeholder
-  // future modules.
-  pub run_id: String,
-  pub artifact_id: String,
-  pub span_id: String,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  pub captured_event_id: Option<String>,
+  pub run_id: RunId,
+  pub artifact_id: ArtifactId,
+  pub span_id: SpanId,
+  pub captured_event_id: Option<EventId>,
 }
 
 #[derive(Clone, Debug)]

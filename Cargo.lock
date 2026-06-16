@@ -563,6 +563,7 @@ dependencies = [
 name = "auv-tracing-driver"
 version = "0.0.1"
 dependencies = [
+ "axum",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

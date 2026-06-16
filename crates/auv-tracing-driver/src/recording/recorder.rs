@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use tokio::sync::broadcast;
 
-use crate::model::AuvResult;
+use crate::error::AuvResult;
 use crate::trace::{ArtifactRecordV1Alpha1, RunId};
 
 use super::update::RunUpdate;
@@ -323,7 +323,7 @@ mod tests {
   }
 
   impl RunRecorder for CapturingRecorder {
-    fn record(&self, update: RunUpdate) -> crate::model::AuvResult<()> {
+    fn record(&self, update: RunUpdate) -> crate::error::AuvResult<()> {
       self.updates.lock().expect("updates lock").push(update);
       Ok(())
     }
@@ -477,7 +477,7 @@ mod tests {
     });
     let path = std::env::temp_dir().join(format!(
       "auv-artifact-upload-source-{}.txt",
-      crate::model::now_millis()
+      crate::time::now_millis()
     ));
     std::fs::write(&path, "artifact body").expect("artifact source should write");
 

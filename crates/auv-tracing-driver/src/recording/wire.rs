@@ -58,8 +58,7 @@ fn rename_discriminator(value: &mut Value, transform: fn(&str) -> String) {
 ///
 /// User-defined keys under `attributes` are preserved verbatim. Useful when
 /// decoding camelCase HTTP write fixtures into canonical record types.
-#[cfg(test)]
-pub(crate) fn camel_case_keys_to_snake(value: &mut Value) {
+pub fn camel_case_keys_to_snake(value: &mut Value) {
   rename_keys(value, camel_to_snake);
 }
 

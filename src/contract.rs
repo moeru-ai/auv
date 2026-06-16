@@ -41,7 +41,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::trace::{ArtifactId, EventId, RunId, SpanId};
+pub use auv_tracing_driver::ArtifactRef;
+
+use crate::trace::{ArtifactId, RunId, SpanId};
 
 // NOTICE(contract-api-version-reader-check): producer-side stamping landed
 // in commit be0aab7 but the reader side does not yet reject artifacts
@@ -77,14 +79,6 @@ fn default_verification_result_api_version() -> String {
 
 fn default_observation_snapshot_api_version() -> String {
   OBSERVATION_SNAPSHOT_API_VERSION.to_string()
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ArtifactRef {
-  pub run_id: RunId,
-  pub artifact_id: ArtifactId,
-  pub span_id: SpanId,
-  pub captured_event_id: Option<EventId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -618,6 +612,8 @@ mod tests {
   use super::*;
   use serde_json::json;
 
+  use crate::trace::EventId;
+
   fn artifact_ref() -> ArtifactRef {
     ArtifactRef {
       run_id: RunId::new("run_123"),
@@ -625,6 +621,20 @@ mod tests {
       span_id: SpanId::new("span_01"),
       captured_event_id: Some(EventId::new("event_01")),
     }
+  }
+
+  #[test]
+  fn artifact_ref_is_owned_by_tracing_driver_boundary() {
+    fn accepts_driver_ref(_value: auv_tracing_driver::ArtifactRef) {}
+
+    let artifact_ref = ArtifactRef {
+      run_id: RunId::new("run_type_identity"),
+      artifact_id: ArtifactId::new("artifact_type_identity"),
+      span_id: SpanId::new("span_type_identity"),
+      captured_event_id: Some(EventId::new("event_type_identity")),
+    };
+
+    accepts_driver_ref(artifact_ref);
   }
 
   #[test]
@@ -640,6 +650,21 @@ mod tests {
     let parsed: ArtifactRef =
       serde_json::from_value(value).expect("artifact ref should deserialize");
     assert_eq!(parsed, artifact_ref());
+  }
+
+  #[test]
+  fn artifact_ref_serializes_missing_capture_event_as_null() {
+    let artifact_ref = ArtifactRef {
+      run_id: RunId::new("run_123"),
+      artifact_id: ArtifactId::new("artifact_01"),
+      span_id: SpanId::new("span_01"),
+      captured_event_id: None,
+    };
+
+    let value = serde_json::to_value(&artifact_ref).expect("artifact ref should serialize");
+
+    assert!(value.get("captured_event_id").is_some());
+    assert_eq!(value["captured_event_id"], serde_json::Value::Null);
   }
 
   #[test]

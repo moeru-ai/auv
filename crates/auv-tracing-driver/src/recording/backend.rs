@@ -7,13 +7,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::contract::ArtifactRef;
-use crate::model::{AuvResult, now_millis};
+use crate::artifact::{ArtifactFileSource, ArtifactRef};
+use crate::error::AuvResult;
 use crate::recorded_operation::{RecordedOperationOutput, RecordedOperationServices};
 use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanRef};
-use crate::store::{ArtifactFileSource, CanonicalRun, LocalStore};
+use crate::store::{CanonicalRun, LocalStore};
+use crate::time::now_millis;
 use crate::trace::{
-  ArtifactRecordV1Alpha1, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, RunType, SpanId,
+  ArtifactRecordV1Alpha1, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, SpanId,
   SpanRecordV1Alpha1, TraceFailure, TraceState, TraceStatusCode, new_event_id, new_run_id,
   new_span_id, new_trace_id,
 };
@@ -107,7 +108,7 @@ impl RunRecordingBackend {
     &self,
     run_id: &RunId,
     index: usize,
-    artifact: crate::model::ProducedArtifact,
+    artifact: crate::artifact::ProducedArtifact,
     span_id: &SpanId,
     event_id: Option<crate::trace::EventId>,
   ) -> AuvResult<ArtifactRecordV1Alpha1> {
@@ -157,23 +158,12 @@ impl RecordingHandle {
     &self.recording
   }
 
-  pub fn read_run(&self, run_id: &str) -> AuvResult<CanonicalRun> {
-    crate::run_read::read_run(self.recording.store(), run_id)
-  }
-
-  pub fn inspect(&self, run_id: &str) -> AuvResult<String> {
-    crate::inspect::inspect_run(self.recording.store(), run_id)
-  }
-
-  pub fn list_candidate_action_execution_lineage(
-    &self,
-    run_id: &str,
-  ) -> AuvResult<Vec<crate::run_read::CandidateActionExecutionLineage>> {
-    crate::inspect::list_candidate_action_execution_lineage(self.recording.store(), run_id)
-  }
-
   pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {
     self.recording.run_dir(run_id)
+  }
+
+  pub fn read_run(&self, run_id: &str) -> AuvResult<CanonicalRun> {
+    self.recording.read_run(run_id)
   }
 
   pub fn start_run(&self, spec: RunSpec) -> AuvResult<RecordingRun> {
@@ -265,69 +255,6 @@ impl RecordingHandle {
       run_dir: &|run_id| self.run_dir(run_id),
     };
     crate::recorded_operation::run_recorded_operation(&services, spec, operation_label, operation)
-  }
-
-  pub fn record_candidate_action_decision(
-    &self,
-    promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,
-    request: crate::candidate_action_decision::CandidateActionDecisionRequest,
-  ) -> AuvResult<
-    RecordedOperationOutput<(
-      ArtifactRef,
-      crate::candidate_action_decision::CandidateActionDecisionArtifact,
-    )>,
-  > {
-    self.run_recorded_operation(
-      RunSpec::new(RunType::Execute, "auv.candidate.action.decide_only"),
-      "Candidate action decide-only artifact recording",
-      |context| {
-        crate::candidate_action_decision::record_candidate_action_decision_artifact(
-          context, promotion, &request,
-        )
-      },
-    )
-  }
-
-  pub fn run_candidate_action_command(
-    &self,
-    request: crate::candidate_action_command::CandidateActionCommandRequest,
-  ) -> AuvResult<
-    RecordedOperationOutput<crate::candidate_action_command::CandidateActionCommandOutput>,
-  > {
-    self.run_recorded_operation(
-      RunSpec::new(RunType::Execute, "auv.candidate.action.command"),
-      "Consent-gated candidate action command",
-      |context| {
-        crate::candidate_action_command::execute_candidate_action_command(context, &request)
-      },
-    )
-  }
-
-  pub fn record_candidate_action_execution(
-    &self,
-    promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,
-    decision: &crate::candidate_action_decision::CandidateActionDecisionArtifact,
-    request: crate::candidate_action_decision::CandidateActionExecutionRequest,
-    input_action_result: auv_driver::InputActionResult,
-  ) -> AuvResult<
-    RecordedOperationOutput<(
-      ArtifactRef,
-      crate::candidate_action_decision::CandidateActionExecutionArtifact,
-    )>,
-  > {
-    self.run_recorded_operation(
-      RunSpec::new(RunType::Execute, "auv.candidate.action.execute_single"),
-      "Candidate action execution artifact recording",
-      |context| {
-        crate::candidate_action_decision::record_candidate_action_execution_artifact(
-          context,
-          promotion,
-          decision,
-          &request,
-          input_action_result,
-        )
-      },
-    )
   }
 
   pub fn stage_artifact_file(
@@ -448,7 +375,8 @@ fn render_artifact_event(artifact: &ArtifactRecordV1Alpha1) -> String {
 mod tests {
   use std::sync::Arc;
 
-  use crate::store::{ArtifactFileSource, LocalStore};
+  use crate::artifact::ArtifactFileSource;
+  use crate::store::LocalStore;
   use crate::trace::{RunId, SpanId};
 
   use super::super::recorder::NoopRunRecorder;
@@ -458,11 +386,11 @@ mod tests {
   fn recording_backend_cleans_temporary_store_on_drop() {
     let root = std::env::temp_dir().join(format!(
       "auv-recording-temp-store-cleanup-{}",
-      crate::model::now_millis()
+      crate::time::now_millis()
     ));
     let source = std::env::temp_dir().join(format!(
       "auv-recording-temp-source-{}.txt",
-      crate::model::now_millis()
+      crate::time::now_millis()
     ));
     std::fs::write(&source, "artifact body").expect("artifact source should write");
     {

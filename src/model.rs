@@ -1,13 +1,11 @@
 // File: src/model.rs
+use crate::trace::{ArtifactRecordV1Alpha1, SpanId};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::trace::{ArtifactRecordV1Alpha1, SpanId};
-
-pub type AuvResult<T> = Result<T, String>;
+pub use auv_tracing_driver::{AuvResult, ProducedArtifact, now_millis};
 
 static RUN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -98,30 +96,12 @@ pub struct DriverCall {
 }
 
 #[derive(Clone, Debug)]
-pub struct ProducedArtifact {
-  pub kind: String,
-  pub source_path: PathBuf,
-  pub preferred_name: String,
-  pub note: Option<String>,
-}
-
-#[derive(Clone, Debug)]
 pub struct DriverResponse {
   pub summary: String,
   pub backend: Option<String>,
   pub signals: BTreeMap<String, String>,
   pub notes: Vec<String>,
   pub artifacts: Vec<ProducedArtifact>,
-}
-
-pub fn now_millis() -> u64 {
-  u64::try_from(
-    SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .unwrap_or_default()
-      .as_millis(),
-  )
-  .unwrap_or(u64::MAX)
 }
 
 pub fn new_run_id() -> String {
