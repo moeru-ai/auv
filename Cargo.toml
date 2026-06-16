@@ -19,6 +19,7 @@ members = [
   "crates/auv-netease-music",
   "crates/auv-overlay-macos",
   "crates/auv-steam",
+  "crates/auv-tracing-driver",
   "crates/auv-view",
 ]
 
@@ -70,6 +71,7 @@ auv-inference-common = { path = "crates/auv-inference-common" }
 auv-driver = { path = "crates/auv-driver" }
 auv-cli-invoke = { path = "crates/auv-cli-invoke" }
 auv-steam = { path = "crates/auv-steam" }
+auv-tracing-driver = { path = "crates/auv-tracing-driver" }
 axum = { version = "0.8", features = ["ws"] }
 semver = "1"
 serde.workspace = true
