@@ -13,7 +13,9 @@ use crate::run_read::{
   CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
   CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
   CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
-  CandidatePromotionLineageStatus, DetectorRecognitionLineage, list_minecraft_projection_artifacts,
+  CandidatePromotionLineageStatus, DetectorRecognitionLineage,
+  MinecraftTelemetrySampleArtifactLineage, list_minecraft_projection_artifacts,
+  list_minecraft_telemetry_sample_artifacts,
 };
 use crate::store::{CanonicalRun, LocalStore};
 
@@ -69,6 +71,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let candidate_action_decision_lineage = list_candidate_action_decision_lineage(store, run_id)?;
   let candidate_action_execution_lineage = list_candidate_action_execution_lineage(store, run_id)?;
   let minecraft_projection_artifacts = list_minecraft_projection_artifacts(store, run_id)?;
+  let minecraft_telemetry_sample_artifacts =
+    list_minecraft_telemetry_sample_artifacts(store, run_id)?;
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -78,6 +82,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &candidate_action_decision_lineage,
     &candidate_action_execution_lineage,
     &minecraft_projection_artifacts,
+    &minecraft_telemetry_sample_artifacts,
   ))
 }
 
@@ -90,6 +95,7 @@ pub fn render_run_text(
   candidate_action_decision_lineage: &[CandidateActionDecisionLineage],
   candidate_action_execution_lineage: &[CandidateActionExecutionLineage],
   minecraft_projection_artifacts: &[auv_game_minecraft::artifact::MinecraftProjectionArtifact],
+  minecraft_telemetry_sample_artifacts: &[MinecraftTelemetrySampleArtifactLineage],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -348,16 +354,46 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nMC-1 Telemetry Samples:\n");
+  if minecraft_telemetry_sample_artifacts.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for lineage in minecraft_telemetry_sample_artifacts {
+      output.push_str(&format!(
+        "- artifact={} line_count={} bytes={} path={} issue={}\n",
+        lineage.artifact.artifact_id,
+        lineage
+          .line_count
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "n/a".to_string()),
+        lineage
+          .byte_size
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "n/a".to_string()),
+        lineage.artifact.path.as_deref().unwrap_or("n/a"),
+        lineage.issue.as_deref().unwrap_or("n/a"),
+      ));
+    }
+  }
+
   output.push_str("\nMC-2 Projection Artifacts:\n");
   if minecraft_projection_artifacts.is_empty() {
     output.push_str("- none\n");
   } else {
     for artifact in minecraft_projection_artifacts {
       output.push_str(&format!(
-        "- frame={} tick={} timestamp_ms={} viewport={}x{}@{},{} visibility={} raycast={} verification_reference={} projected_point={}\n",
+        "- frame={} tick={} timestamp_ms={} screenshot_artifact_ref={} capture_skew_ms={} viewport={}x{}@{},{} visibility={} raycast={} verification_reference={} projected_point={}\n",
         artifact.spatial_frame_id,
         artifact.world_tick,
         artifact.monotonic_timestamp_ms,
+        artifact
+          .screenshot_artifact_ref
+          .as_deref()
+          .unwrap_or("n/a"),
+        artifact
+          .mc_capture_skew_ms
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "n/a".to_string()),
         artifact.viewport_bounds.width,
         artifact.viewport_bounds.height,
         artifact.viewport_bounds.x,
@@ -612,6 +648,7 @@ mod tests {
     CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
     CandidatePromotionLineageStatus, DetectorRecognitionArtifactRefLineage,
     DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
+    MinecraftTelemetrySampleArtifactLineage,
   };
   use crate::store::CanonicalRun;
   use crate::trace::{
@@ -980,10 +1017,27 @@ mod tests {
           basis_frame_id: "frame-1".to_string(),
           confidence: 1.0,
         }),
+        screenshot_artifact_ref: Some("artifact://screenshot-1".to_string()),
+        mc_capture_skew_ms: Some(180),
         visibility: auv_game_minecraft::types::ProjectionVisibility::Visible,
         raycast_block_id: Some("minecraft:stone".to_string()),
         verification_reference: Some("verification-1".to_string()),
       }];
+    let minecraft_telemetry_sample_artifacts = vec![MinecraftTelemetrySampleArtifactLineage {
+      artifact: crate::run_read::ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: crate::trace::ArtifactId::new("artifact_mc1".to_string()),
+        span_id: crate::trace::SpanId::new("span_mc1".to_string()),
+        captured_event_id: None,
+        role: Some("telemetry-sample".to_string()),
+        path: Some("artifacts/telemetry.jsonl".to_string()),
+        summary: Some("durable minecraft telemetry sample".to_string()),
+        resolved: true,
+      },
+      line_count: Some(1),
+      byte_size: Some(16),
+      issue: None,
+    }];
 
     let output = render_run_text(
       &run,
@@ -994,6 +1048,7 @@ mod tests {
       &candidate_action_decision_lineage,
       &candidate_action_execution_lineage,
       &minecraft_projection_artifacts,
+      &minecraft_telemetry_sample_artifacts,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -1036,6 +1091,8 @@ mod tests {
     assert!(output.contains("cursor=warp-visible"));
     assert!(output.contains("MC-2 Projection Artifacts:"));
     assert!(output.contains("frame=frame-1"));
+    assert!(output.contains("screenshot_artifact_ref=artifact://screenshot-1"));
+    assert!(output.contains("capture_skew_ms=180"));
     assert!(output.contains("verification_reference=verification-1"));
     assert!(output.contains(
       "projected_point=screen=320,240 visibility=visible radius_px=12 confidence=1 basis=frame-1"

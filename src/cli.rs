@@ -106,6 +106,13 @@ pub enum CliCommand {
     dispatch_limit: Option<usize>,
     capture_verify: bool,
   },
+  MinecraftProjectionBridge {
+    telemetry_sample: String,
+    screenshot: String,
+    target_block: String,
+    capture_skew_ms: Option<i64>,
+    inspect: InspectClientOptions,
+  },
   Invoke {
     request: InvokeRequest,
     inspect: InspectClientOptions,
@@ -183,6 +190,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "inspect" => parse_inspect(arguments),
     "mcp" => parse_mcp(arguments),
     "invoke" => parse_invoke(arguments),
+    "minecraft" => parse_minecraft(arguments),
     "scan" => parse_scan(arguments),
     "skill" => {
       Err("skill commands have been removed; use app-local Rust commands instead".to_string())
@@ -226,6 +234,7 @@ USAGE
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv-cli mcp serve
+  auv-cli minecraft bridge --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> [--capture-skew-ms <ms>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
   auv-cli candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
 
@@ -1012,6 +1021,62 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
   })
 }
 
+fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 2 || arguments[1] != "bridge" {
+    return Err("usage: auv-cli minecraft bridge --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> [--capture-skew-ms <ms>] [--store-root <path>]".to_string());
+  }
+
+  let mut telemetry_sample = None;
+  let mut screenshot = None;
+  let mut target_block = None;
+  let mut capture_skew_ms = None;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--sample" => {
+        telemetry_sample = Some(required_flag_value(arguments, index, "--sample")?);
+        index += 2;
+      }
+      "--screenshot" => {
+        screenshot = Some(required_flag_value(arguments, index, "--screenshot")?);
+        index += 2;
+      }
+      "--target-block" => {
+        target_block = Some(required_flag_value(arguments, index, "--target-block")?);
+        index += 2;
+      }
+      "--capture-skew-ms" => {
+        capture_skew_ms = Some(
+          required_flag_value(arguments, index, "--capture-skew-ms")?
+            .parse::<i64>()
+            .map_err(|error| format!("invalid --capture-skew-ms: {error}"))?,
+        );
+        index += 2;
+      }
+      other => return Err(format!("unexpected minecraft bridge argument {other}")),
+    }
+  }
+
+  Ok(CliCommand::MinecraftProjectionBridge {
+    telemetry_sample: telemetry_sample.ok_or_else(|| "--sample is required".to_string())?,
+    screenshot: screenshot.ok_or_else(|| "--screenshot is required".to_string())?,
+    target_block: target_block.ok_or_else(|| "--target-block is required".to_string())?,
+    capture_skew_ms,
+    inspect,
+  })
+}
+
 fn parse_scan(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 || arguments[1] != "window-region" {
     return Err("usage: auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--max-pages <n>]".to_string());
@@ -1404,6 +1469,54 @@ mod tests {
       }
       other => panic!("unexpected command: {other:?}"),
     }
+  }
+
+  #[test]
+  fn parse_minecraft_bridge_command() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "bridge".to_string(),
+      "--sample".to_string(),
+      "/tmp/telemetry.jsonl".to_string(),
+      "--screenshot".to_string(),
+      "/tmp/frame.png".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--capture-skew-ms".to_string(),
+      "120".to_string(),
+    ])
+    .expect("minecraft bridge command should parse");
+
+    match command {
+      CliCommand::MinecraftProjectionBridge {
+        telemetry_sample,
+        screenshot,
+        target_block,
+        capture_skew_ms,
+        ..
+      } => {
+        assert_eq!(telemetry_sample, "/tmp/telemetry.jsonl");
+        assert_eq!(screenshot, "/tmp/frame.png");
+        assert_eq!(target_block, "1,2,3");
+        assert_eq!(capture_skew_ms, Some(120));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_bridge_requires_required_flags() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "bridge".to_string(),
+      "--sample".to_string(),
+      "/tmp/telemetry.jsonl".to_string(),
+    ])
+    .expect_err("minecraft bridge should require screenshot and target");
+
+    assert!(
+      error.contains("--screenshot is required") || error.contains("--target-block is required")
+    );
   }
 
   #[test]

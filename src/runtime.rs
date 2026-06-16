@@ -1077,6 +1077,8 @@ mod tests {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 42,
       monotonic_timestamp_ms: 1_000,
+      screenshot_artifact_ref: Some("artifact://screenshot-1".to_string()),
+      mc_capture_skew_ms: Some(180),
       viewport_bounds: auv_game_minecraft::ProjectionViewportBounds {
         x: 0.0,
         y: 0.0,
@@ -1114,6 +1116,8 @@ mod tests {
       .expect("inspect should render run");
     assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
     assert!(inspect_text.contains("frame=frame-1"));
+    assert!(inspect_text.contains("screenshot_artifact_ref=artifact://screenshot-1"));
+    assert!(inspect_text.contains("capture_skew_ms=180"));
     assert!(inspect_text.contains("verification_reference=verification-1"));
 
     let _ = fs::remove_dir_all(project_root);

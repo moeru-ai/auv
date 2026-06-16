@@ -3,9 +3,12 @@ mod cli;
 mod xtask;
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
+
+use image::ImageReader;
 
 use auv_cli::app::{analyze_app_probe, probe_app};
 use auv_cli::model::RunStatus;
@@ -126,6 +129,42 @@ async fn run() -> Result<(), String> {
           "promotionRefusals: {}",
           output.value.promotion_refusals.join(",")
         );
+      }
+    }
+    CliCommand::MinecraftProjectionBridge {
+      telemetry_sample,
+      screenshot,
+      target_block,
+      capture_skew_ms,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = run_minecraft_projection_bridge(
+        &runtime,
+        PathBuf::from(telemetry_sample),
+        PathBuf::from(screenshot),
+        &target_block,
+        capture_skew_ms,
+      )?;
+      println!("runId: {}", output.run_id);
+      println!(
+        "projectionArtifact: {}",
+        output.value.projection_artifact_id
+      );
+      println!(
+        "screenshotArtifact: {}",
+        output.value.screenshot_artifact_id
+      );
+      if let Some(overlay_artifact_id) = output.value.overlay_artifact_id.as_deref() {
+        println!("overlayArtifact: {overlay_artifact_id}");
+      }
+      if let Some(refusal_reason) = output.value.refusal_reason.as_deref() {
+        println!("refusalReason: {refusal_reason}");
+      } else {
+        println!("refusalReason: none");
+      }
+      for artifact in &output.value.artifact_paths {
+        println!("artifact: {}", artifact.display());
       }
     }
     CliCommand::XtaskGenerateSwiftBridge => unreachable!("xtask is handled before runtime setup"),
@@ -430,6 +469,167 @@ async fn run() -> Result<(), String> {
   }
 
   Ok(())
+}
+
+#[derive(Debug)]
+struct MinecraftBridgeOutput {
+  screenshot_artifact_id: String,
+  projection_artifact_id: String,
+  overlay_artifact_id: Option<String>,
+  refusal_reason: Option<String>,
+  artifact_paths: Vec<PathBuf>,
+}
+
+fn run_minecraft_projection_bridge(
+  runtime: &auv_cli::runtime::Runtime,
+  telemetry_sample: PathBuf,
+  screenshot: PathBuf,
+  target_block: &str,
+  capture_skew_ms: Option<i64>,
+) -> Result<auv_cli::recorded_operation::RecordedOperationOutput<MinecraftBridgeOutput>, String> {
+  let target_block = parse_block_position(target_block)?;
+  let frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&telemetry_sample)?
+    .ok_or_else(|| {
+      format!(
+        "no valid minecraft frame found in {}",
+        telemetry_sample.display()
+      )
+    })?;
+
+  let screenshot_image = ImageReader::open(&screenshot)
+    .map_err(|error| {
+      format!(
+        "failed to open screenshot {}: {error}",
+        screenshot.display()
+      )
+    })?
+    .decode()
+    .map_err(|error| {
+      format!(
+        "failed to decode screenshot {}: {error}",
+        screenshot.display()
+      )
+    })?
+    .to_rgb8();
+
+  runtime.run_recorded_operation(
+    auv_cli::run_builder::RunSpec::new(auv_cli::trace::RunType::Execute, "auv.minecraft.bridge"),
+    "Minecraft projection bridge",
+    |context| {
+      let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
+        "minecraft-screenshot",
+        &screenshot,
+        screenshot
+          .file_name()
+          .and_then(|name| name.to_str())
+          .unwrap_or("minecraft-screenshot.png"),
+        Some("minecraft screenshot bound to live telemetry frame".to_string()),
+      )?;
+      let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
+
+      let capture_timestamp_ms = if let Some(skew) = capture_skew_ms {
+        if skew >= 0 {
+          frame.monotonic_timestamp_ms.saturating_sub(skew as u64)
+        } else {
+          frame.monotonic_timestamp_ms.saturating_add((-skew) as u64)
+        }
+      } else {
+        frame.monotonic_timestamp_ms
+      };
+
+      let evidence = auv_game_minecraft::evidence::build_projection_evidence(
+        frame,
+        auv_game_minecraft::evidence::ScreenshotCapture {
+          image: screenshot_image,
+          artifact_ref: format!("artifact://{screenshot_artifact_id}"),
+          capture_monotonic_timestamp_ms: capture_timestamp_ms,
+          is_minecraft_window: true,
+        },
+        &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
+        Some(250),
+      )?;
+
+      let (staged_projection_path, projection_ref) =
+        stage_minecraft_projection_artifact(context, evidence.artifact())?;
+      let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
+      let mut artifact_paths = vec![staged_screenshot_path, staged_projection_path];
+      let mut overlay_artifact_id = None;
+      let mut refusal_reason = None;
+
+      if let auv_game_minecraft::evidence::ProjectionEvidence::Bound { overlay, .. } = evidence {
+        let overlay_path = std::env::temp_dir().join(format!(
+          "auv-minecraft-overlay-{}-{}.png",
+          context.run_id(),
+          auv_cli::model::now_millis()
+        ));
+        overlay
+          .save(&overlay_path)
+          .map_err(|error| format!("failed to save overlay image: {error}"))?;
+        let (staged_overlay_path, overlay_ref) = context.stage_artifact_file_with_ref(
+          "minecraft-overlay",
+          &overlay_path,
+          "minecraft-overlay.png",
+          Some("projected minecraft overlay on real screenshot".to_string()),
+        )?;
+        let _ = fs::remove_file(&overlay_path);
+        overlay_artifact_id = Some(overlay_ref.artifact_id.as_str().to_string());
+        artifact_paths.push(staged_overlay_path);
+      } else if let auv_game_minecraft::evidence::ProjectionEvidence::Refused { refusal, .. } =
+        evidence
+      {
+        refusal_reason = refusal.reason.map(|reason| format!("{:?}", reason));
+      }
+
+      Ok::<MinecraftBridgeOutput, String>(MinecraftBridgeOutput {
+        screenshot_artifact_id,
+        projection_artifact_id,
+        overlay_artifact_id,
+        refusal_reason,
+        artifact_paths,
+      })
+    },
+  )
+}
+
+fn stage_minecraft_projection_artifact(
+  context: &mut auv_cli::recorded_operation::RecordedOperationContext<'_>,
+  projection_artifact: &auv_game_minecraft::MinecraftProjectionArtifact,
+) -> Result<(PathBuf, auv_cli::contract::ArtifactRef), String> {
+  projection_artifact.validate()?;
+  let artifact_json = serde_json::to_string_pretty(projection_artifact)
+    .map_err(|error| format!("failed to serialize minecraft projection artifact: {error}"))?;
+  let artifact_path = std::env::temp_dir().join(format!(
+    "auv-minecraft-projection-{}-{}.json",
+    context.run_id(),
+    auv_cli::model::now_millis()
+  ));
+  fs::write(&artifact_path, artifact_json.as_bytes())
+    .map_err(|error| format!("failed to write minecraft projection artifact: {error}"))?;
+  let staged = context.stage_artifact_file_with_ref(
+    auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+    &artifact_path,
+    "projection-artifact.json",
+    Some("durable minecraft projection artifact".to_string()),
+  );
+  let _ = fs::remove_file(&artifact_path);
+  staged.map_err(|error| error.to_string())
+}
+
+fn parse_block_position(raw: &str) -> Result<auv_game_minecraft::BlockPosition, String> {
+  let parts = raw.split(',').map(str::trim).collect::<Vec<_>>();
+  if parts.len() != 3 {
+    return Err(format!("invalid --target-block {raw:?}; expected x,y,z"));
+  }
+  let x = parts[0]
+    .parse::<i32>()
+    .map_err(|error| format!("invalid target block x: {error}"))?;
+  let y = parts[1]
+    .parse::<i32>()
+    .map_err(|error| format!("invalid target block y: {error}"))?;
+  let z = parts[2]
+    .parse::<i32>()
+    .map_err(|error| format!("invalid target block z: {error}"))?;
+  Ok(auv_game_minecraft::BlockPosition::new(x, y, z))
 }
 
 fn parse_scan_region_arg(raw: &str) -> Result<ScanRegion, String> {
@@ -752,7 +952,10 @@ fn temp_runtime_store_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
   use std::fs;
+  use std::path::Path;
   use std::sync::Mutex;
+
+  use image::{Rgb, RgbImage};
 
   use super::*;
 
@@ -1033,6 +1236,142 @@ mod tests {
     }
     let _ = fs::remove_dir_all(root);
     assert_eq!(target, None);
+  }
+
+  fn mc2_temp_dir(label: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+      "auv-{label}-{}",
+      auv_cli::model::now_millis()
+    ));
+    let _ = fs::remove_dir_all(&path);
+    fs::create_dir_all(&path).expect("temp dir should be creatable");
+    path
+  }
+
+  fn write_mc2_test_telemetry(path: &Path) {
+    let frame = auv_game_minecraft::MinecraftSpatialFrame {
+      spatial_frame_id: "frame-mc2".to_string(),
+      world_tick: 42,
+      monotonic_timestamp_ms: 5_000,
+      viewport: auv_game_minecraft::types::Viewport::new(64, 64),
+      view_matrix: [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+      ],
+      projection_matrix: [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+      ],
+      player_pose: auv_game_minecraft::types::PlayerPose {
+        eye_position: auv_game_minecraft::types::Vec3::new(0.0, 0.0, 0.0),
+        yaw: 0.0,
+        pitch: 0.0,
+      },
+      raycast_hit: Some(auv_game_minecraft::types::RaycastHit {
+        block_pos: auv_game_minecraft::BlockPosition::new(0, 0, 0),
+        face: auv_game_minecraft::types::BlockFace::North,
+        block_id: "minecraft:stone".to_string(),
+      }),
+      nearby_blocks: Vec::new(),
+      nearby_entities: Vec::new(),
+      inventory_summary: Vec::new(),
+      screenshot_artifact_ref: None,
+      mc_capture_skew_ms: None,
+    };
+    let body = serde_json::to_string(&frame).expect("frame should serialize");
+    fs::write(path, format!("{body}\n")).expect("telemetry sample should write");
+  }
+
+  fn write_mc2_test_screenshot(path: &Path) {
+    RgbImage::from_pixel(64, 64, Rgb([0, 0, 0]))
+      .save(path)
+      .expect("screenshot should write");
+  }
+
+  #[test]
+  fn minecraft_bridge_run_persists_telemetry_and_projection_artifacts() {
+    let project_root = mc2_temp_dir("mc2-bridge-project");
+    let store_root = mc2_temp_dir("mc2-bridge-store");
+    let telemetry_path = project_root.join("telemetry.jsonl");
+    let screenshot_path = project_root.join("frame.png");
+    write_mc2_test_telemetry(&telemetry_path);
+    write_mc2_test_screenshot(&screenshot_path);
+
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+    let output = run_minecraft_projection_bridge(
+      &runtime,
+      telemetry_path,
+      screenshot_path,
+      "0,0,0",
+      Some(0),
+    )
+    .expect("bridge should succeed");
+
+    let run = runtime
+      .read_run(output.run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(run.artifacts.len(), 3);
+    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
+    assert_eq!(
+      run.artifacts[1].role,
+      auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+    );
+    assert_eq!(run.artifacts[2].role, "minecraft-overlay");
+
+    let inspect_text = runtime
+      .inspect(output.run_id.as_str())
+      .expect("inspect should render run");
+    assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
+    assert!(inspect_text.contains("capture_skew_ms=0"));
+    assert_eq!(output.value.overlay_artifact_id.is_some(), true);
+    assert_eq!(output.value.refusal_reason, None);
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn minecraft_bridge_refusal_run_still_persists_telemetry_and_projection_artifacts() {
+    let project_root = mc2_temp_dir("mc2-bridge-refusal-project");
+    let store_root = mc2_temp_dir("mc2-bridge-refusal-store");
+    let telemetry_path = project_root.join("telemetry.jsonl");
+    let screenshot_path = project_root.join("frame.png");
+    write_mc2_test_telemetry(&telemetry_path);
+    write_mc2_test_screenshot(&screenshot_path);
+
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+    let output = run_minecraft_projection_bridge(
+      &runtime,
+      telemetry_path,
+      screenshot_path,
+      "0,0,0",
+      Some(999),
+    )
+    .expect("bridge refusal should still record");
+
+    let run = runtime
+      .read_run(output.run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(run.artifacts.len(), 2);
+    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
+    assert_eq!(
+      run.artifacts[1].role,
+      auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+    );
+
+    let inspect_text = runtime
+      .inspect(output.run_id.as_str())
+      .expect("inspect should render run");
+    assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
+    assert!(inspect_text.contains("capture_skew_ms=999"));
+    assert_eq!(
+      output.value.refusal_reason.as_deref(),
+      Some("CaptureSkewUnreliable")
+    );
+    assert_eq!(output.value.overlay_artifact_id, None);
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   fn temp_runtime_store_entries(prefix: &str) -> Vec<String> {

@@ -709,6 +709,7 @@ fn api_version_from_value<'a>(value: &'a serde_json::Value, label: &str) -> AuvR
 fn mime_type_for_extension(extension: &str) -> &'static str {
   match extension {
     "json" => "application/json",
+    "jsonl" | "ndjson" => "application/json",
     "png" => "image/png",
     "txt" | "log" | "md" => "text/plain",
     _ => "application/octet-stream",

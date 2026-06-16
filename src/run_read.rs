@@ -9,6 +9,7 @@
 //!   double-counting artifacts that also populate `OperationResult.verifications`
 
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
@@ -28,6 +29,13 @@ use crate::stability::{StabilityAssessment, StabilityRejection};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::ArtifactRecordV1Alpha1;
 use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
+
+pub struct MinecraftTelemetrySampleArtifactLineage {
+  pub artifact: ArtifactRefLineage,
+  pub line_count: Option<usize>,
+  pub byte_size: Option<u64>,
+  pub issue: Option<String>,
+}
 
 pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
   store.read_run(run_id)
@@ -340,6 +348,68 @@ pub(crate) fn extract_minecraft_projection_artifacts(
 
     if let Ok(projection) = parsed {
       artifacts.push(projection);
+    }
+  }
+  Ok(artifacts)
+}
+
+pub(crate) fn list_minecraft_telemetry_sample_artifacts(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftTelemetrySampleArtifactLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_telemetry_sample_artifacts(store, &run)
+}
+
+pub(crate) fn extract_minecraft_telemetry_sample_artifacts(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftTelemetrySampleArtifactLineage>> {
+  let mut artifacts = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::runtime::TELEMETRY_SAMPLE_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      artifacts.push(MinecraftTelemetrySampleArtifactLineage {
+        artifact: artifact_ref,
+        line_count: None,
+        byte_size: None,
+        issue: Some(format!(
+          "minecraft telemetry sample artifact mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+
+    let parsed = read_telemetry_artifact_summary(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::runtime::TELEMETRY_SAMPLE_ARTIFACT_ROLE,
+    );
+
+    match parsed {
+      Ok((artifact_path, line_count, byte_size)) => {
+        artifacts.push(MinecraftTelemetrySampleArtifactLineage {
+          artifact: ArtifactRefLineage {
+            path: Some(artifact_path.display().to_string()),
+            ..artifact_ref
+          },
+          line_count: Some(line_count),
+          byte_size: Some(byte_size),
+          issue: None,
+        })
+      }
+      Err(error) => artifacts.push(MinecraftTelemetrySampleArtifactLineage {
+        artifact: artifact_ref,
+        line_count: None,
+        byte_size: None,
+        issue: Some(error),
+      }),
     }
   }
   Ok(artifacts)
@@ -1321,6 +1391,46 @@ fn read_artifact_bytes(
     )
   })?;
   Ok((bytes, artifact_path))
+}
+
+fn read_telemetry_artifact_summary(
+  store: &LocalStore,
+  run_id: &str,
+  artifact: &ArtifactRecordV1Alpha1,
+  artifact_role: &str,
+) -> AuvResult<(PathBuf, usize, u64)> {
+  let (_, artifact_path) = store.artifact_file_scoped(
+    run_id,
+    artifact.artifact_id.as_str(),
+    Some(artifact.span_id.as_str()),
+  )?;
+  let metadata = fs::metadata(&artifact_path).map_err(|error| {
+    format!(
+      "failed to stat {artifact_role} artifact {} for run {run_id} from {}: {error}",
+      artifact.artifact_id,
+      artifact_path.display()
+    )
+  })?;
+  let file = fs::File::open(&artifact_path).map_err(|error| {
+    format!(
+      "failed to open {artifact_role} artifact {} for run {run_id} from {}: {error}",
+      artifact.artifact_id,
+      artifact_path.display()
+    )
+  })?;
+  let line_count = BufReader::new(file)
+    .lines()
+    .try_fold(0usize, |count, line| {
+      let line = line.map_err(|error| {
+        format!(
+          "failed to read {artifact_role} artifact {} for run {run_id} from {}: {error}",
+          artifact.artifact_id,
+          artifact_path.display()
+        )
+      })?;
+      Ok::<_, String>(count + usize::from(!line.trim().is_empty()))
+    })?;
+  Ok((artifact_path, line_count, metadata.len()))
 }
 
 #[cfg(test)]
