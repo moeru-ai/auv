@@ -358,6 +358,7 @@ dependencies = [
  "auv-media-macos",
  "auv-overlay-macos",
  "auv-steam",
+ "auv-tracing-driver",
  "axum",
  "image",
  "libc",
@@ -556,6 +557,17 @@ dependencies = [
  "serde_json",
  "steamlocate",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "auv-tracing-driver"
+version = "0.0.1"
+dependencies = [
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

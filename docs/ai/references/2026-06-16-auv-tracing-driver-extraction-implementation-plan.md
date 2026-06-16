@@ -91,6 +91,12 @@ Add this to root `[dependencies]` after `auv-steam`:
 auv-tracing-driver = { path = "crates/auv-tracing-driver" }
 ```
 
+Move the existing root package `reqwest` dependency shape into `[workspace.dependencies]`, then keep the root package on the centralized dependency:
+
+```toml
+reqwest.workspace = true
+```
+
 - [ ] **Step 2: Create the new crate manifest**
 
 Create `crates/auv-tracing-driver/Cargo.toml`:
@@ -113,7 +119,7 @@ repository.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { version = "1", features = ["sync"] }
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+reqwest.workspace = true
 tracing = "0.1"
 ```
 
@@ -130,22 +136,10 @@ Create `crates/auv-tracing-driver/src/lib.rs`:
 
 pub mod artifact;
 pub mod error;
-pub mod recorded_operation;
-pub mod recording;
-pub mod run_builder;
-pub mod store;
 pub mod time;
-pub mod trace;
 
 pub use artifact::{ArtifactFileSource, ArtifactRef, ProducedArtifact};
 pub use error::AuvResult;
-pub use recorded_operation::{RecordedOperationContext, RecordedOperationOutput};
-pub use recording::{
-  BroadcastRunRecorder, CompositeRunRecorder, InspectServerRunRecorder, MemoryRunRecorder,
-  NoopRunRecorder, RecordingHandle, RunRecorder, RunRecordingBackend, RunUpdate, WireUpdate,
-};
-pub use run_builder::{Attributes, RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
-pub use store::{CanonicalRun, LocalStore};
 pub use time::now_millis;
 ```
 
@@ -179,15 +173,16 @@ Create `crates/auv-tracing-driver/src/artifact.rs`:
 ```rust
 use std::path::PathBuf;
 
-use crate::trace::{ArtifactId, EventId, RunId, SpanId};
-
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtifactRef {
-  pub run_id: RunId,
-  pub artifact_id: ArtifactId,
-  pub span_id: SpanId,
+  // TODO(auv-tracing-driver-task2): replace string IDs with trace ID newtypes
+  // after `trace` moves into this crate; Task 1 must build without placeholder
+  // future modules.
+  pub run_id: String,
+  pub artifact_id: String,
+  pub span_id: String,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub captured_event_id: Option<EventId>,
+  pub captured_event_id: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -215,7 +210,7 @@ Run:
 cargo fmt --check
 ```
 
-Expected: either pass or fail only because moved modules are not present yet. If it fails because `recorded_operation`, `recording`, `run_builder`, `store`, or `trace` modules are missing, continue to Task 2 before rerunning.
+Expected: pass. Task 1 exposes only scaffold modules that already exist; Task 2 adds the moved recording/trace/store/run_builder module declarations and reexports after the files are moved.
 
 - [ ] **Step 8: Commit the scaffold**
 
@@ -254,6 +249,8 @@ mkdir -p src/recording
 ```
 
 Expected: the moved files are staged as renames and `src/recording` exists again for the compatibility shim.
+
+After moving the files, update `crates/auv-tracing-driver/src/lib.rs` to declare `recorded_operation`, `recording`, `run_builder`, `store`, and `trace`, and restore the full public reexports for those moved modules. Also update `artifact.rs` to use `crate::trace::{ArtifactId, EventId, RunId, SpanId}` instead of Task 1 string IDs.
 
 - [ ] **Step 2: Rewrite moved-module imports to local crate paths**
 
