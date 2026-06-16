@@ -15,7 +15,6 @@ use std::sync::Arc;
 pub const TELEMETRY_SAMPLE_ARTIFACT_ROLE: &str = "telemetry-sample";
 pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
 
-use crate::catalog::CommandCatalog;
 use crate::contract::ArtifactRef;
 use crate::driver::DriverRegistry;
 use crate::model::{
@@ -852,7 +851,6 @@ mod tests {
   use serde_json::json;
 
   use super::{MINECRAFT_PROJECTION_ARTIFACT_ROLE, Runtime, TELEMETRY_SAMPLE_ARTIFACT_ROLE};
-  use crate::catalog::CommandCatalog;
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{
     AuvResult, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget, InvokeRequest,

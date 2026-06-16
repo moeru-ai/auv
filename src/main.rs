@@ -1239,10 +1239,7 @@ mod tests {
   }
 
   fn mc2_temp_dir(label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-      "auv-{label}-{}",
-      auv_cli::model::now_millis()
-    ));
+    let path = std::env::temp_dir().join(format!("auv-{label}-{}", auv_cli::model::now_millis()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
@@ -1297,14 +1294,9 @@ mod tests {
 
     let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
       .expect("runtime should build");
-    let output = run_minecraft_projection_bridge(
-      &runtime,
-      telemetry_path,
-      screenshot_path,
-      "0,0,0",
-      Some(0),
-    )
-    .expect("bridge should succeed");
+    let output =
+      run_minecraft_projection_bridge(&runtime, telemetry_path, screenshot_path, "0,0,0", Some(0))
+        .expect("bridge should succeed");
 
     let run = runtime
       .read_run(output.run_id.as_str())
