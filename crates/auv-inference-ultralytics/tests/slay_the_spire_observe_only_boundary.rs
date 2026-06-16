@@ -107,7 +107,8 @@ fn slay_the_spire_manual_fixture_stays_observe_only_and_emits_readable_lineage()
     ],
   };
 
-  let recorded = runtime.run_recorded_operation(
+  let recording = runtime.recording().handle();
+  let recorded = recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.game.slay_the_spire.observe_only"),
     "Slay the Spire observe-only recognition fixture",
     |context| {

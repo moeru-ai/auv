@@ -5,7 +5,7 @@ use auv_cli::inference_recognition::{
   RuntimeProjection, RuntimeProjectionKind, record_detector_manifest_recognition_artifact,
 };
 use auv_cli::inspect_server;
-use auv_cli::recording::BroadcastRunRecorder;
+use auv_cli::recording::{BroadcastRunRecorder, RunRecordingBackend};
 use auv_cli::run_builder::RunSpec;
 use auv_cli::store::LocalStore;
 use auv_cli::trace::RunType;
@@ -332,7 +332,6 @@ fn write_smoke_evidence(
   let manifest_path = output_dir.join(format!("{fixture_name}-manifest.json"));
   let image_path = output_dir.join(format!("{fixture_name}-annotated.png"));
   let runtime_store_root = output_dir.join(format!("{fixture_name}-runtime-store"));
-  let runtime_project_root = output_dir.join(format!("{fixture_name}-runtime-project"));
 
   let file = File::create(&json_path)?;
   let mut writer = BufWriter::new(file);
@@ -377,9 +376,9 @@ fn write_smoke_evidence(
   let annotated = render_annotated_image(&source_image, &result.detections);
   annotated.save(&image_path)?;
 
-  fs::create_dir_all(&runtime_project_root)?;
-  let runtime = build_runtime_with_store_root(runtime_project_root, runtime_store_root.clone())?;
-  let recorded = runtime.run_recorded_operation(
+  let store = LocalStore::new(runtime_store_root.clone())?;
+  let recording = RunRecordingBackend::local_only(store.clone()).handle();
+  let recorded = recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.inference.detector_smoke"),
     format!("Balatro detector recognition smoke {fixture_name}"),
     |context| {
@@ -424,7 +423,7 @@ fn write_smoke_evidence(
     },
   )?;
   let recognition_path = {
-    let run = runtime.read_run(recorded.run_id.as_str())?;
+    let run = store.read_run(recorded.run_id.as_str())?;
     let detector_artifact = run
       .artifacts
       .iter()
