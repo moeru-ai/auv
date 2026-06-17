@@ -28,11 +28,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, now_millis};
-use crate::recording::RecordingHandle;
 use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanRef};
 use crate::runtime::Runtime;
 use crate::store::sanitized_artifact_name;
 use crate::trace::{RunType, TraceStatusCode};
+use auv_tracing_driver::RecordingHandle;
 
 const APP_PROBE_VERSION: &str = "v0";
 const APP_ANALYSIS_VERSION: &str = "v0";

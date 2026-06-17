@@ -19,9 +19,9 @@ pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
 
 use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, InvokeRequest, InvokeResult, RunStatus};
-use crate::recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend};
 use crate::store::LocalStore;
 use crate::trace::{RunType, TraceStatusCode, string_attr};
+use auv_tracing_driver::{MemoryRunRecorder, RunRecorder, RunRecordingBackend};
 
 pub struct Runtime {
   project_root: PathBuf,
@@ -578,8 +578,8 @@ mod tests {
     TELEMETRY_SAMPLE_MAX_BYTES,
   };
   use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
-  use crate::recording::{MemoryRunRecorder, RunRecorder, RunUpdate};
   use crate::store::LocalStore;
+  use auv_tracing_driver::{MemoryRunRecorder, RunRecorder, RunUpdate};
 
   struct FailRunFinishedRecorder;
   struct RequiredFailRunStartedRecorder;

@@ -4,17 +4,16 @@ use auv_cli::inference_recognition::{
   BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy,
   RuntimeProjection, RuntimeProjectionKind, record_detector_manifest_recognition_artifact,
 };
-use auv_cli::inspect_server;
-use auv_cli::recording::{BroadcastRunRecorder, RunRecordingBackend};
 use auv_cli::run_builder::RunSpec;
-use auv_cli::store::LocalStore;
 use auv_cli::trace::RunType;
+use auv_cli::{inspect_server, store::LocalStore};
 use auv_inference_common::{
   BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest,
   DetectionOptions, DetectionSet, ModelId, ModelRunMetadata, ProjectionBasis, SourceImageEvidence,
   SourceImageRef, render_annotated_image,
 };
 use auv_inference_ultralytics::{InferenceDevice, UltralyticsDetector, UltralyticsModelConfig};
+use auv_tracing_driver::{BroadcastRunRecorder, RunRecordingBackend};
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use image::ImageReader;
