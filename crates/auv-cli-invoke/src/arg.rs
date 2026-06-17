@@ -28,13 +28,13 @@ pub const QUERY: ArgSpec = ArgSpec {
   flag: "--query",
   value_name: "TEXT",
   required: true,
-  help: "Text query required by the driver operation.",
+  help: "Text query used by the invoke command.",
 };
 pub const OPTIONAL_QUERY: ArgSpec = ArgSpec {
   flag: "--query",
   value_name: "TEXT",
   required: false,
-  help: "Text query used by the driver operation; required unless --candidate is supplied.",
+  help: "Text query used by the invoke command; required unless --candidate is supplied.",
 };
 pub const CANDIDATE: ArgSpec = ArgSpec {
   flag: "--candidate",
@@ -46,13 +46,13 @@ pub const TEXT: ArgSpec = ArgSpec {
   flag: "--text",
   value_name: "TEXT",
   required: true,
-  help: "Text content required by the driver operation.",
+  help: "Text content used by the invoke command.",
 };
 pub const TARGET_TEXT: ArgSpec = ArgSpec {
   flag: "--target_text",
   value_name: "TEXT",
   required: true,
-  help: "Expected AX text required by the verification operation.",
+  help: "Expected AX text used by the invoke command.",
 };
 pub const IMAGE_PATH: ArgSpec = ArgSpec {
   flag: "--image_path",

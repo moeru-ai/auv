@@ -13,5 +13,4 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-driver = { path = "../auv-driver" }
 auv-cli-invoke-macros = { path = "../auv-cli-invoke-macros" }

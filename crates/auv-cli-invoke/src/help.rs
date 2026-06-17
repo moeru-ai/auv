@@ -34,9 +34,9 @@ fn render_group_index(help: &mut String, group: &CommandGroup, depth: usize) {
     match child {
       CommandNode::Command(command) => {
         help.push_str(&"  ".repeat(depth + 1));
-        help.push_str(command.operation.id);
+        help.push_str(command.id);
         help.push_str("  ");
-        help.push_str(command.operation.summary);
+        help.push_str(command.summary);
         help.push('\n');
       }
       CommandNode::Group(group) => render_group_index(help, group, depth + 1),
@@ -53,13 +53,11 @@ fn has_commands(group: &CommandGroup) -> bool {
 
 pub fn render_command_help(command: &InvokeCommand) -> String {
   let mut help = format!(
-    "COMMAND\n  {}\n\nUSAGE\n  auv-cli invoke {}{}\n\nDRIVER\n  {}.{}\n\nSUMMARY\n  {}\n",
-    command.operation.id,
-    command.operation.id,
+    "COMMAND\n  {}\n\nUSAGE\n  auv-cli invoke {}{}\n\nSUMMARY\n  {}\n",
+    command.id,
+    command.id,
     render_usage_args(command.args),
-    command.operation.driver_id,
-    command.operation.operation,
-    command.operation.summary
+    command.summary
   );
 
   help.push_str("\nOPTIONS\n");
@@ -81,24 +79,6 @@ pub fn render_command_help(command: &InvokeCommand) -> String {
     }
   }
 
-  help.push_str("\nDISTURBANCE\n");
-  help.push_str("  max: ");
-  help.push_str(command.operation.max_disturbance.as_str());
-  help.push('\n');
-  for disturbance in command.operation.disturbance_classes {
-    help.push_str("  ");
-    help.push_str(disturbance.as_str());
-    help.push('\n');
-  }
-
-  help.push_str("\nARTIFACTS\n");
-  help.push_str(&render_list(command.artifacts));
-  help.push_str("\nSIGNALS\n");
-  help.push_str(&render_list(command.signals));
-  help.push_str("\nVERIFY\n  ");
-  help.push_str(command.verification);
-  help.push('\n');
-
   help
 }
 
@@ -117,18 +97,4 @@ fn render_usage_args(args: &[ArgSpec]) -> String {
     }
   }
   usage
-}
-
-fn render_list(items: &[&str]) -> String {
-  if items.is_empty() {
-    return "  none\n".to_string();
-  }
-
-  let mut output = String::new();
-  for item in items {
-    output.push_str("  ");
-    output.push_str(item);
-    output.push('\n');
-  }
-  output
 }

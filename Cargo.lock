@@ -381,7 +381,6 @@ name = "auv-cli-invoke"
 version = "0.0.1"
 dependencies = [
  "auv-cli-invoke-macros",
- "auv-driver",
 ]
 
 [[package]]

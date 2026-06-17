@@ -1,8 +1,7 @@
 // File: src/cli.rs
-use std::collections::BTreeMap;
-
 use auv_cli::candidate_action_decision::CandidateActionKind;
 use auv_cli::model::{AuvResult, ExecutionTarget, InvokeRequest};
+use auv_cli_invoke::InvokeCliParse;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InspectWriteSetting {
@@ -952,73 +951,64 @@ fn parse_inspect_client_option(
 }
 
 fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 2 {
-    return Ok(CliCommand::InvokeHelp { command_id: None });
-  }
-
-  if matches!(arguments[1].as_str(), "--help" | "-h" | "help") {
-    return Ok(CliCommand::InvokeHelp { command_id: None });
-  }
-
-  let command_id = arguments[1].clone();
-  if arguments.len() == 3 && matches!(arguments[2].as_str(), "--help" | "-h") {
-    return Ok(CliCommand::InvokeHelp {
-      command_id: Some(command_id),
-    });
-  }
-
-  let mut target = ExecutionTarget::default();
-  let mut inputs = BTreeMap::new();
-  let mut dry_run = false;
   let mut inspect = InspectClientOptions::default();
-  let mut index = 2;
+  let mut invoke_arguments = Vec::with_capacity(arguments.len());
+  let mut index = 0;
+
+  if let Some(subcommand) = arguments.first() {
+    invoke_arguments.push(subcommand.clone());
+    index = 1;
+  }
+
+  if let Some(command_or_help) = arguments.get(index) {
+    invoke_arguments.push(command_or_help.clone());
+    index += 1;
+  }
 
   while index < arguments.len() {
-    let argument = &arguments[index];
-    if !argument.starts_with("--") {
-      return Err(format!("unexpected positional argument {argument}"));
-    }
-    if argument == "--dry-run" {
-      dry_run = true;
-      index += 1;
-      continue;
-    }
+    let argument = arguments[index].as_str();
     if let Some(consumed) =
-      parse_inspect_client_option(argument.as_str(), arguments.get(index + 1), &mut inspect)?
+      parse_inspect_client_option(argument, arguments.get(index + 1), &mut inspect)?
     {
       index += consumed;
       continue;
     }
-    if index + 1 >= arguments.len() {
-      return Err(format!("flag {argument} requires a value"));
+
+    invoke_arguments.push(arguments[index].clone());
+    if matches!(argument, "--dry-run" | "--help" | "-h") {
+      index += 1;
+      continue;
     }
 
-    let value = arguments[index + 1].clone();
-    match argument.as_str() {
-      "--target" => {
-        target.application_id = Some(value);
-      }
-      "--label" => {
-        inputs.insert("label".to_string(), value);
-      }
-      other => {
-        let key = other.trim_start_matches("--");
-        inputs.insert(key.to_string(), value);
-      }
+    if let Some(value) = arguments.get(index + 1) {
+      invoke_arguments.push(value.clone());
+      index += 2;
+      continue;
     }
 
-    index += 2;
+    index += 1;
   }
 
-  Ok(CliCommand::Invoke {
-    request: InvokeRequest {
+  match auv_cli_invoke::parse_invoke_args(&invoke_arguments)? {
+    InvokeCliParse::Help { command_id } => Ok(CliCommand::InvokeHelp { command_id }),
+    InvokeCliParse::Invoke {
       command_id,
-      target,
+      target_application_id,
       inputs,
       dry_run,
-    },
-    inspect,
-  })
+    } => Ok(CliCommand::Invoke {
+      request: InvokeRequest {
+        command_id,
+        target: ExecutionTarget {
+          application_id: target_application_id,
+          target_label: None,
+        },
+        inputs,
+        dry_run,
+      },
+      inspect,
+    }),
+  }
 }
 
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -1672,6 +1662,35 @@ mod tests {
         assert_eq!(inspect.local_write, InspectWriteSetting::Default);
         assert_eq!(inspect.server_write, InspectWriteSetting::Disabled);
         assert_eq!(inspect.server_token_file.as_deref(), Some("/tmp/token"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_preserves_inspect_like_command_input_values() {
+    let command = parse_cli(&[
+      "invoke".to_string(),
+      "input.typeText".to_string(),
+      "--text".to_string(),
+      "--store-root".to_string(),
+      "--label".to_string(),
+      "literal-label".to_string(),
+    ])
+    .expect("invoke input value that looks like an inspect option should parse");
+
+    match command {
+      CliCommand::Invoke { request, inspect } => {
+        assert_eq!(request.command_id, "input.typeText");
+        assert_eq!(
+          request.inputs.get("text").map(String::as_str),
+          Some("--store-root")
+        );
+        assert_eq!(
+          request.inputs.get("label").map(String::as_str),
+          Some("literal-label")
+        );
+        assert_eq!(inspect.store_root, None);
       }
       other => panic!("unexpected command: {other:?}"),
     }

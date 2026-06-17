@@ -164,7 +164,7 @@ fn invoke_tool_input_schema() -> Arc<JsonObject> {
   let command_ids = registry
     .all()
     .iter()
-    .map(|command| Value::String(command.operation.id.to_string()))
+    .map(|command| Value::String(command.id.to_string()))
     .collect::<Vec<_>>();
 
   if let Some(command_id_schema) = schema
@@ -198,20 +198,14 @@ fn invoke_tool_input_schema() -> Arc<JsonObject> {
 
 fn invoke_command_metadata(command: &InvokeCommand) -> Value {
   serde_json::json!({
-    "id": command.operation.id,
+    "id": command.id,
     "namespace": command.namespace.as_str(),
-    "summary": command.operation.summary,
-    "driver_id": command.operation.driver_id,
-    "operation": command.operation.operation,
-    "max_disturbance": command.operation.max_disturbance.as_str(),
+    "summary": command.summary,
     "arguments": command
       .args
       .iter()
       .map(invoke_arg_metadata)
       .collect::<Vec<_>>(),
-    "artifacts": command.artifacts,
-    "signals": command.signals,
-    "verification": command.verification,
   })
 }
 
@@ -571,6 +565,13 @@ mod tests {
       .and_then(|value| value.as_str())
       .expect("summary should exist");
     assert_eq!(output_summary, cli_result.output_summary);
+    let status = invoke_json
+      .get("status")
+      .and_then(|value| value.as_str())
+      .expect("status should exist");
+    assert_eq!(status, cli_result.status.as_str());
+    let signals = invoke_json.get("signals").expect("signals should exist");
+    assert_eq!(signals, &serde_json::to_value(&cli_result.signals)?);
     let artifacts = invoke_json
       .get("artifacts")
       .and_then(|value| value.as_array())
