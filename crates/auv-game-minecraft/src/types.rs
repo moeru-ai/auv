@@ -145,6 +145,8 @@ pub struct MinecraftSpatialFrame {
   // NOTICE(mc3-live-binding): populated only after real screenshot/frame binding lands.
   #[serde(default)]
   pub mc_capture_skew_ms: Option<i64>,
+  #[serde(default)]
+  pub screen_state: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

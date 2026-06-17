@@ -54,7 +54,8 @@
         "item_id": "minecraft:stone",
         "count": 2
       }
-    ]
+    ],
+    "screen_state": "menu"
   },
   "notice": "Matrices are serialized in column-major order to match the Rust projector. This schema still does not prove screenshot binding, live input, or live world-diff verification."
 }

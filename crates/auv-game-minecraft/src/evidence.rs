@@ -87,6 +87,7 @@ pub fn build_projection_evidence(
     max_capture_skew_ms,
   );
   if refusal.refused {
+    let artifact = artifact.with_mismatch_refusal_reason(refusal.reason);
     return Ok(ProjectionEvidence::Refused { artifact, refusal });
   }
 
@@ -133,6 +134,7 @@ mod tests {
       inventory_summary: Vec::new(),
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
+      screen_state: None,
     }
   }
 

@@ -66,6 +66,7 @@ mod tests {
       inventory_summary: Vec::new(),
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
+      screen_state: None,
     }
   }
 

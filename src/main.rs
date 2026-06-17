@@ -11,7 +11,12 @@ use std::sync::Arc;
 use image::ImageReader;
 
 use auv_cli::app::{analyze_app_probe, probe_app};
-use auv_cli::model::RunStatus;
+use auv_cli::contract::{
+  OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
+  VerificationResult,
+};
+use auv_cli::model::{InvokeRequest, RunStatus};
+use auv_cli::run_builder::RunSpec;
 use auv_cli::scroll_scan::{
   ScanRegion, ScanTarget, ScanWindowRegionOptions, StopPolicy, scan_window_region,
 };
@@ -136,6 +141,7 @@ async fn run() -> Result<(), String> {
       screenshot,
       target_block,
       capture_skew_ms,
+      screenshot_is_minecraft_window,
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
@@ -145,6 +151,7 @@ async fn run() -> Result<(), String> {
         PathBuf::from(screenshot),
         &target_block,
         capture_skew_ms,
+        screenshot_is_minecraft_window,
       )?;
       println!("runId: {}", output.run_id);
       println!(
@@ -163,6 +170,47 @@ async fn run() -> Result<(), String> {
       } else {
         println!("refusalReason: none");
       }
+      for artifact in &output.value.artifact_paths {
+        println!("artifact: {}", artifact.display());
+      }
+    }
+    CliCommand::MinecraftLiveClick {
+      telemetry_sample,
+      screenshot,
+      target_block,
+      target_app,
+      target_title,
+      post_telemetry_sample,
+      capture_skew_ms,
+      screenshot_is_minecraft_window,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = run_minecraft_live_click(
+        &runtime,
+        PathBuf::from(telemetry_sample),
+        post_telemetry_sample.as_ref().map(PathBuf::from),
+        PathBuf::from(screenshot),
+        &target_block,
+        &target_app,
+        &target_title,
+        capture_skew_ms,
+        screenshot_is_minecraft_window,
+      )?;
+      println!("runId: {}", output.run_id);
+      println!(
+        "projectionArtifact: {}",
+        output.value.projection_artifact_id
+      );
+      println!(
+        "screenshotArtifact: {}",
+        output.value.screenshot_artifact_id
+      );
+      println!(
+        "operationResultArtifact: {}",
+        output.value.operation_result_artifact_id
+      );
+      println!("inputSummary: {}", output.value.input_summary);
       for artifact in &output.value.artifact_paths {
         println!("artifact: {}", artifact.display());
       }
@@ -480,12 +528,270 @@ struct MinecraftBridgeOutput {
   artifact_paths: Vec<PathBuf>,
 }
 
+#[derive(Debug)]
+struct MinecraftLiveClickOutput {
+  screenshot_artifact_id: String,
+  projection_artifact_id: String,
+  operation_result_artifact_id: String,
+  input_summary: String,
+  artifact_paths: Vec<PathBuf>,
+}
+
+fn build_minecraft_world_diff_verification(
+  verdict: &auv_game_minecraft::verify::WorldDiffVerdict,
+  evidence: Vec<auv_cli::contract::ArtifactRef>,
+) -> auv_cli::contract::VerificationResult {
+  use auv_cli::contract::{
+    FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
+  };
+
+  let failure_layer = match verdict.failure {
+    None => None,
+    Some(auv_game_minecraft::verify::WorldDiffFailure::VerificationUnreliable) => {
+      Some(FailureLayer::VerificationUnreliable)
+    }
+    Some(auv_game_minecraft::verify::WorldDiffFailure::StateChangedNoMatch) => {
+      Some(FailureLayer::StateChangedNoMatch)
+    }
+    Some(auv_game_minecraft::verify::WorldDiffFailure::SemanticMismatch) => {
+      Some(FailureLayer::SemanticMismatch)
+    }
+  };
+
+  VerificationResult {
+    api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+    method: VerificationMethod::SemanticMatch,
+    executed: verdict.executed,
+    state_changed: verdict.state_changed,
+    semantic_matched: verdict.semantic_matched,
+    failure_layer,
+    evidence,
+    consumed_candidate_ref: None,
+    consumed_node_ref: None,
+    consumed_recognition_artifact_ref: None,
+    consumed_recognition_id: None,
+    consumed_recognized_item_id: None,
+    observed_label: verdict.observed_block_id.clone(),
+  }
+}
+
+fn build_minecraft_operation_result(
+  run_id: &auv_cli::trace::RunId,
+  verification: VerificationResult,
+) -> OperationResult {
+  let evidence_artifacts = verification.evidence.clone();
+  OperationResult {
+    api_version: OPERATION_RESULT_API_VERSION.to_string(),
+    run_id: run_id.clone(),
+    status: OperationStatus::Completed,
+    operation_id: "auv.minecraft.live_click".to_string(),
+    evidence_artifacts,
+    output: OperationOutput::Acknowledged {
+      message: Some("minecraft live click completed".to_string()),
+    },
+    verifications: vec![verification],
+    freshness_basis: None,
+    known_limits: Vec::new(),
+  }
+}
+
+fn stage_operation_result_artifact(
+  context: &mut auv_cli::recorded_operation::RecordedOperationContext<'_>,
+  operation_result: &OperationResult,
+) -> Result<(PathBuf, auv_cli::contract::ArtifactRef), String> {
+  let artifact_json = serde_json::to_string_pretty(operation_result)
+    .map(|mut json| {
+      json.push('\n');
+      json
+    })
+    .map_err(|error| format!("failed to serialize minecraft operation result: {error}"))?;
+  let artifact_path = std::env::temp_dir().join(format!(
+    "auv-minecraft-operation-result-{}-{}.json",
+    context.run_id(),
+    auv_cli::model::now_millis()
+  ));
+  fs::write(&artifact_path, artifact_json.as_bytes())
+    .map_err(|error| format!("failed to write minecraft operation result artifact: {error}"))?;
+  let staged = context.stage_artifact_file_with_ref(
+    "operation-result",
+    &artifact_path,
+    "operation-result.json",
+    Some("minecraft live-click operation result with world diff verification".to_string()),
+  );
+  let _ = fs::remove_file(&artifact_path);
+  staged.map_err(|error| error.to_string())
+}
+
+fn run_minecraft_live_click(
+  runtime: &auv_cli::runtime::Runtime,
+  telemetry_sample: PathBuf,
+  post_telemetry_sample: Option<PathBuf>,
+  screenshot: PathBuf,
+  target_block: &str,
+  target_app: &str,
+  target_title: &str,
+  capture_skew_ms: Option<i64>,
+  screenshot_is_minecraft_window: bool,
+) -> Result<auv_cli::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>, String>
+{
+  let target_block = parse_block_position(target_block)?;
+  let pre_frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&telemetry_sample)?
+    .ok_or_else(|| {
+      format!(
+        "no valid minecraft frame found in {}",
+        telemetry_sample.display()
+      )
+    })?;
+  let post_sample_path = post_telemetry_sample.unwrap_or_else(|| telemetry_sample.clone());
+  let screenshot_image = ImageReader::open(&screenshot)
+    .map_err(|error| {
+      format!(
+        "failed to open screenshot {}: {error}",
+        screenshot.display()
+      )
+    })?
+    .decode()
+    .map_err(|error| {
+      format!(
+        "failed to decode screenshot {}: {error}",
+        screenshot.display()
+      )
+    })?
+    .to_rgb8();
+
+  runtime.run_recorded_operation(
+    RunSpec::new(auv_cli::trace::RunType::Execute, "auv.minecraft.live_click"),
+    "Minecraft live click",
+    |context| {
+      let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
+        "minecraft-screenshot",
+        &screenshot,
+        screenshot
+          .file_name()
+          .and_then(|name| name.to_str())
+          .unwrap_or("minecraft-screenshot.png"),
+        Some("minecraft screenshot bound to live telemetry frame".to_string()),
+      )?;
+      let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
+      let capture_timestamp_ms = if let Some(skew) = capture_skew_ms {
+        if skew >= 0 {
+          pre_frame.monotonic_timestamp_ms.saturating_sub(skew as u64)
+        } else {
+          pre_frame
+            .monotonic_timestamp_ms
+            .saturating_add((-skew) as u64)
+        }
+      } else {
+        pre_frame.monotonic_timestamp_ms
+      };
+
+      let evidence = auv_game_minecraft::evidence::build_projection_evidence(
+        pre_frame.clone(),
+        auv_game_minecraft::evidence::ScreenshotCapture {
+          image: screenshot_image,
+          artifact_ref: format!("artifact://{screenshot_artifact_id}"),
+          capture_monotonic_timestamp_ms: capture_timestamp_ms,
+          is_minecraft_window: screenshot_is_minecraft_window,
+        },
+        &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
+        Some(250),
+      )?;
+
+      let projection_artifact = match &evidence {
+        auv_game_minecraft::evidence::ProjectionEvidence::Bound { artifact, .. } => {
+          artifact.clone()
+        }
+        auv_game_minecraft::evidence::ProjectionEvidence::Refused { refusal, .. } => evidence
+          .artifact()
+          .clone()
+          .with_mismatch_refusal_reason(refusal.reason),
+      };
+      let (staged_projection_path, projection_ref) =
+        stage_minecraft_projection_artifact(context, &projection_artifact)?;
+      let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
+
+      let projected_point = match &evidence {
+        auv_game_minecraft::evidence::ProjectionEvidence::Bound { artifact, .. } => {
+          artifact.projected_point.clone().ok_or_else(|| {
+            "minecraft projection evidence is bound but missing projected point".to_string()
+          })?
+        }
+        auv_game_minecraft::evidence::ProjectionEvidence::Refused { refusal, .. } => {
+          return Err(format!(
+            "minecraft live click refused before input dispatch: {:?}",
+            refusal.reason
+          ));
+        }
+      };
+
+      let window_point = auv_game_minecraft::input_target::projected_window_point(&projected_point)
+        .ok_or_else(|| "projected minecraft point is not window-clickable".to_string())?;
+
+      let mut inputs = std::collections::BTreeMap::new();
+      inputs.insert("title".to_string(), target_title.to_string());
+      inputs.insert("offset_x".to_string(), format!("{:.3}", window_point.0.x));
+      inputs.insert("offset_y".to_string(), format!("{:.3}", window_point.0.y));
+
+      let invoke_result = runtime.invoke_resolved(
+        InvokeRequest {
+          command_id: "input.clickWindowPoint".to_string(),
+          target: auv_cli::model::ExecutionTarget {
+            application_id: Some(target_app.to_string()),
+            target_label: None,
+          },
+          inputs,
+          dry_run: false,
+        },
+        auv_cli_invoke::default_registry()
+          .resolve("input.clickWindowPoint")
+          .ok_or_else(|| "input.clickWindowPoint command is not registered".to_string())?,
+      )?;
+      let post_frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&post_sample_path)?
+        .ok_or_else(|| {
+          format!(
+            "no valid minecraft post frame found in {}",
+            post_sample_path.display()
+          )
+        })?;
+
+      let world_diff_request = auv_game_minecraft::verify::WorldDiffRequest::new(
+        auv_game_minecraft::MinecraftBlockTarget::new(target_block),
+      )
+      .allow_same_block_state_change();
+      let verification = build_minecraft_world_diff_verification(
+        &auv_game_minecraft::verify::evaluate_world_diff(
+          &pre_frame,
+          &post_frame,
+          &world_diff_request,
+        ),
+        vec![screenshot_ref.clone(), projection_ref.clone()],
+      );
+      let operation_result = build_minecraft_operation_result(context.run_id(), verification);
+      let (staged_operation_result_path, operation_result_ref) =
+        stage_operation_result_artifact(context, &operation_result)?;
+
+      Ok::<MinecraftLiveClickOutput, String>(MinecraftLiveClickOutput {
+        screenshot_artifact_id,
+        projection_artifact_id,
+        operation_result_artifact_id: operation_result_ref.artifact_id.as_str().to_string(),
+        input_summary: invoke_result.output_summary,
+        artifact_paths: vec![
+          staged_screenshot_path,
+          staged_projection_path,
+          staged_operation_result_path,
+        ],
+      })
+    },
+  )
+}
+
 fn run_minecraft_projection_bridge(
   runtime: &auv_cli::runtime::Runtime,
   telemetry_sample: PathBuf,
   screenshot: PathBuf,
   target_block: &str,
   capture_skew_ms: Option<i64>,
+  screenshot_is_minecraft_window: bool,
 ) -> Result<auv_cli::recorded_operation::RecordedOperationOutput<MinecraftBridgeOutput>, String> {
   let target_block = parse_block_position(target_block)?;
   let frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&telemetry_sample)?
@@ -543,14 +849,23 @@ fn run_minecraft_projection_bridge(
           image: screenshot_image,
           artifact_ref: format!("artifact://{screenshot_artifact_id}"),
           capture_monotonic_timestamp_ms: capture_timestamp_ms,
-          is_minecraft_window: true,
+          is_minecraft_window: screenshot_is_minecraft_window,
         },
         &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
         Some(250),
       )?;
 
+      let projection_artifact = match &evidence {
+        auv_game_minecraft::evidence::ProjectionEvidence::Bound { artifact, .. } => {
+          artifact.clone()
+        }
+        auv_game_minecraft::evidence::ProjectionEvidence::Refused { refusal, .. } => evidence
+          .artifact()
+          .clone()
+          .with_mismatch_refusal_reason(refusal.reason),
+      };
       let (staged_projection_path, projection_ref) =
-        stage_minecraft_projection_artifact(context, evidence.artifact())?;
+        stage_minecraft_projection_artifact(context, &projection_artifact)?;
       let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
       let mut artifact_paths = vec![staged_screenshot_path, staged_projection_path];
       let mut overlay_artifact_id = None;
@@ -1272,6 +1587,7 @@ mod tests {
       inventory_summary: Vec::new(),
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
+      screen_state: None,
     };
     let body = serde_json::to_string(&frame).expect("frame should serialize");
     fs::write(path, format!("{body}\n")).expect("telemetry sample should write");
@@ -1281,6 +1597,125 @@ mod tests {
     RgbImage::from_pixel(64, 64, Rgb([0, 0, 0]))
       .save(path)
       .expect("screenshot should write");
+  }
+
+  #[test]
+  fn minecraft_world_diff_verification_maps_success_verdict() {
+    let verdict = auv_game_minecraft::verify::WorldDiffVerdict {
+      executed: true,
+      state_changed: true,
+      semantic_matched: Some(true),
+      failure: None,
+      observed_block_id: Some("minecraft:air".to_string()),
+      observed_item_delta: Some(1),
+    };
+
+    let verification = build_minecraft_world_diff_verification(&verdict, Vec::new());
+
+    assert_eq!(
+      verification.method,
+      auv_cli::contract::VerificationMethod::SemanticMatch
+    );
+    assert_eq!(verification.executed, true);
+    assert_eq!(verification.state_changed, true);
+    assert_eq!(verification.semantic_matched, Some(true));
+    assert_eq!(verification.failure_layer, None);
+    assert_eq!(
+      verification.observed_label.as_deref(),
+      Some("minecraft:air")
+    );
+  }
+
+  #[test]
+  fn minecraft_world_diff_verification_maps_failure_layers() {
+    let cases = [
+      (
+        auv_game_minecraft::verify::WorldDiffFailure::VerificationUnreliable,
+        Some(auv_cli::contract::FailureLayer::VerificationUnreliable),
+        None,
+      ),
+      (
+        auv_game_minecraft::verify::WorldDiffFailure::StateChangedNoMatch,
+        Some(auv_cli::contract::FailureLayer::StateChangedNoMatch),
+        Some(false),
+      ),
+      (
+        auv_game_minecraft::verify::WorldDiffFailure::SemanticMismatch,
+        Some(auv_cli::contract::FailureLayer::SemanticMismatch),
+        Some(false),
+      ),
+    ];
+
+    for (failure, expected_layer, semantic_matched) in cases {
+      let verdict = auv_game_minecraft::verify::WorldDiffVerdict {
+        executed: true,
+        state_changed: matches!(
+          failure,
+          auv_game_minecraft::verify::WorldDiffFailure::StateChangedNoMatch
+        ),
+        semantic_matched,
+        failure: Some(failure),
+        observed_block_id: Some("minecraft:stone".to_string()),
+        observed_item_delta: Some(0),
+      };
+
+      let verification = build_minecraft_world_diff_verification(&verdict, Vec::new());
+      assert_eq!(verification.failure_layer, expected_layer);
+      assert_eq!(
+        verification.observed_label.as_deref(),
+        Some("minecraft:stone")
+      );
+    }
+  }
+
+  #[test]
+  fn minecraft_live_click_command_persists_operation_result_artifact() {
+    let project_root = mc2_temp_dir("mc3-live-click-project");
+    let store_root = mc2_temp_dir("mc3-live-click-store");
+    let telemetry_path = project_root.join("pre.jsonl");
+    let post_telemetry_path = project_root.join("post.jsonl");
+    let screenshot_path = project_root.join("frame.png");
+    write_mc2_test_telemetry(&telemetry_path);
+    write_mc2_test_telemetry(&post_telemetry_path);
+    write_mc2_test_screenshot(&screenshot_path);
+
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
+      .expect("runtime should build");
+    let output = run_minecraft_live_click(
+      &runtime,
+      telemetry_path,
+      Some(post_telemetry_path),
+      screenshot_path,
+      "0,0,0",
+      "FixtureApp",
+      "Fixture Window",
+      Some(0),
+      true,
+    )
+    .expect("live click should record");
+
+    let run = runtime
+      .read_run(output.run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(run.artifacts.len(), 3);
+    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
+    assert_eq!(
+      run.artifacts[1].role,
+      auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+    );
+    assert_eq!(run.artifacts[2].role, "operation-result");
+
+    let verifications = runtime
+      .list_verifications(output.run_id.as_str())
+      .expect("verifications should list");
+    assert_eq!(verifications.len(), 1);
+    assert_eq!(
+      verifications[0].method,
+      auv_cli::contract::VerificationMethod::SemanticMatch
+    );
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
   }
 
   #[test]
@@ -1294,9 +1729,15 @@ mod tests {
 
     let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
       .expect("runtime should build");
-    let output =
-      run_minecraft_projection_bridge(&runtime, telemetry_path, screenshot_path, "0,0,0", Some(0))
-        .expect("bridge should succeed");
+    let output = run_minecraft_projection_bridge(
+      &runtime,
+      telemetry_path,
+      screenshot_path,
+      "0,0,0",
+      Some(0),
+      true,
+    )
+    .expect("bridge should succeed");
 
     let run = runtime
       .read_run(output.run_id.as_str())
@@ -1338,6 +1779,7 @@ mod tests {
       screenshot_path,
       "0,0,0",
       Some(999),
+      true,
     )
     .expect("bridge refusal should still record");
 

@@ -382,7 +382,7 @@ pub fn render_run_text(
   } else {
     for artifact in minecraft_projection_artifacts {
       output.push_str(&format!(
-        "- frame={} tick={} timestamp_ms={} screenshot_artifact_ref={} capture_skew_ms={} viewport={}x{}@{},{} visibility={} raycast={} verification_reference={} projected_point={}\n",
+        "- frame={} tick={} timestamp_ms={} screenshot_artifact_ref={} capture_skew_ms={} viewport={}x{}@{},{} visibility={} raycast={} screen_state={} refusal_reason={} verification_reference={} projected_point={}\n",
         artifact.spatial_frame_id,
         artifact.world_tick,
         artifact.monotonic_timestamp_ms,
@@ -400,6 +400,11 @@ pub fn render_run_text(
         artifact.viewport_bounds.y,
         render_projection_visibility(&artifact.visibility),
         artifact.raycast_block_id.as_deref().unwrap_or("n/a"),
+        artifact.screen_state.as_deref().unwrap_or("n/a"),
+        artifact
+          .mismatch_refusal_reason
+          .map(|reason| format!("{reason:?}"))
+          .unwrap_or_else(|| "n/a".to_string()),
         artifact.verification_reference.as_deref().unwrap_or("n/a"),
         render_minecraft_projected_point(artifact.projected_point.as_ref()),
       ));
@@ -1021,6 +1026,10 @@ mod tests {
         mc_capture_skew_ms: Some(180),
         visibility: auv_game_minecraft::types::ProjectionVisibility::Visible,
         raycast_block_id: Some("minecraft:stone".to_string()),
+        screen_state: Some("menu".to_string()),
+        mismatch_refusal_reason: Some(
+          auv_game_minecraft::verify::MismatchRefusalReason::MenuLoadingScreen,
+        ),
         verification_reference: Some("verification-1".to_string()),
       }];
     let minecraft_telemetry_sample_artifacts = vec![MinecraftTelemetrySampleArtifactLineage {

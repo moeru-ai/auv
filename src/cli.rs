@@ -111,6 +111,18 @@ pub enum CliCommand {
     screenshot: String,
     target_block: String,
     capture_skew_ms: Option<i64>,
+    screenshot_is_minecraft_window: bool,
+    inspect: InspectClientOptions,
+  },
+  MinecraftLiveClick {
+    telemetry_sample: String,
+    screenshot: String,
+    target_block: String,
+    target_app: String,
+    target_title: String,
+    post_telemetry_sample: Option<String>,
+    capture_skew_ms: Option<i64>,
+    screenshot_is_minecraft_window: bool,
     inspect: InspectClientOptions,
   },
   Invoke {
@@ -234,7 +246,8 @@ USAGE
   auv-cli inspect <run-id>
   auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv-cli mcp serve
-  auv-cli minecraft bridge --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> [--capture-skew-ms <ms>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft bridge --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft live-click --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> --target-app <application-id> --target-title <window title> [--post-sample <telemetry.jsonl>] [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
   auv-cli candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
 
@@ -1022,14 +1035,25 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 }
 
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 2 || arguments[1] != "bridge" {
-    return Err("usage: auv-cli minecraft bridge --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> [--capture-skew-ms <ms>] [--store-root <path>]".to_string());
+  if arguments.len() < 2 {
+    return Err("usage: auv-cli minecraft <bridge|live-click> ...".to_string());
   }
 
+  match arguments[1].as_str() {
+    "bridge" => parse_minecraft_bridge(arguments),
+    "live-click" => parse_minecraft_live_click(arguments),
+    other => Err(format!(
+      "unknown minecraft subcommand {other}; expected bridge or live-click"
+    )),
+  }
+}
+
+fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut telemetry_sample = None;
   let mut screenshot = None;
   let mut target_block = None;
   let mut capture_skew_ms = None;
+  let mut screenshot_is_minecraft_window = true;
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
 
@@ -1064,6 +1088,13 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
         );
         index += 2;
       }
+      "--screenshot-is-minecraft-window" => {
+        screenshot_is_minecraft_window =
+          required_flag_value(arguments, index, "--screenshot-is-minecraft-window")?
+            .parse::<bool>()
+            .map_err(|error| format!("invalid --screenshot-is-minecraft-window: {error}"))?;
+        index += 2;
+      }
       other => return Err(format!("unexpected minecraft bridge argument {other}")),
     }
   }
@@ -1073,6 +1104,86 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     screenshot: screenshot.ok_or_else(|| "--screenshot is required".to_string())?,
     target_block: target_block.ok_or_else(|| "--target-block is required".to_string())?,
     capture_skew_ms,
+    screenshot_is_minecraft_window,
+    inspect,
+  })
+}
+
+fn parse_minecraft_live_click(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut telemetry_sample = None;
+  let mut screenshot = None;
+  let mut target_block = None;
+  let mut target_app = None;
+  let mut target_title = None;
+  let mut post_telemetry_sample = None;
+  let mut capture_skew_ms = None;
+  let mut screenshot_is_minecraft_window = true;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--sample" => {
+        telemetry_sample = Some(required_flag_value(arguments, index, "--sample")?);
+        index += 2;
+      }
+      "--post-sample" => {
+        post_telemetry_sample = Some(required_flag_value(arguments, index, "--post-sample")?);
+        index += 2;
+      }
+      "--screenshot" => {
+        screenshot = Some(required_flag_value(arguments, index, "--screenshot")?);
+        index += 2;
+      }
+      "--target-block" => {
+        target_block = Some(required_flag_value(arguments, index, "--target-block")?);
+        index += 2;
+      }
+      "--target-app" => {
+        target_app = Some(required_flag_value(arguments, index, "--target-app")?);
+        index += 2;
+      }
+      "--target-title" => {
+        target_title = Some(required_flag_value(arguments, index, "--target-title")?);
+        index += 2;
+      }
+      "--capture-skew-ms" => {
+        capture_skew_ms = Some(
+          required_flag_value(arguments, index, "--capture-skew-ms")?
+            .parse::<i64>()
+            .map_err(|error| format!("invalid --capture-skew-ms: {error}"))?,
+        );
+        index += 2;
+      }
+      "--screenshot-is-minecraft-window" => {
+        screenshot_is_minecraft_window =
+          required_flag_value(arguments, index, "--screenshot-is-minecraft-window")?
+            .parse::<bool>()
+            .map_err(|error| format!("invalid --screenshot-is-minecraft-window: {error}"))?;
+        index += 2;
+      }
+      other => return Err(format!("unexpected minecraft live-click argument {other}")),
+    }
+  }
+
+  Ok(CliCommand::MinecraftLiveClick {
+    telemetry_sample: telemetry_sample.ok_or_else(|| "--sample is required".to_string())?,
+    screenshot: screenshot.ok_or_else(|| "--screenshot is required".to_string())?,
+    target_block: target_block.ok_or_else(|| "--target-block is required".to_string())?,
+    target_app: target_app.ok_or_else(|| "--target-app is required".to_string())?,
+    target_title: target_title.ok_or_else(|| "--target-title is required".to_string())?,
+    post_telemetry_sample,
+    capture_skew_ms,
+    screenshot_is_minecraft_window,
     inspect,
   })
 }
@@ -1484,6 +1595,8 @@ mod tests {
       "1,2,3".to_string(),
       "--capture-skew-ms".to_string(),
       "120".to_string(),
+      "--screenshot-is-minecraft-window".to_string(),
+      "false".to_string(),
     ])
     .expect("minecraft bridge command should parse");
 
@@ -1493,12 +1606,63 @@ mod tests {
         screenshot,
         target_block,
         capture_skew_ms,
+        screenshot_is_minecraft_window,
         ..
       } => {
         assert_eq!(telemetry_sample, "/tmp/telemetry.jsonl");
         assert_eq!(screenshot, "/tmp/frame.png");
         assert_eq!(target_block, "1,2,3");
         assert_eq!(capture_skew_ms, Some(120));
+        assert_eq!(screenshot_is_minecraft_window, false);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_live_click_command() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "live-click".to_string(),
+      "--sample".to_string(),
+      "/tmp/pre.jsonl".to_string(),
+      "--post-sample".to_string(),
+      "/tmp/post.jsonl".to_string(),
+      "--screenshot".to_string(),
+      "/tmp/frame.png".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft 1.21.5".to_string(),
+      "--capture-skew-ms".to_string(),
+      "120".to_string(),
+      "--screenshot-is-minecraft-window".to_string(),
+      "false".to_string(),
+    ])
+    .expect("minecraft live-click command should parse");
+
+    match command {
+      CliCommand::MinecraftLiveClick {
+        telemetry_sample,
+        screenshot,
+        target_block,
+        target_app,
+        target_title,
+        post_telemetry_sample,
+        capture_skew_ms,
+        screenshot_is_minecraft_window,
+        ..
+      } => {
+        assert_eq!(telemetry_sample, "/tmp/pre.jsonl");
+        assert_eq!(post_telemetry_sample.as_deref(), Some("/tmp/post.jsonl"));
+        assert_eq!(screenshot, "/tmp/frame.png");
+        assert_eq!(target_block, "1,2,3");
+        assert_eq!(target_app, "com.mojang.minecraft");
+        assert_eq!(target_title, "Minecraft 1.21.5");
+        assert_eq!(capture_skew_ms, Some(120));
+        assert_eq!(screenshot_is_minecraft_window, false);
       }
       other => panic!("unexpected command: {other:?}"),
     }

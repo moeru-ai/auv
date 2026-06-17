@@ -31,6 +31,12 @@ impl MinecraftProjector {
     &self,
     target: &MinecraftBlockTarget,
   ) -> Result<MinecraftProjectedPoint, String> {
+    if is_zero_matrix(&self.frame.view_matrix) || is_zero_matrix(&self.frame.projection_matrix) {
+      return Err(
+        "projection basis is invalid: view_matrix/projection_matrix are all zero".to_string(),
+      );
+    }
+
     let clip = self.project_vec4(target.aim_point());
     if !clip.iter().all(|value| value.is_finite()) {
       return Err("projection produced non-finite clip coordinates".to_string());
@@ -177,6 +183,10 @@ fn validate_matrix(values: &[f64; 16], field_name: &str) -> Result<(), String> {
   Ok(())
 }
 
+fn is_zero_matrix(values: &[f64; 16]) -> bool {
+  values.iter().all(|value| value.abs() <= 1e-12)
+}
+
 fn multiply_mat4_vec4(matrix: &[f64; 16], vector: [f64; 4]) -> [f64; 4] {
   [
     matrix[0] * vector[0] + matrix[4] * vector[1] + matrix[8] * vector[2] + matrix[12] * vector[3],
@@ -237,6 +247,7 @@ mod tests {
       }],
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
+      screen_state: None,
     }
   }
 
@@ -249,6 +260,18 @@ mod tests {
     let mut frame = test_frame(view_matrix, projection_matrix, viewport);
     frame.player_pose.eye_position = eye_position;
     frame
+  }
+
+  #[test]
+  fn rejects_zero_projection_basis() {
+    let frame = test_frame([0.0; 16], identity_matrix(), Viewport::new(854, 508));
+
+    let projector = MinecraftProjector::new(frame).expect("projector");
+    let error = projector
+      .project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(1, 2, 3)))
+      .expect_err("zero basis must fail");
+
+    assert!(error.contains("all zero"));
   }
 
   #[test]

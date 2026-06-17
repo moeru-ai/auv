@@ -24,6 +24,7 @@ public final class TelemetrySample {
   public String raycastBlockId;
   public final List<NearbyBlockSample> nearbyBlocks = new ArrayList<>();
   public final List<InventoryEntrySample> inventorySummary = new ArrayList<>();
+  public String screenState;
 
   public TelemetrySample copy() {
     TelemetrySample copy = new TelemetrySample();
@@ -44,6 +45,7 @@ public final class TelemetrySample {
     copy.raycastBlockZ = raycastBlockZ;
     copy.raycastFace = raycastFace;
     copy.raycastBlockId = raycastBlockId;
+    copy.screenState = screenState;
     for (NearbyBlockSample block : nearbyBlocks) {
       NearbyBlockSample blockCopy = new NearbyBlockSample();
       blockCopy.x = block.x;
@@ -95,6 +97,10 @@ public final class TelemetrySample {
     }
     appendNearbyBlocks(builder, nearbyBlocks);
     appendInventorySummary(builder, inventorySummary);
+    if (screenState != null) {
+      builder.append(",\"screen_state\":");
+      appendJsonStringValue(builder, screenState);
+    }
     builder.append('}');
     return builder.toString();
   }

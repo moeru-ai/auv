@@ -929,7 +929,10 @@ mod tests {
 
   use serde_json::json;
 
-  use super::{MINECRAFT_PROJECTION_ARTIFACT_ROLE, Runtime, TELEMETRY_SAMPLE_ARTIFACT_ROLE};
+  use super::{
+    MINECRAFT_PROJECTION_ARTIFACT_ROLE, Runtime, TELEMETRY_SAMPLE_ARTIFACT_ROLE,
+    TELEMETRY_SAMPLE_MAX_BYTES,
+  };
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{
     AuvResult, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget, InvokeRequest,
@@ -1144,6 +1147,51 @@ mod tests {
   }
 
   #[test]
+  fn record_telemetry_sample_artifact_keeps_large_source_file_intact() {
+    let project_root = temp_dir("runtime-telemetry-large-project");
+    let store_root = temp_dir("runtime-telemetry-large-store");
+    fs::create_dir_all(&project_root).expect("project root should exist");
+    let source_path = project_root.join("telemetry.jsonl");
+    let original_body = (0..6000)
+      .map(|index| {
+        format!(
+          "{{\"sample\":{index},\"payload\":\"{}\"}}\n",
+          "x".repeat(32)
+        )
+      })
+      .collect::<String>();
+    fs::write(&source_path, &original_body).expect("large telemetry sample should write");
+    let original_size = fs::metadata(&source_path).expect("source metadata").len();
+    assert!(
+      original_size > TELEMETRY_SAMPLE_MAX_BYTES,
+      "fixture must exceed trimming threshold"
+    );
+
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+    let output = runtime
+      .record_telemetry_sample_artifact(source_path.clone())
+      .expect("telemetry sample recording should succeed");
+
+    let persisted_source = fs::read_to_string(&source_path).expect("source file should remain");
+    assert_eq!(persisted_source, original_body);
+
+    let run = runtime
+      .read_run(output.run_id.as_str())
+      .expect("run should persist");
+    let staged_path = store_root
+      .join("runs")
+      .join(output.run_id.as_str())
+      .join(&run.artifacts[0].path);
+    let staged_size = fs::metadata(&staged_path)
+      .expect("staged artifact metadata")
+      .len();
+    assert!(staged_size <= TELEMETRY_SAMPLE_MAX_BYTES);
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
   fn record_minecraft_projection_artifact_persists_artifact_for_inspect() {
     let project_root = temp_dir("runtime-minecraft-projection-project");
     let store_root = temp_dir("runtime-minecraft-projection-store");
@@ -1171,6 +1219,10 @@ mod tests {
       }),
       visibility: auv_game_minecraft::ProjectionVisibility::Visible,
       raycast_block_id: Some("minecraft:stone".to_string()),
+      screen_state: Some("menu".to_string()),
+      mismatch_refusal_reason: Some(
+        auv_game_minecraft::verify::MismatchRefusalReason::MenuLoadingScreen,
+      ),
       verification_reference: Some("verification-1".to_string()),
     };
 
@@ -1195,6 +1247,8 @@ mod tests {
     assert!(inspect_text.contains("frame=frame-1"));
     assert!(inspect_text.contains("screenshot_artifact_ref=artifact://screenshot-1"));
     assert!(inspect_text.contains("capture_skew_ms=180"));
+    assert!(inspect_text.contains("screen_state=menu"));
+    assert!(inspect_text.contains("refusal_reason=MenuLoadingScreen"));
     assert!(inspect_text.contains("verification_reference=verification-1"));
 
     let _ = fs::remove_dir_all(project_root);
