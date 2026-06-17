@@ -110,6 +110,43 @@ Acceptance gate:
   on a real client — a real-client refusal sample matrix, not a blind click.
 - Only when this is live is P0 actually done.
 
+## Live-closure evidence recorded (2026-06-18)
+
+MC-2 / MC-3 / MC-4 are now closed against live runs (local `.auv/runs`,
+gitignored). Recorded run ids:
+
+- MC-2 (live screenshot ↔ projection + overlay, `capture_skew_ms=0`,
+  `visibility=visible`, raycast `minecraft:oak_button`):
+  `run_1781715690959_39268_0` (screenshot + projection + overlay artifacts).
+- MC-3 (live driver click → world diff → passing `VerificationResult`,
+  `state_changed=true`, `observed_label=minecraft:oak_button`):
+  `run_1781710969890_45358_0` (screenshot + projection + operation-result).
+- MC-4 live refusal / verification-fail matrix:
+  - target window not Minecraft → `NotMinecraftWindow`:
+    `run_1781715519110_37200_0`.
+  - capture_skew over threshold → `CaptureSkewUnreliable`:
+    `run_1781715630997_38333_0` (`capture_skew_ms=999`).
+  - target behind camera → `TargetBehindCamera`: `run_1781693381843_33814_0`.
+  - target out of frustum → `TargetOutOfFrustum`: `run_1781715806561_39657_0`.
+  - raycast hit != target (occluded) → `TargetOccluded`:
+    `run_1781715677013_38987_0`.
+  - screenshot is menu / black / loading → `MenuLoadingScreen`:
+    `run_1781724723882_57681_0`. The Fabric sidecar now emits `screen_state`
+    (`in_game` / `menu` / `loading_or_overlay`) on each `TelemetrySample`;
+    `evaluate_mismatch_refusal` refuses a menu/loading frame before any geometry
+    verdict, so a paused-client capture refuses with the dedicated
+    `MenuLoadingScreen` reason instead of a misleading geometry reason.
+    A fresh rerun confirmed the durable result as
+    `run_1781728505910_73396_0`.
+  - post-action world diff != expected → verification-fail with evidence
+    (`failure_layer=verification_unreliable`): `run_1781695923701_80537_0`,
+    `run_1781696241095_92333_0`; `state_changed=false` negatives:
+    `run_1781709174208_32257_0`, `run_1781710276833_41284_0`.
+
+No new result family was added: menu/loading refusal flows through the existing
+`MismatchRefusal` / projection-artifact seam, gated on the sidecar-reported
+`screen_state` rather than a pixel heuristic.
+
 ## Per-slice validation
 
 On the Mac, per slice: `cargo fmt --check && cargo check && cargo test &&
