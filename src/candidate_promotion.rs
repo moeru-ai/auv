@@ -300,7 +300,7 @@ mod tests {
     ArtifactRef, Candidate, FreshnessBasis, RecognitionBox, RecognitionResult, RecognitionScope,
     RecognitionSource, RecognitionSurface, RecognizedItem,
   };
-  use crate::trace::{ArtifactId, EventId, RunId, SpanId};
+  use auv_tracing_driver::trace::{ArtifactId, EventId, RunId, SpanId};
 
   fn sample_artifact_ref() -> ArtifactRef {
     ArtifactRef {

@@ -1,5 +1,5 @@
 // File: src/model.rs
-use crate::trace::{ArtifactRecordV1Alpha1, SpanId};
+use auv_tracing_driver::trace::{ArtifactRecordV1Alpha1, SpanId};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process;

@@ -4,13 +4,13 @@ use auv_cli::inference_recognition::{
   BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy,
   RuntimeProjection, RuntimeProjectionKind, record_detector_manifest_recognition_artifact,
 };
-use auv_cli::run_builder::RunSpec;
-use auv_cli::trace::RunType;
 use auv_inference_common::{
   BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest,
   DetectionSet, ImageSize, ModelId, ModelRunMetadata, ProjectionBasis, SourceImageEvidence,
   SourceImageRef,
 };
+use auv_tracing_driver::run_builder::RunSpec;
+use auv_tracing_driver::trace::RunType;
 use serde_json::{Value, json};
 use std::error::Error;
 use std::fs;

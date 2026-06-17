@@ -14,7 +14,7 @@ use crate::contract::{
   RecognizedItem,
 };
 use crate::model::AuvResult;
-use crate::recorded_operation::RecordedOperationContext;
+use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 
 const BRIDGE_POLICY_VERSION: &str = "detector-manifest-recognitionresult.v0";
 const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
@@ -445,9 +445,9 @@ mod tests {
   };
   use crate::build_runtime_with_store_root;
   use crate::contract::{ArtifactRef, RatioRegion, RecognitionScope, RecognitionSurface};
-  use crate::run_builder::RunSpec;
-  use crate::trace::{ArtifactId, EventId, RunId, SpanId};
-  use crate::trace::{RunType, TraceStatusCode};
+  use auv_tracing_driver::run_builder::RunSpec;
+  use auv_tracing_driver::trace::{ArtifactId, EventId, RunId, SpanId};
+  use auv_tracing_driver::trace::{RunType, TraceStatusCode};
 
   fn sample_manifest() -> DetectionEvidenceManifest {
     DetectionEvidenceManifest {

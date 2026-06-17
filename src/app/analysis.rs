@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 
 use crate::contract::{CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
 use crate::model::{AuvResult, RunStatus, now_millis};
-use crate::trace::{ArtifactId, EventId, RunId, SpanId};
 use auv_driver_macos::support::{
   group_ocr_matches_into_rows, parse_observed_ax_tree, parse_ocr_text_snapshot, parse_window_line,
   report_value,
@@ -24,6 +23,7 @@ use auv_driver_macos::types::{
   ObservedAxNode, ObservedAxTreeSnapshot, ObservedDisplay, ObservedDisplaySnapshot, ObservedOcrRow,
   ObservedRect, ObservedWindow, OcrTextSnapshot, compute_combined_bounds,
 };
+use auv_tracing_driver::trace::{ArtifactId, EventId, RunId, SpanId};
 use serde_json::Value;
 
 use super::infra::first_non_empty_string;

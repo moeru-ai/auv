@@ -16,11 +16,11 @@ use auv_cli::contract::{
   VerificationResult,
 };
 use auv_cli::model::{InvokeRequest, RunStatus};
-use auv_cli::run_builder::RunSpec;
 use auv_cli::scroll_scan::{
   ScanRegion, ScanTarget, ScanWindowRegionOptions, StopPolicy, scan_window_region,
 };
 use auv_cli::{build_default_runtime, build_runtime_with_store_root};
+use auv_tracing_driver::run_builder::RunSpec;
 use cli::{CliCommand, InspectClientOptions, help_text, parse_cli};
 
 #[tokio::main]
@@ -62,7 +62,7 @@ async fn run() -> Result<(), String> {
   } = &command
   {
     let store_root = resolve_store_root(&project_root, store_root.as_ref());
-    let store = auv_cli::store::LocalStore::new(store_root.clone())?;
+    let store = auv_tracing_driver::store::LocalStore::new(store_root.clone())?;
     let recorder = Arc::new(auv_tracing_driver::BroadcastRunRecorder::new(1024));
     let token = resolve_inspect_serve_write_token(write)?;
     let config = auv_cli::inspect_server::InspectServeConfig {
@@ -567,7 +567,7 @@ fn build_minecraft_world_diff_verification(
 }
 
 fn build_minecraft_operation_result(
-  run_id: &auv_cli::trace::RunId,
+  run_id: &auv_tracing_driver::trace::RunId,
   verification: VerificationResult,
 ) -> OperationResult {
   let evidence_artifacts = verification.evidence.clone();
@@ -587,7 +587,7 @@ fn build_minecraft_operation_result(
 }
 
 fn stage_operation_result_artifact(
-  context: &mut auv_cli::recorded_operation::RecordedOperationContext<'_>,
+  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
   operation_result: &OperationResult,
 ) -> Result<(PathBuf, auv_cli::contract::ArtifactRef), String> {
   let artifact_json = serde_json::to_string_pretty(operation_result)
@@ -623,8 +623,10 @@ fn run_minecraft_live_click(
   target_title: &str,
   capture_skew_ms: Option<i64>,
   screenshot_is_minecraft_window: bool,
-) -> Result<auv_cli::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>, String>
-{
+) -> Result<
+  auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>,
+  String,
+> {
   let target_block = parse_block_position(target_block)?;
   let pre_frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&telemetry_sample)?
     .ok_or_else(|| {
@@ -651,7 +653,10 @@ fn run_minecraft_live_click(
     .to_rgb8();
 
   runtime.run_recorded_operation(
-    RunSpec::new(auv_cli::trace::RunType::Execute, "auv.minecraft.live_click"),
+    RunSpec::new(
+      auv_tracing_driver::trace::RunType::Execute,
+      "auv.minecraft.live_click",
+    ),
     "Minecraft live click",
     |context| {
       let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
@@ -783,7 +788,10 @@ fn run_minecraft_projection_bridge(
   target_block: &str,
   capture_skew_ms: Option<i64>,
   screenshot_is_minecraft_window: bool,
-) -> Result<auv_cli::recorded_operation::RecordedOperationOutput<MinecraftBridgeOutput>, String> {
+) -> Result<
+  auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftBridgeOutput>,
+  String,
+> {
   let target_block = parse_block_position(target_block)?;
   let frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&telemetry_sample)?
     .ok_or_else(|| {
@@ -810,7 +818,10 @@ fn run_minecraft_projection_bridge(
     .to_rgb8();
 
   runtime.run_recorded_operation(
-    auv_cli::run_builder::RunSpec::new(auv_cli::trace::RunType::Execute, "auv.minecraft.bridge"),
+    auv_tracing_driver::run_builder::RunSpec::new(
+      auv_tracing_driver::trace::RunType::Execute,
+      "auv.minecraft.bridge",
+    ),
     "Minecraft projection bridge",
     |context| {
       let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
@@ -898,7 +909,7 @@ fn run_minecraft_projection_bridge(
 }
 
 fn stage_minecraft_projection_artifact(
-  context: &mut auv_cli::recorded_operation::RecordedOperationContext<'_>,
+  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
   projection_artifact: &auv_game_minecraft::MinecraftProjectionArtifact,
 ) -> Result<(PathBuf, auv_cli::contract::ArtifactRef), String> {
   projection_artifact.validate()?;
@@ -1144,7 +1155,7 @@ fn build_runtime_for_inspect(
   } else {
     temp_runtime_store_root()
   };
-  let store = auv_cli::store::LocalStore::new(store_root.clone())?;
+  let store = auv_tracing_driver::store::LocalStore::new(store_root.clone())?;
   let mut recorders: Vec<Arc<dyn auv_tracing_driver::RunRecorder>> = Vec::new();
 
   if let Some((url, token)) = server_target {

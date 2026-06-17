@@ -36,9 +36,12 @@ impl McpServer {
     }
   }
 
-  fn store(&self, store_root: Option<String>) -> Result<crate::store::LocalStore, McpError> {
+  fn store(
+    &self,
+    store_root: Option<String>,
+  ) -> Result<auv_tracing_driver::store::LocalStore, McpError> {
     let store = match store_root {
-      Some(root) => crate::store::LocalStore::new(PathBuf::from(root)),
+      Some(root) => auv_tracing_driver::store::LocalStore::new(PathBuf::from(root)),
       None => build_default_store(self.project_root.clone()),
     };
     store.map_err(invalid_params)

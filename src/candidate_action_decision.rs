@@ -13,8 +13,8 @@ use crate::contract::{
   VerificationResult,
 };
 use crate::model::{AuvResult, now_millis};
-use crate::recorded_operation::RecordedOperationContext;
-use crate::trace::RunId;
+use auv_tracing_driver::recorded_operation::RecordedOperationContext;
+use auv_tracing_driver::trace::RunId;
 
 pub const CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE: &str = "candidate-action-decision";
 pub const CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE: &str = "candidate-action-execution";
@@ -2288,9 +2288,9 @@ mod tests {
     RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem, TargetGrounding,
     VerificationMethod,
   };
-  use crate::run_builder::RunSpec;
   use crate::stability::StabilityPolicy;
-  use crate::trace::{ArtifactId, EventId, RunId, RunType, SpanId, TraceStatusCode};
+  use auv_tracing_driver::run_builder::RunSpec;
+  use auv_tracing_driver::trace::{ArtifactId, EventId, RunId, RunType, SpanId, TraceStatusCode};
 
   fn sample_artifact_ref() -> ArtifactRef {
     ArtifactRef {

@@ -8,13 +8,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
-use crate::run_builder::{RecordingRun, RunFinish, SpanFinish, SpanRef};
 use crate::runtime::Runtime;
-use crate::store::sanitized_artifact_name;
-use crate::trace::{
+use auv_tracing_driver::RecordingHandle;
+use auv_tracing_driver::run_builder::{RecordingRun, RunFinish, SpanFinish, SpanRef};
+use auv_tracing_driver::store::sanitized_artifact_name;
+use auv_tracing_driver::trace::{
   SPAN_API_VERSION, SpanRecordV1Alpha1, TraceState, TraceStatusCode, new_span_id, string_attr,
 };
-use auv_tracing_driver::RecordingHandle;
 
 use super::{AppIdentity, AppProbeArtifact, AppProbeStep};
 
@@ -355,7 +355,7 @@ pub(crate) fn finish_failed_app_run<T>(
 
 pub(crate) fn app_span_record(
   name: impl Into<String>,
-  attributes: crate::run_builder::Attributes,
+  attributes: auv_tracing_driver::run_builder::Attributes,
 ) -> SpanRecordV1Alpha1 {
   SpanRecordV1Alpha1 {
     api_version: SPAN_API_VERSION.to_string(),

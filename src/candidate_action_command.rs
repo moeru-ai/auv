@@ -24,9 +24,9 @@ use crate::candidate_promotion_recording::{
   record_candidate_promotion_artifact_with_recognition_projection,
 };
 use crate::model::{AuvResult, now_millis};
-use crate::recorded_operation::RecordedOperationContext;
 use crate::stability::StabilityPolicy;
 use auv_driver::Driver;
+use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 const CANDIDATE_ACTION_PROPOSAL_ARTIFACT_ROLE: &str = "candidate-action-proposal";
 const CANDIDATE_ACTION_PROPOSAL_ARTIFACT_VERSION: &str = "candidate_action_proposal_artifact_v0";
 const OPENAI_RESPONSES_API_URL: &str = "https://api.openai.com/v1/responses";

@@ -26,9 +26,9 @@ use crate::contract::{
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
 use crate::stability::{StabilityAssessment, StabilityRejection};
-use crate::store::{CanonicalRun, LocalStore};
-use crate::trace::ArtifactRecordV1Alpha1;
 use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
+use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 
 pub struct MinecraftTelemetrySampleArtifactLineage {
   pub artifact: ArtifactRefLineage,
@@ -58,10 +58,10 @@ pub enum DetectorRecognitionLineageStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct DetectorRecognitionArtifactRefLineage {
-  pub run_id: crate::trace::RunId,
-  pub artifact_id: crate::trace::ArtifactId,
-  pub span_id: crate::trace::SpanId,
-  pub captured_event_id: Option<crate::trace::EventId>,
+  pub run_id: auv_tracing_driver::trace::RunId,
+  pub artifact_id: auv_tracing_driver::trace::ArtifactId,
+  pub span_id: auv_tracing_driver::trace::SpanId,
+  pub captured_event_id: Option<auv_tracing_driver::trace::EventId>,
   pub role: Option<String>,
   pub path: Option<String>,
   pub summary: Option<String>,
@@ -1174,7 +1174,7 @@ fn classify_candidate_action_execution_lineage(
 }
 
 fn artifact_record_lineage(
-  run_id: crate::trace::RunId,
+  run_id: auv_tracing_driver::trace::RunId,
   artifact: &ArtifactRecordV1Alpha1,
 ) -> DetectorRecognitionArtifactRefLineage {
   DetectorRecognitionArtifactRefLineage {
@@ -1479,8 +1479,9 @@ mod tests {
     SectionCandidate, StopEvidence, StopPolicy, StopReason,
   };
   use crate::stability::{StabilityAssessment, StabilityPolicy, StabilityRejection};
-  use crate::store::{ArtifactFileSource, CanonicalRun, LocalStore};
-  use crate::trace::{
+  use auv_tracing_driver::ArtifactFileSource;
+  use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+  use auv_tracing_driver::trace::{
     ArtifactId, ArtifactRecordV1Alpha1, EventId, RUN_API_VERSION, RunId, RunRecordV1Alpha1,
     RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };

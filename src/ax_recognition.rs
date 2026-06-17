@@ -10,7 +10,7 @@ use crate::contract::{
   RecognitionSurface, RecognizedItem,
 };
 use crate::model::{AuvResult, now_millis};
-use crate::recorded_operation::RecordedOperationContext;
+use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 
 #[cfg(target_os = "macos")]
 use auv_driver_macos::types::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
@@ -469,9 +469,9 @@ mod tests {
   use crate::build_runtime_with_store_root;
   use crate::candidate_promotion::PromotionProjection;
   use crate::contract::ArtifactRef;
-  use crate::run_builder::RunSpec;
-  use crate::trace::{ArtifactId, EventId, RunId, RunType, SpanId, TraceStatusCode};
   use auv_driver_macos::types::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
+  use auv_tracing_driver::run_builder::RunSpec;
+  use auv_tracing_driver::trace::{ArtifactId, EventId, RunId, RunType, SpanId, TraceStatusCode};
 
   fn artifact_ref() -> ArtifactRef {
     ArtifactRef {

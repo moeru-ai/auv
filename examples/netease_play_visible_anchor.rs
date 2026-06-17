@@ -2,15 +2,15 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use auv_cli::recorded_operation::RecordedOperationContext;
-use auv_cli::run_builder::{Attributes, RunSpec};
-use auv_cli::trace::{RunType, string_attr};
 use auv_driver::capture::Capture;
 use auv_driver::input::{Click, ClickOptions, TextSubmit, TypeTextOptions, WindowClickStrategy};
 use auv_driver::selector::{App, Window};
 use auv_driver::vision::{RecognizedText, TextRecognition};
 use auv_driver::{Driver, RatioRect, ScreenPoint, WindowPoint};
 use auv_driver_macos::MacosDriver;
+use auv_tracing_driver::recorded_operation::RecordedOperationContext;
+use auv_tracing_driver::run_builder::{Attributes, RunSpec};
+use auv_tracing_driver::trace::{RunType, string_attr};
 
 static TEMP_CAPTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
 

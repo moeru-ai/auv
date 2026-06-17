@@ -19,8 +19,8 @@ pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
 
 use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, InvokeRequest, InvokeResult, RunStatus};
-use crate::store::LocalStore;
-use crate::trace::{RunType, TraceStatusCode, string_attr};
+use auv_tracing_driver::store::LocalStore;
+use auv_tracing_driver::trace::{RunType, TraceStatusCode, string_attr};
 use auv_tracing_driver::{MemoryRunRecorder, RunRecorder, RunRecordingBackend};
 
 pub struct Runtime {
@@ -115,7 +115,7 @@ impl Runtime {
     crate::inspect::inspect_run(self.recording.store(), run_id)
   }
 
-  pub fn read_run(&self, run_id: &str) -> AuvResult<crate::store::CanonicalRun> {
+  pub fn read_run(&self, run_id: &str) -> AuvResult<auv_tracing_driver::store::CanonicalRun> {
     self.recording.read_run(run_id)
   }
 
@@ -156,13 +156,15 @@ impl Runtime {
 
   pub fn run_recorded_operation<T, E, F>(
     &self,
-    spec: crate::run_builder::RunSpec,
+    spec: auv_tracing_driver::run_builder::RunSpec,
     operation_label: impl Into<String>,
     operation: F,
-  ) -> AuvResult<crate::recorded_operation::RecordedOperationOutput<T>>
+  ) -> AuvResult<auv_tracing_driver::recorded_operation::RecordedOperationOutput<T>>
   where
     E: std::fmt::Display,
-    F: FnOnce(&mut crate::recorded_operation::RecordedOperationContext<'_>) -> Result<T, E>,
+    F: FnOnce(
+      &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
+    ) -> Result<T, E>,
   {
     self
       .recording
@@ -175,13 +177,16 @@ impl Runtime {
     promotion: &crate::candidate_promotion_recording::CandidatePromotionArtifact,
     request: crate::candidate_action_decision::CandidateActionDecisionRequest,
   ) -> AuvResult<
-    crate::recorded_operation::RecordedOperationOutput<(
+    auv_tracing_driver::recorded_operation::RecordedOperationOutput<(
       ArtifactRef,
       crate::candidate_action_decision::CandidateActionDecisionArtifact,
     )>,
   > {
     self.run_recorded_operation(
-      crate::run_builder::RunSpec::new(RunType::Execute, "auv.candidate.action.decide_only"),
+      auv_tracing_driver::run_builder::RunSpec::new(
+        RunType::Execute,
+        "auv.candidate.action.decide_only",
+      ),
       "Candidate action decide-only artifact recording",
       |context| {
         crate::candidate_action_decision::record_candidate_action_decision_artifact(
@@ -194,7 +199,7 @@ impl Runtime {
   pub fn record_telemetry_sample_artifact(
     &self,
     sample_path: impl Into<PathBuf>,
-  ) -> AuvResult<crate::recorded_operation::RecordedOperationOutput<ArtifactRef>> {
+  ) -> AuvResult<auv_tracing_driver::recorded_operation::RecordedOperationOutput<ArtifactRef>> {
     let sample_path = sample_path.into();
     let preferred_name = sample_path
       .file_name()
@@ -215,7 +220,10 @@ impl Runtime {
     }
 
     self.run_recorded_operation(
-      crate::run_builder::RunSpec::new(RunType::Execute, "auv.minecraft.telemetry.sample"),
+      auv_tracing_driver::run_builder::RunSpec::new(
+        RunType::Execute,
+        "auv.minecraft.telemetry.sample",
+      ),
       "Minecraft telemetry sample artifact recording",
       |context| {
         let artifact_source =
@@ -238,13 +246,16 @@ impl Runtime {
   pub fn record_minecraft_projection_artifact(
     &self,
     projection_artifact: auv_game_minecraft::MinecraftProjectionArtifact,
-  ) -> AuvResult<crate::recorded_operation::RecordedOperationOutput<ArtifactRef>> {
+  ) -> AuvResult<auv_tracing_driver::recorded_operation::RecordedOperationOutput<ArtifactRef>> {
     projection_artifact.validate()?;
     let artifact_json = serde_json::to_string_pretty(&projection_artifact)
       .map_err(|error| format!("failed to serialize minecraft projection artifact: {error}"))?;
 
     self.run_recorded_operation(
-      crate::run_builder::RunSpec::new(RunType::Execute, "auv.minecraft.projection.artifact"),
+      auv_tracing_driver::run_builder::RunSpec::new(
+        RunType::Execute,
+        "auv.minecraft.projection.artifact",
+      ),
       "Minecraft projection artifact recording",
       |context| {
         let temp_root = std::env::temp_dir();
@@ -278,12 +289,15 @@ impl Runtime {
     &self,
     request: crate::candidate_action_command::CandidateActionCommandRequest,
   ) -> AuvResult<
-    crate::recorded_operation::RecordedOperationOutput<
+    auv_tracing_driver::recorded_operation::RecordedOperationOutput<
       crate::candidate_action_command::CandidateActionCommandOutput,
     >,
   > {
     self.run_recorded_operation(
-      crate::run_builder::RunSpec::new(RunType::Execute, "auv.candidate.action.command"),
+      auv_tracing_driver::run_builder::RunSpec::new(
+        RunType::Execute,
+        "auv.candidate.action.command",
+      ),
       "Consent-gated candidate action command",
       |context| {
         crate::candidate_action_command::execute_candidate_action_command(context, &request)
@@ -298,13 +312,16 @@ impl Runtime {
     request: crate::candidate_action_decision::CandidateActionExecutionRequest,
     input_action_result: auv_driver::InputActionResult,
   ) -> AuvResult<
-    crate::recorded_operation::RecordedOperationOutput<(
+    auv_tracing_driver::recorded_operation::RecordedOperationOutput<(
       ArtifactRef,
       crate::candidate_action_decision::CandidateActionExecutionArtifact,
     )>,
   > {
     self.run_recorded_operation(
-      crate::run_builder::RunSpec::new(RunType::Execute, "auv.candidate.action.execute_single"),
+      auv_tracing_driver::run_builder::RunSpec::new(
+        RunType::Execute,
+        "auv.candidate.action.execute_single",
+      ),
       "Candidate action execution artifact recording",
       |context| {
         crate::candidate_action_decision::record_candidate_action_execution_artifact(
@@ -364,24 +381,25 @@ impl Runtime {
     &self,
     invoke: impl FnOnce(
       &Self,
-      &mut crate::run_builder::RecordingRun,
-      &crate::run_builder::SpanRef,
+      &mut auv_tracing_driver::run_builder::RecordingRun,
+      &auv_tracing_driver::run_builder::SpanRef,
     ) -> AuvResult<InvokeResult>,
   ) -> AuvResult<InvokeResult> {
-    let mut run = self
-      .recording
-      .handle()
-      .start_run(crate::run_builder::RunSpec::new(
-        RunType::Command,
-        "auv.command",
-      ))?;
+    let mut run =
+      self
+        .recording
+        .handle()
+        .start_run(auv_tracing_driver::run_builder::RunSpec::new(
+          RunType::Command,
+          "auv.command",
+        ))?;
     let root = run.root_span();
     let result = match invoke(self, &mut run, &root) {
       Ok(result) => result,
       Err(error) => {
         if let Err(finish_error) = self.recording.handle().finish_run(
           run,
-          crate::run_builder::RunFinish {
+          auv_tracing_driver::run_builder::RunFinish {
             status_code: TraceStatusCode::Error,
             summary: Some(format!(
               "Invocation failed. Inspect the run for details: {error}"
@@ -403,7 +421,7 @@ impl Runtime {
     };
     self.recording.handle().finish_run(
       run,
-      crate::run_builder::RunFinish {
+      auv_tracing_driver::run_builder::RunFinish {
         status_code,
         summary: Some(result.output_summary.clone()),
         failure: result.failure_message.clone(),
@@ -414,8 +432,8 @@ impl Runtime {
 
   pub fn invoke_in_span(
     &self,
-    run: &mut crate::run_builder::RecordingRun,
-    parent: &crate::run_builder::SpanRef,
+    run: &mut auv_tracing_driver::run_builder::RecordingRun,
+    parent: &auv_tracing_driver::run_builder::SpanRef,
     request: InvokeRequest,
   ) -> AuvResult<InvokeResult> {
     let command_id = request.command_id.clone();
@@ -433,14 +451,14 @@ impl Runtime {
 
   fn invoke_metadata_command_in_span(
     &self,
-    run: &mut crate::run_builder::RecordingRun,
-    parent: &crate::run_builder::SpanRef,
+    run: &mut auv_tracing_driver::run_builder::RecordingRun,
+    parent: &auv_tracing_driver::run_builder::SpanRef,
     command: &auv_cli_invoke::InvokeCommand,
     request: InvokeRequest,
   ) -> AuvResult<InvokeResult> {
     let command_span = run.start_span(
       parent,
-      crate::run_builder::running_span_record(
+      auv_tracing_driver::run_builder::running_span_record(
         "auv.command.invoke",
         command_attributes(command.id, request.target.application_id.as_deref()),
       ),
@@ -473,7 +491,7 @@ impl Runtime {
         );
         run.finish_span(
           &command_span,
-          crate::run_builder::SpanFinish {
+          auv_tracing_driver::run_builder::SpanFinish {
             status_code: TraceStatusCode::Error,
             summary: Some(output_summary.clone()),
             failure: Some(failure_message.clone()),
@@ -514,7 +532,7 @@ impl Runtime {
 
     run.finish_span(
       &command_span,
-      crate::run_builder::SpanFinish {
+      auv_tracing_driver::run_builder::SpanFinish {
         status_code: TraceStatusCode::Ok,
         summary: Some(output.summary.clone()),
         failure: None,
@@ -537,8 +555,8 @@ impl Runtime {
 fn command_attributes(
   command_id: &str,
   target_application_id: Option<&str>,
-) -> crate::run_builder::Attributes {
-  let mut attributes = crate::run_builder::Attributes::new();
+) -> auv_tracing_driver::run_builder::Attributes {
+  let mut attributes = auv_tracing_driver::run_builder::Attributes::new();
   attributes.insert("command_id".to_string(), string_attr(command_id));
   attributes.insert("auv.command.id".to_string(), string_attr(command_id));
   if let Some(target_application_id) = target_application_id {
@@ -555,8 +573,8 @@ fn command_attributes(
 }
 
 fn record_event(
-  run: &mut crate::run_builder::RecordingRun,
-  span_id: &crate::trace::SpanId,
+  run: &mut auv_tracing_driver::run_builder::RecordingRun,
+  span_id: &auv_tracing_driver::trace::SpanId,
   name: &str,
   message: Option<String>,
 ) {
@@ -578,7 +596,7 @@ mod tests {
     TELEMETRY_SAMPLE_MAX_BYTES,
   };
   use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
-  use crate::store::LocalStore;
+  use auv_tracing_driver::store::LocalStore;
   use auv_tracing_driver::{MemoryRunRecorder, RunRecorder, RunUpdate};
 
   struct FailRunFinishedRecorder;
@@ -813,8 +831,8 @@ mod tests {
     let mut run = runtime
       .recording()
       .handle()
-      .start_run(crate::run_builder::RunSpec::new(
-        crate::trace::RunType::Execute,
+      .start_run(auv_tracing_driver::run_builder::RunSpec::new(
+        auv_tracing_driver::trace::RunType::Execute,
         "auv.execute",
       ))
       .expect("run should start");
@@ -839,8 +857,8 @@ mod tests {
       .handle()
       .finish_run(
         run,
-        crate::run_builder::RunFinish {
-          status_code: crate::trace::TraceStatusCode::Ok,
+        auv_tracing_driver::run_builder::RunFinish {
+          status_code: auv_tracing_driver::trace::TraceStatusCode::Ok,
           summary: Some("done".to_string()),
           failure: None,
         },
@@ -848,7 +866,10 @@ mod tests {
       .expect("run should finish");
 
     let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
-    assert_eq!(canonical.run.run_type, crate::trace::RunType::Execute);
+    assert_eq!(
+      canonical.run.run_type,
+      auv_tracing_driver::trace::RunType::Execute
+    );
     assert!(
       canonical
         .spans
@@ -950,7 +971,10 @@ mod tests {
       Some(&"handler-output".to_string())
     );
     let canonical = runtime.read_run(&result.run_id).expect("run should read");
-    assert_eq!(canonical.run.status_code, crate::trace::TraceStatusCode::Ok);
+    assert_eq!(
+      canonical.run.status_code,
+      auv_tracing_driver::trace::TraceStatusCode::Ok
+    );
     let command_span = canonical
       .spans
       .iter()
@@ -1019,7 +1043,7 @@ mod tests {
     let canonical = runtime.read_run(&result.run_id).expect("run should read");
     assert_eq!(
       canonical.run.status_code,
-      crate::trace::TraceStatusCode::Error
+      auv_tracing_driver::trace::TraceStatusCode::Error
     );
     assert!(canonical.events.iter().any(|event| {
       event.name == "command.failed"
@@ -1062,7 +1086,7 @@ mod tests {
     let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
     assert_eq!(
       canonical.run.status_code,
-      crate::trace::TraceStatusCode::Error
+      auv_tracing_driver::trace::TraceStatusCode::Error
     );
     assert!(
       canonical
@@ -1076,7 +1100,7 @@ mod tests {
       canonical
         .spans
         .iter()
-        .all(|span| span.state == crate::trace::TraceState::Ended)
+        .all(|span| span.state == auv_tracing_driver::trace::TraceState::Ended)
     );
 
     let _ = fs::remove_dir_all(project_root);
@@ -1129,7 +1153,10 @@ mod tests {
     let canonical = runtime
       .read_run(&result.run_id)
       .expect("snapshot should still be persisted");
-    assert_eq!(canonical.run.status_code, crate::trace::TraceStatusCode::Ok);
+    assert_eq!(
+      canonical.run.status_code,
+      auv_tracing_driver::trace::TraceStatusCode::Ok
+    );
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
@@ -1198,8 +1225,8 @@ mod tests {
     let run = runtime
       .recording()
       .handle()
-      .start_run(crate::run_builder::RunSpec::new(
-        crate::trace::RunType::Command,
+      .start_run(auv_tracing_driver::run_builder::RunSpec::new(
+        auv_tracing_driver::trace::RunType::Command,
         "auv.command",
       ))
       .expect("default-spec run should start");
@@ -1211,8 +1238,8 @@ mod tests {
       .handle()
       .finish_run(
         run,
-        crate::run_builder::RunFinish {
-          status_code: crate::trace::TraceStatusCode::Ok,
+        auv_tracing_driver::run_builder::RunFinish {
+          status_code: auv_tracing_driver::trace::TraceStatusCode::Ok,
           summary: Some("default".to_string()),
           failure: None,
         },
@@ -1229,9 +1256,12 @@ mod tests {
     let store_root = temp_dir("runtime-explicit-device-store");
     let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
 
-    let spec = crate::run_builder::RunSpec::new(crate::trace::RunType::Command, "auv.command")
-      .with_device(crate::trace::DeviceId::new("remote-mac"))
-      .with_session(crate::trace::SessionId::new("music"));
+    let spec = auv_tracing_driver::run_builder::RunSpec::new(
+      auv_tracing_driver::trace::RunType::Command,
+      "auv.command",
+    )
+    .with_device(auv_tracing_driver::trace::DeviceId::new("remote-mac"))
+    .with_session(auv_tracing_driver::trace::SessionId::new("music"));
     let run = runtime
       .recording()
       .handle()
@@ -1245,8 +1275,8 @@ mod tests {
       .handle()
       .finish_run(
         run,
-        crate::run_builder::RunFinish {
-          status_code: crate::trace::TraceStatusCode::Ok,
+        auv_tracing_driver::run_builder::RunFinish {
+          status_code: auv_tracing_driver::trace::TraceStatusCode::Ok,
           summary: Some("explicit".to_string()),
           failure: None,
         },
@@ -1263,9 +1293,12 @@ mod tests {
     let store_root = temp_dir("runtime-attr-roundtrip-store");
     let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
 
-    let spec = crate::run_builder::RunSpec::new(crate::trace::RunType::Command, "auv.command")
-      .with_device(crate::trace::DeviceId::new("local"))
-      .with_session(crate::trace::SessionId::new("scan"));
+    let spec = auv_tracing_driver::run_builder::RunSpec::new(
+      auv_tracing_driver::trace::RunType::Command,
+      "auv.command",
+    )
+    .with_device(auv_tracing_driver::trace::DeviceId::new("local"))
+    .with_session(auv_tracing_driver::trace::SessionId::new("scan"));
     let run = runtime
       .recording()
       .handle()
@@ -1277,8 +1310,8 @@ mod tests {
       .handle()
       .finish_run(
         run,
-        crate::run_builder::RunFinish {
-          status_code: crate::trace::TraceStatusCode::Ok,
+        auv_tracing_driver::run_builder::RunFinish {
+          status_code: auv_tracing_driver::trace::TraceStatusCode::Ok,
           summary: Some("attr".to_string()),
           failure: None,
         },
@@ -1288,11 +1321,11 @@ mod tests {
     let canonical = runtime.read_run(&run_id).expect("run snapshot should read");
     let attrs = &canonical.run.attributes;
     assert_eq!(
-      attrs.get(crate::trace::RUN_ATTR_DEVICE_ID),
+      attrs.get(auv_tracing_driver::trace::RUN_ATTR_DEVICE_ID),
       Some(&json!("local"))
     );
     assert_eq!(
-      attrs.get(crate::trace::RUN_ATTR_SESSION_ID),
+      attrs.get(auv_tracing_driver::trace::RUN_ATTR_SESSION_ID),
       Some(&json!("scan"))
     );
 

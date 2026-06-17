@@ -9,8 +9,8 @@ use crate::candidate_promotion::{
 };
 use crate::contract::{ArtifactRef, FreshnessBasis, RecognitionResult};
 use crate::model::{AuvResult, now_millis};
-use crate::recorded_operation::RecordedOperationContext;
 use crate::stability::{StabilityAssessment, StabilityPolicy, assess_stability};
+use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 
 const CANDIDATE_PROMOTION_ARTIFACT_ROLE: &str = "candidate-promotion";
 const CANDIDATE_PROMOTION_ARTIFACT_VERSION: &str = "candidate_promotion_artifact_v0";
@@ -378,9 +378,9 @@ mod tests {
     ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
     RecognitionSurface, RecognizedItem,
   };
-  use crate::run_builder::RunSpec;
   use crate::stability::StabilityPolicy;
-  use crate::trace::{ArtifactId, EventId, RunId, RunType, SpanId, TraceStatusCode};
+  use auv_tracing_driver::run_builder::RunSpec;
+  use auv_tracing_driver::trace::{ArtifactId, EventId, RunId, RunType, SpanId, TraceStatusCode};
 
   fn sample_artifact_ref() -> ArtifactRef {
     ArtifactRef {

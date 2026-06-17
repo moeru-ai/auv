@@ -17,7 +17,7 @@ use crate::run_read::{
   MinecraftTelemetrySampleArtifactLineage, list_minecraft_projection_artifacts,
   list_minecraft_telemetry_sample_artifacts,
 };
-use crate::store::{CanonicalRun, LocalStore};
+use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
   crate::run_read::read_run(store, run_id)
@@ -655,8 +655,8 @@ mod tests {
     DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
     MinecraftTelemetrySampleArtifactLineage,
   };
-  use crate::store::CanonicalRun;
-  use crate::trace::{
+  use auv_tracing_driver::store::CanonicalRun;
+  use auv_tracing_driver::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
     EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
     SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
@@ -1035,8 +1035,8 @@ mod tests {
     let minecraft_telemetry_sample_artifacts = vec![MinecraftTelemetrySampleArtifactLineage {
       artifact: crate::run_read::ArtifactRefLineage {
         run_id: run.run.run_id.clone(),
-        artifact_id: crate::trace::ArtifactId::new("artifact_mc1".to_string()),
-        span_id: crate::trace::SpanId::new("span_mc1".to_string()),
+        artifact_id: auv_tracing_driver::trace::ArtifactId::new("artifact_mc1".to_string()),
+        span_id: auv_tracing_driver::trace::SpanId::new("span_mc1".to_string()),
         captured_event_id: None,
         role: Some("telemetry-sample".to_string()),
         path: Some("artifacts/telemetry.jsonl".to_string()),

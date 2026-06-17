@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 
 use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
-use crate::trace::{RunId, SpanId};
 use auv_tracing_driver::RecordingHandle;
+use auv_tracing_driver::trace::{RunId, SpanId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -313,10 +313,10 @@ pub struct ScanWindowRegionOptions {
 pub fn scan_window_region(
   runtime: &crate::runtime::Runtime,
   options: ScanWindowRegionOptions,
-) -> AuvResult<crate::trace::RunId> {
+) -> AuvResult<auv_tracing_driver::trace::RunId> {
   let recording = runtime.recording().handle();
-  let mut run = recording.start_run(crate::run_builder::RunSpec::new(
-    crate::trace::RunType::Execute,
+  let mut run = recording.start_run(auv_tracing_driver::run_builder::RunSpec::new(
+    auv_tracing_driver::trace::RunType::Execute,
     "auv.scan.window_region",
   ))?;
   let root = run.root_span();
@@ -324,8 +324,8 @@ pub fn scan_window_region(
   match scan_window_region_into_run(&recording, runtime, &mut run, &root, options) {
     Ok(summary) => recording.finish_run(
       run,
-      crate::run_builder::RunFinish {
-        status_code: crate::trace::TraceStatusCode::Ok,
+      auv_tracing_driver::run_builder::RunFinish {
+        status_code: auv_tracing_driver::trace::TraceStatusCode::Ok,
         summary: Some(summary),
         failure: None,
       },
@@ -333,8 +333,8 @@ pub fn scan_window_region(
     Err(error) => {
       let finish_result = recording.finish_run(
         run,
-        crate::run_builder::RunFinish {
-          status_code: crate::trace::TraceStatusCode::Error,
+        auv_tracing_driver::run_builder::RunFinish {
+          status_code: auv_tracing_driver::trace::TraceStatusCode::Error,
           summary: Some(format!("Window region scan failed: {error}")),
           failure: Some(error.clone()),
         },
@@ -352,8 +352,8 @@ pub fn scan_window_region(
 fn scan_window_region_into_run(
   recording: &RecordingHandle,
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::run_builder::RecordingRun,
-  root: &crate::run_builder::SpanRef,
+  run: &mut auv_tracing_driver::run_builder::RecordingRun,
+  root: &auv_tracing_driver::run_builder::SpanRef,
   options: ScanWindowRegionOptions,
 ) -> AuvResult<String> {
   // TODO(controller): This scan loop is still a script-shaped orchestration
@@ -710,8 +710,8 @@ fn region_inputs(target: &ScanTarget) -> BTreeMap<String, String> {
 fn scan_window_region_page(
   recording: &RecordingHandle,
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::run_builder::RecordingRun,
-  root: &crate::run_builder::SpanRef,
+  run: &mut auv_tracing_driver::run_builder::RecordingRun,
+  root: &auv_tracing_driver::run_builder::SpanRef,
   page_index: usize,
   options: &ScanWindowRegionOptions,
   state: &mut ScanWindowRegionState,
@@ -1157,8 +1157,8 @@ fn scroll_boundary_name(boundary: ScrollBoundary) -> &'static str {
 fn invoke_scan_command(
   _recording: &RecordingHandle,
   runtime: &crate::runtime::Runtime,
-  run: &mut crate::run_builder::RecordingRun,
-  root: &crate::run_builder::SpanRef,
+  run: &mut auv_tracing_driver::run_builder::RecordingRun,
+  root: &auv_tracing_driver::run_builder::SpanRef,
   request: InvokeRequest,
   label: &str,
 ) -> AuvResult<InvokeResult> {
@@ -1243,7 +1243,7 @@ fn first_artifact_with_extension(result: &InvokeResult, extension: &str) -> Opti
 fn first_artifact_record_with_extension<'a>(
   result: &'a InvokeResult,
   extension: &str,
-) -> Option<&'a crate::trace::ArtifactRecordV1Alpha1> {
+) -> Option<&'a auv_tracing_driver::trace::ArtifactRecordV1Alpha1> {
   result.artifacts.iter().find(|artifact| {
     std::path::Path::new(&artifact.path)
       .extension()
@@ -1335,8 +1335,8 @@ impl ListItemCandidateContextArtifact {
 fn enrich_list_item_observations_with_crops(
   recording: &RecordingHandle,
   _runtime: &crate::runtime::Runtime,
-  run: &mut crate::run_builder::RecordingRun,
-  root: &crate::run_builder::SpanRef,
+  run: &mut auv_tracing_driver::run_builder::RecordingRun,
+  root: &auv_tracing_driver::run_builder::SpanRef,
   page_index: usize,
   screenshot_artifact: Option<&Path>,
   options: &ScanWindowRegionOptions,
@@ -1638,8 +1638,8 @@ fn sanitize_scan_artifact_component(raw: &str) -> String {
 
 fn stage_scan_artifact(
   recording: &RecordingHandle,
-  run: &mut crate::run_builder::RecordingRun,
-  root: &crate::run_builder::SpanRef,
+  run: &mut auv_tracing_driver::run_builder::RecordingRun,
+  root: &auv_tracing_driver::run_builder::SpanRef,
   artifact: &ScrollScanArtifact,
 ) -> AuvResult<PathBuf> {
   let temp_path = write_scan_artifact(artifact)?;
@@ -1682,7 +1682,7 @@ mod tests {
   use std::fs;
   use std::sync::atomic::{AtomicU64, Ordering};
 
-  use crate::store::LocalStore;
+  use auv_tracing_driver::store::LocalStore;
 
   static TEST_ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(0);
 

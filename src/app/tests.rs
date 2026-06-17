@@ -7,9 +7,9 @@ use crate::contract::{
   ArtifactRef, CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause,
 };
 use crate::model::RunStatus;
-use crate::run_builder::RunSpec;
-use crate::store::LocalStore;
-use crate::trace::RunType;
+use auv_tracing_driver::run_builder::RunSpec;
+use auv_tracing_driver::store::LocalStore;
+use auv_tracing_driver::trace::RunType;
 
 #[test]
 fn parse_probe_directory_resolves_probe_json() {
@@ -381,10 +381,10 @@ fn report_analysis_fixture() -> AppAnalysis {
         known_limits: vec!["test query".to_string()],
       }),
       evidence_refs: vec![ArtifactRef {
-        run_id: crate::trace::RunId::new("run_probe"),
-        span_id: crate::trace::SpanId::new("span_probe"),
-        artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
-        captured_event_id: Some(crate::trace::EventId::new("event_probe")),
+        run_id: auv_tracing_driver::trace::RunId::new("run_probe"),
+        span_id: auv_tracing_driver::trace::SpanId::new("span_probe"),
+        artifact_id: auv_tracing_driver::trace::ArtifactId::new("artifact_0001"),
+        captured_event_id: Some(auv_tracing_driver::trace::EventId::new("event_probe")),
       }],
       promotion_gate: Some(AppCandidatePromotionGate {
         status: AppCandidatePromotionStatus::ActionGradeCandidate,

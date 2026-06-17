@@ -10,7 +10,7 @@ use crate::contract::{
   RecognitionSurface, RecognizedItem, SurfaceNode,
 };
 use crate::model::{AuvResult, now_millis};
-use crate::trace::{ArtifactRecordV1Alpha1, RunId, SpanId};
+use auv_tracing_driver::trace::{ArtifactRecordV1Alpha1, RunId, SpanId};
 
 use super::{CollectionObservation, ObservationCluster, ScanRect, ScanTarget};
 
@@ -558,7 +558,7 @@ mod tests {
   };
   use crate::contract::ObservationSource;
   use crate::scroll_scan::{CollectionObservation, ScanRect, ScanRegion, ScanTarget};
-  use crate::trace::{RunId, SpanId};
+  use auv_tracing_driver::trace::{RunId, SpanId};
 
   fn sample_target() -> ScanTarget {
     ScanTarget {

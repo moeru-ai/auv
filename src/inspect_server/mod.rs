@@ -34,8 +34,8 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 use crate::contract::{ObservationSnapshot, VerificationResult};
 use crate::model::AuvResult;
 use crate::run_read::{CandidatePromotionLineage, DetectorRecognitionLineage};
-use crate::store::{CanonicalRun, LocalStore};
-use crate::trace::{RunId, RunRecordV1Alpha1, TraceState};
+use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+use auv_tracing_driver::trace::{RunId, RunRecordV1Alpha1, TraceState};
 use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
 
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
@@ -704,8 +704,8 @@ fn apply_update(
 }
 
 fn run_immutable_metadata_differs(
-  existing: &crate::trace::RunRecordV1Alpha1,
-  next: &crate::trace::RunRecordV1Alpha1,
+  existing: &auv_tracing_driver::trace::RunRecordV1Alpha1,
+  next: &auv_tracing_driver::trace::RunRecordV1Alpha1,
 ) -> bool {
   existing.api_version != next.api_version
     || existing.run_id != next.run_id
@@ -717,8 +717,8 @@ fn run_immutable_metadata_differs(
 }
 
 fn span_immutable_metadata_differs(
-  existing: &crate::trace::SpanRecordV1Alpha1,
-  next: &crate::trace::SpanRecordV1Alpha1,
+  existing: &auv_tracing_driver::trace::SpanRecordV1Alpha1,
+  next: &auv_tracing_driver::trace::SpanRecordV1Alpha1,
 ) -> bool {
   existing.api_version != next.api_version
     || existing.span_id != next.span_id
@@ -914,8 +914,9 @@ mod tests {
     SectionCandidate, StopEvidence, StopPolicy, StopReason,
   };
   use crate::stability::{StabilityAssessment, StabilityPolicy};
-  use crate::store::{ArtifactFileSource, CanonicalRun, LocalStore};
-  use crate::trace::{
+  use auv_tracing_driver::ArtifactFileSource;
+  use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+  use auv_tracing_driver::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
     EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
     SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,

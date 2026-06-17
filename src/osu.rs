@@ -7,10 +7,10 @@ use auv_game_osu::{
 };
 
 use crate::model::AuvResult;
-use crate::recorded_operation::RecordedOperationOutput;
-use crate::run_builder::RunSpec;
-use crate::trace::RunType;
 use auv_tracing_driver::RecordingHandle;
+use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
+use auv_tracing_driver::run_builder::RunSpec;
+use auv_tracing_driver::trace::RunType;
 
 pub fn run_osu_benchmark(
   recording: &RecordingHandle,
@@ -259,7 +259,7 @@ pub fn run_osu_vision_demo(
 }
 
 fn stage_dataset_dir(
-  context: &mut crate::recorded_operation::RecordedOperationContext<'_>,
+  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
   dir: &std::path::Path,
   artifact_kind: &str,
 ) -> Result<(), String> {

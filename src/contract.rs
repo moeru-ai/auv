@@ -43,7 +43,7 @@ use serde::{Deserialize, Serialize};
 
 pub use auv_tracing_driver::ArtifactRef;
 
-use crate::trace::{ArtifactId, RunId, SpanId};
+use auv_tracing_driver::trace::{ArtifactId, RunId, SpanId};
 
 // NOTICE(contract-api-version-reader-check): producer-side stamping landed
 // in commit be0aab7 but the reader side does not yet reject artifacts
@@ -102,7 +102,7 @@ pub enum OperationStatus {
 /// # Seam role
 ///
 /// - **Produced by** typed driver / runtime command handlers via
-///   `Runtime::record_operation` (see [`crate::recorded_operation`]).
+///   `Runtime::record_operation` (see [`auv_tracing_driver::recorded_operation`]).
 ///   Action commands record the `InputActionResult` from
 ///   `crates/auv-driver` through the macos `ActionResolverDecision`
 ///   layer, then attach the resulting `OperationResult` here.
@@ -612,7 +612,7 @@ mod tests {
   use super::*;
   use serde_json::json;
 
-  use crate::trace::EventId;
+  use auv_tracing_driver::trace::EventId;
 
   fn artifact_ref() -> ArtifactRef {
     ArtifactRef {
