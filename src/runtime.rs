@@ -21,14 +21,11 @@ use crate::contract::ArtifactRef;
 use crate::driver::DriverRegistry;
 use crate::model::{
   AuvResult, DriverCall, DriverDescriptor, DriverRunContext, ExecutionTarget, InvokeRequest,
-  InvokeResult, RunStatus, now_millis,
+  InvokeResult, RunStatus,
 };
 use crate::recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend};
 use crate::store::LocalStore;
-use crate::trace::{
-  EVENT_API_VERSION, EventRecordV1Alpha1, RunId, RunType, SPAN_API_VERSION, SpanRecordV1Alpha1,
-  TraceState, TraceStatusCode, new_event_id, new_span_id, string_attr,
-};
+use crate::trace::{RunType, TraceStatusCode, string_attr};
 
 pub struct Runtime {
   project_root: PathBuf,
@@ -359,24 +356,6 @@ impl Runtime {
     self
   }
 
-  // TODO(runtime-facade-delete): recording lifecycle methods remain here only
-  // for callers that still construct Runtime; delete these facades once invoke
-  // and typed workflows depend directly on auv-tracing-driver RecordingHandle.
-  pub fn start_run(
-    &self,
-    spec: crate::run_builder::RunSpec,
-  ) -> AuvResult<crate::run_builder::RecordingRun> {
-    self.recording.handle().start_run(spec)
-  }
-
-  pub fn finish_run(
-    &self,
-    run: crate::run_builder::RecordingRun,
-    finish: crate::run_builder::RunFinish,
-  ) -> AuvResult<RunId> {
-    self.recording.handle().finish_run(run, finish)
-  }
-
   pub fn invoke(&self, request: InvokeRequest) -> AuvResult<InvokeResult> {
     self.invoke_in_command_run(|runtime, run, root| runtime.invoke_in_span(run, root, request))
   }
@@ -404,15 +383,18 @@ impl Runtime {
       &crate::run_builder::SpanRef,
     ) -> AuvResult<InvokeResult>,
   ) -> AuvResult<InvokeResult> {
-    let mut run = self.start_run(crate::run_builder::RunSpec::new(
-      RunType::Command,
-      "auv.command",
-    ))?;
+    let mut run = self
+      .recording
+      .handle()
+      .start_run(crate::run_builder::RunSpec::new(
+        RunType::Command,
+        "auv.command",
+      ))?;
     let root = run.root_span();
     let result = match invoke(self, &mut run, &root) {
       Ok(result) => result,
       Err(error) => {
-        if let Err(finish_error) = self.finish_run(
+        if let Err(finish_error) = self.recording.handle().finish_run(
           run,
           crate::run_builder::RunFinish {
             status_code: TraceStatusCode::Error,
@@ -434,7 +416,7 @@ impl Runtime {
     } else {
       TraceStatusCode::Error
     };
-    self.finish_run(
+    self.recording.handle().finish_run(
       run,
       crate::run_builder::RunFinish {
         status_code,
@@ -485,7 +467,7 @@ impl Runtime {
 
     let command_span = run.start_span(
       parent,
-      span_record(
+      crate::run_builder::running_span_record(
         "auv.command.invoke",
         command_attributes(
           command.id,
@@ -507,7 +489,7 @@ impl Runtime {
 
     let driver_span = run.start_span(
       &command_span,
-      span_record(
+      crate::run_builder::running_span_record(
         "auv.driver.invoke",
         command_attributes(
           command.id,
@@ -563,58 +545,22 @@ impl Runtime {
           record_event(run, driver_span.id(), "driver.note", Some(note.clone()));
         }
 
-        let mut artifact_failure = None;
-        for artifact in response.artifacts {
-          let event_id = new_event_id();
-          match self.recording.stage_artifact(
-            run.id(),
-            run.artifact_count(),
-            artifact,
-            driver_span.id(),
-            Some(event_id.clone()),
-          ) {
-            Ok(stored_artifact) => {
-              let staged_path = self
-                .recording
-                .run_dir(run.id())?
-                .join(&stored_artifact.path);
-              record_event_with_id(
-                run,
-                driver_span.id(),
-                event_id,
-                "artifact.captured",
-                Some(render_artifact_event(&stored_artifact)),
-                vec![stored_artifact.artifact_id.clone()],
-              );
-              artifact_paths.push(staged_path.clone());
-              run.record_artifact(stored_artifact.clone());
-              artifact_records.push(stored_artifact.clone());
-              if let Err(error) =
-                self
-                  .recording
-                  .record_artifact_bytes(run.id(), &stored_artifact, &staged_path)
-              {
-                record_event(
-                  run,
-                  driver_span.id(),
-                  "artifact.failed",
-                  Some(format!("artifact upload failed: {error}")),
-                );
-                artifact_failure = Some(error);
-              }
-            }
-            Err(error) => {
-              record_event(
-                run,
-                driver_span.id(),
-                "artifact.failed",
-                Some(format!("artifact staging failed: {error}")),
-              );
-              artifact_failure = Some(error);
-              break;
-            }
+        let artifact_result =
+          self
+            .recording
+            .record_produced_artifacts(run, &driver_span, response.artifacts);
+        let artifact_failure = match artifact_result {
+          Ok(recorded) => {
+            artifact_paths = recorded.paths;
+            artifact_records = recorded.records;
+            None
           }
-        }
+          Err(failure) => {
+            artifact_paths = failure.recorded.paths;
+            artifact_records = failure.recorded.records;
+            Some(failure.message)
+          }
+        };
 
         if let Some(error) = artifact_failure {
           let output_summary = format!(
@@ -685,63 +631,6 @@ impl Runtime {
       failure_message,
     })
   }
-
-  pub fn stage_artifact_file(
-    &self,
-    run: &mut crate::run_builder::RecordingRun,
-    span: &crate::run_builder::SpanRef,
-    role: impl Into<String>,
-    source_path: &Path,
-    preferred_name: impl Into<String>,
-    summary: Option<String>,
-  ) -> AuvResult<PathBuf> {
-    self.recording.handle().stage_artifact_file(
-      run,
-      span,
-      role,
-      source_path,
-      preferred_name,
-      summary,
-    )
-  }
-
-  pub fn stage_artifact_file_with_ref(
-    &self,
-    run: &mut crate::run_builder::RecordingRun,
-    span: &crate::run_builder::SpanRef,
-    role: impl Into<String>,
-    source_path: &Path,
-    preferred_name: impl Into<String>,
-    summary: Option<String>,
-  ) -> AuvResult<(PathBuf, ArtifactRef)> {
-    self.recording.handle().stage_artifact_file_with_ref(
-      run,
-      span,
-      role,
-      source_path,
-      preferred_name,
-      summary,
-    )
-  }
-}
-
-fn span_record(
-  name: impl Into<String>,
-  attributes: crate::run_builder::Attributes,
-) -> SpanRecordV1Alpha1 {
-  SpanRecordV1Alpha1 {
-    api_version: SPAN_API_VERSION.to_string(),
-    span_id: new_span_id(),
-    parent_span_id: None,
-    name: name.into(),
-    state: TraceState::Running,
-    status_code: TraceStatusCode::Unset,
-    started_at_millis: now_millis(),
-    finished_at_millis: None,
-    attributes,
-    summary: None,
-    failure: None,
-  }
 }
 
 fn command_attributes(
@@ -776,38 +665,7 @@ fn record_event(
   name: &str,
   message: Option<String>,
 ) {
-  record_event_with_id(run, span_id, new_event_id(), name, message, Vec::new());
-}
-
-fn record_event_with_id(
-  run: &mut crate::run_builder::RecordingRun,
-  span_id: &crate::trace::SpanId,
-  event_id: crate::trace::EventId,
-  name: &str,
-  message: Option<String>,
-  artifact_ids: Vec<crate::trace::ArtifactId>,
-) {
-  run.record_event(EventRecordV1Alpha1 {
-    api_version: EVENT_API_VERSION.to_string(),
-    event_id,
-    span_id: span_id.clone(),
-    name: name.to_string(),
-    timestamp_millis: now_millis(),
-    attributes: Default::default(),
-    message,
-    artifact_ids,
-  });
-}
-
-fn render_artifact_event(artifact: &crate::trace::ArtifactRecordV1Alpha1) -> String {
-  let note = artifact
-    .summary
-    .clone()
-    .unwrap_or_else(|| "n/a".to_string());
-  format!(
-    "{} kind={} path={} note={}",
-    artifact.artifact_id, artifact.role, artifact.path, note
-  )
+  run.record_event_in_span(span_id, name, message, Vec::new());
 }
 
 #[cfg(test)]
@@ -1100,6 +958,8 @@ mod tests {
     let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
 
     let mut run = runtime
+      .recording()
+      .handle()
       .start_run(crate::run_builder::RunSpec::new(
         crate::trace::RunType::Execute,
         "auv.execute",
@@ -1125,6 +985,8 @@ mod tests {
     );
     assert!(!result.signals.contains_key("bestMatchText"));
     let run_id = runtime
+      .recording()
+      .handle()
       .finish_run(
         run,
         crate::run_builder::RunFinish {
@@ -1502,6 +1364,8 @@ mod tests {
     let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
 
     let run = runtime
+      .recording()
+      .handle()
       .start_run(crate::run_builder::RunSpec::new(
         crate::trace::RunType::Command,
         "auv.command",
@@ -1511,6 +1375,8 @@ mod tests {
     assert_eq!(run.session_id().as_str(), "default");
 
     runtime
+      .recording()
+      .handle()
       .finish_run(
         run,
         crate::run_builder::RunFinish {
@@ -1535,12 +1401,16 @@ mod tests {
       .with_device(crate::trace::DeviceId::new("remote-mac"))
       .with_session(crate::trace::SessionId::new("music"));
     let run = runtime
+      .recording()
+      .handle()
       .start_run(spec)
       .expect("explicit-device run should start");
     assert_eq!(run.device_id().as_str(), "remote-mac");
     assert_eq!(run.session_id().as_str(), "music");
 
     runtime
+      .recording()
+      .handle()
       .finish_run(
         run,
         crate::run_builder::RunFinish {
@@ -1593,9 +1463,15 @@ mod tests {
     let spec = crate::run_builder::RunSpec::new(crate::trace::RunType::Command, "auv.command")
       .with_device(crate::trace::DeviceId::new("local"))
       .with_session(crate::trace::SessionId::new("scan"));
-    let run = runtime.start_run(spec).expect("run should start");
+    let run = runtime
+      .recording()
+      .handle()
+      .start_run(spec)
+      .expect("run should start");
     let run_id = run.id().as_str().to_string();
     runtime
+      .recording()
+      .handle()
       .finish_run(
         run,
         crate::run_builder::RunFinish {

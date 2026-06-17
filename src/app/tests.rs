@@ -112,6 +112,8 @@ fn invoke_probe_steps_share_parent_probe_run_id() {
   let root = temp_dir("probe-step-parent-run");
   let runtime = test_runtime(root.clone());
   let mut run = runtime
+    .recording()
+    .handle()
     .start_run(RunSpec::new(RunType::Probe, "auv.probe"))
     .expect("probe run should start");
   let root_span = run.root_span();
@@ -144,6 +146,8 @@ fn invoke_probe_steps_share_parent_probe_run_id() {
   assert_eq!(first.run_id, second.run_id);
 
   let run_id = runtime
+    .recording()
+    .handle()
     .finish_run(
       run,
       RunFinish {
@@ -177,6 +181,8 @@ fn invoke_probe_step_preserves_artifact_metadata_order() {
   let root = temp_dir("probe-step-artifact-metadata");
   let runtime = test_runtime(root.clone());
   let mut run = runtime
+    .recording()
+    .handle()
     .start_run(RunSpec::new(RunType::Probe, "auv.probe"))
     .expect("probe run should start");
   let root_span = run.root_span();
@@ -205,6 +211,8 @@ fn invoke_probe_step_preserves_artifact_metadata_order() {
   assert_ne!(step.artifacts[0].span_id, step.span_id);
 
   let _ = runtime
+    .recording()
+    .handle()
     .finish_run(
       run,
       RunFinish {

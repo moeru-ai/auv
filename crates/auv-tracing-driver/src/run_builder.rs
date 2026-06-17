@@ -16,11 +16,28 @@ use crate::recording::{RunRecorder, RunUpdate};
 use crate::store::CanonicalRun;
 use crate::time::now_millis;
 use crate::trace::{
-  ArtifactId, ArtifactRecordV1Alpha1, EventId, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1,
-  RunType, SpanId, SpanRecordV1Alpha1, TraceFailure, TraceState, TraceStatusCode,
+  ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RunId,
+  RunRecordV1Alpha1, RunType, SpanId, SpanRecordV1Alpha1, TraceFailure, TraceState,
+  TraceStatusCode, new_event_id, new_span_id,
 };
 
 pub type Attributes = BTreeMap<String, serde_json::Value>;
+
+pub fn running_span_record(name: impl Into<String>, attributes: Attributes) -> SpanRecordV1Alpha1 {
+  SpanRecordV1Alpha1 {
+    api_version: crate::trace::SPAN_API_VERSION.to_string(),
+    span_id: new_span_id(),
+    parent_span_id: None,
+    name: name.into(),
+    state: TraceState::Running,
+    status_code: TraceStatusCode::Unset,
+    started_at_millis: now_millis(),
+    finished_at_millis: None,
+    attributes,
+    summary: None,
+    failure: None,
+  }
+}
 
 pub struct RunSpec {
   pub run_type: RunType,
@@ -384,6 +401,25 @@ impl RecordingRun {
     });
     self.events.push(event);
     event_id
+  }
+
+  pub fn record_event_in_span(
+    &mut self,
+    span_id: &SpanId,
+    name: impl Into<String>,
+    message: Option<String>,
+    artifact_ids: Vec<ArtifactId>,
+  ) -> EventId {
+    self.record_event(EventRecordV1Alpha1 {
+      api_version: EVENT_API_VERSION.to_string(),
+      event_id: new_event_id(),
+      span_id: span_id.clone(),
+      name: name.into(),
+      timestamp_millis: now_millis(),
+      attributes: Default::default(),
+      message,
+      artifact_ids,
+    })
   }
 
   pub fn record_artifact(&mut self, artifact: ArtifactRecordV1Alpha1) -> ArtifactId {

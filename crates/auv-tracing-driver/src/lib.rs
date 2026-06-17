@@ -20,11 +20,13 @@ pub use recorded_operation::{
   run_recorded_operation,
 };
 pub use recording::{
-  BroadcastRunRecorder, CompositeRunRecorder, InspectServerRunRecorder, MemoryRunRecorder,
-  NoopRunRecorder, RecordingHandle, RunRecorder, RunRecordingBackend, RunUpdate, WireUpdate,
+  ArtifactRecordingFailure, BroadcastRunRecorder, CompositeRunRecorder, InspectServerRunRecorder,
+  MemoryRunRecorder, NoopRunRecorder, RecordedArtifacts, RecordingHandle, RunRecorder,
+  RunRecordingBackend, RunUpdate, WireUpdate,
 };
 pub use run_builder::{
   Attributes, RecordedRun, RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef,
+  running_span_record,
 };
 pub use store::{CanonicalRun, LocalStore};
 pub use time::now_millis;

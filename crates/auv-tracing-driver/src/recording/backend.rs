@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::artifact::{ArtifactFileSource, ArtifactRef};
+use crate::artifact::{ArtifactFileSource, ArtifactRef, ProducedArtifact};
 use crate::error::AuvResult;
 use crate::recorded_operation::{RecordedOperationOutput, RecordedOperationServices};
 use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanRef};
@@ -34,6 +34,18 @@ pub struct RunRecordingBackend {
 #[derive(Clone)]
 pub struct RecordingHandle {
   recording: RunRecordingBackend,
+}
+
+#[derive(Debug, Default)]
+pub struct RecordedArtifacts {
+  pub records: Vec<ArtifactRecordV1Alpha1>,
+  pub paths: Vec<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct ArtifactRecordingFailure {
+  pub recorded: RecordedArtifacts,
+  pub message: String,
 }
 
 impl RunRecordingBackend {
@@ -137,6 +149,87 @@ impl RunRecordingBackend {
     path: &Path,
   ) -> AuvResult<()> {
     self.recorder.record_artifact_bytes(run_id, artifact, path)
+  }
+
+  pub fn record_produced_artifacts(
+    &self,
+    run: &mut RecordingRun,
+    span: &SpanRef,
+    artifacts: impl IntoIterator<Item = ProducedArtifact>,
+  ) -> Result<RecordedArtifacts, ArtifactRecordingFailure> {
+    let mut recorded = RecordedArtifacts::default();
+
+    for artifact in artifacts {
+      let event_id = new_event_id();
+      match self.stage_artifact(
+        run.id(),
+        run.artifact_count(),
+        artifact,
+        span.id(),
+        Some(event_id.clone()),
+      ) {
+        Ok(stored_artifact) => {
+          let staged_path = match self.run_dir(run.id()) {
+            Ok(run_dir) => run_dir.join(&stored_artifact.path),
+            Err(error) => {
+              record_event_with_id(
+                run,
+                span.id(),
+                event_id,
+                "artifact.failed",
+                Some(format!("artifact path resolution failed: {error}")),
+                Vec::new(),
+              );
+              return Err(ArtifactRecordingFailure {
+                recorded,
+                message: error,
+              });
+            }
+          };
+          record_event_with_id(
+            run,
+            span.id(),
+            event_id,
+            "artifact.captured",
+            Some(render_artifact_event(&stored_artifact)),
+            vec![stored_artifact.artifact_id.clone()],
+          );
+          run.record_artifact(stored_artifact.clone());
+          recorded.paths.push(staged_path.clone());
+          recorded.records.push(stored_artifact.clone());
+          if let Err(error) = self.record_artifact_bytes(run.id(), &stored_artifact, &staged_path) {
+            record_event_with_id(
+              run,
+              span.id(),
+              new_event_id(),
+              "artifact.failed",
+              Some(format!("artifact upload failed: {error}")),
+              Vec::new(),
+            );
+            return Err(ArtifactRecordingFailure {
+              recorded,
+              message: error,
+            });
+          }
+        }
+        Err(error) => {
+          record_event_with_id(
+            run,
+            span.id(),
+            event_id,
+            "artifact.failed",
+            Some(format!("artifact staging failed: {error}")),
+            Vec::new(),
+          );
+          return Err(ArtifactRecordingFailure {
+            recorded,
+            message: error,
+          });
+        }
+      }
+    }
+
+    Ok(recorded)
   }
 }
 
@@ -412,12 +505,74 @@ fn render_artifact_event(artifact: &ArtifactRecordV1Alpha1) -> String {
 mod tests {
   use std::sync::Arc;
 
-  use crate::artifact::ArtifactFileSource;
+  use crate::artifact::{ArtifactFileSource, ProducedArtifact};
+  use crate::run_builder::{RunFinish, RunSpec};
   use crate::store::LocalStore;
-  use crate::trace::{RunId, SpanId};
+  use crate::trace::{RunId, RunType, SpanId, TraceStatusCode};
 
   use super::super::recorder::NoopRunRecorder;
   use super::RunRecordingBackend;
+
+  #[test]
+  fn record_produced_artifacts_records_paths_events_and_snapshot_artifacts() {
+    let root = std::env::temp_dir().join(format!(
+      "auv-recording-produced-artifacts-{}",
+      crate::time::now_millis()
+    ));
+    let source = std::env::temp_dir().join(format!(
+      "auv-recording-produced-source-{}.txt",
+      crate::time::now_millis()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::write(&source, "artifact body").expect("artifact source should write");
+
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let recording = RunRecordingBackend::local_only(store);
+    let handle = recording.handle();
+    let mut run = handle
+      .start_run(RunSpec::new(RunType::Command, "test.command"))
+      .expect("run should start");
+    let span = run.root_span();
+
+    let recorded = recording
+      .record_produced_artifacts(
+        &mut run,
+        &span,
+        [ProducedArtifact {
+          kind: "text".to_string(),
+          source_path: source.clone(),
+          preferred_name: "artifact.txt".to_string(),
+          note: Some("test artifact".to_string()),
+        }],
+      )
+      .expect("artifact should record");
+
+    assert_eq!(recorded.records.len(), 1);
+    assert_eq!(recorded.paths.len(), 1);
+    assert!(recorded.paths[0].exists());
+    let snapshot = run.snapshot_preview();
+    assert_eq!(snapshot.artifacts.len(), 1);
+    assert_eq!(snapshot.events.len(), 1);
+    assert_eq!(snapshot.events[0].name, "artifact.captured");
+    assert_eq!(
+      snapshot.events[0].artifact_ids,
+      vec![snapshot.artifacts[0].artifact_id.clone()]
+    );
+
+    handle
+      .finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some("done".to_string()),
+          failure: None,
+        },
+      )
+      .expect("run should finish");
+
+    let _ = std::fs::remove_file(source);
+    let _ = std::fs::remove_dir_all(root);
+  }
 
   #[test]
   fn recording_backend_cleans_temporary_store_on_drop() {
