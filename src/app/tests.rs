@@ -177,8 +177,8 @@ fn invoke_probe_steps_share_parent_probe_run_id() {
 }
 
 #[test]
-fn invoke_probe_step_preserves_artifact_metadata_order() {
-  let root = temp_dir("probe-step-artifact-metadata");
+fn invoke_probe_step_preserves_direct_command_artifact_boundary() {
+  let root = temp_dir("probe-step-direct-command-artifact-boundary");
   let runtime = test_runtime(root.clone());
   let mut run = runtime
     .recording()
@@ -194,21 +194,14 @@ fn invoke_probe_step_preserves_artifact_metadata_order() {
     "artifact-step",
     "fixture.observe",
     None,
-    BTreeMap::from([("test_mode".to_string(), "artifact".to_string())]),
+    BTreeMap::new(),
     false,
   )
-  .expect("artifact step should complete");
+  .expect("direct invoke step should complete");
 
-  assert_eq!(step.artifact_paths.len(), 2);
-  assert_eq!(step.artifacts.len(), 2);
-  assert_eq!(step.artifacts[0].artifact_id, "artifact_0001");
-  assert_eq!(step.artifacts[1].artifact_id, "artifact_0002");
-  assert_eq!(step.artifacts[0].path, step.artifact_paths[0]);
-  assert_eq!(step.artifacts[1].path, step.artifact_paths[1]);
-  assert_eq!(step.artifacts[0].role, "text");
-  assert_eq!(step.artifacts[1].role, "text");
-  assert_eq!(step.artifacts[0].span_id, step.artifacts[1].span_id);
-  assert_ne!(step.artifacts[0].span_id, step.span_id);
+  assert_eq!(step.output_summary, "fixture observed");
+  assert!(step.artifact_paths.is_empty());
+  assert!(step.artifacts.is_empty());
 
   let _ = runtime
     .recording()

@@ -14,3 +14,7 @@ repository.workspace = true
 
 [dependencies]
 auv-cli-invoke-macros = { path = "../auv-cli-invoke-macros" }
+auv-driver = { path = "../auv-driver" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+auv-driver-macos = { path = "../auv-driver-macos" }

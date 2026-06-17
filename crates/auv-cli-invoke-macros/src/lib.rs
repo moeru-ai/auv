@@ -39,6 +39,7 @@ pub fn invoke_command(attr: TokenStream, item: TokenStream) -> TokenStream {
         ::auv_cli_invoke::InvokeNamespace::{namespace},
         {summary},
         {args},
+        {function_name},
       )
     }}"
   );
@@ -137,10 +138,9 @@ fn namespace_for_group_literal(group: &str) -> Result<&'static str, String> {
     "\"app\"" => Ok("App"),
     "\"overlay\"" => Ok("Overlay"),
     "\"mediaControl\"" => Ok("MediaControl"),
-    "\"steam\"" => Ok("Steam"),
     "\"fixture\"" => Ok("Fixture"),
     _ => Err(format!(
-      "invoke_command unknown group {group}; expected one of: display, screen, window, input, app, overlay, mediaControl, steam, fixture"
+      "invoke_command unknown group {group}; expected one of: display, screen, window, input, app, overlay, mediaControl, fixture"
     )),
   }
 }
@@ -162,7 +162,6 @@ mod tests {
       namespace_for_group_literal("\"mediaControl\""),
       Ok("MediaControl")
     );
-    assert_eq!(namespace_for_group_literal("\"steam\""), Ok("Steam"));
   }
 
   #[test]

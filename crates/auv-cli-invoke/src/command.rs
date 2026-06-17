@@ -1,4 +1,37 @@
+use std::collections::BTreeMap;
+
 use crate::arg::ArgSpec;
+
+type InvokeCommandHandler = fn(InvokeCommandInput<'_>) -> InvokeCommandResult;
+
+#[derive(Clone, Copy, Debug)]
+pub struct InvokeCommandInput<'a> {
+  pub command_id: &'a str,
+  pub target_application_id: Option<&'a str>,
+  pub inputs: &'a BTreeMap<String, String>,
+  pub dry_run: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvokeCommandOutput {
+  pub summary: String,
+  pub backend: Option<String>,
+  pub signals: BTreeMap<String, String>,
+  pub notes: Vec<String>,
+}
+
+impl InvokeCommandOutput {
+  pub fn new(summary: impl Into<String>) -> Self {
+    Self {
+      summary: summary.into(),
+      backend: None,
+      signals: BTreeMap::new(),
+      notes: Vec::new(),
+    }
+  }
+}
+
+pub type InvokeCommandResult = Result<InvokeCommandOutput, String>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InvokeNamespace {
@@ -9,7 +42,6 @@ pub enum InvokeNamespace {
   App,
   Overlay,
   MediaControl,
-  Steam,
   Fixture,
 }
 
@@ -23,7 +55,6 @@ impl InvokeNamespace {
       Self::App => "app",
       Self::Overlay => "overlay",
       Self::MediaControl => "mediaControl",
-      Self::Steam => "steam",
       Self::Fixture => "fixture",
     }
   }
@@ -35,6 +66,13 @@ pub struct InvokeCommand {
   pub namespace: InvokeNamespace,
   pub summary: &'static str,
   pub args: &'static [ArgSpec],
+  handler: InvokeCommandHandler,
+}
+
+impl InvokeCommand {
+  pub fn invoke(&self, input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+    (self.handler)(input)
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -78,11 +116,13 @@ pub fn spec(
   namespace: InvokeNamespace,
   summary: &'static str,
   args: &'static [ArgSpec],
+  handler: fn(InvokeCommandInput<'_>) -> InvokeCommandResult,
 ) -> InvokeCommand {
   InvokeCommand {
     id,
     namespace,
     summary,
     args,
+    handler,
   }
 }

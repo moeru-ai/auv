@@ -2825,95 +2825,17 @@ mod tests {
   }
 
   #[test]
-  fn scan_window_region_emits_observation_snapshot_per_page() {
+  fn scan_window_region_reports_missing_typed_observe_region_api() {
     let project_root = temp_dir("scroll-scan-snapshot-project");
     let store_root = temp_dir("scroll-scan-snapshot-store");
     let runtime = scroll_scan_test_runtime(project_root.clone(), store_root.clone());
     let options = bounded_scan_options();
-    let target_for_assertion = options.target.clone();
-    let max_pages = max_pages_for_policy(&options.stop_policy);
 
-    let run_id = scan_window_region(&runtime, options).expect("scan should succeed");
-    let recording = runtime.recording().handle();
-    let canonical = recording
-      .read_run(run_id.as_str())
-      .expect("run should read");
+    let error = scan_window_region(&runtime, options)
+      .expect_err("scroll scan should wait for a typed observe-region invoke implementation");
 
-    let artifact_record = canonical
-      .artifacts
-      .iter()
-      .find(|artifact| artifact.role == "scroll-scan")
-      .expect("scroll-scan artifact should be staged");
-    let artifact_path = store_root
-      .join("runs")
-      .join(run_id.as_str())
-      .join(&artifact_record.path);
-    let raw = fs::read_to_string(&artifact_path).expect("artifact file should exist");
-    let scroll_artifact: ScrollScanArtifact =
-      serde_json::from_str(&raw).expect("scroll-scan artifact should deserialize");
-
-    assert!(
-      !scroll_artifact.snapshots.is_empty(),
-      "scan must emit at least one ObservationSnapshot"
-    );
-    assert!(
-      scroll_artifact.snapshots.len() <= max_pages,
-      "snapshot count {} must not exceed max_pages {}",
-      scroll_artifact.snapshots.len(),
-      max_pages
-    );
-    assert_eq!(
-      scroll_artifact.snapshots.len(),
-      scroll_artifact.pages.len(),
-      "every page must produce one snapshot"
-    );
-
-    let first = &scroll_artifact.snapshots[0];
-    assert_eq!(first.source, crate::contract::ObservationSource::Ocr);
-    assert_eq!(
-      first.scope.surface,
-      crate::contract::RecognitionSurface::Region
-    );
-    assert_eq!(
-      first.scope.app_bundle_id.as_deref(),
-      target_for_assertion.application_id.as_deref()
-    );
-    assert_eq!(
-      first.scope.region_hint.as_ref().map(|r| r.left),
-      Some(target_for_assertion.region.left_ratio)
-    );
-    assert_eq!(first.run_id.as_str(), run_id.as_str());
-    assert!(
-      first.snapshot_id.starts_with("snapshot_"),
-      "snapshot id should follow snapshot_{{run}}_{{page}} format, got {}",
-      first.snapshot_id
-    );
-    assert!(
-      !first.evidence.is_empty(),
-      "snapshot should carry structured evidence refs for the page observe artifacts"
-    );
-    assert_eq!(
-      first.span_id, first.evidence[0].span_id,
-      "snapshot span must identify the producer span that emitted its evidence"
-    );
-    assert_ne!(
-      first.span_id, canonical.run.root_span_id,
-      "snapshot must not point at the scan root span when the observe command produced child evidence"
-    );
-    assert!(
-      first
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("did not include a png artifact")),
-      "fixture observe response omits a png, so snapshot should record that remaining limit"
-    );
-    assert!(
-      first
-        .known_limits
-        .iter()
-        .all(|limit| !limit.contains("ArtifactRefs not threaded")),
-      "snapshot should not claim ArtifactRef evidence is missing after evidence refs are wired"
-    );
+    assert!(error.contains("window.observeRegion"));
+    assert!(error.contains("typed window region observation API"));
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

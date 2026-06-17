@@ -19,9 +19,7 @@ pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
 
 use crate::contract::ArtifactRef;
 use crate::driver::DriverRegistry;
-use crate::model::{
-  AuvResult, DriverCall, DriverDescriptor, DriverRunContext, InvokeRequest, InvokeResult, RunStatus,
-};
+use crate::model::{AuvResult, DriverDescriptor, InvokeRequest, InvokeResult, RunStatus};
 use crate::recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend};
 use crate::store::LocalStore;
 use crate::trace::{RunType, TraceStatusCode, string_attr};
@@ -447,279 +445,109 @@ impl Runtime {
     command: &auv_cli_invoke::InvokeCommand,
     request: InvokeRequest,
   ) -> AuvResult<InvokeResult> {
-    let route = legacy_invoke_route(command.id)
-      .ok_or_else(|| format!("command {} has no legacy runtime route", command.id))?;
-    self.invoke_legacy_command_in_span(run, parent, command.id, route, request)
-  }
-
-  fn invoke_legacy_command_in_span(
-    &self,
-    run: &mut crate::run_builder::RecordingRun,
-    parent: &crate::run_builder::SpanRef,
-    command_id: &str,
-    route: LegacyInvokeRoute,
-    request: InvokeRequest,
-  ) -> AuvResult<InvokeResult> {
-    let driver = self.drivers.get(route.driver_id).ok_or_else(|| {
-      format!(
-        "command {} resolved to missing driver {}",
-        command_id, route.driver_id
-      )
-    })?;
-
     let command_span = run.start_span(
       parent,
       crate::run_builder::running_span_record(
         "auv.command.invoke",
-        command_attributes(
-          command_id,
-          route.driver_id,
-          route.operation,
-          request.target.application_id.as_deref(),
-        ),
+        command_attributes(command.id, request.target.application_id.as_deref()),
       ),
     )?;
     record_event(
       run,
       command_span.id(),
       "command.resolved",
-      Some(format!(
-        "resolved {} -> {}.{}",
-        command_id, route.driver_id, route.operation
-      )),
+      Some(format!("resolved {}", command.id)),
     );
 
-    let driver_span = run.start_span(
-      &command_span,
-      crate::run_builder::running_span_record(
-        "auv.driver.invoke",
-        command_attributes(
-          command_id,
-          route.driver_id,
-          route.operation,
-          request.target.application_id.as_deref(),
-        ),
-      ),
-    )?;
-    record_event(
-      run,
-      driver_span.id(),
-      "driver.invoke",
-      Some(format!("invoking {}.{}", route.driver_id, route.operation)),
-    );
-
-    let call = DriverCall {
-      operation: route.operation.to_string(),
-      target: request.target,
-      inputs: request.inputs,
-      working_directory: self.project_root.clone(),
-      run_context: DriverRunContext {
-        run_id: run.id().to_string(),
-        span_id: driver_span.id().to_string(),
-        device_id: run.device_id().as_str().to_string(),
-        session_id: run.session_id().as_str().to_string(),
-      },
-    };
-
-    let mut artifact_paths = Vec::new();
-    let mut artifact_records = Vec::new();
-    let mut response_signals = Default::default();
-
-    let (status, output_summary, failure_message) = match driver.invoke(&call) {
-      Ok(response) => {
-        response_signals = response.signals.clone();
-        if let Some(backend) = &response.backend {
-          record_event(
-            run,
-            driver_span.id(),
-            "driver.backend",
-            Some(format!("backend={backend}")),
-          );
-        }
-
-        for note in &response.notes {
-          record_event(run, driver_span.id(), "driver.note", Some(note.clone()));
-        }
-
-        let artifact_result =
-          self
-            .recording
-            .record_produced_artifacts(run, &driver_span, response.artifacts);
-        let artifact_failure = match artifact_result {
-          Ok(recorded) => {
-            artifact_paths = recorded.paths;
-            artifact_records = recorded.records;
-            None
-          }
-          Err(failure) => {
-            artifact_paths = failure.recorded.paths;
-            artifact_records = failure.recorded.records;
-            Some(failure.message)
-          }
-        };
-
-        if let Some(error) = artifact_failure {
-          let output_summary = format!(
-            "Artifact handling failed after run creation. Inspect {} for the recorded trace.",
-            run.id()
-          );
-          record_event(
-            run,
-            driver_span.id(),
-            "run.failed",
-            Some(format!(
-              "artifact handling failed after driver success: {error}"
-            )),
-          );
-          (RunStatus::Failed, output_summary, Some(error))
-        } else {
-          let output_summary = response.summary.clone();
-          record_event(
-            run,
-            command_span.id(),
-            "run.completed",
-            Some(response.summary),
-          );
-          (RunStatus::Completed, output_summary, None)
-        }
-      }
+    let output = match command.invoke(auv_cli_invoke::InvokeCommandInput {
+      command_id: command.id,
+      target_application_id: request.target.application_id.as_deref(),
+      inputs: &request.inputs,
+      dry_run: request.dry_run,
+    }) {
+      Ok(output) => output,
       Err(error) => {
+        let failure_message = format!("command {} handler failed: {error}", command.id);
         let output_summary = format!(
-          "Driver invocation failed after run creation. Inspect {} for the recorded trace.",
+          "Command invocation failed after run creation. Inspect {} for the recorded trace.",
           run.id()
         );
-        record_event(run, driver_span.id(), "driver.failed", Some(error.clone()));
-        (RunStatus::Failed, output_summary, Some(error))
+        record_event(
+          run,
+          command_span.id(),
+          "command.failed",
+          Some(failure_message.clone()),
+        );
+        run.finish_span(
+          &command_span,
+          crate::run_builder::SpanFinish {
+            status_code: TraceStatusCode::Error,
+            summary: Some(output_summary.clone()),
+            failure: Some(failure_message.clone()),
+          },
+        )?;
+        return Ok(InvokeResult {
+          run_id: run.id().to_string(),
+          producer_span_id: command_span.id().clone(),
+          status: RunStatus::Failed,
+          output_summary,
+          signals: Default::default(),
+          artifacts: Vec::new(),
+          artifact_paths: Vec::new(),
+          failure_message: Some(failure_message),
+        });
       }
     };
 
-    let status_code = if status == RunStatus::Completed {
-      TraceStatusCode::Ok
-    } else {
-      TraceStatusCode::Error
-    };
-    let span_failure = failure_message.clone();
-    run.finish_span(
-      &driver_span,
-      crate::run_builder::SpanFinish {
-        status_code,
-        summary: Some(output_summary.clone()),
-        failure: span_failure.clone(),
-      },
-    )?;
+    if let Some(backend) = &output.backend {
+      record_event(
+        run,
+        command_span.id(),
+        "command.backend",
+        Some(format!("backend={backend}")),
+      );
+    }
+
+    for note in &output.notes {
+      record_event(run, command_span.id(), "command.note", Some(note.clone()));
+    }
+
+    record_event(
+      run,
+      command_span.id(),
+      "run.completed",
+      Some(output.summary.clone()),
+    );
+
     run.finish_span(
       &command_span,
       crate::run_builder::SpanFinish {
-        status_code,
-        summary: Some(output_summary.clone()),
-        failure: span_failure,
+        status_code: TraceStatusCode::Ok,
+        summary: Some(output.summary.clone()),
+        failure: None,
       },
     )?;
 
     Ok(InvokeResult {
       run_id: run.id().to_string(),
-      producer_span_id: driver_span.id().clone(),
-      status,
-      output_summary,
-      signals: response_signals,
-      artifacts: artifact_records,
-      artifact_paths,
-      failure_message,
+      producer_span_id: command_span.id().clone(),
+      status: RunStatus::Completed,
+      output_summary: output.summary,
+      signals: output.signals,
+      artifacts: Vec::new(),
+      artifact_paths: Vec::new(),
+      failure_message: None,
     })
   }
 }
 
-#[derive(Clone, Copy)]
-struct LegacyInvokeRoute {
-  driver_id: &'static str,
-  operation: &'static str,
-}
-
-// NOTICE(invoke-runtime-legacy-route): this root-runtime table preserves current invoke execution after auv-cli-invoke stops carrying driver metadata. Move each entry to typed domain capability code before deleting src/driver/macos.
-fn legacy_invoke_route(command_id: &str) -> Option<LegacyInvokeRoute> {
-  let (driver_id, operation) = match command_id {
-    "app.activate" => ("macos.desktop", "activate_app"),
-    "app.probePermissions" => ("macos.desktop", "probe_permissions"),
-    "display.capture" => ("macos.desktop", "capture_display"),
-    "display.identifyPoint" => ("macos.desktop", "identify_point"),
-    "display.list" => ("macos.desktop", "list_displays"),
-    "display.probeCoordinateReadiness" => ("macos.desktop", "probe_coordinate_readiness"),
-    "display.projectScreenshotPoint" => ("macos.desktop", "project_screenshot_point"),
-    "fixture.observe" => ("fixture.observe", "observe_fixture_scene"),
-    "input.axClickWindowText" => ("macos.desktop", "ax_click_window_text"),
-    "input.axFocusText" => ("macos.desktop", "ax_focus_text_input"),
-    "input.axPressButton" => ("macos.desktop", "ax_press_button"),
-    "input.clickPoint" => ("macos.desktop", "click_point"),
-    "input.clickWindowPoint" => ("macos.desktop", "click_window_point"),
-    "input.focusText" => ("macos.desktop", "focus_text_input"),
-    "input.key" => ("macos.desktop", "press_key"),
-    "input.pasteText" => ("macos.desktop", "paste_text_preserve_clipboard"),
-    "input.pressButton" => ("macos.desktop", "press_button"),
-    "input.scrollPoint" => ("macos.desktop", "scroll_point"),
-    "input.smartPress" => ("macos.desktop", "smart_press"),
-    "input.teachClick" => ("macos.desktop", "teach_click"),
-    "input.typeText" => ("macos.desktop", "type_text"),
-    "mediaControl.next" => ("macos.desktop", "media_control_next"),
-    "mediaControl.nowPlaying" => ("macos.desktop", "media_control_now_playing"),
-    "mediaControl.pause" => ("macos.desktop", "media_control_pause"),
-    "mediaControl.play" => ("macos.desktop", "media_control_play"),
-    "mediaControl.previous" => ("macos.desktop", "media_control_previous"),
-    "mediaControl.togglePlayPause" => ("macos.desktop", "media_control_toggle_play_pause"),
-    "overlay.applyCursorBatch" => ("macos.desktop", "overlay_apply_cursor_batch"),
-    "overlay.clickPoint" => ("macos.desktop", "overlay_click_point"),
-    "overlay.flashCursor" => ("macos.desktop", "overlay_flash_cursor"),
-    "overlay.flashCursorById" => ("macos.desktop", "overlay_flash_cursor_by_id"),
-    "overlay.hideCursor" => ("macos.desktop", "overlay_hide_cursor"),
-    "overlay.hideCursorId" => ("macos.desktop", "overlay_hide_cursor_id"),
-    "overlay.moveCursor" => ("macos.desktop", "overlay_move_cursor"),
-    "overlay.moveCursorById" => ("macos.desktop", "overlay_move_cursor_by_id"),
-    "overlay.setCursor" => ("macos.desktop", "overlay_set_cursor"),
-    "overlay.showCursor" => ("macos.desktop", "overlay_show_cursor"),
-    "overlay.showDualCursor" => ("macos.desktop", "overlay_show_dual_cursor"),
-    "overlay.shutdown" => ("macos.desktop", "overlay_shutdown"),
-    "screen.captureRegion" => ("macos.desktop", "capture_region"),
-    "screen.clickRow" => ("macos.desktop", "click_screen_row"),
-    "screen.clickText" => ("macos.desktop", "click_screen_text"),
-    "screen.findImageText" => ("macos.desktop", "find_image_text"),
-    "screen.findRows" => ("macos.desktop", "find_screen_rows"),
-    "screen.findText" => ("macos.desktop", "find_screen_text"),
-    "screen.waitForRows" => ("macos.desktop", "wait_for_screen_rows"),
-    "screen.waitForText" => ("macos.desktop", "wait_for_screen_text"),
-    "steam.library.list.v0" => ("steam.local", "steam_library_list"),
-    "window.capture" => ("macos.desktop", "capture_window"),
-    "window.captureAxTree" => ("macos.desktop", "capture_ax_tree"),
-    "window.clickRow" => ("macos.desktop", "click_window_row"),
-    "window.clickText" => ("macos.desktop", "click_window_text"),
-    "window.findIconMatch" => ("macos.desktop", "find_icon_match"),
-    "window.findRows" => ("macos.desktop", "find_window_rows"),
-    "window.findText" => ("macos.desktop", "find_window_text"),
-    "window.list" => ("macos.desktop", "list_windows"),
-    "window.observeRegion" => ("macos.desktop", "observe_window_region"),
-    "window.scrollRegion" => ("macos.desktop", "scroll_window_region"),
-    "window.verifyText" => ("macos.desktop", "verify_ax_text"),
-    "window.waitForRows" => ("macos.desktop", "wait_for_window_rows"),
-    "window.waitForText" => ("macos.desktop", "wait_for_window_text"),
-    _ => return None,
-  };
-  Some(LegacyInvokeRoute {
-    driver_id,
-    operation,
-  })
-}
-
 fn command_attributes(
   command_id: &str,
-  driver_id: &str,
-  operation: &str,
   target_application_id: Option<&str>,
 ) -> crate::run_builder::Attributes {
   let mut attributes = crate::run_builder::Attributes::new();
   attributes.insert("command_id".to_string(), string_attr(command_id));
-  attributes.insert("driver_id".to_string(), string_attr(driver_id));
-  attributes.insert("operation".to_string(), string_attr(operation));
   attributes.insert("auv.command.id".to_string(), string_attr(command_id));
-  attributes.insert("auv.driver.id".to_string(), string_attr(driver_id));
-  attributes.insert("auv.driver.operation".to_string(), string_attr(operation));
   if let Some(target_application_id) = target_application_id {
     attributes.insert(
       "target_application_id".to_string(),
@@ -757,13 +585,11 @@ mod tests {
   use crate::driver::{Driver, DriverRegistry};
   use crate::model::{
     AuvResult, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget, InvokeRequest,
-    ProducedArtifact, RunStatus, now_millis,
+    RunStatus, now_millis,
   };
   use crate::recording::{MemoryRunRecorder, RunRecorder, RunUpdate};
   use crate::store::LocalStore;
 
-  struct ArtifactFailureDriver;
-  struct ArtifactSuccessDriver;
   struct CountingDriver {
     calls: Arc<AtomicUsize>,
   }
@@ -774,22 +600,25 @@ mod tests {
 
   const TEST_COMMAND_ID: &str = "fixture.observe";
   const TEST_DRIVER_ID: &str = "fixture.observe";
-  const TEST_OPERATION: &str = "observe_fixture_scene";
+  const REGISTERED_HANDLER_COMMAND_ID: &str = "test.registeredHandler";
 
   #[test]
-  fn default_registry_commands_have_legacy_runtime_routes() {
+  fn fixture_registry_command_has_direct_handler() {
     let registry = auv_cli_invoke::default_registry();
+    let inputs = BTreeMap::new();
+    let command = registry
+      .resolve(TEST_COMMAND_ID)
+      .expect("fixture command should be registered");
+    let output = command
+      .invoke(auv_cli_invoke::InvokeCommandInput {
+        command_id: command.id,
+        target_application_id: None,
+        inputs: &inputs,
+        dry_run: true,
+      })
+      .expect("fixture command should have a direct handler");
 
-    for command in registry.all() {
-      // The coupling belongs in root runtime while the legacy route table exists:
-      // registered invoke commands are user-facing commands, so they must not
-      // appear in help/MCP and then fail before runtime can select execution.
-      assert!(
-        super::legacy_invoke_route(command.id).is_some(),
-        "{} should have a root runtime legacy route until it migrates to typed execution",
-        command.id
-      );
-    }
+    assert_eq!(output.summary, "fixture observed");
   }
 
   impl RunRecorder for FailRunFinishedRecorder {
@@ -824,62 +653,6 @@ mod tests {
 
     fn requires_successful_delivery(&self) -> bool {
       true
-    }
-  }
-
-  impl Driver for ArtifactFailureDriver {
-    fn descriptor(&self) -> DriverDescriptor {
-      DriverDescriptor {
-        id: TEST_DRIVER_ID,
-        summary: "Test driver",
-        capabilities: &["test.artifact-failure"],
-        donor_boundary: "test-only",
-      }
-    }
-
-    fn invoke(&self, _call: &DriverCall) -> AuvResult<DriverResponse> {
-      Ok(DriverResponse {
-        summary: "driver succeeded before artifact staging".to_string(),
-        backend: Some("test.backend".to_string()),
-        signals: BTreeMap::new(),
-        notes: vec!["note".to_string()],
-        artifacts: vec![ProducedArtifact {
-          kind: "text".to_string(),
-          source_path: PathBuf::from("/definitely/missing/artifact.txt"),
-          preferred_name: "artifact.txt".to_string(),
-          note: Some("missing".to_string()),
-        }],
-      })
-    }
-  }
-
-  impl Driver for ArtifactSuccessDriver {
-    fn descriptor(&self) -> DriverDescriptor {
-      DriverDescriptor {
-        id: TEST_DRIVER_ID,
-        summary: "Test driver",
-        capabilities: &["test.artifact-success"],
-        donor_boundary: "test-only",
-      }
-    }
-
-    fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
-      let artifact_path = call
-        .working_directory
-        .join(format!("auv-artifact-{}.txt", now_millis()));
-      fs::write(&artifact_path, "artifact body").expect("artifact source should be writable");
-      Ok(DriverResponse {
-        summary: "driver captured artifact".to_string(),
-        backend: Some("test.backend".to_string()),
-        signals: BTreeMap::new(),
-        notes: vec![],
-        artifacts: vec![ProducedArtifact {
-          kind: "text".to_string(),
-          source_path: artifact_path,
-          preferred_name: "artifact.txt".to_string(),
-          note: Some("captured".to_string()),
-        }],
-      })
     }
   }
 
@@ -1069,11 +842,8 @@ mod tests {
       )
       .expect("recorded invoke should succeed");
     assert_eq!(result.status, RunStatus::Completed);
-    assert_eq!(
-      result.signals.get("explicitSignal"),
-      Some(&"driver".to_string())
-    );
-    assert!(!result.signals.contains_key("bestMatchText"));
+    assert_eq!(result.output_summary, "fixture observed");
+    assert!(result.signals.is_empty());
     let run_id = runtime
       .recording()
       .handle()
@@ -1104,13 +874,12 @@ mod tests {
       command_span.attributes.get("auv.command.id"),
       Some(&json!(TEST_COMMAND_ID))
     );
-    assert_eq!(
-      command_span.attributes.get("auv.driver.id"),
-      Some(&json!(TEST_DRIVER_ID))
-    );
-    assert_eq!(
-      command_span.attributes.get("auv.driver.operation"),
-      Some(&json!(TEST_OPERATION))
+    assert!(command_span.attributes.get("auv.driver.id").is_none());
+    assert!(
+      command_span
+        .attributes
+        .get("auv.driver.operation")
+        .is_none()
     );
     assert!(
       canonical
@@ -1123,37 +892,152 @@ mod tests {
     let _ = fs::remove_dir_all(store_root);
   }
 
+  fn registered_handler_command(
+    input: auv_cli_invoke::InvokeCommandInput<'_>,
+  ) -> auv_cli_invoke::InvokeCommandResult {
+    if input.command_id != REGISTERED_HANDLER_COMMAND_ID {
+      return Err(format!("unexpected command_id {}", input.command_id));
+    }
+    if input.target_application_id != Some("test.app") {
+      return Err(format!(
+        "unexpected target_application_id {:?}",
+        input.target_application_id
+      ));
+    }
+    if input.inputs.get("marker").map(String::as_str) != Some("handler-input") {
+      return Err("handler input marker was not forwarded".to_string());
+    }
+    if !input.dry_run {
+      return Err("dry_run was not forwarded".to_string());
+    }
+    let mut output = auv_cli_invoke::InvokeCommandOutput::new("direct output completed");
+    output.backend = Some("test.direct-handler".to_string());
+    output
+      .signals
+      .insert("marker".to_string(), "handler-output".to_string());
+    output.notes.push("handler note".to_string());
+    Ok(output)
+  }
+
+  fn failing_registered_handler_command(
+    _input: auv_cli_invoke::InvokeCommandInput<'_>,
+  ) -> auv_cli_invoke::InvokeCommandResult {
+    Err("handler refused test command".to_string())
+  }
+
   #[test]
-  fn invoke_resolved_executes_fixture_observe_command() {
+  fn invoke_resolved_records_direct_command_output_without_driver_span() {
     let project_root = temp_dir("runtime-resolved-project");
     let store_root = temp_dir("runtime-resolved-store");
     let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
-    let registry = auv_cli_invoke::default_registry();
-    let command = registry
-      .resolve(TEST_COMMAND_ID)
-      .expect("fixture command should be registered");
+    let command = auv_cli_invoke::command::spec(
+      REGISTERED_HANDLER_COMMAND_ID,
+      auv_cli_invoke::InvokeNamespace::Fixture,
+      "Test registered command handler routing.",
+      auv_cli_invoke::arg::NO_ARGS,
+      registered_handler_command,
+    );
 
     let result = runtime
       .invoke_resolved(
         InvokeRequest {
-          command_id: TEST_COMMAND_ID.to_string(),
-          target: ExecutionTarget::default(),
-          inputs: BTreeMap::new(),
-          dry_run: false,
+          command_id: REGISTERED_HANDLER_COMMAND_ID.to_string(),
+          target: ExecutionTarget {
+            application_id: Some("test.app".to_string()),
+            target_label: None,
+          },
+          inputs: BTreeMap::from([("marker".to_string(), "handler-input".to_string())]),
+          dry_run: true,
         },
-        command,
+        &command,
       )
-      .expect("resolved fixture invoke should succeed");
+      .expect("resolved invoke should use the registered handler");
 
     assert_eq!(result.status, RunStatus::Completed);
+    assert_eq!(result.output_summary, "direct output completed");
+    assert_eq!(
+      result.signals.get("marker"),
+      Some(&"handler-output".to_string())
+    );
     let canonical = runtime.read_run(&result.run_id).expect("run should read");
     assert_eq!(canonical.run.status_code, crate::trace::TraceStatusCode::Ok);
+    let command_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.command.invoke")
+      .expect("command span should be recorded");
+    assert_eq!(
+      command_span.attributes.get("auv.command.id"),
+      Some(&json!(REGISTERED_HANDLER_COMMAND_ID))
+    );
     assert!(
-      canonical
+      !canonical
         .spans
         .iter()
-        .any(|span| span.attributes.get("auv.command.id") == Some(&json!(TEST_COMMAND_ID)))
+        .any(|span| span.name == "auv.driver.invoke")
     );
+    assert_eq!(result.producer_span_id, command_span.span_id);
+    assert!(canonical.events.iter().any(|event| {
+      event.name == "command.backend"
+        && event
+          .message
+          .as_deref()
+          .is_some_and(|message| message.contains("test.direct-handler"))
+    }));
+    assert!(canonical.events.iter().any(|event| {
+      event.name == "command.note"
+        && event
+          .message
+          .as_deref()
+          .is_some_and(|message| message.contains("handler note"))
+    }));
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_resolved_records_registered_handler_error_with_command_id() {
+    let project_root = temp_dir("runtime-resolved-handler-error-project");
+    let store_root = temp_dir("runtime-resolved-handler-error-store");
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+    let command = auv_cli_invoke::command::spec(
+      REGISTERED_HANDLER_COMMAND_ID,
+      auv_cli_invoke::InvokeNamespace::Fixture,
+      "Test registered command handler failure.",
+      auv_cli_invoke::arg::NO_ARGS,
+      failing_registered_handler_command,
+    );
+
+    let result = runtime
+      .invoke_resolved(
+        InvokeRequest {
+          command_id: REGISTERED_HANDLER_COMMAND_ID.to_string(),
+          ..InvokeRequest::default()
+        },
+        &command,
+      )
+      .expect("handler failure should still return an inspectable invoke result");
+
+    assert_eq!(result.status, RunStatus::Failed);
+    let failure = result
+      .failure_message
+      .as_deref()
+      .expect("failure message should be recorded");
+    assert!(failure.contains("command test.registeredHandler handler failed"));
+    assert!(failure.contains("handler refused test command"));
+    let canonical = runtime.read_run(&result.run_id).expect("run should read");
+    assert_eq!(
+      canonical.run.status_code,
+      crate::trace::TraceStatusCode::Error
+    );
+    assert!(canonical.events.iter().any(|event| {
+      event.name == "command.failed"
+        && event
+          .message
+          .as_deref()
+          .is_some_and(|message| message.contains("handler refused test command"))
+    }));
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
@@ -1314,137 +1198,11 @@ mod tests {
     let _ = fs::remove_dir_all(store_root);
   }
 
-  #[test]
-  fn invoke_links_artifact_capture_event_to_artifact_record() {
-    let project_root = temp_dir("runtime-artifact-link-project");
-    let store_root = temp_dir("runtime-artifact-link-store");
-    let runtime = Runtime::new(
-      project_root.clone(),
-      DriverRegistry::new(vec![Box::new(ArtifactSuccessDriver)]),
-      LocalStore::new(store_root.clone()).expect("store should initialize"),
-    );
-
-    let result = runtime
-      .invoke(InvokeRequest {
-        command_id: TEST_COMMAND_ID.to_string(),
-        target: ExecutionTarget::default(),
-        inputs: BTreeMap::new(),
-        dry_run: false,
-      })
-      .expect("artifact capture should succeed");
-
-    let canonical = runtime.read_run(&result.run_id).expect("run should read");
-    let artifact = canonical
-      .artifacts
-      .first()
-      .expect("artifact should be recorded");
-    let event_id = artifact
-      .event_id
-      .as_ref()
-      .expect("artifact should point to event");
-    let event = canonical
-      .events
-      .iter()
-      .find(|event| event.event_id == *event_id)
-      .expect("artifact event should be recorded");
-    assert_eq!(event.name, "artifact.captured");
-    assert_eq!(event.artifact_ids, vec![artifact.artifact_id.clone()]);
-    assert_eq!(
-      result.artifact_paths,
-      vec![
-        store_root
-          .join("runs")
-          .join(&result.run_id)
-          .join(&artifact.path)
-      ]
-    );
-    assert!(result.artifact_paths[0].exists());
-
-    let _ = fs::remove_dir_all(project_root);
-    let _ = fs::remove_dir_all(store_root);
-  }
-
-  #[test]
-  fn invoke_persists_failed_run_when_artifact_staging_breaks() {
-    let project_root = temp_dir("runtime-tests-project");
-    let store_root = temp_dir("runtime-tests-store");
-    let runtime = Runtime::new(
-      project_root.clone(),
-      DriverRegistry::new(vec![Box::new(ArtifactFailureDriver)]),
-      LocalStore::new(store_root.clone()).expect("store should initialize"),
-    );
-
-    let result = runtime
-      .invoke(InvokeRequest {
-        command_id: TEST_COMMAND_ID.to_string(),
-        target: ExecutionTarget::default(),
-        inputs: BTreeMap::new(),
-        dry_run: false,
-      })
-      .expect("artifact staging failures should still return an inspectable run");
-
-    assert_eq!(result.status, RunStatus::Failed);
-    assert!(result.failure_message.is_some());
-
-    let inspection = runtime
-      .inspect(&result.run_id)
-      .expect("failed run should still be inspectable");
-    assert!(inspection.contains("Status: error"));
-    assert!(inspection.contains("artifact staging failed"));
-
-    let _ = fs::remove_dir_all(project_root);
-    let _ = fs::remove_dir_all(store_root);
-  }
-
   fn temp_dir(label: &str) -> PathBuf {
     let path = env::temp_dir().join(format!("auv-{}-{}", label, now_millis()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
-  }
-
-  /// Driver that stashes the run context of every call so tests can assert
-  /// what the runtime actually threaded through `DriverRunContext`.
-  struct ContextCapturingDriver {
-    contexts: Arc<std::sync::Mutex<Vec<crate::model::DriverRunContext>>>,
-  }
-
-  impl Driver for ContextCapturingDriver {
-    fn descriptor(&self) -> DriverDescriptor {
-      DriverDescriptor {
-        id: TEST_DRIVER_ID,
-        summary: "Captures the driver run context",
-        capabilities: &["test.capture"],
-        donor_boundary: "test-only",
-      }
-    }
-
-    fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
-      self
-        .contexts
-        .lock()
-        .expect("context capture lock")
-        .push(call.run_context.clone());
-      Ok(DriverResponse {
-        summary: "captured".to_string(),
-        backend: None,
-        signals: BTreeMap::new(),
-        notes: vec![],
-        artifacts: vec![],
-      })
-    }
-  }
-
-  fn runtime_with_context_capture(
-    project_root: PathBuf,
-    store_root: PathBuf,
-    contexts: Arc<std::sync::Mutex<Vec<crate::model::DriverRunContext>>>,
-  ) -> Runtime {
-    Runtime::new(
-      project_root,
-      DriverRegistry::new(vec![Box::new(ContextCapturingDriver { contexts })]),
-      LocalStore::new(store_root).expect("store should initialize"),
-    )
   }
 
   #[test]
@@ -1510,35 +1268,6 @@ mod tests {
         },
       )
       .expect("explicit-device run should finish");
-
-    let _ = fs::remove_dir_all(project_root);
-    let _ = fs::remove_dir_all(store_root);
-  }
-
-  #[test]
-  fn invoke_threads_device_session_into_driver_run_context() {
-    let project_root = temp_dir("runtime-driver-ctx-project");
-    let store_root = temp_dir("runtime-driver-ctx-store");
-    let contexts = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let runtime =
-      runtime_with_context_capture(project_root.clone(), store_root.clone(), contexts.clone());
-
-    runtime
-      .invoke(InvokeRequest {
-        command_id: TEST_COMMAND_ID.to_string(),
-        target: ExecutionTarget::default(),
-        inputs: BTreeMap::new(),
-        dry_run: false,
-      })
-      .expect("default-target invoke should succeed");
-
-    let captured = contexts.lock().expect("context capture lock").clone();
-    assert_eq!(captured.len(), 1, "driver should be called exactly once");
-    let ctx = &captured[0];
-    assert_eq!(ctx.device_id, "local");
-    assert_eq!(ctx.session_id, "default");
-    assert!(!ctx.run_id.is_empty(), "run_id should be set");
-    assert!(!ctx.span_id.is_empty(), "span_id should be set");
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
