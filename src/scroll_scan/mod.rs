@@ -1682,125 +1682,9 @@ mod tests {
   use std::fs;
   use std::sync::atomic::{AtomicU64, Ordering};
 
-  use serde_json::json;
-
-  use crate::driver::{Driver, DriverRegistry};
-  use crate::model::{AuvResult, DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact};
   use crate::store::LocalStore;
 
   static TEST_ARTIFACT_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-  struct ScrollScanFixtureDriver;
-
-  impl Driver for ScrollScanFixtureDriver {
-    fn descriptor(&self) -> DriverDescriptor {
-      DriverDescriptor {
-        id: "macos.desktop",
-        summary: "Fixture scroll-scan driver",
-        capabilities: &["test.scroll_scan"],
-        donor_boundary: "test-only",
-      }
-    }
-
-    fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
-      match call.operation.as_str() {
-        "observe_window_region" => {
-          let artifact_path = call.working_directory.join(format!(
-            "{}-observe.json",
-            sanitize_test_label(&call.inputs)
-          ));
-          let payload = json!({
-            "item_candidates": [
-              {
-                "item_index": 4,
-                "row_candidate_index": 7,
-                "source": "row_filter",
-                "filter_reason": "accepted_repeating_row_geometry",
-                "text": "Fixture Song",
-                "text_fragments": ["Fixture Song"],
-                "bounds": { "x": 100, "y": 220, "width": 600, "height": 84 }
-              }
-            ]
-          });
-          fs::write(
-            &artifact_path,
-            serde_json::to_string_pretty(&payload).expect("fixture rows json should serialize"),
-          )
-          .map_err(|error| format!("failed to write fixture observe artifact: {error}"))?;
-          Ok(DriverResponse {
-            summary: "fixture observe rows".to_string(),
-            backend: Some("test.scroll-scan.fixture".to_string()),
-            signals: BTreeMap::new(),
-            notes: vec![],
-            artifacts: vec![ProducedArtifact {
-              kind: "observe-window-region".to_string(),
-              source_path: artifact_path,
-              preferred_name: "observe-window-region.json".to_string(),
-              note: Some("Fixture observe rows".to_string()),
-            }],
-          })
-        }
-        "scroll_window_region" => Ok(DriverResponse {
-          summary: "fixture scroll".to_string(),
-          backend: Some("test.scroll-scan.fixture".to_string()),
-          signals: BTreeMap::new(),
-          notes: vec![],
-          artifacts: vec![],
-        }),
-        "observe_fixture_scene" => {
-          let action = call
-            .inputs
-            .get("hook_action")
-            .cloned()
-            .unwrap_or_else(|| "continue".to_string());
-          let reason = call
-            .inputs
-            .get("hook_reason")
-            .cloned()
-            .unwrap_or_else(|| "fixture hook continued".to_string());
-          let hook_name = call
-            .inputs
-            .get("hook_name")
-            .cloned()
-            .unwrap_or_else(|| "fixture".to_string());
-          let hook_stage = call
-            .inputs
-            .get("hook_stage")
-            .cloned()
-            .unwrap_or_else(|| hook_name.clone());
-          let page_index = call
-            .inputs
-            .get("hook_page_index")
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(0);
-          Ok(DriverResponse {
-            summary: format!("fixture hook {hook_name} returned {action}"),
-            backend: Some("test.scroll-scan.fixture".to_string()),
-            signals: BTreeMap::from([
-              ("last.scan.hook.action".to_string(), action.clone()),
-              ("last.scan.hook.reason".to_string(), reason.clone()),
-              (
-                "last.scan.hook.decision".to_string(),
-                json!({
-                  "hook_name": hook_name,
-                  "stage": hook_stage,
-                  "page_index": page_index,
-                  "action": action,
-                  "reason": reason,
-                  "annotations": ["fixture hook annotation"],
-                  "evidence": ["artifacts/fixture-hook.json"]
-                })
-                .to_string(),
-              ),
-            ]),
-            notes: vec![],
-            artifacts: vec![],
-          })
-        }
-        other => Err(format!("unsupported test.scroll-scan operation {other}")),
-      }
-    }
-  }
 
   #[test]
   fn scan_artifact_serializes_completeness_and_observations() {
@@ -2993,25 +2877,8 @@ mod tests {
   ) -> crate::runtime::Runtime {
     crate::runtime::Runtime::new(
       project_root,
-      DriverRegistry::new(vec![Box::new(ScrollScanFixtureDriver)]),
       LocalStore::new(store_root).expect("store should initialize"),
     )
-  }
-
-  fn sanitize_test_label(inputs: &BTreeMap<String, String>) -> String {
-    inputs
-      .get("label")
-      .map(String::as_str)
-      .unwrap_or("fixture")
-      .chars()
-      .map(|character| {
-        if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-          character
-        } else {
-          '-'
-        }
-      })
-      .collect::<String>()
   }
 
   fn temp_dir(label: &str) -> PathBuf {

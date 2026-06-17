@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub use auv_tracing_driver::{AuvResult, ProducedArtifact, now_millis};
+pub use auv_tracing_driver::{AuvResult, now_millis};
 
 static RUN_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -48,60 +48,6 @@ pub struct InvokeResult {
   pub artifacts: Vec<ArtifactRecordV1Alpha1>,
   pub artifact_paths: Vec<PathBuf>,
   pub failure_message: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub struct DriverDescriptor {
-  pub id: &'static str,
-  pub summary: &'static str,
-  pub capabilities: &'static [&'static str],
-  pub donor_boundary: &'static str,
-}
-
-/// Control-plane metadata the runtime injects into every `DriverCall` so drivers can
-/// build evidence `ArtifactRef`s and emit `OperationResult`s tied to the active run/span
-/// without smuggling identifiers through the user-facing `inputs` map.
-///
-/// `device_id` / `session_id` identify the automation target and namespace. Today
-/// they default to `"local"` / `"default"` since AUV runs only on the local
-/// macOS host with one implicit session — drivers can ignore them. The fields
-/// exist so future RPC/JS-SDK frontends can route to remote/VM devices and
-/// scope state per session without changing the driver contract again.
-#[derive(Clone, Debug)]
-pub struct DriverRunContext {
-  pub run_id: String,
-  pub span_id: String,
-  pub device_id: String,
-  pub session_id: String,
-}
-
-impl Default for DriverRunContext {
-  fn default() -> Self {
-    Self {
-      run_id: String::new(),
-      span_id: String::new(),
-      device_id: "local".to_string(),
-      session_id: "default".to_string(),
-    }
-  }
-}
-
-#[derive(Clone, Debug)]
-pub struct DriverCall {
-  pub operation: String,
-  pub target: ExecutionTarget,
-  pub inputs: BTreeMap<String, String>,
-  pub working_directory: PathBuf,
-  pub run_context: DriverRunContext,
-}
-
-#[derive(Clone, Debug)]
-pub struct DriverResponse {
-  pub summary: String,
-  pub backend: Option<String>,
-  pub signals: BTreeMap<String, String>,
-  pub notes: Vec<String>,
-  pub artifacts: Vec<ProducedArtifact>,
 }
 
 pub fn new_run_id() -> String {

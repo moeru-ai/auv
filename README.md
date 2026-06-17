@@ -8,8 +8,9 @@ AUV turns application UI workflows into inspectable, replayable operations.
 Current fact sources live in:
 
 - `src/runtime.rs`
-- `src/catalog.rs`
-- `src/driver/macos/`
+- `crates/auv-cli-invoke/`
+- `crates/auv-driver/`
+- `crates/auv-driver-macos/`
 - `docs/ai/references/`
 
 The former JSON `skill` and checked-in `recipes/` execution lane has been
@@ -29,7 +30,7 @@ Stable verification contracts:
 
 Useful CLI entrypoints:
 
-- `cargo run --quiet -- list-commands`
+- `cargo run --quiet -- invoke --help`
 - `cargo run --quiet -- scan window-region --target <application-id> --region 0.0,0.0,1.0,1.0 --max-pages 3`
 
 `scan window-region` is the first scroll-scan workflow. It is OCR-first,

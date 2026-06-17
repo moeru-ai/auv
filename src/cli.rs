@@ -67,7 +67,6 @@ pub enum CliCommand {
     inspect: InspectClientOptions,
   },
   ListCommandsTombstone,
-  ListDrivers,
   InvokeHelp {
     command_id: Option<String>,
   },
@@ -195,7 +194,6 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "--xtask" => parse_xtask(arguments),
     "candidate-action" => parse_candidate_action(arguments),
     "list-commands" => Ok(CliCommand::ListCommandsTombstone),
-    "list-drivers" => Ok(CliCommand::ListDrivers),
     "app" => parse_app(arguments),
     "osu" => parse_osu(arguments),
     "inspect" => parse_inspect(arguments),
@@ -231,7 +229,6 @@ pub fn help_text() -> String {
   auv-cli prototype
 
 USAGE
-  auv-cli list-drivers
   auv-cli doctor [--json]
   auv-cli permissions check [--json]
   auv-cli app probe <bundle-id> [--output-dir <dir>]
@@ -1344,6 +1341,16 @@ mod tests {
     assert!(help.contains("list-commands"));
     assert!(help.contains("auv-cli invoke --help"));
     assert!(help.contains("retired"));
+  }
+
+  #[test]
+  fn list_drivers_command_is_removed() {
+    let error =
+      parse_cli(&["list-drivers".to_string()]).expect_err("list-drivers should be removed");
+    assert!(error.contains("unknown subcommand list-drivers"));
+
+    let help = help_text();
+    assert!(!help.contains("auv-cli list-drivers"));
   }
 
   #[test]

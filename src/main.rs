@@ -234,15 +234,6 @@ async fn run() -> Result<(), String> {
         print!("{}", auv_cli_invoke::render_help_index(&registry));
       }
     }
-    CliCommand::ListDrivers => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      for driver in runtime.list_drivers() {
-        println!("{}", driver.id);
-        println!("  {}", driver.summary);
-        println!("  capabilities: {}", driver.capabilities.join(", "));
-        println!("  donor boundary: {}", driver.donor_boundary);
-      }
-    }
     CliCommand::AppProbe {
       bundle_id,
       output_dir,
