@@ -47,9 +47,9 @@ After this slice:
 - Do not build an artifact helper inside `auv-cli-invoke`.
 - Do not preserve the Steam invoke command.
 - Do not implement scroll scan integration.
-- Do not delete all of root `src/driver/macos` merely because invoke no longer
-  routes through it; delete only code that becomes unused and is clearly owned
-  by this migration.
+- Historical constraint: the first direct-invoke slice did not delete all of
+  root `src/driver/macos`. The later owner-approved cleanup removed the legacy
+  root driver registry and adapter after `rg` showed no production caller.
 
 ## File Structure
 
@@ -560,12 +560,12 @@ rg "driver_operation|DriverOperation|DriverOperationRoute|invoke_driver_operatio
 
 Expected: no matches.
 
-- [ ] **Step 2: Remove dead adapter code**
+- [x] **Step 2: Remove dead adapter code**
 
 Delete any remaining adapter structs, tests, and helper code that existed only
 to route invoke command ids to driver operations.
 
-- [ ] **Step 3: Remove unused root driver operations**
+- [x] **Step 3: Remove unused root driver operations**
 
 For root driver functions made unreachable by direct invoke migration, delete
 them only when `rg` proves no other root path uses them.

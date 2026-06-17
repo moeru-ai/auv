@@ -8,7 +8,6 @@ pub mod candidate_action_decision;
 pub mod candidate_promotion;
 pub mod candidate_promotion_recording;
 pub mod contract;
-pub mod driver;
 pub mod inference_recognition;
 pub mod inspect;
 pub mod inspect_server;
@@ -27,7 +26,6 @@ pub mod trace;
 
 use std::path::PathBuf;
 
-use driver::default_driver_registry;
 use model::AuvResult;
 use runtime::Runtime;
 use store::LocalStore;
@@ -42,8 +40,7 @@ pub fn build_runtime_with_store_root(
   store_root: PathBuf,
 ) -> AuvResult<Runtime> {
   let store = LocalStore::new(store_root)?;
-  let drivers = default_driver_registry();
-  Ok(Runtime::new(project_root, drivers, store))
+  Ok(Runtime::new(project_root, store))
 }
 
 pub fn default_project_store_root(project_root: PathBuf) -> PathBuf {

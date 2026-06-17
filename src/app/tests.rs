@@ -6,66 +6,10 @@ use super::*;
 use crate::contract::{
   ArtifactRef, CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause,
 };
-use crate::driver::{Driver, DriverRegistry};
 use crate::model::RunStatus;
-use crate::model::{DriverCall, DriverDescriptor, DriverResponse, ProducedArtifact};
 use crate::run_builder::RunSpec;
 use crate::store::LocalStore;
 use crate::trace::RunType;
-
-struct TestProbeDriver;
-
-impl Driver for TestProbeDriver {
-  fn descriptor(&self) -> DriverDescriptor {
-    DriverDescriptor {
-      id: "fixture.observe",
-      summary: "Test probe driver",
-      capabilities: &["test"],
-      donor_boundary: "test",
-    }
-  }
-
-  fn invoke(&self, call: &DriverCall) -> AuvResult<DriverResponse> {
-    if call
-      .inputs
-      .get("test_mode")
-      .is_some_and(|mode| mode == "artifact")
-    {
-      let first_path = call.working_directory.join("probe-first-artifact.txt");
-      let second_path = call.working_directory.join("probe-second-artifact.txt");
-      fs::write(&first_path, "first artifact").expect("first artifact should write");
-      fs::write(&second_path, "second artifact").expect("second artifact should write");
-      return Ok(DriverResponse {
-        summary: "artifact ok".to_string(),
-        artifacts: vec![
-          ProducedArtifact {
-            kind: "text".to_string(),
-            source_path: first_path,
-            preferred_name: "first.txt".to_string(),
-            note: Some("first".to_string()),
-          },
-          ProducedArtifact {
-            kind: "text".to_string(),
-            source_path: second_path,
-            preferred_name: "second.txt".to_string(),
-            note: Some("second".to_string()),
-          },
-        ],
-        notes: Vec::new(),
-        signals: BTreeMap::from([("outcome".to_string(), "ok".to_string())]),
-        backend: None,
-      });
-    }
-
-    Ok(DriverResponse {
-      summary: format!("{} ok", call.operation),
-      artifacts: Vec::new(),
-      notes: Vec::new(),
-      signals: BTreeMap::from([("outcome".to_string(), "ok".to_string())]),
-      backend: None,
-    })
-  }
-}
 
 #[test]
 fn parse_probe_directory_resolves_probe_json() {
@@ -538,10 +482,8 @@ fn failed_probe_step_fixture(id: &str, command_id: &str, error: &str) -> AppProb
 }
 
 fn test_runtime(project_root: PathBuf) -> Runtime {
-  let drivers = DriverRegistry::new(vec![Box::new(TestProbeDriver)]);
   Runtime::new(
     project_root.clone(),
-    drivers,
     LocalStore::new(project_root).expect("store should initialize"),
   )
 }

@@ -18,15 +18,13 @@ pub const TELEMETRY_SAMPLE_MAX_BYTES: u64 = 128 * 1024;
 pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
 
 use crate::contract::ArtifactRef;
-use crate::driver::DriverRegistry;
-use crate::model::{AuvResult, DriverDescriptor, InvokeRequest, InvokeResult, RunStatus};
+use crate::model::{AuvResult, InvokeRequest, InvokeResult, RunStatus};
 use crate::recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend};
 use crate::store::LocalStore;
 use crate::trace::{RunType, TraceStatusCode, string_attr};
 
 pub struct Runtime {
   project_root: PathBuf,
-  drivers: DriverRegistry,
   recording: RunRecordingBackend,
 }
 
@@ -102,20 +100,15 @@ fn prepare_telemetry_sample_artifact(path: &Path) -> AuvResult<Option<PathBuf>> 
 }
 
 impl Runtime {
-  pub fn new(project_root: PathBuf, drivers: DriverRegistry, store: LocalStore) -> Self {
+  pub fn new(project_root: PathBuf, store: LocalStore) -> Self {
     Self {
       project_root,
-      drivers,
       recording: RunRecordingBackend::new(store, Arc::new(MemoryRunRecorder::new())),
     }
   }
 
   pub fn project_root(&self) -> &Path {
     &self.project_root
-  }
-
-  pub fn list_drivers(&self) -> Vec<DriverDescriptor> {
-    self.drivers.descriptors()
   }
 
   pub fn inspect(&self, run_id: &str) -> AuvResult<String> {
@@ -577,7 +570,6 @@ mod tests {
   use std::fs;
   use std::path::PathBuf;
   use std::sync::Arc;
-  use std::sync::atomic::{AtomicUsize, Ordering};
 
   use serde_json::json;
 
@@ -585,24 +577,15 @@ mod tests {
     MINECRAFT_PROJECTION_ARTIFACT_ROLE, Runtime, TELEMETRY_SAMPLE_ARTIFACT_ROLE,
     TELEMETRY_SAMPLE_MAX_BYTES,
   };
-  use crate::driver::{Driver, DriverRegistry};
-  use crate::model::{
-    AuvResult, DriverCall, DriverDescriptor, DriverResponse, ExecutionTarget, InvokeRequest,
-    RunStatus, now_millis,
-  };
+  use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, RunStatus, now_millis};
   use crate::recording::{MemoryRunRecorder, RunRecorder, RunUpdate};
   use crate::store::LocalStore;
 
-  struct CountingDriver {
-    calls: Arc<AtomicUsize>,
-  }
   struct FailRunFinishedRecorder;
   struct RequiredFailRunStartedRecorder;
   struct RequiredFailRunFinishedRecorder;
-  struct SuccessDriver;
 
   const TEST_COMMAND_ID: &str = "fixture.observe";
-  const TEST_DRIVER_ID: &str = "fixture.observe";
   const REGISTERED_HANDLER_COMMAND_ID: &str = "test.registeredHandler";
 
   #[test]
@@ -656,53 +639,6 @@ mod tests {
 
     fn requires_successful_delivery(&self) -> bool {
       true
-    }
-  }
-
-  impl Driver for CountingDriver {
-    fn descriptor(&self) -> DriverDescriptor {
-      DriverDescriptor {
-        id: TEST_DRIVER_ID,
-        summary: "Counting driver",
-        capabilities: &["test.counting"],
-        donor_boundary: "test-only",
-      }
-    }
-
-    fn invoke(&self, _call: &DriverCall) -> AuvResult<DriverResponse> {
-      self.calls.fetch_add(1, Ordering::SeqCst);
-      Ok(DriverResponse {
-        summary: "driver counted".to_string(),
-        backend: Some("test.backend".to_string()),
-        signals: BTreeMap::new(),
-        notes: vec![],
-        artifacts: vec![],
-      })
-    }
-  }
-
-  impl Driver for SuccessDriver {
-    fn descriptor(&self) -> DriverDescriptor {
-      DriverDescriptor {
-        id: TEST_DRIVER_ID,
-        summary: "Test driver",
-        capabilities: &["test.success"],
-        donor_boundary: "test-only",
-      }
-    }
-
-    fn invoke(&self, _call: &DriverCall) -> AuvResult<DriverResponse> {
-      Ok(DriverResponse {
-        summary: "driver ok".to_string(),
-        backend: Some("test.backend".to_string()),
-        signals: BTreeMap::from([("explicitSignal".to_string(), "driver".to_string())]),
-        notes: vec![
-          "bestMatchText=driver ok".to_string(),
-          "explicitSignal=stale-note".to_string(),
-          "plain note".to_string(),
-        ],
-        artifacts: vec![],
-      })
     }
   }
 
@@ -1153,7 +1089,6 @@ mod tests {
     let store_root = temp_dir("unknown-command-no-bundle-store");
     let runtime = Runtime::new(
       project_root.clone(),
-      DriverRegistry::new(Vec::new()),
       LocalStore::new(store_root.clone()).expect("store should create"),
     );
     let request = InvokeRequest {
@@ -1201,15 +1136,11 @@ mod tests {
   }
 
   #[test]
-  fn invoke_aborts_before_driver_when_required_initial_recording_fails() {
+  fn invoke_aborts_before_command_when_required_initial_recording_fails() {
     let project_root = temp_dir("runtime-required-initial-recorder-failure-project");
     let store_root = temp_dir("runtime-required-initial-recorder-failure-store");
-    let calls = Arc::new(AtomicUsize::new(0));
     let runtime = Runtime::new(
       project_root.clone(),
-      DriverRegistry::new(vec![Box::new(CountingDriver {
-        calls: calls.clone(),
-      })]),
       LocalStore::new(store_root.clone()).expect("store should initialize"),
     )
     .with_recorder(Arc::new(RequiredFailRunStartedRecorder));
@@ -1225,7 +1156,6 @@ mod tests {
 
     assert!(error.contains("run recording delivery failed"));
     assert!(error.contains("run started recorder failure"));
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
   }
@@ -1378,7 +1308,6 @@ mod tests {
   fn runtime_with_success_driver(project_root: PathBuf, store_root: PathBuf) -> Runtime {
     Runtime::new(
       project_root,
-      DriverRegistry::new(vec![Box::new(SuccessDriver)]),
       LocalStore::new(store_root).expect("store should initialize"),
     )
   }

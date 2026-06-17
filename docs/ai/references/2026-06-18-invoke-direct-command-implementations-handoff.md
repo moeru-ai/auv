@@ -17,6 +17,11 @@ commands.
 Steam invoke support was removed. No compatibility command or fallback route is
 kept.
 
+The root legacy driver registry and command adapter were removed after direct
+invoke routing became the only active command lane. `src/driver/**`,
+`DriverCall`, `DriverResponse`, `DriverRegistry`, and `auv-cli list-drivers`
+are gone; command discovery is `auv-cli invoke --help`.
+
 ## Direct Implementations
 
 These commands now call typed APIs or produce deterministic direct output:
@@ -88,6 +93,9 @@ belong in `auv-cli-invoke`.
 - `InvokeCommandExecution::driver_operation`
 - root runtime `DriverOperationRoute`
 - root runtime `invoke_driver_operation_in_span`
+- root `src/driver/**`
+- root `DriverCall` / `DriverResponse` / `DriverRegistry`
+- `auv-cli list-drivers`
 - `steam.library.list.v0`
 
 ## Verification
