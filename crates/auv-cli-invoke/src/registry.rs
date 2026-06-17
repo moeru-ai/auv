@@ -53,7 +53,6 @@ pub fn default_registry() -> InvokeRegistry {
     commands::app::group(),
     commands::overlay::group(),
     commands::media_control::group(),
-    commands::steam::group(),
     commands::fixture::group(),
   ])
 }

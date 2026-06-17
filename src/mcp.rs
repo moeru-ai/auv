@@ -457,6 +457,7 @@ mod tests {
       .expect("command_id schema should enumerate registry command ids");
     assert!(command_ids.iter().any(|id| id == "fixture.observe"));
     assert!(command_ids.iter().any(|id| id == "input.pressButton"));
+    assert!(!command_ids.iter().any(|id| id == "steam.library.list.v0"));
     assert!(!command_ids.iter().any(|id| id == "debug.captureWindow"));
     assert!(!command_ids.iter().any(|id| id == "verify.axText"));
     assert!(!command_ids.iter().any(|id| id == "music.result.play"));
@@ -473,6 +474,7 @@ mod tests {
     assert!(!metadata_ids.iter().any(|id| id.starts_with("debug.")));
     assert!(!metadata_ids.iter().any(|id| id.starts_with("verify.")));
     assert!(!metadata_ids.iter().any(|id| id.starts_with("music.")));
+    assert!(!metadata_ids.iter().any(|id| id.starts_with("steam.")));
     let press_button_metadata = command_metadata
       .iter()
       .find(|command| {
@@ -512,27 +514,12 @@ mod tests {
       Some("mediaControl")
     );
 
-    let cli_runtime = crate::build_runtime_with_store_root(project_root, store_root.clone())
-      .map_err(anyhow::Error::msg)?;
-    let cli_result = cli_runtime
-      .invoke(InvokeRequest {
-        command_id: "steam.library.list.v0".to_string(),
-        target: ExecutionTarget::default(),
-        inputs: BTreeMap::new(),
-        dry_run: false,
-      })
-      .map_err(anyhow::Error::msg)?;
-    let cli_store =
-      crate::store::LocalStore::new(store_root.clone()).map_err(anyhow::Error::msg)?;
-    let cli_inspect =
-      crate::inspect::inspect_run(&cli_store, &cli_result.run_id).map_err(anyhow::Error::msg)?;
-
     let invoke = client
       .call_tool(CallToolRequestParam {
         name: "invoke".into(),
         arguments: Some(
           serde_json::json!({
-            "command_id": "steam.library.list.v0",
+            "command_id": "fixture.observe",
             "dry_run": false,
             "inputs": {},
             "target": {},
@@ -560,58 +547,27 @@ mod tests {
       .and_then(|value| value.as_str())
       .expect("run_id should exist")
       .to_string();
-    let output_summary = invoke_json
-      .get("output_summary")
-      .and_then(|value| value.as_str())
-      .expect("summary should exist");
-    assert_eq!(output_summary, cli_result.output_summary);
-    let status = invoke_json
-      .get("status")
-      .and_then(|value| value.as_str())
-      .expect("status should exist");
-    assert_eq!(status, cli_result.status.as_str());
-    let signals = invoke_json.get("signals").expect("signals should exist");
-    assert_eq!(signals, &serde_json::to_value(&cli_result.signals)?);
-    let artifacts = invoke_json
-      .get("artifacts")
-      .and_then(|value| value.as_array())
-      .expect("artifacts should exist");
-    assert_eq!(artifacts.len(), 1);
-    assert_eq!(artifacts[0]["role"], "steam-library-list");
-    assert_eq!(artifacts[0]["role"], cli_result.artifacts[0].role);
-    let artifact_path = artifacts[0]["path"]
-      .as_str()
-      .expect("artifact path should exist");
-    assert!(artifact_path.contains("steam-library-list.json"));
-    assert!(
-      cli_result.artifacts[0]
-        .path
-        .contains("steam-library-list.json")
+    assert_eq!(
+      invoke_json
+        .get("output_summary")
+        .and_then(|value| value.as_str()),
+      Some("fixture observed")
     );
-    let mcp_artifact_name = std::path::Path::new(artifact_path)
-      .file_name()
-      .and_then(|value| value.to_str())
-      .expect("mcp artifact filename should exist");
-    let cli_artifact_name = std::path::Path::new(&cli_result.artifacts[0].path)
-      .file_name()
-      .and_then(|value| value.to_str())
-      .expect("cli artifact filename should exist");
-    assert_eq!(mcp_artifact_name, cli_artifact_name);
-    let artifact_paths = invoke_json
-      .get("artifact_paths")
-      .and_then(|value| value.as_array())
-      .expect("artifact paths should exist");
-    assert_eq!(artifact_paths.len(), cli_result.artifact_paths.len());
-    let mcp_artifact_output_name = artifact_paths[0]
-      .as_str()
-      .and_then(|value| std::path::Path::new(value).file_name())
-      .and_then(|value| value.to_str())
-      .expect("mcp artifact output filename should exist");
-    let cli_artifact_output_name = cli_result.artifact_paths[0]
-      .file_name()
-      .and_then(|value| value.to_str())
-      .expect("cli artifact output filename should exist");
-    assert_eq!(mcp_artifact_output_name, cli_artifact_output_name);
+    assert_eq!(
+      invoke_json.get("status").and_then(|value| value.as_str()),
+      Some("completed")
+    );
+    assert_eq!(
+      invoke_json.get("signals"),
+      Some(&serde_json::Value::Object(Default::default()))
+    );
+    assert_eq!(
+      invoke_json
+        .get("artifacts")
+        .and_then(|value| value.as_array())
+        .map(Vec::len),
+      Some(0)
+    );
 
     let inspect = client
       .call_tool(CallToolRequestParam {
@@ -640,23 +596,90 @@ mod tests {
       .get("text")
       .and_then(|value| value.as_str())
       .expect("inspect text should exist");
-    assert!(inspect_text.contains("Summary: Listed"));
-    assert!(
-      inspect_text.contains("resolved steam.library.list.v0 -> steam.local.steam_library_list")
-    );
-    assert!(inspect_text.contains("backend=steam.local_appmanifest.library-list"));
-    assert!(inspect_text.contains("artifact.captured"));
-    assert!(inspect_text.contains("kind=steam-library-list"));
-    assert!(inspect_text.contains(artifact_path));
-    assert!(inspect_text.contains("resolvedSource=local_appmanifest"));
-    assert!(inspect_text.contains("appCount="));
+    assert!(inspect_text.contains("Summary: fixture observed"));
+    assert!(inspect_text.contains("name=auv.command.invoke"));
+    assert!(inspect_text.contains("resolved fixture.observe"));
+
+    let failed_invoke = client
+      .call_tool(CallToolRequestParam {
+        name: "invoke".into(),
+        arguments: Some(
+          serde_json::json!({
+            "command_id": "app.activate",
+            "dry_run": false,
+            "inputs": {},
+            "target": {},
+            "inspect": {
+              "store_root": store_root.display().to_string()
+            }
+          })
+          .as_object()
+          .unwrap()
+          .clone(),
+        ),
+      })
+      .await?;
+    let failed_invoke_json: serde_json::Value = serde_json::from_str(
+      &failed_invoke
+        .content
+        .first()
+        .and_then(|content| content.raw.as_text())
+        .expect("failed invoke should return text content")
+        .text,
+    )
+    .expect("failed invoke text should decode as json");
+    let failed_run_id = failed_invoke_json
+      .get("run_id")
+      .and_then(|value| value.as_str())
+      .expect("failed run_id should exist")
+      .to_string();
     assert_eq!(
-      normalize_run_text(inspect_text),
-      normalize_run_text(&cli_inspect)
+      failed_invoke_json
+        .get("status")
+        .and_then(|value| value.as_str()),
+      Some("failed")
     );
+    assert!(
+      failed_invoke_json
+        .get("failure_message")
+        .and_then(|value| value.as_str())
+        .is_some_and(|message| message.contains("typed app activation API"))
+    );
+
+    let failed_inspect = client
+      .call_tool(CallToolRequestParam {
+        name: "run_inspect".into(),
+        arguments: Some(
+          serde_json::json!({
+            "run_id": failed_run_id,
+            "store_root": store_root.display().to_string()
+          })
+          .as_object()
+          .unwrap()
+          .clone(),
+        ),
+      })
+      .await?;
+    let failed_inspect_json: serde_json::Value = serde_json::from_str(
+      &failed_inspect
+        .content
+        .first()
+        .and_then(|content| content.raw.as_text())
+        .expect("failed inspect should return text content")
+        .text,
+    )
+    .expect("failed inspect text should decode as json");
+    let failed_inspect_text = failed_inspect_json
+      .get("text")
+      .and_then(|value| value.as_str())
+      .expect("failed inspect text should exist");
+    assert!(failed_inspect_text.contains("Status: error"));
+    assert!(failed_inspect_text.contains("command.failed"));
+    assert!(failed_inspect_text.contains("typed app activation API"));
 
     client.cancel().await?;
     server_handle.await??;
+    let _ = std::fs::remove_dir_all(store_root);
     Ok(())
   }
 
@@ -721,19 +744,5 @@ mod tests {
 
   fn temp_dir(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()))
-  }
-
-  fn normalize_run_text(raw: &str) -> String {
-    raw
-      .lines()
-      .filter(|line| {
-        !line.starts_with("Run run_")
-          && !line.contains("event_")
-          && !line.contains("span=000000")
-          && !line.contains("parent=000000")
-          && !line.contains("name=auv.command parent=n/a")
-      })
-      .collect::<Vec<_>>()
-      .join("\n")
   }
 }

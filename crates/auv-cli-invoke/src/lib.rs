@@ -15,7 +15,10 @@ pub mod registry;
 
 pub use arg::ArgSpec;
 pub use auv_cli_invoke_macros::invoke_command;
-pub use command::{CommandGroup, CommandNode, InvokeCommand, InvokeNamespace};
+pub use command::{
+  CommandGroup, CommandNode, InvokeCommand, InvokeCommandInput, InvokeCommandOutput,
+  InvokeCommandResult, InvokeNamespace,
+};
 pub use help::{render_command_help, render_help_index};
 pub use registry::{InvokeRegistry, default_registry};
 
@@ -114,8 +117,8 @@ mod tests {
     assert!(help.contains("  input.key"));
     assert!(help.contains("MEDIA CONTROL\n"));
     assert!(help.contains("  mediaControl.nowPlaying"));
-    assert!(help.contains("STEAM\n"));
-    assert!(help.contains("  steam.library.list.v0"));
+    assert!(!help.contains("STEAM\n"));
+    assert!(!help.contains("  steam.library.list.v0"));
     assert!(!help.contains("debug."));
     assert!(!help.contains("verify."));
     assert!(!help.contains("music."));
@@ -310,10 +313,10 @@ mod tests {
       "mediaControl.togglePlayPause",
       "mediaControl.next",
       "mediaControl.previous",
-      "steam.library.list.v0",
       "fixture.observe",
     ] {
-      assert!(registry.resolve(id).is_some(), "{id}");
+      assert!(registry.resolve(id).is_some(), "{id} should be registered");
     }
+    assert!(registry.resolve("steam.library.list.v0").is_none());
   }
 }

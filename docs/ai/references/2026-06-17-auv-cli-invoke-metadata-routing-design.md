@@ -45,15 +45,17 @@ catalog and an execution adapter.
 Those runtime outputs belong to the command implementation and to the
 capabilities it calls.
 
-This boundary can improve before all legacy root driver adapters are deleted.
+This boundary can improve before all root driver adapters are replaced with
+typed domain capabilities.
 If a command still executes through root runtime compatibility code, that
 compatibility belongs outside `auv-cli-invoke`; it must not leak back into
 `#[invoke_command]` metadata.
 
 ## Macro Contract
 
-`#[invoke_command]` marks an invoke command metadata anchor as routable from the
-invoke sub-command registry. The macro standardizes only registration metadata:
+`#[invoke_command]` marks an invoke implementation function as routable from the
+invoke sub-command registry. The macro standardizes metadata and registers the
+function pointer; the function body owns execution.
 
 ```rust
 #[invoke_command(
@@ -62,11 +64,15 @@ invoke sub-command registry. The macro standardizes only registration metadata:
   summary = "List installed Steam library apps from local appmanifest files.",
   args = NO_ARGS,
 )]
-fn library_list() {}
+fn library_list(
+  input: InvokeCommandInput<'_>,
+) -> Result<InvokeCommandExecution, String> {
+  // Command implementation calls the relevant domain crate or capability.
+}
 ```
 
 The generated `library_list_invoke_command()` constructor is public registry
-metadata. The anchor function is not an execution API.
+metadata plus the implementation function pointer.
 
 The macro should not require or generate:
 
@@ -90,8 +96,21 @@ This keeps `auv-cli-invoke` as an external interface wrapper over project
 capabilities instead of a thin hardcoded proxy to `auv-driver`.
 
 Runtime remains responsible for run recording, span ownership, artifact
-persistence, inspection-compatible invoke results, and the temporary legacy
-route table used by commands that have not yet moved to typed domain execution.
+persistence, inspection-compatible invoke results, and adapting temporary driver
+operation requests while commands migrate to typed domain execution.
+
+The temporary `DriverOperation` return value is an implementation detail
+inside command functions. It is not macro metadata and should be replaced
+command-by-command as typed domain capabilities become available.
+
+## Superseded Detail
+
+The temporary `DriverOperation` adapter has now been removed from
+`auv-cli-invoke` and root runtime invoke handling. `#[invoke_command]` still
+registers metadata plus a function pointer, but the function returns
+`InvokeCommandOutput` directly. Commands with no typed capability yet return an
+explicit typed-API gap error instead of routing through root driver operation
+strings.
 
 ## CLI Adapter
 
@@ -106,8 +125,8 @@ to a new CLI framework.
 ## First Refactor Slice
 
 The first implementation slice should remove the misleading dispatch model from
-`auv-cli-invoke` without trying to delete every legacy driver adapter at the
-same time:
+`auv-cli-invoke` without trying to delete every root driver adapter at the same
+time:
 
 - Delete `InvokeDriverDispatch`.
 - Delete `InvokeCommandHandler`.
