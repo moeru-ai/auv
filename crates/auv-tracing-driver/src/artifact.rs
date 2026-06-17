@@ -10,7 +10,7 @@ pub struct ArtifactRef {
   pub captured_event_id: Option<EventId>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProducedArtifact {
   pub kind: String,
   pub source_path: PathBuf,

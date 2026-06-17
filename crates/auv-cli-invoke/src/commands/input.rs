@@ -6,6 +6,8 @@ use crate::{
   },
   invoke_command,
 };
+#[cfg(target_os = "macos")]
+use auv_tracing_driver::{ProducedArtifact, now_millis};
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("input", "INPUT")
@@ -199,11 +201,11 @@ fn type_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     .input()
     .type_text(text, TypeTextOptions::default())
     .map_err(|error| error.to_string())?;
-  Ok(input_action_output(
+  input_action_output(
     "typed text into active control",
     "auv-driver-macos.input",
     &result,
-  ))
+  )
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -236,6 +238,15 @@ fn paste_text_preserve_clipboard_impl(input: InvokeCommandInput<'_>) -> InvokeCo
   output
     .signals
     .insert("clipboard_disturbance".to_string(), "temporary".to_string());
+  // TODO(invoke-paste-input-action-result): paste_text currently returns only
+  // success/failure, so this handler cannot persist a typed InputActionResult
+  // artifact like input.typeText/input.key. Extend the typed paste API to
+  // return delivery evidence before claiming full input artifact coverage.
+  output.verification =
+    Some("activation-only; semantic success requires a separate verification result".to_string());
+  output
+    .known_limits
+    .push("input.pasteText records clipboard-based input delivery only; it does not verify target UI state.".to_string());
   Ok(output)
 }
 
@@ -263,11 +274,11 @@ fn press_key_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
       ..KeyPressOptions::default()
     })
     .map_err(|error| error.to_string())?;
-  Ok(input_action_output(
+  input_action_output(
     "pressed key in active app",
     "auv-driver-macos.input",
     &result,
-  ))
+  )
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -308,7 +319,7 @@ fn input_action_output(
   summary: &str,
   backend: &str,
   result: &auv_driver::InputActionResult,
-) -> InvokeCommandOutput {
+) -> InvokeCommandResult {
   let mut output = InvokeCommandOutput::new(summary);
   output.backend = Some(backend.to_string());
   output.signals.insert(
@@ -337,4 +348,34 @@ fn input_action_output(
       .insert("input.fallback_reason".to_string(), reason.clone());
   }
   output
+    .artifacts
+    .push(input_action_artifact(result, "input-action-result")?);
+  output.verification =
+    Some("activation-only; semantic success requires a separate verification result".to_string());
+  output
+    .known_limits
+    .push("input delivery records the selected input path and attempts only; it does not verify target UI state.".to_string());
+  Ok(output)
+}
+
+#[cfg(target_os = "macos")]
+fn input_action_artifact(
+  result: &auv_driver::InputActionResult,
+  label: &str,
+) -> Result<ProducedArtifact, String> {
+  let source_path = std::env::temp_dir().join(format!(
+    "auv-invoke-{label}-{}-{}.json",
+    std::process::id(),
+    now_millis()
+  ));
+  let body = serde_json::to_vec_pretty(result)
+    .map_err(|error| format!("failed to serialize input action artifact: {error}"))?;
+  std::fs::write(&source_path, body)
+    .map_err(|error| format!("failed to write input action artifact: {error}"))?;
+  Ok(ProducedArtifact {
+    kind: "input-action-result".to_string(),
+    source_path,
+    preferred_name: format!("{label}.json"),
+    note: Some("Typed InputActionResult recorded by the invoke handler.".to_string()),
+  })
 }

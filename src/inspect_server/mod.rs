@@ -331,9 +331,11 @@ async fn get_run(
   let candidate_action_execution_lineage =
     crate::run_read::extract_candidate_action_execution_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
+  let command_boundary_claims = extract_command_boundary_claims(&run);
   Ok(
     Json(InspectRunResponse {
       run: run.run,
+      command_boundary_claims,
       verifications,
       observation_snapshots,
       detector_recognition_lineage,
@@ -343,6 +345,26 @@ async fn get_run(
     })
     .into_response(),
   )
+}
+
+fn extract_command_boundary_claims(run: &CanonicalRun) -> Vec<CommandBoundaryClaim> {
+  run
+    .events
+    .iter()
+    .filter_map(|event| match event.name.as_str() {
+      "command.verification" => Some(CommandBoundaryClaim {
+        span_id: event.span_id.clone(),
+        kind: "verification".to_string(),
+        message: event.message.clone().unwrap_or_default(),
+      }),
+      "command.known_limit" => Some(CommandBoundaryClaim {
+        span_id: event.span_id.clone(),
+        kind: "known_limit".to_string(),
+        message: event.message.clone().unwrap_or_default(),
+      }),
+      _ => None,
+    })
+    .collect()
 }
 
 async fn get_spans(
@@ -510,6 +532,8 @@ struct InspectRunResponse {
   #[serde(flatten)]
   run: RunRecordV1Alpha1,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  command_boundary_claims: Vec<CommandBoundaryClaim>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
   verifications: Vec<VerificationResult>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   observation_snapshots: Vec<ObservationSnapshot>,
@@ -521,6 +545,13 @@ struct InspectRunResponse {
   candidate_action_decision_lineage: Vec<crate::run_read::CandidateActionDecisionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   candidate_action_execution_lineage: Vec<crate::run_read::CandidateActionExecutionLineage>,
+}
+
+#[derive(serde::Serialize)]
+struct CommandBoundaryClaim {
+  span_id: auv_tracing_driver::trace::SpanId,
+  kind: String,
+  message: String,
 }
 
 #[allow(clippy::result_large_err)]
@@ -1869,6 +1900,12 @@ mod tests {
       .expect("body should read");
     let run: serde_json::Value = serde_json::from_slice(&run_body).expect("run should be json");
     assert_eq!(run["run_id"], "run_inspect_server_contracts");
+    assert_eq!(run["command_boundary_claims"][0]["kind"], "verification");
+    assert_eq!(
+      run["command_boundary_claims"][0]["message"],
+      "activation-only; semantic success requires a separate verification result"
+    );
+    assert_eq!(run["command_boundary_claims"][1]["kind"], "known_limit");
     assert_eq!(run["verifications"][0]["method"]["kind"], "semantic_match");
     assert_eq!(
       run["observation_snapshots"][0]["snapshot_id"],
@@ -3383,7 +3420,31 @@ mod tests {
       .write_run_snapshot(&CanonicalRun {
         run,
         spans: vec![span],
-        events: Vec::new(),
+        events: vec![
+          EventRecordV1Alpha1 {
+            api_version: EVENT_API_VERSION.to_string(),
+            event_id: EventId::new("event_command_verification"),
+            span_id: span_id.clone(),
+            name: "command.verification".to_string(),
+            timestamp_millis: 100,
+            attributes: BTreeMap::new(),
+            message: Some(
+              "activation-only; semantic success requires a separate verification result"
+                .to_string(),
+            ),
+            artifact_ids: Vec::new(),
+          },
+          EventRecordV1Alpha1 {
+            api_version: EVENT_API_VERSION.to_string(),
+            event_id: EventId::new("event_command_known_limit"),
+            span_id: span_id.clone(),
+            name: "command.known_limit".to_string(),
+            timestamp_millis: 100,
+            attributes: BTreeMap::new(),
+            message: Some("input delivery does not verify target UI state".to_string()),
+            artifact_ids: Vec::new(),
+          },
+        ],
         artifacts,
       })
       .expect("run should persist");

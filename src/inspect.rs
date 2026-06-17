@@ -152,6 +152,36 @@ pub fn render_run_text(
     output.push_str(&format!("- … {} more\n", run.artifacts.len() - 20));
   }
 
+  let command_boundary_claims = run
+    .events
+    .iter()
+    .filter(|event| event.name == "command.verification")
+    .collect::<Vec<_>>();
+  let command_known_limits = run
+    .events
+    .iter()
+    .filter(|event| event.name == "command.known_limit")
+    .collect::<Vec<_>>();
+  output.push_str("\nCommand Boundary Claims:\n");
+  if command_boundary_claims.is_empty() && command_known_limits.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for event in command_boundary_claims {
+      output.push_str(&format!(
+        "- verification={} span={}\n",
+        event.message.as_deref().unwrap_or("n/a"),
+        event.span_id
+      ));
+    }
+    for event in command_known_limits {
+      output.push_str(&format!(
+        "- known_limit={} span={}\n",
+        event.message.as_deref().unwrap_or("n/a"),
+        event.span_id
+      ));
+    }
+  }
+
   output.push_str("\nVerifications:\n");
   if verifications.is_empty() {
     output.push_str("- none\n");
@@ -696,16 +726,40 @@ mod tests {
         summary: None,
         failure: None,
       }],
-      events: vec![EventRecordV1Alpha1 {
-        api_version: EVENT_API_VERSION.to_string(),
-        event_id,
-        span_id: root_span_id.clone(),
-        name: "inspect.event".to_string(),
-        timestamp_millis: 1,
-        attributes: BTreeMap::new(),
-        message: Some("event message".to_string()),
-        artifact_ids: vec![artifact_id.clone()],
-      }],
+      events: vec![
+        EventRecordV1Alpha1 {
+          api_version: EVENT_API_VERSION.to_string(),
+          event_id,
+          span_id: root_span_id.clone(),
+          name: "inspect.event".to_string(),
+          timestamp_millis: 1,
+          attributes: BTreeMap::new(),
+          message: Some("event message".to_string()),
+          artifact_ids: vec![artifact_id.clone()],
+        },
+        EventRecordV1Alpha1 {
+          api_version: EVENT_API_VERSION.to_string(),
+          event_id: EventId::new("event_command_verification"),
+          span_id: root_span_id.clone(),
+          name: "command.verification".to_string(),
+          timestamp_millis: 1,
+          attributes: BTreeMap::new(),
+          message: Some(
+            "activation-only; semantic success requires a separate verification result".to_string(),
+          ),
+          artifact_ids: Vec::new(),
+        },
+        EventRecordV1Alpha1 {
+          api_version: EVENT_API_VERSION.to_string(),
+          event_id: EventId::new("event_command_known_limit"),
+          span_id: root_span_id.clone(),
+          name: "command.known_limit".to_string(),
+          timestamp_millis: 1,
+          attributes: BTreeMap::new(),
+          message: Some("input delivery does not verify target UI state".to_string()),
+          artifact_ids: Vec::new(),
+        },
+      ],
       artifacts: vec![ArtifactRecordV1Alpha1 {
         api_version: ARTIFACT_API_VERSION.to_string(),
         artifact_id: artifact_id.clone(),
@@ -1066,6 +1120,11 @@ mod tests {
     assert!(output.contains("auv.inspect.span"));
     assert!(output.contains("inspect.event"));
     assert!(output.contains("artifact_test"));
+    assert!(output.contains("Command Boundary Claims:"));
+    assert!(output.contains(
+      "verification=activation-only; semantic success requires a separate verification result"
+    ));
+    assert!(output.contains("known_limit=input delivery does not verify target UI state"));
     assert!(output.contains("Verifications:"));
     assert!(output.contains("method=semantic_match"));
     assert!(output.contains("Observations:"));

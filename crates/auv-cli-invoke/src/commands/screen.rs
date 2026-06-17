@@ -3,6 +3,8 @@ use crate::{
   arg::{IMAGE_TEXT_ARGS, REGION_ARGS, SCREEN_TEXT_ARGS, TARGET_ARGS},
   invoke_command,
 };
+#[cfg(target_os = "macos")]
+use auv_tracing_driver::{ProducedArtifact, now_millis};
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("screen", "SCREEN")
@@ -149,6 +151,27 @@ fn capture_region_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     "capture.height".to_string(),
     capture.capture.image.height().to_string(),
   );
+  // TODO(invoke-capture-contract-artifacts): this records the captured pixels
+  // and basic dimensions, but not the standalone capture-contract artifact.
+  // Add it after the direct-invoke contract JSON shape is accepted in
+  // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
+  let source_path = invoke_artifact_path(input.command_id, "region-capture", "png");
+  capture
+    .capture
+    .image
+    .save(&source_path)
+    .map_err(|error| format!("failed to write screen.captureRegion artifact: {error}"))?;
+  output.artifacts.push(ProducedArtifact {
+    kind: "screen-region-capture".to_string(),
+    source_path,
+    preferred_name: format!("{}-region-capture.png", input.command_id.replace('.', "-")),
+    note: Some("Region screenshot captured by screen.captureRegion.".to_string()),
+  });
+  output.verification = Some("capture-only; no semantic success claim".to_string());
+  output.known_limits.push(
+    "screen.captureRegion records a region screenshot only; it does not verify UI semantics."
+      .to_string(),
+  );
   Ok(output)
 }
 
@@ -194,12 +217,33 @@ fn find_screen_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCom
           "screen.waitForText did not find text {query:?} before timeout"
         ));
       }
-      return Ok(text_matches_output(
+      let mut output = text_matches_output(
         input.command_id,
         "auv-driver-macos.vision",
         matches.matches.len(),
         matches.best_match().map(|matched| matched.text.as_str()),
-      ));
+      );
+      // TODO(invoke-recognition-result-artifacts): this records the OCR source
+      // screenshot and scalar match signals, but not a structured
+      // recognition-result artifact with query/bounds/confidence. Add that
+      // after the artifact shape is accepted in the direct-command handoff.
+      let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
+      capture
+        .capture
+        .image
+        .save(&source_path)
+        .map_err(|error| format!("failed to write screen OCR screenshot artifact: {error}"))?;
+      output.artifacts.push(ProducedArtifact {
+        kind: "screen-ocr-screenshot".to_string(),
+        source_path,
+        preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
+        note: Some("Screenshot used for screen OCR matching.".to_string()),
+      });
+      output.verification = Some("recognition-only; no semantic success claim".to_string());
+      output
+        .known_limits
+        .push("screen OCR recognition records text matches and source screenshot only; it does not verify downstream UI state.".to_string());
+      return Ok(output);
     }
     thread::sleep(wait_options.poll_interval);
   }
@@ -245,12 +289,33 @@ fn click_screen_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult 
     matches.matches.len(),
     Some(matched.text.as_str()),
   );
+  // TODO(invoke-recognition-result-artifacts): clickText records the OCR
+  // source screenshot used for target resolution, but not the structured
+  // recognition-result artifact. Add it with screen.findText once the
+  // direct-invoke recognition artifact shape is accepted.
+  let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
+  capture
+    .capture
+    .image
+    .save(&source_path)
+    .map_err(|error| format!("failed to write screen click OCR screenshot artifact: {error}"))?;
+  output.artifacts.push(ProducedArtifact {
+    kind: "screen-ocr-screenshot".to_string(),
+    source_path,
+    preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
+    note: Some("Screenshot used to resolve screen.clickText OCR target.".to_string()),
+  });
   output
     .signals
     .insert("click.x".to_string(), point.x.to_string());
   output
     .signals
     .insert("click.y".to_string(), point.y.to_string());
+  output.verification =
+    Some("activation-only; semantic success requires a separate verification result".to_string());
+  output
+    .known_limits
+    .push("screen.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
   Ok(output)
 }
 
@@ -292,6 +357,17 @@ fn reject_target_activation(
 
 fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
   InvokeCommandOutput::new(format!("dry run: {command_id}"))
+}
+
+#[cfg(target_os = "macos")]
+fn invoke_artifact_path(command_id: &str, label: &str, extension: &str) -> std::path::PathBuf {
+  std::env::temp_dir().join(format!(
+    "auv-invoke-{}-{label}-{}-{}.{}",
+    command_id.replace('.', "-"),
+    std::process::id(),
+    now_millis(),
+    extension
+  ))
 }
 
 fn text_matches_output(

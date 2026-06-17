@@ -43,6 +43,78 @@ These commands now call typed APIs or produce deterministic direct output:
 - `input.pasteText`
 - `input.key`
 
+## Remaining Evidence TODOs
+
+The current direct invoke evidence lane is intentionally handler-owned: command
+functions construct `InvokeCommandOutput { signals, artifacts, known_limits,
+verification }`, and runtime only records what the handler returns. The
+following gaps are known and intentionally left visible at the code site with
+`TODO:` markers.
+
+### Boundary Claim Model
+
+- Code marker: `TODO(invoke-boundary-claims)`.
+- Current state: `InvokeCommandOutput::verification` is a human-readable command
+  boundary claim recorded as `command.verification` and rendered under
+  `Command Boundary Claims`.
+- Deferred gap: this is not yet a first-class read-side model separate from
+  typed semantic `VerificationResult`.
+- Reason: capture-only, recognition-only, read-only, and activation-only claims
+  must not be misrepresented as semantic verification results.
+- Reopen trigger: define an accepted boundary-claim schema for inspect CLI,
+  inspect server, and future viewer APIs.
+
+### Capture Contract Artifacts
+
+- Code marker: `TODO(invoke-capture-contract-artifacts)`.
+- Current state: `display.capture`, `screen.captureRegion`, and
+  `window.capture` return screenshot artifacts plus scalar capture/display
+  signals.
+- Deferred gap: they do not yet emit standalone capture-contract artifacts.
+- Reason: the old root adapter had capture-contract artifacts, but direct invoke
+  needs an accepted JSON shape that is independent of the removed driver
+  operation route.
+- Reopen trigger: accept the direct-invoke capture-contract JSON shape, then add
+  artifacts from each capture handler without reintroducing macro metadata.
+
+### Recognition Result Artifacts
+
+- Code marker: `TODO(invoke-recognition-result-artifacts)`.
+- Current state: screen/window OCR commands record source screenshots when the
+  handler has a capture and expose match count / best text as signals.
+- Deferred gap: they do not yet emit a structured `recognition-result` artifact
+  containing query, all matches, bounds, confidence, source capture reference,
+  and coordinate-space metadata.
+- Reason: this should be a durable artifact contract consumed by inspection and
+  candidate promotion, not a one-off JSON dump local to `auv-cli-invoke`.
+- Reopen trigger: accept the recognition-result artifact shape and wire the
+  screen/window OCR handlers to emit it.
+
+### Paste Input Action Result
+
+- Code marker: `TODO(invoke-paste-input-action-result)`.
+- Current state: `input.pasteText` records activation-only boundary text,
+  clipboard disturbance signal, and known limits.
+- Deferred gap: it does not persist a typed `InputActionResult` artifact.
+- Reason: the typed paste API currently returns success/failure only, unlike
+  `input.typeText` and `input.key`, which return `InputActionResult`.
+- Reopen trigger: extend the typed paste API to return delivery evidence, then
+  persist it as an `input-action-result` artifact.
+
+### Window Capture Backend Stability
+
+- Code marker: `TODO(invoke-window-capture-backend)`.
+- Current state: window capture/OCR handlers are wired to produce boundary
+  claims and artifacts when capture succeeds.
+- Deferred gap: live verification on 2026-06-18 reproduced single-window capture
+  failures for Chrome and NetEase Cloud Music:
+  ScreenCaptureKit timed out after 10 seconds and xcap fallback failed to copy
+  window data.
+- Reason: this is a typed window capture backend reliability problem, not an
+  invoke evidence-shape problem.
+- Reopen trigger: stabilize or replace the typed window capture backend, then
+  rerun the live window.capture/window.findText/window.clickText smoke checks.
+
 ## Explicit Typed-API Gaps
 
 These commands intentionally return explicit errors instead of routing through

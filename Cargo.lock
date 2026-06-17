@@ -383,6 +383,8 @@ dependencies = [
  "auv-cli-invoke-macros",
  "auv-driver",
  "auv-driver-macos",
+ "auv-tracing-driver",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::arg::ArgSpec;
+use auv_tracing_driver::ProducedArtifact;
 
 type InvokeCommandHandler = fn(InvokeCommandInput<'_>) -> InvokeCommandResult;
 
@@ -18,6 +19,19 @@ pub struct InvokeCommandOutput {
   pub backend: Option<String>,
   pub signals: BTreeMap<String, String>,
   pub notes: Vec<String>,
+  pub artifacts: Vec<ProducedArtifact>,
+  pub known_limits: Vec<String>,
+  /// Human-readable boundary claim produced by the handler for this execution.
+  ///
+  /// This is intentionally not a structured `VerificationResult`: direct
+  /// invoke commands such as capture/OCR often need to state "capture-only" or
+  /// "recognition-only" without claiming semantic success.
+  // TODO(invoke-boundary-claims): promote this event-backed string into a
+  // first-class read-side boundary-claim model after the shape in
+  // `docs/ai/references/2026-06-18-invoke-direct-command-implementations-handoff.md`
+  // is accepted. Do not map capture-only/recognition-only/activation-only
+  // claims into semantic `VerificationResult`s.
+  pub verification: Option<String>,
 }
 
 impl InvokeCommandOutput {
@@ -27,6 +41,9 @@ impl InvokeCommandOutput {
       backend: None,
       signals: BTreeMap::new(),
       notes: Vec::new(),
+      artifacts: Vec::new(),
+      known_limits: Vec::new(),
+      verification: None,
     }
   }
 }
@@ -124,5 +141,19 @@ pub fn spec(
     summary,
     args,
     handler,
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::InvokeCommandOutput;
+
+  #[test]
+  fn command_output_defaults_evidence_fields_to_empty() {
+    let output = InvokeCommandOutput::new("observed");
+
+    assert!(output.artifacts.is_empty());
+    assert!(output.known_limits.is_empty());
+    assert!(output.verification.is_none());
   }
 }

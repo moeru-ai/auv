@@ -3,6 +3,8 @@ use crate::{
   arg::{NO_ARGS, TARGET_ARGS},
   invoke_command,
 };
+#[cfg(target_os = "macos")]
+use auv_tracing_driver::{ProducedArtifact, now_millis};
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("display", "DISPLAY")
@@ -123,6 +125,10 @@ fn list_displays_impl() -> InvokeCommandResult {
   for (index, display) in displays.displays.iter().take(5).enumerate() {
     insert_display_signals(&mut output, &format!("display.{index}"), display);
   }
+  output.verification = Some("read-only; no semantic success claim".to_string());
+  output
+    .known_limits
+    .push("display.list records the observed display inventory only.".to_string());
   Ok(output)
 }
 
@@ -171,6 +177,26 @@ fn capture_display_impl() -> InvokeCommandResult {
       .signals
       .insert("capture.fallback_reason".to_string(), reason);
   }
+  // TODO(invoke-capture-contract-artifacts): this handler records the screenshot
+  // and coordinate signals, but not the old standalone capture-contract
+  // artifact. Add the contract artifact after its direct-invoke JSON shape is
+  // accepted in `2026-06-18-invoke-direct-command-implementations-handoff.md`.
+  let source_path = invoke_artifact_path("display-capture", "png");
+  result
+    .capture
+    .image
+    .save(&source_path)
+    .map_err(|error| format!("failed to write display.capture screenshot artifact: {error}"))?;
+  output.artifacts.push(ProducedArtifact {
+    kind: "display-screenshot".to_string(),
+    source_path,
+    preferred_name: "display-capture.png".to_string(),
+    note: Some("Screenshot captured by display.capture.".to_string()),
+  });
+  output.verification = Some("capture-only; no semantic success claim".to_string());
+  output
+    .known_limits
+    .push("display.capture records a screenshot and coordinate signals only; it does not verify UI semantics.".to_string());
   Ok(output)
 }
 
@@ -223,6 +249,16 @@ fn format_rect(rect: auv_driver::Rect) -> String {
     "x={:.0},y={:.0},width={:.0},height={:.0}",
     rect.origin.x, rect.origin.y, rect.size.width, rect.size.height
   )
+}
+
+#[cfg(target_os = "macos")]
+fn invoke_artifact_path(label: &str, extension: &str) -> std::path::PathBuf {
+  std::env::temp_dir().join(format!(
+    "auv-invoke-{label}-{}-{}.{}",
+    std::process::id(),
+    now_millis(),
+    extension
+  ))
 }
 
 #[cfg(test)]

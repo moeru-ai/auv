@@ -66,6 +66,10 @@ fn probe_permissions_impl() -> InvokeCommandResult {
     "permission.automation_to_system_events".to_string(),
     permissions.automation_to_system_events.as_str().to_string(),
   );
+  output.verification = Some("read-only; no semantic success claim".to_string());
+  output
+    .known_limits
+    .push("app.probePermissions records current permission status only; it does not verify an application workflow.".to_string());
   Ok(output)
 }
 

@@ -523,6 +523,60 @@ impl Runtime {
       record_event(run, command_span.id(), "command.note", Some(note.clone()));
     }
 
+    if let Some(verification) = &output.verification {
+      record_event(
+        run,
+        command_span.id(),
+        "command.verification",
+        Some(verification.clone()),
+      );
+    }
+
+    for known_limit in &output.known_limits {
+      record_event(
+        run,
+        command_span.id(),
+        "command.known_limit",
+        Some(known_limit.clone()),
+      );
+    }
+
+    let artifact_result =
+      self
+        .recording
+        .record_produced_artifacts(run, &command_span, output.artifacts);
+    let (artifact_records, artifact_paths) = match artifact_result {
+      Ok(recorded) => (recorded.records, recorded.paths),
+      Err(failure) => {
+        let failure_message = format!(
+          "command {} artifact recording failed: {}",
+          command.id, failure.message
+        );
+        let output_summary = format!(
+          "Command invocation produced output, but artifact recording failed. Inspect {} for the recorded trace.",
+          run.id()
+        );
+        run.finish_span(
+          &command_span,
+          auv_tracing_driver::run_builder::SpanFinish {
+            status_code: TraceStatusCode::Error,
+            summary: Some(output_summary.clone()),
+            failure: Some(failure_message.clone()),
+          },
+        )?;
+        return Ok(InvokeResult {
+          run_id: run.id().to_string(),
+          producer_span_id: command_span.id().clone(),
+          status: RunStatus::Failed,
+          output_summary,
+          signals: output.signals,
+          artifacts: failure.recorded.records,
+          artifact_paths: failure.recorded.paths,
+          failure_message: Some(failure_message),
+        });
+      }
+    };
+
     record_event(
       run,
       command_span.id(),
@@ -545,8 +599,8 @@ impl Runtime {
       status: RunStatus::Completed,
       output_summary: output.summary,
       signals: output.signals,
-      artifacts: Vec::new(),
-      artifact_paths: Vec::new(),
+      artifacts: artifact_records,
+      artifact_paths,
       failure_message: None,
     })
   }
@@ -589,6 +643,7 @@ mod tests {
   use std::path::PathBuf;
   use std::sync::Arc;
 
+  use auv_tracing_driver::ProducedArtifact;
   use serde_json::json;
 
   use super::{
@@ -936,6 +991,26 @@ mod tests {
     Err("handler refused test command".to_string())
   }
 
+  fn artifact_registered_handler_command(
+    input: auv_cli_invoke::InvokeCommandInput<'_>,
+  ) -> auv_cli_invoke::InvokeCommandResult {
+    let source_path = temp_dir("runtime-direct-handler-artifact").join("source.txt");
+    fs::write(&source_path, "direct handler artifact\n").expect("artifact source should write");
+
+    let mut output = auv_cli_invoke::InvokeCommandOutput::new("direct artifact completed");
+    output.artifacts.push(ProducedArtifact {
+      kind: "direct-handler-report".to_string(),
+      source_path,
+      preferred_name: format!("{}-report.txt", input.command_id.replace('.', "-")),
+      note: Some("Direct handler artifact.".to_string()),
+    });
+    output
+      .known_limits
+      .push("fixture direct handler evidence only".to_string());
+    output.verification = Some("fixture-only; no semantic success claim".to_string());
+    Ok(output)
+  }
+
   #[test]
   fn invoke_resolved_records_direct_command_output_without_driver_span() {
     let project_root = temp_dir("runtime-resolved-project");
@@ -1004,6 +1079,58 @@ mod tests {
           .message
           .as_deref()
           .is_some_and(|message| message.contains("handler note"))
+    }));
+
+    let _ = fs::remove_dir_all(project_root);
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_resolved_records_direct_handler_artifacts() {
+    let project_root = temp_dir("runtime-resolved-artifact-project");
+    let store_root = temp_dir("runtime-resolved-artifact-store");
+    let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
+    let command = auv_cli_invoke::command::spec(
+      REGISTERED_HANDLER_COMMAND_ID,
+      auv_cli_invoke::InvokeNamespace::Fixture,
+      "Test registered command handler artifacts.",
+      auv_cli_invoke::arg::NO_ARGS,
+      artifact_registered_handler_command,
+    );
+
+    let result = runtime
+      .invoke_resolved(
+        InvokeRequest {
+          command_id: REGISTERED_HANDLER_COMMAND_ID.to_string(),
+          ..InvokeRequest::default()
+        },
+        &command,
+      )
+      .expect("resolved invoke should record direct handler artifacts");
+
+    assert_eq!(result.status, RunStatus::Completed);
+    assert_eq!(result.artifacts.len(), 1);
+    assert_eq!(result.artifacts[0].role, "direct-handler-report");
+    assert_eq!(result.artifact_paths.len(), 1);
+    let canonical = runtime.read_run(&result.run_id).expect("run should read");
+    assert_eq!(canonical.artifacts.len(), 1);
+    assert!(canonical.events.iter().any(|event| {
+      event.name == "artifact.captured"
+        && event.artifact_ids == vec![result.artifacts[0].artifact_id.clone()]
+    }));
+    assert!(canonical.events.iter().any(|event| {
+      event.name == "command.verification"
+        && event
+          .message
+          .as_deref()
+          .is_some_and(|message| message.contains("fixture-only"))
+    }));
+    assert!(canonical.events.iter().any(|event| {
+      event.name == "command.known_limit"
+        && event
+          .message
+          .as_deref()
+          .is_some_and(|message| message.contains("evidence only"))
     }));
 
     let _ = fs::remove_dir_all(project_root);

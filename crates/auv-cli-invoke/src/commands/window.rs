@@ -3,6 +3,8 @@ use crate::{
   arg::{NO_ARGS, WINDOW_ARGS, WINDOW_TEXT_ARGS, WINDOW_VERIFY_TEXT_ARGS},
   invoke_command,
 };
+#[cfg(target_os = "macos")]
+use auv_tracing_driver::{ProducedArtifact, now_millis};
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("window", "WINDOW")
@@ -203,6 +205,10 @@ fn list_windows_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
         .insert("window.first.app_name".to_string(), app_name.clone());
     }
   }
+  output.verification = Some("read-only; no semantic success claim".to_string());
+  output
+    .known_limits
+    .push("window.list records the observed visible window inventory only.".to_string());
   Ok(output)
 }
 
@@ -241,6 +247,31 @@ fn capture_window_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     "capture.height".to_string(),
     capture.image.height().to_string(),
   );
+  // TODO(invoke-window-capture-backend): live testing on 2026-06-18 showed
+  // ScreenCaptureKit single-window capture can time out and xcap fallback can
+  // fail for Chrome/NetEase windows. Stabilize the typed window capture backend
+  // before treating window.* evidence as reliably available.
+  //
+  // TODO(invoke-capture-contract-artifacts): this records the window screenshot
+  // and scalar capture signals, but not a standalone capture-contract artifact.
+  // Add it after the direct-invoke contract JSON shape is accepted in
+  // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
+  let source_path = invoke_artifact_path(input.command_id, "window-capture", "png");
+  capture
+    .image
+    .save(&source_path)
+    .map_err(|error| format!("failed to write window.capture artifact: {error}"))?;
+  output.artifacts.push(ProducedArtifact {
+    kind: "window-capture".to_string(),
+    source_path,
+    preferred_name: format!("{}-window-capture.png", input.command_id.replace('.', "-")),
+    note: Some("Window screenshot captured by window.capture.".to_string()),
+  });
+  output.verification = Some("capture-only; no semantic success claim".to_string());
+  output.known_limits.push(
+    "window.capture records a resolved window screenshot only; it does not verify UI semantics."
+      .to_string(),
+  );
   Ok(output)
 }
 
@@ -252,6 +283,7 @@ fn capture_window_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 #[cfg(target_os = "macos")]
 fn find_window_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCommandResult {
   use auv_driver::{Driver, RatioRect, WaitOptions};
+  use std::{thread, time::Instant};
 
   if input.dry_run {
     return Ok(dry_run_output(input.command_id));
@@ -264,36 +296,54 @@ fn find_window_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCom
     .window()
     .resolve(window_selector(&input))
     .map_err(|error| error.to_string())?;
-  let matches = if wait {
-    session
+  let wait_options = WaitOptions::default();
+  let started = Instant::now();
+  loop {
+    let capture = session
       .window()
-      .wait_text(
-        &window,
-        query,
-        RatioRect::new(0.0, 0.0, 1.0, 1.0),
-        WaitOptions::default(),
-      )
-      .map_err(|error| error.to_string())?
-  } else {
-    session
-      .window()
-      .find_text(
-        &window,
-        query,
-        RatioRect::new(0.0, 0.0, 1.0, 1.0),
-        WaitOptions::default(),
-      )
-      .map_err(|error| error.to_string())?
-  };
+      .capture(&window)
+      .map_err(|error| error.to_string())?;
+    let matches = session
+      .vision()
+      .find_text_in_capture(&capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0))
+      .map_err(|error| error.to_string())?;
+    if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
+      if wait && matches.matches.is_empty() {
+        return Err(format!(
+          "window.waitForText did not find text {query:?} before timeout"
+        ));
+      }
 
-  let mut output = text_matches_output(
-    input.command_id,
-    "auv-driver-macos.window.vision",
-    matches.matches.len(),
-    matches.best_match().map(|matched| matched.text.as_str()),
-  );
-  add_window_signals(&mut output, &window);
-  Ok(output)
+      let mut output = text_matches_output(
+        input.command_id,
+        "auv-driver-macos.window.vision",
+        matches.matches.len(),
+        matches.best_match().map(|matched| matched.text.as_str()),
+      );
+      add_window_signals(&mut output, &window);
+      // TODO(invoke-recognition-result-artifacts): this records the window OCR
+      // source screenshot and scalar match signals, but not a structured
+      // recognition-result artifact with query/bounds/confidence. Add it after
+      // the artifact shape is accepted in the direct-command handoff.
+      let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
+      capture
+        .image
+        .save(&source_path)
+        .map_err(|error| format!("failed to write window OCR screenshot artifact: {error}"))?;
+      output.artifacts.push(ProducedArtifact {
+        kind: "window-ocr-screenshot".to_string(),
+        source_path,
+        preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
+        note: Some("Window screenshot used for OCR matching.".to_string()),
+      });
+      output.verification = Some("recognition-only; no semantic success claim".to_string());
+      output
+        .known_limits
+        .push("window OCR recognition records text matches and source screenshot only; it does not verify downstream UI state.".to_string());
+      return Ok(output);
+    }
+    thread::sleep(wait_options.poll_interval);
+  }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -303,7 +353,7 @@ fn find_window_text_impl(_input: InvokeCommandInput<'_>, _wait: bool) -> InvokeC
 
 #[cfg(target_os = "macos")]
 fn click_window_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{ClickOptions, Driver, RatioRect, ScreenPoint, WaitOptions};
+  use auv_driver::{ClickOptions, Driver, RatioRect, ScreenPoint};
 
   if input.dry_run {
     return Ok(dry_run_output(input.command_id));
@@ -316,14 +366,13 @@ fn click_window_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult 
     .window()
     .resolve(window_selector(&input))
     .map_err(|error| error.to_string())?;
-  let matches = session
+  let capture = session
     .window()
-    .find_text(
-      &window,
-      query,
-      RatioRect::new(0.0, 0.0, 1.0, 1.0),
-      WaitOptions::default(),
-    )
+    .capture(&window)
+    .map_err(|error| error.to_string())?;
+  let matches = session
+    .vision()
+    .find_text_in_capture(&capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0))
     .map_err(|error| error.to_string())?;
   let matched = matches
     .best_match()
@@ -345,6 +394,21 @@ fn click_window_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult 
     Some(matched.text.as_str()),
   );
   add_window_signals(&mut output, &window);
+  // TODO(invoke-recognition-result-artifacts): clickText records the OCR source
+  // screenshot used for target resolution, but not the structured
+  // recognition-result artifact. Add it with window.findText once the
+  // direct-invoke recognition artifact shape is accepted.
+  let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
+  capture
+    .image
+    .save(&source_path)
+    .map_err(|error| format!("failed to write window click OCR screenshot artifact: {error}"))?;
+  output.artifacts.push(ProducedArtifact {
+    kind: "window-ocr-screenshot".to_string(),
+    source_path,
+    preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
+    note: Some("Window screenshot used to resolve window.clickText OCR target.".to_string()),
+  });
   output.signals.insert(
     "input.selected_path".to_string(),
     format!("{:?}", action.selected_path),
@@ -357,6 +421,11 @@ fn click_window_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult 
     "click.window_y".to_string(),
     window_point.point().y.to_string(),
   );
+  output.verification =
+    Some("activation-only; semantic success requires a separate verification result".to_string());
+  output
+    .known_limits
+    .push("window.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
   Ok(output)
 }
 
@@ -404,6 +473,17 @@ fn required_input<'a>(input: &'a InvokeCommandInput<'_>, name: &str) -> Result<&
 
 fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
   InvokeCommandOutput::new(format!("dry run: {command_id}"))
+}
+
+#[cfg(target_os = "macos")]
+fn invoke_artifact_path(command_id: &str, label: &str, extension: &str) -> std::path::PathBuf {
+  std::env::temp_dir().join(format!(
+    "auv-invoke-{}-{label}-{}-{}.{}",
+    command_id.replace('.', "-"),
+    std::process::id(),
+    now_millis(),
+    extension
+  ))
 }
 
 #[cfg(target_os = "macos")]

@@ -14,5 +14,10 @@ pub fn group() -> CommandGroup {
   args = NO_ARGS,
 )]
 fn observe(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  Ok(InvokeCommandOutput::new("fixture observed"))
+  let mut output = InvokeCommandOutput::new("fixture observed");
+  output.verification = Some("read-only; no semantic success claim".to_string());
+  output
+    .known_limits
+    .push("fixture.observe records deterministic fixture output only.".to_string());
+  Ok(output)
 }
