@@ -2,9 +2,11 @@ use std::collections::BTreeMap;
 
 use proc_macro::{TokenStream, TokenTree};
 
+const ALLOWED_ATTR_KEYS: &[&str] = &["id", "group", "summary", "args"];
+
 #[proc_macro_attribute]
 pub fn invoke_command(attr: TokenStream, item: TokenStream) -> TokenStream {
-  let handler_name = match find_function_name(item.clone()) {
+  let function_name = match find_function_name(item.clone()) {
     Some(name) => name,
     None => return compile_error("invoke_command must annotate a function"),
   };
@@ -12,20 +14,8 @@ pub fn invoke_command(attr: TokenStream, item: TokenStream) -> TokenStream {
     Ok(values) => values,
     Err(error) => return compile_error(&error),
   };
-  for key in [
-    "id",
-    "group",
-    "summary",
-    "driver",
-    "operation",
-    "args",
-    "disturbance",
-    "max_disturbance",
-    "artifacts",
-    "signals",
-    "verification",
-  ] {
-    if !values.contains_key(key) {
+  for key in ALLOWED_ATTR_KEYS {
+    if !values.contains_key(*key) {
       return compile_error(&format!(
         "invoke_command missing required `{key}` attribute"
       ));
@@ -39,54 +29,17 @@ pub fn invoke_command(attr: TokenStream, item: TokenStream) -> TokenStream {
     Err(error) => return compile_error(&error),
   };
   let summary = &values["summary"];
-  let driver = &values["driver"];
-  let operation = &values["operation"];
   let args = &values["args"];
-  let disturbance = &values["disturbance"];
-  let max_disturbance = &values["max_disturbance"];
-  let artifacts = &values["artifacts"];
-  let signals = &values["signals"];
-  let verification = &values["verification"];
-  let export_name = format!("{handler_name}_invoke_command");
-
-  let spec_call = if let Some(operation_namespace) = values.get("operation_namespace") {
-    format!(
-      "::auv_cli_invoke::command::spec_with_operation_namespace(
-        {id},
-        ::auv_cli_invoke::InvokeNamespace::{namespace},
-        {operation_namespace},
-        {summary},
-        {driver},
-        {operation},
-        {disturbance},
-        {max_disturbance},
-        {args},
-        &{artifacts},
-        &{signals},
-        {verification},
-      )"
-    )
-  } else {
-    format!(
-      "::auv_cli_invoke::command::spec(
-        {id},
-        ::auv_cli_invoke::InvokeNamespace::{namespace},
-        {summary},
-        {driver},
-        {operation},
-        {disturbance},
-        {max_disturbance},
-        {args},
-        &{artifacts},
-        &{signals},
-        {verification},
-      )"
-    )
-  };
+  let export_name = format!("{function_name}_invoke_command");
 
   let generated = format!(
     "pub fn {export_name}() -> ::auv_cli_invoke::InvokeCommand {{
-      {spec_call}.with_handler({handler_name}, stringify!({handler_name}))
+      ::auv_cli_invoke::command::spec(
+        {id},
+        ::auv_cli_invoke::InvokeNamespace::{namespace},
+        {summary},
+        {args},
+      )
     }}"
   );
 
@@ -118,6 +71,7 @@ fn parse_attrs(attr: TokenStream) -> Result<BTreeMap<String, String>, String> {
       continue;
     }
     let (key, value) = parse_key_value(entry)?;
+    validate_attr_key(&key)?;
     if values.insert(key.clone(), value).is_some() {
       return Err(format!("invoke_command duplicate `{key}` attribute"));
     }
@@ -160,6 +114,16 @@ fn parse_key_value(tokens: Vec<TokenTree>) -> Result<(String, String), String> {
   Ok((key, tokens_to_string(value_tokens)))
 }
 
+fn validate_attr_key(key: &str) -> Result<(), String> {
+  if ALLOWED_ATTR_KEYS.contains(&key) {
+    Ok(())
+  } else {
+    Err(format!(
+      "invoke_command unknown attribute `{key}`; expected only: id, group, summary, args"
+    ))
+  }
+}
+
 fn tokens_to_string(tokens: Vec<TokenTree>) -> String {
   tokens.into_iter().collect::<TokenStream>().to_string()
 }
@@ -189,7 +153,7 @@ fn compile_error(message: &str) -> TokenStream {
 
 #[cfg(test)]
 mod tests {
-  use super::namespace_for_group_literal;
+  use super::{namespace_for_group_literal, validate_attr_key};
 
   #[test]
   fn namespace_for_group_literal_accepts_supported_groups() {
@@ -208,5 +172,25 @@ mod tests {
 
     assert!(error.contains("invoke_command unknown group"));
     assert!(error.contains("mediaControl"));
+  }
+
+  #[test]
+  fn validate_attr_key_rejects_execution_metadata_keys() {
+    for key in [
+      "driver",
+      "operation",
+      "disturbance",
+      "max_disturbance",
+      "artifacts",
+      "signals",
+      "verification",
+      "operation_namespace",
+    ] {
+      let error = validate_attr_key(key).expect_err("old execution metadata should be rejected");
+
+      assert!(error.contains("invoke_command unknown attribute"));
+      assert!(error.contains(key));
+      assert!(error.contains("id, group, summary, args"));
+    }
   }
 }

@@ -20,8 +20,7 @@ pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
 use crate::contract::ArtifactRef;
 use crate::driver::DriverRegistry;
 use crate::model::{
-  AuvResult, DriverCall, DriverDescriptor, DriverRunContext, ExecutionTarget, InvokeRequest,
-  InvokeResult, RunStatus,
+  AuvResult, DriverCall, DriverDescriptor, DriverRunContext, InvokeRequest, InvokeResult, RunStatus,
 };
 use crate::recording::{MemoryRunRecorder, RunRecorder, RunRecordingBackend};
 use crate::store::LocalStore;
@@ -366,12 +365,7 @@ impl Runtime {
     command: &auv_cli_invoke::InvokeCommand,
   ) -> AuvResult<InvokeResult> {
     self.invoke_in_command_run(|runtime, run, root| {
-      let dispatch = command.dispatch(auv_cli_invoke::InvokeContext {
-        target_application_id: request.target.application_id.as_deref(),
-        target_label: request.target.target_label.as_deref(),
-        inputs: &request.inputs,
-      });
-      runtime.invoke_direct_command_in_span(run, root, &command.operation, dispatch)
+      runtime.invoke_metadata_command_in_span(run, root, command, request)
     })
   }
 
@@ -443,25 +437,33 @@ impl Runtime {
         "unknown command {command_id}; use `auv-cli invoke --help` to inspect available entries"
       )
     })?;
-    let dispatch = command.dispatch(auv_cli_invoke::InvokeContext {
-      target_application_id: request.target.application_id.as_deref(),
-      target_label: request.target.target_label.as_deref(),
-      inputs: &request.inputs,
-    });
-    self.invoke_direct_command_in_span(run, parent, &command.operation, dispatch)
+    self.invoke_metadata_command_in_span(run, parent, command, request)
   }
 
-  fn invoke_direct_command_in_span(
+  fn invoke_metadata_command_in_span(
     &self,
     run: &mut crate::run_builder::RecordingRun,
     parent: &crate::run_builder::SpanRef,
-    command: &auv_driver::OperationSpec,
-    dispatch: auv_cli_invoke::InvokeDriverDispatch,
+    command: &auv_cli_invoke::InvokeCommand,
+    request: InvokeRequest,
   ) -> AuvResult<InvokeResult> {
-    let driver = self.drivers.get(dispatch.driver_id).ok_or_else(|| {
+    let route = legacy_invoke_route(command.id)
+      .ok_or_else(|| format!("command {} has no legacy runtime route", command.id))?;
+    self.invoke_legacy_command_in_span(run, parent, command.id, route, request)
+  }
+
+  fn invoke_legacy_command_in_span(
+    &self,
+    run: &mut crate::run_builder::RecordingRun,
+    parent: &crate::run_builder::SpanRef,
+    command_id: &str,
+    route: LegacyInvokeRoute,
+    request: InvokeRequest,
+  ) -> AuvResult<InvokeResult> {
+    let driver = self.drivers.get(route.driver_id).ok_or_else(|| {
       format!(
         "command {} resolved to missing driver {}",
-        command.id, dispatch.driver_id
+        command_id, route.driver_id
       )
     })?;
 
@@ -470,10 +472,10 @@ impl Runtime {
       crate::run_builder::running_span_record(
         "auv.command.invoke",
         command_attributes(
-          command.id,
-          dispatch.driver_id,
-          dispatch.operation,
-          dispatch.target_application_id.as_deref(),
+          command_id,
+          route.driver_id,
+          route.operation,
+          request.target.application_id.as_deref(),
         ),
       ),
     )?;
@@ -483,7 +485,7 @@ impl Runtime {
       "command.resolved",
       Some(format!(
         "resolved {} -> {}.{}",
-        command.id, dispatch.driver_id, dispatch.operation
+        command_id, route.driver_id, route.operation
       )),
     );
 
@@ -492,10 +494,10 @@ impl Runtime {
       crate::run_builder::running_span_record(
         "auv.driver.invoke",
         command_attributes(
-          command.id,
-          dispatch.driver_id,
-          dispatch.operation,
-          dispatch.target_application_id.as_deref(),
+          command_id,
+          route.driver_id,
+          route.operation,
+          request.target.application_id.as_deref(),
         ),
       ),
     )?;
@@ -503,19 +505,13 @@ impl Runtime {
       run,
       driver_span.id(),
       "driver.invoke",
-      Some(format!(
-        "invoking {}.{}",
-        dispatch.driver_id, dispatch.operation
-      )),
+      Some(format!("invoking {}.{}", route.driver_id, route.operation)),
     );
 
     let call = DriverCall {
-      operation: dispatch.operation.to_string(),
-      target: ExecutionTarget {
-        application_id: dispatch.target_application_id,
-        target_label: dispatch.target_label,
-      },
-      inputs: dispatch.inputs,
+      operation: route.operation.to_string(),
+      target: request.target,
+      inputs: request.inputs,
       working_directory: self.project_root.clone(),
       run_context: DriverRunContext {
         run_id: run.id().to_string(),
@@ -633,6 +629,84 @@ impl Runtime {
   }
 }
 
+#[derive(Clone, Copy)]
+struct LegacyInvokeRoute {
+  driver_id: &'static str,
+  operation: &'static str,
+}
+
+// NOTICE(invoke-runtime-legacy-route): this root-runtime table preserves current invoke execution after auv-cli-invoke stops carrying driver metadata. Move each entry to typed domain capability code before deleting src/driver/macos.
+fn legacy_invoke_route(command_id: &str) -> Option<LegacyInvokeRoute> {
+  let (driver_id, operation) = match command_id {
+    "app.activate" => ("macos.desktop", "activate_app"),
+    "app.probePermissions" => ("macos.desktop", "probe_permissions"),
+    "display.capture" => ("macos.desktop", "capture_display"),
+    "display.identifyPoint" => ("macos.desktop", "identify_point"),
+    "display.list" => ("macos.desktop", "list_displays"),
+    "display.probeCoordinateReadiness" => ("macos.desktop", "probe_coordinate_readiness"),
+    "display.projectScreenshotPoint" => ("macos.desktop", "project_screenshot_point"),
+    "fixture.observe" => ("fixture.observe", "observe_fixture_scene"),
+    "input.axClickWindowText" => ("macos.desktop", "ax_click_window_text"),
+    "input.axFocusText" => ("macos.desktop", "ax_focus_text_input"),
+    "input.axPressButton" => ("macos.desktop", "ax_press_button"),
+    "input.clickPoint" => ("macos.desktop", "click_point"),
+    "input.clickWindowPoint" => ("macos.desktop", "click_window_point"),
+    "input.focusText" => ("macos.desktop", "focus_text_input"),
+    "input.key" => ("macos.desktop", "press_key"),
+    "input.pasteText" => ("macos.desktop", "paste_text_preserve_clipboard"),
+    "input.pressButton" => ("macos.desktop", "press_button"),
+    "input.scrollPoint" => ("macos.desktop", "scroll_point"),
+    "input.smartPress" => ("macos.desktop", "smart_press"),
+    "input.teachClick" => ("macos.desktop", "teach_click"),
+    "input.typeText" => ("macos.desktop", "type_text"),
+    "mediaControl.next" => ("macos.desktop", "media_control_next"),
+    "mediaControl.nowPlaying" => ("macos.desktop", "media_control_now_playing"),
+    "mediaControl.pause" => ("macos.desktop", "media_control_pause"),
+    "mediaControl.play" => ("macos.desktop", "media_control_play"),
+    "mediaControl.previous" => ("macos.desktop", "media_control_previous"),
+    "mediaControl.togglePlayPause" => ("macos.desktop", "media_control_toggle_play_pause"),
+    "overlay.applyCursorBatch" => ("macos.desktop", "overlay_apply_cursor_batch"),
+    "overlay.clickPoint" => ("macos.desktop", "overlay_click_point"),
+    "overlay.flashCursor" => ("macos.desktop", "overlay_flash_cursor"),
+    "overlay.flashCursorById" => ("macos.desktop", "overlay_flash_cursor_by_id"),
+    "overlay.hideCursor" => ("macos.desktop", "overlay_hide_cursor"),
+    "overlay.hideCursorId" => ("macos.desktop", "overlay_hide_cursor_id"),
+    "overlay.moveCursor" => ("macos.desktop", "overlay_move_cursor"),
+    "overlay.moveCursorById" => ("macos.desktop", "overlay_move_cursor_by_id"),
+    "overlay.setCursor" => ("macos.desktop", "overlay_set_cursor"),
+    "overlay.showCursor" => ("macos.desktop", "overlay_show_cursor"),
+    "overlay.showDualCursor" => ("macos.desktop", "overlay_show_dual_cursor"),
+    "overlay.shutdown" => ("macos.desktop", "overlay_shutdown"),
+    "screen.captureRegion" => ("macos.desktop", "capture_region"),
+    "screen.clickRow" => ("macos.desktop", "click_screen_row"),
+    "screen.clickText" => ("macos.desktop", "click_screen_text"),
+    "screen.findImageText" => ("macos.desktop", "find_image_text"),
+    "screen.findRows" => ("macos.desktop", "find_screen_rows"),
+    "screen.findText" => ("macos.desktop", "find_screen_text"),
+    "screen.waitForRows" => ("macos.desktop", "wait_for_screen_rows"),
+    "screen.waitForText" => ("macos.desktop", "wait_for_screen_text"),
+    "steam.library.list.v0" => ("steam.local", "steam_library_list"),
+    "window.capture" => ("macos.desktop", "capture_window"),
+    "window.captureAxTree" => ("macos.desktop", "capture_ax_tree"),
+    "window.clickRow" => ("macos.desktop", "click_window_row"),
+    "window.clickText" => ("macos.desktop", "click_window_text"),
+    "window.findIconMatch" => ("macos.desktop", "find_icon_match"),
+    "window.findRows" => ("macos.desktop", "find_window_rows"),
+    "window.findText" => ("macos.desktop", "find_window_text"),
+    "window.list" => ("macos.desktop", "list_windows"),
+    "window.observeRegion" => ("macos.desktop", "observe_window_region"),
+    "window.scrollRegion" => ("macos.desktop", "scroll_window_region"),
+    "window.verifyText" => ("macos.desktop", "verify_ax_text"),
+    "window.waitForRows" => ("macos.desktop", "wait_for_window_rows"),
+    "window.waitForText" => ("macos.desktop", "wait_for_window_text"),
+    _ => return None,
+  };
+  Some(LegacyInvokeRoute {
+    driver_id,
+    operation,
+  })
+}
+
 fn command_attributes(
   command_id: &str,
   driver_id: &str,
@@ -701,6 +775,22 @@ mod tests {
   const TEST_COMMAND_ID: &str = "fixture.observe";
   const TEST_DRIVER_ID: &str = "fixture.observe";
   const TEST_OPERATION: &str = "observe_fixture_scene";
+
+  #[test]
+  fn default_registry_commands_have_legacy_runtime_routes() {
+    let registry = auv_cli_invoke::default_registry();
+
+    for command in registry.all() {
+      // The coupling belongs in root runtime while the legacy route table exists:
+      // registered invoke commands are user-facing commands, so they must not
+      // appear in help/MCP and then fail before runtime can select execution.
+      assert!(
+        super::legacy_invoke_route(command.id).is_some(),
+        "{} should have a root runtime legacy route until it migrates to typed execution",
+        command.id
+      );
+    }
+  }
 
   impl RunRecorder for FailRunFinishedRecorder {
     fn record(&self, update: RunUpdate) -> AuvResult<()> {
