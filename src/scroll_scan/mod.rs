@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 
 use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
-use crate::recording::RecordingHandle;
 use crate::trace::{RunId, SpanId};
+use auv_tracing_driver::RecordingHandle;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

@@ -51,6 +51,7 @@ ultralytics-inference.workspace = true
 
 [dev-dependencies]
 auv-cli = { path = "../.." }
+auv-tracing-driver = { path = "../auv-tracing-driver" }
 ndarray.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

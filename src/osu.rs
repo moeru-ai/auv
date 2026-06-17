@@ -8,9 +8,9 @@ use auv_game_osu::{
 
 use crate::model::AuvResult;
 use crate::recorded_operation::RecordedOperationOutput;
-use crate::recording::RecordingHandle;
 use crate::run_builder::RunSpec;
 use crate::trace::RunType;
+use auv_tracing_driver::RecordingHandle;
 
 pub fn run_osu_benchmark(
   recording: &RecordingHandle,

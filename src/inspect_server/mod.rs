@@ -33,10 +33,10 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::contract::{ObservationSnapshot, VerificationResult};
 use crate::model::AuvResult;
-use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
 use crate::run_read::{CandidatePromotionLineage, DetectorRecognitionLineage};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::trace::{RunId, RunRecordV1Alpha1, TraceState};
+use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
 
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_INSPECT_PORT: u16 = 8765;
@@ -908,7 +908,6 @@ mod tests {
     VerificationResult,
   };
   use crate::model::now_millis;
-  use crate::recording::{BroadcastRunRecorder, RunRecorder, RunUpdate};
   use crate::scroll_scan::{
     CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster,
     ScanPageRecord, ScanRegion, ScanTarget, ScrollBoundaryCandidate, ScrollScanArtifact,
@@ -921,6 +920,7 @@ mod tests {
     EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
     SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
+  use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate};
 
   fn camel_case_keys_to_snake(value: &mut serde_json::Value) {
     rename_json_keys(value, camel_to_snake);
