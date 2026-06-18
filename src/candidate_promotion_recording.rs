@@ -618,6 +618,7 @@ mod tests {
       .expect("recorded candidate promotion operation should succeed");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
@@ -948,8 +949,7 @@ mod tests {
       artifact.decision,
       CandidatePromotion::Promoted { .. }
     ));
-    let inspect = runtime
-      .inspect(output.run_id.as_str())
+    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
       .expect("recorded smoke run should inspect");
     assert!(inspect.contains("Candidate Promotion Lineage:"));
     assert!(inspect.contains("projection=identity_window_addressable"));

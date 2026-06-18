@@ -152,7 +152,8 @@ fn slay_the_spire_manual_fixture_stays_observe_only_and_emits_readable_lineage()
     },
   )?;
 
-  let inspect_text = runtime.inspect(recorded.run_id.as_str())?;
+  let inspect_text =
+    auv_cli::inspect::inspect_run(runtime.recording().store(), recorded.run_id.as_str())?;
   assert!(
     inspect_text.contains("Detector Recognition Lineage:"),
     "inspect text should expose detector recognition lineage"
@@ -166,7 +167,10 @@ fn slay_the_spire_manual_fixture_stays_observe_only_and_emits_readable_lineage()
     "inspect text should preserve manual fixture model identity"
   );
 
-  let lineage = runtime.list_detector_recognition_lineage(recorded.run_id.as_str())?;
+  let lineage = auv_cli::inspect::list_detector_recognition_lineage(
+    runtime.recording().store(),
+    recorded.run_id.as_str(),
+  )?;
   assert_eq!(lineage.len(), 1);
   let lineage = &lineage[0];
   assert_eq!(serde_json::to_value(&lineage.status)?, json!("ready"));

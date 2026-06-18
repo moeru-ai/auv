@@ -666,7 +666,8 @@ fn assert_smoke_evidence_outputs(
       .join(format!("{fixture_name}-runtime-project")),
     evidence_paths.runtime_store_root.clone(),
   )?;
-  let inspect_text = runtime.inspect(&evidence_paths.runtime_run_id)?;
+  let inspect_text =
+    auv_cli::inspect::inspect_run(runtime.recording().store(), &evidence_paths.runtime_run_id)?;
   assert!(
     inspect_text.contains("Detector Recognition Lineage:"),
     "{fixture_name}: inspect text must expose detector recognition lineage section"
@@ -679,7 +680,10 @@ fn assert_smoke_evidence_outputs(
     inspect_text.contains("capture-image"),
     "{fixture_name}: inspect text must mention capture-image lineage"
   );
-  let lineage = runtime.list_detector_recognition_lineage(&evidence_paths.runtime_run_id)?;
+  let lineage = auv_cli::inspect::list_detector_recognition_lineage(
+    runtime.recording().store(),
+    &evidence_paths.runtime_run_id,
+  )?;
   assert_eq!(
     lineage.len(),
     1,

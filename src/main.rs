@@ -461,8 +461,8 @@ async fn run() -> Result<(), String> {
       }
     }
     CliCommand::Inspect { run_id } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      print!("{}", runtime.inspect(&run_id)?);
+      let store = auv_cli::build_default_store(project_root.clone())?;
+      print!("{}", auv_cli::inspect::inspect_run(&store, &run_id)?);
     }
     CliCommand::InspectServe { .. } => {
       unreachable!("inspect serve is handled before runtime setup")
@@ -1737,6 +1737,7 @@ mod tests {
     .expect("live click should record");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("run should persist");
     assert_eq!(run.artifacts.len(), 3);
@@ -1747,9 +1748,9 @@ mod tests {
     );
     assert_eq!(run.artifacts[2].role, "operation-result");
 
-    let verifications = runtime
-      .list_verifications(output.run_id.as_str())
-      .expect("verifications should list");
+    let verifications =
+      auv_cli::inspect::list_verifications(runtime.recording().store(), output.run_id.as_str())
+        .expect("verifications should list");
     assert_eq!(verifications.len(), 1);
     assert_eq!(
       verifications[0].method,
@@ -1782,6 +1783,7 @@ mod tests {
     .expect("bridge should succeed");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("run should persist");
     assert_eq!(run.artifacts.len(), 3);
@@ -1792,9 +1794,9 @@ mod tests {
     );
     assert_eq!(run.artifacts[2].role, "minecraft-overlay");
 
-    let inspect_text = runtime
-      .inspect(output.run_id.as_str())
-      .expect("inspect should render run");
+    let inspect_text =
+      auv_cli::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
+        .expect("inspect should render run");
     assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
     assert!(inspect_text.contains("capture_skew_ms=0"));
     assert_eq!(output.value.overlay_artifact_id.is_some(), true);
@@ -1826,6 +1828,7 @@ mod tests {
     .expect("bridge refusal should still record");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("run should persist");
     assert_eq!(run.artifacts.len(), 2);
@@ -1835,9 +1838,9 @@ mod tests {
       auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
 
-    let inspect_text = runtime
-      .inspect(output.run_id.as_str())
-      .expect("inspect should render run");
+    let inspect_text =
+      auv_cli::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
+        .expect("inspect should render run");
     assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
     assert!(inspect_text.contains("capture_skew_ms=999"));
     assert_eq!(
