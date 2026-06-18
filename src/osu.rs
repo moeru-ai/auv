@@ -13,7 +13,7 @@ use crate::{
     RecognitionBox, RecognitionScope, RecognitionSource, RecognitionSurface, SurfaceNode,
   },
   model::AuvResult,
-  session::{FixtureObservationProvider, SessionObservationProvider},
+  session::{BufferedObservationProvider, SessionObservationProvider},
 };
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
@@ -275,7 +275,7 @@ pub fn osu_detection_session_provider(
     .enumerate()
     .map(|(index, frame)| osu_frame_detections_snapshot(index, frame))
     .collect();
-  FixtureObservationProvider::new(provider_id, snapshots)
+  BufferedObservationProvider::new(provider_id, snapshots)
 }
 
 fn osu_frame_detections_snapshot(index: usize, frame: FrameDetections) -> ObservationSnapshot {
