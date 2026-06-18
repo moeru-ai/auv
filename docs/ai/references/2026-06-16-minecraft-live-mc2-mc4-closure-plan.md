@@ -176,6 +176,94 @@ Both stay parked behind live P0 closure. §8's standing discipline holds: 3DGS i
 not load-bearing for modded MC (raycast + depth is the stronger, cheaper truth
 signal); do not pre-commit; let the "no truth source" second scenario pull it in.
 
+## Post-MC-4 sequencing — the realtime substrate is the next slice, not the perception fork (2026-06-18)
+
+The "Deferred decision" above is a **representation-axis** choice (2.5D / 3DGS).
+It is **not** the next thing to build. The next slice is on a different axis —
+**runtime lifecycle** — and both representations sit on top of it.
+
+### Why a daemon/session slice, and why now
+
+Today AUV is one-shot: each CLI invocation reloads the detector (e.g. YOLO) and
+exits, and there is no continuous observation. This was surfaced against the
+**osu** lane (reload-per-run; no live observe), and a v0 design already exists:
+`2026-06-10-stateful-session-daemon-js-repl-v0.md`. This slice realizes its
+**realtime / warm-model** form.
+
+Any cross-frame spatial memory — a 2.5D keyframe cache OR 3DGS — is inherently
+**stateful + realtime** and cannot live on a one-shot CLI. So the daemon/session
+is the **substrate prerequisite** for the whole perception fork, for the
+hot-lane / cold-lane split, and for the detector cold-start fix. One slice
+unblocks three things; that is the leverage.
+
+### Two hard boundaries (write them down)
+
+- **Core, not an MC slice.** The daemon/session is a core runtime capability
+  consumed by every vertical (osu, Minecraft, …). It does **not** live in
+  `auv-game-minecraft` and is **not** "MC-5/6/7". It belongs to the core lane and
+  graduates/lives in core like G2/G3/G4 — same hub discipline (a consolidation
+  move, not a new vertical).
+- **Substrate, not agent (red line).** The session holds **perceptual / spatial
+  state only, never goals**. The daemon exposes `observe` / `act` / `verify` on
+  request and streams observations; it must **not** run its own
+  perceive→decide→act loop. This preserves the frontend-convention "AUV does not
+  implement an agent" and the thin-frontend posture. Guard explicitly against
+  drift toward an airicraft-style autonomous loop.
+
+### The cheap floor (the "other" option, below 2.5D)
+
+Once a session persists across observations, the cheapest spatial memory is the
+session **remembering posed detections** — keyframe + camera pose + detector
+boxes — answerable by lookup ("seen before? / where is it?") with no
+reconstruction, depth, or splat. It sits **below** 2.5D on the representation
+sub-ladder and falls out of the daemon for free. Measure whether it suffices
+before climbing to 2.5D, and 2.5D before 3DGS.
+
+### Ordering
+
+```text
+① now       MC-5 graduation (G2/G3/G4 minimal common shape) + consolidate the dirty tree
+            into a clean PR                                                          (in flight)
+② next      CORE daemon/session realtime substrate (realize the v0 design: warm model,
+            persistent session, continuous observe/act/verify) — written as SUBSTRATE,
+            not agent                                                          ← the unblock
+③ parallel  MC-6 2.5D-baseline texture-sweep measurement (Option A above), OFFLINE — needs
+            no daemon; produces the numerical gate that decides session-floor vs 2.5D vs 3DGS
+④ parked    MC-7 3DGS — behind the three-judge gate below
+```
+
+② is the decision to make now. The representation choice (session-floor / 2.5D /
+3DGS) is an **output of ③**, not a call to make today.
+
+### The 3DGS open-gate — three independent judges, none of them rhetoric
+
+3DGS opens only when all three point "yes":
+
+- **Technical forcing** — decided by ③'s numbers (does 2.5D's pose/occlusion
+  error blow up on flat-color / repetitive textures?). A benchmark, not an
+  argument.
+- **Refusal-seam shape needs it** — decided by reading the current contract. The
+  live MC-4 matrix (7 classes) needs **zero** dense photometric comparison; until
+  a "dense mismatch" refusal class is an explicit contract decision, the seam has
+  no slot for splat.
+- **Market forcing** — an owner product judgment about who pays for an
+  API-denied / feature-poor / depth-less 3D surface. Not decidable by benchmark
+  or by any advisor.
+
+This refines Option B's "open dependency" above into three explicit gates.
+
+### Acceptance gate for ② (the daemon slice)
+
+- A warm detector is held across N `observe` calls **without reload** (kills the
+  cold-start pain).
+- A session persists posed observations across calls and answers one lookup query
+  (the cheap floor).
+- `observe` / `act` / `verify` reuse the existing seam unchanged; **no** new
+  action-result schema; **no** agent loop.
+- Core-resident, with at least one vertical (osu or MC) consuming it as a second
+  consumer. **Design-note-first** in the core lane (not this MC doc) before code,
+  since it touches core runtime.
+
 ## What to avoid next (unchanged from CLAUDE.md / the handoff)
 
 - No third action-result schema beside `ActionResolverDecision` /
