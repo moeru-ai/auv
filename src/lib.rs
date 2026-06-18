@@ -12,6 +12,7 @@ pub mod inference_recognition;
 pub mod inspect;
 pub mod inspect_server;
 pub mod mcp;
+pub mod minecraft_session;
 pub mod model;
 pub mod osu;
 mod run_read;

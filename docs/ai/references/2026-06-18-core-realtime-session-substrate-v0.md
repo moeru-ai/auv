@@ -43,6 +43,10 @@ JS REPL, hot/cold lane split, or spatial-memory representation choice.
   of the two action-result schemas; session action responses must carry that
   type rather than add a third result schema.
 - Opened Collabi session `auv-core-realtime-session-substrate-v0` before edits.
+- Second slice: kept Minecraft-specific projection outside `src/session.rs`.
+  `auv-game-minecraft` now exposes an app-local spatial-frame observation, and
+  root `minecraft_session` converts it into the shared `ObservationSnapshot`
+  contract before registering it with `SessionRuntime`.
 
 Rejected options:
 
@@ -63,6 +67,9 @@ Rejected options:
 - `act` returns `InputActionResult` and marks existing observations stale.
 - A lightweight vertical consumer projects osu fixture detections into the same
   session observation substrate.
+- A second vertical consumer projects Minecraft spatial telemetry frames into
+  the same session observation substrate while preserving the app-local
+  telemetry limits.
 - Focused tests cover the above without requiring a live app.
 
 ## Deferrals
@@ -78,4 +85,6 @@ Rejected options:
   until the first transport or vertical command needs session-originated runs.
 - TODO(session-spatial-memory): keyframe/2.5D/3DGS memory is deferred until the
   MC-6 measurement slice produces numbers that justify a representation choice.
-
+- TODO(session-minecraft-action-loop): Minecraft spatial observations are
+  observe-only in this slice; action selection, world-diff verification loops,
+  and live client scheduling require an owner-approved follow-up.

@@ -430,14 +430,14 @@ fn synthetic_surface_node(
 // a scheduler that observes, decides, and acts without an external caller.
 
 #[derive(Clone)]
-pub(crate) struct FixtureObservationProvider {
+pub struct BufferedObservationProvider {
   provider_id: ProviderId,
   snapshots: Arc<Vec<ObservationSnapshot>>,
   observe_count: usize,
 }
 
-impl FixtureObservationProvider {
-  pub(crate) fn new(provider_id: impl Into<String>, snapshots: Vec<ObservationSnapshot>) -> Self {
+impl BufferedObservationProvider {
+  pub fn new(provider_id: impl Into<String>, snapshots: Vec<ObservationSnapshot>) -> Self {
     Self {
       provider_id: ProviderId::new(provider_id),
       snapshots: Arc::new(snapshots),
@@ -446,7 +446,7 @@ impl FixtureObservationProvider {
   }
 }
 
-impl SessionObservationProvider for FixtureObservationProvider {
+impl SessionObservationProvider for BufferedObservationProvider {
   fn provider_id(&self) -> ProviderId {
     self.provider_id.clone()
   }
@@ -460,7 +460,7 @@ impl SessionObservationProvider for FixtureObservationProvider {
       .snapshots
       .get(index)
       .cloned()
-      .ok_or_else(|| "fixture observation provider has no snapshots".to_string())
+      .ok_or_else(|| "buffered observation provider has no snapshots".to_string())
   }
 }
 
@@ -473,7 +473,7 @@ mod tests {
   #[test]
   fn session_reuses_provider_and_answers_lookup() {
     let mut session = SessionRuntime::new(SessionOptions::default());
-    let provider = FixtureObservationProvider::new(
+    let provider = BufferedObservationProvider::new(
       "fixture.visual",
       vec![synthetic_snapshot(vec![synthetic_surface_node(
         "node_hit_circle",
@@ -513,7 +513,7 @@ mod tests {
   #[test]
   fn action_result_invalidates_observations_without_new_result_schema() {
     let mut session = SessionRuntime::new(SessionOptions::default());
-    let provider_id = session.register_provider(FixtureObservationProvider::new(
+    let provider_id = session.register_provider(BufferedObservationProvider::new(
       "fixture.visual",
       vec![synthetic_snapshot(vec![synthetic_surface_node(
         "node_play",

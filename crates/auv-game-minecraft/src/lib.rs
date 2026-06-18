@@ -5,6 +5,7 @@ pub mod ingest;
 pub mod input_target;
 pub mod overlay;
 pub mod projection;
+pub mod session_observation;
 pub mod types;
 pub mod verify;
 
@@ -17,6 +18,10 @@ pub use ingest::{
 pub use input_target::projected_window_point;
 pub use overlay::render_projection_overlay;
 pub use projection::MinecraftProjector;
+pub use session_observation::{
+  MinecraftSessionNode, MinecraftSessionObservation, MinecraftSessionObservationProvider,
+  frame_to_session_observation,
+};
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,
   MinecraftSpatialFrame, NearbyBlock, NearbyEntity, PlayerPose, ProjectionVisibility, RaycastHit,
