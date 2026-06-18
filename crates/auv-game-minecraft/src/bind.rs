@@ -11,6 +11,26 @@ pub struct BoundSpatialFrame {
   pub capture_skew_ms: i64,
 }
 
+impl BoundSpatialFrame {
+  pub fn to_core_capture_binding(&self) -> Option<auv_driver::CaptureBinding> {
+    self
+      .frame
+      .screenshot_artifact_ref
+      .as_ref()
+      .map(|screenshot_artifact_ref| {
+        auv_driver::CaptureBinding::new(
+          self.frame.spatial_frame_id.clone(),
+          screenshot_artifact_ref.clone(),
+          self.capture_skew_ms,
+        )
+        .with_source_timestamp_millis(self.frame.monotonic_timestamp_ms)
+        .with_known_limit(
+          "minecraft capture binding relies on caller-aligned monotonic clock bases",
+        )
+      })
+  }
+}
+
 /// Bind a freshly ingested spatial frame to a real screenshot capture.
 ///
 /// The sidecar stamps each frame with `monotonic_timestamp_ms` from the running
@@ -79,6 +99,26 @@ mod tests {
       Some("shot.png")
     );
     assert_eq!(bound.frame.mc_capture_skew_ms, Some(300));
+  }
+
+  #[test]
+  fn bound_frame_exposes_core_capture_binding() {
+    let bound = bind_capture_to_frame(frame_at(2_000), "artifact://shot", 1_700);
+
+    let binding = bound
+      .to_core_capture_binding()
+      .expect("bound frame should expose capture binding");
+
+    assert_eq!(binding.source_observation_id, "frame-1");
+    assert_eq!(binding.capture_ref, "artifact://shot");
+    assert_eq!(binding.capture_skew_ms, 300);
+    assert_eq!(binding.source_timestamp_millis, Some(2_000));
+    assert!(
+      binding
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("monotonic clock"))
+    );
   }
 
   #[test]

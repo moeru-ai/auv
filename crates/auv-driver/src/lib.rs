@@ -11,10 +11,15 @@ pub mod traits;
 pub mod vision;
 pub mod window;
 
-pub use capture::{Activation, Capture, CaptureOptions, DisplayCapture, ImageView, RegionCapture};
+pub use capture::{
+  Activation, Capture, CaptureBinding, CaptureOptions, DisplayCapture, ImageView, RegionCapture,
+};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
-pub use geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
+pub use geometry::{
+  CameraPoint, CoordinateSpace, Point, Point3, ProjectionBasis, ProjectionDerivationFamily,
+  ProjectionSourceSpace, RatioRect, Rect, ScreenPoint, Size, WindowPoint, WorldPoint,
+};
 pub use input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
   InputDeliveryPath, InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions,

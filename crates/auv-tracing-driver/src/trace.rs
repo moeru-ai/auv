@@ -83,6 +83,75 @@ id_type!(ArtifactId);
 id_type!(DeviceId);
 id_type!(SessionId);
 
+/// Minimal generic key for stitching a source/basis frame to later action and
+/// verification evidence.
+///
+/// This is not an action result and not a workflow object. It exists so
+/// producers can attach common G2 lineage without teaching core about a
+/// vertical target model.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceCorrelationKey {
+  pub basis_frame_id: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub run_id: Option<RunId>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub span_id: Option<SpanId>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source_artifact_id: Option<ArtifactId>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub action_artifact_id: Option<ArtifactId>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub target_artifact_id: Option<ArtifactId>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub verification_artifact_id: Option<ArtifactId>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub event_id: Option<EventId>,
+}
+
+impl EvidenceCorrelationKey {
+  pub fn new(basis_frame_id: impl Into<String>) -> Self {
+    Self {
+      basis_frame_id: basis_frame_id.into(),
+      ..Self::default()
+    }
+  }
+
+  pub fn with_run(mut self, run_id: RunId) -> Self {
+    self.run_id = Some(run_id);
+    self
+  }
+
+  pub fn with_span(mut self, span_id: SpanId) -> Self {
+    self.span_id = Some(span_id);
+    self
+  }
+
+  pub fn with_source_artifact(mut self, artifact_id: ArtifactId) -> Self {
+    self.source_artifact_id = Some(artifact_id);
+    self
+  }
+
+  pub fn with_action_artifact(mut self, artifact_id: ArtifactId) -> Self {
+    self.action_artifact_id = Some(artifact_id);
+    self
+  }
+
+  pub fn with_target_artifact(mut self, artifact_id: ArtifactId) -> Self {
+    self.target_artifact_id = Some(artifact_id);
+    self
+  }
+
+  pub fn with_verification_artifact(mut self, artifact_id: ArtifactId) -> Self {
+    self.verification_artifact_id = Some(artifact_id);
+    self
+  }
+
+  pub fn with_event(mut self, event_id: EventId) -> Self {
+    self.event_id = Some(event_id);
+    self
+  }
+}
+
 impl DeviceId {
   pub fn default_local() -> Self {
     Self::new(DEFAULT_DEVICE_ID)
@@ -300,6 +369,30 @@ mod tests {
     assert_ne!(
       format_trace_id(0x1234_5678_9abc, 0xdef0_1234, 0),
       format_trace_id(0x1234_5678_9abc, 0xdef0_1235, 0)
+    );
+  }
+
+  #[test]
+  fn evidence_correlation_key_serializes_optional_lineage() {
+    let key = EvidenceCorrelationKey::new("basis-frame-1")
+      .with_run(RunId::new("run-1"))
+      .with_span(SpanId::new("span-1"))
+      .with_source_artifact(ArtifactId::new("artifact-source"))
+      .with_verification_artifact(ArtifactId::new("artifact-verification"));
+
+    let value = serde_json::to_value(&key).expect("serialize correlation key");
+
+    assert_eq!(value["basis_frame_id"], json!("basis-frame-1"));
+    assert_eq!(value["run_id"], json!("run-1"));
+    assert_eq!(value["span_id"], json!("span-1"));
+    assert_eq!(value["source_artifact_id"], json!("artifact-source"));
+    assert_eq!(
+      value["verification_artifact_id"],
+      json!("artifact-verification")
+    );
+    assert!(
+      value.get("action_artifact_id").is_none(),
+      "absent optional lineage should stay absent"
     );
   }
 

@@ -56,7 +56,7 @@ Acceptance gate:
 - G2/G3/G4 minimal shapes live in core: `crates/auv-driver/src/geometry.rs`
   (World/Camera space + projection basis), `crates/auv-inference-common`
   (projected `DetectionCoordinateSpace` variant), correlation key in
-  `src/trace.rs`.
+  `crates/auv-tracing-driver/src/trace.rs`.
 - **Both** `auv-game-osu` and `auv-game-minecraft` re-pointed to consume the core
   shape — the proof it is common, not MC-shaped.
 - No vertical noun in core; no third action-result schema.

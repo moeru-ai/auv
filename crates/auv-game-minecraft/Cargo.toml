@@ -14,6 +14,7 @@ repository.workspace = true
 
 [dependencies]
 auv-driver = { path = "../auv-driver" }
+auv-tracing-driver = { path = "../auv-tracing-driver" }
 image.workspace = true
 serde.workspace = true
 serde_json.workspace = true

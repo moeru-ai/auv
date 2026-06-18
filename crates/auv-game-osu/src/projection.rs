@@ -1,5 +1,9 @@
-use auv_driver::geometry::Rect;
+use auv_driver::CaptureBinding;
+use auv_driver::geometry::{
+  CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect,
+};
 use auv_driver::window::Window;
+use auv_tracing_driver::EvidenceCorrelationKey;
 use serde::{Deserialize, Serialize};
 
 use crate::visual_eval::EvalProjection;
@@ -175,6 +179,55 @@ impl ProjectionArtifact {
     })
   }
 
+  pub fn to_core_projection_basis(
+    &self,
+    basis_id: impl Into<String>,
+    timestamp_millis: u64,
+  ) -> ProjectionBasis {
+    let mut basis = ProjectionBasis::new(
+      basis_id,
+      timestamp_millis,
+      ProjectionSourceSpace::Local2d {
+        name: "osu_playfield".to_string(),
+      },
+      CoordinateSpace::Window("osu_playfield_projection".to_string()),
+      match self.derivation_method {
+        ProjectionDerivationMethod::LayoutRule => ProjectionDerivationFamily::LayoutRule,
+        ProjectionDerivationMethod::EmpiricalCalibration => {
+          ProjectionDerivationFamily::EmpiricalCalibration
+        }
+      },
+    )
+    .with_match_radius_px(f64::from(self.match_radius_px));
+    if self.capture_bounds.is_none() {
+      basis = basis.with_known_limit("osu projection basis has no bound capture rectangle");
+    }
+    basis
+  }
+
+  pub fn to_core_evidence_correlation_key(
+    &self,
+    basis_id: impl Into<String>,
+  ) -> EvidenceCorrelationKey {
+    EvidenceCorrelationKey::new(basis_id)
+  }
+
+  pub fn to_core_capture_binding(
+    &self,
+    source_observation_id: impl Into<String>,
+    capture_ref: impl Into<String>,
+    capture_skew_ms: i64,
+  ) -> CaptureBinding {
+    let mut binding = CaptureBinding::new(source_observation_id, capture_ref, capture_skew_ms)
+      .with_known_limit(
+        "osu capture binding records dataset projection provenance, not input success",
+      );
+    if self.capture_bounds.is_none() {
+      binding = binding.with_known_limit("osu projection artifact has no bound capture rectangle");
+    }
+    binding
+  }
+
   pub fn with_capture(
     mut self,
     capture_bounds: Rect,
@@ -259,6 +312,58 @@ mod tests {
   }
 
   #[test]
+  fn projection_artifact_exposes_core_projection_basis() {
+    let artifact = sample_projection_artifact_with_capture();
+
+    let basis = artifact.to_core_projection_basis("osu-frame-1", 1_000);
+
+    assert_eq!(basis.basis_id, "osu-frame-1");
+    assert_eq!(basis.timestamp_millis, 1_000);
+    assert_eq!(
+      basis.source_space,
+      ProjectionSourceSpace::Local2d {
+        name: "osu_playfield".to_string()
+      }
+    );
+    assert_eq!(
+      basis.derivation_family,
+      ProjectionDerivationFamily::LayoutRule
+    );
+    assert_eq!(
+      basis.match_radius_px,
+      Some(f64::from(artifact.match_radius_px))
+    );
+  }
+
+  #[test]
+  fn projection_artifact_exposes_core_evidence_correlation_key() {
+    let artifact = sample_projection_artifact_with_capture();
+
+    let key = artifact.to_core_evidence_correlation_key("osu-frame-1");
+
+    assert_eq!(key.basis_frame_id, "osu-frame-1");
+    assert!(key.action_artifact_id.is_none());
+    assert!(key.verification_artifact_id.is_none());
+  }
+
+  #[test]
+  fn projection_artifact_exposes_core_capture_binding() {
+    let artifact = sample_projection_artifact_with_capture();
+
+    let binding = artifact.to_core_capture_binding("osu-frame-1", "artifact://osu-capture-1", -16);
+
+    assert_eq!(binding.source_observation_id, "osu-frame-1");
+    assert_eq!(binding.capture_ref, "artifact://osu-capture-1");
+    assert_eq!(binding.capture_skew_ms, -16);
+    assert!(
+      binding
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("dataset projection provenance"))
+    );
+  }
+
+  #[test]
   fn projection_artifact_adapts_to_eval_projection() {
     let artifact = ProjectionArtifact {
       source_window_bounds: ProjectionBounds {
@@ -325,5 +430,33 @@ mod tests {
     let window = test_window(0.0, 720.0);
     let error = PlayfieldProjection::for_window(&window, 4.0).expect_err("must fail");
     assert!(error.contains("positive finite size"));
+  }
+
+  fn sample_projection_artifact_with_capture() -> ProjectionArtifact {
+    let projection = PlayfieldProjection::for_capture(1024.0, 768.0, 4.0).expect("projection");
+    ProjectionArtifact {
+      source_window_bounds: ProjectionBounds {
+        x: 0.0,
+        y: 0.0,
+        width: 1024.0,
+        height: 768.0,
+      },
+      capture_bounds: Some(ProjectionBounds {
+        x: 0.0,
+        y: 0.0,
+        width: 1024.0,
+        height: 768.0,
+      }),
+      capture_width: Some(1024),
+      capture_height: Some(768),
+      capture_scale_factor: Some(1.0),
+      scale_x: projection.scale_x,
+      scale_y: projection.scale_y,
+      offset_x: projection.offset_x,
+      offset_y: projection.offset_y,
+      match_radius_px: projection.match_radius_px,
+      derivation_method: ProjectionDerivationMethod::LayoutRule,
+      verification_reference: None,
+    }
   }
 }

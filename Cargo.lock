@@ -461,6 +461,7 @@ name = "auv-game-minecraft"
 version = "0.0.1"
 dependencies = [
  "auv-driver",
+ "auv-tracing-driver",
  "image",
  "serde",
  "serde_json",
@@ -474,6 +475,7 @@ dependencies = [
  "auv-driver",
  "auv-driver-macos",
  "auv-inference-common",
+ "auv-tracing-driver",
  "image",
  "rosu-map",
  "serde",

@@ -32,10 +32,10 @@ pub use store::{CanonicalRun, LocalStore};
 pub use time::now_millis;
 pub use trace::{
   ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, DeviceId, EVENT_API_VERSION, EventId,
-  EventRecordV1Alpha1, RUN_API_VERSION, RUN_ATTR_DEVICE_ID, RUN_ATTR_SESSION_ID, RunId,
-  RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SessionId, SpanId, SpanRecordV1Alpha1,
-  TraceFailure, TraceId, TraceState, TraceStatusCode, new_event_id, new_run_id, new_span_id,
-  new_trace_id, string_attr,
+  EventRecordV1Alpha1, EvidenceCorrelationKey, RUN_API_VERSION, RUN_ATTR_DEVICE_ID,
+  RUN_ATTR_SESSION_ID, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SessionId, SpanId,
+  SpanRecordV1Alpha1, TraceFailure, TraceId, TraceState, TraceStatusCode, new_event_id, new_run_id,
+  new_span_id, new_trace_id, string_attr,
 };
 #[cfg(test)]
 mod tests {

@@ -90,14 +90,12 @@ pub struct DetectionSet {
 
 /// Coordinate space used by detection bounding boxes inside
 /// [`DetectionEvidenceManifest`].
-///
-/// NOTICE: v0 only supports source-image pixel coordinates because no runtime
-/// capture/window/display projection is available in the current inference
-/// slices.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DetectionCoordinateSpace {
   SourceImagePixels,
+  ProjectedScreenPixels,
+  ProjectedWindowPixels,
 }
 
 /// Inference-scoped source-image identity paired with a [`DetectionSet`].
@@ -121,7 +119,13 @@ pub enum SourceImageRef {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProjectionBasis {
-  Unavailable { reason: String },
+  Unavailable {
+    reason: String,
+  },
+  Projected {
+    basis_id: String,
+    derivation_family: String,
+  },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -355,5 +359,19 @@ mod tests {
     assert_eq!(parsed.detection_set.detections.len(), 1);
     assert_eq!(parsed.model_run.backend, "ultralytics-inference");
     assert_eq!(parsed.model_run.execution_provider.as_deref(), Some("cpu"));
+  }
+
+  #[test]
+  fn projected_coordinate_spaces_serialize_explicitly() {
+    assert_eq!(
+      serde_json::to_value(DetectionCoordinateSpace::ProjectedScreenPixels)
+        .expect("serialize screen coordinate space"),
+      json!("projected_screen_pixels")
+    );
+    assert_eq!(
+      serde_json::to_value(DetectionCoordinateSpace::ProjectedWindowPixels)
+        .expect("serialize window coordinate space"),
+      json!("projected_window_pixels")
+    );
   }
 }

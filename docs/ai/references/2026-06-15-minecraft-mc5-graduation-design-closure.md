@@ -416,13 +416,35 @@ A later narrow implementation slice has now landed the smallest approved G3 proo
 - no new top-level result family
 - no Minecraft-specific nouns in core contracts
 
-This implementation does **not** mean MC-5 as a whole is "graduated" into core. It only proves that one minimal G3 binding fact can be recorded through an already-approved runtime seam.
+A later MC-5 Slice A implementation then landed the minimal common G2/G3/G4
+shape in core, with both osu and Minecraft consuming it:
 
-What remains unchanged after this slice:
-- G2 correlation-key graduation is still open
-- G4 projection-provenance graduation is still open
-- no shared core contract shape has been added yet for G3/G2/G4
+- G2: `EvidenceCorrelationKey` in `crates/auv-tracing-driver/src/trace.rs`;
+  `ProjectionArtifact::to_core_evidence_correlation_key` in `auv-game-osu` and
+  `MinecraftProjectionArtifact::to_core_evidence_correlation_key` in
+  `auv-game-minecraft`.
+- G3: `CaptureBinding` in `crates/auv-driver/src/capture.rs`;
+  `ProjectionArtifact::to_core_capture_binding` in `auv-game-osu` and
+  `BoundSpatialFrame::to_core_capture_binding` in `auv-game-minecraft`.
+- G4: `Point3`, `WorldPoint`, `CameraPoint`, `ProjectionBasis`,
+  `ProjectionSourceSpace`, and `ProjectionDerivationFamily` in
+  `crates/auv-driver/src/geometry.rs`, plus projected detection coordinate
+  variants in `crates/auv-inference-common/src/types.rs`;
+  `ProjectionArtifact::to_core_projection_basis` and
+  `MinecraftProjectionArtifact::to_core_projection_basis` consume the shared
+  provenance shape.
+
+This implementation does **not** mean every Minecraft live path is now
+"graduated" into core. It only graduates the smallest shared metadata contracts
+for evidence stitching, capture binding, and projection provenance. Vertical
+projection math, Minecraft refusal policy, osu playfield policy, and all
+game-specific nouns remain in vertical crates.
+
+What remains unchanged after these slices:
 - live MC-1 / MC-3 / MC-4 evidence gates remain unchanged
+- MC-6 measurement and MC-7 representation work are still separate future gates
+- action execution still uses the existing `ActionResolverDecision` /
+  `InputActionResult` seam; no third action-result schema exists
 
 ## What this closes
 
@@ -432,4 +454,5 @@ It does **not** close:
 - live MC-1 telemetry proof
 - live MC-3 input proof
 - live MC-4 refusal proof
-- the actual implementation of any graduation candidate beyond the narrow G3 binding-fact recording slice
+- MC-6 dataset / 2.5D measurement
+- MC-7 3DGS representation work

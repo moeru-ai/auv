@@ -292,6 +292,11 @@ fn validate_mapping_inputs(
     (ProjectionBasis::Unavailable { .. }, RuntimeProjectionKind::IdentitySourceImagePixels) => {
       Ok(())
     }
+    (ProjectionBasis::Projected { .. }, RuntimeProjectionKind::IdentitySourceImagePixels) => {
+      Err(DetectorRecognitionMappingError::UnsupportedCoordinateSpace(
+        manifest.source_image.coordinate_space,
+      ))
+    }
   }
 }
 
