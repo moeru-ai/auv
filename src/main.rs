@@ -439,8 +439,9 @@ async fn run() -> Result<(), String> {
       println!("output: {}", output.value.output_dir.display());
     }
     CliCommand::Invoke { request, inspect } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let result = runtime.invoke(request)?;
+      let recording = build_recording_for_inspect(&project_root, &inspect)?;
+      let registry = auv_cli_invoke::default_registry();
+      let result = auv_cli_invoke::invoke_recorded(&recording, &registry, request)?;
       println!("runId: {}", result.run_id);
       println!("status: {}", result.status.as_str());
       println!("output: {}", result.output_summary);
@@ -1128,10 +1129,10 @@ fn normalize_write_token(source: &str, token: String) -> Result<String, String> 
   }
 }
 
-fn build_runtime_for_inspect(
+fn build_recording_for_inspect(
   project_root: &Path,
   inspect: &InspectClientOptions,
-) -> Result<auv_cli::runtime::Runtime, String> {
+) -> Result<auv_tracing_driver::RunRecordingBackend, String> {
   let server_target = if should_try_server_write(inspect) {
     if let Some((url, token)) = resolve_inspect_server_target(inspect)? {
       Some((url, token))
@@ -1155,7 +1156,7 @@ fn build_runtime_for_inspect(
   } else {
     temp_runtime_store_root()
   };
-  let store = auv_tracing_driver::store::LocalStore::new(store_root.clone())?;
+  let store = auv_tracing_driver::store::LocalStore::new(store_root)?;
   let mut recorders: Vec<Arc<dyn auv_tracing_driver::RunRecorder>> = Vec::new();
 
   if let Some((url, token)) = server_target {
@@ -1171,9 +1172,19 @@ fn build_runtime_for_inspect(
     1 => recorders.remove(0),
     _ => Arc::new(auv_tracing_driver::CompositeRunRecorder::new(recorders)),
   };
-  let recording = auv_tracing_driver::RunRecordingBackend::new(store, recorder)
-    .with_local_snapshot_write_enabled(local_write_enabled)
-    .with_temporary_store_cleanup(!local_write_enabled);
+  Ok(
+    auv_tracing_driver::RunRecordingBackend::new(store, recorder)
+      .with_local_snapshot_write_enabled(local_write_enabled)
+      .with_temporary_store_cleanup(!local_write_enabled),
+  )
+}
+
+fn build_runtime_for_inspect(
+  project_root: &Path,
+  inspect: &InspectClientOptions,
+) -> Result<auv_cli::runtime::Runtime, String> {
+  let recording = build_recording_for_inspect(project_root, inspect)?;
+  let store_root = recording.store().root().to_path_buf();
   Ok(
     build_runtime_with_store_root(project_root.to_path_buf(), store_root)?
       .with_recording(recording),
@@ -1435,6 +1446,29 @@ mod tests {
     let _ = fs::remove_dir_all(root);
     assert!(error.contains("inspect server write is required"));
     assert_eq!(after, before);
+  }
+
+  #[test]
+  fn recording_for_inspect_uses_cleanup_temp_store_when_local_write_disabled() {
+    let root = std::env::temp_dir().join(format!(
+      "auv-recording-no-local-{}",
+      auv_cli::model::now_millis()
+    ));
+    let inspect = InspectClientOptions {
+      local_write: cli::InspectWriteSetting::Disabled,
+      ..InspectClientOptions::default()
+    };
+
+    let recording =
+      build_recording_for_inspect(&root, &inspect).expect("recording backend should build");
+    let store_root = recording.store().root().to_path_buf();
+
+    assert!(!store_root.starts_with(&root));
+    assert!(store_root.exists());
+
+    drop(recording);
+
+    assert!(!store_root.exists());
   }
 
   #[test]
