@@ -215,6 +215,73 @@ async fn run() -> Result<(), String> {
         println!("artifact: {}", artifact.display());
       }
     }
+    CliCommand::MinecraftExportSpatialBundle {
+      run_id,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_spatial_bundle_export(
+        &runtime.recording().handle(),
+        run_id,
+        PathBuf::from(output_dir),
+        auv_cli::minecraft::current_git_commit(),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!(
+        "sourceRunId: {}",
+        output.value.manifest.source_run.source_run_id
+      );
+      println!(
+        "spatialFrames: {}",
+        output.value.manifest.counts.spatial_frames
+      );
+      println!("screenshots: {}", output.value.manifest.counts.screenshots);
+      println!(
+        "verification: {}",
+        output.value.manifest.counts.verification
+      );
+      println!("overlays: {}", output.value.manifest.counts.overlays);
+      println!("output: {}", output.value.output_dir.display());
+    }
+    CliCommand::MinecraftEvalTextureSweep {
+      samples_path,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_texture_sweep_eval(
+        &runtime.recording().handle(),
+        PathBuf::from(samples_path),
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!("passed: {}", output.value.passed);
+      println!("resourcePacks: {}", output.value.actual_resource_pack_count);
+      println!(
+        "noiseRefusalExercised: {}",
+        output.value.noise_refusal_exercised
+      );
+      for row in &output.value.rows {
+        println!(
+          "row: pack={} profile={} samples={} poseP95={} minIoU={} passed={}",
+          row.resource_pack,
+          row.texture_profile,
+          row.sample_count,
+          row
+            .pose_error_p95_px
+            .map(|value| format!("{value:.3}"))
+            .unwrap_or_else(|| "n/a".to_string()),
+          row
+            .min_occlusion_iou
+            .map(|value| format!("{value:.3}"))
+            .unwrap_or_else(|| "n/a".to_string()),
+          row.passed
+        );
+      }
+    }
     CliCommand::XtaskGenerateSwiftBridge => unreachable!("xtask is handled before runtime setup"),
     CliCommand::ListCommandsTombstone => {
       return Err(
@@ -613,6 +680,33 @@ fn stage_operation_result_artifact(
   staged.map_err(|error| error.to_string())
 }
 
+fn stage_minecraft_spatial_frame_artifact(
+  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
+  frame: &auv_game_minecraft::MinecraftSpatialFrame,
+) -> Result<(PathBuf, auv_cli::contract::ArtifactRef), String> {
+  let artifact_json = serde_json::to_string_pretty(frame)
+    .map(|mut json| {
+      json.push('\n');
+      json
+    })
+    .map_err(|error| format!("failed to serialize minecraft spatial frame: {error}"))?;
+  let artifact_path = std::env::temp_dir().join(format!(
+    "auv-minecraft-spatial-frame-{}-{}.json",
+    context.run_id(),
+    auv_cli::model::now_millis()
+  ));
+  fs::write(&artifact_path, artifact_json.as_bytes())
+    .map_err(|error| format!("failed to write minecraft spatial frame artifact: {error}"))?;
+  let staged = context.stage_artifact_file_with_ref(
+    auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE,
+    &artifact_path,
+    "minecraft-spatial-frame.json",
+    Some("durable minecraft spatial frame with pose, matrices, and raycast truth".to_string()),
+  );
+  let _ = fs::remove_file(&artifact_path);
+  staged.map_err(|error| error.to_string())
+}
+
 fn run_minecraft_live_click(
   runtime: &auv_cli::runtime::Runtime,
   telemetry_sample: PathBuf,
@@ -659,6 +753,8 @@ fn run_minecraft_live_click(
     ),
     "Minecraft live click",
     |context| {
+      let (staged_frame_path, _frame_ref) =
+        stage_minecraft_spatial_frame_artifact(context, &pre_frame)?;
       let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
         "minecraft-screenshot",
         &screenshot,
@@ -772,6 +868,7 @@ fn run_minecraft_live_click(
         operation_result_artifact_id: operation_result_ref.artifact_id.as_str().to_string(),
         input_summary: invoke_result.output_summary,
         artifact_paths: vec![
+          staged_frame_path,
           staged_screenshot_path,
           staged_projection_path,
           staged_operation_result_path,
@@ -824,6 +921,8 @@ fn run_minecraft_projection_bridge(
     ),
     "Minecraft projection bridge",
     |context| {
+      let (staged_frame_path, _frame_ref) =
+        stage_minecraft_spatial_frame_artifact(context, &frame)?;
       let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
         "minecraft-screenshot",
         &screenshot,
@@ -869,7 +968,11 @@ fn run_minecraft_projection_bridge(
       let (staged_projection_path, projection_ref) =
         stage_minecraft_projection_artifact(context, &projection_artifact)?;
       let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
-      let mut artifact_paths = vec![staged_screenshot_path, staged_projection_path];
+      let mut artifact_paths = vec![
+        staged_frame_path,
+        staged_screenshot_path,
+        staged_projection_path,
+      ];
       let mut overlay_artifact_id = None;
       let mut refusal_reason = None;
 
@@ -1699,13 +1802,17 @@ mod tests {
     let run = runtime
       .read_run(output.run_id.as_str())
       .expect("run should persist");
-    assert_eq!(run.artifacts.len(), 3);
-    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
+    assert_eq!(run.artifacts.len(), 4);
     assert_eq!(
-      run.artifacts[1].role,
+      run.artifacts[0].role,
+      auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
+    );
+    assert_eq!(run.artifacts[1].role, "minecraft-screenshot");
+    assert_eq!(
+      run.artifacts[2].role,
       auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
-    assert_eq!(run.artifacts[2].role, "operation-result");
+    assert_eq!(run.artifacts[3].role, "operation-result");
 
     let verifications = runtime
       .list_verifications(output.run_id.as_str())
@@ -1744,13 +1851,17 @@ mod tests {
     let run = runtime
       .read_run(output.run_id.as_str())
       .expect("run should persist");
-    assert_eq!(run.artifacts.len(), 3);
-    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
+    assert_eq!(run.artifacts.len(), 4);
     assert_eq!(
-      run.artifacts[1].role,
+      run.artifacts[0].role,
+      auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
+    );
+    assert_eq!(run.artifacts[1].role, "minecraft-screenshot");
+    assert_eq!(
+      run.artifacts[2].role,
       auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
-    assert_eq!(run.artifacts[2].role, "minecraft-overlay");
+    assert_eq!(run.artifacts[3].role, "minecraft-overlay");
 
     let inspect_text = runtime
       .inspect(output.run_id.as_str())
@@ -1788,10 +1899,14 @@ mod tests {
     let run = runtime
       .read_run(output.run_id.as_str())
       .expect("run should persist");
-    assert_eq!(run.artifacts.len(), 2);
-    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
+    assert_eq!(run.artifacts.len(), 3);
     assert_eq!(
-      run.artifacts[1].role,
+      run.artifacts[0].role,
+      auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
+    );
+    assert_eq!(run.artifacts[1].role, "minecraft-screenshot");
+    assert_eq!(
+      run.artifacts[2].role,
       auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
 

@@ -114,6 +114,17 @@ stop.
 
 Offline; does **not** need the daemon; may run in parallel with A / B.
 
+Status: design note and local recorder/measurement substrate implemented. The
+design note is
+`2026-06-18-minecraft-mc6-spatial-dataset-measurement-design.md`. Local code now
+records `minecraft-spatial-frame` artifacts, exports MC-6 bundle manifests via
+`auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir>`, and
+evaluates precomputed texture-sweep samples via
+`auv-cli minecraft eval-texture-sweep --samples <json> --output-dir <dir>` using
+the pre-set v0 thresholds. The real K-pack live/offline sweep has **not** been
+run yet; do not treat MC-6 as numerically closed until that table exists from
+real samples.
+
 C1 — recorder: each run → a bundle (`screenshots/`, `spatial_frames/`,
 `actions/`, `verification/`, `overlays/`, `run.json` with versions + commits).
 The labeled gym, not present showmanship.

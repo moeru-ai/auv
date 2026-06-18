@@ -14,7 +14,8 @@ use crate::run_read::{
   CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
   CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
   CandidatePromotionLineageStatus, DetectorRecognitionLineage,
-  MinecraftTelemetrySampleArtifactLineage, list_minecraft_projection_artifacts,
+  MinecraftSpatialBundleManifestLineage, MinecraftTelemetrySampleArtifactLineage,
+  list_minecraft_projection_artifacts, list_minecraft_spatial_bundle_manifests,
   list_minecraft_telemetry_sample_artifacts,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
@@ -73,6 +74,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let minecraft_projection_artifacts = list_minecraft_projection_artifacts(store, run_id)?;
   let minecraft_telemetry_sample_artifacts =
     list_minecraft_telemetry_sample_artifacts(store, run_id)?;
+  let minecraft_spatial_bundle_manifests = list_minecraft_spatial_bundle_manifests(store, run_id)?;
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -83,6 +85,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &candidate_action_execution_lineage,
     &minecraft_projection_artifacts,
     &minecraft_telemetry_sample_artifacts,
+    &minecraft_spatial_bundle_manifests,
   ))
 }
 
@@ -96,6 +99,7 @@ pub fn render_run_text(
   candidate_action_execution_lineage: &[CandidateActionExecutionLineage],
   minecraft_projection_artifacts: &[auv_game_minecraft::artifact::MinecraftProjectionArtifact],
   minecraft_telemetry_sample_artifacts: &[MinecraftTelemetrySampleArtifactLineage],
+  minecraft_spatial_bundle_manifests: &[MinecraftSpatialBundleManifestLineage],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -438,6 +442,35 @@ pub fn render_run_text(
         artifact.verification_reference.as_deref().unwrap_or("n/a"),
         render_minecraft_projected_point(artifact.projected_point.as_ref()),
       ));
+    }
+  }
+
+  output.push_str("\nMC-6 Spatial Bundles:\n");
+  if minecraft_spatial_bundle_manifests.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for lineage in minecraft_spatial_bundle_manifests {
+      if let Some(manifest) = &lineage.manifest {
+        output.push_str(&format!(
+          "- artifact={} source_run={} schema={} screenshots={} spatial_frames={} actions={} verification={} overlays={} skipped={} issue={}\n",
+          lineage.artifact.artifact_id,
+          manifest.source_run.source_run_id,
+          manifest.schema_version,
+          manifest.counts.screenshots,
+          manifest.counts.spatial_frames,
+          manifest.counts.actions,
+          manifest.counts.verification,
+          manifest.counts.overlays,
+          manifest.counts.skipped,
+          lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      } else {
+        output.push_str(&format!(
+          "- artifact={} source_run=n/a schema=n/a screenshots=n/a spatial_frames=n/a actions=n/a verification=n/a overlays=n/a skipped=n/a issue={}\n",
+          lineage.artifact.artifact_id,
+          lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
     }
   }
 
@@ -1112,6 +1145,7 @@ mod tests {
       &candidate_action_execution_lineage,
       &minecraft_projection_artifacts,
       &minecraft_telemetry_sample_artifacts,
+      &[],
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -1165,6 +1199,7 @@ mod tests {
     assert!(output.contains(
       "projected_point=screen=320,240 visibility=visible radius_px=12 confidence=1 basis=frame-1"
     ));
+    assert!(output.contains("MC-6 Spatial Bundles:"));
     assert!(output.contains("Candidate Action Execution Lineage:"));
     assert!(output.contains("artifact=artifact_candidate_action_execution"));
     assert!(output.contains("execution_id=execution_end_turn"));

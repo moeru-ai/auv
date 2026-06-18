@@ -27,6 +27,7 @@ use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
 use crate::stability::{StabilityAssessment, StabilityRejection};
 use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
+use auv_game_minecraft::dataset::SpatialBundleManifest;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 
@@ -34,6 +35,12 @@ pub struct MinecraftTelemetrySampleArtifactLineage {
   pub artifact: ArtifactRefLineage,
   pub line_count: Option<usize>,
   pub byte_size: Option<u64>,
+  pub issue: Option<String>,
+}
+
+pub struct MinecraftSpatialBundleManifestLineage {
+  pub artifact: ArtifactRefLineage,
+  pub manifest: Option<SpatialBundleManifest>,
   pub issue: Option<String>,
 }
 
@@ -359,6 +366,71 @@ pub(crate) fn list_minecraft_telemetry_sample_artifacts(
 ) -> AuvResult<Vec<MinecraftTelemetrySampleArtifactLineage>> {
   let run = store.read_run(run_id)?;
   extract_minecraft_telemetry_sample_artifacts(store, &run)
+}
+
+pub(crate) fn list_minecraft_spatial_bundle_manifests(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftSpatialBundleManifestLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_spatial_bundle_manifests(store, &run)
+}
+
+pub(crate) fn extract_minecraft_spatial_bundle_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftSpatialBundleManifestLineage>> {
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(MinecraftSpatialBundleManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!(
+          "minecraft spatial bundle artifact mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+
+    let parsed = read_artifact_bytes(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE,
+    )
+    .and_then(|(bytes, artifact_path)| {
+      serde_json::from_slice::<SpatialBundleManifest>(&bytes).map_err(|error| {
+        format!(
+          "failed to parse {} artifact {} for run {} from {}: {error}",
+          crate::minecraft::MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE,
+          artifact.artifact_id,
+          run.run.run_id,
+          artifact_path.display()
+        )
+      })
+    });
+
+    match parsed {
+      Ok(manifest) => manifests.push(MinecraftSpatialBundleManifestLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(MinecraftSpatialBundleManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
 }
 
 pub(crate) fn extract_minecraft_telemetry_sample_artifacts(
