@@ -245,6 +245,40 @@ async fn run() -> Result<(), String> {
       println!("overlays: {}", output.value.manifest.counts.overlays);
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::MinecraftExport3dgsScenePacket {
+      bundle_manifest_paths,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_3dgs_scene_packet_export(
+        &runtime.recording().handle(),
+        bundle_manifest_paths
+          .into_iter()
+          .map(PathBuf::from)
+          .collect(),
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!(
+        "scenePacketSchema: {}",
+        output.value.manifest.schema_version
+      );
+      println!(
+        "sourceRuns: {}",
+        output.value.manifest.source_run_ids.join(",")
+      );
+      println!("frames: {}", output.value.manifest.counts.frames);
+      println!("screenshots: {}", output.value.manifest.counts.screenshots);
+      println!(
+        "missingScreenshots: {}",
+        output.value.manifest.counts.missing_screenshots
+      );
+      println!("manifest: {}", output.value.manifest_path.display());
+      println!("cameras: {}", output.value.cameras_path.display());
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::MinecraftPrepareTextureSweep {
       sidecar_run_dir,
       output_dir,

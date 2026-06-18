@@ -9,6 +9,7 @@ pub mod overlay;
 pub mod prep;
 pub mod projection;
 pub mod sample_builder;
+pub mod scene_packet;
 pub mod session_observation;
 pub mod types;
 pub mod verify;
@@ -41,6 +42,11 @@ pub use projection::MinecraftProjector;
 pub use sample_builder::{
   TEXTURE_SWEEP_SAMPLE_BUILDER_GENERATOR, TextureSweepSampleBuildInputs,
   TextureSweepSampleBuildOutput, build_texture_sweep_samples_from_bundles,
+};
+pub use scene_packet::{
+  SCENE_PACKET_SCHEMA_VERSION, ScenePacketCameraRecord, ScenePacketCounts, ScenePacketFramePayload,
+  ScenePacketFrameRecord, ScenePacketInputs, ScenePacketManifest, ScenePacketOutput,
+  export_3dgs_scene_packet,
 };
 pub use session_observation::{
   MinecraftSessionNode, MinecraftSessionObservation, MinecraftSessionObservationProvider,

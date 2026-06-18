@@ -2,9 +2,9 @@
 
 Date: 2026-06-18
 
-Status: owner-opened design note for MC-7. This starts the 3DGS lane while MC-6
-is deliberately held as unlive / not numerically closed. It does not promote
-3DGS into the action path.
+Status: owner-opened design note for MC-7 plus D1 scene-packet implementation
+handoff. This starts the 3DGS lane while MC-6 is deliberately held as unlive /
+not numerically closed. It does not promote 3DGS into the action path.
 
 ## Owner override
 
@@ -167,6 +167,40 @@ Deliberate deferrals:
 - The artifact cites source bundle manifests and source run ids.
 - Missing spatial frames fail with a clear error.
 - `cargo fmt --check && cargo check && cargo test && git diff --check`.
+
+## D1 implemented command
+
+Implemented command surface:
+
+```bash
+auv-cli minecraft export-3dgs-scene-packet \
+  --bundle-manifest <bundle/run.json> \
+  --output-dir <dir> \
+  --store-root .auv \
+  --inspect-server-write false
+```
+
+The command reads MC spatial bundle manifests, copies `minecraft-spatial-frame`
+payloads plus bound screenshots into a scene packet, writes `run.json`,
+`cameras.json`, and `known_limits.json`, and records the scene-packet manifest as
+an AUV artifact with role `minecraft-3dgs-scene-packet`.
+
+Smoke run from a local fixture bundle:
+
+```text
+run_1781777384592_49500_0
+```
+
+Negative smoke for a bundle manifest with no `minecraft-spatial-frame`
+artifacts:
+
+```text
+run_1781777415603_49868_0
+```
+
+The negative smoke failed with `MC-7 scene packet export found no
+minecraft-spatial-frame artifacts in the supplied bundles`, proving D1 does not
+create an empty 3DGS input packet.
 
 ## Open decisions after D1
 
