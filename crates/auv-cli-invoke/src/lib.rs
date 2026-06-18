@@ -11,6 +11,7 @@ pub mod arg;
 pub mod command;
 pub mod commands;
 pub mod help;
+pub mod model;
 pub mod registry;
 
 pub use arg::ArgSpec;
@@ -20,6 +21,7 @@ pub use command::{
   InvokeCommandResult, InvokeNamespace,
 };
 pub use help::{render_command_help, render_help_index};
+pub use model::{ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
 pub use registry::{InvokeRegistry, default_registry};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
