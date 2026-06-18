@@ -259,7 +259,8 @@ mod tests {
   use std::sync::Arc;
 
   use auv_tracing_driver::{
-    LocalStore, MemoryRunRecorder, RunRecordingBackend, RunType, RunUpdate, TraceStatusCode,
+    LocalStore, MemoryRunRecorder, ProducedArtifact, RunRecordingBackend, RunType, RunUpdate,
+    TraceStatusCode,
   };
   use serde_json::json;
 
@@ -270,6 +271,7 @@ mod tests {
 
   const FIXTURE_COMMAND_ID: &str = "fixture.recorded";
   const FAILING_COMMAND_ID: &str = "fixture.failing";
+  const ARTIFACT_FAILING_COMMAND_ID: &str = "fixture.artifactFailing";
 
   fn temp_dir(label: &str) -> PathBuf {
     let path = env::temp_dir().join(format!(
@@ -302,6 +304,17 @@ mod tests {
     Err("boom".to_string())
   }
 
+  fn artifact_failing_handler(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+    let mut output = InvokeCommandOutput::new("artifact output");
+    output.artifacts.push(ProducedArtifact {
+      kind: "missing-fixture-artifact".to_string(),
+      source_path: temp_dir("missing-artifact-source").join("missing.txt"),
+      preferred_name: format!("{}-artifact.txt", input.command_id.replace('.', "-")),
+      note: Some("Missing artifact source used to cover recording failure.".to_string()),
+    });
+    Ok(output)
+  }
+
   fn fixture_registry() -> InvokeRegistry {
     InvokeRegistry::from_groups(vec![CommandGroup::new("fixture", "FIXTURE").command(
       crate::command::spec(
@@ -322,6 +335,18 @@ mod tests {
         "Failing recorded invoke command.",
         NO_ARGS,
         failing_handler,
+      ),
+    )])
+  }
+
+  fn artifact_failing_registry() -> InvokeRegistry {
+    InvokeRegistry::from_groups(vec![CommandGroup::new("fixture", "FIXTURE").command(
+      crate::command::spec(
+        ARTIFACT_FAILING_COMMAND_ID,
+        InvokeNamespace::Fixture,
+        "Artifact failing recorded invoke command.",
+        NO_ARGS,
+        artifact_failing_handler,
       ),
     )])
   }
@@ -414,6 +439,53 @@ mod tests {
         .failure
         .as_ref()
         .is_some_and(|failure| failure.message.contains("handler failed: boom"))
+    );
+
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_recorded_records_artifact_failure_as_failed_result() {
+    let (recording, store_root) = recording("artifact-failure");
+    let registry = artifact_failing_registry();
+
+    let result = super::invoke_recorded(
+      &recording,
+      &registry,
+      InvokeRequest {
+        command_id: ARTIFACT_FAILING_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      },
+    )
+    .expect("artifact recording failure should return an inspectable result");
+
+    assert_eq!(result.status, RunStatus::Failed);
+    assert!(
+      result
+        .failure_message
+        .as_deref()
+        .is_some_and(|message| message.contains("artifact recording failed"))
+    );
+    assert!(result.artifacts.is_empty());
+    assert!(result.artifact_paths.is_empty());
+
+    let canonical = recording
+      .read_run(result.run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(canonical.run.status_code, TraceStatusCode::Error);
+    let command_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.command.invoke")
+      .expect("command span should be recorded");
+    assert_eq!(command_span.status_code, TraceStatusCode::Error);
+    assert!(
+      command_span
+        .failure
+        .as_ref()
+        .is_some_and(|failure| failure.message.contains("artifact recording failed"))
     );
 
     let _ = fs::remove_dir_all(store_root);
