@@ -633,6 +633,7 @@ mod tests {
       .expect("recorded AX recognition operation should succeed");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);

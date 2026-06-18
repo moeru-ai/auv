@@ -59,16 +59,23 @@ impl McpServer {
 #[tool_router(router = tool_router)]
 impl McpServer {
   #[tool(
-    description = "Invoke one explicit registry-backed AUV command id through the shared runtime. See input_schema.x-auv-commands for available command metadata.",
+    description = "Invoke one explicit registry-backed AUV command id through the shared invoke wrapper. See input_schema.x-auv-commands for available command metadata.",
     input_schema = invoke_tool_input_schema()
   )]
   async fn invoke(
     &self,
     Parameters(req): Parameters<InvokeToolRequest>,
   ) -> Result<CallToolResult, McpError> {
-    let runtime = self.runtime(req.inspect.store_root.clone())?;
-    let result = runtime
-      .invoke(InvokeRequest {
+    let store = self.store(req.inspect.store_root.clone())?;
+    let recording = auv_tracing_driver::RunRecordingBackend::new(
+      store,
+      Arc::new(auv_tracing_driver::MemoryRunRecorder::new()),
+    );
+    let registry = default_registry();
+    let result = auv_cli_invoke::invoke_recorded(
+      &recording,
+      &registry,
+      InvokeRequest {
         command_id: req.command_id,
         target: ExecutionTarget {
           application_id: req.target.application_id,
@@ -76,8 +83,9 @@ impl McpServer {
         },
         inputs: req.inputs,
         dry_run: req.dry_run,
-      })
-      .map_err(invalid_params)?;
+      },
+    )
+    .map_err(invalid_params)?;
 
     let artifacts = result
       .artifacts
@@ -151,7 +159,7 @@ impl ServerHandler for McpServer {
   fn get_info(&self) -> ServerInfo {
     ServerInfo {
       instructions: Some(
-        "Thin MCP frontend over AUV runtime. Call explicit tools with explicit command ids; no planner or NL parsing is present.".into(),
+        "MCP exposes explicit AUV tools, including a registry-backed invoke wrapper for generic commands; no planner or NL parsing is present.".into(),
       ),
       capabilities: ServerCapabilities::builder().enable_tools().build(),
       ..Default::default()
@@ -409,7 +417,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn mcp_server_lists_and_invokes_shared_runtime() -> anyhow::Result<()> {
+  async fn mcp_server_lists_and_invokes_shared_invoke_wrapper() -> anyhow::Result<()> {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let store_root = temp_dir("mcp-shared-runtime-store");
     let (server_transport, client_transport) = tokio::io::duplex(16384);
