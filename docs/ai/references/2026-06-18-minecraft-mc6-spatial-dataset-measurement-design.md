@@ -128,6 +128,48 @@ The report is the only technical forcing input for the session-floor vs 2.5D vs
 3DGS decision. A failed or missing report does not imply "start 3DGS"; it means
 MC-6 is incomplete.
 
+## Preparation commands
+
+The preparation-only substrate is intentionally separate from numerical
+closure:
+
+```bash
+auv-cli minecraft prepare-texture-sweep \
+  --sidecar-run-dir sidecar/minecraft-telemetry/run \
+  --output-dir .tmp-mc6-prep
+```
+
+This creates local ignored resource-pack folders for the three required texture
+profiles:
+
+```text
+sidecar/minecraft-telemetry/run/resourcepacks/auv-mc6-rich
+sidecar/minecraft-telemetry/run/resourcepacks/auv-mc6-flat-color
+sidecar/minecraft-telemetry/run/resourcepacks/auv-mc6-repetitive
+```
+
+The command also writes `mc6-texture-sweep-prep.json` and
+`mc6-texture-sweep-runbook.md` under the requested output directory and records
+both as run artifacts. It does not launch the client or collect samples.
+
+After real live collection and spatial bundle export, build the evaluator input
+from bundle manifests instead of hand-writing sample JSON:
+
+```bash
+auv-cli minecraft build-texture-sweep-samples \
+  --bundle-manifest <rich-bundle>/run.json \
+  --bundle-manifest <flat-bundle>/run.json \
+  --bundle-manifest <repetitive-bundle>/run.json \
+  --output <real-samples.json>
+```
+
+The sample builder reads copied `minecraft-spatial-frame` artifacts from the
+bundles, classifies frames by the MC-6 `resource_pack_ids`, writes a
+`TextureSweepSampleSet`, and records the sample file as a run artifact. It uses
+`mc6.bundle-texture-sweep` as the generator name, so `--require-real-source`
+accepts it only when the sample source also cites real source run ids and bundle
+manifest paths.
+
 ## Acceptance
 
 - Minecraft projection/live-click runs persist `minecraft-spatial-frame`
@@ -136,6 +178,10 @@ MC-6 is incomplete.
 - `auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir>` writes
   the v0 bundle shape and records the manifest as a run artifact.
 - Inspect/read-side can list recorded MC-6 bundle manifests.
+- `auv-cli minecraft prepare-texture-sweep ...` prepares the local K=3 profile
+  packs and runbook without launching the real client.
+- `auv-cli minecraft build-texture-sweep-samples ...` creates evaluator input
+  from real bundle manifests instead of manual JSON.
 - `auv-cli minecraft eval-texture-sweep --samples <json> --output-dir <dir>`
   emits the p95/IoU table from pre-set thresholds and refuses reports that did
   not exercise the noise rule. The run records the input sample file and report

@@ -3,8 +3,10 @@ use std::path::PathBuf;
 
 use auv_game_minecraft::{
   SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput, SpatialBundleSourceArtifact,
-  TextureSweepInputs, TextureSweepReport, TextureSweepThresholds, evaluate_texture_sweep,
-  export_spatial_bundle,
+  TextureSweepInputs, TextureSweepPreparationInputs, TextureSweepPreparationOutput,
+  TextureSweepReport, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput,
+  TextureSweepThresholds, build_texture_sweep_samples_from_bundles, evaluate_texture_sweep,
+  export_spatial_bundle, prepare_texture_sweep_resource_packs,
 };
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
@@ -18,6 +20,94 @@ pub const MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE: &str = "minecraft-spatial-frame
 pub const MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE: &str = "minecraft-spatial-bundle";
 pub const MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-samples";
 pub const MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep";
+pub const MINECRAFT_TEXTURE_SWEEP_PREP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-prep";
+pub const MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-runbook";
+
+pub fn run_minecraft_texture_sweep_preparation(
+  recording: &RecordingHandle,
+  sidecar_run_dir: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TextureSweepPreparationOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.minecraft.prepare_texture_sweep"),
+    "Minecraft prepare MC-6 texture sweep inputs",
+    |context| {
+      context.record_event(
+        "minecraft.prepare_texture_sweep.inputs",
+        Some(format!(
+          "sidecar_run_dir={} output_dir={} live_chain=false",
+          sidecar_run_dir.display(),
+          output_dir.display()
+        )),
+      );
+      let result = prepare_texture_sweep_resource_packs(TextureSweepPreparationInputs {
+        sidecar_run_dir: sidecar_run_dir.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span("minecraft.prepare_texture_sweep.artifacts", |context| {
+        context.stage_artifact_file(
+          MINECRAFT_TEXTURE_SWEEP_PREP_ARTIFACT_ROLE,
+          &result.manifest_path,
+          "mc6-texture-sweep-prep.json",
+          Some("MC-6 texture sweep preparation manifest".to_string()),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE,
+          &result.runbook_path,
+          "mc6-texture-sweep-runbook.md",
+          Some("MC-6 texture sweep manual runbook".to_string()),
+        )?;
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_minecraft_texture_sweep_sample_build(
+  recording: &RecordingHandle,
+  bundle_manifest_paths: Vec<PathBuf>,
+  output_path: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TextureSweepSampleBuildOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(
+      RunType::Execute,
+      "auv.minecraft.build_texture_sweep_samples",
+    ),
+    "Minecraft build MC-6 texture sweep samples",
+    |context| {
+      context.record_event(
+        "minecraft.build_texture_sweep_samples.inputs",
+        Some(format!(
+          "bundle_manifests={} output={}",
+          bundle_manifest_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+          output_path.display()
+        )),
+      );
+      let result = build_texture_sweep_samples_from_bundles(TextureSweepSampleBuildInputs {
+        bundle_manifest_paths: bundle_manifest_paths.clone(),
+        output_path: output_path.clone(),
+      })?;
+      context.in_span(
+        "minecraft.build_texture_sweep_samples.artifacts",
+        |context| {
+          context.stage_artifact_file(
+            MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE,
+            &result.output_path,
+            "texture_sweep_samples.json",
+            Some("MC-6 texture sweep samples built from spatial bundles".to_string()),
+          )?;
+          Ok::<_, String>(())
+        },
+      )?;
+      Ok::<_, String>(result)
+    },
+  )
+}
 
 pub fn run_minecraft_spatial_bundle_export(
   recording: &RecordingHandle,
@@ -193,6 +283,80 @@ mod tests {
     path
   }
 
+  fn identity_matrix() -> [f64; 16] {
+    [
+      1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]
+  }
+
+  fn write_sample_bundle(temp: &std::path::Path) -> PathBuf {
+    let bundle_dir = temp.join("bundle");
+    let frames_dir = bundle_dir.join("spatial_frames");
+    fs::create_dir_all(&frames_dir).expect("frames dir");
+    let frame = auv_game_minecraft::MinecraftSpatialFrame {
+      spatial_frame_id: "frame-rich".to_string(),
+      world_tick: 1,
+      monotonic_timestamp_ms: 1_000,
+      viewport: auv_game_minecraft::Viewport::new(800, 600),
+      view_matrix: identity_matrix(),
+      projection_matrix: identity_matrix(),
+      player_pose: auv_game_minecraft::PlayerPose {
+        eye_position: auv_game_minecraft::Vec3::new(0.0, 0.0, 0.0),
+        yaw: 0.0,
+        pitch: 0.0,
+      },
+      raycast_hit: Some(auv_game_minecraft::RaycastHit {
+        block_pos: auv_game_minecraft::BlockPosition::new(0, 0, 0),
+        face: auv_game_minecraft::BlockFace::North,
+        block_id: "minecraft:stone".to_string(),
+      }),
+      nearby_blocks: Vec::new(),
+      nearby_entities: Vec::new(),
+      inventory_summary: Vec::new(),
+      screenshot_artifact_ref: Some("artifact://screenshot".to_string()),
+      mc_capture_skew_ms: Some(10),
+      screen_state: Some("in_game".to_string()),
+      resource_pack_ids: vec!["fabric".to_string(), "file/auv-mc6-rich".to_string()],
+    };
+    fs::write(
+      frames_dir.join("artifact_0001-frame-rich.json"),
+      serde_json::to_vec_pretty(&frame).expect("frame json"),
+    )
+    .expect("frame write");
+    let manifest = auv_game_minecraft::SpatialBundleManifest {
+      schema_version: auv_game_minecraft::SPATIAL_BUNDLE_SCHEMA_VERSION,
+      source_run: auv_game_minecraft::SourceRunSummary {
+        source_run_id: "run_1".to_string(),
+        source_operation: "auv.minecraft.bridge".to_string(),
+        source_run_type: "execute".to_string(),
+        source_status: "ok".to_string(),
+        generated_at_millis: 1,
+        auv_git_commit: None,
+        exporter_git_commit: None,
+      },
+      counts: auv_game_minecraft::SpatialBundleCounts {
+        spatial_frames: 1,
+        ..auv_game_minecraft::SpatialBundleCounts::default()
+      },
+      artifacts: vec![auv_game_minecraft::SpatialBundleArtifactRecord {
+        artifact_id: "artifact_0001".to_string(),
+        role: "minecraft-spatial-frame".to_string(),
+        source_path: "artifacts/frame-rich.json".to_string(),
+        bundle_path: "spatial_frames/artifact_0001-frame-rich.json".to_string(),
+        directory: auv_game_minecraft::SpatialBundleDirectory::SpatialFrames,
+        summary: None,
+      }],
+      known_limits: Vec::new(),
+    };
+    let manifest_path = bundle_dir.join("run.json");
+    fs::write(
+      &manifest_path,
+      serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+    )
+    .expect("manifest write");
+    manifest_path
+  }
+
   #[test]
   fn spatial_bundle_export_reads_source_run_and_records_manifest() {
     let temp = temp_dir("mc6-spatial-bundle");
@@ -251,6 +415,67 @@ mod tests {
         .source_run
         .source_run_id,
       source.run_id.as_str()
+    );
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn texture_sweep_preparation_records_manifest_and_runbook() {
+    let temp = temp_dir("mc6-texture-sweep-prep");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
+
+    let output = run_minecraft_texture_sweep_preparation(
+      &recording,
+      temp.join("sidecar-run"),
+      temp.join("prep-output"),
+    )
+    .expect("texture sweep prep");
+
+    assert_eq!(output.value.manifest.profiles.len(), 3);
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("prep run should persist");
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_PREP_ARTIFACT_ROLE)
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE)
+    );
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn texture_sweep_sample_build_records_samples_artifact() {
+    let temp = temp_dir("mc6-texture-sweep-samples");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
+    let manifest_path = write_sample_bundle(&temp);
+
+    let output = run_minecraft_texture_sweep_sample_build(
+      &recording,
+      vec![manifest_path],
+      temp.join("samples.json"),
+    )
+    .expect("sample build");
+
+    assert_eq!(output.value.sample_set.samples.len(), 1);
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("sample build run should persist");
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE)
     );
 
     let _ = fs::remove_dir_all(temp);

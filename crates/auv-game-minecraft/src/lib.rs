@@ -6,7 +6,9 @@ pub mod ingest;
 pub mod input_target;
 pub mod measurement;
 pub mod overlay;
+pub mod prep;
 pub mod projection;
+pub mod sample_builder;
 pub mod session_observation;
 pub mod types;
 pub mod verify;
@@ -29,7 +31,17 @@ pub use measurement::{
   TextureSweepThresholds, build_texture_sweep_report, evaluate_texture_sweep,
 };
 pub use overlay::render_projection_overlay;
+pub use prep::{
+  MINECRAFT_1_21_1_RESOURCE_PACK_FORMAT, TEXTURE_SWEEP_PREP_SCHEMA_VERSION,
+  TEXTURE_SWEEP_PROFILE_DURATION_SECONDS, TextureSweepPreparationInputs,
+  TextureSweepPreparationManifest, TextureSweepPreparationOutput, TextureSweepPreparedProfile,
+  TextureSweepRunStep, prepare_texture_sweep_resource_packs,
+};
 pub use projection::MinecraftProjector;
+pub use sample_builder::{
+  TEXTURE_SWEEP_SAMPLE_BUILDER_GENERATOR, TextureSweepSampleBuildInputs,
+  TextureSweepSampleBuildOutput, build_texture_sweep_samples_from_bundles,
+};
 pub use session_observation::{
   MinecraftSessionNode, MinecraftSessionObservation, MinecraftSessionObservationProvider,
   frame_to_session_observation,

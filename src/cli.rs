@@ -128,6 +128,16 @@ pub enum CliCommand {
     output_dir: String,
     inspect: InspectClientOptions,
   },
+  MinecraftPrepareTextureSweep {
+    sidecar_run_dir: String,
+    output_dir: String,
+    inspect: InspectClientOptions,
+  },
+  MinecraftBuildTextureSweepSamples {
+    bundle_manifest_paths: Vec<String>,
+    output_path: String,
+    inspect: InspectClientOptions,
+  },
   MinecraftEvalTextureSweep {
     samples_path: String,
     output_dir: String,
@@ -256,6 +266,8 @@ USAGE
   auv-cli minecraft bridge --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft live-click --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> --target-app <application-id> --target-title <window title> [--post-sample <telemetry.jsonl>] [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft build-texture-sweep-samples --bundle-manifest <bundle/run.json>... --output <samples.json> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--require-real-source] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
   auv-cli candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
@@ -1037,7 +1049,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv-cli minecraft <bridge|live-click|export-spatial-bundle|eval-texture-sweep> ..."
+      "usage: auv-cli minecraft <bridge|live-click|export-spatial-bundle|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
         .to_string(),
     );
   }
@@ -1046,9 +1058,11 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     "bridge" => parse_minecraft_bridge(arguments),
     "live-click" => parse_minecraft_live_click(arguments),
     "export-spatial-bundle" => parse_minecraft_export_spatial_bundle(arguments),
+    "prepare-texture-sweep" => parse_minecraft_prepare_texture_sweep(arguments),
+    "build-texture-sweep-samples" => parse_minecraft_build_texture_sweep_samples(arguments),
     "eval-texture-sweep" => parse_minecraft_eval_texture_sweep(arguments),
     other => Err(format!(
-      "unknown minecraft subcommand {other}; expected bridge, live-click, export-spatial-bundle, or eval-texture-sweep"
+      "unknown minecraft subcommand {other}; expected bridge, live-click, export-spatial-bundle, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
     )),
   }
 }
@@ -1090,6 +1104,87 @@ fn parse_minecraft_export_spatial_bundle(arguments: &[String]) -> AuvResult<CliC
   Ok(CliCommand::MinecraftExportSpatialBundle {
     run_id,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+    inspect,
+  })
+}
+
+fn parse_minecraft_prepare_texture_sweep(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut sidecar_run_dir = None;
+  let mut output_dir = None;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--sidecar-run-dir" => {
+        sidecar_run_dir = Some(required_flag_value(arguments, index, "--sidecar-run-dir")?);
+        index += 2;
+      }
+      "--output-dir" => {
+        output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
+        index += 2;
+      }
+      other => {
+        return Err(format!(
+          "unexpected minecraft prepare-texture-sweep argument {other}"
+        ));
+      }
+    }
+  }
+
+  Ok(CliCommand::MinecraftPrepareTextureSweep {
+    sidecar_run_dir: sidecar_run_dir.ok_or_else(|| "--sidecar-run-dir is required".to_string())?,
+    output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+    inspect,
+  })
+}
+
+fn parse_minecraft_build_texture_sweep_samples(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut bundle_manifest_paths = Vec::new();
+  let mut output_path = None;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--bundle-manifest" => {
+        bundle_manifest_paths.push(required_flag_value(arguments, index, "--bundle-manifest")?);
+        index += 2;
+      }
+      "--output" => {
+        output_path = Some(required_flag_value(arguments, index, "--output")?);
+        index += 2;
+      }
+      other => {
+        return Err(format!(
+          "unexpected minecraft build-texture-sweep-samples argument {other}"
+        ));
+      }
+    }
+  }
+  if bundle_manifest_paths.is_empty() {
+    return Err("--bundle-manifest is required".to_string());
+  }
+
+  Ok(CliCommand::MinecraftBuildTextureSweepSamples {
+    bundle_manifest_paths,
+    output_path: output_path.ok_or_else(|| "--output is required".to_string())?,
     inspect,
   })
 }
@@ -1822,6 +1917,61 @@ mod tests {
     match command {
       CliCommand::MinecraftExportSpatialBundle { inspect, .. } => {
         assert_eq!(inspect.store_root.as_deref(), Some("/tmp/store"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_prepare_texture_sweep_command() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "prepare-texture-sweep".to_string(),
+      "--sidecar-run-dir".to_string(),
+      "sidecar/minecraft-telemetry/run".to_string(),
+      "--output-dir".to_string(),
+      ".tmp-mc6-prep".to_string(),
+    ])
+    .expect("minecraft prepare-texture-sweep command should parse");
+
+    match command {
+      CliCommand::MinecraftPrepareTextureSweep {
+        sidecar_run_dir,
+        output_dir,
+        ..
+      } => {
+        assert_eq!(sidecar_run_dir, "sidecar/minecraft-telemetry/run");
+        assert_eq!(output_dir, ".tmp-mc6-prep");
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_build_texture_sweep_samples_command() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "build-texture-sweep-samples".to_string(),
+      "--bundle-manifest".to_string(),
+      "/tmp/rich/run.json".to_string(),
+      "--bundle-manifest".to_string(),
+      "/tmp/flat/run.json".to_string(),
+      "--output".to_string(),
+      "/tmp/samples.json".to_string(),
+    ])
+    .expect("minecraft build-texture-sweep-samples command should parse");
+
+    match command {
+      CliCommand::MinecraftBuildTextureSweepSamples {
+        bundle_manifest_paths,
+        output_path,
+        ..
+      } => {
+        assert_eq!(
+          bundle_manifest_paths,
+          vec!["/tmp/rich/run.json", "/tmp/flat/run.json"]
+        );
+        assert_eq!(output_path, "/tmp/samples.json");
       }
       other => panic!("unexpected command: {other:?}"),
     }

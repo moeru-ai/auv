@@ -245,6 +245,60 @@ async fn run() -> Result<(), String> {
       println!("overlays: {}", output.value.manifest.counts.overlays);
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::MinecraftPrepareTextureSweep {
+      sidecar_run_dir,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_texture_sweep_preparation(
+        &runtime.recording().handle(),
+        PathBuf::from(sidecar_run_dir),
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: prepared");
+      println!("packFormat: {}", output.value.manifest.pack_format);
+      println!("profiles: {}", output.value.manifest.profiles.len());
+      for profile in &output.value.manifest.profiles {
+        println!(
+          "profile: {} pack={} expectedTelemetryId={} optionsResourcePacks={}",
+          profile.texture_profile,
+          profile.pack_dir,
+          profile.expected_telemetry_resource_pack_id,
+          profile.options_resource_packs_value
+        );
+      }
+      println!("manifest: {}", output.value.manifest_path.display());
+      println!("runbook: {}", output.value.runbook_path.display());
+    }
+    CliCommand::MinecraftBuildTextureSweepSamples {
+      bundle_manifest_paths,
+      output_path,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_texture_sweep_sample_build(
+        &runtime.recording().handle(),
+        bundle_manifest_paths
+          .into_iter()
+          .map(PathBuf::from)
+          .collect(),
+        PathBuf::from(output_path),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!("samples: {}", output.value.sample_set.samples.len());
+      if let Some(source) = &output.value.sample_set.source {
+        println!("sampleSourceGenerator: {}", source.generator);
+        println!("sampleSourceRuns: {}", source.source_run_ids.join(","));
+        println!(
+          "bundleManifests: {}",
+          source.bundle_manifest_paths.join(",")
+        );
+      }
+      println!("output: {}", output.value.output_path.display());
+    }
     CliCommand::MinecraftEvalTextureSweep {
       samples_path,
       output_dir,

@@ -2,8 +2,8 @@
 
 Date: 2026-06-18
 
-Status: exploration ledger for the next MC-6 preparation slice. This is not a
-closure report.
+Status: exploration ledger plus implemented preparation-slice handoff. This is
+not a closure report.
 
 ## Current repo state checked
 
@@ -145,9 +145,9 @@ Minecraft or claiming closure:
 4. Keep `--require-real-source` as the closure gate.
 5. Update docs to say "ready to run", not "numerically closed".
 
-## Recommended implementation
+## Implemented preparation substrate
 
-Recommended command surfaces:
+Implemented command surfaces:
 
 ```text
 auv-cli minecraft prepare-texture-sweep \
@@ -161,15 +161,29 @@ auv-cli minecraft build-texture-sweep-samples \
   --output <real-samples.json>
 ```
 
-The first command should create/refresh ignored local packs under
-`sidecar/minecraft-telemetry/run/resourcepacks/` and write an auditable manifest
-under the requested output directory. The second command should read real
-bundle manifests and spatial frame artifacts, then write `TextureSweepSampleSet`
-with a non-fixture generator name and source run/bundle provenance.
+The first command creates/refreshes ignored local packs under
+`sidecar/minecraft-telemetry/run/resourcepacks/` and writes an auditable manifest
+plus runbook under the requested output directory. The second command reads real
+bundle manifests and copied `minecraft-spatial-frame` artifacts, then writes
+`TextureSweepSampleSet` with generator `mc6.bundle-texture-sweep` and source
+run/bundle provenance.
 
-If command-surface growth feels too much for one slice, a committed runbook plus
-a private library function covered by tests is acceptable, but the later live
-operator must not have to hand-write sample JSON.
+Preparation smoke run:
+
+```text
+run_1781776132841_15186_0
+```
+
+Negative smoke:
+
+```text
+run_1781776150086_15555_0
+```
+
+The negative smoke intentionally passed a missing bundle manifest and failed
+with `failed to read MC-6 spatial bundle manifest ... No such file or
+directory`, proving the builder does not fabricate sample JSON without real
+bundle provenance.
 
 ## Red lines
 

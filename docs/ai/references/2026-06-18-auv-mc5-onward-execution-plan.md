@@ -125,10 +125,17 @@ the pre-set v0 thresholds. Closure runs must add `--require-real-source`, which
 rejects missing source blocks and fixture/smoke/test generators unless the
 sample source cites source run ids plus bundle manifests. The sidecar now
 records `resource_pack_ids` on each telemetry sample and the sweep evaluator
-records both the input sample file and the report as run artifacts. The real
-K-pack live/offline sweep has **not** been run yet; do not treat MC-6 as
-numerically closed until that table exists from real samples whose source block
-cites the run ids / bundle manifests.
+records both the input sample file and the report as run artifacts.
+
+Preparation-only substrate now exists for the next live pass:
+`auv-cli minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir>`
+generates the K=3 local resource-pack profiles and a runbook, and
+`auv-cli minecraft build-texture-sweep-samples --bundle-manifest <bundle/run.json>... --output <samples.json>`
+builds the evaluator input from real exported spatial bundles. These commands
+do **not** launch Minecraft or close MC-6. The real K-pack live/offline sweep has
+**not** been run yet; do not treat MC-6 as numerically closed until that table
+exists from real samples whose source block cites the run ids / bundle
+manifests.
 
 Before continuing MC-6 prep, read
 `2026-06-18-minecraft-mc6-run-preparation-exploration.md`. It records the
