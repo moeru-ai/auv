@@ -849,6 +849,7 @@ mod tests {
       visibility: auv_game_minecraft::ProjectionVisibility::Visible,
       raycast_block_id: Some("minecraft:stone".to_string()),
       screen_state: Some("menu".to_string()),
+      resource_pack_ids: vec!["vanilla".to_string()],
       mismatch_refusal_reason: Some(
         auv_game_minecraft::verify::MismatchRefusalReason::MenuLoadingScreen,
       ),

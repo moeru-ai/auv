@@ -121,9 +121,11 @@ records `minecraft-spatial-frame` artifacts, exports MC-6 bundle manifests via
 `auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir>`, and
 evaluates precomputed texture-sweep samples via
 `auv-cli minecraft eval-texture-sweep --samples <json> --output-dir <dir>` using
-the pre-set v0 thresholds. The real K-pack live/offline sweep has **not** been
+the pre-set v0 thresholds. The sidecar now records `resource_pack_ids` on each
+telemetry sample and the sweep evaluator records both the input sample file and
+the report as run artifacts. The real K-pack live/offline sweep has **not** been
 run yet; do not treat MC-6 as numerically closed until that table exists from
-real samples.
+real samples whose source block cites the run ids / bundle manifests.
 
 C1 — recorder: each run → a bundle (`screenshots/`, `spatial_frames/`,
 `actions/`, `verification/`, `overlays/`, `run.json` with versions + commits).
@@ -147,7 +149,8 @@ session-floor vs 2.5D vs 3DGS — by number, not argument.
 
 Acceptance gate: bundle schema recorded + read-side visible; the sweep runs across
 K packs and emits the p95 / IoU table; pass/fail is read off the pre-set
-thresholds. Finish, report the table, stop.
+thresholds. The table must come from real sample provenance, not the evaluator's
+fixture or smoke data. Finish, report the table, stop.
 
 ## Slice D — MC-7: 3DGS (PARKED — do not start)
 

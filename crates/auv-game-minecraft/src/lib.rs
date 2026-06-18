@@ -25,8 +25,8 @@ pub use ingest::{
 pub use input_target::projected_window_point;
 pub use measurement::{
   TEXTURE_SWEEP_REPORT_SCHEMA_VERSION, TextureSweepInputs, TextureSweepReport,
-  TextureSweepReportRow, TextureSweepSample, TextureSweepSampleSet, TextureSweepThresholds,
-  build_texture_sweep_report, evaluate_texture_sweep,
+  TextureSweepReportRow, TextureSweepSample, TextureSweepSampleSet, TextureSweepSampleSource,
+  TextureSweepThresholds, build_texture_sweep_report, evaluate_texture_sweep,
 };
 pub use overlay::render_projection_overlay;
 pub use projection::MinecraftProjector;

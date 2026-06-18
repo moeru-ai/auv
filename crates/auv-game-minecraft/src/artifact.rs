@@ -43,6 +43,8 @@ pub struct MinecraftProjectionArtifact {
   #[serde(default)]
   pub screen_state: Option<String>,
   #[serde(default)]
+  pub resource_pack_ids: Vec<String>,
+  #[serde(default)]
   pub mismatch_refusal_reason: Option<MismatchRefusalReason>,
   pub verification_reference: Option<String>,
 }
@@ -67,6 +69,7 @@ impl MinecraftProjectionArtifact {
       projected_point,
       raycast_block_id: frame.raycast_hit.as_ref().map(|hit| hit.block_id.clone()),
       screen_state: frame.screen_state.clone(),
+      resource_pack_ids: frame.resource_pack_ids.clone(),
       mismatch_refusal_reason: None,
       verification_reference,
     }
@@ -198,6 +201,7 @@ mod tests {
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
       screen_state: None,
+      resource_pack_ids: Vec::new(),
     }
   }
 
@@ -246,6 +250,16 @@ mod tests {
     );
     assert_eq!(artifact.mc_capture_skew_ms, Some(180));
     assert_eq!(artifact.screen_state.as_deref(), Some("menu"));
+  }
+
+  #[test]
+  fn projection_artifact_carries_resource_pack_provenance() {
+    let mut frame = test_frame();
+    frame.resource_pack_ids = vec!["vanilla".to_string(), "file/flat-pack".to_string()];
+
+    let artifact = MinecraftProjectionArtifact::for_frame(&frame, None, None);
+
+    assert_eq!(artifact.resource_pack_ids, frame.resource_pack_ids);
   }
 
   #[test]

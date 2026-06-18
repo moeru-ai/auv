@@ -98,6 +98,7 @@ pub fn frame_to_session_observation(frame: &MinecraftSpatialFrame) -> MinecraftS
       },
       "screen_state": frame.screen_state,
       "capture_skew_ms": frame.mc_capture_skew_ms,
+      "resource_pack_ids": frame.resource_pack_ids,
       "screenshot_artifact_ref": frame.screenshot_artifact_ref
     }),
   }
@@ -179,6 +180,7 @@ mod tests {
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: Some(0),
       screen_state: Some("in_game".to_string()),
+      resource_pack_ids: vec!["vanilla".to_string()],
     }
   }
 
@@ -203,6 +205,7 @@ mod tests {
         .iter()
         .any(|limit| limit.contains("telemetry truth"))
     );
+    assert_eq!(observation.detail["resource_pack_ids"][0], "vanilla");
   }
 
   #[test]

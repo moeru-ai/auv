@@ -16,6 +16,7 @@ use crate::model::AuvResult;
 
 pub const MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE: &str = "minecraft-spatial-frame";
 pub const MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE: &str = "minecraft-spatial-bundle";
+pub const MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-samples";
 pub const MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep";
 
 pub fn run_minecraft_spatial_bundle_export(
@@ -81,6 +82,12 @@ pub fn run_minecraft_texture_sweep_eval(
         thresholds: TextureSweepThresholds::mc6_v0(),
       })?;
       context.in_span("minecraft.eval_texture_sweep.artifacts", |context| {
+        context.stage_artifact_file(
+          MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE,
+          &samples_path,
+          "texture_sweep_samples.json",
+          Some("MC-6 texture sweep input samples".to_string()),
+        )?;
         let report_path = output_dir.join("texture_sweep_report.json");
         context.stage_artifact_file(
           MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE,
@@ -255,6 +262,7 @@ mod tests {
     fs::write(
       &samples_path,
       serde_json::to_vec_pretty(&auv_game_minecraft::TextureSweepSampleSet {
+        source: None,
         samples: vec![
           auv_game_minecraft::TextureSweepSample {
             resource_pack: "rich-pack".to_string(),
@@ -307,6 +315,12 @@ mod tests {
         .artifacts
         .iter()
         .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE)
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE)
     );
 
     let _ = fs::remove_dir_all(temp);

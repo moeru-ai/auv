@@ -25,6 +25,7 @@ public final class TelemetrySample {
   public final List<NearbyBlockSample> nearbyBlocks = new ArrayList<>();
   public final List<InventoryEntrySample> inventorySummary = new ArrayList<>();
   public String screenState;
+  public final List<String> resourcePackIds = new ArrayList<>();
 
   public TelemetrySample copy() {
     TelemetrySample copy = new TelemetrySample();
@@ -46,6 +47,7 @@ public final class TelemetrySample {
     copy.raycastFace = raycastFace;
     copy.raycastBlockId = raycastBlockId;
     copy.screenState = screenState;
+    copy.resourcePackIds.addAll(resourcePackIds);
     for (NearbyBlockSample block : nearbyBlocks) {
       NearbyBlockSample blockCopy = new NearbyBlockSample();
       blockCopy.x = block.x;
@@ -97,6 +99,7 @@ public final class TelemetrySample {
     }
     appendNearbyBlocks(builder, nearbyBlocks);
     appendInventorySummary(builder, inventorySummary);
+    appendStringArray(builder, "resource_pack_ids", resourcePackIds);
     if (screenState != null) {
       builder.append(",\"screen_state\":");
       appendJsonStringValue(builder, screenState);
@@ -121,6 +124,17 @@ public final class TelemetrySample {
         builder.append(',');
       }
       builder.append(formatDouble(values[index]));
+    }
+    builder.append(']');
+  }
+
+  private static void appendStringArray(StringBuilder builder, String key, List<String> values) {
+    builder.append(",\"").append(key).append("\":[");
+    for (int index = 0; index < values.size(); index += 1) {
+      if (index > 0) {
+        builder.append(',');
+      }
+      appendJsonStringValue(builder, values.get(index));
     }
     builder.append(']');
   }

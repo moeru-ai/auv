@@ -55,6 +55,7 @@ public final class TelemetryRecorder {
     populateRaycast(client, sample);
     populateInventory(client.player, sample);
     populateScreenState(client, sample);
+    populateResourcePacks(client, sample);
 
     synchronized (SAMPLE_LOCK) {
       latestTickSample = sample;
@@ -139,6 +140,10 @@ public final class TelemetryRecorder {
     } else {
       sample.screenState = "loading_or_overlay";
     }
+  }
+
+  private static void populateResourcePacks(MinecraftClient client, TelemetrySample sample) {
+    sample.resourcePackIds.addAll(client.getResourcePackManager().getEnabledIds());
   }
 
   private static double[] floatBufferToColumnMajorArray(FloatBuffer buffer) {

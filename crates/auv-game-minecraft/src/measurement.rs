@@ -77,7 +77,21 @@ impl TextureSweepThresholds {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextureSweepSampleSet {
+  #[serde(default)]
+  pub source: Option<TextureSweepSampleSource>,
   pub samples: Vec<TextureSweepSample>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TextureSweepSampleSource {
+  pub generated_at_millis: u64,
+  pub generator: String,
+  #[serde(default)]
+  pub source_run_ids: Vec<String>,
+  #[serde(default)]
+  pub bundle_manifest_paths: Vec<String>,
+  #[serde(default)]
+  pub known_limits: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -95,6 +109,8 @@ pub struct TextureSweepSample {
 pub struct TextureSweepReport {
   pub schema_version: u32,
   pub thresholds: TextureSweepThresholds,
+  #[serde(default)]
+  pub source: Option<TextureSweepSampleSource>,
   pub rows: Vec<TextureSweepReportRow>,
   pub covered_texture_profiles: Vec<String>,
   pub expected_resource_pack_count: usize,
@@ -124,7 +140,8 @@ pub fn evaluate_texture_sweep(
 ) -> MeasurementResult<TextureSweepReport> {
   inputs.thresholds.validate()?;
   let sample_set = read_sample_set(&inputs.samples_path)?;
-  let report = build_texture_sweep_report(&sample_set.samples, inputs.thresholds.clone())?;
+  let mut report = build_texture_sweep_report(&sample_set.samples, inputs.thresholds.clone())?;
+  report.source = sample_set.source;
   fs::create_dir_all(&inputs.output_dir).map_err(|error| {
     format!(
       "failed to create minecraft texture sweep output directory {}: {error}",
@@ -243,6 +260,7 @@ pub fn build_texture_sweep_report(
   Ok(TextureSweepReport {
     schema_version: TEXTURE_SWEEP_REPORT_SCHEMA_VERSION,
     thresholds,
+    source: None,
     rows,
     covered_texture_profiles,
     expected_resource_pack_count,
@@ -440,6 +458,13 @@ mod tests {
     fs::write(
       &samples_path,
       serde_json::to_vec_pretty(&TextureSweepSampleSet {
+        source: Some(TextureSweepSampleSource {
+          generated_at_millis: 1_000,
+          generator: "mc6.fixture".to_string(),
+          source_run_ids: vec!["run-fixture".to_string()],
+          bundle_manifest_paths: vec!["bundle/run.json".to_string()],
+          known_limits: vec!["fixture sample".to_string()],
+        }),
         samples: vec![
           sample("rich-pack", "rich", 2.0, 0.95, false),
           sample("flat-pack", "flat_color", 4.0, 0.92, false),
@@ -459,6 +484,9 @@ mod tests {
     .expect("sweep should evaluate");
 
     assert!(report.passed);
+    let source = report.source.expect("source should propagate");
+    assert_eq!(source.generator, "mc6.fixture");
+    assert_eq!(source.source_run_ids, vec!["run-fixture"]);
     assert!(output_dir.join("texture_sweep_report.json").is_file());
   }
 }

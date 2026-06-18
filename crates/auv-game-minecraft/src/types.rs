@@ -147,6 +147,8 @@ pub struct MinecraftSpatialFrame {
   pub mc_capture_skew_ms: Option<i64>,
   #[serde(default)]
   pub screen_state: Option<String>,
+  #[serde(default)]
+  pub resource_pack_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

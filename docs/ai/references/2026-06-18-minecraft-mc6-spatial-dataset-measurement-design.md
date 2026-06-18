@@ -64,6 +64,12 @@ It stores the full `MinecraftSpatialFrame` JSON for the observed frame so the
 bundle does not have to reconstruct matrices, pose, raycast, or nearby witness
 state from a projection artifact.
 
+For MC-6 sweep provenance, the Fabric sidecar also records `resource_pack_ids`
+on every telemetry sample and therefore every persisted `minecraft-spatial-frame`
+artifact. This is read-only client state from the same Minecraft client AUV is
+capturing and driving; it is not an action path and it does not decide whether a
+pack satisfies the rich / flat-color / repetitive profile labels.
+
 NOTICE(mc6-action-artifact-gap): current MC live-click evidence does not yet
 persist a first-class `InputActionResult` artifact inside the Minecraft source
 run. Until that seam is approved, `actions/` may be empty for MC bridge runs and
@@ -96,6 +102,22 @@ The evaluator computes per-pack:
 - pose pass/fail
 - occlusion pass/fail
 
+The input sample set may include a `source` block:
+
+```text
+source.generated_at_millis
+source.generator
+source.source_run_ids[]
+source.bundle_manifest_paths[]
+source.known_limits[]
+```
+
+The evaluator copies this source block into `texture_sweep_report.json` and the
+CLI records both the sample JSON and the report as run artifacts. A real MC-6
+sweep must cite the source run ids / bundle manifests in this block; a fixture or
+synthetic sample file may exercise the evaluator but cannot close the numerical
+gate.
+
 The overall report passes only when every pack passes pose, occlusion, and
 duration gates, the expected K packs are present, the required texture profiles
 are covered, and the noise refusal rule is exercised at least once.
@@ -114,7 +136,8 @@ MC-6 is incomplete.
 - Inspect/read-side can list recorded MC-6 bundle manifests.
 - `auv-cli minecraft eval-texture-sweep --samples <json> --output-dir <dir>`
   emits the p95/IoU table from pre-set thresholds and refuses reports that did
-  not exercise the noise rule.
+  not exercise the noise rule. The run records the input sample file and report
+  file as separate artifacts so the table is auditable after the CLI exits.
 - `cargo fmt --check && cargo check && cargo test && git diff --check`.
 
 ## Explicit non-goals
