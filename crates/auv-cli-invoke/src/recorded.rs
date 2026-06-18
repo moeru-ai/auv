@@ -259,8 +259,8 @@ mod tests {
   use std::sync::Arc;
 
   use auv_tracing_driver::{
-    LocalStore, MemoryRunRecorder, ProducedArtifact, RunRecordingBackend, RunType, RunUpdate,
-    TraceStatusCode,
+    LocalStore, MemoryRunRecorder, ProducedArtifact, RunFinish, RunRecordingBackend, RunSpec,
+    RunType, RunUpdate, TraceStatusCode,
   };
   use serde_json::json;
 
@@ -397,6 +397,69 @@ mod tests {
         .iter()
         .any(|event| event.span_id == command_span.span_id && event.name == "run.completed")
     );
+
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_recorded_in_span_adds_command_under_parent_span() {
+    let (recording, store_root) = recording("in-span-parent");
+    let registry = fixture_registry();
+    let mut run = recording
+      .handle()
+      .start_run(RunSpec::new(RunType::Execute, "auv.execute"))
+      .expect("run should start");
+    let parent = run.root_span();
+
+    let result = super::invoke_recorded_in_span(
+      &recording,
+      &registry,
+      &mut run,
+      &parent,
+      InvokeRequest {
+        command_id: FIXTURE_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      },
+    )
+    .expect("recorded invoke should succeed inside parent span");
+
+    assert_eq!(result.status, RunStatus::Completed);
+    assert_eq!(result.output_summary, "fixture observed");
+    let run_id = recording
+      .handle()
+      .finish_run(
+        run,
+        RunFinish {
+          status_code: TraceStatusCode::Ok,
+          summary: Some("done".to_string()),
+          failure: None,
+        },
+      )
+      .expect("run should finish");
+
+    let canonical = recording
+      .read_run(run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(canonical.run.run_type, RunType::Execute);
+    let command_span = canonical
+      .spans
+      .iter()
+      .find(|span| span.name == "auv.command.invoke")
+      .expect("command span should be recorded");
+    assert_eq!(
+      command_span.attributes.get("auv.command.id"),
+      Some(&json!(FIXTURE_COMMAND_ID))
+    );
+    assert!(command_span.attributes.get("auv.driver.id").is_none());
+    assert!(
+      command_span
+        .attributes
+        .get("auv.driver.operation")
+        .is_none()
+    );
+    assert_eq!(command_span.parent_span_id.as_ref(), Some(parent.id()));
 
     let _ = fs::remove_dir_all(store_root);
   }
