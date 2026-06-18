@@ -159,7 +159,7 @@ impl ServerHandler for McpServer {
   fn get_info(&self) -> ServerInfo {
     ServerInfo {
       instructions: Some(
-        "Thin MCP frontend over AUV runtime. Call explicit tools with explicit command ids; no planner or NL parsing is present.".into(),
+        "MCP exposes explicit AUV tools, including a registry-backed invoke wrapper for generic commands; no planner or NL parsing is present.".into(),
       ),
       capabilities: ServerCapabilities::builder().enable_tools().build(),
       ..Default::default()
@@ -417,7 +417,7 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn mcp_server_lists_and_invokes_shared_runtime() -> anyhow::Result<()> {
+  async fn mcp_server_lists_and_invokes_shared_invoke_wrapper() -> anyhow::Result<()> {
     let project_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let store_root = temp_dir("mcp-shared-runtime-store");
     let (server_transport, client_transport) = tokio::io::duplex(16384);
