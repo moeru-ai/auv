@@ -6,28 +6,34 @@ phase.
 
 ## Current Mode
 
-AUV is actively returning to its core lane: invoke, run recording, artifacts,
-inspection, app-local Rust commands, and distill/compile/run reuse across
-frontends. The former SkillBundle surface has been retired; do not reintroduce
-bundle execution, export, or verification as compatibility. Do not treat one
-archived macOS AX proof as the product center, and do not spend active roadmap
-budget polishing the archived vertical.
+AUV is now exploring its next-generation spatial substrate: 3D grounding,
+offline 3DGS inspect artifacts, and view-dependent verification evidence for
+future 3D surfaces that do not expose truth directly. The former SkillBundle
+surface remains retired; do not reintroduce bundle execution, export, or
+verification as compatibility. Do not treat one archived macOS AX proof as the
+product center, and do not spend active roadmap budget polishing the archived
+vertical.
 
 Current validation boundary:
 
 - One real macOS AX copilot vertical is proven and archived.
 - That proof is specific to local TextEdit-style execution and remains a
-  recoverable reference, not the current AUV roadmap.
-- New work should reconnect or extend the AUV core runtime surfaces, especially
-  invoke/run-artifact-inspect and app-local Rust command paths, instead of
-  expanding the archived `candidate-action` path.
+  recoverable reference, not the current roadmap center.
+- New work may extend AUV through the approved spatial-substrate lane described
+  in `docs/ai/references/2026-06-18-auv-mc5-onward-execution-plan.md`,
+  especially the owner-opened MC-7 offline 3DGS inspect-artifact path.
+- Core-lane stabilization work may continue in parallel, but this document now
+  treats it as a separate convergence lane rather than the active exploration
+  center.
 
 Convergence evidence:
 
 - The archived AX copilot proof lives in
   `docs/archive/verticals/ax-copilot/2026-06-09-auv-macos-ax-copilot-mvp-evidence-pack.md`.
-- Active roadmap evidence should come from AUV core runtime surfaces, not from
-  the archived TextEdit copilot runs.
+- The active execution boundary for this phase is
+  `docs/ai/references/2026-06-18-auv-mc5-onward-execution-plan.md`.
+- The owner-opened 3DGS design note lives in
+  `docs/ai/references/2026-06-18-minecraft-mc7-offline-3dgs-inspect-artifact-design.md`.
 
 Current seam to preserve:
 
@@ -53,6 +59,8 @@ Use one label before editing:
 - `docs-only`: clarification with no runtime behavior change.
 - `narrow refactor`: behavior-preserving cleanup required by the assigned slice.
 - `approved feature`: owner named or approved the behavior/module to add.
+- `substrate research`: owner-approved exploration of 3D spatial grounding,
+  offline 3DGS inspect artifacts, or next-generation verification evidence.
 
 If the task does not fit one label, ask for a smaller slice.
 
