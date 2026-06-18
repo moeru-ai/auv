@@ -72,6 +72,32 @@ Rejected options:
   telemetry limits.
 - Focused tests cover the above without requiring a live app.
 
+## Current validation
+
+The in-process Slice B gate is now covered by focused tests:
+
+- warm provider proof:
+  `session::tests::warm_provider_loads_once_across_repeated_observe_calls`
+  records `load_count=1` and `observe_count=3`, with exactly one
+  `ProviderInitialized` event.
+- retained lookup proof:
+  `session::tests::session_reuses_provider_and_answers_lookup` observes twice
+  through one registered provider and resolves `hit_circle` from session state.
+- action/verification seam proof:
+  `session::tests::action_result_invalidates_observations_without_new_result_schema`
+  returns the existing `InputActionResult` and marks retained observations
+  stale; `session::tests::verify_records_existing_verification_result_contract`
+  stores the existing `VerificationResult`.
+- second-consumer proof:
+  `osu::tests::osu_detection_provider_projects_into_session_observation` and
+  `minecraft_session::tests::minecraft_spatial_frame_session_provider_feeds_session_runtime`
+  both drive `SessionRuntime` through the same `ObservationSnapshot` /
+  `SurfaceNode` substrate.
+
+No transport endpoint landed in this slice. The inspect-server-hosted
+HTTP/WebSocket surface remains deferred until the in-process resource semantics
+need a remote caller.
+
 ## Deferrals
 
 - TODO(session-daemon-transport): HTTP/WebSocket/stdio transport is deferred

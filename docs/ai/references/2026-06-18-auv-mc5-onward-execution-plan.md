@@ -25,9 +25,11 @@ here approves widening beyond the slice in hand.
 - Post-MC-4 sequencing is decided: ① MC-5 graduation + clean PR → ② core realtime
   daemon (the unblock) → ③ MC-6 measurement (offline, parallel) → ④ MC-7 3DGS
   (parked behind a three-judge gate).
-- Open per the 06-15 handoff: G2 and G4 still open (only a narrow G3 proof
-  landed); core lane C1e/C2 still open; a `.codex-worktrees/realtime-session-
-  substrate/` worktree exists but its design-note-first gate does not yet.
+- Update after Slice A/B local implementation: MC-5 G2/G3/G4 minimal core
+  shapes have landed with osu + Minecraft consumers, and the core realtime
+  session substrate design note plus in-process warm-provider proof have landed.
+  The `.codex-worktrees/realtime-session-substrate/` worktree remains untracked
+  and should not be treated as committed project state.
 
 ## Kill gates (carried + extended)
 
@@ -39,6 +41,8 @@ KG4  The realtime daemon runs no perceive→decide→act loop and generates no g
 ```
 
 ## Slice A — MC-5: graduate G2/G3/G4 to core (minimal common shape)
+
+Status: implemented locally in `feat(minecraft): graduate mc5 evidence shapes`.
 
 osu + Minecraft are now the two real consumers the parked G-gates were waiting
 for. Lift **only the generic shape** to core; both verticals then consume it.
@@ -65,6 +69,9 @@ Acceptance gate:
 Finish, report the graduated symbols + the two re-pointed call sites, stop.
 
 ## Slice B — CORE realtime session substrate (the ② unblock; NOT an MC slice)
+
+Status: design note and in-process substrate implemented locally; transport
+remains deferred.
 
 Realize the **minimum realtime slice** of the v0 direction
 (`2026-06-10-stateful-session-daemon-js-repl-v0.md`): a warm-model, stateful

@@ -466,9 +466,50 @@ impl SessionObservationProvider for BufferedObservationProvider {
 
 #[cfg(test)]
 mod tests {
+  use std::cell::RefCell;
+  use std::rc::Rc;
+
   use auv_driver::InputDeliveryPath;
 
   use super::*;
+
+  #[derive(Clone, Debug, Default, PartialEq, Eq)]
+  struct CountingProviderStats {
+    load_count: usize,
+    observe_count: usize,
+  }
+
+  struct CountingObservationProvider {
+    provider_id: ProviderId,
+    snapshot: ObservationSnapshot,
+    stats: Rc<RefCell<CountingProviderStats>>,
+  }
+
+  impl CountingObservationProvider {
+    fn new(
+      provider_id: impl Into<String>,
+      snapshot: ObservationSnapshot,
+      stats: Rc<RefCell<CountingProviderStats>>,
+    ) -> Self {
+      stats.borrow_mut().load_count += 1;
+      Self {
+        provider_id: ProviderId::new(provider_id),
+        snapshot,
+        stats,
+      }
+    }
+  }
+
+  impl SessionObservationProvider for CountingObservationProvider {
+    fn provider_id(&self) -> ProviderId {
+      self.provider_id.clone()
+    }
+
+    fn observe(&mut self, _request: &ObserveRequest) -> AuvResult<ObservationSnapshot> {
+      self.stats.borrow_mut().observe_count += 1;
+      Ok(self.snapshot.clone())
+    }
+  }
 
   #[test]
   fn session_reuses_provider_and_answers_lookup() {
@@ -508,6 +549,47 @@ mod tests {
       .expect("node should be lookup-addressable");
     assert_eq!(node.node.label.as_deref(), Some("hit_circle"));
     assert!(!node.is_stale());
+  }
+
+  #[test]
+  fn warm_provider_loads_once_across_repeated_observe_calls() {
+    let stats = Rc::new(RefCell::new(CountingProviderStats::default()));
+    let snapshot = synthetic_snapshot(vec![synthetic_surface_node(
+      "node_warm",
+      "warm_target",
+      crate::contract::RecognitionBox {
+        x: 1,
+        y: 2,
+        width: 3,
+        height: 4,
+      },
+    )]);
+    let provider = CountingObservationProvider::new("fixture.warm", snapshot, stats.clone());
+    let mut session = SessionRuntime::new(SessionOptions::default());
+    let provider_id = session.register_provider(provider);
+
+    for _ in 0..3 {
+      session
+        .observe(&provider_id, ObserveRequest::default())
+        .expect("warm provider observe should succeed");
+    }
+
+    assert_eq!(
+      *stats.borrow(),
+      CountingProviderStats {
+        load_count: 1,
+        observe_count: 3,
+      }
+    );
+    assert_eq!(session.provider_count(), 1);
+    assert_eq!(
+      session
+        .events()
+        .iter()
+        .filter(|event| matches!(event, SessionEvent::ProviderInitialized { .. }))
+        .count(),
+      1
+    );
   }
 
   #[test]
