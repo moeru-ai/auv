@@ -116,7 +116,9 @@ The evaluator copies this source block into `texture_sweep_report.json` and the
 CLI records both the sample JSON and the report as run artifacts. A real MC-6
 sweep must cite the source run ids / bundle manifests in this block; a fixture or
 synthetic sample file may exercise the evaluator but cannot close the numerical
-gate.
+gate. Closure runs use `auv-cli minecraft eval-texture-sweep --require-real-source`,
+which rejects missing source blocks and fixture/smoke/test generators unless the
+source cites source run ids plus bundle manifest paths.
 
 The overall report passes only when every pack passes pose, occlusion, and
 duration gates, the expected K packs are present, the required texture profiles
@@ -138,6 +140,8 @@ MC-6 is incomplete.
   emits the p95/IoU table from pre-set thresholds and refuses reports that did
   not exercise the noise rule. The run records the input sample file and report
   file as separate artifacts so the table is auditable after the CLI exits.
+  MC-6 closure invocations add `--require-real-source`; fixture invocations may
+  omit it only for plumbing tests.
 - `cargo fmt --check && cargo check && cargo test && git diff --check`.
 
 ## Explicit non-goals

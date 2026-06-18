@@ -131,6 +131,7 @@ pub enum CliCommand {
   MinecraftEvalTextureSweep {
     samples_path: String,
     output_dir: String,
+    require_real_source: bool,
     inspect: InspectClientOptions,
   },
   Invoke {
@@ -255,7 +256,7 @@ USAGE
   auv-cli minecraft bridge --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft live-click --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> --target-app <application-id> --target-title <window title> [--post-sample <telemetry.jsonl>] [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--require-real-source] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
   auv-cli candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
 
@@ -1096,6 +1097,7 @@ fn parse_minecraft_export_spatial_bundle(arguments: &[String]) -> AuvResult<CliC
 fn parse_minecraft_eval_texture_sweep(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut samples_path = None;
   let mut output_dir = None;
+  let mut require_real_source = false;
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
@@ -1117,6 +1119,10 @@ fn parse_minecraft_eval_texture_sweep(arguments: &[String]) -> AuvResult<CliComm
         output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
         index += 2;
       }
+      "--require-real-source" => {
+        require_real_source = true;
+        index += 1;
+      }
       other => {
         return Err(format!(
           "unexpected minecraft eval-texture-sweep argument {other}"
@@ -1128,6 +1134,7 @@ fn parse_minecraft_eval_texture_sweep(arguments: &[String]) -> AuvResult<CliComm
   Ok(CliCommand::MinecraftEvalTextureSweep {
     samples_path: samples_path.ok_or_else(|| "--samples is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+    require_real_source,
     inspect,
   })
 }
@@ -1836,11 +1843,35 @@ mod tests {
       CliCommand::MinecraftEvalTextureSweep {
         samples_path,
         output_dir,
+        require_real_source,
         ..
       } => {
         assert_eq!(samples_path, "/tmp/samples.json");
         assert_eq!(output_dir, "/tmp/mc6-sweep");
+        assert!(!require_real_source);
       }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_eval_texture_sweep_real_source_gate() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "eval-texture-sweep".to_string(),
+      "--samples".to_string(),
+      "/tmp/samples.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/mc6-sweep".to_string(),
+      "--require-real-source".to_string(),
+    ])
+    .expect("minecraft eval-texture-sweep command should parse real-source gate");
+
+    match command {
+      CliCommand::MinecraftEvalTextureSweep {
+        require_real_source,
+        ..
+      } => assert!(require_real_source),
       other => panic!("unexpected command: {other:?}"),
     }
   }

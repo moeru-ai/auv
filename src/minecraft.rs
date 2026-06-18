@@ -63,6 +63,7 @@ pub fn run_minecraft_texture_sweep_eval(
   recording: &RecordingHandle,
   samples_path: PathBuf,
   output_dir: PathBuf,
+  require_real_source: bool,
 ) -> AuvResult<RecordedOperationOutput<TextureSweepReport>> {
   recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.minecraft.eval_texture_sweep"),
@@ -71,15 +72,17 @@ pub fn run_minecraft_texture_sweep_eval(
       context.record_event(
         "minecraft.eval_texture_sweep.inputs",
         Some(format!(
-          "samples={} output_dir={} thresholds=mc6_v0",
+          "samples={} output_dir={} thresholds=mc6_v0 require_real_source={}",
           samples_path.display(),
-          output_dir.display()
+          output_dir.display(),
+          require_real_source
         )),
       );
       let report = evaluate_texture_sweep(&TextureSweepInputs {
         samples_path: samples_path.clone(),
         output_dir: output_dir.clone(),
         thresholds: TextureSweepThresholds::mc6_v0(),
+        require_real_source,
       })?;
       context.in_span("minecraft.eval_texture_sweep.artifacts", |context| {
         context.stage_artifact_file(
@@ -303,7 +306,7 @@ mod tests {
     .expect("samples write");
 
     let output =
-      run_minecraft_texture_sweep_eval(&recording, samples_path, temp.join("sweep-output"))
+      run_minecraft_texture_sweep_eval(&recording, samples_path, temp.join("sweep-output"), false)
         .expect("sweep eval");
 
     assert!(output.value.passed);
