@@ -193,7 +193,14 @@ pub(crate) fn invoke_probe_step(
     inputs: inputs.clone(),
     dry_run: false,
   };
-  let result = match runtime.invoke_in_span(run, &step_span, request) {
+  let registry = auv_cli_invoke::default_registry();
+  let result = match auv_cli_invoke::invoke_recorded_in_span(
+    runtime.recording(),
+    &registry,
+    run,
+    &step_span,
+    request,
+  ) {
     Ok(result) => result,
     Err(error) => {
       if let Err(finish_error) = run.finish_span(

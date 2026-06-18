@@ -729,7 +729,16 @@ fn run_minecraft_live_click(
       inputs.insert("offset_x".to_string(), format!("{:.3}", window_point.0.x));
       inputs.insert("offset_y".to_string(), format!("{:.3}", window_point.0.y));
 
-      let invoke_result = runtime.invoke_resolved(
+      let registry = auv_cli_invoke::default_registry();
+      let command = registry
+        .resolve("input.clickWindowPoint")
+        .ok_or_else(|| "input.clickWindowPoint command is not registered".to_string())?;
+      let parent = context.current_span().clone();
+      let invoke_result = auv_cli_invoke::invoke_resolved_recorded_in_span(
+        runtime.recording(),
+        context.run_mut(),
+        &parent,
+        command,
         InvokeRequest {
           command_id: "input.clickWindowPoint".to_string(),
           target: auv_cli::model::ExecutionTarget {
@@ -739,9 +748,6 @@ fn run_minecraft_live_click(
           inputs,
           dry_run: false,
         },
-        auv_cli_invoke::default_registry()
-          .resolve("input.clickWindowPoint")
-          .ok_or_else(|| "input.clickWindowPoint command is not registered".to_string())?,
       )?;
       let post_frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&post_sample_path)?
         .ok_or_else(|| {
