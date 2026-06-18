@@ -13,6 +13,7 @@ pub struct TextureSweepInputs {
   pub samples_path: PathBuf,
   pub output_dir: PathBuf,
   pub thresholds: TextureSweepThresholds,
+  pub require_real_source: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -94,6 +95,46 @@ pub struct TextureSweepSampleSource {
   pub known_limits: Vec<String>,
 }
 
+impl TextureSweepSampleSource {
+  pub fn validate_real_source(&self) -> MeasurementResult<()> {
+    if self.generator.trim().is_empty() {
+      return Err("texture sweep sample source generator must not be empty".to_string());
+    }
+    if self.source_run_ids.is_empty() {
+      return Err(
+        "real MC-6 texture sweep samples must cite at least one source run id".to_string(),
+      );
+    }
+    if self
+      .source_run_ids
+      .iter()
+      .any(|run_id| run_id.trim().is_empty())
+    {
+      return Err("real MC-6 texture sweep source run ids must not be empty".to_string());
+    }
+    if self.bundle_manifest_paths.is_empty() {
+      return Err(
+        "real MC-6 texture sweep samples must cite at least one bundle manifest path".to_string(),
+      );
+    }
+    if self
+      .bundle_manifest_paths
+      .iter()
+      .any(|path| path.trim().is_empty())
+    {
+      return Err("real MC-6 texture sweep bundle manifest paths must not be empty".to_string());
+    }
+    let generator = self.generator.to_ascii_lowercase();
+    if generator.contains("fixture") || generator.contains("smoke") || generator.contains("test") {
+      return Err(format!(
+        "real MC-6 texture sweep source generator must not be fixture/smoke/test data, got {:?}",
+        self.generator
+      ));
+    }
+    Ok(())
+  }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TextureSweepSample {
   pub resource_pack: String,
@@ -140,6 +181,15 @@ pub fn evaluate_texture_sweep(
 ) -> MeasurementResult<TextureSweepReport> {
   inputs.thresholds.validate()?;
   let sample_set = read_sample_set(&inputs.samples_path)?;
+  if inputs.require_real_source {
+    sample_set
+      .source
+      .as_ref()
+      .ok_or_else(|| {
+        "real MC-6 texture sweep evaluation requires a sample source block".to_string()
+      })?
+      .validate_real_source()?;
+  }
   let mut report = build_texture_sweep_report(&sample_set.samples, inputs.thresholds.clone())?;
   report.source = sample_set.source;
   fs::create_dir_all(&inputs.output_dir).map_err(|error| {
@@ -480,6 +530,7 @@ mod tests {
       samples_path,
       output_dir: output_dir.clone(),
       thresholds: TextureSweepThresholds::mc6_v0(),
+      require_real_source: false,
     })
     .expect("sweep should evaluate");
 
@@ -488,5 +539,68 @@ mod tests {
     assert_eq!(source.generator, "mc6.fixture");
     assert_eq!(source.source_run_ids, vec!["run-fixture"]);
     assert!(output_dir.join("texture_sweep_report.json").is_file());
+  }
+
+  #[test]
+  fn real_source_gate_rejects_missing_source_block() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let samples_path = temp.path().join("samples.json");
+    let output_dir = temp.path().join("output");
+    fs::write(
+      &samples_path,
+      serde_json::to_vec_pretty(&TextureSweepSampleSet {
+        source: None,
+        samples: vec![
+          sample("rich-pack", "rich", 2.0, 0.95, false),
+          sample("flat-pack", "flat_color", 4.0, 0.92, false),
+          sample("flat-pack", "flat_color", 20.0, 0.10, true),
+          sample("repeat-pack", "repetitive", 3.0, 0.93, false),
+        ],
+      })
+      .expect("samples json"),
+    )
+    .expect("samples write");
+
+    let error = evaluate_texture_sweep(&TextureSweepInputs {
+      samples_path,
+      output_dir,
+      thresholds: TextureSweepThresholds::mc6_v0(),
+      require_real_source: true,
+    })
+    .expect_err("real source gate should reject missing source");
+
+    assert!(error.contains("requires a sample source block"));
+  }
+
+  #[test]
+  fn real_source_gate_rejects_fixture_generators() {
+    let source = TextureSweepSampleSource {
+      generated_at_millis: 1_000,
+      generator: "mc6.provenance-smoke".to_string(),
+      source_run_ids: vec!["run_123".to_string()],
+      bundle_manifest_paths: vec!["/tmp/bundle/run.json".to_string()],
+      known_limits: Vec::new(),
+    };
+
+    let error = source
+      .validate_real_source()
+      .expect_err("fixture-like generator should be rejected");
+
+    assert!(error.contains("fixture/smoke/test"));
+  }
+
+  #[test]
+  fn real_source_gate_accepts_run_and_bundle_provenance() {
+    let source = TextureSweepSampleSource {
+      generated_at_millis: 1_000,
+      generator: "mc6.live-texture-sweep".to_string(),
+      source_run_ids: vec!["run_1781766000000_12345_0".to_string()],
+      bundle_manifest_paths: vec!["/tmp/mc6-rich/run.json".to_string()],
+      known_limits: Vec::new(),
+    };
+
+    source
+      .validate_real_source()
+      .expect("real source provenance should validate");
   }
 }

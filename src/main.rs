@@ -248,6 +248,7 @@ async fn run() -> Result<(), String> {
     CliCommand::MinecraftEvalTextureSweep {
       samples_path,
       output_dir,
+      require_real_source,
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
@@ -255,9 +256,11 @@ async fn run() -> Result<(), String> {
         &runtime.recording().handle(),
         PathBuf::from(samples_path),
         PathBuf::from(output_dir),
+        require_real_source,
       )?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
+      println!("requireRealSource: {require_real_source}");
       println!("passed: {}", output.value.passed);
       println!("resourcePacks: {}", output.value.actual_resource_pack_count);
       println!(
