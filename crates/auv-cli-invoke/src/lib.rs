@@ -12,6 +12,7 @@ pub mod command;
 pub mod commands;
 pub mod help;
 pub mod model;
+pub mod recorded;
 pub mod registry;
 
 pub use arg::ArgSpec;
@@ -22,6 +23,7 @@ pub use command::{
 };
 pub use help::{render_command_help, render_help_index};
 pub use model::{ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
+pub use recorded::{invoke_recorded, invoke_recorded_in_span, invoke_resolved_recorded_in_span};
 pub use registry::{InvokeRegistry, default_registry};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
