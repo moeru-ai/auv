@@ -20,7 +20,7 @@ pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
 use crate::contract::ArtifactRef;
 use crate::model::{AuvResult, InvokeRequest, InvokeResult, RunStatus};
 use auv_tracing_driver::store::LocalStore;
-use auv_tracing_driver::trace::{RunType, TraceStatusCode, string_attr};
+use auv_tracing_driver::trace::{RunType, TraceStatusCode};
 use auv_tracing_driver::{MemoryRunRecorder, RunRecorder, RunRecordingBackend};
 
 pub struct Runtime {
@@ -364,26 +364,14 @@ impl Runtime {
   }
 
   pub fn invoke(&self, request: InvokeRequest) -> AuvResult<InvokeResult> {
-    self.invoke_in_command_run(|runtime, run, root| runtime.invoke_in_span(run, root, request))
+    let registry = auv_cli_invoke::default_registry();
+    auv_cli_invoke::invoke_recorded(&self.recording, &registry, request)
   }
 
   pub fn invoke_resolved(
     &self,
     request: InvokeRequest,
     command: &auv_cli_invoke::InvokeCommand,
-  ) -> AuvResult<InvokeResult> {
-    self.invoke_in_command_run(|runtime, run, root| {
-      runtime.invoke_metadata_command_in_span(run, root, command, request)
-    })
-  }
-
-  fn invoke_in_command_run(
-    &self,
-    invoke: impl FnOnce(
-      &Self,
-      &mut auv_tracing_driver::run_builder::RecordingRun,
-      &auv_tracing_driver::run_builder::SpanRef,
-    ) -> AuvResult<InvokeResult>,
   ) -> AuvResult<InvokeResult> {
     let mut run =
       self
@@ -394,7 +382,13 @@ impl Runtime {
           "auv.command",
         ))?;
     let root = run.root_span();
-    let result = match invoke(self, &mut run, &root) {
+    let result = match auv_cli_invoke::invoke_resolved_recorded_in_span(
+      &self.recording,
+      &mut run,
+      &root,
+      command,
+      request,
+    ) {
       Ok(result) => result,
       Err(error) => {
         if let Err(finish_error) = self.recording.handle().finish_run(
@@ -436,203 +430,9 @@ impl Runtime {
     parent: &auv_tracing_driver::run_builder::SpanRef,
     request: InvokeRequest,
   ) -> AuvResult<InvokeResult> {
-    let command_id = request.command_id.clone();
-    // TODO(invoke-boundary): accept a resolved invoke command descriptor instead
-    // of resolving the CLI registry here. This stays only until CLI, MCP,
-    // app-probe, and scroll-scan callers share the next typed invoke request.
     let registry = auv_cli_invoke::default_registry();
-    let command = registry.resolve(&command_id).ok_or_else(|| {
-      format!(
-        "unknown command {command_id}; use `auv-cli invoke --help` to inspect available entries"
-      )
-    })?;
-    self.invoke_metadata_command_in_span(run, parent, command, request)
+    auv_cli_invoke::invoke_recorded_in_span(&self.recording, &registry, run, parent, request)
   }
-
-  fn invoke_metadata_command_in_span(
-    &self,
-    run: &mut auv_tracing_driver::run_builder::RecordingRun,
-    parent: &auv_tracing_driver::run_builder::SpanRef,
-    command: &auv_cli_invoke::InvokeCommand,
-    request: InvokeRequest,
-  ) -> AuvResult<InvokeResult> {
-    let command_span = run.start_span(
-      parent,
-      auv_tracing_driver::run_builder::running_span_record(
-        "auv.command.invoke",
-        command_attributes(command.id, request.target.application_id.as_deref()),
-      ),
-    )?;
-    record_event(
-      run,
-      command_span.id(),
-      "command.resolved",
-      Some(format!("resolved {}", command.id)),
-    );
-
-    let output = match command.invoke(auv_cli_invoke::InvokeCommandInput {
-      command_id: command.id,
-      target_application_id: request.target.application_id.as_deref(),
-      inputs: &request.inputs,
-      dry_run: request.dry_run,
-    }) {
-      Ok(output) => output,
-      Err(error) => {
-        let failure_message = format!("command {} handler failed: {error}", command.id);
-        let output_summary = format!(
-          "Command invocation failed after run creation. Inspect {} for the recorded trace.",
-          run.id()
-        );
-        record_event(
-          run,
-          command_span.id(),
-          "command.failed",
-          Some(failure_message.clone()),
-        );
-        run.finish_span(
-          &command_span,
-          auv_tracing_driver::run_builder::SpanFinish {
-            status_code: TraceStatusCode::Error,
-            summary: Some(output_summary.clone()),
-            failure: Some(failure_message.clone()),
-          },
-        )?;
-        return Ok(InvokeResult {
-          run_id: run.id().to_string(),
-          producer_span_id: command_span.id().clone(),
-          status: RunStatus::Failed,
-          output_summary,
-          signals: Default::default(),
-          artifacts: Vec::new(),
-          artifact_paths: Vec::new(),
-          failure_message: Some(failure_message),
-        });
-      }
-    };
-
-    if let Some(backend) = &output.backend {
-      record_event(
-        run,
-        command_span.id(),
-        "command.backend",
-        Some(format!("backend={backend}")),
-      );
-    }
-
-    for note in &output.notes {
-      record_event(run, command_span.id(), "command.note", Some(note.clone()));
-    }
-
-    if let Some(verification) = &output.verification {
-      record_event(
-        run,
-        command_span.id(),
-        "command.verification",
-        Some(verification.clone()),
-      );
-    }
-
-    for known_limit in &output.known_limits {
-      record_event(
-        run,
-        command_span.id(),
-        "command.known_limit",
-        Some(known_limit.clone()),
-      );
-    }
-
-    let artifact_result =
-      self
-        .recording
-        .record_produced_artifacts(run, &command_span, output.artifacts);
-    let (artifact_records, artifact_paths) = match artifact_result {
-      Ok(recorded) => (recorded.records, recorded.paths),
-      Err(failure) => {
-        let failure_message = format!(
-          "command {} artifact recording failed: {}",
-          command.id, failure.message
-        );
-        let output_summary = format!(
-          "Command invocation produced output, but artifact recording failed. Inspect {} for the recorded trace.",
-          run.id()
-        );
-        run.finish_span(
-          &command_span,
-          auv_tracing_driver::run_builder::SpanFinish {
-            status_code: TraceStatusCode::Error,
-            summary: Some(output_summary.clone()),
-            failure: Some(failure_message.clone()),
-          },
-        )?;
-        return Ok(InvokeResult {
-          run_id: run.id().to_string(),
-          producer_span_id: command_span.id().clone(),
-          status: RunStatus::Failed,
-          output_summary,
-          signals: output.signals,
-          artifacts: failure.recorded.records,
-          artifact_paths: failure.recorded.paths,
-          failure_message: Some(failure_message),
-        });
-      }
-    };
-
-    record_event(
-      run,
-      command_span.id(),
-      "run.completed",
-      Some(output.summary.clone()),
-    );
-
-    run.finish_span(
-      &command_span,
-      auv_tracing_driver::run_builder::SpanFinish {
-        status_code: TraceStatusCode::Ok,
-        summary: Some(output.summary.clone()),
-        failure: None,
-      },
-    )?;
-
-    Ok(InvokeResult {
-      run_id: run.id().to_string(),
-      producer_span_id: command_span.id().clone(),
-      status: RunStatus::Completed,
-      output_summary: output.summary,
-      signals: output.signals,
-      artifacts: artifact_records,
-      artifact_paths,
-      failure_message: None,
-    })
-  }
-}
-
-fn command_attributes(
-  command_id: &str,
-  target_application_id: Option<&str>,
-) -> auv_tracing_driver::run_builder::Attributes {
-  let mut attributes = auv_tracing_driver::run_builder::Attributes::new();
-  attributes.insert("command_id".to_string(), string_attr(command_id));
-  attributes.insert("auv.command.id".to_string(), string_attr(command_id));
-  if let Some(target_application_id) = target_application_id {
-    attributes.insert(
-      "target_application_id".to_string(),
-      string_attr(target_application_id),
-    );
-    attributes.insert(
-      "auv.target.application_id".to_string(),
-      string_attr(target_application_id),
-    );
-  }
-  attributes
-}
-
-fn record_event(
-  run: &mut auv_tracing_driver::run_builder::RecordingRun,
-  span_id: &auv_tracing_driver::trace::SpanId,
-  name: &str,
-  message: Option<String>,
-) {
-  run.record_event_in_span(span_id, name, message, Vec::new());
 }
 
 #[cfg(test)]
