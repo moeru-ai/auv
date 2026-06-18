@@ -44,9 +44,13 @@ run's attributes under `auv.session.id` and is threaded into every
 scope cache, namespaces, and action locks per session without changing the
 recording contract again.
 
-Today there is one implicit session per CLI invocation. Multi-session
-semantics, session-scoped artifact namespaces, and device-level action locks
-are planned, not implemented.
+Today there is one implicit session per CLI invocation for ordinary command
+execution. The first in-process `SessionRuntime` substrate now exists for
+callers that need resource-style observation state: it can hold providers
+across repeated observe calls, retain observation/node resources, record
+verification resources, and invalidate observations after an action. Daemon
+transport, JS/REPL handles, session-scoped artifact namespaces, and
+device-level action locks are still planned, not implemented.
 
 ## Run
 

@@ -19,9 +19,9 @@
 //! caller can inspect the raw pixels used for OCR. The file is named
 //! `apple-music-playback-<timestamp>.png`.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
 use crate::app::ResolveOptions;
 
@@ -318,10 +318,11 @@ mod platform {
     diagnostics: &mut Vec<String>,
   ) -> (Option<String>, Option<String>) {
     let region = RatioRect::new(0.0, BOTTOM_BAR_TOP, 1.0, 1.0 - BOTTOM_BAR_TOP);
-    let recognition = match session
-      .vision()
-      .recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default())
-    {
+    let recognition = match session.vision().recognize_text_in_capture_with_options(
+      capture,
+      region,
+      TextRecognitionOptions::default(),
+    ) {
       Ok(r) => r,
       Err(e) => {
         diagnostics.push(format!("bottom-bar OCR failed: {e}"));
@@ -350,8 +351,7 @@ mod platform {
     if parts.len() != 2 {
       return false;
     }
-    parts[0].chars().all(|c| c.is_ascii_digit())
-      && parts[1].chars().all(|c| c.is_ascii_digit())
+    parts[0].chars().all(|c| c.is_ascii_digit()) && parts[1].chars().all(|c| c.is_ascii_digit())
   }
 
   /// Saves the capture image to `dir` and returns the file path string.
@@ -359,8 +359,7 @@ mod platform {
     dir: &std::path::Path,
     capture: &auv_driver::capture::Capture,
   ) -> Result<String, String> {
-    std::fs::create_dir_all(dir)
-      .map_err(|e| format!("create artifact dir failed: {e}"))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create artifact dir failed: {e}"))?;
 
     let ts = SystemTime::now()
       .duration_since(UNIX_EPOCH)

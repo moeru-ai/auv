@@ -111,6 +111,13 @@ impl Runtime {
     &self.project_root
   }
 
+  pub fn open_session(
+    &self,
+    options: crate::session::SessionOptions,
+  ) -> crate::session::SessionRuntime {
+    crate::session::SessionRuntime::new(options)
+  }
+
   pub fn inspect(&self, run_id: &str) -> AuvResult<String> {
     crate::inspect::inspect_run(self.recording.store(), run_id)
   }

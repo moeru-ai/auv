@@ -103,7 +103,11 @@ fn run_open_window_cmd(args: OpenWindowArgs) -> ExitCode {
       if args.json {
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
       } else {
-        let status = if result.window_found { "found" } else { "not found" };
+        let status = if result.window_found {
+          "found"
+        } else {
+          "not found"
+        };
         let title = result.window_title.as_deref().unwrap_or("<no title>");
         println!("window: {status}");
         if result.window_found {
@@ -118,7 +122,11 @@ fn run_open_window_cmd(args: OpenWindowArgs) -> ExitCode {
           println!("  step: {} -> {}{}", step.name, step.outcome, note);
         }
       }
-      if result.window_found { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+      if result.window_found {
+        ExitCode::SUCCESS
+      } else {
+        ExitCode::FAILURE
+      }
     }
   }
 }
@@ -139,10 +147,7 @@ fn run_playback_cmd(args: PlaybackArgs) -> ExitCode {
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
       } else {
         println!("state:   {}", result.state);
-        println!(
-          "title:   {}",
-          result.track_title.as_deref().unwrap_or("-")
-        );
+        println!("title:   {}", result.track_title.as_deref().unwrap_or("-"));
         println!("artist:  {}", result.artist.as_deref().unwrap_or("-"));
         println!("source:  {}", result.metadata_source);
         if let Some(artifact) = &result.artifact {

@@ -15,15 +15,14 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::app::{AppleMusicWindow, APPLE_MUSIC_TITLE, ResolveOptions, resolve_window};
+use crate::app::{APPLE_MUSIC_TITLE, AppleMusicWindow, ResolveOptions, resolve_window};
 
 // NOTICE: the MSIX package family name below is the canonical Microsoft Store
 // value for Apple Music on Windows as of 2026. If Apple republishes under a
 // different package name the launch step will silently fail and the user must
 // open the app manually. A future slice could probe
 // `Get-AppxPackage -Name "AppleInc.AppleMusic*"` to discover the live name.
-const APPLE_MUSIC_APP_ID: &str =
-  "AppleInc.AppleMusic_nzyj5cx40ttqa!AppleMusic";
+const APPLE_MUSIC_APP_ID: &str = "AppleInc.AppleMusic_nzyj5cx40ttqa!AppleMusic";
 
 /// Default polling interval while waiting for the window to appear (ms).
 const POLL_INTERVAL_MS: u64 = 300;
@@ -115,7 +114,11 @@ pub fn run_open_window(inputs: &OpenWindowInputs) -> Result<LaunchResult, String
     let launch_outcome = launch_via_shell_uri(APPLE_MUSIC_APP_ID);
     result.push(
       "launch",
-      if launch_outcome.is_ok() { "ok" } else { "failed" },
+      if launch_outcome.is_ok() {
+        "ok"
+      } else {
+        "failed"
+      },
       launch_outcome.err(),
     );
 

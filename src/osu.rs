@@ -3,14 +3,22 @@ use std::path::PathBuf;
 
 use auv_game_osu::{
   BenchmarkInputs, BenchmarkOutput, DatasetExportInputs, DatasetExportOutput, DetectionEvalInputs,
-  DetectionEvalOutput, RunMode, evaluate_detection_fixture, export_dataset, run_benchmark,
+  DetectionEvalOutput, FrameDetections, RunMode, evaluate_detection_fixture, export_dataset,
+  run_benchmark,
 };
 
-use crate::model::AuvResult;
+use crate::{
+  contract::{
+    NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource,
+    RecognitionBox, RecognitionScope, RecognitionSource, RecognitionSurface, SurfaceNode,
+  },
+  model::AuvResult,
+  session::{FixtureObservationProvider, SessionObservationProvider},
+};
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
 use auv_tracing_driver::run_builder::RunSpec;
-use auv_tracing_driver::trace::RunType;
+use auv_tracing_driver::trace::{RunType, new_run_id, new_span_id};
 
 pub fn run_osu_benchmark(
   recording: &RecordingHandle,
@@ -258,6 +266,102 @@ pub fn run_osu_vision_demo(
   )
 }
 
+pub fn osu_detection_session_provider(
+  provider_id: impl Into<String>,
+  frames: Vec<FrameDetections>,
+) -> impl SessionObservationProvider {
+  let snapshots = frames
+    .into_iter()
+    .enumerate()
+    .map(|(index, frame)| osu_frame_detections_snapshot(index, frame))
+    .collect();
+  FixtureObservationProvider::new(provider_id, snapshots)
+}
+
+fn osu_frame_detections_snapshot(index: usize, frame: FrameDetections) -> ObservationSnapshot {
+  let run_id = new_run_id();
+  let span_id = new_span_id();
+  let nodes = frame
+    .detections
+    .detections
+    .into_iter()
+    .enumerate()
+    .map(|(detection_index, detection)| {
+      let node_id = format!(
+        "osu_detection_{}_{}",
+        frame.frame.capture_file_name, detection_index
+      );
+      SurfaceNode {
+        node_ref: NodeRef {
+          run_id: run_id.clone(),
+          span_id: span_id.clone(),
+          node_id,
+        },
+        kind: "osu_detection".to_string(),
+        label: Some(detection.label.clone()),
+        box_: RecognitionBox {
+          x: detection.bbox.x1.round() as i64,
+          y: detection.bbox.y1.round() as i64,
+          width: detection.bbox.width().round().max(0.0) as i64,
+          height: detection.bbox.height().round().max(0.0) as i64,
+        },
+        source_artifacts: vec![frame.frame.capture_file_name.clone()],
+        recognition_id: Some(format!("osu_frame_detection_{index}")),
+        recognition_source: Some(RecognitionSource::VisualRow),
+        recognition_surface: Some(RecognitionSurface::Window),
+        recognized_item_id: Some(format!("detection_{detection_index}")),
+        recognized_item_kind: Some("osu_object".to_string()),
+        provider_score: Some(f64::from(detection.confidence)),
+        detail: serde_json::json!({
+          "class_id": detection.class_id,
+          "model_id": frame.detections.model_id.0,
+          "source_image_size": {
+            "width": frame.detections.image_size.width,
+            "height": frame.detections.image_size.height,
+          },
+          "frame": {
+            "object_index": frame.frame.object_index,
+            "phase": frame.frame.phase,
+            "capture_file_name": frame.frame.capture_file_name,
+          },
+          "coordinate_space": "source_image_pixels"
+        }),
+      }
+    })
+    .collect();
+
+  ObservationSnapshot {
+    api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
+    snapshot_id: format!("osu_session_observation_{index}"),
+    run_id,
+    span_id,
+    captured_at_millis: auv_tracing_driver::now_millis(),
+    source: ObservationSource::Visual,
+    scope: RecognitionScope {
+      surface: RecognitionSurface::Window,
+      display_ref: None,
+      native_display_id: None,
+      app_bundle_id: None,
+      window_title: None,
+      window_number: None,
+      region_hint: None,
+      capture_artifact: None,
+      capture_contract_artifact: None,
+    },
+    capture_contract_ref: None,
+    evidence: Vec::new(),
+    nodes,
+    detail: serde_json::json!({
+      "producer": "osu_detection_session_provider",
+      "frame_index": index
+    }),
+    known_limits: vec![
+      "osu detections are source-image pixels; this provider is observe-only and does not imply clickable window coordinates".to_string(),
+      "session v0 provider has no durable capture artifact link for this fixture projection".to_string(),
+    ],
+  }
+}
+
 fn stage_dataset_dir(
   context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
   dir: &std::path::Path,
@@ -291,4 +395,63 @@ fn stage_dataset_dir(
     }
   }
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use auv_game_osu::{CapturePhase, FrameDetections, FrameKey};
+  use auv_inference_common::{BoundingBox, Detection, DetectionSet, ImageSize, ModelId};
+
+  use crate::session::{ObserveRequest, SessionOptions, SessionRuntime};
+
+  use super::osu_detection_session_provider;
+
+  #[test]
+  fn osu_detection_provider_projects_into_session_observation() {
+    let provider = osu_detection_session_provider(
+      "osu.fixture.detector",
+      vec![FrameDetections::new(
+        FrameKey::from_parts(0, CapturePhase::AfterDispatch, "capture-after.png"),
+        DetectionSet {
+          model_id: ModelId("osu-yolo-fixture".to_string()),
+          image_size: ImageSize {
+            width: 640,
+            height: 480,
+          },
+          detections: vec![Detection {
+            class_id: 1,
+            label: "hit_circle".to_string(),
+            confidence: 0.91,
+            bbox: BoundingBox {
+              x1: 100.2,
+              y1: 150.7,
+              x2: 132.2,
+              y2: 182.7,
+            },
+          }],
+        },
+      )],
+    );
+
+    let mut session = SessionRuntime::new(SessionOptions::default());
+    let provider_id = session.register_provider(provider);
+    let observation = session
+      .observe(&provider_id, ObserveRequest::default())
+      .expect("osu fixture observation should succeed");
+
+    assert_eq!(observation.snapshot.nodes.len(), 1);
+    assert!(
+      observation
+        .snapshot
+        .known_limits
+        .iter()
+        .any(|limit| limit.contains("observe-only"))
+    );
+    let node = session
+      .find_node_by_label("hit_circle")
+      .expect("osu detection should be addressable by session lookup");
+    assert!(matches!(node.node.provider_score, Some(score) if (score - 0.91).abs() < 1e-6));
+    assert_eq!(node.node.box_.width, 32);
+    assert_eq!(node.node.box_.height, 32);
+  }
 }

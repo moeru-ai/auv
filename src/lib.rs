@@ -17,6 +17,7 @@ pub mod osu;
 mod run_read;
 pub mod runtime;
 pub mod scroll_scan;
+pub mod session;
 pub mod stability;
 
 use std::path::PathBuf;
