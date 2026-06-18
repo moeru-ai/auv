@@ -11,9 +11,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub const TELEMETRY_SAMPLE_ARTIFACT_ROLE: &str = "telemetry-sample";
-pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
-
 use crate::model::AuvResult;
 use auv_tracing_driver::store::LocalStore;
 use auv_tracing_driver::trace::RunType;

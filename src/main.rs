@@ -930,7 +930,7 @@ fn stage_minecraft_projection_artifact(
   fs::write(&artifact_path, artifact_json.as_bytes())
     .map_err(|error| format!("failed to write minecraft projection artifact: {error}"))?;
   let staged = context.stage_artifact_file_with_ref(
-    auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+    auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
     &artifact_path,
     "projection-artifact.json",
     Some("durable minecraft projection artifact".to_string()),
@@ -1744,7 +1744,7 @@ mod tests {
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
     assert_eq!(
       run.artifacts[1].role,
-      auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
     assert_eq!(run.artifacts[2].role, "operation-result");
 
@@ -1790,7 +1790,7 @@ mod tests {
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
     assert_eq!(
       run.artifacts[1].role,
-      auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
     assert_eq!(run.artifacts[2].role, "minecraft-overlay");
 
@@ -1835,7 +1835,7 @@ mod tests {
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
     assert_eq!(
       run.artifacts[1].role,
-      auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
 
     let inspect_text =
