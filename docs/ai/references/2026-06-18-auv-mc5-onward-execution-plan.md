@@ -130,6 +130,12 @@ K-pack live/offline sweep has **not** been run yet; do not treat MC-6 as
 numerically closed until that table exists from real samples whose source block
 cites the run ids / bundle manifests.
 
+Before continuing MC-6 prep, read
+`2026-06-18-minecraft-mc6-run-preparation-exploration.md`. It records the
+current local evidence inventory, sidecar state, and the "prepare only; do not
+run live chain yet" boundary so the next pass does not rescan the same `.auv`
+and sidecar state.
+
 C1 — recorder: each run → a bundle (`screenshots/`, `spatial_frames/`,
 `actions/`, `verification/`, `overlays/`, `run.json` with versions + commits).
 The labeled gym, not present showmanship.
