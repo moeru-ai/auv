@@ -152,6 +152,7 @@ mod tests {
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: Some(0),
       screen_state: Some("in_game".to_string()),
+      resource_pack_ids: vec!["vanilla".to_string()],
     }
   }
 

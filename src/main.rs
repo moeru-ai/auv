@@ -264,6 +264,12 @@ async fn run() -> Result<(), String> {
         "noiseRefusalExercised: {}",
         output.value.noise_refusal_exercised
       );
+      if let Some(source) = &output.value.source {
+        println!("sampleSourceGenerator: {}", source.generator);
+        if !source.source_run_ids.is_empty() {
+          println!("sampleSourceRuns: {}", source.source_run_ids.join(","));
+        }
+      }
       for row in &output.value.rows {
         println!(
           "row: pack={} profile={} samples={} poseP95={} minIoU={} passed={}",
@@ -1733,6 +1739,7 @@ mod tests {
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
       screen_state: None,
+      resource_pack_ids: Vec::new(),
     };
     let body = serde_json::to_string(&frame).expect("frame should serialize");
     fs::write(path, format!("{body}\n")).expect("telemetry sample should write");

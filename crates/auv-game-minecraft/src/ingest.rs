@@ -187,6 +187,7 @@ mod tests {
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
       screen_state: None,
+      resource_pack_ids: Vec::new(),
     };
     serde_json::to_string(&frame).expect("frame serializes")
   }
@@ -211,6 +212,7 @@ mod tests {
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
       screen_state: None,
+      resource_pack_ids: Vec::new(),
     };
     frame.nearby_blocks = (0..block_count)
       .map(|index| NearbyBlock {

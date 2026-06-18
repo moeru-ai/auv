@@ -335,6 +335,7 @@ mod tests {
       screenshot_artifact_ref: Some("artifact://frame.png".to_string()),
       mc_capture_skew_ms: Some(0),
       screen_state: None,
+      resource_pack_ids: Vec::new(),
     }
   }
 

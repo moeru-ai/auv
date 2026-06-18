@@ -135,6 +135,7 @@ mod tests {
       screenshot_artifact_ref: None,
       mc_capture_skew_ms: None,
       screen_state: None,
+      resource_pack_ids: Vec::new(),
     }
   }
 
