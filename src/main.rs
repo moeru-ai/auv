@@ -991,8 +991,6 @@ fn run_minecraft_projection_bridge(
     ),
     "Minecraft projection bridge",
     |context| {
-      let (staged_frame_path, _frame_ref) =
-        stage_minecraft_spatial_frame_artifact(context, &frame)?;
       let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
         "minecraft-screenshot",
         &screenshot,
@@ -1014,8 +1012,16 @@ fn run_minecraft_projection_bridge(
         frame.monotonic_timestamp_ms
       };
 
-      let evidence = auv_game_minecraft::evidence::build_projection_evidence(
+      let bound = auv_game_minecraft::bind_capture_to_frame(
         frame,
+        format!("artifact://{screenshot_artifact_id}"),
+        capture_timestamp_ms,
+      );
+      let (staged_frame_path, _frame_ref) =
+        stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
+
+      let evidence = auv_game_minecraft::evidence::build_projection_evidence(
+        bound.frame,
         auv_game_minecraft::evidence::ScreenshotCapture {
           image: screenshot_image,
           artifact_ref: format!("artifact://{screenshot_artifact_id}"),
