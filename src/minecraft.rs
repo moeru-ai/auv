@@ -2,11 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 
 use auv_game_minecraft::{
-  SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput, SpatialBundleSourceArtifact,
-  TextureSweepInputs, TextureSweepPreparationInputs, TextureSweepPreparationOutput,
-  TextureSweepReport, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput,
-  TextureSweepThresholds, build_texture_sweep_samples_from_bundles, evaluate_texture_sweep,
-  export_spatial_bundle, prepare_texture_sweep_resource_packs,
+  ScenePacketInputs, ScenePacketOutput, SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput,
+  SpatialBundleSourceArtifact, TextureSweepInputs, TextureSweepPreparationInputs,
+  TextureSweepPreparationOutput, TextureSweepReport, TextureSweepSampleBuildInputs,
+  TextureSweepSampleBuildOutput, TextureSweepThresholds, build_texture_sweep_samples_from_bundles,
+  evaluate_texture_sweep, export_3dgs_scene_packet, export_spatial_bundle,
+  prepare_texture_sweep_resource_packs,
 };
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
@@ -22,6 +23,46 @@ pub const MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE: &str = "minecraft-textu
 pub const MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep";
 pub const MINECRAFT_TEXTURE_SWEEP_PREP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-prep";
 pub const MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-runbook";
+pub const MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE: &str = "minecraft-3dgs-scene-packet";
+
+pub fn run_minecraft_3dgs_scene_packet_export(
+  recording: &RecordingHandle,
+  bundle_manifest_paths: Vec<PathBuf>,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<ScenePacketOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.minecraft.export_3dgs_scene_packet"),
+    "Minecraft export MC-7 3DGS scene packet",
+    |context| {
+      context.record_event(
+        "minecraft.export_3dgs_scene_packet.inputs",
+        Some(format!(
+          "bundle_manifests={} output_dir={} trained_3dgs=false action_path=false",
+          bundle_manifest_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+          output_dir.display()
+        )),
+      );
+      let result = export_3dgs_scene_packet(ScenePacketInputs {
+        bundle_manifest_paths: bundle_manifest_paths.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span("minecraft.export_3dgs_scene_packet.artifacts", |context| {
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE,
+          &result.manifest_path,
+          "minecraft-3dgs-scene-packet-run.json",
+          Some("MC-7 3DGS input scene packet manifest; offline inspect artifact only".to_string()),
+        )?;
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
 
 pub fn run_minecraft_texture_sweep_preparation(
   recording: &RecordingHandle,
@@ -291,8 +332,11 @@ mod tests {
 
   fn write_sample_bundle(temp: &std::path::Path) -> PathBuf {
     let bundle_dir = temp.join("bundle");
+    let screenshots_dir = bundle_dir.join("screenshots");
     let frames_dir = bundle_dir.join("spatial_frames");
+    fs::create_dir_all(&screenshots_dir).expect("screenshots dir");
     fs::create_dir_all(&frames_dir).expect("frames dir");
+    fs::write(screenshots_dir.join("artifact_0001-frame.png"), b"png").expect("screenshot");
     let frame = auv_game_minecraft::MinecraftSpatialFrame {
       spatial_frame_id: "frame-rich".to_string(),
       world_tick: 1,
@@ -313,7 +357,7 @@ mod tests {
       nearby_blocks: Vec::new(),
       nearby_entities: Vec::new(),
       inventory_summary: Vec::new(),
-      screenshot_artifact_ref: Some("artifact://screenshot".to_string()),
+      screenshot_artifact_ref: Some("artifact://artifact_0001".to_string()),
       mc_capture_skew_ms: Some(10),
       screen_state: Some("in_game".to_string()),
       resource_pack_ids: vec!["fabric".to_string(), "file/auv-mc6-rich".to_string()],
@@ -335,17 +379,28 @@ mod tests {
         exporter_git_commit: None,
       },
       counts: auv_game_minecraft::SpatialBundleCounts {
+        screenshots: 1,
         spatial_frames: 1,
         ..auv_game_minecraft::SpatialBundleCounts::default()
       },
-      artifacts: vec![auv_game_minecraft::SpatialBundleArtifactRecord {
-        artifact_id: "artifact_0001".to_string(),
-        role: "minecraft-spatial-frame".to_string(),
-        source_path: "artifacts/frame-rich.json".to_string(),
-        bundle_path: "spatial_frames/artifact_0001-frame-rich.json".to_string(),
-        directory: auv_game_minecraft::SpatialBundleDirectory::SpatialFrames,
-        summary: None,
-      }],
+      artifacts: vec![
+        auv_game_minecraft::SpatialBundleArtifactRecord {
+          artifact_id: "artifact_0001".to_string(),
+          role: "minecraft-screenshot".to_string(),
+          source_path: "artifacts/frame.png".to_string(),
+          bundle_path: "screenshots/artifact_0001-frame.png".to_string(),
+          directory: auv_game_minecraft::SpatialBundleDirectory::Screenshots,
+          summary: None,
+        },
+        auv_game_minecraft::SpatialBundleArtifactRecord {
+          artifact_id: "artifact_0002".to_string(),
+          role: "minecraft-spatial-frame".to_string(),
+          source_path: "artifacts/frame-rich.json".to_string(),
+          bundle_path: "spatial_frames/artifact_0001-frame-rich.json".to_string(),
+          directory: auv_game_minecraft::SpatialBundleDirectory::SpatialFrames,
+          summary: None,
+        },
+      ],
       known_limits: Vec::new(),
     };
     let manifest_path = bundle_dir.join("run.json");
@@ -355,6 +410,35 @@ mod tests {
     )
     .expect("manifest write");
     manifest_path
+  }
+
+  #[test]
+  fn three_dgs_scene_packet_export_records_manifest_artifact() {
+    let temp = temp_dir("mc7-scene-packet");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
+    let manifest_path = write_sample_bundle(&temp);
+
+    let output = run_minecraft_3dgs_scene_packet_export(
+      &recording,
+      vec![manifest_path],
+      temp.join("scene-packet"),
+    )
+    .expect("scene packet export");
+
+    assert_eq!(output.value.manifest.counts.frames, 1);
+    assert_eq!(output.value.manifest.counts.screenshots, 1);
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("scene packet run should persist");
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE)
+    );
+
+    let _ = fs::remove_dir_all(temp);
   }
 
   #[test]

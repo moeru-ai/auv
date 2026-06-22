@@ -3,7 +3,9 @@
 Date: 2026-06-18
 
 Status: exploration ledger plus implemented preparation-slice handoff. This is
-not a closure report.
+not a closure report. As of 2026-06-18 owner override, MC-6 is intentionally
+held in this unlive / not-numerically-closed state while MC-7 starts as a
+separate offline inspect-artifact lane.
 
 ## Current repo state checked
 
@@ -78,7 +80,8 @@ Findings:
   committed or ignored `.auv` state.
 
 Conclusion: old MC-2/MC-3/MC-4 evidence cannot close MC-6. It is useful as
-historical live-click/refusal evidence only.
+historical live-click/refusal evidence only. MC-6 remains explicitly unclosed
+until a future owner decision reopens its live K-pack sweep.
 
 ## Sidecar state checked
 
@@ -187,7 +190,10 @@ bundle provenance.
 
 ## Red lines
 
-- Do not start MC-7 or 3DGS.
+- Do not treat MC-6 as live-run or numerically closed.
+- Do not use MC-7 work as a substitute for the missing MC-6 K-pack table.
+- MC-7 may proceed only under the separate owner-opened offline
+  inspect-artifact lane; it does not change this MC-6 status.
 - Do not run Minecraft/Fabric while this slice is "prepare only".
 - Do not fabricate real-source sample JSON by hand.
 - Do not commit generated resource pack zips or sidecar `run/` output.

@@ -30,6 +30,12 @@ here approves widening beyond the slice in hand.
   session substrate design note plus in-process warm-provider proof have landed.
   The `.codex-worktrees/realtime-session-substrate/` worktree remains untracked
   and should not be treated as committed project state.
+- Update after MC-6 preparation: MC-6 has preparation-only resource-pack,
+  sample-builder, and real-source gate substrate, but its K-pack live/offline
+  numerical sweep remains **unrun**. Owner override on 2026-06-18: hold MC-6 in
+  that unlive state and open MC-7 as a separate design-first lane. This is an
+  owner product/architecture selection, not evidence that MC-6 numerically
+  passed or failed.
 
 ## Kill gates (carried + extended)
 
@@ -114,8 +120,8 @@ stop.
 
 Offline; does **not** need the daemon; may run in parallel with A / B.
 
-Status: design note and local recorder/measurement substrate implemented. The
-design note is
+Status: design note and local recorder/measurement substrate implemented, then
+held at preparation-only/unlive by owner override on 2026-06-18. The design note is
 `2026-06-18-minecraft-mc6-spatial-dataset-measurement-design.md`. Local code now
 records `minecraft-spatial-frame` artifacts, exports MC-6 bundle manifests via
 `auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir>`, and
@@ -143,6 +149,11 @@ current local evidence inventory, sidecar state, and the "prepare only; do not
 run live chain yet" boundary so the next pass does not rescan the same `.auv`
 and sidecar state.
 
+Current decision: **do not continue the MC-6 live chain unless the owner
+explicitly reopens MC-6**. Keep its status visible as "not live-run / not
+numerically closed". The preparation substrate remains useful for future data
+collection and as a provenance gate, but it no longer blocks starting MC-7.
+
 C1 — recorder: each run → a bundle (`screenshots/`, `spatial_frames/`,
 `actions/`, `verification/`, `overlays/`, `run.json` with versions + commits).
 The labeled gym, not present showmanship.
@@ -163,16 +174,34 @@ Compute 2.5D keyframe-cache pose/occlusion error vs the mod's raycast + matrix
 ground-truth across the K packs. This table is the **only** input that decides
 session-floor vs 2.5D vs 3DGS — by number, not argument.
 
-Acceptance gate: bundle schema recorded + read-side visible; the sweep runs
-across K packs with `--require-real-source` and emits the p95 / IoU table;
-pass/fail is read off the pre-set thresholds. The table must come from real
-sample provenance, not the evaluator's fixture or smoke data. Finish, report the
-table, stop.
+Acceptance gate if MC-6 is reopened: bundle schema recorded + read-side visible;
+the sweep runs across K packs with `--require-real-source` and emits the p95 /
+IoU table; pass/fail is read off the pre-set thresholds. The table must come
+from real sample provenance, not the evaluator's fixture or smoke data. Until
+then, MC-6 remains deliberately held as unlive preparation work.
 
-## Slice D — MC-7: 3DGS (PARKED — do not start)
+## Slice D — MC-7: offline 3DGS inspect artifact (OWNER-OPENED)
 
-Do not start. Recorded only to fix the open-gate. 3DGS opens only when all three
-independent judges point "yes":
+Status: opened by explicit owner override on 2026-06-18 while MC-6 is held
+unlive. The old three-judge gate remains useful skepticism for trusting 3DGS in
+the action path, but it no longer blocks **starting** the offline inspect-artifact
+lane.
+
+First slice is design-note-first:
+`2026-06-18-minecraft-mc7-offline-3dgs-inspect-artifact-design.md`.
+
+Opening MC-7 now means:
+
+- MC-6 is still not numerically closed.
+- MC-7 starts as an offline artifact/read-side lane, not an action-path or
+  verification-path dependency.
+- Missing MC-6 numbers do not count as a technical forcing result.
+- The first implementation must produce auditable inspect artifacts from real
+  captured/bundled inputs or an explicitly labeled fixture; it must not
+  fabricate closure evidence.
+
+The original three independent judges are retained as the gate for promoting
+3DGS beyond offline inspection:
 
 - **technical forcing** — Slice C's numbers (does 2.5D blow up on flat-color /
   repetitive textures?). Benchmark, not argument.
@@ -184,6 +213,15 @@ independent judges point "yes":
 
 If ever opened, the first version is an **offline inspect artifact only** (P0 §8),
 never in the action path until earned.
+
+D0 acceptance gate:
+
+- MC-7 design note lands under `docs/ai/references/`.
+- Local tooling inventory is recorded.
+- The first artifact schema is named and kept Minecraft-vertical or read-side;
+  no Minecraft nouns graduate to core.
+- The action path and refusal seam are explicitly unchanged.
+- MC-6 remains visibly marked as unlive / not numerically closed.
 
 ## What graduates vs what stays
 
@@ -204,7 +242,8 @@ NEVER graduates (stays in the vertical crates):
 - No vertical nouns (MC or osu) graduated to core.
 - No Mineflayer / MCP / mod action path (KG2). Sidecar stays read-only truth.
 - No agent loop or goal generation in the daemon (KG4).
-- No Slice B code before its B0 design note; no starting Slice D at all.
+- No Slice B code before its B0 design note.
+- No MC-7 action-path work; MC-7 is offline inspect artifact first.
 - No drive-by refactor — one slice in hand, finish, report, stop.
 
 ## Fast restart checklist
@@ -214,6 +253,7 @@ Re-read before editing: `CLAUDE.md`, `AGENTS.md`,
 `2026-06-16-minecraft-live-mc2-mc4-closure-plan.md` (incl. its Post-MC-4
 sequencing), `2026-06-10-stateful-session-daemon-js-repl-v0.md`.
 
-Order: **start at Slice A**; Slice C may run in parallel (offline); Slice B is
-gated on its B0 design note; Slice D is parked. Finish, report, stop, let the
-owner pick next.
+Current order after owner override: keep MC-6 held at preparation-only/unlive;
+start Slice D with the MC-7 design note and only then implement the smallest
+offline inspect artifact slice. Finish, report, stop, let the owner pick the
+next implementation step.

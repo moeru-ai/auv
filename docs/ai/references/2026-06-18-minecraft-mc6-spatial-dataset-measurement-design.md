@@ -4,7 +4,9 @@ Date: 2026-06-18
 
 Status: accepted local slice design for MC-6 implementation. This note narrows
 Slice C from `2026-06-18-auv-mc5-onward-execution-plan.md` into an offline
-recorder and measurement contract. It does not open MC-7.
+recorder and measurement contract. As of 2026-06-18 owner override, MC-6 is held
+at preparation-only/unlive status and MC-7 is opened separately as an offline
+inspect-artifact lane. That override does not make MC-6 numerically closed.
 
 ## Scope
 
@@ -192,7 +194,9 @@ manifest paths.
 
 ## Explicit non-goals
 
-- No MC-7 or 3DGS artifact.
+- No claim that MC-6 has been live-run or numerically closed.
+- No use of MC-7 / 3DGS output as replacement evidence for the missing MC-6
+  K-pack table.
 - No dense photometric mismatch refusal class.
 - No new action-result schema.
 - No Mineflayer/MCP/mod action path.
