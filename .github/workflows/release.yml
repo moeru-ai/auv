@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-14
+    runs-on: ${{ matrix.os }}
+    name: build ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: auv-cli.${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/auv-cli
+          if-no-files-found: error
+          retention-days: 7
+      - uses: TheDoctor0/zip-release@0.7.6
+        with:
+          type: tar
+          filename: auv-cli.${{ matrix.target }}.tar
+          directory: target/${{ matrix.target }}/release/
+          path: auv-cli
+      - uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref, '-') }}
+          files: target/${{ matrix.target }}/release/auv-cli.${{ matrix.target }}.tar
