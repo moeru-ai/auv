@@ -1162,7 +1162,9 @@ fn invoke_scan_command(
   request: InvokeRequest,
   label: &str,
 ) -> AuvResult<InvokeResult> {
-  let result = runtime.invoke_in_span(run, root, request)?;
+  let registry = auv_cli_invoke::default_registry();
+  let result =
+    auv_cli_invoke::invoke_recorded_in_span(runtime.recording(), &registry, run, root, request)?;
   if result.status == RunStatus::Completed {
     Ok(result)
   } else {

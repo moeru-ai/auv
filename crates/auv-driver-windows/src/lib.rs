@@ -18,7 +18,7 @@ mod session;
 pub mod vision;
 pub mod window;
 
-pub use accessibility::{AxNode, AxTreeSnapshot, snapshot_window};
+pub use accessibility::{AxNode, AxTreeSnapshot, focus_node, select_node, snapshot_window};
 pub use descriptor::{
   WINDOWS_DESKTOP_CAPABILITIES, WindowsDriverDescriptor, windows_driver_descriptor,
 };

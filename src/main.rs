@@ -603,8 +603,9 @@ async fn run() -> Result<(), String> {
       println!("output: {}", output.value.output_dir.display());
     }
     CliCommand::Invoke { request, inspect } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let result = runtime.invoke(request)?;
+      let recording = build_recording_for_inspect(&project_root, &inspect)?;
+      let registry = auv_cli_invoke::default_registry();
+      let result = auv_cli_invoke::invoke_recorded(&recording, &registry, request)?;
       println!("runId: {}", result.run_id);
       println!("status: {}", result.status.as_str());
       println!("output: {}", result.output_summary);
@@ -624,8 +625,8 @@ async fn run() -> Result<(), String> {
       }
     }
     CliCommand::Inspect { run_id } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      print!("{}", runtime.inspect(&run_id)?);
+      let store = auv_cli::build_default_store(project_root.clone())?;
+      print!("{}", auv_cli::inspect::inspect_run(&store, &run_id)?);
     }
     CliCommand::InspectServe { .. } => {
       unreachable!("inspect serve is handled before runtime setup")
@@ -921,7 +922,16 @@ fn run_minecraft_live_click(
       inputs.insert("offset_x".to_string(), format!("{:.3}", window_point.0.x));
       inputs.insert("offset_y".to_string(), format!("{:.3}", window_point.0.y));
 
-      let invoke_result = runtime.invoke_resolved(
+      let registry = auv_cli_invoke::default_registry();
+      let command = registry
+        .resolve("input.clickWindowPoint")
+        .ok_or_else(|| "input.clickWindowPoint command is not registered".to_string())?;
+      let parent = context.current_span().clone();
+      let invoke_result = auv_cli_invoke::invoke_resolved_recorded_in_span(
+        runtime.recording(),
+        context.run_mut(),
+        &parent,
+        command,
         InvokeRequest {
           command_id: "input.clickWindowPoint".to_string(),
           target: auv_cli::model::ExecutionTarget {
@@ -931,9 +941,6 @@ fn run_minecraft_live_click(
           inputs,
           dry_run: false,
         },
-        auv_cli_invoke::default_registry()
-          .resolve("input.clickWindowPoint")
-          .ok_or_else(|| "input.clickWindowPoint command is not registered".to_string())?,
       )?;
       let post_frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&post_sample_path)?
         .ok_or_else(|| {
@@ -1018,6 +1025,8 @@ fn run_minecraft_projection_bridge(
     ),
     "Minecraft projection bridge",
     |context| {
+      let (staged_frame_path, _frame_ref) =
+        stage_minecraft_spatial_frame_artifact(context, &frame)?;
       let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
         "minecraft-screenshot",
         &screenshot,
@@ -1039,16 +1048,8 @@ fn run_minecraft_projection_bridge(
         frame.monotonic_timestamp_ms
       };
 
-      let bound = auv_game_minecraft::bind_capture_to_frame(
-        frame,
-        format!("artifact://{screenshot_artifact_id}"),
-        capture_timestamp_ms,
-      );
-      let (staged_frame_path, _frame_ref) =
-        stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
-
       let evidence = auv_game_minecraft::evidence::build_projection_evidence(
-        bound.frame,
+        frame,
         auv_game_minecraft::evidence::ScreenshotCapture {
           image: screenshot_image,
           artifact_ref: format!("artifact://{screenshot_artifact_id}"),
@@ -1129,7 +1130,7 @@ fn stage_minecraft_projection_artifact(
   fs::write(&artifact_path, artifact_json.as_bytes())
     .map_err(|error| format!("failed to write minecraft projection artifact: {error}"))?;
   let staged = context.stage_artifact_file_with_ref(
-    auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+    auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
     &artifact_path,
     "projection-artifact.json",
     Some("durable minecraft projection artifact".to_string()),
@@ -1334,10 +1335,10 @@ fn normalize_write_token(source: &str, token: String) -> Result<String, String> 
   }
 }
 
-fn build_runtime_for_inspect(
+fn build_recording_for_inspect(
   project_root: &Path,
   inspect: &InspectClientOptions,
-) -> Result<auv_cli::runtime::Runtime, String> {
+) -> Result<auv_tracing_driver::RunRecordingBackend, String> {
   let server_target = if should_try_server_write(inspect) {
     if let Some((url, token)) = resolve_inspect_server_target(inspect)? {
       Some((url, token))
@@ -1361,7 +1362,7 @@ fn build_runtime_for_inspect(
   } else {
     temp_runtime_store_root()
   };
-  let store = auv_tracing_driver::store::LocalStore::new(store_root.clone())?;
+  let store = auv_tracing_driver::store::LocalStore::new(store_root)?;
   let mut recorders: Vec<Arc<dyn auv_tracing_driver::RunRecorder>> = Vec::new();
 
   if let Some((url, token)) = server_target {
@@ -1377,9 +1378,19 @@ fn build_runtime_for_inspect(
     1 => recorders.remove(0),
     _ => Arc::new(auv_tracing_driver::CompositeRunRecorder::new(recorders)),
   };
-  let recording = auv_tracing_driver::RunRecordingBackend::new(store, recorder)
-    .with_local_snapshot_write_enabled(local_write_enabled)
-    .with_temporary_store_cleanup(!local_write_enabled);
+  Ok(
+    auv_tracing_driver::RunRecordingBackend::new(store, recorder)
+      .with_local_snapshot_write_enabled(local_write_enabled)
+      .with_temporary_store_cleanup(!local_write_enabled),
+  )
+}
+
+fn build_runtime_for_inspect(
+  project_root: &Path,
+  inspect: &InspectClientOptions,
+) -> Result<auv_cli::runtime::Runtime, String> {
+  let recording = build_recording_for_inspect(project_root, inspect)?;
+  let store_root = recording.store().root().to_path_buf();
   Ok(
     build_runtime_with_store_root(project_root.to_path_buf(), store_root)?
       .with_recording(recording),
@@ -1644,6 +1655,29 @@ mod tests {
   }
 
   #[test]
+  fn recording_for_inspect_uses_cleanup_temp_store_when_local_write_disabled() {
+    let root = std::env::temp_dir().join(format!(
+      "auv-recording-no-local-{}",
+      auv_cli::model::now_millis()
+    ));
+    let inspect = InspectClientOptions {
+      local_write: cli::InspectWriteSetting::Disabled,
+      ..InspectClientOptions::default()
+    };
+
+    let recording =
+      build_recording_for_inspect(&root, &inspect).expect("recording backend should build");
+    let store_root = recording.store().root().to_path_buf();
+
+    assert!(!store_root.starts_with(&root));
+    assert!(store_root.exists());
+
+    drop(recording);
+
+    assert!(!store_root.exists());
+  }
+
+  #[test]
   fn optional_inspect_server_write_ignores_malformed_discovered_session() {
     let _guard = ENV_LOCK.lock().expect("env lock");
     let root = std::env::temp_dir().join(format!(
@@ -1904,6 +1938,7 @@ mod tests {
     .expect("live click should record");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("run should persist");
     assert_eq!(run.artifacts.len(), 4);
@@ -1914,13 +1949,13 @@ mod tests {
     assert_eq!(run.artifacts[1].role, "minecraft-screenshot");
     assert_eq!(
       run.artifacts[2].role,
-      auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
     assert_eq!(run.artifacts[3].role, "operation-result");
 
-    let verifications = runtime
-      .list_verifications(output.run_id.as_str())
-      .expect("verifications should list");
+    let verifications =
+      auv_cli::inspect::list_verifications(runtime.recording().store(), output.run_id.as_str())
+        .expect("verifications should list");
     assert_eq!(verifications.len(), 1);
     assert_eq!(
       verifications[0].method,
@@ -1953,6 +1988,7 @@ mod tests {
     .expect("bridge should succeed");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("run should persist");
     assert_eq!(run.artifacts.len(), 4);
@@ -1963,13 +1999,13 @@ mod tests {
     assert_eq!(run.artifacts[1].role, "minecraft-screenshot");
     assert_eq!(
       run.artifacts[2].role,
-      auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
     assert_eq!(run.artifacts[3].role, "minecraft-overlay");
 
-    let inspect_text = runtime
-      .inspect(output.run_id.as_str())
-      .expect("inspect should render run");
+    let inspect_text =
+      auv_cli::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
+        .expect("inspect should render run");
     assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
     assert!(inspect_text.contains("capture_skew_ms=0"));
     assert_eq!(output.value.overlay_artifact_id.is_some(), true);
@@ -2001,6 +2037,7 @@ mod tests {
     .expect("bridge refusal should still record");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("run should persist");
     assert_eq!(run.artifacts.len(), 3);
@@ -2011,12 +2048,12 @@ mod tests {
     assert_eq!(run.artifacts[1].role, "minecraft-screenshot");
     assert_eq!(
       run.artifacts[2].role,
-      auv_cli::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
     );
 
-    let inspect_text = runtime
-      .inspect(output.run_id.as_str())
-      .expect("inspect should render run");
+    let inspect_text =
+      auv_cli::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
+        .expect("inspect should render run");
     assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
     assert!(inspect_text.contains("capture_skew_ms=999"));
     assert_eq!(

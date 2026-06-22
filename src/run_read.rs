@@ -329,7 +329,7 @@ pub(crate) fn extract_minecraft_projection_artifacts(
 ) -> AuvResult<Vec<MinecraftProjectionArtifact>> {
   let mut artifacts = Vec::new();
   for artifact in &run.artifacts {
-    if artifact.role != crate::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE
+    if artifact.role != crate::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
       || !is_json_mime(&artifact.mime_type)
     {
       continue;
@@ -339,13 +339,13 @@ pub(crate) fn extract_minecraft_projection_artifacts(
       store,
       run.run.run_id.as_str(),
       artifact,
-      crate::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+      crate::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
     )
     .and_then(|(bytes, artifact_path)| {
       serde_json::from_slice::<MinecraftProjectionArtifact>(&bytes).map_err(|error| {
         format!(
           "failed to parse {} artifact {} for run {} from {}: {error}",
-          crate::runtime::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+          crate::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
           artifact.artifact_id,
           run.run.run_id,
           artifact_path.display()
@@ -439,7 +439,7 @@ pub(crate) fn extract_minecraft_telemetry_sample_artifacts(
 ) -> AuvResult<Vec<MinecraftTelemetrySampleArtifactLineage>> {
   let mut artifacts = Vec::new();
   for artifact in &run.artifacts {
-    if artifact.role != crate::runtime::TELEMETRY_SAMPLE_ARTIFACT_ROLE {
+    if artifact.role != crate::contract::TELEMETRY_SAMPLE_ARTIFACT_ROLE {
       continue;
     }
 
@@ -461,7 +461,7 @@ pub(crate) fn extract_minecraft_telemetry_sample_artifacts(
       store,
       run.run.run_id.as_str(),
       artifact,
-      crate::runtime::TELEMETRY_SAMPLE_ARTIFACT_ROLE,
+      crate::contract::TELEMETRY_SAMPLE_ARTIFACT_ROLE,
     );
 
     match parsed {

@@ -10,10 +10,11 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::output::build_playlist_json_output;
 use crate::{
-  DailyRecommendedPlayInputs, Inputs, PlaybackStatusInputs, PlaylistCategory, PlaylistSidebarScan,
-  SongListInputs, run_daily_recommended_play, run_daily_recommended_songs_scan, run_live_scan,
-  run_live_scan_until_query, run_playback_status_probe, run_playlist_play,
-  run_playlist_play_candidate_id, run_playlist_select,
+  DailyRecommendedPlayInputs, Inputs, OpenWindowInputs, PlaybackStatusInputs, PlaylistCategory,
+  PlaylistSidebarScan, SongListInputs, run_daily_recommended_play,
+  run_daily_recommended_songs_scan, run_live_scan, run_live_scan_until_query, run_open_window,
+  run_playback_status_probe, run_playlist_play, run_playlist_play_candidate_id,
+  run_playlist_select,
 };
 
 pub(crate) fn positive_scroll_amount(raw: &str) -> Result<f64, String> {
@@ -176,6 +177,12 @@ pub(crate) struct NowPlayingCommand {
   pub app_id: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct OpenWindowCommand {
+  pub inputs: OpenWindowInputs,
+  pub json: bool,
+}
+
 /// A transport command, scoped to act only when `app_id` owns the now-playing
 /// slot. Reuses `auv_media_macos::MediaCommand` rather than a local mirror.
 #[derive(Clone, Debug, PartialEq)]
@@ -192,6 +199,7 @@ pub(crate) struct SeekCommand {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Command {
+  OpenWindow(OpenWindowCommand),
   PlaylistLs(PlaylistCommand),
   PlaylistSelect(PlaylistSelectCommand),
   PlaylistPlay(PlaylistPlayCommand),
@@ -216,6 +224,8 @@ struct CliArgs {
 
 #[derive(Clone, Debug, Subcommand)]
 enum CliSubcommand {
+  /// Ensure NetEase Cloud Music is running and its window is visible.
+  OpenWindow(OpenWindowArgs),
   /// Work with NetEase Cloud Music playlists.
   Playlist(PlaylistArgs),
   /// Read the system now-playing state (via the macOS media API).
@@ -235,6 +245,25 @@ enum CliSubcommand {
   Seek(SeekArgs),
   /// Experimental current playback probes.
   Playback(PlaybackArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct OpenWindowArgs {
+  /// How long to wait for the window to appear after launch.
+  #[arg(long = "settle-ms", default_value_t = 8_000)]
+  settle_ms: u64,
+  /// Explicit path to cloudmusic.exe.
+  #[arg(long = "exe")]
+  executable: Option<PathBuf>,
+  /// Windows process name used to resolve the app window.
+  #[arg(long = "process-name")]
+  process_name: Option<String>,
+  /// Localized window-title fallback.
+  #[arg(long = "window-title")]
+  window_title: Option<String>,
+  /// Output the structured launch result as JSON.
+  #[arg(long)]
+  json: bool,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -486,6 +515,7 @@ struct PlaylistSelectArgs {
 
 fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
   match parsed.command {
+    CliSubcommand::OpenWindow(args) => Ok(Command::OpenWindow(parse_open_window(args))),
     CliSubcommand::Playlist(args) => parse_playlist(args),
     CliSubcommand::NowPlaying(args) => parse_now_playing(args),
     CliSubcommand::Play(args) => Ok(control(auv_media_macos::MediaCommand::Play, args)),
@@ -500,6 +530,22 @@ fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
     }
     CliSubcommand::Seek(args) => parse_seek(args),
     CliSubcommand::Playback(args) => parse_playback(args),
+  }
+}
+
+fn parse_open_window(args: OpenWindowArgs) -> OpenWindowCommand {
+  let mut inputs = OpenWindowInputs::default();
+  inputs.settle_ms = args.settle_ms;
+  inputs.executable = args.executable;
+  if let Some(process_name) = args.process_name {
+    inputs.resolve.process_name = process_name;
+  }
+  if let Some(window_title) = args.window_title {
+    inputs.resolve.title = window_title;
+  }
+  OpenWindowCommand {
+    inputs,
+    json: args.json,
   }
 }
 
@@ -907,6 +953,7 @@ pub fn run() -> ExitCode {
   };
 
   match command_from_args(parsed) {
+    Ok(Command::OpenWindow(cmd)) => run_open_window_command(cmd),
     Ok(Command::PlaylistLs(cmd)) => run_playlist(cmd),
     Ok(Command::PlaylistSelect(cmd)) => run_playlist_select_command(cmd),
     Ok(Command::PlaylistPlay(cmd)) => run_playlist_play_command(cmd),
@@ -1006,6 +1053,38 @@ mod tests {
       Command::PlaybackStatus(command) => command,
       other => panic!("expected playback status command, got {other:?}"),
     }
+  }
+
+  #[test]
+  fn clap_open_window_maps_windows_launch_options() {
+    let parsed = CliArgs::try_parse_from([
+      "auv-netease-music",
+      "open-window",
+      "--settle-ms",
+      "2500",
+      "--exe",
+      "C:\\Apps\\cloudmusic.exe",
+      "--process-name",
+      "music.exe",
+      "--window-title",
+      "NetEase",
+      "--json",
+    ])
+    .expect("open-window args should parse");
+    let Command::OpenWindow(command) =
+      command_from_args(parsed).expect("open-window command should parse")
+    else {
+      panic!("expected open-window command");
+    };
+
+    assert_eq!(command.inputs.settle_ms, 2_500);
+    assert_eq!(
+      command.inputs.executable,
+      Some(PathBuf::from("C:\\Apps\\cloudmusic.exe"))
+    );
+    assert_eq!(command.inputs.resolve.process_name, "music.exe");
+    assert_eq!(command.inputs.resolve.title, "NetEase");
+    assert!(command.json);
   }
 
   struct TempWordsFile {
@@ -1482,6 +1561,52 @@ fn write_playlist_scan_cache(inputs: &Inputs, scan: &PlaylistSidebarScan) -> Res
     .map_err(|error| format!("failed to write {}: {error}", cache_path.display()))
 }
 
+fn run_open_window_command(cmd: OpenWindowCommand) -> ExitCode {
+  let result = match run_open_window(&cmd.inputs) {
+    Ok(result) => result,
+    Err(error) => {
+      eprintln!("open-window failed: {error}");
+      return ExitCode::from(1);
+    }
+  };
+
+  if cmd.json {
+    match serde_json::to_string_pretty(&result) {
+      Ok(json) => println!("{json}"),
+      Err(error) => {
+        eprintln!("encode failed: {error}");
+        return ExitCode::from(1);
+      }
+    }
+  } else {
+    println!(
+      "window: {}",
+      if result.window_found {
+        "visible"
+      } else {
+        "not found"
+      }
+    );
+    if let Some(title) = &result.window_title {
+      println!("title: {title}");
+    }
+    for step in &result.steps {
+      let note = step
+        .note
+        .as_deref()
+        .map(|note| format!(" ({note})"))
+        .unwrap_or_default();
+      println!("step: {} -> {}{}", step.name, step.outcome, note);
+    }
+  }
+
+  if result.window_found {
+    ExitCode::SUCCESS
+  } else {
+    ExitCode::from(1)
+  }
+}
+
 fn run_playlist_select_command(cmd: PlaylistSelectCommand) -> ExitCode {
   let result = match run_playlist_select(&cmd.inputs, &cmd.query) {
     Ok(result) => result,
@@ -1661,9 +1786,44 @@ fn run_control(cmd: ControlCommand) -> ExitCode {
   }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn run_control(cmd: ControlCommand) -> ExitCode {
+  use crate::{TransportAction, TransportInputs, run_transport_action};
+  use auv_media_macos::MediaCommand;
+
+  let action = match cmd.control {
+    MediaCommand::TogglePlayPause => TransportAction::PlayPause,
+    MediaCommand::NextTrack => TransportAction::Next,
+    MediaCommand::PreviousTrack => TransportAction::Previous,
+    MediaCommand::Play | MediaCommand::Pause => {
+      // TODO(netease-windows-idempotent-playback): separate play and pause
+      // require a reliable UIA-observed current state; add them only after a
+      // live player-state selector is owner-approved and covered by a smoke.
+      eprintln!(
+        "{} is not available through the Windows UIA slice; use `toggle`",
+        cmd.control.label()
+      );
+      return ExitCode::from(1);
+    }
+  };
+  match run_transport_action(&TransportInputs::new(action)) {
+    Ok(result) => {
+      println!(
+        "ok: {} via {:?} control={:?} path={}",
+        result.action, result.delivery.selected_path, result.control_name, result.node_path
+      );
+      ExitCode::SUCCESS
+    }
+    Err(error) => {
+      eprintln!("control failed: {error}");
+      ExitCode::from(1)
+    }
+  }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn run_control(_cmd: ControlCommand) -> ExitCode {
-  eprintln!("media controls are only available on macOS");
+  eprintln!("media controls are only available on macOS and Windows");
   ExitCode::from(1)
 }
 

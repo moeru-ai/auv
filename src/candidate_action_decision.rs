@@ -2803,6 +2803,7 @@ mod tests {
       .expect("recorded decide-only action decision operation should succeed");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
@@ -2821,8 +2822,7 @@ mod tests {
       "candidate.action.decide_only"
     );
     assert_eq!(artifact.detail["input_delivery"], json!("not_attempted"));
-    let inspect = runtime
-      .inspect(output.run_id.as_str())
+    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
       .expect("recorded decide-only run should inspect");
     assert!(inspect.contains("Candidate Action Decision Lineage:"));
     assert!(inspect.contains("resolver=candidate.action.decide_only"));
@@ -3192,6 +3192,7 @@ mod tests {
       .expect("recorded execution operation should succeed");
 
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
@@ -3280,6 +3281,7 @@ mod tests {
 
     assert!(executor.observed_plan.is_some());
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("recorded run should persist");
     assert_eq!(run.artifacts.len(), 4);
@@ -3287,8 +3289,7 @@ mod tests {
     assert_eq!(run.artifacts[1].role, "operation-result");
     assert_eq!(run.artifacts[2].role, "g3-binding-fact");
     assert_eq!(run.artifacts[3].role, "candidate-action-execution");
-    let inspect = runtime
-      .inspect(output.run_id.as_str())
+    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
       .expect("execute-and-record run should inspect");
     assert!(inspect.contains("Candidate Action Execution Lineage:"));
     assert!(inspect.contains("input_delivery=attempted"));
@@ -3433,6 +3434,7 @@ mod tests {
     assert!(executor.executed);
     assert_eq!(executor.verification_calls, 1);
     let run = runtime
+      .recording()
       .read_run(output.run_id.as_str())
       .expect("recorded run should persist");
     assert_eq!(run.artifacts.len(), 4);
@@ -3463,8 +3465,7 @@ mod tests {
     );
     assert_eq!(verifications[1].method, VerificationMethod::SemanticMatch);
     assert_eq!(verifications[1].semantic_matched, Some(true));
-    let inspect = runtime
-      .inspect(output.run_id.as_str())
+    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
       .expect("execute-and-record run should inspect");
     assert!(inspect.contains("verification=activation_only+post_action:semantic_match"));
     assert!(inspect.contains("semantic_matched=true"));
@@ -4218,8 +4219,7 @@ mod tests {
       )
       .expect("recorded L8b smoke should execute and persist");
 
-    let inspect = runtime
-      .inspect(output.run_id.as_str())
+    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
       .expect("recorded L8b smoke should inspect");
     assert!(inspect.contains("Candidate Action Execution Lineage:"));
     assert!(inspect.contains("input_delivery=attempted"));

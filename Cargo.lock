@@ -536,6 +536,7 @@ version = "0.0.1"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
+ "auv-driver-windows",
  "auv-media-macos",
  "auv-view",
  "clap",

@@ -29,6 +29,9 @@ pub const WINDOWS_DESKTOP_CAPABILITIES: &[&str] = &[
   "clipboard.set-text",
   "desktop.probe-permissions",
   "desktop.capture-ax-tree",
+  "control.activate-window",
+  "control.focus-ax-node",
+  "control.select-ax-node",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +55,6 @@ pub fn windows_driver_descriptor() -> WindowsDriverDescriptor {
   WindowsDriverDescriptor {
     id: "windows.desktop",
     platform: PlatformKind::Windows,
-    summary: "Windows desktop driver: system OCR, display/region/window capture, window enumeration and mutation, foreground input, clipboard, permission probe, and UIA accessibility tree snapshot.",
+    summary: "Windows desktop driver: system OCR, display/region/window capture, window enumeration and mutation, foreground input, clipboard, permission probe, and UIA accessibility tree observation/focus.",
   }
 }

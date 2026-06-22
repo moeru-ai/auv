@@ -9,12 +9,15 @@
 //! The snapshot is read-only structure: it captures what the tree looks like,
 //! not how to act on it. Acting on a node (invoke/focus/value) is a separate
 //! concern delivered through the input and control surfaces.
-// TODO(windows-ax-actions): UIA pattern-based actions (InvokePattern,
-// ValuePattern, focus) and a value column on nodes are deferred until an
-// owner-approved slice connects AX nodes to the action/verification seam, the
-// same boundary the macOS AX action path lives behind.
+// TODO(windows-ax-value-write): UIA ValuePattern writes remain deferred until
+// an owner-approved consumer needs them. Read-only ValuePattern text,
+// path-targeted SetFocus, and result-item selection are exposed for Apple Music.
 
+use auv_driver::error::DriverResult;
 use auv_driver::geometry::Rect;
+use auv_driver::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
+
+use crate::error::invalid_input;
 
 // NOTICE: traversal bounds keep a pathological or very deep UI tree from
 // producing an unbounded snapshot (and guard the recursive walk against deep
@@ -33,6 +36,8 @@ pub struct AxNode {
   pub path: String,
   pub control_type: String,
   pub name: String,
+  /// Current text exposed through UIA ValuePattern, when supported.
+  pub value: Option<String>,
   pub automation_id: String,
   pub class_name: String,
   pub focused: bool,
@@ -51,6 +56,72 @@ pub fn snapshot_window(
   window: &auv_driver::window::Window,
 ) -> auv_driver::error::DriverResult<AxTreeSnapshot> {
   native::snapshot_window(window)
+}
+
+/// Moves keyboard focus to a node from a fresh [`AxTreeSnapshot`].
+///
+/// The node path is resolved again against the current UIA control-view tree,
+/// then `IUIAutomationElement::SetFocus` performs the action. Callers should
+/// refresh the snapshot and retry when the tree changes between observation
+/// and action.
+pub fn focus_node(
+  window: &auv_driver::window::Window,
+  node_path: &str,
+) -> DriverResult<InputActionResult> {
+  let indices = child_indices(node_path)?;
+  native::focus_node(window, &indices)?;
+  Ok(InputActionResult {
+    selected_path: InputDeliveryPath::AxFocus,
+    attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
+    fallback_reason: None,
+    mouse_disturbance: DisturbanceLevel::None,
+    focus_disturbance: DisturbanceLevel::Foreground,
+    clipboard_disturbance: DisturbanceLevel::None,
+  })
+}
+
+/// Selects or invokes a node from a recent [`AxTreeSnapshot`].
+///
+/// `SelectionItemPattern::Select` is preferred because result containers such
+/// as WinUI `GridViewItem` expose semantic selection. `InvokePattern::Invoke`
+/// is the typed fallback for actionable nodes that do not expose selection.
+pub fn select_node(
+  window: &auv_driver::window::Window,
+  node_path: &str,
+) -> DriverResult<InputActionResult> {
+  let indices = child_indices(node_path)?;
+  let selected_pattern = native::select_node(window, &indices)?;
+  Ok(InputActionResult {
+    selected_path: InputDeliveryPath::AxPress,
+    attempts: vec![InputAttempt {
+      path: InputDeliveryPath::AxPress,
+      succeeded: true,
+      message: Some(selected_pattern.to_string()),
+    }],
+    fallback_reason: (selected_pattern == "InvokePattern.Invoke")
+      .then_some("SelectionItemPattern was unavailable".to_string()),
+    mouse_disturbance: DisturbanceLevel::None,
+    focus_disturbance: DisturbanceLevel::Foreground,
+    clipboard_disturbance: DisturbanceLevel::None,
+  })
+}
+
+fn child_indices(path: &str) -> DriverResult<Vec<usize>> {
+  let mut parts = path.split('/');
+  if parts.next() != Some("0") {
+    return Err(invalid_input(format!(
+      "UIA node path {path:?} must start at root 0"
+    )));
+  }
+  parts
+    .map(|part| {
+      part.parse::<usize>().map_err(|_| {
+        invalid_input(format!(
+          "UIA node path {path:?} contains invalid child index {part:?}"
+        ))
+      })
+    })
+    .collect()
 }
 
 /// Builds a screen-space rectangle from UIA bounding-rectangle edges.
@@ -76,7 +147,9 @@ mod native {
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
   };
   use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
+    IUIAutomationSelectionItemPattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
+    UIA_InvokePatternId, UIA_SelectionItemPatternId, UIA_ValuePatternId,
   };
   use windows::core::{BSTR, Result as WindowsResult};
 
@@ -130,6 +203,68 @@ mod native {
     })
   }
 
+  pub(super) fn focus_node(window: &Window, child_indices: &[usize]) -> DriverResult<()> {
+    let (_com, element) = resolve_element(window, child_indices)?;
+    unsafe { element.SetFocus() }
+      .map_err(|error| backend(format!("failed to focus UIA node: {error}")))
+  }
+
+  pub(super) fn select_node(
+    window: &Window,
+    child_indices: &[usize],
+  ) -> DriverResult<&'static str> {
+    let (_com, element) = resolve_element(window, child_indices)?;
+    if let Ok(pattern) = unsafe {
+      element.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId)
+    } {
+      unsafe { pattern.Select() }
+        .map_err(|error| backend(format!("failed to select UIA node: {error}")))?;
+      return Ok("SelectionItemPattern.Select");
+    }
+    let pattern =
+      unsafe { element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) }
+        .map_err(|error| {
+          backend(format!(
+            "UIA node supports neither SelectionItemPattern nor InvokePattern: {error}"
+          ))
+        })?;
+    unsafe { pattern.Invoke() }
+      .map_err(|error| backend(format!("failed to invoke UIA node: {error}")))?;
+    Ok("InvokePattern.Invoke")
+  }
+
+  fn resolve_element(
+    window: &Window,
+    child_indices: &[usize],
+  ) -> DriverResult<(ComGuard, IUIAutomationElement)> {
+    let hwnd = window_handle(window)?;
+    let com = init_com();
+    let automation: IUIAutomation =
+      unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+        .map_err(|error| backend(format!("failed to create UI Automation client: {error}")))?;
+    let mut element = unsafe { automation.ElementFromHandle(hwnd) }
+      .map_err(|error| backend(format!("failed to resolve window UI element: {error}")))?;
+    let walker = unsafe { automation.ControlViewWalker() }.map_err(|error| {
+      backend(format!(
+        "failed to get UI Automation control walker: {error}"
+      ))
+    })?;
+    for index in child_indices {
+      let mut child = unsafe { walker.GetFirstChildElement(&element) }
+        .map_err(|error| backend(format!("failed to resolve UIA child 0: {error}")))?;
+      for sibling_index in 0..*index {
+        child = unsafe { walker.GetNextSiblingElement(&child) }.map_err(|error| {
+          backend(format!(
+            "failed to resolve UIA child {}: {error}",
+            sibling_index + 1
+          ))
+        })?;
+      }
+      element = child;
+    }
+    Ok((com, element))
+  }
+
   /// Depth-first traversal that appends each visited element, then descends
   /// through its control-view children. Traversal stops widening once the node
   /// budget is exhausted and stops descending past the depth limit.
@@ -166,6 +301,7 @@ mod native {
       path,
       control_type: bstr_or_default(unsafe { element.CurrentLocalizedControlType() }),
       name: bstr_or_default(unsafe { element.CurrentName() }),
+      value: value_or_none(element),
       automation_id: bstr_or_default(unsafe { element.CurrentAutomationId() }),
       class_name: bstr_or_default(unsafe { element.CurrentClassName() }),
       focused: unsafe { element.CurrentHasKeyboardFocus() }
@@ -177,6 +313,14 @@ mod native {
 
   fn bstr_or_default(result: WindowsResult<BSTR>) -> String {
     result.map(|value| value.to_string()).unwrap_or_default()
+  }
+
+  fn value_or_none(element: &IUIAutomationElement) -> Option<String> {
+    let pattern =
+      unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
+        .ok()?;
+    let value = unsafe { pattern.CurrentValue() }.ok()?.to_string();
+    (!value.is_empty()).then_some(value)
   }
 
   fn bounds_or_default(element: &IUIAutomationElement) -> Rect {
@@ -197,6 +341,17 @@ mod native {
   pub(super) fn snapshot_window(_window: &Window) -> DriverResult<AxTreeSnapshot> {
     Err(DriverError::unsupported("accessibility.snapshot_window"))
   }
+
+  pub(super) fn focus_node(_window: &Window, _child_indices: &[usize]) -> DriverResult<()> {
+    Err(DriverError::unsupported("accessibility.focus_node"))
+  }
+
+  pub(super) fn select_node(
+    _window: &Window,
+    _child_indices: &[usize],
+  ) -> DriverResult<&'static str> {
+    Err(DriverError::unsupported("accessibility.select_node"))
+  }
 }
 
 #[cfg(test)]
@@ -215,6 +370,17 @@ mod tests {
     let rect = rect_from_edges(10, 20, 10, 20);
 
     assert_eq!(rect, Rect::new(10.0, 20.0, 0.0, 0.0));
+  }
+
+  #[test]
+  fn child_indices_parse_snapshot_path() {
+    assert_eq!(child_indices("0/2/0/0/1/3/0").unwrap(), [2, 0, 0, 1, 3, 0]);
+  }
+
+  #[test]
+  fn child_indices_reject_invalid_root_and_child() {
+    assert!(child_indices("1/2").is_err());
+    assert!(child_indices("0/search").is_err());
   }
 
   // Live smoke test: snapshot the first enumerated top-level window and prove

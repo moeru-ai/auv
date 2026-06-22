@@ -6,8 +6,14 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::commands::launch::OpenWindowInputs;
 use crate::commands::playback::PlaybackStatusInputs;
+use crate::commands::search::{
+  DEFAULT_RESULT_SELECTION_TIMEOUT_MS, DEFAULT_SEARCH_SETTLE_MS,
+  DEFAULT_SEARCH_VERIFICATION_TIMEOUT_MS, SearchInputs, SearchResultSelectInputs,
+};
 use crate::commands::transport::{TransportAction, TransportInputs};
-use crate::{run_open_window, run_playback_status, run_transport_action};
+use crate::{
+  run_open_window, run_playback_status, run_search, run_search_result_select, run_transport_action,
+};
 
 #[derive(Clone, Debug, Parser)]
 #[command(
@@ -26,6 +32,8 @@ enum CliCommand {
   OpenWindow(OpenWindowArgs),
   /// Read playback state, track title, and artist from Apple Music.
   Playback(PlaybackArgs),
+  /// Search Apple Music and verify the submitted query.
+  Search(SearchArgs),
   /// Send a transport control action (play/pause, next, previous).
   Transport(TransportArgs),
 }
@@ -45,6 +53,43 @@ struct OpenWindowArgs {
 #[derive(Clone, Debug, Args)]
 struct PlaybackArgs {
   /// Save a window capture PNG to this directory (for debugging).
+  #[arg(long = "artifact-dir", value_name = "DIR")]
+  artifact_dir: Option<PathBuf>,
+
+  /// Output as JSON instead of human-readable text.
+  #[arg(long)]
+  json: bool,
+}
+
+#[derive(Clone, Debug, Args)]
+struct SearchArgs {
+  /// Search query to submit.
+  #[arg(value_name = "query")]
+  query: String,
+
+  /// Select one result whose full accessible name contains this unique anchor.
+  #[arg(long = "select", value_name = "ANCHOR")]
+  select: Option<String>,
+
+  /// How long to wait after each input action (ms).
+  #[arg(long = "settle-ms", default_value_t = DEFAULT_SEARCH_SETTLE_MS)]
+  settle_ms: u64,
+
+  /// How long to wait for OCR verification (ms).
+  #[arg(
+    long = "verification-timeout-ms",
+    default_value_t = DEFAULT_SEARCH_VERIFICATION_TIMEOUT_MS
+  )]
+  verification_timeout_ms: u64,
+
+  /// How long to wait for a matching UIA result item (ms).
+  #[arg(
+    long = "selection-timeout-ms",
+    default_value_t = DEFAULT_RESULT_SELECTION_TIMEOUT_MS
+  )]
+  selection_timeout_ms: u64,
+
+  /// Save the final verification capture PNG to this directory.
   #[arg(long = "artifact-dir", value_name = "DIR")]
   artifact_dir: Option<PathBuf>,
 
@@ -84,6 +129,7 @@ pub fn run() -> ExitCode {
   match args.command {
     CliCommand::OpenWindow(args) => run_open_window_cmd(args),
     CliCommand::Playback(args) => run_playback_cmd(args),
+    CliCommand::Search(args) => run_search_cmd(args),
     CliCommand::Transport(args) => run_transport_cmd(args),
   }
 }
@@ -192,5 +238,126 @@ fn run_transport_cmd(args: TransportArgs) -> ExitCode {
       }
       ExitCode::SUCCESS
     }
+  }
+}
+
+fn run_search_cmd(args: SearchArgs) -> ExitCode {
+  let mut inputs = SearchInputs::with_query(args.query);
+  inputs.settle_ms = args.settle_ms;
+  inputs.verification_timeout_ms = args.verification_timeout_ms;
+  inputs.artifact_dir = args.artifact_dir;
+
+  if let Some(anchor) = args.select {
+    let selection_inputs = SearchResultSelectInputs {
+      search: inputs,
+      anchor,
+      selection_timeout_ms: args.selection_timeout_ms,
+    };
+    return match run_search_result_select(&selection_inputs) {
+      Err(error) => {
+        eprintln!("error: {error}");
+        ExitCode::FAILURE
+      }
+      Ok(result) => {
+        if args.json {
+          println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        } else {
+          println!("query:          {}", result.search.query);
+          println!("verification:   {}", result.search.verification.status);
+          println!("selected:       {}", result.selected.name);
+          println!("selection path: {:?}", result.selection_input.selected_path);
+          println!("selection verified: {}", result.verification.status);
+        }
+        if result.is_verified() {
+          ExitCode::SUCCESS
+        } else {
+          ExitCode::FAILURE
+        }
+      }
+    };
+  }
+
+  match run_search(&inputs) {
+    Err(error) => {
+      eprintln!("error: {error}");
+      ExitCode::FAILURE
+    }
+    Ok(result) => {
+      if args.json {
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+      } else {
+        println!("query:        {}", result.query);
+        println!("verification: {}", result.verification.status);
+        println!("input path:   {:?}", result.query_input.selected_path);
+        if let Some(artifact) = &result.verification.artifact {
+          println!("artifact:     {artifact}");
+        }
+        for note in &result.diagnostics {
+          println!("note:         {note}");
+        }
+      }
+      if result.is_verified() {
+        ExitCode::SUCCESS
+      } else {
+        ExitCode::FAILURE
+      }
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use clap::Parser;
+
+  use super::{CliArgs, CliCommand};
+
+  #[test]
+  fn parse_search_maps_query_and_timing_options() {
+    let args = CliArgs::try_parse_from([
+      "auv-apple-music",
+      "search",
+      "AURORA Cure For Me",
+      "--settle-ms",
+      "125",
+      "--verification-timeout-ms",
+      "900",
+    ])
+    .expect("search command should parse");
+
+    let CliCommand::Search(search) = args.command else {
+      panic!("expected search command");
+    };
+    assert_eq!(search.query, "AURORA Cure For Me");
+    assert_eq!(search.select, None);
+    assert_eq!(search.settle_ms, 125);
+    assert_eq!(search.verification_timeout_ms, 900);
+  }
+
+  #[test]
+  fn parse_search_selection_maps_unique_anchor() {
+    let args = CliArgs::try_parse_from([
+      "auv-apple-music",
+      "search",
+      "Chopin ballade no. 1",
+      "--select",
+      "Ballade No. 1 in G Minor, Op. 23 YUNDI",
+      "--selection-timeout-ms",
+      "1200",
+    ])
+    .expect("search selection should parse");
+
+    let CliCommand::Search(search) = args.command else {
+      panic!("expected search command");
+    };
+    assert_eq!(
+      search.select.as_deref(),
+      Some("Ballade No. 1 in G Minor, Op. 23 YUNDI")
+    );
+    assert_eq!(search.selection_timeout_ms, 1200);
+  }
+
+  #[test]
+  fn parse_search_requires_query() {
+    assert!(CliArgs::try_parse_from(["auv-apple-music", "search"]).is_err());
   }
 }

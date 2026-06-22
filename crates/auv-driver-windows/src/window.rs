@@ -26,6 +26,19 @@ pub fn resolve_window(selector: &WindowSelector) -> DriverResult<Window> {
   resolve_from_windows(&windows, selector)
 }
 
+/// Restores and foregrounds a top-level window for `SendInput` delivery.
+#[cfg(target_os = "windows")]
+pub fn activate_window(window: &Window) -> DriverResult<()> {
+  native::activate_window(window)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn activate_window(_window: &Window) -> DriverResult<()> {
+  Err(auv_driver::error::DriverError::unsupported(
+    "window.activate",
+  ))
+}
+
 /// Parses the native `HWND` value previously encoded in a [`Window`] reference.
 ///
 /// Window references carry the `HWND` as a decimal `isize` string (see
@@ -152,11 +165,13 @@ mod native {
     DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
   };
   use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
   };
   use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsWindowVisible,
+    BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SW_RESTORE, SetForegroundWindow,
+    ShowWindow,
   };
   use windows::core::PWSTR;
 
@@ -166,13 +181,23 @@ mod native {
     let mut handles: Vec<HWND> = Vec::new();
     // SAFETY: `enum_proc` only pushes into the Vec referenced by `lparam`, which
     // outlives the synchronous EnumWindows call.
-    unsafe {
+    let enumeration = unsafe {
       EnumWindows(
         Some(enum_proc),
         LPARAM(&mut handles as *mut Vec<HWND> as isize),
       )
-      .map_err(|error| backend(format!("EnumWindows failed: {error}")))?;
+    };
+    if let Err(error) = enumeration
+      && error.code().is_err()
+    {
+      return Err(backend(format!("EnumWindows failed: {error}")));
     }
+    // NOTICE(windows-enum-zero-last-error): some interactive desktop sessions
+    // return FALSE from EnumWindows while leaving the last-error code at
+    // ERROR_SUCCESS, even though the callback populated the complete window
+    // list. Treat only a real HRESULT failure as an enumeration error. Remove
+    // this tolerance if the Win32 wrapper begins preserving callback-stop
+    // state separately from GetLastError.
 
     let foreground = unsafe { GetForegroundWindow() };
     let mut windows = Vec::new();
@@ -182,6 +207,44 @@ mod native {
       }
     }
     Ok(windows)
+  }
+
+  pub(super) fn activate_window(window: &Window) -> DriverResult<()> {
+    let hwnd = super::window_handle(window)?;
+    let current_thread = unsafe { GetCurrentThreadId() };
+    let foreground = unsafe { GetForegroundWindow() };
+    let foreground_thread = if foreground.is_invalid() {
+      0
+    } else {
+      unsafe { GetWindowThreadProcessId(foreground, None) }
+    };
+    let target_thread = unsafe { GetWindowThreadProcessId(hwnd, None) };
+    let attached_foreground = foreground_thread != 0
+      && foreground_thread != current_thread
+      && unsafe { AttachThreadInput(current_thread, foreground_thread, true) }.as_bool();
+    let attached_target = target_thread != 0
+      && target_thread != current_thread
+      && target_thread != foreground_thread
+      && unsafe { AttachThreadInput(current_thread, target_thread, true) }.as_bool();
+    unsafe {
+      let _ = ShowWindow(hwnd, SW_RESTORE);
+      let _ = BringWindowToTop(hwnd);
+    }
+    let activated =
+      unsafe { SetForegroundWindow(hwnd) }.as_bool() || unsafe { GetForegroundWindow() } == hwnd;
+    if attached_target {
+      let _ = unsafe { AttachThreadInput(current_thread, target_thread, false) };
+    }
+    if attached_foreground {
+      let _ = unsafe { AttachThreadInput(current_thread, foreground_thread, false) };
+    }
+    if activated {
+      Ok(())
+    } else {
+      Err(backend(
+        "SetForegroundWindow was refused; interact with NetEase Music once and retry",
+      ))
+    }
   }
 
   unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {

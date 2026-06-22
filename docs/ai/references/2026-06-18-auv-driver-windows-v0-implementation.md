@@ -40,7 +40,9 @@ descriptor. Every token below is wired end-to-end in the current v0:
 | `clipboard.restore` | `clipboard` | Win32 clipboard text restore |
 | `clipboard.set-text` | `clipboard` | Win32 clipboard text set |
 | `desktop.probe-permissions` | `permission` | UAC elevation, UIAccess privilege, interactive session |
-| `desktop.capture-ax-tree` | `accessibility` | Microsoft UI Automation control-view tree walker; depth ≤ 40, nodes ≤ 2 000 |
+| `desktop.capture-ax-tree` | `accessibility` | Microsoft UI Automation control-view tree walker with read-only ValuePattern text; depth ≤ 40, nodes ≤ 2 000 |
+| `control.focus-ax-node` | `accessibility` | Resolves a recent snapshot path and focuses the UIA element with `SetFocus` |
+| `control.select-ax-node` | `accessibility` | Selects through `SelectionItemPattern` with `InvokePattern` fallback |
 
 Window mutation (`move_to`, `resize`, `set_frame`, `minimize`, `restore`,
 `zoom`) is wired via `SetWindowPos`/`ShowWindow` and produces
@@ -57,7 +59,7 @@ as a capability string yet, mirroring the macOS driver's current shape.
 | `ocr` | `OcrError`, `recognize_text_in_rgba` | `Windows.Media.Ocr` WinRT integration |
 | `vision` | `OcrMatch`, `OcrMatches`, `recognize_text_in_capture`, `find_text_in_capture` | Wraps OCR into capture-coordinate-relative results |
 | `capture` | `list_displays`, `capture_display`, `capture_region`, `capture_window` | `xcap` display/region capture; GDI `PrintWindow` for window capture |
-| `window` | `list_windows`, `resolve_window` | `EnumWindows` enumeration; title/pid/class/exe selector resolution |
+|`window` | `list_windows`, `resolve_window` | `EnumWindows` enumeration; title/pid/class/exe selector resolution |
 | `input` | `click_at`, `scroll_at`, `type_text`, `press_key`, `copy`, `paste` | Foreground `SendInput` with `InputActionResult` disturbance reporting |
 | `clipboard` | `snapshot`, `restore`, `set_text` | Win32 clipboard text operations |
 | `mutation` | `mutate_window` | `SetWindowPos`/`ShowWindow` with before/after frame verification |
@@ -110,21 +112,23 @@ macOS `assess_readiness`) is deferred until an owner-approved slice.
 list of `AxNode` items carrying:
 
 - `depth`, `path` (slash-joined child index chain from root)
-- `control_type`, `name`, `automation_id`, `class_name`, `focused`
+- `control_type`, `name`, optional ValuePattern `value`, `automation_id`,
+  `class_name`, `focused`
 - `bounds` (screen-space `Rect` from UIA bounding-rectangle edges)
 
 Traversal limits: depth ≤ 40, node count ≤ 2 000.
 
-TODO(windows-ax-actions): UIA pattern-based actions (`InvokePattern`,
-`ValuePattern`, focus) and a value column on nodes are deferred until an
-owner-approved slice connects AX nodes to the action/verification seam.
+Read-only ValuePattern text, path-targeted `SetFocus`, and typed
+`SelectionItemPattern`/`InvokePattern` result activation are exposed for Apple
+Music search. UIA ValuePattern writes remain deferred until an owner-approved
+consumer needs them.
 
 ## Deferrals
 
 | Area | Deferral reason |
 | --- | --- |
 | WGC window/UWP capture | Needs owner-approved capture slice; PrintWindow covers common cases |
-| UIA pattern actions (click via AX) | Needs action/verification seam connection (see `TODO(windows-ax-actions)`) |
+| UIA ValuePattern writes | Read-only values, focus, selection, and invocation are available; value mutation still needs an approved consumer (see `TODO(windows-ax-value-write)`) |
 | Target-aware readiness assessment | Needs Windows equivalents for macOS app-bundle/frontmost concepts |
 | UIAccess worker process | Deferred beyond v0 per feasibility design |
 | Framework heuristics (Chromium/WPF/GTK routing) | Deferred to a Windows action resolver or delivery-policy slice |

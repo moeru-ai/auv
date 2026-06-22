@@ -7,7 +7,7 @@ use auv_driver::selector::WindowSelector;
 use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 use auv_driver::window::{Window, WindowMutationKind, WindowMutationOptions, WindowMutationResult};
 
-use crate::accessibility::{AxTreeSnapshot, snapshot_window};
+use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
 use crate::capture::{capture_display, capture_region, capture_window, list_displays};
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot};
 use crate::driver::WindowsDriverSession;
@@ -16,7 +16,7 @@ use crate::input::{click_at, copy, paste, press_key, scroll_at, type_text};
 use crate::mutation::mutate_window;
 use crate::permission::{WindowsPermissionProbe, probe as probe_permissions};
 use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
-use crate::window::{list_windows, resolve_window};
+use crate::window::{activate_window, list_windows, resolve_window};
 
 /// Display-targeted capture capabilities.
 ///
@@ -119,6 +119,12 @@ impl WindowApi<'_> {
   pub fn resolve(&self, selector: WindowSelector) -> DriverResult<Window> {
     let _ = self.session;
     resolve_window(&selector)
+  }
+
+  /// Restores and foregrounds a window before foreground-only input delivery.
+  pub fn activate(&self, window: &Window) -> DriverResult<()> {
+    let _ = self.session;
+    activate_window(window)
   }
 
   /// Captures a single window's pixels via Win32 GDI `PrintWindow`.
@@ -323,6 +329,18 @@ impl AccessibilityApi<'_> {
   pub fn snapshot_window(&self, window: &Window) -> DriverResult<AxTreeSnapshot> {
     let _ = self.session;
     snapshot_window(window)
+  }
+
+  /// Moves keyboard focus to a node path from a recent UIA snapshot.
+  pub fn focus_node(&self, window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    focus_node(window, node_path)
+  }
+
+  /// Selects or invokes an actionable node path from a recent UIA snapshot.
+  pub fn select_node(&self, window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    select_node(window, node_path)
   }
 }
 

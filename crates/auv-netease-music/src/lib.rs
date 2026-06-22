@@ -8,10 +8,12 @@ pub mod output;
 pub mod scroll;
 pub mod view_parsers;
 pub mod views;
+pub mod windows;
 
 pub use commands::daily_recommended::{
   run_daily_recommended_play, run_daily_recommended_songs_scan,
 };
+pub use commands::launch::{LaunchResult, LaunchStep, OpenWindowInputs, run_open_window};
 pub use commands::playback::{
   PlaybackStatus, PlaybackStatusHumanReadable, PlaybackStatusInputs, PlaybackStatusJson,
   run_playback_status_probe,
@@ -20,6 +22,9 @@ pub use commands::playlist::{
   PlaylistPlayResult, PlaylistPlayStep, PlaylistPlayVerification, PlaylistSelectResult,
   PlaylistSelectStep, PlaylistSelectVerification, run_playlist_play,
   run_playlist_play_candidate_id, run_playlist_select,
+};
+pub use commands::transport::{
+  TransportAction, TransportInputs, TransportResult, run_transport_action,
 };
 pub use interaction::{
   InteractionEvent, InteractionEventKind, InteractionPhase, ScrollDirection, ScrollInteraction,
@@ -45,7 +50,7 @@ use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 // observer contract. Domain types (`PlaylistSidebarScan`, `SidebarSection`,
 // the `Sidebar*` candidate flavors, the scan-loop functions) stay in this
 // crate because they consume NetEase-shaped observations.
-use auv_driver::RatioRect;
+use auv_driver::{RatioRect, Size};
 use auv_view::{
   AnchorStrength, BoundaryConfidence, CandidateRole, Confidence, LandmarkUse, ParserDiagnostic,
   ReconstructionOutput, ReconstructionPolicy, ScanAppContext, ScanOptions, ScanWindowContext,
@@ -66,7 +71,7 @@ use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
 use auv_driver::{
   ActivationPolicy, Click, Driver, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions,
-  Size, WindowPoint,
+  WindowPoint,
 };
 #[cfg(target_os = "macos")]
 use auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot;
@@ -780,7 +785,6 @@ fn recognition_in_window_space(
   recognition
 }
 
-#[cfg(target_os = "macos")]
 fn crop_image(image: &RgbaImage, bounds: ViewBounds, scale_factor: f64) -> RgbaImage {
   let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
     scale_factor
