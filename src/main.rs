@@ -1914,11 +1914,11 @@ mod tests {
       .read_run(output.run_id.as_str())
       .expect("run should persist");
     assert_eq!(run.artifacts.len(), 4);
+    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
     assert_eq!(
-      run.artifacts[0].role,
+      run.artifacts[1].role,
       auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
     );
-    assert_eq!(run.artifacts[1].role, "minecraft-screenshot");
     assert_eq!(
       run.artifacts[2].role,
       auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
@@ -1964,11 +1964,11 @@ mod tests {
       .read_run(output.run_id.as_str())
       .expect("run should persist");
     assert_eq!(run.artifacts.len(), 4);
+    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
     assert_eq!(
-      run.artifacts[0].role,
+      run.artifacts[1].role,
       auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
     );
-    assert_eq!(run.artifacts[1].role, "minecraft-screenshot");
     assert_eq!(
       run.artifacts[2].role,
       auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
@@ -2013,11 +2013,11 @@ mod tests {
       .read_run(output.run_id.as_str())
       .expect("run should persist");
     assert_eq!(run.artifacts.len(), 3);
+    assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
     assert_eq!(
-      run.artifacts[0].role,
+      run.artifacts[1].role,
       auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
     );
-    assert_eq!(run.artifacts[1].role, "minecraft-screenshot");
     assert_eq!(
       run.artifacts[2].role,
       auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
