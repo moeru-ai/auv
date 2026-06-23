@@ -92,7 +92,9 @@ pub fn build_projection_evidence(
   let mut projected = projector.project_block_target(target)?;
 
   // Scale projection coordinates if screenshot dimensions differ from viewport
-  if screenshot_width != bound.frame.viewport.width || screenshot_height != bound.frame.viewport.height {
+  if screenshot_width != bound.frame.viewport.width
+    || screenshot_height != bound.frame.viewport.height
+  {
     let viewport_width = f64::from(bound.frame.viewport.width);
     let viewport_height = f64::from(bound.frame.viewport.height);
     let scale_x = f64::from(screenshot_width) / viewport_width;
@@ -330,5 +332,68 @@ mod tests {
       .expect("hidpi projected point")
       .match_radius_px;
     assert!((hidpi_radius - (base_radius * 2.0)).abs() < 1e-6);
+  }
+
+  #[test]
+  fn uses_explicit_screenshot_dimensions_over_image_dimensions() {
+    let base = build_projection_evidence(
+      frame_at(1_000),
+      capture_at(1_000, true),
+      &visible_target(),
+      Some(250),
+    )
+    .expect("base evidence builds");
+
+    let mut explicit_capture = capture_at(1_000, true);
+    // `screenshot_dimensions` is the projection scaling basis; the overlay
+    // canvas remains the owned screenshot image.
+    explicit_capture.screenshot_dimensions = Some((128, 128));
+    let explicit = build_projection_evidence(
+      frame_at(1_000),
+      explicit_capture,
+      &visible_target(),
+      Some(250),
+    )
+    .expect("explicit evidence builds");
+
+    let (base_artifact, _base_overlay) = match base {
+      ProjectionEvidence::Bound { artifact, overlay } => (artifact, overlay),
+      ProjectionEvidence::Refused { refusal, .. } => {
+        panic!("expected bound base evidence, got {:?}", refusal.reason)
+      }
+    };
+    let (explicit_artifact, explicit_overlay) = match explicit {
+      ProjectionEvidence::Bound { artifact, overlay } => (artifact, overlay),
+      ProjectionEvidence::Refused { refusal, .. } => {
+        panic!("expected bound explicit evidence, got {:?}", refusal.reason)
+      }
+    };
+
+    let base_point = base_artifact
+      .projected_point
+      .as_ref()
+      .and_then(|point| point.screen_point)
+      .expect("base projected point");
+    let explicit_point = explicit_artifact
+      .projected_point
+      .as_ref()
+      .and_then(|point| point.screen_point)
+      .expect("explicit projected point");
+
+    assert_eq!(explicit_overlay.width(), 64);
+    assert_eq!(explicit_overlay.height(), 64);
+    assert!((explicit_point.x - (base_point.x * 2.0)).abs() < 1e-6);
+    assert!((explicit_point.y - (base_point.y * 2.0)).abs() < 1e-6);
+    let base_radius = base_artifact
+      .projected_point
+      .as_ref()
+      .expect("base projected point")
+      .match_radius_px;
+    let explicit_radius = explicit_artifact
+      .projected_point
+      .as_ref()
+      .expect("explicit projected point")
+      .match_radius_px;
+    assert!((explicit_radius - (base_radius * 2.0)).abs() < 1e-6);
   }
 }
