@@ -3,25 +3,27 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ax_recognition::{
-  AxBestSelectionStrategy, AxRecognitionPolicy, AxRecognitionRuntimeContext,
-  map_ax_tree_to_recognition_result,
-};
+use crate::ax_recognition::{AxBestSelectionStrategy, AxRecognitionPolicy};
+#[cfg(target_os = "macos")]
+use crate::ax_recognition::{AxRecognitionRuntimeContext, map_ax_tree_to_recognition_result};
+#[cfg(target_os = "macos")]
+use crate::candidate_action_decision::MacosCandidateActionExecutor;
 use crate::candidate_action_decision::{
   CandidateActionDecisionRequest, CandidateActionExecutionConsent,
   CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
   CandidateActionExecutionSideEffect, CandidateActionKind, CandidateActionPostActionProbe,
-  MacosCandidateActionExecutor, execute_and_record_single_candidate_action,
-  record_candidate_action_decision_artifact,
+  execute_and_record_single_candidate_action, record_candidate_action_decision_artifact,
 };
+#[cfg(target_os = "macos")]
 use crate::candidate_promotion::ConsentProvenance;
 use crate::candidate_promotion::{
   ActionPermission, CandidatePromotion, ConsentGrade, PromotionRefusal,
 };
+#[cfg(target_os = "macos")]
+use crate::candidate_promotion_recording::record_candidate_promotion_artifact_with_recognition_projection;
 use crate::candidate_promotion_recording::{
   CandidatePromotionArtifactRequest, CandidatePromotionConsentInput,
   explicit_consent_for_candidate_promotion, freshness_from_capture_backed_recognition,
-  record_candidate_promotion_artifact_with_recognition_projection,
 };
 use crate::model::{AuvResult, now_millis};
 use crate::stability::StabilityPolicy;
@@ -760,7 +762,6 @@ fn refilter_recognition_frame(
   Ok(recognition)
 }
 
-#[cfg(target_os = "macos")]
 fn narrow_observations_for_model_proposal(
   observations: &[crate::contract::RecognitionResult],
   proposal: &ModelSelectionProposal,
@@ -884,7 +885,6 @@ fn record_model_proposal_artifact(
   Ok(artifact_ref.artifact_id.as_str().to_string())
 }
 
-#[cfg(target_os = "macos")]
 impl OpenAiResponsesCandidateActionProposer {
   fn from_request(model: &str, endpoint: &str) -> AuvResult<Self> {
     let api_key = read_env_trimmed("OPENAI_API_KEY")
@@ -897,7 +897,6 @@ impl OpenAiResponsesCandidateActionProposer {
   }
 }
 
-#[cfg(target_os = "macos")]
 impl CandidateActionProposer for OpenAiResponsesCandidateActionProposer {
   fn propose(
     &self,
@@ -1260,7 +1259,6 @@ fn human_gesture_evidence_note(
   )
 }
 
-#[cfg(target_os = "macos")]
 fn recognized_item_matches_policy(
   item: &crate::contract::RecognizedItem,
   policy: &AxRecognitionPolicy,
@@ -1286,7 +1284,6 @@ fn recognized_item_matches_policy(
   true
 }
 
-#[cfg(target_os = "macos")]
 fn recognized_item_search_text(item: &crate::contract::RecognizedItem) -> String {
   [
     item.text.as_deref().unwrap_or(""),
@@ -1319,17 +1316,14 @@ fn recognized_item_search_text(item: &crate::contract::RecognizedItem) -> String
   .join(" ")
 }
 
-#[cfg(target_os = "macos")]
 fn recognized_item_role(item: &crate::contract::RecognizedItem) -> Option<&str> {
   item.detail.get("role").and_then(serde_json::Value::as_str)
 }
 
-#[cfg(target_os = "macos")]
 fn recognized_item_path(item: &crate::contract::RecognizedItem) -> Option<&str> {
   item.detail.get("path").and_then(serde_json::Value::as_str)
 }
 
-#[cfg(target_os = "macos")]
 fn observed_item_for_model(item: &crate::contract::RecognizedItem) -> ProposalObservedItem {
   ProposalObservedItem {
     item_id: item.item_id.clone(),
@@ -1350,7 +1344,6 @@ fn observed_item_for_model(item: &crate::contract::RecognizedItem) -> ProposalOb
   }
 }
 
-#[cfg(target_os = "macos")]
 fn parse_model_selected_action(parsed: &ModelProposalResponse) -> AuvResult<CandidateActionKind> {
   match parsed.selected_action_kind.as_str() {
     "click" => Ok(CandidateActionKind::Click),
@@ -1370,7 +1363,6 @@ fn parse_model_selected_action(parsed: &ModelProposalResponse) -> AuvResult<Cand
   }
 }
 
-#[cfg(target_os = "macos")]
 fn response_output_text(value: &serde_json::Value) -> Option<String> {
   value
     .get("output_text")
@@ -1398,7 +1390,6 @@ fn response_output_text(value: &serde_json::Value) -> Option<String> {
     })
 }
 
-#[cfg(target_os = "macos")]
 fn append_known_limit(known_limits: &mut Vec<String>, value: impl Into<String>) {
   let value = value.into();
   if !known_limits.iter().any(|existing| existing == &value) {
@@ -1406,7 +1397,6 @@ fn append_known_limit(known_limits: &mut Vec<String>, value: impl Into<String>) 
   }
 }
 
-#[cfg(target_os = "macos")]
 fn read_env_trimmed(key: &str) -> Option<String> {
   std::env::var(key)
     .ok()
@@ -1414,7 +1404,6 @@ fn read_env_trimmed(key: &str) -> Option<String> {
     .filter(|value| !value.is_empty())
 }
 
-#[cfg(target_os = "macos")]
 fn normalize_for_matching(value: &str) -> String {
   value
     .chars()

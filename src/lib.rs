@@ -1,7 +1,6 @@
 // File: src/lib.rs
 mod action_resolver_decision;
 pub mod app;
-#[cfg(target_os = "macos")]
 pub mod ax_recognition;
 pub mod candidate_action_command;
 pub mod candidate_action_decision;
