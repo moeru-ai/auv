@@ -843,6 +843,7 @@ fn run_minecraft_live_click(
       )
     })?
     .to_rgb8();
+  let screenshot_dimensions = (screenshot_image.width(), screenshot_image.height());
 
   runtime.run_recorded_operation(
     RunSpec::new(
@@ -882,6 +883,7 @@ fn run_minecraft_live_click(
           artifact_ref: format!("artifact://{screenshot_artifact_id}"),
           capture_monotonic_timestamp_ms: capture_timestamp_ms,
           is_minecraft_window: screenshot_is_minecraft_window,
+          screenshot_dimensions: Some(screenshot_dimensions),
         },
         &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
         Some(250),
@@ -1017,6 +1019,7 @@ fn run_minecraft_projection_bridge(
       )
     })?
     .to_rgb8();
+  let screenshot_dimensions = (screenshot_image.width(), screenshot_image.height());
 
   runtime.run_recorded_operation(
     auv_tracing_driver::run_builder::RunSpec::new(
@@ -1061,6 +1064,7 @@ fn run_minecraft_projection_bridge(
           artifact_ref: format!("artifact://{screenshot_artifact_id}"),
           capture_monotonic_timestamp_ms: capture_timestamp_ms,
           is_minecraft_window: screenshot_is_minecraft_window,
+          screenshot_dimensions: Some(screenshot_dimensions),
         },
         &auv_game_minecraft::MinecraftBlockTarget::new(target_block),
         Some(250),
