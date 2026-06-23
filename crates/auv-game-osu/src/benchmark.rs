@@ -14,14 +14,14 @@ use crate::visual_eval::{
   evaluate_visual_truth_with_provenance,
 };
 use crate::visual_truth::{VisualTruthManifest, build_visual_truth_manifest};
+use auv_driver::InputActionResult;
 use auv_inference_common::{ClassLabelSource, DetectionEvidenceManifest, DetectionSet};
 
 #[cfg(target_os = "macos")]
 use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
 use auv_driver::{
-  App, Click, ClickOptions, Driver, InputActionResult, InputPolicy, WindowClickStrategy,
-  WindowPoint, WindowSelector,
+  App, Click, ClickOptions, Driver, InputPolicy, WindowClickStrategy, WindowPoint, WindowSelector,
 };
 #[cfg(target_os = "macos")]
 use auv_driver_macos::MacosDriver;
