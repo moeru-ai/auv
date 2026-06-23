@@ -72,6 +72,7 @@ auv-game-minecraft = { path = "crates/auv-game-minecraft" }
 auv-inference-common = { path = "crates/auv-inference-common" }
 auv-driver = { path = "crates/auv-driver" }
 auv-driver-macos = { path = "crates/auv-driver-macos" }
+auv-overlay-macos = { path = "crates/auv-overlay-macos" }
 auv-cli-invoke = { path = "crates/auv-cli-invoke" }
 auv-steam = { path = "crates/auv-steam" }
 auv-tracing-driver = { path = "crates/auv-tracing-driver" }
@@ -89,7 +90,6 @@ rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-media-macos = { path = "crates/auv-media-macos" }
-auv-overlay-macos = { path = "crates/auv-overlay-macos" }
 objc2-core-graphics.workspace = true
 objc2-core-foundation.workspace = true
 swift-bridge-build.workspace = true
