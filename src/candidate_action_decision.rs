@@ -2269,12 +2269,15 @@ mod tests {
     CandidateActionPostActionProbe, PostActionWindowAlive,
     build_candidate_action_decision_artifact, build_candidate_action_execution_artifact,
     enforce_action_specific_readiness, execute_and_record_single_candidate_action,
-    execute_single_candidate_action, expected_ax_focus_target, observe_focused_ax_until_settled,
+    execute_single_candidate_action, expected_ax_focus_target,
     record_candidate_action_decision_artifact, record_candidate_action_execution_artifact,
     window_matches_plan,
   };
   #[cfg(target_os = "macos")]
-  use super::{ExpectedAxFocusTarget, MacosCandidateActionExecutor, ax_node_matches_expected};
+  use super::{
+    ExpectedAxFocusTarget, MacosCandidateActionExecutor, ax_node_matches_expected,
+    observe_focused_ax_until_settled,
+  };
   use crate::AuvResult;
   use crate::build_runtime_with_store_root;
   use crate::candidate_promotion::{CandidatePromotion, ConsentGrade, ConsentProvenance};
