@@ -29,6 +29,10 @@
                 rustfmt
                 clippy
                 rust-analyzer
+
+                # protobuf
+                protobuf
+                buf
               ])
               ++ [];
 
