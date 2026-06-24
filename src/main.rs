@@ -325,6 +325,53 @@ async fn run() -> Result<(), String> {
       println!("cameras: {}", output.value.cameras_path.display());
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::MinecraftExport3dgsTrainingPackage {
+      scene_packet_manifest_path,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_3dgs_training_package_export(
+        &runtime.recording().handle(),
+        PathBuf::from(scene_packet_manifest_path),
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: completed");
+      println!(
+        "trainingPackageSchema: {}",
+        output.value.manifest.schema_version
+      );
+      println!(
+        "sourceRuns: {}",
+        output.value.manifest.source_run_ids.join(",")
+      );
+      println!("frames: {}", output.value.manifest.counts.frames);
+      println!("images: {}", output.value.manifest.counts.images);
+      println!(
+        "compatibilityStatus: {}",
+        match output.value.inspect_report.compatibility_views[0].status {
+          auv_game_minecraft::TrainingCompatibilityStatus::Ready => "ready",
+          auv_game_minecraft::TrainingCompatibilityStatus::Partial => "partial",
+          auv_game_minecraft::TrainingCompatibilityStatus::Blocked => "blocked",
+        }
+      );
+      println!(
+        "compatibilityExportedFrames: {}",
+        output.value.manifest.counts.compatibility_exported_frames
+      );
+      println!("manifest: {}", output.value.manifest_path.display());
+      println!(
+        "inspectReport: {}",
+        output.value.inspect_report_path.display()
+      );
+      if let Some(transforms_path) = output.value.compatibility_transforms_path.as_ref() {
+        println!("nerfstudioTransforms: {}", transforms_path.display());
+      } else {
+        println!("nerfstudioTransforms: none");
+      }
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::MinecraftPrepareTextureSweep {
       sidecar_run_dir,
       output_dir,

@@ -5,8 +5,9 @@ use auv_game_minecraft::{
   ScenePacketInputs, ScenePacketOutput, SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput,
   SpatialBundleSourceArtifact, TextureSweepInputs, TextureSweepPreparationInputs,
   TextureSweepPreparationOutput, TextureSweepReport, TextureSweepSampleBuildInputs,
-  TextureSweepSampleBuildOutput, TextureSweepThresholds, build_texture_sweep_samples_from_bundles,
-  evaluate_texture_sweep, export_3dgs_scene_packet, export_spatial_bundle,
+  TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingPackageInputs,
+  TrainingPackageOutput, build_texture_sweep_samples_from_bundles, evaluate_texture_sweep,
+  export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
   prepare_texture_sweep_resource_packs,
 };
 use auv_tracing_driver::RecordingHandle;
@@ -26,6 +27,9 @@ pub const MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE: &str = "minecraft-textu
 pub const MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE: &str = "minecraft-3dgs-scene-packet";
 pub const MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE: &str =
   "minecraft-3dgs-scene-packet-inspect";
+pub const MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-package";
+pub const MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE: &str =
+  "minecraft-3dgs-training-package-inspect";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -71,6 +75,59 @@ pub fn run_minecraft_3dgs_scene_packet_export(
         )?;
         Ok::<_, String>(())
       })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_minecraft_3dgs_training_package_export(
+  recording: &RecordingHandle,
+  scene_packet_manifest_path: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TrainingPackageOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(
+      RunType::Execute,
+      "auv.minecraft.export_3dgs_training_package",
+    ),
+    "Minecraft export MC-7 D3 training-prep package",
+    |context| {
+      context.record_event(
+        "minecraft.export_3dgs_training_package.inputs",
+        Some(format!(
+          "scene_packet_manifest={} output_dir={} trained_3dgs=false trainer_backend=false",
+          scene_packet_manifest_path.display(),
+          output_dir.display()
+        )),
+      );
+      let result = export_3dgs_training_package(TrainingPackageInputs {
+        scene_packet_manifest_path: scene_packet_manifest_path.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span(
+        "minecraft.export_3dgs_training_package.artifacts",
+        |context| {
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE,
+            &result.manifest_path,
+            "minecraft-3dgs-training-package-run.json",
+            Some(
+              "MC-7 D3 canonical training-prep package manifest; offline inspect artifact only"
+                .to_string(),
+            ),
+          )?;
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE,
+            &result.inspect_report_path,
+            "minecraft-3dgs-training-package-inspect.json",
+            Some(
+              "MC-7 D3 training-prep inspect report plus Nerfstudio compatibility view status"
+                .to_string(),
+            ),
+          )?;
+          Ok::<_, String>(())
+        },
+      )?;
       Ok::<_, String>(result)
     },
   )
@@ -457,6 +514,48 @@ mod tests {
         .artifacts
         .iter()
         .any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE)
+    );
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn three_dgs_training_package_export_records_manifest_and_inspect_artifacts() {
+    let temp = temp_dir("mc7-training-package");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
+    let manifest_path = write_sample_bundle(&temp);
+    let scene_packet = run_minecraft_3dgs_scene_packet_export(
+      &recording,
+      vec![manifest_path],
+      temp.join("scene-packet"),
+    )
+    .expect("scene packet export");
+
+    let output = run_minecraft_3dgs_training_package_export(
+      &recording,
+      scene_packet.value.manifest_path.clone(),
+      temp.join("training-package"),
+    )
+    .expect("training package export");
+
+    assert_eq!(output.value.manifest.counts.frames, 1);
+    assert!(output.value.manifest_path.is_file());
+    assert!(output.value.inspect_report_path.is_file());
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("training package run should persist");
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE)
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE)
     );
 
     let _ = fs::remove_dir_all(temp);

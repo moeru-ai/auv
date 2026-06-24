@@ -143,6 +143,11 @@ pub enum CliCommand {
     output_dir: String,
     inspect: InspectClientOptions,
   },
+  MinecraftExport3dgsTrainingPackage {
+    scene_packet_manifest_path: String,
+    output_dir: String,
+    inspect: InspectClientOptions,
+  },
   MinecraftPrepareTextureSweep {
     sidecar_run_dir: String,
     output_dir: String,
@@ -283,6 +288,7 @@ USAGE
   auv-cli minecraft live-click --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> --target-app <application-id> --target-title <window title> [--post-sample <telemetry.jsonl>] [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft export-3dgs-scene-packet --bundle-manifest <bundle/run.json>... --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft export-3dgs-training-package --scene-packet-manifest <scene-packet/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft build-texture-sweep-samples --bundle-manifest <bundle/run.json>... --output <samples.json> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--require-real-source] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
@@ -1066,7 +1072,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv-cli minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
+      "usage: auv-cli minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
         .to_string(),
     );
   }
@@ -1077,11 +1083,12 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     "live-click" => parse_minecraft_live_click(arguments),
     "export-spatial-bundle" => parse_minecraft_export_spatial_bundle(arguments),
     "export-3dgs-scene-packet" => parse_minecraft_export_3dgs_scene_packet(arguments),
+    "export-3dgs-training-package" => parse_minecraft_export_3dgs_training_package(arguments),
     "prepare-texture-sweep" => parse_minecraft_prepare_texture_sweep(arguments),
     "build-texture-sweep-samples" => parse_minecraft_build_texture_sweep_samples(arguments),
     "eval-texture-sweep" => parse_minecraft_eval_texture_sweep(arguments),
     other => Err(format!(
-      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, export-spatial-bundle, export-3dgs-scene-packet, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
+      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, export-spatial-bundle, export-3dgs-scene-packet, export-3dgs-training-package, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
     )),
   }
 }
@@ -1164,6 +1171,50 @@ fn parse_minecraft_export_3dgs_scene_packet(arguments: &[String]) -> AuvResult<C
 
   Ok(CliCommand::MinecraftExport3dgsScenePacket {
     bundle_manifest_paths,
+    output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+    inspect,
+  })
+}
+
+fn parse_minecraft_export_3dgs_training_package(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut scene_packet_manifest_path = None;
+  let mut output_dir = None;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--scene-packet-manifest" => {
+        scene_packet_manifest_path = Some(required_flag_value(
+          arguments,
+          index,
+          "--scene-packet-manifest",
+        )?);
+        index += 2;
+      }
+      "--output-dir" => {
+        output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
+        index += 2;
+      }
+      other => {
+        return Err(format!(
+          "unexpected minecraft export-3dgs-training-package argument {other}"
+        ));
+      }
+    }
+  }
+
+  Ok(CliCommand::MinecraftExport3dgsTrainingPackage {
+    scene_packet_manifest_path: scene_packet_manifest_path
+      .ok_or_else(|| "--scene-packet-manifest is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     inspect,
   })
@@ -2204,6 +2255,31 @@ mod tests {
           vec!["/tmp/rich/run.json", "/tmp/flat/run.json"]
         );
         assert_eq!(output_dir, "/tmp/scene");
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_export_3dgs_training_package_command() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "export-3dgs-training-package".to_string(),
+      "--scene-packet-manifest".to_string(),
+      "/tmp/scene/run.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/training".to_string(),
+    ])
+    .expect("minecraft export-3dgs-training-package command should parse");
+
+    match command {
+      CliCommand::MinecraftExport3dgsTrainingPackage {
+        scene_packet_manifest_path,
+        output_dir,
+        ..
+      } => {
+        assert_eq!(scene_packet_manifest_path, "/tmp/scene/run.json");
+        assert_eq!(output_dir, "/tmp/training");
       }
       other => panic!("unexpected command: {other:?}"),
     }
