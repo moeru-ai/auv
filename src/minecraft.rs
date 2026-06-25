@@ -7,9 +7,11 @@ use auv_game_minecraft::{
   TextureSweepPreparationOutput, TextureSweepReport, TextureSweepSampleBuildInputs,
   TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
   TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs,
-  TrainingPackageOutput, build_texture_sweep_samples_from_bundles, evaluate_texture_sweep,
-  export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
-  launch_3dgs_training_job, prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs,
+  TrainingPackageOutput, TrainingResultInputs, TrainingResultOutput,
+  build_texture_sweep_samples_from_bundles, collect_3dgs_training_job_result,
+  evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
+  export_spatial_bundle, launch_3dgs_training_job, prepare_3dgs_training_launch,
+  prepare_texture_sweep_resource_packs,
 };
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
@@ -42,6 +44,11 @@ pub const MINECRAFT_3DGS_TRAINING_JOB_INSPECT_ARTIFACT_ROLE: &str =
   "minecraft-3dgs-training-job-inspect";
 pub const MINECRAFT_3DGS_TRAINING_JOB_RUNBOOK_ARTIFACT_ROLE: &str =
   "minecraft-3dgs-training-job-runbook";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-result";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE: &str =
+  "minecraft-3dgs-training-result-inspect";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE: &str =
+  "minecraft-3dgs-training-result-runbook";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -279,6 +286,56 @@ pub fn run_minecraft_3dgs_training_job_launch(
           &result.runbook_path,
           "mc7-training-job-runbook.md",
           Some("MC-7 D6 remote training job runbook".to_string()),
+        )?;
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_minecraft_3dgs_training_result_collection(
+  recording: &RecordingHandle,
+  training_job_manifest_path: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TrainingResultOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(
+      RunType::Execute,
+      "auv.minecraft.collect_3dgs_training_job_result",
+    ),
+    "Minecraft collect MC-7 D7 training job result",
+    |context| {
+      context.record_event(
+        "minecraft.collect_3dgs_training_job_result.inputs",
+        Some(format!(
+          "training_job_manifest={} output_dir={} trained_3dgs=false trainer_result_consumed=true job_backend=remote",
+          training_job_manifest_path.display(),
+          output_dir.display()
+        )),
+      );
+      let result = collect_3dgs_training_job_result(TrainingResultInputs {
+        training_job_manifest_path: training_job_manifest_path.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span("minecraft.collect_3dgs_training_job_result.artifacts", |context| {
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE,
+          &result.manifest_path,
+          "minecraft-3dgs-training-result.json",
+          Some("MC-7 D7 remote training result manifest".to_string()),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE,
+          &result.inspect_report_path,
+          "minecraft-3dgs-training-result-inspect.json",
+          Some("MC-7 D7 remote training result inspect report".to_string()),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE,
+          &result.runbook_path,
+          "mc7-training-result-runbook.md",
+          Some("MC-7 D7 remote training result runbook".to_string()),
         )?;
         Ok::<_, String>(())
       })?;
@@ -717,6 +774,48 @@ mod tests {
   }
 
   #[test]
+  fn three_dgs_training_result_collection_records_manifest_inspect_and_runbook_artifacts() {
+    let temp = temp_dir("mc7-training-result");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
+    let job_manifest_path = write_training_job_fixture(&temp);
+
+    let output = run_minecraft_3dgs_training_result_collection(
+      &recording,
+      job_manifest_path,
+      temp.join("training-result"),
+    )
+    .expect("training result collection");
+
+    assert!(output.value.manifest_path.is_file());
+    assert!(output.value.inspect_report_path.is_file());
+    assert!(output.value.runbook_path.is_file());
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("training result run should persist");
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE)
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE)
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE)
+    );
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
   fn spatial_bundle_export_reads_source_run_and_records_manifest() {
     let temp = temp_dir("mc6-spatial-bundle");
     let store = LocalStore::new(temp.join("store")).expect("store");
@@ -1023,5 +1122,69 @@ mod tests {
     .expect("export report write");
 
     training_dir.join("run.json")
+  }
+
+  fn write_training_job_fixture(root: &std::path::Path) -> PathBuf {
+    let result_dir = root.join("trainer-output/nerfstudio-splatfacto");
+    fs::create_dir_all(result_dir.join("nerfstudio_models")).expect("models dir");
+    fs::write(result_dir.join("config.yml"), b"trainer: splatfacto\n").expect("config");
+    fs::write(
+      result_dir.join("job_status.json"),
+      serde_json::to_vec_pretty(&serde_json::json!({
+        "status": "succeeded",
+        "message": "remote result available"
+      }))
+      .expect("status json"),
+    )
+    .expect("status write");
+
+    unsafe {
+      std::env::set_var(
+        "AUV_MINECRAFT_TRAINING_JOB_ENDPOINT",
+        "https://jobs.example.test/v1",
+      );
+      std::env::set_var("AUV_MINECRAFT_TRAINING_JOB_TOKEN", "secret");
+    }
+
+    let job_manifest = auv_game_minecraft::TrainingLaunchJobManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_training_launch_plan_path:
+        "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+      source_training_package_manifest_path: "/tmp/training-package/run.json".to_string(),
+      source_training_package_inspect_report_path: "/tmp/training-package/inspect_report.json"
+        .to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle/run.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      counts: auv_game_minecraft::TrainingLaunchJobCounts {
+        frames: 2,
+        images: 2,
+        compatibility_exported_frames: 2,
+        compatibility_skipped_frames: 0,
+      },
+      compatibility_view_name: "nerfstudio".to_string(),
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      job_submission_endpoint: "https://jobs.example.test/v1".to_string(),
+      job_submission_command: "remote-submit --plan launch.json".to_string(),
+      training_data_dir: "/tmp/training-package/compat/nerfstudio".to_string(),
+      transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+      export_report_path: "/tmp/training-package/compat/nerfstudio/export_report.json".to_string(),
+      suggested_output_dir: result_dir.to_string_lossy().into_owned(),
+      launch_command: "ns-train splatfacto --data compat/nerfstudio --output-dir out".to_string(),
+      status: auv_game_minecraft::TrainingLaunchJobStatus::Submitted,
+      job_id: Some("job-123".to_string()),
+      job_url: Some("https://jobs.example.test/jobs/job-123".to_string()),
+      readiness_blocker: None,
+      known_limits: vec!["limit-a".to_string()],
+    };
+    let job_manifest_path = root.join("minecraft-3dgs-training-job.json");
+    fs::write(
+      &job_manifest_path,
+      serde_json::to_vec_pretty(&job_manifest).expect("job manifest json"),
+    )
+    .expect("job manifest write");
+    job_manifest_path
   }
 }

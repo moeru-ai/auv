@@ -1,0 +1,739 @@
+use std::collections::BTreeSet;
+use std::fs;
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
+
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+
+use crate::training_job::{TrainingLaunchJobManifest, TrainingLaunchJobStatus};
+
+pub type TrainingResultCollectionResult<T> = Result<T, String>;
+
+pub const TRAINING_RESULT_MANIFEST_SCHEMA_VERSION: u32 = 1;
+pub const TRAINING_RESULT_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
+const JOB_ENDPOINT_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_ENDPOINT";
+const JOB_TOKEN_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_TOKEN";
+const STATUS_SNAPSHOT_FILE: &str = "job_status.json";
+const RESULT_CONFIG_FILE: &str = "config.yml";
+const RESULT_MODELS_DIR: &str = "nerfstudio_models";
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct TrainingResultEnvironment {
+  endpoint: Option<String>,
+  token: Option<String>,
+}
+
+impl TrainingResultEnvironment {
+  fn from_process() -> Self {
+    Self {
+      endpoint: std::env::var(JOB_ENDPOINT_ENV).ok(),
+      token: std::env::var(JOB_TOKEN_ENV).ok(),
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrainingResultInputs {
+  pub training_job_manifest_path: PathBuf,
+  pub output_dir: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrainingResultRequest {
+  pub job_backend: String,
+  pub trainer_backend: String,
+  pub endpoint: String,
+  pub token_present: bool,
+  pub job_id: String,
+  pub result_dir: String,
+  pub job_url: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TrainingResultProbeResponse {
+  pub status: TrainingResultStatus,
+  pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TrainingResultOutput {
+  pub output_dir: PathBuf,
+  pub manifest_path: PathBuf,
+  pub inspect_report_path: PathBuf,
+  pub runbook_path: PathBuf,
+  pub manifest: TrainingResultManifest,
+  pub inspect_report: TrainingResultInspectReport,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TrainingResultManifest {
+  pub schema_version: u32,
+  pub generated_at_millis: u64,
+  pub source_training_job_manifest_path: String,
+  pub source_training_launch_plan_path: String,
+  pub source_training_package_manifest_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub trainer_backend: String,
+  pub job_backend: String,
+  pub job_submission_endpoint: String,
+  pub source_job_status: TrainingLaunchJobStatus,
+  pub status: TrainingResultStatus,
+  pub job_id: String,
+  #[serde(default)]
+  pub job_url: Option<String>,
+  pub result_dir: String,
+  pub exported_frame_count: usize,
+  pub skipped_frame_count: usize,
+  pub result_artifacts: Vec<TrainingResultArtifactRecord>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrainingResultArtifactRecord {
+  pub relative_path: String,
+  pub absolute_path: String,
+  pub readable: bool,
+  #[serde(default)]
+  pub byte_size: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TrainingResultInspectReport {
+  pub schema_version: u32,
+  pub generated_at_millis: u64,
+  pub training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_training_launch_plan_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_bundle_manifest_paths: Vec<String>,
+  pub source_run_ids: Vec<String>,
+  pub trainer_backend: String,
+  pub job_backend: String,
+  pub job_submission_endpoint: String,
+  pub source_job_status: TrainingLaunchJobStatus,
+  pub status: TrainingResultStatus,
+  #[serde(default)]
+  pub status_reason: Option<TrainingResultReason>,
+  pub job_id: String,
+  #[serde(default)]
+  pub job_url: Option<String>,
+  pub result_dir: String,
+  pub result_dir_exists: bool,
+  pub key_result_artifacts_present: bool,
+  pub result_artifact_count: usize,
+  pub warnings: Vec<String>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrainingResultStatus {
+  Queued,
+  Submitted,
+  Blocked,
+  Failed,
+  #[default]
+  Succeeded,
+}
+
+impl TrainingResultStatus {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::Queued => "queued",
+      Self::Submitted => "submitted",
+      Self::Blocked => "blocked",
+      Self::Failed => "failed",
+      Self::Succeeded => "succeeded",
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrainingResultReason {
+  MissingConfiguration,
+  MissingAuthentication,
+  LaunchBlocked,
+  RemoteStatusUnavailable,
+  ResultDirectoryMissing,
+  ResultArtifactsMissing,
+}
+
+impl TrainingResultReason {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      Self::MissingConfiguration => "missing_configuration",
+      Self::MissingAuthentication => "missing_authentication",
+      Self::LaunchBlocked => "launch_blocked",
+      Self::RemoteStatusUnavailable => "remote_status_unavailable",
+      Self::ResultDirectoryMissing => "result_directory_missing",
+      Self::ResultArtifactsMissing => "result_artifacts_missing",
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct TrainingResultStatusSnapshot {
+  pub status: TrainingResultStatus,
+  #[serde(default)]
+  pub message: Option<String>,
+}
+
+pub fn collect_3dgs_training_job_result(
+  inputs: TrainingResultInputs,
+) -> TrainingResultCollectionResult<TrainingResultOutput> {
+  collect_3dgs_training_job_result_with_probe_and_env(
+    inputs,
+    default_probe_training_result,
+    TrainingResultEnvironment::from_process(),
+  )
+}
+
+fn collect_3dgs_training_job_result_with_probe_and_env<F>(
+  inputs: TrainingResultInputs,
+  probe: F,
+  env: TrainingResultEnvironment,
+) -> TrainingResultCollectionResult<TrainingResultOutput>
+where
+  F: FnOnce(&TrainingResultRequest) -> TrainingResultCollectionResult<TrainingResultProbeResponse>,
+{
+  let job_manifest = read_json_file::<TrainingLaunchJobManifest>(
+    &inputs.training_job_manifest_path,
+    "MC-7 D6 training job manifest",
+  )?;
+  let job_id = job_manifest.job_id.clone().ok_or_else(|| {
+    format!(
+      "MC-7 D6 training job manifest {} is missing job_id",
+      inputs.training_job_manifest_path.display()
+    )
+  })?;
+
+  let endpoint = env.endpoint;
+  let token = env.token;
+  let result_dir = PathBuf::from(&job_manifest.suggested_output_dir);
+  let request = TrainingResultRequest {
+    job_backend: job_manifest.job_backend.clone(),
+    trainer_backend: job_manifest.trainer_backend.clone(),
+    endpoint: endpoint
+      .clone()
+      .unwrap_or_else(|| job_manifest.job_submission_endpoint.clone()),
+    token_present: token.is_some(),
+    job_id: job_id.clone(),
+    result_dir: result_dir.to_string_lossy().into_owned(),
+    job_url: job_manifest.job_url.clone(),
+  };
+
+  let mut warnings = BTreeSet::new();
+  let mut known_limits = BTreeSet::new();
+  known_limits.extend(job_manifest.known_limits.iter().cloned());
+  known_limits.insert(
+    "MC-7 D7 consumes remote training result evidence only; it does not grade model quality or splat usefulness"
+      .to_string(),
+  );
+
+  let (mut status, mut status_reason) = if job_manifest.status == TrainingLaunchJobStatus::Blocked {
+    (
+      TrainingResultStatus::Blocked,
+      Some(TrainingResultReason::LaunchBlocked),
+    )
+  } else if endpoint.is_none() {
+    (
+      TrainingResultStatus::Blocked,
+      Some(TrainingResultReason::MissingConfiguration),
+    )
+  } else if token.is_none() {
+    (
+      TrainingResultStatus::Blocked,
+      Some(TrainingResultReason::MissingAuthentication),
+    )
+  } else {
+    match probe(&request) {
+      Ok(response) => {
+        if let Some(message) = response.message {
+          warnings.insert(message);
+        }
+        (response.status, None)
+      }
+      Err(error) => {
+        warnings.insert(error);
+        (
+          TrainingResultStatus::Blocked,
+          Some(TrainingResultReason::RemoteStatusUnavailable),
+        )
+      }
+    }
+  };
+
+  let result_dir_exists = result_dir.is_dir();
+  let (result_artifacts, key_result_artifacts_present) = collect_result_artifacts(&result_dir);
+  if status == TrainingResultStatus::Succeeded && !result_dir_exists {
+    status = TrainingResultStatus::Failed;
+    status_reason = Some(TrainingResultReason::ResultDirectoryMissing);
+  } else if status == TrainingResultStatus::Succeeded && !key_result_artifacts_present {
+    status = TrainingResultStatus::Failed;
+    status_reason = Some(TrainingResultReason::ResultArtifactsMissing);
+  }
+
+  let generated_at_millis = auv_tracing_driver::now_millis();
+  let manifest_path = inputs
+    .output_dir
+    .join("minecraft-3dgs-training-result.json");
+  let inspect_report_path = inputs
+    .output_dir
+    .join("minecraft-3dgs-training-result-inspect.json");
+  let runbook_path = inputs.output_dir.join("mc7-training-result-runbook.md");
+
+  let manifest = TrainingResultManifest {
+    schema_version: TRAINING_RESULT_MANIFEST_SCHEMA_VERSION,
+    generated_at_millis,
+    source_training_job_manifest_path: inputs
+      .training_job_manifest_path
+      .to_string_lossy()
+      .into_owned(),
+    source_training_launch_plan_path: job_manifest.source_training_launch_plan_path.clone(),
+    source_training_package_manifest_path: job_manifest
+      .source_training_package_manifest_path
+      .clone(),
+    source_scene_packet_manifest_path: job_manifest.source_scene_packet_manifest_path.clone(),
+    source_bundle_manifest_paths: job_manifest.source_bundle_manifest_paths.clone(),
+    source_run_ids: job_manifest.source_run_ids.clone(),
+    trainer_backend: job_manifest.trainer_backend.clone(),
+    job_backend: job_manifest.job_backend.clone(),
+    job_submission_endpoint: job_manifest.job_submission_endpoint.clone(),
+    source_job_status: job_manifest.status,
+    status,
+    job_id: job_id.clone(),
+    job_url: job_manifest.job_url.clone(),
+    result_dir: result_dir.to_string_lossy().into_owned(),
+    exported_frame_count: job_manifest.counts.compatibility_exported_frames,
+    skipped_frame_count: job_manifest.counts.compatibility_skipped_frames,
+    result_artifacts: result_artifacts.clone(),
+    known_limits: known_limits.iter().cloned().collect(),
+  };
+  write_json(&manifest_path, &manifest, "MC-7 D7 training result JSON")?;
+
+  let inspect_report = TrainingResultInspectReport {
+    schema_version: TRAINING_RESULT_INSPECT_REPORT_SCHEMA_VERSION,
+    generated_at_millis,
+    training_result_manifest_path: manifest_path.to_string_lossy().into_owned(),
+    source_training_job_manifest_path: inputs
+      .training_job_manifest_path
+      .to_string_lossy()
+      .into_owned(),
+    source_training_launch_plan_path: job_manifest.source_training_launch_plan_path.clone(),
+    source_scene_packet_manifest_path: job_manifest.source_scene_packet_manifest_path.clone(),
+    source_bundle_manifest_paths: job_manifest.source_bundle_manifest_paths.clone(),
+    source_run_ids: job_manifest.source_run_ids.clone(),
+    trainer_backend: job_manifest.trainer_backend.clone(),
+    job_backend: job_manifest.job_backend.clone(),
+    job_submission_endpoint: job_manifest.job_submission_endpoint.clone(),
+    source_job_status: job_manifest.status,
+    status,
+    status_reason,
+    job_id,
+    job_url: job_manifest.job_url.clone(),
+    result_dir: result_dir.to_string_lossy().into_owned(),
+    result_dir_exists,
+    key_result_artifacts_present,
+    result_artifact_count: result_artifacts.len(),
+    warnings: warnings.iter().cloned().collect(),
+    known_limits: known_limits.iter().cloned().collect(),
+  };
+  write_json(
+    &inspect_report_path,
+    &inspect_report,
+    "MC-7 D7 training result inspect JSON",
+  )?;
+
+  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
+    format!(
+      "failed to create MC-7 D7 training result output directory {}: {error}",
+      inputs.output_dir.display()
+    )
+  })?;
+  fs::write(
+    &runbook_path,
+    render_runbook(&manifest, &inspect_report).as_bytes(),
+  )
+  .map_err(|error| {
+    format!(
+      "failed to write MC-7 D7 training result runbook {}: {error}",
+      runbook_path.display()
+    )
+  })?;
+
+  Ok(TrainingResultOutput {
+    output_dir: inputs.output_dir,
+    manifest_path,
+    inspect_report_path,
+    runbook_path,
+    manifest,
+    inspect_report,
+  })
+}
+
+// NOTICE(mc7-d7-result-status-snapshot): D7 currently reads a backend-neutral
+// `job_status.json` file from the trainer output directory. Replace this with a
+// backend-specific status adapter only in a follow-up that keeps D7 scoped to
+// result collection rather than training-quality evaluation.
+fn default_probe_training_result(
+  request: &TrainingResultRequest,
+) -> TrainingResultCollectionResult<TrainingResultProbeResponse> {
+  let status_path = PathBuf::from(&request.result_dir).join(STATUS_SNAPSHOT_FILE);
+  let snapshot =
+    read_json_file::<TrainingResultStatusSnapshot>(&status_path, "MC-7 D7 remote status snapshot")?;
+  Ok(TrainingResultProbeResponse {
+    status: snapshot.status,
+    message: snapshot.message,
+  })
+}
+
+fn collect_result_artifacts(result_dir: &Path) -> (Vec<TrainingResultArtifactRecord>, bool) {
+  let mut artifacts = Vec::new();
+  let config_path = result_dir.join(RESULT_CONFIG_FILE);
+  let models_path = result_dir.join(RESULT_MODELS_DIR);
+  let status_path = result_dir.join(STATUS_SNAPSHOT_FILE);
+  artifacts.push(result_artifact_record(result_dir, &config_path));
+  artifacts.push(result_artifact_record(result_dir, &models_path));
+  if status_path.exists() {
+    artifacts.push(result_artifact_record(result_dir, &status_path));
+  }
+  let key_result_artifacts_present = config_path.is_file() && models_path.is_dir();
+  (artifacts, key_result_artifacts_present)
+}
+
+fn result_artifact_record(result_dir: &Path, path: &Path) -> TrainingResultArtifactRecord {
+  let metadata = fs::metadata(path).ok();
+  let relative_path = path
+    .strip_prefix(result_dir)
+    .map(|value| value.to_string_lossy().into_owned())
+    .unwrap_or_else(|_| path.to_string_lossy().into_owned());
+  TrainingResultArtifactRecord {
+    relative_path,
+    absolute_path: path.to_string_lossy().into_owned(),
+    readable: metadata.is_some(),
+    byte_size: metadata.and_then(|metadata| metadata.is_file().then_some(metadata.len())),
+  }
+}
+
+fn render_runbook(
+  manifest: &TrainingResultManifest,
+  inspect_report: &TrainingResultInspectReport,
+) -> String {
+  let mut output = String::new();
+  output.push_str("# MC-7 training result runbook\n\n");
+  output.push_str("This slice consumes remote training result evidence only. It does not claim trained splat quality.\n\n");
+  output.push_str(&format!(
+    "- trainer backend: `{}`\n- job backend: `{}`\n- source job status: `{}`\n- collected status: `{}`\n- endpoint: `{}`\n- result dir: `{}`\n\n",
+    manifest.trainer_backend,
+    manifest.job_backend,
+    manifest.source_job_status.as_str(),
+    manifest.status.as_str(),
+    manifest.job_submission_endpoint,
+    manifest.result_dir,
+  ));
+  if let Some(reason) = inspect_report.status_reason {
+    output.push_str(&format!("- status reason: `{}`\n\n", reason.as_str()));
+  }
+  output.push_str(&format!(
+    "- exported frames: `{}`\n- skipped frames: `{}`\n- result artifacts observed: `{}`\n\n",
+    manifest.exported_frame_count,
+    manifest.skipped_frame_count,
+    inspect_report.result_artifact_count
+  ));
+  output.push_str("Observed artifacts:\n");
+  for artifact in &manifest.result_artifacts {
+    output.push_str(&format!(
+      "- `{}` readable={} bytes={}\n",
+      artifact.relative_path,
+      if artifact.readable { "true" } else { "false" },
+      artifact
+        .byte_size
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n/a".to_string())
+    ));
+  }
+  output.push_str("\nNotes:\n");
+  output.push_str(
+    "- D7 reads the recorded trainer output directory and an optional status snapshot.\n",
+  );
+  output.push_str("- If the result is still blocked or failed, fix the remote job/output contract and rerun D7.\n");
+  output.push_str("- If later slices need quality evaluation or splat consumption, that belongs in D8/D9, not here.\n");
+  output
+}
+
+fn write_json(
+  path: &Path,
+  value: &impl Serialize,
+  label: &str,
+) -> TrainingResultCollectionResult<()> {
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent).map_err(|error| {
+      format!(
+        "failed to create {label} directory {}: {error}",
+        parent.display()
+      )
+    })?;
+  }
+  let json = serde_json::to_string_pretty(value)
+    .map(|mut json| {
+      json.push('\n');
+      json
+    })
+    .map_err(|error| format!("failed to serialize {label}: {error}"))?;
+  fs::write(path, json.as_bytes())
+    .map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
+}
+
+fn read_json_file<T: DeserializeOwned>(
+  path: &Path,
+  label: &str,
+) -> TrainingResultCollectionResult<T> {
+  let file = fs::File::open(path)
+    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
+  serde_json::from_reader(BufReader::new(file))
+    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::training_job::TrainingLaunchJobBlocker;
+  use tempfile::TempDir;
+
+  fn write_job_manifest_fixture(
+    temp: &TempDir,
+    source_job_status: TrainingLaunchJobStatus,
+    with_job_id: bool,
+    remote_status: Option<TrainingResultStatus>,
+    create_result_dir: bool,
+    include_key_artifacts: bool,
+  ) -> PathBuf {
+    let result_dir = temp.path().join("trainer-output/nerfstudio-splatfacto");
+    if create_result_dir {
+      fs::create_dir_all(&result_dir).expect("result dir");
+    }
+    if include_key_artifacts {
+      fs::write(
+        result_dir.join(RESULT_CONFIG_FILE),
+        b"trainer: splatfacto\n",
+      )
+      .expect("config");
+      fs::create_dir_all(result_dir.join(RESULT_MODELS_DIR)).expect("models dir");
+    }
+    if let Some(remote_status) = remote_status {
+      fs::write(
+        result_dir.join(STATUS_SNAPSHOT_FILE),
+        serde_json::to_vec_pretty(&TrainingResultStatusSnapshot {
+          status: remote_status,
+          message: Some("remote status snapshot".to_string()),
+        })
+        .expect("status snapshot"),
+      )
+      .expect("write status snapshot");
+    }
+
+    let manifest_path = temp.path().join("minecraft-3dgs-training-job.json");
+    let manifest = TrainingLaunchJobManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_training_launch_plan_path: "/tmp/launch-plan.json".to_string(),
+      source_training_package_manifest_path: "/tmp/training-package/run.json".to_string(),
+      source_training_package_inspect_report_path: "/tmp/training-package/inspect_report.json"
+        .to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle/run.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      counts: crate::training_job::TrainingLaunchJobCounts {
+        frames: 2,
+        images: 2,
+        compatibility_exported_frames: 2,
+        compatibility_skipped_frames: 0,
+      },
+      compatibility_view_name: "nerfstudio".to_string(),
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      job_submission_endpoint: "https://jobs.example.test/v1".to_string(),
+      job_submission_command: "remote-submit --plan launch.json".to_string(),
+      training_data_dir: "/tmp/training-package/compat/nerfstudio".to_string(),
+      transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+      export_report_path: "/tmp/training-package/compat/nerfstudio/export_report.json".to_string(),
+      suggested_output_dir: result_dir.display().to_string(),
+      launch_command: "ns-train splatfacto --data compat/nerfstudio --output-dir out".to_string(),
+      status: source_job_status,
+      job_id: with_job_id.then_some("job-123".to_string()),
+      job_url: Some("https://jobs.example.test/jobs/job-123".to_string()),
+      readiness_blocker: (source_job_status == TrainingLaunchJobStatus::Blocked)
+        .then_some(TrainingLaunchJobBlocker::SubmissionFailed),
+      known_limits: vec!["limit-a".to_string()],
+    };
+    fs::write(
+      &manifest_path,
+      serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write manifest");
+    manifest_path
+  }
+
+  #[test]
+  fn collect_training_result_happy_path_writes_outputs() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      Some(TrainingResultStatus::Succeeded),
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+      },
+    )
+    .expect("result collection should succeed");
+
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingResultStatus::Succeeded
+    );
+    assert!(output.manifest_path.is_file());
+    assert!(output.inspect_report_path.is_file());
+    assert!(output.runbook_path.is_file());
+    assert_eq!(output.manifest.job_id, "job-123");
+  }
+
+  #[test]
+  fn collect_training_result_fails_when_job_id_missing() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      false,
+      Some(TrainingResultStatus::Succeeded),
+      true,
+      true,
+    );
+
+    let error = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+      },
+    )
+    .expect_err("missing job id should hard fail");
+
+    assert!(error.contains("missing job_id"));
+  }
+
+  #[test]
+  fn collect_training_result_blocks_when_remote_status_unavailable() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      None,
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+      },
+    )
+    .expect("blocked result should still write outputs");
+
+    assert_eq!(output.inspect_report.status, TrainingResultStatus::Blocked);
+    assert_eq!(
+      output.inspect_report.status_reason,
+      Some(TrainingResultReason::RemoteStatusUnavailable)
+    );
+  }
+
+  #[test]
+  fn collect_training_result_fails_when_key_artifacts_missing() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      Some(TrainingResultStatus::Succeeded),
+      true,
+      false,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+      },
+    )
+    .expect("failed result should still write outputs");
+
+    assert_eq!(output.inspect_report.status, TrainingResultStatus::Failed);
+    assert_eq!(
+      output.inspect_report.status_reason,
+      Some(TrainingResultReason::ResultArtifactsMissing)
+    );
+  }
+
+  #[test]
+  fn collect_training_result_marks_launch_blocked_without_remote_probe() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Blocked,
+      true,
+      Some(TrainingResultStatus::Succeeded),
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+      },
+    )
+    .expect("blocked launch should still write outputs");
+
+    assert_eq!(output.inspect_report.status, TrainingResultStatus::Blocked);
+    assert_eq!(
+      output.inspect_report.status_reason,
+      Some(TrainingResultReason::LaunchBlocked)
+    );
+  }
+}

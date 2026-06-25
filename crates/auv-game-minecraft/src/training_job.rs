@@ -18,6 +18,23 @@ const SUBMIT_ENDPOINT_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_ENDPOINT";
 const SUBMIT_TOKEN_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_TOKEN";
 const SUBMIT_COMMAND_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_SUBMIT_COMMAND";
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct TrainingJobEnvironment {
+  submit_endpoint: Option<String>,
+  submit_token: Option<String>,
+  submit_command: Option<String>,
+}
+
+impl TrainingJobEnvironment {
+  fn from_process() -> Self {
+    Self {
+      submit_endpoint: std::env::var(SUBMIT_ENDPOINT_ENV).ok(),
+      submit_token: std::env::var(SUBMIT_TOKEN_ENV).ok(),
+      submit_command: std::env::var(SUBMIT_COMMAND_ENV).ok(),
+    }
+  }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrainingLaunchJobInputs {
   pub training_launch_plan_path: PathBuf,
@@ -75,6 +92,14 @@ pub struct TrainingLaunchJobManifest {
   pub export_report_path: String,
   pub suggested_output_dir: String,
   pub launch_command: String,
+  #[serde(default)]
+  pub status: TrainingLaunchJobStatus,
+  #[serde(default)]
+  pub job_id: Option<String>,
+  #[serde(default)]
+  pub job_url: Option<String>,
+  #[serde(default)]
+  pub readiness_blocker: Option<TrainingLaunchJobBlocker>,
   pub known_limits: Vec<String>,
 }
 
@@ -138,6 +163,12 @@ impl TrainingLaunchJobStatus {
   }
 }
 
+impl Default for TrainingLaunchJobStatus {
+  fn default() -> Self {
+    Self::Queued
+  }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrainingLaunchJobBlocker {
@@ -173,6 +204,21 @@ fn launch_3dgs_training_job_with_submit<F>(
 where
   F: FnOnce(&TrainingLaunchJobRequest) -> TrainingLaunchJobSubmission,
 {
+  launch_3dgs_training_job_with_submit_and_env(
+    inputs,
+    submit,
+    TrainingJobEnvironment::from_process(),
+  )
+}
+
+fn launch_3dgs_training_job_with_submit_and_env<F>(
+  inputs: TrainingLaunchJobInputs,
+  submit: F,
+  env: TrainingJobEnvironment,
+) -> TrainingJobResult<TrainingLaunchJobOutput>
+where
+  F: FnOnce(&TrainingLaunchJobRequest) -> TrainingLaunchJobSubmission,
+{
   let launch_plan = read_json_file::<TrainingLaunchPlanManifest>(
     &inputs.training_launch_plan_path,
     "MC-7 D5 training launch plan",
@@ -192,9 +238,9 @@ where
     "MC-7 D5 training package inspect report",
   )?;
 
-  let submit_endpoint = std::env::var(SUBMIT_ENDPOINT_ENV).ok();
-  let submit_token = std::env::var(SUBMIT_TOKEN_ENV).ok();
-  let submit_command = std::env::var(SUBMIT_COMMAND_ENV).unwrap_or_else(|_| {
+  let submit_endpoint = env.submit_endpoint;
+  let submit_token = env.submit_token;
+  let submit_command = env.submit_command.unwrap_or_else(|| {
     format!(
       "remote-submit --endpoint <configured> --plan {}",
       sh_quote(&inputs.training_launch_plan_path)
@@ -299,6 +345,10 @@ where
     export_report_path: export_report_path.to_string_lossy().into_owned(),
     suggested_output_dir: launch_plan.suggested_output_dir.clone(),
     launch_command: launch_plan.launch_command.clone(),
+    status: submission.status,
+    job_id: submission.job_id.clone(),
+    job_url: submission.job_url.clone(),
+    readiness_blocker: submission.blocker,
     known_limits: known_limits.iter().cloned().collect(),
   };
   write_json(&manifest_path, &manifest, "MC-7 D6 training job JSON")?;
@@ -587,19 +637,7 @@ mod tests {
 ",
     )
     .expect("write run");
-    if with_config {
-      unsafe {
-        std::env::set_var(SUBMIT_ENDPOINT_ENV, "https://jobs.example.test/v1");
-        std::env::set_var(SUBMIT_TOKEN_ENV, "secret");
-        std::env::set_var(SUBMIT_COMMAND_ENV, "remote-submit --dry-run");
-      }
-    } else {
-      unsafe {
-        std::env::remove_var(SUBMIT_ENDPOINT_ENV);
-        std::env::remove_var(SUBMIT_TOKEN_ENV);
-        std::env::remove_var(SUBMIT_COMMAND_ENV);
-      }
-    }
+    let _ = with_config;
     launch_plan_path
   }
 
@@ -607,7 +645,7 @@ mod tests {
   fn job_launch_happy_path_writes_all_outputs() {
     let temp = tempfile::tempdir().expect("temp dir");
     let plan_path = write_launch_plan_fixture(&temp, "nerfstudio", 2, true, true);
-    let output = launch_3dgs_training_job_with_submit(
+    let output = launch_3dgs_training_job_with_submit_and_env(
       TrainingLaunchJobInputs {
         training_launch_plan_path: plan_path,
         output_dir: temp.path().join("job"),
@@ -617,6 +655,11 @@ mod tests {
         job_id: Some(format!("job-for-{}", request.trainer_backend)),
         job_url: Some("https://jobs.example.test/job/1".to_string()),
         blocker: None,
+      },
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
+        submit_token: Some("secret".to_string()),
+        submit_command: Some("remote-submit --dry-run".to_string()),
       },
     )
     .expect("job should launch");
@@ -638,12 +681,17 @@ mod tests {
   fn job_launch_blocks_when_endpoint_missing() {
     let temp = tempfile::tempdir().expect("temp dir");
     let plan_path = write_launch_plan_fixture(&temp, "nerfstudio", 2, true, false);
-    let output = launch_3dgs_training_job_with_submit(
+    let output = launch_3dgs_training_job_with_submit_and_env(
       TrainingLaunchJobInputs {
         training_launch_plan_path: plan_path,
         output_dir: temp.path().join("job"),
       },
       |_request| unreachable!("blocked path should not submit"),
+      TrainingJobEnvironment {
+        submit_endpoint: None,
+        submit_token: None,
+        submit_command: None,
+      },
     )
     .expect("blocked job should still write outputs");
 
@@ -661,12 +709,17 @@ mod tests {
   fn job_launch_blocks_when_backend_unsupported() {
     let temp = tempfile::tempdir().expect("temp dir");
     let plan_path = write_launch_plan_fixture(&temp, "other-view", 2, true, true);
-    let output = launch_3dgs_training_job_with_submit(
+    let output = launch_3dgs_training_job_with_submit_and_env(
       TrainingLaunchJobInputs {
         training_launch_plan_path: plan_path,
         output_dir: temp.path().join("job"),
       },
       |_request| unreachable!("blocked path should not submit"),
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
+        submit_token: Some("secret".to_string()),
+        submit_command: Some("remote-submit --dry-run".to_string()),
+      },
     )
     .expect("blocked job should still write outputs");
 

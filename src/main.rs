@@ -470,6 +470,57 @@ async fn run() -> Result<(), String> {
       println!("runbook: {}", output.value.runbook_path.display());
       println!("output: {}", output.value.output_dir.display());
     }
+    CliCommand::MinecraftCollect3dgsTrainingJobResult {
+      training_job_manifest_path,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_3dgs_training_result_collection(
+        &runtime.recording().handle(),
+        PathBuf::from(training_job_manifest_path),
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: {}", output.value.inspect_report.status.as_str());
+      println!("trainerBackend: {}", output.value.manifest.trainer_backend);
+      println!("jobBackend: {}", output.value.manifest.job_backend);
+      println!(
+        "statusReason: {}",
+        match output.value.inspect_report.status_reason {
+          Some(auv_game_minecraft::TrainingResultReason::MissingConfiguration) => {
+            "missing_configuration"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::MissingAuthentication) => {
+            "missing_authentication"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::LaunchBlocked) => "launch_blocked",
+          Some(auv_game_minecraft::TrainingResultReason::RemoteStatusUnavailable) => {
+            "remote_status_unavailable"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::ResultDirectoryMissing) => {
+            "result_directory_missing"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::ResultArtifactsMissing) => {
+            "result_artifacts_missing"
+          }
+          None => "none",
+        }
+      );
+      println!("jobId: {}", output.value.manifest.job_id);
+      println!(
+        "jobUrl: {}",
+        output.value.manifest.job_url.as_deref().unwrap_or("none")
+      );
+      println!("resultDir: {}", output.value.manifest.result_dir);
+      println!("manifest: {}", output.value.manifest_path.display());
+      println!(
+        "inspectReport: {}",
+        output.value.inspect_report_path.display()
+      );
+      println!("runbook: {}", output.value.runbook_path.display());
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::MinecraftPrepareTextureSweep {
       sidecar_run_dir,
       output_dir,

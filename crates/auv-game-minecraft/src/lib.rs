@@ -14,6 +14,7 @@ pub mod session_observation;
 pub mod training_job;
 pub mod training_launch;
 pub mod training_package;
+pub mod training_result;
 pub mod types;
 pub mod verify;
 
@@ -76,6 +77,12 @@ pub use training_package::{
   TrainingCompatibilityViewReport, TrainingPackageCounts, TrainingPackageFrameRecord,
   TrainingPackageInputs, TrainingPackageInspectReport, TrainingPackageManifest,
   TrainingPackageOutput, export_3dgs_training_package,
+};
+pub use training_result::{
+  TRAINING_RESULT_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_RESULT_MANIFEST_SCHEMA_VERSION,
+  TrainingResultArtifactRecord, TrainingResultInputs, TrainingResultInspectReport,
+  TrainingResultManifest, TrainingResultOutput, TrainingResultReason, TrainingResultRequest,
+  TrainingResultStatus, collect_3dgs_training_job_result,
 };
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,
