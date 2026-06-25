@@ -153,6 +153,11 @@ pub enum CliCommand {
     output_dir: String,
     inspect: InspectClientOptions,
   },
+  MinecraftLaunch3dgsTrainingJob {
+    training_launch_plan_path: String,
+    output_dir: String,
+    inspect: InspectClientOptions,
+  },
   MinecraftPrepareTextureSweep {
     sidecar_run_dir: String,
     output_dir: String,
@@ -295,6 +300,7 @@ USAGE
   auv-cli minecraft export-3dgs-scene-packet --bundle-manifest <bundle/run.json>... --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft export-3dgs-training-package --scene-packet-manifest <scene-packet/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft prepare-3dgs-training --training-package-manifest <training-package/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft launch-3dgs-training-job --training-launch-plan <training-launch-plan.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft build-texture-sweep-samples --bundle-manifest <bundle/run.json>... --output <samples.json> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--require-real-source] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
@@ -1091,6 +1097,7 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     "export-3dgs-scene-packet" => parse_minecraft_export_3dgs_scene_packet(arguments),
     "export-3dgs-training-package" => parse_minecraft_export_3dgs_training_package(arguments),
     "prepare-3dgs-training" => parse_minecraft_prepare_3dgs_training(arguments),
+    "launch-3dgs-training-job" => parse_minecraft_launch_3dgs_training_job(arguments),
     "prepare-texture-sweep" => parse_minecraft_prepare_texture_sweep(arguments),
     "build-texture-sweep-samples" => parse_minecraft_build_texture_sweep_samples(arguments),
     "eval-texture-sweep" => parse_minecraft_eval_texture_sweep(arguments),
@@ -1305,6 +1312,50 @@ fn parse_minecraft_prepare_3dgs_training(arguments: &[String]) -> AuvResult<CliC
   Ok(CliCommand::MinecraftPrepare3dgsTraining {
     training_package_manifest_path: training_package_manifest_path
       .ok_or_else(|| "--training-package-manifest is required".to_string())?,
+    output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+    inspect,
+  })
+}
+
+fn parse_minecraft_launch_3dgs_training_job(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut training_launch_plan_path = None;
+  let mut output_dir = None;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--training-launch-plan" => {
+        training_launch_plan_path = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-launch-plan",
+        )?);
+        index += 2;
+      }
+      "--output-dir" => {
+        output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
+        index += 2;
+      }
+      other => {
+        return Err(format!(
+          "unexpected minecraft launch-3dgs-training-job argument {other}"
+        ));
+      }
+    }
+  }
+
+  Ok(CliCommand::MinecraftLaunch3dgsTrainingJob {
+    training_launch_plan_path: training_launch_plan_path
+      .ok_or_else(|| "--training-launch-plan is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     inspect,
   })
@@ -2356,6 +2407,34 @@ mod tests {
       } => {
         assert_eq!(training_package_manifest_path, "/tmp/training/run.json");
         assert_eq!(output_dir, "/tmp/launch");
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_launch_3dgs_training_job_command() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "launch-3dgs-training-job".to_string(),
+      "--training-launch-plan".to_string(),
+      "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/job".to_string(),
+    ])
+    .expect("minecraft launch-3dgs-training-job command should parse");
+
+    match command {
+      CliCommand::MinecraftLaunch3dgsTrainingJob {
+        training_launch_plan_path,
+        output_dir,
+        ..
+      } => {
+        assert_eq!(
+          training_launch_plan_path,
+          "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json"
+        );
+        assert_eq!(output_dir, "/tmp/job");
       }
       other => panic!("unexpected command: {other:?}"),
     }

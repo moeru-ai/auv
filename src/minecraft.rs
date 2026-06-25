@@ -5,11 +5,11 @@ use auv_game_minecraft::{
   ScenePacketInputs, ScenePacketOutput, SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput,
   SpatialBundleSourceArtifact, TextureSweepInputs, TextureSweepPreparationInputs,
   TextureSweepPreparationOutput, TextureSweepReport, TextureSweepSampleBuildInputs,
-  TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchPreparationInputs,
-  TrainingLaunchPreparationOutput, TrainingPackageInputs, TrainingPackageOutput,
-  build_texture_sweep_samples_from_bundles, evaluate_texture_sweep, export_3dgs_scene_packet,
-  export_3dgs_training_package, export_spatial_bundle, prepare_3dgs_training_launch,
-  prepare_texture_sweep_resource_packs,
+  TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
+  TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs,
+  TrainingPackageOutput, build_texture_sweep_samples_from_bundles, evaluate_texture_sweep,
+  export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
+  launch_3dgs_training_job, prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs,
 };
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
@@ -37,6 +37,11 @@ pub const MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE: &str =
   "minecraft-3dgs-training-launch-inspect";
 pub const MINECRAFT_3DGS_TRAINING_LAUNCH_RUNBOOK_ARTIFACT_ROLE: &str =
   "minecraft-3dgs-training-launch-runbook";
+pub const MINECRAFT_3DGS_TRAINING_JOB_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-job";
+pub const MINECRAFT_3DGS_TRAINING_JOB_INSPECT_ARTIFACT_ROLE: &str =
+  "minecraft-3dgs-training-job-inspect";
+pub const MINECRAFT_3DGS_TRAINING_JOB_RUNBOOK_ARTIFACT_ROLE: &str =
+  "minecraft-3dgs-training-job-runbook";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -227,6 +232,53 @@ pub fn run_minecraft_3dgs_training_launch_preparation(
           &result.runbook_path,
           "mc7-training-launch-runbook.md",
           Some("MC-7 D5 training launch manual runbook".to_string()),
+        )?;
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_minecraft_3dgs_training_job_launch(
+  recording: &RecordingHandle,
+  training_launch_plan_path: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<auv_game_minecraft::TrainingLaunchJobOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.minecraft.launch_3dgs_training_job"),
+    "Minecraft launch MC-7 D6 training job",
+    |context| {
+      context.record_event(
+        "minecraft.launch_3dgs_training_job.inputs",
+        Some(format!(
+          "training_launch_plan={} output_dir={} trained_3dgs=false trainer_started=false job_backend=remote",
+          training_launch_plan_path.display(),
+          output_dir.display()
+        )),
+      );
+      let result = launch_3dgs_training_job(TrainingLaunchJobInputs {
+        training_launch_plan_path: training_launch_plan_path.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span("minecraft.launch_3dgs_training_job.artifacts", |context| {
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_JOB_ARTIFACT_ROLE,
+          &result.manifest_path,
+          "minecraft-3dgs-training-job.json",
+          Some("MC-7 D6 remote training job manifest".to_string()),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_JOB_INSPECT_ARTIFACT_ROLE,
+          &result.inspect_report_path,
+          "minecraft-3dgs-training-job-inspect.json",
+          Some("MC-7 D6 remote training job inspect report".to_string()),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_JOB_RUNBOOK_ARTIFACT_ROLE,
+          &result.runbook_path,
+          "mc7-training-job-runbook.md",
+          Some("MC-7 D6 remote training job runbook".to_string()),
         )?;
         Ok::<_, String>(())
       })?;
@@ -865,7 +917,7 @@ mod tests {
     let _ = fs::remove_dir_all(temp);
   }
 
-  fn write_blocked_training_package_fixture(root: &Path) -> PathBuf {
+  fn write_blocked_training_package_fixture(root: &std::path::Path) -> PathBuf {
     let training_dir = root.join("training-package");
     fs::create_dir_all(training_dir.join("frames")).expect("frames dir");
     fs::create_dir_all(training_dir.join("compat/nerfstudio")).expect("compat dir");
