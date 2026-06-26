@@ -49,6 +49,11 @@ Reference:
 
 ### D2 — remote status/result adapter
 
+MC-8 D2 closed the **command-adapter lane** for D7 remote status/result
+collection. That lane is distinct from the later MC-9 D3 **real provider
+status** lane documented in
+`docs/ai/references/2026-06-27-minecraft-mc9-d3-real-provider-status-closure.md`.
+
 MC-8 D2 closed the command surface for D7 remote status/result collection:
 
 - explicit status-command input exists;

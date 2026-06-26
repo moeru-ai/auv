@@ -364,12 +364,12 @@ pub fn run_minecraft_3dgs_training_result_collection_with_environment(
       RunType::Execute,
       "auv.minecraft.collect_3dgs_training_job_result",
     ),
-    "Minecraft collect MC-7 D7 training job result",
+    "Minecraft collect MC-9 D3 real provider training job result",
     |context| {
       context.record_event(
         "minecraft.collect_3dgs_training_job_result.inputs",
         Some(format!(
-          "training_job_manifest={} output_dir={} trained_3dgs=false trainer_result_consumed=true result_status_adapter=true job_backend=remote",
+          "training_job_manifest={} output_dir={} trained_3dgs=false trainer_result_consumed=true real_provider_status=true job_backend=remote",
           training_job_manifest_path.display(),
           output_dir.display()
         )),
@@ -400,19 +400,19 @@ pub fn run_minecraft_3dgs_training_result_collection_with_environment(
           MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE,
           &result.manifest_path,
           "minecraft-3dgs-training-result.json",
-          Some("MC-8 D2 remote training result adapter manifest".to_string()),
+          Some("MC-9 D3 real provider training result manifest".to_string()),
         )?;
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE,
           &result.inspect_report_path,
           "minecraft-3dgs-training-result-inspect.json",
-          Some("MC-8 D2 remote training result adapter inspect report".to_string()),
+          Some("MC-9 D3 real provider training result inspect report".to_string()),
         )?;
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE,
           &result.runbook_path,
           "mc7-training-result-runbook.md",
-          Some("MC-8 D2 remote training result adapter runbook".to_string()),
+          Some("MC-9 D3 real provider training result runbook".to_string()),
         )?;
         Ok::<_, String>(())
       })?;

@@ -897,6 +897,7 @@ mod tests {
       job_submission_endpoint: "https://jobs.example.test/v1".to_string(),
       source_job_status: crate::training_job::TrainingLaunchJobStatus::Submitted,
       status: source_result_status,
+      status_message: None,
       job_id: "job-123".to_string(),
       job_url: Some("https://jobs.example.test/jobs/job-123".to_string()),
       result_dir: result_dir.display().to_string(),

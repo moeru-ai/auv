@@ -527,6 +527,16 @@ async fn run() -> Result<(), String> {
           training_job_status_command,
         )?;
       println!("runId: {}", output.run_id);
+      println!("status: {}", output.value.inspect_report.status.as_str());
+      println!(
+        "statusMessage: {}",
+        output
+          .value
+          .inspect_report
+          .status_message
+          .as_deref()
+          .unwrap_or("none")
+      );
       println!(
         "remoteResultStatus: {}",
         output.value.inspect_report.status.as_str()
@@ -545,6 +555,9 @@ async fn run() -> Result<(), String> {
           Some(auv_game_minecraft::TrainingResultReason::LaunchBlocked) => "launch_blocked",
           Some(auv_game_minecraft::TrainingResultReason::RemoteStatusUnavailable) => {
             "remote_status_unavailable"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::ProviderReportedFailed) => {
+            "provider_reported_failed"
           }
           Some(auv_game_minecraft::TrainingResultReason::ResultDirectoryMissing) => {
             "result_directory_missing"
@@ -570,13 +583,29 @@ async fn run() -> Result<(), String> {
           Some(auv_game_minecraft::TrainingResultReason::RemoteStatusUnavailable) => {
             "remote_job_state_not_yet_readable"
           }
+          Some(auv_game_minecraft::TrainingResultReason::ProviderReportedFailed) => {
+            "provider_reported_training_failed"
+          }
           Some(auv_game_minecraft::TrainingResultReason::ResultDirectoryMissing) => {
-            "remote_job_reported_done_but_result_dir_missing"
+            "legacy_adapter_result_dir_missing"
           }
           Some(auv_game_minecraft::TrainingResultReason::ResultArtifactsMissing) => {
-            "remote_job_reported_done_but_key_result_artifacts_missing"
+            "legacy_adapter_key_result_artifacts_missing"
           }
-          None => "result_state_matches_current_artifacts",
+          None => match output.value.inspect_report.status {
+            auv_game_minecraft::TrainingResultStatus::Succeeded
+            | auv_game_minecraft::TrainingResultStatus::Submitted
+            | auv_game_minecraft::TrainingResultStatus::Queued => {
+              if !output.value.inspect_report.result_dir_exists
+                || !output.value.inspect_report.key_result_artifacts_present
+              {
+                "provider_status_recorded_local_results_not_yet_observed"
+              } else {
+                "provider_status_matches_local_result_observation"
+              }
+            }
+            _ => "provider_status_recorded",
+          },
         }
       );
       println!("jobId: {}", output.value.manifest.job_id);
@@ -585,6 +614,14 @@ async fn run() -> Result<(), String> {
         output.value.manifest.job_url.as_deref().unwrap_or("none")
       );
       println!("resultDir: {}", output.value.manifest.result_dir);
+      println!(
+        "resultDirExists: {}",
+        output.value.inspect_report.result_dir_exists
+      );
+      println!(
+        "keyResultArtifactsPresent: {}",
+        output.value.inspect_report.key_result_artifacts_present
+      );
       println!("manifest: {}", output.value.manifest_path.display());
       println!(
         "inspectReport: {}",

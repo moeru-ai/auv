@@ -63,6 +63,7 @@ pub struct TrainingResultRequest {
   pub status_command: String,
   pub status_command_explicit: bool,
   pub token_present: bool,
+  pub job_token: Option<String>,
   pub job_id: String,
   pub result_dir: String,
   pub job_url: Option<String>,
@@ -99,6 +100,8 @@ pub struct TrainingResultManifest {
   pub job_submission_endpoint: String,
   pub source_job_status: TrainingLaunchJobStatus,
   pub status: TrainingResultStatus,
+  #[serde(default)]
+  pub status_message: Option<String>,
   pub job_id: String,
   #[serde(default)]
   pub job_url: Option<String>,
@@ -133,6 +136,8 @@ pub struct TrainingResultInspectReport {
   pub job_submission_endpoint: String,
   pub source_job_status: TrainingLaunchJobStatus,
   pub status: TrainingResultStatus,
+  #[serde(default)]
+  pub status_message: Option<String>,
   #[serde(default)]
   pub status_reason: Option<TrainingResultReason>,
   pub job_id: String,
@@ -176,6 +181,7 @@ pub enum TrainingResultReason {
   MissingAuthentication,
   LaunchBlocked,
   RemoteStatusUnavailable,
+  ProviderReportedFailed,
   ResultDirectoryMissing,
   ResultArtifactsMissing,
 }
@@ -187,6 +193,7 @@ impl TrainingResultReason {
       Self::MissingAuthentication => "missing_authentication",
       Self::LaunchBlocked => "launch_blocked",
       Self::RemoteStatusUnavailable => "remote_status_unavailable",
+      Self::ProviderReportedFailed => "provider_reported_failed",
       Self::ResultDirectoryMissing => "result_directory_missing",
       Self::ResultArtifactsMissing => "result_artifacts_missing",
     }
@@ -259,6 +266,7 @@ where
     }),
     status_command_explicit,
     token_present: token.is_some(),
+    job_token: token.clone(),
     job_id: job_id.clone(),
     result_dir: result_dir.to_string_lossy().into_owned(),
     job_url: job_manifest.job_url.clone(),
@@ -268,38 +276,45 @@ where
   let mut known_limits = BTreeSet::new();
   known_limits.extend(job_manifest.known_limits.iter().cloned());
   known_limits.insert(
-    "MC-8 D2 closes remote status/result adapter evidence only; it does not grade model quality or splat usefulness"
+    "MC-9 D3 closes real provider status evidence only; it does not grade model quality, splat usefulness, or artifact fetch completeness"
+      .to_string(),
+  );
+  known_limits.insert(
+    "D7 records provider status truth; local result_dir and key artifacts are observation-only and belong to D11 fetch/completeness"
       .to_string(),
   );
 
-  let (mut status, mut status_reason) = if launch_blocked {
+  let (status, status_reason, status_message) = if launch_blocked {
     (
       TrainingResultStatus::Blocked,
       Some(TrainingResultReason::LaunchBlocked),
+      None,
     )
   } else if endpoint.is_none() {
     (
       TrainingResultStatus::Blocked,
       Some(TrainingResultReason::MissingConfiguration),
+      None,
     )
   } else if token.is_none() {
     (
       TrainingResultStatus::Blocked,
       Some(TrainingResultReason::MissingAuthentication),
+      None,
     )
   } else {
     match probe(&request) {
       Ok(response) => {
-        if let Some(message) = response.message {
-          warnings.insert(message);
-        }
-        (response.status, None)
+        let reason = (response.status == TrainingResultStatus::Failed)
+          .then_some(TrainingResultReason::ProviderReportedFailed);
+        (response.status, reason, response.message)
       }
       Err(error) => {
         warnings.insert(error);
         (
           TrainingResultStatus::Blocked,
           Some(TrainingResultReason::RemoteStatusUnavailable),
+          None,
         )
       }
     }
@@ -308,11 +323,23 @@ where
   let result_dir_exists = result_dir.is_dir();
   let (result_artifacts, key_result_artifacts_present) = collect_result_artifacts(&result_dir);
   if status == TrainingResultStatus::Succeeded && !result_dir_exists {
-    status = TrainingResultStatus::Failed;
-    status_reason = Some(TrainingResultReason::ResultDirectoryMissing);
+    warnings.insert(
+      "provider status is succeeded but local result_dir is not present yet; D11 owns fetch/normalize"
+        .to_string(),
+    );
+    known_limits.insert(
+      "local result_dir absence is not a D7 provider failure; use D11 artifact fetch for completeness"
+        .to_string(),
+    );
   } else if status == TrainingResultStatus::Succeeded && !key_result_artifacts_present {
-    status = TrainingResultStatus::Failed;
-    status_reason = Some(TrainingResultReason::ResultArtifactsMissing);
+    warnings.insert(
+      "provider status is succeeded but key local result artifacts are not present yet; D11 owns required-artifact completeness"
+        .to_string(),
+    );
+    known_limits.insert(
+      "local key artifact absence is not a D7 provider failure; use D11 artifact fetch for completeness"
+        .to_string(),
+    );
   }
 
   let generated_at_millis = auv_tracing_driver::now_millis();
@@ -343,6 +370,7 @@ where
     job_submission_endpoint: job_manifest.job_submission_endpoint.clone(),
     source_job_status: job_manifest.status,
     status,
+    status_message: status_message.clone(),
     job_id: job_id.clone(),
     job_url: job_manifest.job_url.clone(),
     result_dir: result_dir.to_string_lossy().into_owned(),
@@ -370,6 +398,7 @@ where
     job_submission_endpoint: job_manifest.job_submission_endpoint.clone(),
     source_job_status: job_manifest.status,
     status,
+    status_message,
     status_reason,
     job_id,
     job_url: job_manifest.job_url.clone(),
@@ -453,6 +482,7 @@ fn run_status_command(
     job_url: Option<&'a str>,
     endpoint: &'a str,
     token_present: bool,
+    job_token: Option<&'a str>,
     job_backend: &'a str,
     trainer_backend: &'a str,
     result_dir: &'a str,
@@ -462,11 +492,12 @@ fn run_status_command(
     job_url: request.job_url.as_deref(),
     endpoint: &request.endpoint,
     token_present: request.token_present,
+    job_token: request.job_token.as_deref(),
     job_backend: &request.job_backend,
     trainer_backend: &request.trainer_backend,
     result_dir: &request.result_dir,
   })
-  .map_err(|error| format!("failed to serialize MC-8 D2 status command request: {error}"))?;
+  .map_err(|error| format!("failed to serialize MC-9 D3 status command request: {error}"))?;
 
   let mut command = Command::new("sh");
   command
@@ -478,26 +509,26 @@ fn run_status_command(
 
   let mut child = command.spawn().map_err(|error| {
     format!(
-      "failed to run MC-8 D2 remote status command `{}`: {error}",
+      "failed to run MC-9 D3 provider status command `{}`: {error}",
       request.status_command
     )
   })?;
   child
     .stdin
     .take()
-    .ok_or_else(|| "failed to open stdin for MC-8 D2 status command".to_string())?
+    .ok_or_else(|| "failed to open stdin for MC-9 D3 provider status command".to_string())?
     .write_all(&stdin_payload)
-    .map_err(|error| format!("failed to write MC-8 D2 status command request: {error}"))?;
+    .map_err(|error| format!("failed to write MC-9 D3 status command request: {error}"))?;
 
   let output = child.wait_with_output().map_err(|error| {
     format!(
-      "failed to wait for MC-8 D2 remote status command `{}`: {error}",
+      "failed to wait for MC-9 D3 provider status command `{}`: {error}",
       request.status_command
     )
   })?;
   if !output.status.success() {
     return Err(format!(
-      "MC-8 D2 remote status command `{}` failed with status {}: {}",
+      "MC-9 D3 provider status command `{}` failed with status {}: {}",
       request.status_command,
       output.status,
       String::from_utf8_lossy(&output.stderr).trim()
@@ -506,7 +537,7 @@ fn run_status_command(
 
   serde_json::from_slice::<TrainingResultStatusSnapshot>(&output.stdout).map_err(|error| {
     format!(
-      "failed to parse MC-8 D2 remote status command output for job {}: {error}",
+      "failed to parse MC-9 D3 provider status command output for job {}: {error}",
       request.job_id
     )
   })
@@ -568,10 +599,10 @@ fn render_runbook(
   inspect_report: &TrainingResultInspectReport,
 ) -> String {
   let mut output = String::new();
-  output.push_str("# MC-7 training result runbook\n\n");
-  output.push_str("This slice closes the remote training result status adapter and evidence path only. It does not claim trained splat quality.\n\n");
+  output.push_str("# MC-9 D3 training result runbook\n\n");
+  output.push_str("This slice closes real provider status evidence for D7 only. It does not grade model quality, fetch normalized artifacts, or claim required-artifact completeness.\n\n");
   output.push_str(&format!(
-    "- trainer backend: `{}`\n- job backend: `{}`\n- source job status: `{}`\n- collected status: `{}`\n- endpoint: `{}`\n- result dir: `{}`\n\n",
+    "- trainer backend: `{}`\n- job backend: `{}`\n- source job status: `{}`\n- provider status: `{}`\n- endpoint: `{}`\n- result dir: `{}`\n\n",
     manifest.trainer_backend,
     manifest.job_backend,
     manifest.source_job_status.as_str(),
@@ -579,11 +610,16 @@ fn render_runbook(
     manifest.job_submission_endpoint,
     manifest.result_dir,
   ));
+  if let Some(message) = &manifest.status_message {
+    output.push_str(&format!("- provider status message: `{}`\n", message));
+  }
   if let Some(reason) = inspect_report.status_reason {
-    output.push_str(&format!("- status reason: `{}`\n\n", reason.as_str()));
+    output.push_str(&format!("- status reason: `{}`\n", reason.as_str()));
   }
   output.push_str(&format!(
-    "- exported frames: `{}`\n- skipped frames: `{}`\n- result artifacts observed: `{}`\n\n",
+    "- local result dir exists: `{}`\n- key local result artifacts present: `{}`\n- exported frames: `{}`\n- skipped frames: `{}`\n- local result artifacts observed: `{}`\n\n",
+    inspect_report.result_dir_exists,
+    inspect_report.key_result_artifacts_present,
     manifest.exported_frame_count,
     manifest.skipped_frame_count,
     inspect_report.result_artifact_count
@@ -602,10 +638,14 @@ fn render_runbook(
   }
   output.push_str("\nNotes:\n");
   output.push_str(
-    "- D7 reads the recorded trainer output directory and an optional status snapshot.\n",
+    "- D7 records provider/status-command truth; local result_dir and key artifacts are observation-only.\n",
   );
-  output.push_str("- If the result is still blocked or failed, fix the remote job/output contract and rerun D7.\n");
-  output.push_str("- If later slices need quality evaluation or splat consumption, that belongs in D8/D9, not here.\n");
+  output.push_str(
+    "- If provider status is blocked or failed, fix the remote job contract and rerun D7.\n",
+  );
+  output.push_str(
+    "- Artifact fetch, normalization, and required-artifact completeness belong to D11, not D7.\n",
+  );
   output
 }
 
@@ -826,7 +866,7 @@ mod tests {
   }
 
   #[test]
-  fn collect_training_result_fails_when_key_artifacts_missing() {
+  fn collect_training_result_keeps_provider_succeeded_when_key_artifacts_missing() {
     let temp = tempfile::tempdir().expect("temp dir");
     let manifest_path = write_job_manifest_fixture(
       &temp,
@@ -849,13 +889,221 @@ mod tests {
         status_command: None,
       },
     )
-    .expect("failed result should still write outputs");
+    .expect("provider succeeded with missing local artifacts should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingResultStatus::Succeeded
+    );
+    assert_eq!(output.inspect_report.status_reason, None);
+    assert!(!output.inspect_report.key_result_artifacts_present);
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("key local result artifacts"))
+    );
+  }
+
+  #[test]
+  fn collect_training_result_keeps_provider_succeeded_when_result_dir_missing() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      None,
+      false,
+      false,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+        status_command: Some(
+          "python3 -c \"import json,sys; json.dump({'status':'succeeded','message':'provider-done'}, sys.stdout)\""
+            .to_string(),
+        ),
+      },
+    )
+    .expect("provider succeeded without local result dir should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingResultStatus::Succeeded
+    );
+    assert_eq!(
+      output.inspect_report.status_message.as_deref(),
+      Some("provider-done")
+    );
+    assert!(!output.inspect_report.result_dir_exists);
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("local result_dir is not present yet"))
+    );
+  }
+
+  #[test]
+  fn collect_training_result_explicit_command_failed_sets_provider_reported_failed() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      Some(TrainingResultStatus::Succeeded),
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+        status_command: Some(
+          "python3 -c \"import json,sys; json.dump({'status':'failed','message':'provider-failed'}, sys.stdout)\""
+            .to_string(),
+        ),
+      },
+    )
+    .expect("provider failed should still write outputs");
 
     assert_eq!(output.inspect_report.status, TrainingResultStatus::Failed);
     assert_eq!(
       output.inspect_report.status_reason,
-      Some(TrainingResultReason::ResultArtifactsMissing)
+      Some(TrainingResultReason::ProviderReportedFailed)
     );
+    assert_eq!(
+      output.inspect_report.status_message.as_deref(),
+      Some("provider-failed")
+    );
+  }
+
+  #[test]
+  fn collect_training_result_explicit_command_submitted_not_downgraded_by_missing_result_dir() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      None,
+      false,
+      false,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+        status_command: Some(
+          "python3 -c \"import json,sys; json.dump({'status':'submitted'}, sys.stdout)\""
+            .to_string(),
+        ),
+      },
+    )
+    .expect("provider submitted should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingResultStatus::Submitted
+    );
+    assert!(!output.inspect_report.result_dir_exists);
+  }
+
+  #[test]
+  fn collect_training_result_explicit_command_queued_not_downgraded_by_missing_result_dir() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      None,
+      false,
+      false,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+        status_command: Some(
+          "python3 -c \"import json,sys; json.dump({'status':'queued'}, sys.stdout)\"".to_string(),
+        ),
+      },
+    )
+    .expect("provider queued should still write outputs");
+
+    assert_eq!(output.inspect_report.status, TrainingResultStatus::Queued);
+    assert!(!output.inspect_report.result_dir_exists);
+  }
+
+  #[test]
+  fn collect_training_result_explicit_command_receives_job_token_on_stdin() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      None,
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret-token".to_string()),
+        status_command: Some(
+          "python3 -c \"import json,sys; req=json.load(sys.stdin); json.dump({'status':'succeeded','message':'job_token='+str(req.get('job_token'))}, sys.stdout)\""
+            .to_string(),
+        ),
+      },
+    )
+    .expect("command with job_token on stdin should succeed");
+
+    assert_eq!(
+      output.inspect_report.status_message.as_deref(),
+      Some("job_token=secret-token")
+    );
+  }
+
+  #[test]
+  fn collect_training_result_deserializes_legacy_result_reason_codes() {
+    let parsed: TrainingResultReason = serde_json::from_str("\"result_directory_missing\"")
+      .expect("legacy result_directory_missing should deserialize");
+    assert_eq!(parsed, TrainingResultReason::ResultDirectoryMissing);
+    let parsed: TrainingResultReason = serde_json::from_str("\"result_artifacts_missing\"")
+      .expect("legacy result_artifacts_missing should deserialize");
+    assert_eq!(parsed, TrainingResultReason::ResultArtifactsMissing);
   }
 
   #[test]
@@ -964,12 +1212,9 @@ mod tests {
       output.inspect_report.status,
       TrainingResultStatus::Succeeded
     );
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("command-status-bridge"))
+    assert_eq!(
+      output.inspect_report.status_message.as_deref(),
+      Some("command-status-bridge")
     );
   }
 
@@ -1009,7 +1254,7 @@ mod tests {
         .inspect_report
         .warnings
         .iter()
-        .any(|warning| warning.contains("failed to parse MC-8 D2 remote status command output"))
+        .any(|warning| warning.contains("failed to parse MC-9 D3 provider status command output"))
     );
   }
 
@@ -1044,12 +1289,13 @@ mod tests {
     .expect("explicit command should win over local snapshot");
 
     assert_eq!(output.inspect_report.status, TrainingResultStatus::Failed);
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|w| w.contains("explicit-wins"))
+    assert_eq!(
+      output.inspect_report.status_reason,
+      Some(TrainingResultReason::ProviderReportedFailed)
+    );
+    assert_eq!(
+      output.inspect_report.status_message.as_deref(),
+      Some("explicit-wins")
     );
   }
 
@@ -1086,12 +1332,9 @@ mod tests {
       output.inspect_report.status,
       TrainingResultStatus::Succeeded
     );
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|w| w.contains("job_id=job-123"))
+    assert_eq!(
+      output.inspect_report.status_message.as_deref(),
+      Some("job_id=job-123")
     );
   }
 

@@ -976,7 +976,7 @@ pub fn render_run_text(
       }
       if let Some(manifest) = &manifest_lineage.manifest {
         output.push_str(&format!(
-          "- manifest_artifact={} role={} path={} schema={} source_training_job_manifest={} source_training_launch_plan={} source_runs={} trainer_backend={} job_backend={} source_job_status={} status={} job_id={} job_url={} result_dir={} result_artifacts={} exported={} skipped={} paired_report_artifact={} issue={}\n",
+          "- manifest_artifact={} role={} path={} schema={} source_training_job_manifest={} source_training_launch_plan={} source_runs={} trainer_backend={} job_backend={} source_job_status={} provider_status={} status_message={} job_id={} job_url={} result_dir={} result_artifacts={} exported={} skipped={} paired_report_artifact={} issue={}\n",
           manifest_lineage.artifact.artifact_id,
           manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -988,6 +988,7 @@ pub fn render_run_text(
           manifest.job_backend,
           manifest.source_job_status,
           manifest.status,
+          manifest.status_message.as_deref().unwrap_or("n/a"),
           manifest.job_id,
           manifest.job_url.as_deref().unwrap_or("n/a"),
           manifest.result_dir,
@@ -1005,12 +1006,13 @@ pub fn render_run_text(
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
-            "  paired_report schema={} trainer_backend={} job_backend={} source_job_status={} status={} status_reason={} job_id={} job_url={} result_dir={} result_dir_exists={} key_result_artifacts_present={} result_artifact_count={} warnings={} issue={}\n",
+            "  paired_report schema={} trainer_backend={} job_backend={} source_job_status={} provider_status={} status_message={} status_reason={} job_id={} job_url={} result_dir={} local_result_observation result_dir_exists={} key_result_artifacts_present={} result_artifact_count={} warnings={} issue={}\n",
             report.schema_version,
             report.trainer_backend,
             report.job_backend,
             report.source_job_status,
             report.status,
+            report.status_message.as_deref().unwrap_or("n/a"),
             report.status_reason.as_deref().unwrap_or("n/a"),
             report.job_id,
             report.job_url.as_deref().unwrap_or("n/a"),
@@ -1047,7 +1049,7 @@ pub fn render_run_text(
       }
       if let Some(report) = &report_lineage.report {
         output.push_str(&format!(
-          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_job_manifest={} source_training_launch_plan={} source_runs={} trainer_backend={} job_backend={} source_job_status={} status={} status_reason={} job_id={} job_url={} result_dir={} result_dir_exists={} key_result_artifacts_present={} result_artifact_count={} warnings={} issue={}\n",
+          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_job_manifest={} source_training_launch_plan={} source_runs={} trainer_backend={} job_backend={} source_job_status={} provider_status={} status_message={} status_reason={} job_id={} job_url={} result_dir={} local_result_observation result_dir_exists={} key_result_artifacts_present={} result_artifact_count={} warnings={} issue={}\n",
           report_lineage.artifact.artifact_id,
           report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -1060,6 +1062,7 @@ pub fn render_run_text(
           report.job_backend,
           report.source_job_status,
           report.status,
+          report.status_message.as_deref().unwrap_or("n/a"),
           report.status_reason.as_deref().unwrap_or("n/a"),
           report.job_id,
           report.job_url.as_deref().unwrap_or("n/a"),
@@ -2205,6 +2208,7 @@ mod tests {
         job_submission_endpoint: "https://jobs.example/api".to_string(),
         source_job_status: "submitted".to_string(),
         status: "succeeded".to_string(),
+        status_message: Some("provider succeeded".to_string()),
         job_id: "job-123".to_string(),
         job_url: Some("https://jobs.example/job-123".to_string()),
         result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
@@ -2252,6 +2256,7 @@ mod tests {
             job_submission_endpoint: "https://jobs.example/api".to_string(),
             source_job_status: "submitted".to_string(),
             status: "succeeded".to_string(),
+            status_message: Some("provider succeeded".to_string()),
             status_reason: None,
             job_id: "job-123".to_string(),
             job_url: Some("https://jobs.example/job-123".to_string()),
@@ -2483,8 +2488,10 @@ mod tests {
     assert!(output.contains("manifest_artifact=artifact_mc7_result"));
     assert!(output.contains("paired_report_artifact=artifact_mc7_result_inspect"));
     assert!(output.contains("source_job_status=submitted"));
+    assert!(output.contains("provider_status=succeeded"));
+    assert!(output.contains("status_message=provider succeeded"));
     assert!(output.contains("status_reason=n/a"));
-    assert!(output.contains("result_dir_exists=true"));
+    assert!(output.contains("local_result_observation result_dir_exists=true"));
     assert!(output.contains("key_result_artifacts_present=true"));
     assert!(output.contains("result_artifact_count=1"));
     assert!(output.contains("MC-7 Training Result Artifacts:"));
@@ -3196,6 +3203,7 @@ mod tests {
         job_submission_endpoint: "https://jobs.example/api".to_string(),
         source_job_status: "submitted".to_string(),
         status: "succeeded".to_string(),
+        status_message: Some("provider succeeded".to_string()),
         job_id: "job-123".to_string(),
         job_url: Some("https://jobs.example/job-123".to_string()),
         result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
@@ -3241,6 +3249,7 @@ mod tests {
             job_submission_endpoint: "https://jobs.example/api".to_string(),
             source_job_status: "submitted".to_string(),
             status: "succeeded".to_string(),
+            status_message: Some("provider succeeded".to_string()),
             status_reason: None,
             job_id: "job-123".to_string(),
             job_url: Some("https://jobs.example/job-123".to_string()),
@@ -3282,6 +3291,7 @@ mod tests {
             job_submission_endpoint: "https://jobs.example/api".to_string(),
             source_job_status: "submitted".to_string(),
             status: "failed".to_string(),
+            status_message: Some("legacy adapter failure".to_string()),
             status_reason: Some("result_artifacts_missing".to_string()),
             job_id: "job-123".to_string(),
             job_url: Some("https://jobs.example/job-123".to_string()),

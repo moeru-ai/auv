@@ -58,8 +58,14 @@ Reason codes are narrow:
 - `missing_authentication`
 - `launch_blocked`
 - `remote_status_unavailable`
-- `result_directory_missing`
-- `result_artifacts_missing`
+- `provider_reported_failed` (MC-9 D3 real provider lane)
+- `result_directory_missing` (legacy MC-8 command-adapter lane only)
+- `result_artifacts_missing` (legacy MC-8 command-adapter lane only)
+
+MC-9 D3 moved D7 status truth to the provider/status-command response. Local
+`result_dir` and key artifact presence are observation-only and no longer
+force D7 failure. See
+`docs/ai/references/2026-06-27-minecraft-mc9-d3-real-provider-status-closure.md`.
 
 This keeps the slice focused on result-collection truth rather than trainer
 quality.

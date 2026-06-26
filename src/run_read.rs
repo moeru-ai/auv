@@ -232,6 +232,8 @@ pub struct MinecraftTrainingResultManifestSummary {
   pub job_submission_endpoint: String,
   pub source_job_status: String,
   pub status: String,
+  #[serde(default)]
+  pub status_message: Option<String>,
   pub job_id: String,
   pub job_url: Option<String>,
   pub result_dir: String,
@@ -276,6 +278,8 @@ pub struct MinecraftTrainingResultInspectReportSummary {
   pub job_submission_endpoint: String,
   pub source_job_status: String,
   pub status: String,
+  #[serde(default)]
+  pub status_message: Option<String>,
   pub status_reason: Option<String>,
   pub job_id: String,
   pub job_url: Option<String>,
@@ -2446,6 +2450,7 @@ impl From<TrainingResultManifest> for MinecraftTrainingResultManifestSummary {
       job_submission_endpoint: value.job_submission_endpoint,
       source_job_status: value.source_job_status.as_str().to_string(),
       status: value.status.as_str().to_string(),
+      status_message: value.status_message,
       job_id: value.job_id,
       job_url: value.job_url,
       result_dir: value.result_dir,
@@ -2476,6 +2481,7 @@ impl From<TrainingResultInspectReport> for MinecraftTrainingResultInspectReportS
       job_submission_endpoint: value.job_submission_endpoint,
       source_job_status: value.source_job_status.as_str().to_string(),
       status: value.status.as_str().to_string(),
+      status_message: value.status_message,
       status_reason: value
         .status_reason
         .map(|reason| reason.as_str().to_string()),
@@ -4056,6 +4062,7 @@ mod tests {
       job_submission_endpoint: "https://jobs.example/api".to_string(),
       source_job_status: TrainingLaunchJobStatus::Submitted,
       status: TrainingResultStatus::Succeeded,
+      status_message: Some("provider succeeded".to_string()),
       job_id: "job-123".to_string(),
       job_url: Some("https://jobs.example/job-123".to_string()),
       result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
@@ -4103,6 +4110,10 @@ mod tests {
       .as_ref()
       .expect("summary should parse");
     assert_eq!(summary.status, "succeeded");
+    assert_eq!(
+      summary.status_message.as_deref(),
+      Some("provider succeeded")
+    );
     assert_eq!(summary.source_job_status, "submitted");
     assert_eq!(summary.result_artifacts.len(), 1);
 
@@ -4138,6 +4149,7 @@ mod tests {
       job_submission_endpoint: "https://jobs.example/api".to_string(),
       source_job_status: TrainingLaunchJobStatus::Submitted,
       status: TrainingResultStatus::Failed,
+      status_message: Some("legacy adapter failure".to_string()),
       status_reason: Some(TrainingResultReason::ResultArtifactsMissing),
       job_id: "job-123".to_string(),
       job_url: Some("https://jobs.example/job-123".to_string()),
@@ -4179,6 +4191,10 @@ mod tests {
     assert_eq!(extracted.len(), 1);
     let summary = extracted[0].report.as_ref().expect("summary should parse");
     assert_eq!(summary.status, "failed");
+    assert_eq!(
+      summary.status_message.as_deref(),
+      Some("legacy adapter failure")
+    );
     assert_eq!(
       summary.status_reason.as_deref(),
       Some("result_artifacts_missing")
