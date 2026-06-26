@@ -19,6 +19,8 @@ orchestration instead of new recipe manifests.
 
 Current validated native-app samples are narrow:
 
+- Apple Music Windows command surface:
+  `docs/ai/references/2026-06-26-apple-music-windows-command-reference.md`
 - QQ音乐 playback slices
 - Notes AX text sample
 - TextEdit AX text sample

@@ -4,8 +4,8 @@
 //! The command tries three steps in order:
 //!
 //! 1. **Resolve** — check whether the Apple Music window is already visible.
-//! 2. **Launch** — if not found, attempt to start Apple Music via the MSIX
-//!    app URI (`shell:AppsFolder\AppleInc.AppleMusic_...`).
+//! 2. **Launch** — if not found, discover Apple Music's registered Start app
+//!    AppUserModelID and activate it through the MSIX `AppsFolder` shell URI.
 //! 3. **Wait** — poll for the window to appear up to `settle_ms` milliseconds.
 //!
 //! Only step 1 is executed on non-Windows targets; steps 2 and 3 are
@@ -17,12 +17,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::{APPLE_MUSIC_TITLE, AppleMusicWindow, ResolveOptions, resolve_window};
 
-// NOTICE: the MSIX package family name below is the canonical Microsoft Store
-// value for Apple Music on Windows as of 2026. If Apple republishes under a
-// different package name the launch step will silently fail and the user must
-// open the app manually. A future slice could probe
-// `Get-AppxPackage -Name "AppleInc.AppleMusic*"` to discover the live name.
-const APPLE_MUSIC_APP_ID: &str = "AppleInc.AppleMusic_nzyj5cx40ttqa!AppleMusic";
+// NOTICE(apple-music-store-aumid): Microsoft Store apps launch by
+// AppUserModelID, not executable path. Prefer `Get-StartApps` at runtime
+// because Apple has used more than one package/application ID shape. The list
+// below is only an offline fallback for older hosts or locked-down shells.
+const FALLBACK_APP_USER_MODEL_IDS: &[&str] = &[
+  "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App",
+  "AppleInc.AppleMusicWin_nzyj5cx40ttqa!AppleMusic",
+  "AppleInc.AppleMusic_nzyj5cx40ttqa!AppleMusic",
+];
+
+#[cfg(target_os = "windows")]
+const DISCOVER_APP_IDS_SCRIPT: &str = r#"
+$apps = Get-StartApps | Where-Object {
+  $_.Name -eq 'Apple Music' -or
+  $_.Name -like 'Apple Music*' -or
+  $_.AppID -like 'AppleInc.AppleMusic*'
+}
+$apps | Select-Object -ExpandProperty AppID
+"#;
 
 /// Default polling interval while waiting for the window to appear (ms).
 const POLL_INTERVAL_MS: u64 = 300;
@@ -110,17 +123,37 @@ pub fn run_open_window(inputs: &OpenWindowInputs) -> Result<LaunchResult, String
   // Steps 2 and 3 are Windows-only.
   #[cfg(target_os = "windows")]
   {
-    // Step 2: launch via the MSIX shell URI.
-    let launch_outcome = launch_via_shell_uri(APPLE_MUSIC_APP_ID);
-    result.push(
-      "launch",
-      if launch_outcome.is_ok() {
-        "ok"
-      } else {
-        "failed"
-      },
-      launch_outcome.err(),
-    );
+    let discovered = discover_registered_app_user_model_ids();
+    match &discovered {
+      Ok(ids) if !ids.is_empty() => result.push(
+        "discover-launch-target",
+        "found",
+        Some(format!("app_ids={}", ids.join(", "))),
+      ),
+      Ok(_) => result.push(
+        "discover-launch-target",
+        "not-found",
+        Some("Get-StartApps returned no Apple Music AppID".to_string()),
+      ),
+      Err(error) => result.push("discover-launch-target", "failed", Some(error.clone())),
+    }
+
+    // Step 2: launch via the MSIX AppsFolder shell URI.
+    for app_id in app_user_model_id_candidates(discovered.unwrap_or_default()) {
+      match launch_via_shell_uri(&app_id) {
+        Ok(()) => {
+          result.push("launch", "ok", Some(format!("app_id={app_id}")));
+          break;
+        }
+        Err(error) => {
+          result.push(
+            "launch",
+            "failed",
+            Some(format!("app_id={app_id}; {error}")),
+          );
+        }
+      }
+    }
 
     // Step 3: poll until the window appears or settle_ms elapses.
     if inputs.settle_ms > 0 {
@@ -163,6 +196,64 @@ pub fn run_open_window(inputs: &OpenWindowInputs) -> Result<LaunchResult, String
   Ok(result)
 }
 
+#[cfg(target_os = "windows")]
+fn discover_registered_app_user_model_ids() -> Result<Vec<String>, String> {
+  use std::process::Command;
+
+  let output = Command::new("powershell.exe")
+    .args([
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      DISCOVER_APP_IDS_SCRIPT,
+    ])
+    .output()
+    .map_err(|e| format!("Get-StartApps discovery failed to start: {e}"))?;
+
+  if !output.status.success() {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    return Err(if stderr.is_empty() {
+      format!(
+        "Get-StartApps discovery exited with status {}",
+        output.status
+      )
+    } else {
+      format!("Get-StartApps discovery failed: {stderr}")
+    });
+  }
+
+  Ok(parse_app_user_model_ids(&String::from_utf8_lossy(
+    &output.stdout,
+  )))
+}
+
+fn parse_app_user_model_ids(output: &str) -> Vec<String> {
+  let mut ids = Vec::new();
+  for line in output.lines().map(str::trim) {
+    if line.is_empty() || ids.iter().any(|existing| existing == line) {
+      continue;
+    }
+    ids.push(line.to_string());
+  }
+  ids
+}
+
+fn app_user_model_id_candidates(discovered: Vec<String>) -> Vec<String> {
+  let mut ids = Vec::new();
+  for app_id in discovered
+    .into_iter()
+    .chain(FALLBACK_APP_USER_MODEL_IDS.iter().map(|id| id.to_string()))
+  {
+    if ids.iter().any(|existing| existing == &app_id) {
+      continue;
+    }
+    ids.push(app_id);
+  }
+  ids
+}
+
 /// Launches Apple Music via the Windows shell `AppsFolder` URI.
 ///
 /// This is the standard way to start an MSIX/Store app without knowing its
@@ -178,4 +269,39 @@ fn launch_via_shell_uri(app_id: &str) -> Result<(), String> {
     .spawn()
     .map_err(|e| format!("explorer.exe launch failed: {e}"))?;
   Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parse_app_user_model_ids_trims_empty_lines_and_duplicates() {
+    let ids = parse_app_user_model_ids(
+      "\r\n  AppleInc.AppleMusicWin_nzyj5cx40ttqa!App  \r\n\r\nAppleInc.AppleMusicWin_nzyj5cx40ttqa!App\r\n",
+    );
+
+    assert_eq!(
+      ids,
+      vec!["AppleInc.AppleMusicWin_nzyj5cx40ttqa!App".to_string()]
+    );
+  }
+
+  #[test]
+  fn app_user_model_id_candidates_prefer_discovered_ids() {
+    let ids = app_user_model_id_candidates(vec![
+      "AppleInc.AppleMusicWin_nzyj5cx40ttqa!AppleMusic".to_string(),
+      "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App".to_string(),
+    ]);
+
+    assert_eq!(ids[0], "AppleInc.AppleMusicWin_nzyj5cx40ttqa!AppleMusic");
+    assert_eq!(ids[1], "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App");
+    assert_eq!(
+      ids
+        .iter()
+        .filter(|id| id.as_str() == "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App")
+        .count(),
+      1
+    );
+  }
 }
