@@ -527,22 +527,40 @@ fn collect_result_artifacts(result_dir: &Path) -> (Vec<TrainingResultArtifactRec
   if status_path.exists() {
     artifacts.push(result_artifact_record(result_dir, &status_path));
   }
-  let key_result_artifacts_present = config_path.is_file() && models_path.is_dir();
+  let key_result_artifacts_present =
+    path_is_non_symlink_file(&config_path) && path_is_non_symlink_dir(&models_path);
   (artifacts, key_result_artifacts_present)
 }
 
 fn result_artifact_record(result_dir: &Path, path: &Path) -> TrainingResultArtifactRecord {
-  let metadata = fs::metadata(path).ok();
+  let metadata = fs::symlink_metadata(path).ok();
   let relative_path = path
     .strip_prefix(result_dir)
     .map(|value| value.to_string_lossy().into_owned())
     .unwrap_or_else(|_| path.to_string_lossy().into_owned());
+  let readable = metadata
+    .as_ref()
+    .is_some_and(|metadata| !metadata.file_type().is_symlink());
   TrainingResultArtifactRecord {
     relative_path,
     absolute_path: path.to_string_lossy().into_owned(),
-    readable: metadata.is_some(),
-    byte_size: metadata.and_then(|metadata| metadata.is_file().then_some(metadata.len())),
+    readable,
+    byte_size: metadata.and_then(|metadata| {
+      (!metadata.file_type().is_symlink() && metadata.is_file()).then_some(metadata.len())
+    }),
   }
+}
+
+fn path_is_non_symlink_file(path: &Path) -> bool {
+  fs::symlink_metadata(path)
+    .map(|metadata| !metadata.file_type().is_symlink() && metadata.is_file())
+    .unwrap_or(false)
+}
+
+fn path_is_non_symlink_dir(path: &Path) -> bool {
+  fs::symlink_metadata(path)
+    .map(|metadata| !metadata.file_type().is_symlink() && metadata.is_dir())
+    .unwrap_or(false)
 }
 
 fn render_runbook(
@@ -1069,6 +1087,50 @@ mod tests {
         .warnings
         .iter()
         .any(|w| w.contains("job_id=job-123"))
+    );
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn collect_training_result_marks_symlinked_config_unreadable() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      Some(TrainingResultStatus::Succeeded),
+      true,
+      true,
+    );
+    let result_dir = temp.path().join("trainer-output/nerfstudio-splatfacto");
+    let real_config = temp.path().join("real-config.yml");
+    fs::write(&real_config, b"trainer: splatfacto\n").expect("real config");
+    fs::remove_file(result_dir.join(RESULT_CONFIG_FILE)).expect("remove config");
+    symlink(&real_config, result_dir.join(RESULT_CONFIG_FILE)).expect("symlink config");
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+        status_command: None,
+      },
+    )
+    .expect("result collection should still write outputs");
+
+    assert!(!output.inspect_report.key_result_artifacts_present);
+    assert!(
+      output
+        .manifest
+        .result_artifacts
+        .iter()
+        .any(|artifact| { artifact.relative_path == RESULT_CONFIG_FILE && !artifact.readable })
     );
   }
 }

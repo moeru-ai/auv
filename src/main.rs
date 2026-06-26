@@ -443,12 +443,14 @@ async fn run() -> Result<(), String> {
       println!("jobBackend: {}", output.value.manifest.job_backend);
       println!(
         "submissionState: {}",
-        if output.value.inspect_report.status
-          == auv_game_minecraft::TrainingLaunchJobStatus::Blocked
-        {
-          "blocked_before_submission"
-        } else {
-          "submission_path_entered"
+        match output.value.inspect_report.status {
+          auv_game_minecraft::TrainingLaunchJobStatus::Blocked => "blocked_before_submission",
+          auv_game_minecraft::TrainingLaunchJobStatus::Failed => "submission_failed",
+          auv_game_minecraft::TrainingLaunchJobStatus::Queued
+          | auv_game_minecraft::TrainingLaunchJobStatus::Submitted
+          | auv_game_minecraft::TrainingLaunchJobStatus::Succeeded => {
+            "submission_submitted_or_queued"
+          }
         }
       );
       println!(

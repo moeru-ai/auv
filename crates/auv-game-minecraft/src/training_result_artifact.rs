@@ -445,6 +445,10 @@ fn infer_source_result_reason(manifest: &TrainingResultManifest) -> Option<Strin
   if !PathBuf::from(&manifest.result_dir).is_dir() {
     return Some("result_directory_missing".to_string());
   }
+  match validate_source_result_paths(Path::new(&manifest.result_dir)) {
+    Ok(()) => {}
+    Err(_) => return Some("source_result_paths_invalid".to_string()),
+  }
   if !has_required_source_artifacts(&manifest.result_artifacts) {
     return Some("result_artifacts_missing".to_string());
   }
@@ -465,6 +469,7 @@ fn normalize_result_artifacts(
   source_result_dir: &Path,
   normalized_result_dir: &Path,
 ) -> TrainingResultArtifactFetchResult<Vec<TrainingResultNormalizedArtifactRecord>> {
+  validate_source_result_paths(source_result_dir)?;
   fs::create_dir_all(normalized_result_dir).map_err(|error| {
     format!(
       "failed to create MC-7 D11 normalized result directory {}: {error}",
@@ -504,6 +509,54 @@ fn normalize_result_artifacts(
   }
 
   Ok(artifacts)
+}
+
+fn validate_source_result_paths(source_result_dir: &Path) -> TrainingResultArtifactFetchResult<()> {
+  let config = source_result_dir.join(RESULT_CONFIG_FILE);
+  if config.is_symlink() {
+    return Err(format!(
+      "MC-8 D3 source config {} must not be a symlink",
+      config.display()
+    ));
+  }
+  if !config.is_file() {
+    return Err(format!(
+      "required source file {} is missing or unreadable",
+      config.display()
+    ));
+  }
+
+  let models = source_result_dir.join(RESULT_MODELS_DIR);
+  if models.is_symlink() {
+    return Err(format!(
+      "MC-8 D3 source models directory {} must not be a symlink",
+      models.display()
+    ));
+  }
+  if !models.is_dir() {
+    return Err(format!(
+      "required source directory {} is missing or unreadable",
+      models.display()
+    ));
+  }
+
+  let status = source_result_dir.join(STATUS_SNAPSHOT_FILE);
+  if status.exists() {
+    if status.is_symlink() {
+      return Err(format!(
+        "MC-8 D3 source status snapshot {} must not be a symlink",
+        status.display()
+      ));
+    }
+    if !status.is_file() {
+      return Err(format!(
+        "required source file {} is missing or unreadable",
+        status.display()
+      ));
+    }
+  }
+
+  Ok(())
 }
 
 fn run_artifact_fetch_command(
@@ -1155,6 +1208,89 @@ mod tests {
         .warnings
         .iter()
         .any(|w| w.contains("must not be a symlink"))
+    );
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn fetch_training_result_artifacts_rejects_source_config_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      true,
+      true,
+      true,
+      false,
+    );
+    let result_dir = temp.path().join("trainer-output/nerfstudio-splatfacto");
+    let real_config = temp.path().join("real-config.yml");
+    fs::write(&real_config, b"trainer: splatfacto\n").expect("real config");
+    fs::remove_file(result_dir.join(RESULT_CONFIG_FILE)).expect("remove config");
+    symlink(&real_config, result_dir.join(RESULT_CONFIG_FILE)).expect("symlink config");
+
+    let output = fetch_3dgs_training_result_artifacts(TrainingResultArtifactFetchInputs {
+      training_result_manifest_path: manifest_path,
+      output_dir: temp.path().join("normalized"),
+    })
+    .expect("failed fetch should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.fetch_status,
+      TrainingResultArtifactFetchStatus::Failed
+    );
+    assert_eq!(
+      output.inspect_report.fetch_reason,
+      Some(TrainingResultArtifactFetchReason::CopyFailed)
+    );
+    assert!(output.inspect_report.warnings.iter().any(
+      |warning| warning.contains("source config") && warning.contains("must not be a symlink")
+    ));
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn fetch_training_result_artifacts_rejects_source_models_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      true,
+      true,
+      true,
+      false,
+    );
+    let result_dir = temp.path().join("trainer-output/nerfstudio-splatfacto");
+    let real_models = temp.path().join("real-models");
+    fs::create_dir_all(&real_models).expect("real models dir");
+    fs::remove_dir_all(result_dir.join(RESULT_MODELS_DIR)).expect("remove models");
+    symlink(&real_models, result_dir.join(RESULT_MODELS_DIR)).expect("symlink models");
+
+    let output = fetch_3dgs_training_result_artifacts(TrainingResultArtifactFetchInputs {
+      training_result_manifest_path: manifest_path,
+      output_dir: temp.path().join("normalized"),
+    })
+    .expect("failed fetch should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.fetch_status,
+      TrainingResultArtifactFetchStatus::Failed
+    );
+    assert_eq!(
+      output.inspect_report.fetch_reason,
+      Some(TrainingResultArtifactFetchReason::CopyFailed)
+    );
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("source models directory")
+          && warning.contains("must not be a symlink"))
     );
   }
 }
