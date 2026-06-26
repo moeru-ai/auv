@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ pub const TRAINING_RESULT_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_RESULT_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
 const JOB_ENDPOINT_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_ENDPOINT";
 const JOB_TOKEN_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_TOKEN";
+const JOB_STATUS_COMMAND_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_STATUS_COMMAND";
 const STATUS_SNAPSHOT_FILE: &str = "job_status.json";
 const RESULT_CONFIG_FILE: &str = "config.yml";
 const RESULT_MODELS_DIR: &str = "nerfstudio_models";
@@ -22,6 +24,7 @@ const RESULT_MODELS_DIR: &str = "nerfstudio_models";
 pub struct TrainingResultEnvironment {
   endpoint: Option<String>,
   token: Option<String>,
+  status_command: Option<String>,
 }
 
 impl TrainingResultEnvironment {
@@ -29,11 +32,20 @@ impl TrainingResultEnvironment {
     Self {
       endpoint: std::env::var(JOB_ENDPOINT_ENV).ok(),
       token: std::env::var(JOB_TOKEN_ENV).ok(),
+      status_command: std::env::var(JOB_STATUS_COMMAND_ENV).ok(),
     }
   }
 
-  pub fn with_values(endpoint: Option<String>, token: Option<String>) -> Self {
-    Self { endpoint, token }
+  pub fn with_values(
+    endpoint: Option<String>,
+    token: Option<String>,
+    status_command: Option<String>,
+  ) -> Self {
+    Self {
+      endpoint,
+      token,
+      status_command,
+    }
   }
 }
 
@@ -48,13 +60,14 @@ pub struct TrainingResultRequest {
   pub job_backend: String,
   pub trainer_backend: String,
   pub endpoint: String,
+  pub status_command: String,
   pub token_present: bool,
   pub job_id: String,
   pub result_dir: String,
   pub job_url: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct TrainingResultProbeResponse {
   pub status: TrainingResultStatus,
   pub message: Option<String>,
@@ -236,6 +249,12 @@ where
     endpoint: endpoint
       .clone()
       .unwrap_or_else(|| job_manifest.job_submission_endpoint.clone()),
+    status_command: env.status_command.unwrap_or_else(|| {
+      format!(
+        "cat {}",
+        shell_quote_path(&result_dir.join(STATUS_SNAPSHOT_FILE))
+      )
+    }),
     token_present: token.is_some(),
     job_id: job_id.clone(),
     result_dir: result_dir.to_string_lossy().into_owned(),
@@ -246,7 +265,7 @@ where
   let mut known_limits = BTreeSet::new();
   known_limits.extend(job_manifest.known_limits.iter().cloned());
   known_limits.insert(
-    "MC-7 D7 consumes remote training result evidence only; it does not grade model quality or splat usefulness"
+    "MC-8 D2 closes remote status/result adapter evidence only; it does not grade model quality or splat usefulness"
       .to_string(),
   );
 
@@ -411,12 +430,54 @@ fn default_probe_training_result(
   request: &TrainingResultRequest,
 ) -> TrainingResultCollectionResult<TrainingResultProbeResponse> {
   let status_path = PathBuf::from(&request.result_dir).join(STATUS_SNAPSHOT_FILE);
-  let snapshot =
-    read_json_file::<TrainingResultStatusSnapshot>(&status_path, "MC-7 D7 remote status snapshot")?;
+  let snapshot = if status_path.is_file() {
+    read_json_file::<TrainingResultStatusSnapshot>(&status_path, "MC-8 D2 remote status snapshot")?
+  } else {
+    run_status_command(request)?
+  };
   Ok(TrainingResultProbeResponse {
     status: snapshot.status,
     message: snapshot.message,
   })
+}
+
+fn run_status_command(
+  request: &TrainingResultRequest,
+) -> TrainingResultCollectionResult<TrainingResultStatusSnapshot> {
+  let mut command = Command::new("sh");
+  command
+    .arg("-lc")
+    .arg(&request.status_command)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+  let output = command.output().map_err(|error| {
+    format!(
+      "failed to run MC-8 D2 remote status command `{}`: {error}",
+      request.status_command
+    )
+  })?;
+  if !output.status.success() {
+    return Err(format!(
+      "MC-8 D2 remote status command `{}` failed with status {}: {}",
+      request.status_command,
+      output.status,
+      String::from_utf8_lossy(&output.stderr).trim()
+    ));
+  }
+
+  serde_json::from_slice::<TrainingResultStatusSnapshot>(&output.stdout).map_err(|error| {
+    format!(
+      "failed to parse MC-8 D2 remote status command output for job {}: {error}",
+      request.job_id
+    )
+  })
+}
+
+fn shell_quote_path(path: &Path) -> String {
+  let raw = path.to_string_lossy();
+  format!("'{}'", raw.replace('"', "\\\"").replace('\'', "'\\''"))
 }
 
 fn collect_result_artifacts(result_dir: &Path) -> (Vec<TrainingResultArtifactRecord>, bool) {
@@ -453,7 +514,7 @@ fn render_runbook(
 ) -> String {
   let mut output = String::new();
   output.push_str("# MC-7 training result runbook\n\n");
-  output.push_str("This slice consumes remote training result evidence only. It does not claim trained splat quality.\n\n");
+  output.push_str("This slice closes the remote training result status adapter and evidence path only. It does not claim trained splat quality.\n\n");
   output.push_str(&format!(
     "- trainer backend: `{}`\n- job backend: `{}`\n- source job status: `{}`\n- collected status: `{}`\n- endpoint: `{}`\n- result dir: `{}`\n\n",
     manifest.trainer_backend,
@@ -627,6 +688,7 @@ mod tests {
       TrainingResultEnvironment {
         endpoint: Some("https://jobs.example.test/v1".to_string()),
         token: Some("secret".to_string()),
+        status_command: None,
       },
     )
     .expect("result collection should succeed");
@@ -662,6 +724,7 @@ mod tests {
       TrainingResultEnvironment {
         endpoint: Some("https://jobs.example.test/v1".to_string()),
         token: Some("secret".to_string()),
+        status_command: None,
       },
     )
     .expect_err("missing job id should hard fail");
@@ -690,6 +753,7 @@ mod tests {
       TrainingResultEnvironment {
         endpoint: Some("https://jobs.example.test/v1".to_string()),
         token: Some("secret".to_string()),
+        status_command: None,
       },
     )
     .expect("blocked result should still write outputs");
@@ -722,6 +786,7 @@ mod tests {
       TrainingResultEnvironment {
         endpoint: Some("https://jobs.example.test/v1".to_string()),
         token: Some("secret".to_string()),
+        status_command: None,
       },
     )
     .expect("failed result should still write outputs");
@@ -786,6 +851,7 @@ mod tests {
       TrainingResultEnvironment {
         endpoint: Some("https://jobs.example.test/v1".to_string()),
         token: Some("secret".to_string()),
+        status_command: None,
       },
     )
     .expect("blocked launch without a submitted job id should still write outputs");
@@ -803,5 +869,86 @@ mod tests {
         .any(|warning| warning.contains("job_id empty by design"))
     );
     assert_eq!(output.manifest.job_id, "");
+  }
+
+  #[test]
+  fn collect_training_result_reads_status_from_explicit_command_when_snapshot_missing() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      None,
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+        status_command: Some(
+          "python3 -c \"import json,sys; json.dump({'status':'succeeded','message':'command-status-bridge'}, sys.stdout)\"".to_string(),
+        ),
+      },
+    )
+    .expect("command-based probe should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingResultStatus::Succeeded
+    );
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("command-status-bridge"))
+    );
+  }
+
+  #[test]
+  fn collect_training_result_blocks_when_explicit_status_command_output_is_malformed() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      None,
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+        status_command: Some("python3 -c \"import sys; sys.stdout.write('not-json')\"".to_string()),
+      },
+    )
+    .expect("malformed command output should still write outputs");
+
+    assert_eq!(output.inspect_report.status, TrainingResultStatus::Blocked);
+    assert_eq!(
+      output.inspect_report.status_reason,
+      Some(TrainingResultReason::RemoteStatusUnavailable)
+    );
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|warning| warning.contains("failed to parse MC-8 D2 remote status command output"))
+    );
   }
 }

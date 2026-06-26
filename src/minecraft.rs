@@ -347,6 +347,7 @@ pub fn run_minecraft_3dgs_training_result_collection(
     output_dir,
     None,
     None,
+    None,
   )
 }
 
@@ -356,6 +357,7 @@ pub fn run_minecraft_3dgs_training_result_collection_with_environment(
   output_dir: PathBuf,
   training_job_endpoint: Option<String>,
   training_job_token: Option<String>,
+  training_job_status_command: Option<String>,
 ) -> AuvResult<RecordedOperationOutput<TrainingResultOutput>> {
   recording.run_recorded_operation(
     RunSpec::new(
@@ -367,12 +369,15 @@ pub fn run_minecraft_3dgs_training_result_collection_with_environment(
       context.record_event(
         "minecraft.collect_3dgs_training_job_result.inputs",
         Some(format!(
-          "training_job_manifest={} output_dir={} trained_3dgs=false trainer_result_consumed=true job_backend=remote",
+          "training_job_manifest={} output_dir={} trained_3dgs=false trainer_result_consumed=true result_status_adapter=true job_backend=remote",
           training_job_manifest_path.display(),
           output_dir.display()
         )),
       );
-      let result = if training_job_endpoint.is_some() || training_job_token.is_some() {
+      let result = if training_job_endpoint.is_some()
+        || training_job_token.is_some()
+        || training_job_status_command.is_some()
+      {
         collect_3dgs_training_job_result_with_environment(
           TrainingResultInputs {
             training_job_manifest_path: training_job_manifest_path.clone(),
@@ -381,6 +386,7 @@ pub fn run_minecraft_3dgs_training_result_collection_with_environment(
           auv_game_minecraft::TrainingResultEnvironment::with_values(
             training_job_endpoint.clone(),
             training_job_token.clone(),
+            training_job_status_command.clone(),
           ),
         )?
       } else {
@@ -394,19 +400,19 @@ pub fn run_minecraft_3dgs_training_result_collection_with_environment(
           MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE,
           &result.manifest_path,
           "minecraft-3dgs-training-result.json",
-          Some("MC-7 D7 remote training result manifest".to_string()),
+          Some("MC-8 D2 remote training result adapter manifest".to_string()),
         )?;
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE,
           &result.inspect_report_path,
           "minecraft-3dgs-training-result-inspect.json",
-          Some("MC-7 D7 remote training result inspect report".to_string()),
+          Some("MC-8 D2 remote training result adapter inspect report".to_string()),
         )?;
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE,
           &result.runbook_path,
           "mc7-training-result-runbook.md",
-          Some("MC-7 D7 remote training result runbook".to_string()),
+          Some("MC-8 D2 remote training result adapter runbook".to_string()),
         )?;
         Ok::<_, String>(())
       })?;
@@ -1325,7 +1331,9 @@ mod tests {
       temp.join("job"),
       Some("https://jobs.example.test/v1".to_string()),
       Some("secret-token".to_string()),
-      Some("remote-submit --json".to_string()),
+      Some(
+        "python3 -c \"import json,sys; req=json.load(sys.stdin); json.dump({'status':'submitted','job_id':'job-from-runtime','job_url':req['endpoint'].rstrip('/') + '/jobs/job-from-runtime','blocker':None}, sys.stdout)\"".to_string(),
+      ),
     )
     .expect("job launch with explicit environment");
 
@@ -1335,11 +1343,15 @@ mod tests {
     );
     assert_eq!(
       job_output.value.manifest.job_submission_command,
-      "remote-submit --json"
+      "python3 -c \"import json,sys; req=json.load(sys.stdin); json.dump({'status':'submitted','job_id':'job-from-runtime','job_url':req['endpoint'].rstrip('/') + '/jobs/job-from-runtime','blocker':None}, sys.stdout)\""
     );
     assert_eq!(
       job_output.value.inspect_report.status,
-      auv_game_minecraft::TrainingLaunchJobStatus::Queued
+      auv_game_minecraft::TrainingLaunchJobStatus::Submitted
+    );
+    assert_eq!(
+      job_output.value.inspect_report.job_id.as_deref(),
+      Some("job-from-runtime")
     );
     let _ = fs::remove_dir_all(temp);
   }
@@ -1357,6 +1369,9 @@ mod tests {
       temp.join("result"),
       Some("https://jobs.example.test/v1".to_string()),
       Some("secret-token".to_string()),
+      Some(
+        "python3 -c \"import json,sys; json.dump({'status':'succeeded','message':'runtime-status-bridge'}, sys.stdout)\"".to_string(),
+      ),
     )
     .expect("result collection with explicit environment");
 

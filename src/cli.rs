@@ -166,6 +166,7 @@ pub enum CliCommand {
     output_dir: String,
     training_job_endpoint: Option<String>,
     training_job_token: Option<String>,
+    training_job_status_command: Option<String>,
     inspect: InspectClientOptions,
   },
   MinecraftFetch3dgsTrainingResultArtifacts {
@@ -1419,6 +1420,7 @@ fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> Auv
   let mut output_dir = None;
   let mut training_job_endpoint = None;
   let mut training_job_token = None;
+  let mut training_job_status_command = None;
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
@@ -1460,6 +1462,14 @@ fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> Auv
         )?);
         index += 2;
       }
+      "--training-job-status-command" => {
+        training_job_status_command = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-job-status-command",
+        )?);
+        index += 2;
+      }
       other => {
         return Err(format!(
           "unexpected minecraft collect-3dgs-training-job-result argument {other}"
@@ -1474,6 +1484,7 @@ fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> Auv
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     training_job_endpoint,
     training_job_token,
+    training_job_status_command,
     inspect,
   })
 }
@@ -2713,6 +2724,7 @@ mod tests {
       CliCommand::MinecraftCollect3dgsTrainingJobResult {
         training_job_endpoint,
         training_job_token,
+        training_job_status_command,
         ..
       } => {
         assert_eq!(
@@ -2720,6 +2732,35 @@ mod tests {
           Some("https://jobs.example.test/v1")
         );
         assert_eq!(training_job_token.as_deref(), Some("secret-token"));
+        assert_eq!(training_job_status_command, None);
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_collect_3dgs_training_job_result_command_with_status_command_flag() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "collect-3dgs-training-job-result".to_string(),
+      "--training-job-manifest".to_string(),
+      "/tmp/training-job/minecraft-3dgs-training-job.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/result".to_string(),
+      "--training-job-status-command".to_string(),
+      "python3 -c \"print(1)\"".to_string(),
+    ])
+    .expect("minecraft collect-3dgs-training-job-result command with status command should parse");
+
+    match command {
+      CliCommand::MinecraftCollect3dgsTrainingJobResult {
+        training_job_status_command,
+        ..
+      } => {
+        assert_eq!(
+          training_job_status_command.as_deref(),
+          Some("python3 -c \"print(1)\"")
+        );
       }
       other => panic!("unexpected command: {other:?}"),
     }

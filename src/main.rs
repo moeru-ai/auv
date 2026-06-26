@@ -494,6 +494,7 @@ async fn run() -> Result<(), String> {
       output_dir,
       training_job_endpoint,
       training_job_token,
+      training_job_status_command,
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
@@ -504,6 +505,7 @@ async fn run() -> Result<(), String> {
           PathBuf::from(output_dir),
           training_job_endpoint,
           training_job_token,
+          training_job_status_command,
         )?;
       println!("runId: {}", output.run_id);
       println!(

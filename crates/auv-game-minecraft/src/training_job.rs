@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::BufReader;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -54,11 +56,12 @@ pub struct TrainingLaunchJobInputs {
   pub output_dir: PathBuf,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrainingLaunchJobRequest {
   pub job_backend: String,
   pub trainer_backend: String,
   pub endpoint: String,
+  pub submit_command: String,
   pub token_present: bool,
   pub token: Option<String>,
   pub launch_command: String,
@@ -66,7 +69,7 @@ pub struct TrainingLaunchJobRequest {
   pub suggested_output_dir: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrainingLaunchJobSubmission {
   pub status: TrainingLaunchJobStatus,
   pub job_id: Option<String>,
@@ -313,6 +316,7 @@ where
     job_backend: JOB_BACKEND.to_string(),
     trainer_backend: TRAINER_BACKEND.to_string(),
     endpoint: job_submission_endpoint.clone(),
+    submit_command: submit_command.clone(),
     token_present: submit_token.is_some(),
     token: submit_token.clone(),
     launch_command: launch_plan.launch_command.clone(),
@@ -443,21 +447,57 @@ where
 }
 
 fn default_submit_job(request: &TrainingLaunchJobRequest) -> TrainingLaunchJobSubmission {
-  let job_id = format!(
-    "job-{}-{}",
-    request.trainer_backend.replace('.', "-"),
-    auv_tracing_driver::now_millis()
-  );
-  let _token = request.token.as_deref();
-  TrainingLaunchJobSubmission {
-    status: TrainingLaunchJobStatus::Queued,
-    job_id: Some(job_id.clone()),
-    job_url: Some(format!(
-      "{}/jobs/{job_id}",
-      request.endpoint.trim_end_matches('/')
-    )),
-    blocker: None,
+  match run_submit_command(request) {
+    Ok(submission) => submission,
+    Err(error) => TrainingLaunchJobSubmission {
+      status: TrainingLaunchJobStatus::Failed,
+      job_id: None,
+      job_url: None,
+      blocker: Some(error),
+    },
   }
+}
+
+fn run_submit_command(
+  request: &TrainingLaunchJobRequest,
+) -> Result<TrainingLaunchJobSubmission, TrainingLaunchJobBlocker> {
+  let mut command = Command::new("sh");
+  command
+    .arg("-lc")
+    .arg(&request.submit_command)
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+  let mut child = command
+    .spawn()
+    .map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
+
+  let stdin_payload =
+    serde_json::to_vec(request).map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
+  child
+    .stdin
+    .take()
+    .ok_or(TrainingLaunchJobBlocker::SubmissionFailed)?
+    .write_all(&stdin_payload)
+    .map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
+
+  let output = child
+    .wait_with_output()
+    .map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
+  if !output.status.success() {
+    return Err(TrainingLaunchJobBlocker::SubmissionFailed);
+  }
+
+  let mut submission: TrainingLaunchJobSubmission = serde_json::from_slice(&output.stdout)
+    .map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
+  if submission.status == TrainingLaunchJobStatus::Submitted && submission.job_id.is_none() {
+    return Err(TrainingLaunchJobBlocker::SubmissionFailed);
+  }
+  if submission.status == TrainingLaunchJobStatus::Blocked && submission.blocker.is_none() {
+    submission.blocker = Some(TrainingLaunchJobBlocker::SubmissionFailed);
+  }
+  Ok(submission)
 }
 
 fn render_runbook(
@@ -764,6 +804,70 @@ mod tests {
     assert_eq!(
       output.inspect_report.job_id.as_deref(),
       Some("job-with-token")
+    );
+  }
+
+  #[test]
+  fn default_submit_job_reads_json_submission_from_command_stdout() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let plan_path = write_launch_plan_fixture(&temp, "nerfstudio", 2, true, true);
+    let output = launch_3dgs_training_job_with_submit_and_env(
+      TrainingLaunchJobInputs {
+        training_launch_plan_path: plan_path,
+        output_dir: temp.path().join("job"),
+      },
+      default_submit_job,
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
+        submit_token: Some("secret-token".to_string()),
+        submit_command: Some(
+          "python3 -c \"import json,sys; req=json.load(sys.stdin); json.dump({'status':'submitted','job_id':'job-from-command','job_url':req['endpoint'].rstrip('/') + '/jobs/job-from-command','blocker':None}, sys.stdout)\"".to_string(),
+        ),
+      },
+    )
+      .expect("job should launch through submit command");
+
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingLaunchJobStatus::Submitted
+    );
+    assert_eq!(
+      output.inspect_report.job_id.as_deref(),
+      Some("job-from-command")
+    );
+    assert_eq!(
+      output.inspect_report.job_url.as_deref(),
+      Some("https://jobs.example.test/v1/jobs/job-from-command")
+    );
+  }
+
+  #[test]
+  fn default_submit_job_fails_when_command_returns_missing_job_id() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let plan_path = write_launch_plan_fixture(&temp, "nerfstudio", 2, true, true);
+    let output = launch_3dgs_training_job_with_submit_and_env(
+      TrainingLaunchJobInputs {
+        training_launch_plan_path: plan_path,
+        output_dir: temp.path().join("job"),
+      },
+      default_submit_job,
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
+        submit_token: Some("secret-token".to_string()),
+        submit_command: Some(
+          "python3 -c \"import json,sys; json.dump({'status':'submitted','job_id':None,'job_url':'https://jobs.example.test/v1/jobs/missing','blocker':None}, sys.stdout)\"".to_string(),
+        ),
+      },
+    )
+      .expect("failed submission should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingLaunchJobStatus::Failed
+    );
+    assert_eq!(
+      output.inspect_report.readiness_blocker,
+      Some(TrainingLaunchJobBlocker::SubmissionFailed)
     );
   }
 }
