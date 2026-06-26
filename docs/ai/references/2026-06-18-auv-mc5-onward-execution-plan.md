@@ -235,6 +235,10 @@ Opening MC-7 now means:
 - The first implementation must produce auditable inspect artifacts from real
   captured/bundled inputs or an explicitly labeled fixture; it must not
   fabricate closure evidence.
+- Update after MC-8 on 2026-06-26: the remote command-adapter lane is now
+  live-closed through D1/D2/D3 adapter readiness plus the D4 adapter live gate.
+  That closure is still adapter-only; it does not prove provider-backed remote
+  training execution, model quality, renderer quality, or checkpoint semantics.
 
 The original three independent judges are retained as the gate for promoting
 3DGS beyond offline inspection:
