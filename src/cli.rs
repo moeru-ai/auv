@@ -2716,6 +2716,19 @@ mod tests {
   }
 
   #[test]
+  fn parse_minecraft_launch_3dgs_training_job_requires_output_dir() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "launch-3dgs-training-job".to_string(),
+      "--training-launch-plan".to_string(),
+      "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+    ])
+    .expect_err("missing output dir should fail");
+
+    assert_eq!(error, "--output-dir is required");
+  }
+
+  #[test]
   fn parse_minecraft_collect_3dgs_training_job_result_command_with_remote_config_flags() {
     let command = parse_cli(&[
       "minecraft".to_string(),

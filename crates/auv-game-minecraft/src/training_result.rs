@@ -698,6 +698,7 @@ mod tests {
         compatibility_skipped_frames: 0,
       },
       compatibility_view_name: "nerfstudio".to_string(),
+      provider_backend: "remote-command-provider".to_string(),
       trainer_backend: "nerfstudio.splatfacto".to_string(),
       job_backend: "remote".to_string(),
       job_submission_endpoint: "https://jobs.example.test/v1".to_string(),

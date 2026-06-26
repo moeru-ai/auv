@@ -17,6 +17,7 @@ pub const TRAINING_JOB_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_JOB_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
 const TRAINER_BACKEND: &str = "nerfstudio.splatfacto";
 const JOB_BACKEND: &str = "remote";
+const PROVIDER_BACKEND: &str = "remote-command-provider";
 const SUBMIT_ENDPOINT_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_ENDPOINT";
 const SUBMIT_TOKEN_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_TOKEN";
 const SUBMIT_COMMAND_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_SUBMIT_COMMAND";
@@ -58,6 +59,7 @@ pub struct TrainingLaunchJobInputs {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrainingLaunchJobRequest {
+  pub provider_backend: String,
   pub job_backend: String,
   pub trainer_backend: String,
   pub endpoint: String,
@@ -99,6 +101,8 @@ pub struct TrainingLaunchJobManifest {
   pub source_run_ids: Vec<String>,
   pub counts: TrainingLaunchJobCounts,
   pub compatibility_view_name: String,
+  #[serde(default = "default_provider_backend")]
+  pub provider_backend: String,
   pub trainer_backend: String,
   pub job_backend: String,
   pub job_submission_endpoint: String,
@@ -138,6 +142,8 @@ pub struct TrainingLaunchJobInspectReport {
   pub source_scene_packet_manifest_path: String,
   pub source_bundle_manifest_paths: Vec<String>,
   pub source_run_ids: Vec<String>,
+  #[serde(default = "default_provider_backend")]
+  pub provider_backend: String,
   pub job_backend: String,
   pub trainer_backend: String,
   pub job_submission_endpoint: String,
@@ -184,6 +190,10 @@ impl Default for TrainingLaunchJobStatus {
   fn default() -> Self {
     Self::Queued
   }
+}
+
+fn default_provider_backend() -> String {
+  PROVIDER_BACKEND.to_string()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,6 +302,10 @@ where
     "MC-7 D6 is a remote job envelope only; it does not execute training locally or consume trained splat outputs"
       .to_string(),
   );
+  known_limits.insert(
+    "MC-9 D1 binds this training job lane to one provider contract; multi-provider expansion is deferred by owner approval"
+      .to_string(),
+  );
 
   let blocker = if launch_plan.compatibility_view_name != "nerfstudio" {
     Some(TrainingLaunchJobBlocker::UnsupportedBackend)
@@ -313,6 +327,7 @@ where
   };
 
   let request = TrainingLaunchJobRequest {
+    provider_backend: PROVIDER_BACKEND.to_string(),
     job_backend: JOB_BACKEND.to_string(),
     trainer_backend: TRAINER_BACKEND.to_string(),
     endpoint: job_submission_endpoint.clone(),
@@ -362,6 +377,7 @@ where
       compatibility_skipped_frames: launch_plan.counts.compatibility_skipped_frames,
     },
     compatibility_view_name: launch_plan.compatibility_view_name.clone(),
+    provider_backend: PROVIDER_BACKEND.to_string(),
     trainer_backend: TRAINER_BACKEND.to_string(),
     job_backend: JOB_BACKEND.to_string(),
     job_submission_endpoint: job_submission_endpoint.clone(),
@@ -393,6 +409,7 @@ where
     source_scene_packet_manifest_path: launch_plan.source_scene_packet_manifest_path.clone(),
     source_bundle_manifest_paths: launch_plan.source_bundle_manifest_paths.clone(),
     source_run_ids: launch_plan.source_run_ids.clone(),
+    provider_backend: PROVIDER_BACKEND.to_string(),
     job_backend: JOB_BACKEND.to_string(),
     trainer_backend: TRAINER_BACKEND.to_string(),
     job_submission_endpoint: job_submission_endpoint.clone(),
@@ -508,7 +525,8 @@ fn render_runbook(
   output.push_str("# MC-7 training job runbook\n\n");
   output.push_str("This is a remote job envelope only. It does not run training locally and it does not claim model quality.\n\n");
   output.push_str(&format!(
-    "- trainer backend: `{}`\n- job backend: `{}`\n- status: `{}`\n- endpoint: `{}`\n\n",
+    "- provider backend: `{}`\n- trainer backend: `{}`\n- job backend: `{}`\n- status: `{}`\n- endpoint: `{}`\n\n",
+    manifest.provider_backend,
     manifest.trainer_backend,
     manifest.job_backend,
     status_text(inspect_report.status),
@@ -529,6 +547,9 @@ fn render_runbook(
   output.push_str("Notes:\n");
   output
     .push_str("- D6 only envelopes the launch request; it does not execute training locally.\n");
+  output.push_str(
+    "- NOTICE: MC-9 D1 binds this path to a single provider contract; do not widen to multiple providers without a new owner-approved slice.\n",
+  );
   output.push_str("- D7 is the first slice that can consume remote training results.\n");
   output.push_str("- If blocked, fix configuration or the launch plan and rerun D6.\n");
   output
@@ -784,6 +805,7 @@ mod tests {
         output_dir: temp.path().join("job"),
       },
       |request| {
+        assert_eq!(request.provider_backend, PROVIDER_BACKEND);
         assert_eq!(request.token.as_deref(), Some("secret-token"));
         assert!(request.token_present);
         TrainingLaunchJobSubmission {
@@ -805,6 +827,8 @@ mod tests {
       output.inspect_report.job_id.as_deref(),
       Some("job-with-token")
     );
+    assert_eq!(output.manifest.provider_backend, PROVIDER_BACKEND);
+    assert_eq!(output.inspect_report.provider_backend, PROVIDER_BACKEND);
   }
 
   #[test]
@@ -839,6 +863,7 @@ mod tests {
       output.inspect_report.job_url.as_deref(),
       Some("https://jobs.example.test/v1/jobs/job-from-command")
     );
+    assert_eq!(output.manifest.provider_backend, PROVIDER_BACKEND);
   }
 
   #[test]
@@ -927,5 +952,79 @@ mod tests {
       output.inspect_report.readiness_blocker,
       Some(TrainingLaunchJobBlocker::SubmissionFailed)
     );
+  }
+
+  #[test]
+  fn training_job_manifest_backfills_provider_backend_from_legacy_json() {
+    let legacy_json = r#"
+{
+  "schema_version": 1,
+  "generated_at_millis": 1,
+  "source_training_launch_plan_path": "/tmp/launch.json",
+  "source_training_package_manifest_path": "/tmp/package/run.json",
+  "source_training_package_inspect_report_path": "/tmp/package/inspect_report.json",
+  "source_scene_packet_manifest_path": "/tmp/scene/run.json",
+  "source_bundle_manifest_paths": ["/tmp/bundle/run.json"],
+  "source_run_ids": ["run-1"],
+  "counts": {
+    "frames": 1,
+    "images": 1,
+    "compatibility_exported_frames": 1,
+    "compatibility_skipped_frames": 0
+  },
+  "compatibility_view_name": "nerfstudio",
+  "trainer_backend": "nerfstudio.splatfacto",
+  "job_backend": "remote",
+  "job_submission_endpoint": "https://jobs.example.test/v1",
+  "job_submission_command": "remote-submit --dry-run",
+  "training_data_dir": "/tmp/package/compat/nerfstudio",
+  "transforms_path": "compat/nerfstudio/transforms.json",
+  "export_report_path": "/tmp/package/compat/nerfstudio/export_report.json",
+  "suggested_output_dir": "/tmp/job-output",
+  "launch_command": "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/job-output",
+  "status": "submitted",
+  "job_id": "job-1",
+  "job_url": "https://jobs.example.test/v1/jobs/job-1",
+  "readiness_blocker": null,
+  "known_limits": ["legacy artifact"]
+}
+"#;
+    let manifest: TrainingLaunchJobManifest =
+      serde_json::from_str(legacy_json).expect("legacy manifest should parse");
+    assert_eq!(manifest.provider_backend, PROVIDER_BACKEND);
+  }
+
+  #[test]
+  fn training_job_inspect_backfills_provider_backend_from_legacy_json() {
+    let legacy_json = r#"
+{
+  "schema_version": 1,
+  "generated_at_millis": 1,
+  "training_launch_manifest_path": "/tmp/job.json",
+  "source_training_launch_plan_path": "/tmp/launch.json",
+  "source_training_package_manifest_path": "/tmp/package/run.json",
+  "source_scene_packet_manifest_path": "/tmp/scene/run.json",
+  "source_bundle_manifest_paths": ["/tmp/bundle/run.json"],
+  "source_run_ids": ["run-1"],
+  "job_backend": "remote",
+  "trainer_backend": "nerfstudio.splatfacto",
+  "job_submission_endpoint": "https://jobs.example.test/v1",
+  "job_submission_command": "remote-submit --dry-run",
+  "status": "submitted",
+  "job_id": "job-1",
+  "job_url": "https://jobs.example.test/v1/jobs/job-1",
+  "readiness_blocker": null,
+  "probe_command": "ns-train --help",
+  "probe_succeeded": true,
+  "exported_frame_count": 1,
+  "skipped_frame_count": 0,
+  "transforms_present": true,
+  "warnings": [],
+  "known_limits": ["legacy artifact"]
+}
+"#;
+    let report: TrainingLaunchJobInspectReport =
+      serde_json::from_str(legacy_json).expect("legacy inspect should parse");
+    assert_eq!(report.provider_backend, PROVIDER_BACKEND);
   }
 }

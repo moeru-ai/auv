@@ -822,7 +822,7 @@ pub fn render_run_text(
       }
       if let Some(manifest) = &manifest_lineage.manifest {
         output.push_str(&format!(
-          "- manifest_artifact={} role={} path={} schema={} source_training_launch_plan={} source_runs={} frames={} images={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} paired_report_artifact={} issue={}\n",
+          "- manifest_artifact={} role={} path={} schema={} source_training_launch_plan={} source_runs={} frames={} images={} provider_backend={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} paired_report_artifact={} issue={}\n",
           manifest_lineage.artifact.artifact_id,
           manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -831,6 +831,7 @@ pub fn render_run_text(
           manifest.source_run_ids.len(),
           manifest.counts.frames,
           manifest.counts.images,
+          manifest.provider_backend,
           manifest.trainer_backend,
           manifest.job_backend,
           manifest.status,
@@ -853,8 +854,9 @@ pub fn render_run_text(
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
-            "  paired_report schema={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
+            "  paired_report schema={} provider_backend={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
             report.schema_version,
+            report.provider_backend,
             report.trainer_backend,
             report.job_backend,
             report.status,
@@ -883,7 +885,7 @@ pub fn render_run_text(
         }
       } else {
         output.push_str(&format!(
-          "- manifest_artifact={} role={} path={} schema=n/a source_training_launch_plan=n/a source_runs=n/a frames=n/a images=n/a trainer_backend=n/a job_backend=n/a status=n/a job_id=n/a job_url=n/a readiness_blocker=n/a job_submission_endpoint=n/a job_submission_command=n/a exported=n/a skipped=n/a transforms=n/a paired_report_artifact=n/a issue={}\n",
+          "- manifest_artifact={} role={} path={} schema=n/a source_training_launch_plan=n/a source_runs=n/a frames=n/a images=n/a provider_backend=n/a trainer_backend=n/a job_backend=n/a status=n/a job_id=n/a job_url=n/a readiness_blocker=n/a job_submission_endpoint=n/a job_submission_command=n/a exported=n/a skipped=n/a transforms=n/a paired_report_artifact=n/a issue={}\n",
           manifest_lineage.artifact.artifact_id,
           manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -897,7 +899,7 @@ pub fn render_run_text(
       }
       if let Some(report) = &report_lineage.report {
         output.push_str(&format!(
-          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_launch_plan={} source_runs={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
+          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_launch_plan={} source_runs={} provider_backend={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
           report_lineage.artifact.artifact_id,
           report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -905,6 +907,7 @@ pub fn render_run_text(
           report.schema_version,
           report.source_training_launch_plan_path,
           report.source_run_ids.len(),
+          report.provider_backend,
           report.trainer_backend,
           report.job_backend,
           report.status,
@@ -932,7 +935,7 @@ pub fn render_run_text(
         }
       } else {
         output.push_str(&format!(
-          "- inspect_artifact={} role={} path={} manifest_path=n/a schema=n/a source_training_launch_plan=n/a source_runs=n/a trainer_backend=n/a job_backend=n/a status=n/a job_id=n/a job_url=n/a readiness_blocker=n/a job_submission_endpoint=n/a job_submission_command=n/a exported=n/a skipped=n/a transforms=n/a probe_command=n/a probe_succeeded=n/a warnings=n/a issue={}\n",
+          "- inspect_artifact={} role={} path={} manifest_path=n/a schema=n/a source_training_launch_plan=n/a source_runs=n/a provider_backend=n/a trainer_backend=n/a job_backend=n/a status=n/a job_id=n/a job_url=n/a readiness_blocker=n/a job_submission_endpoint=n/a job_submission_command=n/a exported=n/a skipped=n/a transforms=n/a probe_command=n/a probe_succeeded=n/a warnings=n/a issue={}\n",
           report_lineage.artifact.artifact_id,
           report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -2104,6 +2107,7 @@ mod tests {
         source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
         counts: TrainingPackageCounts { frames: 6, images: 6, compatibility_exported_frames: 4, compatibility_skipped_frames: 2 },
         compatibility_view_name: "nerfstudio".to_string(),
+        provider_backend: "remote-command-provider".to_string(),
         trainer_backend: "nerfstudio.splatfacto".to_string(),
         job_backend: "remote".to_string(),
         job_submission_endpoint: "https://jobs.example/api".to_string(),
@@ -2144,6 +2148,7 @@ mod tests {
           "/tmp/bundle-b/run.json".to_string(),
         ],
         source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        provider_backend: "remote-command-provider".to_string(),
         job_backend: "remote".to_string(),
         trainer_backend: "nerfstudio.splatfacto".to_string(),
         job_submission_endpoint: "https://jobs.example/api".to_string(),
@@ -2458,6 +2463,7 @@ mod tests {
     assert!(output.contains("MC-7 Training Jobs:"));
     assert!(output.contains("manifest_artifact=artifact_mc7_job"));
     assert!(output.contains("paired_report_artifact=artifact_mc7_job_inspect"));
+    assert!(output.contains("provider_backend=remote-command-provider"));
     assert!(output.contains("job_backend=remote"));
     assert!(output.contains("status=submitted"));
     assert!(output.contains("job_id=job-123"));
@@ -2814,6 +2820,7 @@ mod tests {
           compatibility_skipped_frames: 0,
         },
         compatibility_view_name: "nerfstudio".to_string(),
+        provider_backend: "remote-command-provider".to_string(),
         trainer_backend: "nerfstudio.splatfacto".to_string(),
         job_backend: "remote".to_string(),
         job_submission_endpoint: "https://jobs.example/api".to_string(),
@@ -2853,6 +2860,7 @@ mod tests {
           source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
           source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
           source_run_ids: vec!["run_a".to_string()],
+          provider_backend: "remote-command-provider".to_string(),
           job_backend: "remote".to_string(),
           trainer_backend: "nerfstudio.splatfacto".to_string(),
           job_submission_endpoint: "https://jobs.example/api".to_string(),
@@ -2891,6 +2899,7 @@ mod tests {
           source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
           source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
           source_run_ids: vec!["run_a".to_string()],
+          provider_backend: "remote-command-provider".to_string(),
           job_backend: "remote".to_string(),
           trainer_backend: "nerfstudio.splatfacto".to_string(),
           job_submission_endpoint: "https://jobs.example/api".to_string(),

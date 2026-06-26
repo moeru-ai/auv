@@ -440,6 +440,10 @@ async fn run() -> Result<(), String> {
         output.value.inspect_report.status.as_str()
       );
       println!("trainerBackend: {}", output.value.manifest.trainer_backend);
+      println!(
+        "providerBackend: {}",
+        output.value.manifest.provider_backend
+      );
       println!("jobBackend: {}", output.value.manifest.job_backend);
       println!(
         "submissionState: {}",
