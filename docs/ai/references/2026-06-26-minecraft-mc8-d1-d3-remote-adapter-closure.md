@@ -90,8 +90,11 @@ This slice intentionally does not:
 - change the D5/D6/D7/D11/D12 persisted artifact roles;
 - require a fresh Minecraft capture.
 
-A future MC-8 live gate should use these adapters with real remote credentials
-and verify a non-blocked path through D6, D7, D11, and D12.
+The follow-up MC-8 D4 adapter live gate exercised this command-adapter path
+through D6, D7, D11, and D12. See
+`docs/ai/references/2026-06-26-minecraft-mc8-d4-adapter-live-closure.md`
+for the recorded evidence. A provider-backed remote training run remains a
+separate future slice.
 
 ## Validation
 
