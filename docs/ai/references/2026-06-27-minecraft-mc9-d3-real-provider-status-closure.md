@@ -2,7 +2,9 @@
 
 Date: 2026-06-27
 
-Status: implemented code slice for D7 real provider status truth only.
+Status: implemented code slice with fresh local live evidence for D6 submit,
+D7 provider-status truth, and D11 command-materialized normalized-artifact
+fetch.
 
 ## Scope
 
@@ -89,3 +91,71 @@ Given a D2-accepted D6 manifest and an explicit status command that returns a
 non-blocked provider state, D7 must write a non-blocked result even when the
 local trainer output directory has not been fetched yet. The inspect/terminal
 surfaces must show provider status separately from local result observation.
+
+## Fresh local live evidence
+
+Fresh local live evidence was recorded on 2026-06-27 under
+`.tmp/mc9-d3-live/`.
+
+Recorded runs:
+
+- D5 launch-prep reference run: `run_1782493609356_36354_0`
+- D6 real-provider submit run: `run_1782493613903_36423_0`
+- D7 real-provider status run: `run_1782493616372_36652_0`
+- D11 command-materialized artifact fetch run: `run_1782493728710_37763_0`
+
+Observed D6 submit facts:
+
+- `status = submitted`
+- `accepted_by_provider = true`
+- `submission_recorded_at_millis = 1782493613989`
+- `job_id = mc9-d3-live-job`
+- `job_url = https://mc9-live.example.invalid/api/jobs/mc9-d3-live-job`
+
+Observed D7 provider-status facts:
+
+- `status = succeeded`
+- `status_reason = null`
+- `status_message = provider-status-saw-job_id=mc9-d3-live-job token=present`
+- `result_dir_exists = false`
+- `key_result_artifacts_present = false`
+
+This is the key D3 proof: provider-reported success remained `succeeded` even
+though the local result directory had not been fetched yet.
+
+Observed D11 command-materialized fetch facts:
+
+- `fetch_status = succeeded`
+- `fetch_reason = null`
+- `source_result_dir_exists = false`
+- `required_artifacts_present = false`
+- `normalized_artifact_count = 3`
+
+The `required_artifacts_present = false` value is expected in this branch. It
+describes the **source** D7 manifest's local-result observation, not the
+freshly materialized normalized output. The normalized output still contained:
+
+- `normalized-result/config.yml`
+- `normalized-result/nerfstudio_models/`
+- `normalized-result/job_status.json`
+
+Saved inspect text snapshots:
+
+- `.tmp/mc9-d3-live/inspect/d6.txt`
+- `.tmp/mc9-d3-live/inspect/d7.txt`
+- `.tmp/mc9-d3-live/inspect/d11.txt`
+
+Saved manifest / inspect artifacts:
+
+- `.tmp/mc9-d3-live/training-job/minecraft-3dgs-training-job.json`
+- `.tmp/mc9-d3-live/training-job/minecraft-3dgs-training-job-inspect.json`
+- `.tmp/mc9-d3-live/training-result/minecraft-3dgs-training-result.json`
+- `.tmp/mc9-d3-live/training-result/minecraft-3dgs-training-result-inspect.json`
+- `.tmp/mc9-d3-live/training-result-artifacts/minecraft-3dgs-training-result-artifact-manifest.json`
+- `.tmp/mc9-d3-live/training-result-artifacts/minecraft-3dgs-training-result-artifact-inspect.json`
+
+Operational note:
+
+- local inspect-server writes to `127.0.0.1:8765` were unavailable during this
+  pass, but local run-store records and local artifact outputs were written
+  successfully.
