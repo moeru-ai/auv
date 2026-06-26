@@ -1298,6 +1298,14 @@
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-inspect";
   }
 
+  function isMinecraftTrainingResultArtifactFetchManifestArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result-artifact-manifest";
+  }
+
+  function isMinecraftTrainingResultArtifactFetchInspectArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result-artifact-inspect";
+  }
+
   function artifactStem(artifact) {
     const basename = pathBasename(artifact && artifact.path);
     const idx = basename.lastIndexOf(".");
@@ -1590,6 +1598,20 @@
     return path ? "present" : "none";
   }
 
+  function renderNormalizedArtifactRows(parsed) {
+    const artifacts = Array.isArray(parsed && parsed.normalized_artifacts)
+      ? parsed.normalized_artifacts
+      : [];
+    if (!artifacts.length) return "—";
+    return artifacts.map(function (artifact) {
+      const byteSize = artifact && artifact.byte_size != null ? artifact.byte_size : "n/a";
+      return (artifact.kind || "unknown")
+        + " · " + (artifact.relative_path || "—")
+        + " · readable=" + String(!!artifact.readable)
+        + " · bytes=" + byteSize;
+    }).join(" | ");
+  }
+
   function renderTrainerLineageSummaryCard(artifact, parsed) {
     if (isMinecraftTrainingLaunchArtifact(artifact)) {
       return renderKeyValueSummary([
@@ -1697,6 +1719,42 @@
         ["result_dir_exists", parsed.result_dir_exists],
         ["key_result_artifacts_present", parsed.key_result_artifacts_present],
         ["result_artifact_count", parsed.result_artifact_count],
+        ["warnings", countArray(parsed.warnings)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingResultArtifactFetchManifestArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result artifact fetch manifest"],
+        ["schema", parsed.schema_version],
+        ["source_training_result_manifest", parsed.source_training_result_manifest_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["trainer_backend", parsed.trainer_backend],
+        ["job_backend", parsed.job_backend],
+        ["source_job_status", parsed.source_job_status],
+        ["source_result_status", parsed.source_result_status],
+        ["source_result_status_reason", parsed.source_result_status_reason],
+        ["normalized_result_dir", parsed.normalized_result_dir],
+        ["normalized_artifacts", renderNormalizedArtifactRows(parsed)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingResultArtifactFetchInspectArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result artifact fetch inspect report"],
+        ["schema", parsed.schema_version],
+        ["manifest_path", parsed.training_result_artifact_fetch_manifest_path],
+        ["source_runs", countArray(parsed.source_run_ids)],
+        ["trainer_backend", parsed.trainer_backend],
+        ["job_backend", parsed.job_backend],
+        ["source_job_status", parsed.source_job_status],
+        ["source_result_status", parsed.source_result_status],
+        ["source_result_status_reason", parsed.source_result_status_reason],
+        ["fetch_status", parsed.fetch_status],
+        ["fetch_reason", parsed.fetch_reason],
+        ["source_result_dir_exists", parsed.source_result_dir_exists],
+        ["required_artifacts_present", parsed.required_artifacts_present],
+        ["normalized_artifact_count", parsed.normalized_artifact_count],
         ["warnings", countArray(parsed.warnings)],
         ["known_limits", countArray(parsed.known_limits)],
       ]);
@@ -1955,6 +2013,8 @@
             || isMinecraftTrainingJobInspectArtifact(artifact)
             || isMinecraftTrainingResultArtifact(artifact)
             || isMinecraftTrainingResultInspectArtifact(artifact)
+            || isMinecraftTrainingResultArtifactFetchManifestArtifact(artifact)
+            || isMinecraftTrainingResultArtifactFetchInspectArtifact(artifact)
           )) {
             const summaryCard = renderTrainingPackageSummaryCard(artifact, parsed)
               || renderTrainerLineageSummaryCard(artifact, parsed);

@@ -2593,6 +2593,8 @@ mod tests {
     extract_minecraft_training_launch_inspect_reports, extract_minecraft_training_launch_manifests,
     extract_minecraft_training_package_inspect_reports,
     extract_minecraft_training_package_manifests,
+    extract_minecraft_training_result_artifact_fetch_inspect_reports,
+    extract_minecraft_training_result_artifact_fetch_manifests,
     extract_minecraft_training_result_inspect_reports, extract_minecraft_training_result_manifests,
     extract_observation_snapshots, extract_verifications, list_candidate_action_decision_lineage,
     list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
@@ -2600,6 +2602,8 @@ mod tests {
     list_minecraft_training_job_inspect_reports, list_minecraft_training_job_manifests,
     list_minecraft_training_launch_inspect_reports, list_minecraft_training_launch_manifests,
     list_minecraft_training_package_inspect_reports, list_minecraft_training_package_manifests,
+    list_minecraft_training_result_artifact_fetch_inspect_reports,
+    list_minecraft_training_result_artifact_fetch_manifests,
     list_minecraft_training_result_inspect_reports, list_minecraft_training_result_manifests,
     list_observation_snapshots, list_verifications,
   };
@@ -2633,9 +2637,11 @@ mod tests {
     TrainingLaunchJobBlocker, TrainingLaunchJobCounts, TrainingLaunchJobInspectReport,
     TrainingLaunchJobManifest, TrainingLaunchJobStatus, TrainingLaunchPlanManifest,
     TrainingLaunchReadiness, TrainingLaunchReadinessBlocker, TrainingPackageCounts,
-    TrainingPackageInspectReport, TrainingPackageManifest, TrainingResultArtifactRecord,
-    TrainingResultInspectReport, TrainingResultManifest, TrainingResultReason,
-    TrainingResultStatus,
+    TrainingPackageInspectReport, TrainingPackageManifest,
+    TrainingResultArtifactFetchInspectReport, TrainingResultArtifactFetchManifest,
+    TrainingResultArtifactFetchReason, TrainingResultArtifactFetchStatus,
+    TrainingResultArtifactRecord, TrainingResultInspectReport, TrainingResultManifest,
+    TrainingResultNormalizedArtifactKind, TrainingResultReason, TrainingResultStatus,
   };
   use auv_tracing_driver::ArtifactFileSource;
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
@@ -2786,6 +2792,278 @@ mod tests {
     let listed_snapshots = list_observation_snapshots(&store, "run_read_contracts")
       .expect("observation snapshots should list");
     assert_eq!(listed_snapshots, extracted_snapshots);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn training_result_artifact_fetch_manifest_extracts_normalized_artifact_rows() {
+    let root = temp_dir("run-read-mc7-d11-fetch-manifest");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc7_d11_fetch_manifest");
+    let span = dummy_span(&run.root_span_id);
+
+    let manifest = TrainingResultArtifactFetchManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+        .to_string(),
+      source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+        .to_string(),
+      source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+      source_run_ids: vec!["run-a".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      source_job_status: TrainingResultStatus::Submitted,
+      source_result_status: TrainingResultStatus::Succeeded,
+      source_result_status_reason: None,
+      source_result_dir: "/tmp/result/trainer-output".to_string(),
+      normalized_result_dir: "/tmp/result/normalized-result".to_string(),
+      normalized_artifacts: vec![
+        auv_game_minecraft::TrainingResultNormalizedArtifactRecord {
+          kind: TrainingResultNormalizedArtifactKind::Config,
+          relative_path: "config.yml".to_string(),
+          absolute_path: "/tmp/result/normalized-result/config.yml".to_string(),
+          readable: true,
+          byte_size: Some(128),
+        },
+        auv_game_minecraft::TrainingResultNormalizedArtifactRecord {
+          kind: TrainingResultNormalizedArtifactKind::ModelsDirectory,
+          relative_path: "nerfstudio_models".to_string(),
+          absolute_path: "/tmp/result/normalized-result/nerfstudio_models".to_string(),
+          readable: true,
+          byte_size: None,
+        },
+        auv_game_minecraft::TrainingResultNormalizedArtifactRecord {
+          kind: TrainingResultNormalizedArtifactKind::StatusSnapshot,
+          relative_path: "job_status.json".to_string(),
+          absolute_path: "/tmp/result/normalized-result/job_status.json".to_string(),
+          readable: true,
+          byte_size: Some(32),
+        },
+      ],
+      known_limits: vec!["normalized artifacts only".to_string()],
+    };
+
+    let artifacts = vec![stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE,
+      "minecraft-3dgs-training-result-artifact-manifest.json",
+      &manifest,
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_mc7_d11_fetch_manifest")
+      .expect("run should read back");
+
+    let extracted = extract_minecraft_training_result_artifact_fetch_manifests(&store, &canonical)
+      .expect("manifest should extract");
+    assert_eq!(extracted.len(), 1);
+    let summary = extracted[0]
+      .manifest
+      .as_ref()
+      .expect("summary should be present");
+    assert_eq!(summary.normalized_artifacts.len(), 3);
+    assert_eq!(summary.normalized_artifacts[0].kind, "config");
+    assert_eq!(summary.normalized_artifacts[0].relative_path, "config.yml");
+    assert_eq!(
+      summary.normalized_artifacts[0].absolute_path,
+      "/tmp/result/normalized-result/config.yml"
+    );
+    assert!(summary.normalized_artifacts[0].readable);
+    assert_eq!(summary.normalized_artifacts[0].byte_size, Some(128));
+    assert_eq!(summary.normalized_artifacts[1].kind, "models_directory");
+    assert_eq!(summary.normalized_artifacts[1].byte_size, None);
+    assert_eq!(summary.normalized_artifacts[2].kind, "status_snapshot");
+
+    let listed = list_minecraft_training_result_artifact_fetch_manifests(
+      &store,
+      "run_read_mc7_d11_fetch_manifest",
+    )
+    .expect("manifest should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn training_result_artifact_fetch_inspect_extracts_blocked_summary_fields() {
+    let root = temp_dir("run-read-mc7-d11-fetch-inspect");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc7_d11_fetch_inspect");
+    let span = dummy_span(&run.root_span_id);
+
+    let report = TrainingResultArtifactFetchInspectReport {
+      schema_version: 1,
+      generated_at_millis: 1,
+      training_result_artifact_fetch_manifest_path:
+        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+        .to_string(),
+      source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+        .to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+      source_run_ids: vec!["run-a".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      source_job_status: TrainingResultStatus::Submitted,
+      source_result_status: TrainingResultStatus::Blocked,
+      source_result_status_reason: Some(
+        TrainingResultReason::RemoteStatusUnavailable
+          .as_str()
+          .to_string(),
+      ),
+      fetch_status: TrainingResultArtifactFetchStatus::Blocked,
+      fetch_reason: Some(TrainingResultArtifactFetchReason::SourceResultBlocked),
+      source_result_dir: "/tmp/result/trainer-output".to_string(),
+      normalized_result_dir: "/tmp/result/normalized-result".to_string(),
+      source_result_dir_exists: false,
+      required_artifacts_present: false,
+      normalized_artifact_count: 0,
+      warnings: vec!["remote status probe unavailable".to_string()],
+      known_limits: vec!["blocked evidence only".to_string()],
+    };
+
+    let artifacts = vec![stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE,
+      "minecraft-3dgs-training-result-artifact-inspect.json",
+      &report,
+    )];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_mc7_d11_fetch_inspect")
+      .expect("run should read back");
+
+    let extracted =
+      extract_minecraft_training_result_artifact_fetch_inspect_reports(&store, &canonical)
+        .expect("report should extract");
+    assert_eq!(extracted.len(), 1);
+    let summary = extracted[0]
+      .report
+      .as_ref()
+      .expect("summary should be present");
+    assert_eq!(summary.fetch_status, "blocked");
+    assert_eq!(
+      summary.fetch_reason.as_deref(),
+      Some("source_result_blocked")
+    );
+    assert!(!summary.source_result_dir_exists);
+    assert!(!summary.required_artifacts_present);
+    assert_eq!(summary.normalized_artifact_count, 0);
+    assert_eq!(
+      summary.source_result_status_reason.as_deref(),
+      Some("remote_status_unavailable")
+    );
+
+    let listed = list_minecraft_training_result_artifact_fetch_inspect_reports(
+      &store,
+      "run_read_mc7_d11_fetch_inspect",
+    )
+    .expect("report should list");
+    assert_eq!(listed, extracted);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn training_result_artifact_fetch_extractors_report_json_issues() {
+    let root = temp_dir("run-read-mc7-d11-fetch-issues");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc7_d11_fetch_issues");
+    let span = dummy_span(&run.root_span_id);
+
+    let manifest_artifact = stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE,
+      "minecraft-3dgs-training-result-artifact-manifest.txt",
+      "not json",
+    );
+    let mut inspect_artifact = stage_text_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      1,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE,
+      "minecraft-3dgs-training-result-artifact-inspect.json",
+      "{ malformed",
+    );
+    inspect_artifact.mime_type = "application/json".to_string();
+    let artifacts = vec![manifest_artifact, inspect_artifact];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_mc7_d11_fetch_issues")
+      .expect("run should read back");
+
+    let manifest_lineage =
+      extract_minecraft_training_result_artifact_fetch_manifests(&store, &canonical)
+        .expect("manifest lineage should extract");
+    assert_eq!(manifest_lineage.len(), 1);
+    assert!(manifest_lineage[0].manifest.is_none());
+    assert!(
+      manifest_lineage[0]
+        .issue
+        .as_deref()
+        .is_some_and(|issue| issue.contains("mime_type text/plain is not JSON"))
+    );
+
+    let report_lineage =
+      extract_minecraft_training_result_artifact_fetch_inspect_reports(&store, &canonical)
+        .expect("report lineage should extract");
+    assert_eq!(report_lineage.len(), 1);
+    assert!(report_lineage[0].report.is_none());
+    assert!(
+      report_lineage[0]
+        .issue
+        .as_deref()
+        .unwrap_or_default()
+        .contains("failed to parse")
+    );
 
     let _ = fs::remove_dir_all(root);
   }

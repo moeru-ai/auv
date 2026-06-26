@@ -1133,6 +1133,21 @@ pub fn render_run_text(
             .unwrap_or_else(|| "n/a".to_string()),
           manifest_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
+        if !manifest.normalized_artifacts.is_empty() {
+          for artifact in &manifest.normalized_artifacts {
+            output.push_str(&format!(
+              "  normalized_artifact kind={} relative_path={} readable={} byte_size={} absolute_path={}\n",
+              artifact.kind,
+              artifact.relative_path,
+              artifact.readable,
+              artifact
+                .byte_size
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+              artifact.absolute_path,
+            ));
+          }
+        }
         if !manifest.known_limits.is_empty() {
           output.push_str(&format!(
             "  known_limits={}\n",
@@ -1485,8 +1500,10 @@ mod tests {
     MinecraftTrainingJobManifestLineage, MinecraftTrainingLaunchInspectReportLineage,
     MinecraftTrainingLaunchManifestLineage, MinecraftTrainingPackageInspectReportLineage,
     MinecraftTrainingPackageInspectReportSummary, MinecraftTrainingPackageManifestLineage,
-    MinecraftTrainingPackageManifestSummary, MinecraftTrainingResultInspectReportLineage,
-    MinecraftTrainingResultManifestLineage,
+    MinecraftTrainingPackageManifestSummary,
+    MinecraftTrainingResultArtifactFetchInspectReportLineage,
+    MinecraftTrainingResultArtifactFetchManifestLineage,
+    MinecraftTrainingResultInspectReportLineage, MinecraftTrainingResultManifestLineage,
   };
   use auv_game_minecraft::{
     TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingPackageCounts,
@@ -2233,6 +2250,121 @@ mod tests {
         ),
         issue: None,
       }];
+    let minecraft_training_result_artifact_fetch_manifests = vec![
+      MinecraftTrainingResultArtifactFetchManifestLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_result_artifact_manifest"),
+          span_id: SpanId::new("span_mc7_result_artifact"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-artifact-manifest".to_string()),
+          path: Some(
+            "artifacts/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+          ),
+          summary: Some("training result artifact fetch manifest".to_string()),
+          resolved: true,
+        },
+        manifest: Some(crate::run_read::MinecraftTrainingResultArtifactFetchManifestSummary {
+          schema_version: 1,
+          source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+            .to_string(),
+          source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
+            .to_string(),
+          source_training_launch_plan_path:
+            "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+          source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+          source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec![
+            "/tmp/bundle-a/run.json".to_string(),
+            "/tmp/bundle-b/run.json".to_string(),
+          ],
+          source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+          trainer_backend: "nerfstudio.splatfacto".to_string(),
+          job_backend: "remote".to_string(),
+          source_job_status: "submitted".to_string(),
+          source_result_status: "succeeded".to_string(),
+          source_result_status_reason: None,
+          source_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+          normalized_result_dir:
+            "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+          normalized_artifacts: vec![
+            crate::run_read::MinecraftTrainingResultNormalizedArtifactSummary {
+              kind: "config".to_string(),
+              relative_path: "config.yml".to_string(),
+              absolute_path:
+                "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/config.yml"
+                  .to_string(),
+              readable: true,
+              byte_size: Some(128),
+            },
+            crate::run_read::MinecraftTrainingResultNormalizedArtifactSummary {
+              kind: "models_directory".to_string(),
+              relative_path: "nerfstudio_models".to_string(),
+              absolute_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models".to_string(),
+              readable: true,
+              byte_size: None,
+            },
+            crate::run_read::MinecraftTrainingResultNormalizedArtifactSummary {
+              kind: "status_snapshot".to_string(),
+              relative_path: "job_status.json".to_string(),
+              absolute_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/job_status.json".to_string(),
+              readable: true,
+              byte_size: Some(32),
+            },
+          ],
+          known_limits: vec!["normalized artifacts only".to_string()],
+        }),
+        issue: None,
+      },
+    ];
+    let minecraft_training_result_artifact_fetch_inspect_reports =
+      vec![MinecraftTrainingResultArtifactFetchInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_result_artifact_inspect"),
+          span_id: SpanId::new("span_mc7_result_artifact"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-artifact-inspect".to_string()),
+          path: Some("artifacts/minecraft-3dgs-training-result-artifact-inspect.json".to_string()),
+          summary: Some("training result artifact fetch inspect".to_string()),
+          resolved: true,
+        },
+        report: Some(
+          crate::run_read::MinecraftTrainingResultArtifactFetchInspectReportSummary {
+            schema_version: 1,
+            training_result_artifact_fetch_manifest_path:
+              "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+            source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+              .to_string(),
+            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
+              .to_string(),
+            source_training_launch_plan_path:
+              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+            source_bundle_manifest_paths: vec![
+              "/tmp/bundle-a/run.json".to_string(),
+              "/tmp/bundle-b/run.json".to_string(),
+            ],
+            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+            trainer_backend: "nerfstudio.splatfacto".to_string(),
+            job_backend: "remote".to_string(),
+            source_job_status: "submitted".to_string(),
+            source_result_status: "succeeded".to_string(),
+            source_result_status_reason: None,
+            fetch_status: "succeeded".to_string(),
+            fetch_reason: None,
+            source_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+            normalized_result_dir:
+              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+            source_result_dir_exists: true,
+            required_artifacts_present: true,
+            normalized_artifact_count: 3,
+            warnings: vec!["manual downstream quality review pending".to_string()],
+            known_limits: vec!["normalized artifacts only".to_string()],
+          },
+        ),
+        issue: None,
+      }];
 
     let output = render_run_text(
       &run,
@@ -2253,8 +2385,8 @@ mod tests {
       &minecraft_training_job_inspect_reports,
       &minecraft_training_result_manifests,
       &minecraft_training_result_inspect_reports,
-      &[],
-      &[],
+      &minecraft_training_result_artifact_fetch_manifests,
+      &minecraft_training_result_artifact_fetch_inspect_reports,
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -2338,6 +2470,22 @@ mod tests {
     assert!(output.contains("result_dir_exists=true"));
     assert!(output.contains("key_result_artifacts_present=true"));
     assert!(output.contains("result_artifact_count=1"));
+    assert!(output.contains("MC-7 Training Result Artifacts:"));
+    assert!(output.contains("manifest_artifact=artifact_mc7_result_artifact_manifest"));
+    assert!(output.contains("paired_report_artifact=artifact_mc7_result_artifact_inspect"));
+    assert!(output.contains("fetch_status=succeeded"));
+    assert!(output.contains("required_artifacts_present=true"));
+    assert!(output.contains("normalized_artifact_count=3"));
+    assert!(output.contains("kind=config relative_path=config.yml readable=true byte_size=128"));
+    assert!(output.contains(
+      "kind=models_directory relative_path=nerfstudio_models readable=true byte_size=n/a"
+    ));
+    assert!(
+      output
+        .contains("kind=status_snapshot relative_path=job_status.json readable=true byte_size=32")
+    );
+    assert!(output.contains("normalized artifacts only"));
+    assert!(output.contains("normalized_artifacts=3"));
     assert!(output.contains("Candidate Action Execution Lineage:"));
     assert!(output.contains("artifact=artifact_candidate_action_execution"));
     assert!(output.contains("execution_id=execution_end_turn"));
@@ -2409,13 +2557,49 @@ mod tests {
       }],
       &[],
       &[],
-      &[],
-      &[],
+      &[MinecraftTrainingResultArtifactFetchManifestLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_result_artifact_manifest_orphan"),
+          span_id: SpanId::new("span_mc7_result_artifact_orphan"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-artifact-manifest".to_string()),
+          path: Some(
+            "artifacts/minecraft-3dgs-training-result-artifact-manifest-orphan.json".to_string(),
+          ),
+          summary: Some("training result artifact orphan manifest".to_string()),
+          resolved: true,
+        },
+        manifest: None,
+        issue: Some("json parse error: expected value".to_string()),
+      }],
+      &[MinecraftTrainingResultArtifactFetchInspectReportLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_mc7_result_artifact_orphan"),
+          span_id: SpanId::new("span_mc7_result_artifact_orphan"),
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-artifact-inspect".to_string()),
+          path: Some(
+            "artifacts/minecraft-3dgs-training-result-artifact-inspect-orphan.json".to_string(),
+          ),
+          summary: Some("training result artifact orphan inspect".to_string()),
+          resolved: true,
+        },
+        report: None,
+        issue: Some("json parse error: expected value".to_string()),
+      }],
     );
 
     assert!(output.contains("MC-7 Training Jobs:"));
     assert!(output.contains("inspect_artifact=artifact_mc7_job_orphan"));
     assert!(output.contains("path=artifacts/minecraft-3dgs-training-job-inspect-orphan.json"));
+    assert!(output.contains("issue=json parse error: expected value"));
+    assert!(output.contains("MC-7 Training Result Artifacts:"));
+    assert!(output.contains("inspect_artifact=artifact_mc7_result_artifact_orphan"));
+    assert!(
+      output.contains("path=artifacts/minecraft-3dgs-training-result-artifact-inspect-orphan.json")
+    );
     assert!(output.contains("issue=json parse error: expected value"));
   }
 
