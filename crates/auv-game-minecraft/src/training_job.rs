@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::training_launch::{TrainingLaunchInspectReport, TrainingLaunchPlanManifest};
+use crate::training_launch::TrainingLaunchPlanManifest;
+use crate::training_package::TrainingPackageInspectReport;
 
 pub type TrainingJobResult<T> = Result<T, String>;
 
@@ -233,7 +234,7 @@ where
   })?;
   let training_package_inspect_report_path =
     PathBuf::from(&launch_plan.source_training_package_inspect_report_path);
-  let training_package_inspect_report = read_json_file::<TrainingLaunchInspectReport>(
+  let training_package_inspect_report = read_json_file::<TrainingPackageInspectReport>(
     &training_package_inspect_report_path,
     "MC-7 D5 training package inspect report",
   )?;
@@ -530,8 +531,7 @@ fn sh_quote(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::training_launch::{TrainingLaunchReadiness, TrainingLaunchReadinessBlocker};
-  use crate::training_package::{TrainingCompatibilityStatus, TrainingPackageCounts};
+  use crate::training_package::TrainingPackageCounts;
   use tempfile::TempDir;
 
   fn write_launch_plan_fixture(
@@ -593,36 +593,15 @@ mod tests {
       serde_json::to_vec_pretty(&launch_plan).expect("serialize plan"),
     )
     .expect("write plan");
-    let inspect_report = TrainingLaunchInspectReport {
+    let inspect_report = TrainingPackageInspectReport {
       schema_version: 1,
       generated_at_millis: 1,
-      training_launch_manifest_path: launch_plan_path.display().to_string(),
-      source_training_package_manifest_path: launch_plan
-        .source_training_package_manifest_path
-        .clone(),
-      source_scene_packet_manifest_path: launch_plan.source_scene_packet_manifest_path.clone(),
+      training_package_manifest_path: launch_plan.source_training_package_manifest_path.clone(),
+      scene_packet_manifest_path: launch_plan.source_scene_packet_manifest_path.clone(),
       source_bundle_manifest_paths: launch_plan.source_bundle_manifest_paths.clone(),
       source_run_ids: launch_plan.source_run_ids.clone(),
-      compatibility_status: if compatibility_view_name == "nerfstudio" {
-        TrainingCompatibilityStatus::Ready
-      } else {
-        TrainingCompatibilityStatus::Blocked
-      },
-      trainer_readiness: if compatibility_view_name == "nerfstudio" {
-        TrainingLaunchReadiness::Ready
-      } else {
-        TrainingLaunchReadiness::Blocked
-      },
-      readiness_blocker: if compatibility_view_name == "nerfstudio" {
-        None
-      } else {
-        Some(TrainingLaunchReadinessBlocker::CompatibilityViewBlocked)
-      },
-      probe_command: "ns-train --help".to_string(),
-      probe_succeeded: true,
-      exported_frame_count,
-      skipped_frame_count: 0,
-      transforms_present: include_transforms,
+      counts: launch_plan.counts.clone(),
+      compatibility_views: Vec::new(),
       warnings: vec!["warn-a".to_string()],
       known_limits: vec!["limit-b".to_string()],
     };

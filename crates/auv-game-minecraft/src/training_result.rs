@@ -204,12 +204,16 @@ where
     &inputs.training_job_manifest_path,
     "MC-7 D6 training job manifest",
   )?;
-  let job_id = job_manifest.job_id.clone().ok_or_else(|| {
-    format!(
-      "MC-7 D6 training job manifest {} is missing job_id",
-      inputs.training_job_manifest_path.display()
-    )
-  })?;
+  let job_id = match job_manifest.job_id.clone() {
+    Some(job_id) => job_id,
+    None if job_manifest.status == TrainingLaunchJobStatus::Blocked => String::new(),
+    None => {
+      return Err(format!(
+        "MC-7 D6 training job manifest {} is missing job_id",
+        inputs.training_job_manifest_path.display()
+      ));
+    }
+  };
 
   let endpoint = env.endpoint;
   let token = env.token;
@@ -735,5 +739,38 @@ mod tests {
       output.inspect_report.status_reason,
       Some(TrainingResultReason::LaunchBlocked)
     );
+  }
+
+  #[test]
+  fn collect_training_result_marks_launch_blocked_even_when_job_id_missing() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Blocked,
+      false,
+      Some(TrainingResultStatus::Succeeded),
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+      },
+    )
+    .expect("blocked launch without a submitted job id should still write outputs");
+
+    assert_eq!(output.inspect_report.status, TrainingResultStatus::Blocked);
+    assert_eq!(
+      output.inspect_report.status_reason,
+      Some(TrainingResultReason::LaunchBlocked)
+    );
+    assert_eq!(output.manifest.job_id, "");
   }
 }
