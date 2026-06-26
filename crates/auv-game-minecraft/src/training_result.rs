@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -61,6 +61,7 @@ pub struct TrainingResultRequest {
   pub trainer_backend: String,
   pub endpoint: String,
   pub status_command: String,
+  pub status_command_explicit: bool,
   pub token_present: bool,
   pub job_id: String,
   pub result_dir: String,
@@ -243,6 +244,7 @@ where
   let endpoint = env.endpoint;
   let token = env.token;
   let result_dir = PathBuf::from(&job_manifest.suggested_output_dir);
+  let status_command_explicit = env.status_command.is_some();
   let request = TrainingResultRequest {
     job_backend: job_manifest.job_backend.clone(),
     trainer_backend: job_manifest.trainer_backend.clone(),
@@ -255,6 +257,7 @@ where
         shell_quote_path(&result_dir.join(STATUS_SNAPSHOT_FILE))
       )
     }),
+    status_command_explicit,
     token_present: token.is_some(),
     job_id: job_id.clone(),
     result_dir: result_dir.to_string_lossy().into_owned(),
@@ -430,7 +433,7 @@ fn default_probe_training_result(
   request: &TrainingResultRequest,
 ) -> TrainingResultCollectionResult<TrainingResultProbeResponse> {
   let status_path = PathBuf::from(&request.result_dir).join(STATUS_SNAPSHOT_FILE);
-  let snapshot = if status_path.is_file() {
+  let snapshot = if !request.status_command_explicit && status_path.is_file() {
     read_json_file::<TrainingResultStatusSnapshot>(&status_path, "MC-8 D2 remote status snapshot")?
   } else {
     run_status_command(request)?
@@ -444,17 +447,51 @@ fn default_probe_training_result(
 fn run_status_command(
   request: &TrainingResultRequest,
 ) -> TrainingResultCollectionResult<TrainingResultStatusSnapshot> {
+  #[derive(Serialize)]
+  struct StatusCommandRequest<'a> {
+    job_id: &'a str,
+    job_url: Option<&'a str>,
+    endpoint: &'a str,
+    token_present: bool,
+    job_backend: &'a str,
+    trainer_backend: &'a str,
+    result_dir: &'a str,
+  }
+  let stdin_payload = serde_json::to_vec(&StatusCommandRequest {
+    job_id: &request.job_id,
+    job_url: request.job_url.as_deref(),
+    endpoint: &request.endpoint,
+    token_present: request.token_present,
+    job_backend: &request.job_backend,
+    trainer_backend: &request.trainer_backend,
+    result_dir: &request.result_dir,
+  })
+  .map_err(|error| format!("failed to serialize MC-8 D2 status command request: {error}"))?;
+
   let mut command = Command::new("sh");
   command
     .arg("-lc")
     .arg(&request.status_command)
-    .stdin(Stdio::null())
+    .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
 
-  let output = command.output().map_err(|error| {
+  let mut child = command.spawn().map_err(|error| {
     format!(
       "failed to run MC-8 D2 remote status command `{}`: {error}",
+      request.status_command
+    )
+  })?;
+  child
+    .stdin
+    .take()
+    .ok_or_else(|| "failed to open stdin for MC-8 D2 status command".to_string())?
+    .write_all(&stdin_payload)
+    .map_err(|error| format!("failed to write MC-8 D2 status command request: {error}"))?;
+
+  let output = child.wait_with_output().map_err(|error| {
+    format!(
+      "failed to wait for MC-8 D2 remote status command `{}`: {error}",
       request.status_command
     )
   })?;
@@ -950,6 +987,88 @@ mod tests {
         .warnings
         .iter()
         .any(|warning| warning.contains("failed to parse MC-8 D2 remote status command output"))
+    );
+  }
+
+  #[test]
+  fn collect_training_result_explicit_command_wins_over_local_snapshot() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    // create fixture WITH a local succeeded snapshot; explicit command returns failed
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      Some(TrainingResultStatus::Succeeded),
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+        status_command: Some(
+          "python3 -c \"import json,sys; json.dump({'status':'failed','message':'explicit-wins'}, sys.stdout)\""
+            .to_string(),
+        ),
+      },
+    )
+    .expect("explicit command should win over local snapshot");
+
+    assert_eq!(output.inspect_report.status, TrainingResultStatus::Failed);
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|w| w.contains("explicit-wins"))
+    );
+  }
+
+  #[test]
+  fn collect_training_result_explicit_command_receives_job_id_on_stdin() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_job_manifest_fixture(
+      &temp,
+      TrainingLaunchJobStatus::Submitted,
+      true,
+      None,
+      true,
+      true,
+    );
+
+    let output = collect_3dgs_training_job_result_with_probe_and_env(
+      TrainingResultInputs {
+        training_job_manifest_path: manifest_path,
+        output_dir: temp.path().join("result"),
+      },
+      default_probe_training_result,
+      TrainingResultEnvironment {
+        endpoint: Some("https://jobs.example.test/v1".to_string()),
+        token: Some("secret".to_string()),
+        status_command: Some(
+          "python3 -c \"import json,sys; req=json.load(sys.stdin); json.dump({'status':'succeeded','message':'job_id='+req['job_id']}, sys.stdout)\""
+            .to_string(),
+        ),
+      },
+    )
+    .expect("command with stdin should succeed");
+
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingResultStatus::Succeeded
+    );
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|w| w.contains("job_id=job-123"))
     );
   }
 }

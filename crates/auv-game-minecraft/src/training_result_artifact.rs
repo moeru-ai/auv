@@ -520,6 +520,14 @@ fn run_artifact_fetch_command(
       )
     })?;
   }
+  if normalized_result_dir.exists() {
+    fs::remove_dir_all(normalized_result_dir).map_err(|error| {
+      format!(
+        "failed to clear MC-8 D3 normalized result dir before fetch {}: {error}",
+        normalized_result_dir.display()
+      )
+    })?;
+  }
 
   let mut command = Command::new("sh");
   command
@@ -577,6 +585,12 @@ fn collect_normalized_artifacts(
   normalized_result_dir: &Path,
 ) -> TrainingResultArtifactFetchResult<Vec<TrainingResultNormalizedArtifactRecord>> {
   let config = normalized_result_dir.join(RESULT_CONFIG_FILE);
+  if config.is_symlink() {
+    return Err(format!(
+      "MC-8 D3 normalized config {} must not be a symlink",
+      config.display()
+    ));
+  }
   if !config.is_file() {
     return Err(format!(
       "MC-8 D3 artifact fetch command did not materialize required normalized config {}",
@@ -584,6 +598,12 @@ fn collect_normalized_artifacts(
     ));
   }
   let models = normalized_result_dir.join(RESULT_MODELS_DIR);
+  if models.is_symlink() {
+    return Err(format!(
+      "MC-8 D3 normalized models directory {} must not be a symlink",
+      models.display()
+    ));
+  }
   if !models.is_dir() {
     return Err(format!(
       "MC-8 D3 artifact fetch command did not materialize required normalized models directory {}",
@@ -1016,6 +1036,125 @@ mod tests {
         .warnings
         .iter()
         .any(|warning| warning.contains("did not materialize required normalized models directory"))
+    );
+  }
+
+  #[test]
+  fn fetch_command_clears_stale_normalized_dir_before_running() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      false,
+      true,
+      true,
+      false,
+    );
+    let output_dir = temp.path().join("normalized");
+    let normalized_result_dir = output_dir.join(NORMALIZED_RESULT_ROOT_DIR);
+    // pre-create stale config.yml with no models dir
+    fs::create_dir_all(&normalized_result_dir).expect("pre-create normalized dir");
+    fs::write(normalized_result_dir.join("stale.txt"), b"stale").expect("stale file");
+    let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'ok'}, sys.stdout)\"".to_string();
+
+    let output = fetch_3dgs_training_result_artifacts_with_command(
+      TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: manifest_path,
+        output_dir,
+      },
+      Some(command),
+    )
+    .expect("fetch should succeed");
+
+    assert_eq!(
+      output.inspect_report.fetch_status,
+      TrainingResultArtifactFetchStatus::Succeeded
+    );
+    assert!(!normalized_result_dir.join("stale.txt").exists());
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn fetch_command_rejects_config_symlink() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      false,
+      true,
+      true,
+      false,
+    );
+    let output_dir = temp.path().join("normalized");
+    // command creates a config symlink instead of a real file
+    let target = temp.path().join("real-config.yml");
+    fs::write(&target, b"trainer: splatfacto\n").expect("real config");
+    let target_str = target.to_string_lossy().into_owned();
+    let command = format!(
+      "python3 -c \"import json,os,pathlib,sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); root.mkdir(parents=True, exist_ok=True); (root/'nerfstudio_models').mkdir(); os.symlink('{target_str}', root/'config.yml'); json.dump({{'message':'symlink'}}, sys.stdout)\""
+    );
+
+    let output = fetch_3dgs_training_result_artifacts_with_command(
+      TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: manifest_path,
+        output_dir,
+      },
+      Some(command),
+    )
+    .expect("failed fetch should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.fetch_status,
+      TrainingResultArtifactFetchStatus::Failed
+    );
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|w| w.contains("must not be a symlink"))
+    );
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn fetch_command_rejects_models_dir_symlink() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest_path = write_training_result_manifest_fixture(
+      &temp,
+      TrainingResultStatus::Succeeded,
+      false,
+      true,
+      true,
+      false,
+    );
+    let output_dir = temp.path().join("normalized");
+    let real_models = temp.path().join("real-models");
+    fs::create_dir_all(&real_models).expect("real models dir");
+    let real_models_str = real_models.to_string_lossy().into_owned();
+    let command = format!(
+      "python3 -c \"import json,os,pathlib,sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); root.mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: splatfacto\\n'); os.symlink('{real_models_str}', root/'nerfstudio_models'); json.dump({{'message':'symlink'}}, sys.stdout)\""
+    );
+
+    let output = fetch_3dgs_training_result_artifacts_with_command(
+      TrainingResultArtifactFetchInputs {
+        training_result_manifest_path: manifest_path,
+        output_dir,
+      },
+      Some(command),
+    )
+    .expect("failed fetch should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.fetch_status,
+      TrainingResultArtifactFetchStatus::Failed
+    );
+    assert!(
+      output
+        .inspect_report
+        .warnings
+        .iter()
+        .any(|w| w.contains("must not be a symlink"))
     );
   }
 }

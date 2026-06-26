@@ -491,7 +491,7 @@ fn run_submit_command(
 
   let mut submission: TrainingLaunchJobSubmission = serde_json::from_slice(&output.stdout)
     .map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
-  if submission.status == TrainingLaunchJobStatus::Submitted && submission.job_id.is_none() {
+  if submission.status != TrainingLaunchJobStatus::Blocked && submission.job_id.is_none() {
     return Err(TrainingLaunchJobBlocker::SubmissionFailed);
   }
   if submission.status == TrainingLaunchJobStatus::Blocked && submission.blocker.is_none() {
@@ -861,6 +861,64 @@ mod tests {
     )
       .expect("failed submission should still write outputs");
 
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingLaunchJobStatus::Failed
+    );
+    assert_eq!(
+      output.inspect_report.readiness_blocker,
+      Some(TrainingLaunchJobBlocker::SubmissionFailed)
+    );
+  }
+
+  #[test]
+  fn default_submit_job_fails_when_queued_status_has_no_job_id() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let plan_path = write_launch_plan_fixture(&temp, "nerfstudio", 2, true, true);
+    let output = launch_3dgs_training_job_with_submit_and_env(
+      TrainingLaunchJobInputs {
+        training_launch_plan_path: plan_path,
+        output_dir: temp.path().join("job"),
+      },
+      default_submit_job,
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
+        submit_token: Some("secret-token".to_string()),
+        submit_command: Some(
+          "python3 -c \"import json,sys; json.dump({'status':'queued','job_id':None,'job_url':None,'blocker':None}, sys.stdout)\"".to_string(),
+        ),
+      },
+    )
+    .expect("failed submission should still write outputs");
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingLaunchJobStatus::Failed
+    );
+    assert_eq!(
+      output.inspect_report.readiness_blocker,
+      Some(TrainingLaunchJobBlocker::SubmissionFailed)
+    );
+  }
+
+  #[test]
+  fn default_submit_job_fails_when_failed_status_has_no_job_id() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let plan_path = write_launch_plan_fixture(&temp, "nerfstudio", 2, true, true);
+    let output = launch_3dgs_training_job_with_submit_and_env(
+      TrainingLaunchJobInputs {
+        training_launch_plan_path: plan_path,
+        output_dir: temp.path().join("job"),
+      },
+      default_submit_job,
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
+        submit_token: Some("secret-token".to_string()),
+        submit_command: Some(
+          "python3 -c \"import json,sys; json.dump({'status':'failed','job_id':None,'job_url':None,'blocker':None}, sys.stdout)\"".to_string(),
+        ),
+      },
+    )
+    .expect("failed submission should still write outputs");
     assert_eq!(
       output.inspect_report.status,
       TrainingLaunchJobStatus::Failed
