@@ -59,10 +59,10 @@ pub use session_observation::{
 };
 pub use training_job::{
   TRAINING_JOB_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_JOB_MANIFEST_SCHEMA_VERSION,
-  TrainingLaunchJobBlocker, TrainingLaunchJobCounts, TrainingLaunchJobInputs,
-  TrainingLaunchJobInspectReport, TrainingLaunchJobManifest, TrainingLaunchJobOutput,
-  TrainingLaunchJobRequest, TrainingLaunchJobStatus, TrainingLaunchJobSubmission,
-  launch_3dgs_training_job,
+  TrainingJobEnvironment, TrainingLaunchJobBlocker, TrainingLaunchJobCounts,
+  TrainingLaunchJobInputs, TrainingLaunchJobInspectReport, TrainingLaunchJobManifest,
+  TrainingLaunchJobOutput, TrainingLaunchJobRequest, TrainingLaunchJobStatus,
+  TrainingLaunchJobSubmission, launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
 };
 pub use training_launch::{
   TRAINING_LAUNCH_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_LAUNCH_PLAN_SCHEMA_VERSION,
@@ -80,9 +80,10 @@ pub use training_package::{
 };
 pub use training_result::{
   TRAINING_RESULT_INSPECT_REPORT_SCHEMA_VERSION, TRAINING_RESULT_MANIFEST_SCHEMA_VERSION,
-  TrainingResultArtifactRecord, TrainingResultInputs, TrainingResultInspectReport,
-  TrainingResultManifest, TrainingResultOutput, TrainingResultReason, TrainingResultRequest,
-  TrainingResultStatus, collect_3dgs_training_job_result,
+  TrainingResultArtifactRecord, TrainingResultEnvironment, TrainingResultInputs,
+  TrainingResultInspectReport, TrainingResultManifest, TrainingResultOutput, TrainingResultReason,
+  TrainingResultRequest, TrainingResultStatus, collect_3dgs_training_job_result,
+  collect_3dgs_training_job_result_with_environment,
 };
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,

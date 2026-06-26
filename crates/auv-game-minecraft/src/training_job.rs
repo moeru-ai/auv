@@ -20,7 +20,7 @@ const SUBMIT_TOKEN_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_TOKEN";
 const SUBMIT_COMMAND_ENV: &str = "AUV_MINECRAFT_TRAINING_JOB_SUBMIT_COMMAND";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct TrainingJobEnvironment {
+pub struct TrainingJobEnvironment {
   submit_endpoint: Option<String>,
   submit_token: Option<String>,
   submit_command: Option<String>,
@@ -32,6 +32,18 @@ impl TrainingJobEnvironment {
       submit_endpoint: std::env::var(SUBMIT_ENDPOINT_ENV).ok(),
       submit_token: std::env::var(SUBMIT_TOKEN_ENV).ok(),
       submit_command: std::env::var(SUBMIT_COMMAND_ENV).ok(),
+    }
+  }
+
+  pub fn with_values(
+    submit_endpoint: Option<String>,
+    submit_token: Option<String>,
+    submit_command: Option<String>,
+  ) -> Self {
+    Self {
+      submit_endpoint,
+      submit_token,
+      submit_command,
     }
   }
 }
@@ -48,6 +60,7 @@ pub struct TrainingLaunchJobRequest {
   pub trainer_backend: String,
   pub endpoint: String,
   pub token_present: bool,
+  pub token: Option<String>,
   pub launch_command: String,
   pub training_data_dir: String,
   pub suggested_output_dir: String,
@@ -212,6 +225,13 @@ where
   )
 }
 
+pub fn launch_3dgs_training_job_with_environment(
+  inputs: TrainingLaunchJobInputs,
+  env: TrainingJobEnvironment,
+) -> TrainingJobResult<TrainingLaunchJobOutput> {
+  launch_3dgs_training_job_with_submit_and_env(inputs, default_submit_job, env)
+}
+
 fn launch_3dgs_training_job_with_submit_and_env<F>(
   inputs: TrainingLaunchJobInputs,
   submit: F,
@@ -294,6 +314,7 @@ where
     trainer_backend: TRAINER_BACKEND.to_string(),
     endpoint: job_submission_endpoint.clone(),
     token_present: submit_token.is_some(),
+    token: submit_token.clone(),
     launch_command: launch_plan.launch_command.clone(),
     training_data_dir: training_data_dir.to_string_lossy().into_owned(),
     suggested_output_dir: launch_plan.suggested_output_dir.clone(),
@@ -427,6 +448,7 @@ fn default_submit_job(request: &TrainingLaunchJobRequest) -> TrainingLaunchJobSu
     request.trainer_backend.replace('.', "-"),
     auv_tracing_driver::now_millis()
   );
+  let _token = request.token.as_deref();
   TrainingLaunchJobSubmission {
     status: TrainingLaunchJobStatus::Queued,
     job_id: Some(job_id.clone()),
@@ -709,6 +731,39 @@ mod tests {
     assert_eq!(
       output.inspect_report.readiness_blocker,
       Some(TrainingLaunchJobBlocker::UnsupportedBackend)
+    );
+  }
+
+  #[test]
+  fn job_launch_request_carries_submit_token_into_submitter() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let plan_path = write_launch_plan_fixture(&temp, "nerfstudio", 2, true, true);
+    let output = launch_3dgs_training_job_with_submit_and_env(
+      TrainingLaunchJobInputs {
+        training_launch_plan_path: plan_path,
+        output_dir: temp.path().join("job"),
+      },
+      |request| {
+        assert_eq!(request.token.as_deref(), Some("secret-token"));
+        assert!(request.token_present);
+        TrainingLaunchJobSubmission {
+          status: TrainingLaunchJobStatus::Submitted,
+          job_id: Some("job-with-token".to_string()),
+          job_url: Some("https://jobs.example.test/job/token".to_string()),
+          blocker: None,
+        }
+      },
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
+        submit_token: Some("secret-token".to_string()),
+        submit_command: Some("remote-submit --dry-run".to_string()),
+      },
+    )
+    .expect("job should launch");
+
+    assert_eq!(
+      output.inspect_report.job_id.as_deref(),
+      Some("job-with-token")
     );
   }
 }

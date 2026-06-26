@@ -9,9 +9,10 @@ use auv_game_minecraft::{
   TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs,
   TrainingPackageOutput, TrainingResultInputs, TrainingResultOutput,
   build_texture_sweep_samples_from_bundles, collect_3dgs_training_job_result,
-  evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
-  export_spatial_bundle, launch_3dgs_training_job, prepare_3dgs_training_launch,
-  prepare_texture_sweep_resource_packs,
+  collect_3dgs_training_job_result_with_environment, evaluate_texture_sweep,
+  export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
+  launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
+  prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs,
 };
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
@@ -252,6 +253,24 @@ pub fn run_minecraft_3dgs_training_job_launch(
   training_launch_plan_path: PathBuf,
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<auv_game_minecraft::TrainingLaunchJobOutput>> {
+  run_minecraft_3dgs_training_job_launch_with_environment(
+    recording,
+    training_launch_plan_path,
+    output_dir,
+    None,
+    None,
+    None,
+  )
+}
+
+pub fn run_minecraft_3dgs_training_job_launch_with_environment(
+  recording: &RecordingHandle,
+  training_launch_plan_path: PathBuf,
+  output_dir: PathBuf,
+  training_job_endpoint: Option<String>,
+  training_job_token: Option<String>,
+  training_job_submit_command: Option<String>,
+) -> AuvResult<RecordedOperationOutput<auv_game_minecraft::TrainingLaunchJobOutput>> {
   recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.minecraft.launch_3dgs_training_job"),
     "Minecraft launch MC-7 D6 training job",
@@ -264,10 +283,27 @@ pub fn run_minecraft_3dgs_training_job_launch(
           output_dir.display()
         )),
       );
-      let result = launch_3dgs_training_job(TrainingLaunchJobInputs {
-        training_launch_plan_path: training_launch_plan_path.clone(),
-        output_dir: output_dir.clone(),
-      })?;
+      let result = if training_job_endpoint.is_some()
+        || training_job_token.is_some()
+        || training_job_submit_command.is_some()
+      {
+        launch_3dgs_training_job_with_environment(
+          TrainingLaunchJobInputs {
+            training_launch_plan_path: training_launch_plan_path.clone(),
+            output_dir: output_dir.clone(),
+          },
+          auv_game_minecraft::TrainingJobEnvironment::with_values(
+            training_job_endpoint.clone(),
+            training_job_token.clone(),
+            training_job_submit_command.clone(),
+          ),
+        )?
+      } else {
+        launch_3dgs_training_job(TrainingLaunchJobInputs {
+          training_launch_plan_path: training_launch_plan_path.clone(),
+          output_dir: output_dir.clone(),
+        })?
+      };
       context.in_span("minecraft.launch_3dgs_training_job.artifacts", |context| {
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_JOB_ARTIFACT_ROLE,
@@ -299,6 +335,22 @@ pub fn run_minecraft_3dgs_training_result_collection(
   training_job_manifest_path: PathBuf,
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<TrainingResultOutput>> {
+  run_minecraft_3dgs_training_result_collection_with_environment(
+    recording,
+    training_job_manifest_path,
+    output_dir,
+    None,
+    None,
+  )
+}
+
+pub fn run_minecraft_3dgs_training_result_collection_with_environment(
+  recording: &RecordingHandle,
+  training_job_manifest_path: PathBuf,
+  output_dir: PathBuf,
+  training_job_endpoint: Option<String>,
+  training_job_token: Option<String>,
+) -> AuvResult<RecordedOperationOutput<TrainingResultOutput>> {
   recording.run_recorded_operation(
     RunSpec::new(
       RunType::Execute,
@@ -314,10 +366,23 @@ pub fn run_minecraft_3dgs_training_result_collection(
           output_dir.display()
         )),
       );
-      let result = collect_3dgs_training_job_result(TrainingResultInputs {
-        training_job_manifest_path: training_job_manifest_path.clone(),
-        output_dir: output_dir.clone(),
-      })?;
+      let result = if training_job_endpoint.is_some() || training_job_token.is_some() {
+        collect_3dgs_training_job_result_with_environment(
+          TrainingResultInputs {
+            training_job_manifest_path: training_job_manifest_path.clone(),
+            output_dir: output_dir.clone(),
+          },
+          auv_game_minecraft::TrainingResultEnvironment::with_values(
+            training_job_endpoint.clone(),
+            training_job_token.clone(),
+          ),
+        )?
+      } else {
+        collect_3dgs_training_job_result(TrainingResultInputs {
+          training_job_manifest_path: training_job_manifest_path.clone(),
+          output_dir: output_dir.clone(),
+        })?
+      };
       context.in_span("minecraft.collect_3dgs_training_job_result.artifacts", |context| {
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE,
@@ -1186,5 +1251,70 @@ mod tests {
     )
     .expect("job manifest write");
     job_manifest_path
+  }
+
+  #[test]
+  fn training_job_launch_with_environment_uses_explicit_remote_config() {
+    let temp = temp_dir("mc7-d9-job-env");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
+    let training_package_manifest = write_blocked_training_package_fixture(&temp);
+    let launch_output = run_minecraft_3dgs_training_launch_preparation(
+      &recording,
+      training_package_manifest,
+      temp.join("launch"),
+    )
+    .expect("launch prep");
+
+    let job_output = run_minecraft_3dgs_training_job_launch_with_environment(
+      &recording,
+      launch_output.value.manifest_path.clone(),
+      temp.join("job"),
+      Some("https://jobs.example.test/v1".to_string()),
+      Some("secret-token".to_string()),
+      Some("remote-submit --json".to_string()),
+    )
+    .expect("job launch with explicit environment");
+
+    assert_eq!(
+      job_output.value.manifest.job_submission_endpoint,
+      "https://jobs.example.test/v1"
+    );
+    assert_eq!(
+      job_output.value.manifest.job_submission_command,
+      "remote-submit --json"
+    );
+    assert_eq!(
+      job_output.value.inspect_report.status,
+      auv_game_minecraft::TrainingLaunchJobStatus::Queued
+    );
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn training_result_collection_with_environment_uses_explicit_remote_config() {
+    let temp = temp_dir("mc7-d9-result-env");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
+    let job_manifest_path = write_training_job_fixture(&temp);
+
+    let result_output = run_minecraft_3dgs_training_result_collection_with_environment(
+      &recording,
+      job_manifest_path,
+      temp.join("result"),
+      Some("https://jobs.example.test/v1".to_string()),
+      Some("secret-token".to_string()),
+    )
+    .expect("result collection with explicit environment");
+
+    assert_eq!(
+      result_output.value.manifest.job_submission_endpoint,
+      "https://jobs.example.test/v1"
+    );
+    assert_eq!(
+      result_output.value.inspect_report.status,
+      auv_game_minecraft::TrainingResultStatus::Succeeded
+    );
+    let _ = fs::remove_dir_all(temp);
   }
 }

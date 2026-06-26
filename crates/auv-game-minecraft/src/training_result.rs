@@ -19,7 +19,7 @@ const RESULT_CONFIG_FILE: &str = "config.yml";
 const RESULT_MODELS_DIR: &str = "nerfstudio_models";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct TrainingResultEnvironment {
+pub struct TrainingResultEnvironment {
   endpoint: Option<String>,
   token: Option<String>,
 }
@@ -30,6 +30,10 @@ impl TrainingResultEnvironment {
       endpoint: std::env::var(JOB_ENDPOINT_ENV).ok(),
       token: std::env::var(JOB_TOKEN_ENV).ok(),
     }
+  }
+
+  pub fn with_values(endpoint: Option<String>, token: Option<String>) -> Self {
+    Self { endpoint, token }
   }
 }
 
@@ -190,6 +194,13 @@ pub fn collect_3dgs_training_job_result(
     default_probe_training_result,
     TrainingResultEnvironment::from_process(),
   )
+}
+
+pub fn collect_3dgs_training_job_result_with_environment(
+  inputs: TrainingResultInputs,
+  env: TrainingResultEnvironment,
+) -> TrainingResultCollectionResult<TrainingResultOutput> {
+  collect_3dgs_training_job_result_with_probe_and_env(inputs, default_probe_training_result, env)
 }
 
 fn collect_3dgs_training_job_result_with_probe_and_env<F>(

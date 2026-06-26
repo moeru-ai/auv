@@ -156,11 +156,16 @@ pub enum CliCommand {
   MinecraftLaunch3dgsTrainingJob {
     training_launch_plan_path: String,
     output_dir: String,
+    training_job_endpoint: Option<String>,
+    training_job_token: Option<String>,
+    training_job_submit_command: Option<String>,
     inspect: InspectClientOptions,
   },
   MinecraftCollect3dgsTrainingJobResult {
     training_job_manifest_path: String,
     output_dir: String,
+    training_job_endpoint: Option<String>,
+    training_job_token: Option<String>,
     inspect: InspectClientOptions,
   },
   MinecraftPrepareTextureSweep {
@@ -1329,6 +1334,9 @@ fn parse_minecraft_prepare_3dgs_training(arguments: &[String]) -> AuvResult<CliC
 fn parse_minecraft_launch_3dgs_training_job(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut training_launch_plan_path = None;
   let mut output_dir = None;
+  let mut training_job_endpoint = None;
+  let mut training_job_token = None;
+  let mut training_job_submit_command = None;
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
@@ -1354,6 +1362,30 @@ fn parse_minecraft_launch_3dgs_training_job(arguments: &[String]) -> AuvResult<C
         output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
         index += 2;
       }
+      "--training-job-endpoint" => {
+        training_job_endpoint = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-job-endpoint",
+        )?);
+        index += 2;
+      }
+      "--training-job-token" => {
+        training_job_token = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-job-token",
+        )?);
+        index += 2;
+      }
+      "--training-job-submit-command" => {
+        training_job_submit_command = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-job-submit-command",
+        )?);
+        index += 2;
+      }
       other => {
         return Err(format!(
           "unexpected minecraft launch-3dgs-training-job argument {other}"
@@ -1366,6 +1398,9 @@ fn parse_minecraft_launch_3dgs_training_job(arguments: &[String]) -> AuvResult<C
     training_launch_plan_path: training_launch_plan_path
       .ok_or_else(|| "--training-launch-plan is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+    training_job_endpoint,
+    training_job_token,
+    training_job_submit_command,
     inspect,
   })
 }
@@ -1373,6 +1408,8 @@ fn parse_minecraft_launch_3dgs_training_job(arguments: &[String]) -> AuvResult<C
 fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut training_job_manifest_path = None;
   let mut output_dir = None;
+  let mut training_job_endpoint = None;
+  let mut training_job_token = None;
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
@@ -1398,6 +1435,22 @@ fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> Auv
         output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
         index += 2;
       }
+      "--training-job-endpoint" => {
+        training_job_endpoint = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-job-endpoint",
+        )?);
+        index += 2;
+      }
+      "--training-job-token" => {
+        training_job_token = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-job-token",
+        )?);
+        index += 2;
+      }
       other => {
         return Err(format!(
           "unexpected minecraft collect-3dgs-training-job-result argument {other}"
@@ -1410,6 +1463,8 @@ fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> Auv
     training_job_manifest_path: training_job_manifest_path
       .ok_or_else(|| "--training-job-manifest is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+    training_job_endpoint,
+    training_job_token,
     inspect,
   })
 }
@@ -2481,6 +2536,9 @@ mod tests {
       CliCommand::MinecraftLaunch3dgsTrainingJob {
         training_launch_plan_path,
         output_dir,
+        training_job_endpoint,
+        training_job_token,
+        training_job_submit_command,
         ..
       } => {
         assert_eq!(
@@ -2488,6 +2546,9 @@ mod tests {
           "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json"
         );
         assert_eq!(output_dir, "/tmp/job");
+        assert_eq!(training_job_endpoint, None);
+        assert_eq!(training_job_token, None);
+        assert_eq!(training_job_submit_command, None);
       }
       other => panic!("unexpected command: {other:?}"),
     }
@@ -2509,6 +2570,8 @@ mod tests {
       CliCommand::MinecraftCollect3dgsTrainingJobResult {
         training_job_manifest_path,
         output_dir,
+        training_job_endpoint,
+        training_job_token,
         ..
       } => {
         assert_eq!(
@@ -2516,6 +2579,8 @@ mod tests {
           "/tmp/training-job/minecraft-3dgs-training-job.json"
         );
         assert_eq!(output_dir, "/tmp/result");
+        assert_eq!(training_job_endpoint, None);
+        assert_eq!(training_job_token, None);
       }
       other => panic!("unexpected command: {other:?}"),
     }
@@ -2532,6 +2597,77 @@ mod tests {
     .expect_err("missing training job manifest should fail");
 
     assert_eq!(error, "--training-job-manifest is required");
+  }
+
+  #[test]
+  fn parse_minecraft_launch_3dgs_training_job_command_with_remote_config_flags() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "launch-3dgs-training-job".to_string(),
+      "--training-launch-plan".to_string(),
+      "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/job".to_string(),
+      "--training-job-endpoint".to_string(),
+      "https://jobs.example.test/v1".to_string(),
+      "--training-job-token".to_string(),
+      "secret-token".to_string(),
+      "--training-job-submit-command".to_string(),
+      "remote-submit --json".to_string(),
+    ])
+    .expect("minecraft launch-3dgs-training-job command with remote config should parse");
+
+    match command {
+      CliCommand::MinecraftLaunch3dgsTrainingJob {
+        training_job_endpoint,
+        training_job_token,
+        training_job_submit_command,
+        ..
+      } => {
+        assert_eq!(
+          training_job_endpoint.as_deref(),
+          Some("https://jobs.example.test/v1")
+        );
+        assert_eq!(training_job_token.as_deref(), Some("secret-token"));
+        assert_eq!(
+          training_job_submit_command.as_deref(),
+          Some("remote-submit --json")
+        );
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_collect_3dgs_training_job_result_command_with_remote_config_flags() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "collect-3dgs-training-job-result".to_string(),
+      "--training-job-manifest".to_string(),
+      "/tmp/training-job/minecraft-3dgs-training-job.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/result".to_string(),
+      "--training-job-endpoint".to_string(),
+      "https://jobs.example.test/v1".to_string(),
+      "--training-job-token".to_string(),
+      "secret-token".to_string(),
+    ])
+    .expect("minecraft collect-3dgs-training-job-result command with remote config should parse");
+
+    match command {
+      CliCommand::MinecraftCollect3dgsTrainingJobResult {
+        training_job_endpoint,
+        training_job_token,
+        ..
+      } => {
+        assert_eq!(
+          training_job_endpoint.as_deref(),
+          Some("https://jobs.example.test/v1")
+        );
+        assert_eq!(training_job_token.as_deref(), Some("secret-token"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
   }
 
   #[test]

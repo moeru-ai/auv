@@ -420,18 +420,37 @@ async fn run() -> Result<(), String> {
     CliCommand::MinecraftLaunch3dgsTrainingJob {
       training_launch_plan_path,
       output_dir,
+      training_job_endpoint,
+      training_job_token,
+      training_job_submit_command,
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = auv_cli::minecraft::run_minecraft_3dgs_training_job_launch(
+      let output = auv_cli::minecraft::run_minecraft_3dgs_training_job_launch_with_environment(
         &runtime.recording().handle(),
         PathBuf::from(training_launch_plan_path),
         PathBuf::from(output_dir),
+        training_job_endpoint,
+        training_job_token,
+        training_job_submit_command,
       )?;
       println!("runId: {}", output.run_id);
-      println!("status: {}", output.value.inspect_report.status.as_str());
+      println!(
+        "remoteJobStatus: {}",
+        output.value.inspect_report.status.as_str()
+      );
       println!("trainerBackend: {}", output.value.manifest.trainer_backend);
       println!("jobBackend: {}", output.value.manifest.job_backend);
+      println!(
+        "submissionState: {}",
+        if output.value.inspect_report.status
+          == auv_game_minecraft::TrainingLaunchJobStatus::Blocked
+        {
+          "blocked_before_submission"
+        } else {
+          "submission_path_entered"
+        }
+      );
       println!(
         "readinessBlocker: {}",
         match output.value.inspect_report.readiness_blocker {
@@ -455,7 +474,7 @@ async fn run() -> Result<(), String> {
       );
       println!("launchCommand: {}", output.value.manifest.launch_command);
       println!(
-        "jobSubmissionCommand: {}",
+        "configuredJobSubmissionCommand: {}",
         output.value.manifest.job_submission_command
       );
       println!(
@@ -473,16 +492,24 @@ async fn run() -> Result<(), String> {
     CliCommand::MinecraftCollect3dgsTrainingJobResult {
       training_job_manifest_path,
       output_dir,
+      training_job_endpoint,
+      training_job_token,
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = auv_cli::minecraft::run_minecraft_3dgs_training_result_collection(
-        &runtime.recording().handle(),
-        PathBuf::from(training_job_manifest_path),
-        PathBuf::from(output_dir),
-      )?;
+      let output =
+        auv_cli::minecraft::run_minecraft_3dgs_training_result_collection_with_environment(
+          &runtime.recording().handle(),
+          PathBuf::from(training_job_manifest_path),
+          PathBuf::from(output_dir),
+          training_job_endpoint,
+          training_job_token,
+        )?;
       println!("runId: {}", output.run_id);
-      println!("status: {}", output.value.inspect_report.status.as_str());
+      println!(
+        "remoteResultStatus: {}",
+        output.value.inspect_report.status.as_str()
+      );
       println!("trainerBackend: {}", output.value.manifest.trainer_backend);
       println!("jobBackend: {}", output.value.manifest.job_backend);
       println!(
@@ -505,6 +532,30 @@ async fn run() -> Result<(), String> {
             "result_artifacts_missing"
           }
           None => "none",
+        }
+      );
+      println!(
+        "resultStateInterpretation: {}",
+        match output.value.inspect_report.status_reason {
+          Some(auv_game_minecraft::TrainingResultReason::MissingConfiguration) => {
+            "blocked_without_remote_configuration"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::MissingAuthentication) => {
+            "blocked_without_remote_authentication"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::LaunchBlocked) => {
+            "upstream_job_never_submitted"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::RemoteStatusUnavailable) => {
+            "remote_job_state_not_yet_readable"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::ResultDirectoryMissing) => {
+            "remote_job_reported_done_but_result_dir_missing"
+          }
+          Some(auv_game_minecraft::TrainingResultReason::ResultArtifactsMissing) => {
+            "remote_job_reported_done_but_key_result_artifacts_missing"
+          }
+          None => "result_state_matches_current_artifacts",
         }
       );
       println!("jobId: {}", output.value.manifest.job_id);
