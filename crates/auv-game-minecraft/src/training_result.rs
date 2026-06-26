@@ -703,6 +703,10 @@ mod tests {
       job_backend: "remote".to_string(),
       job_submission_endpoint: "https://jobs.example.test/v1".to_string(),
       job_submission_command: "remote-submit --plan launch.json".to_string(),
+      submission_recorded_at_millis: (with_job_id
+        && source_job_status != TrainingLaunchJobStatus::Blocked)
+        .then_some(1),
+      accepted_by_provider: with_job_id && source_job_status != TrainingLaunchJobStatus::Blocked,
       training_data_dir: "/tmp/training-package/compat/nerfstudio".to_string(),
       transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
       export_report_path: "/tmp/training-package/compat/nerfstudio/export_report.json".to_string(),

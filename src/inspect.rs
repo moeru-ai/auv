@@ -822,7 +822,7 @@ pub fn render_run_text(
       }
       if let Some(manifest) = &manifest_lineage.manifest {
         output.push_str(&format!(
-          "- manifest_artifact={} role={} path={} schema={} source_training_launch_plan={} source_runs={} frames={} images={} provider_backend={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} paired_report_artifact={} issue={}\n",
+          "- manifest_artifact={} role={} path={} schema={} source_training_launch_plan={} source_runs={} frames={} images={} provider_backend={} trainer_backend={} job_backend={} status={} accepted_by_provider={} submission_recorded_at_millis={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} paired_report_artifact={} issue={}\n",
           manifest_lineage.artifact.artifact_id,
           manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -835,6 +835,8 @@ pub fn render_run_text(
           manifest.trainer_backend,
           manifest.job_backend,
           manifest.status,
+          manifest.accepted_by_provider,
+          manifest.submission_recorded_at_millis.map(|value| value.to_string()).as_deref().unwrap_or("n/a"),
           manifest.job_id.as_deref().unwrap_or("n/a"),
           manifest.job_url.as_deref().unwrap_or("n/a"),
           manifest.readiness_blocker.as_deref().unwrap_or("n/a"),
@@ -854,12 +856,14 @@ pub fn render_run_text(
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
-            "  paired_report schema={} provider_backend={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
+            "  paired_report schema={} provider_backend={} trainer_backend={} job_backend={} status={} accepted_by_provider={} submission_recorded_at_millis={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
             report.schema_version,
             report.provider_backend,
             report.trainer_backend,
             report.job_backend,
             report.status,
+            report.accepted_by_provider,
+            report.submission_recorded_at_millis.map(|value| value.to_string()).as_deref().unwrap_or("n/a"),
             report.job_id.as_deref().unwrap_or("n/a"),
             report.job_url.as_deref().unwrap_or("n/a"),
             report.readiness_blocker.as_deref().unwrap_or("n/a"),
@@ -899,7 +903,7 @@ pub fn render_run_text(
       }
       if let Some(report) = &report_lineage.report {
         output.push_str(&format!(
-          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_launch_plan={} source_runs={} provider_backend={} trainer_backend={} job_backend={} status={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
+          "- inspect_artifact={} role={} path={} manifest_path={} schema={} source_training_launch_plan={} source_runs={} provider_backend={} trainer_backend={} job_backend={} status={} accepted_by_provider={} submission_recorded_at_millis={} job_id={} job_url={} readiness_blocker={} job_submission_endpoint={} job_submission_command={} exported={} skipped={} transforms={} probe_command={} probe_succeeded={} warnings={} issue={}\n",
           report_lineage.artifact.artifact_id,
           report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -911,6 +915,8 @@ pub fn render_run_text(
           report.trainer_backend,
           report.job_backend,
           report.status,
+          report.accepted_by_provider,
+          report.submission_recorded_at_millis.map(|value| value.to_string()).as_deref().unwrap_or("n/a"),
           report.job_id.as_deref().unwrap_or("n/a"),
           report.job_url.as_deref().unwrap_or("n/a"),
           report.readiness_blocker.as_deref().unwrap_or("n/a"),
@@ -2112,6 +2118,8 @@ mod tests {
         job_backend: "remote".to_string(),
         job_submission_endpoint: "https://jobs.example/api".to_string(),
         job_submission_command: "submit-training-job".to_string(),
+        submission_recorded_at_millis: Some(1),
+        accepted_by_provider: true,
         training_data_dir: "/tmp/package/compat/nerfstudio".to_string(),
         transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
         export_report_path: "compat/nerfstudio/export_report.json".to_string(),
@@ -2153,6 +2161,8 @@ mod tests {
         trainer_backend: "nerfstudio.splatfacto".to_string(),
         job_submission_endpoint: "https://jobs.example/api".to_string(),
         job_submission_command: "submit-training-job".to_string(),
+        submission_recorded_at_millis: Some(1),
+        accepted_by_provider: true,
         status: "submitted".to_string(),
         job_id: Some("job-123".to_string()),
         job_url: Some("https://jobs.example/job-123".to_string()),
@@ -2466,6 +2476,7 @@ mod tests {
     assert!(output.contains("provider_backend=remote-command-provider"));
     assert!(output.contains("job_backend=remote"));
     assert!(output.contains("status=submitted"));
+    assert!(output.contains("accepted_by_provider=true"));
     assert!(output.contains("job_id=job-123"));
     assert!(output.contains("job_submission_endpoint=https://jobs.example/api"));
     assert!(output.contains("MC-7 Training Results:"));
@@ -2825,6 +2836,8 @@ mod tests {
         job_backend: "remote".to_string(),
         job_submission_endpoint: "https://jobs.example/api".to_string(),
         job_submission_command: "submit-training-job".to_string(),
+        submission_recorded_at_millis: Some(1),
+        accepted_by_provider: true,
         training_data_dir: "/tmp/package/compat/nerfstudio".to_string(),
         transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
         export_report_path: "compat/nerfstudio/export_report.json".to_string(),
@@ -2865,6 +2878,8 @@ mod tests {
           trainer_backend: "nerfstudio.splatfacto".to_string(),
           job_submission_endpoint: "https://jobs.example/api".to_string(),
           job_submission_command: "submit-training-job".to_string(),
+          submission_recorded_at_millis: Some(1),
+          accepted_by_provider: true,
           status: "submitted".to_string(),
           job_id: Some("job-123".to_string()),
           job_url: Some("https://jobs.example/job-123".to_string()),
@@ -2904,6 +2919,8 @@ mod tests {
           trainer_backend: "nerfstudio.splatfacto".to_string(),
           job_submission_endpoint: "https://jobs.example/api".to_string(),
           job_submission_command: "submit-training-job".to_string(),
+          submission_recorded_at_millis: None,
+          accepted_by_provider: false,
           status: "blocked".to_string(),
           job_id: None,
           job_url: None,

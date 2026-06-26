@@ -107,6 +107,10 @@ pub struct TrainingLaunchJobManifest {
   pub job_backend: String,
   pub job_submission_endpoint: String,
   pub job_submission_command: String,
+  #[serde(default)]
+  pub submission_recorded_at_millis: Option<u64>,
+  #[serde(default)]
+  pub accepted_by_provider: bool,
   pub training_data_dir: String,
   #[serde(default)]
   pub transforms_path: Option<String>,
@@ -148,6 +152,10 @@ pub struct TrainingLaunchJobInspectReport {
   pub trainer_backend: String,
   pub job_submission_endpoint: String,
   pub job_submission_command: String,
+  #[serde(default)]
+  pub submission_recorded_at_millis: Option<u64>,
+  #[serde(default)]
+  pub accepted_by_provider: bool,
   pub status: TrainingLaunchJobStatus,
   #[serde(default)]
   pub job_id: Option<String>,
@@ -348,6 +356,9 @@ where
     .unwrap_or_else(|| submit(&request));
 
   let generated_at_millis = auv_tracing_driver::now_millis();
+  let accepted_by_provider =
+    submission.status != TrainingLaunchJobStatus::Blocked && submission.job_id.is_some();
+  let submission_recorded_at_millis = accepted_by_provider.then_some(generated_at_millis);
   let manifest_path = inputs.output_dir.join("minecraft-3dgs-training-job.json");
   let inspect_report_path = inputs
     .output_dir
@@ -382,6 +393,8 @@ where
     job_backend: JOB_BACKEND.to_string(),
     job_submission_endpoint: job_submission_endpoint.clone(),
     job_submission_command: submit_command.clone(),
+    submission_recorded_at_millis,
+    accepted_by_provider,
     training_data_dir: training_data_dir.to_string_lossy().into_owned(),
     transforms_path: launch_plan.transforms_path.clone(),
     export_report_path: export_report_path.to_string_lossy().into_owned(),
@@ -414,6 +427,8 @@ where
     trainer_backend: TRAINER_BACKEND.to_string(),
     job_submission_endpoint: job_submission_endpoint.clone(),
     job_submission_command: submit_command.clone(),
+    submission_recorded_at_millis,
+    accepted_by_provider,
     status: submission.status,
     job_id: submission.job_id,
     job_url: submission.job_url,
@@ -525,11 +540,12 @@ fn render_runbook(
   output.push_str("# MC-7 training job runbook\n\n");
   output.push_str("This is a remote job envelope only. It does not run training locally and it does not claim model quality.\n\n");
   output.push_str(&format!(
-    "- provider backend: `{}`\n- trainer backend: `{}`\n- job backend: `{}`\n- status: `{}`\n- endpoint: `{}`\n\n",
+    "- provider backend: `{}`\n- trainer backend: `{}`\n- job backend: `{}`\n- status: `{}`\n- accepted by provider: `{}`\n- endpoint: `{}`\n\n",
     manifest.provider_backend,
     manifest.trainer_backend,
     manifest.job_backend,
     status_text(inspect_report.status),
+    manifest.accepted_by_provider,
     manifest.job_submission_endpoint,
   ));
   if let Some(blocker) = inspect_report.readiness_blocker {
@@ -549,6 +565,9 @@ fn render_runbook(
     .push_str("- D6 only envelopes the launch request; it does not execute training locally.\n");
   output.push_str(
     "- NOTICE: MC-9 D1 binds this path to a single provider contract; do not widen to multiple providers without a new owner-approved slice.\n",
+  );
+  output.push_str(
+    "- D2 records whether the provider actually accepted the submit request; later slices may consume that evidence but do not change the persisted artifact roles here.\n",
   );
   output.push_str("- D7 is the first slice that can consume remote training results.\n");
   output.push_str("- If blocked, fix configuration or the launch plan and rerun D6.\n");
@@ -737,6 +756,11 @@ mod tests {
       output.inspect_report.job_id.as_deref(),
       Some("job-for-nerfstudio.splatfacto")
     );
+    assert!(output.manifest.accepted_by_provider);
+    assert_eq!(
+      output.manifest.submission_recorded_at_millis,
+      Some(output.manifest.generated_at_millis)
+    );
   }
 
   #[test]
@@ -765,6 +789,8 @@ mod tests {
       output.inspect_report.readiness_blocker,
       Some(TrainingLaunchJobBlocker::MissingConfiguration)
     );
+    assert!(!output.manifest.accepted_by_provider);
+    assert_eq!(output.manifest.submission_recorded_at_millis, None);
   }
 
   #[test]
@@ -829,6 +855,11 @@ mod tests {
     );
     assert_eq!(output.manifest.provider_backend, PROVIDER_BACKEND);
     assert_eq!(output.inspect_report.provider_backend, PROVIDER_BACKEND);
+    assert!(output.inspect_report.accepted_by_provider);
+    assert_eq!(
+      output.inspect_report.submission_recorded_at_millis,
+      output.manifest.submission_recorded_at_millis
+    );
   }
 
   #[test]
@@ -864,6 +895,13 @@ mod tests {
       Some("https://jobs.example.test/v1/jobs/job-from-command")
     );
     assert_eq!(output.manifest.provider_backend, PROVIDER_BACKEND);
+    assert!(output.manifest.accepted_by_provider);
+    assert!(
+      output
+        .inspect_report
+        .submission_recorded_at_millis
+        .is_some()
+    );
   }
 
   #[test]
@@ -952,8 +990,89 @@ mod tests {
       output.inspect_report.readiness_blocker,
       Some(TrainingLaunchJobBlocker::SubmissionFailed)
     );
+    assert!(!output.inspect_report.accepted_by_provider);
+    assert_eq!(output.inspect_report.submission_recorded_at_millis, None);
   }
 
+  #[test]
+  fn default_submit_job_records_provider_acceptance_for_failed_status_with_job_id() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let plan_path = write_launch_plan_fixture(&temp, "nerfstudio", 2, true, true);
+    let output = launch_3dgs_training_job_with_submit_and_env(
+      TrainingLaunchJobInputs {
+        training_launch_plan_path: plan_path,
+        output_dir: temp.path().join("job"),
+      },
+      |_request| TrainingLaunchJobSubmission {
+        status: TrainingLaunchJobStatus::Failed,
+        job_id: Some("job-failed".to_string()),
+        job_url: Some("https://jobs.example.test/v1/jobs/job-failed".to_string()),
+        blocker: None,
+      },
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
+        submit_token: Some("secret-token".to_string()),
+        submit_command: Some("remote-submit --dry-run".to_string()),
+      },
+    )
+    .expect("failed status with job id should still write outputs");
+
+    assert_eq!(
+      output.inspect_report.status,
+      TrainingLaunchJobStatus::Failed
+    );
+    assert_eq!(output.inspect_report.job_id.as_deref(), Some("job-failed"));
+    assert!(output.manifest.accepted_by_provider);
+    assert!(output.inspect_report.accepted_by_provider);
+    assert_eq!(
+      output.manifest.submission_recorded_at_millis,
+      Some(output.manifest.generated_at_millis)
+    );
+    assert_eq!(
+      output.inspect_report.submission_recorded_at_millis,
+      Some(output.inspect_report.generated_at_millis)
+    );
+  }
+
+  #[test]
+  fn real_submit_manifest_records_provider_acceptance_fields() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let plan_path = write_launch_plan_fixture(&temp, "nerfstudio", 2, true, true);
+    let output = launch_3dgs_training_job_with_submit_and_env(
+      TrainingLaunchJobInputs {
+        training_launch_plan_path: plan_path,
+        output_dir: temp.path().join("job"),
+      },
+      |_request| TrainingLaunchJobSubmission {
+        status: TrainingLaunchJobStatus::Submitted,
+        job_id: Some("provider-job-42".to_string()),
+        job_url: Some("https://provider.example/jobs/provider-job-42".to_string()),
+        blocker: None,
+      },
+      TrainingJobEnvironment {
+        submit_endpoint: Some("https://provider.example/api".to_string()),
+        submit_token: Some("secret-token".to_string()),
+        submit_command: Some("provider-submit --json".to_string()),
+      },
+    )
+    .expect("real submit should write outputs");
+
+    assert!(output.manifest.accepted_by_provider);
+    assert_eq!(
+      output.manifest.submission_recorded_at_millis,
+      Some(output.manifest.generated_at_millis)
+    );
+    assert!(output.inspect_report.accepted_by_provider);
+    assert_eq!(
+      output.inspect_report.submission_recorded_at_millis,
+      Some(output.inspect_report.generated_at_millis)
+    );
+    assert_eq!(output.manifest.job_id.as_deref(), Some("provider-job-42"));
+    assert_eq!(
+      output.inspect_report.job_url.as_deref(),
+      Some("https://provider.example/jobs/provider-job-42")
+    );
+  }
   #[test]
   fn training_job_manifest_backfills_provider_backend_from_legacy_json() {
     let legacy_json = r#"
@@ -992,6 +1111,8 @@ mod tests {
     let manifest: TrainingLaunchJobManifest =
       serde_json::from_str(legacy_json).expect("legacy manifest should parse");
     assert_eq!(manifest.provider_backend, PROVIDER_BACKEND);
+    assert!(!manifest.accepted_by_provider);
+    assert_eq!(manifest.submission_recorded_at_millis, None);
   }
 
   #[test]
@@ -1026,5 +1147,7 @@ mod tests {
     let report: TrainingLaunchJobInspectReport =
       serde_json::from_str(legacy_json).expect("legacy inspect should parse");
     assert_eq!(report.provider_backend, PROVIDER_BACKEND);
+    assert!(!report.accepted_by_provider);
+    assert_eq!(report.submission_recorded_at_millis, None);
   }
 }

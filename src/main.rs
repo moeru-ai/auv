@@ -458,6 +458,19 @@ async fn run() -> Result<(), String> {
         }
       );
       println!(
+        "acceptedByProvider: {}",
+        output.value.inspect_report.accepted_by_provider
+      );
+      println!(
+        "submissionRecordedAtMillis: {}",
+        output
+          .value
+          .inspect_report
+          .submission_recorded_at_millis
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string())
+      );
+      println!(
         "readinessBlocker: {}",
         match output.value.inspect_report.readiness_blocker {
           Some(auv_game_minecraft::TrainingLaunchJobBlocker::MissingConfiguration) => {

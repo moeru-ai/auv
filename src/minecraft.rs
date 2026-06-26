@@ -279,12 +279,12 @@ pub fn run_minecraft_3dgs_training_job_launch_with_environment(
 ) -> AuvResult<RecordedOperationOutput<auv_game_minecraft::TrainingLaunchJobOutput>> {
   recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.minecraft.launch_3dgs_training_job"),
-    "Minecraft launch MC-7 D6 training job",
+    "Minecraft launch MC-9 D2 real provider submit",
     |context| {
       context.record_event(
         "minecraft.launch_3dgs_training_job.inputs",
         Some(format!(
-          "training_launch_plan={} output_dir={} trained_3dgs=false trainer_started=false job_backend=remote provider_backend=remote-command-provider",
+          "training_launch_plan={} output_dir={} trained_3dgs=false trainer_started=false job_backend=remote provider_backend=remote-command-provider real_submit=true",
           training_launch_plan_path.display(),
           output_dir.display()
         )),
@@ -315,19 +315,19 @@ pub fn run_minecraft_3dgs_training_job_launch_with_environment(
           MINECRAFT_3DGS_TRAINING_JOB_ARTIFACT_ROLE,
           &result.manifest_path,
           "minecraft-3dgs-training-job.json",
-          Some("MC-9 D1 single-provider-bound remote training job manifest".to_string()),
+          Some("MC-9 D2 real provider submit manifest".to_string()),
         )?;
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_JOB_INSPECT_ARTIFACT_ROLE,
           &result.inspect_report_path,
           "minecraft-3dgs-training-job-inspect.json",
-          Some("MC-9 D1 single-provider-bound remote training job inspect report".to_string()),
+          Some("MC-9 D2 real provider submit inspect report".to_string()),
         )?;
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_JOB_RUNBOOK_ARTIFACT_ROLE,
           &result.runbook_path,
           "mc7-training-job-runbook.md",
-          Some("MC-9 D1 single-provider-bound remote training job runbook".to_string()),
+          Some("MC-9 D2 real provider submit runbook".to_string()),
         )?;
         Ok::<_, String>(())
       })?;
@@ -1298,6 +1298,8 @@ mod tests {
       job_backend: "remote".to_string(),
       job_submission_endpoint: "https://jobs.example.test/v1".to_string(),
       job_submission_command: "remote-submit --plan launch.json".to_string(),
+      submission_recorded_at_millis: Some(1),
+      accepted_by_provider: true,
       training_data_dir: "/tmp/training-package/compat/nerfstudio".to_string(),
       transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
       export_report_path: "/tmp/training-package/compat/nerfstudio/export_report.json".to_string(),
