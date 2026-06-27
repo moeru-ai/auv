@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use crate::closed_scene_toy_fixture::load_closed_scene_fixture;
 use crate::scene_packet::ScenePacketManifest;
 use crate::training_result_semantic::{
   TrainingResultSemanticCheckpointRecord, TrainingResultSemanticManifest,
@@ -273,9 +274,6 @@ pub(crate) fn run_checkpoint_native_provider_backend(
   Ok(CheckpointNativeProviderOutcome { answer }.into_backend_outcome())
 }
 
-// TODO(mc18-d3): dispatch from query_3dgs_training_result when --query-provider
-// closed-scene-toy lands; D1 keeps the provider entrypoint crate-local until CLI wiring.
-#[allow(dead_code)]
 pub(crate) fn run_closed_scene_toy_provider_backend(
   semantic_manifest: &TrainingResultSemanticManifest,
   inputs: &TrainingResultSpatialQueryInputs,
@@ -330,16 +328,27 @@ pub(crate) fn run_closed_scene_toy_provider_backend(
     );
   }
 
-  // TODO(mc18-d2): bounded fixture schema + closed-label lookup; MC-18 D1 skeleton
-  // blocks until fixture resolution lands.
-  let _fixture_path = fixture_path;
-  Ok(
-    toy_blocked_answer(
-      TrainingResultSpatialQueryReason::ProviderOutputInvalid,
-      "MC-18 closed_scene_toy provider blocked: fixture resolution deferred to MC-18 D2",
-    )
-    .into_backend_outcome(),
-  )
+  let fixture = match load_closed_scene_fixture(fixture_path) {
+    Ok(fixture) => fixture,
+    Err(error) => {
+      return Ok(
+        toy_failed_answer(
+          TrainingResultSpatialQueryReason::ProviderOutputInvalid,
+          format!(
+            "MC-18 closed_scene_toy provider failed: {}",
+            error.message()
+          ),
+        )
+        .into_backend_outcome(),
+      );
+    }
+  };
+
+  let answer = crate::closed_scene_toy_fixture::resolve_closed_label_answer(
+    &fixture,
+    &provider_inputs.request,
+  );
+  Ok(ClosedSceneToyProviderOutcome { answer }.into_backend_outcome())
 }
 
 fn blocked_answer(
@@ -364,9 +373,24 @@ fn toy_blocked_answer(
   reason: TrainingResultSpatialQueryReason,
   message: impl Into<String>,
 ) -> ClosedSceneToyProviderOutcome {
+  toy_status_answer(TrainingResultSpatialQueryStatus::Blocked, reason, message)
+}
+
+fn toy_failed_answer(
+  reason: TrainingResultSpatialQueryReason,
+  message: impl Into<String>,
+) -> ClosedSceneToyProviderOutcome {
+  toy_status_answer(TrainingResultSpatialQueryStatus::Failed, reason, message)
+}
+
+fn toy_status_answer(
+  status: TrainingResultSpatialQueryStatus,
+  reason: TrainingResultSpatialQueryReason,
+  message: impl Into<String>,
+) -> ClosedSceneToyProviderOutcome {
   ClosedSceneToyProviderOutcome {
     answer: TrainingResultSpatialQueryAnswer {
-      status: TrainingResultSpatialQueryStatus::Blocked,
+      status,
       reason: Some(reason),
       message: Some(message.into()),
       basis_frame_id: None,
@@ -449,8 +473,8 @@ mod tests {
   use crate::training_result::TrainingResultStatus;
   use crate::training_result_semantic::TrainingResultSemanticManifest;
   use crate::types::{
-    BlockFace, MinecraftSpatialFrame, MinecraftTargetSemantics, PlayerPose, RaycastHit, Vec3,
-    Viewport,
+    BlockFace, MinecraftSpatialFrame, MinecraftTargetSemantics, PlayerPose, ProjectionVisibility,
+    RaycastHit, Vec3, Viewport,
   };
   use std::fs;
   use tempfile::TempDir;
@@ -602,6 +626,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: true,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     };
 
@@ -650,6 +676,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: true,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     };
 
@@ -703,6 +731,8 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: true,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir: temp.path().join("query-output"),
     };
 
@@ -736,8 +766,16 @@ mod tests {
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
       query_command: None,
       use_checkpoint_native_provider: false,
+      use_closed_scene_toy_provider: false,
+      closed_scene_fixture_path: None,
       output_dir,
     }
+  }
+
+  fn mc18_fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("tests/fixtures/mc18")
+      .join(name)
   }
 
   #[test]
@@ -810,6 +848,127 @@ mod tests {
     assert_eq!(
       outcome.answer.reason,
       Some(TrainingResultSpatialQueryReason::SemanticSourceNotReady)
+    );
+  }
+
+  #[test]
+  fn visible_fixture_answers_with_closed_scene_toy_basis() {
+    let temp = TempDir::new().expect("tempdir");
+    let target_block = BlockPosition::new(511, 73, 728);
+    let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
+    let (semantic_manifest_path, _) = write_semantic_manifest(
+      &temp,
+      TrainingResultSemanticStatus::Ready,
+      &scene_packet_manifest_path,
+      false,
+    );
+    let semantic_manifest: TrainingResultSemanticManifest =
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
+        .expect("parse semantic");
+    let mut inputs = spatial_query_inputs(
+      semantic_manifest_path,
+      target_block,
+      temp.path().join("query-output"),
+    );
+    inputs.target_face = Some(BlockFace::North);
+
+    let outcome = run_closed_scene_toy_provider_backend(
+      &semantic_manifest,
+      &inputs,
+      Some(mc18_fixture_path("visible.json").as_path()),
+    )
+    .expect("visible fixture should answer");
+
+    assert_eq!(
+      outcome.answer.status,
+      TrainingResultSpatialQueryStatus::Answered
+    );
+    assert_eq!(
+      outcome.answer.basis_frame_id.as_deref(),
+      Some("closed_scene_toy:mc18-smoke-v1:frame-0003")
+    );
+    assert_eq!(
+      outcome.answer.visibility,
+      Some(ProjectionVisibility::Visible)
+    );
+    assert!(outcome.answer.screen_point.is_some());
+  }
+
+  #[test]
+  fn outside_window_fixture_answers_without_clickable_visibility() {
+    let temp = TempDir::new().expect("tempdir");
+    let target_block = BlockPosition::new(511, 73, 728);
+    let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
+    let (semantic_manifest_path, _) = write_semantic_manifest(
+      &temp,
+      TrainingResultSemanticStatus::Ready,
+      &scene_packet_manifest_path,
+      false,
+    );
+    let semantic_manifest: TrainingResultSemanticManifest =
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
+        .expect("parse semantic");
+    let mut inputs = spatial_query_inputs(
+      semantic_manifest_path,
+      target_block,
+      temp.path().join("query-output"),
+    );
+    inputs.target_face = Some(BlockFace::North);
+
+    let outcome = run_closed_scene_toy_provider_backend(
+      &semantic_manifest,
+      &inputs,
+      Some(mc18_fixture_path("outside_window.json").as_path()),
+    )
+    .expect("outside_window fixture should answer");
+
+    assert_eq!(
+      outcome.answer.status,
+      TrainingResultSpatialQueryStatus::Answered
+    );
+    assert_eq!(
+      outcome.answer.visibility,
+      Some(ProjectionVisibility::OutsideWindow)
+    );
+    assert!(outcome.answer.screen_point.is_some());
+  }
+
+  #[test]
+  fn corrupt_fixture_json_fails_closed_scene_toy_provider() {
+    let temp = TempDir::new().expect("tempdir");
+    let target_block = BlockPosition::new(511, 73, 728);
+    let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
+    let (semantic_manifest_path, _) = write_semantic_manifest(
+      &temp,
+      TrainingResultSemanticStatus::Ready,
+      &scene_packet_manifest_path,
+      false,
+    );
+    let semantic_manifest: TrainingResultSemanticManifest =
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
+        .expect("parse semantic");
+    let inputs = spatial_query_inputs(
+      semantic_manifest_path,
+      target_block,
+      temp.path().join("query-output"),
+    );
+    let corrupt_fixture = temp.path().join("corrupt.json");
+    fs::write(&corrupt_fixture, b"{not-json").expect("write corrupt");
+
+    let outcome = run_closed_scene_toy_provider_backend(
+      &semantic_manifest,
+      &inputs,
+      Some(corrupt_fixture.as_path()),
+    )
+    .expect("corrupt fixture should return outcome");
+
+    assert_eq!(
+      outcome.answer.status,
+      TrainingResultSpatialQueryStatus::Failed
+    );
+    assert_eq!(
+      outcome.answer.reason,
+      Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid)
     );
   }
 }

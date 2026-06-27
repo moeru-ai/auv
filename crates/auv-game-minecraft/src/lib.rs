@@ -1,5 +1,6 @@
 pub mod artifact;
 pub mod bind;
+pub mod closed_scene_toy_fixture;
 pub mod dataset;
 pub mod evidence;
 pub mod ingest;
