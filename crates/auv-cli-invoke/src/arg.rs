@@ -96,9 +96,35 @@ pub const REGION_HEIGHT: ArgSpec = ArgSpec {
   required: true,
   help: "Region height in the selected coordinate space.",
 };
+pub const OFFSET_X: ArgSpec = ArgSpec {
+  flag: "--offset_x",
+  value_name: "NUMBER",
+  required: false,
+  help: "Absolute window-pixel X coordinate for the click target.",
+};
+pub const OFFSET_Y: ArgSpec = ArgSpec {
+  flag: "--offset_y",
+  value_name: "NUMBER",
+  required: false,
+  help: "Absolute window-pixel Y coordinate for the click target.",
+};
+pub const RELATIVE_X: ArgSpec = ArgSpec {
+  flag: "--relative_x",
+  value_name: "NUMBER",
+  required: false,
+  help: "Relative window X coordinate in 0..1 against the resolved window width.",
+};
+pub const RELATIVE_Y: ArgSpec = ArgSpec {
+  flag: "--relative_y",
+  value_name: "NUMBER",
+  required: false,
+  help: "Relative window Y coordinate in 0..1 against the resolved window height.",
+};
 
 pub const TARGET_ARGS: &[ArgSpec] = &[TARGET];
 pub const WINDOW_ARGS: &[ArgSpec] = &[TARGET, TITLE];
+pub const WINDOW_CLICK_POINT_ARGS: &[ArgSpec] =
+  &[TARGET, TITLE, OFFSET_X, OFFSET_Y, RELATIVE_X, RELATIVE_Y];
 pub const LABEL_ARGS: &[ArgSpec] = &[TARGET, LABEL];
 pub const SCREEN_TEXT_ARGS: &[ArgSpec] = &[TARGET, QUERY];
 pub const IMAGE_TEXT_ARGS: &[ArgSpec] = &[QUERY, IMAGE_PATH];

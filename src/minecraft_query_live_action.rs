@@ -17,10 +17,9 @@ use auv_tracing_driver::trace::RunId;
 
 pub const QUERY_WIRED_LIVE_ACTION_OPERATION_ID: &str = "auv.minecraft.query_wired_live_action";
 
-// NOTICE(mc19-d3-click-stub): `input.clickWindowPoint` remains a stub in
-// `crates/auv-cli-invoke/src/commands/input.rs`; D3 records honest wiring +
-// operation-result evidence via library-only run recording. Live gameplay
-// closure with a non-stub click backend is deferred to MC-19 D4.
+// NOTICE(mc19-d4-known-limit): D4 closes non-stub `input.clickWindowPoint`
+// dispatch for MC-19 wired live action; gameplay verification remains out of
+// scope for this slice.
 
 pub fn invoke_click_at_window_point(
   recording: &RunRecordingBackend,
@@ -177,7 +176,7 @@ pub fn stage_query_wired_live_action_operation_result(
     "operation-result",
     &artifact_path,
     "operation-result.json",
-    Some("MC-19 D3 query wired live action operation result with MC-12 query lineage".to_string()),
+    Some("MC-19 D4 query wired live action operation result with MC-12 query lineage".to_string()),
   );
   let _ = fs::remove_file(&artifact_path);
   staged.map_err(|error| error.to_string())

@@ -12,8 +12,8 @@ use crate::training_result_spatial_query_action::{
 };
 use crate::types::BlockPosition;
 
-pub const MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT: &str =
-  "mc19_v1_d3_query_wired_live_action_library_recording_no_gameplay_verification";
+pub const MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT: &str =
+  "mc19_v1_d4_query_wired_live_action_non_stub_click_no_gameplay_verification";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryActionWiringLineage {
@@ -49,7 +49,7 @@ pub fn wire_query_manifest_to_action(
 ) -> QueryActionWiringOutcome {
   let readiness = derive_action_readiness(manifest);
   let mut known_limits = manifest.known_limits.clone();
-  known_limits.push(MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT.to_string());
+  known_limits.push(MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT.to_string());
   wire_readiness_to_action(&readiness, lineage, known_limits, executor)
 }
 
@@ -224,7 +224,7 @@ mod tests {
       outcome
         .known_limits
         .iter()
-        .any(|limit| limit == MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT)
+        .any(|limit| limit == MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT)
     );
   }
 
@@ -290,7 +290,7 @@ mod tests {
     let outcome = wire_readiness_to_action(
       &readiness,
       &lineage,
-      vec![MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT.to_string()],
+      vec![MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT.to_string()],
       &executor,
     );
 

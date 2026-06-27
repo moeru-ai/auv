@@ -145,7 +145,7 @@ pub use training_result_spatial_query_action::{
   derive_action_readiness,
 };
 pub use training_result_spatial_query_action_wiring::{
-  MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT, QueryActionWiringLineage,
+  MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT, QueryActionWiringLineage,
   QueryActionWiringOutcome, QueryLiveClickExecutor, query_action_wiring_lineage_from_manifest,
   wire_query_manifest_to_action,
 };

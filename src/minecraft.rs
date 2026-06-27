@@ -2836,7 +2836,7 @@ mod tests {
       operation_output_message(&operation_result.output).contains("mock live click dispatched")
     );
     assert!(operation_result.known_limits.iter().any(|limit| {
-      limit == auv_game_minecraft::MC19_V1_D3_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT
+      limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT
     }));
 
     let _ = fs::remove_dir_all(temp);

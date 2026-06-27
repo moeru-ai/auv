@@ -2,7 +2,8 @@ use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
   arg::{
     KEY_ARGS, QUERY_ARGS, QUERY_OR_CANDIDATE_ARGS, QUERY_OR_CANDIDATE_OVERLAY_ARGS,
-    QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS, WINDOW_QUERY_OVERLAY_ARGS,
+    QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS, WINDOW_CLICK_POINT_ARGS,
+    WINDOW_QUERY_OVERLAY_ARGS,
   },
   invoke_command,
 };
@@ -150,13 +151,10 @@ fn click_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   id = "input.clickWindowPoint",
   group = "input",
   summary = "Click a point relative to a target macOS window, either from --relative_x/--relative_y inputs or from a promoted --candidate JSON payload.",
-  args = WINDOW_ARGS,
+  args = WINDOW_CLICK_POINT_ARGS,
 )]
-fn click_window_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  // TODO(invoke-input-click-window-point): WindowApi::click exists, but this
-  // invoke command exposes only window selection args and no relative point or
-  // candidate parser; add that typed input contract before enabling it.
-  Err("input.clickWindowPoint requires direct window-relative point inputs".to_string())
+fn click_window_point(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+  click_window_point_impl(input)
 }
 
 #[invoke_command(
@@ -286,6 +284,193 @@ fn press_key_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   Err("input.key is only available on macOS".to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn click_window_point_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+  use auv_driver::{ClickOptions, Driver};
+
+  // TODO(invoke-input-click-window-point-candidate): --candidate JSON promotion
+  // path is documented on the command summary but intentionally deferred; MC-19
+  // D4 uses direct offset/relative point inputs only.
+  if input.dry_run {
+    return Ok(dry_run_output(input.command_id));
+  }
+
+  let uses_relative_window_point =
+    input.inputs.contains_key("relative_x") || input.inputs.contains_key("relative_y");
+  let absolute_window_point = if uses_relative_window_point {
+    None
+  } else {
+    Some(resolve_click_window_point(
+      input.inputs,
+      input.command_id,
+      None,
+    )?)
+  };
+
+  let driver = auv_driver_macos::MacosDriver::new();
+  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let window = session
+    .window()
+    .resolve(click_window_selector(&input))
+    .map_err(|error| error.to_string())?;
+  let window_point = if uses_relative_window_point {
+    resolve_click_window_point(input.inputs, input.command_id, Some(&window))?
+  } else {
+    absolute_window_point
+      .expect("absolute window point must be present when relative inputs are absent")
+  };
+  let action = session
+    .window()
+    .click(&window, window_point, ClickOptions::default())
+    .map_err(|error| error.to_string())?;
+
+  let mut output = input_action_output(
+    "clicked window point",
+    "auv-driver-macos.window.input",
+    &action,
+  )?;
+  add_click_window_signals(&mut output, &window, window_point);
+  Ok(output)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn click_window_point_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+  Err("input.clickWindowPoint is only available on macOS".to_string())
+}
+
+fn resolve_click_window_point(
+  inputs: &std::collections::BTreeMap<String, String>,
+  command_id: &str,
+  window: Option<&auv_driver::Window>,
+) -> Result<auv_driver::geometry::WindowPoint, String> {
+  use auv_driver::geometry::WindowPoint;
+
+  let has_offset_x = inputs.contains_key("offset_x");
+  let has_offset_y = inputs.contains_key("offset_y");
+  let has_relative_x = inputs.contains_key("relative_x");
+  let has_relative_y = inputs.contains_key("relative_y");
+
+  if has_offset_x || has_offset_y {
+    if !has_offset_x || !has_offset_y {
+      return Err(format!(
+        "{command_id} requires both --offset_x and --offset_y when using absolute window points"
+      ));
+    }
+    if has_relative_x || has_relative_y {
+      return Err(format!(
+        "{command_id} accepts either --offset_x/--offset_y or --relative_x/--relative_y, not both"
+      ));
+    }
+    let offset_x = parse_required_number(inputs, "offset_x", command_id)?;
+    let offset_y = parse_required_number(inputs, "offset_y", command_id)?;
+    return Ok(WindowPoint::new(offset_x, offset_y));
+  }
+
+  if has_relative_x || has_relative_y {
+    if !has_relative_x || !has_relative_y {
+      return Err(format!(
+        "{command_id} requires both --relative_x and --relative_y when using relative window points"
+      ));
+    }
+    let window = window.ok_or_else(|| {
+      format!("{command_id} requires a resolved window for --relative_x/--relative_y")
+    })?;
+    let relative_x = parse_required_number(inputs, "relative_x", command_id)?;
+    let relative_y = parse_required_number(inputs, "relative_y", command_id)?;
+    return Ok(window_relative_window_point(window, relative_x, relative_y));
+  }
+
+  Err(format!(
+    "{command_id} requires --offset_x/--offset_y or --relative_x/--relative_y"
+  ))
+}
+
+fn parse_required_number(
+  inputs: &std::collections::BTreeMap<String, String>,
+  name: &str,
+  command_id: &str,
+) -> Result<f64, String> {
+  let raw = inputs
+    .get(name)
+    .ok_or_else(|| format!("{command_id} requires --{name}"))?;
+  raw
+    .parse::<f64>()
+    .map_err(|error| format!("{command_id} received invalid --{name}: {error}"))
+}
+
+fn window_relative_window_point(
+  window: &auv_driver::Window,
+  relative_x: f64,
+  relative_y: f64,
+) -> auv_driver::geometry::WindowPoint {
+  auv_driver::geometry::WindowPoint::new(
+    window.frame.size.width * relative_x,
+    window.frame.size.height * relative_y,
+  )
+}
+
+#[cfg(target_os = "macos")]
+fn click_window_selector(input: &InvokeCommandInput<'_>) -> auv_driver::WindowSelector {
+  use auv_driver::{App, TextMatcher, WindowSelector};
+
+  let mut selector = WindowSelector {
+    main_visible: true,
+    ..WindowSelector::default()
+  };
+  if let Some(target) = click_window_target(input) {
+    selector.app = Some(App::bundle_id(target));
+  }
+  if let Some(title) = input
+    .inputs
+    .get("title")
+    .filter(|value| !value.trim().is_empty())
+  {
+    selector.title = Some(TextMatcher::Contains(title.clone()));
+  }
+  selector
+}
+
+fn click_window_target<'a>(input: &'a InvokeCommandInput<'_>) -> Option<&'a str> {
+  input
+    .target_application_id
+    .or_else(|| input.inputs.get("target").map(String::as_str))
+    .filter(|value| !value.trim().is_empty())
+}
+
+#[cfg(target_os = "macos")]
+fn add_click_window_signals(
+  output: &mut InvokeCommandOutput,
+  window: &auv_driver::Window,
+  window_point: auv_driver::geometry::WindowPoint,
+) {
+  output
+    .signals
+    .insert("window.id".to_string(), window.reference.id.clone());
+  if let Some(title) = &window.title {
+    output
+      .signals
+      .insert("window.title".to_string(), title.clone());
+  }
+  if let Some(app_name) = &window.app_name {
+    output
+      .signals
+      .insert("window.app_name".to_string(), app_name.clone());
+  }
+  if let Some(bundle_id) = &window.app_bundle_id {
+    output
+      .signals
+      .insert("window.app_bundle_id".to_string(), bundle_id.clone());
+  }
+  output.signals.insert(
+    "click.window_x".to_string(),
+    window_point.point().x.to_string(),
+  );
+  output.signals.insert(
+    "click.window_y".to_string(),
+    window_point.point().y.to_string(),
+  );
+}
+
 fn required_input<'a>(input: &'a InvokeCommandInput<'_>, name: &str) -> Result<&'a str, String> {
   input
     .inputs
@@ -378,4 +563,77 @@ fn input_action_artifact(
     preferred_name: format!("{label}.json"),
     note: Some("Typed InputActionResult recorded by the invoke handler.".to_string()),
   })
+}
+
+#[cfg(test)]
+mod click_window_point_tests {
+  use super::*;
+  use std::collections::BTreeMap;
+
+  #[test]
+  fn click_window_point_missing_point_args_returns_error() {
+    let inputs = BTreeMap::new();
+    let input = InvokeCommandInput {
+      command_id: "input.clickWindowPoint",
+      target_application_id: Some("com.example.App"),
+      inputs: &inputs,
+      dry_run: false,
+    };
+    let error = click_window_point_impl(input).expect_err("missing point args should fail");
+    assert!(error.contains("requires --offset_x/--offset_y or --relative_x/--relative_y"));
+  }
+
+  #[test]
+  fn click_window_point_dry_run_succeeds_without_driver() {
+    let mut inputs = BTreeMap::new();
+    inputs.insert("offset_x".to_string(), "640".to_string());
+    inputs.insert("offset_y".to_string(), "360".to_string());
+    let input = InvokeCommandInput {
+      command_id: "input.clickWindowPoint",
+      target_application_id: Some("com.example.App"),
+      inputs: &inputs,
+      dry_run: true,
+    };
+    let output = click_window_point_impl(input).expect("dry run should succeed");
+    assert!(output.summary.contains("dry run: input.clickWindowPoint"));
+  }
+
+  #[test]
+  fn resolve_click_window_point_accepts_offset_pair() {
+    let mut inputs = BTreeMap::new();
+    inputs.insert("offset_x".to_string(), "640".to_string());
+    inputs.insert("offset_y".to_string(), "360".to_string());
+    let point =
+      resolve_click_window_point(&inputs, "input.clickWindowPoint", None).expect("offset pair");
+    assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
+  }
+
+  #[test]
+  fn resolve_click_window_point_converts_relative_pair() {
+    use auv_driver::geometry::{CoordinateSpace, Point, Rect, Size};
+    use auv_driver::window::{Window, WindowRef};
+
+    let mut inputs = BTreeMap::new();
+    inputs.insert("relative_x".to_string(), "0.5".to_string());
+    inputs.insert("relative_y".to_string(), "0.5".to_string());
+    let window = Window {
+      reference: WindowRef {
+        id: "window-1".to_string(),
+      },
+      title: Some("Example".to_string()),
+      app_name: Some("Example".to_string()),
+      app_bundle_id: Some("com.example.App".to_string()),
+      process_id: Some(1),
+      frame: Rect {
+        origin: Point::new(0.0, 0.0),
+        size: Size::new(1280.0, 720.0),
+      },
+      coordinate_space: CoordinateSpace::Screen,
+      is_main: true,
+      is_visible: true,
+    };
+    let point = resolve_click_window_point(&inputs, "input.clickWindowPoint", Some(&window))
+      .expect("relative pair");
+    assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
+  }
 }
