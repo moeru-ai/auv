@@ -87,7 +87,7 @@ Status model:
 
 - MC-10 v1 supports `nerfstudio.splatfacto` only
 - backend hint uses top-level `trainer` scalar only
-- no render preview
+- render preview / holdout witness is MC-16; see `docs/ai/references/2026-06-27-minecraft-mc16-holdout-preview-render-inspect-design.md`
 - no checkpoint semantic validation
 - read-side inspect/viewer summary consumption is MC-11; see `docs/ai/references/2026-06-27-minecraft-mc11-semantic-read-side-inspect-consumer-design.md`
 

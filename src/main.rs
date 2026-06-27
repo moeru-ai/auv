@@ -691,6 +691,73 @@ async fn run() -> Result<(), String> {
       println!("output: {}", output.value.output_dir.display());
     }
 
+    CliCommand::MinecraftInspect3dgsTrainingResultHoldout {
+      training_result_semantic_manifest_path,
+      holdout_frame_index,
+      holdout_render_command,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_3dgs_training_result_holdout_preview(
+        &runtime.recording().handle(),
+        PathBuf::from(training_result_semantic_manifest_path),
+        holdout_frame_index,
+        holdout_render_command,
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: {}", output.value.manifest.status.as_str());
+      println!(
+        "reason: {}",
+        output
+          .value
+          .manifest
+          .reason
+          .map(|reason| reason.as_str())
+          .unwrap_or("none")
+      );
+      println!(
+        "holdoutFrameIndex: {}",
+        output.value.manifest.holdout_frame_index
+      );
+      println!(
+        "spatialFrameId: {}",
+        output
+          .value
+          .manifest
+          .holdout_frame
+          .as_ref()
+          .map(|witness| witness.spatial_frame_id.as_str())
+          .unwrap_or("none")
+      );
+      println!(
+        "basisCheckpointPath: {}",
+        output
+          .value
+          .manifest
+          .basis_checkpoint_path
+          .as_deref()
+          .unwrap_or("none")
+      );
+      println!(
+        "holdoutScreenshotPath: {}",
+        output
+          .value
+          .manifest
+          .holdout_screenshot_path
+          .as_deref()
+          .unwrap_or("none")
+      );
+      println!(
+        "holdoutPreviewManifest: {}",
+        output.value.manifest_path.display()
+      );
+      println!(
+        "inspectReport: {}",
+        output.value.inspect_report_path.display()
+      );
+    }
     CliCommand::MinecraftQuery3dgsTrainingResult {
       training_result_semantic_manifest_path,
       target_block,

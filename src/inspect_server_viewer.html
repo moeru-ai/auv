@@ -1311,6 +1311,14 @@
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-semantic-inspect";
   }
 
+  function isMinecraftTrainingResultHoldoutPreviewManifestArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result-holdout-preview";
+  }
+
+  function isMinecraftTrainingResultHoldoutPreviewInspectArtifact(artifact) {
+    return !!artifact && artifact.role === "minecraft-3dgs-training-result-holdout-preview-inspect";
+  }
+
   function isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact) {
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-query";
   }
@@ -1824,6 +1832,36 @@
       ]);
     }
 
+    if (isMinecraftTrainingResultHoldoutPreviewManifestArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result holdout preview manifest"],
+        ["schema", parsed.schema_version],
+        ["training_result_semantic_manifest", parsed.training_result_semantic_manifest_path],
+        ["holdout_frame_index", parsed.holdout_frame_index],
+        ["spatial_frame_id", parsed.holdout_frame && parsed.holdout_frame.spatial_frame_id],
+        ["status", parsed.status],
+        ["reason", parsed.reason],
+        ["basis_checkpoint_path", parsed.basis_checkpoint_path],
+        ["holdout_screenshot_path", parsed.holdout_screenshot_path],
+        ["reference_overlay_path", parsed.reference_overlay_path],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
+    if (isMinecraftTrainingResultHoldoutPreviewInspectArtifact(artifact)) {
+      return renderKeyValueSummary([
+        ["kind", "training result holdout preview inspect report"],
+        ["schema", parsed.schema_version],
+        ["manifest_path", parsed.training_result_holdout_preview_manifest_path],
+        ["holdout_frame_index", parsed.holdout_frame_index],
+        ["status", parsed.status],
+        ["reason", parsed.reason],
+        ["holdout_frame_selection", parsed.holdout_frame_selection],
+        ["checkpoint_count", parsed.checkpoint_count],
+        ["scene_packet_frame_count", parsed.scene_packet_frame_count],
+        ["warnings", countArray(parsed.warnings)],
+        ["known_limits", countArray(parsed.known_limits)],
+      ]);
+    }
     if (isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact)) {
       const actionReadiness = deriveSpatialQueryActionReadiness(parsed);
       return renderKeyValueSummary([
@@ -2164,6 +2202,8 @@
             || isMinecraftTrainingResultArtifactFetchInspectArtifact(artifact)
             || isMinecraftTrainingResultSemanticManifestArtifact(artifact)
             || isMinecraftTrainingResultSemanticInspectArtifact(artifact)
+            || isMinecraftTrainingResultHoldoutPreviewManifestArtifact(artifact)
+            || isMinecraftTrainingResultHoldoutPreviewInspectArtifact(artifact)
             || isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact)
             || isMinecraftTrainingResultSpatialQueryInspectArtifact(artifact)
           )) {

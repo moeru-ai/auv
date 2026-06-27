@@ -8,15 +8,16 @@ use auv_game_minecraft::{
   TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
   TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs,
   TrainingPackageOutput, TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput,
-  TrainingResultInputs, TrainingResultOutput, TrainingResultSemanticValidationInputs,
+  TrainingResultHoldoutPreviewInputs, TrainingResultHoldoutPreviewOutput, TrainingResultInputs,
+  TrainingResultOutput, TrainingResultSemanticValidationInputs,
   TrainingResultSemanticValidationOutput, TrainingResultSpatialQueryInputs,
   TrainingResultSpatialQueryOutput, build_texture_sweep_samples_from_bundles,
   collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
   evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
   export_spatial_bundle, fetch_3dgs_training_result_artifacts_with_environment,
-  launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
-  prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs, query_3dgs_training_result,
-  validate_3dgs_training_result,
+  inspect_3dgs_training_result_holdout, launch_3dgs_training_job,
+  launch_3dgs_training_job_with_environment, prepare_3dgs_training_launch,
+  prepare_texture_sweep_resource_packs, query_3dgs_training_result, validate_3dgs_training_result,
 };
 
 use auv_tracing_driver::RecordingHandle;
@@ -66,6 +67,10 @@ pub const MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE: &str =
 pub const MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE: &str = "minecraft-3dgs-training-result-query";
 pub const MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE: &str =
   "minecraft-3dgs-training-result-query-inspect";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_ROLE: &str =
+  "minecraft-3dgs-training-result-holdout-preview";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_ROLE: &str =
+  "minecraft-3dgs-training-result-holdout-preview-inspect";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -549,6 +554,61 @@ fn block_face_label(face: auv_game_minecraft::BlockFace) -> String {
     auv_game_minecraft::BlockFace::East => "east".to_string(),
     auv_game_minecraft::BlockFace::West => "west".to_string(),
   }
+}
+
+pub fn run_minecraft_3dgs_training_result_holdout_preview(
+  recording: &RecordingHandle,
+  training_result_semantic_manifest_path: PathBuf,
+  holdout_frame_index: Option<usize>,
+  holdout_render_command: Option<String>,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TrainingResultHoldoutPreviewOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(
+      RunType::Execute,
+      "auv.minecraft.inspect_3dgs_training_result_holdout",
+    ),
+    "Minecraft inspect MC-16 3DGS training result holdout preview",
+    move |context| {
+      context.record_event(
+        "minecraft.inspect_3dgs_training_result_holdout.inputs",
+        Some(format!(
+          "training_result_semantic_manifest={} holdout_frame_index={} holdout_render_command={} output_dir={} holdout_preview_witness=true splat_holdout_render=false",
+          training_result_semantic_manifest_path.display(),
+          holdout_frame_index
+            .map(|index| index.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+          holdout_render_command.is_some(),
+          output_dir.display(),
+        )),
+      );
+      let result = inspect_3dgs_training_result_holdout(TrainingResultHoldoutPreviewInputs {
+        training_result_semantic_manifest_path: training_result_semantic_manifest_path.clone(),
+        holdout_frame_index,
+        holdout_render_command: holdout_render_command.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span(
+        "minecraft.inspect_3dgs_training_result_holdout.artifacts",
+        |context| {
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_ROLE,
+            &result.manifest_path,
+            "minecraft-3dgs-training-result-holdout-preview.json",
+            Some("MC-16 training result holdout preview manifest".to_string()),
+          )?;
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_ROLE,
+            &result.inspect_report_path,
+            "minecraft-3dgs-training-result-holdout-preview-inspect.json",
+            Some("MC-16 training result holdout preview inspect report".to_string()),
+          )?;
+          Ok::<_, String>(())
+        },
+      )?;
+      Ok::<_, String>(result)
+    },
+  )
 }
 
 pub fn run_minecraft_3dgs_training_result_spatial_query(

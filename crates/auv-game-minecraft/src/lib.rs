@@ -16,6 +16,7 @@ pub mod training_launch;
 pub mod training_package;
 pub mod training_result;
 pub mod training_result_artifact;
+pub mod training_result_holdout_preview;
 pub mod training_result_semantic;
 pub mod training_result_spatial_query;
 pub mod training_result_spatial_query_action;
@@ -100,6 +101,14 @@ pub use training_result_artifact::{
   fetch_3dgs_training_result_artifacts, fetch_3dgs_training_result_artifacts_with_command,
   fetch_3dgs_training_result_artifacts_with_environment,
 };
+pub use training_result_holdout_preview::{
+  HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewAnswer, HoldoutPreviewReason,
+  HoldoutPreviewRequest, HoldoutPreviewStatus, MC16_V1_HOLDOUT_PREVIEW_KNOWN_LIMIT,
+  TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_REPORT_SCHEMA_VERSION,
+  TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION, TrainingResultHoldoutPreviewInputs,
+  TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
+  TrainingResultHoldoutPreviewOutput, inspect_3dgs_training_result_holdout,
+};
 pub use training_result_semantic::{
   TRAINING_RESULT_SEMANTIC_INSPECT_REPORT_SCHEMA_VERSION,
   TRAINING_RESULT_SEMANTIC_MANIFEST_SCHEMA_VERSION, TrainingResultSemanticCheckpointRecord,
@@ -121,10 +130,7 @@ pub use training_result_spatial_query_action::{
   TrainingResultSpatialQueryActionEligibility, TrainingResultSpatialQueryActionReadiness,
   derive_action_readiness,
 };
-pub use training_result_spatial_query_provider::{
-  CheckpointNativeProviderInputs, CheckpointNativeProviderOutcome,
-  MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, run_checkpoint_native_provider_backend,
-};
+pub use training_result_spatial_query_provider::MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT;
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,
   MinecraftSpatialFrame, MinecraftTargetSemantics, NearbyBlock, NearbyEntity, PlayerPose,
