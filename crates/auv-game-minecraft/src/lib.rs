@@ -18,6 +18,7 @@ pub mod training_result;
 pub mod training_result_artifact;
 pub mod training_result_semantic;
 pub mod training_result_spatial_query;
+pub mod training_result_spatial_query_action;
 pub mod types;
 pub mod verify;
 
@@ -114,6 +115,10 @@ pub use training_result_spatial_query::{
   TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest,
   TrainingResultSpatialQueryOutput, TrainingResultSpatialQueryReason,
   TrainingResultSpatialQueryRequest, TrainingResultSpatialQueryStatus, query_3dgs_training_result,
+};
+pub use training_result_spatial_query_action::{
+  TrainingResultSpatialQueryActionEligibility, TrainingResultSpatialQueryActionReadiness,
+  derive_action_readiness,
 };
 pub use types::{
   BlockFace, BlockPosition, InventorySummaryEntry, MinecraftBlockTarget, MinecraftProjectedPoint,

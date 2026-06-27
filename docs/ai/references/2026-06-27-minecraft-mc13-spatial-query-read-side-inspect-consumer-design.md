@@ -51,7 +51,8 @@ Duplicate matches leave reports unpaired, matching MC-11 / D12 behavior.
 
 - No MC-12 producer contract rewrite
 - No rerun of `query-3dgs-training-result`
-- No action / ActionResolver integration (**MC-14**)
+- No action / ActionResolver integration (**MC-14** — see
+  `docs/ai/references/2026-06-27-minecraft-mc14-spatial-query-action-facing-consumer-design.md`)
 - No Gaussian-native / checkpoint-native provider (**MC-15**)
 - No render preview or splat quality gate (**MC-16**)
 - No entity / anchor / label query
@@ -59,7 +60,7 @@ Duplicate matches leave reports unpaired, matching MC-11 / D12 behavior.
 ## Deferred slices
 
 ```text
-MC-14  action-facing spatial query consumer
+MC-14  action-facing spatial query consumer (see MC-14 design + live closure docs)
 MC-15  checkpoint-native / Gaussian-native provider backend
 MC-16  render inspect / holdout preview consumer
 ```

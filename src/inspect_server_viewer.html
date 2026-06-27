@@ -1315,6 +1315,53 @@
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-query";
   }
 
+
+  function deriveSpatialQueryActionReadiness(parsed) {
+    if (!parsed || typeof parsed !== "object") {
+      return {
+        action_eligibility: "n/a",
+        window_point: null,
+        refusal_reason: null,
+      };
+    }
+    const status = parsed.status;
+    if (status !== "answered") {
+      const reason = parsed.reason ? ` reason=${parsed.reason}` : "";
+      return {
+        action_eligibility: "not_consumable",
+        window_point: null,
+        refusal_reason: `status=${status || "unknown"}${reason}`,
+      };
+    }
+    const visibility = parsed.visibility;
+    if (!visibility) {
+      return {
+        action_eligibility: "answer_non_clickable",
+        window_point: null,
+        refusal_reason: "answered query missing visibility witness",
+      };
+    }
+    if (visibility === "visible" && parsed.screen_point && typeof parsed.screen_point.x === "number" && typeof parsed.screen_point.y === "number") {
+      return {
+        action_eligibility: "click_ready",
+        window_point: `${parsed.screen_point.x},${parsed.screen_point.y}`,
+        refusal_reason: null,
+      };
+    }
+    if (visibility !== "visible") {
+      return {
+        action_eligibility: "answer_non_clickable",
+        window_point: null,
+        refusal_reason: `visibility=${visibility}`,
+      };
+    }
+    return {
+      action_eligibility: "answer_non_clickable",
+      window_point: null,
+      refusal_reason: "visibility=visible missing_screen_point",
+    };
+  }
+
   function isMinecraftTrainingResultSpatialQueryInspectArtifact(artifact) {
     return !!artifact && artifact.role === "minecraft-3dgs-training-result-query-inspect";
   }
@@ -1778,6 +1825,7 @@
     }
 
     if (isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact)) {
+      const actionReadiness = deriveSpatialQueryActionReadiness(parsed);
       return renderKeyValueSummary([
         ["kind", "training result spatial query manifest"],
         ["schema", parsed.schema_version],
@@ -1793,6 +1841,9 @@
         ["screen_point", parsed.screen_point && [parsed.screen_point.x, parsed.screen_point.y].join(",")],
         ["basis_frame_id", parsed.basis_frame_id],
         ["comparison_verdict", parsed.comparison_verdict],
+        ["action_eligibility", actionReadiness.action_eligibility],
+        ["window_point", actionReadiness.window_point],
+        ["refusal_reason", actionReadiness.refusal_reason],
         ["known_limits", countArray(parsed.known_limits)],
       ]);
     }

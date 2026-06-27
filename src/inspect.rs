@@ -23,11 +23,13 @@ use crate::run_read::{
   MinecraftTrainingResultManifestLineage, MinecraftTrainingResultSemanticInspectReportLineage,
   MinecraftTrainingResultSemanticManifestLineage,
   MinecraftTrainingResultSpatialQueryInspectReportLineage,
-  MinecraftTrainingResultSpatialQueryManifestLineage, list_minecraft_projection_artifacts,
-  list_minecraft_spatial_bundle_manifests, list_minecraft_telemetry_sample_artifacts,
-  list_minecraft_training_job_inspect_reports, list_minecraft_training_job_manifests,
-  list_minecraft_training_launch_inspect_reports, list_minecraft_training_launch_manifests,
-  list_minecraft_training_package_inspect_reports, list_minecraft_training_package_manifests,
+  MinecraftTrainingResultSpatialQueryManifestLineage,
+  derive_minecraft_training_result_spatial_query_action_readiness,
+  list_minecraft_projection_artifacts, list_minecraft_spatial_bundle_manifests,
+  list_minecraft_telemetry_sample_artifacts, list_minecraft_training_job_inspect_reports,
+  list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports,
+  list_minecraft_training_launch_manifests, list_minecraft_training_package_inspect_reports,
+  list_minecraft_training_package_manifests,
   list_minecraft_training_result_artifact_fetch_inspect_reports,
   list_minecraft_training_result_artifact_fetch_manifests,
   list_minecraft_training_result_inspect_reports, list_minecraft_training_result_manifests,
@@ -1589,6 +1591,47 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nMC-14 Training Result Spatial Query Action Readiness:\n");
+  if minecraft_training_result_spatial_query_manifests.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in minecraft_training_result_spatial_query_manifests {
+      let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
+        unique_matching_report(
+          minecraft_training_result_spatial_query_inspect_reports,
+          |lineage| {
+            lineage
+              .report
+              .as_ref()
+              .is_some_and(|report| spatial_query_manifest_matches_report(manifest, report))
+          },
+        )
+      });
+      let readiness =
+        derive_minecraft_training_result_spatial_query_action_readiness(manifest_lineage);
+      let manifest = manifest_lineage.manifest.as_ref();
+      output.push_str(&format!(
+        "- query_artifact={} target_block={} status={} visibility={} selected_backend={} action_eligibility={} window_point={} refusal_reason={} paired_inspect_artifact={} issue={}\n",
+        manifest_lineage.artifact.artifact_id,
+        manifest.map(|value| value.target_block.as_str()).unwrap_or("n/a"),
+        manifest.map(|value| value.status.as_str()).unwrap_or("n/a"),
+        manifest
+          .and_then(|value| value.visibility.as_deref())
+          .unwrap_or("n/a"),
+        manifest
+          .and_then(|value| value.selected_backend.as_deref())
+          .unwrap_or("n/a"),
+        readiness.action_eligibility,
+        readiness.window_point.as_deref().unwrap_or("n/a"),
+        readiness.refusal_reason.as_deref().unwrap_or("n/a"),
+        paired_report
+          .map(|report| report.artifact.artifact_id.to_string())
+          .unwrap_or_else(|| "n/a".to_string()),
+        readiness.issue.as_deref().unwrap_or("n/a"),
+      ));
+    }
+  }
+
   output.push_str("\nCandidate Action Execution Lineage:\n");
   if candidate_action_execution_lineage.is_empty() {
     output.push_str("- none\n");
@@ -3102,6 +3145,10 @@ mod tests {
     assert!(output.contains("provider_status=blocked"));
     assert!(output.contains("reference_status=answered"));
     assert!(output.contains("scene_packet_frame_count=12"));
+    assert!(output.contains("MC-14 Training Result Spatial Query Action Readiness:"));
+    assert!(output.contains("query_artifact=artifact_mc12_query_manifest"));
+    assert!(output.contains("action_eligibility=click_ready"));
+    assert!(output.contains("paired_inspect_artifact=artifact_mc12_query_inspect"));
 
     assert!(output.contains("normalized_artifacts=3"));
     assert!(output.contains("Candidate Action Execution Lineage:"));
@@ -3262,6 +3309,158 @@ mod tests {
     assert!(output.contains("inspect_artifact=artifact_mc12_query_orphan"));
     assert!(
       output.contains("path=artifacts/minecraft-3dgs-training-result-query-inspect-orphan.json")
+    );
+  }
+
+  #[test]
+  fn render_run_text_renders_spatial_query_action_readiness_three_states() {
+    use crate::run_read::MinecraftTrainingResultSpatialQueryManifestSummary;
+
+    let run_id = RunId::new("run_inspect_mc14_three_states");
+    let root_span_id = SpanId::new("span_mc14_root");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_mc14_three_states"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id: root_span_id.clone(),
+        attributes: BTreeMap::new(),
+        summary: Some("mc14 three states".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+
+    fn query_manifest(
+      run: &CanonicalRun,
+      span_id: SpanId,
+      artifact_id: &str,
+      summary: MinecraftTrainingResultSpatialQueryManifestSummary,
+    ) -> MinecraftTrainingResultSpatialQueryManifestLineage {
+      MinecraftTrainingResultSpatialQueryManifestLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new(artifact_id),
+          span_id,
+          captured_event_id: None,
+          role: Some("minecraft-3dgs-training-result-query".to_string()),
+          path: Some(format!("artifacts/{artifact_id}.json")),
+          summary: Some("spatial query manifest".to_string()),
+          resolved: true,
+        },
+        manifest: Some(summary),
+        issue: None,
+      }
+    }
+
+    fn base_summary() -> MinecraftTrainingResultSpatialQueryManifestSummary {
+      MinecraftTrainingResultSpatialQueryManifestSummary {
+        schema_version: 1,
+        training_result_semantic_manifest_path: "/tmp/semantic.json".to_string(),
+        source_training_result_artifact_manifest_path: "/tmp/artifact.json".to_string(),
+        source_training_result_manifest_path: "/tmp/result.json".to_string(),
+        source_training_job_manifest_path: "/tmp/job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch.json".to_string(),
+        source_training_package_manifest_path: "/tmp/package.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet.json".to_string(),
+        source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
+        source_run_ids: vec!["run-1".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        normalized_result_dir: "/tmp/normalized".to_string(),
+        query_kind: "block_projection".to_string(),
+        target_block: "511,73,728".to_string(),
+        target_face: None,
+        target_semantics: "hit_face_center".to_string(),
+        selected_backend: Some("projection_reference".to_string()),
+        status: "answered".to_string(),
+        reason: None,
+        visibility: Some("visible".to_string()),
+        screen_point: Some("854.0,480.0".to_string()),
+        match_radius_px: Some(8.0),
+        confidence: Some(0.9),
+        basis_frame_id: Some("frame-1".to_string()),
+        comparison_verdict: Some("reference_only".to_string()),
+        known_limits: vec![],
+      }
+    }
+
+    let click_ready = base_summary();
+    let mut outside_window = base_summary();
+    outside_window.selected_backend = Some("command_provider".to_string());
+    outside_window.visibility = Some("outside_window".to_string());
+    outside_window.screen_point = None;
+    outside_window.comparison_verdict = Some("divergent".to_string());
+
+    let mut absent = base_summary();
+    absent.target_block = "9,9,9".to_string();
+    absent.selected_backend = None;
+    absent.status = "failed".to_string();
+    absent.reason = Some("target_block_absent_from_scene_packet".to_string());
+    absent.visibility = None;
+    absent.screen_point = None;
+    absent.comparison_verdict = Some("not_comparable".to_string());
+
+    let manifests = vec![
+      query_manifest(
+        &run,
+        root_span_id.clone(),
+        "artifact_mc14_click_ready",
+        click_ready,
+      ),
+      query_manifest(
+        &run,
+        root_span_id.clone(),
+        "artifact_mc14_outside_window",
+        outside_window,
+      ),
+      query_manifest(&run, root_span_id.clone(), "artifact_mc14_absent", absent),
+    ];
+
+    let output = render_run_text(
+      &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &manifests,
+      &[],
+    );
+
+    assert!(output.contains("MC-14 Training Result Spatial Query Action Readiness:"));
+    assert!(output.contains("query_artifact=artifact_mc14_click_ready"));
+    assert!(output.contains("action_eligibility=click_ready"));
+    assert!(output.contains("query_artifact=artifact_mc14_outside_window"));
+    assert!(output.contains("action_eligibility=answer_non_clickable"));
+    assert!(output.contains("refusal_reason=visibility=outside_window"));
+    assert!(output.contains("query_artifact=artifact_mc14_absent"));
+    assert!(output.contains("action_eligibility=not_consumable"));
+    assert!(
+      output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet")
     );
   }
 

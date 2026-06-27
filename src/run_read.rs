@@ -35,7 +35,7 @@ use auv_game_minecraft::{
   TrainingResultArtifactFetchManifest, TrainingResultInspectReport, TrainingResultManifest,
   TrainingResultSemanticCheckpointRecord, TrainingResultSemanticInspectReport,
   TrainingResultSemanticManifest, TrainingResultSpatialQueryInspectReport,
-  TrainingResultSpatialQueryManifest,
+  TrainingResultSpatialQueryManifest, derive_action_readiness,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
@@ -134,6 +134,14 @@ pub struct MinecraftTrainingResultSemanticInspectReportLineage {
 pub struct MinecraftTrainingResultSpatialQueryManifestLineage {
   pub artifact: ArtifactRefLineage,
   pub manifest: Option<MinecraftTrainingResultSpatialQueryManifestSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftTrainingResultSpatialQueryActionReadinessSummary {
+  pub action_eligibility: String,
+  pub window_point: Option<String>,
+  pub refusal_reason: Option<String>,
   pub issue: Option<String>,
 }
 
@@ -1547,6 +1555,273 @@ pub(crate) fn extract_minecraft_training_result_spatial_query_inspect_reports(
     }
   }
   Ok(reports)
+}
+
+pub fn derive_minecraft_training_result_spatial_query_action_readiness(
+  lineage: &MinecraftTrainingResultSpatialQueryManifestLineage,
+) -> MinecraftTrainingResultSpatialQueryActionReadinessSummary {
+  if let Some(issue) = &lineage.issue {
+    return MinecraftTrainingResultSpatialQueryActionReadinessSummary {
+      action_eligibility: "n/a".to_string(),
+      window_point: None,
+      refusal_reason: None,
+      issue: Some(issue.clone()),
+    };
+  }
+  let Some(manifest_summary) = &lineage.manifest else {
+    return MinecraftTrainingResultSpatialQueryActionReadinessSummary {
+      action_eligibility: "n/a".to_string(),
+      window_point: None,
+      refusal_reason: None,
+      issue: Some("minecraft training result spatial query manifest summary missing".to_string()),
+    };
+  };
+  let manifest = match spatial_query_manifest_summary_for_action_readiness(manifest_summary) {
+    Ok(manifest) => manifest,
+    Err(error) => {
+      return MinecraftTrainingResultSpatialQueryActionReadinessSummary {
+        action_eligibility: "n/a".to_string(),
+        window_point: None,
+        refusal_reason: None,
+        issue: Some(error),
+      };
+    }
+  };
+  let readiness = derive_action_readiness(&manifest);
+  MinecraftTrainingResultSpatialQueryActionReadinessSummary {
+    action_eligibility: readiness.eligibility.as_str().to_string(),
+    window_point: readiness.window_point.map(|point| {
+      let point = auv_driver::geometry::Point::from(point);
+      format!("{},{}", point.x, point.y)
+    }),
+    refusal_reason: readiness.refusal_reason,
+    issue: None,
+  }
+}
+
+fn spatial_query_manifest_summary_for_action_readiness(
+  summary: &MinecraftTrainingResultSpatialQueryManifestSummary,
+) -> Result<TrainingResultSpatialQueryManifest, String> {
+  let target_block = parse_spatial_query_target_block(&summary.target_block)?;
+  let target_face = summary
+    .target_face
+    .as_deref()
+    .map(parse_spatial_query_target_face)
+    .transpose()?;
+  let target_semantics = parse_spatial_query_target_semantics(&summary.target_semantics)?;
+  let query_kind = parse_spatial_query_kind(&summary.query_kind)?;
+  let status = parse_spatial_query_status(&summary.status)?;
+  let reason = summary
+    .reason
+    .as_deref()
+    .map(parse_spatial_query_reason)
+    .transpose()?;
+  let visibility = summary
+    .visibility
+    .as_deref()
+    .map(parse_spatial_query_visibility)
+    .transpose()?;
+  let screen_point = summary
+    .screen_point
+    .as_deref()
+    .map(parse_spatial_query_screen_point)
+    .transpose()?;
+  let selected_backend = summary
+    .selected_backend
+    .as_deref()
+    .map(parse_spatial_query_backend)
+    .transpose()?;
+  let comparison_verdict = summary
+    .comparison_verdict
+    .as_deref()
+    .map(parse_spatial_query_comparison_verdict)
+    .transpose()?;
+
+  Ok(TrainingResultSpatialQueryManifest {
+    schema_version: summary.schema_version,
+    generated_at_millis: 0,
+    training_result_semantic_manifest_path: summary.training_result_semantic_manifest_path.clone(),
+    source_training_result_artifact_manifest_path: summary
+      .source_training_result_artifact_manifest_path
+      .clone(),
+    source_training_result_manifest_path: summary.source_training_result_manifest_path.clone(),
+    source_training_job_manifest_path: summary.source_training_job_manifest_path.clone(),
+    source_training_launch_plan_path: summary.source_training_launch_plan_path.clone(),
+    source_training_package_manifest_path: summary.source_training_package_manifest_path.clone(),
+    source_scene_packet_manifest_path: summary.source_scene_packet_manifest_path.clone(),
+    source_bundle_manifest_paths: summary.source_bundle_manifest_paths.clone(),
+    source_run_ids: summary.source_run_ids.clone(),
+    trainer_backend: summary.trainer_backend.clone(),
+    job_backend: summary.job_backend.clone(),
+    normalized_result_dir: summary.normalized_result_dir.clone(),
+    query_kind,
+    target_block,
+    target_face,
+    target_semantics,
+    selected_backend,
+    status,
+    reason,
+    visibility,
+    screen_point,
+    match_radius_px: summary.match_radius_px,
+    confidence: summary.confidence,
+    basis_frame_id: summary.basis_frame_id.clone(),
+    comparison_verdict,
+    known_limits: summary.known_limits.clone(),
+  })
+}
+
+fn parse_spatial_query_target_block(
+  label: &str,
+) -> Result<auv_game_minecraft::BlockPosition, String> {
+  let parts: Vec<&str> = label.split(',').collect();
+  if parts.len() != 3 {
+    return Err(format!(
+      "invalid spatial query target_block label `{label}`"
+    ));
+  }
+  let x = parts[0]
+    .parse::<i32>()
+    .map_err(|error| format!("invalid spatial query target_block x `{label}`: {error}"))?;
+  let y = parts[1]
+    .parse::<i32>()
+    .map_err(|error| format!("invalid spatial query target_block y `{label}`: {error}"))?;
+  let z = parts[2]
+    .parse::<i32>()
+    .map_err(|error| format!("invalid spatial query target_block z `{label}`: {error}"))?;
+  Ok(auv_game_minecraft::BlockPosition::new(x, y, z))
+}
+
+fn parse_spatial_query_target_face(label: &str) -> Result<auv_game_minecraft::BlockFace, String> {
+  match label {
+    "up" => Ok(auv_game_minecraft::BlockFace::Up),
+    "down" => Ok(auv_game_minecraft::BlockFace::Down),
+    "north" => Ok(auv_game_minecraft::BlockFace::North),
+    "south" => Ok(auv_game_minecraft::BlockFace::South),
+    "east" => Ok(auv_game_minecraft::BlockFace::East),
+    "west" => Ok(auv_game_minecraft::BlockFace::West),
+    other => Err(format!("invalid spatial query target_face label `{other}`")),
+  }
+}
+
+fn parse_spatial_query_target_semantics(
+  label: &str,
+) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
+  match label {
+    "hit_face_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter),
+    "block_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::BlockCenter),
+    other => Err(format!(
+      "invalid spatial query target_semantics label `{other}`"
+    )),
+  }
+}
+
+fn parse_spatial_query_kind(
+  label: &str,
+) -> Result<auv_game_minecraft::TrainingResultSpatialQueryKind, String> {
+  match label {
+    "block_projection" => Ok(auv_game_minecraft::TrainingResultSpatialQueryKind::BlockProjection),
+    other => Err(format!("invalid spatial query query_kind label `{other}`")),
+  }
+}
+
+fn parse_spatial_query_status(
+  label: &str,
+) -> Result<auv_game_minecraft::TrainingResultSpatialQueryStatus, String> {
+  match label {
+    "answered" => Ok(auv_game_minecraft::TrainingResultSpatialQueryStatus::Answered),
+    "blocked" => Ok(auv_game_minecraft::TrainingResultSpatialQueryStatus::Blocked),
+    "failed" => Ok(auv_game_minecraft::TrainingResultSpatialQueryStatus::Failed),
+    other => Err(format!("invalid spatial query status label `{other}`")),
+  }
+}
+
+fn parse_spatial_query_reason(
+  label: &str,
+) -> Result<auv_game_minecraft::TrainingResultSpatialQueryReason, String> {
+  match label {
+    "semantic_source_not_ready" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::SemanticSourceNotReady)
+    }
+    "target_block_absent_from_scene_packet" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket)
+    }
+    "reference_projection_failed" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::ReferenceProjectionFailed)
+    }
+    "provider_command_failed" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::ProviderCommandFailed)
+    }
+    "provider_output_invalid" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::ProviderOutputInvalid)
+    }
+    other => Err(format!("invalid spatial query reason label `{other}`")),
+  }
+}
+
+fn parse_spatial_query_visibility(
+  label: &str,
+) -> Result<auv_game_minecraft::ProjectionVisibility, String> {
+  match label {
+    "visible" => Ok(auv_game_minecraft::ProjectionVisibility::Visible),
+    "behind_camera" => Ok(auv_game_minecraft::ProjectionVisibility::BehindCamera),
+    "out_of_frustum" => Ok(auv_game_minecraft::ProjectionVisibility::OutOfFrustum),
+    "outside_window" => Ok(auv_game_minecraft::ProjectionVisibility::OutsideWindow),
+    other => Err(format!("invalid spatial query visibility label `{other}`")),
+  }
+}
+
+fn parse_spatial_query_screen_point(label: &str) -> Result<auv_driver::geometry::Point, String> {
+  let parts: Vec<&str> = label.split(',').collect();
+  if parts.len() != 2 {
+    return Err(format!(
+      "invalid spatial query screen_point label `{label}`"
+    ));
+  }
+  let x = parts[0]
+    .parse::<f64>()
+    .map_err(|error| format!("invalid spatial query screen_point x `{label}`: {error}"))?;
+  let y = parts[1]
+    .parse::<f64>()
+    .map_err(|error| format!("invalid spatial query screen_point y `{label}`: {error}"))?;
+  Ok(auv_driver::geometry::Point::new(x, y))
+}
+
+fn parse_spatial_query_backend(
+  label: &str,
+) -> Result<auv_game_minecraft::TrainingResultSpatialQueryBackend, String> {
+  match label {
+    "command_provider" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::CommandProvider)
+    }
+    "projection_reference" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::ProjectionReference)
+    }
+    other => Err(format!(
+      "invalid spatial query selected_backend label `{other}`"
+    )),
+  }
+}
+
+fn parse_spatial_query_comparison_verdict(
+  label: &str,
+) -> Result<auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict, String> {
+  match label {
+    "match" => Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::Match),
+    "divergent" => Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::Divergent),
+    "provider_only" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::ProviderOnly)
+    }
+    "reference_only" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly)
+    }
+    "not_comparable" => {
+      Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::NotComparable)
+    }
+    other => Err(format!(
+      "invalid spatial query comparison_verdict label `{other}`"
+    )),
+  }
 }
 
 pub(crate) fn extract_minecraft_training_package_manifests(
@@ -3243,11 +3518,13 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE, CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
-    CANDIDATE_PROMOTION_ARTIFACT_ROLE, CandidateActionDecisionLineageStatus,
-    CandidateActionExecutionClosureState, CandidateActionExecutionLineageStatus,
-    CandidatePromotionLineageStatus, DETECTOR_RECOGNITION_ARTIFACT_ROLE,
-    DetectorRecognitionLineageStatus, MinecraftSpatialBundleManifestSummary,
+    ArtifactRefLineage, CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+    CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE, CANDIDATE_PROMOTION_ARTIFACT_ROLE,
+    CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState,
+    CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus,
+    DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
+    MinecraftSpatialBundleManifestSummary, MinecraftTrainingResultSpatialQueryManifestLineage,
+    derive_minecraft_training_result_spatial_query_action_readiness,
     extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
     extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
     extract_minecraft_training_job_inspect_reports, extract_minecraft_training_job_manifests,
@@ -4098,7 +4375,46 @@ mod tests {
       1
     );
 
+    let readiness = derive_minecraft_training_result_spatial_query_action_readiness(&extracted[0]);
+    assert_eq!(readiness.action_eligibility, "click_ready");
+    assert!(readiness.window_point.is_some());
+    assert!(readiness.refusal_reason.is_none());
+    assert!(readiness.issue.is_none());
+
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_training_result_spatial_query_action_readiness_inherits_manifest_issue() {
+    use auv_tracing_driver::trace::{ArtifactId, RunId, SpanId};
+
+    let lineage = MinecraftTrainingResultSpatialQueryManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: RunId::new("run_issue"),
+        artifact_id: ArtifactId::new("artifact_issue"),
+        span_id: SpanId::new("span_issue"),
+        captured_event_id: None,
+        role: Some(crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE.to_string()),
+        path: Some("artifacts/query.json".to_string()),
+        summary: Some("spatial query manifest".to_string()),
+        resolved: true,
+      },
+      manifest: None,
+      issue: Some(
+        "minecraft training result spatial query manifest mime_type text/plain is not JSON"
+          .to_string(),
+      ),
+    };
+
+    let readiness = derive_minecraft_training_result_spatial_query_action_readiness(&lineage);
+    assert_eq!(readiness.action_eligibility, "n/a");
+    assert!(readiness.window_point.is_none());
+    assert!(
+      readiness
+        .issue
+        .as_deref()
+        .is_some_and(|issue| issue.contains("mime_type"))
+    );
   }
 
   #[test]
