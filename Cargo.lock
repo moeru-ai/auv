@@ -438,6 +438,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-file"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "auv-game-balatro"
 version = "0.0.1"
 dependencies = [
@@ -461,6 +470,7 @@ name = "auv-game-minecraft"
 version = "0.0.1"
 dependencies = [
  "auv-driver",
+ "auv-file",
  "auv-tracing-driver",
  "image",
  "serde",
@@ -475,6 +485,7 @@ version = "0.0.1"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
+ "auv-file",
  "auv-inference-common",
  "auv-tracing-driver",
  "image",

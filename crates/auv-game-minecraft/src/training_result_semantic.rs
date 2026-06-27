@@ -1,8 +1,11 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
+use auv_file::{
+  JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
+  write_json_file as write_json_file_helper,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -171,9 +174,9 @@ pub fn validate_3dgs_training_result(
   let mut known_limits = BTreeSet::new();
   known_limits.extend(artifact_manifest.known_limits.iter().cloned());
   known_limits.insert(
-    "MC-10 closes normalized training-result semantic inspect evidence only; it does not grade model quality or claim downstream splat usability"
-      .to_string(),
-  );
+        "MC-10 closes normalized training-result semantic inspect evidence only; it does not grade model quality or claim downstream splat usability"
+            .to_string(),
+    );
   known_limits.insert(
     "MC-10 does not inspect checkpoint internal semantics or run render preview".to_string(),
   );
@@ -185,9 +188,9 @@ pub fn validate_3dgs_training_result(
   let status_snapshot_present = is_real_file(&status_snapshot_path);
   if !status_snapshot_present {
     warnings.insert(
-      "job_status.json is absent or unreadable; MC-10 records the snapshot observation only and does not gate on it"
-        .to_string(),
-    );
+            "job_status.json is absent or unreadable; MC-10 records the snapshot observation only and does not gate on it"
+                .to_string(),
+        );
   }
 
   let (
@@ -609,10 +612,14 @@ fn read_json_file<T: DeserializeOwned>(
   path: &Path,
   label: &str,
 ) -> TrainingResultSemanticValidationResult<T> {
-  let file = fs::File::open(path)
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
-  serde_json::from_reader(BufReader::new(file))
-    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+  read_json_file_helper(path).map_err(|error| match error {
+    JsonFileReadError::Open(error) => {
+      format!("failed to open {label} {}: {error}", path.display())
+    }
+    JsonFileReadError::Parse(error) => {
+      format!("failed to parse {label} {}: {error}", path.display())
+    }
+  })
 }
 
 fn write_json_file<T: Serialize>(
@@ -620,10 +627,12 @@ fn write_json_file<T: Serialize>(
   value: &T,
   label: &str,
 ) -> TrainingResultSemanticValidationResult<()> {
-  let bytes = serde_json::to_vec_pretty(value)
-    .map_err(|error| format!("failed to serialize {label}: {error}"))?;
-  fs::write(path, bytes)
-    .map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
+  write_json_file_helper(path, value, JsonWriteOptions::default()).map_err(|error| match error {
+    JsonFileWriteError::CreateParent(error) | JsonFileWriteError::Write(error) => {
+      format!("failed to write {label} {}: {error}", path.display())
+    }
+    JsonFileWriteError::Serialize(error) => format!("failed to serialize {label}: {error}"),
+  })
 }
 
 #[cfg(test)]

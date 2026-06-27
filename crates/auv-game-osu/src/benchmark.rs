@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use auv_file::{JsonFileWriteError, JsonWriteOptions, write_json_file as write_json_file_helper};
 use rosu_map::Beatmap;
 use rosu_map::section::hit_objects::HitObjectKind;
 use serde::{Deserialize, Serialize};
@@ -1128,10 +1129,22 @@ fn scheduled_target(kind: &HitObjectKind) -> (ObjectKind, f32, f32) {
 }
 
 fn write_json(path: PathBuf, value: &impl Serialize) -> OsuResult<()> {
-  let mut rendered = serde_json::to_string_pretty(value)
-    .map_err(|error| format!("failed to encode {}: {error}", path.display()))?;
-  rendered.push('\n');
-  fs::write(&path, rendered).map_err(|error| format!("failed to write {}: {error}", path.display()))
+  write_json_file_helper(
+    &path,
+    value,
+    JsonWriteOptions {
+      create_parent_dirs: false,
+      trailing_newline: true,
+    },
+  )
+  .map_err(|error| match error {
+    JsonFileWriteError::CreateParent(error) | JsonFileWriteError::Write(error) => {
+      format!("failed to write {}: {error}", path.display())
+    }
+    JsonFileWriteError::Serialize(error) => {
+      format!("failed to encode {}: {error}", path.display())
+    }
+  })
 }
 
 fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> OsuResult<T> {
@@ -1619,6 +1632,15 @@ ApproachRate:7
     assert_eq!(summary.missing_frame_count, 0);
     assert_eq!(summary.max_capture_delay_ms, -1);
     assert_eq!(summary.suspicious_time_inversion_count, 1);
+  }
+
+  #[test]
+  fn read_json_reports_read_error_for_directory_path() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+
+    let error = read_json::<serde_json::Value>(temp_dir.path()).expect_err("directory should fail");
+
+    assert!(error.contains("failed to read"));
   }
 
   #[test]

@@ -593,6 +593,15 @@ mod tests {
   }
 
   #[test]
+  fn read_json_reports_read_error_for_directory_path() {
+    let temp_dir = tempfile::tempdir().expect("tempdir");
+
+    let error = read_json::<serde_json::Value>(temp_dir.path()).expect_err("directory should fail");
+
+    assert!(error.contains("failed to read"));
+  }
+
+  #[test]
   fn build_label_entries_uses_default_label_order() {
     let entries = build_label_entries(&LabelMap::default()).expect("entries");
     assert_eq!(entries[0].label, "hit_circle");

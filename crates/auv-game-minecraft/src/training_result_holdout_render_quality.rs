@@ -1,9 +1,13 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use auv_file::{
+  JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
+  write_json_file as write_json_file_helper,
+};
 use image::RgbImage;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -856,9 +860,9 @@ fn run_holdout_render_and_metrics(
     })
   } else {
     warnings.insert(
-      "holdout screenshot and rendered image dimensions differ; MC-17 records metric_partial without resize"
-        .to_string(),
-    );
+            "holdout screenshot and rendered image dimensions differ; MC-17 records metric_partial without resize"
+                .to_string(),
+        );
     Ok(HoldoutRenderQualityOutcome {
       status: HoldoutRenderQualityStatus::Ready,
       reason: None,
@@ -976,10 +980,14 @@ fn read_json_file<T: DeserializeOwned>(
   path: &Path,
   label: &str,
 ) -> TrainingResultHoldoutRenderQualityResult<T> {
-  let file = fs::File::open(path)
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
-  serde_json::from_reader(BufReader::new(file))
-    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+  read_json_file_helper(path).map_err(|error| match error {
+    JsonFileReadError::Open(error) => {
+      format!("failed to open {label} {}: {error}", path.display())
+    }
+    JsonFileReadError::Parse(error) => {
+      format!("failed to parse {label} {}: {error}", path.display())
+    }
+  })
 }
 
 fn write_json_file<T: Serialize>(
@@ -987,10 +995,12 @@ fn write_json_file<T: Serialize>(
   value: &T,
   label: &str,
 ) -> TrainingResultHoldoutRenderQualityResult<()> {
-  let bytes = serde_json::to_vec_pretty(value)
-    .map_err(|error| format!("failed to serialize {label}: {error}"))?;
-  fs::write(path, bytes)
-    .map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
+  write_json_file_helper(path, value, JsonWriteOptions::default()).map_err(|error| match error {
+    JsonFileWriteError::CreateParent(error) | JsonFileWriteError::Write(error) => {
+      format!("failed to write {label} {}: {error}", path.display())
+    }
+    JsonFileWriteError::Serialize(error) => format!("failed to serialize {label}: {error}"),
+  })
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ members = [
   "crates/auv-apple-textedit",
   "crates/auv-cli-invoke-macros",
   "crates/auv-cli-invoke",
+  "crates/auv-file",
   "crates/auv-qqmusic",
   "crates/auv-driver",
   "crates/auv-driver-macos",

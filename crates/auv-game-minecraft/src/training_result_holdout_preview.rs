@@ -1,9 +1,13 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use auv_file::{
+  JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
+  write_json_file as write_json_file_helper,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -250,9 +254,9 @@ pub fn inspect_3dgs_training_result_holdout(
   known_limits.extend(semantic_manifest.known_limits.iter().cloned());
   known_limits.insert(MC16_V1_HOLDOUT_PREVIEW_KNOWN_LIMIT.to_string());
   known_limits.insert(
-    "MC-16 closes holdout preview witness evidence over MC-10 semantic manifests; it does not grade splat quality or claim trained holdout render closed"
-      .to_string(),
-  );
+        "MC-16 closes holdout preview witness evidence over MC-10 semantic manifests; it does not grade splat quality or claim trained holdout render closed"
+            .to_string(),
+    );
 
   let generated_at_millis = auv_tracing_driver::now_millis();
   let semantic_ready = semantic_manifest.semantic_status == TrainingResultSemanticStatus::Ready;
@@ -783,10 +787,14 @@ fn read_json_file<T: DeserializeOwned>(
   path: &Path,
   label: &str,
 ) -> TrainingResultHoldoutPreviewResult<T> {
-  let file = fs::File::open(path)
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
-  serde_json::from_reader(BufReader::new(file))
-    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+  read_json_file_helper(path).map_err(|error| match error {
+    JsonFileReadError::Open(error) => {
+      format!("failed to open {label} {}: {error}", path.display())
+    }
+    JsonFileReadError::Parse(error) => {
+      format!("failed to parse {label} {}: {error}", path.display())
+    }
+  })
 }
 
 fn write_json_file<T: Serialize>(
@@ -794,10 +802,12 @@ fn write_json_file<T: Serialize>(
   value: &T,
   label: &str,
 ) -> TrainingResultHoldoutPreviewResult<()> {
-  let bytes = serde_json::to_vec_pretty(value)
-    .map_err(|error| format!("failed to serialize {label}: {error}"))?;
-  fs::write(path, bytes)
-    .map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
+  write_json_file_helper(path, value, JsonWriteOptions::default()).map_err(|error| match error {
+    JsonFileWriteError::CreateParent(error) | JsonFileWriteError::Write(error) => {
+      format!("failed to write {label} {}: {error}", path.display())
+    }
+    JsonFileWriteError::Serialize(error) => format!("failed to serialize {label}: {error}"),
+  })
 }
 
 #[cfg(test)]

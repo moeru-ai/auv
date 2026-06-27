@@ -13,6 +13,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+auv-file = { path = "../auv-file" }
 auv-driver = { path = "../auv-driver" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
 image.workspace = true

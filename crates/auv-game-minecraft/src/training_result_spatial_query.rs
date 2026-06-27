@@ -1,10 +1,14 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use auv_driver::geometry::Point;
+use auv_file::{
+  JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
+  write_json_file as write_json_file_helper,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -316,17 +320,17 @@ pub fn query_3dgs_training_result(
   let mut known_limits = BTreeSet::new();
   known_limits.extend(semantic_manifest.known_limits.iter().cloned());
   known_limits.insert(
-    "MC-12 closes block-only spatial query evidence over MC-10 semantic manifests; it does not grade model quality or claim Gaussian-native inference"
-      .to_string(),
-  );
+        "MC-12 closes block-only spatial query evidence over MC-10 semantic manifests; it does not grade model quality or claim Gaussian-native inference"
+            .to_string(),
+    );
   known_limits.insert(
-    "projection_reference is a scene-packet fallback reference backend, not a checkpoint-native Gaussian query core"
-      .to_string(),
-  );
+        "projection_reference is a scene-packet fallback reference backend, not a checkpoint-native Gaussian query core"
+            .to_string(),
+    );
   known_limits.insert(
-    "MC-12 does not add entity query, anchor/label query, render preview, or dedicated read-side viewer consumption"
-      .to_string(),
-  );
+        "MC-12 does not add entity query, anchor/label query, render preview, or dedicated read-side viewer consumption"
+            .to_string(),
+    );
   if inputs.use_checkpoint_native_provider {
     known_limits.insert(MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT.to_string());
   }
@@ -881,10 +885,14 @@ fn read_json_file<T: DeserializeOwned>(
   path: &Path,
   label: &str,
 ) -> TrainingResultSpatialQueryResult<T> {
-  let file = fs::File::open(path)
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
-  serde_json::from_reader(BufReader::new(file))
-    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+  read_json_file_helper(path).map_err(|error| match error {
+    JsonFileReadError::Open(error) => {
+      format!("failed to open {label} {}: {error}", path.display())
+    }
+    JsonFileReadError::Parse(error) => {
+      format!("failed to parse {label} {}: {error}", path.display())
+    }
+  })
 }
 
 fn write_json_file<T: Serialize>(
@@ -892,10 +900,12 @@ fn write_json_file<T: Serialize>(
   value: &T,
   label: &str,
 ) -> TrainingResultSpatialQueryResult<()> {
-  let bytes = serde_json::to_vec_pretty(value)
-    .map_err(|error| format!("failed to serialize {label}: {error}"))?;
-  fs::write(path, bytes)
-    .map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
+  write_json_file_helper(path, value, JsonWriteOptions::default()).map_err(|error| match error {
+    JsonFileWriteError::CreateParent(error) | JsonFileWriteError::Write(error) => {
+      format!("failed to write {label} {}: {error}", path.display())
+    }
+    JsonFileWriteError::Serialize(error) => format!("failed to serialize {label}: {error}"),
+  })
 }
 
 #[cfg(test)]
