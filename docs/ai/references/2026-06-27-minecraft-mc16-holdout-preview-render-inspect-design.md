@@ -17,7 +17,7 @@ MC-16 does **not**:
 
 - grade trainer quality or trained splat usefulness
 - run photometric holdout quality gates (PSNR/SSIM pass/fail)
-- perform true Nerfstudio / Gaussian holdout render (deferred MC-16+ / MC-17)
+- perform true Nerfstudio / Gaussian holdout render (MC-17 closes external render + metric evidence; see `docs/ai/references/2026-06-27-minecraft-mc17-holdout-render-quality-design.md`)
 - dispatch actions or upgrade MC-15 provider inference
 - replace MC-12 spatial query read-side surfaces
 
@@ -56,7 +56,7 @@ Artifact roles:
 
 ## Known limits
 
-- `MC-16 v1 holdout preview records scene-packet holdout witness and checkpoint basis; trained splat holdout render and photometric quality judgment are deferred`
+- `MC-16 v1 holdout preview records scene-packet holdout witness and checkpoint basis; trained splat holdout render and photometric metrics are MC-17 (see docs/ai/references/2026-06-27-minecraft-mc17-holdout-render-quality-design.md)`
 - MC-10 forward pointer: `docs/ai/references/2026-06-27-minecraft-mc10-result-semantic-validation-design.md`
 
 ## Relationship

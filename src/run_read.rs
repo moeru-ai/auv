@@ -33,7 +33,8 @@ use auv_game_minecraft::{
   TrainingLaunchJobManifest, TrainingLaunchPlanManifest, TrainingPackageCounts,
   TrainingPackageInspectReport, TrainingPackageManifest, TrainingResultArtifactFetchInspectReport,
   TrainingResultArtifactFetchManifest, TrainingResultHoldoutPreviewInspectReport,
-  TrainingResultHoldoutPreviewManifest, TrainingResultInspectReport, TrainingResultManifest,
+  TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport,
+  TrainingResultHoldoutRenderQualityManifest, TrainingResultInspectReport, TrainingResultManifest,
   TrainingResultSemanticCheckpointRecord, TrainingResultSemanticInspectReport,
   TrainingResultSemanticManifest, TrainingResultSpatialQueryInspectReport,
   TrainingResultSpatialQueryManifest, derive_action_readiness,
@@ -227,6 +228,71 @@ pub struct MinecraftTrainingResultHoldoutPreviewManifestLineage {
 pub struct MinecraftTrainingResultHoldoutPreviewInspectReportLineage {
   pub artifact: ArtifactRefLineage,
   pub report: Option<MinecraftTrainingResultHoldoutPreviewInspectReportSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftHoldoutRenderQualityMetricsSummary {
+  pub l1_mean: Option<f64>,
+  pub mse: Option<f64>,
+  pub psnr: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftHoldoutRenderQualityManifestSummary {
+  pub schema_version: u32,
+  pub training_result_semantic_manifest_path: String,
+  pub holdout_preview_manifest_path: String,
+  pub source_training_result_artifact_manifest_path: String,
+  pub source_training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_run_ids: Vec<String>,
+  pub holdout_frame_index: usize,
+  pub basis_checkpoint_path: Option<String>,
+  pub rendered_image_path: Option<String>,
+  pub image_size_match: bool,
+  pub metrics: Option<MinecraftHoldoutRenderQualityMetricsSummary>,
+  pub status: String,
+  pub reason: Option<String>,
+  pub verdict: String,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MinecraftHoldoutRenderQualityInspectReportSummary {
+  pub schema_version: u32,
+  pub training_result_holdout_render_quality_manifest_path: String,
+  pub training_result_semantic_manifest_path: String,
+  pub holdout_preview_manifest_path: String,
+  pub source_training_result_artifact_manifest_path: String,
+  pub source_training_result_manifest_path: String,
+  pub source_training_job_manifest_path: String,
+  pub source_scene_packet_manifest_path: String,
+  pub source_run_ids: Vec<String>,
+  pub holdout_frame_index: usize,
+  pub basis_checkpoint_path: Option<String>,
+  pub rendered_image_path: Option<String>,
+  pub image_size_match: bool,
+  pub metrics: Option<MinecraftHoldoutRenderQualityMetricsSummary>,
+  pub status: String,
+  pub reason: Option<String>,
+  pub verdict: String,
+  pub warnings: Vec<String>,
+  pub known_limits: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftHoldoutRenderQualityManifestLineage {
+  pub artifact: ArtifactRefLineage,
+  pub manifest: Option<MinecraftHoldoutRenderQualityManifestSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftHoldoutRenderQualityInspectReportLineage {
+  pub artifact: ArtifactRefLineage,
+  pub report: Option<MinecraftHoldoutRenderQualityInspectReportSummary>,
   pub issue: Option<String>,
 }
 
@@ -1027,6 +1093,110 @@ pub(crate) fn list_minecraft_training_result_semantic_inspect_reports(
 ) -> AuvResult<Vec<MinecraftTrainingResultSemanticInspectReportLineage>> {
   let run = store.read_run(run_id)?;
   extract_minecraft_training_result_semantic_inspect_reports(store, &run)
+}
+
+pub(crate) fn list_minecraft_holdout_render_quality_manifests(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftHoldoutRenderQualityManifestLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_holdout_render_quality_manifests(store, &run)
+}
+
+pub(crate) fn list_minecraft_holdout_render_quality_inspect_reports(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftHoldoutRenderQualityInspectReportLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_minecraft_holdout_render_quality_inspect_reports(store, &run)
+}
+
+pub(crate) fn extract_minecraft_holdout_render_quality_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftHoldoutRenderQualityManifestLineage>> {
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(MinecraftHoldoutRenderQualityManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!(
+          "minecraft holdout render quality manifest mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<TrainingResultHoldoutRenderQualityManifest>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_ROLE,
+    )
+    .map(MinecraftHoldoutRenderQualityManifestSummary::from);
+    match parsed {
+      Ok(manifest) => manifests.push(MinecraftHoldoutRenderQualityManifestLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(MinecraftHoldoutRenderQualityManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
+}
+
+pub(crate) fn extract_minecraft_holdout_render_quality_inspect_reports(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<MinecraftHoldoutRenderQualityInspectReportLineage>> {
+  let mut reports = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_INSPECT_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      reports.push(MinecraftHoldoutRenderQualityInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(format!(
+          "minecraft holdout render quality inspect mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<TrainingResultHoldoutRenderQualityInspectReport>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::minecraft::MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_INSPECT_ROLE,
+    )
+    .map(MinecraftHoldoutRenderQualityInspectReportSummary::from);
+    match parsed {
+      Ok(report) => reports.push(MinecraftHoldoutRenderQualityInspectReportLineage {
+        artifact: artifact_ref,
+        report: Some(report),
+        issue: None,
+      }),
+      Err(error) => reports.push(MinecraftHoldoutRenderQualityInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(reports)
 }
 
 pub(crate) fn list_minecraft_training_result_spatial_query_manifests(
@@ -3480,6 +3650,79 @@ fn spatial_query_manifest_fields(
   }
 }
 
+impl From<auv_game_minecraft::HoldoutRenderQualityMetrics>
+  for MinecraftHoldoutRenderQualityMetricsSummary
+{
+  fn from(value: auv_game_minecraft::HoldoutRenderQualityMetrics) -> Self {
+    Self {
+      l1_mean: value.l1_mean,
+      mse: value.mse,
+      psnr: value.psnr,
+    }
+  }
+}
+
+impl From<TrainingResultHoldoutRenderQualityManifest>
+  for MinecraftHoldoutRenderQualityManifestSummary
+{
+  fn from(value: TrainingResultHoldoutRenderQualityManifest) -> Self {
+    Self {
+      schema_version: value.schema_version,
+      training_result_semantic_manifest_path: value.training_result_semantic_manifest_path,
+      holdout_preview_manifest_path: value.holdout_preview_manifest_path,
+      source_training_result_artifact_manifest_path: value
+        .source_training_result_artifact_manifest_path,
+      source_training_result_manifest_path: value.source_training_result_manifest_path,
+      source_training_job_manifest_path: value.source_training_job_manifest_path,
+      source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
+      source_run_ids: value.source_run_ids,
+      holdout_frame_index: value.holdout_frame_index,
+      basis_checkpoint_path: value.basis_checkpoint_path,
+      rendered_image_path: value.rendered_image_path,
+      image_size_match: value.image_size_match,
+      metrics: value
+        .metrics
+        .map(MinecraftHoldoutRenderQualityMetricsSummary::from),
+      status: value.status.as_str().to_string(),
+      reason: value.reason.map(|reason| reason.as_str().to_string()),
+      verdict: value.verdict.as_str().to_string(),
+      known_limits: value.known_limits,
+    }
+  }
+}
+
+impl From<TrainingResultHoldoutRenderQualityInspectReport>
+  for MinecraftHoldoutRenderQualityInspectReportSummary
+{
+  fn from(value: TrainingResultHoldoutRenderQualityInspectReport) -> Self {
+    Self {
+      schema_version: value.schema_version,
+      training_result_holdout_render_quality_manifest_path: value
+        .training_result_holdout_render_quality_manifest_path,
+      training_result_semantic_manifest_path: value.training_result_semantic_manifest_path,
+      holdout_preview_manifest_path: value.holdout_preview_manifest_path,
+      source_training_result_artifact_manifest_path: value
+        .source_training_result_artifact_manifest_path,
+      source_training_result_manifest_path: value.source_training_result_manifest_path,
+      source_training_job_manifest_path: value.source_training_job_manifest_path,
+      source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
+      source_run_ids: value.source_run_ids,
+      holdout_frame_index: value.holdout_frame_index,
+      basis_checkpoint_path: value.basis_checkpoint_path,
+      rendered_image_path: value.rendered_image_path,
+      image_size_match: value.image_size_match,
+      metrics: value
+        .metrics
+        .map(MinecraftHoldoutRenderQualityMetricsSummary::from),
+      status: value.status.as_str().to_string(),
+      reason: value.reason.map(|reason| reason.as_str().to_string()),
+      verdict: value.verdict.as_str().to_string(),
+      warnings: value.warnings,
+      known_limits: value.known_limits,
+    }
+  }
+}
+
 impl From<TrainingResultSpatialQueryManifest>
   for MinecraftTrainingResultSpatialQueryManifestSummary
 {
@@ -3799,6 +4042,8 @@ mod tests {
     derive_minecraft_training_result_spatial_query_action_readiness,
     extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
     extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
+    extract_minecraft_holdout_render_quality_inspect_reports,
+    extract_minecraft_holdout_render_quality_manifests,
     extract_minecraft_training_job_inspect_reports, extract_minecraft_training_job_manifests,
     extract_minecraft_training_launch_inspect_reports, extract_minecraft_training_launch_manifests,
     extract_minecraft_training_package_inspect_reports,
@@ -4687,6 +4932,199 @@ mod tests {
       reports[0].report.as_ref().unwrap().holdout_frame_selection,
       "last_in_game"
     );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_holdout_render_quality_manifest_lineage_reads_summary() {
+    use auv_game_minecraft::{
+      HoldoutFrameWitness, HoldoutPreviewStatus, HoldoutRenderQualityBackend,
+      HoldoutRenderQualityMetrics, HoldoutRenderQualityStatus, HoldoutRenderQualityVerdict,
+      TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport,
+      TrainingResultHoldoutRenderQualityManifest,
+    };
+
+    let root = temp_dir("run-read-mc17-holdout-quality-manifest");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_mc17_holdout_quality_manifest");
+    let span = dummy_span(&run.root_span_id);
+    let witness = HoldoutFrameWitness {
+      frame_index: 6,
+      spatial_frame_id: "frame-355416".to_string(),
+      screenshot_path: "/tmp/scene-packet/frames/frame_000006.png".to_string(),
+      frame_json_path: "/tmp/scene-packet/frames/frame_000006.json".to_string(),
+    };
+    let holdout_preview_manifest = TrainingResultHoldoutPreviewManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      training_result_semantic_manifest_path:
+        "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+      source_training_result_artifact_manifest_path:
+        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
+        .to_string(),
+      source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
+        .to_string(),
+      source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+      source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      normalized_result_dir: "/tmp/normalized".to_string(),
+      holdout_frame_index: 6,
+      holdout_frame: Some(witness.clone()),
+      basis_checkpoint_path: Some("/tmp/normalized/nerfstudio_models/step-000001.ckpt".to_string()),
+      holdout_screenshot_path: Some(witness.screenshot_path.clone()),
+      reference_overlay_path: Some("/tmp/holdout/holdout_overlay_frame_000006.png".to_string()),
+      status: HoldoutPreviewStatus::Ready,
+      reason: None,
+      known_limits: vec!["holdout preview only".to_string()],
+    };
+    let manifest = TrainingResultHoldoutRenderQualityManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      training_result_semantic_manifest_path: holdout_preview_manifest
+        .training_result_semantic_manifest_path
+        .clone(),
+      holdout_preview_manifest_path:
+        "/tmp/holdout/minecraft-3dgs-training-result-holdout-preview.json".to_string(),
+      source_training_result_artifact_manifest_path: holdout_preview_manifest
+        .source_training_result_artifact_manifest_path
+        .clone(),
+      source_training_result_manifest_path: holdout_preview_manifest
+        .source_training_result_manifest_path
+        .clone(),
+      source_training_job_manifest_path: holdout_preview_manifest
+        .source_training_job_manifest_path
+        .clone(),
+      source_training_launch_plan_path: holdout_preview_manifest
+        .source_training_launch_plan_path
+        .clone(),
+      source_training_package_manifest_path: holdout_preview_manifest
+        .source_training_package_manifest_path
+        .clone(),
+      source_scene_packet_manifest_path: holdout_preview_manifest
+        .source_scene_packet_manifest_path
+        .clone(),
+      source_bundle_manifest_paths: holdout_preview_manifest
+        .source_bundle_manifest_paths
+        .clone(),
+      source_run_ids: holdout_preview_manifest.source_run_ids.clone(),
+      trainer_backend: holdout_preview_manifest.trainer_backend.clone(),
+      job_backend: holdout_preview_manifest.job_backend.clone(),
+      normalized_result_dir: holdout_preview_manifest.normalized_result_dir.clone(),
+      holdout_frame_index: 6,
+      holdout_frame: Some(witness.clone()),
+      basis_checkpoint_path: holdout_preview_manifest.basis_checkpoint_path.clone(),
+      holdout_screenshot_path: holdout_preview_manifest.holdout_screenshot_path.clone(),
+      rendered_image_path: Some("/tmp/holdout/rendered_frame_000006.png".to_string()),
+      render_backend: HoldoutRenderQualityBackend::ExternalCommand,
+      image_size_match: true,
+      source_image_size: None,
+      rendered_image_size: None,
+      metrics: Some(HoldoutRenderQualityMetrics {
+        l1_mean: Some(0.01),
+        mse: Some(0.002),
+        psnr: Some(27.0),
+        ssim: None,
+      }),
+      status: HoldoutRenderQualityStatus::Ready,
+      reason: None,
+      verdict: HoldoutRenderQualityVerdict::MeasuredOnly,
+      known_limits: vec!["render quality evidence only".to_string()],
+    };
+    let inspect_report = TrainingResultHoldoutRenderQualityInspectReport {
+      schema_version: 1,
+      generated_at_millis: 1,
+      training_result_holdout_render_quality_manifest_path:
+        "/tmp/holdout/minecraft-3dgs-holdout-render-quality.json".to_string(),
+      training_result_semantic_manifest_path: manifest
+        .training_result_semantic_manifest_path
+        .clone(),
+      holdout_preview_manifest_path: manifest.holdout_preview_manifest_path.clone(),
+      source_training_result_artifact_manifest_path: manifest
+        .source_training_result_artifact_manifest_path
+        .clone(),
+      source_training_result_manifest_path: manifest.source_training_result_manifest_path.clone(),
+      source_training_job_manifest_path: manifest.source_training_job_manifest_path.clone(),
+      source_training_launch_plan_path: manifest.source_training_launch_plan_path.clone(),
+      source_training_package_manifest_path: manifest.source_training_package_manifest_path.clone(),
+      source_scene_packet_manifest_path: manifest.source_scene_packet_manifest_path.clone(),
+      source_bundle_manifest_paths: manifest.source_bundle_manifest_paths.clone(),
+      source_run_ids: manifest.source_run_ids.clone(),
+      trainer_backend: manifest.trainer_backend.clone(),
+      job_backend: manifest.job_backend.clone(),
+      normalized_result_dir: manifest.normalized_result_dir.clone(),
+      holdout_frame_index: 6,
+      holdout_frame: Some(witness),
+      basis_checkpoint_path: manifest.basis_checkpoint_path.clone(),
+      holdout_screenshot_path: manifest.holdout_screenshot_path.clone(),
+      rendered_image_path: manifest.rendered_image_path.clone(),
+      render_backend: manifest.render_backend.clone(),
+      image_size_match: true,
+      l1_mean_available: true,
+      mse_available: true,
+      psnr_available: true,
+      ssim_available: false,
+      metrics: manifest.metrics.clone(),
+      status: HoldoutRenderQualityStatus::Ready,
+      reason: None,
+      verdict: HoldoutRenderQualityVerdict::MeasuredOnly,
+      warnings: vec![],
+      known_limits: vec!["render quality inspect only".to_string()],
+    };
+
+    let artifacts = vec![
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        0,
+        crate::minecraft::MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_ROLE,
+        "minecraft-3dgs-holdout-render-quality.json",
+        &manifest,
+      ),
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        1,
+        crate::minecraft::MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_INSPECT_ROLE,
+        "minecraft-3dgs-holdout-render-quality-inspect.json",
+        &inspect_report,
+      ),
+    ];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_mc17_holdout_quality_manifest")
+      .expect("run should read back");
+    let extracted = extract_minecraft_holdout_render_quality_manifests(&store, &canonical)
+      .expect("extract holdout render quality manifests");
+    assert_eq!(extracted.len(), 1);
+    let summary = extracted[0].manifest.as_ref().expect("summary");
+    assert_eq!(summary.status, "ready");
+    assert_eq!(summary.verdict, "measured_only");
+    assert_eq!(summary.image_size_match, true);
+    assert_eq!(summary.metrics.as_ref().unwrap().l1_mean, Some(0.01));
+
+    let reports = extract_minecraft_holdout_render_quality_inspect_reports(&store, &canonical)
+      .expect("extract holdout render quality inspect");
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].report.as_ref().unwrap().holdout_frame_index, 6);
 
     let _ = fs::remove_dir_all(root);
   }

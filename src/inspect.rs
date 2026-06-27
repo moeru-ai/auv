@@ -14,6 +14,7 @@ use crate::run_read::{
   CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
   CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
   CandidatePromotionLineageStatus, DetectorRecognitionLineage,
+  MinecraftHoldoutRenderQualityInspectReportLineage, MinecraftHoldoutRenderQualityManifestLineage,
   MinecraftSpatialBundleManifestLineage, MinecraftTelemetrySampleArtifactLineage,
   MinecraftTrainingJobInspectReportLineage, MinecraftTrainingJobManifestLineage,
   MinecraftTrainingLaunchInspectReportLineage, MinecraftTrainingLaunchManifestLineage,
@@ -28,11 +29,12 @@ use crate::run_read::{
   MinecraftTrainingResultSpatialQueryInspectReportLineage,
   MinecraftTrainingResultSpatialQueryManifestLineage,
   derive_minecraft_training_result_spatial_query_action_readiness,
-  list_minecraft_projection_artifacts, list_minecraft_spatial_bundle_manifests,
-  list_minecraft_telemetry_sample_artifacts, list_minecraft_training_job_inspect_reports,
-  list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports,
-  list_minecraft_training_launch_manifests, list_minecraft_training_package_inspect_reports,
-  list_minecraft_training_package_manifests,
+  list_minecraft_holdout_render_quality_inspect_reports,
+  list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts,
+  list_minecraft_spatial_bundle_manifests, list_minecraft_telemetry_sample_artifacts,
+  list_minecraft_training_job_inspect_reports, list_minecraft_training_job_manifests,
+  list_minecraft_training_launch_inspect_reports, list_minecraft_training_launch_manifests,
+  list_minecraft_training_package_inspect_reports, list_minecraft_training_package_manifests,
   list_minecraft_training_result_artifact_fetch_inspect_reports,
   list_minecraft_training_result_artifact_fetch_manifests,
   list_minecraft_training_result_holdout_preview_inspect_reports,
@@ -56,6 +58,20 @@ fn holdout_preview_manifest_matches_report(
     && report.source_training_result_manifest_path == manifest.source_training_result_manifest_path
     && report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
     && report.source_training_launch_plan_path == manifest.source_training_launch_plan_path
+    && report.source_scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
+    && report.source_run_ids == manifest.source_run_ids
+}
+
+fn holdout_render_quality_manifest_matches_report(
+  manifest: &crate::run_read::MinecraftHoldoutRenderQualityManifestSummary,
+  report: &crate::run_read::MinecraftHoldoutRenderQualityInspectReportSummary,
+) -> bool {
+  report.training_result_semantic_manifest_path == manifest.training_result_semantic_manifest_path
+    && report.holdout_preview_manifest_path == manifest.holdout_preview_manifest_path
+    && report.source_training_result_artifact_manifest_path
+      == manifest.source_training_result_artifact_manifest_path
+    && report.source_training_result_manifest_path == manifest.source_training_result_manifest_path
+    && report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
     && report.source_scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
     && report.source_run_ids == manifest.source_run_ids
 }
@@ -175,6 +191,10 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_minecraft_training_result_holdout_preview_manifests(store, run_id)?;
   let minecraft_training_result_holdout_preview_inspect_reports =
     list_minecraft_training_result_holdout_preview_inspect_reports(store, run_id)?;
+  let minecraft_holdout_render_quality_manifests =
+    list_minecraft_holdout_render_quality_manifests(store, run_id)?;
+  let minecraft_holdout_render_quality_inspect_reports =
+    list_minecraft_holdout_render_quality_inspect_reports(store, run_id)?;
   let minecraft_training_result_spatial_query_inspect_reports =
     list_minecraft_training_result_spatial_query_inspect_reports(store, run_id)?;
   Ok(render_run_text(
@@ -202,6 +222,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &minecraft_training_result_semantic_inspect_reports,
     &minecraft_training_result_holdout_preview_manifests,
     &minecraft_training_result_holdout_preview_inspect_reports,
+    &minecraft_holdout_render_quality_manifests,
+    &minecraft_holdout_render_quality_inspect_reports,
     &minecraft_training_result_spatial_query_manifests,
     &minecraft_training_result_spatial_query_inspect_reports,
   ))
@@ -232,6 +254,8 @@ pub fn render_run_text(
   minecraft_training_result_semantic_inspect_reports: &[MinecraftTrainingResultSemanticInspectReportLineage],
   minecraft_training_result_holdout_preview_manifests: &[MinecraftTrainingResultHoldoutPreviewManifestLineage],
   minecraft_training_result_holdout_preview_inspect_reports: &[MinecraftTrainingResultHoldoutPreviewInspectReportLineage],
+  minecraft_holdout_render_quality_manifests: &[MinecraftHoldoutRenderQualityManifestLineage],
+  minecraft_holdout_render_quality_inspect_reports: &[MinecraftHoldoutRenderQualityInspectReportLineage],
   minecraft_training_result_spatial_query_manifests: &[MinecraftTrainingResultSpatialQueryManifestLineage],
   minecraft_training_result_spatial_query_inspect_reports: &[MinecraftTrainingResultSpatialQueryInspectReportLineage],
 ) -> String {
@@ -1611,6 +1635,175 @@ pub fn render_run_text(
       } else {
         output.push_str(&format!(
           "- inspect_artifact={} role={} path={} schema=n/a training_result_holdout_preview_manifest_path=n/a training_result_semantic_manifest=n/a holdout_frame_index=n/a status=n/a reason=n/a holdout_frame_selection=n/a checkpoint_count=n/a scene_packet_frame_count=n/a issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nMC-17 Holdout Render Quality:\n");
+  if minecraft_holdout_render_quality_manifests.is_empty()
+    && minecraft_holdout_render_quality_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    let mut rendered_report_artifacts = BTreeSet::new();
+    for manifest_lineage in minecraft_holdout_render_quality_manifests {
+      let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
+        unique_matching_report(
+          minecraft_holdout_render_quality_inspect_reports,
+          |lineage| {
+            lineage.report.as_ref().is_some_and(|report| {
+              holdout_render_quality_manifest_matches_report(manifest, report)
+            })
+          },
+        )
+      });
+      if let Some(report_lineage) = paired_report {
+        rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
+      }
+      if let Some(manifest) = &manifest_lineage.manifest {
+        let (l1_mean, mse, psnr) = manifest
+          .metrics
+          .as_ref()
+          .map(|metrics| {
+            (
+              metrics
+                .l1_mean
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+              metrics
+                .mse
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+              metrics
+                .psnr
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+            )
+          })
+          .unwrap_or_else(|| ("n/a".to_string(), "n/a".to_string(), "n/a".to_string()));
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema={} training_result_semantic_manifest={} holdout_preview_manifest={} source_training_result_artifact_manifest={} source_runs={} holdout_frame_index={} status={} reason={} verdict={} image_size_match={} basis_checkpoint_path={} rendered_image_path={} l1_mean={} mse={} psnr={} paired_report_artifact={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest.schema_version,
+          manifest.training_result_semantic_manifest_path,
+          manifest.holdout_preview_manifest_path,
+          manifest.source_training_result_artifact_manifest_path,
+          manifest.source_run_ids.len(),
+          manifest.holdout_frame_index,
+          manifest.status,
+          manifest.reason.as_deref().unwrap_or("n/a"),
+          manifest.verdict,
+          manifest.image_size_match,
+          manifest.basis_checkpoint_path.as_deref().unwrap_or("n/a"),
+          manifest.rendered_image_path.as_deref().unwrap_or("n/a"),
+          l1_mean,
+          mse,
+          psnr,
+          paired_report
+            .map(|report| report.artifact.artifact_id.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !manifest.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            manifest.known_limits.join(" | ")
+          ));
+        }
+        if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
+          output.push_str(&format!(
+            "  paired_report schema={} image_size_match={} verdict={} warnings={} issue={}\n",
+            report.schema_version,
+            report.image_size_match,
+            report.verdict,
+            report.warnings.len(),
+            paired_report
+              .and_then(|lineage| lineage.issue.as_deref())
+              .unwrap_or("n/a"),
+          ));
+          if !report.warnings.is_empty() {
+            output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+          }
+          if !report.known_limits.is_empty() {
+            output.push_str(&format!(
+              "  known_limits={}\n",
+              report.known_limits.join(" | ")
+            ));
+          }
+        }
+      } else {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} schema=n/a training_result_semantic_manifest=n/a holdout_preview_manifest=n/a source_training_result_artifact_manifest=n/a source_runs=n/a holdout_frame_index=n/a status=n/a reason=n/a verdict=n/a image_size_match=n/a basis_checkpoint_path=n/a rendered_image_path=n/a l1_mean=n/a mse=n/a psnr=n/a paired_report_artifact=n/a issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in minecraft_holdout_render_quality_inspect_reports {
+      if rendered_report_artifacts.contains(&report_lineage.artifact.artifact_id.to_string()) {
+        continue;
+      }
+      if let Some(report) = &report_lineage.report {
+        let (l1_mean, mse, psnr) = report
+          .metrics
+          .as_ref()
+          .map(|metrics| {
+            (
+              metrics
+                .l1_mean
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+              metrics
+                .mse
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+              metrics
+                .psnr
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "n/a".to_string()),
+            )
+          })
+          .unwrap_or_else(|| ("n/a".to_string(), "n/a".to_string(), "n/a".to_string()));
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} schema={} training_result_holdout_render_quality_manifest_path={} training_result_semantic_manifest={} holdout_preview_manifest={} holdout_frame_index={} status={} reason={} verdict={} image_size_match={} l1_mean={} mse={} psnr={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report.schema_version,
+          report.training_result_holdout_render_quality_manifest_path,
+          report.training_result_semantic_manifest_path,
+          report.holdout_preview_manifest_path,
+          report.holdout_frame_index,
+          report.status,
+          report.reason.as_deref().unwrap_or("n/a"),
+          report.verdict,
+          report.image_size_match,
+          l1_mean,
+          mse,
+          psnr,
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+        if !report.warnings.is_empty() {
+          output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
+        }
+        if !report.known_limits.is_empty() {
+          output.push_str(&format!(
+            "  known_limits={}\n",
+            report.known_limits.join(" | ")
+          ));
+        }
+      } else {
+        output.push_str(&format!(
+          "- inspect_artifact={} role={} path={} schema=n/a training_result_holdout_render_quality_manifest_path=n/a training_result_semantic_manifest=n/a holdout_preview_manifest=n/a holdout_frame_index=n/a status=n/a reason=n/a verdict=n/a image_size_match=n/a l1_mean=n/a mse=n/a psnr=n/a issue={}\n",
           report_lineage.artifact.artifact_id,
           report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
@@ -3306,6 +3499,8 @@ mod tests {
       &minecraft_training_result_semantic_inspect_reports,
       &minecraft_training_result_holdout_preview_manifests,
       &minecraft_training_result_holdout_preview_inspect_reports,
+      &[],
+      &[],
       &minecraft_training_result_spatial_query_manifests,
       &minecraft_training_result_spatial_query_inspect_reports,
     );
@@ -3590,6 +3785,8 @@ mod tests {
         issue: Some("json parse error: expected value".to_string()),
       }],
       &[],
+      &[],
+      &[],
       &[MinecraftTrainingResultSpatialQueryInspectReportLineage {
         artifact: ArtifactRefLineage {
           run_id: run.run.run_id.clone(),
@@ -3749,6 +3946,8 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -3935,6 +4134,8 @@ mod tests {
       &[],
       &[launch_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -4139,6 +4340,8 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_job_manifest_dup"));
@@ -4312,6 +4515,8 @@ mod tests {
       &[],
       &[package_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -4506,6 +4711,8 @@ mod tests {
       &[],
       &[result_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -4712,6 +4919,8 @@ mod tests {
       &[],
       &[holdout_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
     );

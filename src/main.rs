@@ -758,6 +758,55 @@ async fn run() -> Result<(), String> {
         output.value.inspect_report_path.display()
       );
     }
+
+    CliCommand::MinecraftMeasure3dgsHoldoutRenderQuality {
+      training_result_semantic_manifest_path,
+      holdout_preview_manifest_path,
+      render_command,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let output = auv_cli::minecraft::run_minecraft_measure_3dgs_holdout_render_quality(
+        &runtime.recording().handle(),
+        PathBuf::from(training_result_semantic_manifest_path),
+        PathBuf::from(holdout_preview_manifest_path),
+        render_command,
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: {}", output.value.manifest.status.as_str());
+      println!("verdict: {}", output.value.manifest.verdict.as_str());
+      println!("imageSizeMatch: {}", output.value.manifest.image_size_match);
+      let metrics = output.value.manifest.metrics.as_ref();
+      println!(
+        "l1Mean: {}",
+        metrics
+          .and_then(|metrics| metrics.l1_mean)
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string())
+      );
+      println!(
+        "mse: {}",
+        metrics
+          .and_then(|metrics| metrics.mse)
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string())
+      );
+      println!(
+        "psnr: {}",
+        metrics
+          .and_then(|metrics| metrics.psnr)
+          .map(|value| value.to_string())
+          .unwrap_or_else(|| "none".to_string())
+      );
+      println!("manifest: {}", output.value.manifest_path.display());
+      println!(
+        "inspectReport: {}",
+        output.value.inspect_report_path.display()
+      );
+      println!("output: {}", output.value.output_dir.display());
+    }
     CliCommand::MinecraftQuery3dgsTrainingResult {
       training_result_semantic_manifest_path,
       target_block,

@@ -8,16 +8,18 @@ use auv_game_minecraft::{
   TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
   TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs,
   TrainingPackageOutput, TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput,
-  TrainingResultHoldoutPreviewInputs, TrainingResultHoldoutPreviewOutput, TrainingResultInputs,
-  TrainingResultOutput, TrainingResultSemanticValidationInputs,
+  TrainingResultHoldoutPreviewInputs, TrainingResultHoldoutPreviewOutput,
+  TrainingResultHoldoutRenderQualityInputs, TrainingResultHoldoutRenderQualityOutput,
+  TrainingResultInputs, TrainingResultOutput, TrainingResultSemanticValidationInputs,
   TrainingResultSemanticValidationOutput, TrainingResultSpatialQueryInputs,
   TrainingResultSpatialQueryOutput, build_texture_sweep_samples_from_bundles,
   collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
   evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
   export_spatial_bundle, fetch_3dgs_training_result_artifacts_with_environment,
   inspect_3dgs_training_result_holdout, launch_3dgs_training_job,
-  launch_3dgs_training_job_with_environment, prepare_3dgs_training_launch,
-  prepare_texture_sweep_resource_packs, query_3dgs_training_result, validate_3dgs_training_result,
+  launch_3dgs_training_job_with_environment, measure_3dgs_holdout_render_quality,
+  prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs, query_3dgs_training_result,
+  validate_3dgs_training_result,
 };
 
 use auv_tracing_driver::RecordingHandle;
@@ -71,6 +73,10 @@ pub const MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_ROLE: &str =
   "minecraft-3dgs-training-result-holdout-preview";
 pub const MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_ROLE: &str =
   "minecraft-3dgs-training-result-holdout-preview-inspect";
+pub const MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_ROLE: &str =
+  "minecraft-3dgs-holdout-render-quality";
+pub const MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_INSPECT_ROLE: &str =
+  "minecraft-3dgs-holdout-render-quality-inspect";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -602,6 +608,59 @@ pub fn run_minecraft_3dgs_training_result_holdout_preview(
             &result.inspect_report_path,
             "minecraft-3dgs-training-result-holdout-preview-inspect.json",
             Some("MC-16 training result holdout preview inspect report".to_string()),
+          )?;
+          Ok::<_, String>(())
+        },
+      )?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_minecraft_measure_3dgs_holdout_render_quality(
+  recording: &RecordingHandle,
+  training_result_semantic_manifest_path: PathBuf,
+  holdout_preview_manifest_path: PathBuf,
+  render_command: String,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TrainingResultHoldoutRenderQualityOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(
+      RunType::Execute,
+      "auv.minecraft.measure_3dgs_holdout_render_quality",
+    ),
+    "Minecraft measure MC-17 3DGS holdout render quality",
+    move |context| {
+      context.record_event(
+        "minecraft.measure_3dgs_holdout_render_quality.inputs",
+        Some(format!(
+          "training_result_semantic_manifest={} holdout_preview_manifest={} render_command={} output_dir={} holdout_render_quality_evidence=true quality_gate=false action_wiring=false",
+          training_result_semantic_manifest_path.display(),
+          holdout_preview_manifest_path.display(),
+          !render_command.is_empty(),
+          output_dir.display(),
+        )),
+      );
+      let result = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
+        training_result_semantic_manifest_path: training_result_semantic_manifest_path.clone(),
+        holdout_preview_manifest_path: holdout_preview_manifest_path.clone(),
+        render_command: render_command.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span(
+        "minecraft.measure_3dgs_holdout_render_quality.artifacts",
+        |context| {
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_ROLE,
+            &result.manifest_path,
+            "minecraft-3dgs-holdout-render-quality.json",
+            Some("MC-17 holdout render quality manifest".to_string()),
+          )?;
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_INSPECT_ROLE,
+            &result.inspect_report_path,
+            "minecraft-3dgs-holdout-render-quality-inspect.json",
+            Some("MC-17 holdout render quality inspect report".to_string()),
           )?;
           Ok::<_, String>(())
         },

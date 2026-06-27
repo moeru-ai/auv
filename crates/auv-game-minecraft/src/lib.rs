@@ -17,6 +17,7 @@ pub mod training_package;
 pub mod training_result;
 pub mod training_result_artifact;
 pub mod training_result_holdout_preview;
+pub mod training_result_holdout_render_quality;
 pub mod training_result_semantic;
 pub mod training_result_spatial_query;
 pub mod training_result_spatial_query_action;
@@ -108,6 +109,17 @@ pub use training_result_holdout_preview::{
   TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION, TrainingResultHoldoutPreviewInputs,
   TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
   TrainingResultHoldoutPreviewOutput, inspect_3dgs_training_result_holdout,
+};
+pub use training_result_holdout_render_quality::{
+  HoldoutRenderQualityAnswer, HoldoutRenderQualityBackend, HoldoutRenderQualityImageSize,
+  HoldoutRenderQualityMetrics, HoldoutRenderQualityReason, HoldoutRenderQualityRequest,
+  HoldoutRenderQualityStatus, HoldoutRenderQualityVerdict,
+  MC17_V1_HOLDOUT_RENDER_QUALITY_KNOWN_LIMIT,
+  TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_INSPECT_REPORT_SCHEMA_VERSION,
+  TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_MANIFEST_SCHEMA_VERSION,
+  TrainingResultHoldoutRenderQualityInputs, TrainingResultHoldoutRenderQualityInspectReport,
+  TrainingResultHoldoutRenderQualityManifest, TrainingResultHoldoutRenderQualityOutput,
+  measure_3dgs_holdout_render_quality,
 };
 pub use training_result_semantic::{
   TRAINING_RESULT_SEMANTIC_INSPECT_REPORT_SCHEMA_VERSION,
