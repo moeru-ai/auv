@@ -77,10 +77,12 @@ Paired inspect reports still use MC-13 business-key pairing
 ## Deferred slices
 
 ```text
-MC-14+  live-click-from-query or candidate_promotion wiring
-MC-15   checkpoint-native / Gaussian-native provider backend
+MC-19   query-to-live-click minimal wiring (see design note below)
 MC-16   render inspect / holdout preview consumer
 ```
+
+MC-19 design:
+`docs/ai/references/2026-06-27-minecraft-mc19-query-to-live-click-wiring-design.md`
 
 ## Related references
 
