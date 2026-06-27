@@ -217,6 +217,24 @@ candidates. OCR rows, visual row bands, segmented regions, icon matches, and
 future detector outputs should be able to project into this shape before an
 action consumes them.
 
+## Spatial Result Consumption Pattern
+
+Spatial result consumption pattern is a provisional design term for a
+consumption-first chain over persisted result artifacts:
+
+```text
+producer artifact
+→ semantic gate
+→ spatial query
+→ action readiness view
+→ witness artifact
+→ quality measurement
+```
+
+This is a pattern note, not a stable runtime API. See
+`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-pattern.md`
+for the current design boundary, ownership split, and defer list.
+
 ## Capture Frame
 
 Capture frame is a provisional term for an in-memory screenshot or cropped
