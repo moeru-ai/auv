@@ -62,9 +62,8 @@ auv-cli minecraft query-3dgs-training-result \
   [--target-face <face>] \
   [--target-semantics hit_face_center|block_center] \
   [--query-provider checkpoint-native] \
-  # MC-18 design-only (not implemented yet):
-  # [--query-provider closed-scene-toy] \
-  # [--closed-scene-fixture <fixture.json>] \
+  [--query-provider closed-scene-toy] \
+  [--closed-scene-fixture <fixture.json>] \
   [--query-command <command>] \
   --output-dir <dir>
 ```
@@ -86,14 +85,15 @@ Selection / inspect fields remain MC-12 (`provider_status`, `reference_status`,
 
 ## Sibling provider seam
 
-MC-18 closed-scene toy provider (design-only, parallel seam, no reference projector):
+MC-18 closed-scene toy provider (parallel seam, no reference projector):
 `docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-design.md`.
+Live closure: `docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md`.
 
 ## Deferred
 
 - MC-15+ / MC-17: true Gaussian render inference inside query providers (MC-16/17
   holdout witness/quality evidence does not close this gap)
-- MC-18: closed-scene toy provider implementation (after design review)
+
 
 ## Closed related slices
 

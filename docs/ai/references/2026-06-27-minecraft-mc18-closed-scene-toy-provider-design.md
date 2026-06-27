@@ -241,15 +241,11 @@ Rules:
 
 | Slice | Scope | Done when |
 | --- | --- | --- |
-| **D1** | Provider module skeleton: `ClosedSceneToyProviderInputs`, `Outcome`, `run_closed_scene_toy_provider_backend`, `MC18_V1_*_KNOWN_LIMIT` constant | Compiles; returns `blocked` for missing fixture |
-| **D2** | Bounded fixture schema + resolver (closed label table, frame/pose rows, visibility + screen_point columns) | Fixture JSON validates; unknown targets degrade honestly |
-| **D3** | CLI / `TrainingResultSpatialQueryInputs` wiring: `--query-provider closed-scene-toy`, optional `--closed-scene-fixture`, mutual exclusion with `checkpoint-native` and `--query-command` | `src/cli.rs` parses flag; `query_3dgs_training_result` dispatches backend |
-| **D4** | Unit tests — three evidence classes (below) | `cargo test` in provider + spatial_query modules |
-| **D5** | Live closure note (`docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md`) | Fresh local run artifacts recorded |
-
-**D1 skeleton** landed in `training_result_spatial_query_provider.rs` (provider types,
-`run_closed_scene_toy_provider_backend`, `TrainingResultSpatialQueryBackend::ClosedSceneToy`,
-unit tests). CLI dispatch and fixture resolution remain **D3** / **D2**.
+| **D1** | Provider module skeleton | **closed** (`0c3319b`) |
+| **D2** | Bounded fixture schema + resolver | **closed** |
+| **D3** | CLI + `query_3dgs_training_result` dispatch | **closed** |
+| **D4** | Unit/integration tests — three evidence classes | **closed** |
+| **D5** | Live closure note | **closed** — `docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md` |
 
 ## Acceptance criteria (design-level)
 
@@ -331,6 +327,10 @@ Gates to check in artifacts:
 - `basis_frame_id` prefix is `closed_scene_toy:`
 
 No live run required for this design slice.
+
+## Live closure
+
+`docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md`
 
 ## Related slices
 

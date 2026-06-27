@@ -36,9 +36,8 @@ auv-cli minecraft query-3dgs-training-result \
   [--target-semantics hit_face_center|block_center] \
   [--query-command <command>] \
   [--query-provider checkpoint-native] \
-  # MC-18 design-only (not implemented yet):
-  # [--query-provider closed-scene-toy] \
-  # [--closed-scene-fixture <fixture.json>] \
+  [--query-provider closed-scene-toy] \
+  [--closed-scene-fixture <fixture.json>] \
   --output-dir <dir>
 ```
 
@@ -53,8 +52,7 @@ Input boundary:
 1. `projection_reference` — always attempted when MC-10 `semantic_status = ready`.
 2. `command_provider` — only when `--query-command` is present.
 3. `checkpoint_native` — when `--query-provider checkpoint-native` is present (MC-15).
-4. `closed_scene_toy` — when `--query-provider closed-scene-toy` is present (**MC-18**,
-   design-only until implementation).
+4. `closed_scene_toy` — when `--query-provider closed-scene-toy` is present (**MC-18**).
 
 Selection:
 
@@ -94,5 +92,7 @@ implementation. Manual writer flow:
   `docs/ai/references/2026-06-27-minecraft-mc11-semantic-read-side-inspect-consumer-design.md`
 - MC-12 live closure evidence:
   `docs/ai/references/2026-06-27-minecraft-mc12-spatial-query-live-closure.md`
-- MC-18 closed-scene toy provider (design-only):
+- MC-18 closed-scene toy provider:
   `docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-design.md`
+- MC-18 live closure:
+  `docs/ai/references/2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md`
