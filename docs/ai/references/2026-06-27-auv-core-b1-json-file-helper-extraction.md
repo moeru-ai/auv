@@ -75,7 +75,9 @@ This slice intentionally does **not**:
 - unify viewer or inspect pairing
 - centralize vertical error-message text
 
-Those remain blocked by the Core-A proof matrix.
+Those remain blocked by the Core-A proof matrix. Dual-backend compare helper
+design (still no enum contract extraction): see
+[`2026-06-27-auv-core-b2-dual-backend-query-compare-helper-extraction.md`](2026-06-27-auv-core-b2-dual-backend-query-compare-helper-extraction.md).
 
 ## Error-policy decision
 

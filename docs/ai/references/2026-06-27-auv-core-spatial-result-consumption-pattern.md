@@ -477,6 +477,11 @@ explicitly wants cross-vertical reuse, consider extracting:
 
 Do **not** start with a giant generic runtime trait.
 
+Design note (not yet implemented):
+[`2026-06-27-auv-core-b2-dual-backend-query-compare-helper-extraction.md`](2026-06-27-auv-core-b2-dual-backend-query-compare-helper-extraction.md)
+records the owner-approved Core-B2 helper-only plan for MC-12 dual-backend
+query compare policy (#1).
+
 ## Explicit defer list
 
 This note intentionally defers:
