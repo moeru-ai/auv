@@ -182,6 +182,15 @@ pub enum CliCommand {
     output_dir: String,
     inspect: InspectClientOptions,
   },
+  MinecraftQuery3dgsTrainingResult {
+    training_result_semantic_manifest_path: String,
+    target_block: String,
+    target_face: Option<String>,
+    target_semantics: String,
+    query_command: Option<String>,
+    output_dir: String,
+    inspect: InspectClientOptions,
+  },
   MinecraftPrepareTextureSweep {
     sidecar_run_dir: String,
     output_dir: String,
@@ -328,6 +337,7 @@ USAGE
   auv-cli minecraft collect-3dgs-training-job-result --training-job-manifest <training-job.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--training-job-status-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft fetch-3dgs-training-result-artifacts --training-result-manifest <training-result.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--artifact-fetch-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft validate-3dgs-training-result --training-result-artifact-manifest <d11-manifest.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv-cli minecraft query-3dgs-training-result --training-result-semantic-manifest <semantic.json> --target-block <x,y,z> [--target-face <up|down|north|south|east|west>] [--target-semantics hit_face_center|block_center] [--query-command <command>] --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft build-texture-sweep-samples --bundle-manifest <bundle/run.json>... --output <samples.json> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv-cli minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--require-real-source] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
@@ -1111,7 +1121,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv-cli minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-3dgs-training|launch-3dgs-training-job|collect-3dgs-training-job-result|fetch-3dgs-training-result-artifacts|validate-3dgs-training-result|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
+      "usage: auv-cli minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-3dgs-training|launch-3dgs-training-job|collect-3dgs-training-job-result|fetch-3dgs-training-result-artifacts|validate-3dgs-training-result|query-3dgs-training-result|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
         .to_string(),
     );
   }
@@ -1132,11 +1142,12 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
       parse_minecraft_fetch_3dgs_training_result_artifacts(arguments)
     }
     "validate-3dgs-training-result" => parse_minecraft_validate_3dgs_training_result(arguments),
+    "query-3dgs-training-result" => parse_minecraft_query_3dgs_training_result(arguments),
     "prepare-texture-sweep" => parse_minecraft_prepare_texture_sweep(arguments),
     "build-texture-sweep-samples" => parse_minecraft_build_texture_sweep_samples(arguments),
     "eval-texture-sweep" => parse_minecraft_eval_texture_sweep(arguments),
     other => Err(format!(
-      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, export-spatial-bundle, export-3dgs-scene-packet, export-3dgs-training-package, prepare-3dgs-training, launch-3dgs-training-job, collect-3dgs-training-job-result, fetch-3dgs-training-result-artifacts, validate-3dgs-training-result, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
+      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, export-spatial-bundle, export-3dgs-scene-packet, export-3dgs-training-package, prepare-3dgs-training, launch-3dgs-training-job, collect-3dgs-training-job-result, fetch-3dgs-training-result-artifacts, validate-3dgs-training-result, query-3dgs-training-result, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
     )),
   }
 }
@@ -1307,6 +1318,106 @@ fn parse_minecraft_validate_3dgs_training_result(arguments: &[String]) -> AuvRes
   Ok(CliCommand::MinecraftValidate3dgsTrainingResult {
     training_result_artifact_manifest_path: training_result_artifact_manifest_path
       .ok_or_else(|| "--training-result-artifact-manifest is required".to_string())?,
+    output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
+    inspect,
+  })
+}
+
+fn validate_target_block_coordinates(raw: &str) -> AuvResult<()> {
+  let parts = raw.split(',').map(str::trim).collect::<Vec<_>>();
+  if parts.len() != 3 {
+    return Err(format!("invalid --target-block {raw:?}; expected x,y,z"));
+  }
+  for (index, label) in [(0, "x"), (1, "y"), (2, "z")] {
+    parts[index]
+      .parse::<i32>()
+      .map_err(|error| format!("invalid target block {label}: {error}"))?;
+  }
+  Ok(())
+}
+
+fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut training_result_semantic_manifest_path = None;
+  let mut target_block = None;
+  let mut target_face = None;
+  let mut target_semantics = "hit_face_center".to_string();
+  let mut query_command = None;
+  let mut output_dir = None;
+  let mut inspect = InspectClientOptions::default();
+  let mut index = 2;
+  while index < arguments.len() {
+    if let Some(consumed) = parse_inspect_client_option(
+      arguments[index].as_str(),
+      arguments.get(index + 1),
+      &mut inspect,
+    )? {
+      index += consumed;
+      continue;
+    }
+
+    match arguments[index].as_str() {
+      "--training-result-semantic-manifest" => {
+        training_result_semantic_manifest_path = Some(required_flag_value(
+          arguments,
+          index,
+          "--training-result-semantic-manifest",
+        )?);
+        index += 2;
+      }
+      "--target-block" => {
+        target_block = Some(required_flag_value(arguments, index, "--target-block")?);
+        index += 2;
+      }
+      "--target-face" => {
+        let value = required_flag_value(arguments, index, "--target-face")?;
+        match value.as_str() {
+          "up" | "down" | "north" | "south" | "east" | "west" => target_face = Some(value),
+          other => {
+            return Err(format!(
+              "invalid --target-face {other:?}; expected up, down, north, south, east, or west"
+            ));
+          }
+        }
+        index += 2;
+      }
+      "--target-semantics" => {
+        let value = required_flag_value(arguments, index, "--target-semantics")?;
+        match value.as_str() {
+          "hit_face_center" | "block_center" => target_semantics = value,
+          other => {
+            return Err(format!(
+              "invalid --target-semantics {other:?}; expected hit_face_center or block_center"
+            ));
+          }
+        }
+        index += 2;
+      }
+      "--query-command" => {
+        query_command = Some(required_flag_value(arguments, index, "--query-command")?);
+        index += 2;
+      }
+      "--output-dir" => {
+        output_dir = Some(required_flag_value(arguments, index, "--output-dir")?);
+        index += 2;
+      }
+      other => {
+        return Err(format!(
+          "unexpected minecraft query-3dgs-training-result argument {other}"
+        ));
+      }
+    }
+  }
+
+  let target_block = target_block.ok_or_else(|| "--target-block is required".to_string())?;
+  validate_target_block_coordinates(&target_block)?;
+
+  Ok(CliCommand::MinecraftQuery3dgsTrainingResult {
+    training_result_semantic_manifest_path: training_result_semantic_manifest_path
+      .ok_or_else(|| "--training-result-semantic-manifest is required".to_string())?,
+    target_block,
+    target_face,
+    target_semantics,
+    query_command,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     inspect,
   })
@@ -2858,6 +2969,132 @@ mod tests {
           training_job_status_command.as_deref(),
           Some("python3 -c \"print(1)\"")
         );
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_requires_semantic_manifest() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+    ])
+    .expect_err("semantic manifest should be required");
+
+    assert!(error.contains("--training-result-semantic-manifest is required"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_requires_target_block() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+    ])
+    .expect_err("target block should be required");
+
+    assert!(error.contains("--target-block is required"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_rejects_invalid_target_block() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "bad".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+    ])
+    .expect_err("invalid target block should fail in main parser");
+
+    assert!(error.contains("invalid --target-block"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_rejects_invalid_target_face() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--target-face".to_string(),
+      "diagonal".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+    ])
+    .expect_err("invalid target face should fail");
+
+    assert!(error.contains("invalid --target-face"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_rejects_unexpected_argument() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--extra".to_string(),
+      "nope".to_string(),
+    ])
+    .expect_err("unexpected argument should fail");
+
+    assert!(error.contains("unexpected minecraft query-3dgs-training-result argument --extra"));
+  }
+
+  #[test]
+  fn parse_minecraft_query_3dgs_training_result_command_parses_optional_flags() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "query-3dgs-training-result".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--target-face".to_string(),
+      "north".to_string(),
+      "--target-semantics".to_string(),
+      "block_center".to_string(),
+      "--query-command".to_string(),
+      "python3 query.py".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+    ])
+    .expect("query command should parse");
+
+    match command {
+      CliCommand::MinecraftQuery3dgsTrainingResult {
+        training_result_semantic_manifest_path,
+        target_block,
+        target_face,
+        target_semantics,
+        query_command,
+        output_dir,
+        ..
+      } => {
+        assert_eq!(training_result_semantic_manifest_path, "/tmp/semantic.json");
+        assert_eq!(target_block, "1,2,3");
+        assert_eq!(target_face.as_deref(), Some("north"));
+        assert_eq!(target_semantics, "block_center");
+        assert_eq!(query_command.as_deref(), Some("python3 query.py"));
+        assert_eq!(output_dir, "/tmp/query");
       }
       other => panic!("unexpected command: {other:?}"),
     }

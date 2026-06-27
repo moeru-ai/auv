@@ -9,12 +9,13 @@ use auv_game_minecraft::{
   TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs,
   TrainingPackageOutput, TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput,
   TrainingResultInputs, TrainingResultOutput, TrainingResultSemanticValidationInputs,
-  TrainingResultSemanticValidationOutput, build_texture_sweep_samples_from_bundles,
+  TrainingResultSemanticValidationOutput, TrainingResultSpatialQueryInputs,
+  TrainingResultSpatialQueryOutput, build_texture_sweep_samples_from_bundles,
   collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
   evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package,
   export_spatial_bundle, fetch_3dgs_training_result_artifacts_with_environment,
   launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
-  prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs,
+  prepare_3dgs_training_launch, prepare_texture_sweep_resource_packs, query_3dgs_training_result,
   validate_3dgs_training_result,
 };
 
@@ -62,6 +63,9 @@ pub const MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE: &str =
   "minecraft-3dgs-training-result-semantic";
 pub const MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE: &str =
   "minecraft-3dgs-training-result-semantic-inspect";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE: &str = "minecraft-3dgs-training-result-query";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE: &str =
+  "minecraft-3dgs-training-result-query-inspect";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -527,6 +531,83 @@ pub fn run_minecraft_3dgs_training_result_semantic_validation(
             &result.inspect_report_path,
             "minecraft-3dgs-training-result-semantic-inspect.json",
             Some("MC-10 training result semantic inspect report".to_string()),
+          )?;
+          Ok::<_, String>(())
+        },
+      )?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+fn block_face_label(face: auv_game_minecraft::BlockFace) -> String {
+  match face {
+    auv_game_minecraft::BlockFace::Up => "up".to_string(),
+    auv_game_minecraft::BlockFace::Down => "down".to_string(),
+    auv_game_minecraft::BlockFace::North => "north".to_string(),
+    auv_game_minecraft::BlockFace::South => "south".to_string(),
+    auv_game_minecraft::BlockFace::East => "east".to_string(),
+    auv_game_minecraft::BlockFace::West => "west".to_string(),
+  }
+}
+
+pub fn run_minecraft_3dgs_training_result_spatial_query(
+  recording: &RecordingHandle,
+  training_result_semantic_manifest_path: PathBuf,
+  target_block: auv_game_minecraft::BlockPosition,
+  target_face: Option<auv_game_minecraft::BlockFace>,
+  target_semantics: auv_game_minecraft::MinecraftTargetSemantics,
+  query_command: Option<String>,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<TrainingResultSpatialQueryOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(
+      RunType::Execute,
+      "auv.minecraft.query_3dgs_training_result",
+    ),
+    "Minecraft query MC-12 3DGS training result spatial block target",
+    move |context| {
+      context.record_event(
+        "minecraft.query_3dgs_training_result.inputs",
+        Some(format!(
+          "training_result_semantic_manifest={} target_block={},{},{} target_face={} target_semantics={} query_command={} output_dir={} block_projection_query=true gaussian_native_query=false",
+          training_result_semantic_manifest_path.display(),
+          target_block.x,
+          target_block.y,
+          target_block.z,
+          target_face
+            .map(block_face_label)
+            .unwrap_or_else(|| "none".to_string()),
+          match target_semantics {
+            auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter => "hit_face_center",
+            auv_game_minecraft::MinecraftTargetSemantics::BlockCenter => "block_center",
+          },
+          query_command.is_some(),
+          output_dir.display()
+        )),
+      );
+      let result = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
+        training_result_semantic_manifest_path: training_result_semantic_manifest_path.clone(),
+        target_block,
+        target_face,
+        target_semantics,
+        query_command: query_command.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span(
+        "minecraft.query_3dgs_training_result.artifacts",
+        |context| {
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+            &result.manifest_path,
+            "minecraft-3dgs-training-result-query.json",
+            Some("MC-12 training result spatial query manifest".to_string()),
+          )?;
+          context.stage_artifact_file(
+            MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE,
+            &result.inspect_report_path,
+            "minecraft-3dgs-training-result-query-inspect.json",
+            Some("MC-12 training result spatial query inspect report".to_string()),
           )?;
           Ok::<_, String>(())
         },
@@ -1714,6 +1795,168 @@ mod tests {
         .iter()
         .any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE }),
       "semantic inspect artifact should be staged"
+    );
+
+    let _ = fs::remove_dir_all(temp);
+  }
+  #[test]
+  fn training_result_spatial_query_records_manifest_and_inspect_artifacts() {
+    let temp = temp_dir("mc12-query-run-store");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+
+    let scene_packet_dir = temp.join("scene-packet");
+    fs::create_dir_all(scene_packet_dir.join("frames")).expect("frames dir");
+    let target_block = auv_game_minecraft::BlockPosition::new(0, 0, 0);
+    let frame = auv_game_minecraft::MinecraftSpatialFrame {
+      spatial_frame_id: "frame-1".to_string(),
+      world_tick: 1,
+      monotonic_timestamp_ms: 100,
+      telemetry_session_id: None,
+      viewport: auv_game_minecraft::Viewport::new(800, 600),
+      view_matrix: [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+      ],
+      projection_matrix: [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+      ],
+      player_pose: auv_game_minecraft::PlayerPose {
+        eye_position: auv_game_minecraft::Vec3::new(0.0, 0.0, 0.0),
+        yaw: 0.0,
+        pitch: 0.0,
+      },
+      raycast_hit: Some(auv_game_minecraft::RaycastHit {
+        block_pos: target_block,
+        face: auv_game_minecraft::BlockFace::North,
+        block_id: "minecraft:stone".to_string(),
+      }),
+      nearby_blocks: Vec::new(),
+      nearby_entities: Vec::new(),
+      inventory_summary: Vec::new(),
+      screenshot_artifact_ref: None,
+      mc_capture_skew_ms: None,
+      screen_state: Some("in_game".to_string()),
+      resource_pack_ids: Vec::new(),
+    };
+    fs::write(
+      scene_packet_dir.join("frames/frame_000001.json"),
+      serde_json::to_vec_pretty(&frame).expect("frame json"),
+    )
+    .expect("frame write");
+    let scene_packet_manifest = auv_game_minecraft::ScenePacketManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      counts: auv_game_minecraft::ScenePacketCounts {
+        frames: 1,
+        screenshots: 0,
+        missing_screenshots: 1,
+      },
+      frames: vec![auv_game_minecraft::ScenePacketFrameRecord {
+        frame_index: 1,
+        spatial_frame_id: frame.spatial_frame_id.clone(),
+        source_run_id: "run-1".to_string(),
+        source_bundle_manifest_path: "/tmp/bundle.json".to_string(),
+        source_frame_artifact_id: "artifact_0001".to_string(),
+        source_frame_bundle_path: "spatial_frames/frame.json".to_string(),
+        frame_json_path: "frames/frame_000001.json".to_string(),
+        screenshot_artifact_id: None,
+        screenshot_path: None,
+        monotonic_timestamp_ms: frame.monotonic_timestamp_ms,
+        viewport: frame.viewport,
+        screen_state: frame.screen_state.clone(),
+        resource_pack_ids: Vec::new(),
+      }],
+      known_limits: Vec::new(),
+    };
+    let scene_packet_manifest_path = scene_packet_dir.join("scene-packet.json");
+    fs::write(
+      &scene_packet_manifest_path,
+      serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"),
+    )
+    .expect("scene packet write");
+    let semantic_manifest = auv_game_minecraft::TrainingResultSemanticManifest {
+      schema_version: 1,
+      generated_at_millis: 1,
+      source_training_result_artifact_manifest_path: "/tmp/d11.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result.json".to_string(),
+      source_training_job_manifest_path: "/tmp/job.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch.json".to_string(),
+      source_training_package_manifest_path: "/tmp/package.json".to_string(),
+      source_scene_packet_manifest_path: scene_packet_manifest_path.to_string_lossy().into_owned(),
+      source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
+      source_run_ids: vec!["run-1".to_string()],
+      trainer_backend: "nerfstudio.splatfacto".to_string(),
+      job_backend: "remote".to_string(),
+      source_result_status: auv_game_minecraft::TrainingResultStatus::Succeeded,
+      normalized_result_dir: temp.join("normalized").to_string_lossy().into_owned(),
+      semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
+      semantic_reason: None,
+      config_path: temp
+        .join("normalized/config.yml")
+        .to_string_lossy()
+        .into_owned(),
+      models_dir_path: temp
+        .join("normalized/nerfstudio_models")
+        .to_string_lossy()
+        .into_owned(),
+      status_snapshot_path: None,
+      config_trainer: Some("nerfstudio.splatfacto".to_string()),
+      checkpoint_files: Vec::new(),
+      checkpoint_count: 0,
+      known_limits: vec!["fixture".to_string()],
+    };
+    let semantic_manifest_path = temp.join("semantic.json");
+    fs::write(
+      &semantic_manifest_path,
+      serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json"),
+    )
+    .expect("semantic write");
+
+    let output = run_minecraft_3dgs_training_result_spatial_query(
+      &recording,
+      semantic_manifest_path,
+      target_block,
+      None,
+      auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+      None,
+      temp.join("query-output"),
+    )
+    .expect("spatial query should succeed");
+
+    assert_eq!(
+      output.value.manifest.status,
+      auv_game_minecraft::TrainingResultSpatialQueryStatus::Answered
+    );
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("spatial query run should persist");
+    let input_event = run
+      .events
+      .iter()
+      .find(|event| event.name == "minecraft.query_3dgs_training_result.inputs")
+      .expect("spatial query input event should be recorded");
+    assert!(
+      input_event.message.as_deref().is_some_and(|message| {
+        message.contains("block_projection_query=true")
+          && message.contains("gaussian_native_query=false")
+      }),
+      "recorded input event should expose MC-12 contract boundary"
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE),
+      "query manifest artifact should be staged"
+    );
+    assert!(
+      run
+        .artifacts
+        .iter()
+        .any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE }),
+      "query inspect artifact should be staged"
     );
 
     let _ = fs::remove_dir_all(temp);

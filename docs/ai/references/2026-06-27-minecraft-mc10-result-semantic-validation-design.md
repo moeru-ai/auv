@@ -97,6 +97,7 @@ MC-9 closes real-provider submit/status/fetch. MC-10 is the next slice and
 does not retroactively change the MC-9 verdict.
 
 MC-11 will consume semantic manifest/inspect artifacts on the read side.
+MC-12 block-only spatial query over semantic manifests is documented in `docs/ai/references/2026-06-27-minecraft-mc12-spatial-query-contract-design.md`.
 
 Fresh local live evidence:
 `docs/ai/references/2026-06-27-minecraft-mc10-semantic-validation-live-closure.md`

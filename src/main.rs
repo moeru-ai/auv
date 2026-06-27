@@ -690,6 +690,78 @@ async fn run() -> Result<(), String> {
       );
       println!("output: {}", output.value.output_dir.display());
     }
+
+    CliCommand::MinecraftQuery3dgsTrainingResult {
+      training_result_semantic_manifest_path,
+      target_block,
+      target_face,
+      target_semantics,
+      query_command,
+      output_dir,
+      inspect,
+    } => {
+      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
+      let target_block = parse_block_position(&target_block)?;
+      let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
+      let target_semantics = parse_target_semantics(&target_semantics)?;
+      let output = auv_cli::minecraft::run_minecraft_3dgs_training_result_spatial_query(
+        &runtime.recording().handle(),
+        PathBuf::from(training_result_semantic_manifest_path),
+        target_block,
+        target_face,
+        target_semantics,
+        query_command,
+        PathBuf::from(output_dir),
+      )?;
+      println!("runId: {}", output.run_id);
+      println!("status: {}", output.value.manifest.status.as_str());
+      println!(
+        "selectedBackend: {}",
+        output
+          .value
+          .manifest
+          .selected_backend
+          .map(|backend| backend.as_str())
+          .unwrap_or("none")
+      );
+      println!(
+        "visibility: {}",
+        output
+          .value
+          .manifest
+          .visibility
+          .map(|visibility| format!("{visibility:?}"))
+          .unwrap_or_else(|| "none".to_string())
+      );
+      if let Some(screen_point) = output.value.manifest.screen_point {
+        println!("screenPoint: {},{}", screen_point.x, screen_point.y);
+      } else {
+        println!("screenPoint: none");
+      }
+      println!(
+        "basisFrameId: {}",
+        output
+          .value
+          .manifest
+          .basis_frame_id
+          .as_deref()
+          .unwrap_or("none")
+      );
+      println!(
+        "comparisonVerdict: {}",
+        output
+          .value
+          .manifest
+          .comparison_verdict
+          .map(|verdict| verdict.as_str())
+          .unwrap_or("none")
+      );
+      println!("queryManifest: {}", output.value.manifest_path.display());
+      println!(
+        "inspectReport: {}",
+        output.value.inspect_report_path.display()
+      );
+    }
     CliCommand::MinecraftValidate3dgsTrainingResult {
       training_result_artifact_manifest_path,
       output_dir,
@@ -1921,6 +1993,20 @@ fn run_minecraft_calibrate_projection(
       })
     },
   )
+}
+
+fn parse_block_face(raw: &str) -> Result<auv_game_minecraft::BlockFace, String> {
+  match raw {
+    "up" => Ok(auv_game_minecraft::BlockFace::Up),
+    "down" => Ok(auv_game_minecraft::BlockFace::Down),
+    "north" => Ok(auv_game_minecraft::BlockFace::North),
+    "south" => Ok(auv_game_minecraft::BlockFace::South),
+    "east" => Ok(auv_game_minecraft::BlockFace::East),
+    "west" => Ok(auv_game_minecraft::BlockFace::West),
+    other => Err(format!(
+      "invalid --target-face {other:?}; expected up, down, north, south, east, or west"
+    )),
+  }
 }
 
 fn parse_block_position(raw: &str) -> Result<auv_game_minecraft::BlockPosition, String> {
