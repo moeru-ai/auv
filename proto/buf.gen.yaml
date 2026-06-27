@@ -1,0 +1,9 @@
+version: v2
+plugins:
+  # Rust generation is currently owned by crates/auv-api-proto/build.rs so
+  # Cargo can compile without requiring buf or protoc to be installed globally.
+  # Keep this file as the Buf entrypoint for future SDK generation.
+  - local: protoc-gen-prost
+    out: gen/rust
+  - local: protoc-gen-tonic
+    out: gen/rust
