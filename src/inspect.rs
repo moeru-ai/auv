@@ -15,10 +15,11 @@ use crate::run_read::{
   CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
   CandidatePromotionLineageStatus, DetectorRecognitionLineage,
   MinecraftHoldoutRenderQualityInspectReportLineage, MinecraftHoldoutRenderQualityManifestLineage,
-  MinecraftSpatialBundleManifestLineage, MinecraftTelemetrySampleArtifactLineage,
-  MinecraftTrainingJobInspectReportLineage, MinecraftTrainingJobManifestLineage,
-  MinecraftTrainingLaunchInspectReportLineage, MinecraftTrainingLaunchManifestLineage,
-  MinecraftTrainingPackageInspectReportLineage, MinecraftTrainingPackageManifestLineage,
+  MinecraftQueryWiredLiveActionSummary, MinecraftSpatialBundleManifestLineage,
+  MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage,
+  MinecraftTrainingJobManifestLineage, MinecraftTrainingLaunchInspectReportLineage,
+  MinecraftTrainingLaunchManifestLineage, MinecraftTrainingPackageInspectReportLineage,
+  MinecraftTrainingPackageManifestLineage,
   MinecraftTrainingResultArtifactFetchInspectReportLineage,
   MinecraftTrainingResultArtifactFetchManifestLineage,
   MinecraftTrainingResultHoldoutPreviewInspectReportLineage,
@@ -31,10 +32,11 @@ use crate::run_read::{
   derive_minecraft_training_result_spatial_query_action_readiness,
   list_minecraft_holdout_render_quality_inspect_reports,
   list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts,
-  list_minecraft_spatial_bundle_manifests, list_minecraft_telemetry_sample_artifacts,
-  list_minecraft_training_job_inspect_reports, list_minecraft_training_job_manifests,
-  list_minecraft_training_launch_inspect_reports, list_minecraft_training_launch_manifests,
-  list_minecraft_training_package_inspect_reports, list_minecraft_training_package_manifests,
+  list_minecraft_query_wired_live_action_summaries, list_minecraft_spatial_bundle_manifests,
+  list_minecraft_telemetry_sample_artifacts, list_minecraft_training_job_inspect_reports,
+  list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports,
+  list_minecraft_training_launch_manifests, list_minecraft_training_package_inspect_reports,
+  list_minecraft_training_package_manifests,
   list_minecraft_training_result_artifact_fetch_inspect_reports,
   list_minecraft_training_result_artifact_fetch_manifests,
   list_minecraft_training_result_holdout_preview_inspect_reports,
@@ -197,6 +199,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_minecraft_holdout_render_quality_inspect_reports(store, run_id)?;
   let minecraft_training_result_spatial_query_inspect_reports =
     list_minecraft_training_result_spatial_query_inspect_reports(store, run_id)?;
+  let minecraft_query_wired_live_action_summaries =
+    list_minecraft_query_wired_live_action_summaries(store, run_id)?;
   Ok(render_run_text(
     &canonical,
     &verifications,
@@ -226,6 +230,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &minecraft_holdout_render_quality_inspect_reports,
     &minecraft_training_result_spatial_query_manifests,
     &minecraft_training_result_spatial_query_inspect_reports,
+    &minecraft_query_wired_live_action_summaries,
   ))
 }
 
@@ -258,6 +263,7 @@ pub fn render_run_text(
   minecraft_holdout_render_quality_inspect_reports: &[MinecraftHoldoutRenderQualityInspectReportLineage],
   minecraft_training_result_spatial_query_manifests: &[MinecraftTrainingResultSpatialQueryManifestLineage],
   minecraft_training_result_spatial_query_inspect_reports: &[MinecraftTrainingResultSpatialQueryInspectReportLineage],
+  minecraft_query_wired_live_action_summaries: &[MinecraftQueryWiredLiveActionSummary],
 ) -> String {
   let mut output = format!(
     "Run {}\nType: {}\nStatus: {}\nState: {}\n",
@@ -1981,6 +1987,31 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nMC-19 Query Wired Live Action:\n");
+  if minecraft_query_wired_live_action_summaries.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for summary in minecraft_query_wired_live_action_summaries {
+      output.push_str(&format!(
+        "- operation_result_artifact={} query_artifact={} attempted={} action_eligibility={} window_point={} refusal_reason={} operation_status={} operation_message={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} mc14_action_eligibility={} issue={}\n",
+        summary.operation_result_artifact_id.as_deref().unwrap_or("n/a"),
+        summary.query_artifact_id.as_deref().unwrap_or("n/a"),
+        summary.attempted,
+        summary.action_eligibility,
+        summary.window_point.as_deref().unwrap_or("n/a"),
+        summary.refusal_reason.as_deref().unwrap_or("n/a"),
+        summary.operation_status.as_deref().unwrap_or("n/a"),
+        summary.operation_message.as_deref().unwrap_or("n/a"),
+        summary.dispatch_command.as_deref().unwrap_or("n/a"),
+        summary.dispatch_outcome.as_deref().unwrap_or("n/a"),
+        summary.target_app.as_deref().unwrap_or("n/a"),
+        summary.target_title.as_deref().unwrap_or("n/a"),
+        summary.mc14_action_eligibility.as_deref().unwrap_or("n/a"),
+        summary.issue.as_deref().unwrap_or("n/a"),
+      ));
+    }
+  }
+
   output.push_str("\nCandidate Action Execution Lineage:\n");
   if candidate_action_execution_lineage.is_empty() {
     output.push_str("- none\n");
@@ -2221,7 +2252,7 @@ fn render_recognition_source(source: crate::contract::RecognitionSource) -> &'st
 mod tests {
   use std::collections::BTreeMap;
 
-  use super::render_run_text;
+  use super::{inspect_run, render_run_text};
   use crate::contract::{
     OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope,
     RecognitionSource, RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
@@ -3503,6 +3534,7 @@ mod tests {
       &[],
       &minecraft_training_result_spatial_query_manifests,
       &minecraft_training_result_spatial_query_inspect_reports,
+      &[],
     );
 
     assert!(output.contains("Run run_inspect_test"));
@@ -3803,6 +3835,7 @@ mod tests {
         report: None,
         issue: Some("json parse error: expected value".to_string()),
       }],
+      &[],
     );
 
     assert!(output.contains("MC-7 Training Jobs:"));
@@ -3973,6 +4006,7 @@ mod tests {
       &[],
       &manifests,
       &[],
+      &[],
     );
 
     assert!(output.contains("MC-14 Training Result Spatial Query Action Readiness:"));
@@ -3982,6 +4016,133 @@ mod tests {
     assert!(output.contains("action_eligibility=answer_non_clickable"));
     assert!(output.contains("refusal_reason=visibility=outside_window"));
     assert!(output.contains("query_artifact=artifact_mc14_absent"));
+    assert!(output.contains("action_eligibility=not_consumable"));
+    assert!(
+      output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet")
+    );
+  }
+
+  #[test]
+  fn render_run_text_renders_query_wired_live_action_three_gates() {
+    use crate::run_read::MinecraftQueryWiredLiveActionSummary;
+
+    let run_id = RunId::new("run_inspect_mc19_three_gates");
+    let root_span_id = SpanId::new("span_mc19_root");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_mc19_three_gates"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id: root_span_id.clone(),
+        attributes: BTreeMap::new(),
+        summary: Some("mc19 three gates".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+
+    let summaries = vec![
+      MinecraftQueryWiredLiveActionSummary {
+        operation_result_artifact_id: Some("artifact_mc19_click_ready_op".to_string()),
+        query_artifact_id: Some("artifact_mc19_click_ready_query".to_string()),
+        attempted: true,
+        action_eligibility: "click_ready".to_string(),
+        window_point: Some("854.0,480.0".to_string()),
+        refusal_reason: None,
+        operation_status: Some("completed".to_string()),
+        operation_message: Some("mock live click dispatched".to_string()),
+        target_app: Some("net.minecraft.client".to_string()),
+        target_title: Some("Minecraft".to_string()),
+        dispatch_command: Some("input.clickWindowPoint".to_string()),
+        dispatch_outcome: Some("failed: main visible window was not found".to_string()),
+        mc14_action_eligibility: Some("click_ready".to_string()),
+        issue: None,
+      },
+      MinecraftQueryWiredLiveActionSummary {
+        operation_result_artifact_id: Some("artifact_mc19_outside_op".to_string()),
+        query_artifact_id: Some("artifact_mc19_outside_query".to_string()),
+        attempted: false,
+        action_eligibility: "answer_non_clickable".to_string(),
+        window_point: None,
+        refusal_reason: Some("visibility=outside_window".to_string()),
+        operation_status: Some("completed".to_string()),
+        operation_message: Some("visibility=outside_window".to_string()),
+        target_app: Some("net.minecraft.client".to_string()),
+        target_title: Some("Minecraft".to_string()),
+        dispatch_command: None,
+        dispatch_outcome: None,
+        mc14_action_eligibility: Some("answer_non_clickable".to_string()),
+        issue: None,
+      },
+      MinecraftQueryWiredLiveActionSummary {
+        operation_result_artifact_id: Some("artifact_mc19_absent_op".to_string()),
+        query_artifact_id: Some("artifact_mc19_absent_query".to_string()),
+        attempted: false,
+        action_eligibility: "not_consumable".to_string(),
+        window_point: None,
+        refusal_reason: Some(
+          "status=failed reason=target_block_absent_from_scene_packet".to_string(),
+        ),
+        operation_status: Some("completed".to_string()),
+        operation_message: Some(
+          "status=failed reason=target_block_absent_from_scene_packet".to_string(),
+        ),
+        target_app: Some("net.minecraft.client".to_string()),
+        target_title: Some("Minecraft".to_string()),
+        dispatch_command: None,
+        dispatch_outcome: None,
+        mc14_action_eligibility: Some("not_consumable".to_string()),
+        issue: None,
+      },
+    ];
+
+    let output = render_run_text(
+      &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &summaries,
+    );
+
+    assert!(output.contains("MC-19 Query Wired Live Action:"));
+    assert!(output.contains("operation_result_artifact=artifact_mc19_click_ready_op"));
+    assert!(output.contains("attempted=true"));
+    assert!(output.contains("action_eligibility=click_ready"));
+    assert!(output.contains("dispatch_command=input.clickWindowPoint"));
+    assert!(output.contains("operation_result_artifact=artifact_mc19_outside_op"));
+    assert!(output.contains("refusal_reason=visibility=outside_window"));
+    assert!(output.contains("operation_result_artifact=artifact_mc19_absent_op"));
     assert!(output.contains("action_eligibility=not_consumable"));
     assert!(
       output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet")
@@ -4134,6 +4295,7 @@ mod tests {
       &[],
       &[launch_manifest],
       &duplicate_reports,
+      &[],
       &[],
       &[],
       &[],
@@ -4342,6 +4504,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
     );
 
     assert!(output.contains("manifest_artifact=artifact_mc7_job_manifest_dup"));
@@ -4515,6 +4678,7 @@ mod tests {
       &[],
       &[package_manifest],
       &duplicate_reports,
+      &[],
       &[],
       &[],
       &[],
@@ -4711,6 +4875,7 @@ mod tests {
       &[],
       &[result_manifest],
       &duplicate_reports,
+      &[],
       &[],
       &[],
       &[],
@@ -4923,6 +5088,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
     );
 
     assert!(output.contains("MC-16 Training Result Holdout Preview:"));
@@ -4930,5 +5096,56 @@ mod tests {
     assert!(output.contains("paired_report_artifact=n/a"));
     assert!(output.contains("inspect_artifact=artifact_mc16_holdout_report_a"));
     assert!(output.contains("inspect_artifact=artifact_mc16_holdout_report_b"));
+  }
+
+  #[test]
+  fn mc19_d5_live_store_inspect_acceptance() {
+    use std::path::PathBuf;
+    let store_root = PathBuf::from(".tmp/mc19-live/store");
+    if !store_root.exists() {
+      return;
+    }
+    let store = auv_tracing_driver::store::LocalStore::new(store_root).expect("store");
+    let cases = [
+      (
+        "run_1782590245467_18186_0",
+        "attempted=true",
+        "action_eligibility=click_ready",
+        "dispatch_command=input.clickWindowPoint",
+      ),
+      (
+        "run_1782590246310_18190_0",
+        "attempted=false",
+        "visibility=outside_window",
+        "dispatch_command=n/a",
+      ),
+      (
+        "run_1782590246843_18194_0",
+        "attempted=false",
+        "refusal_reason=status=failed reason=target_block_absent_from_scene_packet",
+        "dispatch_command=n/a",
+      ),
+    ];
+    for (run_id, attempted, eligibility_or_refusal, dispatch) in cases {
+      let output = inspect_run(&store, run_id).unwrap_or_else(|error| panic!("{run_id}: {error}"));
+      assert!(
+        output.contains("MC-19 Query Wired Live Action:"),
+        "{run_id}"
+      );
+      assert!(output.contains(attempted), "{run_id} missing {attempted}");
+      assert!(
+        output.contains(eligibility_or_refusal),
+        "{run_id} missing {eligibility_or_refusal}"
+      );
+      assert!(output.contains(dispatch), "{run_id} missing {dispatch}");
+      eprintln!("--- MC-19 inspect {run_id} ---");
+      for line in output.lines() {
+        if line.contains("MC-19 Query Wired Live Action:")
+          || line.starts_with("- operation_result_artifact=")
+        {
+          eprintln!("{line}");
+        }
+      }
+    }
   }
 }

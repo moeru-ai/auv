@@ -20,9 +20,10 @@ use crate::candidate_action_decision::{
 use crate::candidate_promotion::{CandidatePromotion, PromotionProjection, PromotionRefusal};
 use crate::candidate_promotion_recording::CandidatePromotionArtifact;
 use crate::contract::{
-  ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, RecognitionResult,
-  RecognitionSource, VerificationResult,
+  ArtifactRef, ObservationSnapshot, OperationOutput, OperationResult, OperationStatus,
+  RecognitionResult, RecognitionSource, VerificationResult,
 };
+use crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
 use crate::stability::{StabilityAssessment, StabilityRejection};
@@ -144,6 +145,24 @@ pub struct MinecraftTrainingResultSpatialQueryActionReadinessSummary {
   pub action_eligibility: String,
   pub window_point: Option<String>,
   pub refusal_reason: Option<String>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct MinecraftQueryWiredLiveActionSummary {
+  pub operation_result_artifact_id: Option<String>,
+  pub query_artifact_id: Option<String>,
+  pub attempted: bool,
+  pub action_eligibility: String,
+  pub window_point: Option<String>,
+  pub refusal_reason: Option<String>,
+  pub operation_status: Option<String>,
+  pub operation_message: Option<String>,
+  pub target_app: Option<String>,
+  pub target_title: Option<String>,
+  pub dispatch_command: Option<String>,
+  pub dispatch_outcome: Option<String>,
+  pub mc14_action_eligibility: Option<String>,
   pub issue: Option<String>,
 }
 
@@ -1951,6 +1970,209 @@ pub fn derive_minecraft_training_result_spatial_query_action_readiness(
     refusal_reason: readiness.refusal_reason,
     issue: None,
   }
+}
+
+fn parse_event_message_field(message: &str, key: &str) -> Option<String> {
+  if key == "refusal_reason" {
+    return parse_event_message_field_until(message, key, &["query_manifest_path"]);
+  }
+  let prefix = format!("{key}=");
+  for token in message.split_whitespace() {
+    if let Some(value) = token.strip_prefix(&prefix) {
+      return Some(value.to_string());
+    }
+  }
+  None
+}
+
+fn parse_event_message_field_until(message: &str, key: &str, stop_keys: &[&str]) -> Option<String> {
+  let prefix = format!("{key}=");
+  let start = message.find(&prefix)?;
+  let rest = &message[start + prefix.len()..];
+  let mut end = rest.len();
+  for stop in stop_keys {
+    if let Some(idx) = rest.find(&format!(" {stop}=")) {
+      end = end.min(idx);
+    }
+  }
+  let value = rest[..end].trim();
+  if value.is_empty() {
+    None
+  } else {
+    Some(value.to_string())
+  }
+}
+
+fn operation_status_label(status: OperationStatus) -> &'static str {
+  match status {
+    OperationStatus::Completed => "completed",
+    OperationStatus::Failed => "failed",
+  }
+}
+
+fn operation_acknowledged_message(output: &OperationOutput) -> Option<String> {
+  match output {
+    OperationOutput::Acknowledged { message } => message.clone(),
+    _ => None,
+  }
+}
+
+fn query_artifact_id_from_operation_result(operation_result: &OperationResult) -> Option<String> {
+  operation_result
+    .evidence_artifacts
+    .first()
+    .map(|artifact| artifact.artifact_id.as_str().to_string())
+    .or_else(|| {
+      operation_result
+        .freshness_basis
+        .as_ref()
+        .and_then(|basis| basis.source_artifact.as_ref())
+        .map(|artifact| artifact.artifact_id.as_str().to_string())
+    })
+}
+
+fn find_query_wired_live_action_operation_result(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> Option<(ArtifactRefLineage, OperationResult)> {
+  for artifact in &run.artifacts {
+    if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
+      continue;
+    }
+    let parsed = read_artifact_json::<OperationResult>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      "operation-result",
+    )
+    .ok()?;
+    if parsed.operation_id == QUERY_WIRED_LIVE_ACTION_OPERATION_ID {
+      return Some((
+        artifact_record_lineage(run.run.run_id.clone(), artifact),
+        parsed,
+      ));
+    }
+  }
+  None
+}
+
+fn derive_dispatch_evidence_from_events(run: &CanonicalRun) -> (Option<String>, Option<String>) {
+  let mut dispatch_command = None;
+  let mut dispatch_outcome = None;
+  for event in &run.events {
+    if event.name == "command.resolved"
+      && event.message.as_deref() == Some("resolved input.clickWindowPoint")
+    {
+      dispatch_command = Some("input.clickWindowPoint".to_string());
+      dispatch_outcome = Some("resolved".to_string());
+    }
+    if event.name == "command.failed" && dispatch_command.is_some() {
+      if let Some(message) = event.message.as_deref() {
+        dispatch_outcome = Some(format!("failed: {message}"));
+      }
+    }
+  }
+  (dispatch_command, dispatch_outcome)
+}
+
+pub fn derive_minecraft_query_wired_live_action_summary(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> Option<MinecraftQueryWiredLiveActionSummary> {
+  let outcome_event = run
+    .events
+    .iter()
+    .find(|event| event.name == "minecraft.query_wired_live_action.outcome");
+  let operation_result_pair = find_query_wired_live_action_operation_result(store, run);
+  if outcome_event.is_none() && operation_result_pair.is_none() {
+    return None;
+  }
+
+  let mut issue = None;
+  let (attempted, action_eligibility, refusal_reason) = if let Some(event) = outcome_event {
+    let message = event.message.as_deref().unwrap_or("");
+    let attempted =
+      parse_event_message_field(message, "attempted").is_some_and(|value| value == "true");
+    let action_eligibility =
+      parse_event_message_field(message, "action_eligibility").unwrap_or_else(|| "n/a".to_string());
+    let refusal_reason =
+      parse_event_message_field(message, "refusal_reason").filter(|value| value != "none");
+    (attempted, action_eligibility, refusal_reason)
+  } else {
+    (false, "n/a".to_string(), None)
+  };
+
+  let inputs_event = run
+    .events
+    .iter()
+    .find(|event| event.name == "minecraft.query_wired_live_action.inputs");
+  let target_app = inputs_event
+    .and_then(|event| event.message.as_deref())
+    .and_then(|message| parse_event_message_field(message, "target_app"));
+  let target_title = inputs_event
+    .and_then(|event| event.message.as_deref())
+    .and_then(|message| parse_event_message_field(message, "target_title"));
+
+  let (operation_result_artifact_id, query_artifact_id, operation_status, operation_message) =
+    if let Some((artifact_ref, operation_result)) = operation_result_pair {
+      (
+        Some(artifact_ref.artifact_id.as_str().to_string()),
+        query_artifact_id_from_operation_result(&operation_result),
+        Some(operation_status_label(operation_result.status).to_string()),
+        operation_acknowledged_message(&operation_result.output),
+      )
+    } else {
+      (None, None, None, None)
+    };
+
+  let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
+
+  let mut window_point = None;
+  let mut mc14_action_eligibility = None;
+  if let Some(query_id) = query_artifact_id.as_deref() {
+    if let Ok(manifests) = extract_minecraft_training_result_spatial_query_manifests(store, run) {
+      if let Some(lineage) = manifests
+        .iter()
+        .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id)
+      {
+        let readiness = derive_minecraft_training_result_spatial_query_action_readiness(lineage);
+        mc14_action_eligibility = Some(readiness.action_eligibility);
+        window_point = readiness.window_point;
+        if readiness.issue.is_some() {
+          issue = readiness.issue;
+        }
+      }
+    }
+  }
+
+  Some(MinecraftQueryWiredLiveActionSummary {
+    operation_result_artifact_id,
+    query_artifact_id,
+    attempted,
+    action_eligibility,
+    window_point,
+    refusal_reason,
+    operation_status,
+    operation_message,
+    target_app,
+    target_title,
+    dispatch_command,
+    dispatch_outcome,
+    mc14_action_eligibility,
+    issue,
+  })
+}
+
+pub(crate) fn list_minecraft_query_wired_live_action_summaries(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<MinecraftQueryWiredLiveActionSummary>> {
+  let run = store.read_run(run_id)?;
+  Ok(
+    derive_minecraft_query_wired_live_action_summary(store, &run)
+      .into_iter()
+      .collect(),
+  )
 }
 
 fn spatial_query_manifest_summary_for_action_readiness(
@@ -4040,6 +4262,7 @@ mod tests {
     CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus,
     DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
     MinecraftSpatialBundleManifestSummary, MinecraftTrainingResultSpatialQueryManifestLineage,
+    derive_minecraft_query_wired_live_action_summary,
     derive_minecraft_training_result_spatial_query_action_readiness,
     extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
     extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
@@ -4059,10 +4282,11 @@ mod tests {
     extract_minecraft_training_result_spatial_query_manifests, extract_observation_snapshots,
     extract_verifications, list_candidate_action_decision_lineage,
     list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
-    list_detector_recognition_lineage, list_minecraft_spatial_bundle_manifests,
-    list_minecraft_training_job_inspect_reports, list_minecraft_training_job_manifests,
-    list_minecraft_training_launch_inspect_reports, list_minecraft_training_launch_manifests,
-    list_minecraft_training_package_inspect_reports, list_minecraft_training_package_manifests,
+    list_detector_recognition_lineage, list_minecraft_query_wired_live_action_summaries,
+    list_minecraft_spatial_bundle_manifests, list_minecraft_training_job_inspect_reports,
+    list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports,
+    list_minecraft_training_launch_manifests, list_minecraft_training_package_inspect_reports,
+    list_minecraft_training_package_manifests,
     list_minecraft_training_result_artifact_fetch_inspect_reports,
     list_minecraft_training_result_artifact_fetch_manifests,
     list_minecraft_training_result_inspect_reports, list_minecraft_training_result_manifests,
@@ -8105,5 +8329,377 @@ mod tests {
         "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
       ],
     }
+  }
+
+  fn mc19_query_manifest_json(
+    target_block: (i32, i32, i32),
+    status: &str,
+    visibility: Option<&str>,
+    screen_point: Option<serde_json::Value>,
+    reason: Option<&str>,
+    selected_backend: Option<&str>,
+  ) -> serde_json::Value {
+    json!({
+      "schema_version": 1,
+      "generated_at_millis": 1,
+      "training_result_semantic_manifest_path": "/tmp/semantic.json",
+      "source_training_result_artifact_manifest_path": "/tmp/artifact.json",
+      "source_training_result_manifest_path": "/tmp/result.json",
+      "source_training_job_manifest_path": "/tmp/job.json",
+      "source_training_launch_plan_path": "/tmp/launch.json",
+      "source_training_package_manifest_path": "/tmp/package.json",
+      "source_scene_packet_manifest_path": "/tmp/scene-packet.json",
+      "source_bundle_manifest_paths": ["/tmp/bundle.json"],
+      "source_run_ids": ["run-a"],
+      "trainer_backend": "nerfstudio.splatfacto",
+      "job_backend": "remote",
+      "normalized_result_dir": "/tmp/normalized",
+      "query_kind": "block_projection",
+      "target_block": {"x": target_block.0, "y": target_block.1, "z": target_block.2},
+      "target_face": null,
+      "target_semantics": "hit_face_center",
+      "selected_backend": selected_backend,
+      "status": status,
+      "reason": reason,
+      "visibility": visibility,
+      "screen_point": screen_point,
+      "match_radius_px": 8.0,
+      "confidence": 0.9,
+      "basis_frame_id": "frame-1",
+      "comparison_verdict": "reference_only",
+      "known_limits": []
+    })
+  }
+
+  fn mc19_operation_result(
+    run_id: &RunId,
+    query_artifact_id: &str,
+    status: OperationStatus,
+    message: &str,
+  ) -> OperationResult {
+    let query_ref = ArtifactRef {
+      artifact_id: ArtifactId::new(query_artifact_id),
+      run_id: run_id.clone(),
+      span_id: SpanId::new("0000000000000001"),
+      captured_event_id: None,
+    };
+    OperationResult {
+      api_version: OPERATION_RESULT_API_VERSION.to_string(),
+      run_id: run_id.clone(),
+      status,
+      operation_id: crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID
+        .to_string(),
+      evidence_artifacts: vec![query_ref.clone()],
+      output: OperationOutput::Acknowledged {
+        message: Some(message.to_string()),
+      },
+      verifications: Vec::new(),
+      freshness_basis: Some(crate::contract::FreshnessBasis {
+        source_artifact: Some(query_ref),
+        source_operation_id: Some("auv.minecraft.query_3dgs_training_result".to_string()),
+        notes: vec!["MC-12 spatial query manifest staged in the same run".to_string()],
+      }),
+      known_limits: vec![
+        "mc19_v1_d4_query_wired_live_action_non_stub_click_no_gameplay_verification".to_string(),
+      ],
+    }
+  }
+
+  fn dummy_mc19_event(
+    span_id: &SpanId,
+    name: &str,
+    message: &str,
+  ) -> auv_tracing_driver::trace::EventRecordV1Alpha1 {
+    auv_tracing_driver::trace::EventRecordV1Alpha1 {
+      api_version: auv_tracing_driver::trace::EVENT_API_VERSION.to_string(),
+      event_id: EventId::new(format!("event_{name}")),
+      span_id: span_id.clone(),
+      name: name.to_string(),
+      timestamp_millis: 150,
+      attributes: BTreeMap::new(),
+      message: Some(message.to_string()),
+      artifact_ids: Vec::new(),
+    }
+  }
+
+  fn write_mc19_run_snapshot(
+    store: &LocalStore,
+    root: &Path,
+    run_id: &str,
+    events: Vec<auv_tracing_driver::trace::EventRecordV1Alpha1>,
+    artifacts: Vec<ArtifactRecordV1Alpha1>,
+  ) {
+    let run = dummy_run(run_id);
+    let span = dummy_span(&run.root_span_id);
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events,
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+    let _ = root;
+  }
+
+  #[test]
+  fn minecraft_query_wired_live_action_summary_click_ready_gate() {
+    let root = temp_dir("run-read-mc19-click-ready");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_mc19_click_ready";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let query_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+      "minecraft-3dgs-training-result-query.json",
+      &mc19_query_manifest_json(
+        (511, 73, 728),
+        "answered",
+        Some("visible"),
+        Some(json!({"x": 854.0, "y": 480.0})),
+        None,
+        Some("projection_reference"),
+      ),
+    );
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      1,
+      "operation-result",
+      "operation-result.json",
+      &mc19_operation_result(
+        &run.run_id,
+        query_artifact.artifact_id.as_str(),
+        OperationStatus::Completed,
+        "mock live click dispatched",
+      ),
+    );
+    let events = vec![
+      dummy_mc19_event(
+        &span_id,
+        "minecraft.query_wired_live_action.inputs",
+        "training_result_semantic_manifest=/tmp/semantic.json target_block=511,73,728 target_app=net.minecraft.client target_title=Minecraft checkpoint_native_provider=false closed_scene_toy_provider=true closed_scene_fixture=/tmp/fixture.json output_dir=/tmp/out",
+      ),
+      dummy_mc19_event(
+        &span_id,
+        "minecraft.query_wired_live_action.outcome",
+        "attempted=true action_eligibility=click_ready refusal_reason=none query_manifest_path=/tmp/query.json",
+      ),
+      dummy_mc19_event(
+        &span_id,
+        "command.resolved",
+        "resolved input.clickWindowPoint",
+      ),
+      dummy_mc19_event(
+        &span_id,
+        "command.failed",
+        "main visible window was not found",
+      ),
+    ];
+    write_mc19_run_snapshot(
+      &store,
+      &root,
+      run_id,
+      events,
+      vec![query_artifact, operation_result],
+    );
+
+    let summary = derive_minecraft_query_wired_live_action_summary(
+      &store,
+      &store.read_run(run_id).expect("run"),
+    )
+    .expect("summary should derive");
+    assert!(summary.attempted);
+    assert_eq!(summary.action_eligibility, "click_ready");
+    assert_eq!(
+      summary.dispatch_command.as_deref(),
+      Some("input.clickWindowPoint")
+    );
+    assert!(
+      summary
+        .dispatch_outcome
+        .as_deref()
+        .is_some_and(|v| v.starts_with("failed:"))
+    );
+    assert_eq!(
+      summary.mc14_action_eligibility.as_deref(),
+      Some("click_ready")
+    );
+    assert!(summary.window_point.is_some());
+    assert_eq!(
+      list_minecraft_query_wired_live_action_summaries(&store, run_id)
+        .expect("list")
+        .len(),
+      1
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_query_wired_live_action_summary_answer_non_clickable_gate() {
+    let root = temp_dir("run-read-mc19-outside-window");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_mc19_outside_window";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let query_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+      "minecraft-3dgs-training-result-query.json",
+      &mc19_query_manifest_json(
+        (511, 73, 728),
+        "answered",
+        Some("outside_window"),
+        None,
+        None,
+        Some("command_provider"),
+      ),
+    );
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      1,
+      "operation-result",
+      "operation-result.json",
+      &mc19_operation_result(
+        &run.run_id,
+        query_artifact.artifact_id.as_str(),
+        OperationStatus::Completed,
+        "visibility=outside_window",
+      ),
+    );
+    let events = vec![
+      dummy_mc19_event(
+        &span_id,
+        "minecraft.query_wired_live_action.inputs",
+        "target_app=net.minecraft.client target_title=Minecraft",
+      ),
+      dummy_mc19_event(
+        &span_id,
+        "minecraft.query_wired_live_action.outcome",
+        "attempted=false action_eligibility=answer_non_clickable refusal_reason=visibility=outside_window query_manifest_path=/tmp/query.json",
+      ),
+    ];
+    write_mc19_run_snapshot(
+      &store,
+      &root,
+      run_id,
+      events,
+      vec![query_artifact, operation_result],
+    );
+
+    let summary = derive_minecraft_query_wired_live_action_summary(
+      &store,
+      &store.read_run(run_id).expect("run"),
+    )
+    .expect("summary should derive");
+    assert!(!summary.attempted);
+    assert_eq!(summary.action_eligibility, "answer_non_clickable");
+    assert_eq!(
+      summary.refusal_reason.as_deref(),
+      Some("visibility=outside_window")
+    );
+    assert!(summary.dispatch_command.is_none());
+    assert!(summary.dispatch_outcome.is_none());
+    assert_eq!(
+      summary.mc14_action_eligibility.as_deref(),
+      Some("answer_non_clickable")
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn minecraft_query_wired_live_action_summary_not_consumable_gate() {
+    let root = temp_dir("run-read-mc19-not-consumable");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = "run_read_mc19_not_consumable";
+    let run = dummy_run(run_id);
+    let span_id = run.root_span_id.clone();
+    let query_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      0,
+      crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+      "minecraft-3dgs-training-result-query.json",
+      &mc19_query_manifest_json(
+        (9, 9, 9),
+        "failed",
+        None,
+        None,
+        Some("target_block_absent_from_scene_packet"),
+        None,
+      ),
+    );
+    let operation_result = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span_id,
+      1,
+      "operation-result",
+      "operation-result.json",
+      &mc19_operation_result(
+        &run.run_id,
+        query_artifact.artifact_id.as_str(),
+        OperationStatus::Completed,
+        "status=failed reason=target_block_absent_from_scene_packet",
+      ),
+    );
+    let events = vec![
+      dummy_mc19_event(
+        &span_id,
+        "minecraft.query_wired_live_action.inputs",
+        "target_app=net.minecraft.client target_title=Minecraft",
+      ),
+      dummy_mc19_event(
+        &span_id,
+        "minecraft.query_wired_live_action.outcome",
+        "attempted=false action_eligibility=not_consumable refusal_reason=status=failed reason=target_block_absent_from_scene_packet query_manifest_path=/tmp/query.json",
+      ),
+    ];
+    write_mc19_run_snapshot(
+      &store,
+      &root,
+      run_id,
+      events,
+      vec![query_artifact, operation_result],
+    );
+
+    let summary = derive_minecraft_query_wired_live_action_summary(
+      &store,
+      &store.read_run(run_id).expect("run"),
+    )
+    .expect("summary should derive");
+    assert!(!summary.attempted);
+    assert_eq!(summary.action_eligibility, "not_consumable");
+    assert_eq!(
+      summary.refusal_reason.as_deref(),
+      Some("status=failed reason=target_block_absent_from_scene_packet")
+    );
+    assert!(summary.dispatch_command.is_none());
+    assert!(summary.dispatch_outcome.is_none());
+    assert_eq!(
+      summary.mc14_action_eligibility.as_deref(),
+      Some("not_consumable")
+    );
+
+    let _ = fs::remove_dir_all(root);
   }
 }

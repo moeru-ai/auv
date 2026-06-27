@@ -1324,6 +1324,178 @@
   }
 
 
+
+  function isOperationResultArtifact(artifact) {
+    return !!artifact && artifact.role === "operation-result";
+  }
+
+  function isMc19QueryWiredLiveActionResult(parsed) {
+    return !!parsed && parsed.operation_id === "auv.minecraft.query_wired_live_action";
+  }
+
+  function parseEventMessageField(message, key) {
+    if (!message) return null;
+    const prefix = key + "=";
+    if (key === "refusal_reason") {
+      const start = message.indexOf(prefix);
+      if (start < 0) return null;
+      let rest = message.slice(start + prefix.length);
+      const marker = " query_manifest_path=";
+      const idx = rest.indexOf(marker);
+      if (idx >= 0) rest = rest.slice(0, idx);
+      rest = rest.trim();
+      return rest || null;
+    }
+    const tokens = message.split(/\s+/);
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i].indexOf(prefix) === 0) {
+        return tokens[i].slice(prefix.length);
+      }
+    }
+    return null;
+  }
+
+  function queryArtifactIdFromOperationResult(parsed) {
+    if (!parsed) return null;
+    const evidence = Array.isArray(parsed.evidence_artifacts) ? parsed.evidence_artifacts : [];
+    if (evidence.length && evidence[0].artifact_id) return evidence[0].artifact_id;
+    const basis = parsed.freshness_basis && parsed.freshness_basis.source_artifact;
+    return basis && basis.artifact_id ? basis.artifact_id : null;
+  }
+
+  function deriveQueryWiredLiveActionCard(parsed, runEvents, runArtifacts) {
+    const events = Array.isArray(runEvents) ? runEvents : [];
+    const outcomeEvent = events.find(function (event) {
+      return event && event.name === "minecraft.query_wired_live_action.outcome";
+    });
+    const inputsEvent = events.find(function (event) {
+      return event && event.name === "minecraft.query_wired_live_action.inputs";
+    });
+    if (!outcomeEvent && !(parsed && isMc19QueryWiredLiveActionResult(parsed))) {
+      return null;
+    }
+
+    const outcomeMessage = outcomeEvent && outcomeEvent.message ? outcomeEvent.message : "";
+    const attemptedRaw = parseEventMessageField(outcomeMessage, "attempted");
+    const attempted = attemptedRaw === "true";
+    const actionEligibility = parseEventMessageField(outcomeMessage, "action_eligibility") || "n/a";
+    let refusalReason = parseEventMessageField(outcomeMessage, "refusal_reason");
+    if (refusalReason === "none") refusalReason = null;
+
+    const inputsMessage = inputsEvent && inputsEvent.message ? inputsEvent.message : "";
+    const targetApp = parseEventMessageField(inputsMessage, "target_app");
+    const targetTitle = parseEventMessageField(inputsMessage, "target_title");
+
+    let dispatchCommand = null;
+    let dispatchOutcome = null;
+    events.forEach(function (event) {
+      if (!event) return;
+      if (event.name === "command.resolved" && event.message === "resolved input.clickWindowPoint") {
+        dispatchCommand = "input.clickWindowPoint";
+        dispatchOutcome = "resolved";
+      }
+      if (event.name === "command.failed" && dispatchCommand) {
+        dispatchOutcome = "failed: " + (event.message || "unknown");
+      }
+    });
+
+    const queryArtifactId = parsed ? queryArtifactIdFromOperationResult(parsed) : null;
+    const operationStatus = parsed && parsed.status ? parsed.status : null;
+    let operationMessage = null;
+    if (parsed && parsed.output && parsed.output.kind === "acknowledged") {
+      operationMessage = parsed.output.message || null;
+    }
+
+    let mc14ActionEligibility = null;
+    let windowPoint = null;
+    if (queryArtifactId && Array.isArray(runArtifacts)) {
+      const queryArtifact = runArtifacts.find(function (artifact) {
+        return artifact && artifact.artifact_id === queryArtifactId
+          && artifact.role === "minecraft-3dgs-training-result-query";
+      });
+      if (queryArtifact && state.artifactJsonCache && state.artifactJsonCache[artifactKey(queryArtifact)]) {
+        const manifest = state.artifactJsonCache[artifactKey(queryArtifact)];
+        const readiness = deriveSpatialQueryActionReadiness(manifest);
+        mc14ActionEligibility = readiness.action_eligibility;
+        windowPoint = readiness.window_point;
+      }
+    }
+
+    return {
+      attempted: attempted,
+      action_eligibility: actionEligibility,
+      window_point: windowPoint,
+      refusal_reason: refusalReason,
+      operation_status: operationStatus,
+      operation_message: operationMessage,
+      dispatch_command: dispatchCommand,
+      dispatch_outcome: dispatchOutcome,
+      query_artifact_id: queryArtifactId,
+      target_app: targetApp,
+      target_title: targetTitle,
+      mc14_action_eligibility: mc14ActionEligibility,
+    };
+  }
+
+  function renderQueryWiredLiveActionSummaryCard(artifact, parsed, runEvents, runArtifacts) {
+    if (!isOperationResultArtifact(artifact) || !isMc19QueryWiredLiveActionResult(parsed)) {
+      return null;
+    }
+    const card = deriveQueryWiredLiveActionCard(parsed, runEvents, runArtifacts);
+    if (!card) return null;
+    return renderKeyValueSummary([
+      ["kind", "MC-19 query wired live action"],
+      ["operation_id", parsed.operation_id],
+      ["query_artifact_id", card.query_artifact_id],
+      ["attempted", card.attempted],
+      ["action_eligibility", card.action_eligibility],
+      ["window_point", card.window_point],
+      ["refusal_reason", card.refusal_reason],
+      ["operation_status", card.operation_status],
+      ["operation_message", card.operation_message],
+      ["dispatch_command", card.dispatch_command],
+      ["dispatch_outcome", card.dispatch_outcome],
+      ["target_app", card.target_app],
+      ["target_title", card.target_title],
+      ["mc14_action_eligibility", card.mc14_action_eligibility],
+      ["known_limits", countArray(parsed.known_limits)],
+    ]);
+  }
+
+  function wiredActionRowsForQueryManifest(artifact, runEvents, runArtifacts) {
+    if (!artifact || !Array.isArray(runArtifacts)) return [];
+    const opArtifact = runArtifacts.find(function (candidate) {
+      if (!isOperationResultArtifact(candidate)) return false;
+      const key = artifactKey(candidate);
+      const cached = state.artifactJsonCache && state.artifactJsonCache[key];
+      if (cached && isMc19QueryWiredLiveActionResult(cached)) return true;
+      return !state.artifactJsonCache;
+    }) || runArtifacts.find(function (candidate) {
+      if (!isOperationResultArtifact(candidate)) return false;
+      const key = artifactKey(candidate);
+      const cached = state.artifactJsonCache && state.artifactJsonCache[key];
+      return cached && isMc19QueryWiredLiveActionResult(cached);
+    });
+    if (!opArtifact) return [];
+    const cacheKey = artifactKey(opArtifact);
+    const parsed = state.artifactJsonCache && state.artifactJsonCache[cacheKey];
+    if (!parsed || !isMc19QueryWiredLiveActionResult(parsed)) return [];
+    const linkedQueryId = queryArtifactIdFromOperationResult(parsed);
+    if (!linkedQueryId || linkedQueryId !== artifact.artifact_id) return [];
+    const card = deriveQueryWiredLiveActionCard(parsed, runEvents, runArtifacts);
+    if (!card) return [];
+    return [
+      ["wired_action_attempted", card.attempted],
+      ["wired_action_eligibility", card.action_eligibility],
+      ["wired_action_refusal", card.refusal_reason],
+      ["wired_action_dispatch_command", card.dispatch_command],
+      ["wired_action_dispatch_outcome", card.dispatch_outcome],
+      ["wired_action_operation_status", card.operation_status],
+      ["wired_action_operation_message", card.operation_message],
+    ];
+  }
+
+
   function deriveSpatialQueryActionReadiness(parsed) {
     if (!parsed || typeof parsed !== "object") {
       return {
@@ -1864,7 +2036,7 @@
     }
     if (isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact)) {
       const actionReadiness = deriveSpatialQueryActionReadiness(parsed);
-      return renderKeyValueSummary([
+      const entries = [
         ["kind", "training result spatial query manifest"],
         ["schema", parsed.schema_version],
         ["training_result_semantic_manifest", parsed.training_result_semantic_manifest_path],
@@ -1883,7 +2055,9 @@
         ["window_point", actionReadiness.window_point],
         ["refusal_reason", actionReadiness.refusal_reason],
         ["known_limits", countArray(parsed.known_limits)],
-      ]);
+      ];
+      entries.push.apply(entries, wiredActionRowsForQueryManifest(artifact, state.events, state.artifacts));
+      return renderKeyValueSummary(entries);
     }
     if (isMinecraftTrainingResultSpatialQueryInspectArtifact(artifact)) {
       return renderKeyValueSummary([
@@ -2189,6 +2363,13 @@
               preview.insertBefore(renderSurfaceNodesPanel(artifact, nodes), surface);
             }
           }
+          if (parsed) {
+            state.artifactJsonCache[expectedArtifactKey] = parsed;
+          }
+          const mc19Card = renderQueryWiredLiveActionSummaryCard(artifact, parsed, state.events, state.artifacts);
+          if (mc19Card) {
+            preview.insertBefore(mc19Card, surface);
+          }
           if (parsed && (
             isMinecraftTrainingPackageArtifact(artifact)
             || isMinecraftTrainingPackageInspectArtifact(artifact)
@@ -2213,6 +2394,33 @@
               preview.insertBefore(summaryCard, surface);
             }
           }
+
+          if (isMinecraftTrainingResultSpatialQueryManifestArtifact(artifact) && state.artifacts) {
+            state.artifacts.forEach(function (candidate) {
+              if (!isOperationResultArtifact(candidate)) return;
+              const key = artifactKey(candidate);
+              if (state.artifactJsonCache[key]) return;
+              fetch(artifactUrl(candidate))
+                .then(function (response) {
+                  if (!response.ok) return null;
+                  return response.text();
+                })
+                .then(function (body) {
+                  if (!body || state.activeArtifactKey !== expectedArtifactKey) return;
+                  const opParsed = parseJsonObject(body);
+                  if (!opParsed) return;
+                  state.artifactJsonCache[key] = opParsed;
+                  const summaryCard = renderTrainerLineageSummaryCard(artifact, parsed);
+                  if (summaryCard) {
+                    const existingCards = preview.querySelectorAll(".json-summary");
+                    existingCards.forEach(function (node) { node.remove(); });
+                    preview.insertBefore(summaryCard, surface);
+                  }
+                })
+                .catch(function () {});
+            });
+          }
+
           surface.appendChild(el("pre", null, [text]));
         })
         .catch(function (err) {
