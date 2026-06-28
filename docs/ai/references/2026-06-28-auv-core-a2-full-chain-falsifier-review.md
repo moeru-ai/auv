@@ -170,7 +170,10 @@ No Core-C1 falsifier **triggered** by second vertical wiring.
 3. **Live closure is not semantic success** — `run_1782631533865_61190_0` proves
    admission + dispatch honesty, not osu gameplay hit.
 4. **Third vertical** — two live admission donors reduce coincidence argument for
-   Core-C1 vocabulary but not for Core-A enum extraction.
+   Core-C1 vocabulary but not for Core-A enum extraction. Core-X1⁶ scouts
+   third-vertical candidates (Balatro primary scout, not existing donor) for
+   rows 69/70 and coincidence risk — see
+   [`2026-06-29-auv-core-x1-third-vertical-scouting-design.md`](2026-06-29-auv-core-x1-third-vertical-scouting-design.md).
 
 ## Explicit defer list
 
@@ -181,9 +184,13 @@ No Core-C1 falsifier **triggered** by second vertical wiring.
 | MC-20 / controller | Owner opens planner slice |
 | osu gameplay verification (Layer 3) | Owner names verification slice |
 | Inline inspect disclaimer | Owner approves read-side polish |
+| Core-X2 third-vertical consumption probe | Owner accepts Core-X1 MVP + names candidate (Balatro default) |
 
 ## Related references (post-A2)
 
+- Core-X1 third-vertical scouting (rows 69/70 donor scout; footnote⁶):
+  [`2026-06-29-auv-core-x1-third-vertical-scouting-design.md`](2026-06-29-auv-core-x1-third-vertical-scouting-design.md),
+  [`2026-06-29-auv-core-x1-third-vertical-admissibility-mvp.md`](2026-06-29-auv-core-x1-third-vertical-admissibility-mvp.md)
 - Core-A4 quality/backend falsifier gate (rows 69/70):
   [`2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md`](2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md)
 

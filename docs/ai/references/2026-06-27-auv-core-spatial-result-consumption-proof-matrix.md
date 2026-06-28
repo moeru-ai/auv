@@ -92,6 +92,8 @@ not matrix graduation.
 
 Rows marked probe-local remain **non-admissible for Core-B extraction** unless
 footnote³ helper-only admissible language applies (stage triad only on main matrix).
+Third-vertical scouting for rows 69/70 semantic triangulation is in progress
+(Core-X1⁶); no verdict column changes from osu appendix alone.
 Graduation reviews:
 `docs/ai/references/2026-06-27-auv-core-a-query-readiness-graduation-review.md` (rows 66/68)
 and Core-A2³ (rows 65/69/70). **Admissible does not mean recommended now**;
@@ -125,6 +127,14 @@ unchanged; **not** Core-B graduation.
 [`2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md`](2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md)
 — post-A3 re-adjudication of rows 69/70; main matrix verdicts **unchanged**;
 **defer** Core-A5a (quality verdict) and Core-A5b (backend label) extraction.
+
+⁶ Core-X1 third-vertical scouting (2026-06-29, `docs/core-x1-third-vertical-scouting`):
+[`2026-06-29-auv-core-x1-third-vertical-scouting-design.md`](2026-06-29-auv-core-x1-third-vertical-scouting-design.md)
+and
+[`2026-06-29-auv-core-x1-third-vertical-admissibility-mvp.md`](2026-06-29-auv-core-x1-third-vertical-admissibility-mvp.md)
+— design-only scout of third vertical candidates; **Balatro** as most donor-like
+scout (not existing donor); main matrix verdict columns **unchanged**; third-vertical
+scouting in progress; implementation deferred to Core-X2.
 
 ## What does not need a second vertical
 

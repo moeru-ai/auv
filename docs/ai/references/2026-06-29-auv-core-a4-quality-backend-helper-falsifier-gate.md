@@ -300,9 +300,13 @@ without owner row split.
 | Helper-only admissible language (row 69) | Third vertical semantic match or documented mapping |
 | Helper-only admissible language (row 70) | Full-row second-vertical backend discipline |
 | Core-B enum graduation | Separate from helper-only; not unlocked by A4 |
+| Core-X2 third-vertical consumption probe | Owner accepts Core-X1 scouting + MVP; Balatro default scout |
 
 ## Related references
 
+- Core-X1 third-vertical scouting (footnote⁶; verdict columns unchanged):
+  [`2026-06-29-auv-core-x1-third-vertical-scouting-design.md`](2026-06-29-auv-core-x1-third-vertical-scouting-design.md),
+  [`2026-06-29-auv-core-x1-third-vertical-admissibility-mvp.md`](2026-06-29-auv-core-x1-third-vertical-admissibility-mvp.md)
 - Core-A2 graduation (initial row 69/70 grading):
   [`2026-06-28-auv-core-a2-stage-quality-graduation-review.md`](2026-06-28-auv-core-a2-stage-quality-graduation-review.md)
 - Core-A2 full-chain falsifier:
