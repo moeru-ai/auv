@@ -6369,7 +6369,6 @@ mod tests {
       HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewStatus,
       TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
     };
-
     let root = temp_dir("run-read-mc16-holdout-manifest");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run = dummy_run("run_read_mc16_holdout_manifest");
@@ -6509,7 +6508,6 @@ mod tests {
       TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport,
       TrainingResultHoldoutRenderQualityManifest,
     };
-
     let root = temp_dir("run-read-mc17-holdout-quality-manifest");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run = dummy_run("run_read_mc17_holdout_quality_manifest");
@@ -6702,7 +6700,6 @@ mod tests {
       TrainingResultSpatialQueryComparisonVerdict, TrainingResultSpatialQueryKind,
       TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryStatus,
     };
-
     let root = temp_dir("run-read-mc13-query-manifest");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run = dummy_run("run_read_mc13_query_manifest");
@@ -6913,7 +6910,6 @@ mod tests {
       TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest,
       TrainingResultSpatialQueryStatus,
     };
-
     let root = temp_dir("run-read-mc13-query-inspect");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run = dummy_run("run_read_mc13_query_inspect");

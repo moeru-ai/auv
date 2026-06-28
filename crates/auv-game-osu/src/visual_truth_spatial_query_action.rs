@@ -1,11 +1,9 @@
 use auv_query_readiness::{DerivedActionReadiness, format_query_not_consumable_refusal};
-
 use crate::visual_truth_spatial_query::{
   VisualTruthPixelVisibility, VisualTruthSpatialQueryManifest, VisualTruthSpatialQueryStatus,
 };
 
 pub type VisualTruthSpatialQueryActionEligibility = auv_query_readiness::DerivedActionEligibility;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct VisualTruthSpatialQueryActionReadiness {
   pub eligibility: VisualTruthSpatialQueryActionEligibility,
