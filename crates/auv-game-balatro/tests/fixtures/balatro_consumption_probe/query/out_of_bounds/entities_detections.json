@@ -1,0 +1,20 @@
+{
+  "model_id": "balatro-entities",
+  "image_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "detections": [
+    {
+      "class_id": 0,
+      "label": "poker_card_front",
+      "confidence": 0.95,
+      "bbox": {
+        "x1": 1400.0,
+        "y1": 500.0,
+        "x2": 1480.0,
+        "y2": 620.0
+      }
+    }
+  ]
+}

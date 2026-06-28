@@ -73,6 +73,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 
 [dependencies]
 auv-game-osu = { path = "crates/auv-game-osu" }
+auv-game-balatro = { path = "crates/auv-game-balatro" }
 auv-game-minecraft = { path = "crates/auv-game-minecraft" }
 auv-inference-common = { path = "crates/auv-inference-common" }
 auv-driver = { path = "crates/auv-driver" }

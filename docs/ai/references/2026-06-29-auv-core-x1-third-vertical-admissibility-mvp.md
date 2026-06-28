@@ -2,7 +2,7 @@
 
 Date: 2026-06-29
 
-Status: design-only MVP proof contract. Implementation deferred to Core-X2.
+Status: design-only MVP proof contract. **Core-X2 implementation:** [`2026-06-29-auv-core-x2-balatro-consumption-probe-design.md`](2026-06-29-auv-core-x2-balatro-consumption-probe-design.md).
 **Balatro only** — framed as **path to donor**, not existing donor.
 
 Parent scouting design:

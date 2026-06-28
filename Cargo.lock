@@ -363,6 +363,7 @@ dependencies = [
  "auv-cli-invoke",
  "auv-driver",
  "auv-driver-macos",
+ "auv-game-balatro",
  "auv-game-minecraft",
  "auv-game-osu",
  "auv-inference-common",
@@ -456,9 +457,12 @@ version = "0.0.1"
 dependencies = [
  "auv-driver",
  "auv-driver-macos",
+ "auv-file",
  "auv-inference-common",
  "auv-inference-ort",
  "auv-inference-ultralytics",
+ "auv-stage-status",
+ "auv-tracing-driver",
  "auv-view",
  "clap",
  "hf-hub",
@@ -466,6 +470,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 

@@ -1,0 +1,53 @@
+{
+  "model_id": "balatro-entities",
+  "image_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "detections": [
+    {
+      "class_id": 0,
+      "label": "poker_card_front",
+      "confidence": 0.95,
+      "bbox": {
+        "x1": 400.0,
+        "y1": 500.0,
+        "x2": 480.0,
+        "y2": 620.0
+      }
+    },
+    {
+      "class_id": 0,
+      "label": "poker_card_front",
+      "confidence": 0.93,
+      "bbox": {
+        "x1": 500.0,
+        "y1": 500.0,
+        "x2": 580.0,
+        "y2": 620.0
+      }
+    },
+    {
+      "class_id": 0,
+      "label": "poker_card_front",
+      "confidence": 0.9,
+      "bbox": {
+        "x1": 600.0,
+        "y1": 500.0,
+        "x2": 680.0,
+        "y2": 620.0
+      }
+    },
+    {
+      "class_id": 1,
+      "label": "joker_card",
+      "confidence": 0.87,
+      "bbox": {
+        "x1": 50.0,
+        "y1": 100.0,
+        "x2": 130.0,
+        "y2": 220.0
+      }
+    }
+  ]
+}

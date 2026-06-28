@@ -17,6 +17,9 @@ default = []
 card-corner-onnx = ["dep:auv-inference-ort"]
 
 [dependencies]
+auv-file = { path = "../auv-file" }
+auv-stage-status = { path = "../auv-stage-status" }
+auv-tracing-driver = { path = "../auv-tracing-driver" }
 auv-driver = { path = "../auv-driver" }
 auv-inference-common = { path = "../auv-inference-common" }
 auv-inference-ort = { path = "../auv-inference-ort", optional = true }
@@ -32,3 +35,6 @@ thiserror.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-driver-macos = { path = "../auv-driver-macos" }
+
+[dev-dependencies]
+tempfile = "3"

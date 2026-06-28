@@ -136,6 +136,12 @@ and
 scout (not existing donor); main matrix verdict columns **unchanged**; third-vertical
 scouting in progress; implementation deferred to Core-X2.
 
+⁷ Core-X2 Balatro consumption probe (2026-06-29, `feat/core-x2-balatro-consumption-probe`):
+[`2026-06-29-auv-core-x2-balatro-consumption-probe-design.md`](2026-06-29-auv-core-x2-balatro-consumption-probe-design.md)
+and
+[`2026-06-29-auv-core-x2-balatro-consumption-probe-evidence.md`](2026-06-29-auv-core-x2-balatro-consumption-probe-evidence.md)
+— Balatro X2 candidate third-donor probe for rows 69/70 semantic triangulation; main matrix verdict columns **unchanged**; **not** graduation.
+
 ## What does not need a second vertical
 
 Not every reuse decision needs a full graduation process.

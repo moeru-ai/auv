@@ -1,0 +1,8 @@
+{
+  "model_id": "balatro-entities",
+  "image_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "detections": []
+}

@@ -2,6 +2,7 @@
 mod action_resolver_decision;
 pub mod app;
 pub mod ax_recognition;
+pub mod balatro;
 pub mod candidate_action_command;
 pub mod candidate_action_decision;
 pub mod candidate_promotion;

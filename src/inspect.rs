@@ -10,10 +10,13 @@ use crate::contract::{
 };
 use crate::model::AuvResult;
 use crate::run_read::{
-  CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
-  CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
-  CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
-  CandidatePromotionLineageStatus, DetectorRecognitionLineage,
+  BalatroCardDetectionQualityInspectReportLineage, BalatroCardDetectionQualityManifestLineage,
+  BalatroCardDetectionSemanticInspectReportLineage, BalatroCardDetectionSemanticManifestLineage,
+  BalatroCardDetectionSpatialQueryInspectReportLineage,
+  BalatroCardDetectionSpatialQueryManifestLineage, CandidateActionDecisionLineage,
+  CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState,
+  CandidateActionExecutionLineage, CandidateActionExecutionLineageStatus,
+  CandidatePromotionLineage, CandidatePromotionLineageStatus, DetectorRecognitionLineage,
   MinecraftHoldoutRenderQualityInspectReportLineage, MinecraftHoldoutRenderQualityManifestLineage,
   MinecraftQueryWiredLiveActionSummary, MinecraftSpatialBundleManifestLineage,
   MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage,
@@ -41,6 +44,12 @@ use crate::run_read::{
   derive_minecraft_training_result_spatial_query_action_readiness,
   derive_osu_detection_eval_quality_verdict_summary,
   derive_osu_visual_truth_spatial_query_action_readiness,
+  list_balatro_card_detection_quality_inspect_reports,
+  list_balatro_card_detection_quality_manifests,
+  list_balatro_card_detection_semantic_inspect_reports,
+  list_balatro_card_detection_semantic_manifests,
+  list_balatro_card_detection_spatial_query_inspect_reports,
+  list_balatro_card_detection_spatial_query_manifests,
   list_minecraft_holdout_render_quality_inspect_reports,
   list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts,
   list_minecraft_query_wired_live_action_summaries, list_minecraft_spatial_bundle_manifests,
@@ -235,6 +244,18 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_osu_detection_eval_witness_inspect_reports(store, run_id)?;
   let osu_detection_eval_quality_manifests =
     list_osu_detection_eval_quality_manifests(store, run_id)?;
+  let balatro_card_detection_semantic_manifests =
+    list_balatro_card_detection_semantic_manifests(store, run_id)?;
+  let balatro_card_detection_semantic_inspect_reports =
+    list_balatro_card_detection_semantic_inspect_reports(store, run_id)?;
+  let balatro_card_detection_spatial_query_manifests =
+    list_balatro_card_detection_spatial_query_manifests(store, run_id)?;
+  let balatro_card_detection_spatial_query_inspect_reports =
+    list_balatro_card_detection_spatial_query_inspect_reports(store, run_id)?;
+  let balatro_card_detection_quality_manifests =
+    list_balatro_card_detection_quality_manifests(store, run_id)?;
+  let balatro_card_detection_quality_inspect_reports =
+    list_balatro_card_detection_quality_inspect_reports(store, run_id)?;
   let osu_detection_eval_quality_inspect_reports =
     list_osu_detection_eval_quality_inspect_reports(store, run_id)?;
   let quality_baseline_report = quality_baseline_profile_v1().ok().and_then(|profile| {
@@ -300,6 +321,12 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &osu_detection_eval_witness_inspect_reports,
     &osu_detection_eval_quality_manifests,
     &osu_detection_eval_quality_inspect_reports,
+    &balatro_card_detection_semantic_manifests,
+    &balatro_card_detection_semantic_inspect_reports,
+    &balatro_card_detection_spatial_query_manifests,
+    &balatro_card_detection_spatial_query_inspect_reports,
+    &balatro_card_detection_quality_manifests,
+    &balatro_card_detection_quality_inspect_reports,
     quality_baseline_report.as_ref(),
     quality_verdict_probe.as_ref(),
     quality_verdict_trained_render.as_ref(),
@@ -384,6 +411,12 @@ pub fn render_run_text(
   osu_detection_eval_witness_inspect_reports: &[OsuDetectionEvalWitnessInspectReportLineage],
   osu_detection_eval_quality_manifests: &[OsuDetectionEvalQualityManifestLineage],
   osu_detection_eval_quality_inspect_reports: &[OsuDetectionEvalQualityInspectReportLineage],
+  balatro_card_detection_semantic_manifests: &[BalatroCardDetectionSemanticManifestLineage],
+  balatro_card_detection_semantic_inspect_reports: &[BalatroCardDetectionSemanticInspectReportLineage],
+  balatro_card_detection_spatial_query_manifests: &[BalatroCardDetectionSpatialQueryManifestLineage],
+  balatro_card_detection_spatial_query_inspect_reports: &[BalatroCardDetectionSpatialQueryInspectReportLineage],
+  balatro_card_detection_quality_manifests: &[BalatroCardDetectionQualityManifestLineage],
+  balatro_card_detection_quality_inspect_reports: &[BalatroCardDetectionQualityInspectReportLineage],
   quality_baseline_report: Option<&MinecraftTrainingResultQualityBaselineReportSummary>,
   quality_verdict_probe: Option<&MinecraftTrainingResultQualityVerdictSummary>,
   quality_verdict_trained_render: Option<&MinecraftTrainingResultQualityVerdictSummary>,
@@ -1936,6 +1969,128 @@ pub fn render_run_text(
           report_lineage.artifact.artifact_id,
           report_lineage.artifact.role.as_deref().unwrap_or("n/a"),
           report_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nBalatro Card Detection Semantic:\n");
+  if balatro_card_detection_semantic_manifests.is_empty()
+    && balatro_card_detection_semantic_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in balatro_card_detection_semantic_manifests {
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- manifest_artifact={} semantic_status={} semantic_reason={} ui_detection_count={} entities_detection_count={} frame_source={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest.semantic_status,
+          manifest.semantic_reason.as_deref().unwrap_or("n/a"),
+          manifest.ui_detection_count,
+          manifest.entities_detection_count,
+          manifest.frame_source,
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in balatro_card_detection_semantic_inspect_reports {
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- inspect_artifact={} semantic_status={} detection_bundle_readable={} detection_sets_non_empty={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report.semantic_status,
+          report.detection_bundle_readable,
+          report.detection_sets_non_empty,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nBalatro Card Detection Spatial Query:\n");
+  if balatro_card_detection_spatial_query_manifests.is_empty()
+    && balatro_card_detection_spatial_query_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in balatro_card_detection_spatial_query_manifests {
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- query_artifact={} target_slot={}:{} status={} reason={} pixel_point={} query_backend={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest.target_zone,
+          manifest.target_index,
+          manifest.status,
+          manifest.reason.as_deref().unwrap_or("n/a"),
+          match (manifest.pixel_x, manifest.pixel_y) {
+            (Some(x), Some(y)) => format!("{x},{y}"),
+            _ => "n/a".to_string(),
+          },
+          manifest.query_backend,
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in balatro_card_detection_spatial_query_inspect_reports {
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- inspect_artifact={} status={} semantic_status={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report.status,
+          report.semantic_status,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nBalatro Card Detection Quality:\n");
+  if balatro_card_detection_quality_manifests.is_empty()
+    && balatro_card_detection_quality_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in balatro_card_detection_quality_manifests {
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- quality_artifact={} semantic_status={} status={} verdict={} quality_backend={} expected_slot_count={} scored_slot_count={} unscored_slot_count={} slot_coverage_ratio={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest.semantic_status,
+          manifest.status,
+          manifest.verdict,
+          manifest.quality_backend.as_deref().unwrap_or("n/a"),
+          manifest
+            .expected_slot_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest
+            .scored_slot_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest
+            .unscored_slot_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest
+            .slot_coverage_ratio
+            .map(|value| format!("{value:.3}"))
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in balatro_card_detection_quality_inspect_reports {
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- quality_inspect_artifact={} verdict={} quality_backend={} slot_coverage_ratio_available={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report.verdict,
+          report.quality_backend.as_deref().unwrap_or("n/a"),
+          report.slot_coverage_ratio_available,
           report_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
       }
@@ -3984,6 +4139,12 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4297,6 +4458,12 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4480,6 +4647,12 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4633,6 +4806,12 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4760,6 +4939,12 @@ mod tests {
       &[],
       &[],
       &summaries,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -4902,6 +5087,12 @@ mod tests {
       &[],
       &[],
       &summaries,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5070,6 +5261,12 @@ mod tests {
       &[],
       &[launch_manifest],
       &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5301,6 +5498,12 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -5477,6 +5680,12 @@ mod tests {
       &[],
       &[package_manifest],
       &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5686,6 +5895,12 @@ mod tests {
       &[],
       &[result_manifest],
       &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5921,6 +6136,12 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -6012,6 +6233,12 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -6218,5 +6445,60 @@ mod tests {
         && output.contains("quality_verdict=pass"),
       "{run_id}"
     );
+  }
+  #[test]
+  fn render_run_text_renders_balatro_card_detection_probe() {
+    use std::path::PathBuf;
+
+    use auv_game_balatro::ObjectZone;
+    use auv_tracing_driver::recording::RunRecordingBackend;
+    use auv_tracing_driver::store::LocalStore;
+
+    use crate::balatro::run_balatro_consumption_probe_chain;
+
+    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe");
+    let store_root = std::env::temp_dir().join(format!(
+      "auv-balatro-probe-store-{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos()
+    ));
+    let work_dir = std::env::temp_dir().join(format!(
+      "auv-balatro-probe-work-{}",
+      std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos()
+    ));
+    std::fs::create_dir_all(&store_root).expect("store dir");
+    std::fs::create_dir_all(&work_dir).expect("work dir");
+
+    let store = LocalStore::new(store_root.clone()).expect("store");
+    let recording = RunRecordingBackend::local_only(store.clone()).handle();
+
+    let chain = run_balatro_consumption_probe_chain(
+      &recording,
+      fixture_root.clone(),
+      fixture_root.join("expected_slots.json"),
+      auv_game_balatro::SlotId::new(ObjectZone::Hand, 0),
+      work_dir.clone(),
+    )
+    .expect("probe chain");
+
+    let output =
+      inspect_run(&store, chain.run_id.as_str()).unwrap_or_else(|error| panic!("inspect: {error}"));
+
+    assert!(output.contains("Balatro Card Detection Semantic:"));
+    assert!(output.contains("semantic_status=ready"));
+    assert!(output.contains("Balatro Card Detection Spatial Query:"));
+    assert!(output.contains("status=answered"));
+    assert!(output.contains("Balatro Card Detection Quality:"));
+    assert!(output.contains("verdict=measured_only"));
+    assert!(output.contains("quality_backend=ultralytics_onnx_entities"));
+
+    let _ = std::fs::remove_dir_all(&store_root);
+    let _ = std::fs::remove_dir_all(&work_dir);
   }
 }

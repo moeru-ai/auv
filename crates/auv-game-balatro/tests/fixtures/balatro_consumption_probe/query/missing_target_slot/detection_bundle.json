@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "frame": {
+    "source": "sample.png",
+    "image_size": {
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "ui_detection_set_path": "ui_detections.json",
+  "entities_detection_set_path": "entities_detections.json",
+  "setup_manifest_path": null,
+  "detector_model_id_ui": "games-balatro-ui",
+  "detector_model_id_entities": "games-balatro-entities"
+}

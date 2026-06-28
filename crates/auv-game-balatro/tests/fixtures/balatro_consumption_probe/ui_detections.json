@@ -1,0 +1,31 @@
+{
+  "model_id": "balatro-ui",
+  "image_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "detections": [
+    {
+      "class_id": 0,
+      "label": "button_play",
+      "confidence": 0.91,
+      "bbox": {
+        "x1": 100.0,
+        "y1": 600.0,
+        "x2": 200.0,
+        "y2": 680.0
+      }
+    },
+    {
+      "class_id": 1,
+      "label": "button_discard",
+      "confidence": 0.88,
+      "bbox": {
+        "x1": 220.0,
+        "y1": 600.0,
+        "x2": 320.0,
+        "y2": 680.0
+      }
+    }
+  ]
+}
