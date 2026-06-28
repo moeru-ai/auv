@@ -1,7 +1,7 @@
 //! Registry-backed CLI invoke metadata and help rendering.
 //!
 //! This crate owns how invoke-visible commands are described, grouped, and
-//! parsed for `auv-cli invoke ...`.
+//! parsed for `auv invoke ...`.
 
 use std::collections::BTreeMap;
 
@@ -217,7 +217,7 @@ mod tests {
     let help = render_command_help(command);
 
     assert!(help.contains("COMMAND\n  fixture.observe"));
-    assert!(help.contains("USAGE\n  auv-cli invoke fixture.observe"));
+    assert!(help.contains("USAGE\n  auv invoke fixture.observe"));
     assert!(help.contains("SUMMARY\n  Emit a deterministic observation result"));
     assert!(help.contains("OPTIONS\n  none"));
     assert!(!help.contains("DRIVER\n"));

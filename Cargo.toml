@@ -53,6 +53,11 @@ description.workspace = true
 documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
+autobins = false
+
+[[bin]]
+name = "auv"
+path = "src/main.rs"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

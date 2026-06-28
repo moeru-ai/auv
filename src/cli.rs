@@ -313,7 +313,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_xtask(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() != 2 {
-    return Err("usage: auv-cli --xtask generate-swift-bridge".to_string());
+    return Err("usage: auv --xtask generate-swift-bridge".to_string());
   }
 
   match arguments[1].as_str() {
@@ -327,47 +327,47 @@ fn parse_xtask(arguments: &[String]) -> AuvResult<CliCommand> {
 pub fn help_text() -> String {
   String::from(
     "\
-  auv-cli prototype
+  auv prototype
 
 USAGE
-  auv-cli doctor [--json]
-  auv-cli permissions check [--json]
-  auv-cli app probe <bundle-id> [--output-dir <dir>]
-  auv-cli app analyze <probe-dir-or-probe-json>
-  auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]
-  auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
-  auv-cli osu export-dataset <run-artifact-dir> --output-dir <dir>
-  auv-cli osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]
-  auv-cli osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
-  auv-cli invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli inspect <run-id>
-  auv-cli inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
-  auv-cli mcp serve
-  auv-cli minecraft bridge --sample <telemetry.jsonl> (--screenshot <frame.png> | --capture-target-app <bundle-id> [--capture-target-title <window-title-substring>]) --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft calibrate-projection --frame <minecraft-spatial-frame.json> --screenshot <frame.png> --target-block <x,y,z> [--target-semantics hit_face_center|block_center] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft live-click --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> --target-app <application-id> --target-title <window title> [--post-sample <telemetry.jsonl>] [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft export-3dgs-scene-packet --bundle-manifest <bundle/run.json>... --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft export-3dgs-training-package --scene-packet-manifest <scene-packet/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft prepare-3dgs-training --training-package-manifest <training-package/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft launch-3dgs-training-job --training-launch-plan <training-launch-plan.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--training-job-submit-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft collect-3dgs-training-job-result --training-job-manifest <training-job.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--training-job-status-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft fetch-3dgs-training-result-artifacts --training-result-manifest <training-result.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--artifact-fetch-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft validate-3dgs-training-result --training-result-artifact-manifest <d11-manifest.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft query-3dgs-training-result --training-result-semantic-manifest <semantic.json> --target-block <x,y,z> [--target-face <up|down|north|south|east|west>] [--target-semantics hit_face_center|block_center] [--query-command <command>] --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft inspect-3dgs-training-result-holdout --training-result-semantic-manifest <semantic.json> [--holdout-frame-index <n>] [--holdout-render-command <command>] --output-dir <dir>
-  auv-cli minecraft measure-3dgs-holdout-render-quality --training-result-semantic-manifest <semantic.json> --holdout-preview-manifest <mc16.json> --render-command <command> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft build-texture-sweep-samples --bundle-manifest <bundle/run.json>... --output <samples.json> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--require-real-source] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
-  auv-cli candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv doctor [--json]
+  auv permissions check [--json]
+  auv app probe <bundle-id> [--output-dir <dir>]
+  auv app analyze <probe-dir-or-probe-json>
+  auv osu benchmark <beatmap.osu> [--output-dir <dir>]
+  auv osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
+  auv osu export-dataset <run-artifact-dir> --output-dir <dir>
+  auv osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]
+  auv osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]
+  auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv inspect <run-id>
+  auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
+  auv mcp serve
+  auv minecraft bridge --sample <telemetry.jsonl> (--screenshot <frame.png> | --capture-target-app <bundle-id> [--capture-target-title <window-title-substring>]) --target-block <x,y,z> [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft calibrate-projection --frame <minecraft-spatial-frame.json> --screenshot <frame.png> --target-block <x,y,z> [--target-semantics hit_face_center|block_center] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft live-click --sample <telemetry.jsonl> --screenshot <frame.png> --target-block <x,y,z> --target-app <application-id> --target-title <window title> [--post-sample <telemetry.jsonl>] [--capture-skew-ms <ms>] [--screenshot-is-minecraft-window true|false] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft export-spatial-bundle <run-id> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft export-3dgs-scene-packet --bundle-manifest <bundle/run.json>... --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft export-3dgs-training-package --scene-packet-manifest <scene-packet/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft prepare-3dgs-training --training-package-manifest <training-package/run.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft launch-3dgs-training-job --training-launch-plan <training-launch-plan.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--training-job-submit-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft collect-3dgs-training-job-result --training-job-manifest <training-job.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--training-job-status-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft fetch-3dgs-training-result-artifacts --training-result-manifest <training-result.json> --output-dir <dir> [--training-job-endpoint <url>] [--training-job-token <token>] [--artifact-fetch-command <command>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft validate-3dgs-training-result --training-result-artifact-manifest <d11-manifest.json> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft query-3dgs-training-result --training-result-semantic-manifest <semantic.json> --target-block <x,y,z> [--target-face <up|down|north|south|east|west>] [--target-semantics hit_face_center|block_center] [--query-command <command>] --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft inspect-3dgs-training-result-holdout --training-result-semantic-manifest <semantic.json> [--holdout-frame-index <n>] [--holdout-render-command <command>] --output-dir <dir>
+  auv minecraft measure-3dgs-holdout-render-quality --training-result-semantic-manifest <semantic.json> --holdout-preview-manifest <mc16.json> --render-command <command> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft prepare-texture-sweep --sidecar-run-dir <dir> --output-dir <dir> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft build-texture-sweep-samples --bundle-manifest <bundle/run.json>... --output <samples.json> [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv minecraft eval-texture-sweep --samples <samples.json> --output-dir <dir> [--require-real-source] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
+  auv scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
+  auv candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
 
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
   - The CLI is a thin frontend over the library runtime in src/lib.rs.
   - `invoke --help` is the discovery surface for canonical invoke commands in the current C1 scaffold.
-  - `list-commands` has been retired; use `auv-cli invoke --help` instead.
+  - `list-commands` has been retired; use `auv invoke --help` instead.
   - `overlay.showCursor`, `overlay.hideCursor`, and `overlay.shutdown` are visual-only macOS overlay probes; standalone `invoke` calls run in separate Rust processes, so use `--hold_ms` on show when manually observing the overlay.
   - `window.captureAxTree`, `input.focusText`, and `input.pressButton` accept `--reveal_shortcut cmd+f`-style hints when an app hides the target UI until a keyboard shortcut reveals it.
   - `candidate-action run` is a frozen archived macOS AX copilot vertical kept for recovery and reference. It stays buildable, but it is not the active AUV roadmap or the default product path.
@@ -398,7 +398,7 @@ fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
       "--json" => json = true,
       other => {
         return Err(format!(
-          "unknown doctor option {other}; usage: auv-cli doctor [--json]"
+          "unknown doctor option {other}; usage: auv doctor [--json]"
         ));
       }
     }
@@ -409,7 +409,7 @@ fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 || arguments[1] != "run" {
-    return Err("usage: auv-cli candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
+    return Err("usage: auv candidate-action run --target-app <bundle-id> [(--query <text> --role <ax-role> [--action click|type-text] [--text <content>]) | (--intent <text> [--proposer-model <id>] [--proposer-base-url <url>])] [(--dev-self-minted-consent --granted-by <who>) | (--human-gesture-consent [--granted-by <who>] [--human-gesture-timeout-ms <ms>])] [--reveal-shortcut <shortcut>] [--reveal-settle-ms <ms>] [--stable-frames <n>] [--stable-frame-delay-ms <ms>] [--max-centroid-drift-px <px>] [--require-stable-text true|false] [--proposal-id <id>] [--promotion-id <id>] [--decision-id <id>] [--execution-id <id>] [--promotion-scope-note <text>] [--promotion-evidence-note <text>] [--execution-scope-note <text>] [--execution-evidence-note <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]".to_string());
   }
 
   let mut request = CandidateActionCommandRequest {
@@ -642,7 +642,7 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_permissions(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err("usage: auv-cli permissions check [--json]".to_string());
+    return Err("usage: auv permissions check [--json]".to_string());
   }
 
   match arguments[1].as_str() {
@@ -652,21 +652,21 @@ fn parse_permissions(arguments: &[String]) -> AuvResult<CliCommand> {
       parse_permission_check(&normalized)
     }
     other => Err(format!(
-      "unknown permissions subcommand {other}; usage: auv-cli permissions check [--json]"
+      "unknown permissions subcommand {other}; usage: auv permissions check [--json]"
     )),
   }
 }
 
 fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err("usage: auv-cli app <probe|analyze> ...".to_string());
+    return Err("usage: auv app <probe|analyze> ...".to_string());
   }
 
   match arguments[1].as_str() {
     "probe" => parse_app_probe(arguments),
     "analyze" => {
       if arguments.len() != 3 {
-        return Err("usage: auv-cli app analyze <probe-dir-or-probe-json>".to_string());
+        return Err("usage: auv app analyze <probe-dir-or-probe-json>".to_string());
       }
       Ok(CliCommand::AppAnalyze {
         query: arguments[2].clone(),
@@ -676,14 +676,14 @@ fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
       "app recipe distillation has been removed; use app-local Rust commands instead".to_string(),
     ),
     other => Err(format!(
-      "unknown app subcommand {other}; use `auv-cli app probe` or `auv-cli app analyze`"
+      "unknown app subcommand {other}; use `auv app probe` or `auv app analyze`"
     )),
   }
 }
 
 fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 3 {
-    return Err("usage: auv-cli app probe <bundle-id> [--output-dir <dir>]".to_string());
+    return Err("usage: auv app probe <bundle-id> [--output-dir <dir>]".to_string());
   }
 
   let bundle_id = arguments[2].clone();
@@ -713,7 +713,7 @@ fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv-cli osu <benchmark|dispatch|export-dataset|eval-detections|vision-demo> ..."
+      "usage: auv osu <benchmark|dispatch|export-dataset|eval-detections|vision-demo> ..."
         .to_string(),
     );
   }
@@ -725,14 +725,14 @@ fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
     "eval-detections" => parse_osu_eval_detections(arguments),
     "vision-demo" => parse_osu_vision_demo(arguments),
     other => Err(format!(
-      "unknown osu subcommand {other}; use `auv-cli osu benchmark`, `auv-cli osu dispatch`, `auv-cli osu export-dataset`, `auv-cli osu eval-detections`, or `auv-cli osu vision-demo`"
+      "unknown osu subcommand {other}; use `auv osu benchmark`, `auv osu dispatch`, `auv osu export-dataset`, `auv osu eval-detections`, or `auv osu vision-demo`"
     )),
   }
 }
 
 fn parse_osu_benchmark(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 3 {
-    return Err("usage: auv-cli osu benchmark <beatmap.osu> [--output-dir <dir>]".to_string());
+    return Err("usage: auv osu benchmark <beatmap.osu> [--output-dir <dir>]".to_string());
   }
 
   let beatmap_path = arguments[2].clone();
@@ -762,7 +762,7 @@ fn parse_osu_benchmark(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_osu_dispatch(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 5 {
     return Err(
-      "usage: auv-cli osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]".to_string(),
+      "usage: auv osu dispatch <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]".to_string(),
     );
   }
 
@@ -820,9 +820,7 @@ fn parse_osu_dispatch(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_osu_export_dataset(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 5 {
-    return Err(
-      "usage: auv-cli osu export-dataset <run-artifact-dir> --output-dir <dir>".to_string(),
-    );
+    return Err("usage: auv osu export-dataset <run-artifact-dir> --output-dir <dir>".to_string());
   }
 
   let run_artifact_dir = arguments[2].clone();
@@ -850,7 +848,7 @@ fn parse_osu_export_dataset(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_osu_eval_detections(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 5 {
     return Err(
-      "usage: auv-cli osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]".to_string(),
+      "usage: auv osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]".to_string(),
     );
   }
 
@@ -888,7 +886,7 @@ fn parse_osu_eval_detections(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_osu_vision_demo(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 5 {
     return Err(
-      "usage: auv-cli osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]".to_string(),
+      "usage: auv osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]".to_string(),
     );
   }
 
@@ -944,9 +942,7 @@ fn parse_osu_vision_demo(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err(
-      "usage: auv-cli inspect <run-id>|serve [--host <host>] [--port <port>]".to_string(),
-    );
+    return Err("usage: auv inspect <run-id>|serve [--host <host>] [--port <port>]".to_string());
   }
 
   if arguments[1] == "serve" {
@@ -954,7 +950,7 @@ fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
   }
 
   if arguments.len() != 2 {
-    return Err("usage: auv-cli inspect <run-id>".to_string());
+    return Err("usage: auv inspect <run-id>".to_string());
   }
 
   Ok(CliCommand::Inspect {
@@ -1140,7 +1136,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
     return Err(
-      "usage: auv-cli minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-3dgs-training|launch-3dgs-training-job|collect-3dgs-training-job-result|fetch-3dgs-training-result-artifacts|validate-3dgs-training-result|query-3dgs-training-result|inspect-3dgs-training-result-holdout|measure-3dgs-holdout-render-quality|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
+      "usage: auv minecraft <bridge|calibrate-projection|live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-3dgs-training|launch-3dgs-training-job|collect-3dgs-training-job-result|fetch-3dgs-training-result-artifacts|validate-3dgs-training-result|query-3dgs-training-result|inspect-3dgs-training-result-holdout|measure-3dgs-holdout-render-quality|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
         .to_string(),
     );
   }
@@ -1180,7 +1176,7 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_minecraft_export_spatial_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 5 {
     return Err(
-      "usage: auv-cli minecraft export-spatial-bundle <run-id> --output-dir <dir>".to_string(),
+      "usage: auv minecraft export-spatial-bundle <run-id> --output-dir <dir>".to_string(),
     );
   }
 
@@ -2270,7 +2266,7 @@ fn parse_minecraft_live_click(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_scan(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 || arguments[1] != "window-region" {
-    return Err("usage: auv-cli scan window-region --target <application-id> --region <left,top,right,bottom> [--max-pages <n>]".to_string());
+    return Err("usage: auv scan window-region --target <application-id> --region <left,top,right,bottom> [--max-pages <n>]".to_string());
   }
 
   let mut target = None;
@@ -2364,7 +2360,7 @@ fn parse_scan(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_mcp(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() != 2 || arguments[1].as_str() != "serve" {
-    return Err("usage: auv-cli mcp serve".to_string());
+    return Err("usage: auv mcp serve".to_string());
   }
   Ok(CliCommand::McpServe)
 }
@@ -2432,7 +2428,7 @@ mod tests {
     let help = help_text();
 
     assert!(help.contains("list-commands"));
-    assert!(help.contains("auv-cli invoke --help"));
+    assert!(help.contains("auv invoke --help"));
     assert!(help.contains("retired"));
   }
 
@@ -2443,7 +2439,7 @@ mod tests {
     assert!(error.contains("unknown subcommand list-drivers"));
 
     let help = help_text();
-    assert!(!help.contains("auv-cli list-drivers"));
+    assert!(!help.contains("auv list-drivers"));
   }
 
   #[test]

@@ -61,9 +61,7 @@ pub fn invoke_recorded_in_span(
 ) -> AuvResult<InvokeResult> {
   let command_id = request.command_id.clone();
   let command = registry.resolve(&command_id).ok_or_else(|| {
-    format!(
-      "unknown command {command_id}; use `auv-cli invoke --help` to inspect available entries"
-    )
+    format!("unknown command {command_id}; use `auv invoke --help` to inspect available entries")
   })?;
   invoke_resolved_recorded_in_span(recording, run, parent, command, request)
 }
@@ -576,7 +574,7 @@ mod tests {
     )
     .expect_err("unknown command should fail");
 
-    assert!(error.contains("auv-cli invoke --help"));
+    assert!(error.contains("auv invoke --help"));
     let run_id = recorder
       .drain_for_test()
       .into_iter()

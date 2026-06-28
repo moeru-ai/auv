@@ -1046,16 +1046,14 @@ async fn run() -> Result<(), String> {
     }
     CliCommand::XtaskGenerateSwiftBridge => unreachable!("xtask is handled before runtime setup"),
     CliCommand::ListCommandsTombstone => {
-      return Err(
-        "`list-commands` has been removed; use `auv-cli invoke --help` instead".to_string(),
-      );
+      return Err("`list-commands` has been removed; use `auv invoke --help` instead".to_string());
     }
     CliCommand::InvokeHelp { command_id } => {
       let registry = auv_cli_invoke::default_registry();
       if let Some(command_id) = command_id {
         let command = registry.resolve(&command_id).ok_or_else(|| {
           format!(
-            "unknown command {command_id}; use `auv-cli invoke --help` to inspect available entries"
+            "unknown command {command_id}; use `auv invoke --help` to inspect available entries"
           )
         })?;
         print!("{}", auv_cli_invoke::render_command_help(command));
@@ -1299,7 +1297,7 @@ async fn run() -> Result<(), String> {
 
       if let Some(failure) = &result.failure_message {
         return Err(format!(
-          "{} (inspect with `auv-cli inspect {}`)",
+          "{} (inspect with `auv inspect {}`)",
           failure, result.run_id
         ));
       }
@@ -2231,15 +2229,15 @@ fn permission_recommendation(accessibility: &str, screen_capture_kit: &str) -> S
       "AUV has the macOS permissions needed for capture and AX-backed automation.".to_string()
     }
     ("missing", "missing") => {
-      "Grant Accessibility and Screen Recording to the terminal or app that launches auv-cli, then rerun this check."
+      "Grant Accessibility and Screen Recording to the terminal or app that launches auv, then rerun this check."
         .to_string()
     }
     ("missing", _) => {
-      "Grant Accessibility to the terminal or app that launches auv-cli, then rerun this check."
+      "Grant Accessibility to the terminal or app that launches auv, then rerun this check."
         .to_string()
     }
     (_, "missing") => {
-      "Grant Screen Recording to the terminal or app that launches auv-cli, then rerun this check."
+      "Grant Screen Recording to the terminal or app that launches auv, then rerun this check."
         .to_string()
     }
     _ => "Review the permission statuses above before running desktop automation.".to_string(),

@@ -1824,7 +1824,13 @@ fn display_targets_from_monitors(
   monitors: &[xcap::Monitor],
 ) -> DriverResult<Vec<MacosDisplayTarget>> {
   if monitors.is_empty() {
-    return Err(not_found("display"));
+    return Err(DriverError::PermissionDenied {
+      permission: "screen_recording",
+      recovery: Some(
+        "xcap returned no displays; run `auv doctor --json` and grant Screen Recording to the terminal or agent process that launches AUV"
+          .to_string(),
+      ),
+    });
   }
   monitors
     .iter()
@@ -2412,6 +2418,28 @@ mod no_steal_tests {
       permission_status_from_label("new-native-status"),
       PermissionStatus::Unknown
     );
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn empty_display_monitor_list_reports_permission_context() {
+    let error = display_targets_from_monitors(&[])
+      .expect_err("empty xcap monitor list should explain the likely permission boundary");
+
+    match error {
+      DriverError::PermissionDenied {
+        permission,
+        recovery,
+      } => {
+        assert_eq!(permission, "screen_recording");
+        assert!(
+          recovery
+            .as_deref()
+            .is_some_and(|message| message.contains("auv doctor --json"))
+        );
+      }
+      other => panic!("unexpected error: {other}"),
+    }
   }
 
   #[test]

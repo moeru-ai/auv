@@ -2,7 +2,7 @@ use crate::{ArgSpec, CommandGroup, CommandNode, InvokeCommand, InvokeRegistry};
 
 pub fn render_help_index(registry: &InvokeRegistry) -> String {
   let mut help = String::from(
-    "USAGE\n  auv-cli invoke <command> [options]\n\nUse auv-cli invoke <command> --help for command-specific options.\n",
+    "USAGE\n  auv invoke <command> [options]\n\nUse auv invoke <command> --help for command-specific options.\n",
   );
 
   for group in registry.groups() {
@@ -53,7 +53,7 @@ fn has_commands(group: &CommandGroup) -> bool {
 
 pub fn render_command_help(command: &InvokeCommand) -> String {
   let mut help = format!(
-    "COMMAND\n  {}\n\nUSAGE\n  auv-cli invoke {}{}\n\nSUMMARY\n  {}\n",
+    "COMMAND\n  {}\n\nUSAGE\n  auv invoke {}{}\n\nSUMMARY\n  {}\n",
     command.id,
     command.id,
     render_usage_args(command.args),
