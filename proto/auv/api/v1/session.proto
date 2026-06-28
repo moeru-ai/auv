@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package auv.api.v1.session;
+package auv.api.session.v1;
 
 service SessionService {
   rpc DoExample(DoExampleRequest) returns (DoExampleResponse);
