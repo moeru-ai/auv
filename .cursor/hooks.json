@@ -74,9 +74,14 @@
     ],
     "subagentStart": [
       {
+        "command": "node .cursor/hooks/disable-gateguard.js",
+        "event": "subagentStart",
+        "description": "Disable GateGuard for Task subagent sessions (ECC_GATEGUARD=off)"
+      },
+      {
         "command": "node .cursor/hooks/subagent-start.js",
         "event": "subagentStart",
-        "description": "Log agent spawning for observability"
+        "description": "Log agent spawn and re-emit GateGuard disable env for subagents"
       }
     ],
     "subagentStop": [

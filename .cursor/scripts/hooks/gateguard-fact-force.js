@@ -1091,14 +1091,41 @@ function withRecoveryHint(message, hookIds = [EDIT_WRITE_HOOK_ID]) {
   return [message, '', `Recovery: if GateGuard is blocking setup or repair work, run this session with \`ECC_GATEGUARD=off\` or add ${disableTargets} to \`ECC_DISABLED_HOOKS\`.`].join('\n');
 }
 
+function isSubagentTranscriptPath(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return false;
+  }
+
+  const normalized = value.replace(/\\/g, '/');
+  return normalized.includes('/subagents/');
+}
+
 function isSubagentInvocation(data) {
   if (!data || typeof data !== 'object') {
     return false;
   }
 
-  const candidates = [data.agent_id, data.agentId, data.parent_tool_use_id, data.parentToolUseId];
+  const idCandidates = [
+    data.agent_id,
+    data.agentId,
+    data.parent_tool_use_id,
+    data.parentToolUseId,
+  ];
 
-  return candidates.some(candidate => typeof candidate === 'string' && candidate.trim());
+  if (idCandidates.some(candidate => typeof candidate === 'string' && candidate.trim())) {
+    return true;
+  }
+
+  const transcriptCandidates = [
+    data.transcript_path,
+    data.transcriptPath,
+    data.session && data.session.transcript_path,
+    data.session && data.session.transcriptPath,
+    data._cursor && data._cursor.transcript_path,
+    data._cursor && data._cursor.transcriptPath,
+  ];
+
+  return transcriptCandidates.some(isSubagentTranscriptPath);
 }
 
 // --- Deny helper ---
@@ -1235,4 +1262,8 @@ function run(rawInput) {
   return rawInput; // allow
 }
 
-module.exports = { run };
+module.exports = {
+  run,
+  isSubagentInvocation,
+  isSubagentTranscriptPath,
+};
