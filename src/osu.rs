@@ -3,9 +3,18 @@ use std::path::PathBuf;
 
 use auv_game_osu::{
   BenchmarkInputs, BenchmarkOutput, CapturePhase, DatasetExportInputs, DatasetExportOutput,
-  DetectionEvalInputs, DetectionEvalOutput, FrameDetections, ObjectKind, RunMode,
-  VisualTruthSemanticValidationInputs, VisualTruthSpatialQueryInputs, evaluate_detection_fixture,
+  DetectionEvalInputs, DetectionEvalOutput, FrameDetections, ObjectKind, PlayfieldProjection,
+  RunMode, VisualTruthManifest, VisualTruthQueryActionWiringOutcome,
+  VisualTruthQueryLiveClickExecutor, VisualTruthSemanticValidationInputs,
+  VisualTruthSpatialQueryInputs, VisualTruthSpatialQueryOutput, evaluate_detection_fixture,
   export_dataset, query_visual_truth_spatial, run_benchmark, validate_visual_truth_semantic,
+  visual_truth_query_action_wiring_lineage_from_manifest,
+  wire_visual_truth_spatial_query_manifest_to_action,
+};
+use crate::osu_query_live_action::{
+  InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
+  build_osu_query_wired_live_action_operation_result,
+  stage_osu_query_wired_live_action_operation_result,
 };
 
 use crate::{
@@ -507,6 +516,220 @@ fn stage_dataset_dir(
   Ok(())
 }
 
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryWiredLiveActionInputs {
+  pub visual_truth_semantic_manifest_path: PathBuf,
+  pub object_index: usize,
+  pub capture_phase: CapturePhase,
+  pub object_kind: Option<ObjectKind>,
+  pub output_dir: PathBuf,
+  pub target_app: String,
+  pub target_title: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct QueryWiredLiveActionOutput {
+  pub query: VisualTruthSpatialQueryOutput,
+  pub wiring: VisualTruthQueryActionWiringOutcome,
+  pub operation_result_artifact_id: String,
+}
+
+pub fn run_osu_query_wired_live_action(
+  recording: &RecordingHandle,
+  inputs: QueryWiredLiveActionInputs,
+) -> AuvResult<RecordedOperationOutput<QueryWiredLiveActionOutput>> {
+  #[cfg(target_os = "macos")]
+  {
+    let circle_size = circle_size_for_wired_live_action_inputs(&inputs)?;
+    let live_projection =
+      build_live_playfield_projection(&inputs.target_app, &inputs.target_title, circle_size)?;
+    return recording.run_recorded_operation(
+      RunSpec::new(RunType::Execute, QUERY_WIRED_LIVE_ACTION_OPERATION_ID),
+      "osu visual truth query wired live action",
+      |context| {
+        let click_executor = InvokeWindowPointClickExecutor::new(
+          context,
+          inputs.target_app.as_str(),
+          inputs.target_title.as_str(),
+        );
+        run_osu_query_wired_live_action_core(context, &inputs, &live_projection, &click_executor)
+      },
+    );
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (recording, inputs);
+    Err(
+      "osu query wired live action requires macOS for live window projection".to_string(),
+    )
+  }
+}
+
+pub fn run_osu_query_wired_live_action_with_executor<E: VisualTruthQueryLiveClickExecutor>(
+  recording: &RecordingHandle,
+  inputs: QueryWiredLiveActionInputs,
+  live_projection: &PlayfieldProjection,
+  executor: &E,
+) -> AuvResult<RecordedOperationOutput<QueryWiredLiveActionOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(RunType::Execute, QUERY_WIRED_LIVE_ACTION_OPERATION_ID),
+    "osu visual truth query wired live action",
+    |context| run_osu_query_wired_live_action_core(context, &inputs, live_projection, executor),
+  )
+}
+
+fn run_osu_query_wired_live_action_core<E: VisualTruthQueryLiveClickExecutor>(
+  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
+  inputs: &QueryWiredLiveActionInputs,
+  live_projection: &PlayfieldProjection,
+  executor: &E,
+) -> Result<QueryWiredLiveActionOutput, String> {
+  context.record_event(
+    "osu.query_wired_live_action.inputs",
+    Some(format!(
+      "semantic_manifest={} object_index={} capture_phase={:?} object_kind={} target_app={} target_title={} output_dir={}",
+      inputs.visual_truth_semantic_manifest_path.display(),
+      inputs.object_index,
+      inputs.capture_phase,
+      inputs
+        .object_kind
+        .as_ref()
+        .map(|kind| format!("{kind:?}"))
+        .unwrap_or_else(|| "none".to_string()),
+      inputs.target_app,
+      inputs.target_title,
+      inputs.output_dir.display(),
+    )),
+  );
+
+  let query = query_visual_truth_spatial(VisualTruthSpatialQueryInputs {
+    visual_truth_semantic_manifest_path: inputs.visual_truth_semantic_manifest_path.clone(),
+    object_index: inputs.object_index,
+    capture_phase: inputs.capture_phase.clone(),
+    object_kind: inputs.object_kind.clone(),
+    output_dir: inputs.output_dir.clone(),
+  })?;
+
+  let (_staged_manifest_path, query_manifest_ref) = context.in_span(
+    "osu.query_visual_truth_spatial.artifacts",
+    |context| {
+      context.stage_artifact_file_with_ref(
+        OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
+        &query.manifest_path,
+        "osu-visual-truth-spatial-query.json",
+        Some("osu visual truth spatial query manifest".to_string()),
+      )
+    },
+  )?;
+  context.in_span("osu.query_visual_truth_spatial.artifacts", |context| {
+    context.stage_artifact_file(
+      OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE,
+      &query.inspect_report_path,
+      "osu-visual-truth-spatial-query-inspect.json",
+      Some("osu visual truth spatial query inspect report".to_string()),
+    )?;
+    Ok::<_, String>(())
+  })?;
+
+  let lineage = visual_truth_query_action_wiring_lineage_from_manifest(
+    &query.manifest,
+    &query.manifest_path,
+  );
+  let wiring = wire_visual_truth_spatial_query_manifest_to_action(
+    &query.manifest,
+    &lineage,
+    live_projection,
+    executor,
+  );
+
+  let operation_result = build_osu_query_wired_live_action_operation_result(
+    context.run_id(),
+    &wiring,
+    Some(query_manifest_ref.clone()),
+  );
+  let (_staged_operation_result_path, operation_result_ref) =
+    stage_osu_query_wired_live_action_operation_result(context, &operation_result)?;
+
+  context.record_event(
+    "osu.query_wired_live_action.outcome",
+    Some(format!(
+      "attempted={} action_eligibility={} refusal_reason={} pixel_point={} window_point={} query_manifest_path={}",
+      wiring.attempted,
+      wiring.action_eligibility.as_str(),
+      wiring.refusal_reason.as_deref().unwrap_or("none"),
+      wiring
+        .pixel_point
+        .map(|(x, y)| format!("{x},{y}"))
+        .unwrap_or_else(|| "none".to_string()),
+      wiring
+        .window_point
+        .map(|point| format!("{:.3},{:.3}", point.0.x, point.0.y))
+        .unwrap_or_else(|| "none".to_string()),
+      query.manifest_path.display(),
+    )),
+  );
+
+  Ok(QueryWiredLiveActionOutput {
+    query,
+    wiring,
+    operation_result_artifact_id: operation_result_ref.artifact_id.as_str().to_string(),
+  })
+}
+
+fn circle_size_for_wired_live_action_inputs(inputs: &QueryWiredLiveActionInputs) -> Result<f32, String> {
+  use auv_game_osu::VisualTruthSemanticManifest;
+
+  let semantic_json = fs::read_to_string(&inputs.visual_truth_semantic_manifest_path).map_err(|error| {
+    format!(
+      "failed to read osu visual truth semantic manifest {}: {error}",
+      inputs.visual_truth_semantic_manifest_path.display()
+    )
+  })?;
+  let semantic: VisualTruthSemanticManifest = serde_json::from_str(&semantic_json).map_err(|error| {
+    format!(
+      "failed to parse osu visual truth semantic manifest {}: {error}",
+      inputs.visual_truth_semantic_manifest_path.display()
+    )
+  })?;
+  let manifest_json = fs::read_to_string(&semantic.source_visual_truth_manifest_path).map_err(|error| {
+    format!(
+      "failed to read osu visual truth manifest {}: {error}",
+      semantic.source_visual_truth_manifest_path
+    )
+  })?;
+  let manifest: VisualTruthManifest = serde_json::from_str(&manifest_json).map_err(|error| {
+    format!(
+      "failed to parse osu visual truth manifest {}: {error}",
+      semantic.source_visual_truth_manifest_path
+    )
+  })?;
+  Ok(manifest.map_summary.circle_size)
+}
+
+#[cfg(target_os = "macos")]
+fn build_live_playfield_projection(
+  target_app: &str,
+  target_title: &str,
+  circle_size: f32,
+) -> Result<PlayfieldProjection, String> {
+  use auv_driver::{App, Driver, WindowSelector};
+  use auv_driver_macos::MacosDriver;
+
+  let driver = MacosDriver::new();
+  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let window = session
+    .window()
+    .resolve(
+      WindowSelector::default()
+        .owned_by(App::name(target_app.to_string()))
+        .title_contains(target_title),
+    )
+    .map_err(|error| error.to_string())?;
+  PlayfieldProjection::for_window(&window, circle_size)
+}
+
+
 #[cfg(test)]
 mod tests {
   use auv_game_osu::{CapturePhase, FrameDetections, FrameKey};
@@ -564,4 +787,159 @@ mod tests {
     assert_eq!(node.node.box_.width, 32);
     assert_eq!(node.node.box_.height, 32);
   }
+
+  mod osu_query_wired_live_action_tests {
+    use std::cell::Cell;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use auv_driver::geometry::WindowPoint;
+    use auv_game_osu::{
+      OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT, PlayfieldProjection,
+      VisualTruthQueryActionWiringLineage, VisualTruthQueryLiveClickExecutor,
+      validate_visual_truth_semantic, VisualTruthSemanticValidationInputs,
+    };
+    use auv_tracing_driver::recording::{NoopRunRecorder, RunRecordingBackend};
+    use auv_tracing_driver::store::LocalStore;
+
+    use auv_game_osu::CapturePhase;
+    use crate::osu::{
+      run_osu_query_wired_live_action_with_executor, QueryWiredLiveActionInputs,
+      OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE, OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
+    };
+    use crate::osu_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
+
+    struct CountingExecutor {
+      calls: Cell<usize>,
+      summary: String,
+    }
+
+    impl CountingExecutor {
+      fn success(summary: impl Into<String>) -> Self {
+        Self { calls: Cell::new(0), summary: summary.into() }
+      }
+    }
+
+    impl VisualTruthQueryLiveClickExecutor for CountingExecutor {
+      fn attempt_click(
+        &self,
+        _window_point: WindowPoint,
+        _lineage: &VisualTruthQueryActionWiringLineage,
+      ) -> Result<String, String> {
+        self.calls.set(self.calls.get() + 1);
+        Ok(self.summary.clone())
+      }
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+      std::env::temp_dir().join(format!("auv-{name}-{}", std::process::id()))
+    }
+
+    fn setup_probe_work() -> PathBuf {
+      let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates/auv-game-osu/tests/fixtures/osu_visual_truth_probe");
+      let work = temp_dir("osu-wired-live-action");
+      fs::create_dir_all(&work).expect("work dir");
+      for name in ["visual_truth_manifest.json", "projection.json"] {
+        fs::copy(fixture_root.join(name), work.join(name)).expect("copy fixture");
+      }
+      work
+    }
+
+    fn live_projection() -> PlayfieldProjection {
+      PlayfieldProjection::for_capture(800.0, 600.0, 4.0).expect("projection")
+    }
+
+    fn operation_output_message(output: &crate::contract::OperationOutput) -> String {
+      match output {
+        crate::contract::OperationOutput::Acknowledged { message } => message.clone().unwrap_or_default(),
+        _ => String::new(),
+      }
+    }
+
+    fn read_operation_result_artifact(
+      store: &LocalStore,
+      run: &auv_tracing_driver::store::CanonicalRun,
+    ) -> crate::contract::OperationResult {
+      let artifact = run.artifacts.iter().find(|a| a.role == "operation-result").expect("op");
+      let artifact_path = store.run_dir(run.run.run_id.as_str()).expect("dir").join(&artifact.path);
+      serde_json::from_slice(&fs::read(&artifact_path).expect("read")).expect("parse")
+    }
+
+    #[test]
+    fn osu_query_wired_live_action_click_ready_records_operation_result() {
+      let work = setup_probe_work();
+      let temp = work.parent().unwrap().join("osu-wired-click-ready");
+      fs::create_dir_all(&temp).expect("temp");
+      let semantic_manifest = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
+        run_artifact_dir: work.clone(),
+        output_dir: work.join("semantic-out-click"),
+      }).expect("semantic").manifest_path;
+      let store = LocalStore::new(temp.join("store")).expect("store");
+      let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+      let executor = CountingExecutor::success("mock live click dispatched");
+      let output = run_osu_query_wired_live_action_with_executor(
+        &recording,
+        QueryWiredLiveActionInputs {
+          visual_truth_semantic_manifest_path: semantic_manifest,
+          object_index: 0,
+          capture_phase: CapturePhase::BeforeDispatch,
+          object_kind: None,
+          output_dir: temp.join("query-output"),
+          target_app: "osu!".into(),
+          target_title: "osu".into(),
+        },
+        &live_projection(),
+        &executor,
+      ).expect("ok");
+      assert!(output.value.wiring.attempted);
+      assert_eq!(executor.calls.get(), 1);
+      let run = recording.read_run(output.run_id.as_str()).expect("run");
+      assert!(run.artifacts.iter().any(|a| a.role == OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE));
+      let operation_result = read_operation_result_artifact(&store, &run);
+      assert_eq!(operation_result.operation_id, QUERY_WIRED_LIVE_ACTION_OPERATION_ID);
+      assert!(operation_output_message(&operation_result.output).contains("mock live click dispatched"));
+      assert!(operation_result.known_limits.iter().any(|l| l == OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT));
+      let _ = fs::remove_dir_all(&work);
+      let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn osu_query_wired_live_action_not_consumable_refuses_without_executor() {
+      let work = setup_probe_work();
+      let temp = work.parent().unwrap().join("osu-wired-not-consumable");
+      fs::create_dir_all(&temp).expect("temp");
+      let semantic_manifest = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
+        run_artifact_dir: work.clone(),
+        output_dir: work.join("semantic-out-absent"),
+      }).expect("semantic").manifest_path;
+      let store = LocalStore::new(temp.join("store")).expect("store");
+      let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+      let executor = CountingExecutor::success("should not run");
+      let output = run_osu_query_wired_live_action_with_executor(
+        &recording,
+        QueryWiredLiveActionInputs {
+          visual_truth_semantic_manifest_path: semantic_manifest,
+          object_index: 99,
+          capture_phase: CapturePhase::BeforeDispatch,
+          object_kind: None,
+          output_dir: temp.join("query-output"),
+          target_app: "osu!".into(),
+          target_title: "osu".into(),
+        },
+        &live_projection(),
+        &executor,
+      ).expect("ok");
+      assert!(!output.value.wiring.attempted);
+      assert_eq!(executor.calls.get(), 0);
+      let run = recording.read_run(output.run_id.as_str()).expect("run");
+      let operation_result = read_operation_result_artifact(&store, &run);
+      assert_eq!(output.value.wiring.action_eligibility.as_str(), "not_consumable");
+      assert!(output.value.wiring.refusal_reason.as_deref().is_some_and(|r| r.contains("target_absent_from_visual_truth")));
+      let _ = fs::remove_dir_all(&work);
+      let _ = fs::remove_dir_all(&temp);
+    }
+  }
+
 }

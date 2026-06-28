@@ -24,6 +24,7 @@ use crate::contract::{
   RecognitionResult, RecognitionSource, VerificationResult,
 };
 use crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
+use crate::osu_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID as OSU_QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
 use crate::stability::{StabilityAssessment, StabilityRejection};
@@ -249,6 +250,25 @@ pub struct MinecraftTrainingResultSpatialQueryActionReadinessSummary {
   pub action_eligibility: String,
   pub window_point: Option<String>,
   pub refusal_reason: Option<String>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct OsuQueryWiredLiveActionSummary {
+  pub operation_result_artifact_id: Option<String>,
+  pub query_artifact_id: Option<String>,
+  pub attempted: bool,
+  pub action_eligibility: String,
+  pub pixel_point: Option<String>,
+  pub window_point: Option<String>,
+  pub refusal_reason: Option<String>,
+  pub operation_status: Option<String>,
+  pub operation_message: Option<String>,
+  pub target_app: Option<String>,
+  pub target_title: Option<String>,
+  pub dispatch_command: Option<String>,
+  pub dispatch_outcome: Option<String>,
+  pub readiness_class: Option<String>,
   pub issue: Option<String>,
 }
 
@@ -2588,6 +2608,146 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     mc14_action_eligibility,
     issue,
   })
+}
+
+
+
+fn find_osu_query_wired_live_action_operation_result(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> Option<(ArtifactRefLineage, OperationResult)> {
+  for artifact in &run.artifacts {
+    if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
+      continue;
+    }
+    let parsed = read_artifact_json::<OperationResult>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      "operation-result",
+    )
+    .ok()?;
+    if parsed.operation_id == OSU_QUERY_WIRED_LIVE_ACTION_OPERATION_ID {
+      return Some((
+        artifact_record_lineage(run.run.run_id.clone(), artifact),
+        parsed,
+      ));
+    }
+  }
+  None
+}
+
+pub fn derive_osu_query_wired_live_action_summary(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> Option<OsuQueryWiredLiveActionSummary> {
+  let outcome_event = run
+    .events
+    .iter()
+    .find(|event| event.name == "osu.query_wired_live_action.outcome");
+  let operation_result_pair = find_osu_query_wired_live_action_operation_result(store, run);
+  if outcome_event.is_none() && operation_result_pair.is_none() {
+    return None;
+  }
+
+  let mut issue = None;
+  let (attempted, action_eligibility, refusal_reason, pixel_point, window_point) =
+    if let Some(event) = outcome_event {
+      let message = event.message.as_deref().unwrap_or("");
+      let attempted =
+        parse_event_message_field(message, "attempted").is_some_and(|value| value == "true");
+      let action_eligibility =
+        parse_event_message_field(message, "action_eligibility").unwrap_or_else(|| "n/a".to_string());
+      let refusal_reason =
+        parse_event_message_field(message, "refusal_reason").filter(|value| value != "none");
+      let pixel_point =
+        parse_event_message_field(message, "pixel_point").filter(|value| value != "none");
+      let window_point =
+        parse_event_message_field(message, "window_point").filter(|value| value != "none");
+      (
+        attempted,
+        action_eligibility,
+        refusal_reason,
+        pixel_point,
+        window_point,
+      )
+    } else {
+      (false, "n/a".to_string(), None, None, None)
+    };
+
+  let inputs_event = run
+    .events
+    .iter()
+    .find(|event| event.name == "osu.query_wired_live_action.inputs");
+  let target_app = inputs_event
+    .and_then(|event| event.message.as_deref())
+    .and_then(|message| parse_event_message_field(message, "target_app"));
+  let target_title = inputs_event
+    .and_then(|event| event.message.as_deref())
+    .and_then(|message| parse_event_message_field(message, "target_title"));
+
+  let (operation_result_artifact_id, query_artifact_id, operation_status, operation_message) =
+    if let Some((artifact_ref, operation_result)) = operation_result_pair {
+      (
+        Some(artifact_ref.artifact_id.as_str().to_string()),
+        query_artifact_id_from_operation_result(&operation_result),
+        Some(operation_status_label(operation_result.status).to_string()),
+        operation_acknowledged_message(&operation_result.output),
+      )
+    } else {
+      (None, None, None, None)
+    };
+
+  let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
+
+  let mut readiness_class = None;
+  if let Some(query_id) = query_artifact_id.as_deref() {
+    if let Ok(manifests) = extract_osu_visual_truth_spatial_query_manifests(store, run) {
+      if let Some(lineage) = manifests
+        .iter()
+        .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id)
+      {
+        let readiness = derive_osu_visual_truth_spatial_query_action_readiness(lineage);
+        readiness_class = Some(readiness.action_eligibility);
+        if readiness.issue.is_some() {
+          issue = readiness.issue;
+        }
+        if pixel_point.is_none() {
+          // fall back to derived readiness when outcome event omitted pixel_point
+        }
+      }
+    }
+  }
+
+  Some(OsuQueryWiredLiveActionSummary {
+    operation_result_artifact_id,
+    query_artifact_id,
+    attempted,
+    action_eligibility,
+    pixel_point,
+    window_point,
+    refusal_reason,
+    operation_status,
+    operation_message,
+    target_app,
+    target_title,
+    dispatch_command,
+    dispatch_outcome,
+    readiness_class,
+    issue,
+  })
+}
+
+pub(crate) fn list_osu_query_wired_live_action_summaries(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<OsuQueryWiredLiveActionSummary>> {
+  let run = store.read_run(run_id)?;
+  Ok(
+    derive_osu_query_wired_live_action_summary(store, &run)
+      .into_iter()
+      .collect(),
+  )
 }
 
 pub(crate) fn list_minecraft_query_wired_live_action_summaries(

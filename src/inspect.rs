@@ -16,6 +16,7 @@ use crate::run_read::{
   CandidatePromotionLineageStatus, DetectorRecognitionLineage,
   MinecraftHoldoutRenderQualityInspectReportLineage, MinecraftHoldoutRenderQualityManifestLineage,
   MinecraftQueryWiredLiveActionSummary, MinecraftSpatialBundleManifestLineage,
+  OsuQueryWiredLiveActionSummary,
   MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage,
   MinecraftTrainingJobManifestLineage, MinecraftTrainingLaunchInspectReportLineage,
   MinecraftTrainingLaunchManifestLineage, MinecraftTrainingPackageInspectReportLineage,
@@ -39,7 +40,8 @@ use crate::run_read::{
   derive_osu_visual_truth_spatial_query_action_readiness,
   list_minecraft_holdout_render_quality_inspect_reports,
   list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts,
-  list_minecraft_query_wired_live_action_summaries, list_minecraft_spatial_bundle_manifests,
+  list_minecraft_query_wired_live_action_summaries, list_osu_query_wired_live_action_summaries,
+  list_minecraft_spatial_bundle_manifests,
   list_minecraft_telemetry_sample_artifacts, list_minecraft_training_job_inspect_reports,
   list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports,
   list_minecraft_training_launch_manifests, list_minecraft_training_package_inspect_reports,
@@ -221,6 +223,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_osu_visual_truth_spatial_query_inspect_reports(store, run_id)?;
   let minecraft_query_wired_live_action_summaries =
     list_minecraft_query_wired_live_action_summaries(store, run_id)?;
+  let osu_query_wired_live_action_summaries =
+    list_osu_query_wired_live_action_summaries(store, run_id)?;
   let quality_baseline_report = quality_baseline_profile_v1().ok().and_then(|profile| {
     collect_quality_baseline_evidence_for_run(store, run_id, &profile)
       .ok()
@@ -279,6 +283,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &osu_visual_truth_semantic_inspect_reports,
     &osu_visual_truth_spatial_query_manifests,
     &osu_visual_truth_spatial_query_inspect_reports,
+    &osu_query_wired_live_action_summaries,
     quality_baseline_report.as_ref(),
     quality_verdict_probe.as_ref(),
     quality_verdict_trained_render.as_ref(),
@@ -358,6 +363,7 @@ pub fn render_run_text(
   osu_visual_truth_semantic_inspect_reports: &[OsuVisualTruthSemanticInspectReportLineage],
   osu_visual_truth_spatial_query_manifests: &[OsuVisualTruthSpatialQueryManifestLineage],
   osu_visual_truth_spatial_query_inspect_reports: &[OsuVisualTruthSpatialQueryInspectReportLineage],
+  osu_query_wired_live_action_summaries: &[OsuQueryWiredLiveActionSummary],
   quality_baseline_report: Option<&MinecraftTrainingResultQualityBaselineReportSummary>,
   quality_verdict_probe: Option<&MinecraftTrainingResultQualityVerdictSummary>,
   quality_verdict_trained_render: Option<&MinecraftTrainingResultQualityVerdictSummary>,
@@ -2290,6 +2296,33 @@ pub fn render_run_text(
     }
   }
 
+
+  output.push_str("\nOsu Visual Truth Query Wired Live Action:\n");
+  if osu_query_wired_live_action_summaries.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for summary in osu_query_wired_live_action_summaries {
+      output.push_str(&format!(
+        "- operation_result_artifact={} query_artifact={} attempted={} action_eligibility={} pixel_point={} window_point={} refusal_reason={} operation_status={} operation_message={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} readiness_class={} issue={}\n",
+        summary.operation_result_artifact_id.as_deref().unwrap_or("n/a"),
+        summary.query_artifact_id.as_deref().unwrap_or("n/a"),
+        summary.attempted,
+        summary.action_eligibility,
+        summary.pixel_point.as_deref().unwrap_or("n/a"),
+        summary.window_point.as_deref().unwrap_or("n/a"),
+        summary.refusal_reason.as_deref().unwrap_or("n/a"),
+        summary.operation_status.as_deref().unwrap_or("n/a"),
+        summary.operation_message.as_deref().unwrap_or("n/a"),
+        summary.dispatch_command.as_deref().unwrap_or("n/a"),
+        summary.dispatch_outcome.as_deref().unwrap_or("n/a"),
+        summary.target_app.as_deref().unwrap_or("n/a"),
+        summary.target_title.as_deref().unwrap_or("n/a"),
+        summary.readiness_class.as_deref().unwrap_or("n/a"),
+        summary.issue.as_deref().unwrap_or("n/a"),
+      ));
+    }
+  }
+
   output.push_str("\nMC-19 Query Wired Live Action:\n");
   if minecraft_query_wired_live_action_summaries.is_empty() {
     output.push_str("- none\n");
@@ -3842,6 +3875,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       None,
       None,
       None,
@@ -4150,6 +4184,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       None,
       None,
       None,
@@ -4328,6 +4363,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       None,
       None,
       None,
@@ -4476,6 +4512,7 @@ mod tests {
       &[],
       &manifests,
       &[],
+      &[],
       None,
       None,
       None,
@@ -4607,6 +4644,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       None,
       None,
       None,
@@ -4624,6 +4662,115 @@ mod tests {
     assert!(
       output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet")
     );
+  }
+
+  #[test]
+  fn render_run_text_renders_osu_query_wired_live_action_three_gates() {
+    use crate::run_read::OsuQueryWiredLiveActionSummary;
+
+    let run_id = RunId::new("run_inspect_osu_wired_three_gates");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_osu_wired_three_gates"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id: SpanId::new("span_osu_wired_root"),
+        attributes: BTreeMap::new(),
+        summary: Some("osu wired three gates".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+
+    let summaries = vec![
+      OsuQueryWiredLiveActionSummary {
+        operation_result_artifact_id: Some("artifact_osu_click_ready_op".to_string()),
+        query_artifact_id: Some("artifact_osu_click_ready_query".to_string()),
+        attempted: true,
+        action_eligibility: "click_ready".to_string(),
+        pixel_point: Some("400.0,300.0".to_string()),
+        window_point: Some("400.000,300.000".to_string()),
+        refusal_reason: None,
+        operation_status: Some("completed".to_string()),
+        operation_message: Some("mock live click dispatched".to_string()),
+        target_app: Some("osu!".to_string()),
+        target_title: Some("osu".to_string()),
+        dispatch_command: Some("input.clickWindowPoint".to_string()),
+        dispatch_outcome: Some("failed: main visible window was not found".to_string()),
+        readiness_class: Some("click_ready".to_string()),
+        issue: None,
+      },
+      OsuQueryWiredLiveActionSummary {
+        operation_result_artifact_id: Some("artifact_osu_outside_op".to_string()),
+        query_artifact_id: Some("artifact_osu_outside_query".to_string()),
+        attempted: false,
+        action_eligibility: "answer_non_clickable".to_string(),
+        pixel_point: Some("900.0,300.0".to_string()),
+        window_point: None,
+        refusal_reason: Some("pixel_visibility=outside_capture".to_string()),
+        operation_status: Some("completed".to_string()),
+        operation_message: Some("pixel_visibility=outside_capture".to_string()),
+        target_app: Some("osu!".to_string()),
+        target_title: Some("osu".to_string()),
+        dispatch_command: None,
+        dispatch_outcome: None,
+        readiness_class: Some("answer_non_clickable".to_string()),
+        issue: None,
+      },
+      OsuQueryWiredLiveActionSummary {
+        operation_result_artifact_id: Some("artifact_osu_absent_op".to_string()),
+        query_artifact_id: Some("artifact_osu_absent_query".to_string()),
+        attempted: false,
+        action_eligibility: "not_consumable".to_string(),
+        pixel_point: None,
+        window_point: None,
+        refusal_reason: Some(
+          "status=failed reason=target_absent_from_visual_truth".to_string(),
+        ),
+        operation_status: Some("completed".to_string()),
+        operation_message: Some(
+          "status=failed reason=target_absent_from_visual_truth".to_string(),
+        ),
+        target_app: Some("osu!".to_string()),
+        target_title: Some("osu".to_string()),
+        dispatch_command: None,
+        dispatch_outcome: None,
+        readiness_class: Some("not_consumable".to_string()),
+        issue: None,
+      },
+    ];
+
+    let output = render_run_text(
+      &run,
+      &[], &[], &[], &[], &[], &[],
+      &[], &[], &[], &[], &[], &[],
+      &[], &[], &[], &[], &[], &[],
+      &[], &[], &[], &[], &[], &[],
+      &[], &[], &[], &[], &[], &[],
+      &[], &[], &summaries,
+      None,
+      None,
+      None,
+    );
+
+    assert!(output.contains("Osu Visual Truth Query Wired Live Action:"));
+    assert!(output.contains("pixel_point=400.0,300.0"));
+    assert!(output.contains("window_point=400.000,300.000"));
+    assert!(output.contains("action_eligibility=click_ready"));
+    assert!(output.contains("dispatch_command=input.clickWindowPoint"));
+    assert!(output.contains("refusal_reason=pixel_visibility=outside_capture"));
+    assert!(output.contains("action_eligibility=not_consumable"));
+    assert!(output.contains(
+      "osu_query_wired_live_action_capture_space_readiness_live_window_dispatch_no_gameplay_verification"
+    ) || output.contains("readiness_class=not_consumable"));
+    assert!(output.contains("refusal_reason=status=failed reason=target_absent_from_visual_truth"));
   }
 
   #[test]
@@ -4772,6 +4919,7 @@ mod tests {
       &[],
       &[launch_manifest],
       &duplicate_reports,
+      &[],
       &[],
       &[],
       &[],
@@ -4993,6 +5141,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       None,
       None,
       None,
@@ -5169,6 +5318,7 @@ mod tests {
       &[],
       &[package_manifest],
       &duplicate_reports,
+      &[],
       &[],
       &[],
       &[],
@@ -5373,6 +5523,7 @@ mod tests {
       &[],
       &[result_manifest],
       &duplicate_reports,
+      &[],
       &[],
       &[],
       &[],
@@ -5598,6 +5749,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       None,
       None,
       None,
@@ -5689,6 +5841,7 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
       &[],
       &[],
       &[],
