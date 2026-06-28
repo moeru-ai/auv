@@ -147,6 +147,47 @@ impl VisualEvalReport {
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PlayfieldPixelPoint {
+  pub x: f32,
+  pub y: f32,
+  pub match_radius_px: f32,
+}
+
+pub fn pixel_point_inside_capture(
+  point: &PlayfieldPixelPoint,
+  capture_width: u32,
+  capture_height: u32,
+) -> bool {
+  point.x.is_finite()
+    && point.y.is_finite()
+    && point.x >= 0.0
+    && point.y >= 0.0
+    && point.x <= capture_width as f32
+    && point.y <= capture_height as f32
+}
+
+pub fn project_playfield_point(
+  playfield_x: f32,
+  playfield_y: f32,
+  projection: &EvalProjection,
+) -> Option<PlayfieldPixelPoint> {
+  match projection {
+    EvalProjection::Unavailable { .. } => None,
+    EvalProjection::PlayfieldToPixels {
+      scale_x,
+      scale_y,
+      offset_x,
+      offset_y,
+      match_radius_px,
+    } => Some(PlayfieldPixelPoint {
+      x: playfield_x * scale_x + offset_x,
+      y: playfield_y * scale_y + offset_y,
+      match_radius_px: *match_radius_px,
+    }),
+  }
+}
+
 pub fn evaluate_visual_truth(
   manifest: &VisualTruthManifest,
   detections_by_frame: &[FrameDetections],
