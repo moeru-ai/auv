@@ -30,13 +30,16 @@ use crate::run_read::{
   MinecraftTrainingResultSemanticInspectReportLineage,
   MinecraftTrainingResultSemanticManifestLineage,
   MinecraftTrainingResultSpatialQueryInspectReportLineage,
-  MinecraftTrainingResultSpatialQueryManifestLineage, OsuQueryWiredLiveActionSummary,
+  MinecraftTrainingResultSpatialQueryManifestLineage, OsuDetectionEvalQualityInspectReportLineage,
+  OsuDetectionEvalQualityManifestLineage, OsuDetectionEvalWitnessInspectReportLineage,
+  OsuDetectionEvalWitnessManifestLineage, OsuQueryWiredLiveActionSummary,
   OsuVisualTruthSemanticInspectReportLineage, OsuVisualTruthSemanticManifestLineage,
   OsuVisualTruthSpatialQueryInspectReportLineage, OsuVisualTruthSpatialQueryManifestLineage,
   collect_quality_baseline_evidence_for_run,
   derive_minecraft_training_result_quality_baseline_report,
   derive_minecraft_training_result_quality_verdict,
   derive_minecraft_training_result_spatial_query_action_readiness,
+  derive_osu_detection_eval_quality_verdict_summary,
   derive_osu_visual_truth_spatial_query_action_readiness,
   list_minecraft_holdout_render_quality_inspect_reports,
   list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts,
@@ -54,6 +57,8 @@ use crate::run_read::{
   list_minecraft_training_result_semantic_manifests,
   list_minecraft_training_result_spatial_query_inspect_reports,
   list_minecraft_training_result_spatial_query_manifests,
+  list_osu_detection_eval_quality_inspect_reports, list_osu_detection_eval_quality_manifests,
+  list_osu_detection_eval_witness_inspect_reports, list_osu_detection_eval_witness_manifests,
   list_osu_query_wired_live_action_summaries, list_osu_visual_truth_semantic_inspect_reports,
   list_osu_visual_truth_semantic_manifests, list_osu_visual_truth_spatial_query_inspect_reports,
   list_osu_visual_truth_spatial_query_manifests, quality_baseline_profile_v1,
@@ -224,6 +229,14 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_minecraft_query_wired_live_action_summaries(store, run_id)?;
   let osu_query_wired_live_action_summaries =
     list_osu_query_wired_live_action_summaries(store, run_id)?;
+  let osu_detection_eval_witness_manifests =
+    list_osu_detection_eval_witness_manifests(store, run_id)?;
+  let osu_detection_eval_witness_inspect_reports =
+    list_osu_detection_eval_witness_inspect_reports(store, run_id)?;
+  let osu_detection_eval_quality_manifests =
+    list_osu_detection_eval_quality_manifests(store, run_id)?;
+  let osu_detection_eval_quality_inspect_reports =
+    list_osu_detection_eval_quality_inspect_reports(store, run_id)?;
   let quality_baseline_report = quality_baseline_profile_v1().ok().and_then(|profile| {
     collect_quality_baseline_evidence_for_run(store, run_id, &profile)
       .ok()
@@ -283,6 +296,10 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &osu_visual_truth_spatial_query_manifests,
     &osu_visual_truth_spatial_query_inspect_reports,
     &osu_query_wired_live_action_summaries,
+    &osu_detection_eval_witness_manifests,
+    &osu_detection_eval_witness_inspect_reports,
+    &osu_detection_eval_quality_manifests,
+    &osu_detection_eval_quality_inspect_reports,
     quality_baseline_report.as_ref(),
     quality_verdict_probe.as_ref(),
     quality_verdict_trained_render.as_ref(),
@@ -363,6 +380,10 @@ pub fn render_run_text(
   osu_visual_truth_spatial_query_manifests: &[OsuVisualTruthSpatialQueryManifestLineage],
   osu_visual_truth_spatial_query_inspect_reports: &[OsuVisualTruthSpatialQueryInspectReportLineage],
   osu_query_wired_live_action_summaries: &[OsuQueryWiredLiveActionSummary],
+  osu_detection_eval_witness_manifests: &[OsuDetectionEvalWitnessManifestLineage],
+  osu_detection_eval_witness_inspect_reports: &[OsuDetectionEvalWitnessInspectReportLineage],
+  osu_detection_eval_quality_manifests: &[OsuDetectionEvalQualityManifestLineage],
+  osu_detection_eval_quality_inspect_reports: &[OsuDetectionEvalQualityInspectReportLineage],
   quality_baseline_report: Option<&MinecraftTrainingResultQualityBaselineReportSummary>,
   quality_verdict_probe: Option<&MinecraftTrainingResultQualityVerdictSummary>,
   quality_verdict_trained_render: Option<&MinecraftTrainingResultQualityVerdictSummary>,
@@ -2321,6 +2342,91 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nOsu Detection Eval Witness:\n");
+  if osu_detection_eval_witness_manifests.is_empty()
+    && osu_detection_eval_witness_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in osu_detection_eval_witness_manifests {
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- witness_artifact={} status={} reason={} total_frames={} label_matched={} spatial_matched={} spatial_unscored={} spurious={} projection_kind={} frame_witness_count={} detector_model_id={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest.status,
+          manifest.reason.as_deref().unwrap_or("n/a"),
+          manifest.total_frames,
+          manifest.label_matched_frames,
+          manifest.spatial_matched_frames,
+          manifest.spatial_unscored_frames,
+          manifest.spurious_detection_count,
+          manifest.projection_kind,
+          manifest.frame_witness_count,
+          manifest.detector_model_id.as_deref().unwrap_or("n/a"),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in osu_detection_eval_witness_inspect_reports {
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- witness_inspect_artifact={} status={} frame_witness_count={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report.status,
+          report.frame_witness_count,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nOsu Detection Eval Quality:\n");
+  if osu_detection_eval_quality_manifests.is_empty()
+    && osu_detection_eval_quality_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in osu_detection_eval_quality_manifests {
+      if let Some(manifest) = &manifest_lineage.manifest {
+        let derived = derive_osu_detection_eval_quality_verdict_summary(manifest_lineage);
+        output.push_str(&format!(
+          "- quality_artifact={} witness_status={} status={} verdict={} label_recall={} spatial_recall={} spurious={} derived_verdict={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest.witness_status,
+          manifest.status,
+          manifest.verdict,
+          manifest
+            .label_recall
+            .map(|value| format!("{value:.3}"))
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest
+            .spatial_recall
+            .map(|value| format!("{value:.3}"))
+            .unwrap_or_else(|| "n/a".to_string()),
+          manifest
+            .spurious_detection_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+          derived.verdict,
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in osu_detection_eval_quality_inspect_reports {
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- quality_inspect_artifact={} verdict={} label_recall_available={} spatial_recall_available={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report.verdict,
+          report.label_recall_available,
+          report.spatial_recall_available,
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
   output.push_str("\nMC-19 Query Wired Live Action:\n");
   if minecraft_query_wired_live_action_summaries.is_empty() {
     output.push_str("- none\n");
@@ -3874,6 +3980,10 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4183,6 +4293,10 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4362,6 +4476,10 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4511,6 +4629,10 @@ mod tests {
       &manifests,
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4638,6 +4760,10 @@ mod tests {
       &[],
       &[],
       &summaries,
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -4776,6 +4902,10 @@ mod tests {
       &[],
       &[],
       &summaries,
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4940,6 +5070,10 @@ mod tests {
       &[],
       &[launch_manifest],
       &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5163,6 +5297,10 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -5339,6 +5477,10 @@ mod tests {
       &[],
       &[package_manifest],
       &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5544,6 +5686,10 @@ mod tests {
       &[],
       &[result_manifest],
       &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5771,6 +5917,10 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -5862,6 +6012,10 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],

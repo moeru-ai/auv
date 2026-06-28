@@ -1,5 +1,7 @@
 pub mod benchmark;
 pub mod dataset;
+pub mod detection_eval_quality;
+pub mod detection_eval_witness;
 pub mod projection;
 pub mod visual_eval;
 pub mod visual_truth;
@@ -30,6 +32,18 @@ pub use visual_truth::{
   build_visual_truth_manifest,
 };
 
+pub use detection_eval_quality::{
+  DetectionEvalQualityInputs, DetectionEvalQualityInspectReport, DetectionEvalQualityManifest,
+  DetectionEvalQualityMetrics, DetectionEvalQualityOutput, DetectionEvalQualityReason,
+  DetectionEvalQualityStatus, DetectionEvalQualityVerdict, OSU_WQ1_V1_QUALITY_KNOWN_LIMIT,
+  build_detection_eval_quality, build_detection_eval_quality_from_witness_dir,
+  derive_detection_eval_quality_verdict,
+};
+pub use detection_eval_witness::{
+  DetectionEvalFrameWitness, DetectionEvalWitnessInputs, DetectionEvalWitnessInspectReport,
+  DetectionEvalWitnessManifest, DetectionEvalWitnessOutput, DetectionEvalWitnessReason,
+  DetectionEvalWitnessStatus, OSU_WQ1_V1_WITNESS_KNOWN_LIMIT, build_detection_eval_witness,
+};
 pub use visual_truth_semantic::{
   VisualTruthSemanticInspectReport, VisualTruthSemanticManifest, VisualTruthSemanticReason,
   VisualTruthSemanticStatus, VisualTruthSemanticValidationInputs,
