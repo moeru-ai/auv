@@ -6,6 +6,7 @@ pub mod visual_truth;
 pub mod visual_truth_semantic;
 pub mod visual_truth_spatial_query;
 pub mod visual_truth_spatial_query_action;
+pub mod visual_truth_spatial_query_action_wiring;
 
 pub use benchmark::{
   BenchmarkEvidenceSummary, BenchmarkInputs, BenchmarkOutput, CapturePhase, CaptureSample,
@@ -43,4 +44,10 @@ pub use visual_truth_spatial_query::{
 pub use visual_truth_spatial_query_action::{
   VisualTruthSpatialQueryActionEligibility, VisualTruthSpatialQueryActionReadiness,
   derive_visual_truth_spatial_query_action_readiness,
+};
+pub use visual_truth_spatial_query_action_wiring::{
+  OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT, VisualTruthQueryActionWiringLineage,
+  VisualTruthQueryActionWiringOutcome, VisualTruthQueryLiveClickExecutor,
+  visual_truth_query_action_wiring_lineage_from_manifest,
+  wire_visual_truth_spatial_query_manifest_to_action,
 };
