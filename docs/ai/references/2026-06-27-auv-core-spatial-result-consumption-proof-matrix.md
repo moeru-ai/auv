@@ -66,7 +66,7 @@ If any one of these fails, the candidate stays local.
 | Query status triad | `TrainingResultSpatialQueryStatus` | One non-Minecraft vertical must expose target-conditioned answers where `answered` must stay distinct from readiness or semantic success. | Show a real case where query answers are naturally boolean or where `answered` adds no information. If true, this stays app-local. | Shared query-status enum only. | Main matrix verdict unchanged pending owner acceptance of graduation review; osu adds probe-local recurrence only — see graduation review (admissibility-only, defer extraction). | `candidate, not admissible yet`¹ |
 | Provider comparison verdict | `TrainingResultSpatialQueryComparisonVerdict` | Another vertical must actually run dual-backend answer compare and need the same `match / divergent / provider_only / reference_only / not_comparable` split in persisted evidence. | Show a real compare seam where ordering, partiality, or uncertainty needs extra states beyond the five-label set. | Shared compare-verdict enum or helper. | Only Minecraft provider/reference compare exists. | `candidate, not admissible yet` |
 | Action readiness view | `TrainingResultSpatialQueryActionEligibility`, `TrainingResultSpatialQueryActionReadiness`, `derive_action_readiness`, `derive_minecraft_training_result_spatial_query_action_readiness` | Another vertical must need a **derived** action-facing view over persisted answer artifacts, with at least one `click_ready`-like path and one honest non-actionable path. | Show a real case where action-facing consumption must mutate producer truth or where dispatch and readiness cannot be kept separate. | Shared derived read-model contract only; no runtime dispatch wiring. | Main matrix verdict unchanged pending owner acceptance of graduation review; osu adds derived-shape recurrence only — capture-space, not dispatch-safe — see graduation review. | `candidate, not admissible yet`¹ |
-| Quality measurement verdict | `HoldoutRenderQualityVerdict` | Another vertical must measure witness-bound quality evidence and need the same split between `measured_only`, `metric_partial`, `blocked`, and `failed`. | Show a real measurement seam where thresholds are inseparable from measurement evidence, or where partial measurement is meaningless. | Shared evidence-verdict enum only. | Only MC-17 photometric evidence exists, and it is single-vertical. | `candidate, not admissible yet` |
+| Quality measurement verdict | `HoldoutRenderQualityVerdict` | Another vertical must measure witness-bound quality evidence and need the same split between `measured_only`, `metric_partial`, `blocked`, and `failed`. | Show a real measurement seam where thresholds are inseparable from measurement evidence, or where partial measurement is meaningless. | Shared evidence-verdict enum only. | Only MC-17 photometric evidence exists in main matrix; osu WQ1 adds **candidate** second-vertical probe-local recurrence only — see osu probe footnote²; **not** admissible graduation. | `candidate, not admissible yet` |
 | Persisted backend label discipline | `HoldoutRenderQualityBackend`, `TrainingResultSpatialQueryBackend` | Another vertical must persist backend provenance and independently hit the same rule: stable backend labels belong in artifacts, raw runtime command text does not. | Show a real vertical where backend provenance cannot be represented by stable labels alone. | Shared label-discipline rule or tiny backend-label trait bound, if ever needed. | Current proof is policy-level only; no second donor. | `candidate, not admissible yet` |
 
 
@@ -77,8 +77,9 @@ Companion evidence:
 
 This probe closes **MC-14-analog derived consumption** on osu! only (query→
 readiness shape recurrence, not full MC-14 window-readiness parity). It does not
-graduate types into core and does not claim witness, quality, or live-click
-wiring.
+graduate types into core; WQ1 witness/quality evidence is **candidate**
+probe-local only (footnote²), not admissible graduation. Live-click wiring
+remains out of scope.
 
 | Candidate contract | Verdict after osu probe | Notes |
 | --- | --- | --- |
@@ -86,7 +87,7 @@ wiring.
 | Action readiness view | **satisfied as second-vertical probe-local recurrence** | Derived triad without dispatch; **capture-space consumability**, not click authority. |
 | Stage status triad | **partial (structurally shallow)** | Semantic + query only; no staged-consumption family expansion — not near-complete partial. |
 | Provider comparison verdict | **not satisfied** | Dual-backend compare intentionally deferred. |
-| Quality measurement verdict | **out of scope** | Excluded by osu probe design. |
+| Quality measurement verdict | **candidate probe-local recurrence (OSU-WQ1)** | `DetectionEvalQualityVerdict` on detection-eval witness; evidence-only; not extraction-pressure. |
 | Persisted backend label discipline | **partial (second vertical)** | `playfield_projection_reference` persisted; no second backend family yet. |
 
 Rows marked probe-local remain **non-admissible for Core-B extraction**.
@@ -101,6 +102,12 @@ next slice, and does not lift extraction pressure — default remains **defer**.
 `docs/ai/references/2026-06-27-auv-core-a-query-readiness-graduation-review.md`:
 may record **helper-only admissible (review language only)** for these two rows
 after owner acceptance — **not** an extraction recommendation; default **defer**.
+
+² OSU-WQ1 **candidate** probe-local evidence (not admissible graduation):
+`docs/ai/references/2026-06-28-osu-wq1-witness-quality-evidence-design.md` and
+`docs/ai/references/2026-06-27-auv-second-vertical-consumption-probe-osu-evidence.md`
+(WQ1 section). Default remains **defer** extraction; recurrence does not lift
+matrix admissibility.
 
 ## What does not need a second vertical
 

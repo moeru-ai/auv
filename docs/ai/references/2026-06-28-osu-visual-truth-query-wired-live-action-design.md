@@ -103,6 +103,8 @@ use stub executor + capture-derived projection in unit/integration tests only.
 
 - Osu second-vertical probe:
   [`2026-06-27-auv-second-vertical-consumption-probe-osu-design.md`](2026-06-27-auv-second-vertical-consumption-probe-osu-design.md)
+- OSU-WQ1 witness + quality:
+  [`2026-06-28-osu-wq1-witness-quality-evidence-design.md`](2026-06-28-osu-wq1-witness-quality-evidence-design.md)
 - Core-C1 admission design:
   [`2026-06-28-auv-core-c1-action-attempt-admission-design.md`](2026-06-28-auv-core-c1-action-attempt-admission-design.md)
 - MC-19 wiring template:
