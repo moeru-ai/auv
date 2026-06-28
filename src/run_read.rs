@@ -42,6 +42,8 @@ use auv_game_minecraft::{
   TrainingResultSpatialQueryManifest, derive_action_readiness,
 };
 use auv_game_osu::{
+  DetectionEvalQualityInspectReport, DetectionEvalQualityManifest,
+  DetectionEvalWitnessInspectReport, DetectionEvalWitnessManifest,
   VisualTruthSemanticInspectReport, VisualTruthSemanticManifest,
   VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
   derive_visual_truth_spatial_query_action_readiness,
@@ -269,6 +271,92 @@ pub struct OsuQueryWiredLiveActionSummary {
   pub dispatch_command: Option<String>,
   pub dispatch_outcome: Option<String>,
   pub readiness_class: Option<String>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct OsuDetectionEvalWitnessManifestLineage {
+  pub artifact: ArtifactRefLineage,
+  pub manifest: Option<OsuDetectionEvalWitnessManifestSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct OsuDetectionEvalWitnessInspectReportLineage {
+  pub artifact: ArtifactRefLineage,
+  pub report: Option<OsuDetectionEvalWitnessInspectReportSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct OsuDetectionEvalQualityManifestLineage {
+  pub artifact: ArtifactRefLineage,
+  pub manifest: Option<OsuDetectionEvalQualityManifestSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct OsuDetectionEvalQualityInspectReportLineage {
+  pub artifact: ArtifactRefLineage,
+  pub report: Option<OsuDetectionEvalQualityInspectReportSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OsuDetectionEvalWitnessManifestSummary {
+  pub schema_version: u32,
+  pub source_visual_eval_report_path: String,
+  pub source_run_artifact_dir: String,
+  pub detector_model_id: Option<String>,
+  pub total_frames: usize,
+  pub label_matched_frames: usize,
+  pub spatial_matched_frames: usize,
+  pub spatial_unscored_frames: usize,
+  pub spurious_detection_count: usize,
+  pub projection_kind: String,
+  pub frame_witness_count: usize,
+  pub status: String,
+  pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OsuDetectionEvalWitnessInspectReportSummary {
+  pub schema_version: u32,
+  pub detection_eval_witness_manifest_path: String,
+  pub total_frames: usize,
+  pub frame_witness_count: usize,
+  pub status: String,
+  pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct OsuDetectionEvalQualityManifestSummary {
+  pub schema_version: u32,
+  pub detection_eval_witness_manifest_path: String,
+  pub source_visual_eval_report_path: String,
+  pub witness_status: String,
+  pub status: String,
+  pub verdict: String,
+  pub label_recall: Option<f32>,
+  pub spatial_recall: Option<f32>,
+  pub spurious_detection_count: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OsuDetectionEvalQualityInspectReportSummary {
+  pub schema_version: u32,
+  pub detection_eval_quality_manifest_path: String,
+  pub witness_status: String,
+  pub status: String,
+  pub verdict: String,
+  pub label_recall_available: bool,
+  pub spatial_recall_available: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct OsuDetectionEvalQualityVerdictSummary {
+  pub verdict: String,
+  pub derived_from_witness_status: String,
   pub issue: Option<String>,
 }
 
@@ -1556,6 +1644,238 @@ pub(crate) fn extract_osu_visual_truth_spatial_query_inspect_reports(
     }
   }
   Ok(reports)
+}
+
+pub(crate) fn list_osu_detection_eval_witness_manifests(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<OsuDetectionEvalWitnessManifestLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_osu_detection_eval_witness_manifests(store, &run)
+}
+
+pub(crate) fn list_osu_detection_eval_witness_inspect_reports(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<OsuDetectionEvalWitnessInspectReportLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_osu_detection_eval_witness_inspect_reports(store, &run)
+}
+
+pub(crate) fn list_osu_detection_eval_quality_manifests(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<OsuDetectionEvalQualityManifestLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_osu_detection_eval_quality_manifests(store, &run)
+}
+
+pub(crate) fn list_osu_detection_eval_quality_inspect_reports(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<OsuDetectionEvalQualityInspectReportLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_osu_detection_eval_quality_inspect_reports(store, &run)
+}
+
+pub(crate) fn extract_osu_detection_eval_witness_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<OsuDetectionEvalWitnessManifestLineage>> {
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::osu::OSU_DETECTION_EVAL_WITNESS_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(OsuDetectionEvalWitnessManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!(
+          "osu detection eval witness manifest mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<DetectionEvalWitnessManifest>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::osu::OSU_DETECTION_EVAL_WITNESS_ROLE,
+    )
+    .map(|manifest| OsuDetectionEvalWitnessManifestSummary::from(&manifest));
+    match parsed {
+      Ok(manifest) => manifests.push(OsuDetectionEvalWitnessManifestLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(OsuDetectionEvalWitnessManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
+}
+
+pub(crate) fn extract_osu_detection_eval_witness_inspect_reports(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<OsuDetectionEvalWitnessInspectReportLineage>> {
+  let mut reports = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::osu::OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      reports.push(OsuDetectionEvalWitnessInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(format!(
+          "osu detection eval witness inspect mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<DetectionEvalWitnessInspectReport>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::osu::OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE,
+    )
+    .map(|report| OsuDetectionEvalWitnessInspectReportSummary::from(&report));
+    match parsed {
+      Ok(report) => reports.push(OsuDetectionEvalWitnessInspectReportLineage {
+        artifact: artifact_ref,
+        report: Some(report),
+        issue: None,
+      }),
+      Err(error) => reports.push(OsuDetectionEvalWitnessInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(reports)
+}
+
+pub(crate) fn extract_osu_detection_eval_quality_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<OsuDetectionEvalQualityManifestLineage>> {
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::osu::OSU_DETECTION_EVAL_QUALITY_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(OsuDetectionEvalQualityManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!(
+          "osu detection eval quality manifest mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<DetectionEvalQualityManifest>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::osu::OSU_DETECTION_EVAL_QUALITY_ROLE,
+    )
+    .map(|manifest| OsuDetectionEvalQualityManifestSummary::from(&manifest));
+    match parsed {
+      Ok(manifest) => manifests.push(OsuDetectionEvalQualityManifestLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(OsuDetectionEvalQualityManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
+}
+
+pub(crate) fn extract_osu_detection_eval_quality_inspect_reports(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<OsuDetectionEvalQualityInspectReportLineage>> {
+  let mut reports = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::osu::OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      reports.push(OsuDetectionEvalQualityInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(format!(
+          "osu detection eval quality inspect mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<DetectionEvalQualityInspectReport>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::osu::OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE,
+    )
+    .map(|report| OsuDetectionEvalQualityInspectReportSummary::from(&report));
+    match parsed {
+      Ok(report) => reports.push(OsuDetectionEvalQualityInspectReportLineage {
+        artifact: artifact_ref,
+        report: Some(report),
+        issue: None,
+      }),
+      Err(error) => reports.push(OsuDetectionEvalQualityInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(reports)
+}
+
+pub fn derive_osu_detection_eval_quality_verdict_summary(
+  lineage: &OsuDetectionEvalQualityManifestLineage,
+) -> OsuDetectionEvalQualityVerdictSummary {
+  if let Some(issue) = &lineage.issue {
+    return OsuDetectionEvalQualityVerdictSummary {
+      verdict: "n/a".to_string(),
+      derived_from_witness_status: "n/a".to_string(),
+      issue: Some(issue.clone()),
+    };
+  }
+  let Some(summary) = &lineage.manifest else {
+    return OsuDetectionEvalQualityVerdictSummary {
+      verdict: "n/a".to_string(),
+      derived_from_witness_status: "n/a".to_string(),
+      issue: Some("osu detection eval quality manifest summary missing".to_string()),
+    };
+  };
+  OsuDetectionEvalQualityVerdictSummary {
+    verdict: summary.verdict.clone(),
+    derived_from_witness_status: summary.witness_status.clone(),
+    issue: None,
+  }
 }
 
 pub fn derive_osu_visual_truth_spatial_query_action_readiness(
@@ -5632,6 +5952,72 @@ impl From<TrainingPackageInspectReport> for MinecraftTrainingPackageInspectRepor
       compatibility_views: value.compatibility_views,
       warnings: value.warnings,
       known_limits: value.known_limits,
+    }
+  }
+}
+
+impl From<&DetectionEvalWitnessManifest> for OsuDetectionEvalWitnessManifestSummary {
+  fn from(manifest: &DetectionEvalWitnessManifest) -> Self {
+    Self {
+      schema_version: manifest.schema_version,
+      source_visual_eval_report_path: manifest.source_visual_eval_report_path.clone(),
+      source_run_artifact_dir: manifest.source_run_artifact_dir.clone(),
+      detector_model_id: manifest.detector_model_id.clone(),
+      total_frames: manifest.total_frames,
+      label_matched_frames: manifest.label_matched_frames,
+      spatial_matched_frames: manifest.spatial_matched_frames,
+      spatial_unscored_frames: manifest.spatial_unscored_frames,
+      spurious_detection_count: manifest.spurious_detection_count,
+      projection_kind: manifest.projection_kind.clone(),
+      frame_witness_count: manifest.frame_witnesses.len(),
+      status: manifest.status.as_str().to_string(),
+      reason: manifest.reason.map(|reason| reason.as_str().to_string()),
+    }
+  }
+}
+
+impl From<&DetectionEvalWitnessInspectReport> for OsuDetectionEvalWitnessInspectReportSummary {
+  fn from(report: &DetectionEvalWitnessInspectReport) -> Self {
+    Self {
+      schema_version: report.schema_version,
+      detection_eval_witness_manifest_path: report.detection_eval_witness_manifest_path.clone(),
+      total_frames: report.total_frames,
+      frame_witness_count: report.frame_witness_count,
+      status: report.status.as_str().to_string(),
+      warnings: report.warnings.clone(),
+    }
+  }
+}
+
+impl From<&DetectionEvalQualityManifest> for OsuDetectionEvalQualityManifestSummary {
+  fn from(manifest: &DetectionEvalQualityManifest) -> Self {
+    Self {
+      schema_version: manifest.schema_version,
+      detection_eval_witness_manifest_path: manifest.detection_eval_witness_manifest_path.clone(),
+      source_visual_eval_report_path: manifest.source_visual_eval_report_path.clone(),
+      witness_status: manifest.witness_status.as_str().to_string(),
+      status: manifest.status.as_str().to_string(),
+      verdict: manifest.verdict.as_str().to_string(),
+      label_recall: manifest.metrics.as_ref().and_then(|m| m.label_recall),
+      spatial_recall: manifest.metrics.as_ref().and_then(|m| m.spatial_recall),
+      spurious_detection_count: manifest
+        .metrics
+        .as_ref()
+        .map(|m| m.spurious_detection_count),
+    }
+  }
+}
+
+impl From<&DetectionEvalQualityInspectReport> for OsuDetectionEvalQualityInspectReportSummary {
+  fn from(report: &DetectionEvalQualityInspectReport) -> Self {
+    Self {
+      schema_version: report.schema_version,
+      detection_eval_quality_manifest_path: report.detection_eval_quality_manifest_path.clone(),
+      witness_status: report.witness_status.as_str().to_string(),
+      status: report.status.as_str().to_string(),
+      verdict: report.verdict.as_str().to_string(),
+      label_recall_available: report.label_recall_available,
+      spatial_recall_available: report.spatial_recall_available,
     }
   }
 }

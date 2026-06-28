@@ -8,12 +8,13 @@ use crate::osu_query_live_action::{
 };
 use auv_game_osu::{
   BenchmarkInputs, BenchmarkOutput, CapturePhase, DatasetExportInputs, DatasetExportOutput,
-  DetectionEvalInputs, DetectionEvalOutput, FrameDetections, ObjectKind, PlayfieldProjection,
-  RunMode, VisualTruthManifest, VisualTruthQueryActionWiringOutcome,
-  VisualTruthQueryLiveClickExecutor, VisualTruthSemanticValidationInputs,
-  VisualTruthSpatialQueryInputs, VisualTruthSpatialQueryOutput, evaluate_detection_fixture,
-  export_dataset, query_visual_truth_spatial, run_benchmark, validate_visual_truth_semantic,
-  visual_truth_query_action_wiring_lineage_from_manifest,
+  DetectionEvalInputs, DetectionEvalOutput, DetectionEvalQualityOutput, DetectionEvalWitnessInputs,
+  DetectionEvalWitnessOutput, FrameDetections, ObjectKind, PlayfieldProjection, RunMode,
+  VisualTruthManifest, VisualTruthQueryActionWiringOutcome, VisualTruthQueryLiveClickExecutor,
+  VisualTruthSemanticValidationInputs, VisualTruthSpatialQueryInputs,
+  VisualTruthSpatialQueryOutput, build_detection_eval_quality, build_detection_eval_witness,
+  evaluate_detection_fixture, export_dataset, query_visual_truth_spatial, run_benchmark,
+  validate_visual_truth_semantic, visual_truth_query_action_wiring_lineage_from_manifest,
   wire_visual_truth_spatial_query_manifest_to_action,
 };
 
@@ -35,6 +36,10 @@ pub const OSU_VISUAL_TRUTH_SEMANTIC_INSPECT_ROLE: &str = "osu-visual-truth-seman
 pub const OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE: &str = "osu-visual-truth-spatial-query";
 pub const OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE: &str =
   "osu-visual-truth-spatial-query-inspect";
+pub const OSU_DETECTION_EVAL_WITNESS_ROLE: &str = "osu-detection-eval-witness";
+pub const OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE: &str = "osu-detection-eval-witness-inspect";
+pub const OSU_DETECTION_EVAL_QUALITY_ROLE: &str = "osu-detection-eval-quality";
+pub const OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE: &str = "osu-detection-eval-quality-inspect";
 
 pub fn run_osu_benchmark(
   recording: &RecordingHandle,
@@ -205,11 +210,122 @@ pub fn run_osu_detection_eval(
             )?;
           }
         }
+        stage_osu_detection_eval_witness_quality_artifacts(context, &result.output_dir)?;
         Ok::<_, String>(())
       })?;
       Ok::<_, String>(result)
     },
   )
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DetectionEvalWitnessQualityOutput {
+  pub witness: DetectionEvalWitnessOutput,
+  pub quality: DetectionEvalQualityOutput,
+}
+
+pub fn run_osu_detection_eval_witness_quality(
+  recording: &RecordingHandle,
+  detection_eval_output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<DetectionEvalWitnessQualityOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.osu.eval_detections_witness_quality"),
+    "osu detection eval witness and quality evidence",
+    |context| {
+      context.record_event(
+        "osu.eval_detections_witness_quality.inputs",
+        Some(format!(
+          "detection_eval_output_dir={}",
+          detection_eval_output_dir.display(),
+        )),
+      );
+      let witness = build_detection_eval_witness(&DetectionEvalWitnessInputs {
+        detection_eval_output_dir: detection_eval_output_dir.clone(),
+        output_dir: detection_eval_output_dir.join("witness"),
+      })?;
+      let quality = build_detection_eval_quality(&auv_game_osu::DetectionEvalQualityInputs {
+        witness_manifest_path: witness.manifest_path.clone(),
+        output_dir: detection_eval_output_dir.join("quality"),
+      })?;
+      context.in_span("osu.eval_detections_witness_quality.artifacts", |context| {
+        stage_osu_detection_eval_witness_quality_artifacts(context, &detection_eval_output_dir)?;
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(DetectionEvalWitnessQualityOutput { witness, quality })
+    },
+  )
+}
+
+fn stage_osu_detection_eval_witness_quality_artifacts(
+  context: &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
+  detection_eval_output_dir: &std::path::Path,
+) -> Result<(), String> {
+  let witness_dir = detection_eval_output_dir.join("witness");
+  let quality_dir = detection_eval_output_dir.join("quality");
+  let witness_manifest_path = witness_dir.join("osu-detection-eval-witness.json");
+  if !witness_manifest_path.exists() {
+    let witness = build_detection_eval_witness(&DetectionEvalWitnessInputs {
+      detection_eval_output_dir: detection_eval_output_dir.to_path_buf(),
+      output_dir: witness_dir.clone(),
+    })?;
+    let _quality = build_detection_eval_quality(&auv_game_osu::DetectionEvalQualityInputs {
+      witness_manifest_path: witness.manifest_path.clone(),
+      output_dir: quality_dir.clone(),
+    })?;
+  } else if !quality_dir.join("osu-detection-eval-quality.json").exists() {
+    let _quality = build_detection_eval_quality(&auv_game_osu::DetectionEvalQualityInputs {
+      witness_manifest_path: witness_manifest_path,
+      output_dir: quality_dir.clone(),
+    })?;
+  }
+
+  for (artifact_name, role) in [
+    (
+      "osu-detection-eval-witness.json",
+      OSU_DETECTION_EVAL_WITNESS_ROLE,
+    ),
+    (
+      "osu-detection-eval-witness-inspect.json",
+      OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE,
+    ),
+  ] {
+    let artifact_path = witness_dir.join(artifact_name);
+    if artifact_path.exists() {
+      context.stage_artifact_file(
+        role,
+        &artifact_path,
+        artifact_name,
+        Some(format!(
+          "osu detection eval witness artifact {artifact_name}"
+        )),
+      )?;
+    }
+  }
+
+  for (artifact_name, role) in [
+    (
+      "osu-detection-eval-quality.json",
+      OSU_DETECTION_EVAL_QUALITY_ROLE,
+    ),
+    (
+      "osu-detection-eval-quality-inspect.json",
+      OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE,
+    ),
+  ] {
+    let artifact_path = quality_dir.join(artifact_name);
+    if artifact_path.exists() {
+      context.stage_artifact_file(
+        role,
+        &artifact_path,
+        artifact_name,
+        Some(format!(
+          "osu detection eval quality artifact {artifact_name}"
+        )),
+      )?;
+    }
+  }
+
+  Ok(())
 }
 
 pub fn run_osu_visual_truth_semantic_validation(
@@ -801,8 +917,8 @@ mod tests {
     use auv_tracing_driver::store::LocalStore;
 
     use crate::osu::{
-      OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE, OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
-      QueryWiredLiveActionInputs, run_osu_query_wired_live_action_with_executor,
+      OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE, QueryWiredLiveActionInputs,
+      run_osu_query_wired_live_action_with_executor,
     };
     use crate::osu_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
     use auv_game_osu::CapturePhase;
@@ -963,8 +1079,7 @@ mod tests {
       .expect("ok");
       assert!(!output.value.wiring.attempted);
       assert_eq!(executor.calls.get(), 0);
-      let run = recording.read_run(output.run_id.as_str()).expect("run");
-      let operation_result = read_operation_result_artifact(&store, &run);
+      let _run = recording.read_run(output.run_id.as_str()).expect("run");
       assert_eq!(
         output.value.wiring.action_eligibility.as_str(),
         "not_consumable"
