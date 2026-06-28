@@ -5,8 +5,8 @@ lint:
   use:
     - STANDARD
   except:
-    # AUV uses `auv.api.v1.<domain>` packages so generated Rust modules read as
-    # `v1::<domain>` instead of duplicating the version as `<domain>::v1`.
+    # AUV keeps proto files under versioned directories while using
+    # `<domain>.v1` package suffixes.
     - PACKAGE_DIRECTORY_MATCH
     - PACKAGE_VERSION_SUFFIX
 breaking:
