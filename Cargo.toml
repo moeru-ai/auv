@@ -4,6 +4,7 @@ members = [
   "crates/auv-apple-music",
   "crates/auv-apple-notes",
   "crates/auv-apple-textedit",
+  "crates/auv-api-proto",
   "crates/auv-cli-invoke-macros",
   "crates/auv-cli-invoke",
   "crates/auv-compare",

@@ -29,6 +29,12 @@
                 rustfmt
                 clippy
                 rust-analyzer
+
+                # protobuf
+                protobuf
+                buf
+                protoc-gen-prost
+                protoc-gen-tonic
               ])
               ++ [];
 

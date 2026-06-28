@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package auv.api.session.v1;
+
+service SessionService {
+  rpc DoExample(DoExampleRequest) returns (DoExampleResponse);
+  rpc DoExampleStream(stream DoExampleStreamRequest)
+      returns (stream DoExampleStreamResponse);
+}
+
+message DoExampleRequest {
+  string input = 1;
+}
+
+message DoExampleResponse {
+  string output = 1;
+}
+
+message DoExampleStreamRequest {
+  uint64 sequence = 1;
+  string input = 2;
+}
+
+message DoExampleStreamResponse {
+  uint64 sequence = 1;
+  string output = 2;
+}
