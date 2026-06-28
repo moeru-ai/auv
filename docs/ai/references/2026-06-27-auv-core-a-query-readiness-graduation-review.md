@@ -237,6 +237,10 @@ Helper-only admissible does **not** close these. Any one would revert toward
 
 ## Recommended sequence
 
+Post-helper closeout, see falsifier review
+[`2026-06-27-auv-core-a-query-readiness-falsifier-review.md`](2026-06-27-auv-core-a-query-readiness-falsifier-review.md)
+for per-falsifier verdicts against MC + osu evidence.
+
 1. **This review** — record admissibility-only verdict; **default defer
    extraction**; main matrix rows stay `candidate, not admissible yet` until
    owner explicitly accepts graduation language.

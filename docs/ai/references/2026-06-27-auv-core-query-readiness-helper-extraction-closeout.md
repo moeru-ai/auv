@@ -101,8 +101,9 @@ matrix L92–98 and helper note L124–131:
 - No dispatch or live-click consumption wiring
 - Proof-matrix row verdicts unchanged
 
-**Next after merge:** owner chooses falsifier-oriented review — **not** another
-extraction slice.
+**Next after merge:** falsifier-oriented review recorded in
+[`2026-06-27-auv-core-a-query-readiness-falsifier-review.md`](2026-06-27-auv-core-a-query-readiness-falsifier-review.md)
+— **not** another extraction slice.
 
 ## 7. Validation rerun (2026-06-28)
 
