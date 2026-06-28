@@ -39,6 +39,34 @@ Useful CLI entrypoints:
 region-scoped, conservative about duplicate text, and records why scanning
 stopped instead of unconditionally claiming a complete collection.
 
+## Protocol Buffers
+
+The initial protobuf surface lives under `proto/`. Rust consumers use the
+generated types exposed by `crates/auv-api-proto`.
+
+- Edit schemas under `proto/auv/api/v1/`.
+- Build generated Rust with Cargo:
+
+  ```shell
+  cargo check -p auv-api-proto
+  ```
+
+- Lint schemas with Buf:
+
+  ```shell
+  nix --extra-experimental-features nix-command --extra-experimental-features flakes develop --command buf lint proto
+  ```
+
+- Generate through the Buf template when checking SDK output:
+
+  ```shell
+  nix --extra-experimental-features nix-command --extra-experimental-features flakes develop --command buf generate proto --template proto/buf.gen.yaml
+  ```
+
+Cargo builds use vendored `protoc` through `crates/auv-api-proto/build.rs`.
+The Nix dev shell provides `buf`, `protobuf`, `protoc-gen-prost`, and
+`protoc-gen-tonic` for explicit schema work.
+
 ## License
 
 [Apache License 2.0](LICENSE.md)
