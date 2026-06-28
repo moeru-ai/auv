@@ -2402,7 +2402,7 @@ pub fn render_run_text(
         derive_minecraft_training_result_spatial_query_action_readiness(manifest_lineage);
       let manifest = manifest_lineage.manifest.as_ref();
       output.push_str(&format!(
-        "- query_artifact={} target_block={} status={} visibility={} selected_backend={} action_eligibility={} window_point={} refusal_reason={} paired_inspect_artifact={} issue={}\n",
+        "- query_artifact={} target_block={} status={} visibility={} selected_backend={} action_eligibility={} readiness_class={} window_point={} refusal_reason={} paired_inspect_artifact={} issue={}\n",
         manifest_lineage.artifact.artifact_id,
         manifest.map(|value| value.target_block.as_str()).unwrap_or("n/a"),
         manifest.as_ref().map(|value| value.status.as_str()).unwrap_or("n/a"),
@@ -2413,6 +2413,7 @@ pub fn render_run_text(
           .and_then(|value| value.selected_backend.as_deref())
           .unwrap_or("n/a"),
         readiness.action_eligibility,
+        readiness.readiness_class.as_deref().unwrap_or("n/a"),
         readiness.window_point.as_deref().unwrap_or("n/a"),
         readiness.refusal_reason.as_deref().unwrap_or("n/a"),
         paired_report

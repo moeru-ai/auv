@@ -921,6 +921,23 @@ struct CardReadValue {
   valid: bool,
 }
 
+impl CardReadValue {
+  #[cfg(not(target_os = "macos"))]
+  fn unread() -> Self {
+    Self {
+      status: "unread",
+      raw_text: None,
+      normalized_text: None,
+      rank: None,
+      suit: None,
+      suit_symbol: None,
+      short_code: None,
+      confidence: None,
+      valid: false,
+    }
+  }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 struct CardReadEvidence {
   frame: String,

@@ -250,6 +250,7 @@ pub struct OsuVisualTruthSpatialQueryInspectReportSummary {
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultSpatialQueryActionReadinessSummary {
   pub action_eligibility: String,
+  pub readiness_class: Option<String>,
   pub window_point: Option<String>,
   pub refusal_reason: Option<String>,
   pub issue: Option<String>,
@@ -3305,6 +3306,7 @@ pub fn derive_minecraft_training_result_spatial_query_action_readiness(
   if let Some(issue) = &lineage.issue {
     return MinecraftTrainingResultSpatialQueryActionReadinessSummary {
       action_eligibility: "n/a".to_string(),
+      readiness_class: None,
       window_point: None,
       refusal_reason: None,
       issue: Some(issue.clone()),
@@ -3313,6 +3315,7 @@ pub fn derive_minecraft_training_result_spatial_query_action_readiness(
   let Some(manifest_summary) = &lineage.manifest else {
     return MinecraftTrainingResultSpatialQueryActionReadinessSummary {
       action_eligibility: "n/a".to_string(),
+      readiness_class: None,
       window_point: None,
       refusal_reason: None,
       issue: Some("minecraft training result spatial query manifest summary missing".to_string()),
@@ -3323,6 +3326,7 @@ pub fn derive_minecraft_training_result_spatial_query_action_readiness(
     Err(error) => {
       return MinecraftTrainingResultSpatialQueryActionReadinessSummary {
         action_eligibility: "n/a".to_string(),
+        readiness_class: None,
         window_point: None,
         refusal_reason: None,
         issue: Some(error),
@@ -3330,8 +3334,10 @@ pub fn derive_minecraft_training_result_spatial_query_action_readiness(
     }
   };
   let readiness = derive_action_readiness(&manifest);
+  let action_eligibility = readiness.eligibility.as_str().to_string();
   MinecraftTrainingResultSpatialQueryActionReadinessSummary {
-    action_eligibility: readiness.eligibility.as_str().to_string(),
+    readiness_class: map_action_eligibility_to_readiness_class(&action_eligibility),
+    action_eligibility,
     window_point: readiness.window_point.map(|point| {
       let point = auv_driver::geometry::Point::from(point);
       format!("{},{}", point.x, point.y)

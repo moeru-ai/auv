@@ -952,10 +952,10 @@ mod tests {
       std::env::temp_dir().join(format!("auv-{name}-{}", std::process::id()))
     }
 
-    fn setup_probe_work() -> PathBuf {
+    fn setup_probe_work(name: &str) -> PathBuf {
       let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("crates/auv-game-osu/tests/fixtures/osu_visual_truth_probe");
-      let work = temp_dir("osu-wired-live-action");
+      let work = temp_dir(name);
       fs::create_dir_all(&work).expect("work dir");
       for name in ["visual_truth_manifest.json", "projection.json"] {
         fs::copy(fixture_root.join(name), work.join(name)).expect("copy fixture");
@@ -994,7 +994,7 @@ mod tests {
 
     #[test]
     fn osu_query_wired_live_action_click_ready_records_operation_result() {
-      let work = setup_probe_work();
+      let work = setup_probe_work("osu-wired-live-action-click-ready");
       let temp = work.parent().unwrap().join("osu-wired-click-ready");
       fs::create_dir_all(&temp).expect("temp");
       let semantic_manifest = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
@@ -1050,7 +1050,7 @@ mod tests {
 
     #[test]
     fn osu_query_wired_live_action_not_consumable_refuses_without_executor() {
-      let work = setup_probe_work();
+      let work = setup_probe_work("osu-wired-live-action-not-consumable");
       let temp = work.parent().unwrap().join("osu-wired-not-consumable");
       fs::create_dir_all(&temp).expect("temp");
       let semantic_manifest = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
