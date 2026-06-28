@@ -40,6 +40,8 @@ usefulness). No core extraction.
 
 ## Cross-links
 
+- Core-A4 falsifier gate (row 69 — shape recurrence, not helper admissible):
+  [`2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md`](2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md)
 - [`2026-06-27-auv-second-vertical-consumption-probe-osu-evidence.md`](2026-06-27-auv-second-vertical-consumption-probe-osu-evidence.md)
 - [`2026-06-28-osu-visual-truth-query-wired-live-action-design.md`](2026-06-28-osu-visual-truth-query-wired-live-action-design.md)
 - [`2026-06-27-minecraft-mc17-holdout-render-quality-design.md`](2026-06-27-minecraft-mc17-holdout-render-quality-design.md)

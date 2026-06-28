@@ -158,8 +158,8 @@ No Core-C1 falsifier **triggered** by second vertical wiring.
 | Authority conflation | **Latent risk, boundary exercised** — prior "not hit by second vertical" **retired** |
 | Proof matrix rows 66/68 | **Unchanged** — `candidate, not admissible yet` / helper-only admissible in prior review language only |
 | Proof matrix row 65 | See A2 stage review — **helper-only admissible** |
-| Proof matrix rows 69/70 | **Unchanged** on main matrix |
-| Next slice | **Owner choice** — not Core-C2, Core-B, MC-20 from this review |
+| Proof matrix rows 69/70 | **Unchanged** on main matrix — see Core-A4⁵ post-A3 re-confirmation |
+| Next slice | **Owner choice** — not Core-C2, Core-B, MC-20 from this review; Core-A5a/A5b deferred per A4⁵ |
 
 ## Observations (not approved work)
 
@@ -181,6 +181,11 @@ No Core-C1 falsifier **triggered** by second vertical wiring.
 | MC-20 / controller | Owner opens planner slice |
 | osu gameplay verification (Layer 3) | Owner names verification slice |
 | Inline inspect disclaimer | Owner approves read-side polish |
+
+## Related references (post-A2)
+
+- Core-A4 quality/backend falsifier gate (rows 69/70):
+  [`2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md`](2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md)
 
 ## One-sentence summary
 

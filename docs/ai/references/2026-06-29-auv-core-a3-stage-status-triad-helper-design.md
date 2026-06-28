@@ -130,6 +130,8 @@ git diff --check
 
 ## Related references
 
+- Core-A4 quality/backend falsifier gate (rows 69/70 unchanged; defers A5):
+  [`2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md`](2026-06-29-auv-core-a4-quality-backend-helper-falsifier-gate.md)
 - Core-A2 graduation (row 65 helper-only admissible):
   [`2026-06-28-auv-core-a2-stage-quality-graduation-review.md`](2026-06-28-auv-core-a2-stage-quality-graduation-review.md)
 - Prior helper extraction pattern:
