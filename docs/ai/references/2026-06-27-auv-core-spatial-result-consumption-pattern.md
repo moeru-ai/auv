@@ -487,7 +487,10 @@ query compare policy (#1).
 This note intentionally defers:
 
 - generic render provider API
-- generic action lease / dispatch protocol
+- generic action lease / dispatch protocol — still deferred; Core-C1 opens the
+  **design boundary only** for one attempt vs pre-dispatch refusal (see
+  [`2026-06-28-auv-core-c1-action-attempt-admission-design.md`](2026-06-28-auv-core-c1-action-attempt-admission-design.md));
+  it does **not** extract runtime, lease, or controller surfaces
 - candidate promotion integration
 - Gaussian-native inference abstraction
 - threshold-based quality verdicts (opened only for MC-17 D3 derived read-side; see docs/ai/references/2026-06-27-minecraft-mc17-d3-quality-verdict-design.md)

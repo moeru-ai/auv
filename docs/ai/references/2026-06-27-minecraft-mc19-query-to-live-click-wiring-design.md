@@ -208,6 +208,8 @@ that slice explicitly.
 
 ## Related references
 
+- Core-C1 admission vocabulary (generic boundary; MC-19 proves wiring honesty):
+  `docs/ai/references/2026-06-28-auv-core-c1-action-attempt-admission-design.md`
 - MC-12 contract:
   `docs/ai/references/2026-06-27-minecraft-mc12-spatial-query-contract-design.md`
 - MC-14 action-facing design:

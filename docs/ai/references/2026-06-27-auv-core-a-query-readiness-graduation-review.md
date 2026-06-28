@@ -241,6 +241,12 @@ Post-helper closeout, see falsifier review
 [`2026-06-27-auv-core-a-query-readiness-falsifier-review.md`](2026-06-27-auv-core-a-query-readiness-falsifier-review.md)
 for per-falsifier verdicts against MC + osu evidence.
 
+Core-C1
+([`2026-06-28-auv-core-c1-action-attempt-admission-design.md`](2026-06-28-auv-core-c1-action-attempt-admission-design.md))
+names the admission vocabulary above derived readiness only; it does **not**
+change Core-A verdicts or upgrade helper-only admissible language to core
+runtime.
+
 1. **This review** — record admissibility-only verdict; **default defer
    extraction**; main matrix rows stay `candidate, not admissible yet` until
    owner explicitly accepts graduation language.
