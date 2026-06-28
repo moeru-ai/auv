@@ -4,17 +4,14 @@ use auv_game_osu::evaluate_detection_fixture;
 
 #[test]
 fn detection_fixture_eval_writes_report_with_provenance() {
-  let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    .ancestors()
-    .nth(2)
-    .expect("workspace root")
-    .to_path_buf();
-  let run_artifact_dir = repo_root.join(".tmp-osu-dispatch-p4ab-closeout");
-  let detections_path = repo_root.join("crates/auv-game-osu/tests/fixtures/osu_eval_detection");
+  let manifest_dir =
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_run_artifacts");
+  let detections_path =
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_detection");
   let output_dir = tempfile::tempdir().expect("tempdir");
 
   let result = evaluate_detection_fixture(&auv_game_osu::DetectionEvalInputs {
-    run_artifact_dir,
+    run_artifact_dir: manifest_dir,
     detections_path,
     output_dir: output_dir.path().join("report"),
   })

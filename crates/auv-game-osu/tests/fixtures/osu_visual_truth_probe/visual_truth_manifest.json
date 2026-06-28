@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "beatmap_path": "tests/fixtures/probe.osu",
+  "map_summary": {
+    "beatmap_path": "tests/fixtures/probe.osu",
+    "mode": 0,
+    "total_objects": 1,
+    "circle_count": 1,
+    "slider_count": 0,
+    "spinner_count": 0,
+    "hold_count": 0,
+    "first_object_time_ms": 1000,
+    "last_object_time_ms": 1000,
+    "approach_rate": 8.0,
+    "overall_difficulty": 7.0,
+    "circle_size": 4.0,
+    "hp_drain_rate": 5.0
+  },
+  "frames": [
+    {
+      "object_index": 0,
+      "scheduled_time_ms": 1000,
+      "actual_dispatch_time_ms": 1001,
+      "dispatch_error_ms": 1,
+      "capture": {
+        "phase": "before_dispatch",
+        "capture_time_ms": 990,
+        "relative_to_scheduled_ms": -10,
+        "relative_to_dispatch_ms": -11,
+        "file_name": "capture-object-0000-before-16ms.png",
+        "width": 800,
+        "height": 600,
+        "backend": "fixture"
+      },
+      "expected_object": {
+        "object_kind": "circle",
+        "expected_playfield_x": 256.0,
+        "expected_playfield_y": 192.0,
+        "circle_size": 4.0,
+        "approach_rate": 8.0,
+        "overall_difficulty": 7.0
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "source_window_bounds": {
+    "x": 0.0,
+    "y": 0.0,
+    "width": 1512.0,
+    "height": 949.0
+  },
+  "capture_bounds": {
+    "x": 0.0,
+    "y": 0.0,
+    "width": 1512.0,
+    "height": 949.0
+  },
+  "capture_width": 1512,
+  "capture_height": 949,
+  "capture_scale_factor": 1.0,
+  "scale_x": 1.0,
+  "scale_y": 1.0,
+  "offset_x": 0.0,
+  "offset_y": 0.0,
+  "match_radius_px": 20.0,
+  "derivation_method": "layout_rule",
+  "verification_reference": null
+}
