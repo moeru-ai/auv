@@ -24,8 +24,8 @@ use crate::contract::{
   RecognitionResult, RecognitionSource, VerificationResult,
 };
 use crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
-use crate::osu_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID as OSU_QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
 use crate::model::AuvResult;
+use crate::osu_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID as OSU_QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
 use crate::scroll_scan::ScrollScanArtifact;
 use crate::stability::{StabilityAssessment, StabilityRejection};
 use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
@@ -2610,8 +2610,6 @@ pub fn derive_minecraft_query_wired_live_action_summary(
   })
 }
 
-
-
 fn find_osu_query_wired_live_action_operation_result(
   store: &LocalStore,
   run: &CanonicalRun,
@@ -2656,8 +2654,8 @@ pub fn derive_osu_query_wired_live_action_summary(
       let message = event.message.as_deref().unwrap_or("");
       let attempted =
         parse_event_message_field(message, "attempted").is_some_and(|value| value == "true");
-      let action_eligibility =
-        parse_event_message_field(message, "action_eligibility").unwrap_or_else(|| "n/a".to_string());
+      let action_eligibility = parse_event_message_field(message, "action_eligibility")
+        .unwrap_or_else(|| "n/a".to_string());
       let refusal_reason =
         parse_event_message_field(message, "refusal_reason").filter(|value| value != "none");
       let pixel_point =

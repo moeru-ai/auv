@@ -1,6 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::osu_query_live_action::{
+  InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
+  build_osu_query_wired_live_action_operation_result,
+  stage_osu_query_wired_live_action_operation_result,
+};
 use auv_game_osu::{
   BenchmarkInputs, BenchmarkOutput, CapturePhase, DatasetExportInputs, DatasetExportOutput,
   DetectionEvalInputs, DetectionEvalOutput, FrameDetections, ObjectKind, PlayfieldProjection,
@@ -10,11 +15,6 @@ use auv_game_osu::{
   export_dataset, query_visual_truth_spatial, run_benchmark, validate_visual_truth_semantic,
   visual_truth_query_action_wiring_lineage_from_manifest,
   wire_visual_truth_spatial_query_manifest_to_action,
-};
-use crate::osu_query_live_action::{
-  InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
-  build_osu_query_wired_live_action_operation_result,
-  stage_osu_query_wired_live_action_operation_result,
 };
 
 use crate::{
@@ -516,7 +516,6 @@ fn stage_dataset_dir(
   Ok(())
 }
 
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryWiredLiveActionInputs {
   pub visual_truth_semantic_manifest_path: PathBuf,
@@ -560,9 +559,7 @@ pub fn run_osu_query_wired_live_action(
   #[cfg(not(target_os = "macos"))]
   {
     let _ = (recording, inputs);
-    Err(
-      "osu query wired live action requires macOS for live window projection".to_string(),
-    )
+    Err("osu query wired live action requires macOS for live window projection".to_string())
   }
 }
 
@@ -611,17 +608,15 @@ fn run_osu_query_wired_live_action_core<E: VisualTruthQueryLiveClickExecutor>(
     output_dir: inputs.output_dir.clone(),
   })?;
 
-  let (_staged_manifest_path, query_manifest_ref) = context.in_span(
-    "osu.query_visual_truth_spatial.artifacts",
-    |context| {
+  let (_staged_manifest_path, query_manifest_ref) =
+    context.in_span("osu.query_visual_truth_spatial.artifacts", |context| {
       context.stage_artifact_file_with_ref(
         OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
         &query.manifest_path,
         "osu-visual-truth-spatial-query.json",
         Some("osu visual truth spatial query manifest".to_string()),
       )
-    },
-  )?;
+    })?;
   context.in_span("osu.query_visual_truth_spatial.artifacts", |context| {
     context.stage_artifact_file(
       OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE,
@@ -632,10 +627,8 @@ fn run_osu_query_wired_live_action_core<E: VisualTruthQueryLiveClickExecutor>(
     Ok::<_, String>(())
   })?;
 
-  let lineage = visual_truth_query_action_wiring_lineage_from_manifest(
-    &query.manifest,
-    &query.manifest_path,
-  );
+  let lineage =
+    visual_truth_query_action_wiring_lineage_from_manifest(&query.manifest, &query.manifest_path);
   let wiring = wire_visual_truth_spatial_query_manifest_to_action(
     &query.manifest,
     &lineage,
@@ -677,27 +670,32 @@ fn run_osu_query_wired_live_action_core<E: VisualTruthQueryLiveClickExecutor>(
   })
 }
 
-fn circle_size_for_wired_live_action_inputs(inputs: &QueryWiredLiveActionInputs) -> Result<f32, String> {
+fn circle_size_for_wired_live_action_inputs(
+  inputs: &QueryWiredLiveActionInputs,
+) -> Result<f32, String> {
   use auv_game_osu::VisualTruthSemanticManifest;
 
-  let semantic_json = fs::read_to_string(&inputs.visual_truth_semantic_manifest_path).map_err(|error| {
-    format!(
-      "failed to read osu visual truth semantic manifest {}: {error}",
-      inputs.visual_truth_semantic_manifest_path.display()
-    )
-  })?;
-  let semantic: VisualTruthSemanticManifest = serde_json::from_str(&semantic_json).map_err(|error| {
-    format!(
-      "failed to parse osu visual truth semantic manifest {}: {error}",
-      inputs.visual_truth_semantic_manifest_path.display()
-    )
-  })?;
-  let manifest_json = fs::read_to_string(&semantic.source_visual_truth_manifest_path).map_err(|error| {
-    format!(
-      "failed to read osu visual truth manifest {}: {error}",
-      semantic.source_visual_truth_manifest_path
-    )
-  })?;
+  let semantic_json =
+    fs::read_to_string(&inputs.visual_truth_semantic_manifest_path).map_err(|error| {
+      format!(
+        "failed to read osu visual truth semantic manifest {}: {error}",
+        inputs.visual_truth_semantic_manifest_path.display()
+      )
+    })?;
+  let semantic: VisualTruthSemanticManifest =
+    serde_json::from_str(&semantic_json).map_err(|error| {
+      format!(
+        "failed to parse osu visual truth semantic manifest {}: {error}",
+        inputs.visual_truth_semantic_manifest_path.display()
+      )
+    })?;
+  let manifest_json =
+    fs::read_to_string(&semantic.source_visual_truth_manifest_path).map_err(|error| {
+      format!(
+        "failed to read osu visual truth manifest {}: {error}",
+        semantic.source_visual_truth_manifest_path
+      )
+    })?;
   let manifest: VisualTruthManifest = serde_json::from_str(&manifest_json).map_err(|error| {
     format!(
       "failed to parse osu visual truth manifest {}: {error}",
@@ -728,7 +726,6 @@ fn build_live_playfield_projection(
     .map_err(|error| error.to_string())?;
   PlayfieldProjection::for_window(&window, circle_size)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -798,17 +795,17 @@ mod tests {
     use auv_game_osu::{
       OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT, PlayfieldProjection,
       VisualTruthQueryActionWiringLineage, VisualTruthQueryLiveClickExecutor,
-      validate_visual_truth_semantic, VisualTruthSemanticValidationInputs,
+      VisualTruthSemanticValidationInputs, validate_visual_truth_semantic,
     };
     use auv_tracing_driver::recording::{NoopRunRecorder, RunRecordingBackend};
     use auv_tracing_driver::store::LocalStore;
 
-    use auv_game_osu::CapturePhase;
     use crate::osu::{
-      run_osu_query_wired_live_action_with_executor, QueryWiredLiveActionInputs,
       OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE, OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE,
+      QueryWiredLiveActionInputs, run_osu_query_wired_live_action_with_executor,
     };
     use crate::osu_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
+    use auv_game_osu::CapturePhase;
 
     struct CountingExecutor {
       calls: Cell<usize>,
@@ -817,7 +814,10 @@ mod tests {
 
     impl CountingExecutor {
       fn success(summary: impl Into<String>) -> Self {
-        Self { calls: Cell::new(0), summary: summary.into() }
+        Self {
+          calls: Cell::new(0),
+          summary: summary.into(),
+        }
       }
     }
 
@@ -853,7 +853,9 @@ mod tests {
 
     fn operation_output_message(output: &crate::contract::OperationOutput) -> String {
       match output {
-        crate::contract::OperationOutput::Acknowledged { message } => message.clone().unwrap_or_default(),
+        crate::contract::OperationOutput::Acknowledged { message } => {
+          message.clone().unwrap_or_default()
+        }
         _ => String::new(),
       }
     }
@@ -862,8 +864,15 @@ mod tests {
       store: &LocalStore,
       run: &auv_tracing_driver::store::CanonicalRun,
     ) -> crate::contract::OperationResult {
-      let artifact = run.artifacts.iter().find(|a| a.role == "operation-result").expect("op");
-      let artifact_path = store.run_dir(run.run.run_id.as_str()).expect("dir").join(&artifact.path);
+      let artifact = run
+        .artifacts
+        .iter()
+        .find(|a| a.role == "operation-result")
+        .expect("op");
+      let artifact_path = store
+        .run_dir(run.run.run_id.as_str())
+        .expect("dir")
+        .join(&artifact.path);
       serde_json::from_slice(&fs::read(&artifact_path).expect("read")).expect("parse")
     }
 
@@ -875,7 +884,9 @@ mod tests {
       let semantic_manifest = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
         run_artifact_dir: work.clone(),
         output_dir: work.join("semantic-out-click"),
-      }).expect("semantic").manifest_path;
+      })
+      .expect("semantic")
+      .manifest_path;
       let store = LocalStore::new(temp.join("store")).expect("store");
       let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
       let executor = CountingExecutor::success("mock live click dispatched");
@@ -892,15 +903,31 @@ mod tests {
         },
         &live_projection(),
         &executor,
-      ).expect("ok");
+      )
+      .expect("ok");
       assert!(output.value.wiring.attempted);
       assert_eq!(executor.calls.get(), 1);
       let run = recording.read_run(output.run_id.as_str()).expect("run");
-      assert!(run.artifacts.iter().any(|a| a.role == OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE));
+      assert!(
+        run
+          .artifacts
+          .iter()
+          .any(|a| a.role == OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE)
+      );
       let operation_result = read_operation_result_artifact(&store, &run);
-      assert_eq!(operation_result.operation_id, QUERY_WIRED_LIVE_ACTION_OPERATION_ID);
-      assert!(operation_output_message(&operation_result.output).contains("mock live click dispatched"));
-      assert!(operation_result.known_limits.iter().any(|l| l == OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT));
+      assert_eq!(
+        operation_result.operation_id,
+        QUERY_WIRED_LIVE_ACTION_OPERATION_ID
+      );
+      assert!(
+        operation_output_message(&operation_result.output).contains("mock live click dispatched")
+      );
+      assert!(
+        operation_result
+          .known_limits
+          .iter()
+          .any(|l| l == OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT)
+      );
       let _ = fs::remove_dir_all(&work);
       let _ = fs::remove_dir_all(&temp);
     }
@@ -913,7 +940,9 @@ mod tests {
       let semantic_manifest = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
         run_artifact_dir: work.clone(),
         output_dir: work.join("semantic-out-absent"),
-      }).expect("semantic").manifest_path;
+      })
+      .expect("semantic")
+      .manifest_path;
       let store = LocalStore::new(temp.join("store")).expect("store");
       let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
       let executor = CountingExecutor::success("should not run");
@@ -930,16 +959,26 @@ mod tests {
         },
         &live_projection(),
         &executor,
-      ).expect("ok");
+      )
+      .expect("ok");
       assert!(!output.value.wiring.attempted);
       assert_eq!(executor.calls.get(), 0);
       let run = recording.read_run(output.run_id.as_str()).expect("run");
       let operation_result = read_operation_result_artifact(&store, &run);
-      assert_eq!(output.value.wiring.action_eligibility.as_str(), "not_consumable");
-      assert!(output.value.wiring.refusal_reason.as_deref().is_some_and(|r| r.contains("target_absent_from_visual_truth")));
+      assert_eq!(
+        output.value.wiring.action_eligibility.as_str(),
+        "not_consumable"
+      );
+      assert!(
+        output
+          .value
+          .wiring
+          .refusal_reason
+          .as_deref()
+          .is_some_and(|r| r.contains("target_absent_from_visual_truth"))
+      );
       let _ = fs::remove_dir_all(&work);
       let _ = fs::remove_dir_all(&temp);
     }
   }
-
 }

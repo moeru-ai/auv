@@ -14,8 +14,7 @@ use crate::visual_truth_spatial_query_action::{
   derive_visual_truth_spatial_query_action_readiness,
 };
 
-pub const OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT: &str =
-  "osu_query_wired_live_action_capture_space_readiness_live_window_dispatch_no_gameplay_verification";
+pub const OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT: &str = "osu_query_wired_live_action_capture_space_readiness_live_window_dispatch_no_gameplay_verification";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VisualTruthQueryActionWiringLineage {
@@ -125,15 +124,17 @@ fn wire_readiness_to_action(
       }
     }
     VisualTruthSpatialQueryActionEligibility::AnswerNonClickable
-    | VisualTruthSpatialQueryActionEligibility::NotConsumable => VisualTruthQueryActionWiringOutcome {
-      attempted: false,
-      action_eligibility: readiness.eligibility,
-      refusal_reason: readiness.refusal_reason.clone(),
-      pixel_point,
-      window_point: None,
-      click_summary: None,
-      known_limits,
-    },
+    | VisualTruthSpatialQueryActionEligibility::NotConsumable => {
+      VisualTruthQueryActionWiringOutcome {
+        attempted: false,
+        action_eligibility: readiness.eligibility,
+        refusal_reason: readiness.refusal_reason.clone(),
+        pixel_point,
+        window_point: None,
+        click_summary: None,
+        known_limits,
+      }
+    }
   }
 }
 
@@ -341,7 +342,9 @@ mod tests {
     }
   }
 
-  fn lineage_for(manifest: &VisualTruthSpatialQueryManifest) -> VisualTruthQueryActionWiringLineage {
+  fn lineage_for(
+    manifest: &VisualTruthSpatialQueryManifest,
+  ) -> VisualTruthQueryActionWiringLineage {
     visual_truth_query_action_wiring_lineage_from_manifest(manifest, Path::new("/tmp/query.json"))
   }
 
@@ -477,7 +480,9 @@ mod tests {
     );
     assert_eq!(
       outcome.refusal_reason.as_deref(),
-      Some("click_ready eligibility missing live window_point from playfield projection; defensive refusal")
+      Some(
+        "click_ready eligibility missing live window_point from playfield projection; defensive refusal"
+      )
     );
   }
 }
