@@ -95,8 +95,8 @@ donor comparable to MC-10..17 or osu full chain.
 **Helper-only extraction candidacy:** **defer** — shared four-label enum would
 **over-normalize** three distinct `metric_partial` policies.
 
-**Core-A5a:** **not now**. Optional **Core-A5a-prep** (docs-only mapping) is the
-honest next step.
+**Core-A5a:** **not now**. **Core-A5a-prep** mapping doc landed — see
+[`2026-06-30-auv-core-a5a-prep-metric-partial-cross-donor-mapping.md`](2026-06-30-auv-core-a5a-prep-metric-partial-cross-donor-mapping.md).
 
 ### Third-donor `metric_partial` triangulation
 
