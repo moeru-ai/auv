@@ -1,4 +1,5 @@
 use auv_driver::geometry::WindowPoint;
+use auv_query_readiness::{DerivedActionReadiness, format_query_not_consumable_refusal};
 
 use crate::input_target::projected_window_point;
 use crate::training_result_spatial_query::{
@@ -6,22 +7,8 @@ use crate::training_result_spatial_query::{
 };
 use crate::types::{MinecraftProjectedPoint, ProjectionVisibility};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TrainingResultSpatialQueryActionEligibility {
-  NotConsumable,
-  AnswerNonClickable,
-  ClickReady,
-}
-
-impl TrainingResultSpatialQueryActionEligibility {
-  pub fn as_str(self) -> &'static str {
-    match self {
-      Self::NotConsumable => "not_consumable",
-      Self::AnswerNonClickable => "answer_non_clickable",
-      Self::ClickReady => "click_ready",
-    }
-  }
-}
+pub type TrainingResultSpatialQueryActionEligibility =
+  auv_query_readiness::DerivedActionEligibility;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrainingResultSpatialQueryActionReadiness {
@@ -34,18 +21,24 @@ pub fn derive_action_readiness(
   manifest: &TrainingResultSpatialQueryManifest,
 ) -> TrainingResultSpatialQueryActionReadiness {
   if manifest.status != TrainingResultSpatialQueryStatus::Answered {
+    let derived = DerivedActionReadiness::not_consumable(format_query_not_consumable_refusal(
+      manifest.status.as_str(),
+      manifest.reason.map(|reason| reason.as_str()),
+    ));
     return TrainingResultSpatialQueryActionReadiness {
-      eligibility: TrainingResultSpatialQueryActionEligibility::NotConsumable,
+      eligibility: derived.eligibility,
       window_point: None,
-      refusal_reason: Some(not_consumable_refusal_reason(manifest)),
+      refusal_reason: derived.refusal_reason,
     };
   }
 
   let Some(visibility) = manifest.visibility else {
+    let derived =
+      DerivedActionReadiness::answer_non_clickable("answered query missing visibility witness");
     return TrainingResultSpatialQueryActionReadiness {
-      eligibility: TrainingResultSpatialQueryActionEligibility::AnswerNonClickable,
+      eligibility: derived.eligibility,
       window_point: None,
-      refusal_reason: Some("answered query missing visibility witness".to_string()),
+      refusal_reason: derived.refusal_reason,
     };
   };
 
@@ -61,25 +54,21 @@ pub fn derive_action_readiness(
   };
 
   if let Some(window_point) = projected_window_point(&projected) {
+    let derived = DerivedActionReadiness::click_ready();
     return TrainingResultSpatialQueryActionReadiness {
-      eligibility: TrainingResultSpatialQueryActionEligibility::ClickReady,
+      eligibility: derived.eligibility,
       window_point: Some(window_point),
-      refusal_reason: None,
+      refusal_reason: derived.refusal_reason,
     };
   }
 
+  let derived = DerivedActionReadiness::answer_non_clickable(answer_non_clickable_refusal_reason(
+    visibility, manifest,
+  ));
   TrainingResultSpatialQueryActionReadiness {
-    eligibility: TrainingResultSpatialQueryActionEligibility::AnswerNonClickable,
+    eligibility: derived.eligibility,
     window_point: None,
-    refusal_reason: Some(answer_non_clickable_refusal_reason(visibility, manifest)),
-  }
-}
-
-fn not_consumable_refusal_reason(manifest: &TrainingResultSpatialQueryManifest) -> String {
-  let status = manifest.status.as_str();
-  match manifest.reason {
-    Some(reason) => format!("status={status} reason={}", reason.as_str()),
-    None => format!("status={status}"),
+    refusal_reason: derived.refusal_reason,
   }
 }
 

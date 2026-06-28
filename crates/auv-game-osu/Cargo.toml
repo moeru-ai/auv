@@ -14,6 +14,7 @@ repository.workspace = true
 
 [dependencies]
 auv-file = { path = "../auv-file" }
+auv-query-readiness = { path = "../auv-query-readiness" }
 auv-driver = { path = "../auv-driver" }
 auv-inference-common = { path = "../auv-inference-common" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }

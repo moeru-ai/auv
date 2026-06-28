@@ -1,6 +1,10 @@
+use auv_query_readiness::{DerivedActionReadiness, format_query_not_consumable_refusal};
+
 use crate::visual_truth_spatial_query::{
   VisualTruthPixelVisibility, VisualTruthSpatialQueryManifest, VisualTruthSpatialQueryStatus,
 };
+
+pub type VisualTruthSpatialQueryActionEligibility = auv_query_readiness::DerivedActionEligibility;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VisualTruthSpatialQueryActionReadiness {
@@ -9,39 +13,29 @@ pub struct VisualTruthSpatialQueryActionReadiness {
   pub refusal_reason: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VisualTruthSpatialQueryActionEligibility {
-  NotConsumable,
-  AnswerNonClickable,
-  ClickReady,
-}
-
-impl VisualTruthSpatialQueryActionEligibility {
-  pub fn as_str(self) -> &'static str {
-    match self {
-      Self::NotConsumable => "not_consumable",
-      Self::AnswerNonClickable => "answer_non_clickable",
-      Self::ClickReady => "click_ready",
-    }
-  }
-}
-
 pub fn derive_visual_truth_spatial_query_action_readiness(
   manifest: &VisualTruthSpatialQueryManifest,
 ) -> VisualTruthSpatialQueryActionReadiness {
   if manifest.status != VisualTruthSpatialQueryStatus::Answered {
+    let derived = DerivedActionReadiness::not_consumable(format_query_not_consumable_refusal(
+      manifest.status.as_str(),
+      manifest.reason.map(|reason| reason.as_str()),
+    ));
     return VisualTruthSpatialQueryActionReadiness {
-      eligibility: VisualTruthSpatialQueryActionEligibility::NotConsumable,
+      eligibility: derived.eligibility,
       pixel_point: None,
-      refusal_reason: Some(not_consumable_refusal_reason(manifest)),
+      refusal_reason: derived.refusal_reason,
     };
   }
 
   let Some(visibility) = manifest.pixel_visibility else {
+    let derived = DerivedActionReadiness::answer_non_clickable(
+      "answered query missing pixel visibility witness",
+    );
     return VisualTruthSpatialQueryActionReadiness {
-      eligibility: VisualTruthSpatialQueryActionEligibility::AnswerNonClickable,
+      eligibility: derived.eligibility,
       pixel_point: None,
-      refusal_reason: Some("answered query missing pixel visibility witness".to_string()),
+      refusal_reason: derived.refusal_reason,
     };
   };
 
@@ -52,31 +46,30 @@ pub fn derive_visual_truth_spatial_query_action_readiness(
 
   if visibility == VisualTruthPixelVisibility::InsideCapture {
     if let Some(point) = pixel_point {
+      let derived = DerivedActionReadiness::click_ready();
       return VisualTruthSpatialQueryActionReadiness {
-        eligibility: VisualTruthSpatialQueryActionEligibility::ClickReady,
+        eligibility: derived.eligibility,
         pixel_point: Some(point),
-        refusal_reason: None,
+        refusal_reason: derived.refusal_reason,
       };
     }
+    let derived =
+      DerivedActionReadiness::answer_non_clickable("visibility=inside_capture missing_pixel_point");
     return VisualTruthSpatialQueryActionReadiness {
-      eligibility: VisualTruthSpatialQueryActionEligibility::AnswerNonClickable,
+      eligibility: derived.eligibility,
       pixel_point: None,
-      refusal_reason: Some("visibility=inside_capture missing_pixel_point".to_string()),
+      refusal_reason: derived.refusal_reason,
     };
   }
 
+  let derived = DerivedActionReadiness::answer_non_clickable(format!(
+    "pixel_visibility={}",
+    visibility.as_str()
+  ));
   VisualTruthSpatialQueryActionReadiness {
-    eligibility: VisualTruthSpatialQueryActionEligibility::AnswerNonClickable,
+    eligibility: derived.eligibility,
     pixel_point,
-    refusal_reason: Some(format!("pixel_visibility={}", visibility.as_str())),
-  }
-}
-
-fn not_consumable_refusal_reason(manifest: &VisualTruthSpatialQueryManifest) -> String {
-  let status = manifest.status.as_str();
-  match manifest.reason {
-    Some(reason) => format!("status={status} reason={}", reason.as_str()),
-    None => format!("status={status}"),
+    refusal_reason: derived.refusal_reason,
   }
 }
 

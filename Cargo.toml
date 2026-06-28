@@ -8,6 +8,7 @@ members = [
   "crates/auv-cli-invoke",
   "crates/auv-compare",
   "crates/auv-file",
+  "crates/auv-query-readiness",
   "crates/auv-qqmusic",
   "crates/auv-driver",
   "crates/auv-driver-macos",
