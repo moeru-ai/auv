@@ -121,6 +121,9 @@ cross-vertical abstraction maturity.
 
 ## Explicit non-goals (v1)
 
+**Footnote (2026-06-28):** live admission/dispatch opened as a **separate owner slice** (`2026-06-28-osu-visual-truth-query-wired-live-action-design.md`); probe v1 historical scope below is unchanged.
+
+
 - Core enum/helper extraction
 - MC-20 planner/controller
 - Witness (MC-16), quality (MC-17), live click (MC-19)
