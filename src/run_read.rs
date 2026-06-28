@@ -552,6 +552,7 @@ pub struct MinecraftQueryWiredLiveActionSummary {
   pub dispatch_command: Option<String>,
   pub dispatch_outcome: Option<String>,
   pub mc14_action_eligibility: Option<String>,
+  pub readiness_class: Option<String>,
   pub issue: Option<String>,
 }
 
@@ -3443,6 +3444,18 @@ fn derive_dispatch_evidence_from_events(run: &CanonicalRun) -> (Option<String>, 
   (dispatch_command, dispatch_outcome)
 }
 
+// NOTICE(core-c2-d1): reader-side vocabulary only — Core-C1 table in
+// docs/ai/references/2026-06-28-auv-core-c1-action-attempt-admission-design.md.
+// Do not promote to shared crate/module in D1.
+fn map_action_eligibility_to_readiness_class(donor: &str) -> Option<String> {
+  match donor {
+    "click_ready" => Some("ready".to_string()),
+    "answer_non_clickable" => Some("non_actionable".to_string()),
+    "not_consumable" => Some("not_consumable".to_string()),
+    _ => None,
+  }
+}
+
 pub fn derive_minecraft_query_wired_live_action_summary(
   store: &LocalStore,
   run: &CanonicalRun,
@@ -3513,6 +3526,11 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     }
   }
 
+  let readiness_donor = mc14_action_eligibility
+    .as_deref()
+    .unwrap_or(action_eligibility.as_str());
+  let readiness_class = map_action_eligibility_to_readiness_class(readiness_donor);
+
   Some(MinecraftQueryWiredLiveActionSummary {
     operation_result_artifact_id,
     query_artifact_id,
@@ -3527,6 +3545,7 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     dispatch_command,
     dispatch_outcome,
     mc14_action_eligibility,
+    readiness_class,
     issue,
   })
 }
@@ -3619,7 +3638,7 @@ pub fn derive_osu_query_wired_live_action_summary(
 
   let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
 
-  let mut readiness_class = None;
+  let mut readiness_class = map_action_eligibility_to_readiness_class(&action_eligibility);
   if let Some(query_id) = query_artifact_id.as_deref() {
     if let Ok(manifests) = extract_osu_visual_truth_spatial_query_manifests(store, run) {
       if let Some(lineage) = manifests
@@ -3627,7 +3646,7 @@ pub fn derive_osu_query_wired_live_action_summary(
         .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id)
       {
         let readiness = derive_osu_visual_truth_spatial_query_action_readiness(lineage);
-        readiness_class = Some(readiness.action_eligibility);
+        readiness_class = map_action_eligibility_to_readiness_class(&readiness.action_eligibility);
         if readiness.issue.is_some() {
           issue = readiness.issue;
         }
@@ -11256,6 +11275,7 @@ mod tests {
     .expect("summary should derive");
     assert!(summary.attempted);
     assert_eq!(summary.action_eligibility, "click_ready");
+    assert_eq!(summary.readiness_class.as_deref(), Some("ready"));
     assert_eq!(
       summary.dispatch_command.as_deref(),
       Some("input.clickWindowPoint")
@@ -11347,6 +11367,7 @@ mod tests {
     .expect("summary should derive");
     assert!(!summary.attempted);
     assert_eq!(summary.action_eligibility, "answer_non_clickable");
+    assert_eq!(summary.readiness_class.as_deref(), Some("non_actionable"));
     assert_eq!(
       summary.refusal_reason.as_deref(),
       Some("visibility=outside_window")
@@ -11427,6 +11448,7 @@ mod tests {
     .expect("summary should derive");
     assert!(!summary.attempted);
     assert_eq!(summary.action_eligibility, "not_consumable");
+    assert_eq!(summary.readiness_class.as_deref(), Some("not_consumable"));
     assert_eq!(
       summary.refusal_reason.as_deref(),
       Some("status=failed reason=target_block_absent_from_scene_packet")

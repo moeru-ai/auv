@@ -2641,7 +2641,7 @@ pub fn render_run_text(
   } else {
     for summary in minecraft_query_wired_live_action_summaries {
       output.push_str(&format!(
-        "- operation_result_artifact={} query_artifact={} attempted={} action_eligibility={} window_point={} refusal_reason={} operation_status={} operation_message={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} mc14_action_eligibility={} issue={}\n",
+        "- operation_result_artifact={} query_artifact={} attempted={} action_eligibility={} window_point={} refusal_reason={} operation_status={} operation_message={} dispatch_command={} dispatch_outcome={} target_app={} target_title={} mc14_action_eligibility={} readiness_class={} issue={}\n",
         summary.operation_result_artifact_id.as_deref().unwrap_or("n/a"),
         summary.query_artifact_id.as_deref().unwrap_or("n/a"),
         summary.attempted,
@@ -2655,6 +2655,7 @@ pub fn render_run_text(
         summary.target_app.as_deref().unwrap_or("n/a"),
         summary.target_title.as_deref().unwrap_or("n/a"),
         summary.mc14_action_eligibility.as_deref().unwrap_or("n/a"),
+        summary.readiness_class.as_deref().unwrap_or("n/a"),
         summary.issue.as_deref().unwrap_or("n/a"),
       ));
     }
@@ -4725,6 +4726,7 @@ mod tests {
     assert!(output.contains("refusal_reason=visibility=outside_window"));
     assert!(output.contains("query_artifact=artifact_mc14_absent"));
     assert!(output.contains("action_eligibility=not_consumable"));
+    assert!(output.contains("readiness_class=not_consumable"));
     assert!(
       output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet")
     );
@@ -4930,6 +4932,7 @@ mod tests {
         dispatch_command: Some("input.clickWindowPoint".to_string()),
         dispatch_outcome: Some("failed: main visible window was not found".to_string()),
         mc14_action_eligibility: Some("click_ready".to_string()),
+        readiness_class: Some("ready".to_string()),
         issue: None,
       },
       MinecraftQueryWiredLiveActionSummary {
@@ -4946,6 +4949,7 @@ mod tests {
         dispatch_command: None,
         dispatch_outcome: None,
         mc14_action_eligibility: Some("answer_non_clickable".to_string()),
+        readiness_class: Some("non_actionable".to_string()),
         issue: None,
       },
       MinecraftQueryWiredLiveActionSummary {
@@ -4966,6 +4970,7 @@ mod tests {
         dispatch_command: None,
         dispatch_outcome: None,
         mc14_action_eligibility: Some("not_consumable".to_string()),
+        readiness_class: Some("not_consumable".to_string()),
         issue: None,
       },
     ];
@@ -5026,6 +5031,7 @@ mod tests {
     assert!(output.contains("operation_result_artifact=artifact_mc19_click_ready_op"));
     assert!(output.contains("attempted=true"));
     assert!(output.contains("action_eligibility=click_ready"));
+    assert!(output.contains("readiness_class=ready"));
     assert!(output.contains("dispatch_command=input.clickWindowPoint"));
     assert!(output.contains("operation_result_artifact=artifact_mc19_outside_op"));
     assert!(output.contains("refusal_reason=visibility=outside_window"));
@@ -5076,7 +5082,7 @@ mod tests {
         target_title: Some("osu".to_string()),
         dispatch_command: Some("input.clickWindowPoint".to_string()),
         dispatch_outcome: Some("failed: main visible window was not found".to_string()),
-        readiness_class: Some("click_ready".to_string()),
+        readiness_class: Some("ready".to_string()),
         issue: None,
       },
       OsuQueryWiredLiveActionSummary {
@@ -5093,7 +5099,7 @@ mod tests {
         target_title: Some("osu".to_string()),
         dispatch_command: None,
         dispatch_outcome: None,
-        readiness_class: Some("answer_non_clickable".to_string()),
+        readiness_class: Some("non_actionable".to_string()),
         issue: None,
       },
       OsuQueryWiredLiveActionSummary {
@@ -5171,12 +5177,12 @@ mod tests {
     assert!(output.contains("pixel_point=400.0,300.0"));
     assert!(output.contains("window_point=400.000,300.000"));
     assert!(output.contains("action_eligibility=click_ready"));
+    assert!(output.contains("readiness_class=ready"));
     assert!(output.contains("dispatch_command=input.clickWindowPoint"));
     assert!(output.contains("refusal_reason=pixel_visibility=outside_capture"));
+    assert!(output.contains("readiness_class=non_actionable"));
     assert!(output.contains("action_eligibility=not_consumable"));
-    assert!(output.contains(
-      "osu_query_wired_live_action_capture_space_readiness_live_window_dispatch_no_gameplay_verification"
-    ) || output.contains("readiness_class=not_consumable"));
+    assert!(output.contains("readiness_class=not_consumable"));
     assert!(output.contains("refusal_reason=status=failed reason=target_absent_from_visual_truth"));
   }
 

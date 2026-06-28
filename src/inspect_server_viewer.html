@@ -1581,6 +1581,14 @@
     return !!parsed && parsed.operation_id === "auv.minecraft.query_wired_live_action";
   }
 
+  // NOTICE(core-c2-d1): reader-side vocabulary only — keep local to viewer in D1.
+  function mapActionEligibilityToReadinessClass(donor) {
+    if (donor === "click_ready") return "ready";
+    if (donor === "answer_non_clickable") return "non_actionable";
+    if (donor === "not_consumable") return "not_consumable";
+    return null;
+  }
+
   function parseEventMessageField(message, key) {
     if (!message) return null;
     const prefix = key + "=";
@@ -1669,6 +1677,9 @@
       }
     }
 
+    const readinessDonor = mc14ActionEligibility || actionEligibility;
+    const readinessClass = mapActionEligibilityToReadinessClass(readinessDonor);
+
     return {
       attempted: attempted,
       action_eligibility: actionEligibility,
@@ -1682,6 +1693,7 @@
       target_app: targetApp,
       target_title: targetTitle,
       mc14_action_eligibility: mc14ActionEligibility,
+      readiness_class: readinessClass,
     };
   }
 
@@ -1706,6 +1718,7 @@
       ["target_app", card.target_app],
       ["target_title", card.target_title],
       ["mc14_action_eligibility", card.mc14_action_eligibility],
+      ["readiness_class", card.readiness_class],
       ["known_limits", countArray(parsed.known_limits)],
     ]);
   }
