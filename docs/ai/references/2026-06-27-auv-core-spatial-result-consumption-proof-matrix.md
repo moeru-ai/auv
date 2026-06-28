@@ -67,7 +67,9 @@ If any one of these fails, the candidate stays local.
 | Provider comparison verdict | `TrainingResultSpatialQueryComparisonVerdict` | Another vertical must actually run dual-backend answer compare and need the same `match / divergent / provider_only / reference_only / not_comparable` split in persisted evidence. | Show a real compare seam where ordering, partiality, or uncertainty needs extra states beyond the five-label set. | Shared compare-verdict enum or helper. | Only Minecraft provider/reference compare exists. | `candidate, not admissible yet` |
 | Action readiness view | `TrainingResultSpatialQueryActionEligibility`, `TrainingResultSpatialQueryActionReadiness`, `derive_action_readiness`, `derive_minecraft_training_result_spatial_query_action_readiness` | Another vertical must need a **derived** action-facing view over persisted answer artifacts, with at least one `click_ready`-like path and one honest non-actionable path. | Show a real case where action-facing consumption must mutate producer truth or where dispatch and readiness cannot be kept separate. | Shared derived read-model contract only; no runtime dispatch wiring. | Main matrix verdict unchanged pending owner acceptance of graduation review; osu adds derived-shape recurrence only — capture-space, not dispatch-safe — see graduation review. | `candidate, not admissible yet`¹ |
 | Quality measurement verdict | `HoldoutRenderQualityVerdict` | Another vertical must measure witness-bound quality evidence and need the same split between `measured_only`, `metric_partial`, `blocked`, and `failed`. | Show a real measurement seam where thresholds are inseparable from measurement evidence, or where partial measurement is meaningless. | Shared evidence-verdict enum only. | osu WQ1 + Balatro X4 witness-bound quality¹¹; three `metric_partial` policies (A5a-prep⁹); X4 lineage honest but F3 divergence unchanged — **defer** Core-A5a. | `candidate, not admissible yet` |
-| Persisted backend label discipline | `HoldoutRenderQualityBackend`, `TrainingResultSpatialQueryBackend` | Another vertical must persist backend provenance and independently hit the same rule: stable backend labels belong in artifacts, raw runtime command text does not. | Show a real vertical where backend provenance cannot be represented by stable labels alone. | Shared label-discipline rule or tiny backend-label trait bound, if ever needed. | Query half three-donor recurrence; render MC-only; quality half split (MC `render_backend`, Balatro witness+quality `quality_backend`¹¹, osu strings) — F2 full-row + F3 osu gap; **defer** Core-A5b. | `candidate, not admissible yet` |
+| Query backend label discipline (70a) | `TrainingResultSpatialQueryBackend`, `VisualTruthSpatialQueryBackend`, `CardDetectionSpatialQueryBackend` | Three donors must persist stable query-backend enums and exclude raw runtime command text from artifacts. | Show a vertical where query backend provenance cannot be represented by stable labels alone. | Shared query-backend label rule or tiny enum helper only; no shared manifest struct. | Three-donor recurrence (A5b-prep, X5); `selected_backend` vs `query_backend` naming — **defer** Core-A5b-query extraction. | `candidate, helper-only admissible`¹² |
+| Render backend label discipline (70b) | `HoldoutRenderQualityBackend` | A second vertical must persist render-backend enum discipline under the same stable-label / no-raw-command rule. | Show render backend must stay command-text-only with no stable label. | Shared render-backend label rule only. | MC-17 only; no second donor — **defer** Core-A5b-render. | `candidate, not admissible yet` |
+| Quality backend label discipline (70c) | `HoldoutRenderQualityBackend` (MC `render_backend`), `CardDetectionQualityBackend` | Donors must agree on quality-backend enum discipline (not witness free strings) for the same measurement lineage rule. | Show quality measurement lineage cannot use stable backend-family labels. | Shared quality-backend label rule only. | MC `render_backend` vs Balatro `quality_backend`; osu strings (F3); X4 witness lineage — **defer** Core-A5b-quality. | `candidate, not admissible yet` |
 
 
 ## osu! second-vertical probe (2026-06-27)
@@ -88,16 +90,17 @@ not matrix graduation.
 | Stage status triad | **satisfied as second-vertical probe-local recurrence** | Semantic + witness + quality stages (`ready/blocked/failed`); main matrix helper-only admissible³. |
 | Provider comparison verdict | **not satisfied** | Dual-backend compare intentionally deferred. |
 | Quality measurement verdict | **satisfied as probe-local recurrence (OSU-WQ1)** | Four-label verdict chain; `metric_partial` semantics differ from MC-17 — main matrix **not** admissible³. |
-| Persisted backend label discipline | **satisfied (query backend layer)** | `query_backend=playfield_projection_reference` persisted; render/quality backend enum still MC-only. |
+| Query backend label discipline (70a) | **satisfied as probe recurrence** | Three donors; main matrix helper-only admissible¹². |
+| Render backend label discipline (70b) | **not satisfied** | MC-only render enum. |
+| Quality backend label discipline (70c) | **partial** | osu strings; MC/Balatro field split — main matrix not admissible. |
 
 Rows marked probe-local remain **non-admissible for Core-B extraction** unless
 footnote³ helper-only admissible language applies (stage triad only on main matrix).
-Third-vertical probe for rows 69/70 re-adjudicated at Core-X3⁸ (Balatro X2 inline
-eval) and Core-X5¹¹ (Balatro X4 witness closure); main matrix verdict columns
-**unchanged**.
+Third-vertical probe for row 69 and rows 70a–70c re-adjudicated at Core-X3⁸,
+Core-X5¹¹, and Core-A6 row split¹²; row 70 monolithic **retired**.
 Graduation reviews:
 `docs/ai/references/2026-06-27-auv-core-a-query-readiness-graduation-review.md` (rows 66/68)
-and Core-A2³ (rows 65/69/70). **Admissible does not mean recommended now**;
+and Core-A2³ (rows 65/69/70a–70c). **Admissible does not mean recommended now**;
 default remains **defer**.
 
 ¹ See graduation review
@@ -168,6 +171,13 @@ columns **unchanged**; **defer** Core-A5b extraction.
 closes X3 inline-eval lineage gap but **does not** converge `metric_partial` (F3) or
 full-row backend discipline (F2/F3); main matrix verdict columns **unchanged**;
 **defer** Core-A5a/A5b extraction.
+
+¹² Core-A6 row 70 split owner decision (2026-06-30, `main`):
+[`2026-06-30-auv-core-a6-row-70-split-owner-decision.md`](2026-06-30-auv-core-a6-row-70-split-owner-decision.md)
+— owner splits monolithic row 70 into **70a query** (helper-only admissible review
+language), **70b render** (not admissible), **70c quality** (not admissible);
+**Core-A5b** umbrella retired; use **Core-A5b-query** / **Core-A5b-render** /
+**Core-A5b-quality** for future slices. **No** implementation approved.
 
 
 ## Balatro third-vertical probe appendix (2026-06-29)
