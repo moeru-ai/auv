@@ -2,9 +2,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use auv_game_osu::{
-  BenchmarkInputs, BenchmarkOutput, DatasetExportInputs, DatasetExportOutput, DetectionEvalInputs,
-  DetectionEvalOutput, FrameDetections, RunMode, evaluate_detection_fixture, export_dataset,
-  run_benchmark,
+  BenchmarkInputs, BenchmarkOutput, CapturePhase, DatasetExportInputs, DatasetExportOutput,
+  DetectionEvalInputs, DetectionEvalOutput, FrameDetections, ObjectKind, RunMode,
+  VisualTruthSemanticValidationInputs, VisualTruthSpatialQueryInputs, evaluate_detection_fixture,
+  export_dataset, query_visual_truth_spatial, run_benchmark, validate_visual_truth_semantic,
 };
 
 use crate::{
@@ -19,6 +20,12 @@ use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
 use auv_tracing_driver::run_builder::RunSpec;
 use auv_tracing_driver::trace::{RunType, new_run_id, new_span_id};
+
+pub const OSU_VISUAL_TRUTH_SEMANTIC_ROLE: &str = "osu-visual-truth-semantic";
+pub const OSU_VISUAL_TRUTH_SEMANTIC_INSPECT_ROLE: &str = "osu-visual-truth-semantic-inspect";
+pub const OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE: &str = "osu-visual-truth-spatial-query";
+pub const OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE: &str =
+  "osu-visual-truth-spatial-query-inspect";
 
 pub fn run_osu_benchmark(
   recording: &RecordingHandle,
@@ -186,6 +193,109 @@ pub fn run_osu_detection_eval(
               &artifact_path,
               artifact_name,
               Some(format!("osu detection eval artifact {artifact_name}")),
+            )?;
+          }
+        }
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_osu_visual_truth_semantic_validation(
+  recording: &RecordingHandle,
+  run_artifact_dir: PathBuf,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<auv_game_osu::VisualTruthSemanticValidationOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.osu.validate_visual_truth_semantic"),
+    "osu validate visual truth semantic gate",
+    |context| {
+      context.record_event(
+        "osu.validate_visual_truth_semantic.inputs",
+        Some(format!(
+          "run_artifact_dir={} output_dir={}",
+          run_artifact_dir.display(),
+          output_dir.display()
+        )),
+      );
+      let result = validate_visual_truth_semantic(VisualTruthSemanticValidationInputs {
+        run_artifact_dir: run_artifact_dir.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span("osu.validate_visual_truth_semantic.artifacts", |context| {
+        for (artifact_name, role) in [
+          (
+            "osu-visual-truth-semantic.json",
+            OSU_VISUAL_TRUTH_SEMANTIC_ROLE,
+          ),
+          (
+            "osu-visual-truth-semantic-inspect.json",
+            OSU_VISUAL_TRUTH_SEMANTIC_INSPECT_ROLE,
+          ),
+        ] {
+          let artifact_path = result.output_dir.join(artifact_name);
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              role,
+              &artifact_path,
+              artifact_name,
+              Some(format!(
+                "osu visual truth semantic artifact {artifact_name}"
+              )),
+            )?;
+          }
+        }
+        Ok::<_, String>(())
+      })?;
+      Ok::<_, String>(result)
+    },
+  )
+}
+
+pub fn run_osu_visual_truth_spatial_query(
+  recording: &RecordingHandle,
+  visual_truth_semantic_manifest_path: PathBuf,
+  object_index: usize,
+  capture_phase: CapturePhase,
+  object_kind: Option<ObjectKind>,
+  output_dir: PathBuf,
+) -> AuvResult<RecordedOperationOutput<auv_game_osu::VisualTruthSpatialQueryOutput>> {
+  recording.run_recorded_operation(
+    RunSpec::new(RunType::Execute, "auv.osu.query_visual_truth_spatial"),
+    "osu query visual truth spatial target",
+    |context| {
+      context.record_event(
+        "osu.query_visual_truth_spatial.inputs",
+        Some(format!(
+          "semantic_manifest={} object_index={object_index} capture_phase={capture_phase:?} output_dir={}",
+          visual_truth_semantic_manifest_path.display(),
+          output_dir.display()
+        )),
+      );
+      let result = query_visual_truth_spatial(VisualTruthSpatialQueryInputs {
+        visual_truth_semantic_manifest_path: visual_truth_semantic_manifest_path.clone(),
+        object_index,
+        capture_phase: capture_phase.clone(),
+        object_kind: object_kind.clone(),
+        output_dir: output_dir.clone(),
+      })?;
+      context.in_span("osu.query_visual_truth_spatial.artifacts", |context| {
+        for (artifact_name, role) in [
+          ("osu-visual-truth-spatial-query.json", OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE),
+          (
+            "osu-visual-truth-spatial-query-inspect.json",
+            OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE,
+          ),
+        ] {
+          let artifact_path = result.output_dir.join(artifact_name);
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              role,
+              &artifact_path,
+              artifact_name,
+              Some(format!("osu visual truth spatial query artifact {artifact_name}")),
             )?;
           }
         }

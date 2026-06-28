@@ -30,10 +30,13 @@ use crate::run_read::{
   MinecraftTrainingResultSemanticInspectReportLineage,
   MinecraftTrainingResultSemanticManifestLineage,
   MinecraftTrainingResultSpatialQueryInspectReportLineage,
-  MinecraftTrainingResultSpatialQueryManifestLineage, collect_quality_baseline_evidence_for_run,
+  MinecraftTrainingResultSpatialQueryManifestLineage, OsuVisualTruthSemanticInspectReportLineage,
+  OsuVisualTruthSemanticManifestLineage, OsuVisualTruthSpatialQueryInspectReportLineage,
+  OsuVisualTruthSpatialQueryManifestLineage, collect_quality_baseline_evidence_for_run,
   derive_minecraft_training_result_quality_baseline_report,
   derive_minecraft_training_result_quality_verdict,
   derive_minecraft_training_result_spatial_query_action_readiness,
+  derive_osu_visual_truth_spatial_query_action_readiness,
   list_minecraft_holdout_render_quality_inspect_reports,
   list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts,
   list_minecraft_query_wired_live_action_summaries, list_minecraft_spatial_bundle_manifests,
@@ -49,7 +52,10 @@ use crate::run_read::{
   list_minecraft_training_result_semantic_inspect_reports,
   list_minecraft_training_result_semantic_manifests,
   list_minecraft_training_result_spatial_query_inspect_reports,
-  list_minecraft_training_result_spatial_query_manifests, quality_baseline_profile_v1,
+  list_minecraft_training_result_spatial_query_manifests,
+  list_osu_visual_truth_semantic_inspect_reports, list_osu_visual_truth_semantic_manifests,
+  list_osu_visual_truth_spatial_query_inspect_reports,
+  list_osu_visual_truth_spatial_query_manifests, quality_baseline_profile_v1,
   quality_baseline_verdict_thresholds_probe_v1,
   quality_baseline_verdict_thresholds_trained_render_v1,
 };
@@ -205,6 +211,14 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_minecraft_holdout_render_quality_inspect_reports(store, run_id)?;
   let minecraft_training_result_spatial_query_inspect_reports =
     list_minecraft_training_result_spatial_query_inspect_reports(store, run_id)?;
+  let osu_visual_truth_semantic_manifests =
+    list_osu_visual_truth_semantic_manifests(store, run_id)?;
+  let osu_visual_truth_semantic_inspect_reports =
+    list_osu_visual_truth_semantic_inspect_reports(store, run_id)?;
+  let osu_visual_truth_spatial_query_manifests =
+    list_osu_visual_truth_spatial_query_manifests(store, run_id)?;
+  let osu_visual_truth_spatial_query_inspect_reports =
+    list_osu_visual_truth_spatial_query_inspect_reports(store, run_id)?;
   let minecraft_query_wired_live_action_summaries =
     list_minecraft_query_wired_live_action_summaries(store, run_id)?;
   let quality_baseline_report = quality_baseline_profile_v1().ok().and_then(|profile| {
@@ -261,6 +275,10 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &minecraft_training_result_spatial_query_manifests,
     &minecraft_training_result_spatial_query_inspect_reports,
     &minecraft_query_wired_live_action_summaries,
+    &osu_visual_truth_semantic_manifests,
+    &osu_visual_truth_semantic_inspect_reports,
+    &osu_visual_truth_spatial_query_manifests,
+    &osu_visual_truth_spatial_query_inspect_reports,
     quality_baseline_report.as_ref(),
     quality_verdict_probe.as_ref(),
     quality_verdict_trained_render.as_ref(),
@@ -336,6 +354,10 @@ pub fn render_run_text(
   minecraft_training_result_spatial_query_manifests: &[MinecraftTrainingResultSpatialQueryManifestLineage],
   minecraft_training_result_spatial_query_inspect_reports: &[MinecraftTrainingResultSpatialQueryInspectReportLineage],
   minecraft_query_wired_live_action_summaries: &[MinecraftQueryWiredLiveActionSummary],
+  osu_visual_truth_semantic_manifests: &[OsuVisualTruthSemanticManifestLineage],
+  osu_visual_truth_semantic_inspect_reports: &[OsuVisualTruthSemanticInspectReportLineage],
+  osu_visual_truth_spatial_query_manifests: &[OsuVisualTruthSpatialQueryManifestLineage],
+  osu_visual_truth_spatial_query_inspect_reports: &[OsuVisualTruthSpatialQueryInspectReportLineage],
   quality_baseline_report: Option<&MinecraftTrainingResultQualityBaselineReportSummary>,
   quality_verdict_probe: Option<&MinecraftTrainingResultQualityVerdictSummary>,
   quality_verdict_trained_render: Option<&MinecraftTrainingResultQualityVerdictSummary>,
@@ -2149,7 +2171,7 @@ pub fn render_run_text(
         "- query_artifact={} target_block={} status={} visibility={} selected_backend={} action_eligibility={} window_point={} refusal_reason={} paired_inspect_artifact={} issue={}\n",
         manifest_lineage.artifact.artifact_id,
         manifest.map(|value| value.target_block.as_str()).unwrap_or("n/a"),
-        manifest.map(|value| value.status.as_str()).unwrap_or("n/a"),
+        manifest.as_ref().map(|value| value.status.as_str()).unwrap_or("n/a"),
         manifest
           .and_then(|value| value.visibility.as_deref())
           .unwrap_or("n/a"),
@@ -2162,6 +2184,107 @@ pub fn render_run_text(
         paired_report
           .map(|report| report.artifact.artifact_id.to_string())
           .unwrap_or_else(|| "n/a".to_string()),
+        readiness.issue.as_deref().unwrap_or("n/a"),
+      ));
+    }
+  }
+
+  output.push_str("\nOsu Visual Truth Semantic:\n");
+  if osu_visual_truth_semantic_manifests.is_empty()
+    && osu_visual_truth_semantic_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in osu_visual_truth_semantic_manifests {
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} semantic_status={} semantic_reason={} frame_count={} beatmap_path={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest.semantic_status,
+          manifest.semantic_reason.as_deref().unwrap_or("n/a"),
+          manifest.frame_count,
+          manifest.beatmap_path,
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      } else {
+        output.push_str(&format!(
+          "- manifest_artifact={} role={} path={} semantic_status=n/a issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest_lineage.artifact.role.as_deref().unwrap_or("n/a"),
+          manifest_lineage.artifact.path.as_deref().unwrap_or("n/a"),
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in osu_visual_truth_semantic_inspect_reports {
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- inspect_artifact={} semantic_status={} projection_eval_ready={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report.semantic_status,
+          report.projection_eval_ready,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nOsu Visual Truth Spatial Query:\n");
+  if osu_visual_truth_spatial_query_manifests.is_empty()
+    && osu_visual_truth_spatial_query_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in osu_visual_truth_spatial_query_manifests {
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- query_artifact={} object_index={} capture_phase={} status={} reason={} pixel_visibility={} pixel_point={} query_backend={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest.object_index,
+          manifest.capture_phase,
+          manifest.status,
+          manifest.reason.as_deref().unwrap_or("n/a"),
+          manifest.pixel_visibility.as_deref().unwrap_or("n/a"),
+          match (manifest.pixel_x, manifest.pixel_y) {
+            (Some(x), Some(y)) => format!("{x},{y}"),
+            _ => "n/a".to_string(),
+          },
+          manifest.query_backend,
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in osu_visual_truth_spatial_query_inspect_reports {
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- inspect_artifact={} status={} semantic_status={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report.status,
+          report.semantic_status,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
+  output.push_str("\nOsu Visual Truth Spatial Query Action Readiness:\n");
+  if osu_visual_truth_spatial_query_manifests.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in osu_visual_truth_spatial_query_manifests {
+      let readiness = derive_osu_visual_truth_spatial_query_action_readiness(manifest_lineage);
+      let manifest = manifest_lineage.manifest.as_ref();
+      output.push_str(&format!(
+        "- query_artifact={} status={} action_eligibility={} pixel_point={} refusal_reason={} issue={}\n",
+        manifest_lineage.artifact.artifact_id,
+        manifest.as_ref().map(|value| value.status.as_str()).unwrap_or("n/a"),
+        readiness.action_eligibility,
+        readiness.pixel_point.as_deref().unwrap_or("n/a"),
+        readiness.refusal_reason.as_deref().unwrap_or("n/a"),
         readiness.issue.as_deref().unwrap_or("n/a"),
       ));
     }
@@ -2457,7 +2580,7 @@ mod tests {
     MinecraftTrainingResultSemanticInspectReportLineage,
     MinecraftTrainingResultSemanticManifestLineage,
     MinecraftTrainingResultSpatialQueryInspectReportLineage,
-    MinecraftTrainingResultSpatialQueryManifestLineage,
+    MinecraftTrainingResultSpatialQueryManifestLineage, OsuVisualTruthSpatialQueryManifestLineage,
   };
   use auv_game_minecraft::{
     HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewStatus, TrainingCompatibilityStatus,
@@ -3715,6 +3838,10 @@ mod tests {
       &minecraft_training_result_spatial_query_manifests,
       &minecraft_training_result_spatial_query_inspect_reports,
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4019,6 +4146,10 @@ mod tests {
         issue: Some("json parse error: expected value".to_string()),
       }],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4193,6 +4324,10 @@ mod tests {
       &manifests,
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4209,6 +4344,152 @@ mod tests {
     assert!(
       output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet")
     );
+  }
+
+  #[test]
+  fn render_run_text_renders_osu_visual_truth_action_readiness_three_states() {
+    use crate::run_read::OsuVisualTruthSpatialQueryManifestSummary;
+
+    let run_id = RunId::new("run_inspect_osu_mc14_three_states");
+    let root_span_id = SpanId::new("span_osu_mc14_root");
+    let run = CanonicalRun {
+      run: RunRecordV1Alpha1 {
+        api_version: RUN_API_VERSION.to_string(),
+        run_id: run_id.clone(),
+        trace_id: TraceId::new("trace_osu_mc14_three_states"),
+        run_type: RunType::Command,
+        state: TraceState::Ended,
+        status_code: TraceStatusCode::Ok,
+        started_at_millis: 1,
+        finished_at_millis: Some(2),
+        root_span_id: root_span_id.clone(),
+        attributes: BTreeMap::new(),
+        summary: Some("osu mc14 three states".to_string()),
+        failure: None,
+      },
+      spans: vec![],
+      events: vec![],
+      artifacts: vec![],
+    };
+
+    fn query_manifest(
+      run: &CanonicalRun,
+      span_id: SpanId,
+      artifact_id: &str,
+      summary: OsuVisualTruthSpatialQueryManifestSummary,
+    ) -> OsuVisualTruthSpatialQueryManifestLineage {
+      OsuVisualTruthSpatialQueryManifestLineage {
+        artifact: ArtifactRefLineage {
+          run_id: run.run.run_id.clone(),
+          artifact_id: ArtifactId::new(artifact_id),
+          span_id,
+          captured_event_id: None,
+          role: Some("osu-visual-truth-spatial-query".to_string()),
+          path: Some(format!("artifacts/{artifact_id}.json")),
+          summary: Some("osu spatial query manifest".to_string()),
+          resolved: true,
+        },
+        manifest: Some(summary),
+        issue: None,
+      }
+    }
+
+    fn base_summary() -> OsuVisualTruthSpatialQueryManifestSummary {
+      OsuVisualTruthSpatialQueryManifestSummary {
+        schema_version: 1,
+        visual_truth_semantic_manifest_path: "/tmp/semantic.json".to_string(),
+        source_run_artifact_dir: "/tmp/run".to_string(),
+        object_index: 0,
+        capture_phase: "before_dispatch".to_string(),
+        object_kind: Some("circle".to_string()),
+        query_backend: "playfield_projection_reference".to_string(),
+        status: "answered".to_string(),
+        reason: None,
+        pixel_visibility: Some("inside_capture".to_string()),
+        pixel_x: Some(400.0),
+        pixel_y: Some(300.0),
+        match_radius_px: Some(20.0),
+        capture_width: Some(800),
+        capture_height: Some(600),
+        known_limits: vec![],
+      }
+    }
+
+    let click_ready = base_summary();
+    let mut outside_capture = base_summary();
+    outside_capture.pixel_visibility = Some("outside_capture".to_string());
+
+    let mut absent = base_summary();
+    absent.status = "failed".to_string();
+    absent.reason = Some("target_absent_from_visual_truth".to_string());
+    absent.pixel_visibility = None;
+    absent.pixel_x = None;
+    absent.pixel_y = None;
+
+    let manifests = vec![
+      query_manifest(
+        &run,
+        root_span_id.clone(),
+        "artifact_osu_click_ready",
+        click_ready,
+      ),
+      query_manifest(
+        &run,
+        root_span_id.clone(),
+        "artifact_osu_outside_capture",
+        outside_capture,
+      ),
+      query_manifest(&run, root_span_id.clone(), "artifact_osu_absent", absent),
+    ];
+
+    let output = render_run_text(
+      &run,
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &[],
+      &manifests,
+      &[],
+      None,
+      None,
+      None,
+    );
+
+    assert!(output.contains("Osu Visual Truth Spatial Query Action Readiness:"));
+    assert!(output.contains("query_artifact=artifact_osu_click_ready"));
+    assert!(output.contains("action_eligibility=click_ready"));
+    assert!(output.contains("query_artifact=artifact_osu_outside_capture"));
+    assert!(output.contains("action_eligibility=answer_non_clickable"));
+    assert!(output.contains("refusal_reason=pixel_visibility=outside_capture"));
+    assert!(output.contains("query_artifact=artifact_osu_absent"));
+    assert!(output.contains("action_eligibility=not_consumable"));
+    assert!(output.contains("refusal_reason=status=failed reason=target_absent_from_visual_truth"));
   }
 
   #[test]
@@ -4322,6 +4603,10 @@ mod tests {
       &[],
       &[],
       &summaries,
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4487,6 +4772,10 @@ mod tests {
       &[],
       &[launch_manifest],
       &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -4700,6 +4989,10 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4876,6 +5169,10 @@ mod tests {
       &[],
       &[package_manifest],
       &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5076,6 +5373,10 @@ mod tests {
       &[],
       &[result_manifest],
       &duplicate_reports,
+      &[],
+      &[],
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5293,6 +5594,10 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -5412,6 +5717,10 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
+      &[],
+      &[],
       Some(&report),
       Some(&probe_verdict),
       Some(&trained_verdict),
@@ -5432,6 +5741,68 @@ mod tests {
       output.contains("screenshot_copy_probe thresholds judge pipeline wiring only"),
       "verdict trust_notes should surface probe disclaimer"
     );
+  }
+
+  #[test]
+  fn osu_visual_truth_probe_live_store_inspect_acceptance() {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use auv_game_osu::CapturePhase;
+    use auv_tracing_driver::recording::RunRecordingBackend;
+    use auv_tracing_driver::store::LocalStore;
+
+    use crate::osu::{
+      run_osu_visual_truth_semantic_validation, run_osu_visual_truth_spatial_query,
+    };
+
+    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-osu/tests/fixtures/osu_visual_truth_probe");
+    use std::env;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let stamp = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .expect("clock")
+      .as_nanos();
+    let work = env::temp_dir().join(format!("auv-osu-probe-work-{stamp}"));
+    fs::create_dir_all(&work).expect("work dir");
+    for name in ["visual_truth_manifest.json", "projection.json"] {
+      fs::copy(fixture_root.join(name), work.join(name)).expect("copy fixture");
+    }
+
+    let store_root = env::temp_dir().join(format!("auv-osu-probe-store-{stamp}"));
+    fs::create_dir_all(&store_root).expect("store dir");
+    let store = LocalStore::new(store_root.clone()).expect("store");
+    let recording = RunRecordingBackend::local_only(store.clone()).handle();
+
+    let semantic =
+      run_osu_visual_truth_semantic_validation(&recording, work.clone(), work.join("semantic-out"))
+        .expect("semantic validation should record");
+
+    let semantic_output = inspect_run(&store, semantic.run_id.as_str())
+      .unwrap_or_else(|error| panic!("semantic inspect: {error}"));
+    assert!(semantic_output.contains("Osu Visual Truth Semantic:"));
+    assert!(semantic_output.contains("semantic_status=ready"));
+
+    let query = run_osu_visual_truth_spatial_query(
+      &recording,
+      semantic.value.manifest_path,
+      0,
+      CapturePhase::BeforeDispatch,
+      None,
+      work.join("query-out"),
+    )
+    .expect("spatial query should record");
+
+    let query_output = inspect_run(&store, query.run_id.as_str())
+      .unwrap_or_else(|error| panic!("query inspect: {error}"));
+    assert!(query_output.contains("Osu Visual Truth Spatial Query:"));
+    assert!(query_output.contains("status=answered"));
+    assert!(query_output.contains("Osu Visual Truth Spatial Query Action Readiness:"));
+    assert!(query_output.contains("action_eligibility=click_ready"));
+    let _ = fs::remove_dir_all(&work);
+    let _ = fs::remove_dir_all(&store_root);
   }
 
   #[test]
