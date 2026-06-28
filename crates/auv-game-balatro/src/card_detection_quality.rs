@@ -9,27 +9,26 @@ use auv_file::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::card_detection_producer::{
-  ExpectedSlotEntry, LoadedDetectionBundle, load_detection_bundle, load_expected_slots,
+use crate::card_detection_eval_witness::{
+  CardDetectionEvalWitnessManifest, CardDetectionEvalWitnessReason, CardDetectionEvalWitnessStatus,
+  CardDetectionQualityBackend,
 };
-use crate::card_detection_semantic::{CardDetectionSemanticManifest, CardDetectionSemanticStatus};
-use crate::card_detection_spatial_query::slot_detections;
-use crate::model::ObjectZone;
 
 pub type CardDetectionQualityResult<T> = Result<T, String>;
 
-pub const CARD_DETECTION_QUALITY_MANIFEST_SCHEMA_VERSION: u32 = 1;
-pub const CARD_DETECTION_QUALITY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
-pub const BALATRO_X2_QUALITY_KNOWN_LIMIT: &str = "balatro X2 quality records slot-coverage measurement evidence only; it does not claim model usefulness, gameplay success, or pass/fail thresholds";
-pub const BALATRO_X2_INLINE_EVAL_KNOWN_LIMIT: &str = "balatro X2 v1 derives quality metrics/verdict inline from semantic bundle + expected_slots; no persisted eval-report artifact role or durable eval-report path";
+pub const CARD_DETECTION_QUALITY_MANIFEST_SCHEMA_VERSION: u32 = 2;
+pub const CARD_DETECTION_QUALITY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 2;
+pub const BALATRO_SLOT_COVERAGE_QUALITY_KNOWN_LIMIT: &str = "balatro slot-coverage quality records measurement evidence only; it does not claim model usefulness, gameplay success, or pass/fail thresholds";
+pub const BALATRO_X2_QUALITY_KNOWN_LIMIT: &str = BALATRO_SLOT_COVERAGE_QUALITY_KNOWN_LIMIT;
+pub const BALATRO_X4_WITNESS_BOUND_QUALITY_KNOWN_LIMIT: &str = "balatro X4 quality derives metrics/verdict only from persisted card-detection-eval-witness manifest; it does not reload semantic bundle or expected_slots directly";
 
+const WITNESS_MANIFEST_FILE: &str = "balatro-card-detection-eval-witness.json";
 const QUALITY_MANIFEST_FILE: &str = "balatro-card-detection-quality.json";
 const QUALITY_INSPECT_FILE: &str = "balatro-card-detection-quality-inspect.json";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct CardDetectionQualityInputs {
-  pub card_detection_semantic_manifest_path: PathBuf,
-  pub expected_slots_path: PathBuf,
+  pub witness_manifest_path: PathBuf,
   pub output_dir: PathBuf,
 }
 
@@ -40,30 +39,6 @@ pub struct CardDetectionQualityOutput {
   pub inspect_report_path: PathBuf,
   pub manifest: CardDetectionQualityManifest,
   pub inspect_report: CardDetectionQualityInspectReport,
-  pub eval_report: CardDetectionEvalReport,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CardDetectionEvalReport {
-  pub schema_version: u32,
-  pub generated_at_millis: u64,
-  pub source_detection_bundle_dir: String,
-  pub expected_slot_count: usize,
-  pub scored_slot_count: usize,
-  pub unscored_slot_count: usize,
-  pub below_confidence_slot_count: usize,
-  pub quality_backend: CardDetectionQualityBackend,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub detector_model_id: Option<String>,
-  pub slot_scores: Vec<CardDetectionSlotScore>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CardDetectionSlotScore {
-  pub zone: String,
-  pub index: u32,
-  pub scored: bool,
-  pub confidence: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -79,9 +54,8 @@ pub struct CardDetectionQualityMetrics {
 pub struct CardDetectionQualityManifest {
   pub schema_version: u32,
   pub generated_at_millis: u64,
-  pub card_detection_semantic_manifest_path: String,
-  pub source_detection_bundle_dir: String,
-  pub semantic_status: CardDetectionSemanticStatus,
+  pub card_detection_eval_witness_manifest_path: String,
+  pub witness_status: CardDetectionEvalWitnessStatus,
   pub status: CardDetectionQualityStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<CardDetectionQualityReason>,
@@ -100,8 +74,8 @@ pub struct CardDetectionQualityInspectReport {
   pub schema_version: u32,
   pub generated_at_millis: u64,
   pub card_detection_quality_manifest_path: String,
-  pub card_detection_semantic_manifest_path: String,
-  pub semantic_status: CardDetectionSemanticStatus,
+  pub card_detection_eval_witness_manifest_path: String,
+  pub witness_status: CardDetectionEvalWitnessStatus,
   pub status: CardDetectionQualityStatus,
   pub verdict: CardDetectionQualityVerdict,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -117,40 +91,22 @@ pub type CardDetectionQualityStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CardDetectionQualityBackend {
-  UltralyticsOnnxUi,
-  UltralyticsOnnxEntities,
-}
-
-impl CardDetectionQualityBackend {
-  pub fn as_str(self) -> &'static str {
-    match self {
-      Self::UltralyticsOnnxUi => "ultralytics_onnx_ui",
-      Self::UltralyticsOnnxEntities => "ultralytics_onnx_entities",
-    }
-  }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum CardDetectionQualityReason {
-  MissingSemanticManifest,
-  SemanticManifestParseFailed,
-  SemanticNotReady,
-  MissingExpectedSlots,
-  ExpectedSlotsParseFailed,
-  BundleUnavailable,
+  MissingWitnessManifest,
+  WitnessManifestParseFailed,
+  WitnessNotReady,
+  WitnessBlocked,
+  WitnessFailed,
 }
 
 impl CardDetectionQualityReason {
   pub fn as_str(self) -> &'static str {
     match self {
-      Self::MissingSemanticManifest => "missing_semantic_manifest",
-      Self::SemanticManifestParseFailed => "semantic_manifest_parse_failed",
-      Self::SemanticNotReady => "semantic_not_ready",
-      Self::MissingExpectedSlots => "missing_expected_slots",
-      Self::ExpectedSlotsParseFailed => "expected_slots_parse_failed",
-      Self::BundleUnavailable => "bundle_unavailable",
+      Self::MissingWitnessManifest => "missing_witness_manifest",
+      Self::WitnessManifestParseFailed => "witness_manifest_parse_failed",
+      Self::WitnessNotReady => "witness_not_ready",
+      Self::WitnessBlocked => "witness_blocked",
+      Self::WitnessFailed => "witness_failed",
     }
   }
 }
@@ -188,42 +144,34 @@ pub fn build_card_detection_quality(
   let generated_at_millis = auv_tracing_driver::now_millis();
   let known_limits = BTreeSet::from([
     BALATRO_X2_QUALITY_KNOWN_LIMIT.to_string(),
-    BALATRO_X2_INLINE_EVAL_KNOWN_LIMIT.to_string(),
+    BALATRO_X4_WITNESS_BOUND_QUALITY_KNOWN_LIMIT.to_string(),
   ]);
   let mut warnings = BTreeSet::new();
 
-  let gate = evaluate_quality_gate(
-    &inputs.card_detection_semantic_manifest_path,
-    &inputs.expected_slots_path,
-    &mut warnings,
-  );
+  let gate = evaluate_quality_gate(&inputs.witness_manifest_path, &mut warnings);
+  let witness = gate.witness_manifest.as_ref();
 
-  let eval_report = gate.eval_report.clone();
-  let outcome = gate
-    .eval_report
-    .as_ref()
-    .map(|report| derive_quality_outcome(report))
-    .unwrap_or(QualityOutcome {
+  let outcome = match gate.witness_manifest.as_ref() {
+    Some(witness) if witness.status == CardDetectionEvalWitnessStatus::Ready => {
+      derive_quality_outcome(witness)
+    }
+    _ => QualityOutcome {
       status: gate.quality_status,
       reason: gate.quality_reason,
       verdict: gate.verdict,
       metrics: None,
       quality_backend: None,
       detector_model_id: None,
-    });
+    },
+  };
 
   let manifest = CardDetectionQualityManifest {
     schema_version: CARD_DETECTION_QUALITY_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
-    card_detection_semantic_manifest_path: inputs
-      .card_detection_semantic_manifest_path
-      .display()
-      .to_string(),
-    source_detection_bundle_dir: eval_report
-      .as_ref()
-      .map(|report| report.source_detection_bundle_dir.clone())
-      .unwrap_or_default(),
-    semantic_status: gate.semantic_status,
+    card_detection_eval_witness_manifest_path: inputs.witness_manifest_path.display().to_string(),
+    witness_status: witness
+      .map(|w| w.status)
+      .unwrap_or(CardDetectionEvalWitnessStatus::Blocked),
     status: outcome.status,
     reason: outcome.reason,
     verdict: outcome.verdict,
@@ -240,8 +188,10 @@ pub fn build_card_detection_quality(
     schema_version: CARD_DETECTION_QUALITY_INSPECT_REPORT_SCHEMA_VERSION,
     generated_at_millis,
     card_detection_quality_manifest_path: manifest_path.display().to_string(),
-    card_detection_semantic_manifest_path: manifest.card_detection_semantic_manifest_path.clone(),
-    semantic_status: manifest.semantic_status,
+    card_detection_eval_witness_manifest_path: manifest
+      .card_detection_eval_witness_manifest_path
+      .clone(),
+    witness_status: manifest.witness_status,
     status: manifest.status,
     verdict: manifest.verdict,
     quality_backend: manifest.quality_backend,
@@ -264,33 +214,30 @@ pub fn build_card_detection_quality(
     inspect_report_path,
     manifest,
     inspect_report,
-    eval_report: eval_report.unwrap_or(CardDetectionEvalReport {
-      schema_version: 1,
-      generated_at_millis,
-      source_detection_bundle_dir: String::new(),
-      expected_slot_count: 0,
-      scored_slot_count: 0,
-      unscored_slot_count: 0,
-      below_confidence_slot_count: 0,
-      quality_backend: CardDetectionQualityBackend::UltralyticsOnnxEntities,
-      detector_model_id: None,
-      slot_scores: vec![],
-    }),
+  })
+}
+
+pub fn build_card_detection_quality_from_witness_dir(
+  witness_output_dir: &Path,
+  output_dir: PathBuf,
+) -> CardDetectionQualityResult<CardDetectionQualityOutput> {
+  build_card_detection_quality(&CardDetectionQualityInputs {
+    witness_manifest_path: witness_output_dir.join(WITNESS_MANIFEST_FILE),
+    output_dir,
   })
 }
 
 pub fn derive_card_detection_quality_verdict(
-  eval_report: &CardDetectionEvalReport,
+  witness: &CardDetectionEvalWitnessManifest,
 ) -> CardDetectionQualityVerdict {
-  derive_quality_outcome(eval_report).verdict
+  derive_quality_outcome(witness).verdict
 }
 
 struct QualityGateEvaluation {
   quality_status: CardDetectionQualityStatus,
   quality_reason: Option<CardDetectionQualityReason>,
   verdict: CardDetectionQualityVerdict,
-  semantic_status: CardDetectionSemanticStatus,
-  eval_report: Option<CardDetectionEvalReport>,
+  witness_manifest: Option<CardDetectionEvalWitnessManifest>,
 }
 
 struct QualityOutcome {
@@ -303,165 +250,83 @@ struct QualityOutcome {
 }
 
 fn evaluate_quality_gate(
-  semantic_manifest_path: &Path,
-  expected_slots_path: &Path,
+  witness_manifest_path: &Path,
   warnings: &mut BTreeSet<String>,
 ) -> QualityGateEvaluation {
-  if !semantic_manifest_path.is_file() {
+  if !witness_manifest_path.is_file() {
     return QualityGateEvaluation {
       quality_status: CardDetectionQualityStatus::Blocked,
-      quality_reason: Some(CardDetectionQualityReason::MissingSemanticManifest),
+      quality_reason: Some(CardDetectionQualityReason::MissingWitnessManifest),
       verdict: CardDetectionQualityVerdict::Blocked,
-      semantic_status: CardDetectionSemanticStatus::Blocked,
-      eval_report: None,
+      witness_manifest: None,
     };
   }
 
-  let semantic_manifest = match read_json_file::<CardDetectionSemanticManifest>(
-    semantic_manifest_path,
-    "balatro card detection semantic manifest",
+  let witness_manifest = match read_json_file::<CardDetectionEvalWitnessManifest>(
+    witness_manifest_path,
+    "balatro card detection eval witness manifest",
   ) {
-    Ok(manifest) => manifest,
+    Ok(manifest) => Some(manifest),
     Err(error) => {
       warnings.insert(error);
       return QualityGateEvaluation {
         quality_status: CardDetectionQualityStatus::Failed,
-        quality_reason: Some(CardDetectionQualityReason::SemanticManifestParseFailed),
+        quality_reason: Some(CardDetectionQualityReason::WitnessManifestParseFailed),
         verdict: CardDetectionQualityVerdict::Failed,
-        semantic_status: CardDetectionSemanticStatus::Failed,
-        eval_report: None,
+        witness_manifest: None,
       };
     }
   };
 
-  if semantic_manifest.semantic_status != CardDetectionSemanticStatus::Ready {
+  let Some(witness) = witness_manifest.as_ref() else {
     return QualityGateEvaluation {
-      quality_status: CardDetectionQualityStatus::Blocked,
-      quality_reason: Some(CardDetectionQualityReason::SemanticNotReady),
-      verdict: CardDetectionQualityVerdict::Blocked,
-      semantic_status: semantic_manifest.semantic_status,
-      eval_report: None,
+      quality_status: CardDetectionQualityStatus::Failed,
+      quality_reason: Some(CardDetectionQualityReason::WitnessManifestParseFailed),
+      verdict: CardDetectionQualityVerdict::Failed,
+      witness_manifest,
     };
-  }
-
-  if !expected_slots_path.is_file() {
-    return QualityGateEvaluation {
-      quality_status: CardDetectionQualityStatus::Blocked,
-      quality_reason: Some(CardDetectionQualityReason::MissingExpectedSlots),
-      verdict: CardDetectionQualityVerdict::Blocked,
-      semantic_status: semantic_manifest.semantic_status,
-      eval_report: None,
-    };
-  }
-
-  let expected_slots = match load_expected_slots(expected_slots_path) {
-    Ok(slots) => slots,
-    Err(error) => {
-      warnings.insert(error);
-      return QualityGateEvaluation {
-        quality_status: CardDetectionQualityStatus::Failed,
-        quality_reason: Some(CardDetectionQualityReason::ExpectedSlotsParseFailed),
-        verdict: CardDetectionQualityVerdict::Failed,
-        semantic_status: semantic_manifest.semantic_status,
-        eval_report: None,
-      };
-    }
   };
 
-  let bundle_dir = PathBuf::from(&semantic_manifest.source_detection_bundle_dir);
-  let bundle = match load_detection_bundle(&bundle_dir) {
-    Ok(bundle) => bundle,
-    Err(error) => {
-      warnings.insert(error);
-      return QualityGateEvaluation {
-        quality_status: CardDetectionQualityStatus::Failed,
-        quality_reason: Some(CardDetectionQualityReason::BundleUnavailable),
-        verdict: CardDetectionQualityVerdict::Failed,
-        semantic_status: semantic_manifest.semantic_status,
-        eval_report: None,
-      };
+  match witness.status {
+    CardDetectionEvalWitnessStatus::Blocked => QualityGateEvaluation {
+      quality_status: CardDetectionQualityStatus::Blocked,
+      quality_reason: witness.reason.map(|reason| match reason {
+        CardDetectionEvalWitnessReason::SemanticNotReady
+        | CardDetectionEvalWitnessReason::MissingExpectedSlots
+        | CardDetectionEvalWitnessReason::MissingQueryManifest
+        | CardDetectionEvalWitnessReason::QueryLineageMismatch => {
+          CardDetectionQualityReason::WitnessBlocked
+        }
+        _ => CardDetectionQualityReason::WitnessNotReady,
+      }),
+      verdict: CardDetectionQualityVerdict::Blocked,
+      witness_manifest,
+    },
+    CardDetectionEvalWitnessStatus::Failed => QualityGateEvaluation {
+      quality_status: CardDetectionQualityStatus::Failed,
+      quality_reason: Some(CardDetectionQualityReason::WitnessFailed),
+      verdict: CardDetectionQualityVerdict::Failed,
+      witness_manifest,
+    },
+    CardDetectionEvalWitnessStatus::Ready => {
+      let outcome = derive_quality_outcome(witness);
+      QualityGateEvaluation {
+        quality_status: outcome.status,
+        quality_reason: outcome.reason,
+        verdict: outcome.verdict,
+        witness_manifest,
+      }
     }
-  };
-
-  let eval_report = build_eval_report(&bundle, &expected_slots.slots);
-  let outcome = derive_quality_outcome(&eval_report);
-  QualityGateEvaluation {
-    quality_status: outcome.status,
-    quality_reason: outcome.reason,
-    verdict: outcome.verdict,
-    semantic_status: semantic_manifest.semantic_status,
-    eval_report: Some(eval_report),
   }
 }
 
-fn build_eval_report(
-  bundle: &LoadedDetectionBundle,
-  expected_slots: &[ExpectedSlotEntry],
-) -> CardDetectionEvalReport {
-  let mut slot_scores = Vec::new();
-  let mut scored_slot_count = 0usize;
-  let mut below_confidence_slot_count = 0usize;
-
-  for entry in expected_slots {
-    let zone = parse_zone(&entry.zone);
-    let detections = slot_detections(bundle, zone);
-    let detection = detections.get(entry.index as usize);
-    let (scored, confidence) = match detection {
-      Some(detection) if detection.confidence >= entry.min_confidence => {
-        scored_slot_count += 1;
-        (true, Some(detection.confidence))
-      }
-      Some(detection) => {
-        below_confidence_slot_count += 1;
-        (false, Some(detection.confidence))
-      }
-      None => (false, None),
-    };
-    slot_scores.push(CardDetectionSlotScore {
-      zone: entry.zone.clone(),
-      index: entry.index,
-      scored,
-      confidence,
-    });
-  }
-
-  let expected_slot_count = expected_slots.len();
-  let unscored_slot_count = expected_slot_count
-    .saturating_sub(scored_slot_count)
-    .max(below_confidence_slot_count);
-
-  CardDetectionEvalReport {
-    schema_version: 1,
-    generated_at_millis: auv_tracing_driver::now_millis(),
-    source_detection_bundle_dir: bundle.bundle_dir.display().to_string(),
-    expected_slot_count,
-    scored_slot_count,
-    unscored_slot_count,
-    below_confidence_slot_count,
-    quality_backend: CardDetectionQualityBackend::UltralyticsOnnxEntities,
-    detector_model_id: bundle.manifest.detector_model_id_entities.clone(),
-    slot_scores,
-  }
-}
-
-fn parse_zone(zone: &str) -> ObjectZone {
-  match zone {
-    "hand" => ObjectZone::Hand,
-    "joker" => ObjectZone::Joker,
-    "consumable" => ObjectZone::Consumable,
-    "store" => ObjectZone::Store,
-    "button" => ObjectZone::Button,
-    _ => ObjectZone::Unknown,
-  }
-}
-
-fn derive_quality_outcome(eval_report: &CardDetectionEvalReport) -> QualityOutcome {
-  let metrics = metrics_from_eval_report(eval_report);
-  let verdict = if eval_report.expected_slot_count == 0 {
+fn derive_quality_outcome(witness: &CardDetectionEvalWitnessManifest) -> QualityOutcome {
+  let metrics = metrics_from_witness(witness);
+  let verdict = if witness.expected_slot_count == 0 {
     CardDetectionQualityVerdict::Blocked
-  } else if eval_report.unscored_slot_count == 0 && eval_report.below_confidence_slot_count == 0 {
+  } else if witness.unscored_slot_count == 0 && witness.below_confidence_slot_count == 0 {
     CardDetectionQualityVerdict::MeasuredOnly
-  } else if eval_report.expected_slot_count > 0 {
+  } else if witness.expected_slot_count > 0 {
     CardDetectionQualityVerdict::MetricPartial
   } else {
     CardDetectionQualityVerdict::Blocked
@@ -472,23 +337,23 @@ fn derive_quality_outcome(eval_report: &CardDetectionEvalReport) -> QualityOutco
     reason: None,
     verdict,
     metrics: Some(metrics),
-    quality_backend: Some(eval_report.quality_backend),
-    detector_model_id: eval_report.detector_model_id.clone(),
+    quality_backend: Some(witness.quality_backend),
+    detector_model_id: witness.detector_model_id.clone(),
   }
 }
 
-fn metrics_from_eval_report(eval_report: &CardDetectionEvalReport) -> CardDetectionQualityMetrics {
-  let slot_coverage_ratio = if eval_report.expected_slot_count == 0 {
+fn metrics_from_witness(witness: &CardDetectionEvalWitnessManifest) -> CardDetectionQualityMetrics {
+  let slot_coverage_ratio = if witness.expected_slot_count == 0 {
     None
   } else {
-    Some(eval_report.scored_slot_count as f32 / eval_report.expected_slot_count as f32)
+    Some(witness.scored_slot_count as f32 / witness.expected_slot_count as f32)
   };
 
   CardDetectionQualityMetrics {
-    expected_slot_count: eval_report.expected_slot_count,
-    scored_slot_count: eval_report.scored_slot_count,
-    unscored_slot_count: eval_report.unscored_slot_count,
-    below_confidence_slot_count: eval_report.below_confidence_slot_count,
+    expected_slot_count: witness.expected_slot_count,
+    scored_slot_count: witness.scored_slot_count,
+    unscored_slot_count: witness.unscored_slot_count,
+    below_confidence_slot_count: witness.below_confidence_slot_count,
     slot_coverage_ratio,
   }
 }
@@ -518,31 +383,60 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::card_detection_eval_witness::{
+    CardDetectionEvalWitnessInputs, build_card_detection_eval_witness,
+  };
   use crate::card_detection_semantic::{
     CardDetectionSemanticValidationInputs, validate_card_detection_semantic,
   };
+  use crate::card_detection_spatial_query::{
+    CardDetectionSpatialQueryInputs, query_card_detection_spatial,
+  };
+  use crate::model::{ObjectZone, SlotId};
   use std::path::PathBuf;
 
   fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/balatro_consumption_probe")
   }
 
-  fn semantic_for(bundle: PathBuf, temp: &tempfile::TempDir) -> PathBuf {
-    validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
+  fn witness_manifest_for_bundle(
+    bundle: PathBuf,
+    expected_slots_path: PathBuf,
+    temp: &tempfile::TempDir,
+  ) -> PathBuf {
+    let semantic_path = validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
       bundle_input: bundle,
       output_dir: temp.path().join("semantic"),
     })
     .expect("semantic")
+    .manifest_path;
+    let query_path = query_card_detection_spatial(CardDetectionSpatialQueryInputs {
+      card_detection_semantic_manifest_path: semantic_path.clone(),
+      target_slot: SlotId::new(ObjectZone::Hand, 0),
+      output_dir: temp.path().join("query"),
+    })
+    .expect("query")
+    .manifest_path;
+    build_card_detection_eval_witness(&CardDetectionEvalWitnessInputs {
+      card_detection_semantic_manifest_path: semantic_path,
+      card_detection_spatial_query_manifest_path: query_path,
+      expected_slots_path,
+      output_dir: temp.path().join("witness"),
+    })
+    .expect("witness")
     .manifest_path
   }
 
   #[test]
   fn quality_full_coverage_yields_measured_only_with_backend() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let semantic_path = semantic_for(fixture_root(), &temp);
+    let witness_path = witness_manifest_for_bundle(
+      fixture_root(),
+      fixture_root().join("expected_slots.json"),
+      &temp,
+    );
     let output = build_card_detection_quality(&CardDetectionQualityInputs {
-      card_detection_semantic_manifest_path: semantic_path,
-      expected_slots_path: fixture_root().join("expected_slots.json"),
+      witness_manifest_path: witness_path,
       output_dir: temp.path().join("quality"),
     })
     .expect("quality");
@@ -565,10 +459,13 @@ mod tests {
   #[test]
   fn quality_partial_slot_coverage_yields_metric_partial_with_metrics() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let semantic_path = semantic_for(fixture_root().join("partial_coverage"), &temp);
+    let witness_path = witness_manifest_for_bundle(
+      fixture_root().join("partial_coverage"),
+      fixture_root().join("partial_expected_slots.json"),
+      &temp,
+    );
     let output = build_card_detection_quality(&CardDetectionQualityInputs {
-      card_detection_semantic_manifest_path: semantic_path,
-      expected_slots_path: fixture_root().join("partial_expected_slots.json"),
+      witness_manifest_path: witness_path,
       output_dir: temp.path().join("quality"),
     })
     .expect("quality");
@@ -583,11 +480,10 @@ mod tests {
   }
 
   #[test]
-  fn quality_blocked_when_semantic_manifest_missing() {
+  fn quality_blocked_when_witness_manifest_missing() {
     let temp = tempfile::tempdir().expect("tempdir");
     let output = build_card_detection_quality(&CardDetectionQualityInputs {
-      card_detection_semantic_manifest_path: temp.path().join("missing.json"),
-      expected_slots_path: fixture_root().join("expected_slots.json"),
+      witness_manifest_path: temp.path().join("missing.json"),
       output_dir: temp.path().join("quality"),
     })
     .expect("quality");
@@ -601,35 +497,198 @@ mod tests {
   }
 
   #[test]
-  fn quality_does_not_persist_eval_report_path_or_sidecar_file() {
+  fn quality_blocked_when_witness_blocked() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let semantic_path = semantic_for(fixture_root(), &temp);
-    let output = build_card_detection_quality(&CardDetectionQualityInputs {
+    let semantic_path = validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
+      bundle_input: fixture_root().join("broken/empty_detections"),
+      output_dir: temp.path().join("semantic"),
+    })
+    .expect("semantic")
+    .manifest_path;
+    let witness_path = build_card_detection_eval_witness(&CardDetectionEvalWitnessInputs {
       card_detection_semantic_manifest_path: semantic_path,
+      card_detection_spatial_query_manifest_path: temp.path().join("missing-query.json"),
       expected_slots_path: fixture_root().join("expected_slots.json"),
+      output_dir: temp.path().join("witness"),
+    })
+    .expect("witness")
+    .manifest_path;
+    let output = build_card_detection_quality(&CardDetectionQualityInputs {
+      witness_manifest_path: witness_path,
+      output_dir: temp.path().join("quality"),
+    })
+    .expect("quality");
+
+    assert_eq!(output.manifest.status, CardDetectionQualityStatus::Blocked);
+    assert_eq!(
+      output.manifest.verdict,
+      CardDetectionQualityVerdict::Blocked
+    );
+    assert!(output.manifest.metrics.is_none());
+  }
+
+  #[test]
+  fn quality_metric_partial_from_witness_ready_partial_coverage() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let witness_path = witness_manifest_for_bundle(
+      fixture_root().join("partial_coverage"),
+      fixture_root().join("partial_expected_slots.json"),
+      &temp,
+    );
+    let witness = read_json_file::<CardDetectionEvalWitnessManifest>(&witness_path, "witness")
+      .expect("read witness");
+    assert_eq!(witness.status, CardDetectionEvalWitnessStatus::Ready);
+    assert_eq!(
+      derive_card_detection_quality_verdict(&witness),
+      CardDetectionQualityVerdict::MetricPartial
+    );
+  }
+
+  #[test]
+  fn quality_does_not_reload_semantic_or_bundle_directly() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let witness_path = witness_manifest_for_bundle(
+      fixture_root(),
+      fixture_root().join("expected_slots.json"),
+      &temp,
+    );
+    let output = build_card_detection_quality(&CardDetectionQualityInputs {
+      witness_manifest_path: witness_path,
       output_dir: temp.path().join("quality"),
     })
     .expect("quality");
 
     let manifest_json = serde_json::to_string(&output.manifest).expect("manifest json");
     assert!(
-      !manifest_json.contains("eval_report"),
-      "quality manifest must not claim a durable eval-report path"
+      !manifest_json.contains("card_detection_semantic_manifest_path"),
+      "quality manifest must not carry direct semantic lineage"
     );
     assert!(
-      !temp
-        .path()
-        .join("quality/balatro-card-detection-eval-report.json")
-        .exists(),
-      "v1 inline eval must not write a separate eval-report file"
+      !manifest_json.contains("source_detection_bundle_dir"),
+      "quality manifest must not reload bundle lineage directly"
     );
     assert!(
       output
         .manifest
         .known_limits
         .iter()
-        .any(|limit| limit.contains("inline")),
-      "known_limits must document inline eval boundary"
+        .any(|limit| limit.contains("witness")),
+      "known_limits must document witness-bound quality boundary"
     );
+  }
+
+  #[test]
+  fn quality_does_not_persist_eval_report_sidecar_file() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let witness_path = witness_manifest_for_bundle(
+      fixture_root(),
+      fixture_root().join("expected_slots.json"),
+      &temp,
+    );
+    let _output = build_card_detection_quality(&CardDetectionQualityInputs {
+      witness_manifest_path: witness_path,
+      output_dir: temp.path().join("quality"),
+    })
+    .expect("quality");
+
+    assert!(
+      !temp
+        .path()
+        .join("quality/balatro-card-detection-eval-report.json")
+        .exists(),
+      "quality must not write a separate eval-report file"
+    );
+    assert!(
+      temp
+        .path()
+        .join("witness/balatro-card-detection-eval-witness.json")
+        .exists(),
+      "witness must persist eval payload"
+    );
+  }
+
+  #[test]
+  fn quality_manifest_schema_version_is_two_for_witness_bound_wire() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let witness_path = witness_manifest_for_bundle(
+      fixture_root(),
+      fixture_root().join("expected_slots.json"),
+      &temp,
+    );
+    let output = build_card_detection_quality(&CardDetectionQualityInputs {
+      witness_manifest_path: witness_path,
+      output_dir: temp.path().join("quality"),
+    })
+    .expect("quality");
+
+    assert_eq!(
+      output.manifest.schema_version,
+      CARD_DETECTION_QUALITY_MANIFEST_SCHEMA_VERSION
+    );
+    assert_eq!(output.manifest.schema_version, 2);
+    assert_eq!(
+      output.inspect_report.schema_version,
+      CARD_DETECTION_QUALITY_INSPECT_REPORT_SCHEMA_VERSION
+    );
+    assert_eq!(output.inspect_report.schema_version, 2);
+  }
+
+  #[test]
+  fn quality_failed_when_witness_manifest_parse_failed() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let bad_witness = temp.path().join("bad-witness.json");
+    fs::write(&bad_witness, "{not-json").expect("write bad witness");
+    let output = build_card_detection_quality(&CardDetectionQualityInputs {
+      witness_manifest_path: bad_witness,
+      output_dir: temp.path().join("quality"),
+    })
+    .expect("quality");
+
+    assert_eq!(output.manifest.status, CardDetectionQualityStatus::Failed);
+    assert_eq!(
+      output.manifest.reason,
+      Some(CardDetectionQualityReason::WitnessManifestParseFailed)
+    );
+    assert_eq!(output.manifest.verdict, CardDetectionQualityVerdict::Failed);
+    assert!(output.manifest.metrics.is_none());
+  }
+
+  #[test]
+  fn quality_failed_when_witness_failed() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let semantic_path = validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
+      bundle_input: fixture_root(),
+      output_dir: temp.path().join("semantic"),
+    })
+    .expect("semantic")
+    .manifest_path;
+    let query_path = query_card_detection_spatial(CardDetectionSpatialQueryInputs {
+      card_detection_semantic_manifest_path: semantic_path.clone(),
+      target_slot: SlotId::new(ObjectZone::Hand, 0),
+      output_dir: temp.path().join("query"),
+    })
+    .expect("query")
+    .manifest_path;
+    let witness_path = build_card_detection_eval_witness(&CardDetectionEvalWitnessInputs {
+      card_detection_semantic_manifest_path: semantic_path,
+      card_detection_spatial_query_manifest_path: query_path,
+      expected_slots_path: fixture_root().join("witness/failed_expected_slots.json"),
+      output_dir: temp.path().join("witness"),
+    })
+    .expect("witness")
+    .manifest_path;
+    let output = build_card_detection_quality(&CardDetectionQualityInputs {
+      witness_manifest_path: witness_path,
+      output_dir: temp.path().join("quality"),
+    })
+    .expect("quality");
+
+    assert_eq!(output.manifest.status, CardDetectionQualityStatus::Failed);
+    assert_eq!(
+      output.manifest.reason,
+      Some(CardDetectionQualityReason::WitnessFailed)
+    );
+    assert_eq!(output.manifest.verdict, CardDetectionQualityVerdict::Failed);
+    assert!(output.manifest.metrics.is_none());
   }
 }

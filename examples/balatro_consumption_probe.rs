@@ -39,6 +39,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     output.value.query.manifest.status.as_str()
   );
   println!(
+    "witness_status={}",
+    output.value.witness.manifest.status.as_str()
+  );
+  println!(
     "quality_verdict={}",
     output.value.quality.manifest.verdict.as_str()
   );

@@ -382,6 +382,20 @@ pub struct BalatroCardDetectionSpatialQueryInspectReportLineage {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct BalatroCardDetectionEvalWitnessManifestLineage {
+  pub artifact: ArtifactRefLineage,
+  pub manifest: Option<BalatroCardDetectionEvalWitnessManifestSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct BalatroCardDetectionEvalWitnessInspectReportLineage {
+  pub artifact: ArtifactRefLineage,
+  pub report: Option<BalatroCardDetectionEvalWitnessInspectReportSummary>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct BalatroCardDetectionQualityManifestLineage {
   pub artifact: ArtifactRefLineage,
   pub manifest: Option<BalatroCardDetectionQualityManifestSummary>,
@@ -449,11 +463,52 @@ pub struct BalatroCardDetectionSpatialQueryInspectReportSummary {
   pub known_limits: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BalatroCardDetectionEvalWitnessManifestSummary {
+  pub schema_version: u32,
+  pub card_detection_semantic_manifest_path: String,
+  pub card_detection_spatial_query_manifest_path: String,
+  pub expected_slots_path: String,
+  pub source_detection_bundle_dir: String,
+  pub expected_slot_count: usize,
+  pub scored_slot_count: usize,
+  pub unscored_slot_count: usize,
+  pub below_confidence_slot_count: usize,
+  pub quality_backend: String,
+  pub detector_model_id: Option<String>,
+  pub slot_score_count: usize,
+  pub status: String,
+  pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BalatroCardDetectionEvalWitnessInspectReportSummary {
+  pub schema_version: u32,
+  pub card_detection_eval_witness_manifest_path: String,
+  pub card_detection_semantic_manifest_path: String,
+  pub card_detection_spatial_query_manifest_path: String,
+  pub expected_slots_path: String,
+  pub source_detection_bundle_dir: String,
+  pub expected_slot_count: usize,
+  pub scored_slot_count: usize,
+  pub unscored_slot_count: usize,
+  pub below_confidence_slot_count: usize,
+  pub quality_backend: String,
+  pub detector_model_id: Option<String>,
+  pub slot_score_count: usize,
+  pub semantic_manifest_readable: bool,
+  pub spatial_query_manifest_readable: bool,
+  pub expected_slots_readable: bool,
+  pub status: String,
+  pub reason: Option<String>,
+  pub warnings: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BalatroCardDetectionQualityManifestSummary {
   pub schema_version: u32,
-  pub card_detection_semantic_manifest_path: String,
-  pub semantic_status: String,
+  pub card_detection_eval_witness_manifest_path: String,
+  pub witness_status: String,
   pub status: String,
   pub verdict: String,
   pub quality_backend: Option<String>,
@@ -467,7 +522,8 @@ pub struct BalatroCardDetectionQualityManifestSummary {
 pub struct BalatroCardDetectionQualityInspectReportSummary {
   pub schema_version: u32,
   pub card_detection_quality_manifest_path: String,
-  pub semantic_status: String,
+  pub card_detection_eval_witness_manifest_path: String,
+  pub witness_status: String,
   pub status: String,
   pub verdict: String,
   pub quality_backend: Option<String>,
@@ -2007,6 +2063,22 @@ pub(crate) fn list_balatro_card_detection_spatial_query_inspect_reports(
   extract_balatro_card_detection_spatial_query_inspect_reports(store, &run)
 }
 
+pub(crate) fn list_balatro_card_detection_eval_witness_manifests(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<BalatroCardDetectionEvalWitnessManifestLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_balatro_card_detection_eval_witness_manifests(store, &run)
+}
+
+pub(crate) fn list_balatro_card_detection_eval_witness_inspect_reports(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<BalatroCardDetectionEvalWitnessInspectReportLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_balatro_card_detection_eval_witness_inspect_reports(store, &run)
+}
+
 pub(crate) fn list_balatro_card_detection_quality_manifests(
   store: &LocalStore,
   run_id: &str,
@@ -2194,6 +2266,96 @@ pub(crate) fn extract_balatro_card_detection_spatial_query_inspect_reports(
         issue: None,
       }),
       Err(error) => reports.push(BalatroCardDetectionSpatialQueryInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(reports)
+}
+
+pub(crate) fn extract_balatro_card_detection_eval_witness_manifests(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<BalatroCardDetectionEvalWitnessManifestLineage>> {
+  use auv_game_balatro::CardDetectionEvalWitnessManifest;
+  let mut manifests = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::balatro::BALATRO_CARD_DETECTION_EVAL_WITNESS_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      manifests.push(BalatroCardDetectionEvalWitnessManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(format!(
+          "balatro card detection eval witness manifest mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<CardDetectionEvalWitnessManifest>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::balatro::BALATRO_CARD_DETECTION_EVAL_WITNESS_ROLE,
+    )
+    .map(|manifest| BalatroCardDetectionEvalWitnessManifestSummary::from(&manifest));
+    match parsed {
+      Ok(manifest) => manifests.push(BalatroCardDetectionEvalWitnessManifestLineage {
+        artifact: artifact_ref,
+        manifest: Some(manifest),
+        issue: None,
+      }),
+      Err(error) => manifests.push(BalatroCardDetectionEvalWitnessManifestLineage {
+        artifact: artifact_ref,
+        manifest: None,
+        issue: Some(error),
+      }),
+    }
+  }
+  Ok(manifests)
+}
+
+pub(crate) fn extract_balatro_card_detection_eval_witness_inspect_reports(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<BalatroCardDetectionEvalWitnessInspectReportLineage>> {
+  use auv_game_balatro::CardDetectionEvalWitnessInspectReport;
+  let mut reports = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != crate::balatro::BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE {
+      continue;
+    }
+    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      reports.push(BalatroCardDetectionEvalWitnessInspectReportLineage {
+        artifact: artifact_ref,
+        report: None,
+        issue: Some(format!(
+          "balatro card detection eval witness inspect mime_type {} is not JSON",
+          artifact.mime_type
+        )),
+      });
+      continue;
+    }
+    let parsed = read_artifact_json::<CardDetectionEvalWitnessInspectReport>(
+      store,
+      run.run.run_id.as_str(),
+      artifact,
+      crate::balatro::BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE,
+    )
+    .map(|report| BalatroCardDetectionEvalWitnessInspectReportSummary::from(&report));
+    match parsed {
+      Ok(report) => reports.push(BalatroCardDetectionEvalWitnessInspectReportLineage {
+        artifact: artifact_ref,
+        report: Some(report),
+        issue: None,
+      }),
+      Err(error) => reports.push(BalatroCardDetectionEvalWitnessInspectReportLineage {
         artifact: artifact_ref,
         report: None,
         issue: Some(error),
@@ -6578,14 +6740,73 @@ impl From<&auv_game_balatro::CardDetectionSpatialQueryInspectReport>
   }
 }
 
+impl From<&auv_game_balatro::CardDetectionEvalWitnessManifest>
+  for BalatroCardDetectionEvalWitnessManifestSummary
+{
+  fn from(manifest: &auv_game_balatro::CardDetectionEvalWitnessManifest) -> Self {
+    Self {
+      schema_version: manifest.schema_version,
+      card_detection_semantic_manifest_path: manifest.card_detection_semantic_manifest_path.clone(),
+      card_detection_spatial_query_manifest_path: manifest
+        .card_detection_spatial_query_manifest_path
+        .clone(),
+      expected_slots_path: manifest.expected_slots_path.clone(),
+      source_detection_bundle_dir: manifest.source_detection_bundle_dir.clone(),
+      expected_slot_count: manifest.expected_slot_count,
+      scored_slot_count: manifest.scored_slot_count,
+      unscored_slot_count: manifest.unscored_slot_count,
+      below_confidence_slot_count: manifest.below_confidence_slot_count,
+      quality_backend: manifest.quality_backend.as_str().to_string(),
+      detector_model_id: manifest.detector_model_id.clone(),
+      slot_score_count: manifest.slot_scores.len(),
+      status: manifest.status.as_str().to_string(),
+      reason: manifest.reason.map(|reason| reason.as_str().to_string()),
+    }
+  }
+}
+
+impl From<&auv_game_balatro::CardDetectionEvalWitnessInspectReport>
+  for BalatroCardDetectionEvalWitnessInspectReportSummary
+{
+  fn from(report: &auv_game_balatro::CardDetectionEvalWitnessInspectReport) -> Self {
+    Self {
+      schema_version: report.schema_version,
+      card_detection_eval_witness_manifest_path: report
+        .card_detection_eval_witness_manifest_path
+        .clone(),
+      card_detection_semantic_manifest_path: report.card_detection_semantic_manifest_path.clone(),
+      card_detection_spatial_query_manifest_path: report
+        .card_detection_spatial_query_manifest_path
+        .clone(),
+      expected_slots_path: report.expected_slots_path.clone(),
+      source_detection_bundle_dir: report.source_detection_bundle_dir.clone(),
+      expected_slot_count: report.expected_slot_count,
+      scored_slot_count: report.scored_slot_count,
+      unscored_slot_count: report.unscored_slot_count,
+      below_confidence_slot_count: report.below_confidence_slot_count,
+      quality_backend: report.quality_backend.as_str().to_string(),
+      detector_model_id: report.detector_model_id.clone(),
+      slot_score_count: report.slot_score_count,
+      semantic_manifest_readable: report.semantic_manifest_readable,
+      spatial_query_manifest_readable: report.spatial_query_manifest_readable,
+      expected_slots_readable: report.expected_slots_readable,
+      status: report.status.as_str().to_string(),
+      reason: report.reason.map(|reason| reason.as_str().to_string()),
+      warnings: report.warnings.clone(),
+    }
+  }
+}
+
 impl From<&auv_game_balatro::CardDetectionQualityManifest>
   for BalatroCardDetectionQualityManifestSummary
 {
   fn from(manifest: &auv_game_balatro::CardDetectionQualityManifest) -> Self {
     Self {
       schema_version: manifest.schema_version,
-      card_detection_semantic_manifest_path: manifest.card_detection_semantic_manifest_path.clone(),
-      semantic_status: manifest.semantic_status.as_str().to_string(),
+      card_detection_eval_witness_manifest_path: manifest
+        .card_detection_eval_witness_manifest_path
+        .clone(),
+      witness_status: manifest.witness_status.as_str().to_string(),
       status: manifest.status.as_str().to_string(),
       verdict: manifest.verdict.as_str().to_string(),
       quality_backend: manifest
@@ -6609,7 +6830,10 @@ impl From<&auv_game_balatro::CardDetectionQualityInspectReport>
     Self {
       schema_version: report.schema_version,
       card_detection_quality_manifest_path: report.card_detection_quality_manifest_path.clone(),
-      semantic_status: report.semantic_status.as_str().to_string(),
+      card_detection_eval_witness_manifest_path: report
+        .card_detection_eval_witness_manifest_path
+        .clone(),
+      witness_status: report.witness_status.as_str().to_string(),
       status: report.status.as_str().to_string(),
       verdict: report.verdict.as_str().to_string(),
       quality_backend: report

@@ -10,8 +10,10 @@ use crate::contract::{
 };
 use crate::model::AuvResult;
 use crate::run_read::{
-  BalatroCardDetectionQualityInspectReportLineage, BalatroCardDetectionQualityManifestLineage,
-  BalatroCardDetectionSemanticInspectReportLineage, BalatroCardDetectionSemanticManifestLineage,
+  BalatroCardDetectionEvalWitnessInspectReportLineage,
+  BalatroCardDetectionEvalWitnessManifestLineage, BalatroCardDetectionQualityInspectReportLineage,
+  BalatroCardDetectionQualityManifestLineage, BalatroCardDetectionSemanticInspectReportLineage,
+  BalatroCardDetectionSemanticManifestLineage,
   BalatroCardDetectionSpatialQueryInspectReportLineage,
   BalatroCardDetectionSpatialQueryManifestLineage, CandidateActionDecisionLineage,
   CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState,
@@ -44,6 +46,8 @@ use crate::run_read::{
   derive_minecraft_training_result_spatial_query_action_readiness,
   derive_osu_detection_eval_quality_verdict_summary,
   derive_osu_visual_truth_spatial_query_action_readiness,
+  list_balatro_card_detection_eval_witness_inspect_reports,
+  list_balatro_card_detection_eval_witness_manifests,
   list_balatro_card_detection_quality_inspect_reports,
   list_balatro_card_detection_quality_manifests,
   list_balatro_card_detection_semantic_inspect_reports,
@@ -252,6 +256,10 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     list_balatro_card_detection_spatial_query_manifests(store, run_id)?;
   let balatro_card_detection_spatial_query_inspect_reports =
     list_balatro_card_detection_spatial_query_inspect_reports(store, run_id)?;
+  let balatro_card_detection_eval_witness_manifests =
+    list_balatro_card_detection_eval_witness_manifests(store, run_id)?;
+  let balatro_card_detection_eval_witness_inspect_reports =
+    list_balatro_card_detection_eval_witness_inspect_reports(store, run_id)?;
   let balatro_card_detection_quality_manifests =
     list_balatro_card_detection_quality_manifests(store, run_id)?;
   let balatro_card_detection_quality_inspect_reports =
@@ -325,6 +333,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &balatro_card_detection_semantic_inspect_reports,
     &balatro_card_detection_spatial_query_manifests,
     &balatro_card_detection_spatial_query_inspect_reports,
+    &balatro_card_detection_eval_witness_manifests,
+    &balatro_card_detection_eval_witness_inspect_reports,
     &balatro_card_detection_quality_manifests,
     &balatro_card_detection_quality_inspect_reports,
     quality_baseline_report.as_ref(),
@@ -415,6 +425,8 @@ pub fn render_run_text(
   balatro_card_detection_semantic_inspect_reports: &[BalatroCardDetectionSemanticInspectReportLineage],
   balatro_card_detection_spatial_query_manifests: &[BalatroCardDetectionSpatialQueryManifestLineage],
   balatro_card_detection_spatial_query_inspect_reports: &[BalatroCardDetectionSpatialQueryInspectReportLineage],
+  balatro_card_detection_eval_witness_manifests: &[BalatroCardDetectionEvalWitnessManifestLineage],
+  balatro_card_detection_eval_witness_inspect_reports: &[BalatroCardDetectionEvalWitnessInspectReportLineage],
   balatro_card_detection_quality_manifests: &[BalatroCardDetectionQualityManifestLineage],
   balatro_card_detection_quality_inspect_reports: &[BalatroCardDetectionQualityInspectReportLineage],
   quality_baseline_report: Option<&MinecraftTrainingResultQualityBaselineReportSummary>,
@@ -2048,6 +2060,47 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\nBalatro Card Detection Eval Witness:\n");
+  if balatro_card_detection_eval_witness_manifests.is_empty()
+    && balatro_card_detection_eval_witness_inspect_reports.is_empty()
+  {
+    output.push_str("- none\n");
+  } else {
+    for manifest_lineage in balatro_card_detection_eval_witness_manifests {
+      if let Some(manifest) = &manifest_lineage.manifest {
+        output.push_str(&format!(
+          "- witness_artifact={} status={} reason={} expected_slot_count={} scored_slot_count={} unscored_slot_count={} below_confidence_slot_count={} quality_backend={} semantic_manifest={} spatial_query_manifest={} issue={}\n",
+          manifest_lineage.artifact.artifact_id,
+          manifest.status,
+          manifest.reason.as_deref().unwrap_or("n/a"),
+          manifest.expected_slot_count,
+          manifest.scored_slot_count,
+          manifest.unscored_slot_count,
+          manifest.below_confidence_slot_count,
+          manifest.quality_backend,
+          manifest.card_detection_semantic_manifest_path,
+          manifest.card_detection_spatial_query_manifest_path,
+          manifest_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+    for report_lineage in balatro_card_detection_eval_witness_inspect_reports {
+      if let Some(report) = &report_lineage.report {
+        output.push_str(&format!(
+          "- witness_inspect_artifact={} status={} slot_score_count={} semantic_readable={} spatial_query_readable={} expected_slots_readable={} warnings={} issue={}\n",
+          report_lineage.artifact.artifact_id,
+          report.status,
+          report.slot_score_count,
+          report.semantic_manifest_readable,
+          report.spatial_query_manifest_readable,
+          report.expected_slots_readable,
+          report.warnings.len(),
+          report_lineage.issue.as_deref().unwrap_or("n/a"),
+        ));
+      }
+    }
+  }
+
   output.push_str("\nBalatro Card Detection Quality:\n");
   if balatro_card_detection_quality_manifests.is_empty()
     && balatro_card_detection_quality_inspect_reports.is_empty()
@@ -2057,9 +2110,9 @@ pub fn render_run_text(
     for manifest_lineage in balatro_card_detection_quality_manifests {
       if let Some(manifest) = &manifest_lineage.manifest {
         output.push_str(&format!(
-          "- quality_artifact={} semantic_status={} status={} verdict={} quality_backend={} expected_slot_count={} scored_slot_count={} unscored_slot_count={} slot_coverage_ratio={} issue={}\n",
+          "- quality_artifact={} witness_status={} status={} verdict={} quality_backend={} expected_slot_count={} scored_slot_count={} unscored_slot_count={} slot_coverage_ratio={} issue={}\n",
           manifest_lineage.artifact.artifact_id,
-          manifest.semantic_status,
+          manifest.witness_status,
           manifest.status,
           manifest.verdict,
           manifest.quality_backend.as_deref().unwrap_or("n/a"),
@@ -4145,6 +4198,8 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4464,6 +4519,8 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4653,6 +4710,8 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4812,6 +4871,8 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -4939,6 +5000,8 @@ mod tests {
       &[],
       &[],
       &summaries,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5087,6 +5150,8 @@ mod tests {
       &[],
       &[],
       &summaries,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5261,6 +5326,8 @@ mod tests {
       &[],
       &[launch_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5504,6 +5571,8 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -5680,6 +5749,8 @@ mod tests {
       &[],
       &[package_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -5895,6 +5966,8 @@ mod tests {
       &[],
       &[result_manifest],
       &duplicate_reports,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -6142,6 +6215,8 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
+      &[],
       None,
       None,
       None,
@@ -6233,6 +6308,8 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
+      &[],
       &[],
       &[],
       &[],
@@ -6494,7 +6571,10 @@ mod tests {
     assert!(output.contains("semantic_status=ready"));
     assert!(output.contains("Balatro Card Detection Spatial Query:"));
     assert!(output.contains("status=answered"));
+    assert!(output.contains("Balatro Card Detection Eval Witness:"));
+    assert!(output.contains("status=ready"));
     assert!(output.contains("Balatro Card Detection Quality:"));
+    assert!(output.contains("witness_status=ready"));
     assert!(output.contains("verdict=measured_only"));
     assert!(output.contains("quality_backend=ultralytics_onnx_entities"));
 

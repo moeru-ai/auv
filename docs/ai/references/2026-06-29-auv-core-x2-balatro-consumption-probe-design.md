@@ -56,7 +56,7 @@ v1 slot-coverage eval uses `ultralytics_onnx_entities` for hand/joker entity det
 
 - Live admission / Core-C1 wired action
 - `operation.rs` real wire (placeholders unchanged)
-- Persisted witness artifact role (eval report inline only)
+- ~~Persisted witness artifact role (eval report inline only)~~ — **closed in Core-X4**; see [`2026-06-30-auv-core-x4-balatro-witness-lineage-closure-design.md`](2026-06-30-auv-core-x4-balatro-witness-lineage-closure-design.md)
 - Action readiness derive / query-wired live click
 - Core-A5a/A5b helper extraction
 - Dual-backend query compare (row 67)
