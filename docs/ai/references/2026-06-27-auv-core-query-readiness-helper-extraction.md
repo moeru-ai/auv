@@ -4,7 +4,8 @@ Date: 2026-06-27
 
 Status: implemented helper-only extraction. This note records a narrow code move.
 It does **not** graduate query status triad or action readiness view in the
-proof matrix.
+proof matrix. Post-extraction closeout:
+[`2026-06-27-auv-core-query-readiness-helper-extraction-closeout.md`](2026-06-27-auv-core-query-readiness-helper-extraction-closeout.md).
 
 ## Why this slice exists
 
