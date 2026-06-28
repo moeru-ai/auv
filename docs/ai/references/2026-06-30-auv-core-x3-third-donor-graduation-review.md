@@ -162,7 +162,7 @@ Companion: [`2026-06-29-auv-core-x2-balatro-consumption-probe-evidence.md`](2026
 | Item | Trigger to reopen |
 | --- | --- |
 | Core-A5a quality verdict helper | Accepted cross-donor `metric_partial` mapping + owner names A5a |
-| Core-A5b backend label helper | Row 70 split or second `render_backend` donor |
+| Core-A5b backend label helper | Row 70 split or second `render_backend` donor; **Core-A5b-prep** split review landed — see [`2026-06-30-auv-core-a5b-prep-backend-label-discipline-split-review.md`](2026-06-30-auv-core-a5b-prep-backend-label-discipline-split-review.md) |
 | Helper-only admissible row 69 | Semantic convergence or accepted mapping |
 | Balatro full donor | Witness stage + durable lineage; owner-named slice |
 
