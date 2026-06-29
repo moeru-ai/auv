@@ -74,6 +74,10 @@ fn query_wired_dispatch_succeeded(wiring: &QueryActionWiringOutcome) -> bool {
   wiring.click_summary.is_some()
 }
 
+pub fn query_wired_verification_readable(wiring: &QueryActionWiringOutcome) -> bool {
+  wiring.attempted && query_wired_dispatch_succeeded(wiring)
+}
+
 pub fn build_query_wired_post_action_verifications(
   context: &mut RecordedOperationContext<'_>,
   wiring: &QueryActionWiringOutcome,

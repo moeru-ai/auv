@@ -3,7 +3,7 @@
 Date: 2026-06-30
 
 Status: **D2 implemented** — stable vertical CLI for the MC-19+MC-20 D1 library chain.
-**D2.1 live closure recorded** (2026-06-30) — see
+**D2.1 live closure recorded**; **D2.2 inspect/store-root closure** (see below) (2026-06-30) — see
 [`2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md`](2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md).
 MC-20 controller / planner lane remains **paused** after this slice.
 
@@ -78,10 +78,10 @@ On success the CLI prints at minimum:
 | `actionEligibility` | `output.value.wiring.action_eligibility` |
 | `operationResultArtifact` | `output.value.operation_result_artifact_id` |
 
-When `--sample` was provided and wiring attempted dispatch, also print:
+When wiring dispatch succeeded (`click_summary` present), also print:
 
 ```text
-inspectHint: run `auv inspect <run-id>` to view verification_outcome
+inspectHint: run `auv inspect <run-id> [--store-root <path>]` to view verification_outcome
 ```
 
 **Honesty:** verification reports world-diff witness honesty (`passed` / `failed` /
@@ -124,6 +124,14 @@ src/cli.rs + src/main.rs (parse + thin dispatch)
 | osu CLI symmetry | separate owner slice |
 | MC-20 controller / planner | paused orchestration lane |
 | Verification glue in `main.rs` | lives in `verticals/minecraft/verification.rs` |
+
+## D2.2 inspect / store-root closure
+
+- `auv inspect <run-id> [--store-root <path>]` reads the same store used by
+  `--store-root` on producer commands.
+- `inspectHint` prints only when dispatch succeeded (`click_summary` present),
+  i.e. when MC-20 verification was evaluated (including `unreliable` without
+  witness). Custom store roots are echoed in the hint.
 
 ## Paused after D2 — reopen triggers (observation only)
 

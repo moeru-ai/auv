@@ -2950,6 +2950,55 @@ mod tests {
   };
 
   #[test]
+  fn inspect_run_reads_run_from_custom_store_root() {
+    let root = std::env::temp_dir().join(format!(
+      "auv-inspect-custom-store-{}",
+      crate::model::now_millis()
+    ));
+    let store = auv_tracing_driver::store::LocalStore::new(root.clone())
+      .expect("custom store should initialize");
+    let run_id = RunId::new("run_custom_store_root");
+    let root_span_id = SpanId::new("span_root");
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: RunRecordV1Alpha1 {
+          api_version: RUN_API_VERSION.to_string(),
+          run_id: run_id.clone(),
+          trace_id: TraceId::new("trace_custom_store"),
+          run_type: RunType::Command,
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 1,
+          finished_at_millis: Some(2),
+          root_span_id: root_span_id.clone(),
+          attributes: BTreeMap::new(),
+          summary: Some("custom store run".to_string()),
+          failure: None,
+        },
+        spans: vec![SpanRecordV1Alpha1 {
+          api_version: SPAN_API_VERSION.to_string(),
+          span_id: root_span_id,
+          parent_span_id: None,
+          name: "auv.inspect.span".to_string(),
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 1,
+          finished_at_millis: Some(2),
+          attributes: BTreeMap::new(),
+          summary: None,
+          failure: None,
+        }],
+        events: Vec::new(),
+        artifacts: Vec::new(),
+      })
+      .expect("run should persist");
+
+    let rendered = inspect_run(&store, run_id.as_str()).expect("inspect should read custom store");
+    assert!(rendered.contains("run_custom_store_root"));
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
   fn render_run_text_includes_run_span_event_artifact_verification_and_observation_records() {
     let run_id = RunId::new("run_inspect_test");
     let root_span_id = SpanId::new("span_root");

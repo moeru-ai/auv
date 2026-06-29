@@ -150,10 +150,9 @@ Honesty: synthetic tick-advance witness proves **world-diff witness plumbing**
 
 Store root: `.tmp/mc20-d2-1-live/store`
 
-**Inspect note:** `auv inspect <run-id>` reads the default project store
-(`.auv/runs`). For excerpts below, each run was copied into `.auv/runs/<run-id>`
-before `cargo run --quiet -- inspect <run-id>`. Artifact paths remain under the
-dedicated D2.1 store.
+**Inspect note (historical D2.1 runs):** recorded before D2.2. Excerpts used
+`auv inspect <run-id>` against copied runs in `.auv/runs/`. After D2.2, prefer
+`auv inspect <run-id> --store-root .tmp/mc20-d2-1-live/store` for direct read.
 
 ### G2 — answer_non_clickable (`run_1782726278209_6291_0`)
 
@@ -236,7 +235,7 @@ cargo run --quiet -- minecraft query-wired-live-click \
   --store-root .tmp/mc20-d2-1-live/store
 ```
 
-Stdout:
+Stdout (D2.1 capture; D2.2+ also prints `inspectHint` with `--store-root`):
 
 ```text
 runId: run_1782726447885_7262_0
@@ -244,6 +243,7 @@ queryStatus: answered
 wiringAttempted: true
 actionEligibility: click_ready
 operationResultArtifact: artifact_0004
+inspectHint: run `auv inspect run_1782726447885_7262_0 --store-root .tmp/mc20-d2-1-live/store` to view verification_outcome
 ```
 
 Dispatch: `command.resolved` → `input.clickWindowPoint`, `dispatch_outcome=resolved`
@@ -277,7 +277,7 @@ cargo run --quiet -- minecraft query-wired-live-click \
   --store-root .tmp/mc20-d2-1-live/store
 ```
 
-Stdout:
+Stdout (D2.1 capture; D2.2+ echoes `--store-root` in hint):
 
 ```text
 runId: run_1782726624570_10870_0
@@ -285,7 +285,7 @@ queryStatus: answered
 wiringAttempted: true
 actionEligibility: click_ready
 operationResultArtifact: artifact_0006
-inspectHint: run `auv inspect run_1782726624570_10870_0` to view verification_outcome
+inspectHint: run `auv inspect run_1782726624570_10870_0 --store-root .tmp/mc20-d2-1-live/store` to view verification_outcome
 ```
 
 `operation-result.verifications`: non-empty (1 entry, `state_changed=true`,

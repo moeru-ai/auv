@@ -246,6 +246,7 @@ pub enum CliCommand {
   },
   Inspect {
     run_id: String,
+    store_root: Option<String>,
   },
   InspectServe {
     host: String,
@@ -337,7 +338,7 @@ USAGE
   auv app probe <bundle-id> [--output-dir <dir>]
   auv app analyze <probe-dir-or-probe-json>
   auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
-  auv inspect <run-id>
+  auv inspect <run-id> [--store-root <path>]
   auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv mcp serve
 
@@ -925,20 +926,32 @@ fn parse_osu_vision_demo(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err("usage: auv inspect <run-id>|serve [--host <host>] [--port <port>]".to_string());
+    return Err(
+      "usage: auv inspect <run-id> [--store-root <path>]|serve [--host <host>] [--port <port>]"
+        .to_string(),
+    );
   }
 
   if arguments[1] == "serve" {
     return parse_inspect_serve(arguments);
   }
 
-  if arguments.len() != 2 {
-    return Err("usage: auv inspect <run-id>".to_string());
+  let run_id = arguments[1].clone();
+  let mut store_root = None;
+  let mut index = 2;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--store-root" => {
+        store_root = Some(required_flag_value(arguments, index, "--store-root")?);
+        index += 2;
+      }
+      other => {
+        return Err(format!("unexpected auv inspect argument {other}"));
+      }
+    }
   }
 
-  Ok(CliCommand::Inspect {
-    run_id: arguments[1].clone(),
-  })
+  Ok(CliCommand::Inspect { run_id, store_root })
 }
 
 fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -2502,7 +2515,7 @@ mod tests {
       "auv app probe <bundle-id> [--output-dir <dir>]",
       "auv app analyze <probe-dir-or-probe-json>",
       "auv invoke <command-id>",
-      "auv inspect <run-id>",
+      "auv inspect <run-id> [--store-root <path>]",
       "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]",
       "auv mcp serve",
     ] {
@@ -3994,6 +4007,37 @@ mod tests {
       }
       other => panic!("unexpected command: {other:?}"),
     }
+  }
+
+  #[test]
+  fn parse_inspect_command_accepts_store_root() {
+    let command = parse_cli(&[
+      "inspect".to_string(),
+      "run_test_1".to_string(),
+      "--store-root".to_string(),
+      "/tmp/mc20-store".to_string(),
+    ])
+    .expect("inspect with store-root should parse");
+
+    match command {
+      CliCommand::Inspect { run_id, store_root } => {
+        assert_eq!(run_id, "run_test_1");
+        assert_eq!(store_root.as_deref(), Some("/tmp/mc20-store"));
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_inspect_command_rejects_unexpected_argument() {
+    let error = parse_cli(&[
+      "inspect".to_string(),
+      "run_test_1".to_string(),
+      "--extra".to_string(),
+    ])
+    .expect_err("unexpected inspect flag should fail");
+
+    assert!(error.contains("unexpected auv inspect argument --extra"));
   }
 
   #[test]

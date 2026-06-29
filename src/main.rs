@@ -19,6 +19,7 @@ use auv_cli::minecraft::{
   QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness,
   run_minecraft_query_wired_live_action,
 };
+use auv_cli::minecraft_verification::query_wired_verification_readable;
 use auv_cli::model::{InvokeRequest, RunStatus};
 use auv_cli::{build_default_runtime, build_runtime_with_store_root};
 use auv_tracing_driver::run_builder::RunSpec;
@@ -920,7 +921,6 @@ async fn run() -> Result<(), String> {
       let target_block = parse_block_position(&target_block)?;
       let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
       let target_semantics = parse_target_semantics(&target_semantics)?;
-      let has_telemetry_witness = telemetry_sample.is_some();
       let telemetry_witness =
         telemetry_sample.map(|pre_sample| QueryWiredLiveActionTelemetryWitness {
           pre_telemetry_sample: PathBuf::from(pre_sample),
@@ -957,10 +957,10 @@ async fn run() -> Result<(), String> {
         "operationResultArtifact: {}",
         output.value.operation_result_artifact_id
       );
-      if has_telemetry_witness && output.value.wiring.attempted {
+      if query_wired_verification_readable(&output.value.wiring) && should_write_local(&inspect) {
         println!(
-          "inspectHint: run `auv inspect {}` to view verification_outcome",
-          output.run_id
+          "{}",
+          format_query_wired_inspect_hint(&output.run_id, &inspect)
         );
       }
     }
@@ -1371,8 +1371,9 @@ async fn run() -> Result<(), String> {
         return Err(format!("run {} finished in failed state", result.run_id));
       }
     }
-    CliCommand::Inspect { run_id } => {
-      let store = auv_cli::build_default_store(project_root.clone())?;
+    CliCommand::Inspect { run_id, store_root } => {
+      let store_root = resolve_store_root(&project_root, store_root.as_ref());
+      let store = auv_tracing_driver::store::LocalStore::new(store_root)?;
       print!("{}", auv_cli::inspect::inspect_run(&store, &run_id)?);
     }
     CliCommand::InspectServe { .. } => {
@@ -2234,6 +2235,31 @@ fn permission_status_line(status: &str) -> String {
   }
 }
 
+fn shell_quote_hint_path(path: &str) -> String {
+  if path
+    .chars()
+    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
+  {
+    path.to_string()
+  } else {
+    format!("'{}'", path.replace('\'', "'\"'\"'"))
+  }
+}
+
+fn format_query_wired_inspect_hint(
+  run_id: impl std::fmt::Display,
+  inspect: &cli::InspectClientOptions,
+) -> String {
+  if let Some(store_root) = inspect.store_root.as_deref() {
+    let store_root = shell_quote_hint_path(store_root);
+    format!(
+      "inspectHint: run `auv inspect {run_id} --store-root {store_root}` to view verification_outcome"
+    )
+  } else {
+    format!("inspectHint: run `auv inspect {run_id}` to view verification_outcome")
+  }
+}
+
 fn resolve_store_root(project_root: &Path, explicit: Option<&String>) -> PathBuf {
   explicit
     .map(PathBuf::from)
@@ -2438,6 +2464,71 @@ mod tests {
   use super::*;
 
   static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+  #[test]
+  fn format_query_wired_inspect_hint_omits_store_root_when_default_store() {
+    let inspect = cli::InspectClientOptions {
+      store_root: None,
+      ..cli::InspectClientOptions::default()
+    };
+    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
+    assert_eq!(
+      hint,
+      "inspectHint: run `auv inspect run_test_1` to view verification_outcome"
+    );
+  }
+
+  #[test]
+  fn format_query_wired_inspect_hint_echoes_custom_store_root() {
+    let inspect = cli::InspectClientOptions {
+      store_root: Some("/tmp/mc20-store".to_string()),
+      ..cli::InspectClientOptions::default()
+    };
+    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
+    assert_eq!(
+      hint,
+      "inspectHint: run `auv inspect run_test_1 --store-root /tmp/mc20-store` to view verification_outcome"
+    );
+  }
+
+  #[test]
+  fn format_query_wired_inspect_hint_quotes_store_root_with_whitespace() {
+    let inspect = cli::InspectClientOptions {
+      store_root: Some("/tmp/mc20 store".to_string()),
+      ..cli::InspectClientOptions::default()
+    };
+    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
+    assert_eq!(
+      hint,
+      "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/mc20 store'` to view verification_outcome"
+    );
+  }
+
+  #[test]
+  fn format_query_wired_inspect_hint_quotes_store_root_with_single_quote() {
+    let inspect = cli::InspectClientOptions {
+      store_root: Some("/tmp/mc20'store".to_string()),
+      ..cli::InspectClientOptions::default()
+    };
+    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
+    assert_eq!(
+      hint,
+      "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/mc20'\"'\"'store'` to view verification_outcome"
+    );
+  }
+
+  #[test]
+  fn format_query_wired_inspect_hint_quotes_store_root_with_shell_metacharacters() {
+    let inspect = cli::InspectClientOptions {
+      store_root: Some("/tmp/(mc20)[store]".to_string()),
+      ..cli::InspectClientOptions::default()
+    };
+    let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
+    assert_eq!(
+      hint,
+      "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/(mc20)[store]'` to view verification_outcome"
+    );
+  }
 
   #[test]
   fn inspect_serve_write_token_rejects_token_and_token_file_conflict() {
