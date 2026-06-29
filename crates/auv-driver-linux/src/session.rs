@@ -7,6 +7,7 @@ use auv_driver::permission::PermissionProbe;
 use auv_driver::selector::WindowSelector;
 use auv_driver::window::Window;
 
+use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
 use crate::capture::{capture_display, capture_region, list_displays};
 use crate::driver::LinuxDriverSession;
 use crate::error::invalid_input;
@@ -34,6 +35,11 @@ pub struct PermissionApi<'a> {
   session: &'a LinuxDriverSession,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct AccessibilityApi<'a> {
+  session: &'a LinuxDriverSession,
+}
+
 impl LinuxDriverSession {
   pub fn display(&self) -> DisplayApi<'_> {
     DisplayApi { session: self }
@@ -49,6 +55,10 @@ impl LinuxDriverSession {
 
   pub fn permission(&self) -> PermissionApi<'_> {
     PermissionApi { session: self }
+  }
+
+  pub fn accessibility(&self) -> AccessibilityApi<'_> {
+    AccessibilityApi { session: self }
   }
 }
 
@@ -135,6 +145,23 @@ impl WindowApi<'_> {
       point.x - window.frame.origin.x,
       point.y - window.frame.origin.y,
     ))
+  }
+}
+
+impl AccessibilityApi<'_> {
+  pub fn snapshot_window(&self, window: &Window) -> DriverResult<AxTreeSnapshot> {
+    let _ = self.session;
+    snapshot_window(window)
+  }
+
+  pub fn focus_node(&self, window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    focus_node(window, node_path)
+  }
+
+  pub fn select_node(&self, window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    select_node(window, node_path)
   }
 }
 

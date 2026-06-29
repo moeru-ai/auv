@@ -1,27 +1,19 @@
 use auv_driver::capture::Capture;
 use auv_driver::error::DriverResult;
-use auv_driver::geometry::{CoordinateSpace, Rect};
+use auv_driver::geometry::Rect;
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
-use auv_driver::window::{Window, WindowRef};
+use auv_driver::window::Window;
 
-use crate::error::{backend, invalid_input, not_found};
+use crate::atspi;
+use crate::capture::capture_display;
+use crate::error::{invalid_input, not_found};
 
 #[cfg(target_os = "linux")]
-const WINDOW_CAPTURE_BACKEND: &str = "xcap.linux.window";
+const WINDOW_CAPTURE_BACKEND: &str = "atspi.extents+xcap.linux.display.crop";
 
 #[cfg(target_os = "linux")]
 pub fn list_windows() -> DriverResult<Vec<Window>> {
-  let windows = xcap::Window::all()
-    .map_err(|error| backend(format!("failed to enumerate windows: {error}")))?;
-  windows
-    .into_iter()
-    .enumerate()
-    .filter_map(|(index, window)| match observe_window(index, &window) {
-      Ok(Some(window)) => Some(Ok(window)),
-      Ok(None) => None,
-      Err(error) => Some(Err(error)),
-    })
-    .collect()
+  atspi::list_windows()
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -36,34 +28,17 @@ pub fn resolve_window(selector: &WindowSelector) -> DriverResult<Window> {
 
 #[cfg(target_os = "linux")]
 pub fn capture_window(window: &Window) -> DriverResult<Capture> {
-  let native_id = window.reference.id.parse::<u32>().map_err(|_| {
-    invalid_input(format!(
-      "window reference {:?} is not a valid Linux xcap window id",
-      window.reference.id
-    ))
-  })?;
-  let windows = xcap::Window::all()
-    .map_err(|error| backend(format!("failed to enumerate windows: {error}")))?;
-  let xcap_window = windows
-    .into_iter()
-    .find(|candidate| candidate.id().ok() == Some(native_id))
-    .ok_or_else(|| not_found(format!("window id {native_id}")))?;
-  let image = xcap_window
-    .capture_image()
-    .map_err(|error| backend(format!("failed to capture window: {error}")))?;
-  let scale_factor = if window.frame.size.width > 0.0 {
-    f64::from(image.width()) / window.frame.size.width
-  } else {
-    1.0
-  };
-  let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
-    .ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
+  atspi::ObjectRef::decode(&window.reference.id)?;
+  let display = capture_display(None)?;
+  let crop = crop_capture_to_window(&display.capture, window.frame)?;
   Ok(Capture {
-    image,
+    image: crop,
     bounds: window.frame,
-    scale_factor,
+    scale_factor: display.capture.scale_factor,
     backend: WINDOW_CAPTURE_BACKEND.to_string(),
-    fallback_reason: None,
+    fallback_reason: Some(
+      "window pixels were cropped from display capture using AT-SPI window extents".to_string(),
+    ),
   })
 }
 
@@ -72,53 +47,6 @@ pub fn capture_window(_window: &Window) -> DriverResult<Capture> {
   Err(auv_driver::error::DriverError::unsupported(
     "window.capture",
   ))
-}
-
-#[cfg(target_os = "linux")]
-fn observe_window(index: usize, window: &xcap::Window) -> DriverResult<Option<Window>> {
-  if window.is_minimized().unwrap_or(false) {
-    return Ok(None);
-  }
-  let id = window
-    .id()
-    .map_err(|error| backend(format!("failed to read window id: {error}")))?;
-  let title = window.title().ok().filter(|title| !title.trim().is_empty());
-  let app_name = window
-    .app_name()
-    .ok()
-    .filter(|app_name| !app_name.trim().is_empty());
-  let process_id = window.pid().ok();
-  let x = window
-    .x()
-    .map_err(|error| backend(format!("failed to read window x: {error}")))? as f64;
-  let y = window
-    .y()
-    .map_err(|error| backend(format!("failed to read window y: {error}")))? as f64;
-  let width = window
-    .width()
-    .map_err(|error| backend(format!("failed to read window width: {error}")))?
-    as f64;
-  let height = window
-    .height()
-    .map_err(|error| backend(format!("failed to read window height: {error}")))?
-    as f64;
-  if width <= 0.0 || height <= 0.0 {
-    return Ok(None);
-  }
-  Ok(Some(Window {
-    reference: WindowRef { id: id.to_string() },
-    title,
-    app_name,
-    // NOTICE: Linux desktop files/application IDs are not reliably exposed by
-    // the xcap window snapshot. Keep this None until a portal or compositor
-    // source provides a stable app identity.
-    app_bundle_id: None,
-    process_id,
-    frame: Rect::new(x, y, width, height),
-    coordinate_space: CoordinateSpace::Screen,
-    is_main: index == 0,
-    is_visible: true,
-  }))
 }
 
 fn resolve_from_windows(windows: &[Window], selector: &WindowSelector) -> DriverResult<Window> {
@@ -203,13 +131,50 @@ fn matches_app_selector(window: &Window, selector: &AppSelector) -> bool {
 fn matches_text(value: &str, matcher: &TextMatcher) -> bool {
   match matcher {
     TextMatcher::Exact(expected) => value == expected,
-    TextMatcher::Contains(needle) => value.contains(needle),
+    TextMatcher::Contains(needle) => value.to_lowercase().contains(&needle.to_lowercase()),
   }
+}
+
+#[cfg(target_os = "linux")]
+fn crop_capture_to_window(capture: &Capture, frame: Rect) -> DriverResult<image::RgbaImage> {
+  let scale_x = f64::from(capture.image.width()) / capture.bounds.size.width;
+  let scale_y = f64::from(capture.image.height()) / capture.bounds.size.height;
+  let local_x = scaled_capture_dimension("x", frame.origin.x - capture.bounds.origin.x, scale_x)?;
+  let local_y = scaled_capture_dimension("y", frame.origin.y - capture.bounds.origin.y, scale_y)?;
+  let width = scaled_positive_capture_dimension("width", frame.size.width, scale_x)?;
+  let height = scaled_positive_capture_dimension("height", frame.size.height, scale_y)?;
+  if local_x + width > capture.image.width() || local_y + height > capture.image.height() {
+    return Err(invalid_input(format!(
+      "AT-SPI window frame {:?} exceeds display capture bounds {:?}",
+      frame, capture.bounds
+    )));
+  }
+  Ok(image::imageops::crop_imm(&capture.image, local_x, local_y, width, height).to_image())
+}
+
+fn scaled_capture_dimension(name: &str, value: f64, scale: f64) -> DriverResult<u32> {
+  let value = (value * scale).round();
+  if !(0.0..=f64::from(u32::MAX)).contains(&value) {
+    return Err(invalid_input(format!(
+      "window {name} must be within u32 capture bounds"
+    )));
+  }
+  Ok(value as u32)
+}
+
+fn scaled_positive_capture_dimension(name: &str, value: f64, scale: f64) -> DriverResult<u32> {
+  let value = scaled_capture_dimension(name, value, scale)?;
+  if value == 0 {
+    return Err(invalid_input(format!("window {name} must be positive")));
+  }
+  Ok(value)
 }
 
 #[cfg(test)]
 mod tests {
+  use auv_driver::geometry::CoordinateSpace;
   use auv_driver::selector::Window as SelectWindow;
+  use auv_driver::window::WindowRef;
 
   use super::*;
 
@@ -236,5 +201,75 @@ mod tests {
     .expect("window resolves");
 
     assert_eq!(resolved, window);
+  }
+
+  #[test]
+  fn resolve_from_windows_matches_title_contains_case_insensitive() {
+    let window = Window {
+      reference: WindowRef {
+        id: "1".to_string(),
+      },
+      title: Some("Settings".to_string()),
+      app_name: Some("GNOME Settings".to_string()),
+      app_bundle_id: None,
+      process_id: Some(42),
+      frame: Rect::new(0.0, 0.0, 500.0, 400.0),
+      coordinate_space: CoordinateSpace::Screen,
+      is_main: true,
+      is_visible: true,
+    };
+
+    let resolved =
+      resolve_from_windows(&[window.clone()], &SelectWindow::title_contains("settings"))
+        .expect("window resolves");
+
+    assert_eq!(resolved, window);
+  }
+
+  #[test]
+  fn resolve_from_windows_matches_app_name_contains_case_insensitive() {
+    let window = Window {
+      reference: WindowRef {
+        id: "1".to_string(),
+      },
+      title: Some("Settings".to_string()),
+      app_name: Some("GNOME Settings".to_string()),
+      app_bundle_id: None,
+      process_id: Some(42),
+      frame: Rect::new(0.0, 0.0, 500.0, 400.0),
+      coordinate_space: CoordinateSpace::Screen,
+      is_main: true,
+      is_visible: true,
+    };
+
+    let resolved = resolve_from_windows(
+      &[window.clone()],
+      &WindowSelector::default().owned_by(AppSelector {
+        name: Some(TextMatcher::Contains("settings".to_string())),
+        ..AppSelector::default()
+      }),
+    )
+    .expect("window resolves");
+
+    assert_eq!(resolved, window);
+  }
+
+  #[test]
+  fn crop_capture_to_window_uses_window_extents_inside_display_capture() {
+    let mut image = image::RgbaImage::new(10, 10);
+    image.put_pixel(3, 4, image::Rgba([1, 2, 3, 4]));
+    let capture = Capture {
+      image,
+      bounds: Rect::new(0.0, 0.0, 10.0, 10.0),
+      scale_factor: 1.0,
+      backend: "test".to_string(),
+      fallback_reason: None,
+    };
+
+    let cropped = crop_capture_to_window(&capture, Rect::new(3.0, 4.0, 2.0, 2.0)).unwrap();
+
+    assert_eq!(cropped.width(), 2);
+    assert_eq!(cropped.height(), 2);
+    assert_eq!(*cropped.get_pixel(0, 0), image::Rgba([1, 2, 3, 4]));
   }
 }

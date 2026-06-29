@@ -9,11 +9,12 @@
 //! Commands:
 //!   permissions                    probe Wayland/XDG portal readiness
 //!   displays                       list xcap-visible displays
-//!   windows                        list xcap-visible windows
+//!   windows                        list AT-SPI-visible windows
 //!   resolve <title-substr>         resolve a window by title substring
 //!   capture-screen [out.png]       capture the primary display to a PNG
 //!   capture-region <x> <y> <w> <h> [out.png]
 //!   capture-window <substr> [out]  capture a window to a PNG
+//!   ax <title-substr>              capture a window accessibility tree
 //!   coords <title-substr>          round-trip a window/screen point mapping
 //!   input-boundary                 print current RemoteDesktop/libei boundary
 
@@ -22,7 +23,7 @@ use std::error::Error;
 use auv_driver::Driver;
 use auv_driver::capture::CaptureOptions;
 use auv_driver::geometry::{Rect, WindowPoint};
-use auv_driver::selector::Window as SelectWindow;
+use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
 use auv_driver::window::Window;
 use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
 
@@ -63,6 +64,7 @@ fn run() -> Run {
       arg(rest, 0, "title-substr")?,
       rest.get(1).map(String::as_str),
     ),
+    "ax" => ax(&session, arg(rest, 0, "title-substr")?),
     "coords" => coords(&session, arg(rest, 0, "title-substr")?),
     "input-boundary" => input_boundary(&session),
     other => {
@@ -190,6 +192,33 @@ fn capture_window(session: &LinuxDriverSession, substr: &str, out: Option<&str>)
   Ok(())
 }
 
+fn ax(session: &LinuxDriverSession, substr: &str) -> Run {
+  let window = find_window(session, substr)?;
+  let snapshot = session.accessibility().snapshot_window(&window)?;
+  println!(
+    "ax window {:?} ref={} nodes={}",
+    window.title,
+    snapshot.window_ref,
+    snapshot.nodes.len()
+  );
+  for node in snapshot.nodes.iter().take(80) {
+    println!(
+      "  depth={} path={} type={:?} name={:?} id={:?} focused={} bounds={:?}",
+      node.depth,
+      node.path,
+      node.control_type,
+      node.name,
+      node.automation_id,
+      node.focused,
+      node.bounds
+    );
+  }
+  if snapshot.nodes.len() > 80 {
+    println!("  ... {} more nodes", snapshot.nodes.len() - 80);
+  }
+  Ok(())
+}
+
 fn coords(session: &LinuxDriverSession, substr: &str) -> Run {
   let window = find_window(session, substr)?;
   let local = WindowPoint::new(10.0, 20.0);
@@ -221,6 +250,22 @@ fn find_window(session: &LinuxDriverSession, substr: &str) -> Result<Window, Box
     session
       .window()
       .resolve(SelectWindow::title_contains(substr))
+      .or_else(|_| {
+        session
+          .window()
+          .resolve(WindowSelector::default().owned_by(AppSelector {
+            bundle: Some(TextMatcher::Contains(substr.to_string())),
+            ..AppSelector::default()
+          }))
+      })
+      .or_else(|_| {
+        session
+          .window()
+          .resolve(WindowSelector::default().owned_by(AppSelector {
+            name: Some(TextMatcher::Contains(substr.to_string())),
+            ..AppSelector::default()
+          }))
+      })
       .or_else(|_| session.window().resolve(SelectWindow::main_visible()))?,
   )
 }
@@ -242,6 +287,6 @@ where
 
 fn print_usage() {
   eprintln!(
-    "usage: cargo run -p auv-driver-linux --example validate -- <permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|coords|input-boundary> ..."
+    "usage: cargo run -p auv-driver-linux --example validate -- <permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ax|coords|input-boundary> ..."
   );
 }
