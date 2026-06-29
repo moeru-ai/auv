@@ -3,7 +3,7 @@
 Date: 2026-06-30
 
 Status: **D2 implemented** — stable vertical CLI for the MC-19+MC-20 D1 library chain.
-**D2.1 live closure recorded**; **D2.2 inspect/store-root closure** (see below) (2026-06-30) — see
+**D2.1 live closure recorded**; **D2.2 inspect/store-root closure**; **D3 semantic pass/fail closure** (2026-06-30) — see
 [`2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md`](2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md).
 MC-20 controller / planner lane remains **paused** after this slice.
 
@@ -34,6 +34,7 @@ auv minecraft query-wired-live-click \
   --target-title <window-title-substring> \
   [--sample <pre-telemetry.jsonl>] \
   [--post-sample <post-telemetry.jsonl>] \
+  [--verification-expected-item-id <minecraft:item_id>] \
   [--store-root <path>] \
   [inspect client flags]
 ```
@@ -55,6 +56,7 @@ auv minecraft query-wired-live-click \
 | Live dispatch | `--target-title` | yes | `target_title` |
 | MC-20 witness | `--sample` | no | `telemetry_witness.pre_telemetry_sample` |
 | MC-20 witness | `--post-sample` | no (requires `--sample`) | `telemetry_witness.post_telemetry_sample` |
+| MC-20 D3 semantic | `--verification-expected-item-id` | no (requires `--sample`) | `verification_expected_item_id` |
 | Inspect client | `--store-root`, `--inspect-*` | no | `InspectClientOptions` |
 
 Provider rules mirror `query-3dgs-training-result`, plus:
@@ -78,7 +80,8 @@ On success the CLI prints at minimum:
 | `actionEligibility` | `output.value.wiring.action_eligibility` |
 | `operationResultArtifact` | `output.value.operation_result_artifact_id` |
 
-When wiring dispatch succeeded (`click_summary` present), also print:
+When wiring dispatch succeeded (`click_summary` present) **and local inspect write is enabled**
+(`--inspect-local-write` not set to `false`), also print:
 
 ```text
 inspectHint: run `auv inspect <run-id> [--store-root <path>]` to view verification_outcome
@@ -129,8 +132,9 @@ src/cli.rs + src/main.rs (parse + thin dispatch)
 
 - `auv inspect <run-id> [--store-root <path>]` reads the same store used by
   `--store-root` on producer commands.
-- `inspectHint` prints only when dispatch succeeded (`click_summary` present),
-  i.e. when MC-20 verification was evaluated (including `unreliable` without
+- `inspectHint` prints only when dispatch succeeded (`click_summary` present)
+  **and** local inspect write is enabled, i.e. when MC-20 verification was
+  evaluated into a locally readable store (including `unreliable` without
   witness). Custom store roots are echoed in the hint.
 
 ## Paused after D2 — reopen triggers (observation only)
@@ -146,3 +150,8 @@ src/cli.rs + src/main.rs (parse + thin dispatch)
 - MC-20 D1: [`2026-06-30-minecraft-mc20-d1-query-wired-post-action-verification-design.md`](2026-06-30-minecraft-mc20-d1-query-wired-post-action-verification-design.md)
 - MC-19 wiring closure: [`2026-06-27-minecraft-mc19-query-to-live-click-wiring-live-closure.md`](2026-06-27-minecraft-mc19-query-to-live-click-wiring-live-closure.md)
 - Canonical CLI replaces historical `examples/mc19_query_wired_live_action.rs` harness (example retained as thin wrapper when present)
+
+## D3 semantic pass/fail (closed 2026-06-30)
+
+- Design: [`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md)
+- Live G6/G7: [`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md)

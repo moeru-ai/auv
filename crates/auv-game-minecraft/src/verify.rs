@@ -177,13 +177,17 @@ pub struct QueryWiredPostActionWitness {
   pub target_block: BlockPosition,
   pub pre_frame: MinecraftSpatialFrame,
   pub post_frame: MinecraftSpatialFrame,
+  pub expected_item_id: Option<String>,
 }
 
 pub fn verify_query_wired_live_action_semantic(
   witness: &QueryWiredPostActionWitness,
 ) -> WorldDiffVerdict {
-  let request = WorldDiffRequest::new(MinecraftBlockTarget::new(witness.target_block))
+  let mut request = WorldDiffRequest::new(MinecraftBlockTarget::new(witness.target_block))
     .allow_same_block_state_change();
+  if let Some(item_id) = &witness.expected_item_id {
+    request = request.with_expected_item_id(item_id.clone());
+  }
   evaluate_world_diff(&witness.pre_frame, &witness.post_frame, &request)
 }
 
@@ -831,6 +835,7 @@ mod tests {
       target_block,
       pre_frame: pre,
       post_frame: post,
+      expected_item_id: None,
     });
 
     assert!(verdict.state_changed);
@@ -847,6 +852,7 @@ mod tests {
       target_block,
       pre_frame: pre,
       post_frame: post,
+      expected_item_id: None,
     });
 
     assert_eq!(
@@ -884,10 +890,81 @@ mod tests {
       target_block,
       pre_frame: pre,
       post_frame: post,
+      expected_item_id: None,
     });
 
     assert!(verdict.state_changed);
     assert_eq!(verdict.failure, None);
     assert_eq!(verdict.observed_block_id.as_deref(), Some("minecraft:air"));
+  }
+  #[test]
+  fn verify_query_wired_live_action_semantic_passes_with_expected_item_id_on_block_break_and_inventory_rise()
+   {
+    let target_block = target().block_pos;
+    let pre = frame_at(
+      10,
+      1_000,
+      Some(witnessed_stone()),
+      vec![NearbyBlock {
+        block_pos: target_block,
+        block_id: "minecraft:stone".to_string(),
+      }],
+      vec![InventorySummaryEntry {
+        item_id: "minecraft:stone".to_string(),
+        count: 1,
+      }],
+    );
+    let post = frame_at(
+      11,
+      1_050,
+      None,
+      vec![],
+      vec![InventorySummaryEntry {
+        item_id: "minecraft:stone".to_string(),
+        count: 2,
+      }],
+    );
+    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
+      target_block,
+      pre_frame: pre,
+      post_frame: post,
+      expected_item_id: Some("minecraft:stone".to_string()),
+    });
+
+    assert_eq!(verdict.semantic_matched, Some(true));
+    assert!(verdict.state_changed);
+    assert_eq!(verdict.failure, None);
+    assert_eq!(verdict.observed_item_delta, Some(1));
+  }
+
+  #[test]
+  fn verify_query_wired_live_action_semantic_fails_with_expected_item_id_when_inventory_stays_flat()
+  {
+    let target_block = target().block_pos;
+    let pre = frame_at(
+      10,
+      1_000,
+      Some(witnessed_stone()),
+      vec![NearbyBlock {
+        block_pos: target_block,
+        block_id: "minecraft:stone".to_string(),
+      }],
+      vec![InventorySummaryEntry {
+        item_id: "minecraft:stone".to_string(),
+        count: 1,
+      }],
+    );
+    let post = frame_at(11, 1_050, None, vec![], vec![]);
+    let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
+      target_block,
+      pre_frame: pre,
+      post_frame: post,
+      expected_item_id: Some("minecraft:stone".to_string()),
+    });
+
+    assert_eq!(verdict.semantic_matched, Some(false));
+    assert!(verdict.state_changed);
+    assert_eq!(verdict.failure, Some(WorldDiffFailure::StateChangedNoMatch));
+    assert_eq!(verdict.observed_item_delta, Some(-1));
   }
 }

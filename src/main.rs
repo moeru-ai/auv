@@ -915,6 +915,7 @@ async fn run() -> Result<(), String> {
       target_title,
       telemetry_sample,
       post_telemetry_sample,
+      verification_expected_item_id,
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
@@ -941,6 +942,7 @@ async fn run() -> Result<(), String> {
         target_app,
         target_title,
         telemetry_witness,
+        verification_expected_item_id,
       };
       let output = run_minecraft_query_wired_live_action(&runtime.recording().handle(), inputs)?;
       println!("runId: {}", output.run_id);

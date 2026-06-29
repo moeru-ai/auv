@@ -791,6 +791,7 @@ pub struct QueryWiredLiveActionInputs {
   pub target_app: String,
   pub target_title: String,
   pub telemetry_witness: Option<QueryWiredLiveActionTelemetryWitness>,
+  pub verification_expected_item_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -918,6 +919,7 @@ fn run_query_wired_live_action_core<E: QueryLiveClickExecutor>(
         input_target_block: inputs.target_block,
         manifest_target_block: query.manifest.target_block,
         pre_frame,
+        verification_expected_item_id: inputs.verification_expected_item_id.clone(),
       },
     );
 
@@ -2843,6 +2845,7 @@ mod tests {
         target_app: "net.minecraft.client".to_string(),
         target_title: "Minecraft".to_string(),
         telemetry_witness: None,
+        verification_expected_item_id: None,
       },
       &executor,
     )
@@ -2914,6 +2917,216 @@ mod tests {
     fs::write(path, format!("{body}\n")).expect("telemetry sample should write");
   }
 
+  fn mc20_semantic_pre_frame(
+    target_block: auv_game_minecraft::BlockPosition,
+  ) -> auv_game_minecraft::MinecraftSpatialFrame {
+    auv_game_minecraft::MinecraftSpatialFrame {
+      spatial_frame_id: "frame-1".to_string(),
+      world_tick: 10,
+      monotonic_timestamp_ms: 1_000,
+      telemetry_session_id: None,
+      viewport: auv_game_minecraft::Viewport::new(800, 600),
+      view_matrix: identity_matrix(),
+      projection_matrix: identity_matrix(),
+      player_pose: auv_game_minecraft::PlayerPose {
+        eye_position: auv_game_minecraft::Vec3::new(0.0, 0.0, 0.0),
+        yaw: 0.0,
+        pitch: 0.0,
+      },
+      raycast_hit: Some(auv_game_minecraft::RaycastHit {
+        block_pos: target_block,
+        face: auv_game_minecraft::BlockFace::North,
+        block_id: "minecraft:stone".to_string(),
+      }),
+      nearby_blocks: vec![auv_game_minecraft::NearbyBlock {
+        block_pos: target_block,
+        block_id: "minecraft:stone".to_string(),
+      }],
+      nearby_entities: Vec::new(),
+      inventory_summary: vec![auv_game_minecraft::InventorySummaryEntry {
+        item_id: "minecraft:stone".to_string(),
+        count: 1,
+      }],
+      screenshot_artifact_ref: None,
+      mc_capture_skew_ms: None,
+      screen_state: Some("in_game".to_string()),
+      resource_pack_ids: Vec::new(),
+    }
+  }
+
+  fn mc20_semantic_pass_post_frame(
+    _target_block: auv_game_minecraft::BlockPosition,
+    pre: &auv_game_minecraft::MinecraftSpatialFrame,
+  ) -> auv_game_minecraft::MinecraftSpatialFrame {
+    auv_game_minecraft::MinecraftSpatialFrame {
+      spatial_frame_id: "frame-2".to_string(),
+      world_tick: pre.world_tick + 1,
+      monotonic_timestamp_ms: pre.monotonic_timestamp_ms + 50,
+      telemetry_session_id: pre.telemetry_session_id.clone(),
+      viewport: pre.viewport,
+      view_matrix: pre.view_matrix,
+      projection_matrix: pre.projection_matrix,
+      player_pose: pre.player_pose.clone(),
+      raycast_hit: None,
+      nearby_blocks: Vec::new(),
+      nearby_entities: Vec::new(),
+      inventory_summary: vec![auv_game_minecraft::InventorySummaryEntry {
+        item_id: "minecraft:stone".to_string(),
+        count: 2,
+      }],
+      screenshot_artifact_ref: None,
+      mc_capture_skew_ms: None,
+      screen_state: pre.screen_state.clone(),
+      resource_pack_ids: Vec::new(),
+    }
+  }
+
+  fn mc20_semantic_fail_post_frame(
+    _target_block: auv_game_minecraft::BlockPosition,
+    pre: &auv_game_minecraft::MinecraftSpatialFrame,
+  ) -> auv_game_minecraft::MinecraftSpatialFrame {
+    auv_game_minecraft::MinecraftSpatialFrame {
+      spatial_frame_id: "frame-2".to_string(),
+      world_tick: pre.world_tick + 1,
+      monotonic_timestamp_ms: pre.monotonic_timestamp_ms + 50,
+      telemetry_session_id: pre.telemetry_session_id.clone(),
+      viewport: pre.viewport,
+      view_matrix: pre.view_matrix,
+      projection_matrix: pre.projection_matrix,
+      player_pose: pre.player_pose.clone(),
+      raycast_hit: None,
+      nearby_blocks: Vec::new(),
+      nearby_entities: Vec::new(),
+      inventory_summary: Vec::new(),
+      screenshot_artifact_ref: None,
+      mc_capture_skew_ms: None,
+      screen_state: pre.screen_state.clone(),
+      resource_pack_ids: Vec::new(),
+    }
+  }
+
+  #[test]
+  fn query_wired_live_action_semantic_pass_witness_projects_passed() {
+    let temp = temp_dir("mc20-d3-semantic-pass");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
+    let semantic_manifest_path =
+      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let pre_frame = mc20_semantic_pre_frame(target_block);
+    let post_frame = mc20_semantic_pass_post_frame(target_block, &pre_frame);
+    let pre_telemetry = temp.join("pre.jsonl");
+    let post_telemetry = temp.join("post.jsonl");
+    write_telemetry_jsonl(&pre_telemetry, &pre_frame);
+    write_telemetry_jsonl(&post_telemetry, &post_frame);
+    let executor = CountingQueryLiveClickExecutor::success("mock live click dispatched");
+
+    let output = run_minecraft_query_wired_live_action_with_executor(
+      &recording,
+      QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: semantic_manifest_path,
+        target_block,
+        target_face: Some(auv_game_minecraft::BlockFace::North),
+        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        query_command: None,
+        use_checkpoint_native_provider: false,
+        use_closed_scene_toy_provider: true,
+        closed_scene_fixture_path: Some(fixture_path),
+        output_dir: temp.join("query-output"),
+        target_app: "net.minecraft.client".to_string(),
+        target_title: "Minecraft".to_string(),
+        telemetry_witness: Some(QueryWiredLiveActionTelemetryWitness {
+          pre_telemetry_sample: pre_telemetry,
+          post_telemetry_sample: Some(post_telemetry),
+        }),
+        verification_expected_item_id: Some("minecraft:stone".to_string()),
+      },
+      &executor,
+    )
+    .expect("semantic pass witness should succeed");
+
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("wired live action run should persist");
+    let operation_result = read_operation_result_artifact(&store, &run);
+    assert_eq!(operation_result.verifications.len(), 1);
+    assert_eq!(
+      operation_result.verifications[0].semantic_matched,
+      Some(true)
+    );
+    assert!(operation_result.verifications[0].state_changed);
+    assert_eq!(operation_result.verifications[0].failure_layer, None);
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
+      .expect("summary should derive");
+    assert_eq!(summary.verification_outcome, "passed");
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
+  fn query_wired_live_action_semantic_fail_witness_projects_failed() {
+    let temp = temp_dir("mc20-d3-semantic-fail");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
+    let semantic_manifest_path =
+      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let pre_frame = mc20_semantic_pre_frame(target_block);
+    let post_frame = mc20_semantic_fail_post_frame(target_block, &pre_frame);
+    let pre_telemetry = temp.join("pre.jsonl");
+    let post_telemetry = temp.join("post.jsonl");
+    write_telemetry_jsonl(&pre_telemetry, &pre_frame);
+    write_telemetry_jsonl(&post_telemetry, &post_frame);
+    let executor = CountingQueryLiveClickExecutor::success("mock live click dispatched");
+
+    let output = run_minecraft_query_wired_live_action_with_executor(
+      &recording,
+      QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: semantic_manifest_path,
+        target_block,
+        target_face: Some(auv_game_minecraft::BlockFace::North),
+        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        query_command: None,
+        use_checkpoint_native_provider: false,
+        use_closed_scene_toy_provider: true,
+        closed_scene_fixture_path: Some(fixture_path),
+        output_dir: temp.join("query-output"),
+        target_app: "net.minecraft.client".to_string(),
+        target_title: "Minecraft".to_string(),
+        telemetry_witness: Some(QueryWiredLiveActionTelemetryWitness {
+          pre_telemetry_sample: pre_telemetry,
+          post_telemetry_sample: Some(post_telemetry),
+        }),
+        verification_expected_item_id: Some("minecraft:stone".to_string()),
+      },
+      &executor,
+    )
+    .expect("semantic fail witness should succeed");
+
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("wired live action run should persist");
+    let operation_result = read_operation_result_artifact(&store, &run);
+    assert_eq!(operation_result.verifications.len(), 1);
+    assert_eq!(
+      operation_result.verifications[0].semantic_matched,
+      Some(false)
+    );
+    assert_eq!(
+      operation_result.verifications[0].failure_layer,
+      Some(crate::contract::FailureLayer::StateChangedNoMatch)
+    );
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
+      .expect("summary should derive");
+    assert_eq!(summary.verification_outcome, "failed");
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
   fn mc20_post_frame_after_click(
     target_block: auv_game_minecraft::BlockPosition,
     pre: &auv_game_minecraft::MinecraftSpatialFrame,
@@ -2978,6 +3191,7 @@ mod tests {
           pre_telemetry_sample: pre_telemetry,
           post_telemetry_sample: Some(post_telemetry),
         }),
+        verification_expected_item_id: None,
       },
       &executor,
     )
@@ -3023,6 +3237,66 @@ mod tests {
   }
 
   #[test]
+  fn query_wired_live_action_with_expected_item_id_tick_advance_projects_failed() {
+    let temp = temp_dir("mc20-d3-tick-advance-expected-item");
+    let store = LocalStore::new(temp.join("store")).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
+    let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
+    let semantic_manifest_path =
+      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let pre_frame = mc18_target_frame(target_block);
+    let post_frame = mc20_post_frame_after_click(target_block, &pre_frame);
+    let pre_telemetry = temp.join("pre.jsonl");
+    let post_telemetry = temp.join("post.jsonl");
+    write_telemetry_jsonl(&pre_telemetry, &pre_frame);
+    write_telemetry_jsonl(&post_telemetry, &post_frame);
+    let executor = CountingQueryLiveClickExecutor::success("mock live click dispatched");
+
+    let output = run_minecraft_query_wired_live_action_with_executor(
+      &recording,
+      QueryWiredLiveActionInputs {
+        training_result_semantic_manifest_path: semantic_manifest_path,
+        target_block,
+        target_face: Some(auv_game_minecraft::BlockFace::North),
+        target_semantics: auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter,
+        query_command: None,
+        use_checkpoint_native_provider: false,
+        use_closed_scene_toy_provider: true,
+        closed_scene_fixture_path: Some(fixture_path),
+        output_dir: temp.join("query-output"),
+        target_app: "net.minecraft.client".to_string(),
+        target_title: "Minecraft".to_string(),
+        telemetry_witness: Some(QueryWiredLiveActionTelemetryWitness {
+          pre_telemetry_sample: pre_telemetry,
+          post_telemetry_sample: Some(post_telemetry),
+        }),
+        verification_expected_item_id: Some("minecraft:stone".to_string()),
+      },
+      &executor,
+    )
+    .expect("tick-advance witness with expected item should succeed");
+
+    let run = recording
+      .read_run(output.run_id.as_str())
+      .expect("wired live action run should persist");
+    let operation_result = read_operation_result_artifact(&store, &run);
+    assert_eq!(operation_result.verifications.len(), 1);
+    assert_eq!(
+      operation_result.verifications[0].semantic_matched,
+      Some(false)
+    );
+    assert!(operation_result.verifications[0].state_changed);
+    assert_eq!(operation_result.verifications[0].failure_layer, None);
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
+      .expect("summary should derive");
+    assert_eq!(summary.verification_outcome, "failed");
+
+    let _ = fs::remove_dir_all(temp);
+  }
+
+  #[test]
   fn query_wired_live_action_dispatch_failed_skips_post_action_verification() {
     let temp = temp_dir("mc20-d1-dispatch-failed");
     let store = LocalStore::new(temp.join("store")).expect("store");
@@ -3049,6 +3323,7 @@ mod tests {
         target_app: "net.minecraft.client".to_string(),
         target_title: "Minecraft".to_string(),
         telemetry_witness: None,
+        verification_expected_item_id: None,
       },
       &executor,
     )
@@ -3108,6 +3383,7 @@ mod tests {
           pre_telemetry_sample: pre_telemetry,
           post_telemetry_sample: Some(temp.join("missing-post.jsonl")),
         }),
+        verification_expected_item_id: None,
       },
       &executor,
     )
@@ -3162,6 +3438,7 @@ mod tests {
         target_app: "net.minecraft.client".to_string(),
         target_title: "Minecraft".to_string(),
         telemetry_witness: None,
+        verification_expected_item_id: None,
       },
       &executor,
     )
@@ -3210,6 +3487,7 @@ mod tests {
         target_app: "net.minecraft.client".to_string(),
         target_title: "Minecraft".to_string(),
         telemetry_witness: None,
+        verification_expected_item_id: None,
       },
       &executor,
     )

@@ -68,6 +68,7 @@ pub struct QueryWiredPostActionVerificationInput<'a> {
   pub input_target_block: BlockPosition,
   pub manifest_target_block: BlockPosition,
   pub pre_frame: Option<MinecraftSpatialFrame>,
+  pub verification_expected_item_id: Option<String>,
 }
 
 fn query_wired_dispatch_succeeded(wiring: &QueryActionWiringOutcome) -> bool {
@@ -150,6 +151,7 @@ pub fn build_query_wired_post_action_verifications(
     target_block: input.manifest_target_block,
     pre_frame: pre.clone(),
     post_frame: post.clone(),
+    expected_item_id: input.verification_expected_item_id.clone(),
   });
 
   let evidence = match stage_minecraft_spatial_frame_artifacts(context, &pre, &post) {

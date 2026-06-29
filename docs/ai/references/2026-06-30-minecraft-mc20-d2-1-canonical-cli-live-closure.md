@@ -336,3 +336,9 @@ MC-19 Query Wired Live Action:
   [`2026-06-27-minecraft-mc19-query-to-live-click-wiring-live-closure.md`](2026-06-27-minecraft-mc19-query-to-live-click-wiring-live-closure.md)
 - MC-18 provider closure:
   [`2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md`](2026-06-27-minecraft-mc18-closed-scene-toy-provider-live-closure.md)
+
+## D3 follow-on (G6/G7 — closed)
+
+D2.1 ceiling was `inconclusive` for tick-advance witnesses (G5). MC-20 D3 closes
+`passed`/`failed` with block-removal + inventory witnesses — see
+[`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md).

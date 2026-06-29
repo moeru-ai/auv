@@ -28,6 +28,7 @@ fn main() -> Result<(), String> {
   let mut store_root = None;
   let mut telemetry_sample = None;
   let mut post_telemetry_sample = None;
+  let mut verification_expected_item_id = None;
 
   while let Some(flag) = args.next() {
     match flag.as_str() {
@@ -62,6 +63,9 @@ fn main() -> Result<(), String> {
       "--store-root" => store_root = args.next().map(PathBuf::from),
       "--sample" => telemetry_sample = args.next().map(PathBuf::from),
       "--post-sample" => post_telemetry_sample = args.next().map(PathBuf::from),
+      "--verification-expected-item-id" => {
+        verification_expected_item_id = args.next();
+      }
       other => return Err(format!("unexpected argument {other}")),
     }
   }
@@ -82,6 +86,9 @@ fn main() -> Result<(), String> {
   }
   if post_telemetry_sample.is_some() && telemetry_sample.is_none() {
     return Err("--post-sample requires --sample".to_string());
+  }
+  if verification_expected_item_id.is_some() && telemetry_sample.is_none() {
+    return Err("--verification-expected-item-id requires --sample".to_string());
   }
 
   let project_root = env::current_dir().map_err(|error| error.to_string())?;
@@ -109,6 +116,7 @@ fn main() -> Result<(), String> {
       target_app: target_app.ok_or("--target-app is required")?,
       target_title: target_title.ok_or("--target-title is required")?,
       telemetry_witness,
+      verification_expected_item_id,
     },
   )?;
   println!("runId: {}", output.run_id);

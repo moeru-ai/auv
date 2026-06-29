@@ -46,6 +46,7 @@ pub struct QueryWiredPostActionWitness {
   pub target_block: BlockPosition,
   pub pre_frame: MinecraftSpatialFrame,
   pub post_frame: MinecraftSpatialFrame,
+  pub expected_item_id: Option<String>,
 }
 
 pub fn verify_query_wired_live_action_semantic(
@@ -53,9 +54,10 @@ pub fn verify_query_wired_live_action_semantic(
 ) -> WorldDiffVerdict;
 ```
 
-- **Only** calls `evaluate_world_diff` with
-  `WorldDiffRequest::new(target).allow_same_block_state_change()` (aligned with
-  `minecraft live-click`).
+- When `expected_item_id` is `None`, calls `evaluate_world_diff` with
+  `WorldDiffRequest::new(target).allow_same_block_state_change()` only (D1 behavior).
+- When `expected_item_id` is `Some`, also calls `with_expected_item_id` (D3 — see
+  [`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md)).
 - **No** second verifier trait, registry, or planner hook.
 
 ## Glue mapping seam (`auv-cli`)
@@ -97,6 +99,8 @@ pub struct QueryWiredLiveActionTelemetryWitness {
 | `attempted=true`, dispatch succeeded, witness, `semantic_matched: Some(true)` | 1× `SemanticMatch` | `passed` |
 | `attempted=true`, dispatch succeeded, witness, semantic failure | `semantic_mismatch` / `state_changed_no_match` | `failed` |
 | `attempted=true`, dispatch succeeded, witness, tick advance / block removal without `expected_item_id` | `state_changed=true`, `semantic_matched: None` | `inconclusive` |
+| `attempted=true`, dispatch succeeded, witness, `expected_item_id` set, block removed + inventory match (D3 G6) | `semantic_matched: Some(true)` | `passed` |
+| `attempted=true`, dispatch succeeded, witness, `expected_item_id` set, block removed + inventory flat (D3 G7) | `failure_layer: StateChangedNoMatch`, `semantic_matched: Some(false)` | `failed` |
 
 Discipline:
 
@@ -106,8 +110,9 @@ Discipline:
   `MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT` from `operation_result.known_limits`.
 - No-witness unreliable path uses **`MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT`** instead of
   MC-19 D4.
-- World-diff uses `allow_same_block_state_change()` only; it does **not** assert
-  `semantic_matched: Some(true)` unless a future slice adds `expected_item_id` or richer semantics.
+- Without `expected_item_id`, world-diff does **not** assert `semantic_matched: Some(true)`.
+  D3 (closed 2026-06-30) adds optional `expected_item_id` via CLI
+  `--verification-expected-item-id` for G6/G7 synthetic closure.
 - Same-coordinate **block_id replacement without tick advance** is not detected; read-side may
   still show `absent` for unmappable claims — document as honest world-diff boundary.
 
@@ -172,3 +177,10 @@ cargo test -p auv-cli --lib
 cargo test -p auv-game-minecraft
 git diff --check
 ```
+
+## D3 follow-on (closed)
+
+MC-20 D3 closed Layer-3 `passed`/`failed` producer evidence — see
+[`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-closure-design.md)
+and live closure
+[`2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md`](2026-06-30-minecraft-mc20-d3-semantic-pass-fail-live-closure.md).

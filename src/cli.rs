@@ -222,6 +222,7 @@ pub enum CliCommand {
     target_title: String,
     telemetry_sample: Option<String>,
     post_telemetry_sample: Option<String>,
+    verification_expected_item_id: Option<String>,
     inspect: InspectClientOptions,
   },
   MinecraftPrepareTextureSweep {
@@ -1507,6 +1508,7 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
   let mut target_title = None;
   let mut telemetry_sample = None;
   let mut post_telemetry_sample = None;
+  let mut verification_expected_item_id = None;
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
@@ -1601,6 +1603,14 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
         post_telemetry_sample = Some(required_flag_value(arguments, index, "--post-sample")?);
         index += 2;
       }
+      "--verification-expected-item-id" => {
+        verification_expected_item_id = Some(required_flag_value(
+          arguments,
+          index,
+          "--verification-expected-item-id",
+        )?);
+        index += 2;
+      }
       other => {
         return Err(format!(
           "unexpected minecraft query-wired-live-click argument {other}"
@@ -1645,6 +1655,10 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
     return Err("--post-sample requires --sample".to_string());
   }
 
+  if verification_expected_item_id.is_some() && telemetry_sample.is_none() {
+    return Err("--verification-expected-item-id requires --sample".to_string());
+  }
+
   Ok(CliCommand::MinecraftQueryWiredLiveClick {
     training_result_semantic_manifest_path: training_result_semantic_manifest_path
       .ok_or_else(|| "--training-result-semantic-manifest is required".to_string())?,
@@ -1660,6 +1674,7 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
     target_title: target_title.ok_or_else(|| "--target-title is required".to_string())?,
     telemetry_sample,
     post_telemetry_sample,
+    verification_expected_item_id,
     inspect,
   })
 }
@@ -3289,6 +3304,7 @@ mod tests {
         target_title,
         telemetry_sample,
         post_telemetry_sample,
+        verification_expected_item_id,
         query_command,
         ..
       } => {
@@ -3306,6 +3322,7 @@ mod tests {
         assert_eq!(target_title, "Minecraft");
         assert_eq!(telemetry_sample.as_deref(), Some("/tmp/pre.jsonl"));
         assert_eq!(post_telemetry_sample.as_deref(), Some("/tmp/post.jsonl"));
+        assert!(verification_expected_item_id.is_none());
         assert!(query_command.is_none());
       }
       other => panic!("unexpected command: {other:?}"),
@@ -3332,6 +3349,65 @@ mod tests {
   }
 
   #[test]
+  fn parse_minecraft_query_wired_live_click_command_accepts_verification_expected_item_id() {
+    let command = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+      "--sample".to_string(),
+      "/tmp/pre.jsonl".to_string(),
+      "--verification-expected-item-id".to_string(),
+      "minecraft:stone".to_string(),
+    ])
+    .expect("verification expected item id should parse");
+
+    match command {
+      CliCommand::MinecraftQueryWiredLiveClick {
+        telemetry_sample,
+        verification_expected_item_id,
+        ..
+      } => {
+        assert_eq!(telemetry_sample.as_deref(), Some("/tmp/pre.jsonl"));
+        assert_eq!(
+          verification_expected_item_id.as_deref(),
+          Some("minecraft:stone")
+        );
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_minecraft_query_wired_live_click_command_rejects_expected_item_without_sample() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "query-wired-live-click".to_string(),
+      "--training-result-semantic-manifest".to_string(),
+      "/tmp/semantic.json".to_string(),
+      "--target-block".to_string(),
+      "1,2,3".to_string(),
+      "--output-dir".to_string(),
+      "/tmp/query".to_string(),
+      "--target-app".to_string(),
+      "com.mojang.minecraft".to_string(),
+      "--target-title".to_string(),
+      "Minecraft".to_string(),
+      "--verification-expected-item-id".to_string(),
+      "minecraft:stone".to_string(),
+    ])
+    .expect_err("expected item id without sample should fail");
+
+    assert!(error.contains("--verification-expected-item-id requires --sample"));
+  }
   fn parse_minecraft_query_wired_live_click_command_rejects_post_sample_without_sample() {
     let error = parse_cli(&[
       "minecraft".to_string(),
