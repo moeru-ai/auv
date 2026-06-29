@@ -1,8 +1,8 @@
 //! Shared hermetic fixtures for `session_service` unit tests.
 //!
 //! Centralizes run/artifact staging so operation-result and operation-summary
-//! shape changes touch one place. Callers: `summary`, `summary_store`, and
-//! `handler` test modules.
+//! shape changes touch one place. Callers: `summary`, `summary_store`,
+//! `handler`, `transport`, and `client_smoke` test modules.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -42,6 +42,11 @@ pub fn unique_temp_dir(label: &str) -> PathBuf {
   let _ = fs::remove_dir_all(&path);
   fs::create_dir_all(&path).expect("temp dir should be creatable");
   path
+}
+
+/// Temp store root for session API gRPC tests (`transport`, `client_smoke`).
+pub fn session_api_temp_store_root(label: &str) -> PathBuf {
+  unique_temp_dir(&format!("session-api-{label}"))
 }
 
 pub fn dummy_run(run_id: &str) -> RunRecordV1Alpha1 {
@@ -275,6 +280,11 @@ pub fn persist_operation_result_run(
   let store = LocalStore::new(root.clone()).expect("store should initialize");
   persist_operation_result_on_store(&store, &root, run_id, operation);
   SessionRunFixture { root, store }
+}
+
+/// Store with a `music.search` domain `operation-result` staged on disk.
+pub fn music_search_operation_result_fixture(label: &str, run_id: &str) -> SessionRunFixture {
+  persist_operation_result_run(label, run_id, &music_search_operation(run_id))
 }
 
 pub fn persist_operation_result_and_summary_run(

@@ -244,6 +244,25 @@ mod tests {
     SessionApiHandler::new(root)
   }
 
+  fn handler_with_music_search_cached(
+    label: &str,
+    run_id: &str,
+  ) -> (SessionApiHandler, std::path::PathBuf) {
+    use crate::api::session_service::test_fixtures::{
+      music_runtime_summary, music_search_operation_result_fixture,
+    };
+
+    let fixture = music_search_operation_result_fixture(label, run_id);
+    let root = fixture.root.clone();
+    let handler = SessionApiHandler::new(root.clone());
+    handler
+      .summaries
+      .lock()
+      .expect("summary cache mutex poisoned")
+      .record(music_runtime_summary(run_id));
+    (handler, root)
+  }
+
   #[test]
   fn create_session_allocates_and_registers_session() {
     let handler = handler();
@@ -342,22 +361,9 @@ mod tests {
   #[test]
   fn get_operation_on_same_handler_uses_process_local_cache_path() {
     // Same-handler path: process-local cache supplies the runtime half of the join.
-    use crate::api::session_service::test_fixtures::{
-      music_runtime_summary, music_search_operation, persist_operation_result_on_store,
-      unique_temp_dir,
-    };
-
-    let root = unique_temp_dir("session-api-joined");
-    let handler = SessionApiHandler::new(root.clone());
+    // P12 wire operation_id (command_id, not domain label) covered here.
     let run_id = "run-get-op-happy";
-    let store = handler.open_store().expect("open store");
-    persist_operation_result_on_store(&store, &root, run_id, &music_search_operation(run_id));
-
-    handler
-      .summaries
-      .lock()
-      .expect("summary cache mutex poisoned")
-      .record(music_runtime_summary(run_id));
+    let (handler, root) = handler_with_music_search_cached("session-api-joined", run_id);
 
     let response = handler
       .get_operation(proto::GetOperationRequest {
@@ -500,57 +506,9 @@ mod tests {
   }
 
   #[test]
-  fn get_operation_emits_command_id_not_domain_operation_id() {
-    use crate::api::session_service::test_fixtures::{
-      music_runtime_summary, music_search_operation, persist_operation_result_on_store,
-      unique_temp_dir,
-    };
-
-    let root = unique_temp_dir("session-api-p12-cmd-id");
-    let handler = SessionApiHandler::new(root.clone());
-    let run_id = "run-p12-cmd";
-    let store = handler.open_store().expect("open store");
-    persist_operation_result_on_store(&store, &root, run_id, &music_search_operation(run_id));
-    handler
-      .summaries
-      .lock()
-      .expect("summary cache mutex poisoned")
-      .record(music_runtime_summary(run_id));
-
-    let response = handler
-      .get_operation(proto::GetOperationRequest {
-        operation: Some(proto::OperationRef {
-          run_id: run_id.to_string(),
-          operation_id: String::new(),
-        }),
-      })
-      .expect("get_operation");
-
-    assert_eq!(
-      response.operation.expect("operation ref").operation_id,
-      "music.search"
-    );
-
-    let _ = std::fs::remove_dir_all(root);
-  }
-
-  #[test]
   fn get_operation_rejects_operation_id_mismatch() {
-    use crate::api::session_service::test_fixtures::{
-      music_runtime_summary, music_search_operation, persist_operation_result_on_store,
-      unique_temp_dir,
-    };
-
-    let root = unique_temp_dir("session-api-p12-mismatch");
-    let handler = SessionApiHandler::new(root.clone());
     let run_id = "run-p12-mismatch";
-    let store = handler.open_store().expect("open store");
-    persist_operation_result_on_store(&store, &root, run_id, &music_search_operation(run_id));
-    handler
-      .summaries
-      .lock()
-      .expect("summary cache mutex poisoned")
-      .record(music_runtime_summary(run_id));
+    let (handler, root) = handler_with_music_search_cached("session-api-p12-mismatch", run_id);
 
     let error = handler
       .get_operation(proto::GetOperationRequest {

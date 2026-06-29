@@ -4,28 +4,16 @@
 //! perspective on CreateSession, Invoke, and GetOperation.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use auv_api_proto::v1::session as proto;
 use auv_api_proto::v1::session::session_service_client::SessionServiceClient;
 use tonic::Code;
 use tonic::transport::Channel;
 
+use crate::api::session_service::test_fixtures::session_api_temp_store_root;
 use crate::api::session_service::transport::{
   DEFAULT_SESSION_API_HOST, SessionApiServeConfig, bind_session_api, serve_on_listener,
 };
-use crate::model::now_millis;
-
-static DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn temp_store_root() -> PathBuf {
-  let unique = DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-  std::env::temp_dir().join(format!(
-    "auv-session-api-client-smoke-{}-{}",
-    now_millis(),
-    unique
-  ))
-}
 
 async fn with_smoke_server<T, F, Fut>(store_root: PathBuf, f: F) -> T
 where
@@ -83,7 +71,7 @@ async fn invoke_fixture_observe(
 
 #[tokio::test]
 async fn session_api_smoke_external_client_invoke_fixture_observe() {
-  let store_root = temp_store_root();
+  let store_root = session_api_temp_store_root("client-smoke");
   with_smoke_server(store_root, |mut client| async move {
     let session = create_session(&mut client).await;
     assert!(!session.session_id.is_empty());
@@ -99,7 +87,7 @@ async fn session_api_smoke_external_client_invoke_fixture_observe() {
 
 #[tokio::test]
 async fn session_api_smoke_get_operation_requires_persisted_operation_result() {
-  let store_root = temp_store_root();
+  let store_root = session_api_temp_store_root("client-smoke");
   with_smoke_server(store_root, |mut client| async move {
     let session = create_session(&mut client).await;
     let invoke_response = invoke_fixture_observe(&mut client, session).await;

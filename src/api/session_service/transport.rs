@@ -254,24 +254,12 @@ pub async fn serve(config: SessionApiServeConfig) -> Result<SocketAddr, String> 
 
 #[cfg(test)]
 mod tests {
-  use std::sync::atomic::{AtomicU64, Ordering};
-
   use auv_api_proto::v1::session::session_service_client::SessionServiceClient;
-  use auv_tracing_driver::now_millis;
   use tonic::Code;
 
+  use crate::api::session_service::test_fixtures::session_api_temp_store_root;
+
   use super::*;
-
-  static DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-  fn temp_store_root() -> std::path::PathBuf {
-    let unique = DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-      "auv-session-api-transport-{}-{}",
-      now_millis(),
-      unique
-    ))
-  }
 
   #[test]
   fn assert_loopback_host_accepts_loopback_literals() {
@@ -332,7 +320,7 @@ mod tests {
 
   #[tokio::test]
   async fn grpc_create_session_round_trip() {
-    let store_root = temp_store_root();
+    let store_root = session_api_temp_store_root("transport");
     let config = SessionApiServeConfig {
       host: DEFAULT_SESSION_API_HOST.to_string(),
       port: 0,
@@ -363,7 +351,7 @@ mod tests {
 
   #[tokio::test]
   async fn grpc_invoke_and_get_operation_failed_precondition() {
-    let store_root = temp_store_root();
+    let store_root = session_api_temp_store_root("transport");
     let config = SessionApiServeConfig {
       host: DEFAULT_SESSION_API_HOST.to_string(),
       port: 0,
