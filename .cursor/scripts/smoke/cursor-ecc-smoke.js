@@ -296,5 +296,49 @@ check('inject-pending-edit-review emits queue context', () => {
   queuePath.clearQueue();
 });
 
+
+check('gateguard enforced marker is present in workspace', () => {
+  const { isGateGuardEnforced } = require('../lib/gateguard-project-disable');
+  assert.equal(isGateGuardEnforced([repoRoot]), true);
+});
+
+check('ECC_GATEGUARD=off does not disable enforced gateguard', () => {
+  const { isGateGuardDisabled } = require('../hooks/gateguard-fact-force');
+  const prev = process.env.ECC_GATEGUARD;
+  const prevDisabled = process.env.GATEGUARD_DISABLED;
+  process.env.ECC_GATEGUARD = 'off';
+  process.env.GATEGUARD_DISABLED = '1';
+  try {
+    assert.equal(isGateGuardDisabled([repoRoot]), false);
+  } finally {
+    if (prev === undefined) delete process.env.ECC_GATEGUARD;
+    else process.env.ECC_GATEGUARD = prev;
+    if (prevDisabled === undefined) delete process.env.GATEGUARD_DISABLED;
+    else process.env.GATEGUARD_DISABLED = prevDisabled;
+  }
+});
+
+check('ECC_DISABLED_HOOKS cannot disable enforced gateguard bash hook', () => {
+  const { isHookEnabled } = require('../lib/hook-flags');
+  const prev = process.env.ECC_DISABLED_HOOKS;
+  process.env.ECC_DISABLED_HOOKS = 'pre:bash:gateguard-fact-force,pre:edit-write:gateguard-fact-force';
+  try {
+    assert.equal(
+      isHookEnabled('pre:bash:gateguard-fact-force', { profiles: 'standard,strict' }),
+      true,
+    );
+  } finally {
+    if (prev === undefined) delete process.env.ECC_DISABLED_HOOKS;
+    else process.env.ECC_DISABLED_HOOKS = prev;
+  }
+});
+
+check('gateguard recovery hint does not advertise ECC_GATEGUARD=off', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync(path.join(repoRoot, '.cursor/scripts/hooks/gateguard-fact-force.js'), 'utf8');
+  assert.ok(!src.includes('ECC_GATEGUARD=off disables'), src);
+  assert.ok(!src.includes('run this session with `ECC_GATEGUARD=off`'), src);
+});
+
 console.log(`cursor-ecc-smoke: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

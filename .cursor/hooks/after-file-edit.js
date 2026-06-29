@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const { hookEnabled, readStdin, runExistingHook, transformToClaude } = require('./adapter');
 const { run: runAntiGarbageReview } = require('../scripts/hooks/post-edit-anti-garbage-review');
+const { run: runCodeQualityReview } = require('../scripts/hooks/post-edit-code-quality-review');
 
 readStdin().then(raw => {
   try {
@@ -22,6 +23,11 @@ readStdin().then(raw => {
     const review = runAntiGarbageReview(claudeStr, { source: 'afterFileEdit' });
     if (review.stderr) {
       process.stderr.write(`${review.stderr}\n`);
+    }
+
+    const quality = runCodeQualityReview(claudeStr, { source: 'afterFileEdit' });
+    if (quality.stderr) {
+      process.stderr.write(`${quality.stderr}\n`);
     }
   } catch {}
   process.stdout.write(raw);

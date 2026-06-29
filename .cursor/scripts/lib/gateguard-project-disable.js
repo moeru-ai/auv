@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
- * Project-local GateGuard opt-out.
+ * Project-local GateGuard policy markers.
  *
- * Cursor sessionStart env (ECC_GATEGUARD=off) does not always reach ECC
- * PreToolUse hooks loaded from the global plugin cache. Workspaces that ship
- * `.cursor/hooks/disable-gateguard.js` disable GateGuard by filesystem marker
- * instead, walking up from cwd / workspace env / optional edit targets.
+ * - `.cursor/hooks/gateguard-enforced.js` — GateGuard cannot be disabled via
+ *   env (`ECC_GATEGUARD=off`, `GATEGUARD_DISABLED`) or `ECC_DISABLED_HOOKS`.
+ * - `.cursor/hooks/disable-gateguard.js` — opt-out marker (ignored when enforced).
  */
 
 'use strict';
@@ -14,6 +13,20 @@ const fs = require('fs');
 const path = require('path');
 
 const DISABLE_MARKER_SEGMENTS = ['.cursor', 'hooks', 'disable-gateguard.js'];
+const ENFORCED_MARKER_SEGMENTS = ['.cursor', 'hooks', 'gateguard-enforced.js'];
+
+function enforcedMarkerPath(projectRoot) {
+  return path.join(projectRoot, ...ENFORCED_MARKER_SEGMENTS);
+}
+
+function hasEnforcedMarkerAt(projectRoot) {
+  const marker = enforcedMarkerPath(projectRoot);
+  try {
+    return fs.existsSync(marker) && fs.statSync(marker).isFile();
+  } catch (_) {
+    return false;
+  }
+}
 
 function disableMarkerPath(projectRoot) {
   return path.join(projectRoot, ...DISABLE_MARKER_SEGMENTS);
@@ -50,7 +63,40 @@ function collectSearchRoots(extraStarts = []) {
   return roots;
 }
 
+function isGateGuardEnforced(extraStarts = []) {
+  const seen = new Set();
+
+  for (const start of collectSearchRoots(extraStarts)) {
+    let dir = path.resolve(start);
+    if (seen.has(dir)) {
+      continue;
+    }
+    seen.add(dir);
+
+    try {
+      if (fs.existsSync(dir) && fs.statSync(dir).isFile()) {
+        dir = path.dirname(dir);
+      }
+    } catch (_) {
+      /* ignore */
+    }
+
+    while (dir && dir !== path.dirname(dir)) {
+      if (hasEnforcedMarkerAt(dir)) {
+        return true;
+      }
+      dir = path.dirname(dir);
+    }
+  }
+
+  return false;
+}
+
 function isProjectGateGuardDisabled(extraStarts = []) {
+  if (isGateGuardEnforced(extraStarts)) {
+    return false;
+  }
+
   const seen = new Set();
 
   for (const start of collectSearchRoots(extraStarts)) {
@@ -81,7 +127,11 @@ function isProjectGateGuardDisabled(extraStarts = []) {
 
 module.exports = {
   DISABLE_MARKER_SEGMENTS,
+  ENFORCED_MARKER_SEGMENTS,
   disableMarkerPath,
+  enforcedMarkerPath,
   hasDisableMarkerAt,
+  hasEnforcedMarkerAt,
+  isGateGuardEnforced,
   isProjectGateGuardDisabled,
 };

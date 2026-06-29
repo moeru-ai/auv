@@ -5,12 +5,13 @@
  * Controls:
  * - ECC_HOOK_PROFILE=minimal|standard|strict (default: standard)
  * - ECC_DISABLED_HOOKS=comma,separated,hook,ids
- * - Project marker: `.cursor/hooks/disable-gateguard.js` (see gateguard-project-disable.js)
+ * - Project enforced: `.cursor/hooks/gateguard-enforced.js` (hard lock; env bypass disabled)
+ * - Project opt-out: `.cursor/hooks/disable-gateguard.js` (ignored when enforced)
  */
 
 'use strict';
 
-const { isProjectGateGuardDisabled } = require('./gateguard-project-disable');
+const { isProjectGateGuardDisabled, isGateGuardEnforced } = require('./gateguard-project-disable');
 
 const VALID_PROFILES = new Set(['minimal', 'standard', 'strict']);
 const GATEGUARD_HOOK_IDS = new Set([
@@ -66,7 +67,8 @@ function isHookEnabled(hookId, options = {}) {
   if (!id) return true;
 
   const disabled = getDisabledHookIds();
-  if (disabled.has(id)) {
+  const gateGuardEnforced = GATEGUARD_HOOK_IDS.has(id) && isGateGuardEnforced();
+  if (disabled.has(id) && !gateGuardEnforced) {
     return false;
   }
 

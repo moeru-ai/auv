@@ -26,7 +26,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { extractCommandSubstitutions, extractSubshellGroups, extractBraceGroups } = require('../lib/shell-substitution');
-const { isProjectGateGuardDisabled } = require('../lib/gateguard-project-disable');
+const { isProjectGateGuardDisabled, isGateGuardEnforced } = require('../lib/gateguard-project-disable');
 
 // Session state — scoped per session to avoid cross-session races.
 const STATE_DIR = process.env.GATEGUARD_STATE_DIR || path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.gateguard');
@@ -42,7 +42,6 @@ const MAX_SESSION_KEYS = 50;
 const ROUTINE_BASH_SESSION_KEY = '__bash_session__';
 const EDIT_WRITE_HOOK_ID = 'pre:edit-write:gateguard-fact-force';
 const BASH_HOOK_ID = 'pre:bash:gateguard-fact-force';
-const ECC_DISABLE_VALUES = new Set(['0', 'false', 'off', 'disabled', 'disable']);
 const ECC_ENABLE_VALUES = new Set(['1', 'true', 'on', 'enabled', 'enable', 'yes']);
 
 // SQL-keyword + dd patterns stay as a single regex — they are stable
@@ -684,15 +683,11 @@ function normalizeEnvValue(value) {
 }
 
 function isGateGuardDisabled(extraStarts = []) {
-  if (isProjectGateGuardDisabled(extraStarts)) {
-    return true;
+  if (isGateGuardEnforced(extraStarts)) {
+    return false;
   }
 
-  if (normalizeEnvValue(process.env.GATEGUARD_DISABLED) === '1') {
-    return true;
-  }
-
-  return ECC_DISABLE_VALUES.has(normalizeEnvValue(process.env.ECC_GATEGUARD));
+  return isProjectGateGuardDisabled(extraStarts);
 }
 
 function sanitizeSessionKey(value) {
@@ -1059,8 +1054,7 @@ function condensedGateMsg(action, filePath, ordinal) {
   const safe = sanitizePath(filePath);
   return (
     `[Fact-Forcing Gate] (denial #${ordinal} this session) First ${action} of ${safe}: ` +
-    "briefly state importers/callers, affected API, data schemas if any, and the user's verbatim instruction, then retry. " +
-    '(ECC_GATEGUARD=off disables this gate.)'
+    "briefly state importers/callers, affected API, data schemas if any, and the user's verbatim instruction, then retry."
   );
 }
 
@@ -1091,9 +1085,12 @@ function routineBashMsg() {
   ].join('\n');
 }
 
-function withRecoveryHint(message, hookIds = [EDIT_WRITE_HOOK_ID]) {
-  const disableTargets = hookIds.map(hookId => `\`${hookId}\``).join(' or ');
-  return [message, '', `Recovery: if GateGuard is blocking setup or repair work, run this session with \`ECC_GATEGUARD=off\` or add ${disableTargets} to \`ECC_DISABLED_HOOKS\`.`].join('\n');
+function withRecoveryHint(message) {
+  return [
+    message,
+    '',
+    'Recovery: present the required facts in chat, then retry the same tool call. Env bypass is not available in this workspace.',
+  ].join('\n');
 }
 
 function isSubagentTranscriptPath(value) {
@@ -1274,4 +1271,5 @@ module.exports = {
   run,
   isSubagentInvocation,
   isSubagentTranscriptPath,
+  isGateGuardDisabled,
 };

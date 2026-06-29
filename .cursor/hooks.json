@@ -87,6 +87,11 @@
         "command": "node .cursor/hooks/inject-pending-edit-review.js",
         "event": "beforeSubmitPrompt",
         "description": "Inject anti-garbage edit review queue before each prompt"
+      },
+      {
+        "command": "node .cursor/hooks/inject-pending-code-quality-review.js",
+        "event": "beforeSubmitPrompt",
+        "description": "Inject code-quality edit review queue before each prompt"
       }
     ],
     "subagentStart": [
@@ -138,6 +143,12 @@
         "event": "postToolUse",
         "matcher": "Write|StrReplace",
         "description": "Anti-garbage heuristics after Write/StrReplace (backup path)"
+      },
+      {
+        "command": "node .cursor/hooks/post-tool-code-quality.js",
+        "event": "postToolUse",
+        "matcher": "Write|StrReplace",
+        "description": "Code-quality heuristics after Write/StrReplace (backup path)"
       }
     ]
   }

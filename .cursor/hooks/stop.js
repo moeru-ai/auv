@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const { readStdin, runExistingHook, transformToClaude, hookEnabled } = require('./adapter');
 const { run: runStopAntiGarbageReview } = require('../scripts/hooks/stop-anti-garbage-review');
+const { run: runStopCodeQualityReview } = require('../scripts/hooks/stop-code-quality-review');
 
 readStdin().then(raw => {
   const input = JSON.parse(raw || '{}');
@@ -30,8 +31,21 @@ readStdin().then(raw => {
     process.stderr.write(`${antiGarbage.stderr}\n`);
   }
 
-  const followupPayload = String(antiGarbage.stdout || '').trim();
-  if (followupPayload && followupPayload !== '{}') {
+  const codeQuality = runStopCodeQualityReview(raw);
+  if (codeQuality.stderr) {
+    process.stderr.write(`${codeQuality.stderr}\n`);
+  }
+
+  const antiGarbageFollowup = String(antiGarbage.stdout || '').trim();
+  const codeQualityFollowup = String(codeQuality.stdout || '').trim();
+  const followupPayload =
+    antiGarbageFollowup && antiGarbageFollowup !== '{}'
+      ? antiGarbageFollowup
+      : codeQualityFollowup && codeQualityFollowup !== '{}'
+        ? codeQualityFollowup
+        : '';
+
+  if (followupPayload) {
     process.stdout.write(`${followupPayload}\n`);
     return;
   }
