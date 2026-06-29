@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::osu_query_live_action::{
+pub mod query_live_action;
+
+use self::query_live_action::{
   InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
   build_osu_query_wired_live_action_operation_result,
   stage_osu_query_wired_live_action_operation_result,
@@ -916,11 +918,11 @@ mod tests {
     use auv_tracing_driver::recording::{NoopRunRecorder, RunRecordingBackend};
     use auv_tracing_driver::store::LocalStore;
 
-    use crate::osu::{
+    use super::super::query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
+    use super::super::{
       OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE, QueryWiredLiveActionInputs,
       run_osu_query_wired_live_action_with_executor,
     };
-    use crate::osu_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
     use auv_game_osu::CapturePhase;
 
     struct CountingExecutor {

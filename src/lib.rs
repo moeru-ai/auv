@@ -2,7 +2,6 @@
 mod action_resolver_decision;
 pub mod app;
 pub mod ax_recognition;
-pub mod balatro;
 pub mod candidate_action_command;
 pub mod candidate_action_decision;
 pub mod candidate_promotion;
@@ -12,18 +11,20 @@ pub mod inference_recognition;
 pub mod inspect;
 pub mod inspect_server;
 pub mod mcp;
-pub mod minecraft;
-pub mod minecraft_query_live_action;
-pub mod minecraft_session;
-pub mod minecraft_verification;
 pub mod model;
-pub mod osu;
-pub mod osu_query_live_action;
 pub mod run_read;
 pub mod runtime;
 pub mod scroll_scan;
 pub mod session;
 pub mod stability;
+pub mod verticals;
+
+pub use verticals::balatro;
+pub use verticals::minecraft::{
+  self as minecraft, query_live_action as minecraft_query_live_action,
+  session as minecraft_session, verification as minecraft_verification,
+};
+pub use verticals::osu::{self as osu, query_live_action as osu_query_live_action};
 
 use std::path::PathBuf;
 

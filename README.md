@@ -11,6 +11,16 @@ AUV means **Application Use Via**.
 
 > Think of it as a programmable computer use, without agents.
 
+Current fact sources live in:
+
+- `src/runtime.rs`
+- `src/verticals/` — CLI / inspect / run-record wiring glue for reference game verticals
+- `crates/auv-game-*` — donor/domain logic for those verticals (not CLI glue)
+- `crates/auv-cli-invoke/`
+- `crates/auv-driver/`
+- `crates/auv-driver-macos/`
+- `docs/ai/references/`
+
 For [Cua](https://github.com/trycua/cua) and similar computer-use projects, it
 is common to execute `screenshot`, `read image`, `click`, `type`, `wait`, and
 follow-up verification steps in sequence, then ask LLMs or agents to judge the
