@@ -37,6 +37,9 @@
 
               # pkg-config
               pkg-config
+
+              # clang
+              clang
             ];
 
             buildInputs = with pkgs; [
@@ -44,9 +47,11 @@
               libglvnd
               openssl
               pipewire
+              llvmPackages.libclang
             ];
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           };
 
           packages = forAllSystems (
