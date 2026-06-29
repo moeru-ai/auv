@@ -142,6 +142,19 @@ impl RunRecordingBackend {
       .stage_artifact_file(run_id, index, span_id, event_id, artifact)
   }
 
+  pub fn stage_artifact_bytes(
+    &self,
+    run_id: &RunId,
+    index: usize,
+    span_id: &SpanId,
+    event_id: Option<crate::trace::EventId>,
+    artifact: crate::artifact::ArtifactBytesSource,
+  ) -> AuvResult<ArtifactRecordV1Alpha1> {
+    self
+      .store
+      .stage_artifact_bytes(run_id, index, span_id, event_id, artifact)
+  }
+
   pub fn record_artifact_bytes(
     &self,
     run_id: &RunId,

@@ -13,7 +13,7 @@ use std::io::ErrorKind;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::artifact::{ArtifactFileSource, ProducedArtifact};
+use crate::artifact::{ArtifactBytesSource, ArtifactFileSource, ProducedArtifact};
 use crate::error::AuvResult;
 use crate::time::now_millis;
 use crate::trace::{
@@ -71,6 +71,41 @@ pub(crate) fn copy_file(source: &PathBuf, destination: &PathBuf) -> AuvResult<()
     format!(
       "failed to copy artifact from {} to {}: {detail}",
       source.display(),
+      destination.display()
+    )
+  })?;
+
+  Ok(())
+}
+
+pub(crate) fn publish_bytes_to_path(destination: &Path, bytes: &[u8]) -> AuvResult<()> {
+  if let Some(parent) = destination.parent() {
+    fs::create_dir_all(parent).map_err(|error| {
+      format!(
+        "failed to create artifact directory {}: {error}",
+        parent.display()
+      )
+    })?;
+  }
+
+  let file_name = destination
+    .file_name()
+    .and_then(|file_name| file_name.to_str())
+    .unwrap_or("artifact");
+  let parent = destination
+    .parent()
+    .ok_or_else(|| format!("invalid artifact destination {}", destination.display()))?;
+  let temp_path = parent.join(format!(".{file_name}.upload-{}.tmp", now_millis()));
+  fs::write(&temp_path, bytes).map_err(|error| {
+    format!(
+      "failed to write staged artifact {}: {error}",
+      temp_path.display()
+    )
+  })?;
+  fs::rename(&temp_path, destination).map_err(|error| {
+    let _ = fs::remove_file(&temp_path);
+    format!(
+      "failed to publish staged artifact {}: {error}",
       destination.display()
     )
   })?;
@@ -218,35 +253,88 @@ impl LocalStore {
     event_id: Option<EventId>,
     artifact: ArtifactFileSource,
   ) -> AuvResult<ArtifactRecordV1Alpha1> {
-    let artifact_id = ArtifactId::new(format!("artifact_{:04}", index + 1));
     let extension = artifact
       .source_path
       .extension()
       .and_then(|extension| extension.to_str())
       .unwrap_or("bin");
-    let base_name = sanitized_artifact_name(
-      artifact
-        .preferred_name
-        .trim_end_matches(&format!(".{extension}")),
-    );
+    let (record, destination) = self.plan_staged_artifact(
+      run_id,
+      index,
+      span_id,
+      event_id,
+      artifact.role,
+      &artifact.preferred_name,
+      extension,
+      artifact.summary,
+    )?;
+
+    copy_file(&artifact.source_path, &destination)?;
+
+    Ok(record)
+  }
+
+  pub fn stage_artifact_bytes(
+    &self,
+    run_id: &RunId,
+    index: usize,
+    span_id: &SpanId,
+    event_id: Option<EventId>,
+    artifact: ArtifactBytesSource,
+  ) -> AuvResult<ArtifactRecordV1Alpha1> {
+    let extension = Path::new(&artifact.preferred_name)
+      .extension()
+      .and_then(|extension| extension.to_str())
+      .unwrap_or("bin");
+    let (record, destination) = self.plan_staged_artifact(
+      run_id,
+      index,
+      span_id,
+      event_id,
+      artifact.role,
+      &artifact.preferred_name,
+      extension,
+      artifact.summary,
+    )?;
+
+    publish_bytes_to_path(&destination, &artifact.bytes)?;
+
+    Ok(record)
+  }
+
+  fn plan_staged_artifact(
+    &self,
+    run_id: &RunId,
+    index: usize,
+    span_id: &SpanId,
+    event_id: Option<EventId>,
+    role: String,
+    preferred_name: &str,
+    extension: &str,
+    summary: Option<String>,
+  ) -> AuvResult<(ArtifactRecordV1Alpha1, PathBuf)> {
+    let artifact_id = ArtifactId::new(format!("artifact_{:04}", index + 1));
+    let base_name =
+      sanitized_artifact_name(preferred_name.trim_end_matches(&format!(".{extension}")));
     let relative_path =
       PathBuf::from("artifacts").join(format!("{}_{base_name}.{extension}", artifact_id.as_str()));
     let destination = self.run_dir(run_id)?.join(&relative_path);
 
-    copy_file(&artifact.source_path, &destination)?;
-
-    Ok(ArtifactRecordV1Alpha1 {
-      api_version: ARTIFACT_API_VERSION.to_string(),
-      artifact_id,
-      span_id: span_id.clone(),
-      event_id,
-      role: artifact.role,
-      mime_type: mime_type_for_extension(extension).to_string(),
-      path: relative_path.to_string_lossy().into_owned(),
-      sha256: None,
-      attributes: Default::default(),
-      summary: artifact.summary,
-    })
+    Ok((
+      ArtifactRecordV1Alpha1 {
+        api_version: ARTIFACT_API_VERSION.to_string(),
+        artifact_id,
+        span_id: span_id.clone(),
+        event_id,
+        role,
+        mime_type: mime_type_for_extension(extension).to_string(),
+        path: relative_path.to_string_lossy().into_owned(),
+        sha256: None,
+        attributes: Default::default(),
+        summary,
+      },
+      destination,
+    ))
   }
 
   pub fn read_run(&self, run_id: &str) -> AuvResult<CanonicalRun> {
@@ -845,6 +933,52 @@ mod tests {
       .read_run("run_staged_artifact")
       .expect("persisted run should read");
     assert_eq!(loaded.artifacts.len(), 1);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn local_store_stages_artifact_bytes_without_external_source_file() {
+    let root = temp_dir("store-staged-artifact-bytes");
+    let store = LocalStore::new(root.clone()).expect("should initialize");
+    let run = dummy_run("run_staged_artifact_bytes");
+    let span = dummy_span(&run.root_span_id);
+    let body = br#"{"hello":"world"}"#;
+
+    let artifact = store
+      .stage_artifact_bytes(
+        &run.run_id,
+        0,
+        &span.span_id,
+        None,
+        ArtifactBytesSource {
+          role: "driver.output".to_string(),
+          bytes: body.to_vec(),
+          preferred_name: "output.json".to_string(),
+          summary: Some("output".to_string()),
+        },
+      )
+      .expect("artifact should stage");
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts: vec![artifact.clone()],
+      })
+      .expect("run should persist after artifact staging");
+
+    let artifact_path = root
+      .join("runs")
+      .join("run_staged_artifact_bytes")
+      .join(&artifact.path);
+    assert_eq!(
+      fs::read(&artifact_path).expect("staged artifact should remain"),
+      body
+    );
+    assert_eq!(artifact.role, "driver.output");
+    assert_eq!(artifact.mime_type, "application/json");
 
     let _ = fs::remove_dir_all(root);
   }

@@ -13,7 +13,7 @@ pub mod store;
 pub mod time;
 pub mod trace;
 
-pub use artifact::{ArtifactFileSource, ArtifactRef, ProducedArtifact};
+pub use artifact::{ArtifactBytesSource, ArtifactFileSource, ArtifactRef, ProducedArtifact};
 pub use error::AuvResult;
 pub use recorded_operation::{
   RecordedOperationContext, RecordedOperationOutput, RecordedOperationServices,

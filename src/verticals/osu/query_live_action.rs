@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::PathBuf;
 
 use crate::contract::{
@@ -102,23 +101,15 @@ pub fn stage_osu_query_wired_live_action_operation_result(
     .map_err(|error| {
       format!("failed to serialize osu query wired live action operation result: {error}")
     })?;
-  let artifact_path = std::env::temp_dir().join(format!(
-    "auv-osu-query-wired-live-action-operation-result-{}-{}.json",
-    context.run_id(),
-    crate::model::now_millis()
-  ));
-  fs::write(&artifact_path, artifact_json.as_bytes()).map_err(|error| {
-    format!("failed to write osu query wired live action operation result: {error}")
-  })?;
-  let staged = context.stage_artifact_file_with_ref(
-    "operation-result",
-    &artifact_path,
-    "operation-result.json",
-    Some(
-      "osu visual truth query wired live action operation result with spatial query lineage"
-        .to_string(),
-    ),
-  );
-  let _ = fs::remove_file(&artifact_path);
-  staged.map_err(|error| error.to_string())
+  context
+    .stage_artifact_bytes_with_ref(
+      "operation-result",
+      artifact_json.as_bytes(),
+      "operation-result.json",
+      Some(
+        "osu visual truth query wired live action operation result with spatial query lineage"
+          .to_string(),
+      ),
+    )
+    .map_err(|error| error.to_string())
 }

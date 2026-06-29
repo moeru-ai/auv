@@ -4,17 +4,13 @@
 //! invoke, the runtime half of the `GetOperation` projection is staged as an
 //! `operation-summary` JSON artifact on the recorded run.
 
-use std::fs;
-use std::path::PathBuf;
-
 use auv_cli_invoke::{InvokeResult, OperationSummary};
-use auv_tracing_driver::artifact::ArtifactFileSource;
+use auv_tracing_driver::artifact::ArtifactBytesSource;
 use auv_tracing_driver::store::LocalStore;
 use auv_tracing_driver::trace::RunId;
 
 use crate::api::session_service::SessionApiError;
 use crate::contract::{OPERATION_SUMMARY_API_VERSION, OPERATION_SUMMARY_ARTIFACT_ROLE};
-use crate::model::now_millis;
 
 /// Known limit surfaced when invoke succeeded but the operation-summary artifact
 /// could not be persisted (API-P11). The command already executed; callers must
@@ -41,29 +37,24 @@ pub fn persist_operation_summary(
   let mut canonical = store.read_run(run_id).map_err(SessionApiError::Storage)?;
 
   let record = summary.to_record(OPERATION_SUMMARY_API_VERSION);
-  let staging_path = staging_source_path(run_id);
   let rendered = serde_json::to_string_pretty(&record)
     .map_err(|error| SessionApiError::Storage(error.to_string()))?
     + "\n";
-  fs::write(&staging_path, rendered)
-    .map_err(|error| SessionApiError::Storage(error.to_string()))?;
 
-  let stage_result = store
-    .stage_artifact_file(
+  let artifact = store
+    .stage_artifact_bytes(
       &RunId::new(run_id),
       canonical.artifacts.len(),
       &result.producer_span_id,
       None,
-      ArtifactFileSource {
+      ArtifactBytesSource {
         role: OPERATION_SUMMARY_ARTIFACT_ROLE.to_string(),
-        source_path: staging_path.clone(),
+        bytes: rendered.into_bytes(),
         preferred_name: "operation-summary.json".to_string(),
         summary: None,
       },
     )
-    .map_err(SessionApiError::Storage);
-  let _ = fs::remove_file(&staging_path);
-  let artifact = stage_result?;
+    .map_err(SessionApiError::Storage)?;
 
   canonical.artifacts.push(artifact);
   store
@@ -91,13 +82,6 @@ pub fn record_invoke_summary(
       vec![OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT.to_string()]
     }
   }
-}
-
-fn staging_source_path(run_id: &str) -> PathBuf {
-  std::env::temp_dir().join(format!(
-    "auv-operation-summary-staging-{run_id}-{}.json",
-    now_millis()
-  ))
 }
 
 #[cfg(test)]

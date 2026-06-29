@@ -162,6 +162,63 @@ impl<'a> RecordedOperationContext<'a> {
     Ok((staged_path, artifact_ref))
   }
 
+  pub fn stage_artifact_bytes_with_ref(
+    &mut self,
+    role: impl Into<String>,
+    bytes: impl AsRef<[u8]>,
+    preferred_name: impl Into<String>,
+    summary: Option<String>,
+  ) -> AuvResult<(PathBuf, ArtifactRef)> {
+    let current = self.current.clone();
+    self.stage_artifact_bytes_with_ref_in_span(&current, role, bytes, preferred_name, summary)
+  }
+
+  pub fn stage_artifact_bytes_with_ref_in_span(
+    &mut self,
+    span: &SpanRef,
+    role: impl Into<String>,
+    bytes: impl AsRef<[u8]>,
+    preferred_name: impl Into<String>,
+    summary: Option<String>,
+  ) -> AuvResult<(PathBuf, ArtifactRef)> {
+    let event_id = new_event_id();
+    let artifact = self.recording().stage_artifact_bytes(
+      self.run.id(),
+      self.run.artifact_count(),
+      span.id(),
+      Some(event_id.clone()),
+      crate::artifact::ArtifactBytesSource {
+        role: role.into(),
+        bytes: bytes.as_ref().to_vec(),
+        preferred_name: preferred_name.into(),
+        summary,
+      },
+    )?;
+    record_event_with_id(
+      self.run,
+      span.id(),
+      event_id.clone(),
+      "artifact.captured",
+      Some(render_artifact_event(&artifact)),
+      vec![artifact.artifact_id.clone()],
+    );
+    let staged_path = self
+      .recording()
+      .run_dir(self.run.id())?
+      .join(&artifact.path);
+    let artifact_ref = ArtifactRef {
+      run_id: self.run.id().clone(),
+      artifact_id: artifact.artifact_id.clone(),
+      span_id: span.id().clone(),
+      captured_event_id: Some(event_id),
+    };
+    self.run.record_artifact(artifact.clone());
+    self
+      .recording()
+      .record_artifact_bytes(self.run.id(), &artifact, &staged_path)?;
+    Ok((staged_path, artifact_ref))
+  }
+
   pub fn in_span<T, E, F>(&mut self, name: impl Into<String>, operation: F) -> Result<T, E>
   where
     E: Display + From<String>,

@@ -25,3 +25,12 @@ pub struct ArtifactFileSource {
   pub preferred_name: String,
   pub summary: Option<String>,
 }
+
+/// In-memory artifact payload for [`crate::store::LocalStore::stage_artifact_bytes`].
+#[derive(Clone, Debug)]
+pub struct ArtifactBytesSource {
+  pub role: String,
+  pub bytes: Vec<u8>,
+  pub preferred_name: String,
+  pub summary: Option<String>,
+}
