@@ -21,22 +21,27 @@
         in
         {
           default = pkgs.mkShell {
-            nativeBuildInputs =
-              (with pkgs; [
-                # rust
-                rustc
-                cargo
-                rustfmt
-                clippy
-                rust-analyzer
+            nativeBuildInputs = with pkgs; [
+              # rust
+              rustc
+              cargo
+              rustfmt
+              clippy
+              rust-analyzer
 
-                # protobuf
-                protobuf
-                buf
-                protoc-gen-prost
-                protoc-gen-tonic
-              ])
-              ++ [];
+              # protobuf
+              protobuf
+              buf
+              protoc-gen-prost
+              protoc-gen-tonic
+
+              # pkg-config
+              pkg-config
+            ];
+
+            buildInputs = with pkgs; [
+              wayland
+            ];
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
           };
