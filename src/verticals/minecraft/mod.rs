@@ -1,6 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod query_live_action;
+pub mod session;
+pub mod verification;
+
 use auv_game_minecraft::{
   QueryActionWiringOutcome, QueryLiveClickExecutor, ScenePacketInputs, ScenePacketOutput,
   SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput, SpatialBundleSourceArtifact,
@@ -32,7 +36,7 @@ use auv_tracing_driver::run_builder::RunSpec;
 use auv_tracing_driver::store::CanonicalRun;
 use auv_tracing_driver::trace::{RunType, TraceStatusCode};
 
-use crate::minecraft_query_live_action::{
+use self::query_live_action::{
   InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
   build_query_wired_live_action_operation_result, stage_query_wired_live_action_operation_result,
 };
@@ -906,10 +910,10 @@ fn run_query_wired_live_action_core<E: QueryLiveClickExecutor>(
     wire_spatial_query_manifest_to_action(&query.manifest, &query.manifest_path, executor);
 
   let (verifications, witness_absent_limit_needed) =
-    crate::minecraft_verification::build_query_wired_post_action_verifications(
+    self::verification::build_query_wired_post_action_verifications(
       context,
       &wiring,
-      crate::minecraft_verification::QueryWiredPostActionVerificationInput {
+      self::verification::QueryWiredPostActionVerificationInput {
         telemetry_witness: inputs.telemetry_witness.as_ref(),
         input_target_block: inputs.target_block,
         manifest_target_block: query.manifest.target_block,
@@ -2875,7 +2879,7 @@ mod tests {
     let operation_result = read_operation_result_artifact(&store, &run);
     assert_eq!(
       operation_result.operation_id,
-      crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID
+      self::query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID
     );
     assert_eq!(
       operation_result.status,

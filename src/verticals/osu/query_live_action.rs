@@ -5,7 +5,7 @@ use crate::contract::{
   ArtifactRef, FreshnessBasis, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult,
   OperationStatus,
 };
-use crate::minecraft_query_live_action::invoke_click_at_window_point;
+use crate::verticals::minecraft::query_live_action::invoke_click_at_window_point;
 use auv_driver::geometry::WindowPoint;
 use auv_game_osu::{
   VisualTruthQueryActionWiringLineage, VisualTruthQueryActionWiringOutcome,

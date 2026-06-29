@@ -7,12 +7,11 @@ use auv_game_minecraft::{
 };
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 
+use super::{MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE, QueryWiredLiveActionTelemetryWitness};
 use crate::contract::{
   ArtifactRef, FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
   VerificationResult,
 };
-use crate::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE;
-use crate::minecraft::QueryWiredLiveActionTelemetryWitness;
 
 pub fn map_world_diff_verdict_to_verification_result(
   verdict: &WorldDiffVerdict,
