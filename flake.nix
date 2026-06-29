@@ -48,6 +48,8 @@
               openssl
               pipewire
               llvmPackages.libclang
+              libgbm
+              xorg.libxcb
             ];
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;

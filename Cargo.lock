@@ -428,6 +428,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-driver-linux"
+version = "0.0.1"
+dependencies = [
+ "auv-driver",
+ "image",
+ "serde",
+ "xcap",
+ "zbus",
+]
+
+[[package]]
 name = "auv-driver-macos"
 version = "0.0.1"
 dependencies = [
