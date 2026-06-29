@@ -176,18 +176,18 @@ Legend: ✅ supported, ⚠️ partial or platform-limited, ❌ not the focus.
 
 | Capability | AUV | [Cua](https://github.com/trycua/cua) | [OpenBridge](https://github.com/AFK-surf/OpenBridge) / [KWWKComputerUseCore](https://github.com/EYHN/kwwk-computer-use-core) | Playwright |
 | --- | --- | --- | --- | --- |
-| Agent model | 💡 BYOA | 💡 BYOA + Agent | 💡 BYOA | ❌ |
-| Scriptable | ✅ Rust ⏳ JS/TS/Python | ⚠️ Agent tools only | ⚠️ Swift API | ✅ JS/TS/Python/... |
+| Agent model | 💡 BYOA | 💡 BYOA + Built-in Agent | 💡 BYOA + Built-in Agent | ❌ |
+| Scriptable | ✅ Rust ⏳ JS/TS/Python | ⚠️ Tools only | ⚠️ Swift Only | ✅ JS/TS/Python/... |
 | Multi-driver | ✅ macOS/Windows ⏳ Linux/Android/iOS | ✅ | ❌ | ❌ |
 | CLI | ✅ | ✅ | ❌ | ⚠️ via user scripts |
 | MCP | ✅ | ✅ | ❌ | ❌ |
-| RL Trajectory | ✅ runs + artifacts + inspect | ⚠️ recordings | ❌ | ✅ |
+| RL Trajectory | ✅ runs + o11y (OTEL compatible) + artifacts | ⚠️ recordings | ❌ | ✅ |
 | Screenshot | ✅ | ✅ | ✅ | ✅ browser only |
 | OCR | ✅ BYOK / OS OCR | ⚠️ BYOK | ❌ | ❌ |
 | Image Match | ✅ | ✅ | ❌ | ❌ user code only |
 | AX (Accessibility Tree) | ✅ macOS/Windows | ✅ macOS | ✅ macOS | ⚠️ Browser only |
-| AX Actions | ✅ press/focus/click paths | ✅ | ✅ | ⚠️ browser only |
-| Mouse / Click | ✅ display + window-relative | ✅ | ✅ | ⚠️ Browser only |
+| AX Actions | ✅ | ✅ | ✅ | ⚠️ browser only |
+| Mouse / Click | ✅ | ✅ | ✅ | ⚠️ Browser only |
 | Virtual Mouse / Background | ✅ macOS/Windows | ✅ macOS focused | ✅ macOS focused | ⚠️ Browser only |
 | Virtual Mouse / Foreground HID | ✅ | ✅ | ❌ | ⚠️ Browser only |
 | Keyboard | ✅ | ✅ | ✅ | ⚠️ Browser Only |
