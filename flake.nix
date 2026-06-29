@@ -42,6 +42,7 @@
             buildInputs = with pkgs; [
               wayland
               libglvnd
+              openssl
             ];
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
