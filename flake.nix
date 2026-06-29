@@ -21,24 +21,37 @@
         in
         {
           default = pkgs.mkShell {
-            nativeBuildInputs =
-              (with pkgs; [
-                # rust
-                rustc
-                cargo
-                rustfmt
-                clippy
-                rust-analyzer
+            nativeBuildInputs = with pkgs; [
+              # rust
+              rustc
+              cargo
+              rustfmt
+              clippy
+              rust-analyzer
 
-                # protobuf
-                protobuf
-                buf
-                protoc-gen-prost
-                protoc-gen-tonic
-              ])
-              ++ [];
+              # protobuf
+              protobuf
+              buf
+              protoc-gen-prost
+              protoc-gen-tonic
+
+              # pkg-config
+              pkg-config
+
+              # clang
+              clang
+            ];
+
+            buildInputs = with pkgs; [
+              wayland
+              libglvnd
+              openssl
+              pipewire
+              llvmPackages.libclang
+            ];
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
           };
 
           packages = forAllSystems (
