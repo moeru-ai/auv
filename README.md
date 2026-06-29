@@ -142,10 +142,12 @@ reusable GUI operations.
 
 AUV is meant to work with coding agents and agent products such as:
 
-- Codex
-- Claude Code
-- Pi Agent
-- LobeHub
+- [Codex](https://chatgpt.com/codex/)
+- [Claude Code](https://claude.com/product/claude-code)
+- [Pi Agent](https://github.com/earendil-works/pi)
+- [LobeHub](https://github.com/lobehub/lobehub)
+- [Kimi CLI](https://www.kimi.com/code)
+- ... bring your own
 
 That means:
 
