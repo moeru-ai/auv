@@ -14,6 +14,7 @@ pub mod help;
 pub mod model;
 pub mod recorded;
 pub mod registry;
+pub mod summary;
 
 pub use arg::ArgSpec;
 pub use auv_cli_invoke_macros::invoke_command;
@@ -23,8 +24,12 @@ pub use command::{
 };
 pub use help::{render_command_help, render_help_index};
 pub use model::{ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
-pub use recorded::{invoke_recorded, invoke_recorded_in_span, invoke_resolved_recorded_in_span};
+pub use recorded::{
+  invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_session,
+  invoke_resolved_recorded_in_span,
+};
 pub use registry::{InvokeRegistry, default_registry};
+pub use summary::OperationSummarySource;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InvokeCliParse {

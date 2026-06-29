@@ -1,20 +1,44 @@
 use auv_tracing_driver::{
-  AuvResult, RecordingRun, RunFinish, RunRecordingBackend, RunSpec, RunType, SpanFinish, SpanRef,
-  TraceStatusCode, running_span_record, string_attr,
+  AuvResult, RecordingRun, RunFinish, RunRecordingBackend, RunSpec, RunType, SessionId, SpanFinish,
+  SpanRef, TraceStatusCode, running_span_record, string_attr,
 };
 
 use crate::{
   InvokeCommand, InvokeCommandInput, InvokeRegistry, InvokeRequest, InvokeResult, RunStatus,
 };
 
+/// Run a recorded command invoke under the default session.
+///
+/// The recorded invoke path owns the default `session_id` so CLI/MCP callers
+/// that have no session concept still produce a session-scoped run (see
+/// `docs/TERMS_AND_CONCEPTS.md`: every run carries a `session_id`; the runtime
+/// owns the default). Callers that can name a session use
+/// [`invoke_recorded_with_session`].
 pub fn invoke_recorded(
   recording: &RunRecordingBackend,
   registry: &InvokeRegistry,
   request: InvokeRequest,
 ) -> AuvResult<InvokeResult> {
+  invoke_recorded_with_session(recording, registry, request, SessionId::default_session())
+}
+
+/// Run a recorded command invoke and stamp `session` onto the recorded run.
+///
+/// This is the session-aware invoke seam: it threads an explicit caller-chosen
+/// `session_id` through the existing run/trace session plumbing
+/// (`RunSpec::with_session`) so a session-aware frontend can run invoke for a
+/// specific session instead of relying on the runtime default. The session
+/// applies only to the new run this entrypoint starts; the in-span variants
+/// inherit their session from the parent run they record under.
+pub fn invoke_recorded_with_session(
+  recording: &RunRecordingBackend,
+  registry: &InvokeRegistry,
+  request: InvokeRequest,
+  session: SessionId,
+) -> AuvResult<InvokeResult> {
   let mut run = recording
     .handle()
-    .start_run(RunSpec::new(RunType::Command, "auv.command"))?;
+    .start_run(RunSpec::new(RunType::Command, "auv.command").with_session(session))?;
   let root = run.root_span();
   let result = match invoke_recorded_in_span(recording, registry, &mut run, &root, request) {
     Ok(result) => result,
@@ -394,6 +418,74 @@ mod tests {
         .events
         .iter()
         .any(|event| event.span_id == command_span.span_id && event.name == "run.completed")
+    );
+
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_recorded_with_session_stamps_explicit_session_on_run() {
+    let (recording, store_root) = recording("explicit-session");
+    let registry = fixture_registry();
+
+    let result = super::invoke_recorded_with_session(
+      &recording,
+      &registry,
+      InvokeRequest {
+        command_id: FIXTURE_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      },
+      auv_tracing_driver::SessionId::new("session-p5"),
+    )
+    .expect("invoke should succeed");
+
+    let canonical = recording
+      .read_run(result.run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(
+      canonical
+        .run
+        .attributes
+        .get(auv_tracing_driver::RUN_ATTR_SESSION_ID)
+        .and_then(|value| value.as_str()),
+      Some("session-p5"),
+      "explicit session id should reach the recorded run"
+    );
+
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_recorded_stamps_default_session_on_run() {
+    let (recording, store_root) = recording("default-session");
+    let registry = fixture_registry();
+
+    let result = super::invoke_recorded(
+      &recording,
+      &registry,
+      InvokeRequest {
+        command_id: FIXTURE_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      },
+    )
+    .expect("invoke should succeed");
+
+    let default_session = auv_tracing_driver::SessionId::default_session();
+    let canonical = recording
+      .read_run(result.run_id.as_str())
+      .expect("run should persist");
+    assert_eq!(
+      canonical
+        .run
+        .attributes
+        .get(auv_tracing_driver::RUN_ATTR_SESSION_ID)
+        .and_then(|value| value.as_str()),
+      Some(default_session.as_str()),
+      "invoke_recorded should stamp the runtime default session when none is given"
     );
 
     let _ = fs::remove_dir_all(store_root);
