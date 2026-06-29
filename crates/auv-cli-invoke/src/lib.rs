@@ -262,7 +262,6 @@ mod tests {
       "display.list",
       "display.projectScreenshotPoint",
       "display.identifyPoint",
-      "display.probeCoordinateReadiness",
       "screen.captureRegion",
       "screen.findText",
       "screen.waitForText",

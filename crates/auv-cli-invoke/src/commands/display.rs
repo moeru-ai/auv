@@ -12,7 +12,6 @@ pub fn group() -> CommandGroup {
     .command(list_displays_invoke_command())
     .command(project_screenshot_point_invoke_command())
     .command(identify_point_invoke_command())
-    .command(probe_coordinate_readiness_invoke_command())
 }
 
 #[invoke_command(
@@ -71,22 +70,6 @@ fn identify_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   // TODO(invoke-display-typed-api): identifyPoint needs a typed display point
   // resolution API before this invoke command can replace root-driver routing.
   Err("display.identifyPoint requires a typed display API for point identification".to_string())
-}
-
-#[invoke_command(
-  id = "display.probeCoordinateReadiness",
-  group = "display",
-  summary = "Capture a screenshot and compare its pixels against the observed macOS coordinate space.",
-  args = NO_ARGS,
-)]
-fn probe_coordinate_readiness(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  // TODO(invoke-display-typed-api): probeCoordinateReadiness needs a typed
-  // coordinate-readiness probe API before this invoke command can replace
-  // root-driver routing.
-  Err(
-    "display.probeCoordinateReadiness requires a typed display API for coordinate readiness probing"
-      .to_string(),
-  )
 }
 
 #[cfg(target_os = "macos")]
@@ -287,10 +270,6 @@ mod tests {
       (
         "display.identifyPoint",
         identify_point as fn(InvokeCommandInput<'_>) -> InvokeCommandResult,
-      ),
-      (
-        "display.probeCoordinateReadiness",
-        probe_coordinate_readiness as fn(InvokeCommandInput<'_>) -> InvokeCommandResult,
       ),
       (
         "display.projectScreenshotPoint",

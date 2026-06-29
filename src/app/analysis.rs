@@ -36,12 +36,6 @@ use super::{
 };
 
 #[derive(Clone, Debug)]
-struct CoordinateReadinessReport {
-  ready_for_logical_input: bool,
-  reason: String,
-}
-
-#[derive(Clone, Debug)]
 struct WindowSnapshotAnalysis {
   observed_at: String,
   frontmost_app_name: String,
@@ -63,12 +57,6 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
       "Display probe data was incomplete: {error}. Display-relative projection remains provisional."
     ));
     default_display_snapshot()
-  });
-  let coordinate_readiness = parse_coordinate_readiness(probe).unwrap_or_else(|error| {
-    known_boundaries.push(format!(
-      "Coordinate-readiness probe data was incomplete: {error}. Logical-input alignment remains provisional."
-    ));
-    default_coordinate_readiness(error)
   });
   let window_snapshot = parse_window_snapshot(probe).unwrap_or_else(|error| {
     known_boundaries.push(format!(
@@ -196,15 +184,6 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
   );
 
   let mut control_notes = Vec::new();
-  control_notes.push(format!(
-    "coordinateReadiness={} ({})",
-    if coordinate_readiness.ready_for_logical_input {
-      "ready"
-    } else {
-      "not-ready"
-    },
-    coordinate_readiness.reason
-  ));
   if keyboard_first_surface == AssessmentStatus::Candidate {
     control_notes.push("AX snapshot exposed at least one text-input-like node; keyboard-first entry is a plausible candidate but still unvalidated.".to_string());
   }
@@ -284,12 +263,6 @@ pub(crate) fn build_app_analysis(probe_path: &Path, probe: &AppProbe) -> AuvResu
     known_boundaries.push(format!(
       "Screen Recording permission is {} instead of granted; screenshot/OCR evidence may be blocked or partial.",
       permission_state.screen_recording
-    ));
-  }
-  if !coordinate_readiness.ready_for_logical_input {
-    known_boundaries.push(format!(
-      "Coordinate readiness is not yet aligned for logical input: {}",
-      coordinate_readiness.reason
     ));
   }
   if ocr_snapshot.matches.is_empty() {
@@ -1003,23 +976,6 @@ fn parse_display_step(probe: &AppProbe) -> AuvResult<ObservedDisplaySnapshot> {
   })
 }
 
-fn parse_coordinate_readiness(probe: &AppProbe) -> AuvResult<CoordinateReadinessReport> {
-  let report = read_named_text_artifact(
-    probe,
-    "probe-coordinate-readiness",
-    Some("coordinate-readiness-report"),
-  )?;
-  Ok(CoordinateReadinessReport {
-    ready_for_logical_input: report_value(&report, "readyForLogicalInput=")
-      .unwrap_or("false")
-      .trim()
-      == "true",
-    reason: report_value(&report, "reason=")
-      .unwrap_or("unknown")
-      .to_string(),
-  })
-}
-
 fn parse_window_snapshot(probe: &AppProbe) -> AuvResult<WindowSnapshotAnalysis> {
   let report = read_named_text_artifact(probe, "list-windows", Some("window-list"))?;
   let windows = report
@@ -1070,13 +1026,6 @@ fn default_display_snapshot() -> ObservedDisplaySnapshot {
     },
     displays: Vec::new(),
     captured_at: String::new(),
-  }
-}
-
-fn default_coordinate_readiness(reason: String) -> CoordinateReadinessReport {
-  CoordinateReadinessReport {
-    ready_for_logical_input: false,
-    reason,
   }
 }
 

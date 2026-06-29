@@ -16,9 +16,6 @@ use auv_cli::contract::{
   VerificationResult,
 };
 use auv_cli::model::{InvokeRequest, RunStatus};
-use auv_cli::scroll_scan::{
-  ScanRegion, ScanTarget, ScanWindowRegionOptions, StopPolicy, scan_window_region,
-};
 use auv_cli::{build_default_runtime, build_runtime_with_store_root};
 use auv_tracing_driver::run_builder::RunSpec;
 use cli::{CliCommand, InspectClientOptions, help_text, parse_cli};
@@ -1316,42 +1313,6 @@ async fn run() -> Result<(), String> {
     CliCommand::McpServe => {
       unreachable!("mcp serve is handled before runtime setup")
     }
-    CliCommand::ScanWindowRegion {
-      target,
-      region,
-      max_pages,
-      max_scrolls,
-      direction,
-      scroll_amount,
-      settle_ms,
-      min_confidence,
-      max_observations,
-    } => {
-      let runtime = build_default_runtime(project_root.clone())?;
-      let region = parse_scan_region_arg(&region)?;
-      let run_id = scan_window_region(
-        &runtime,
-        ScanWindowRegionOptions {
-          target: ScanTarget {
-            application_id: Some(target),
-            window_title: None,
-            region,
-          },
-          stop_policy: StopPolicy::UntilEnd {
-            max_pages,
-            max_scrolls,
-            no_progress_limit: 2,
-          },
-          direction,
-          scroll_amount,
-          settle_ms,
-          min_confidence,
-          max_observations,
-        },
-      )?;
-      println!("runId: {run_id}");
-      println!("status: scanned");
-    }
   }
 
   Ok(())
@@ -2086,23 +2047,6 @@ fn parse_block_position(raw: &str) -> Result<auv_game_minecraft::BlockPosition, 
     .parse::<i32>()
     .map_err(|error| format!("invalid target block z: {error}"))?;
   Ok(auv_game_minecraft::BlockPosition::new(x, y, z))
-}
-
-fn parse_scan_region_arg(raw: &str) -> Result<ScanRegion, String> {
-  let values = raw
-    .split(',')
-    .map(|value| value.trim().parse::<f64>())
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|error| format!("invalid --region ratios: {error}"))?;
-  if values.len() != 4 {
-    return Err("--region must contain four comma-separated ratios".to_string());
-  }
-  Ok(ScanRegion {
-    left_ratio: values[0],
-    top_ratio: values[1],
-    right_ratio: values[2],
-    bottom_ratio: values[3],
-  })
 }
 
 #[derive(serde::Serialize)]

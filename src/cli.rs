@@ -238,19 +238,6 @@ pub enum CliCommand {
     write: InspectServeWriteOptions,
   },
   McpServe,
-  // REVIEW: `scan window-region` is the first public scan CLI surface; keep
-  // the name easy to revisit before treating scan terminology as stable.
-  ScanWindowRegion {
-    target: String,
-    region: String,
-    max_pages: usize,
-    max_scrolls: usize,
-    direction: String,
-    scroll_amount: f64,
-    settle_ms: u64,
-    min_confidence: f64,
-    max_observations: i64,
-  },
   XtaskGenerateSwiftBridge,
 }
 
@@ -301,7 +288,6 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "mcp" => parse_mcp(arguments),
     "invoke" => parse_invoke(arguments),
     "minecraft" => parse_minecraft(arguments),
-    "scan" => parse_scan(arguments),
     "skill" => {
       Err("skill commands have been removed; use app-local Rust commands instead".to_string())
     }
@@ -338,7 +324,6 @@ USAGE
   auv inspect <run-id>
   auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv mcp serve
-  auv scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]
 
 REFERENCE VERTICALS
   auv minecraft --help
@@ -2246,100 +2231,6 @@ fn parse_minecraft_live_click(arguments: &[String]) -> AuvResult<CliCommand> {
   })
 }
 
-fn parse_scan(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 2 || arguments[1] != "window-region" {
-    return Err("usage: auv scan window-region --target <application-id> --region <left,top,right,bottom> [--max-pages <n>]".to_string());
-  }
-
-  let mut target = None;
-  let mut region = None;
-  let mut max_pages = 5usize;
-  let mut max_scrolls = 4usize;
-  let mut direction = "down".to_string();
-  let mut scroll_amount = 6.0;
-  let mut settle_ms = 250u64;
-  let mut min_confidence = 0.0;
-  let mut max_observations = 128i64;
-
-  let mut index = 2;
-  while index < arguments.len() {
-    match arguments[index].as_str() {
-      "--target" => {
-        target = Some(required_flag_value(arguments, index, "--target")?);
-        index += 2;
-      }
-      "--region" => {
-        region = Some(required_flag_value(arguments, index, "--region")?);
-        index += 2;
-      }
-      "--max-pages" => {
-        max_pages = required_flag_value(arguments, index, "--max-pages")?
-          .parse::<usize>()
-          .map_err(|error| format!("invalid --max-pages: {error}"))?;
-        if max_pages == 0 {
-          return Err("--max-pages must be greater than 0".to_string());
-        }
-        index += 2;
-      }
-      "--max-scrolls" => {
-        max_scrolls = required_flag_value(arguments, index, "--max-scrolls")?
-          .parse::<usize>()
-          .map_err(|error| format!("invalid --max-scrolls: {error}"))?;
-        index += 2;
-      }
-      "--direction" => {
-        direction = required_flag_value(arguments, index, "--direction")?;
-        index += 2;
-      }
-      "--scroll-amount" => {
-        scroll_amount = required_flag_value(arguments, index, "--scroll-amount")?
-          .parse::<f64>()
-          .map_err(|error| format!("invalid --scroll-amount: {error}"))?;
-        index += 2;
-      }
-      "--settle-ms" => {
-        settle_ms = required_flag_value(arguments, index, "--settle-ms")?
-          .parse::<u64>()
-          .map_err(|error| format!("invalid --settle-ms: {error}"))?;
-        index += 2;
-      }
-      "--min-confidence" => {
-        min_confidence = required_flag_value(arguments, index, "--min-confidence")?
-          .parse::<f64>()
-          .map_err(|error| format!("invalid --min-confidence: {error}"))?;
-        index += 2;
-      }
-      "--max-observations" => {
-        max_observations = required_flag_value(arguments, index, "--max-observations")?
-          .parse::<i64>()
-          .map_err(|error| format!("invalid --max-observations: {error}"))?;
-        index += 2;
-      }
-      "--per-page-after-observe-recipe"
-      | "--per-list-item-candidate-recipe"
-      | "--on-stop-candidate-recipe" => {
-        return Err(
-          "scan recipe hooks have been removed; typed interaction hooks will replace them"
-            .to_string(),
-        );
-      }
-      other => return Err(format!("unexpected scan window-region argument {other}")),
-    }
-  }
-
-  Ok(CliCommand::ScanWindowRegion {
-    target: target.ok_or_else(|| "--target is required".to_string())?,
-    region: region.ok_or_else(|| "--region is required".to_string())?,
-    max_pages,
-    max_scrolls,
-    direction,
-    scroll_amount,
-    settle_ms,
-    min_confidence,
-    max_observations,
-  })
-}
-
 fn parse_mcp(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() != 2 || arguments[1].as_str() != "serve" {
     return Err("usage: auv mcp serve".to_string());
@@ -2427,7 +2318,6 @@ mod tests {
       "auv inspect <run-id>",
       "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]",
       "auv mcp serve",
-      "auv scan window-region --target <application-id> --region <left,top,right,bottom> [--direction up|down|left|right] [--max-pages <n>] [--max-scrolls <n>]",
     ] {
       assert!(
         help.contains(expected),
@@ -2484,74 +2374,12 @@ mod tests {
   }
 
   #[test]
-  fn parse_scan_window_region_command() {
-    let command = parse_cli(&[
-      "scan".to_string(),
-      "window-region".to_string(),
-      "--target".to_string(),
-      "com.example.App".to_string(),
-      "--region".to_string(),
-      "0.1,0.2,0.9,0.8".to_string(),
-      "--max-pages".to_string(),
-      "3".to_string(),
-    ])
-    .expect("scan window-region command should parse");
+  fn scan_command_is_removed() {
+    let error = parse_cli(&["scan".to_string()]).expect_err("scan should be removed");
+    assert!(error.contains("unknown subcommand scan"));
 
-    match command {
-      CliCommand::ScanWindowRegion {
-        target,
-        region,
-        max_pages,
-        ..
-      } => {
-        assert_eq!(target, "com.example.App");
-        assert_eq!(region, "0.1,0.2,0.9,0.8");
-        assert_eq!(max_pages, 3);
-      }
-      other => panic!("unexpected command: {other:?}"),
-    }
-  }
-
-  #[test]
-  fn parse_scan_window_region_rejects_recipe_hooks() {
-    for flag in [
-      "--per-page-after-observe-recipe",
-      "--per-list-item-candidate-recipe",
-      "--on-stop-candidate-recipe",
-    ] {
-      let args = vec![
-        "scan".to_string(),
-        "window-region".to_string(),
-        "--target".to_string(),
-        "com.example.App".to_string(),
-        "--region".to_string(),
-        "0,0,1,1".to_string(),
-        flag.to_string(),
-        "recipes/scan/list-item-candidate-continue-hook.v0.json".to_string(),
-      ];
-      let error = parse_cli(&args).expect_err("recipe hook flags should be removed");
-      assert!(
-        error.contains("scan recipe hooks have been removed"),
-        "unexpected error for {flag}: {error}"
-      );
-    }
-  }
-
-  #[test]
-  fn parse_scan_window_region_rejects_zero_max_pages() {
-    let error = parse_cli(&[
-      "scan".to_string(),
-      "window-region".to_string(),
-      "--target".to_string(),
-      "com.example.App".to_string(),
-      "--region".to_string(),
-      "0.1,0.2,0.9,0.8".to_string(),
-      "--max-pages".to_string(),
-      "0".to_string(),
-    ])
-    .expect_err("zero max pages should fail");
-
-    assert!(error.contains("--max-pages must be greater than 0"));
+    let help = help_text();
+    assert!(!help.contains("auv scan"));
   }
 
   #[test]

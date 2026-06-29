@@ -196,16 +196,6 @@ pub struct ObservedAxTreeSnapshot {
   pub nodes: Vec<ObservedAxNode>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct CoordinateReadinessAssessment {
-  pub ready_for_logical_input: bool,
-  pub matches_main_logical: bool,
-  pub matches_main_physical: bool,
-  pub matches_combined_logical: bool,
-  pub likely_retina_backing_mismatch: bool,
-  pub reason: String,
-}
-
 pub fn compute_combined_bounds(displays: &[ObservedDisplay]) -> ObservedRect {
   let min_x = displays
     .iter()
