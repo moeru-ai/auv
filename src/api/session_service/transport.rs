@@ -229,7 +229,7 @@ pub async fn bind_session_api(
   Ok((listener, local_address))
 }
 
-async fn serve_on_listener(
+pub(crate) async fn serve_on_listener(
   listener: TcpListener,
   local_address: SocketAddr,
   store_root: std::path::PathBuf,

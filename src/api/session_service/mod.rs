@@ -25,6 +25,9 @@ pub mod summary_store;
 pub mod transport;
 
 #[cfg(test)]
+mod client_smoke;
+
+#[cfg(test)]
 pub(crate) mod test_fixtures;
 
 use std::fmt;
