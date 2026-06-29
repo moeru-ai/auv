@@ -2,11 +2,6 @@
 
 [![License](https://badgen.net/github/license/moeru-ai/auv)](LICENSE.md)
 
-
-> [!NOTE]
->
-> This project is part of the [Project AIRI](https://github.com/moeru-ai/airi) ecosystem.
-
 AUV means **Application Use Via ...**.
 
 - Apple Music Application Use Via [`auv-apple-music`](https://github.com/moeru-ai/auv/tree/main/crates/auv-apple-music)...
@@ -280,6 +275,12 @@ auv inspect <run-id>
 Use `docs/TERMS_AND_CONCEPTS.md` for shared vocabulary. Durable design and
 evidence notes live under `docs/ai/references/`.
 
+## Related
+
+> [!NOTE]
+>
+> This project is part of the [Project AIRI](https://github.com/moeru-ai/airi) ecosystem.
+
 ## Acknowledgements
 
 - [MaaFramework](https://github.com/MaaXYZ/MaaFramework)
@@ -289,6 +290,24 @@ evidence notes live under `docs/ai/references/`.
 - [WebDriver](https://developer.mozilla.org/en-US/docs/Web/WebDriver)
 - [Appium](https://github.com/appium/appium-mac2-driver)
 - [OpenBridge](https://github.com/AFK-surf/OpenBridge)
+
+## Special Thanks
+
+Special thanks to all contributors for their contributions to auv ❤️
+
+<a href="https://github.com/moeru-ai/auv/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=moeru-ai/auv" />
+</a>
+
+## Star History
+
+<a href="https://star-history.com/#moeru-ai/auv&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=moeru-ai/auv&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=moeru-ai/auv&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=moeru-ai/auv&type=Date" />
+  </picture>
+</a>
 
 ## License
 
