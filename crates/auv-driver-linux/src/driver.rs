@@ -1,0 +1,72 @@
+use auv_driver::{Driver, DriverDescriptor, DriverResult, DriverSession};
+
+use crate::descriptor::{LinuxDriverDescriptor, linux_driver_descriptor};
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LinuxDriver;
+
+impl LinuxDriver {
+  pub fn new() -> Self {
+    Self
+  }
+
+  pub fn linux_descriptor(&self) -> LinuxDriverDescriptor {
+    linux_driver_descriptor()
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LinuxDriverSession {
+  pub(crate) _private: (),
+}
+
+impl LinuxDriverSession {
+  pub fn linux_descriptor(&self) -> LinuxDriverDescriptor {
+    linux_driver_descriptor()
+  }
+}
+
+impl Driver for LinuxDriver {
+  type Session = LinuxDriverSession;
+
+  fn descriptor(&self) -> DriverDescriptor {
+    self.linux_descriptor().as_driver_descriptor()
+  }
+
+  fn open_local(&self) -> DriverResult<Self::Session> {
+    Ok(LinuxDriverSession { _private: () })
+  }
+}
+
+impl DriverSession for LinuxDriverSession {
+  fn descriptor(&self) -> DriverDescriptor {
+    self.linux_descriptor().as_driver_descriptor()
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use auv_driver::{Driver, DriverSession, PlatformKind};
+
+  use crate::LinuxDriver;
+
+  #[test]
+  fn descriptor_uses_desktop_namespace() {
+    let descriptor = LinuxDriver::new().linux_descriptor();
+
+    assert_eq!(descriptor.id, "linux.desktop");
+    assert_eq!(descriptor.platform, PlatformKind::Linux);
+  }
+
+  #[test]
+  fn session_exposes_driver_descriptor() {
+    let driver = LinuxDriver::new();
+    let session = driver.open_local().expect("session should open");
+
+    assert_eq!(session.linux_descriptor(), driver.linux_descriptor());
+    assert_eq!(
+      DriverSession::descriptor(&session),
+      driver.linux_descriptor().as_driver_descriptor()
+    );
+  }
+}
