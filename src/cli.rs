@@ -3424,7 +3424,7 @@ mod tests {
       "minecraft".to_string(),
       "prepare-texture-sweep".to_string(),
       "--sidecar-run-dir".to_string(),
-      "sidecar/minecraft-telemetry/run".to_string(),
+      "devtools/auv-game-minecraft/run".to_string(),
       "--output-dir".to_string(),
       ".tmp-mc6-prep".to_string(),
     ])
@@ -3436,7 +3436,7 @@ mod tests {
         output_dir,
         ..
       } => {
-        assert_eq!(sidecar_run_dir, "sidecar/minecraft-telemetry/run");
+        assert_eq!(sidecar_run_dir, "devtools/auv-game-minecraft/run");
         assert_eq!(output_dir, ".tmp-mc6-prep");
       }
       other => panic!("unexpected command: {other:?}"),

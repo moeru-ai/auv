@@ -137,7 +137,7 @@ closure:
 
 ```bash
 auv-cli minecraft prepare-texture-sweep \
-  --sidecar-run-dir sidecar/minecraft-telemetry/run \
+  --sidecar-run-dir devtools/auv-game-minecraft/run \
   --output-dir .tmp-mc6-prep
 ```
 
@@ -145,9 +145,9 @@ This creates local ignored resource-pack folders for the three required texture
 profiles:
 
 ```text
-sidecar/minecraft-telemetry/run/resourcepacks/auv-mc6-rich
-sidecar/minecraft-telemetry/run/resourcepacks/auv-mc6-flat-color
-sidecar/minecraft-telemetry/run/resourcepacks/auv-mc6-repetitive
+devtools/auv-game-minecraft/run/resourcepacks/auv-mc6-rich
+devtools/auv-game-minecraft/run/resourcepacks/auv-mc6-flat-color
+devtools/auv-game-minecraft/run/resourcepacks/auv-mc6-repetitive
 ```
 
 The command also writes `mc6-texture-sweep-prep.json` and

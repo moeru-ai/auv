@@ -46,14 +46,14 @@ Recent wording / bug-fix commits that tightened boundary claims:
 
 ### What is already true
 
-- A sidecar tree exists at `sidecar/minecraft-telemetry/`.
+- A sidecar tree exists at `devtools/auv-game-minecraft/`.
 - The lane already documents append-only JSONL as the intended first persistence shape.
 - The MC-2/MC-3/MC-4 handoff records that the sidecar tree is buildable and includes a telemetry writer shape.
-- A **real running-client telemetry sample now exists and was imported as a durable run artifact.** The dev client (`./gradlew runClient`) was run live and produced `sidecar/minecraft-telemetry/run/auv/telemetry.jsonl`, which was imported through the committed runtime artifact seam (`2407d90 feat(runtime): record mc-1 telemetry sample artifact`) and persisted under the local run store. This closes the MC-1 "a real running-client sample exists as durable evidence" gap.
+- A **real running-client telemetry sample now exists and was imported as a durable run artifact.** The dev client (`./gradlew runClient`) was run live and produced `devtools/auv-game-minecraft/run/auv/telemetry.jsonl`, which was imported through the committed runtime artifact seam (`2407d90 feat(runtime): record mc-1 telemetry sample artifact`) and persisted under the local run store. This closes the MC-1 "a real running-client sample exists as durable evidence" gap.
 
 ### MC-1 real-sample closure evidence
 
-- **Source sample**: `sidecar/minecraft-telemetry/run/auv/telemetry.jsonl` (produced by a live `runClient` session, which exited cleanly).
+- **Source sample**: `devtools/auv-game-minecraft/run/auv/telemetry.jsonl` (produced by a live `runClient` session, which exited cleanly).
 - **Import run id**: `run_1781537928075_75501_0`
 - **Artifact id**: `artifact_0001`
 - **Durable artifact path**: `.auv/runs/run_1781537928075_75501_0/artifacts/artifact_0001_telemetry.jsonl` — **local-only / gitignored** via `.gitignore` `.auv/`; this sample is durable on disk, not committed to the repo.
@@ -71,7 +71,7 @@ MC-1's real-sample / durable-evidence gap is **closed**. The remaining Minecraft
 
 ### Most relevant files for the next MC-1 slice
 
-- `sidecar/minecraft-telemetry/`
+- `devtools/auv-game-minecraft/`
 - `src/run_builder.rs`
 - `src/model.rs`
 - `src/inspect.rs`
@@ -222,4 +222,4 @@ If continuing from the completed read-side closure, inspect these first:
 - `src/candidate_action_decision.rs`
 - `crates/auv-game-minecraft/src/projection.rs`
 - `crates/auv-game-minecraft/src/artifact.rs`
-- `sidecar/minecraft-telemetry/`
+- `devtools/auv-game-minecraft/`

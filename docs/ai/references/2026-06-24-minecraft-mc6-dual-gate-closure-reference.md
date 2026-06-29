@@ -153,7 +153,7 @@ Closed live completeness set:
 
 Live runbook rules:
 
-- switch profiles through `sidecar/minecraft-telemetry/run/options.txt`
+- switch profiles through `devtools/auv-game-minecraft/run/options.txt`
 - restart the Minecraft client between profiles so each profile gets a fresh
   `telemetry_session_id`
 - keep `accepted-early` and `accepted-late` in the same

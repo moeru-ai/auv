@@ -81,7 +81,7 @@ source) but is **not** the P0 camera source and **not** required for P0.
 
 ```text
 NEW (this lane)
-  sidecar/minecraft-telemetry/        Fabric mod (Java) — read-only telemetry. External to the Rust workspace.
+  devtools/auv-game-minecraft/        Fabric mod (Java) — read-only telemetry. External to the Rust workspace.
   crates/auv-game-minecraft/          NEW vertical crate (mirrors crates/auv-game-osu): sidecar client,
                                       SpatialFrame, projection math, overlay artifact, P0 task harness,
                                       verification-against-sidecar, the minecraft.* skills.

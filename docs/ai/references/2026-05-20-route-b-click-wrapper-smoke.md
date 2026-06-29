@@ -22,7 +22,7 @@ field, or trace integration.
 
 ## Scope
 
-Added a local-only Swift smoke script:
+Added a local-only Swift smoke script, retired with `scripts/local/`:
 
 ```text
 scripts/local/route-b-click-wrapper-smoke.swift
@@ -41,6 +41,7 @@ user's current application. It intentionally does not:
 ## Smoke Command
 
 ```bash
+# Retired local-only script; kept here as historical command evidence.
 swift scripts/local/route-b-click-wrapper-smoke.swift \
   --delta-x 420 \
   --delta-y 0 \

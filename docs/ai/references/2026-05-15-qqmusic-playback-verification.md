@@ -26,7 +26,8 @@ The current validated chain is:
 7. run OCR over the captured evidence image
 8. verify the player-title region contains `Cure For Me - AURORA`
 
-The first practical wrapper for this baseline is:
+The first practical wrapper for this baseline was a retired `scripts/local/`
+helper:
 
 ```bash
 ./scripts/local/qqmusic-play-visible-anchor.sh aa "Cure For Me" "Cure For Me - AURORA"

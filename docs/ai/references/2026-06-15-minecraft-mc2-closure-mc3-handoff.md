@@ -124,7 +124,7 @@ Explicitly not implemented in this MC-4 crate-local closure:
 ## MC-1 telemetry gate status
 
 The repo now also contains the first real **MC-1 telemetry mod build gate** under:
-- `sidecar/minecraft-telemetry/`
+- `devtools/auv-game-minecraft/`
 
 Implemented there:
 - Fabric mod skeleton and metadata
@@ -149,7 +149,7 @@ Passed locally:
 - `cargo check -p auv-game-minecraft`
 - `cargo test -p auv-game-minecraft`
 - `git diff --check`
-- `JAVA_HOME=/Users/liuziheng/Library/Java/JavaVirtualMachines/zulu-21.0.9-arm64.jdk/Contents/Home sidecar/minecraft-telemetry/gradlew -p sidecar/minecraft-telemetry build`
+- `JAVA_HOME=/Users/liuziheng/Library/Java/JavaVirtualMachines/zulu-21.0.9-arm64.jdk/Contents/Home devtools/auv-game-minecraft/gradlew -p devtools/auv-game-minecraft build`
 
 Not done in these slices:
 - no real-frame smoke
@@ -231,7 +231,7 @@ Local branch now contains, in order:
 
 At the moment of writing this handoff, the working tree is expected to contain:
 - this handoff doc update
-- the uncommitted `sidecar/minecraft-telemetry/` MC-1 telemetry mod tree, if it has not yet been committed in a later slice
+- the uncommitted `devtools/auv-game-minecraft/` MC-1 telemetry mod tree, if it has not yet been committed in a later slice
 
 ## Next-slice recommendation
 

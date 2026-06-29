@@ -285,7 +285,7 @@ Current repository facts:
   `ax_tree`, `capture`, `control`, `descriptor`, `dispatch`, `observe`,
   `overlay`, `native`, `support`, and `types`.
 - The macOS Swift package is real. Generated `swift-bridge` files are ignored;
-  `hack/generate-swift-bridge` exists for SourceKit/IDE indexing before running
+  `scripts/generate-swift-bridge` exists for SourceKit/IDE indexing before running
   SwiftPM-side checks.
 - `default_driver_registry()` registers both the fixture driver and the macOS
   desktop driver today.

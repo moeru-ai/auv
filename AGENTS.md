@@ -410,7 +410,7 @@ Use this root-cause block format in regression tests when relevant:
   SwiftPM creates the skeleton.
 - The macOS Swift packages use generated `swift-bridge` types that are produced
   by Cargo during the real build.
-- For SourceKit or IDE indexing, run `hack/generate-swift-bridge` to generate
+- For SourceKit or IDE indexing, run `scripts/generate-swift-bridge` to generate
   ignored files under:
   - `crates/auv-driver-macos/native/swift/Sources/AuvMacosNative/Generated/`
   - `crates/auv-overlay-macos/native/swift/Sources/AuvMacosOverlayNative/Generated/`
@@ -423,7 +423,7 @@ Use this root-cause block format in regression tests when relevant:
   - `crates/auv-driver-macos/src/native/binding.rs`
   - `crates/auv-overlay-macos/src/native/binding.rs`
 - When a change touches Rust/Swift FFI declarations or Swift native source
-  files, rerun `hack/generate-swift-bridge` before validating.
+  files, rerun `scripts/generate-swift-bridge` before validating.
 - Run the SwiftPM build for every touched Swift package.
 - Treat SwiftPM and SourceKit errors as real compatibility issues even when
   `cargo check` succeeds.
@@ -504,4 +504,4 @@ Use this root-cause block format in regression tests when relevant:
 - `cargo check`
 - `cargo test`
 - `git diff --check`
-- `cargo run --quiet -- list-commands`
+- `cargo run --quiet -- invoke --help`

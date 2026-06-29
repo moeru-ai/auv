@@ -215,7 +215,7 @@ cargo test -q inspect_server --lib
 cargo test -q parse_candidate_action_run_command --bin auv-cli
 cargo test -q native_human_approval_status_labels_are_stable -p auv-driver-macos
 cargo test -q execution_consent_cannot_be_reused_for_another_execution_id --lib
-hack/generate-swift-bridge
+scripts/generate-swift-bridge
 cargo check -q
 swift build    # crates/auv-driver-macos/native/swift
 cargo fmt --check

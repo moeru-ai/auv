@@ -252,7 +252,7 @@ fn render_runbook(manifest: &TextureSweepPreparationManifest) -> String {
   let mut output = String::new();
   output.push_str("# MC-6 texture sweep runbook\n\n");
   output.push_str("This is a preparation artifact. It does not prove MC-6 closure.\n\n");
-  output.push_str("For each profile, set `sidecar/minecraft-telemetry/run/options.txt` to the listed `resourcePacks` value, launch the Fabric client manually, collect at least 30 seconds of in-game telemetry, and exercise at least one refusal frame before exporting the source run.\n\n");
+  output.push_str("For each profile, set `devtools/auv-game-minecraft/run/options.txt` to the listed `resourcePacks` value, launch the Fabric client manually, collect at least 30 seconds of in-game telemetry, and exercise at least one refusal frame before exporting the source run.\n\n");
   for step in &manifest.live_run_sequence {
     output.push_str(&format!(
       "- `{}`: `resourcePacks:{}`; expect telemetry id `{}`.\n",

@@ -92,7 +92,7 @@ and recovery hints are not collapsed into a generic unsupported error.
 - `cargo test -p auv-driver`
 - `cargo test -p auv-driver-macos`
 - `cargo check`
-- `hack/generate-swift-bridge`
+- `scripts/generate-swift-bridge`
 - `swift build` in `crates/auv-driver-macos/native/swift`
 - `git diff --check`
 

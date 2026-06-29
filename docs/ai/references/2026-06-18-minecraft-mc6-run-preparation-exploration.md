@@ -99,7 +99,7 @@ until a future owner decision reopens its live K-pack sweep.
 
 ## Sidecar state checked
 
-Checked `sidecar/minecraft-telemetry/run/auv/telemetry.jsonl`:
+Checked `devtools/auv-game-minecraft/run/auv/telemetry.jsonl`:
 
 - It exists and had 1333 lines at exploration time.
 - The tail was menu-state frames with `screen_state: "menu"`.
@@ -107,8 +107,8 @@ Checked `sidecar/minecraft-telemetry/run/auv/telemetry.jsonl`:
 
 Checked sidecar run config:
 
-- `sidecar/minecraft-telemetry/run/resourcepacks/` existed but was empty.
-- `sidecar/minecraft-telemetry/run/options.txt` contained
+- `devtools/auv-game-minecraft/run/resourcepacks/` existed but was empty.
+- `devtools/auv-game-minecraft/run/options.txt` contained
   `resourcePacks:["fabric"]`.
 - No reusable resource-pack zips were found under the sidecar run directory.
 
@@ -135,8 +135,8 @@ Relevant files:
 - `src/cli.rs`
 - `src/main.rs`
 - `src/minecraft.rs`
-- `sidecar/minecraft-telemetry/src/main/java/ai/moeru/auv/minecraft/telemetry/TelemetryRecorder.java`
-- `sidecar/minecraft-telemetry/src/main/java/ai/moeru/auv/minecraft/telemetry/TelemetrySample.java`
+- `devtools/auv-game-minecraft/src/main/java/ai/moeru/auv/minecraft/telemetry/TelemetryRecorder.java`
+- `devtools/auv-game-minecraft/src/main/java/ai/moeru/auv/minecraft/telemetry/TelemetrySample.java`
 
 Important shape:
 
@@ -180,7 +180,7 @@ Implemented command surfaces:
 
 ```text
 auv-cli minecraft prepare-texture-sweep \
-  --sidecar-run-dir sidecar/minecraft-telemetry/run \
+  --sidecar-run-dir devtools/auv-game-minecraft/run \
   --output-dir .tmp-mc6-prep
 
 auv-cli minecraft build-texture-sweep-samples \
@@ -191,7 +191,7 @@ auv-cli minecraft build-texture-sweep-samples \
 ```
 
 The first command creates/refreshes ignored local packs under
-`sidecar/minecraft-telemetry/run/resourcepacks/` and writes an auditable manifest
+`devtools/auv-game-minecraft/run/resourcepacks/` and writes an auditable manifest
 plus runbook under the requested output directory. The second command reads real
 bundle manifests and copied `minecraft-spatial-frame` artifacts, then writes
 `TextureSweepSampleSet` with generator `mc6.bundle-texture-sweep` and source
