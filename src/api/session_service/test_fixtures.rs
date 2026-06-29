@@ -155,16 +155,19 @@ pub fn fixture_observe_operation(run_id: &str) -> OperationResult {
 pub fn music_runtime_summary(run_id: &str) -> OperationSummary {
   let mut signals = std::collections::BTreeMap::new();
   signals.insert("now_playing".to_string(), "track-x".to_string());
-  OperationSummary::capture(&InvokeResult {
-    run_id: run_id.to_string(),
-    producer_span_id: SpanId::new("0000000000000001"),
-    status: RunStatus::Completed,
-    output_summary: "did the thing".to_string(),
-    signals,
-    artifacts: Vec::new(),
-    artifact_paths: Vec::new(),
-    failure_message: None,
-  })
+  OperationSummary::capture(
+    &InvokeResult {
+      run_id: run_id.to_string(),
+      producer_span_id: SpanId::new("0000000000000001"),
+      status: RunStatus::Completed,
+      output_summary: "did the thing".to_string(),
+      signals,
+      artifacts: Vec::new(),
+      artifact_paths: Vec::new(),
+      failure_message: None,
+    },
+    "music.search",
+  )
 }
 
 pub fn fixture_observe_invoke_result(run_id: &str) -> InvokeResult {

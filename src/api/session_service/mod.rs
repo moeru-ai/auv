@@ -6,7 +6,7 @@
 //! Modules:
 //! - `registry`: lightweight in-memory session registry (API-P4 responsibility A).
 //! - `mapper`: proto <-> host mapping, isolated from handler code (API-P4 checklist).
-//! - `summary`: two-source `GetOperation` read path + join policy (API-P7).
+//! - `summary`: two-source `GetOperation` read path + join policy (API-P7/P12).
 //! - `summary_store`: persisted `operation-summary` write path (API-P11).
 //! - `handler`: transport-agnostic handler skeleton wiring proto RPCs to the
 //!   internal seams (API-P8).
@@ -46,6 +46,12 @@ pub enum SessionApiError {
   RunNotFound(String),
   /// The run exists but recorded no persisted `OperationResult` artifact.
   PersistedOperationRequired(String),
+  /// `GetOperation` request `operation_id` does not match the resolved wire id.
+  OperationIdMismatch {
+    run_id: String,
+    requested: String,
+    resolved: String,
+  },
   /// A seam this RPC depends on is not wired in the current skeleton.
   NotWired { gate: &'static str },
 }
@@ -62,6 +68,14 @@ impl fmt::Display for SessionApiError {
       Self::PersistedOperationRequired(run_id) => {
         write!(f, "no persisted operation result for run: {run_id}")
       }
+      Self::OperationIdMismatch {
+        run_id,
+        requested,
+        resolved,
+      } => write!(
+        f,
+        "operation_id mismatch for run {run_id}: requested {requested}, resolved {resolved}"
+      ),
       Self::NotWired { gate } => write!(f, "session API seam not wired: {gate}"),
     }
   }

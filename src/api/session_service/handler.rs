@@ -127,7 +127,7 @@ impl SessionApiHandler {
     result: &auv_cli_invoke::InvokeResult,
     recording: &RunRecordingBackend,
   ) -> proto::InvokeResponse {
-    let summary = OperationSummary::capture(result);
+    let summary = OperationSummary::capture(result, command_id);
     // NOTICE(api-p11-invoke-partial-success): invoke already finished; summary
     // persistence failure must not surface as an invoke error (clients must not
     // blind-retry non-idempotent commands). Durability gaps go to known_limits.
@@ -158,7 +158,8 @@ impl SessionApiHandler {
     let operation = request
       .operation
       .ok_or(SessionApiError::MissingField("operation"))?;
-    let run_id = operation.run_id;
+    let run_id = operation.run_id.clone();
+    let requested_operation_id = operation.operation_id;
 
     let runtime_summary = {
       let summaries = self.summaries.lock().expect("summary cache mutex poisoned");
@@ -166,13 +167,30 @@ impl SessionApiHandler {
     };
 
     let store = self.open_store()?;
-    let runtime = runtime_summary
-      .as_ref()
-      .map(|summary| summary as &dyn auv_cli_invoke::OperationSummarySource);
-    match load_joined_operation_summary(&store, &run_id, runtime)
+    let local_override = runtime_summary.as_ref();
+    match load_joined_operation_summary(&store, &run_id, local_override)
       .map_err(SessionApiError::Storage)?
     {
       JoinedOperationSummaryLoad::Found(joined) => {
+        if !requested_operation_id.is_empty() {
+          match &joined.command_id {
+            Some(resolved) if resolved != &requested_operation_id => {
+              return Err(SessionApiError::OperationIdMismatch {
+                run_id,
+                requested: requested_operation_id,
+                resolved: resolved.clone(),
+              });
+            }
+            None => {
+              return Err(SessionApiError::OperationIdMismatch {
+                run_id,
+                requested: requested_operation_id,
+                resolved: String::new(),
+              });
+            }
+            _ => {}
+          }
+        }
         Ok(mapper::joined_to_get_operation_response(&joined))
       }
       JoinedOperationSummaryLoad::RunNotFound => Err(SessionApiError::RunNotFound(run_id)),
@@ -358,7 +376,7 @@ mod tests {
     );
     let operation_ref = response.operation.expect("operation ref");
     assert_eq!(operation_ref.run_id, run_id);
-    assert_eq!(operation_ref.operation_id, "music.search.results");
+    assert_eq!(operation_ref.operation_id, "music.search");
 
     let _ = std::fs::remove_dir_all(root);
   }
@@ -478,6 +496,73 @@ mod tests {
       .permissions();
     cleanup_permissions.set_mode(0o700);
     let _ = std::fs::set_permissions(&run_dir, cleanup_permissions);
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn get_operation_emits_command_id_not_domain_operation_id() {
+    use crate::api::session_service::test_fixtures::{
+      music_runtime_summary, music_search_operation, persist_operation_result_on_store,
+      unique_temp_dir,
+    };
+
+    let root = unique_temp_dir("session-api-p12-cmd-id");
+    let handler = SessionApiHandler::new(root.clone());
+    let run_id = "run-p12-cmd";
+    let store = handler.open_store().expect("open store");
+    persist_operation_result_on_store(&store, &root, run_id, &music_search_operation(run_id));
+    handler
+      .summaries
+      .lock()
+      .expect("summary cache mutex poisoned")
+      .record(music_runtime_summary(run_id));
+
+    let response = handler
+      .get_operation(proto::GetOperationRequest {
+        operation: Some(proto::OperationRef {
+          run_id: run_id.to_string(),
+          operation_id: String::new(),
+        }),
+      })
+      .expect("get_operation");
+
+    assert_eq!(
+      response.operation.expect("operation ref").operation_id,
+      "music.search"
+    );
+
+    let _ = std::fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn get_operation_rejects_operation_id_mismatch() {
+    use crate::api::session_service::test_fixtures::{
+      music_runtime_summary, music_search_operation, persist_operation_result_on_store,
+      unique_temp_dir,
+    };
+
+    let root = unique_temp_dir("session-api-p12-mismatch");
+    let handler = SessionApiHandler::new(root.clone());
+    let run_id = "run-p12-mismatch";
+    let store = handler.open_store().expect("open store");
+    persist_operation_result_on_store(&store, &root, run_id, &music_search_operation(run_id));
+    handler
+      .summaries
+      .lock()
+      .expect("summary cache mutex poisoned")
+      .record(music_runtime_summary(run_id));
+
+    let error = handler
+      .get_operation(proto::GetOperationRequest {
+        operation: Some(proto::OperationRef {
+          run_id: run_id.to_string(),
+          operation_id: "wrong.command".to_string(),
+        }),
+      })
+      .expect_err("mismatch");
+
+    assert!(matches!(error, SessionApiError::OperationIdMismatch { .. }));
+
     let _ = std::fs::remove_dir_all(root);
   }
 

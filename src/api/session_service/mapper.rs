@@ -11,7 +11,9 @@ use auv_cli_invoke::{
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 
 use crate::api::session_service::SessionApiError;
-use crate::api::session_service::summary::JoinedOperationSummary;
+use crate::api::session_service::summary::{
+  ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT, JoinedOperationSummary,
+};
 use crate::contract::{ArtifactRef as ContractArtifactRef, OperationStatus};
 
 /// Status string shared by `InvokeResponse` and `GetOperationResponse`
@@ -74,10 +76,8 @@ pub fn decode_invoke_payload(
   })
 }
 
-// NOTICE(api-p3-od4): proto ArtifactRef requires `role`. The invoke-path record
-// (ArtifactRecordV1Alpha1) carries `role`; the persisted `contract::ArtifactRef`
-// does NOT. This mapper fills `role` from the record on the invoke path and
-// leaves it empty for persisted refs until the role-source rule is resolved.
+// NOTICE(api-p3-od4): resolved in API-P12 — invoke path uses ArtifactRecordV1Alpha1;
+// GetOperation joins contract refs against the run artifact catalog.
 fn artifact_ref_from_record(run_id: &str, record: &ArtifactRecordV1Alpha1) -> proto::ArtifactRef {
   proto::ArtifactRef {
     run_id: run_id.to_string(),
@@ -86,12 +86,25 @@ fn artifact_ref_from_record(run_id: &str, record: &ArtifactRecordV1Alpha1) -> pr
   }
 }
 
-fn artifact_ref_from_contract(artifact: &ContractArtifactRef) -> proto::ArtifactRef {
+// API-P12: role on GetOperation comes from the run artifact catalog keyed by
+// artifact_id; contract::ArtifactRef stays slim (reference-only).
+fn artifact_ref_from_contract(
+  artifact: &ContractArtifactRef,
+  artifact_roles: &BTreeMap<String, String>,
+  known_limits: &mut Vec<String>,
+) -> proto::ArtifactRef {
+  let artifact_id = artifact.artifact_id.as_str().to_string();
+  let role = artifact_roles
+    .get(&artifact_id)
+    .cloned()
+    .unwrap_or_default();
+  if role.is_empty() {
+    known_limits.push(ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT.to_string());
+  }
   proto::ArtifactRef {
     run_id: artifact.run_id.as_str().to_string(),
-    artifact_id: artifact.artifact_id.as_str().to_string(),
-    // NOTICE(api-p3-od4): role unavailable on contract::ArtifactRef; empty until resolved.
-    role: String::new(),
+    artifact_id,
+    role,
   }
 }
 
@@ -103,11 +116,7 @@ pub fn invoke_result_to_response(
   result: &InvokeResult,
   extra_known_limits: &[&str],
 ) -> proto::InvokeResponse {
-  // NOTICE(api-p3-od2): operation_id on the invoke path is the request
-  // command_id (per the API-P2 proto comment). GetOperation instead returns the
-  // persisted OperationResult.operation_id (a domain label). These can diverge
-  // for the same run; unifying them is API-P3 open decision 2 / API-P4 gate 3
-  // and needs an owner decision (e.g. persist command_id or widen OperationRef).
+  // API-P12: wire operation_id is invoke command_id on both Invoke and GetOperation.
   let artifacts = result
     .artifacts
     .iter()
@@ -156,7 +165,7 @@ pub fn joined_to_get_operation_response(
   proto::GetOperationResponse {
     operation: Some(proto::OperationRef {
       run_id: joined.run_id.clone(),
-      operation_id: joined.operation_id.clone(),
+      operation_id: joined.command_id.clone().unwrap_or_default(),
     }),
     status: operation_status_str(joined.status),
     output_summary,
@@ -164,7 +173,9 @@ pub fn joined_to_get_operation_response(
     artifacts: joined
       .artifacts
       .iter()
-      .map(artifact_ref_from_contract)
+      .map(|artifact| {
+        artifact_ref_from_contract(artifact, &joined.artifact_roles, &mut known_limits)
+      })
       .collect(),
     failure_message,
     known_limits,
@@ -176,12 +187,14 @@ mod tests {
   use std::collections::BTreeMap;
 
   use auv_cli_invoke::{InvokeResult, RunStatus};
-  use auv_tracing_driver::trace::SpanId;
 
   use super::{decode_invoke_payload, invoke_result_to_response, joined_to_get_operation_response};
   use crate::api::session_service::SessionApiError;
-  use crate::api::session_service::summary::{JoinedOperationSummary, RuntimeOperationSummary};
-  use crate::contract::OperationStatus;
+  use crate::api::session_service::summary::{
+    ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT, JoinedOperationSummary, RuntimeOperationSummary,
+  };
+  use crate::contract::{ArtifactRef as ContractArtifactRef, OperationStatus};
+  use auv_tracing_driver::trace::{ArtifactId, RunId, SpanId};
 
   #[test]
   fn decode_empty_payload_uses_host_defaults() {
@@ -262,10 +275,12 @@ mod tests {
   fn joined_maps_to_get_operation_response_with_runtime() {
     let joined = JoinedOperationSummary {
       run_id: "run-2".to_string(),
-      operation_id: "music.search.results".to_string(),
+      domain_operation_id: "music.search.results".to_string(),
+      command_id: Some("music.search".to_string()),
       status: OperationStatus::Completed,
       known_limits: vec!["lim".to_string()],
       artifacts: Vec::new(),
+      artifact_roles: BTreeMap::new(),
       runtime: Some(RuntimeOperationSummary {
         output_summary: "did the thing".to_string(),
         signals: BTreeMap::from([("k".to_string(), "v".to_string())]),
@@ -277,20 +292,19 @@ mod tests {
     assert_eq!(response.output_summary, "did the thing");
     assert_eq!(response.signals.get("k").map(String::as_str), Some("v"));
     assert_eq!(response.known_limits, vec!["lim"]);
-    assert_eq!(
-      response.operation.expect("op").operation_id,
-      "music.search.results"
-    );
+    assert_eq!(response.operation.expect("op").operation_id, "music.search");
   }
 
   #[test]
   fn joined_without_runtime_flags_missing_summary() {
     let joined = JoinedOperationSummary {
       run_id: "run-3".to_string(),
-      operation_id: "op".to_string(),
+      domain_operation_id: "op".to_string(),
+      command_id: Some("fixture.observe".to_string()),
       status: OperationStatus::Completed,
       known_limits: Vec::new(),
       artifacts: Vec::new(),
+      artifact_roles: BTreeMap::new(),
       runtime: None,
     };
     let response = joined_to_get_operation_response(&joined);
@@ -307,13 +321,15 @@ mod tests {
   fn joined_propagates_runtime_status_mismatch_known_limit() {
     let joined = JoinedOperationSummary {
       run_id: "run-mismatch".to_string(),
-      operation_id: "music.search.results".to_string(),
+      domain_operation_id: "music.search.results".to_string(),
+      command_id: Some("fixture.observe".to_string()),
       status: OperationStatus::Completed,
       known_limits: vec![
         "semantic_shaping_synthetic".to_string(),
         "auv.api.session.runtime_status_mismatch".to_string(),
       ],
       artifacts: Vec::new(),
+      artifact_roles: BTreeMap::new(),
       runtime: Some(RuntimeOperationSummary {
         output_summary: "runtime failed".to_string(),
         signals: BTreeMap::new(),
@@ -329,5 +345,64 @@ mod tests {
         .any(|limit| limit == "auv.api.session.runtime_status_mismatch")
     );
     assert_eq!(response.failure_message, "boom");
+  }
+
+  #[test]
+  fn joined_maps_evidence_artifact_role_from_catalog() {
+    let artifact_id = ArtifactId::new("artifact_evidence");
+    let joined = JoinedOperationSummary {
+      run_id: "run-role".to_string(),
+      domain_operation_id: "music.search.results".to_string(),
+      command_id: Some("music.search".to_string()),
+      status: OperationStatus::Completed,
+      known_limits: Vec::new(),
+      artifacts: vec![ContractArtifactRef {
+        run_id: RunId::new("run-role"),
+        artifact_id: artifact_id.clone(),
+        span_id: SpanId::new("0000000000000001"),
+        captured_event_id: None,
+      }],
+      artifact_roles: BTreeMap::from([(
+        artifact_id.as_str().to_string(),
+        "evidence-pack".to_string(),
+      )]),
+      runtime: None,
+    };
+    let response = joined_to_get_operation_response(&joined);
+    assert_eq!(response.artifacts.len(), 1);
+    assert_eq!(response.artifacts[0].role, "evidence-pack");
+    assert!(
+      !response
+        .known_limits
+        .iter()
+        .any(|limit| limit == ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT)
+    );
+  }
+
+  #[test]
+  fn joined_flags_missing_artifact_role() {
+    let joined = JoinedOperationSummary {
+      run_id: "run-missing-role".to_string(),
+      domain_operation_id: "op".to_string(),
+      command_id: Some("fixture.observe".to_string()),
+      status: OperationStatus::Completed,
+      known_limits: Vec::new(),
+      artifacts: vec![ContractArtifactRef {
+        run_id: RunId::new("run-missing-role"),
+        artifact_id: ArtifactId::new("missing"),
+        span_id: SpanId::new("0000000000000001"),
+        captured_event_id: None,
+      }],
+      artifact_roles: BTreeMap::new(),
+      runtime: None,
+    };
+    let response = joined_to_get_operation_response(&joined);
+    assert!(response.artifacts[0].role.is_empty());
+    assert!(
+      response
+        .known_limits
+        .iter()
+        .any(|limit| limit == ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT)
+    );
   }
 }

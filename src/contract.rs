@@ -65,7 +65,7 @@ pub const OPERATION_RESULT_API_VERSION: &str = "auv.operation_result.v1alpha1";
 ///
 /// Covers the `InvokeResult`-sourced half of the `GetOperation` projection:
 /// `status`, `output_summary`, `signals`, and `failure_message`.
-pub const OPERATION_SUMMARY_API_VERSION: &str = "auv.operation_summary.v1alpha1";
+pub const OPERATION_SUMMARY_API_VERSION: &str = "auv.operation_summary.v1alpha2";
 
 /// Artifact role for persisted operation summary projections (API-P11).
 pub const OPERATION_SUMMARY_ARTIFACT_ROLE: &str = "operation-summary";

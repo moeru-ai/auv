@@ -1,4 +1,4 @@
-//! Two-source operation summary read path and join policy (API-P7).
+//! Two-source operation summary read path and join policy (API-P7/P12).
 //!
 //! API-P3 showed `GetOperation` is a two-source projection:
 //! - `OperationResult` (persisted) owns `operation_id`, `status`,
@@ -25,12 +25,18 @@
 
 use std::collections::BTreeMap;
 
-use auv_cli_invoke::{OperationSummarySource, RunStatus};
+use auv_cli_invoke::{OperationSummary, OperationSummarySource, RunStatus};
 use auv_tracing_driver::store::LocalStore;
 
 use crate::contract::{ArtifactRef, OperationResult, OperationStatus};
 use crate::model::AuvResult;
 use crate::run_read;
+
+/// Known limit when wire `command_id` cannot be resolved (API-P12).
+pub const COMMAND_ID_UNAVAILABLE_KNOWN_LIMIT: &str = "auv.api.session.command_id_unavailable";
+
+/// Known limit when an evidence artifact has no catalog role entry (API-P12).
+pub const ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT: &str = "auv.api.session.artifact_role_unavailable";
 
 /// Outcome of loading and joining a `GetOperation` summary for one run.
 #[derive(Clone, Debug, PartialEq)]
@@ -72,10 +78,15 @@ impl RuntimeOperationSummary {
 pub struct JoinedOperationSummary {
   // OperationResult-sourced (persisted, required skeleton).
   pub run_id: String,
-  pub operation_id: String,
+  /// Internal domain label from `OperationResult.operation_id` (not API wire).
+  pub domain_operation_id: String,
+  /// Invoke `command_id` for proto `OperationRef.operation_id` (API-P12).
+  pub command_id: Option<String>,
   pub status: OperationStatus,
   pub known_limits: Vec<String>,
   pub artifacts: Vec<ArtifactRef>,
+  /// Run artifact catalog `artifact_id` → `role` (API-P12).
+  pub artifact_roles: BTreeMap<String, String>,
   // InvokeResult-sourced (runtime return value, may be absent).
   pub runtime: Option<RuntimeOperationSummary>,
 }
@@ -98,13 +109,13 @@ fn runtime_status_matches_persisted(persisted: OperationStatus, runtime: RunStat
 pub fn join_operation_summary(
   operation: &OperationResult,
   runtime: Option<&dyn OperationSummarySource>,
+  command_id: Option<String>,
+  artifact_roles: BTreeMap<String, String>,
 ) -> JoinedOperationSummary {
-  // NOTICE(api-p3-od2): `operation_id` here is the persisted domain label from
-  // `OperationResult` (e.g. "music.search.results"), which is NOT the invoke
-  // `command_id`. The proto `operation_id` mapping rule (command_id vs domain
-  // label vs widened ref) is API-P3 open decision 2 / API-P4 gate 3 and is
-  // resolved at the proto mapper (API-P8), not in this read path.
   let mut known_limits = operation.known_limits.clone();
+  if command_id.is_none() {
+    known_limits.push(COMMAND_ID_UNAVAILABLE_KNOWN_LIMIT.to_string());
+  }
   if let Some(source) = runtime {
     if !runtime_status_matches_persisted(operation.status, source.status()) {
       known_limits.push("auv.api.session.runtime_status_mismatch".to_string());
@@ -112,12 +123,59 @@ pub fn join_operation_summary(
   }
   JoinedOperationSummary {
     run_id: operation.run_id.as_str().to_string(),
-    operation_id: operation.operation_id.clone(),
+    domain_operation_id: operation.operation_id.clone(),
+    command_id,
     status: operation.status,
     known_limits,
     artifacts: operation.evidence_artifacts.clone(),
+    artifact_roles,
     runtime: runtime.map(RuntimeOperationSummary::from_source),
   }
+}
+
+fn resolve_wire_command_id(
+  store: &LocalStore,
+  run_id: &str,
+  local_summary: Option<&OperationSummary>,
+  stored_summary: Option<&OperationSummary>,
+) -> AuvResult<Option<String>> {
+  for summary in [local_summary, stored_summary].into_iter().flatten() {
+    if !summary.command_id().is_empty() {
+      return Ok(Some(summary.command_id().to_string()));
+    }
+  }
+  read_command_id_from_invoke_span(store, run_id)
+}
+
+fn read_command_id_from_invoke_span(store: &LocalStore, run_id: &str) -> AuvResult<Option<String>> {
+  let run = store.read_run(run_id)?;
+  for span in &run.spans {
+    if span.name != "auv.command.invoke" {
+      continue;
+    }
+    let Some(value) = span.attributes.get("auv.command.id") else {
+      continue;
+    };
+    let Some(command_id) = value.as_str() else {
+      continue;
+    };
+    if !command_id.is_empty() {
+      return Ok(Some(command_id.to_string()));
+    }
+  }
+  Ok(None)
+}
+
+fn artifact_role_catalog(store: &LocalStore, run_id: &str) -> AuvResult<BTreeMap<String, String>> {
+  let run = store.read_run(run_id)?;
+  let mut catalog = BTreeMap::new();
+  for artifact in &run.artifacts {
+    catalog.insert(
+      artifact.artifact_id.as_str().to_string(),
+      artifact.role.clone(),
+    );
+  }
+  Ok(catalog)
 }
 
 /// Load and join the `GetOperation` summary for a run.
@@ -130,7 +188,7 @@ pub fn join_operation_summary(
 pub fn load_joined_operation_summary(
   store: &LocalStore,
   run_id: &str,
-  process_local_runtime_override: Option<&dyn OperationSummarySource>,
+  process_local_runtime_override: Option<&OperationSummary>,
 ) -> AuvResult<JoinedOperationSummaryLoad> {
   let run_dir = store.run_dir(run_id)?;
   if !run_dir.join("run.json").exists() {
@@ -145,13 +203,23 @@ pub fn load_joined_operation_summary(
     None
   };
   let runtime: Option<&dyn OperationSummarySource> = match process_local_runtime_override {
-    Some(source) => Some(source),
+    Some(summary) => Some(summary as &dyn OperationSummarySource),
     None => stored_summary
       .as_ref()
       .map(|summary| summary as &dyn OperationSummarySource),
   };
+  let command_id = resolve_wire_command_id(
+    store,
+    run_id,
+    process_local_runtime_override,
+    stored_summary.as_ref(),
+  )?;
+  let artifact_roles = artifact_role_catalog(store, run_id)?;
   Ok(JoinedOperationSummaryLoad::Found(join_operation_summary(
-    &operation, runtime,
+    &operation,
+    runtime,
+    command_id,
+    artifact_roles,
   )))
 }
 
@@ -185,15 +253,21 @@ mod tests {
     music_runtime_summary(run_id)
   }
 
+  fn join_args(command_id: &str) -> (Option<String>, BTreeMap<String, String>) {
+    (Some(command_id.to_string()), BTreeMap::new())
+  }
+
   #[test]
   fn join_includes_runtime_summary_when_present() {
     let operation = sample_operation("run-join");
     let summary = runtime_summary("run-join");
+    let (command_id, roles) = join_args("music.search");
 
-    let joined = join_operation_summary(&operation, Some(&summary));
+    let joined = join_operation_summary(&operation, Some(&summary), command_id, roles);
 
     assert_eq!(joined.run_id, "run-join");
-    assert_eq!(joined.operation_id, "music.search.results");
+    assert_eq!(joined.domain_operation_id, "music.search.results");
+    assert_eq!(joined.command_id.as_deref(), Some("music.search"));
     assert_eq!(joined.status, OperationStatus::Completed);
     assert_eq!(joined.known_limits, vec!["semantic_shaping_synthetic"]);
     let runtime = joined.runtime.expect("runtime summary should be present");
@@ -208,12 +282,15 @@ mod tests {
   #[test]
   fn join_marks_runtime_absent_without_fabricating() {
     let operation = sample_operation("run-join-missing");
+    let (command_id, roles) = join_args("music.search");
 
-    let joined = join_operation_summary(&operation, None);
+    let joined = join_operation_summary(&operation, None, command_id, roles);
 
-    // Persisted skeleton still present.
-    assert_eq!(joined.operation_id, "music.search.results");
-    assert_eq!(joined.known_limits, vec!["semantic_shaping_synthetic"]);
+    assert_eq!(joined.domain_operation_id, "music.search.results");
+    assert_eq!(
+      joined.known_limits,
+      vec!["semantic_shaping_synthetic".to_string(),]
+    );
     // Runtime summary explicitly absent, not fabricated as empty strings.
     assert!(joined.runtime.is_none());
   }
@@ -224,27 +301,33 @@ mod tests {
     operation.status = OperationStatus::Failed;
     operation.known_limits = vec!["dispatch_failed".to_string()];
 
-    let joined = join_operation_summary(&operation, None);
+    let joined = join_operation_summary(&operation, None, None, BTreeMap::new());
 
     assert_eq!(joined.status, OperationStatus::Failed);
-    assert_eq!(joined.known_limits, vec!["dispatch_failed"]);
+    assert!(joined.known_limits.iter().any(|limit| {
+      limit == "dispatch_failed" || limit == super::COMMAND_ID_UNAVAILABLE_KNOWN_LIMIT
+    }));
   }
 
   #[test]
   fn join_flags_runtime_status_mismatch() {
     let operation = sample_operation("run-mismatch");
-    let summary = OperationSummary::capture(&InvokeResult {
-      run_id: "run-mismatch".to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
-      status: RunStatus::Failed,
-      output_summary: "runtime failed".to_string(),
-      signals: BTreeMap::new(),
-      artifacts: Vec::new(),
-      artifact_paths: Vec::new(),
-      failure_message: Some("boom".to_string()),
-    });
+    let summary = OperationSummary::capture(
+      &InvokeResult {
+        run_id: "run-mismatch".to_string(),
+        producer_span_id: SpanId::new("0000000000000001"),
+        status: RunStatus::Failed,
+        output_summary: "runtime failed".to_string(),
+        signals: BTreeMap::new(),
+        artifacts: Vec::new(),
+        artifact_paths: Vec::new(),
+        failure_message: Some("boom".to_string()),
+      },
+      "fixture.observe",
+    );
+    let (command_id, roles) = join_args("fixture.observe");
 
-    let joined = join_operation_summary(&operation, Some(&summary));
+    let joined = join_operation_summary(&operation, Some(&summary), command_id, roles);
 
     assert_eq!(joined.status, OperationStatus::Completed);
     assert!(
@@ -299,7 +382,7 @@ mod tests {
     };
 
     assert_eq!(joined.run_id, "run-happy");
-    assert_eq!(joined.operation_id, "music.search.results");
+    assert_eq!(joined.domain_operation_id, "music.search.results");
     assert_eq!(joined.status, OperationStatus::Completed);
     let runtime = joined.runtime.expect("runtime summary should be present");
     assert_eq!(runtime.output_summary, "did the thing");
@@ -348,16 +431,19 @@ mod tests {
       &operation,
       &stored_summary,
     );
-    let override_summary = OperationSummary::capture(&InvokeResult {
-      run_id: "run-override".to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
-      status: RunStatus::Completed,
-      output_summary: "process-local override wins".to_string(),
-      signals: BTreeMap::new(),
-      artifacts: Vec::new(),
-      artifact_paths: Vec::new(),
-      failure_message: None,
-    });
+    let override_summary = OperationSummary::capture(
+      &InvokeResult {
+        run_id: "run-override".to_string(),
+        producer_span_id: SpanId::new("0000000000000001"),
+        status: RunStatus::Completed,
+        output_summary: "process-local override wins".to_string(),
+        signals: BTreeMap::new(),
+        artifacts: Vec::new(),
+        artifact_paths: Vec::new(),
+        failure_message: None,
+      },
+      "fixture.observe",
+    );
 
     let loaded = load_joined_operation_summary(&store, "run-override", Some(&override_summary))
       .expect("load should succeed");

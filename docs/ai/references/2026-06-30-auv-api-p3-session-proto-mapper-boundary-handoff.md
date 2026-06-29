@@ -177,16 +177,10 @@ before any mapper code is written.
    whether those summary fields get persisted. Until then, a `GetOperation`
    served purely from disk would return empty `output_summary` / `signals`.
 
-2. **`operation_id` semantics.** API-P2 field comment says v1 maps
-   `operation_id` to `InvokeRequest.command_id`. But `InvokeResult` has no
-   `operation_id` and no `command_id`, and `OperationResult.operation_id` is a
-   **domain label** (e.g. `music.search.results`) that is not the command id.
-   The `Invoke` path (command_id known from the request) and the
-   `GetOperation` path (only the persisted domain `operation_id` known) would
-   therefore disagree. Decide one rule: either both expose `command_id`, or
-   both expose the persisted domain `operation_id`, or `OperationRef` carries
-   both. Do not let `Invoke` and `GetOperation` emit different `operation_id`
-   meanings for the same run.
+2. **`operation_id` semantics.** **Resolved in API-P12** — wire `operation_id` is
+   always invoke `command_id`; domain `OperationResult.operation_id` stays
+   internal. See
+   [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md).
 
 3. **`status` is execution status, not verification verdict.** Proto `status`
    is two-state (`completed` | `failed`) and reflects whether the command
@@ -196,13 +190,9 @@ before any mapper code is written.
    `FailureLayer`. A future slice that wants to expose verification verdicts
    must add a distinct field/message; it must not overload `status`.
 
-4. **`ArtifactRef.role` source.** Proto `ArtifactRef` needs `{ run_id,
-   artifact_id, role }`. Internal `auv_tracing_driver::ArtifactRef` has
-   `run_id` + `artifact_id` but **no `role`**; `ArtifactRecordV1Alpha1` has
-   `artifact_id` + `role` but **no `run_id`**. The mapper must join: `run_id`
-   from the owning result, `role` from the artifact record. Proto intentionally
-   drops `span_id`, `mime_type`, `path`, `sha256`, `attributes`, `summary`
-   (reference-only per API-P1).
+4. **`ArtifactRef.role` source.** **Resolved in API-P12** — run artifact catalog
+   is authoritative; mapper joins evidence refs at the API boundary. See
+   [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md).
 
 5. **`json_payload` envelope schema.** Proto `InvokeRequest.json_payload` is
    opaque `bytes` (documented as UTF-8 JSON object when non-empty). The host

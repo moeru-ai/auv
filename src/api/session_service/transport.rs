@@ -99,6 +99,7 @@ pub fn map_session_error(error: SessionApiError) -> Status {
     SessionApiError::PersistedOperationRequired(_) => {
       Status::failed_precondition(error.to_string())
     }
+    SessionApiError::OperationIdMismatch { .. } => Status::invalid_argument(error.to_string()),
     SessionApiError::Storage(_) | SessionApiError::InvokeExecution(_) => {
       Status::internal(error.to_string())
     }

@@ -21,7 +21,7 @@ use crate::{InvokeResult, RunStatus};
 /// Deserialize default only: writers stamp `auv::contract::OPERATION_SUMMARY_API_VERSION`.
 /// NOTICE(api-p11-version-ownership): this literal must stay aligned with the main
 /// crate constant; `auv-cli-invoke` cannot depend on `contract.rs`.
-pub const OPERATION_SUMMARY_RECORD_API_VERSION: &str = "auv.operation_summary.v1alpha1";
+pub const OPERATION_SUMMARY_RECORD_API_VERSION: &str = "auv.operation_summary.v1alpha2";
 
 fn default_operation_summary_record_api_version() -> String {
   OPERATION_SUMMARY_RECORD_API_VERSION.to_string()
@@ -35,6 +35,9 @@ pub struct OperationSummaryRecord {
   #[serde(default = "default_operation_summary_record_api_version")]
   pub api_version: String,
   pub run_id: String,
+  /// Invoke command identity for API wire `OperationRef.operation_id` (API-P12).
+  #[serde(default)]
+  pub command_id: String,
   pub status: RunStatus,
   pub output_summary: String,
   pub signals: BTreeMap<String, String>,
@@ -102,6 +105,7 @@ impl OperationSummarySource for InvokeResult {
 #[derive(Clone, Debug, PartialEq)]
 pub struct OperationSummary {
   run_id: String,
+  command_id: String,
   status: RunStatus,
   output_summary: String,
   signals: BTreeMap<String, String>,
@@ -110,10 +114,11 @@ pub struct OperationSummary {
 
 impl OperationSummary {
   /// Capture the summary view from an invoke result, cloning only the
-  /// `InvokeResult`-sourced summary fields.
-  pub fn capture(result: &InvokeResult) -> Self {
+  /// `InvokeResult`-sourced summary fields and the invoke `command_id`.
+  pub fn capture(result: &InvokeResult, command_id: &str) -> Self {
     Self {
       run_id: result.run_id.clone(),
+      command_id: command_id.to_string(),
       status: result.status.clone(),
       output_summary: result.output_summary.clone(),
       signals: result.signals.clone(),
@@ -126,11 +131,17 @@ impl OperationSummary {
     &self.run_id
   }
 
+  /// Invoke command identity for API wire `OperationRef.operation_id` (API-P12).
+  pub fn command_id(&self) -> &str {
+    &self.command_id
+  }
+
   /// Build a versioned wire record for persistence.
   pub fn to_record(&self, api_version: &str) -> OperationSummaryRecord {
     OperationSummaryRecord {
       api_version: api_version.to_string(),
       run_id: self.run_id.clone(),
+      command_id: self.command_id.clone(),
       status: self.status.clone(),
       output_summary: self.output_summary.clone(),
       signals: self.signals.clone(),
@@ -142,6 +153,7 @@ impl OperationSummary {
   pub fn from_record(record: OperationSummaryRecord) -> Self {
     Self {
       run_id: record.run_id,
+      command_id: record.command_id,
       status: record.status,
       output_summary: record.output_summary,
       signals: record.signals,
@@ -197,8 +209,8 @@ impl OperationSummaryCache {
   }
 
   /// Capture and record the summary for an invoke result in one step.
-  pub fn record_result(&mut self, result: &InvokeResult) {
-    self.record(OperationSummary::capture(result));
+  pub fn record_result(&mut self, result: &InvokeResult, command_id: &str) {
+    self.record(OperationSummary::capture(result, command_id));
   }
 
   /// Read the cached summary for a run, if present.
@@ -274,9 +286,10 @@ mod tests {
   #[test]
   fn operation_summary_captures_invoke_result_summary_fields() {
     let result = completed_result("run-capture");
-    let summary = OperationSummary::capture(&result);
+    let summary = OperationSummary::capture(&result, "fixture.observe");
 
     assert_eq!(summary.run_id(), "run-capture");
+    assert_eq!(summary.command_id(), "fixture.observe");
     assert_eq!(summary.status(), RunStatus::Completed);
     assert_eq!(summary.output_summary(), "fixture observed");
     assert_eq!(
@@ -291,7 +304,7 @@ mod tests {
     let mut cache = OperationSummaryCache::new();
     assert!(cache.is_empty());
 
-    cache.record_result(&completed_result("run-cached"));
+    cache.record_result(&completed_result("run-cached"), "fixture.observe");
 
     assert_eq!(cache.len(), 1);
     let cached = cache.get("run-cached").expect("summary should be cached");
@@ -308,11 +321,11 @@ mod tests {
   #[test]
   fn summary_cache_record_replaces_existing_run_entry() {
     let mut cache = OperationSummaryCache::new();
-    cache.record_result(&completed_result("run-dup"));
+    cache.record_result(&completed_result("run-dup"), "fixture.observe");
 
     let mut updated = completed_result("run-dup");
     updated.output_summary = "second observation".to_string();
-    cache.record_result(&updated);
+    cache.record_result(&updated, "fixture.observe");
 
     assert_eq!(cache.len(), 1);
     assert_eq!(

@@ -27,7 +27,8 @@ message SessionRef {
 
 message OperationRef {
   string run_id = 1;
-  // v1 maps operation_id to command_id from the InvokeRequest (not span_id).
+  // v1 maps operation_id to command_id from InvokeRequest (not span_id, and not
+  // the internal OperationResult.operation_id domain label).
   string operation_id = 2;
 }
 

@@ -87,7 +87,6 @@ pub fn record_invoke_summary(
 #[cfg(test)]
 mod tests {
   use std::fs;
-  use std::path::Path;
 
   use auv_cli_invoke::{
     OperationSummary, OperationSummaryRecord, OperationSummarySource, RunStatus,
@@ -100,25 +99,6 @@ mod tests {
   use crate::contract::{OPERATION_SUMMARY_API_VERSION, OPERATION_SUMMARY_ARTIFACT_ROLE};
   use crate::run_read;
 
-  fn count_staging_files(run_id: &str) -> usize {
-    let prefix = format!("auv-operation-summary-staging-{run_id}-");
-    match fs::read_dir(std::env::temp_dir()) {
-      Ok(entries) => entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| matches_staging_file(path, &prefix))
-        .count(),
-      Err(_) => 0,
-    }
-  }
-
-  fn matches_staging_file(path: &Path, prefix: &str) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-      return false;
-    };
-    name.starts_with(prefix) && name.ends_with(".json")
-  }
-
   #[test]
   fn persist_operation_summary_stages_operation_summary_artifact() {
     let root = unique_temp_dir("summary-store-persist");
@@ -127,10 +107,8 @@ mod tests {
     write_minimal_run(&store, "run-summary-persist");
 
     let result = fixture_observe_invoke_result("run-summary-persist");
-    let summary = OperationSummary::capture(&result);
-    let staging_before = count_staging_files(result.run_id.as_str());
+    let summary = OperationSummary::capture(&result, "fixture.observe");
     persist_operation_summary(&store, &result, &summary).expect("persist should succeed");
-    let staging_after = count_staging_files(result.run_id.as_str());
 
     let loaded = store
       .read_run("run-summary-persist")
@@ -150,7 +128,6 @@ mod tests {
         .map(String::as_str),
       Some("records deterministic fixture output only.")
     );
-    assert_eq!(staging_after, staging_before);
 
     let _ = fs::remove_dir_all(root);
   }
@@ -162,6 +139,7 @@ mod tests {
     let record = OperationSummaryRecord {
       api_version: OPERATION_SUMMARY_API_VERSION.to_string(),
       run_id: "run-roundtrip".to_string(),
+      command_id: "fixture.observe".to_string(),
       status: RunStatus::Failed,
       output_summary: "failed".to_string(),
       signals,
@@ -198,15 +176,12 @@ mod tests {
     fs::set_permissions(&run_dir, permissions).expect("run dir should be read-only");
 
     let result = fixture_observe_invoke_result("run-summary-persist-fail");
-    let summary = OperationSummary::capture(&result);
-    let staging_before = count_staging_files(result.run_id.as_str());
+    let summary = OperationSummary::capture(&result, "fixture.observe");
     let limits = record_invoke_summary(&store, &result, &summary);
-    let staging_after = count_staging_files(result.run_id.as_str());
     assert_eq!(
       limits,
       vec![super::OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT.to_string()]
     );
-    assert_eq!(staging_after, staging_before);
 
     let _ = fs::remove_dir_all(root);
   }
