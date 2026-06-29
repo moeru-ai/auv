@@ -29,7 +29,7 @@ pub use recorded::{
   invoke_resolved_recorded_in_span,
 };
 pub use registry::{InvokeRegistry, default_registry};
-pub use summary::OperationSummarySource;
+pub use summary::{OperationSummary, OperationSummaryCache, OperationSummarySource};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InvokeCliParse {
