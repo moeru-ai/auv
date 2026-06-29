@@ -48,7 +48,7 @@
       {
         "command": "node .cursor/hooks/after-file-edit.js",
         "event": "afterFileEdit",
-        "description": "Auto-format, TypeScript check, console.log warning, and frontend design-quality reminder"
+        "description": "Accumulate edits, anti-garbage review, console warnings, optional frontend design check"
       }
     ],
     "beforeMCPExecution": [
@@ -82,6 +82,11 @@
         "command": "node .cursor/hooks/inject-project-context.js",
         "event": "beforeSubmitPrompt",
         "description": "Inject CONTRIBUTING.local.md, cursor.md, and AGENTS.md on every prompt (never codex.md)"
+      },
+      {
+        "command": "node .cursor/hooks/inject-pending-edit-review.js",
+        "event": "beforeSubmitPrompt",
+        "description": "Inject anti-garbage edit review queue before each prompt"
       }
     ],
     "subagentStart": [
@@ -123,7 +128,16 @@
       {
         "command": "node .cursor/hooks/stop.js",
         "event": "stop",
-        "description": "Console.log audit on all modified files"
+        "description": "Console.log audit on all modified files",
+        "loop_limit": 3
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node .cursor/hooks/post-tool-anti-garbage.js",
+        "event": "postToolUse",
+        "matcher": "Write|StrReplace",
+        "description": "Anti-garbage heuristics after Write/StrReplace (backup path)"
       }
     ]
   }

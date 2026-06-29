@@ -233,5 +233,43 @@ check('commit-gate passes non-commit shell commands', () => {
   assert.equal(result.stdout.trim(), JSON.stringify({ command: 'cargo check' }));
 });
 
+
+check('anti-garbage flags env-coupled rust test', () => {
+  const { analyzeFileContent } = require('../lib/anti-garbage-heuristics');
+  const sample = `#![cfg(test)]
+#[test]
+fn reads_foreground() {
+  let _ = NSWorkspace::sharedWorkspace();
+}`;
+  const findings = analyzeFileContent('src/foo_test.rs', sample);
+  assert.ok(findings.some(f => f.code === 'env-coupled-test'), JSON.stringify(findings));
+});
+
+check('anti-garbage flags cross-layer session mix', () => {
+  const { analyzeCrossLayer } = require('../lib/anti-garbage-heuristics');
+  const findings = analyzeCrossLayer(['src/runtime.rs', 'docs/ai/references/note.md']);
+  assert.ok(findings.some(f => f.code === 'cross-layer-mix'), JSON.stringify(findings));
+});
+
+check('inject-pending-edit-review emits queue context', () => {
+  const os = require('os');
+  const queuePath = require('../lib/session-edit-review-queue');
+  queuePath.appendReviewEntry({
+    filePath: 'src/runtime.rs',
+    layers: ['runtime'],
+    findings: [{ code: 'fake-refactor-suspect', severity: 'low', message: 'check behavior' }],
+  });
+  const result = spawnSync('node', [path.join(repoRoot, '.cursor', 'hooks', 'inject-pending-edit-review.js')], {
+    input: JSON.stringify({ hook_event_name: 'beforeSubmitPrompt', prompt: 'continue' }),
+    encoding: 'utf8',
+    cwd: repoRoot,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout.trim());
+  assert.ok(String(payload.additional_context).includes('anti-garbage'), payload.additional_context);
+  assert.ok(String(payload.additional_context).includes('src/runtime.rs'), payload.additional_context);
+  queuePath.clearQueue();
+});
+
 console.log(`cursor-ecc-smoke: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 const { readStdin, runExistingHook, transformToClaude, hookEnabled } = require('./adapter');
+const { run: runStopAntiGarbageReview } = require('../scripts/hooks/stop-anti-garbage-review');
+
 readStdin().then(raw => {
   const input = JSON.parse(raw || '{}');
   const claudeInput = transformToClaude(input);
@@ -21,6 +23,17 @@ readStdin().then(raw => {
   }
   if (hookEnabled('stop:cost-tracker', ['minimal', 'standard', 'strict'])) {
     runExistingHook('cost-tracker.js', claudeInput);
+  }
+
+  const antiGarbage = runStopAntiGarbageReview(raw);
+  if (antiGarbage.stderr) {
+    process.stderr.write(`${antiGarbage.stderr}\n`);
+  }
+
+  const followupPayload = String(antiGarbage.stdout || '').trim();
+  if (followupPayload && followupPayload !== '{}') {
+    process.stdout.write(`${followupPayload}\n`);
+    return;
   }
 
   process.stdout.write(raw);

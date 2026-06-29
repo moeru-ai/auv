@@ -1,18 +1,27 @@
 #!/usr/bin/env node
 const { hookEnabled, readStdin, runExistingHook, transformToClaude } = require('./adapter');
+const { run: runAntiGarbageReview } = require('../scripts/hooks/post-edit-anti-garbage-review');
+
 readStdin().then(raw => {
   try {
     const input = JSON.parse(raw);
     const claudeInput = transformToClaude(input, {
-      tool_input: { file_path: input.path || input.file || '' }
+      tool_input: {
+        file_path: input.path || input.file || input.file_path || '',
+        edits: input.edits || [],
+      },
     });
     const claudeStr = JSON.stringify(claudeInput);
 
-    // Accumulate edited paths for batch format+typecheck at stop time
     runExistingHook('post-edit-accumulator.js', claudeStr);
     runExistingHook('post-edit-console-warn.js', claudeStr);
     if (hookEnabled('post:edit:design-quality-check', ['standard', 'strict'])) {
       runExistingHook('design-quality-check.js', claudeStr);
+    }
+
+    const review = runAntiGarbageReview(claudeStr);
+    if (review.stderr) {
+      process.stderr.write(`${review.stderr}\n`);
     }
   } catch {}
   process.stdout.write(raw);
