@@ -43,6 +43,7 @@
               wayland
               libglvnd
               openssl
+              pipewire
             ];
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
