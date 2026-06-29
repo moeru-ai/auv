@@ -10,7 +10,6 @@ pub const MACOS_DESKTOP_CAPABILITIES: &[&str] = &[
   "desktop.probe-permissions",
   "desktop.identify-point",
   "desktop.project-screenshot-point",
-  "desktop.probe-coordinate-readiness",
   "desktop.find-screen-text",
   "desktop.wait-screen-text",
   "desktop.find-screen-rows",

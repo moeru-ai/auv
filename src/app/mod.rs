@@ -548,16 +548,6 @@ fn probe_app_into_run(
     BTreeMap::new(),
     false,
   )?);
-  steps.push(invoke_probe_step(
-    runtime,
-    run,
-    parent,
-    "probe-coordinate-readiness",
-    "display.probeCoordinateReadiness",
-    None,
-    BTreeMap::new(),
-    false,
-  )?);
   let can_activate_target = app.apple_script_addressable;
   if can_activate_target {
     let mut activate_inputs = BTreeMap::new();
