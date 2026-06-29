@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 use crate::contract::{
   ArtifactRef, FreshnessBasis, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult,
-  OperationStatus,
 };
 use crate::verticals::minecraft::query_live_action::invoke_click_at_window_point;
+use crate::verticals::query_wired_live_action_status::{OSU_LABELS, operation_status_and_message};
 use auv_driver::geometry::WindowPoint;
 use auv_game_osu::{
   VisualTruthQueryActionWiringLineage, VisualTruthQueryActionWiringOutcome,
@@ -61,35 +61,12 @@ impl VisualTruthQueryLiveClickExecutor for InvokeWindowPointClickExecutor<'_> {
   }
 }
 
-pub fn operation_status_and_message_from_wiring(
-  wiring: &VisualTruthQueryActionWiringOutcome,
-) -> (OperationStatus, String) {
-  if wiring.attempted {
-    if let Some(summary) = &wiring.click_summary {
-      return (OperationStatus::Completed, summary.clone());
-    }
-    if let Some(refusal) = &wiring.refusal_reason {
-      return (OperationStatus::Failed, refusal.clone());
-    }
-    return (
-      OperationStatus::Failed,
-      "osu query wired live action attempted without click summary or refusal".to_string(),
-    );
-  }
-
-  let message = wiring
-    .refusal_reason
-    .clone()
-    .unwrap_or_else(|| "osu query wired live action refused before dispatch".to_string());
-  (OperationStatus::Completed, message)
-}
-
 pub fn build_osu_query_wired_live_action_operation_result(
   run_id: &RunId,
   wiring: &VisualTruthQueryActionWiringOutcome,
   query_manifest_ref: Option<ArtifactRef>,
 ) -> OperationResult {
-  let (status, message) = operation_status_and_message_from_wiring(wiring);
+  let (status, message) = operation_status_and_message(wiring, &OSU_LABELS);
   let freshness_basis = query_manifest_ref
     .as_ref()
     .map(|artifact_ref| FreshnessBasis {

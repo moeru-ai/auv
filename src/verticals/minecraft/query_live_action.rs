@@ -4,9 +4,12 @@ use std::path::PathBuf;
 
 use crate::contract::{
   ArtifactRef, FreshnessBasis, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult,
-  OperationStatus, VerificationResult,
+  VerificationResult,
 };
 use crate::model::{InvokeRequest, RunStatus};
+use crate::verticals::query_wired_live_action_status::{
+  MINECRAFT_LABELS, operation_status_and_message,
+};
 use auv_driver::geometry::WindowPoint;
 use auv_game_minecraft::{
   QueryActionWiringLineage, QueryActionWiringOutcome, QueryLiveClickExecutor,
@@ -117,29 +120,6 @@ impl QueryLiveClickExecutor for InvokeWindowPointClickExecutor<'_> {
   }
 }
 
-pub fn operation_status_and_message_from_wiring(
-  wiring: &QueryActionWiringOutcome,
-) -> (OperationStatus, String) {
-  if wiring.attempted {
-    if let Some(summary) = &wiring.click_summary {
-      return (OperationStatus::Completed, summary.clone());
-    }
-    if let Some(refusal) = &wiring.refusal_reason {
-      return (OperationStatus::Failed, refusal.clone());
-    }
-    return (
-      OperationStatus::Failed,
-      "query wired live action attempted without click summary or refusal".to_string(),
-    );
-  }
-
-  let message = wiring
-    .refusal_reason
-    .clone()
-    .unwrap_or_else(|| "query wired live action refused before dispatch".to_string());
-  (OperationStatus::Completed, message)
-}
-
 pub fn build_query_wired_live_action_operation_result(
   run_id: &RunId,
   wiring: &QueryActionWiringOutcome,
@@ -147,7 +127,7 @@ pub fn build_query_wired_live_action_operation_result(
   verifications: Vec<VerificationResult>,
   witness_absent_limit_needed: bool,
 ) -> OperationResult {
-  let (status, message) = operation_status_and_message_from_wiring(wiring);
+  let (status, message) = operation_status_and_message(wiring, &MINECRAFT_LABELS);
   let freshness_basis = query_manifest_ref
     .as_ref()
     .map(|artifact_ref| FreshnessBasis {
