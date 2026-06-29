@@ -131,6 +131,8 @@ MC-20 G8 closure depends on this mapping so dispatch failure leaves
 
 - D4 live graduation:
   [`2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md)
+- MC-20 final pause decision:
+  [`2026-06-30-minecraft-mc20-final-closeout-pause-decision.md`](2026-06-30-minecraft-mc20-final-closeout-pause-decision.md)
 - D2.1 G0–G5:
   [`2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md`](2026-06-30-minecraft-mc20-d2-1-canonical-cli-live-closure.md)
 - D3 G6/G7:

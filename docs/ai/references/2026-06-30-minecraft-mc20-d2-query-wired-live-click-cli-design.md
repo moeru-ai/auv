@@ -167,3 +167,9 @@ src/cli.rs + src/main.rs (parse + thin dispatch)
 
 - Design: [`2026-06-30-minecraft-mc20-d4-live-evidence-closeout-design.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout-design.md)
 - Graduation G0–G8: [`2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md`](2026-06-30-minecraft-mc20-d4-live-evidence-closeout.md)
+
+
+## Final closeout / pause decision
+
+MC-20 final closeout and pause boundary are recorded in
+[`2026-06-30-minecraft-mc20-final-closeout-pause-decision.md`](2026-06-30-minecraft-mc20-final-closeout-pause-decision.md).
