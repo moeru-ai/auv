@@ -316,7 +316,10 @@ If a later slice wants any of the above, it needs a new owner-named scope.
 API-P1 should be followed, if approved, by **one** narrow proto-only slice:
 
 - **API-P2:** replace `DoExample` / `DoExampleStream` with the minimal real
-  session surface defined here
+  session surface defined here (landed, commit `758fa21`)
+- **API-P3:** record the proto-to-internal mapper boundary and server handoff;
+  see
+  [`2026-06-30-auv-api-p3-session-proto-mapper-boundary-handoff.md`](2026-06-30-auv-api-p3-session-proto-mapper-boundary-handoff.md)
 
 API-P1 does **not** itself approve:
 
