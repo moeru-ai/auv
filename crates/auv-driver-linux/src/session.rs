@@ -1,10 +1,11 @@
 use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver::display::ObservedDisplays;
 use auv_driver::error::DriverResult;
-use auv_driver::geometry::{Point, ScreenPoint, WindowPoint};
+use auv_driver::geometry::{Point, RatioRect, ScreenPoint, WindowPoint};
 use auv_driver::input::{Click, InputActionResult, KeyPressOptions, Scroll, TypeTextOptions};
 use auv_driver::permission::PermissionProbe;
 use auv_driver::selector::WindowSelector;
+use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 use auv_driver::window::Window;
 
 use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
@@ -13,6 +14,7 @@ use crate::driver::LinuxDriverSession;
 use crate::error::invalid_input;
 use crate::input::{click_at, press_key, scroll_at, type_text};
 use crate::permission::{LinuxPortalProbe, probe_portals};
+use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
 use crate::window::{capture_window, list_windows, resolve_window};
 
 #[derive(Clone, Copy, Debug)]
@@ -27,6 +29,11 @@ pub struct WindowApi<'a> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct InputApi<'a> {
+  session: &'a LinuxDriverSession,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct VisionApi<'a> {
   session: &'a LinuxDriverSession,
 }
 
@@ -51,6 +58,10 @@ impl LinuxDriverSession {
 
   pub fn input(&self) -> InputApi<'_> {
     InputApi { session: self }
+  }
+
+  pub fn vision(&self) -> VisionApi<'_> {
+    VisionApi { session: self }
   }
 
   pub fn permission(&self) -> PermissionApi<'_> {
@@ -145,6 +156,51 @@ impl WindowApi<'_> {
       point.x - window.frame.origin.x,
       point.y - window.frame.origin.y,
     ))
+  }
+}
+
+impl VisionApi<'_> {
+  pub fn recognize_text_in_capture(
+    &self,
+    capture: &Capture,
+    region: RatioRect,
+  ) -> DriverResult<TextRecognition> {
+    self.recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default())
+  }
+
+  pub fn recognize_text_in_capture_with_options(
+    &self,
+    capture: &Capture,
+    region: RatioRect,
+    options: TextRecognitionOptions,
+  ) -> DriverResult<TextRecognition> {
+    let _ = self.session;
+    recognize_text_in_capture(capture, region, &options)
+  }
+
+  pub fn find_text_in_capture(
+    &self,
+    capture: &Capture,
+    query: &str,
+    region: RatioRect,
+  ) -> DriverResult<OcrMatches> {
+    self.find_text_in_capture_with_options(
+      capture,
+      query,
+      region,
+      TextRecognitionOptions::default(),
+    )
+  }
+
+  pub fn find_text_in_capture_with_options(
+    &self,
+    capture: &Capture,
+    query: &str,
+    region: RatioRect,
+    options: TextRecognitionOptions,
+  ) -> DriverResult<OcrMatches> {
+    let _ = self.session;
+    find_text_in_capture(capture, query, region, &options)
   }
 }
 

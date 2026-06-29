@@ -11,5 +11,6 @@ image.workspace = true
 serde.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+leptess.workspace = true
 xcap.workspace = true
 zbus.workspace = true

@@ -14,6 +14,7 @@
 //!   capture-screen [out.png]       capture the primary display to a PNG
 //!   capture-region <x> <y> <w> <h> [out.png]
 //!   capture-window <substr> [out]  capture a window to a PNG
+//!   ocr <title-substr>             OCR a window capture and print recognized text
 //!   ax <title-substr>              capture a window accessibility tree
 //!   coords <title-substr>          round-trip a window/screen point mapping
 //!   input-boundary                 print current RemoteDesktop/libei boundary
@@ -22,7 +23,7 @@ use std::error::Error;
 
 use auv_driver::Driver;
 use auv_driver::capture::CaptureOptions;
-use auv_driver::geometry::{Rect, WindowPoint};
+use auv_driver::geometry::{RatioRect, Rect, WindowPoint};
 use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
 use auv_driver::window::Window;
 use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
@@ -64,6 +65,7 @@ fn run() -> Run {
       arg(rest, 0, "title-substr")?,
       rest.get(1).map(String::as_str),
     ),
+    "ocr" => ocr(&session, arg(rest, 0, "title-substr")?),
     "ax" => ax(&session, arg(rest, 0, "title-substr")?),
     "coords" => coords(&session, arg(rest, 0, "title-substr")?),
     "input-boundary" => input_boundary(&session),
@@ -192,6 +194,25 @@ fn capture_window(session: &LinuxDriverSession, substr: &str, out: Option<&str>)
   Ok(())
 }
 
+fn ocr(session: &LinuxDriverSession, substr: &str) -> Run {
+  let window = find_window(session, substr)?;
+  let captured = session.window().capture(&window)?;
+  let recognition = session
+    .vision()
+    .recognize_text_in_capture(&captured, RatioRect::new(0.0, 0.0, 1.0, 1.0))?;
+  println!("recognized {} regions:", recognition.regions.len());
+  for region in recognition.regions.iter().take(80) {
+    println!(
+      "  {:?} conf={:?} bounds={:?}",
+      region.text, region.confidence, region.bounds
+    );
+  }
+  if recognition.regions.len() > 80 {
+    println!("  ... {} more regions", recognition.regions.len() - 80);
+  }
+  Ok(())
+}
+
 fn ax(session: &LinuxDriverSession, substr: &str) -> Run {
   let window = find_window(session, substr)?;
   let snapshot = session.accessibility().snapshot_window(&window)?;
@@ -287,6 +308,6 @@ where
 
 fn print_usage() {
   eprintln!(
-    "usage: cargo run -p auv-driver-linux --example validate -- <permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ax|coords|input-boundary> ..."
+    "usage: cargo run -p auv-driver-linux --example validate -- <permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|coords|input-boundary> ..."
   );
 }

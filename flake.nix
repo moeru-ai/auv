@@ -47,6 +47,8 @@
               libglvnd
               openssl
               pipewire
+              tesseract
+              leptonica
               llvmPackages.libclang
               libgbm
               xorg.libxcb

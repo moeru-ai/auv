@@ -12,11 +12,15 @@ mod descriptor;
 mod driver;
 mod error;
 pub mod input;
+pub mod ocr;
 mod permission;
 mod session;
+pub mod vision;
 mod window;
 
 pub use descriptor::{LINUX_DESKTOP_CAPABILITIES, LinuxDriverDescriptor, linux_driver_descriptor};
 pub use driver::{LinuxDriver, LinuxDriverSession};
+pub use ocr::{OcrError, recognize_text_in_rgba};
 pub use permission::{LinuxPortalProbe, PortalInterfaceProbe, probe_portals};
-pub use session::{AccessibilityApi, DisplayApi, InputApi, PermissionApi, WindowApi};
+pub use session::{AccessibilityApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};
+pub use vision::{OcrMatch, OcrMatches};
