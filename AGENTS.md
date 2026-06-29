@@ -187,7 +187,11 @@ while quarantining the archived vertical.
 - `src/catalog.rs`: command catalog and default command definitions.
 - `src/driver/macos/`: macOS driver implementation, dispatch, support, and
   tests.
+- `docs/README.md`: documentation layout, placement rules, and quick entry
+  points.
 - `docs/TERMS_AND_CONCEPTS.md`: shared vocabulary for core AUV concepts.
+- `docs/ai/references/INDEX.md`: lane- and doc-type index for flat reference
+  notes (start here when browsing references).
 - `docs/ai/references/`: durable reference notes, coverage reports, evidence
   packs, and implementation handoffs.
 - `docs/ai/explanations/`: committed tutorials, explainers, walkthroughs, and
