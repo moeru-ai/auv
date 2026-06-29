@@ -372,6 +372,7 @@ name = "auv-cli"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "auv-api-proto",
  "auv-cli-invoke",
  "auv-driver",
  "auv-driver-macos",
