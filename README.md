@@ -177,26 +177,26 @@ Legend: ✅ supported, ⚠️ partial or platform-limited, ❌ not the focus.
 | Capability | AUV | [Cua](https://github.com/trycua/cua) | [KWWKComputerUseCore](https://github.com/EYHN/kwwk-computer-use-core) / OpenBridge-style | Playwright/WebDriver |
 | --- | --- | --- | --- | --- |
 | Agent model | 💡 BYOA | 💡 BYOA + Agent | 💡 BYOA | ❌ |
-| Scriptable | ✅ Rust today; JS/TS/Python planned | ⚠️ tool/API calls | ⚠️ Swift API | ✅ JS/TS/Python/... |
-| Multi-driver | ✅ macOS ✅ Windows ⏳ Linux ⏳ Android ⏳ iOS | ✅ macOS/Linux/Windows sandbox focus | ⚠️ macOS-focused | ⚠️ browser engines across OSes |
+| Scriptable | ✅ Rust ⏳ JS/TS/Python | ⚠️ Agent tools only | ⚠️ Swift API | ✅ JS/TS/Python/... |
+| Multi-driver | ✅ macOS/Windows ⏳ Linux/Android/iOS | ✅ | ❌ | ❌ |
 | CLI | ✅ | ✅ | ❌ | ⚠️ via user scripts |
 | MCP | ✅ | ✅ | ❌ | ❌ |
-| RL Trajectory | ✅ runs + artifacts + inspect | ⚠️ trajectories/recordings | ❌ | ⚠️ traces/screenshots |
-| Screenshot | ✅ | ✅ | ✅ | ✅ browser/page only |
-| OCR | ✅ macOS OCR commands | ⚠️ model/tool dependent | ❌ | ❌ user code only |
-| Image Match | ⚠️ template/image matching path exists | ⚠️ model/tool dependent | ❌ | ❌ user code only |
-| AX (Accessibility Tree) | ✅ macOS AX tree | ✅ macOS AX tools | ✅ macOS AX snapshots | ⚠️ browser accessibility/DOM locators |
-| AX Actions | ✅ AX press/focus/click paths | ✅ | ✅ | ✅ browser elements |
-| Mouse / Click | ✅ global + window-relative | ✅ | ✅ snapshot coordinate click | ✅ browser viewport |
-| Virtual Mouse / Background | ⚠️ macOS window-targeted paths; policy still evolving | ✅ strong macOS focus | ✅ strong macOS focus | ✅ browser-scoped, not desktop apps |
-| Virtual Mouse / Foreground HID | ✅ | ✅ | ⚠️ mostly background-oriented | ✅ browser-scoped |
-| Keyboard | ✅ foreground + target-aware paths | ✅ | ✅ | ✅ browser |
-| Scroll | ✅ window/global scroll paths | ✅ | ✅ element scroll | ✅ DOM/page scroll |
-| Scroll to List | ⚠️ visual rows + OCR artifacts exist; CLI surface retired while contracts settle | ❌ | ❌ | ✅ DOM lists, ❌ native visual lists |
-| Bundled for Apps | ✅ app-local crates | ⚠️ agent/tool orchestration | ⚠️ product integration | ❌ browser-first |
-| Feedback | ✅ `OperationResult` / `VerificationResult` / artifacts | ⚠️ tool outputs | ⚠️ structured metadata | ⚠️ assertions/traces |
-| SLM friendly | ✅ compiled commands avoid repeated visual reasoning | ⚠️ depends on agent loop | ⚠️ depends on integration | ✅ inside browser scope |
-| YOLO / Custom Models | ⚠️ inference crates and visual lanes exist | ⚠️ model/tool dependent | ❌ | ❌ user code only |
+| RL Trajectory | ✅ runs + artifacts + inspect | ⚠️ recordings | ❌ | ✅ |
+| Screenshot | ✅ | ✅ | ✅ | ✅ browser only |
+| OCR | ✅ BYOK / OS OCR | ⚠️ BYOK | ❌ | ❌ |
+| Image Match | ✅ | ✅ | ❌ | ❌ user code only |
+| AX (Accessibility Tree) | ✅ macOS/Windows | ✅ macOS | ✅ macOS | ⚠️ Browser only |
+| AX Actions | ✅ press/focus/click paths | ✅ | ✅ | ⚠️ browser only |
+| Mouse / Click | ✅ display + window-relative | ✅ | ✅ | ⚠️ Browser only |
+| Virtual Mouse / Background | ✅ macOS/Windows | ✅ macOS focused | ✅ macOS focused | ⚠️ Browser only |
+| Virtual Mouse / Foreground HID | ✅ | ✅ | ❌ | ⚠️ Browser only |
+| Keyboard | ✅ | ✅ | ✅ | ⚠️ Browser Only |
+| Scroll | ✅ | ✅ | ✅ | ⚠️ Browser Only |
+| Scroll to List | ✅ | ❌ | ❌ | ✅ |
+| Bundled for Apps | ✅ | ❌ | ❌ | ❌ |
+| Feedback | ✅ Agent understand whether clicked or typed | ⚠️ tool outputs | ⚠️ structured metadata | ⚠️ assertions/traces |
+| SLM friendly | ✅ Bundled for Apps | ⚠️ Agent orchestrated | ⚠️ Agent ochestrated | ✅ |
+| YOLO / Custom Models | ✅ | ✅ | ❌ | ❌ |
 
 Scroll scan is a major reason AUV exists. Most desktop automation stacks can
 scroll or read a screenshot, but they do not turn a native app's visual list into
