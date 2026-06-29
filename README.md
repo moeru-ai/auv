@@ -174,8 +174,6 @@ app-local commands, and shared runtime reuse across frontends.
 
 ## Capability Matrix
 
-Legend: ✅ supported, ⚠️ partial or platform-limited, ❌ not the focus.
-
 | Capability | AUV | [Cua](https://github.com/trycua/cua) | [OpenBridge](https://github.com/AFK-surf/OpenBridge) / [KWWKComputerUseCore](https://github.com/EYHN/kwwk-computer-use-core) | Playwright |
 | --- | --- | --- | --- | --- |
 | Agent model | 💡 BYOA | 💡 BYOA + Built-in Agent | 💡 BYOA + Built-in Agent | ❌ |
@@ -200,14 +198,13 @@ Legend: ✅ supported, ⚠️ partial or platform-limited, ❌ not the focus.
 | SLM friendly | ✅ Bundled for Apps | ⚠️ Agent orchestrated | ⚠️ Agent ochestrated | ✅ |
 | YOLO / Custom Models | ✅ | ✅ | ❌ | ❌ |
 
-Scroll scan is a major reason AUV exists. Most desktop automation stacks can
+- **Scroll scan** is a major reason AUV exists. Most desktop automation stacks can
 scroll or read a screenshot, but they do not turn a native app's visual list into
 page records, row candidates, crop artifacts, OCR fragments, and inspectable
 stop reasons. AUV's current scroll-scan implementation is still contract work,
 so the old public `scan window-region` CLI was removed until the reusable API is
 clear.
-
-**Feedback** means the automation returns machine-readable evidence after an
+- **Feedback** means the automation returns machine-readable evidence after an
 attempt: what input path was used, what changed, what artifacts were captured,
 whether verification passed, and why an operation should retry, stop, or fail.
 
