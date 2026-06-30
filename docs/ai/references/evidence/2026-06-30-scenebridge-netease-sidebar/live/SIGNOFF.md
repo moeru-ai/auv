@@ -4,7 +4,7 @@
 
 **Date:** 2026-07-01 (A6c-3 live re-probe)
 **live_binary_rev:** `dbb7f1e192baef76304a87737743a7d3b204c32a`
-**evidence_docs_rev:** _(set at docs commit)_
+**evidence_docs_rev:** `71a286448a4efd6e4186b30f1c3c0cfa91c62ca6`
 **Environment:** macOS 27.0 (arm64); NetEase foreground; logged-in account; default window `1057×752`, resized probe `1200×820`
 **Closure:** [A6 live evidence closure](../../2026-06-30-auv-scenebridge-a6-live-evidence-closure.md)
 
