@@ -1,0 +1,1197 @@
+{
+  "command": "playlist",
+  "query": "VIP",
+  "item_count": 2,
+  "match_count": 1,
+  "matches": [
+    {
+      "section_id": "section.obs0.obs0.candidate.ocr2._____1_._____1_",
+      "section_kind": "favorite_playlists",
+      "item_id": "item.obs0.obs0.candidate.ocr3.vip______.vip______",
+      "label": "VIP黑胶专属歌单",
+      "candidate_id": "obs0.candidate.ocr3.vip______",
+      "anchor_id": "anchor.item.obs0.obs0.candidate.ocr3.vip______.vip______"
+    }
+  ],
+  "scan": {
+    "schema_version": "view-ir-v0",
+    "app": {
+      "app_id": "com.netease.163music",
+      "name": "网易云音乐",
+      "version": null
+    },
+    "window": {
+      "id": "33779",
+      "title": null,
+      "bounds": {
+        "x": 0.0,
+        "y": 0.0,
+        "width": 1200.0,
+        "height": 820.0
+      }
+    },
+    "sidebar_region": {
+      "id": null,
+      "name": "playlist_sidebar",
+      "bounds": {
+        "x": 0.0,
+        "y": 536.0,
+        "width": 264.0,
+        "height": 202.0
+      },
+      "coordinate_space": "window"
+    },
+    "observations": [
+      {
+        "observation_index": 0,
+        "viewport": {
+          "page_index": 0,
+          "bounds": {
+            "x": 0.0,
+            "y": 536.0,
+            "width": 264.0,
+            "height": 202.0
+          },
+          "axis": "vertical",
+          "scroll_offset": null
+        },
+        "source_artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-observation.json"
+        ],
+        "incoming_scroll_delivery_path": null,
+        "scroll_motion": null,
+        "viewport_fingerprint": "创建的歌单1へ|精|收藏的歌单1へ|vip黑胶专属歌单",
+        "evidence_nodes": [
+          {
+            "id": "obs0.ocr0",
+            "source": "ocr_text",
+            "label": "创建的歌单1へ",
+            "bounds": {
+              "x": 30.0,
+              "y": 536.0,
+              "width": 92.0,
+              "height": 13.0
+            },
+            "confidence": "high"
+          },
+          {
+            "id": "obs0.ocr1",
+            "source": "ocr_text",
+            "label": "精",
+            "bounds": {
+              "x": 243.0,
+              "y": 584.0,
+              "width": 20.0,
+              "height": 17.0
+            },
+            "confidence": "low"
+          },
+          {
+            "id": "obs0.ocr2",
+            "source": "ocr_text",
+            "label": "收藏的歌单1へ",
+            "bounds": {
+              "x": 33.0,
+              "y": 637.0,
+              "width": 89.0,
+              "height": 14.0
+            },
+            "confidence": "high"
+          },
+          {
+            "id": "obs0.ocr3",
+            "source": "ocr_text",
+            "label": "VIP黑胶专属歌单",
+            "bounds": {
+              "x": 71.0,
+              "y": 676.0,
+              "width": 92.0,
+              "height": 14.0
+            },
+            "confidence": "low"
+          }
+        ],
+        "candidates": [
+          {
+            "id": "obs0.candidate.ocr0._____1_",
+            "kind": "section_header",
+            "label": "创建的歌单1へ",
+            "bounds": {
+              "x": 30.0,
+              "y": 536.0,
+              "width": 92.0,
+              "height": 13.0
+            },
+            "evidence_ids": [
+              "obs0.ocr0"
+            ],
+            "confidence": "high"
+          },
+          {
+            "id": "obs0.candidate.ocr2._____1_",
+            "kind": "section_header",
+            "label": "收藏的歌单1へ",
+            "bounds": {
+              "x": 33.0,
+              "y": 637.0,
+              "width": 89.0,
+              "height": 14.0
+            },
+            "evidence_ids": [
+              "obs0.ocr2"
+            ],
+            "confidence": "high"
+          },
+          {
+            "id": "obs0.candidate.ocr3.vip______",
+            "kind": "playlist_item",
+            "label": "VIP黑胶专属歌单",
+            "bounds": {
+              "x": 71.0,
+              "y": 676.0,
+              "width": 92.0,
+              "height": 14.0
+            },
+            "evidence_ids": [
+              "obs0.ocr3"
+            ],
+            "confidence": "low"
+          }
+        ],
+        "parser_notes": []
+      },
+      {
+        "observation_index": 1,
+        "viewport": {
+          "page_index": 1,
+          "bounds": {
+            "x": 0.0,
+            "y": 536.0,
+            "width": 264.0,
+            "height": 202.0
+          },
+          "axis": "vertical",
+          "scroll_offset": null
+        },
+        "source_artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-observation.json"
+        ],
+        "incoming_scroll_delivery_path": "window_targeted_wheel",
+        "scroll_motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.006890123845141161,
+          "no_motion": true
+        },
+        "viewport_fingerprint": "创建歌单1へ|精|收藏的歌单1へ|vip黑胶专属歌单",
+        "evidence_nodes": [
+          {
+            "id": "obs1.ocr0",
+            "source": "ocr_text",
+            "label": "创建歌单1へ",
+            "bounds": {
+              "x": 30.0,
+              "y": 536.0,
+              "width": 93.0,
+              "height": 13.0
+            },
+            "confidence": "high"
+          },
+          {
+            "id": "obs1.ocr1",
+            "source": "ocr_text",
+            "label": "精",
+            "bounds": {
+              "x": 243.0,
+              "y": 584.0,
+              "width": 20.0,
+              "height": 17.0
+            },
+            "confidence": "low"
+          },
+          {
+            "id": "obs1.ocr2",
+            "source": "ocr_text",
+            "label": "收藏的歌单1へ",
+            "bounds": {
+              "x": 33.0,
+              "y": 637.0,
+              "width": 89.0,
+              "height": 14.0
+            },
+            "confidence": "high"
+          },
+          {
+            "id": "obs1.ocr3",
+            "source": "ocr_text",
+            "label": "VIP黑胶专属歌单",
+            "bounds": {
+              "x": 71.0,
+              "y": 676.0,
+              "width": 92.0,
+              "height": 14.0
+            },
+            "confidence": "low"
+          }
+        ],
+        "candidates": [
+          {
+            "id": "obs1.candidate.ocr0.____1_",
+            "kind": "playlist_item",
+            "label": "创建歌单1へ",
+            "bounds": {
+              "x": 30.0,
+              "y": 536.0,
+              "width": 93.0,
+              "height": 13.0
+            },
+            "evidence_ids": [
+              "obs1.ocr0"
+            ],
+            "confidence": "high"
+          },
+          {
+            "id": "obs1.candidate.ocr2._____1_",
+            "kind": "section_header",
+            "label": "收藏的歌单1へ",
+            "bounds": {
+              "x": 33.0,
+              "y": 637.0,
+              "width": 89.0,
+              "height": 14.0
+            },
+            "evidence_ids": [
+              "obs1.ocr2"
+            ],
+            "confidence": "high"
+          },
+          {
+            "id": "obs1.candidate.ocr3.vip______",
+            "kind": "playlist_item",
+            "label": "VIP黑胶专属歌单",
+            "bounds": {
+              "x": 71.0,
+              "y": 676.0,
+              "width": 92.0,
+              "height": 14.0
+            },
+            "evidence_ids": [
+              "obs1.ocr3"
+            ],
+            "confidence": "low"
+          }
+        ],
+        "parser_notes": []
+      },
+      {
+        "observation_index": 2,
+        "viewport": {
+          "page_index": 2,
+          "bounds": {
+            "x": 0.0,
+            "y": 536.0,
+            "width": 264.0,
+            "height": 202.0
+          },
+          "axis": "vertical",
+          "scroll_offset": null
+        },
+        "source_artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-observation.json"
+        ],
+        "incoming_scroll_delivery_path": "window_targeted_wheel",
+        "scroll_motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.009822562417718166,
+          "no_motion": true
+        },
+        "viewport_fingerprint": "创建的歌单1へ|收藏的歌单1へ|vip黑胶专属歌单",
+        "evidence_nodes": [
+          {
+            "id": "obs2.ocr0",
+            "source": "ocr_text",
+            "label": "创建的歌单1へ",
+            "bounds": {
+              "x": 30.0,
+              "y": 536.0,
+              "width": 92.0,
+              "height": 13.0
+            },
+            "confidence": "high"
+          },
+          {
+            "id": "obs2.ocr1",
+            "source": "ocr_text",
+            "label": "收藏的歌单1へ",
+            "bounds": {
+              "x": 33.0,
+              "y": 637.0,
+              "width": 89.0,
+              "height": 14.0
+            },
+            "confidence": "high"
+          },
+          {
+            "id": "obs2.ocr2",
+            "source": "ocr_text",
+            "label": "VIP黑胶专属歌单",
+            "bounds": {
+              "x": 71.0,
+              "y": 676.0,
+              "width": 92.0,
+              "height": 14.0
+            },
+            "confidence": "low"
+          }
+        ],
+        "candidates": [
+          {
+            "id": "obs2.candidate.ocr0._____1_",
+            "kind": "section_header",
+            "label": "创建的歌单1へ",
+            "bounds": {
+              "x": 30.0,
+              "y": 536.0,
+              "width": 92.0,
+              "height": 13.0
+            },
+            "evidence_ids": [
+              "obs2.ocr0"
+            ],
+            "confidence": "high"
+          },
+          {
+            "id": "obs2.candidate.ocr1._____1_",
+            "kind": "section_header",
+            "label": "收藏的歌单1へ",
+            "bounds": {
+              "x": 33.0,
+              "y": 637.0,
+              "width": 89.0,
+              "height": 14.0
+            },
+            "evidence_ids": [
+              "obs2.ocr1"
+            ],
+            "confidence": "high"
+          },
+          {
+            "id": "obs2.candidate.ocr2.vip______",
+            "kind": "playlist_item",
+            "label": "VIP黑胶专属歌单",
+            "bounds": {
+              "x": 71.0,
+              "y": 676.0,
+              "width": 92.0,
+              "height": 14.0
+            },
+            "evidence_ids": [
+              "obs2.ocr2"
+            ],
+            "confidence": "low"
+          }
+        ],
+        "parser_notes": []
+      },
+      {
+        "observation_index": 3,
+        "viewport": {
+          "page_index": 3,
+          "bounds": {
+            "x": 0.0,
+            "y": 536.0,
+            "width": 264.0,
+            "height": 202.0
+          },
+          "axis": "vertical",
+          "scroll_offset": null
+        },
+        "source_artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-observation.json"
+        ],
+        "incoming_scroll_delivery_path": "window_targeted_wheel",
+        "scroll_motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.0,
+          "no_motion": true
+        },
+        "viewport_fingerprint": "创建的歌单1へ|收藏的歌单1へ|vip黑胶专属歌单",
+        "evidence_nodes": [
+          {
+            "id": "obs3.ocr0",
+            "source": "ocr_text",
+            "label": "创建的歌单1へ",
+            "bounds": {
+              "x": 30.0,
+              "y": 536.0,
+              "width": 92.0,
+              "height": 13.0
+            },
+            "confidence": "high"
+          },
+          {
+            "id": "obs3.ocr1",
+            "source": "ocr_text",
+            "label": "收藏的歌单1へ",
+            "bounds": {
+              "x": 33.0,
+              "y": 637.0,
+              "width": 89.0,
+              "height": 14.0
+            },
+            "confidence": "high"
+          },
+          {
+            "id": "obs3.ocr2",
+            "source": "ocr_text",
+            "label": "VIP黑胶专属歌单",
+            "bounds": {
+              "x": 71.0,
+              "y": 676.0,
+              "width": 92.0,
+              "height": 14.0
+            },
+            "confidence": "low"
+          }
+        ],
+        "candidates": [
+          {
+            "id": "obs3.candidate.ocr0._____1_",
+            "kind": "section_header",
+            "label": "创建的歌单1へ",
+            "bounds": {
+              "x": 30.0,
+              "y": 536.0,
+              "width": 92.0,
+              "height": 13.0
+            },
+            "evidence_ids": [
+              "obs3.ocr0"
+            ],
+            "confidence": "high"
+          },
+          {
+            "id": "obs3.candidate.ocr1._____1_",
+            "kind": "section_header",
+            "label": "收藏的歌单1へ",
+            "bounds": {
+              "x": 33.0,
+              "y": 637.0,
+              "width": 89.0,
+              "height": 14.0
+            },
+            "evidence_ids": [
+              "obs3.ocr1"
+            ],
+            "confidence": "high"
+          },
+          {
+            "id": "obs3.candidate.ocr2.vip______",
+            "kind": "playlist_item",
+            "label": "VIP黑胶专属歌单",
+            "bounds": {
+              "x": 71.0,
+              "y": 676.0,
+              "width": 92.0,
+              "height": 14.0
+            },
+            "evidence_ids": [
+              "obs3.ocr2"
+            ],
+            "confidence": "low"
+          }
+        ],
+        "parser_notes": []
+      }
+    ],
+    "reconstruction": {
+      "root": {
+        "id": "root.sidebar",
+        "kind": "collection",
+        "domain_kind": "netease.sidebar_playlist_collection",
+        "layout": "v_stack",
+        "label": null,
+        "bounds": {
+          "x": 0.0,
+          "y": 536.0,
+          "width": 264.0,
+          "height": 202.0
+        },
+        "scrollable": {
+          "axis": "vertical",
+          "boundary": {
+            "top": "likely",
+            "bottom": "likely",
+            "left": "unknown",
+            "right": "unknown"
+          }
+        },
+        "anchors": [],
+        "landmarks": [],
+        "actions": [
+          "scroll"
+        ],
+        "evidence": [],
+        "children": [
+          {
+            "id": "section.obs0.obs0.candidate.ocr0._____1_._____1_",
+            "kind": "section",
+            "domain_kind": "netease.my_playlists",
+            "layout": "v_stack",
+            "label": "创建的歌单1へ",
+            "bounds": {
+              "x": 30.0,
+              "y": 536.0,
+              "width": 92.0,
+              "height": 13.0
+            },
+            "scrollable": null,
+            "anchors": [
+              {
+                "id": "anchor.section.obs0.obs0.candidate.ocr0._____1_._____1_",
+                "label": "创建的歌单1へ",
+                "strength": "medium",
+                "bounds": {
+                  "x": 30.0,
+                  "y": 536.0,
+                  "width": 92.0,
+                  "height": 13.0
+                },
+                "evidence_ids": [
+                  "obs0.ocr0"
+                ]
+              }
+            ],
+            "landmarks": [
+              {
+                "id": "landmark.section.obs0.obs0.candidate.ocr0._____1_._____1_",
+                "label": "创建的歌单1へ",
+                "use": "section_assignment",
+                "bounds": {
+                  "x": 30.0,
+                  "y": 536.0,
+                  "width": 92.0,
+                  "height": 13.0
+                },
+                "evidence_ids": [
+                  "obs0.ocr0"
+                ]
+              }
+            ],
+            "actions": [
+              "observe_only"
+            ],
+            "evidence": [
+              {
+                "id": "obs0.ocr0",
+                "source": "ocr_text",
+                "label": "创建的歌单1へ",
+                "bounds": {
+                  "x": 30.0,
+                  "y": 536.0,
+                  "width": 92.0,
+                  "height": 13.0
+                },
+                "confidence": "high"
+              }
+            ],
+            "children": []
+          },
+          {
+            "id": "section.obs0.obs0.candidate.ocr2._____1_._____1_",
+            "kind": "section",
+            "domain_kind": "netease.favorite_playlists",
+            "layout": "v_stack",
+            "label": "收藏的歌单1へ",
+            "bounds": {
+              "x": 33.0,
+              "y": 637.0,
+              "width": 89.0,
+              "height": 14.0
+            },
+            "scrollable": null,
+            "anchors": [
+              {
+                "id": "anchor.section.obs0.obs0.candidate.ocr2._____1_._____1_",
+                "label": "收藏的歌单1へ",
+                "strength": "medium",
+                "bounds": {
+                  "x": 33.0,
+                  "y": 637.0,
+                  "width": 89.0,
+                  "height": 14.0
+                },
+                "evidence_ids": [
+                  "obs0.ocr2"
+                ]
+              }
+            ],
+            "landmarks": [
+              {
+                "id": "landmark.section.obs0.obs0.candidate.ocr2._____1_._____1_",
+                "label": "收藏的歌单1へ",
+                "use": "section_assignment",
+                "bounds": {
+                  "x": 33.0,
+                  "y": 637.0,
+                  "width": 89.0,
+                  "height": 14.0
+                },
+                "evidence_ids": [
+                  "obs0.ocr2"
+                ]
+              }
+            ],
+            "actions": [
+              "observe_only"
+            ],
+            "evidence": [
+              {
+                "id": "obs0.ocr2",
+                "source": "ocr_text",
+                "label": "收藏的歌单1へ",
+                "bounds": {
+                  "x": 33.0,
+                  "y": 637.0,
+                  "width": 89.0,
+                  "height": 14.0
+                },
+                "confidence": "high"
+              }
+            ],
+            "children": [
+              {
+                "id": "item.obs0.obs0.candidate.ocr3.vip______.vip______",
+                "kind": "item",
+                "domain_kind": "netease.playlist_item",
+                "layout": "h_stack",
+                "label": "VIP黑胶专属歌单",
+                "bounds": {
+                  "x": 71.0,
+                  "y": 676.0,
+                  "width": 92.0,
+                  "height": 14.0
+                },
+                "scrollable": null,
+                "anchors": [
+                  {
+                    "id": "anchor.item.obs0.obs0.candidate.ocr3.vip______.vip______",
+                    "label": "VIP黑胶专属歌单",
+                    "strength": "strong",
+                    "bounds": {
+                      "x": 71.0,
+                      "y": 676.0,
+                      "width": 92.0,
+                      "height": 14.0
+                    },
+                    "evidence_ids": [
+                      "obs0.ocr3"
+                    ]
+                  }
+                ],
+                "landmarks": [],
+                "actions": [
+                  "open",
+                  "select"
+                ],
+                "evidence": [],
+                "children": [
+                  {
+                    "id": "item.obs0.obs0.candidate.ocr3.vip______.vip______.text",
+                    "kind": "text",
+                    "domain_kind": null,
+                    "layout": null,
+                    "label": "VIP黑胶专属歌单",
+                    "bounds": {
+                      "x": 71.0,
+                      "y": 676.0,
+                      "width": 92.0,
+                      "height": 14.0
+                    },
+                    "scrollable": null,
+                    "anchors": [],
+                    "landmarks": [],
+                    "actions": [
+                      "observe_only"
+                    ],
+                    "evidence": [
+                      {
+                        "id": "obs0.ocr3",
+                        "source": "ocr_text",
+                        "label": "VIP黑胶专属歌单",
+                        "bounds": {
+                          "x": 71.0,
+                          "y": 676.0,
+                          "width": 92.0,
+                          "height": 14.0
+                        },
+                        "confidence": "low"
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "item.obs1.obs1.candidate.ocr0.____1_.____1_",
+                "kind": "item",
+                "domain_kind": "netease.playlist_item",
+                "layout": "h_stack",
+                "label": "创建歌单1へ",
+                "bounds": {
+                  "x": 30.0,
+                  "y": 536.0,
+                  "width": 93.0,
+                  "height": 13.0
+                },
+                "scrollable": null,
+                "anchors": [
+                  {
+                    "id": "anchor.item.obs1.obs1.candidate.ocr0.____1_.____1_",
+                    "label": "创建歌单1へ",
+                    "strength": "strong",
+                    "bounds": {
+                      "x": 30.0,
+                      "y": 536.0,
+                      "width": 93.0,
+                      "height": 13.0
+                    },
+                    "evidence_ids": [
+                      "obs1.ocr0"
+                    ]
+                  }
+                ],
+                "landmarks": [],
+                "actions": [
+                  "open",
+                  "select"
+                ],
+                "evidence": [],
+                "children": [
+                  {
+                    "id": "item.obs1.obs1.candidate.ocr0.____1_.____1_.text",
+                    "kind": "text",
+                    "domain_kind": null,
+                    "layout": null,
+                    "label": "创建歌单1へ",
+                    "bounds": {
+                      "x": 30.0,
+                      "y": 536.0,
+                      "width": 93.0,
+                      "height": 13.0
+                    },
+                    "scrollable": null,
+                    "anchors": [],
+                    "landmarks": [],
+                    "actions": [
+                      "observe_only"
+                    ],
+                    "evidence": [
+                      {
+                        "id": "obs1.ocr0",
+                        "source": "ocr_text",
+                        "label": "创建歌单1へ",
+                        "bounds": {
+                          "x": 30.0,
+                          "y": 536.0,
+                          "width": 93.0,
+                          "height": 13.0
+                        },
+                        "confidence": "high"
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "anchor_index": [
+        {
+          "id": "anchor.section.obs0.obs0.candidate.ocr0._____1_._____1_",
+          "label": "创建的歌单1へ",
+          "strength": "medium",
+          "bounds": {
+            "x": 30.0,
+            "y": 536.0,
+            "width": 92.0,
+            "height": 13.0
+          },
+          "evidence_ids": [
+            "obs0.ocr0"
+          ]
+        },
+        {
+          "id": "anchor.section.obs0.obs0.candidate.ocr2._____1_._____1_",
+          "label": "收藏的歌单1へ",
+          "strength": "medium",
+          "bounds": {
+            "x": 33.0,
+            "y": 637.0,
+            "width": 89.0,
+            "height": 14.0
+          },
+          "evidence_ids": [
+            "obs0.ocr2"
+          ]
+        },
+        {
+          "id": "anchor.item.obs0.obs0.candidate.ocr3.vip______.vip______",
+          "label": "VIP黑胶专属歌单",
+          "strength": "strong",
+          "bounds": {
+            "x": 71.0,
+            "y": 676.0,
+            "width": 92.0,
+            "height": 14.0
+          },
+          "evidence_ids": [
+            "obs0.ocr3"
+          ]
+        },
+        {
+          "id": "anchor.item.obs1.obs1.candidate.ocr0.____1_.____1_",
+          "label": "创建歌单1へ",
+          "strength": "strong",
+          "bounds": {
+            "x": 30.0,
+            "y": 536.0,
+            "width": 93.0,
+            "height": 13.0
+          },
+          "evidence_ids": [
+            "obs1.ocr0"
+          ]
+        }
+      ],
+      "landmark_index": [
+        {
+          "id": "landmark.section.obs0.obs0.candidate.ocr0._____1_._____1_",
+          "label": "创建的歌单1へ",
+          "use": "section_assignment",
+          "bounds": {
+            "x": 30.0,
+            "y": 536.0,
+            "width": 92.0,
+            "height": 13.0
+          },
+          "evidence_ids": [
+            "obs0.ocr0"
+          ]
+        },
+        {
+          "id": "landmark.section.obs0.obs0.candidate.ocr2._____1_._____1_",
+          "label": "收藏的歌单1へ",
+          "use": "section_assignment",
+          "bounds": {
+            "x": 33.0,
+            "y": 637.0,
+            "width": 89.0,
+            "height": 14.0
+          },
+          "evidence_ids": [
+            "obs0.ocr2"
+          ]
+        }
+      ]
+    },
+    "projection": {
+      "sections": [
+        {
+          "id": "section.obs0.obs0.candidate.ocr0._____1_._____1_",
+          "kind": "my_playlists",
+          "label": "创建的歌单1へ",
+          "items": []
+        },
+        {
+          "id": "section.obs0.obs0.candidate.ocr2._____1_._____1_",
+          "kind": "favorite_playlists",
+          "label": "收藏的歌单1へ",
+          "items": [
+            {
+              "id": "item.obs0.obs0.candidate.ocr3.vip______.vip______",
+              "label": "VIP黑胶专属歌单",
+              "section_hint": "favorite_playlists",
+              "confidence": "low",
+              "candidate_id": "obs0.candidate.ocr3.vip______",
+              "anchor_id": "anchor.item.obs0.obs0.candidate.ocr3.vip______.vip______"
+            },
+            {
+              "id": "item.obs1.obs1.candidate.ocr0.____1_.____1_",
+              "label": "创建歌单1へ",
+              "section_hint": "favorite_playlists",
+              "confidence": "high",
+              "candidate_id": "obs1.candidate.ocr0.____1_",
+              "anchor_id": "anchor.item.obs1.obs1.candidate.ocr0.____1_.____1_"
+            }
+          ]
+        }
+      ]
+    },
+    "boundary": {
+      "top": "likely",
+      "bottom": "likely",
+      "left": "unknown",
+      "right": "unknown"
+    },
+    "interaction_events": [
+      {
+        "event_index": 0,
+        "phase": "collect",
+        "kind": "observe",
+        "observation_index": 0,
+        "from_observation": null,
+        "to_observation": null,
+        "viewport_fingerprint": "创建的歌单1へ|精|收藏的歌单1へ|vip黑胶专属歌单",
+        "scroll": null,
+        "motion": null,
+        "artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-observation.json"
+        ],
+        "note": null
+      },
+      {
+        "event_index": 1,
+        "phase": "collect",
+        "kind": "input_scroll",
+        "observation_index": null,
+        "from_observation": 0,
+        "to_observation": 1,
+        "viewport_fingerprint": null,
+        "scroll": {
+          "axis": "vertical",
+          "direction": "down",
+          "requested_delta": -300.0,
+          "policy": "background_preferred",
+          "delivery_path": "window_targeted_wheel",
+          "motion": {
+            "estimated_shift_y": 0,
+            "normalized_diff": 0.006890123845141161,
+            "no_motion": true
+          },
+          "settle_ms": 50,
+          "anchor": null,
+          "detected_boundary": "unknown"
+        },
+        "motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.006890123845141161,
+          "no_motion": true
+        },
+        "artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0000-observation.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-observation.json"
+        ],
+        "note": "standalone event; durable trace should use view.parse.scroll.<index> spans"
+      },
+      {
+        "event_index": 2,
+        "phase": "collect",
+        "kind": "observe",
+        "observation_index": 1,
+        "from_observation": null,
+        "to_observation": null,
+        "viewport_fingerprint": "创建歌单1へ|精|收藏的歌单1へ|vip黑胶专属歌单",
+        "scroll": null,
+        "motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.006890123845141161,
+          "no_motion": true
+        },
+        "artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-observation.json"
+        ],
+        "note": null
+      },
+      {
+        "event_index": 3,
+        "phase": "collect",
+        "kind": "input_scroll",
+        "observation_index": null,
+        "from_observation": 1,
+        "to_observation": 2,
+        "viewport_fingerprint": null,
+        "scroll": {
+          "axis": "vertical",
+          "direction": "down",
+          "requested_delta": -300.0,
+          "policy": "background_preferred",
+          "delivery_path": "window_targeted_wheel",
+          "motion": {
+            "estimated_shift_y": 0,
+            "normalized_diff": 0.009822562417718166,
+            "no_motion": true
+          },
+          "settle_ms": 50,
+          "anchor": null,
+          "detected_boundary": "unknown"
+        },
+        "motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.009822562417718166,
+          "no_motion": true
+        },
+        "artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0001-observation.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-observation.json"
+        ],
+        "note": "standalone event; durable trace should use view.parse.scroll.<index> spans"
+      },
+      {
+        "event_index": 4,
+        "phase": "collect",
+        "kind": "observe",
+        "observation_index": 2,
+        "from_observation": null,
+        "to_observation": null,
+        "viewport_fingerprint": "创建的歌单1へ|收藏的歌单1へ|vip黑胶专属歌单",
+        "scroll": null,
+        "motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.009822562417718166,
+          "no_motion": true
+        },
+        "artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-observation.json"
+        ],
+        "note": null
+      },
+      {
+        "event_index": 5,
+        "phase": "collect",
+        "kind": "input_scroll",
+        "observation_index": null,
+        "from_observation": 2,
+        "to_observation": 3,
+        "viewport_fingerprint": null,
+        "scroll": {
+          "axis": "vertical",
+          "direction": "down",
+          "requested_delta": -300.0,
+          "policy": "background_preferred",
+          "delivery_path": "window_targeted_wheel",
+          "motion": {
+            "estimated_shift_y": 0,
+            "normalized_diff": 0.0,
+            "no_motion": true
+          },
+          "settle_ms": 50,
+          "anchor": null,
+          "detected_boundary": "unknown"
+        },
+        "motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.0,
+          "no_motion": true
+        },
+        "artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0002-observation.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-observation.json"
+        ],
+        "note": "standalone event; durable trace should use view.parse.scroll.<index> spans"
+      },
+      {
+        "event_index": 6,
+        "phase": "collect",
+        "kind": "observe",
+        "observation_index": 3,
+        "from_observation": null,
+        "to_observation": null,
+        "viewport_fingerprint": "创建的歌单1へ|收藏的歌单1へ|vip黑胶专属歌单",
+        "scroll": null,
+        "motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.0,
+          "no_motion": true
+        },
+        "artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-observation.json"
+        ],
+        "note": null
+      },
+      {
+        "event_index": 7,
+        "phase": "collect",
+        "kind": "stop_decision",
+        "observation_index": 3,
+        "from_observation": null,
+        "to_observation": null,
+        "viewport_fingerprint": "创建的歌单1へ|收藏的歌单1へ|vip黑胶专属歌单",
+        "scroll": null,
+        "motion": {
+          "estimated_shift_y": 0,
+          "normalized_diff": 0.0,
+          "no_motion": true
+        },
+        "artifacts": [
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-window.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-overlay.png",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-recognition.json",
+          "/tmp/auv-scenebridge-a6-live-20260701-002044-big/obs-0003-observation.json"
+        ],
+        "note": "repeated_viewport_fingerprint"
+      }
+    ],
+    "diagnostics": [
+      {
+        "code": "deduplicated_item",
+        "message": "deduplicated repeated sidebar item \"VIP黑胶专属歌单\" in section FavoritePlaylists",
+        "node_id": "obs1.candidate.ocr3.vip______"
+      },
+      {
+        "code": "deduplicated_item",
+        "message": "deduplicated repeated sidebar item \"VIP黑胶专属歌单\" in section FavoritePlaylists",
+        "node_id": "obs2.candidate.ocr2.vip______"
+      },
+      {
+        "code": "deduplicated_item",
+        "message": "deduplicated repeated sidebar item \"VIP黑胶专属歌单\" in section FavoritePlaylists",
+        "node_id": "obs3.candidate.ocr2.vip______"
+      }
+    ],
+    "known_limits": []
+  }
+}

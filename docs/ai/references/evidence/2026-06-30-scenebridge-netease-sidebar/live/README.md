@@ -17,6 +17,13 @@ matrix (Cases A–E) and redacted attachments.
 - **Logged-in account** with at least one **named playlist** in the sidebar
   (`创建的歌单` / `收藏的歌单` items). Guest / `创建的歌单 0` yields `item_count=0`
   and blocks Cases A–E (A6b probe: `case-ls-probe.json`).
+- Current live blockers (2026-07-01 refresh):
+  - **Open:** default window geometry still yields headers-only `item_count=0`.
+  - **Resolved @ A6c-1 (hermetic):** dedup-only scans with `deduplicated_item` diagnostics
+    no longer block ViewMemory write; mixed diagnostics still block. Live confirmation
+    on resized-window probe is pending after merge (`case-ls-window-resized-probe.json`
+    documents pre-fix behavior; attachment is machine-parseable JSON — TextRecognition
+    stderr was stripped from the committed file).
 
 ## Hermetic pre-gate (run before live)
 
@@ -126,6 +133,7 @@ Copy redacted artifacts into this folder after owner review:
 | `case-d-missing-select.json` | Case D |
 | `case-e-gate-off-select.json` | Case E |
 | `case-ls-probe.json` | A6b blocker probe (`item_count=0`) |
+| `case-ls-window-resized-probe.json` | A6c blocker probe (`match_count=1`, dirty scan, no ViewMemory file) |
 | `view-memory-playlist_sidebar.json` | Post-`ls` snapshot |
 | `view-memory-playlist_sidebar-probe.json` | A6b probe snapshot |
 | `SIGNOFF.md` | Matrix checkboxes + environment |

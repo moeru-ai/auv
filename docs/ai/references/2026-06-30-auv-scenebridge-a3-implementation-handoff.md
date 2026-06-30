@@ -158,7 +158,7 @@ playlist select <label>  (or play --candidate-id → select path)
 - [x] Gate on + memory hit: reacquire path skips top-scroll replay (hermetic test)
 - [x] `git diff --check` on docs
 - [x] A2 `playlist ls --json` doc drift fixed if touched
-- [x] Optional live evidence attached — [A6 live closure](2026-06-30-auv-scenebridge-a6-live-evidence-closure.md) (**PARTIAL**; A6b probe blocked on `item_count=0`)
+- [x] Optional live evidence attached — [A6 live closure](2026-06-30-auv-scenebridge-a6-live-evidence-closure.md) (**PARTIAL**; live probes found window-geometry-sensitive scan coverage and dirty-scan `deduplicated_item` blocker)
 
 **A4 follow-up:** [A4 stale closure](2026-06-30-auv-scenebridge-a4-closure.md) —
 `ReacquireOutcome::Stale`, NetEase injectable test, stale vs not-found semantics.
