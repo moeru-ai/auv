@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **236** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **237** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -52,7 +52,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | `vertical/minecraft` | Paused vertical | Minecraft 3D spatial 探针；MC20 pause decision 已落地 | 58 |
 | `vertical/osu` | Graduation candidate | osu benchmark；G-series 需单独 owner 批准 | 10 |
 | `vertical/balatro` | Graduation candidate | 第三垂直消费探针 | 4 |
-| `vertical/netease-music` | Product crate | 网易云音乐 app-local 命令 | 9 |
+| `vertical/netease-music` | Product crate | 网易云音乐 app-local 命令 | 10 |
 | `vertical/qqmusic` | Historical evidence | QQ 音乐早期探针与 GLM 证据 | 8 |
 | `vertical/game-observe` | Observe-only | Steam/STS 等 observe-only fixture | 4 |
 | `archive/skill-bundle-retirement` | Retired | SkillBundle / recipe 退役记录 | 5 |
@@ -427,11 +427,12 @@ osu benchmark；G-series 需单独 owner 批准
 
 网易云音乐 app-local 命令
 
-#### design (3)
+#### design (4)
 
 - [`2026-05-28-view-parser-ir-netease-playlist-example-design.md`](2026-05-28-view-parser-ir-netease-playlist-example-design.md)
 - [`2026-05-29-netease-music-cli-design.md`](2026-05-29-netease-music-cli-design.md)
 - [`2026-06-03-netease-cloud-music-domain-api-design.md`](2026-06-03-netease-cloud-music-domain-api-design.md)
+- [`2026-06-30-netease-macos-ax-playlist-design.md`](2026-06-30-netease-macos-ax-playlist-design.md)
 
 #### implementation-plan (2)
 

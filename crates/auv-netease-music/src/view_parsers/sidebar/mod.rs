@@ -1,5 +1,7 @@
 #[cfg(target_os = "macos")]
 pub mod ax;
+#[cfg(target_os = "macos")]
+pub mod ax_enumerate;
 pub mod live;
 pub mod parse;
 pub mod reconstruct;

@@ -446,3 +446,40 @@ func set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse {
     recovery_hint: nil
   )
 }
+
+// Toggle the application-level AXEnhancedUserInterface attribute. WebKit/AppKit
+// hosts (for example NetEase Music) build their full accessibility subtree only
+// after an assistive client sets this flag; until then
+// AXUIElementCreateApplication exposes just the window shell. The flag lives on
+// the app element, so no window or path navigation is needed.
+//
+// NOTICE(netease-ax-enhanced-ui): AXEnhancedUserInterface is a private VoiceOver
+// activation attribute. AXUIElementSetAttributeValue routinely returns
+// kAXErrorNotImplemented (-25208) for it even though the write is applied —
+// confirmed locally by read-back flipping both directions, and matching the
+// sibling AXManualAccessibility case in electron/electron#38102. So we do not
+// trust the set return code; we confirm the write by reading the value back.
+// Removal condition: a public AX setter that reports success for this attribute.
+func set_app_enhanced_user_interface(pid: Int64, enabled: Bool) -> NativeActionResponse {
+  let appElement = AXUIElementCreateApplication(pid_t(pid))
+  let setResult = AXUIElementSetAttributeValue(
+    appElement,
+    "AXEnhancedUserInterface" as CFString,
+    enabled ? kCFBooleanTrue : kCFBooleanFalse
+  )
+
+  var applied = false
+  if let value = axAttributeValue(appElement, "AXEnhancedUserInterface"),
+    CFGetTypeID(value) == CFBooleanGetTypeID()
+  {
+    applied = CFBooleanGetValue((value as! CFBoolean)) == enabled
+  }
+
+  guard applied else {
+    return nativeActionError(
+      "AXEnhancedUserInterface read-back did not confirm enabled=\(enabled) for pid \(pid) (set rc=\(setResult.rawValue))",
+      "ensure the controlling process is trusted for Accessibility and the target app supports enhanced UI"
+    )
+  }
+  return nativeActionOk()
+}

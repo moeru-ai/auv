@@ -364,6 +364,7 @@ pub(crate) mod ffi {
     fn capture_ax_tree(request: NativeAxTreeRequest) -> NativeAxTreeResponse;
     fn perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse;
     fn set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse;
+    fn set_app_enhanced_user_interface(pid: i64, enabled: bool) -> NativeActionResponse;
     fn find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse;
     fn find_ocr_text_rgba(request: NativeOcrRgbaRequest) -> NativeOcrTextResponse;
     fn capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse;

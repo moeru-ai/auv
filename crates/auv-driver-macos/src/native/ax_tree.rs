@@ -2,7 +2,8 @@
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
   NativeAxActionRequest, NativeAxActionResponse, NativeAxFocusRequest, NativeAxFocusResponse,
-  NativeAxTreeRequest, NativeAxTreeResponse, capture_ax_tree, perform_ax_action, set_ax_focused,
+  NativeAxTreeRequest, NativeAxTreeResponse, capture_ax_tree, perform_ax_action,
+  set_app_enhanced_user_interface as native_set_app_enhanced_user_interface, set_ax_focused,
 };
 use super::types::{AuvResult, ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
@@ -101,6 +102,34 @@ pub fn set_ax_focused_path(
   _expected_role: &str,
 ) -> AuvResult<NativeAxFocus> {
   Err("macOS native AX focus dispatch is unsupported on this target".to_string())
+}
+
+// Toggle the application-level `AXEnhancedUserInterface` flag on a target process.
+//
+// WebKit/AppKit hosts (for example NetEase Music) build their full accessibility
+// subtree only after an assistive client sets this flag; until then
+// `capture_ax_tree_snapshot` observes just the window shell. Callers set it true
+// before capturing and may restore it afterward.
+//
+// TODO(netease-ax-get-attr): the prior value is not read back, so this is not an
+// idempotent get-then-set; callers that must restore exact state track it
+// themselves. Deferred per
+// docs/ai/references/2026-06-30-netease-macos-ax-playlist-design.md; trigger =
+// if redundant sets prove costly.
+#[cfg(target_os = "macos")]
+pub fn set_app_enhanced_user_interface(pid: i32, enabled: bool) -> AuvResult<()> {
+  let response = native_set_app_enhanced_user_interface(i64::from(pid), enabled);
+  super::error::native_result(
+    "set_app_enhanced_user_interface",
+    response.ok.then_some(()),
+    response.error_message,
+    response.recovery_hint,
+  )
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_app_enhanced_user_interface(_pid: i32, _enabled: bool) -> AuvResult<()> {
+  Err("macOS native AX enhanced-user-interface toggle is unsupported on this target".to_string())
 }
 
 pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<NativeAxTreeCapture> {
