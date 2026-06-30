@@ -1,0 +1,50 @@
+{
+  "_meta": {
+    "description": "Hermetic reacquire target cases for A3c cascade tests",
+    "proof_class": "hermetic",
+    "date": "2026-06-30"
+  },
+  "cases": [
+    {
+      "name": "stage1_direct_id_on_screen",
+      "target": { "kind": "node_id", "node_id": "item.coding-bgm-synth" },
+      "expected_stage": "direct_id",
+      "viewport_labels": ["创建的歌单", "Coding BGM"]
+    },
+    {
+      "name": "stage3_unique_label",
+      "target": {
+        "kind": "label_with_section",
+        "label": "Road Trip",
+        "section_hint": "favorite_playlists"
+      },
+      "expected_stage": "label_current_viewport",
+      "viewport_labels": ["收藏的歌单", "Road Trip"]
+    },
+    {
+      "name": "stage3_ambiguous_label",
+      "target": { "kind": "label_with_section", "label": "Jazz", "section_hint": null },
+      "expected_outcome": "not_found_or_fallthrough",
+      "viewport_labels": ["Jazz", "Jazz Classics"]
+    },
+    {
+      "name": "stage5_label_section_after_scroll",
+      "target": {
+        "kind": "label_with_section",
+        "label": "Jazz",
+        "section_hint": "my_playlists"
+      },
+      "expected_stage": "label_plus_section",
+      "scroll_sequence": [
+        { "fingerprint": "创建的歌单|codingbgm", "labels": ["创建的歌单", "Coding BGM"] },
+        { "fingerprint": "jazz|收藏的歌单|roadtrip", "labels": ["Jazz", "收藏的歌单", "Road Trip"] }
+      ]
+    },
+    {
+      "name": "anchor_target_optional",
+      "target": { "kind": "anchor", "anchor_id": "anchor.coding-bgm-synth" },
+      "resolves_to_label": "Coding BGM",
+      "section_hint": "my_playlists"
+    }
+  ]
+}

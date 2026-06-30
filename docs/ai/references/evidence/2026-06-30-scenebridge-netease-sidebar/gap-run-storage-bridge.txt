@@ -1,0 +1,36 @@
+SceneBridge A3 — artifact-dir vs run-storage bridge gap card
+Date: 2026-06-30
+Proof class: curated spec + code inventory (hermetic)
+
+=== Spec position ===
+
+view-parser-view-memory-v0.md §Storage location:
+  - ViewMemory artifacts live in run storage with role view-memory
+  - Follow-up command scans recent runs for matching memory_id
+
+=== Shipped NetEase CLI position ===
+
+crates/auv-netease-music:
+  - Uses --artifact-dir local directory (default /tmp paths)
+  - playlist-scan-cache.json = full PlaylistSidebarScan JSON
+  - No RunId, no implicit run recording in product crate
+  - cli.rs write_playlist_scan_cache after playlist ls
+
+=== A3-min bridge (Package A3-min accepted) ===
+
+Write view-memory-{scope_id}.json beside scan cache under same artifact-dir.
+
+Fields bridged:
+  - source_run_id = "artifact-dir-bridge-a3" (synthetic placeholder)
+  - source_reconstruction_ref = path to playlist-scan-cache.json
+
+Read path:
+  - load_latest from artifact-dir file, not run storage scan
+
+=== A4 trigger ===
+
+Owner names SceneBridge A4 run-storage migration when:
+  - NetEase adopts implicit run recording, OR
+  - Cross-frontend consumer needs inspect list_view_memory_writes
+
+Until A4: gap is intentional, not a bug.

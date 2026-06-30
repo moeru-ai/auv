@@ -1,0 +1,66 @@
+{
+  "_meta": {
+    "description": "Synthetic ViewMemory derived from A2 sidebar projection fixture",
+    "source": "hermetic-reconstruct-sidebar-synthetic.json",
+    "proof_class": "hermetic",
+    "bridge": "artifact-dir (A3-min); not run-storage view-memory role",
+    "date": "2026-06-30"
+  },
+  "schema_version": "view-memory-v0",
+  "memory_id": "com.netease.163music:playlist_sidebar",
+  "app_bundle_id": "com.netease.163music",
+  "scope_id": "playlist_sidebar",
+  "last_reconstructed_at_millis": 1719744000000,
+  "source_run_id": "artifact-dir-bridge-a3",
+  "source_reconstruction_ref": "playlist-scan-cache.json",
+  "anchors": [
+    {
+      "id": "anchor.coding-bgm-synth",
+      "label": "Coding BGM",
+      "strength": "strong",
+      "bounds": { "x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0 },
+      "evidence_ids": []
+    },
+    {
+      "id": "anchor.jazz-synth",
+      "label": "Jazz",
+      "strength": "strong",
+      "bounds": { "x": 32.0, "y": 42.0, "width": 80.0, "height": 20.0 },
+      "evidence_ids": []
+    }
+  ],
+  "landmarks": [],
+  "node_snapshots": {
+    "item.coding-bgm-synth": {
+      "node_id": "item.coding-bgm-synth",
+      "kind": "item",
+      "domain_kind": null,
+      "label": "Coding BGM",
+      "parent": "sec-my-playlists-synth",
+      "section_hint": "my_playlists",
+      "bounds_window_local": { "x": 32.0, "y": 74.0, "width": 120.0, "height": 20.0 },
+      "viewport_fingerprint_hint": "创建的歌单|codingbgm",
+      "last_seen_observation_index": 0,
+      "confidence": "high"
+    },
+    "item.jazz-synth": {
+      "node_id": "item.jazz-synth",
+      "kind": "item",
+      "domain_kind": null,
+      "label": "Jazz",
+      "parent": "sec-my-playlists-synth",
+      "section_hint": "my_playlists",
+      "bounds_window_local": { "x": 32.0, "y": 42.0, "width": 80.0, "height": 20.0 },
+      "viewport_fingerprint_hint": "jazz|收藏的歌单|roadtrip",
+      "last_seen_observation_index": 1,
+      "confidence": "high"
+    }
+  },
+  "scope_snapshot": {
+    "region_id": "playlist_sidebar",
+    "region_bounds_window_local": { "x": 0.0, "y": 0.0, "width": 240.0, "height": 400.0 },
+    "baseline_width": 240,
+    "schema_version_view_ir": "view-ir-v0"
+  },
+  "diagnostics": []
+}

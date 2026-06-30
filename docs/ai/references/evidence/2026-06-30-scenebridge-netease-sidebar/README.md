@@ -21,6 +21,17 @@ directory and contains **no production screenshots**.
   - Example `MatchRef` JSON plus field glossary for agent-facing CLI output
 - `gap-view-memory-and-reacquire.txt`
   - Curated NOTICE + spec pointers for ViewMemory / reacquire debt
+- `gap-run-storage-bridge.txt`
+  - artifact-dir vs run-storage seam for A3-min bridge
+- `view-memory-roundtrip-synthetic.json`
+  - Example `ViewMemory` JSON for hermetic serde / round-trip tests
+- `reacquire-target-fixtures.json`
+  - Target cases for A3c reacquire cascade tests
+- `live/README.md` (optional)
+  - Template for owner-labeled live desktop proof (`proof_class: live`)
+
+**A3 docs:** [prototype boundary review](../../2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md),
+[implementation handoff](../../2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
 
 ## What this folder proves
 
