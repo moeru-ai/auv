@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "source": "synthetic — authored from reconstruct_sidebar_groups_items_under_carried_section test vectors",
+    "source": "synthetic — layout matches reconstruct_sidebar_groups_items_under_carried_section assertions",
     "source_file": "crates/auv-netease-music/src/view_parsers/sidebar/tests.rs",
     "source_lines": "7-54",
     "proof_class": "hermetic",
@@ -14,7 +14,8 @@
   },
   "scope": {
     "scope_id": "netease.playlist_sidebar",
-    "projection_id": "netease.playlist_sidebar"
+    "projection_id": "netease.playlist_sidebar",
+    "scope_id_source": "provisional — view-memory-v0 / ir-shapes-v0 example; shipped code uses ViewRegionRecord.name playlist_sidebar"
   },
   "fixture_summary": {
     "viewport_pages": 2,
@@ -47,6 +48,14 @@
             "anchor_id": "anchor.coding-bgm-synth",
             "candidate_id": "obs0.candidate.coding-bgm-synth",
             "confidence": "high"
+          },
+          {
+            "id": "item-jazz-synth",
+            "label": "Jazz",
+            "section_hint": "my_playlists",
+            "anchor_id": "anchor.jazz-synth",
+            "candidate_id": "obs1.candidate.jazz-synth",
+            "confidence": "high"
           }
         ]
       },
@@ -55,14 +64,6 @@
         "kind": "favorite_playlists",
         "label": "收藏的歌单",
         "items": [
-          {
-            "id": "item-jazz-synth",
-            "label": "Jazz",
-            "section_hint": "my_playlists",
-            "anchor_id": "anchor.jazz-synth",
-            "candidate_id": "obs1.candidate.jazz-synth",
-            "confidence": "high"
-          },
           {
             "id": "item-road-trip-synth",
             "label": "Road Trip",

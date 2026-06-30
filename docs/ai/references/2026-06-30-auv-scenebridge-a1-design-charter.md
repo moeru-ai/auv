@@ -1,7 +1,7 @@
 # SceneBridge A1: Cross-App Scene Identity Design Charter
 
 **Date:** 2026-06-30  
-**Status:** design charter only — no implementation approved  
+**Status:** design charter — A2 boundary + evidence landed 2026-06-30; no Rust implementation approved
 **Slice:** docs-only design (independent lane)
 
 **AIRI boundary:** [2026-05-13-auv-airi-desktop-reuse.md](2026-05-13-auv-airi-desktop-reuse.md)  
@@ -35,8 +35,8 @@ SceneBridge is that design lane — **not** a second invoke runtime.
 
 ```text
 Scene identity evidence (AX / vision / driver)
-  → stable scene target descriptor (A2+ TBD)
-  → catalog command_id / typed operation binding
+  → ViewAnchor + ViewMemory scope (A2 Package A)
+  → product CLI / catalog command binding
   → existing invoke + run recording + inspect path
 ```
 

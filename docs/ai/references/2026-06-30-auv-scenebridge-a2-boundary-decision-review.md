@@ -34,7 +34,7 @@ A3-impl：frozen unless owner reopens with Package B + named consumer
 | Scene identity = ViewAnchor + ViewMemory scope | Cross-run scene target keys use `app_bundle_id`, `scope_id` / `projection_id`, and `anchor_id` from view-parser IR — not a new `SceneTarget` in `contract.rs` | [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md), [`MatchRef`](../../crates/auv-netease-music/src/output.rs), [`PlaylistSidebarScan` doc](../../crates/auv-netease-music/src/lib.rs) L317–325 |
 | Implementation locus `auv-view::memory` | `ViewMemory` writer/reader lives in existing `auv-view` crate per placement spec | [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md) L60–62; **zero Rust** in `auv-view::memory` today |
 | Surface-analyze single gate | View-derived actionable targets promote only through surface-analyze → `contract::Candidate` | [contract-bridge-v0](2026-05-29-view-parser-contract-bridge-v0.md) L70–75 |
-| Product CLI binding first | `auv-netease-music playlist` / `playlist select` with `anchor_id` / `item_id`; root [`catalog.rs`](../../src/catalog.rs) unchanged | [`playlist.rs` NOTICE](../../crates/auv-netease-music/src/commands/playlist.rs) L353–357 |
+| Product CLI binding first | `playlist` JSON exposes `MatchRef`; `playlist play --candidate-id` consumes `candidate_id`; `playlist select <label>` uses keyword query — root [`catalog.rs`](../../src/catalog.rs) unchanged | [`cli.rs`](../../crates/auv-netease-music/src/cli.rs), [`playlist.rs` NOTICE](../../crates/auv-netease-music/src/commands/playlist.rs) L353–357 |
 | Hermetic proof only in A2 | Evidence pack is curated spec + synthetic fixtures; live desktop proof deferred to A3 | [A2 evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md) |
 | A3 frozen | No `ViewMemory` impl, reacquire, or catalog promotion without owner reopen | This note §Reopen triggers |
 
@@ -96,7 +96,7 @@ Without an explicit boundary decision, A3 work risks:
 
 | Surface | Bound? |
 | --- | --- |
-| `auv-netease-music playlist` / `playlist select` | **yes** — product crate CLI |
+| `auv-netease-music playlist` / `playlist play --candidate-id` | **yes** — product crate CLI (`playlist select <label>` is label query, not id-based) |
 | Root `src/catalog.rs` `command_id` | **no** — deferred until owner names cross-frontend consumer |
 | Session API / MCP invoke | **separate lane** — [P14 pause](2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md) |
 
@@ -110,7 +110,7 @@ Sidebar OCR / AX observations
   → MatchRef (agent JSON today)
   → (gap) ViewMemory persist + reacquire
   → (future) AppSurfaceCandidate → surface-analyze → contract::Candidate
-  → playlist select / invoke path (product CLI first)
+  → playlist play --candidate-id / playlist select <label> (product CLI first)
 ```
 
 ## Options analysis — D1 through D5
@@ -147,7 +147,7 @@ forbids parallel scene gates and direct `contract::Candidate` minting from view-
 
 | Package A (recommend) | Package B (defer) |
 | --- | --- |
-| **Product CLI binding first:** `auv-netease-music playlist` / `playlist select` with `anchor_id`/`item_id`; root catalog deferred | Promote NetEase commands into root catalog in A3 without named consumer |
+| **Product CLI binding first:** `playlist` JSON + `playlist play --candidate-id`; `playlist select <label>` for keyword path; root catalog deferred | Promote NetEase commands into root catalog in A3 without named consumer |
 
 **Reviewer recommendation:** Package A. NetEase commands live in product crate;
 root catalog changes need a named MCP/session/CLI consumer per invoke discipline.
@@ -222,7 +222,10 @@ reuse view IR, or requires a dedicated scene crate before a second donor app exi
 9. **Hermetic evidence ≠ live proof** — synthetic JSON in evidence folder is
    authored from test vectors; label any future desktop run `live`.
 
-10. **Signing A2 Package A does not add TERMS entries** — provisional vocabulary
+10. **`playlist select` ≠ id-based binding** — `playlist select <label>` is keyword
+    query; durable id path is `playlist play --candidate-id` after `playlist --json`.
+
+11. **Signing A2 Package A does not add TERMS entries** — provisional vocabulary
     lives in A2 evidence pack; full `TERMS_AND_CONCEPTS.md` update deferred to A3
     unless owner names a TERMS slice.
 

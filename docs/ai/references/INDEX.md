@@ -48,6 +48,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | `core/inspect-trace` | Active | run 录制、inspect viewer、trace | 6 |
 | `core/driver-macos` | Active | auv-driver、macOS 输入/窗口/权限 | 20 |
 | `core/view-parser` | Active | view-parser IR 与 inspect 消费 | 14 |
+| `core/scenebridge` | Active | cross-app scene identity / grounding | 3 |
 | `core/recognition` | Active | RecognitionResult、detector 边界 | 5 |
 | `vertical/minecraft` | Paused vertical | Minecraft 3D spatial 探针；MC20 pause decision 已落地 | 58 |
 | `vertical/osu` | Graduation candidate | osu benchmark；G-series 需单独 owner 批准 | 10 |

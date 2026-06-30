@@ -18,7 +18,7 @@ view parse (per viewport)
   → agent-callable MatchRef (product CLI JSON)
   → (gap) ViewMemory persist + reacquire
   → (gap) surface-analyze promotion → CandidateRef
-  → playlist select (rescan replay today)
+  → playlist play --candidate-id / playlist select <label> (rescan replay today)
 ```
 
 The purpose is to curate **existing** hermetic tests and specs into a durable
@@ -32,7 +32,7 @@ concrete shapes):
 | Concept | Stable across refocus/layout? | Source today | Maps to |
 | --- | --- | --- | --- |
 | `app_bundle_id` | yes (app identity) | scan `app` context | ViewMemory key ([view-memory-v0](2026-05-29-view-parser-view-memory-v0.md)) |
-| `scope_id` / `projection_id` | yes (surface namespace) | `netease.playlist_sidebar` ([ir-shapes-v0](2026-05-29-view-parser-ir-shapes-v0.md)) | ViewMemory scope |
+| `scope_id` / `projection_id` | yes (surface namespace, **provisional**) | `netease.playlist_sidebar` in [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md) / [ir-shapes-v0](2026-05-29-view-parser-ir-shapes-v0.md); shipped region name `playlist_sidebar` | ViewMemory scope |
 | `anchor_id` | yes within memory scope (target) | `ViewAnchor` on reconstruction | `MatchRef.anchor_id` |
 | `item_id` / `section_id` | mostly stable post-merge | `PlaylistSidebarProjection` | `MatchRef.item_id`, `MatchRef.section_id` |
 | `label` | display; normalize for match | OCR text | keyword filter in [`output.rs`](../../crates/auv-netease-music/src/output.rs) |
@@ -98,8 +98,9 @@ A2 does not duplicate the full fixture corpus; refer to that doc for case names.
   pages in the canonical test fixture.
 - Agent-facing **`MatchRef`** exposes `section_id`, `item_id`, `anchor_id`,
   `candidate_id`, and `label` for `playlist` CLI JSON output.
+- **CLI binding today:** `playlist play --candidate-id` (id path); `playlist select <label>` (keyword path).
 - **Gaps are explicit:** ViewMemory, reacquire, and core `CandidateRef` promotion
-  are not landed; playlist select replays scan pages.
+  are not landed; `playlist select` replays scan pages.
 
 ## What this pack does not prove
 

@@ -55,7 +55,13 @@
   "view_memory_keys": {
     "app_bundle_id": "com.netease.163music",
     "scope_id": "netease.playlist_sidebar",
+    "scope_id_note": "provisional per view-memory-v0; region.name is playlist_sidebar in shipped code",
     "anchor_id": "anchor.coding-bgm-synth"
+  },
+  "cli_binding": {
+    "playlist_ls_json": "exposes MatchRef including candidate_id",
+    "playlist_play": "playlist play --candidate-id <matches[].candidate_id>",
+    "playlist_select": "playlist select <label> — keyword query, not anchor_id/item_id"
   },
   "not_identity_keys": [
     "window bounds",
