@@ -2,6 +2,8 @@
 pub mod ax;
 pub mod live;
 pub mod parse;
+#[cfg(target_os = "macos")]
+pub mod reacquire;
 pub mod reconstruct;
 pub mod region;
 pub mod scan;

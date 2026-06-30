@@ -21,6 +21,8 @@ pub struct PlaylistSelectResult {
   pub verification: PlaylistSelectVerification,
   pub diagnostics: Vec<ParserDiagnostic>,
   pub known_limits: Vec<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub reacquire: Option<crate::view_memory::PlaylistReacquireSummary>,
 }
 
 impl PlaylistSelectResult {
@@ -349,131 +351,163 @@ fn run_playlist_select_resolved(
   let mut steps = Vec::new();
   let mut diagnostics = scan.diagnostics().to_vec();
   let mut known_limits = scan.known_limits().to_vec();
+  let mut reacquire_summary = None;
+  let mut skip_rescan_replay = false;
+  let mut click_bounds = target_bounds;
 
-  // NOTICE(netease-playlist-select-reacquire): selection consumes the
-  // parse-scoped bounds from the fresh scan. It rewinds to the top and replays
-  // the scan page count instead of treating stored bounds as durable across
-  // arbitrary prior app state. Replace this with view-memory reacquire once
-  // that owner-approved slice lands.
-  let top_scrolls = inputs.max_scrolls.max(target_observation_index) + 4;
-  for index in 0..top_scrolls {
-    match session.window().scroll(
-      &window,
-      sidebar_anchor,
-      Scroll::new(0.0, inputs.scroll_amount),
-      ScrollOptions {
-        policy: InputPolicy::BackgroundPreferred,
-        settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
-        ..ScrollOptions::default()
-      },
-    ) {
-      Ok(result) => steps.push(PlaylistSelectStep {
-        name: format!("scroll-sidebar-top-{index}"),
+  if crate::view_memory::enabled() {
+    if let Some(memory) = crate::view_memory::load_for_sidebar(inputs) {
+      match crate::view_parsers::sidebar::reacquire::try_reacquire_for_target(
+        inputs,
+        &session,
+        &window,
+        sidebar_bounds,
+        sidebar_anchor,
+        &memory,
+        &target,
+      ) {
+        Some((bounds, summary)) => {
+          click_bounds = bounds;
+          skip_rescan_replay = true;
+          reacquire_summary = Some(summary);
+          steps.push(PlaylistSelectStep {
+            name: "reacquire-target".to_string(),
+            target_bounds: Some(click_bounds),
+            delivery_path: None,
+            fallback_reason: None,
+          });
+        }
+        None => known_limits
+          .push("view-memory reacquire missed target — falling back to rescan replay".to_string()),
+      }
+    }
+  }
+
+  if !skip_rescan_replay {
+    // NOTICE(netease-playlist-select-reacquire): selection consumes the
+    // parse-scoped bounds from the fresh scan. It rewinds to the top and replays
+    // the scan page count instead of treating stored bounds as durable across
+    // arbitrary prior app state. Replace this with view-memory reacquire once
+    // that owner-approved slice lands.
+    let top_scrolls = inputs.max_scrolls.max(target_observation_index) + 4;
+    for index in 0..top_scrolls {
+      match session.window().scroll(
+        &window,
+        sidebar_anchor,
+        Scroll::new(0.0, inputs.scroll_amount),
+        ScrollOptions {
+          policy: InputPolicy::BackgroundPreferred,
+          settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
+          ..ScrollOptions::default()
+        },
+      ) {
+        Ok(result) => steps.push(PlaylistSelectStep {
+          name: format!("scroll-sidebar-top-{index}"),
+          target_bounds: Some(sidebar_bounds),
+          delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
+          fallback_reason: result.fallback_reason,
+        }),
+        Err(error) => {
+          diagnostics.push(ParserDiagnostic {
+            code: "playlist_select_top_scroll_failed".to_string(),
+            message: error.to_string(),
+            node_id: target.candidate_id.clone(),
+          });
+          known_limits.push("playlist select top seek stopped after scroll failure".to_string());
+          break;
+        }
+      }
+    }
+
+    for index in 0..target_observation_index {
+      let result = session
+        .window()
+        .scroll(
+          &window,
+          sidebar_anchor,
+          Scroll::new(0.0, -inputs.scroll_amount),
+          ScrollOptions {
+            policy: InputPolicy::BackgroundPreferred,
+            settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
+            ..ScrollOptions::default()
+          },
+        )
+        .map_err(|error| format!("playlist select page scroll failed: {error}"))?;
+      steps.push(PlaylistSelectStep {
+        name: format!("scroll-sidebar-target-page-{index}"),
         target_bounds: Some(sidebar_bounds),
         delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
         fallback_reason: result.fallback_reason,
-      }),
-      Err(error) => {
-        diagnostics.push(ParserDiagnostic {
-          code: "playlist_select_top_scroll_failed".to_string(),
-          message: error.to_string(),
-          node_id: target.candidate_id.clone(),
-        });
-        known_limits.push("playlist select top seek stopped after scroll failure".to_string());
-        break;
-      }
-    }
-  }
-
-  for index in 0..target_observation_index {
-    let result = session
-      .window()
-      .scroll(
-        &window,
-        sidebar_anchor,
-        Scroll::new(0.0, -inputs.scroll_amount),
-        ScrollOptions {
-          policy: InputPolicy::BackgroundPreferred,
-          settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
-          ..ScrollOptions::default()
-        },
-      )
-      .map_err(|error| format!("playlist select page scroll failed: {error}"))?;
-    steps.push(PlaylistSelectStep {
-      name: format!("scroll-sidebar-target-page-{index}"),
-      target_bounds: Some(sidebar_bounds),
-      delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
-      fallback_reason: result.fallback_reason,
-    });
-  }
-
-  let mut click_bounds = target_bounds;
-  for attempt in 0..2 {
-    if !playlist_select_bottom_padding_scroll_needed(click_bounds, sidebar_bounds) {
-      break;
+      });
     }
 
-    let result = session
-      .window()
-      .scroll(
-        &window,
-        sidebar_anchor,
-        Scroll::new(0.0, -inputs.scroll_amount),
-        ScrollOptions {
-          policy: InputPolicy::BackgroundPreferred,
-          settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
-          ..ScrollOptions::default()
-        },
-      )
-      .map_err(|error| format!("playlist select bottom padding scroll failed: {error}"))?;
-    steps.push(PlaylistSelectStep {
-      name: format!("scroll-sidebar-bottom-padding-{attempt}"),
-      target_bounds: Some(sidebar_bounds),
-      delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
-      fallback_reason: result.fallback_reason,
-    });
+    for attempt in 0..2 {
+      if !playlist_select_bottom_padding_scroll_needed(click_bounds, sidebar_bounds) {
+        break;
+      }
 
-    match current_sidebar_target_bounds(
-      &session,
-      &window,
-      sidebar_bounds,
-      inputs,
-      &target.label,
-      query,
-    ) {
-      Ok(Some(bounds)) => {
-        click_bounds = bounds;
-        steps.push(PlaylistSelectStep {
-          name: format!("reobserve-playlist-after-bottom-padding-{attempt}"),
-          target_bounds: Some(click_bounds),
-          delivery_path: None,
-          fallback_reason: None,
-        });
-      }
-      Ok(None) => {
-        diagnostics.push(ParserDiagnostic {
-          code: "playlist_select_bottom_padding_reobserve_missed_target".to_string(),
-          message: format!(
-            "target {:?} was not visible after bottom padding scroll",
-            target.label
-          ),
-          node_id: target.candidate_id.clone(),
-        });
-        known_limits.push(
-          "playlist select bottom padding could not reacquire target before click".to_string(),
-        );
-        break;
-      }
-      Err(error) => {
-        diagnostics.push(ParserDiagnostic {
-          code: "playlist_select_bottom_padding_reobserve_failed".to_string(),
-          message: error,
-          node_id: target.candidate_id.clone(),
-        });
-        known_limits.push(
-          "playlist select bottom padding could not reacquire target before click".to_string(),
-        );
-        break;
+      let result = session
+        .window()
+        .scroll(
+          &window,
+          sidebar_anchor,
+          Scroll::new(0.0, -inputs.scroll_amount),
+          ScrollOptions {
+            policy: InputPolicy::BackgroundPreferred,
+            settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
+            ..ScrollOptions::default()
+          },
+        )
+        .map_err(|error| format!("playlist select bottom padding scroll failed: {error}"))?;
+      steps.push(PlaylistSelectStep {
+        name: format!("scroll-sidebar-bottom-padding-{attempt}"),
+        target_bounds: Some(sidebar_bounds),
+        delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
+        fallback_reason: result.fallback_reason,
+      });
+
+      match current_sidebar_target_bounds(
+        &session,
+        &window,
+        sidebar_bounds,
+        inputs,
+        &target.label,
+        query,
+      ) {
+        Ok(Some(bounds)) => {
+          click_bounds = bounds;
+          steps.push(PlaylistSelectStep {
+            name: format!("reobserve-playlist-after-bottom-padding-{attempt}"),
+            target_bounds: Some(click_bounds),
+            delivery_path: None,
+            fallback_reason: None,
+          });
+        }
+        Ok(None) => {
+          diagnostics.push(ParserDiagnostic {
+            code: "playlist_select_bottom_padding_reobserve_missed_target".to_string(),
+            message: format!(
+              "target {:?} was not visible after bottom padding scroll",
+              target.label
+            ),
+            node_id: target.candidate_id.clone(),
+          });
+          known_limits.push(
+            "playlist select bottom padding could not reacquire target before click".to_string(),
+          );
+          break;
+        }
+        Err(error) => {
+          diagnostics.push(ParserDiagnostic {
+            code: "playlist_select_bottom_padding_reobserve_failed".to_string(),
+            message: error,
+            node_id: target.candidate_id.clone(),
+          });
+          known_limits.push(
+            "playlist select bottom padding could not reacquire target before click".to_string(),
+          );
+          break;
+        }
       }
     }
   }
@@ -564,6 +598,7 @@ fn run_playlist_select_resolved(
     verification,
     diagnostics,
     known_limits,
+    reacquire: reacquire_summary,
   })
 }
 

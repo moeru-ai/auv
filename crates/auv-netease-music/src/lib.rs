@@ -6,6 +6,7 @@ pub mod commands;
 pub mod interaction;
 pub mod output;
 pub mod scroll;
+pub mod view_memory;
 pub mod view_parsers;
 pub mod views;
 pub mod windows;
@@ -415,6 +416,10 @@ impl PlaylistSidebarScan {
 
   pub fn observations_len(&self) -> usize {
     self.observations.len()
+  }
+
+  pub fn reconstruction(&self) -> &ViewReconstructionRecord {
+    &self.reconstruction
   }
 
   pub fn projection(&self) -> &PlaylistSidebarProjection {

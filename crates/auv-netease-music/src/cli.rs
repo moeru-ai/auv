@@ -1513,6 +1513,9 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
     eprintln!("{error}");
     return ExitCode::from(1);
   }
+  if let Err(error) = crate::view_memory::write_from_scan(&cmd.inputs, &scan) {
+    eprintln!("view memory write skipped: {error}");
+  }
   let output = build_playlist_json_output(&scan, cmd.query.as_deref());
 
   match &cmd.output {
