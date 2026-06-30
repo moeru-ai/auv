@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-30  
 **Status:** **owner accepted Package A** — final decision record for SceneBridge A2.
-Does not approve **SceneBridge A3** prototype. Session API P14 pause unchanged.
+A3 prototype boundary landed separately. Session API P14 pause unchanged.
 
 **Prior work:** [A1 design charter](2026-06-30-auv-scenebridge-a1-design-charter.md)
 (docs-only lane framing) → A2 evidence pack + boundary forks (this note).
@@ -34,7 +34,7 @@ A3-impl：frozen unless owner reopens with Package B + named consumer
 | Scene identity = ViewAnchor + ViewMemory scope | Cross-run scene target keys use `app_bundle_id`, `scope_id` / `projection_id`, and `anchor_id` from view-parser IR — not a new `SceneTarget` in `contract.rs` | [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md), [`MatchRef`](../../crates/auv-netease-music/src/output.rs), [`PlaylistSidebarScan` doc](../../crates/auv-netease-music/src/lib.rs) L317–325 |
 | Implementation locus `auv-view::memory` | `ViewMemory` writer/reader lives in existing `auv-view` crate per placement spec | [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md) L60–62; **zero Rust** in `auv-view::memory` today |
 | Surface-analyze single gate | View-derived actionable targets promote only through surface-analyze → `contract::Candidate` | [contract-bridge-v0](2026-05-29-view-parser-contract-bridge-v0.md) L70–75 |
-| Product CLI binding first | `playlist` JSON exposes `MatchRef`; `playlist play --candidate-id` consumes `candidate_id`; `playlist select <label>` uses keyword query — root [`catalog.rs`](../../src/catalog.rs) unchanged | [`cli.rs`](../../crates/auv-netease-music/src/cli.rs), [`playlist.rs` NOTICE](../../crates/auv-netease-music/src/commands/playlist.rs) L353–357 |
+| Product CLI binding first | `playlist ls --json` exposes `MatchRef`; `playlist play --candidate-id` consumes `candidate_id`; `playlist select <label>` uses keyword query — root [`catalog.rs`](../../src/catalog.rs) unchanged | [`cli.rs`](../../crates/auv-netease-music/src/cli.rs), [`playlist.rs` NOTICE](../../crates/auv-netease-music/src/commands/playlist.rs) L353–357 |
 | Hermetic proof only in A2 | Evidence pack is curated spec + synthetic fixtures; live desktop proof deferred to A3 | [A2 evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md) |
 | A3 frozen | No `ViewMemory` impl, reacquire, or catalog promotion without owner reopen | This note §Reopen triggers |
 
@@ -147,7 +147,7 @@ forbids parallel scene gates and direct `contract::Candidate` minting from view-
 
 | Package A (recommend) | Package B (defer) |
 | --- | --- |
-| **Product CLI binding first:** `playlist` JSON + `playlist play --candidate-id`; `playlist select <label>` for keyword path; root catalog deferred | Promote NetEase commands into root catalog in A3 without named consumer |
+| **Product CLI binding first:** `playlist ls --json` + `playlist play --candidate-id`; `playlist select <label>` for keyword path; root catalog deferred | Promote NetEase commands into root catalog in A3 without named consumer |
 
 **Reviewer recommendation:** Package A. NetEase commands live in product crate;
 root catalog changes need a named MCP/session/CLI consumer per invoke discipline.
@@ -223,7 +223,7 @@ reuse view IR, or requires a dedicated scene crate before a second donor app exi
    authored from test vectors; label any future desktop run `live`.
 
 10. **`playlist select` ≠ id-based binding** — `playlist select <label>` is keyword
-    query; durable id path is `playlist play --candidate-id` after `playlist --json`.
+    query; durable id path is `playlist play --candidate-id` after `playlist ls --json`.
 
 11. **Signing A2 Package A does not add TERMS entries** — provisional vocabulary
     lives in A2 evidence pack; full `TERMS_AND_CONCEPTS.md` update deferred to A3
@@ -247,19 +247,16 @@ This note does **not** approve:
 
 | Trigger | Unlocks | Does **not** auto-unlock |
 | --- | --- | --- |
-| Owner names **SceneBridge A3** prototype | Minimal `auv-view::memory` + NetEase `playlist select` reacquire replacing rescan NOTICE | Root catalog, session API, live proof mandate |
+| Owner names **SceneBridge A3** prototype | Minimal `auv-view::memory` + NetEase `playlist select` reacquire replacing rescan NOTICE | **Landed 2026-06-30** — [A3 boundary](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md) |
 | Owner signs **Package B** + named cross-frontend consumer | Revisit D1/D4 (contract type, catalog binding) | A3 without explicit owner name |
 | Owner names **TERMS** slice for scene identity | Provisional → durable vocabulary in `TERMS_AND_CONCEPTS.md` | ViewMemory impl by itself |
 
-### A3 candidate preview (not approved here)
+### A3 prototype (landed 2026-06-30)
 
-If owner names A3 after A2 Package A:
+Owner named SceneBridge A3 after A2 Package A. See:
 
-- Minimal `auv-view::memory` writer/reader
-- NetEase `playlist select` reacquire replacing
-  `NOTICE(netease-playlist-select-reacquire)` rescan path
-- Hermetic tests using [A2 curated fixtures](evidence/2026-06-30-scenebridge-netease-sidebar/)
-- Optional one `live`-labeled desktop proof run
+- [A3 prototype boundary review](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md) — **Package A3-min accepted**
+- [A3 implementation handoff](2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
 
 ## Open questions — resolved (Package A)
 
@@ -285,11 +282,13 @@ cargo test -p auv-netease-music view_parsers::sidebar  # optional cross-check
 ```
 
 Expected: boundary + evidence-pack docs cite D1–D5 and Package A; sidebar hermetic
-tests pass; no `auv-view::memory` implementation appears in `crates/auv-view`.
+tests pass; `auv-view::memory` implementation follows [A3 handoff](2026-06-30-auv-scenebridge-a3-implementation-handoff.md).
 
 ## Related
 
 - [A1 design charter](2026-06-30-auv-scenebridge-a1-design-charter.md)
+- [A3 prototype boundary review](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md)
+- [A3 implementation handoff](2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
 - [A2 NetEase sidebar evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md)
 - [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md)
 - [contract-bridge-v0](2026-05-29-view-parser-contract-bridge-v0.md)

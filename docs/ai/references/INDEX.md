@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **238** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **240** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -48,7 +48,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | `core/inspect-trace` | Active | run 录制、inspect viewer、trace | 6 |
 | `core/driver-macos` | Active | auv-driver、macOS 输入/窗口/权限 | 20 |
 | `core/view-parser` | Active | view-parser IR 与 inspect 消费 | 14 |
-| `core/scenebridge` | Active | cross-app scene identity / grounding | 3 |
+| `core/scenebridge` | Active | cross-app scene identity / grounding | 5 |
 | `core/recognition` | Active | RecognitionResult、detector 边界 | 5 |
 | `vertical/minecraft` | Paused vertical | Minecraft 3D spatial 探针；MC20 pause decision 已落地 | 58 |
 | `vertical/osu` | Graduation candidate | osu benchmark；G-series 需单独 owner 批准 | 10 |
@@ -157,13 +157,18 @@ cross-app scene identity / grounding → command targets; not session API rhythm
 
 - [`2026-06-30-auv-scenebridge-a1-design-charter.md`](2026-06-30-auv-scenebridge-a1-design-charter.md)
 
-#### review (1)
+#### review (2)
 
 - [`2026-06-30-auv-scenebridge-a2-boundary-decision-review.md`](2026-06-30-auv-scenebridge-a2-boundary-decision-review.md)
+- [`2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md`](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md)
 
 #### evidence-pack (1)
 
 - [`2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md`](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md)
+
+#### handoff (1)
+
+- [`2026-06-30-auv-scenebridge-a3-implementation-handoff.md`](2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
 
 ### `core/api-mcp` — Active
 

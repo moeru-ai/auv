@@ -1,7 +1,7 @@
 # SceneBridge A1: Cross-App Scene Identity Design Charter
 
 **Date:** 2026-06-30  
-**Status:** design charter — A2 boundary + evidence landed 2026-06-30; no Rust implementation approved
+**Status:** design charter — A2 boundary + evidence landed 2026-06-30; A3 prototype boundary landed 2026-06-30; Rust per A3 handoff
 **Slice:** docs-only design (independent lane)
 
 **AIRI boundary:** [2026-05-13-auv-airi-desktop-reuse.md](2026-05-13-auv-airi-desktop-reuse.md)  
@@ -78,20 +78,28 @@ Do not import AIRI orchestration shells into AUV core as part of this lane.
 | --- | --- | --- |
 | 1 | First evidence pack app / surface? | **NetEase Music playlist sidebar** — [A2 evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md) |
 | 2 | Prototype crate vs `auv-view` extension? | **`auv-view::memory` only** — [A2 boundary review](2026-06-30-auv-scenebridge-a2-boundary-decision-review.md) D2 |
-| 3 | Live vs hermetic proof boundary? | **Hermetic curated only in A2**; live deferred to A3 — boundary review D5 |
+| 3 | Live vs hermetic proof boundary? | **Hermetic curated only in A2**; live optional in A3 — boundary review D5 |
+
+## Open questions — partial A3 resolution (2026-06-30)
+
+| # | Question | A3 resolution (Package A3-min) |
+| --- | --- | --- |
+| 4 | Inspect contract — artifacts/trace for identity? | **Partial:** `PlaylistSelectResult` reacquire JSON; run trace → A4 |
+| 5 | Cross-app scope? | **Deferred** — NetEase `playlist_sidebar` only |
 
 ## Reopen triggers (candidate only)
 
 | Trigger | Unlocks | Status |
 | --- | --- | --- |
 | Owner names **SceneBridge A2** evidence pack | Grounding vocabulary + fixture scope | **Landed 2026-06-30** — [boundary review](2026-06-30-auv-scenebridge-a2-boundary-decision-review.md), [evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md) |
-| Owner names **SceneBridge A3** prototype | Narrow read-side producer behind feature gate | **Frozen** until owner reopens |
+| Owner names **SceneBridge A3** prototype | Narrow read-side producer behind feature gate | **Landed 2026-06-30** — [A3 boundary](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md), [A3 handoff](2026-06-30-auv-scenebridge-a3-implementation-handoff.md) |
 
 Signing A1 does **not** unlock session API P10, R2b-impl, or MCP merge.
 
 ## Related
 
-- [A2 boundary decision review](2026-06-30-auv-scenebridge-a2-boundary-decision-review.md) — **Owner: Package A accepted**
+- [A3 prototype boundary review](2026-06-30-auv-scenebridge-a3-prototype-boundary-review.md) — **Owner: Package A3-min accepted**
+- [A3 implementation handoff](2026-06-30-auv-scenebridge-a3-implementation-handoff.md)
 - [A2 NetEase sidebar evidence pack](2026-06-30-auv-scenebridge-a2-netease-sidebar-evidence-pack.md)
 - [view-memory-v0](2026-05-29-view-parser-view-memory-v0.md)
 - [contract-bridge-v0](2026-05-29-view-parser-contract-bridge-v0.md)
