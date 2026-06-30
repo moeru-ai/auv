@@ -22,5 +22,8 @@ pub fn try_build_memory(
   input: MemoryWriteInput<'_>,
   reconstruction: &crate::ViewReconstructionRecord,
 ) -> Option<super::ViewMemory> {
+  if !input.clean {
+    return None;
+  }
   super::memory_from_reconstruction_parts(input, reconstruction)
 }

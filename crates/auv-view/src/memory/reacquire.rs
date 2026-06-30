@@ -17,6 +17,7 @@ pub enum ReacquireStrategy {
   DirectId,
   LabelCurrentViewport,
   LabelPlusSection,
+  // TODO(view-memory-a4): ViewportFingerprint stage deferred per anchor-reacquisition-v0.
   ViewportFingerprint,
 }
 

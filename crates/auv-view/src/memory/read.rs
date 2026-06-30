@@ -56,6 +56,8 @@ pub fn read_memory(
     if saved > 0 {
       let drift = (current as f64 - saved as f64).abs() / saved as f64;
       if drift > config.baseline_mismatch_tolerance_ratio {
+        // NOTICE(a3-min-baseline-hard-reject): spec warns on drift; A3-min rejects load
+        // so playlist select can fall back to rescan replay with a known_limits note.
         return MemoryReadOutcome::Rejected {
           reason: StaleReason::BaselineMismatchHard,
         };

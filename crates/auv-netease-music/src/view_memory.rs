@@ -22,10 +22,11 @@ pub const PLAYLIST_SIDEBAR_SCOPE_ID: &str = "playlist_sidebar";
 pub const PLAYLIST_SCAN_CACHE_FILE_NAME: &str = "playlist-scan-cache.json";
 
 pub fn enabled() -> bool {
-  matches!(
-    std::env::var("AUV_NETEASE_VIEW_MEMORY").ok().as_deref(),
-    Some("1")
-  )
+  enabled_with_env(std::env::var("AUV_NETEASE_VIEW_MEMORY").ok().as_deref())
+}
+
+pub(crate) fn enabled_with_env(value: Option<&str>) -> bool {
+  matches!(value, Some("1"))
 }
 
 pub fn system_time_millis() -> u64 {
@@ -70,22 +71,21 @@ pub fn write_from_scan(inputs: &crate::Inputs, scan: &PlaylistSidebarScan) -> Re
   write_memory_file(&path, &memory)
 }
 
-pub fn load_for_sidebar(inputs: &crate::Inputs) -> Option<auv_view::memory::ViewMemory> {
+pub fn load_for_sidebar(
+  inputs: &crate::Inputs,
+  current_baseline_width: Option<u32>,
+) -> Option<auv_view::memory::ViewMemory> {
   if !enabled() {
     return None;
   }
   let path = memory_file_path(&inputs.artifact_dir, PLAYLIST_SIDEBAR_SCOPE_ID);
-  let baseline = inputs
-    .sidebar_region
-    .map(|region| (region.width * 1920.0).round() as u32)
-    .unwrap_or(240);
   load_memory_file(
     &path,
     &MemoryReadConfig {
       now_millis: system_time_millis(),
       ..Default::default()
     },
-    Some(baseline),
+    current_baseline_width,
   )
 }
 
@@ -94,14 +94,10 @@ mod tests {
   use super::*;
 
   #[test]
-  fn enabled_respects_env_gate() {
-    // NOTICE: Rust 2024 marks env mutation as unsafe (may race in parallel tests).
-    unsafe {
-      std::env::remove_var("AUV_NETEASE_VIEW_MEMORY");
-      assert!(!enabled());
-      std::env::set_var("AUV_NETEASE_VIEW_MEMORY", "1");
-      assert!(enabled());
-      std::env::remove_var("AUV_NETEASE_VIEW_MEMORY");
-    }
+  fn enabled_with_env_requires_exact_value() {
+    assert!(!enabled_with_env(None));
+    assert!(!enabled_with_env(Some("0")));
+    assert!(!enabled_with_env(Some("true")));
+    assert!(enabled_with_env(Some("1")));
   }
 }
