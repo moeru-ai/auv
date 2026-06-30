@@ -148,6 +148,14 @@ invoke 路由、CLI handler、catalog
 - [`2026-06-17-invoke-command-handler-binding-plan.md`](2026-06-17-invoke-command-handler-binding-plan.md)
 - [`2026-06-18-auv-cli-invoke-traced-wrapper-runtime-exit-plan.md`](2026-06-18-auv-cli-invoke-traced-wrapper-runtime-exit-plan.md)
 
+### `core/scenebridge` — Active (independent lane)
+
+cross-app scene identity / grounding → command targets; not session API rhythm
+
+#### design (1)
+
+- [`2026-06-30-auv-scenebridge-a1-design-charter.md`](2026-06-30-auv-scenebridge-a1-design-charter.md)
+
 ### `core/api-mcp` — Active
 
 session API、proto、MCP 前端
@@ -161,8 +169,9 @@ session API、proto、MCP 前端
 
 - [`2026-06-11-mcp-read-chain-evidence-pack.md`](2026-06-11-mcp-read-chain-evidence-pack.md)
 
-#### handoff (6)
+#### handoff (7)
 
+- [`2026-06-30-auv-api-s1-subprocess-smoke-handoff.md`](2026-06-30-auv-api-s1-subprocess-smoke-handoff.md)
 - [`2026-06-14-c4-mcp-frontend-handoff.md`](2026-06-14-c4-mcp-frontend-handoff.md)
 - [`2026-06-30-auv-api-p11-summary-durability-handoff.md`](2026-06-30-auv-api-p11-summary-durability-handoff.md)
 - [`2026-06-30-auv-api-p3-session-proto-mapper-boundary-handoff.md`](2026-06-30-auv-api-p3-session-proto-mapper-boundary-handoff.md)
@@ -170,8 +179,9 @@ session API、proto、MCP 前端
 - [`2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md`](2026-06-30-auv-api-p14-api-line-closeout-pause-decision.md)
 - [`2026-06-30-auv-api-r2-invoke-operation-result-handoff.md`](2026-06-30-auv-api-r2-invoke-operation-result-handoff.md)
 
-#### note (3)
+#### note (4)
 
+- [`2026-06-30-auv-api-l1-session-api-operator-guide.md`](2026-06-30-auv-api-l1-session-api-operator-guide.md)
 - [`2026-06-10-stateful-session-daemon-js-repl-v0.md`](2026-06-10-stateful-session-daemon-js-repl-v0.md)
 - [`2026-06-11-mcp-frontend-surface-v0.md`](2026-06-11-mcp-frontend-surface-v0.md)
 - [`2026-06-18-core-realtime-session-substrate-v0.md`](2026-06-18-core-realtime-session-substrate-v0.md)

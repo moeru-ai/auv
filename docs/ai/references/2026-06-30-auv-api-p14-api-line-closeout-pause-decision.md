@@ -86,6 +86,7 @@ not mean every proto RPC is fully featured.
 | **P11** | Summary durability | [`2026-06-30-auv-api-p11-summary-durability-handoff.md`](2026-06-30-auv-api-p11-summary-durability-handoff.md) | `operation-summary` artifact persisted on `Invoke` |
 | **P12** | Identity / role closeout | [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md) | Wire `operation_id` = `command_id`; `ArtifactRef.role` from catalog |
 | **P13** | External client smoke | [`2026-06-30-auv-api-p13-external-client-smoke-handoff.md`](2026-06-30-auv-api-p13-external-client-smoke-handoff.md) | Three gRPC smoke journeys; Journey B green post-R2 invoke→GetOperation round-trip |
+| **S1** | Subprocess loopback smoke | [`2026-06-30-auv-api-s1-subprocess-smoke-handoff.md`](2026-06-30-auv-api-s1-subprocess-smoke-handoff.md) | `auv session serve` subprocess proof via `CARGO_BIN_EXE_auv` |
 
 ## Frozen capability matrix
 
@@ -96,6 +97,7 @@ not mean every proto RPC is fully featured.
 | `GetOperation` (with persisted skeleton) | **landed** | Two-source join when `operation-result` artifact exists |
 | `GetOperation` after fresh `Invoke` (happy path) | **landed (R2)** | Round-trip succeeds when persist succeeds; `PersistedOperationRequired` on durability failure / missing skeleton |
 | External client smoke (P13) | **landed** | `cargo test session_api_smoke` |
+| Subprocess loopback smoke (S1) | **landed** | `cargo test --test session_api_subprocess_smoke` |
 | `StreamSessionEvents` (P10) | **deferred** | Transport `UNIMPLEMENTED`; handler `NotWired` |
 | `json_payload` envelope (P3 OD5) | **deferred** | Provisional decoder only; owner-named envelope slice required |
 
@@ -136,7 +138,8 @@ the other is a category error (see API-P4 §D).
 ### 4. P13 smoke ≠ production external API
 
 P13 uses in-process loopback TCP and hermetic fixtures. It does not certify
-subprocess `auv session serve` CI, remote access, TLS, or gRPC reflection.
+remote access, TLS, or gRPC reflection. The subprocess `auv session serve`
+loopback path is covered separately by API-S1.
 
 ### 5. Pause does not unlock adjacent lanes
 
@@ -145,7 +148,7 @@ merger, controller, planner, or action lease work.
 
 ## Anti-misread rule (main point)
 
-> **API-P14 closeout means "the approved unary session API lane + P13 smoke are
+> **API-P14 closeout means "the approved unary session API lane + P13/S1 smoke are
 > done for their named scope."** It does **not** mean "P10 stream or
 > R2b-impl is the obvious next implementation."
 
@@ -163,7 +166,7 @@ API-P14 does **not** approve:
 - implementing P10 `StreamSessionEvents` in this slice
 - re-landing session `Invoke` synthetic `OperationResult` persist (API-R2)
 - expanding `session.proto` or adding gRPC reflection
-- subprocess / grpcurl CI gates for session API
+- grpcurl / TLS / remote production CI gates for session API (subprocess loopback smoke landed in API-S1)
 - MCP / inspect-server route unification
 - `json_payload` envelope standardization (P3 OD5)
 - reopening controller / planner / lease / archived `candidate-action` lanes
@@ -178,7 +181,6 @@ owner names the trigger **and** the exact slice.
 | Owner names **P10** | `StreamSessionEvents` v0 (handler-emitted hub) | RunUpdate projector, `invoke_started`, proto expansion |
 | Owner names **API-R2b-impl** (Package B) | MCP/CLI catalog invoke join-artifact parity on shared `store_root` | Stream, MCP merge, R2c-impl |
 | Owner names **P3 OD5 envelope** | Versioned `json_payload` decoder | Stream, operation-result |
-| Owner names **P13b** | Subprocess `auv session serve` smoke | Unary semantics change |
 | Owner names **P10b** | RunUpdate / BroadcastRunRecorder projection | Unary changes |
 
 **Trigger met ≠ implement.** A reopened lane still needs a named slice and fresh
@@ -191,11 +193,13 @@ Readers verifying this pause record against the repo:
 ```sh
 cargo test session_service
 cargo test session_api_smoke
+cargo test --test session_api_subprocess_smoke
 git diff --check
 ```
 
 Expected: `session_service` includes handler, mapper, summary, transport, and
-`client_smoke` tests; `session_api_smoke` runs three external-client journeys.
+`client_smoke` tests; `session_api_smoke` runs three external-client journeys;
+`session_api_subprocess_smoke` runs the subprocess loopback proof.
 
 ## Related
 
@@ -211,6 +215,10 @@ Expected: `session_service` includes handler, mapper, summary, transport, and
   [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md)
 - API-P13 external smoke:
   [`2026-06-30-auv-api-p13-external-client-smoke-handoff.md`](2026-06-30-auv-api-p13-external-client-smoke-handoff.md)
+- API-L1 operator guide:
+  [`2026-06-30-auv-api-l1-session-api-operator-guide.md`](2026-06-30-auv-api-l1-session-api-operator-guide.md)
+- API-S1 subprocess smoke:
+  [`2026-06-30-auv-api-s1-subprocess-smoke-handoff.md`](2026-06-30-auv-api-s1-subprocess-smoke-handoff.md)
 - MC-20 pause template (pattern reference):
   [`2026-06-30-minecraft-mc20-final-closeout-pause-decision.md`](2026-06-30-minecraft-mc20-final-closeout-pause-decision.md)
 - Proto: `proto/auv/api/v1/session.proto`

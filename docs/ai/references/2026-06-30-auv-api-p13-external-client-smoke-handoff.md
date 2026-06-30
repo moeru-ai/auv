@@ -76,6 +76,7 @@ cargo run --quiet -- session serve --store-root /tmp/auv-smoke
 
 # Terminal 2 — run automated external-client smoke
 cargo test session_api_smoke
+cargo test --test session_api_subprocess_smoke
 ```
 
 Optional grpcurl (no server reflection in P13; requires local proto import path):
@@ -108,16 +109,16 @@ transport internals.
 - Not asserting `ArtifactRef.role` in smoke journeys
 - Not persisting typed `OperationResult` on non-session invoke paths (API-R2b)
 - Not adding tonic gRPC reflection
-- Not subprocess / `auv session serve` CI smoke
+- Not subprocess `auv session serve` smoke (landed separately in [API-S1](2026-06-30-auv-api-s1-subprocess-smoke-handoff.md))
 - Not `StreamSessionEvents` (P10)
 - Not MCP / inspect-server unification
 
-## Deferred follow-ups
+## Follow-ups (historical / now landed where noted)
 
 | Item | Trigger |
 | --- | --- |
 | Journey D: fresh-store Invoke → GetOperation green | **landed in API-R2** |
-| Subprocess `auv session serve` smoke | P13b or manual-only until port discovery is stable |
+| Subprocess `auv session serve` smoke | **landed in API-S1** |
 | Optional 10–20 line server-boot helper share | Only if byte-identical duplication remains after smoke lands |
 
 ## Validation
@@ -126,5 +127,6 @@ transport internals.
 cargo fmt --check
 cargo check
 cargo test session_api_smoke
+cargo test --test session_api_subprocess_smoke
 git diff --check
 ```

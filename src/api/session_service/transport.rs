@@ -10,6 +10,7 @@
 //!   `Invoke` may still complete recorded command execution until cooperative
 //!   cancellation is wired through the invoke seam.
 
+use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
@@ -235,6 +236,11 @@ pub(crate) async fn serve_on_listener(
   store_root: std::path::PathBuf,
 ) -> Result<(), String> {
   println!("session API: grpc://{local_address}");
+  // NOTICE(api-s1-readiness): flush so subprocess integration tests reading piped
+  // stdout see the bind address without block-buffer delay.
+  std::io::stdout()
+    .flush()
+    .map_err(|error| format!("failed to flush session API readiness line: {error}"))?;
   let handler = Arc::new(SessionApiHandler::new(store_root));
   let service = SessionServiceGrpc::new(handler);
   tonic::transport::Server::builder()
