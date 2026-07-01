@@ -60,6 +60,35 @@ const PLAYLIST_SELECT_VERIFICATION_METHOD_SIDEBAR_ECHO: &str = "sidebar_row_echo
 const PLAYLIST_SELECT_VERIFICATION_SIDEBAR_ECHO_LIMIT: &str =
   "verification_used_sidebar_row_echo_for_numeric_title";
 const PLAYLIST_SELECT_VERIFICATION_ROW_ECHO_MARGIN: f64 = 16.0;
+const PLAYLIST_SELECT_TARGET_FROM_SCAN_CACHE_MARKER: &str =
+  "playlist_select_target_from_scan_cache_v1";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlaylistSelectTargetResolveSource {
+  ScanCache,
+  LiveScan,
+}
+
+fn playlist_select_target_resolve_source(
+  gate_enabled: bool,
+  cache: Option<&crate::PlaylistSidebarScan>,
+  query: &str,
+) -> PlaylistSelectTargetResolveSource {
+  if gate_enabled {
+    if let Some(scan) = cache {
+      if scan.select_target(query).is_ok() {
+        return PlaylistSelectTargetResolveSource::ScanCache;
+      }
+    }
+  }
+  PlaylistSelectTargetResolveSource::LiveScan
+}
+
+fn try_load_playlist_scan_cache_optional(inputs: &Inputs) -> Option<crate::PlaylistSidebarScan> {
+  let cache_path = inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE);
+  let json = std::fs::read_to_string(&cache_path).ok()?;
+  decode_playlist_sidebar_scan_json(&json).ok()
+}
 
 pub struct PlaylistSelectHumanSummary<'a> {
   result: &'a PlaylistSelectResult,
@@ -938,6 +967,85 @@ mod tests {
     assert!(note.contains("sidebar_echo_attempted=true"));
     assert!(note.contains("sidebar_echo_pass=true"));
   }
+  fn scan_with_playlist_labels(labels: &[&str]) -> crate::PlaylistSidebarScan {
+    use crate::view_parsers::sidebar::parse_sidebar_viewport;
+    use crate::view_parsers::sidebar::reconstruct::reconstruct_playlist_sidebar;
+    use crate::view_parsers::sidebar::test_support::fake_recognition;
+    use crate::{ScanAppContext, ScanWindowContext, ViewRegionRecord};
+
+    let mut rows = vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)];
+    for (index, label) in labels.iter().enumerate() {
+      let y = 74.0 + index as f64 * 30.0;
+      rows.push((*label, 32.0, y, 120.0, 20.0));
+    }
+    let page0 = parse_sidebar_viewport(
+      0,
+      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
+      &fake_recognition(rows),
+    );
+
+    reconstruct_playlist_sidebar(
+      ScanAppContext::default(),
+      ScanWindowContext::default(),
+      ViewRegionRecord::default(),
+      vec![page0],
+    )
+  }
+
+  #[test]
+  fn playlist_select_target_resolve_source_uses_cache_when_gate_and_unique_match() {
+    let scan = scan_with_playlist_labels(&["43", "3"]);
+    assert_eq!(
+      playlist_select_target_resolve_source(true, Some(&scan), "3"),
+      PlaylistSelectTargetResolveSource::ScanCache
+    );
+  }
+
+  #[test]
+  fn playlist_select_target_resolve_source_live_scan_when_gate_off() {
+    let scan = scan_with_playlist_labels(&["3"]);
+    assert_eq!(
+      playlist_select_target_resolve_source(false, Some(&scan), "3"),
+      PlaylistSelectTargetResolveSource::LiveScan
+    );
+  }
+
+  #[test]
+  fn playlist_select_target_resolve_source_live_scan_when_cache_missing() {
+    assert_eq!(
+      playlist_select_target_resolve_source(true, None, "3"),
+      PlaylistSelectTargetResolveSource::LiveScan
+    );
+  }
+
+  #[test]
+  fn playlist_select_target_resolve_source_live_scan_when_select_target_ambiguous() {
+    let scan = scan_with_playlist_labels(&["43", "13"]);
+    assert_eq!(
+      playlist_select_target_resolve_source(true, Some(&scan), "3"),
+      PlaylistSelectTargetResolveSource::LiveScan
+    );
+  }
+
+  #[test]
+  fn playlist_select_target_resolve_source_live_scan_when_select_target_miss() {
+    let scan = scan_with_playlist_labels(&["43", "13"]);
+    assert_eq!(
+      playlist_select_target_resolve_source(true, Some(&scan), "99"),
+      PlaylistSelectTargetResolveSource::LiveScan
+    );
+  }
+
+  #[test]
+  fn playlist_select_target_resolve_source_ignores_memory_presence() {
+    // `playlist_select_target_resolve_source` only reads gate + scan cache + query;
+    // view-memory file presence is not an input to this resolver.
+    let scan = scan_with_playlist_labels(&["3"]);
+    assert_eq!(
+      playlist_select_target_resolve_source(true, Some(&scan), "3"),
+      PlaylistSelectTargetResolveSource::ScanCache
+    );
+  }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -960,15 +1068,15 @@ pub fn run_playlist_play_candidate_id(
 
 #[cfg(target_os = "macos")]
 pub fn run_playlist_select(inputs: &Inputs, query: &str) -> Result<PlaylistSelectResult, String> {
-  let (scan, target) = resolve_playlist_target_for_query(inputs, query)?;
-  run_playlist_select_resolved(inputs, query, scan, target)
+  let (scan, target, target_from_scan_cache) = resolve_playlist_target_for_query(inputs, query)?;
+  run_playlist_select_resolved(inputs, query, scan, target, target_from_scan_cache)
 }
 
 #[cfg(target_os = "macos")]
 fn resolve_playlist_target_for_query(
   inputs: &Inputs,
   query: &str,
-) -> Result<(crate::PlaylistSidebarScan, PlaylistSelectTarget), String> {
+) -> Result<(crate::PlaylistSidebarScan, PlaylistSelectTarget, bool), String> {
   std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| {
     format!(
       "failed to create {}: {error}",
@@ -976,9 +1084,20 @@ fn resolve_playlist_target_for_query(
     )
   })?;
 
-  let scan = run_live_scan_until_query(inputs, query)?;
-  let target = scan.select_target(query)?;
-  Ok((scan, target))
+  let gate_enabled = crate::view_memory::enabled();
+  let cache = try_load_playlist_scan_cache_optional(inputs);
+  match playlist_select_target_resolve_source(gate_enabled, cache.as_ref(), query) {
+    PlaylistSelectTargetResolveSource::ScanCache => {
+      let scan = cache.expect("ScanCache path requires loaded cache");
+      let target = scan.select_target(query)?;
+      Ok((scan, target, true))
+    }
+    PlaylistSelectTargetResolveSource::LiveScan => {
+      let scan = run_live_scan_until_query(inputs, query)?;
+      let target = scan.select_target(query)?;
+      Ok((scan, target, false))
+    }
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -987,6 +1106,7 @@ fn run_playlist_select_resolved(
   query: &str,
   scan: crate::PlaylistSidebarScan,
   target: PlaylistSelectTarget,
+  target_from_scan_cache: bool,
 ) -> Result<PlaylistSelectResult, String> {
   use crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
   use crate::delivery_path_label;
@@ -1030,6 +1150,9 @@ fn run_playlist_select_resolved(
   let mut steps = Vec::new();
   let mut diagnostics = scan.diagnostics().to_vec();
   let mut known_limits = scan.known_limits().to_vec();
+  if target_from_scan_cache {
+    known_limits.insert(0, PLAYLIST_SELECT_TARGET_FROM_SCAN_CACHE_MARKER.to_string());
+  }
   let mut reacquire_summary = None;
   let mut skip_rescan_replay = false;
   let mut click_bounds = target_bounds;
@@ -1583,8 +1706,8 @@ fn verify_playlist_select_title(
 
 #[cfg(target_os = "macos")]
 pub fn run_playlist_play(inputs: &Inputs, query: &str) -> Result<PlaylistPlayResult, String> {
-  let (scan, target) = resolve_playlist_target_for_query(inputs, query)?;
-  run_playlist_play_resolved(inputs, query, scan, target)
+  let (scan, target, target_from_scan_cache) = resolve_playlist_target_for_query(inputs, query)?;
+  run_playlist_play_resolved(inputs, query, scan, target, target_from_scan_cache)
 }
 
 #[cfg(target_os = "macos")]
@@ -1594,7 +1717,7 @@ pub fn run_playlist_play_candidate_id(
 ) -> Result<PlaylistPlayResult, String> {
   let scan = load_playlist_scan_cache(inputs)?;
   let target = scan.select_target_by_candidate_id(candidate_id)?;
-  run_playlist_play_resolved(inputs, candidate_id, scan, target)
+  run_playlist_play_resolved(inputs, candidate_id, scan, target, true)
 }
 
 #[cfg(target_os = "macos")]
@@ -1615,6 +1738,7 @@ fn run_playlist_play_resolved(
   query: &str,
   scan: crate::PlaylistSidebarScan,
   target: PlaylistSelectTarget,
+  target_from_scan_cache: bool,
 ) -> Result<PlaylistPlayResult, String> {
   use crate::commands::daily_recommended::best_text_match;
   use crate::delivery_path_label;
@@ -1624,7 +1748,7 @@ fn run_playlist_play_resolved(
   };
   use auv_driver_macos::MacosDriver;
 
-  let select = run_playlist_select_resolved(inputs, query, scan, target)?;
+  let select = run_playlist_select_resolved(inputs, query, scan, target, target_from_scan_cache)?;
   if select.verification.status != "passed" {
     return Err(format!(
       "playlist select verification failed before play: observed_title={:?}",
