@@ -4,8 +4,8 @@
 
 **Date:** 2026-07-01 (A6 Case B closeout @ 2338)
 **live_binary_rev:** `fc4977bf64e3fe1cfd0c6dcfc1c647205279b04a`
-**evidence_docs_rev:** `71a286448a4efd6e4186b30f1c3c0cfa91c62ca6`
-**Environment:** macOS 27.0 (arm64); NetEase foreground; logged-in account; default window `1057×752`, resized probe `1200×820`
+**evidence_docs_rev:** `2f17ffbf171fb55bbe39b90d4a6c0dfff5ee863a`
+**Environment:** macOS 27.0 (arm64); NetEase foreground; logged-in account; default window `1057×752`, resized probe `1200×820`, Case B closeout run `1512×890`
 **Closure:** [A6 live evidence closure](../../2026-06-30-auv-scenebridge-a6-live-evidence-closure.md)
 
 ## Hermetic pre-gate

@@ -29,8 +29,9 @@ matrix (Cases A–E) and redacted attachments.
     echo (`sidebar_row_echo_detail_chrome_v1`); confirmed on Case B replay path @ 2338.
   - **Closed (live @ A6c-13):** `playlist select <query>` uses scan-cache target resolve when
     gated; Case B **PASS** @ 2338 (`not_found` + rescan replay + verification passed) —
-    [`case-b-miss-select.json`](case-b-miss-select.json). Matrix command is
-    **`playlist select <query>`**, not `play --candidate-id`.
+    [`case-b-miss-select.json`](case-b-miss-select.json). `playlist play <query>` shares the
+    same target-resolve fast path, but the matrix command is **`playlist select <query>`**, not
+    `play --candidate-id`.
   - **PASS (scoped):** Cases A–E live matrix complete @ `AUV_NETEASE_VIEW_MEMORY=1`. See
     [`SIGNOFF.md`](SIGNOFF.md). Gate default-on and NOTICE removal remain explicit non-goals.
 
@@ -199,7 +200,8 @@ Copy redacted artifacts into this folder after owner review:
 4. Live evidence is CLI JSON + artifact-dir files only — no `view.reacquire.*` spans,
    no run-storage `view-memory` role (A5 Tier II–III).
 5. **A6c-13:** target resolve from scan cache does **not** require view-memory file;
-   memory is consumed at reacquire only. Case B matrix uses `playlist select <query>`, not `play --candidate-id`.
+   memory is consumed at reacquire only. `playlist play <query>` shares this fast path, but the
+   Case B matrix uses `playlist select <query>`, not `play --candidate-id`.
 6. **PASS (scoped) != default-on** — gate remains off unless owner approves a rollout slice.
 7. **PASS (scoped) != NOTICE removed** — A3e deferral unchanged.
 
