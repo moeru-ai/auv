@@ -2387,6 +2387,26 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[test]
+  fn viewer_renders_view_parser_proof_hooks() {
+    assert!(
+      super::VIEWER_HTML.contains("view-parser-proof"),
+      "viewer payload should mount the view-parser proof panel"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("renderViewParserProof"),
+      "viewer payload should render view_parser resolution summaries"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("resolution_summaries"),
+      "viewer payload should read resolution_summaries from view_parser"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("refreshViewParserProofFromRunDetail"),
+      "viewer payload should narrow-refetch proof on run_finished without full loadRunDetail"
+    );
+  }
+
   #[tokio::test]
   async fn assets_route_serves_known_design_svgs_with_svg_mime() {
     let root = temp_dir("inspect-server-assets-route");

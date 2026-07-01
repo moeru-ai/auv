@@ -20,6 +20,7 @@ questions (identity, memory, resolution, replay, verification, geometry).
 | A8c summaries | `auv-view::memory::ViewParserInspect` + `ViewResolutionSummary` tiers |
 | Read API | `list_view_memory_writes`, `view_parser_inspect`, `inspect_run` proof appendix |
 | HTTP | `inspect_server` always returns `view_parser` on `GET /runs/{id}` |
+| Viewer (B1a) | `inspect_server_viewer.html` renders `resolution_summaries` proof panel — see [B1 handoff](2026-06-30-auv-scenebridge-b1-inspect-viewer-consumption.md) |
 | Re-exports | `run_read` pub-use for shared scan/extract entrypoints |
 
 ## Not shipped
@@ -40,3 +41,7 @@ geometry notes are machine-readable on run read and in the inspect server JSON.
 - `crates/auv-view/src/memory/inspect.rs`
 - `crates/auv-netease-music/src/recording.rs`
 - [gap card](evidence/2026-06-30-scenebridge-netease-sidebar/gap-run-storage-bridge.txt)
+
+## Viewer consumption
+
+B1a inspect viewer proof panel: [B1 handoff](2026-06-30-auv-scenebridge-b1-inspect-viewer-consumption.md).

@@ -708,6 +708,71 @@
     color: var(--fg);
     word-break: break-word;
   }
+
+  #view-parser-proof {
+    flex: none;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--shell-line);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow: auto;
+    max-height: 40vh;
+    background: var(--shell);
+  }
+  #view-parser-proof[hidden] { display: none; }
+  #view-parser-proof .view-parser-proof-card {
+    border: 1px solid var(--shell-line);
+    border-radius: 4px;
+    background: var(--shell-2);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #view-parser-proof .view-parser-proof-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  #view-parser-proof .view-parser-proof-query {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  #view-parser-proof .view-parser-proof-section-label {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    letter-spacing: 0.6px;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--fg-3);
+    margin-bottom: 4px;
+  }
+  #view-parser-proof .view-parser-proof-geometry {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--fg-3);
+    line-height: 1.4;
+  }
+  #view-parser-proof .json-summary {
+    border: 1px solid var(--shell-line);
+    background: rgba(0, 196, 210, 0.07);
+    border-radius: 4px;
+    padding: 10px 12px;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  #view-parser-proof .json-summary .k { color: var(--fg-3); }
+  #view-parser-proof .json-summary .v {
+    color: var(--fg);
+    word-break: break-word;
+  }
 </style>
 </head>
 <body>
@@ -746,6 +811,7 @@
         <span class="right" id="main-crumb"></span>
         <span id="main-status"></span>
       </div>
+      <div id="view-parser-proof" hidden></div>
       <div class="placeholder" id="main-body">
         <div>select a run from the sidebar.</div>
         <div>this viewer reads <code>/runs</code> and renders the AUV trace contract.</div>
@@ -935,7 +1001,148 @@
     ) {
       merged.observation_snapshots = previous.observation_snapshots.slice();
     }
+    if (!merged.view_parser && previous && previous.view_parser) {
+      merged.view_parser = previous.view_parser;
+    }
     return merged;
+  }
+
+
+  function clearViewParserProof() {
+    const panel = document.getElementById("view-parser-proof");
+    if (!panel) return;
+    panel.innerHTML = "";
+    panel.hidden = true;
+  }
+
+  function hasViewParserProof(run) {
+    const viewParser = run && run.view_parser;
+    return !!(
+      viewParser
+      && Array.isArray(viewParser.resolution_summaries)
+      && viewParser.resolution_summaries.length > 0
+    );
+  }
+
+  function outcomePillClass(outcome) {
+    const value = String(outcome || "").toLowerCase();
+    if (value === "reacquired") return "s-validated";
+    if (value === "stale") return "s-candidate";
+    if (value === "not_found" || value === "failed") return "s-failed";
+    return "s-frozen";
+  }
+
+  function verificationPillClass(status) {
+    const value = String(status || "").toLowerCase();
+    if (value === "passed") return "s-validated";
+    if (value === "failed") return "s-failed";
+    return "s-frozen";
+  }
+
+  function makeProofPill(label, cls) {
+    return el("span", { className: "status-pill " + cls }, [
+      el("span", { className: "dot" }),
+      label || "—",
+    ]);
+  }
+
+  function renderResolutionSummaryCard(summary) {
+    const identity = summary.identity || {};
+    const memory = summary.memory || {};
+    const resolution = summary.resolution || {};
+    const replay = summary.replay || {};
+    const verification = summary.verification || {};
+    const geometry = summary.geometry_note || {};
+    const stepNames = Array.isArray(replay.step_names) ? replay.step_names.join(", ") : "";
+
+    const header = el("div", { className: "view-parser-proof-card-head" }, [
+      el("span", { className: "view-parser-proof-query" }, [summary.query || "—"]),
+      makeProofPill(resolution.outcome || "—", outcomePillClass(resolution.outcome)),
+      makeProofPill(verification.status || "—", verificationPillClass(verification.status)),
+    ]);
+
+    function section(title, card) {
+      return el("div", { className: "view-parser-proof-section" }, [
+        el("div", { className: "view-parser-proof-section-label" }, [title]),
+        card,
+      ]);
+    }
+
+    const sections = [
+      section("Identity", renderKeyValueSummary([
+        ["query", summary.query],
+        ["label", identity.label],
+        ["section_kind", identity.section_kind],
+        ["anchor_id", identity.anchor_id],
+      ])),
+      section("Memory", renderKeyValueSummary([
+        ["present", memory.present != null ? String(memory.present) : null],
+        ["memory_id", memory.memory_id],
+        ["source_run_id", memory.source_run_id],
+        ["last_reconstructed_at_millis", memory.last_reconstructed_at_millis],
+        ["anchor_count", memory.anchor_count],
+      ])),
+      section("Resolution", renderKeyValueSummary([
+        ["outcome", resolution.outcome],
+        ["strategy_used", resolution.strategy_used],
+        ["observation_count", resolution.observation_count],
+        ["stale_reason", resolution.stale_reason],
+        ["span_scope_id", resolution.span_scope_id],
+      ])),
+      section("Replay", renderKeyValueSummary([
+        ["step_names", stepNames || null],
+        ["skipped_rescan_replay", replay.skipped_rescan_replay != null
+          ? String(replay.skipped_rescan_replay)
+          : null],
+      ])),
+      section("Verification", renderKeyValueSummary([
+        ["status", verification.status],
+        ["method", verification.method],
+      ])),
+    ];
+
+    const children = [header].concat(sections);
+    if (geometry.note || geometry.has_ephemeral_target_bounds != null) {
+      children.push(el("div", { className: "view-parser-proof-geometry" }, [
+        "geometry: ephemeral_bounds="
+          + String(!!geometry.has_ephemeral_target_bounds)
+          + (geometry.note ? " · " + geometry.note : ""),
+      ]));
+    }
+    return el("div", { className: "view-parser-proof-card" }, children);
+  }
+
+  function renderViewParserProof(run) {
+    const panel = document.getElementById("view-parser-proof");
+    if (!panel) return;
+    if (!hasViewParserProof(run)) {
+      clearViewParserProof();
+      return;
+    }
+    panel.innerHTML = "";
+    panel.hidden = false;
+    for (const summary of run.view_parser.resolution_summaries) {
+      panel.appendChild(renderResolutionSummaryCard(summary));
+    }
+  }
+
+  async function refreshViewParserProofFromRunDetail(runId) {
+    try {
+      const response = await fetch("/runs/" + encodeURIComponent(runId));
+      if (!response.ok) throw new Error("/runs/" + runId + " HTTP " + response.status);
+      const run = await response.json();
+      if (state.activeRunId !== runId) return;
+      state.activeRun = mergeRunDetail(state.activeRun, run);
+      const runIndex = state.runs.findIndex(function (candidate) {
+        return candidate.run_id === runId;
+      });
+      if (runIndex >= 0) state.runs[runIndex] = state.activeRun;
+      setMainHeader(state.activeRun, false);
+      renderViewParserProof(state.activeRun);
+    } catch (err) {
+      if (state.activeRunId !== runId) return;
+      clearViewParserProof();
+    }
   }
 
   function renderRun(run, isActive, onSelect) {
@@ -1022,6 +1229,7 @@
 
   async function selectRun(runId) {
     closeStream();
+    clearViewParserProof();
     state.activeRunId = runId;
     state.activeRun = state.runs.find(function (r) { return r.run_id === runId; }) || null;
     state.spans = [];
@@ -1083,8 +1291,10 @@
       renderEventList(state.events, state.activeRun);
       renderArtifactList(state.artifacts);
       renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
+      renderViewParserProof(state.activeRun);
     } catch (err) {
       if (state.activeRunId !== runId) return;
+      clearViewParserProof();
       setConnection(false, "/runs/:id (" + err.message + ")");
       renderPlaceholder([
         "failed to load run detail.",
@@ -3180,6 +3390,9 @@
           setMainHeader(state.activeRun, false);
           if (!state.activeSpanId) renderSpanDetail(null);
           renderRunList();
+          if (frame.run.run_id === state.activeRunId) {
+            refreshViewParserProofFromRunDetail(frame.run.run_id);
+          }
         }
         // Server closes the socket after RunFinished; tear our side down too.
         closeStream();
