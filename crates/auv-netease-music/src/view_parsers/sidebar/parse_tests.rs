@@ -1,6 +1,73 @@
 use crate::view_parsers::sidebar::parse::parse_sidebar_viewport;
+use crate::view_parsers::sidebar::target_probe::{
+  SidebarTargetMissReason, analyze_sidebar_target_probe,
+};
 use crate::view_parsers::sidebar::test_support::fake_recognition;
 use crate::{SidebarCandidateKind, ViewBounds, ViewEvidenceSource};
+
+#[test]
+fn analyze_sidebar_target_probe_finds_playlist_item() {
+  let recognition = fake_recognition(vec![
+    ("创建的歌单", 8.0, 480.0, 110.0, 20.0),
+    ("16", 70.0, 512.0, 14.0, 11.0),
+    ("21", 70.0, 544.0, 14.0, 11.0),
+  ]);
+  let observation =
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 469.8, 320.0, 338.2), &recognition);
+  let probe = analyze_sidebar_target_probe(&observation, "16", "16");
+
+  assert_eq!(probe.playlist_item_count, 2);
+  assert_eq!(probe.result, Some(ViewBounds::new(70.0, 512.0, 14.0, 11.0)));
+  assert!(probe.miss_reason.is_none());
+}
+
+#[test]
+fn analyze_sidebar_target_probe_reports_misclassified_numeric() {
+  let recognition = fake_recognition(vec![
+    ("创建的歌单", 8.0, 480.0, 110.0, 20.0),
+    ("16", 10.0, 512.0, 14.0, 11.0),
+    ("21", 70.0, 544.0, 14.0, 11.0),
+  ]);
+  let observation =
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 469.8, 320.0, 338.2), &recognition);
+  let probe = analyze_sidebar_target_probe(&observation, "16", "16");
+
+  assert!(probe.result.is_none());
+  match probe.miss_reason.as_ref() {
+    Some(SidebarTargetMissReason::LabelNotMatched {
+      ocr_contains_target,
+      misclassified,
+      ..
+    }) => {
+      assert_eq!(ocr_contains_target, &vec!["16".to_string()]);
+      assert_eq!(misclassified.len(), 1);
+      assert_eq!(misclassified[0].label, "16");
+    }
+    other => panic!("expected label-not-matched reason, got {other:?}"),
+  }
+}
+
+#[test]
+fn analyze_sidebar_target_probe_reports_label_not_matched() {
+  let recognition = fake_recognition(vec![
+    ("创建的歌单", 8.0, 480.0, 110.0, 20.0),
+    ("21", 70.0, 512.0, 14.0, 11.0),
+    ("34", 70.0, 544.0, 14.0, 11.0),
+  ]);
+  let observation =
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 469.8, 320.0, 338.2), &recognition);
+  let probe = analyze_sidebar_target_probe(&observation, "16", "16");
+
+  assert!(probe.result.is_none());
+  match probe.miss_reason.as_ref() {
+    Some(SidebarTargetMissReason::LabelNotMatched {
+      playlist_labels, ..
+    }) => {
+      assert_eq!(playlist_labels, &vec!["21".to_string(), "34".to_string()]);
+    }
+    other => panic!("expected label-not-matched reason, got {other:?}"),
+  }
+}
 
 #[test]
 fn parse_viewport_classifies_sections_and_playlist_items() {
@@ -98,6 +165,50 @@ fn parse_viewport_assigns_unique_candidate_ids_for_duplicate_cjk_labels() {
     ]
   );
   assert_eq!(unique_candidate_ids.len(), observation.candidates.len());
+}
+
+#[test]
+fn parse_single_digit_playlist_at_sidebar_x_becomes_candidate() {
+  // obs-0005 live fixture (A6c-8): OCR recognized "1" at sidebar playlist row x=71.
+  let recognition = fake_recognition(vec![("1", 71.0, 591.0, 10.0, 19.0)]);
+  let observation =
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 469.8, 320.16, 338.2), &recognition);
+
+  assert_eq!(observation.evidence_nodes.len(), 1);
+  assert_eq!(observation.candidates.len(), 1);
+  assert_eq!(
+    observation.candidates[0].kind,
+    SidebarCandidateKind::PlaylistItem
+  );
+  assert_eq!(observation.candidates[0].label.as_deref(), Some("1"));
+}
+
+#[test]
+fn parse_single_digit_rejected_below_playlist_x_threshold() {
+  let recognition = fake_recognition(vec![("1", 10.0, 591.0, 10.0, 19.0)]);
+  let observation =
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 469.8, 320.16, 338.2), &recognition);
+
+  assert!(observation.candidates.is_empty());
+}
+
+#[test]
+fn parse_single_non_digit_char_still_rejected_at_playlist_x() {
+  let recognition = fake_recognition(vec![("A", 71.0, 591.0, 10.0, 19.0)]);
+  let observation =
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 469.8, 320.16, 338.2), &recognition);
+
+  assert!(observation.candidates.is_empty());
+}
+
+#[test]
+fn parse_two_digit_playlist_label_unchanged() {
+  let recognition = fake_recognition(vec![("43", 71.0, 500.0, 15.0, 12.0)]);
+  let observation =
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 469.8, 320.16, 338.2), &recognition);
+
+  assert_eq!(observation.candidates.len(), 1);
+  assert_eq!(observation.candidates[0].label.as_deref(), Some("43"));
 }
 
 #[test]

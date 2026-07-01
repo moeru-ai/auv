@@ -26,6 +26,29 @@ pub fn run_live_scan_until_query(
   run_live_scan_inner(inputs, Some(query))
 }
 
+// NOTICE(a6c-8b): `playlist ls <query>` observes the sidebar with plain OCR,
+// unlike the target probe path which already boosts `target_label`/`query`
+// via `build_sidebar_target_probe_ocr_options`. Short numeric playlist labels
+// ("3", "9") are the least reliable OCR case, so merge the query into
+// custom_words here too. This intentionally does not adopt the probe's
+// full-window-fallback recognition-language default; ls keeps the caller's
+// languages untouched.
+pub(crate) fn sidebar_ls_scan_ocr_options(
+  base: &TextRecognitionOptions,
+  query: Option<&str>,
+) -> TextRecognitionOptions {
+  let Some(query) = query else {
+    return base.clone();
+  };
+  TextRecognitionOptions {
+    custom_words: crate::view_parsers::sidebar::target_probe::merge_custom_words(
+      &base.custom_words,
+      &[query],
+    ),
+    recognition_languages: base.recognition_languages.clone(),
+  }
+}
+
 #[cfg(target_os = "macos")]
 fn run_live_scan_inner(
   inputs: &Inputs,
@@ -374,7 +397,7 @@ fn run_live_scan_inner(
     window: window.clone(),
     sidebar_bounds,
     sidebar_ratio,
-    ocr_options: inputs.ocr_options.clone(),
+    ocr_options: sidebar_ls_scan_ocr_options(&inputs.ocr_options, query),
     artifact_dir: inputs.artifact_dir.clone(),
     pending_artifacts: Vec::new(),
     scroll_amount: inputs.scroll_amount,
@@ -672,10 +695,7 @@ impl LiveSidebarObserver {
   }
 
   fn scroll_anchor(&self) -> auv_driver::Point {
-    auv_driver::Point::new(
-      self.sidebar_bounds.x + self.sidebar_bounds.width * 0.5,
-      self.sidebar_bounds.y + self.sidebar_bounds.height * 0.75,
-    )
+    crate::view_parsers::sidebar::sidebar_scroll_anchor(self.sidebar_bounds).0
   }
 
   fn scroll_by(&mut self, vertical_delta: f64) -> Result<(), ParserDiagnostic> {
@@ -720,5 +740,40 @@ impl LiveSidebarObserver {
       })?;
     self.pending_scroll_delivery_path = Some(delivery_path_label(result.selected_path).to_string());
     Ok(())
+  }
+}
+
+#[cfg(test)]
+mod ls_scan_ocr_options_tests {
+  use super::*;
+
+  #[test]
+  fn sidebar_ls_scan_ocr_options_merges_query_into_custom_words() {
+    let base = TextRecognitionOptions::default().with_custom_words(["绚香"]);
+    let options = sidebar_ls_scan_ocr_options(&base, Some("3"));
+
+    assert_eq!(
+      options.custom_words,
+      vec!["绚香".to_string(), "3".to_string()]
+    );
+  }
+
+  #[test]
+  fn sidebar_ls_scan_ocr_options_leaves_base_untouched_without_query() {
+    let base = TextRecognitionOptions::default().with_custom_words(["绚香"]);
+    let options = sidebar_ls_scan_ocr_options(&base, None);
+
+    assert_eq!(options, base);
+  }
+
+  #[test]
+  fn sidebar_ls_scan_ocr_options_preserves_caller_recognition_languages() {
+    let base = TextRecognitionOptions::default().with_recognition_languages(["ja-JP"]);
+    let options = sidebar_ls_scan_ocr_options(&base, Some("3"));
+
+    assert_eq!(
+      options.recognition_languages,
+      Some(vec!["ja-JP".to_string()])
+    );
   }
 }

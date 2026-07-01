@@ -79,10 +79,18 @@ pub(crate) fn candidate_from_evidence(
   node: &ViewEvidenceNode,
 ) -> Option<SidebarViewportCandidate> {
   let label = node.label.as_deref()?.trim();
-  if label.chars().count() < 2 {
+  let bounds = node.bounds?;
+  // NOTICE(a6c-8): live Case B has playlist rows named with a single ASCII
+  // digit (owner account). Sidebar-body OCR text under 2 chars is normally
+  // discarded as noise, but a lone digit at the playlist-row x threshold is
+  // real playlist evidence, not noise — narrow the drop to non-numeric or
+  // non-playlist-x single chars only.
+  let is_single_digit_playlist_row = label.chars().count() == 1
+    && label.chars().all(|char| char.is_ascii_digit())
+    && bounds.x >= 24.0;
+  if label.chars().count() < 2 && !is_single_digit_playlist_row {
     return None;
   }
-  let bounds = node.bounds?;
   let kind = classify_sidebar_text(label, bounds.x);
   if kind == SidebarCandidateKind::Unknown {
     return None;
