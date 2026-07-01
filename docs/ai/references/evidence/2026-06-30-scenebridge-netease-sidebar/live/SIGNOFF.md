@@ -50,13 +50,28 @@
 | Case | Status | Notes |
 | --- | --- | --- |
 | **A Hit** | **PASS** | `reacquire.outcome=reacquired`, `skipped_rescan_replay=true`, no `scroll-sidebar-top-*` — [`case-a-hit-select.json`](case-a-hit-select.json) |
-| **B Miss** | **OPEN** | A6c-8b closed `ls '3'` (`/tmp/auv-case-b-live-20260701-1725`: `match_count=1`). Case B `select` still **OPEN**: memory not written (`sidebar_region_fallback_used` blocked write gate) → Case D shape (`reacquire=null`). **A6c-9** fixes write gate + `view_memory` JSON field; owner re-probe required for `not_found` — [`case-b-miss-select.json`](case-b-miss-select.json) |
+| **B Miss** | **OPEN** | `not_found` + rescan replay not re-run live @ A6c-12. Separate from 1812 verification false-negative (`reacquired` + OCR miss). A6c-10b/`ls` gates still apply — [`case-b-miss-select.json`](case-b-miss-select.json) |
 | **C Stale** | **PASS** | `stale` + `stale_reason=memory_rejected_at_freshness`, rescan replay — [`case-c-stale-select.json`](case-c-stale-select.json) |
 | **D Memory missing** | **PASS** | `reacquire=null`, missing-memory limit, rescan replay — [`case-d-missing-select.json`](case-d-missing-select.json) |
 | **E Gate off** | **PASS** | `reacquire=null`, legacy scroll replay — [`case-e-gate-off-select.json`](case-e-gate-off-select.json) |
 
+
+## A6c-12 verification false-negative (1812 bisect)
+
+| Signal | 1812 live (`/tmp/auv-a6c11-live-20260701-1812`) | Meaning |
+| --- | --- | --- |
+| `reacquire.outcome` | `reacquired` | Hit path — **not** Case B |
+| `verification.method` | `main_title_ocr_full_window_v1` | A6c-11 ladder exhausted |
+| `verification.note` | `region_count=13` | OCR produced regions |
+| `playlist-select-post-click-recognition.json` | no `"3"` region | Root cause: **main-pane OCR miss**, not guard/match |
+| `obs-0007-recognition.json` (ls) | `"3"` @ (70,657) | Sidebar digit readable; hero title not |
+
+**A6c-12 (code, owner live pending):** hero-header crop tier; sidebar row echo at final
+`click_bounds` with strict detail chrome; dual recognition artifacts; structured
+`verification.note`. Does **not** close Case B (`not_found` + rescan replay).
+
 ## Conclusion
 
-**PARTIAL** — A6c-1/A6c-2 confirmed on live `playlist ls` @ `dbb7f1e` (default geometry unblocked; dedup-only ViewMemory write on default + resized). Cases **A, C, D, E PASS**; **Case B OPEN** (A6c-8b closed `ls '3'` @ 1725; `select` blocked by ViewMemory write gate until A6c-9). Full A6 PASS deferred until Case B `not_found` is re-run live after A6c-9.
+**PARTIAL** — Cases **A, C, D, E PASS**; **Case B OPEN** (`not_found` rescan replay). A6c-12 addresses 1812-style verification false-negative on reacquire hit (owner live pending). Full A6 PASS deferred until Case B live re-run.
 
 Gate remains default-off; NOTICE removal deferred.

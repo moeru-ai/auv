@@ -17,19 +17,28 @@ matrix (Cases A–E) and redacted attachments.
 - **Logged-in account** with at least one **named playlist** in the sidebar
   (`创建的歌单` / `收藏的歌单` items). Guest / `创建的歌单 0` yields `item_count=0`
   and blocks Cases A–E (A6b probe: `case-ls-probe.json`).
-- Current live status (2026-07-01 @ A6c-9):
+- Current live status (2026-07-01 @ A6c-10b):
   - **Closed:** default-window geometry (`case-ls-a6c3-default-probe.json`: `height≈286`, `item_count≥1`).
   - **Closed:** dedup-only ViewMemory write (`case-ls-a6c3-resized-probe.json` + default probe).
-  - **Closed (hermetic):** `query_match` exact-first resolution (`playlist_query_resolution_is_unique_exact`)
-    is unit-tested and wired into `scan.rs`'s `observation_satisfies_query`.
-  - **Closed (live @ A6c-8b):** `playlist ls '3'` pre-gate — `/tmp/auv-case-b-live-20260701-1725`:
-    `item_count=42`, `match_count=1`, `matches[0].label="3"`.
-  - **Open:** Case B miss (`not_found`) — see [`SIGNOFF.md`](SIGNOFF.md). 1725 live showed `select`
-    fell through to **Case D** (`reacquire=null`, `view-memory file missing`) because `playlist ls`
-    skipped ViewMemory write when `sidebar_region_fallback_used` diagnostics were present.
-    **A6c-9** relaxes the write gate for the paired fallback path and adds `view_memory.written` to
-    `ls --json`. Owner must re-run Case B after A6c-9 with `jq -e '.view_memory.written == true'`
-    (or `test -f view-memory-playlist_sidebar.json`) before manual scroll-off + `select`.
+  - **Closed (hermetic):** `query_match` exact-first + `query_resolution` JSON (`A6c-10a`).
+  - **Closed (hermetic @ A6c-9):** ViewMemory write gate for paired `sidebar_region_fallback_used`.
+  - **Flaky (live):** `playlist ls '3'` — PASS @ 1725 (`match_count=1`); FAIL @ 1740/1750
+    (`query_resolution=ambiguous`, `match_count=13`, no OCR `"3"` in artifacts). Root cause:
+    collection top rewind scrolls selected numeric labels away + weak ls OCR vs probe.
+  - **Fixed (code @ A6c-10b, owner live pending):** skip collection top rewind when query is
+    `unique_exact` in current viewport; short-digit query gets probe default languages and
+    empty-sidebar full-window OCR fallback. Audit via `known_limits` `query_scan_skipped_top_rewind`
+    or `query_scan_top_rewind_applied`.
+  - **Open:** Case B miss (`not_found`) — see [`SIGNOFF.md`](SIGNOFF.md). Re-run `ls` only after
+    A6c-10b live PASS: `query_resolution == unique_exact` **and** `view_memory.written == true`.
+    Do **not** run `select` until both gates pass.
+  - **Fixed (code @ A6c-12, owner live pending):** single-digit playlist `select` verification
+    false-negative when reacquire hits but main-pane Vision OCR never emits the hero title
+    (1812: `reacquired` + `main_title_ocr_full_window_v1` + 13 regions, no `"3"`). Mitigation:
+    OCR ladder `title → hero → main → full`, then sidebar row echo at `click_bounds` with strict
+    detail chrome (`播放全部` or `歌曲`+`评论`). Artifacts:
+    `playlist-select-post-click-recognition.json` and optional
+    `playlist-select-post-click-sidebar-echo-recognition.json`. **Case B remains OPEN.**
 
 ## Hermetic pre-gate (run before live)
 
@@ -117,6 +126,8 @@ cargo run -p auv-netease-music -- playlist ls "$QUERY" --json --artifact-dir "$A
 
 # Verify view-memory exists before Cases A–D
 jq -e '.view_memory.written == true' "$ARTIFACT_DIR/case-ls.json"
+jq -e '.query_resolution == "unique_exact"' "$ARTIFACT_DIR/case-ls.json"
+jq -e '.match_count == 1' "$ARTIFACT_DIR/case-ls.json"
 test -f "$ARTIFACT_DIR/view-memory-playlist_sidebar.json"
 
 # Case A — Hit (no scroll between ls and select)
