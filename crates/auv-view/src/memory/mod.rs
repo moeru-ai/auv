@@ -5,12 +5,21 @@
 //! Run-storage `view-memory` artifact role lands in A7-min when store recording
 //! is enabled.
 
+mod inspect;
 mod reacquire;
 mod reacquire_adapter;
 mod read;
 mod store;
+mod trace;
 mod write;
 
+pub use inspect::{
+  GeometryProofSummary, IdentityProofSummary, MemoryProofSummary,
+  PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, ReacquisitionRecord, ReplayProofSummary,
+  ResolutionProofSummary, VerificationProofSummary, ViewParserInspect, ViewParserReacquireWire,
+  ViewParserSelectResultWire, ViewParserSelectStepWire, ViewParserSelectTargetWire,
+  ViewParserSelectVerificationWire, ViewResolutionSummary, format_view_resolution_summary_text,
+};
 pub use reacquire::{
   ReacquireCandidate, ReacquireConfig, ReacquireObservation, ReacquireOutcome, ReacquireStrategy,
   ReacquireTarget, ReacquiredNode, reacquire,
@@ -20,6 +29,16 @@ pub use read::{MemoryReadConfig, MemoryReadOutcome, StaleReason, read_memory};
 pub use store::{
   load_memory_file, memory_file_name, memory_file_path, parse_memory_file, serialize_memory_bytes,
   view_memory_lineage_ref_wire, write_memory_file,
+};
+pub use trace::{
+  ATTR_MEMORY_ANCHOR_COUNT, ATTR_MEMORY_EVICTION_COUNT, ATTR_MEMORY_LANDMARK_COUNT,
+  ATTR_MEMORY_LAST_RECONSTRUCTED_AT_MILLIS, ATTR_MEMORY_LOAD_MEMORY_ID,
+  ATTR_MEMORY_LOAD_SOURCE_RUN_ID, ATTR_MEMORY_MEMORY_ID, ATTR_MEMORY_NODE_SNAPSHOT_COUNT,
+  ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND, ATTR_REACQUIRE_OBSERVATION_COUNT, ATTR_REACQUIRE_OUTCOME,
+  ATTR_REACQUIRE_SCOPE_ID, ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY, ATTR_REACQUIRE_STAGE_USED,
+  ATTR_REACQUIRE_TARGET_KIND, SPAN_MEMORY_WRITE, SPAN_REACQUIRE_MEMORY_LOAD,
+  SPAN_REACQUIRE_ROOT_PREFIX, SPAN_REACQUIRE_STAGE_PREFIX, memory_write_span_attributes,
+  reacquire_memory_load_span_attributes, reacquire_root_span_name, reacquire_stage_span_name,
 };
 pub use write::{ARTIFACT_DIR_BRIDGE_RUN_ID, MemoryWriteInput, build_memory_id, try_build_memory};
 
