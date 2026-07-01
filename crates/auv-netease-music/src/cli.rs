@@ -8,7 +8,7 @@ use auv_driver::vision::TextRecognitionOptions;
 use auv_media_macos::OutputFormat;
 use clap::{Args, Parser, Subcommand};
 
-use crate::output::build_playlist_json_output;
+use crate::output::{build_playlist_json_output, playlist_view_memory_report};
 use crate::{
   DailyRecommendedPlayInputs, Inputs, OpenWindowInputs, PlaybackStatusInputs, PlaylistCategory,
   PlaylistSidebarScan, SongListInputs, run_daily_recommended_play,
@@ -1513,10 +1513,19 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
     eprintln!("{error}");
     return ExitCode::from(1);
   }
-  if let Err(error) = crate::view_memory::write_from_scan(&cmd.inputs, &scan) {
-    eprintln!("view memory write skipped: {error}");
-  }
-  let output = build_playlist_json_output(&scan, cmd.query.as_deref());
+  let view_memory_write = if crate::view_memory::enabled() {
+    match crate::view_memory::write_from_scan(&cmd.inputs, &scan) {
+      Ok(()) => Ok(()),
+      Err(error) => {
+        eprintln!("view memory write skipped: {error}");
+        Err(error)
+      }
+    }
+  } else {
+    Ok(())
+  };
+  let view_memory = playlist_view_memory_report(crate::view_memory::enabled(), view_memory_write);
+  let output = build_playlist_json_output(&scan, cmd.query.as_deref(), view_memory);
 
   match &cmd.output {
     OutputMode::Human => {
