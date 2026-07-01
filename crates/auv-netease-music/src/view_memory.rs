@@ -555,6 +555,38 @@ mod tests {
   }
 
   #[test]
+  fn playlist_select_reacquire_miss_when_viewport_empty_candidates() {
+    let memory = sample_memory();
+    let target = road_trip_target();
+    let mut adapter = FakeAdapter {
+      observations: vec![ReacquireObservation {
+        fingerprint: "empty".into(),
+        candidates: vec![],
+      }],
+      cursor: 0,
+    };
+
+    let attempt = try_reacquire_playlist_target(
+      &memory,
+      &target,
+      &mut adapter,
+      &MemoryReadConfig {
+        now_millis: memory.last_reconstructed_at_millis,
+        ..Default::default()
+      },
+      Some(memory.scope_snapshot.baseline_width),
+    );
+
+    match attempt {
+      PlaylistReacquireAttempt::Miss { summary, .. } => {
+        assert!(!summary.skipped_rescan_replay);
+        assert_eq!(summary.outcome, "not_found");
+      }
+      other => panic!("expected reacquire miss, got {other:?}"),
+    }
+  }
+
+  #[test]
   fn playlist_select_falls_back_on_stale_memory() {
     let mut memory = sample_memory();
     memory.last_reconstructed_at_millis = 1_000;

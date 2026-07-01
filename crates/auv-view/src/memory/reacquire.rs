@@ -184,38 +184,30 @@ pub fn reacquire(
   }
 
   if !saw_any_candidates {
-    let (reason, diagnostics) = if observation_count > 0 {
-      (
-        StaleReason::RegionGoneAtReacquisition,
-        vec![ParserDiagnostic {
-          code: "reacquire_region_gone".into(),
-          message: format!(
-            "no sidebar candidates observed across {observation_count} viewport(s) while reacquiring label={label:?}"
-          ),
-          node_id: None,
-        }],
-      )
-    } else if observe_error_count > 0 {
-      (
-        StaleReason::ObservationFailedAtReacquisition,
-        observe_diagnostics,
-      )
-    } else {
-      // NOTICE(a4-min): defensive fallback if cascade ends with zero observes
-      // and zero errors (should not occur after LabelCurrentViewport observe).
-      (
-        StaleReason::RegionGoneAtReacquisition,
-        vec![ParserDiagnostic {
-          code: "reacquire_region_gone".into(),
-          message: format!("no sidebar candidates observed while reacquiring label={label:?}"),
-          node_id: None,
-        }],
-      )
-    };
-    return ReacquireOutcome::Stale {
-      reason,
+    if observe_error_count > 0 && observation_count == 0 {
+      return ReacquireOutcome::Stale {
+        reason: StaleReason::ObservationFailedAtReacquisition,
+        observation_count,
+        diagnostics: observe_diagnostics,
+      };
+    }
+    // NOTICE(a6c-4): viewport observe succeeded but adapter returned zero
+    // reacquire candidates (e.g. Case B target scrolled off-viewport while
+    // section/nav OCR remains). Classify as miss, not region-gone stale.
+    return ReacquireOutcome::NotFound {
+      attempted_strategies: attempted,
       observation_count,
-      diagnostics,
+      diagnostics: vec![ParserDiagnostic {
+        code: "reacquire_not_found".into(),
+        message: if observation_count > 0 {
+          format!(
+            "no sidebar candidates observed across {observation_count} viewport(s) while reacquiring label={label:?}"
+          )
+        } else {
+          format!("no sidebar candidates observed while reacquiring label={label:?}")
+        },
+        node_id: None,
+      }],
     };
   }
 
@@ -661,7 +653,7 @@ mod tests {
   }
 
   #[test]
-  fn reacquire_stale_when_region_gone() {
+  fn reacquire_not_found_when_viewport_observed_but_empty_candidates() {
     let memory = empty_memory();
     let mut adapter = FakeAdapter {
       observations: vec![ReacquireObservation {
@@ -685,11 +677,19 @@ mod tests {
       },
     );
     match outcome {
-      ReacquireOutcome::Stale {
-        reason: StaleReason::RegionGoneAtReacquisition,
+      ReacquireOutcome::NotFound {
+        attempted_strategies,
+        observation_count,
         ..
-      } => {}
-      other => panic!("expected region gone stale, got {other:?}"),
+      } => {
+        assert_eq!(observation_count, 1);
+        assert!(
+          attempted_strategies
+            .iter()
+            .any(|strategy| *strategy == ReacquireStrategy::LabelCurrentViewport)
+        );
+      }
+      other => panic!("expected not_found after successful observe, got {other:?}"),
     }
   }
 
