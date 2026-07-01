@@ -119,6 +119,33 @@ pub(crate) fn top_seek_scroll_budget(collection_max_scrolls: usize) -> usize {
   collection_max_scrolls.min(LIVE_TOP_SEEK_MAX_SCROLL_INPUTS)
 }
 
+pub(crate) fn sidebar_rescan_target_seek_budget(
+  max_scrolls: usize,
+  target_observation_index: usize,
+) -> usize {
+  max_scrolls.max(target_observation_index).saturating_add(4)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SidebarTargetSeekStep {
+  Found(usize),
+  ScrollNext(usize),
+}
+
+pub(crate) fn next_sidebar_target_seek_step(
+  attempt: usize,
+  max_attempts: usize,
+  found: bool,
+) -> Option<SidebarTargetSeekStep> {
+  if found {
+    return Some(SidebarTargetSeekStep::Found(attempt));
+  }
+  if attempt + 1 >= max_attempts {
+    return None;
+  }
+  Some(SidebarTargetSeekStep::ScrollNext(attempt))
+}
+
 pub(crate) trait SidebarScanObserver:
   ViewObserver<Observation = SidebarViewportObservation>
 {

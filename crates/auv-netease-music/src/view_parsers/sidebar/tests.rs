@@ -477,6 +477,41 @@ fn top_seek_budget_is_capped_separately_from_collection_budget() {
 }
 
 #[test]
+fn sidebar_target_seek_stops_on_first_match() {
+  let budget = sidebar_rescan_target_seek_budget(12, 1);
+  for attempt in 0..budget {
+    let found = attempt == 2;
+    match next_sidebar_target_seek_step(attempt, budget, found) {
+      Some(SidebarTargetSeekStep::Found(hit)) => {
+        assert_eq!(hit, 2);
+        return;
+      }
+      Some(SidebarTargetSeekStep::ScrollNext(_)) => {}
+      None => panic!("expected found before budget exhausted"),
+    }
+  }
+  panic!("expected Found step");
+}
+
+#[test]
+fn sidebar_target_seek_exhausts_budget_without_match() {
+  let budget = 3usize;
+  let mut scrolls = 0usize;
+  for attempt in 0..budget {
+    match next_sidebar_target_seek_step(attempt, budget, false) {
+      Some(SidebarTargetSeekStep::Found(_)) => panic!("unexpected match"),
+      Some(SidebarTargetSeekStep::ScrollNext(_)) => scrolls += 1,
+      None => {
+        assert_eq!(attempt, budget - 1);
+        assert_eq!(scrolls, budget - 1);
+        return;
+      }
+    }
+  }
+  panic!("expected None on final attempt");
+}
+
+#[test]
 fn scan_loop_stops_after_one_no_motion_when_ax_scrollbar_is_bottom() {
   let mut first = parse_sidebar_viewport(
     0,

@@ -443,8 +443,10 @@ fn run_playlist_select_resolved(
   scan: crate::PlaylistSidebarScan,
   target: PlaylistSelectTarget,
 ) -> Result<PlaylistSelectResult, String> {
+  use crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
   use crate::delivery_path_label;
   use crate::view_parsers::sidebar::region::broad_sidebar_probe_bounds;
+  use crate::view_parsers::sidebar::top_seek_scroll_budget;
   use auv_driver::selector::{App, Window};
   use auv_driver::{
     ActivationPolicy, Click, Driver, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions,
@@ -546,14 +548,16 @@ fn run_playlist_select_resolved(
 
   if !skip_rescan_replay {
     // NOTICE(netease-playlist-select-reacquire): rescan replay path when view-memory
-    // is disabled, not loaded, or reacquire misses. Rewinds to top and replays scan
-    // page count instead of trusting parse-scoped bounds across arbitrary app state.
-    let top_scrolls = inputs.max_scrolls.max(target_observation_index) + 4;
+    // is disabled, not loaded, or reacquire misses. Rewinds to top then scroll-seeks
+    // the target label instead of replaying a stale observation_index page count.
+    // NOTICE(a6c-5): top rewind step size matches live top seek; motion stop deferred.
+    let top_scroll_delta = inputs.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
+    let top_scrolls = top_seek_scroll_budget(inputs.max_scrolls);
     for index in 0..top_scrolls {
       match session.window().scroll(
         &window,
         sidebar_anchor,
-        Scroll::new(0.0, inputs.scroll_amount),
+        Scroll::new(0.0, top_scroll_delta),
         ScrollOptions {
           policy: InputPolicy::BackgroundPreferred,
           settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
@@ -578,68 +582,84 @@ fn run_playlist_select_resolved(
       }
     }
 
-    for index in 0..target_observation_index {
-      let result = session
-        .window()
-        .scroll(
-          &window,
-          sidebar_anchor,
-          Scroll::new(0.0, -inputs.scroll_amount),
-          ScrollOptions {
-            policy: InputPolicy::BackgroundPreferred,
-            settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
-            ..ScrollOptions::default()
-          },
-        )
-        .map_err(|error| format!("playlist select page scroll failed: {error}"))?;
-      steps.push(PlaylistSelectStep {
-        name: format!("scroll-sidebar-target-page-{index}"),
-        target_bounds: Some(sidebar_bounds),
-        delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
-        fallback_reason: result.fallback_reason,
-      });
+    use crate::view_parsers::sidebar::{
+      SidebarTargetSeekStep, next_sidebar_target_seek_step, sidebar_rescan_target_seek_budget,
+    };
+
+    let seek_budget =
+      sidebar_rescan_target_seek_budget(inputs.max_scrolls, target_observation_index);
+    let mut rescan_target_found = false;
+    for index in 0..seek_budget {
+      let bounds = match current_sidebar_target_bounds(
+        &session,
+        &window,
+        sidebar_bounds,
+        inputs,
+        &target.label,
+        query,
+      ) {
+        Ok(bounds) => bounds,
+        Err(error) => {
+          diagnostics.push(ParserDiagnostic {
+            code: "playlist_select_rescan_reobserve_failed".to_string(),
+            message: error,
+            node_id: target.candidate_id.clone(),
+          });
+          known_limits.push(
+            "playlist select rescan replay could not reobserve target before click".to_string(),
+          );
+          break;
+        }
+      };
+      let found = bounds.is_some();
+      match next_sidebar_target_seek_step(index, seek_budget, found) {
+        Some(SidebarTargetSeekStep::Found(_)) => {
+          click_bounds = bounds.expect("found step requires bounds");
+          steps.push(PlaylistSelectStep {
+            name: "reobserve-playlist-after-rescan-replay".to_string(),
+            target_bounds: Some(click_bounds),
+            delivery_path: None,
+            fallback_reason: None,
+          });
+          rescan_target_found = true;
+          break;
+        }
+        Some(SidebarTargetSeekStep::ScrollNext(_)) => {
+          let result = session
+            .window()
+            .scroll(
+              &window,
+              sidebar_anchor,
+              Scroll::new(0.0, -inputs.scroll_amount),
+              ScrollOptions {
+                policy: InputPolicy::ForegroundPreferred,
+                settle: std::time::Duration::from_millis(inputs.scroll_settle_ms),
+                ..ScrollOptions::default()
+              },
+            )
+            .map_err(|error| format!("playlist select page scroll failed: {error}"))?;
+          steps.push(PlaylistSelectStep {
+            name: format!("scroll-sidebar-target-page-{index}"),
+            target_bounds: Some(sidebar_bounds),
+            delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
+            fallback_reason: result.fallback_reason,
+          });
+        }
+        None => break,
+      }
     }
 
-    match current_sidebar_target_bounds(
-      &session,
-      &window,
-      sidebar_bounds,
-      inputs,
-      &target.label,
-      query,
-    ) {
-      Ok(Some(bounds)) => {
-        click_bounds = bounds;
-        steps.push(PlaylistSelectStep {
-          name: "reobserve-playlist-after-rescan-replay".to_string(),
-          target_bounds: Some(click_bounds),
-          delivery_path: None,
-          fallback_reason: None,
-        });
-      }
-      Ok(None) => {
-        diagnostics.push(ParserDiagnostic {
-          code: "playlist_select_rescan_reobserve_missed_target".to_string(),
-          message: format!(
-            "target {:?} was not visible after rescan replay",
-            target.label
-          ),
-          node_id: target.candidate_id.clone(),
-        });
-        known_limits.push(
-          "playlist select rescan replay could not reobserve target before click".to_string(),
-        );
-      }
-      Err(error) => {
-        diagnostics.push(ParserDiagnostic {
-          code: "playlist_select_rescan_reobserve_failed".to_string(),
-          message: error,
-          node_id: target.candidate_id.clone(),
-        });
-        known_limits.push(
-          "playlist select rescan replay could not reobserve target before click".to_string(),
-        );
-      }
+    if !rescan_target_found {
+      diagnostics.push(ParserDiagnostic {
+        code: "playlist_select_rescan_reobserve_missed_target".to_string(),
+        message: format!(
+          "target {:?} was not visible after rescan replay",
+          target.label
+        ),
+        node_id: target.candidate_id.clone(),
+      });
+      known_limits
+        .push("playlist select rescan replay could not reobserve target before click".to_string());
     }
   }
 
