@@ -2,9 +2,19 @@ use crate::view_parsers::sidebar::parse::parse_sidebar_viewport;
 use crate::view_parsers::sidebar::region::{
   DefaultScreenRestoreReason, broad_sidebar_probe_bounds, detect_blocking_modal,
   detect_default_screen_restore, detect_sidebar_region, fallback_playlist_sidebar_region,
+  sidebar_scroll_anchor,
 };
 use crate::view_parsers::sidebar::test_support::fake_recognition;
 use crate::{RatioRect, SidebarCandidateKind, ViewBounds};
+
+#[test]
+fn sidebar_scroll_anchor_matches_live_ratio() {
+  let bounds = ViewBounds::new(0.0, 469.8, 320.16, 338.2);
+  let anchor = sidebar_scroll_anchor(bounds);
+
+  assert_eq!(anchor.0.x, bounds.x + bounds.width * 0.5);
+  assert_eq!(anchor.0.y, bounds.y + bounds.height * 0.75);
+}
 
 #[test]
 fn detect_sidebar_region_uses_manual_region_when_provided() {

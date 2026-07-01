@@ -7,6 +7,7 @@ pub mod reacquire;
 pub mod reconstruct;
 pub mod region;
 pub mod scan;
+pub mod target_probe;
 
 #[cfg(target_os = "macos")]
 pub(crate) use ax::*;
@@ -14,6 +15,7 @@ pub(crate) use parse::*;
 pub(crate) use reconstruct::*;
 pub(crate) use region::*;
 pub(crate) use scan::*;
+pub(crate) use target_probe::*;
 
 #[cfg(all(test, target_os = "macos"))]
 mod ax_tests;

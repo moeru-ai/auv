@@ -192,6 +192,13 @@ pub(crate) fn broad_sidebar_probe_bounds(window_size: auv_driver::Size) -> ViewB
   ViewBounds::new(0.0, 0.0, probe_width, playlist_sidebar_bottom(window_size))
 }
 
+pub(crate) fn sidebar_scroll_anchor(bounds: ViewBounds) -> auv_driver::WindowPoint {
+  auv_driver::WindowPoint::new(
+    bounds.x + bounds.width * 0.5,
+    bounds.y + bounds.height * 0.75,
+  )
+}
+
 pub(crate) fn fallback_playlist_sidebar_region(window_size: auv_driver::Size) -> ViewRegionRecord {
   // NOTICE(netease-sidebar-fallback): if OCR misses section headers, avoid the
   // full left rail because it can target library/navigation rows such as

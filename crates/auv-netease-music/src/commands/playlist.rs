@@ -445,8 +445,12 @@ fn run_playlist_select_resolved(
 ) -> Result<PlaylistSelectResult, String> {
   use crate::LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
   use crate::delivery_path_label;
-  use crate::view_parsers::sidebar::region::broad_sidebar_probe_bounds;
-  use crate::view_parsers::sidebar::top_seek_scroll_budget;
+  use crate::view_parsers::sidebar::region::{broad_sidebar_probe_bounds, sidebar_scroll_anchor};
+  use crate::view_parsers::sidebar::{
+    SidebarTargetProbeScrollContext, SidebarTargetSeekStep, capture_sidebar_target_probe,
+    next_sidebar_target_seek_step, preceding_scroll_context, sidebar_rescan_target_seek_budget,
+    sidebar_target_probe_diagnostic_message, top_seek_scroll_budget,
+  };
   use auv_driver::selector::{App, Window};
   use auv_driver::{
     ActivationPolicy, Click, Driver, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions,
@@ -477,10 +481,7 @@ fn run_playlist_select_resolved(
     .bounds
     .unwrap_or_else(|| broad_sidebar_probe_bounds(window_size));
   let sidebar_baseline_width = Some(sidebar_bounds.width.round().max(1.0) as u32);
-  let sidebar_anchor = WindowPoint::new(
-    sidebar_bounds.x + sidebar_bounds.width * 0.5,
-    sidebar_bounds.y + sidebar_bounds.height * 0.45,
-  );
+  let sidebar_anchor = sidebar_scroll_anchor(sidebar_bounds);
   let mut steps = Vec::new();
   let mut diagnostics = scan.diagnostics().to_vec();
   let mut known_limits = scan.known_limits().to_vec();
@@ -497,10 +498,7 @@ fn run_playlist_select_resolved(
         .is_finite()
         .then_some(memory.scope_snapshot.region_bounds_window_local)
         .unwrap_or(sidebar_bounds);
-      let reacquire_anchor = WindowPoint::new(
-        reacquire_bounds.x + reacquire_bounds.width * 0.5,
-        reacquire_bounds.y + reacquire_bounds.height * 0.45,
-      );
+      let reacquire_anchor = sidebar_scroll_anchor(reacquire_bounds);
       let read_config = auv_view::memory::MemoryReadConfig {
         now_millis: crate::view_memory::system_time_millis(),
         ..Default::default()
@@ -553,6 +551,7 @@ fn run_playlist_select_resolved(
     // NOTICE(a6c-5): top rewind step size matches live top seek; motion stop deferred.
     let top_scroll_delta = inputs.scroll_amount * LIVE_TOP_SEEK_SCROLL_DELTA_MULTIPLIER;
     let top_scrolls = top_seek_scroll_budget(inputs.max_scrolls);
+    let mut last_scroll_context = None;
     for index in 0..top_scrolls {
       match session.window().scroll(
         &window,
@@ -564,12 +563,22 @@ fn run_playlist_select_resolved(
           ..ScrollOptions::default()
         },
       ) {
-        Ok(result) => steps.push(PlaylistSelectStep {
-          name: format!("scroll-sidebar-top-{index}"),
-          target_bounds: Some(sidebar_bounds),
-          delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
-          fallback_reason: result.fallback_reason,
-        }),
+        Ok(result) => {
+          last_scroll_context = Some(preceding_scroll_context(
+            format!("scroll-sidebar-top-{index}"),
+            top_scroll_delta,
+            "background_preferred",
+            inputs.scroll_settle_ms,
+            Some(delivery_path_label(result.selected_path).to_string()),
+            result.fallback_reason.clone(),
+          ));
+          steps.push(PlaylistSelectStep {
+            name: format!("scroll-sidebar-top-{index}"),
+            target_bounds: Some(sidebar_bounds),
+            delivery_path: Some(delivery_path_label(result.selected_path).to_string()),
+            fallback_reason: result.fallback_reason,
+          });
+        }
         Err(error) => {
           diagnostics.push(ParserDiagnostic {
             code: "playlist_select_top_scroll_failed".to_string(),
@@ -582,23 +591,32 @@ fn run_playlist_select_resolved(
       }
     }
 
-    use crate::view_parsers::sidebar::{
-      SidebarTargetSeekStep, next_sidebar_target_seek_step, sidebar_rescan_target_seek_budget,
-    };
-
     let seek_budget =
       sidebar_rescan_target_seek_budget(inputs.max_scrolls, target_observation_index);
     let mut rescan_target_found = false;
+    let mut last_rescan_probe_summary = None;
+    let mut previous_sidebar_crop = None;
     for index in 0..seek_budget {
-      let bounds = match current_sidebar_target_bounds(
+      let scroll_context = SidebarTargetProbeScrollContext {
+        phase: "rescan".to_string(),
+        attempt: index,
+        scroll_anchor: (sidebar_anchor.0.x, sidebar_anchor.0.y),
+        preceding_scroll: last_scroll_context.clone(),
+      };
+      let outcome = match capture_sidebar_target_probe(
         &session,
         &window,
         sidebar_bounds,
         inputs,
+        index,
         &target.label,
         query,
+        &inputs.artifact_dir,
+        &format!("rescan-reobserve-{index:02}"),
+        scroll_context,
+        &mut previous_sidebar_crop,
       ) {
-        Ok(bounds) => bounds,
+        Ok(outcome) => outcome,
         Err(error) => {
           diagnostics.push(ParserDiagnostic {
             code: "playlist_select_rescan_reobserve_failed".to_string(),
@@ -611,10 +629,18 @@ fn run_playlist_select_resolved(
           break;
         }
       };
-      let found = bounds.is_some();
+      diagnostics.push(ParserDiagnostic {
+        code: "playlist_select_rescan_reobserve_probe".to_string(),
+        message: sidebar_target_probe_diagnostic_message("rescan", index, &outcome),
+        node_id: target.candidate_id.clone(),
+      });
+      last_rescan_probe_summary = Some(sidebar_target_probe_diagnostic_message(
+        "rescan", index, &outcome,
+      ));
+      let found = outcome.probe.result.is_some();
       match next_sidebar_target_seek_step(index, seek_budget, found) {
         Some(SidebarTargetSeekStep::Found(_)) => {
-          click_bounds = bounds.expect("found step requires bounds");
+          click_bounds = outcome.probe.result.expect("found step requires bounds");
           steps.push(PlaylistSelectStep {
             name: "reobserve-playlist-after-rescan-replay".to_string(),
             target_bounds: Some(click_bounds),
@@ -638,6 +664,14 @@ fn run_playlist_select_resolved(
               },
             )
             .map_err(|error| format!("playlist select page scroll failed: {error}"))?;
+          last_scroll_context = Some(preceding_scroll_context(
+            format!("scroll-sidebar-target-page-{index}"),
+            -inputs.scroll_amount,
+            "foreground_preferred",
+            inputs.scroll_settle_ms,
+            Some(delivery_path_label(result.selected_path).to_string()),
+            result.fallback_reason.clone(),
+          ));
           steps.push(PlaylistSelectStep {
             name: format!("scroll-sidebar-target-page-{index}"),
             target_bounds: Some(sidebar_bounds),
@@ -653,8 +687,9 @@ fn run_playlist_select_resolved(
       diagnostics.push(ParserDiagnostic {
         code: "playlist_select_rescan_reobserve_missed_target".to_string(),
         message: format!(
-          "target {:?} was not visible after rescan replay",
-          target.label
+          "target {:?} was not visible after rescan replay; last_probe={}",
+          target.label,
+          last_rescan_probe_summary.unwrap_or_else(|| "none".to_string())
         ),
         node_id: target.candidate_id.clone(),
       });
@@ -681,6 +716,14 @@ fn run_playlist_select_resolved(
         },
       )
       .map_err(|error| format!("playlist select bottom padding scroll failed: {error}"))?;
+    let bottom_padding_scroll = preceding_scroll_context(
+      format!("scroll-sidebar-bottom-padding-{attempt}"),
+      -inputs.scroll_amount,
+      "background_preferred",
+      inputs.scroll_settle_ms,
+      Some(delivery_path_label(result.selected_path).to_string()),
+      result.fallback_reason.clone(),
+    );
     steps.push(PlaylistSelectStep {
       name: format!("scroll-sidebar-bottom-padding-{attempt}"),
       target_bounds: Some(sidebar_bounds),
@@ -688,36 +731,54 @@ fn run_playlist_select_resolved(
       fallback_reason: result.fallback_reason,
     });
 
-    match current_sidebar_target_bounds(
+    let mut previous_sidebar_crop = None;
+    match capture_sidebar_target_probe(
       &session,
       &window,
       sidebar_bounds,
       inputs,
+      attempt,
       &target.label,
       query,
+      &inputs.artifact_dir,
+      &format!("bottom-padding-reobserve-{attempt:02}"),
+      SidebarTargetProbeScrollContext {
+        phase: "bottom_padding".to_string(),
+        attempt,
+        scroll_anchor: (sidebar_anchor.0.x, sidebar_anchor.0.y),
+        preceding_scroll: Some(bottom_padding_scroll),
+      },
+      &mut previous_sidebar_crop,
     ) {
-      Ok(Some(bounds)) => {
-        click_bounds = bounds;
-        steps.push(PlaylistSelectStep {
-          name: format!("reobserve-playlist-after-bottom-padding-{attempt}"),
-          target_bounds: Some(click_bounds),
-          delivery_path: None,
-          fallback_reason: None,
-        });
-      }
-      Ok(None) => {
+      Ok(outcome) => {
         diagnostics.push(ParserDiagnostic {
-          code: "playlist_select_bottom_padding_reobserve_missed_target".to_string(),
-          message: format!(
-            "target {:?} was not visible after bottom padding scroll",
-            target.label
-          ),
+          code: "playlist_select_bottom_padding_reobserve_probe".to_string(),
+          message: sidebar_target_probe_diagnostic_message("bottom_padding", attempt, &outcome),
           node_id: target.candidate_id.clone(),
         });
-        known_limits.push(
-          "playlist select bottom padding could not reacquire target before click".to_string(),
-        );
-        break;
+        if let Some(bounds) = outcome.probe.result {
+          click_bounds = bounds;
+          steps.push(PlaylistSelectStep {
+            name: format!("reobserve-playlist-after-bottom-padding-{attempt}"),
+            target_bounds: Some(click_bounds),
+            delivery_path: None,
+            fallback_reason: None,
+          });
+        } else {
+          diagnostics.push(ParserDiagnostic {
+            code: "playlist_select_bottom_padding_reobserve_missed_target".to_string(),
+            message: format!(
+              "target {:?} was not visible after bottom padding scroll; probe={}",
+              target.label,
+              sidebar_target_probe_diagnostic_message("bottom_padding", attempt, &outcome)
+            ),
+            node_id: target.candidate_id.clone(),
+          });
+          known_limits.push(
+            "playlist select bottom padding could not reacquire target before click".to_string(),
+          );
+          break;
+        }
       }
       Err(error) => {
         diagnostics.push(ParserDiagnostic {
@@ -1145,49 +1206,4 @@ fn recognize_playlist_bottom_text(
     .ok()
     .map(|recognition| recognition.text.trim().to_string())
     .filter(|text| !text.is_empty())
-}
-
-#[cfg(target_os = "macos")]
-fn current_sidebar_target_bounds(
-  session: &auv_driver_macos::MacosDriverSession,
-  window: &auv_driver::Window,
-  sidebar_bounds: ViewBounds,
-  inputs: &Inputs,
-  target_label: &str,
-  query: &str,
-) -> Result<Option<ViewBounds>, String> {
-  let capture = session
-    .window()
-    .capture(window)
-    .map_err(|error| format!("bottom padding capture failed: {error}"))?;
-  let recognition = session
-    .vision()
-    .recognize_text_in_capture_with_options(
-      &capture,
-      crate::bounds_to_ratio(sidebar_bounds, &capture),
-      inputs.ocr_options.clone(),
-    )
-    .map_err(|error| format!("bottom padding sidebar OCR failed: {error}"))?;
-  let recognition = crate::recognition_in_window_space(recognition, &capture);
-  let observation =
-    crate::view_parsers::sidebar::parse::parse_sidebar_viewport(0, sidebar_bounds, &recognition);
-  let target_identity = crate::normalize_identity(target_label);
-  let query_identity = crate::normalize_identity(query);
-
-  Ok(
-    observation
-      .candidates
-      .iter()
-      .filter(|candidate| candidate.kind == crate::SidebarCandidateKind::PlaylistItem)
-      .filter_map(|candidate| {
-        let label = candidate.label.as_deref()?;
-        let bounds = candidate.bounds?;
-        let label_identity = crate::normalize_identity(label);
-        let matches_target = label_identity.contains(&target_identity)
-          || target_identity.contains(&label_identity)
-          || (!query_identity.is_empty() && label_identity.contains(&query_identity));
-        matches_target.then_some(bounds)
-      })
-      .next(),
-  )
 }
