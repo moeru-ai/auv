@@ -7371,6 +7371,11 @@ impl From<&VisualTruthSpatialQueryInspectReport>
   }
 }
 
+pub use crate::view_parser_read::{
+  build_view_parser_inspect, build_view_resolution_summary, extract_playlist_select_result_wires,
+  extract_reacquisition_records, extract_view_memory_writes, list_view_memory_writes,
+};
+
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;

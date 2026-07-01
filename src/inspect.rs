@@ -79,6 +79,8 @@ use crate::run_read::{
   quality_baseline_verdict_thresholds_trained_render_v1,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+pub use auv_view::memory::format_view_resolution_summary_text;
+use auv_view::memory::{ViewMemory, ViewParserInspect};
 use std::collections::BTreeSet;
 
 fn holdout_preview_manifest_matches_report(
@@ -181,6 +183,14 @@ pub fn list_candidate_action_execution_lineage(
   run_id: &str,
 ) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
   crate::run_read::list_candidate_action_execution_lineage(store, run_id)
+}
+
+pub fn list_view_memory_writes(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ViewMemory>> {
+  crate::inspect_view_parser::list_view_memory_writes(store, run_id)
+}
+
+pub fn view_parser_inspect(store: &LocalStore, run_id: &str) -> AuvResult<ViewParserInspect> {
+  crate::inspect_view_parser::view_parser_inspect(store, run_id)
 }
 
 pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
@@ -290,7 +300,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
         .map(|thresholds| derive_minecraft_training_result_quality_verdict(report, &thresholds));
       (probe, trained_render)
     });
-  Ok(render_run_text(
+  let mut output = render_run_text(
     &canonical,
     &verifications,
     &observation_snapshots,
@@ -340,7 +350,13 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     quality_baseline_report.as_ref(),
     quality_verdict_probe.as_ref(),
     quality_verdict_trained_render.as_ref(),
-  ))
+  );
+  crate::inspect_view_parser::append_view_parser_proof_text_from_run(
+    store,
+    &canonical,
+    &mut output,
+  )?;
+  Ok(output)
 }
 
 fn format_quality_verdict_stage_summary(

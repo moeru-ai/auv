@@ -11,6 +11,7 @@ pub mod contract;
 pub mod inference_recognition;
 pub mod inspect;
 pub mod inspect_server;
+pub mod inspect_view_parser;
 pub mod mcp;
 pub mod model;
 pub mod run_read;
@@ -19,6 +20,7 @@ pub mod scroll_scan;
 pub mod session;
 pub mod stability;
 pub mod verticals;
+pub mod view_parser_read;
 
 pub use verticals::balatro;
 pub use verticals::minecraft::{

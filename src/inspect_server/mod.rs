@@ -37,6 +37,7 @@ use crate::run_read::{CandidatePromotionLineage, DetectorRecognitionLineage};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::{RunId, RunRecordV1Alpha1, TraceState};
 use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
+use auv_view::memory::ViewParserInspect;
 
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_INSPECT_PORT: u16 = 8765;
@@ -335,6 +336,9 @@ async fn get_run(
   let candidate_action_execution_lineage =
     crate::run_read::extract_candidate_action_execution_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
+  let view_parser =
+    crate::inspect_view_parser::build_view_parser_inspect_for_run(state.store.as_ref(), &run)
+      .map_err(InspectHttpError::from_store)?;
   let command_boundary_claims = extract_command_boundary_claims(&run);
   Ok(
     Json(InspectRunResponse {
@@ -346,6 +350,7 @@ async fn get_run(
       candidate_promotion_lineage,
       candidate_action_decision_lineage,
       candidate_action_execution_lineage,
+      view_parser,
     })
     .into_response(),
   )
@@ -559,6 +564,7 @@ struct InspectRunResponse {
   candidate_action_decision_lineage: Vec<crate::run_read::CandidateActionDecisionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   candidate_action_execution_lineage: Vec<crate::run_read::CandidateActionExecutionLineage>,
+  view_parser: ViewParserInspect,
 }
 
 #[derive(serde::Serialize)]
@@ -1843,6 +1849,11 @@ mod tests {
       .expect("body should read");
     let run: serde_json::Value = serde_json::from_slice(&run_body).expect("run should be json");
     assert_eq!(run["run_id"], "run_inspect_server_test");
+    assert!(
+      run.get("view_parser").is_some(),
+      "GET /runs must always include view_parser"
+    );
+    assert!(run["view_parser"]["resolution_summaries"].is_array());
     assert!(
       run.get("spans").is_none(),
       "/runs/{run_id} should return run metadata only"
