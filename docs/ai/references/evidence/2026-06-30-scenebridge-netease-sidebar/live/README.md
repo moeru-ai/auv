@@ -17,35 +17,22 @@ matrix (Cases A–E) and redacted attachments.
 - **Logged-in account** with at least one **named playlist** in the sidebar
   (`创建的歌单` / `收藏的歌单` items). Guest / `创建的歌单 0` yields `item_count=0`
   and blocks Cases A–E (A6b probe: `case-ls-probe.json`).
-- Current live status (2026-07-01 @ A6c-10b):
+- Current live status (2026-07-01 @ A6 closeout):
   - **Closed:** default-window geometry (`case-ls-a6c3-default-probe.json`: `height≈286`, `item_count≥1`).
   - **Closed:** dedup-only ViewMemory write (`case-ls-a6c3-resized-probe.json` + default probe).
   - **Closed (hermetic):** `query_match` exact-first + `query_resolution` JSON (`A6c-10a`).
   - **Closed (hermetic @ A6c-9):** ViewMemory write gate for paired `sidebar_region_fallback_used`.
-  - **Flaky (live):** `playlist ls '3'` — PASS @ 1725 (`match_count=1`); FAIL @ 1740/1750
-    (`query_resolution=ambiguous`, `match_count=13`, no OCR `"3"` in artifacts). Root cause:
-    collection top rewind scrolls selected numeric labels away + weak ls OCR vs probe.
-  - **Fixed (code @ A6c-10b, owner live pending):** skip collection top rewind when query is
-    `unique_exact` in current viewport; short-digit query gets probe default languages and
-    empty-sidebar full-window OCR fallback. Audit via `known_limits` `query_scan_skipped_top_rewind`
-    or `query_scan_top_rewind_applied`.
-  - **Open:** Case B miss (`not_found`) — see [`SIGNOFF.md`](SIGNOFF.md). Re-run `ls` only after
-    A6c-10b live PASS: `query_resolution == unique_exact` **and** `view_memory.written == true`.
-    Do **not** run `select` until both gates pass.
-  - **Fixed (code @ A6c-12, owner live pending):** single-digit playlist `select` verification
-    false-negative when reacquire hits but main-pane Vision OCR never emits the hero title
-    (1812: `reacquired` + `main_title_ocr_full_window_v1` + 13 regions, no `"3"`). Mitigation:
-    OCR ladder `title → hero → main → full`, then sidebar row echo at `click_bounds` with strict
-    detail chrome (`播放全部` or `歌曲`+`评论`). Artifacts:
-    `playlist-select-post-click-recognition.json` and optional
-    `playlist-select-post-click-sidebar-echo-recognition.json`. **Case B remains OPEN.**
-  - **Fixed (code @ A6c-13, owner live pending):** `playlist select <query>` with
-    `AUV_NETEASE_VIEW_MEMORY=1` resolves target from `playlist-scan-cache.json` (not
-    `view-memory-*.json`) when cache has a unique `select_target` — skips pre-select
-    `run_live_scan_until_query` so manual scroll-off can reach `reacquire.outcome=not_found`.
-    Audit marker in `known_limits`: `playlist_select_target_from_scan_cache_v1` (source note,
-    not a runtime limit). **`play --candidate-id`** already skipped pre-scan; it is **not** the
-    Case B matrix command. **Case B remains OPEN** until owner live PASS.
+  - **Closed (live @ A6c-10b):** `playlist ls '3'` → `query_resolution=unique_exact` @ 2338
+    (`/tmp/auv-a6c13-case-b-20260701-2338/case-ls.json`); skip top rewind when query visible;
+    audit via `query_scan_skipped_top_rewind` / `query_scan_top_rewind_applied`.
+  - **Closed (live @ A6c-12):** single-digit `select` verification via OCR ladder + sidebar row
+    echo (`sidebar_row_echo_detail_chrome_v1`); confirmed on Case B replay path @ 2338.
+  - **Closed (live @ A6c-13):** `playlist select <query>` uses scan-cache target resolve when
+    gated; Case B **PASS** @ 2338 (`not_found` + rescan replay + verification passed) —
+    [`case-b-miss-select.json`](case-b-miss-select.json). Matrix command is
+    **`playlist select <query>`**, not `play --candidate-id`.
+  - **PASS (scoped):** Cases A–E live matrix complete @ `AUV_NETEASE_VIEW_MEMORY=1`. See
+    [`SIGNOFF.md`](SIGNOFF.md). Gate default-on and NOTICE removal remain explicit non-goals.
 
 ## Hermetic pre-gate (run before live)
 
@@ -92,16 +79,25 @@ Change `scope_snapshot.baseline_width` by ±50 from the live scan value. Expect
 
 ### A6c-13 prerequisite (Case B only)
 
-Before A6c-13, `playlist select <query>` always ran `run_live_scan_until_query` first,
-which re-scrolled the target back into view — manual scroll-off could not produce
-`not_found`. Case B live requires A6c-13 code plus the audit marker below.
+### Validated @ 2338 (Case B PASS)
+
+Prerequisite: A6c-13 scan-cache target resolve (audit marker below). Historical note:
+before A6c-13, pre-select live scan erased manual scroll-off (2309 bisect).
 
 ```bash
-jq -e 'any(.known_limits[]; . == "playlist_select_target_from_scan_cache_v1")' case-b-select.json
+jq -e '
+  .reacquire.outcome == "not_found" and
+  .reacquire.skipped_rescan_replay == false and
+  (.known_limits | index("playlist_select_target_from_scan_cache_v1")) and
+  (.known_limits[] | select(test("reacquire missed target"))) and
+  ([.steps[].name] | any(test("^scroll-sidebar-top-"))) and
+  ([.steps[].name] | index("reobserve-playlist-after-rescan-replay")) and
+  .verification.status == "passed" and
+  (([.diagnostics[].code] | index("playlist_select_rescan_reobserve_missed_target")) | not)
+' case-b-miss-select.json
 ```
 
 `play --candidate-id` skips pre-scan by design but is **not** the Case B acceptance command.
-
 
 Before scrolling for a miss, `playlist ls '<query>'` must first return
 `match_count == 1` with `matches[0].label` exactly equal to the query. Only
@@ -115,13 +111,9 @@ match. If `match_count > 1`, refine the query or use `playlist play
 --candidate-id` with the `candidate_id` from `playlist ls --json` (`playlist
 select` does not expose `--candidate-id` yet).
 
-As of 2026-07-01 (A6c-8), single-character numeric playlist labels (`"3"`,
-`"9"`) can still fail to reach `match_count == 1` on `ls`. This is a
-**parse/OCR** blocker, not an exact-first query bug — see the A6c-8 status
-row above and [`SIGNOFF.md`](SIGNOFF.md) Case B for the live evidence chain.
-If `ls` still reports zero matches for a single digit after this fix, check
-`obs-*-recognition.json` in the artifact dir for whether OCR produced the
-digit at all before escalating.
+Single-digit labels (`"3"`) required A6c-10b top-rewind skip + probe OCR path before
+Case B; validated @ 2338. If `ls` regresses to `ambiguous`, check `obs-*-recognition.json`
+and `known_limits` for `query_scan_*` before re-running Case B.
 
 ## Redaction rules
 
@@ -198,18 +190,22 @@ Copy redacted artifacts into this folder after owner review:
 
 ## Anti-misread (live sign-off)
 
-1. Reacquire optimizes **scroll replay only** — `resolve_playlist_target_for_query` still
-   runs a live scan before select ([`playlist.rs`](../../../../../../crates/auv-netease-music/src/commands/playlist.rs) L362–418).
+1. When `AUV_NETEASE_VIEW_MEMORY=1` and `playlist-scan-cache.json` has a unique
+   `select_target`, `playlist select <query>` skips pre-resolve live scan (A6c-13);
+   otherwise `resolve_playlist_target_for_query` still runs `run_live_scan_until_query`.
+   Reacquire optimizes **scroll replay** after target resolve.
 2. `reacquire.outcome` wire values are `reacquired` / `stale` / `not_found`.
 3. Hermetic FakeAdapter JSON ≠ `proof_class: live` (A5 anti-misread #6).
 4. Live evidence is CLI JSON + artifact-dir files only — no `view.reacquire.*` spans,
    no run-storage `view-memory` role (A5 Tier II–III).
 5. **A6c-13:** target resolve from scan cache does **not** require view-memory file;
    memory is consumed at reacquire only. Case B matrix uses `playlist select <query>`, not `play --candidate-id`.
+6. **PASS (scoped) != default-on** — gate remains off unless owner approves a rollout slice.
+7. **PASS (scoped) != NOTICE removed** — A3e deferral unchanged.
 
 ## Sign-off checklist
 
 - [x] Hermetic matrix green (`cargo test -p auv-view memory`, `playlist_select`, `region`, `write_from_scan_when_enabled`)
-- [x] A6c-3 baseline + A/C/D/E live matrix on owner Mac (see `SIGNOFF.md`)
-- [ ] Case B miss live PASS
+- [x] A6c-3 baseline + Cases A–E live matrix on owner Mac (see `SIGNOFF.md`)
+- [x] Case B miss live PASS @ 2338
 - [ ] Owner approval to remove NOTICE / default-on feature gate (**not** in A6 scope)

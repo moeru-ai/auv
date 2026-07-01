@@ -1,6 +1,6 @@
 {
   "command": "playlist.select",
-  "query": "最近播放",
+  "query": "3",
   "app": {
     "app_id": "com.netease.163music",
     "name": "网易云音乐",
@@ -12,33 +12,242 @@
     "bounds": {
       "x": 0.0,
       "y": 0.0,
-      "width": 1057.0,
-      "height": 752.0
+      "width": 1512.0,
+      "height": 890.0
     }
   },
   "target": {
-    "label": "最近播放",
-    "section_id": "section.obs0.obs0.candidate.ocr4._____1_._____1_",
-    "section_kind": "favorite_playlists",
-    "item_id": "item.obs1.obs1.candidate.ocr0.____.____",
-    "anchor_id": "anchor.item.obs1.obs1.candidate.ocr0.____.____",
-    "candidate_id": "obs1.candidate.ocr0.____",
-    "observation_index": 1,
+    "label": "3",
+    "section_id": "section.obs0.obs0.candidate.ocr8._____45_._____45_",
+    "section_kind": "my_playlists",
+    "item_id": "item.obs7.obs7.candidate.ocr4.3.3",
+    "anchor_id": "anchor.item.obs7.obs7.candidate.ocr4.3.3",
+    "candidate_id": "obs7.candidate.ocr4.3",
+    "observation_index": 7,
     "bounds": {
-      "x": 59.0,
-      "y": 405.0,
-      "width": 58.0,
-      "height": 16.0
+      "x": 70.0,
+      "y": 657.0,
+      "width": 10.0,
+      "height": 13.0
     }
   },
   "steps": [
     {
-      "name": "reacquire-target",
+      "name": "scroll-sidebar-top-0",
       "target_bounds": {
-        "x": 59.0,
-        "y": 405.0,
-        "width": 58.0,
-        "height": 16.0
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-1",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-2",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-3",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-4",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-5",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-6",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-7",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-8",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-9",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-10",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-top-11",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "window_targeted_wheel",
+      "fallback_reason": "AX scroll is not implemented in this slice"
+    },
+    {
+      "name": "scroll-sidebar-target-page-0",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "foreground_system_events",
+      "fallback_reason": null
+    },
+    {
+      "name": "scroll-sidebar-target-page-1",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "foreground_system_events",
+      "fallback_reason": null
+    },
+    {
+      "name": "scroll-sidebar-target-page-2",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "foreground_system_events",
+      "fallback_reason": null
+    },
+    {
+      "name": "scroll-sidebar-target-page-3",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "foreground_system_events",
+      "fallback_reason": null
+    },
+    {
+      "name": "scroll-sidebar-target-page-4",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "foreground_system_events",
+      "fallback_reason": null
+    },
+    {
+      "name": "scroll-sidebar-target-page-5",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "foreground_system_events",
+      "fallback_reason": null
+    },
+    {
+      "name": "scroll-sidebar-target-page-6",
+      "target_bounds": {
+        "x": 0.0,
+        "y": 267.0,
+        "width": 362.88,
+        "height": 541.0
+      },
+      "delivery_path": "foreground_system_events",
+      "fallback_reason": null
+    },
+    {
+      "name": "reobserve-playlist-after-rescan-replay",
+      "target_bounds": {
+        "x": 71.0,
+        "y": 657.0,
+        "width": 9.0,
+        "height": 13.0
       },
       "delivery_path": null,
       "fallback_reason": null
@@ -46,41 +255,270 @@
     {
       "name": "click-playlist",
       "target_bounds": {
-        "x": 59.0,
-        "y": 405.0,
-        "width": 58.0,
-        "height": 16.0
+        "x": 71.0,
+        "y": 657.0,
+        "width": 9.0,
+        "height": 13.0
       },
       "delivery_path": "window_targeted_mouse",
       "fallback_reason": null
-    },
-    {
-      "name": "click-playlist-foreground-retry",
-      "target_bounds": {
-        "x": 59.0,
-        "y": 405.0,
-        "width": 58.0,
-        "height": 16.0
-      },
-      "delivery_path": "foreground_system_events",
-      "fallback_reason": "window-targeted click did not verify selection"
     }
   ],
   "verification": {
-    "status": "failed",
-    "method": "main_title_ocr",
-    "observed_title": "曲。播客。有声书。歌单。专辑。",
-    "artifact": "/tmp/auv-scenebridge-a6c3-20260701/case-b2/playlist-select-post-click.png",
-    "note": "verification checks the main content title after opening the sidebar playlist"
+    "status": "passed",
+    "method": "sidebar_row_echo_detail_chrome_v1",
+    "observed_title": "3",
+    "artifact": "/tmp/auv-a6c13-case-b-20260701-2338/playlist-select-post-click.png",
+    "recognition_artifact": "/tmp/auv-a6c13-case-b-20260701-2338/playlist-select-post-click-recognition.json",
+    "sidebar_echo_recognition_artifact": "/tmp/auv-a6c13-case-b-20260701-2338/playlist-select-post-click-sidebar-echo-recognition.json",
+    "note": "ocr_tiers_tried=title,hero,main,full; final_tier=sidebar_row_echo_detail_chrome_v1; region_count=14; main_pane_guard_pass=4; sidebar_echo_attempted=true; sidebar_echo_pass=true"
   },
-  "diagnostics": [],
+  "diagnostics": [
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"45\" in section MyPlaylists",
+      "node_id": "obs1.candidate.ocr0.45"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"44\" in section MyPlaylists",
+      "node_id": "obs1.candidate.ocr3.44"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"43\" in section MyPlaylists",
+      "node_id": "obs1.candidate.ocr4.43"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"42\" in section MyPlaylists",
+      "node_id": "obs1.candidate.ocr5.42"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"41\" in section MyPlaylists",
+      "node_id": "obs1.candidate.ocr6.41"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"歌曲\" in section MyPlaylists",
+      "node_id": "obs2.candidate.ocr1.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"评论\" in section MyPlaylists",
+      "node_id": "obs2.candidate.ocr2.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"LE\" in section MyPlaylists",
+      "node_id": "obs2.candidate.ocr3.le"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"歌曲\" in section MyPlaylists",
+      "node_id": "obs3.candidate.ocr1.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"评论\" in section MyPlaylists",
+      "node_id": "obs3.candidate.ocr2.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"31\" in section MyPlaylists",
+      "node_id": "obs3.candidate.ocr3.31"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"30\" in section MyPlaylists",
+      "node_id": "obs3.candidate.ocr4.30"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"29\" in section MyPlaylists",
+      "node_id": "obs3.candidate.ocr5.29"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"28\" in section MyPlaylists",
+      "node_id": "obs3.candidate.ocr6.28"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"歌曲\" in section MyPlaylists",
+      "node_id": "obs4.candidate.ocr1.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"评论\" in section MyPlaylists",
+      "node_id": "obs4.candidate.ocr2.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"25\" in section MyPlaylists",
+      "node_id": "obs4.candidate.ocr0.25"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"24\" in section MyPlaylists",
+      "node_id": "obs4.candidate.ocr3.24"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"23\" in section MyPlaylists",
+      "node_id": "obs4.candidate.ocr4.23"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"22\" in section MyPlaylists",
+      "node_id": "obs4.candidate.ocr5.22"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"21\" in section MyPlaylists",
+      "node_id": "obs4.candidate.ocr6.21"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"歌曲\" in section MyPlaylists",
+      "node_id": "obs5.candidate.ocr0.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"评论\" in section MyPlaylists",
+      "node_id": "obs5.candidate.ocr1.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"16\" in section MyPlaylists",
+      "node_id": "obs5.candidate.ocr2.16"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"15\" in section MyPlaylists",
+      "node_id": "obs5.candidate.ocr3.15"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"歌曲\" in section MyPlaylists",
+      "node_id": "obs6.candidate.ocr2.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"评论\" in section MyPlaylists",
+      "node_id": "obs6.candidate.ocr3.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"11\" in section MyPlaylists",
+      "node_id": "obs6.candidate.ocr0.11"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"10\" in section MyPlaylists",
+      "node_id": "obs6.candidate.ocr1.10"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"歌曲\" in section MyPlaylists",
+      "node_id": "obs7.candidate.ocr0.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"评论\" in section MyPlaylists",
+      "node_id": "obs7.candidate.ocr1.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"10\" in section MyPlaylists",
+      "node_id": "obs7.candidate.ocr2.10"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"歌曲\" in section MyPlaylists",
+      "node_id": "obs8.candidate.ocr0.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"评论\" in section MyPlaylists",
+      "node_id": "obs8.candidate.ocr1.__"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"10\" in section MyPlaylists",
+      "node_id": "obs8.candidate.ocr2.10"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"8\" in section MyPlaylists",
+      "node_id": "obs8.candidate.ocr3.8"
+    },
+    {
+      "code": "deduplicated_item",
+      "message": "deduplicated repeated sidebar item \"3\" in section MyPlaylists",
+      "node_id": "obs8.candidate.ocr4.3"
+    },
+    {
+      "code": "sidebar_region_not_found",
+      "message": "sidebar markers could not be identified on the left side; refusing to infer sidebar bounds from unanchored list rows",
+      "node_id": null
+    },
+    {
+      "code": "sidebar_region_fallback_used",
+      "message": "sidebar markers were not recognized after default screen restore; using conservative playlist sidebar bounds",
+      "node_id": null
+    },
+    {
+      "code": "playlist_select_rescan_reobserve_probe",
+      "message": "{\"artifact_path\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-00.json\",\"attempt\":0,\"crop_h\":541,\"crop_w\":363,\"evidence_count\":14,\"found\":false,\"miss_reason\":{\"label_not_matched\":{\"misclassified\":[],\"ocr_contains_target\":[],\"playlist_labels\":[\"大は\",\"歌曲\",\"评论\",\"我的\",\"♥ 我喜欢的音乐 ♥\",\"最近播放\",\"我的播客\",\"V更多\",\"45\",\"44\",\"43\",\"42\",\"41\"]}},\"ocr_custom_word_count\":1,\"ocr_profile\":\"probe_sidebar_enhanced_v1\",\"ocr_recognition_languages\":[\"zh-Hans\",\"en-US\"],\"ocr_region_count\":14,\"ocr_regions_below_sidebar_bottom\":0,\"parse_viewport_bottom\":808.0,\"phase\":\"rescan\",\"playlist_item_count\":13,\"scroll_motion_no_motion\":null,\"sidebar_crop_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-00-sidebar-crop.png\",\"viewport_fingerprint\":\"大は|歌曲|评论|我的|♥我喜欢的音乐♥|最近播放|我的播客|v更多|创建的歌单45へ|45|44|43|42|41\",\"window_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-00-window.png\"}",
+      "node_id": "obs7.candidate.ocr4.3"
+    },
+    {
+      "code": "playlist_select_rescan_reobserve_probe",
+      "message": "{\"artifact_path\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-01.json\",\"attempt\":1,\"crop_h\":541,\"crop_w\":363,\"evidence_count\":14,\"found\":false,\"miss_reason\":{\"label_not_matched\":{\"misclassified\":[],\"ocr_contains_target\":[],\"playlist_labels\":[\"45\",\"歌曲\",\"评论\",\"44\",\"43\",\"42\",\"41\",\"40\",\"6€\",\"38\",\"LE\",\"36\",\"35\",\"34\"]}},\"ocr_custom_word_count\":1,\"ocr_profile\":\"probe_sidebar_enhanced_v1\",\"ocr_recognition_languages\":[\"zh-Hans\",\"en-US\"],\"ocr_region_count\":14,\"ocr_regions_below_sidebar_bottom\":0,\"parse_viewport_bottom\":808.0,\"phase\":\"rescan\",\"playlist_item_count\":14,\"scroll_motion_no_motion\":false,\"sidebar_crop_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-01-sidebar-crop.png\",\"viewport_fingerprint\":\"45|歌曲|评论|44|43|42|41|40|6€|38|le|36|35|34\",\"window_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-01-window.png\"}",
+      "node_id": "obs7.candidate.ocr4.3"
+    },
+    {
+      "code": "playlist_select_rescan_reobserve_probe",
+      "message": "{\"artifact_path\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-02.json\",\"attempt\":2,\"crop_h\":541,\"crop_w\":363,\"evidence_count\":13,\"found\":false,\"miss_reason\":{\"label_not_matched\":{\"misclassified\":[],\"ocr_contains_target\":[],\"playlist_labels\":[\"歌曲\",\"评论\",\"38\",\"LE\",\"36\",\"35\",\"te\",\"33\",\"32\",\"31\",\"30\",\"29\",\"28\"]}},\"ocr_custom_word_count\":1,\"ocr_profile\":\"probe_sidebar_enhanced_v1\",\"ocr_recognition_languages\":[\"zh-Hans\",\"en-US\"],\"ocr_region_count\":13,\"ocr_regions_below_sidebar_bottom\":0,\"parse_viewport_bottom\":808.0,\"phase\":\"rescan\",\"playlist_item_count\":13,\"scroll_motion_no_motion\":false,\"sidebar_crop_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-02-sidebar-crop.png\",\"viewport_fingerprint\":\"歌曲|评论|38|le|36|35|te|33|32|31|30|29|28\",\"window_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-02-window.png\"}",
+      "node_id": "obs7.candidate.ocr4.3"
+    },
+    {
+      "code": "playlist_select_rescan_reobserve_probe",
+      "message": "{\"artifact_path\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-03.json\",\"attempt\":3,\"crop_h\":541,\"crop_w\":363,\"evidence_count\":14,\"found\":false,\"miss_reason\":{\"label_not_matched\":{\"misclassified\":[],\"ocr_contains_target\":[],\"playlist_labels\":[\"ZE\",\"歌曲\",\"评论\",\"31\",\"30\",\"29\",\"28\",\"LZ\",\"26\",\"25\",\"24\",\"23\",\"22\",\"21\"]}},\"ocr_custom_word_count\":1,\"ocr_profile\":\"probe_sidebar_enhanced_v1\",\"ocr_recognition_languages\":[\"zh-Hans\",\"en-US\"],\"ocr_region_count\":14,\"ocr_regions_below_sidebar_bottom\":0,\"parse_viewport_bottom\":808.0,\"phase\":\"rescan\",\"playlist_item_count\":14,\"scroll_motion_no_motion\":false,\"sidebar_crop_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-03-sidebar-crop.png\",\"viewport_fingerprint\":\"ze|歌曲|评论|31|30|29|28|lz|26|25|24|23|22|21\",\"window_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-03-window.png\"}",
+      "node_id": "obs7.candidate.ocr4.3"
+    },
+    {
+      "code": "playlist_select_rescan_reobserve_probe",
+      "message": "{\"artifact_path\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-04.json\",\"attempt\":4,\"crop_h\":541,\"crop_w\":363,\"evidence_count\":8,\"found\":false,\"miss_reason\":{\"label_not_matched\":{\"misclassified\":[],\"ocr_contains_target\":[],\"playlist_labels\":[\"歌曲\",\"评论\",\"25\",\"24\",\"23\",\"22\",\"21\",\"14\"]}},\"ocr_custom_word_count\":1,\"ocr_profile\":\"probe_sidebar_enhanced_v1\",\"ocr_recognition_languages\":[\"zh-Hans\",\"en-US\"],\"ocr_region_count\":8,\"ocr_regions_below_sidebar_bottom\":0,\"parse_viewport_bottom\":808.0,\"phase\":\"rescan\",\"playlist_item_count\":8,\"scroll_motion_no_motion\":false,\"sidebar_crop_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-04-sidebar-crop.png\",\"viewport_fingerprint\":\"歌曲|评论|25|24|23|22|21|14\",\"window_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-04-window.png\"}",
+      "node_id": "obs7.candidate.ocr4.3"
+    },
+    {
+      "code": "playlist_select_rescan_reobserve_probe",
+      "message": "{\"artifact_path\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-05.json\",\"attempt\":5,\"crop_h\":541,\"crop_w\":363,\"evidence_count\":7,\"found\":false,\"miss_reason\":{\"label_not_matched\":{\"misclassified\":[],\"ocr_contains_target\":[],\"playlist_labels\":[\"歌曲\",\"评论\",\"16\",\"15\",\"13\",\"12\",\"0\"]}},\"ocr_custom_word_count\":1,\"ocr_profile\":\"probe_sidebar_enhanced_v1\",\"ocr_recognition_languages\":[\"zh-Hans\",\"en-US\"],\"ocr_region_count\":7,\"ocr_regions_below_sidebar_bottom\":0,\"parse_viewport_bottom\":808.0,\"phase\":\"rescan\",\"playlist_item_count\":7,\"scroll_motion_no_motion\":false,\"sidebar_crop_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-05-sidebar-crop.png\",\"viewport_fingerprint\":\"歌曲|评论|16|15|13|12|0\",\"window_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-05-window.png\"}",
+      "node_id": "obs7.candidate.ocr4.3"
+    },
+    {
+      "code": "playlist_select_rescan_reobserve_probe",
+      "message": "{\"artifact_path\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-06.json\",\"attempt\":6,\"crop_h\":541,\"crop_w\":363,\"evidence_count\":4,\"found\":false,\"miss_reason\":{\"label_not_matched\":{\"misclassified\":[],\"ocr_contains_target\":[],\"playlist_labels\":[\"歌曲\",\"评论\",\"11\",\"10\"]}},\"ocr_custom_word_count\":1,\"ocr_profile\":\"probe_sidebar_enhanced_v1\",\"ocr_recognition_languages\":[\"zh-Hans\",\"en-US\"],\"ocr_region_count\":4,\"ocr_regions_below_sidebar_bottom\":0,\"parse_viewport_bottom\":808.0,\"phase\":\"rescan\",\"playlist_item_count\":4,\"scroll_motion_no_motion\":false,\"sidebar_crop_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-06-sidebar-crop.png\",\"viewport_fingerprint\":\"歌曲|评论|11|10\",\"window_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-06-window.png\"}",
+      "node_id": "obs7.candidate.ocr4.3"
+    },
+    {
+      "code": "playlist_select_rescan_reobserve_probe",
+      "message": "{\"artifact_path\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-07.json\",\"attempt\":7,\"crop_h\":541,\"crop_w\":363,\"evidence_count\":5,\"found\":true,\"miss_reason\":null,\"ocr_custom_word_count\":1,\"ocr_profile\":\"probe_sidebar_enhanced_v1\",\"ocr_recognition_languages\":[\"zh-Hans\",\"en-US\"],\"ocr_region_count\":5,\"ocr_regions_below_sidebar_bottom\":0,\"parse_viewport_bottom\":808.0,\"phase\":\"rescan\",\"playlist_item_count\":5,\"scroll_motion_no_motion\":false,\"sidebar_crop_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-07-sidebar-crop.png\",\"viewport_fingerprint\":\"歌曲|评论|10|8|3\",\"window_png\":\"/tmp/auv-a6c13-case-b-20260701-2338/rescan-reobserve-07-window.png\"}",
+      "node_id": "obs7.candidate.ocr4.3"
+    }
+  ],
   "known_limits": [
-    "background playlist row click did not verify; retried with foreground click"
+    "playlist_select_target_from_scan_cache_v1",
+    "query_scan_top_rewind_applied",
+    "view-memory reacquire missed target — falling back to rescan replay",
+    "verification_used_sidebar_row_echo_for_numeric_title"
   ],
   "reacquire": {
-    "outcome": "reacquired",
-    "strategy_used": "label_current_viewport",
-    "observation_count": 1,
-    "skipped_rescan_replay": true
+    "outcome": "not_found",
+    "observation_count": 6,
+    "skipped_rescan_replay": false
   }
 }

@@ -2,8 +2,8 @@
 
 `proof_class: live`
 
-**Date:** 2026-07-01 (A6c-3 live re-probe)
-**live_binary_rev:** `dbb7f1e192baef76304a87737743a7d3b204c32a`
+**Date:** 2026-07-01 (A6 Case B closeout @ 2338)
+**live_binary_rev:** `fc4977bf64e3fe1cfd0c6dcfc1c647205279b04a`
 **evidence_docs_rev:** `71a286448a4efd6e4186b30f1c3c0cfa91c62ca6`
 **Environment:** macOS 27.0 (arm64); NetEase foreground; logged-in account; default window `1057×752`, resized probe `1200×820`
 **Closure:** [A6 live evidence closure](../../2026-06-30-auv-scenebridge-a6-live-evidence-closure.md)
@@ -15,8 +15,8 @@
 | `cargo fmt --check` | PASS |
 | `cargo check -p auv-view -p auv-netease-music` | PASS |
 | `cargo test -p auv-view memory` | PASS (16 tests) |
-| `cargo test -p auv-netease-music playlist_select` | PASS (7 tests) |
-| `cargo test -p auv-netease-music --lib view_parsers::sidebar::region` | PASS (23 tests) |
+| `cargo test -p auv-netease-music playlist_select` | PASS (37 tests) |
+| `cargo test -p auv-netease-music view_parsers::sidebar` | PASS (84 tests) |
 | `cargo test -p auv-netease-music --lib write_from_scan_when_enabled` | PASS (3 tests) |
 | `git diff --check` | PASS |
 
@@ -50,12 +50,40 @@
 | Case | Status | Notes |
 | --- | --- | --- |
 | **A Hit** | **PASS** | `reacquire.outcome=reacquired`, `skipped_rescan_replay=true`, no `scroll-sidebar-top-*` — [`case-a-hit-select.json`](case-a-hit-select.json) |
-| **B Miss** | **OPEN** | 2309: manual scroll + select still `reacquired` (pre-scan). A6c-13 unlocks true miss live for `playlist select <query>` (owner pending). [`case-b-miss-select.json`](case-b-miss-select.json) |
+| **B Miss** | **PASS** | `not_found` + rescan replay @ `/tmp/auv-a6c13-case-b-20260701-2338`; query `"3"`; `observation_count=6`; verification `sidebar_row_echo_detail_chrome_v1` — [`case-b-miss-select.json`](case-b-miss-select.json) |
 | **C Stale** | **PASS** | `stale` + `stale_reason=memory_rejected_at_freshness`, rescan replay — [`case-c-stale-select.json`](case-c-stale-select.json) |
 | **D Memory missing** | **PASS** | `reacquire=null`, missing-memory limit, rescan replay — [`case-d-missing-select.json`](case-d-missing-select.json) |
 | **E Gate off** | **PASS** | `reacquire=null`, legacy scroll replay — [`case-e-gate-off-select.json`](case-e-gate-off-select.json) |
 
 
+
+
+## A6c-13 Case B PASS (2338 live)
+
+| Run | `/tmp/auv-a6c13-case-b-20260701-2338` | Meaning |
+| --- | --- | --- |
+| `case-ls.json` | `query_resolution=unique_exact`, `view_memory.written=true` | A6c-10b ls gate satisfied |
+| `reacquire.outcome` | `not_found` | True miss — not pre-scan relocation |
+| `observation_count` | `6` | Reacquire seek exhausted before rescan |
+| `skipped_rescan_replay` | `false` | Honest rescan replay |
+| `known_limits` | `playlist_select_target_from_scan_cache_v1` | A6c-13 scan-cache target resolve |
+| `steps` | `scroll-sidebar-top-*` + `reobserve-playlist-after-rescan-replay` | Full miss fallback path |
+| `verification.status` | `passed` | A6c-12 sidebar echo on replay path |
+
+**Case B jq audit** (committed artifact):
+
+```bash
+jq -e '
+  .reacquire.outcome == "not_found" and
+  .reacquire.skipped_rescan_replay == false and
+  (.known_limits | index("playlist_select_target_from_scan_cache_v1")) and
+  (.known_limits[] | select(test("reacquire missed target"))) and
+  ([.steps[].name] | any(test("^scroll-sidebar-top-"))) and
+  ([.steps[].name] | index("reobserve-playlist-after-rescan-replay")) and
+  .verification.status == "passed" and
+  (([.diagnostics[].code] | index("playlist_select_rescan_reobserve_missed_target")) | not)
+' case-b-miss-select.json
+```
 
 ## A6c-13 Case B blocker (2309 live negative)
 
@@ -66,9 +94,8 @@
 | `verification.status` | `passed` | A6c-12 path OK — not a verification regression |
 
 **Root cause:** `resolve_playlist_target_for_query` → `run_live_scan_until_query` erases
-manual scroll. **A6c-13 (code, owner live pending):** gate=1 + unique cache
-`select_target` → skip live scan; audit `playlist_select_target_from_scan_cache_v1`.
-Case B matrix command remains **`playlist select <query>`** only.
+manual scroll. **A6c-13 (closed @ 2338):** gate=1 + unique cache `select_target` → skip pre-resolve live scan.
+2309 negative bisect retained above; Case B PASS artifact replaces pre-A6c-13 attempts.
 
 ## A6c-12 verification false-negative (1812 bisect)
 
@@ -80,12 +107,12 @@ Case B matrix command remains **`playlist select <query>`** only.
 | `playlist-select-post-click-recognition.json` | no `"3"` region | Root cause: **main-pane OCR miss**, not guard/match |
 | `obs-0007-recognition.json` (ls) | `"3"` @ (70,657) | Sidebar digit readable; hero title not |
 
-**A6c-12 (code, owner live pending):** hero-header crop tier; sidebar row echo at final
-`click_bounds` with strict detail chrome; dual recognition artifacts; structured
-`verification.note`. Does **not** close Case B (`not_found` + rescan replay).
+**A6c-12 (closed @ 1812 fix, confirmed @ 2338):** hero-header crop tier; sidebar row echo at
+`click_bounds` with strict detail chrome. 2338 Case B verification passed via
+`sidebar_row_echo_detail_chrome_v1` after rescan replay.
 
 ## Conclusion
 
-**PARTIAL** — Cases **A, C, D, E PASS**; **Case B OPEN**. A6c-13 code landed (scan-cache target resolve); owner must re-run Case B live with manual scroll after `ls`. Full A6 PASS deferred until Case B `not_found` + rescan replay PASS.
-
-Gate remains default-off; NOTICE removal deferred.
+**PASS (scoped)** — Cases **A–E PASS** @ `AUV_NETEASE_VIEW_MEMORY=1` on owner Mac.
+A6c-10b ls `unique_exact` for `"3"`; A6c-13 scan-cache resolve; Case B `not_found` +
+rescan replay @ 2338. Gate remains default-off; NOTICE removal deferred (explicit non-goals).
