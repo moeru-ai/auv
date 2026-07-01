@@ -16,9 +16,10 @@ mod write;
 pub use inspect::{
   GeometryProofSummary, IdentityProofSummary, MemoryProofSummary,
   PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, ReacquisitionRecord, ReplayProofSummary,
-  ResolutionProofSummary, VerificationProofSummary, ViewParserInspect, ViewParserReacquireWire,
-  ViewParserSelectResultWire, ViewParserSelectStepWire, ViewParserSelectTargetWire,
-  ViewParserSelectVerificationWire, ViewResolutionSummary, format_view_resolution_summary_text,
+  ResolutionProofSummary, VerificationProofSummary, ViewParserInspect, ViewParserListSummary,
+  ViewParserReacquireWire, ViewParserSelectResultWire, ViewParserSelectStepWire,
+  ViewParserSelectTargetWire, ViewParserSelectVerificationWire, ViewResolutionSummary,
+  format_view_resolution_summary_text, summarize_view_parser_inspect,
 };
 pub use reacquire::{
   ReacquireCandidate, ReacquireConfig, ReacquireObservation, ReacquireOutcome, ReacquireStrategy,

@@ -37,7 +37,7 @@ use crate::run_read::{CandidatePromotionLineage, DetectorRecognitionLineage};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::{RunId, RunRecordV1Alpha1, TraceState};
 use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
-use auv_view::memory::ViewParserInspect;
+use auv_view::memory::{ViewParserInspect, ViewParserListSummary, summarize_view_parser_inspect};
 
 pub const DEFAULT_INSPECT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_INSPECT_PORT: u16 = 8765;
@@ -303,12 +303,55 @@ pub async fn serve(
   Ok(local_address)
 }
 
+#[derive(serde::Serialize)]
+struct RunListEntry {
+  #[serde(flatten)]
+  run: RunRecordV1Alpha1,
+  view_parser_summary: ViewParserListSummary,
+}
+
 async fn list_runs(State(state): State<InspectServerState>) -> Result<Response, InspectHttpError> {
   let runs = state
     .store
     .list_runs()
     .map_err(InspectHttpError::from_store)?;
-  Ok(Json(runs).into_response())
+  let mut entries = Vec::with_capacity(runs.len());
+  for run in runs {
+    let run_id = run.run_id.as_str();
+    let view_parser_summary = match state.store.read_run(run_id) {
+      Ok(canonical) => {
+        match crate::inspect_view_parser::build_view_parser_inspect_for_run(
+          state.store.as_ref(),
+          &canonical,
+        ) {
+          Ok(view_parser) => summarize_view_parser_inspect(&view_parser),
+          Err(error) => {
+            tracing::warn!(
+              run_id = %run_id,
+              stage = "build_view_parser_inspect",
+              error = %error,
+              "list row view_parser_summary degraded"
+            );
+            ViewParserListSummary::default()
+          }
+        }
+      }
+      Err(error) => {
+        tracing::warn!(
+          run_id = %run_id,
+          stage = "read_run",
+          error = %error,
+          "list row view_parser_summary degraded"
+        );
+        ViewParserListSummary::default()
+      }
+    };
+    entries.push(RunListEntry {
+      run,
+      view_parser_summary,
+    });
+  }
+  Ok(Json(entries).into_response())
 }
 
 async fn get_run(
@@ -339,6 +382,7 @@ async fn get_run(
   let view_parser =
     crate::inspect_view_parser::build_view_parser_inspect_for_run(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
+  let view_parser_summary = summarize_view_parser_inspect(&view_parser);
   let command_boundary_claims = extract_command_boundary_claims(&run);
   Ok(
     Json(InspectRunResponse {
@@ -351,6 +395,7 @@ async fn get_run(
       candidate_action_decision_lineage,
       candidate_action_execution_lineage,
       view_parser,
+      view_parser_summary,
     })
     .into_response(),
   )
@@ -565,6 +610,7 @@ struct InspectRunResponse {
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   candidate_action_execution_lineage: Vec<crate::run_read::CandidateActionExecutionLineage>,
   view_parser: ViewParserInspect,
+  view_parser_summary: ViewParserListSummary,
 }
 
 #[derive(serde::Serialize)]
@@ -1851,7 +1897,11 @@ mod tests {
     assert_eq!(run["run_id"], "run_inspect_server_test");
     assert!(
       run.get("view_parser").is_some(),
-      "GET /runs must always include view_parser"
+      "GET /runs/{{id}} must always include view_parser"
+    );
+    assert!(
+      run.get("view_parser_summary").is_some(),
+      "GET /runs/{{id}} must always include view_parser_summary"
     );
     assert!(run["view_parser"]["resolution_summaries"].is_array());
     assert!(
@@ -2387,6 +2437,101 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[tokio::test]
+  async fn list_runs_includes_view_parser_summary_on_every_row() {
+    let root = temp_dir("inspect-server-list-summary");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    write_test_run(&store, RunId::new("run_list_summary_ok"), None);
+    write_list_degraded_run(&store, &root, "run_list_summary_bad");
+
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/runs")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let runs: Vec<serde_json::Value> =
+      serde_json::from_slice(&body).expect("runs should be json array");
+    assert_eq!(runs.len(), 2);
+    for run in &runs {
+      assert!(
+        run.get("view_parser_summary").is_some(),
+        "every list row must include view_parser_summary"
+      );
+      let summary = &run["view_parser_summary"];
+      assert!(summary.get("has_proof").is_some());
+      assert!(summary.get("resolution_count").is_some());
+      assert!(summary.get("has_known_limits").is_some());
+    }
+    let bad = runs
+      .iter()
+      .find(|run| run["run_id"] == "run_list_summary_bad")
+      .expect("degraded run should remain in list");
+    assert_eq!(bad["view_parser_summary"]["has_proof"], false);
+    assert_eq!(bad["view_parser_summary"]["resolution_count"], 0);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn run_detail_includes_view_parser_summary() {
+    let root = temp_dir("inspect-server-detail-summary");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    write_test_run(&store, RunId::new("run_detail_summary"), None);
+
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/runs/run_detail_summary")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX)
+      .await
+      .expect("body should read");
+    let run: serde_json::Value = serde_json::from_slice(&body).expect("run should be json");
+    assert!(
+      run.get("view_parser_summary").is_some(),
+      "GET /runs/{{id}} must always include view_parser_summary"
+    );
+    assert_eq!(run["view_parser_summary"]["has_proof"], false);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn viewer_renders_view_parser_list_badges_hooks() {
+    assert!(
+      super::VIEWER_HTML.contains("view_parser_summary"),
+      "viewer payload should read view_parser_summary on list rows"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("renderViewParserListBadges"),
+      "viewer payload should render list proof badges"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("outcomePillClass"),
+      "viewer payload should reuse outcome pill styling for list badges"
+    );
+    assert!(
+      super::VIEWER_HTML
+        .contains("!merged.view_parser_summary && previous && previous.view_parser_summary"),
+      "viewer payload should preserve view_parser_summary across mergeRunDetail"
+    );
+  }
+
   #[test]
   fn viewer_renders_view_parser_proof_hooks() {
     assert!(
@@ -2838,6 +2983,17 @@ mod tests {
         artifacts,
       })
       .expect("run should persist");
+  }
+
+  fn write_list_degraded_run(store: &LocalStore, root: &std::path::Path, run_id: &str) {
+    write_test_run(store, RunId::new(run_id), None);
+    let spans_path = root.join("runs").join(run_id).join("spans.jsonl");
+    fs::write(
+      &spans_path,
+      "not valid jsonl
+",
+    )
+    .expect("corrupt spans should write");
   }
 
   fn write_test_run_with_read_side_contracts(store: &LocalStore, root: &Path, run_id: RunId) {

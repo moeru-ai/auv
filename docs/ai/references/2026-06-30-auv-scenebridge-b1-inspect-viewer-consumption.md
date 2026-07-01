@@ -1,14 +1,16 @@
 # SceneBridge B1: Inspect viewer view-parser consumption
 
 Date: 2026-06-30
-Status: **B1a + B1b landed** (run detail proof panel + drill-down)
+Status: **B1a + B1b + B1c landed** (run detail proof panel + drill-down + list badges)
 
 ## Summary
 
-B1 consumes the existing `GET /runs/{id}.view_parser` field in the inspect
-viewer HTML. Each `ViewResolutionSummary` in `resolution_summaries` renders as a
-human-readable proof card answering the six A8 owner inspect questions without
-client-side recomputation.
+B1 consumes the existing `GET /runs/{id}.view_parser` field and the B1c
+`view_parser_summary` list read-model in the inspect viewer HTML. Each
+`ViewResolutionSummary` in `resolution_summaries` renders as a human-readable
+proof card answering the six A8 owner inspect questions without client-side
+recomputation. Run-list rows show lightweight proof badges without fetching full
+`view_parser` per row in the browser.
 
 ## B1a scope (shipped)
 
@@ -31,18 +33,18 @@ client-side recomputation.
 
 ### Narrow freshness on `run_finished`
 
-`run_finished` WebSocket frames carry `frame.run` **without** `view_parser`.
-Calling full `loadRunDetail()` on finish would overwrite `state.activeRun`,
-reset `activeArtifactKey`, and re-render spans/events/artifacts — destroying
-the user's current span / artifact / surface-node selection.
+`run_finished` WebSocket frames carry `frame.run` **without** `view_parser` or
+`view_parser_summary`. Calling full `loadRunDetail()` on finish would overwrite
+`state.activeRun`, reset `activeArtifactKey`, and re-render spans/events/artifacts
+— destroying the user's current span / artifact / surface-node selection.
 
 **B1a rule:** when `frame.run.run_id === state.activeRunId`, call
 `refreshViewParserProofFromRunDetail(runId)` only:
 
-1. `fetch("/runs/" + runId)` — run metadata + `view_parser` only
+1. `fetch("/runs/" + runId)` — run metadata + `view_parser` + `view_parser_summary`
 2. `mergeRunDetail(state.activeRun, json)`
 3. Sync sidebar row + `setMainHeader`
-4. `renderViewParserProof(state.activeRun)`
+4. `renderViewParserProof(state.activeRun)` + `renderRunList()` (B1c)
 5. **Do not touch** `state.spans`, `state.events`, `state.artifacts`,
    `activeSpanId`, `activeArtifactKey`, or `activeSurfaceNode*`
 
@@ -65,24 +67,63 @@ sort `resolution_summaries` independently without re-pairing.
 Alternate path (separate read slice): add a stable key on the wire — requires
 owner approval beyond viewer-only scope.
 
-## B1c deferred — needs API decision
+## B1c scope (shipped)
 
-`GET /runs` list responses do **not** include `view_parser`; only
-`GET /runs/{id}` detail does. Run-list badges are **not** a natural B1a/b
-follow-on.
+| Area | Detail |
+|------|--------|
+| List API | `GET /runs` returns `RunListEntry` with flattened run metadata + `view_parser_summary` |
+| Detail API | `GET /runs/{id}` always includes required `view_parser_summary` (derived from same `view_parser` build) |
+| Viewer list | `renderViewParserListBadges(run.view_parser_summary)` on each sidebar row |
+| Freshness | `mergeRunDetail` preserves `view_parser_summary`; narrow refetch writes summary back to `state.runs` |
 
-| Option | Trade-off |
-|--------|-----------|
-| Extend `GET /runs` with lightweight badge/summary fields | Server read-model change |
-| Client N+1 detail fetch per row | Latency / load on large stores |
-| Cache badge only for runs already opened in session | Partial UX, no list-at-a-glance |
+### `view_parser_summary` fields
 
-Pick one in a separate slice before implementing B1c.
+| Field | Type | Meaning |
+|-------|------|---------|
+| `has_proof` | `bool` | `true` when `resolution_summaries` is non-empty |
+| `resolution_count` | `usize` | `resolution_summaries.len()` |
+| `latest_outcome` | `string?` | Last summary's `resolution.outcome` when `reacquired` / `not_found` / `stale` |
+| `latest_verification_status` | `string?` | Last summary's `verification.status` when `passed` / `failed` |
+| `has_known_limits` | `bool` | **Any** `select_results[].known_limits` is non-empty |
+
+Empty summary (`has_proof: false`, count 0, optional fields omitted, `has_known_limits: false`)
+is always present on every list row and on detail responses.
+
+### Aggregation semantics
+
+- `latest_outcome` and `latest_verification_status` read from the **last**
+  `resolution_summaries` entry only.
+- `has_known_limits` scans **all** `select_results` entries (not limited to the
+  last resolution).
+
+Implemented in `auv_view::memory::summarize_view_parser_inspect` — no pass-through
+builder wrapper.
+
+### Row-level failure policy (`GET /runs`)
+
+| Failure | Behavior |
+|---------|----------|
+| `read_run` fails | Row kept with run metadata + `ViewParserListSummary::default()`; `tracing::warn!` with `stage=read_run` |
+| `build_view_parser_inspect_for_run` fails | Row kept with default summary; `tracing::warn!` with `stage=build_view_parser_inspect` |
+| Never | Single bad run causes `GET /runs` to return 500 |
+
+### `mergeRunDetail` preserve (list badge anti-flicker)
+
+```javascript
+if (!merged.view_parser_summary && previous && previous.view_parser_summary) {
+  merged.view_parser_summary = previous.view_parser_summary;
+}
+```
+
+`run_finished` → `mergeRunDetail` (preserve summary) →
+`refreshViewParserProofFromRunDetail` (detail refetch overwrites with final values)
+→ `renderRunList()`.
 
 ## Key files
 
-- `src/inspect_server_viewer.html` — panel, render helpers, narrow refresh
-- `src/inspect_server/mod.rs` — `viewer_renders_view_parser_proof_hooks` contract test (B1a + B1b hooks)
+- `crates/auv-view/src/memory/inspect.rs` — `ViewParserListSummary`, `summarize_view_parser_inspect`
+- `src/inspect_server/mod.rs` — `GET /runs` / `GET /runs/{id}` wiring + route tests
+- `src/inspect_server_viewer.html` — panel, list badges, narrow refresh
 - [A8 proof graduation](2026-06-30-auv-scenebridge-a8-proof-graduation.md)
 
 ## Validation
@@ -90,7 +131,9 @@ Pick one in a separate slice before implementing B1c.
 ```sh
 cargo fmt --check
 cargo check
-cargo test inspect_server --lib -- viewer_renders_view_parser
+cargo test summarize_view_parser
+cargo test list_runs_includes_view_parser_summary
+cargo test viewer_renders_view_parser_list
 cargo test inspect_server --lib
 git diff --check
 ```

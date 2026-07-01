@@ -179,6 +179,9 @@
     display: flex; gap: 12px;
   }
   .run-row .row-meta .right { margin-left: auto; }
+  .run-row .row-proof-badges {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
   .run-row.empty {
     display: block; padding: 20px 16px;
     color: var(--fg-3); font-family: var(--font-mono); font-size: 12px;
@@ -1004,6 +1007,9 @@
     if (!merged.view_parser && previous && previous.view_parser) {
       merged.view_parser = previous.view_parser;
     }
+    if (!merged.view_parser_summary && previous && previous.view_parser_summary) {
+      merged.view_parser_summary = previous.view_parser_summary;
+    }
     return merged;
   }
 
@@ -1197,10 +1203,37 @@
       if (runIndex >= 0) state.runs[runIndex] = state.activeRun;
       setMainHeader(state.activeRun, false);
       renderViewParserProof(state.activeRun);
+      renderRunList();
     } catch (err) {
       if (state.activeRunId !== runId) return;
       clearViewParserProof();
     }
+  }
+
+  function renderViewParserListBadges(summary) {
+    if (!summary || !summary.has_proof) return null;
+    const badges = [];
+    if (summary.latest_outcome) {
+      badges.push(
+        makeProofPill(summary.latest_outcome, outcomePillClass(summary.latest_outcome))
+      );
+    }
+    if (summary.latest_verification_status) {
+      badges.push(
+        makeProofPill(
+          summary.latest_verification_status,
+          verificationPillClass(summary.latest_verification_status)
+        )
+      );
+    }
+    if (summary.has_known_limits) {
+      badges.push(makeProofPill("limits", "s-candidate"));
+    }
+    if (summary.resolution_count > 1) {
+      badges.push(el("span", { className: "run-type-chip" }, ["×" + summary.resolution_count]));
+    }
+    if (badges.length === 0) return null;
+    return el("div", { className: "row-proof-badges" }, badges);
   }
 
   function renderRun(run, isActive, onSelect) {
@@ -1209,11 +1242,15 @@
       makeTypeChip(run.run_type),
     ]);
     const idRow = el("div", { className: "row-id" }, [midTrunc(run.run_id, 24, 8)]);
+    const proofBadges = renderViewParserListBadges(run.view_parser_summary);
     const summary = el("div", { className: "row-summary" }, [runSummaryText(run)]);
     const meta = el("div", { className: "row-meta" }, [
       el("span", null, [fmtDuration(run.started_at_millis, run.finished_at_millis)]),
       el("span", { className: "right" }, [(run.run_type || "").toLowerCase()]),
     ]);
+    const rowChildren = [headerRow, idRow];
+    if (proofBadges) rowChildren.push(proofBadges);
+    rowChildren.push(summary, meta);
     const row = el(
       "button",
       {
@@ -1221,7 +1258,7 @@
         dataset: { runId: run.run_id },
         onClick: function () { onSelect(run.run_id); },
       },
-      [headerRow, idRow, summary, meta]
+      rowChildren
     );
     return row;
   }

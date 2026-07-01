@@ -102,6 +102,7 @@ tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 tonic = { version = "0.14", features = ["transport"] }
+tracing = "0.1"
 xcap.workspace = true
 image.workspace = true
 reqwest.workspace = true

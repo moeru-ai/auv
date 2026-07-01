@@ -149,6 +149,60 @@ impl Default for ViewParserInspect {
   }
 }
 
+/// Lightweight list read-model for run-list proof badges (B1c).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ViewParserListSummary {
+  pub has_proof: bool,
+  pub resolution_count: usize,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub latest_outcome: Option<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub latest_verification_status: Option<String>,
+  pub has_known_limits: bool,
+}
+
+/// Summarize a full [`ViewParserInspect`] for run-list badges (B1c).
+///
+/// Aggregation rules:
+/// - `has_proof` — `!resolution_summaries.is_empty()`
+/// - `resolution_count` — `resolution_summaries.len()`
+/// - `latest_outcome` — **last** resolution summary's `resolution.outcome`, only when
+///   `reacquired` / `not_found` / `stale`; otherwise `None`
+/// - `latest_verification_status` — **last** summary's `verification.status`, only when
+///   `passed` / `failed`; otherwise `None`
+/// - `has_known_limits` — **any** `select_results[].known_limits` is non-empty (not limited
+///   to the last resolution)
+pub fn summarize_view_parser_inspect(inspect: &ViewParserInspect) -> ViewParserListSummary {
+  if inspect.resolution_summaries.is_empty() {
+    return ViewParserListSummary::default();
+  }
+
+  let latest = inspect
+    .resolution_summaries
+    .last()
+    .expect("non-empty resolution_summaries checked above");
+  let latest_outcome = match latest.resolution.outcome.as_str() {
+    "reacquired" | "not_found" | "stale" => Some(latest.resolution.outcome.clone()),
+    _ => None,
+  };
+  let latest_verification_status = match latest.verification.status.as_str() {
+    "passed" | "failed" => Some(latest.verification.status.clone()),
+    _ => None,
+  };
+  let has_known_limits = inspect
+    .select_results
+    .iter()
+    .any(|select| !select.known_limits.is_empty());
+
+  ViewParserListSummary {
+    has_proof: true,
+    resolution_count: inspect.resolution_summaries.len(),
+    latest_outcome,
+    latest_verification_status,
+    has_known_limits,
+  }
+}
+
 /// Render human-readable inspect text from a machine summary (A8c).
 pub fn format_view_resolution_summary_text(summary: &ViewResolutionSummary) -> String {
   let anchor = summary.identity.anchor_id.as_deref().unwrap_or("-");
@@ -185,6 +239,123 @@ pub fn format_view_resolution_summary_text(summary: &ViewResolutionSummary) -> S
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn sample_resolution_summary(outcome: &str, verification_status: &str) -> ViewResolutionSummary {
+    ViewResolutionSummary {
+      query: "Test".into(),
+      identity: IdentityProofSummary {
+        label: "Test Playlist".into(),
+        section_kind: "my_playlists".into(),
+        anchor_id: None,
+      },
+      memory: MemoryProofSummary {
+        present: true,
+        memory_id: Some("com.example:playlist_sidebar".into()),
+        source_run_id: Some("run_ls".into()),
+        last_reconstructed_at_millis: Some(1),
+        anchor_count: Some(2),
+      },
+      resolution: ResolutionProofSummary {
+        outcome: outcome.into(),
+        strategy_used: Some("label_current_viewport".into()),
+        stale_reason: None,
+        observation_count: 1,
+        span_scope_id: Some("playlist_sidebar".into()),
+      },
+      replay: ReplayProofSummary {
+        step_names: vec!["reacquire-target".into()],
+        skipped_rescan_replay: true,
+      },
+      verification: VerificationProofSummary {
+        status: verification_status.into(),
+        method: "main_title_ocr_full_window_v1".into(),
+      },
+      geometry_note: GeometryProofSummary {
+        has_ephemeral_target_bounds: true,
+        note: "bounds are tier IV only".into(),
+      },
+    }
+  }
+
+  #[test]
+  fn summarize_view_parser_inspect_empty() {
+    let summary = summarize_view_parser_inspect(&ViewParserInspect::default());
+    assert_eq!(summary, ViewParserListSummary::default());
+    assert!(!summary.has_proof);
+    assert_eq!(summary.resolution_count, 0);
+    assert!(summary.latest_outcome.is_none());
+    assert!(summary.latest_verification_status.is_none());
+    assert!(!summary.has_known_limits);
+  }
+
+  #[test]
+  fn summarize_view_parser_inspect_latest_from_last_resolution() {
+    let inspect = ViewParserInspect {
+      resolution_summaries: vec![
+        sample_resolution_summary("reacquired", "passed"),
+        sample_resolution_summary("stale", "failed"),
+      ],
+      ..Default::default()
+    };
+    let summary = summarize_view_parser_inspect(&inspect);
+    assert!(summary.has_proof);
+    assert_eq!(summary.resolution_count, 2);
+    assert_eq!(summary.latest_outcome.as_deref(), Some("stale"));
+    assert_eq!(
+      summary.latest_verification_status.as_deref(),
+      Some("failed")
+    );
+    assert!(!summary.has_known_limits);
+  }
+
+  #[test]
+  fn summarize_view_parser_inspect_has_known_limits_from_any_select_result() {
+    let inspect = ViewParserInspect {
+      resolution_summaries: vec![sample_resolution_summary("reacquired", "passed")],
+      select_results: vec![
+        ViewParserSelectResultWire {
+          run_id: None,
+          query: "First".into(),
+          target: ViewParserSelectTargetWire {
+            label: "A".into(),
+            section_kind: "my_playlists".into(),
+            anchor_id: None,
+          },
+          steps: Vec::new(),
+          verification: ViewParserSelectVerificationWire {
+            status: "passed".into(),
+            method: "main_title_ocr_full_window_v1".into(),
+          },
+          reacquire: None,
+          known_limits: Vec::new(),
+        },
+        ViewParserSelectResultWire {
+          run_id: None,
+          query: "Second".into(),
+          target: ViewParserSelectTargetWire {
+            label: "B".into(),
+            section_kind: "my_playlists".into(),
+            anchor_id: None,
+          },
+          steps: Vec::new(),
+          verification: ViewParserSelectVerificationWire {
+            status: "passed".into(),
+            method: "main_title_ocr_full_window_v1".into(),
+          },
+          reacquire: None,
+          known_limits: vec!["ocr-only".into()],
+        },
+      ],
+      ..Default::default()
+    };
+    let summary = summarize_view_parser_inspect(&inspect);
+    assert!(summary.has_known_limits);
+    assert_eq!(summary.latest_outcome.as_deref(), Some("reacquired"));
+    assert_eq!(
+      summary.latest_verification_status.as_deref(),
+      Some("passed")
+    );
+  }
 
   #[test]
   fn format_view_resolution_summary_text_includes_all_tiers() {
