@@ -50,13 +50,13 @@
 | Case | Status | Notes |
 | --- | --- | --- |
 | **A Hit** | **PASS** | `reacquire.outcome=reacquired`, `skipped_rescan_replay=true`, no `scroll-sidebar-top-*` — [`case-a-hit-select.json`](case-a-hit-select.json) |
-| **B Miss** | **FAIL** | UI scroll + memory tamper attempts still yielded `reacquired`; `not_found` + rescan replay not observed — [`case-b-miss-select.json`](case-b-miss-select.json) |
+| **B Miss** | **OPEN** | A6c-8b closed `ls '3'` (`/tmp/auv-case-b-live-20260701-1725`: `match_count=1`). Case B `select` still **OPEN**: memory not written (`sidebar_region_fallback_used` blocked write gate) → Case D shape (`reacquire=null`). **A6c-9** fixes write gate + `view_memory` JSON field; owner re-probe required for `not_found` — [`case-b-miss-select.json`](case-b-miss-select.json) |
 | **C Stale** | **PASS** | `stale` + `stale_reason=memory_rejected_at_freshness`, rescan replay — [`case-c-stale-select.json`](case-c-stale-select.json) |
 | **D Memory missing** | **PASS** | `reacquire=null`, missing-memory limit, rescan replay — [`case-d-missing-select.json`](case-d-missing-select.json) |
 | **E Gate off** | **PASS** | `reacquire=null`, legacy scroll replay — [`case-e-gate-off-select.json`](case-e-gate-off-select.json) |
 
 ## Conclusion
 
-**PARTIAL** — A6c-1/A6c-2 confirmed on live `playlist ls` @ `dbb7f1e` (default geometry unblocked; dedup-only ViewMemory write on default + resized). Cases **A, C, D, E PASS**; **Case B FAIL** (miss / `not_found` path not reproduced in this session). Full A6 PASS deferred until Case B is re-run with a verified manual miss recipe.
+**PARTIAL** — A6c-1/A6c-2 confirmed on live `playlist ls` @ `dbb7f1e` (default geometry unblocked; dedup-only ViewMemory write on default + resized). Cases **A, C, D, E PASS**; **Case B OPEN** (A6c-8b closed `ls '3'` @ 1725; `select` blocked by ViewMemory write gate until A6c-9). Full A6 PASS deferred until Case B `not_found` is re-run live after A6c-9.
 
 Gate remains default-off; NOTICE removal deferred.

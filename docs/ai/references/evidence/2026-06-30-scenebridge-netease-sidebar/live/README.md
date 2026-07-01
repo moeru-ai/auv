@@ -17,10 +17,19 @@ matrix (Cases A–E) and redacted attachments.
 - **Logged-in account** with at least one **named playlist** in the sidebar
   (`创建的歌单` / `收藏的歌单` items). Guest / `创建的歌单 0` yields `item_count=0`
   and blocks Cases A–E (A6b probe: `case-ls-probe.json`).
-- Current live status (2026-07-01 @ A6c-3):
+- Current live status (2026-07-01 @ A6c-9):
   - **Closed:** default-window geometry (`case-ls-a6c3-default-probe.json`: `height≈286`, `item_count≥1`).
   - **Closed:** dedup-only ViewMemory write (`case-ls-a6c3-resized-probe.json` + default probe).
-  - **Open:** Case B miss (`not_found`) — see [`SIGNOFF.md`](SIGNOFF.md).
+  - **Closed (hermetic):** `query_match` exact-first resolution (`playlist_query_resolution_is_unique_exact`)
+    is unit-tested and wired into `scan.rs`'s `observation_satisfies_query`.
+  - **Closed (live @ A6c-8b):** `playlist ls '3'` pre-gate — `/tmp/auv-case-b-live-20260701-1725`:
+    `item_count=42`, `match_count=1`, `matches[0].label="3"`.
+  - **Open:** Case B miss (`not_found`) — see [`SIGNOFF.md`](SIGNOFF.md). 1725 live showed `select`
+    fell through to **Case D** (`reacquire=null`, `view-memory file missing`) because `playlist ls`
+    skipped ViewMemory write when `sidebar_region_fallback_used` diagnostics were present.
+    **A6c-9** relaxes the write gate for the paired fallback path and adds `view_memory.written` to
+    `ls --json`. Owner must re-run Case B after A6c-9 with `jq -e '.view_memory.written == true'`
+    (or `test -f view-memory-playlist_sidebar.json`) before manual scroll-off + `select`.
 
 ## Hermetic pre-gate (run before live)
 
@@ -65,9 +74,25 @@ Change `scope_snapshot.baseline_width` by ±50 from the live scan value. Expect
 
 ## Miss recipe
 
-After `playlist ls` completes, scroll the NetEase sidebar down 10+ pages so the
-target playlist is no longer in the viewport, then run `playlist select` with the
-same label.
+Before scrolling for a miss, `playlist ls '<query>'` must first return
+`match_count == 1` with `matches[0].label` exactly equal to the query. Only
+then scroll the NetEase sidebar down 10+ pages so the target playlist is no
+longer in the viewport, and run `playlist select` with the same label.
+
+`QUERY` must be a label that `playlist ls` resolves **uniquely** in its JSON
+output (`match_count == 1`). Short numeric labels (for example `"3"`) use
+exact-first matching: substring-only hits such as `"43"` or `"13"` no longer
+match. If `match_count > 1`, refine the query or use `playlist play
+--candidate-id` with the `candidate_id` from `playlist ls --json` (`playlist
+select` does not expose `--candidate-id` yet).
+
+As of 2026-07-01 (A6c-8), single-character numeric playlist labels (`"3"`,
+`"9"`) can still fail to reach `match_count == 1` on `ls`. This is a
+**parse/OCR** blocker, not an exact-first query bug — see the A6c-8 status
+row above and [`SIGNOFF.md`](SIGNOFF.md) Case B for the live evidence chain.
+If `ls` still reports zero matches for a single digit after this fix, check
+`obs-*-recognition.json` in the artifact dir for whether OCR produced the
+digit at all before escalating.
 
 ## Redaction rules
 
@@ -91,6 +116,7 @@ cargo run -p auv-netease-music -- playlist ls "$QUERY" --json --artifact-dir "$A
   | tee "$ARTIFACT_DIR/case-ls.json"
 
 # Verify view-memory exists before Cases A–D
+jq -e '.view_memory.written == true' "$ARTIFACT_DIR/case-ls.json"
 test -f "$ARTIFACT_DIR/view-memory-playlist_sidebar.json"
 
 # Case A — Hit (no scroll between ls and select)

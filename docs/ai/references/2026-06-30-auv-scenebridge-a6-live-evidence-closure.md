@@ -8,7 +8,7 @@
 
 ## One-line summary
 
-**PARTIAL** — @ `dbb7f1e`, logged-in live probes confirm A6c-2 default-window sidebar expansion (`height≈286`, `item_count≥1`) and A6c-1 dedup-only ViewMemory write (default + resized). Cases A/C/D/E PASS on owner Mac; Case B (`not_found` miss) **FAIL** in A6c-3 session.
+**PARTIAL** — @ `dbb7f1e`, logged-in live probes confirm A6c-2 default-window sidebar expansion (`height≈286`, `item_count≥1`) and A6c-1 dedup-only ViewMemory write (default + resized). Cases A/C/D/E PASS on owner Mac; Case B **OPEN** — A6c-8b closed `ls '3'` @ 1725; `select` hit ViewMemory write gate (A6c-9).
 
 Question: does `AUV_NETEASE_VIEW_MEMORY=1` make real `playlist ls → select` use ViewMemory reacquire and honestly fall back on stale/miss/missing/gate-off?
 
