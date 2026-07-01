@@ -50,11 +50,25 @@
 | Case | Status | Notes |
 | --- | --- | --- |
 | **A Hit** | **PASS** | `reacquire.outcome=reacquired`, `skipped_rescan_replay=true`, no `scroll-sidebar-top-*` — [`case-a-hit-select.json`](case-a-hit-select.json) |
-| **B Miss** | **OPEN** | `not_found` + rescan replay not re-run live @ A6c-12. Separate from 1812 verification false-negative (`reacquired` + OCR miss). A6c-10b/`ls` gates still apply — [`case-b-miss-select.json`](case-b-miss-select.json) |
+| **B Miss** | **OPEN** | 2309: manual scroll + select still `reacquired` (pre-scan). A6c-13 unlocks true miss live for `playlist select <query>` (owner pending). [`case-b-miss-select.json`](case-b-miss-select.json) |
 | **C Stale** | **PASS** | `stale` + `stale_reason=memory_rejected_at_freshness`, rescan replay — [`case-c-stale-select.json`](case-c-stale-select.json) |
 | **D Memory missing** | **PASS** | `reacquire=null`, missing-memory limit, rescan replay — [`case-d-missing-select.json`](case-d-missing-select.json) |
 | **E Gate off** | **PASS** | `reacquire=null`, legacy scroll replay — [`case-e-gate-off-select.json`](case-e-gate-off-select.json) |
 
+
+
+## A6c-13 Case B blocker (2309 live negative)
+
+| Run | `/tmp/auv-a6c12-live-20260701-2309` | Meaning |
+| --- | --- | --- |
+| Manual scroll | visible `41..24`, `"3"` off-screen | Owner believed miss precondition met |
+| `reacquire.outcome` | `reacquired` | Pre-select live scan relocated target before reacquire |
+| `verification.status` | `passed` | A6c-12 path OK — not a verification regression |
+
+**Root cause:** `resolve_playlist_target_for_query` → `run_live_scan_until_query` erases
+manual scroll. **A6c-13 (code, owner live pending):** gate=1 + unique cache
+`select_target` → skip live scan; audit `playlist_select_target_from_scan_cache_v1`.
+Case B matrix command remains **`playlist select <query>`** only.
 
 ## A6c-12 verification false-negative (1812 bisect)
 
@@ -72,6 +86,6 @@
 
 ## Conclusion
 
-**PARTIAL** — Cases **A, C, D, E PASS**; **Case B OPEN** (`not_found` rescan replay). A6c-12 addresses 1812-style verification false-negative on reacquire hit (owner live pending). Full A6 PASS deferred until Case B live re-run.
+**PARTIAL** — Cases **A, C, D, E PASS**; **Case B OPEN**. A6c-13 code landed (scan-cache target resolve); owner must re-run Case B live with manual scroll after `ls`. Full A6 PASS deferred until Case B `not_found` + rescan replay PASS.
 
 Gate remains default-off; NOTICE removal deferred.

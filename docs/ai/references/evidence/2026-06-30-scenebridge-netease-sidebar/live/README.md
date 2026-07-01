@@ -39,6 +39,13 @@ matrix (Cases A–E) and redacted attachments.
     detail chrome (`播放全部` or `歌曲`+`评论`). Artifacts:
     `playlist-select-post-click-recognition.json` and optional
     `playlist-select-post-click-sidebar-echo-recognition.json`. **Case B remains OPEN.**
+  - **Fixed (code @ A6c-13, owner live pending):** `playlist select <query>` with
+    `AUV_NETEASE_VIEW_MEMORY=1` resolves target from `playlist-scan-cache.json` (not
+    `view-memory-*.json`) when cache has a unique `select_target` — skips pre-select
+    `run_live_scan_until_query` so manual scroll-off can reach `reacquire.outcome=not_found`.
+    Audit marker in `known_limits`: `playlist_select_target_from_scan_cache_v1` (source note,
+    not a runtime limit). **`play --candidate-id`** already skipped pre-scan; it is **not** the
+    Case B matrix command. **Case B remains OPEN** until owner live PASS.
 
 ## Hermetic pre-gate (run before live)
 
@@ -55,7 +62,7 @@ git diff --check
 | Case | Preconditions | Expected `PlaylistSelectResult` signals | Expected `steps[]` signals |
 | --- | --- | --- | --- |
 | **A Hit** | gate=1; `ls` then **no** large scroll; `select` same label | `reacquire.outcome=reacquired`; `skipped_rescan_replay=true`; `strategy_used` non-empty | contains `reacquire-target`; **no** `scroll-sidebar-top-*` |
-| **B Miss** | gate=1; after `ls` manually scroll target off-screen; `select` same label | `reacquire.outcome=not_found`; `skipped_rescan_replay=false` | `known_limits` miss fallback text; **has** `scroll-sidebar-top-*` + `scroll-sidebar-target-page-*` |
+| **B Miss** | gate=1; `ls` then **A6c-13+** manually scroll target off-screen; **`playlist select <query>`** (not `play --candidate-id`) | `reacquire.outcome=not_found`; `skipped_rescan_replay=false`; `known_limits` has `playlist_select_target_from_scan_cache_v1` | miss fallback text; **has** `scroll-sidebar-top-*` + `reobserve-playlist-after-rescan-replay` |
 | **C Stale** | gate=1; after `ls` edit `view-memory-playlist_sidebar.json` (recipe below) | `reacquire.outcome=stale`; `stale_reason` is a wire value | same as B: honest rescan replay |
 | **D Memory missing** | gate=1; after `ls` delete view-memory file | `reacquire=null`; `known_limits` missing-memory text | rescan replay |
 | **E Gate off** | unset/`0` env; otherwise same as A | `reacquire=null` | rescan replay (pre-A3 path) |
@@ -82,6 +89,19 @@ Change `scope_snapshot.baseline_width` by ±50 from the live scan value. Expect
 `stale_reason=baseline_mismatch_hard`.
 
 ## Miss recipe
+
+### A6c-13 prerequisite (Case B only)
+
+Before A6c-13, `playlist select <query>` always ran `run_live_scan_until_query` first,
+which re-scrolled the target back into view — manual scroll-off could not produce
+`not_found`. Case B live requires A6c-13 code plus the audit marker below.
+
+```bash
+jq -e 'any(.known_limits[]; . == "playlist_select_target_from_scan_cache_v1")' case-b-select.json
+```
+
+`play --candidate-id` skips pre-scan by design but is **not** the Case B acceptance command.
+
 
 Before scrolling for a miss, `playlist ls '<query>'` must first return
 `match_count == 1` with `matches[0].label` exactly equal to the query. Only
@@ -184,6 +204,8 @@ Copy redacted artifacts into this folder after owner review:
 3. Hermetic FakeAdapter JSON ≠ `proof_class: live` (A5 anti-misread #6).
 4. Live evidence is CLI JSON + artifact-dir files only — no `view.reacquire.*` spans,
    no run-storage `view-memory` role (A5 Tier II–III).
+5. **A6c-13:** target resolve from scan cache does **not** require view-memory file;
+   memory is consumed at reacquire only. Case B matrix uses `playlist select <query>`, not `play --candidate-id`.
 
 ## Sign-off checklist
 

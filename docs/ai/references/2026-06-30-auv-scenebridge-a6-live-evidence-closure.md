@@ -8,7 +8,7 @@
 
 ## One-line summary
 
-**PARTIAL** — @ `dbb7f1e`, logged-in live probes confirm A6c-2 default-window sidebar expansion (`height≈286`, `item_count≥1`) and A6c-1 dedup-only ViewMemory write (default + resized). Cases A/C/D/E PASS on owner Mac; Case B **OPEN** — A6c-8b closed `ls '3'` @ 1725; `select` hit ViewMemory write gate (A6c-9).
+**PARTIAL** — Cases A/C/D/E PASS on owner Mac; Case B **OPEN**. A6c-9 closed ViewMemory write; A6c-10b addresses 1750 ls OCR/top-rewind blocker (owner live re-probe pending).
 
 Question: does `AUV_NETEASE_VIEW_MEMORY=1` make real `playlist ls → select` use ViewMemory reacquire and honestly fall back on stale/miss/missing/gate-off?
 
@@ -39,7 +39,7 @@ gate：remains default-off; A3e NOTICE removal deferred
 
 1. **Closed @ A6c-2 (live)** — default `1057×752` sidebar region captures playlist rows (`height≈286`, was ~136 in 2026-07-01 SIGNOFF narrative).
 2. **Closed @ A6c-1 (live)** — dedup-only scans write `view-memory-playlist_sidebar.json` on default + resized probes.
-3. **Open** — Case B miss recipe not validated live (`not_found` + honest rescan replay).
+3. **Open** — Case B miss recipe not validated live (`not_found` + honest rescan replay). A6c-10b code landed for 1750 OCR/top-rewind blocker; owner must re-run `ls '3'` with `query_resolution=unique_exact` before `select`. A6c-13 (code) unlocks Case B for `playlist select <query>` via scan-cache target resolve — see [`live/README.md`](evidence/2026-06-30-scenebridge-netease-sidebar/live/README.md) § A6c-13.
 
 ## Slice classification
 
