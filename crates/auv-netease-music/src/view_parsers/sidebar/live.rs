@@ -26,13 +26,9 @@ pub fn run_live_scan_until_query(
   run_live_scan_inner(inputs, Some(query))
 }
 
-// NOTICE(a6c-8b): `playlist ls <query>` observes the sidebar with plain OCR,
-// unlike the target probe path which already boosts `target_label`/`query`
-// via `build_sidebar_target_probe_ocr_options`. Short numeric playlist labels
-// ("3", "9") are the least reliable OCR case, so merge the query into
-// custom_words here too. This intentionally does not adopt the probe's
-// full-window-fallback recognition-language default; ls keeps the caller's
-// languages untouched.
+// NOTICE(a6c-8b/a6c-10b): short numeric playlist labels get query custom_words
+// plus probe default languages when the caller did not set recognition_languages.
+// Full-window OCR fallback remains empty-sidebar-only in capture_observation.
 pub(crate) fn sidebar_ls_scan_ocr_options(
   base: &TextRecognitionOptions,
   query: Option<&str>,
@@ -40,12 +36,23 @@ pub(crate) fn sidebar_ls_scan_ocr_options(
   let Some(query) = query else {
     return base.clone();
   };
+  let recognition_languages =
+    if crate::view_parsers::sidebar::parse::is_single_ascii_digit_query(query)
+      && base.recognition_languages.is_none()
+    {
+      crate::view_parsers::sidebar::target_probe::build_sidebar_target_probe_ocr_options(
+        base, query, query,
+      )
+      .recognition_languages
+    } else {
+      base.recognition_languages.clone()
+    };
   TextRecognitionOptions {
     custom_words: crate::view_parsers::sidebar::target_probe::merge_custom_words(
       &base.custom_words,
       &[query],
     ),
-    recognition_languages: base.recognition_languages.clone(),
+    recognition_languages,
   }
 }
 
@@ -235,6 +242,7 @@ fn run_live_scan_inner(
       sidebar_bounds: broad_sidebar_bounds,
       sidebar_ratio: broad_sidebar_ratio,
       ocr_options: inputs.ocr_options.clone(),
+      ls_query: None,
       artifact_dir: inputs.artifact_dir.clone(),
       pending_artifacts: Vec::new(),
       scroll_amount: inputs.scroll_amount,
@@ -398,6 +406,7 @@ fn run_live_scan_inner(
     sidebar_bounds,
     sidebar_ratio,
     ocr_options: sidebar_ls_scan_ocr_options(&inputs.ocr_options, query),
+    ls_query: query.map(str::to_string),
     artifact_dir: inputs.artifact_dir.clone(),
     pending_artifacts: Vec::new(),
     scroll_amount: inputs.scroll_amount,
@@ -449,6 +458,7 @@ struct LiveSidebarObserver {
   sidebar_bounds: ViewBounds,
   sidebar_ratio: RatioRect,
   ocr_options: TextRecognitionOptions,
+  ls_query: Option<String>,
   artifact_dir: PathBuf,
   pending_artifacts: Vec<std::thread::JoinHandle<Result<(), String>>>,
   scroll_amount: f64,
@@ -473,7 +483,7 @@ impl LiveSidebarObserver {
         message: error.to_string(),
         node_id: None,
       })?;
-    let recognition = self
+    let sidebar_recognition = self
       .session
       .vision()
       .recognize_text_in_capture_with_options(
@@ -486,10 +496,44 @@ impl LiveSidebarObserver {
         message: error.to_string(),
         node_id: None,
       })?;
+    let sidebar_region_count = sidebar_recognition.regions.len();
+    let numeric_query = self
+      .ls_query
+      .as_deref()
+      .is_some_and(crate::view_parsers::sidebar::parse::is_single_ascii_digit_query);
+    let recognition = if numeric_query && sidebar_region_count == 0 {
+      let full_window = RatioRect::new(0.0, 0.0, 1.0, 1.0);
+      self
+        .session
+        .vision()
+        .recognize_text_in_capture_with_options(&capture, full_window, self.ocr_options.clone())
+        .map_err(|error| ParserDiagnostic {
+          code: "sidebar_ocr_full_window_failed".to_string(),
+          message: error.to_string(),
+          node_id: None,
+        })?
+    } else {
+      sidebar_recognition
+    };
 
     let window_recognition = recognition_in_window_space(recognition, &capture);
-    let observation =
-      parse_sidebar_viewport(observation_index, self.sidebar_bounds, &window_recognition);
+    let parse_bounds =
+      crate::view_parsers::sidebar::target_probe::ls_parse_viewport_bounds_for_sidebar_ocr(
+        self.sidebar_bounds,
+        sidebar_region_count,
+        numeric_query,
+      );
+    let mut observation =
+      parse_sidebar_viewport(observation_index, parse_bounds, &window_recognition);
+    if numeric_query && sidebar_region_count == 0 {
+      observation.parser_notes.push(ParserDiagnostic {
+        code: crate::view_parsers::sidebar::target_probe::LS_OCR_FULL_WINDOW_FALLBACK_NOTE
+          .to_string(),
+        message: "sidebar crop OCR returned zero regions; retried with full-window capture"
+          .to_string(),
+        node_id: None,
+      });
+    }
 
     Ok((
       capture.image.clone(),
@@ -764,6 +808,25 @@ mod ls_scan_ocr_options_tests {
     let options = sidebar_ls_scan_ocr_options(&base, None);
 
     assert_eq!(options, base);
+  }
+
+  #[test]
+  fn sidebar_ls_scan_ocr_options_sets_default_languages_for_single_digit_query() {
+    let base = TextRecognitionOptions::default();
+    let options = sidebar_ls_scan_ocr_options(&base, Some("3"));
+
+    assert_eq!(
+      options.recognition_languages,
+      Some(vec!["zh-Hans".to_string(), "en-US".to_string()])
+    );
+  }
+
+  #[test]
+  fn sidebar_ls_scan_ocr_options_leaves_languages_for_non_numeric_query() {
+    let base = TextRecognitionOptions::default();
+    let options = sidebar_ls_scan_ocr_options(&base, Some("My Playlist"));
+
+    assert_eq!(options.recognition_languages, None);
   }
 
   #[test]

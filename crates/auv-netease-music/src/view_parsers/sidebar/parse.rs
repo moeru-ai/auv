@@ -74,6 +74,10 @@ pub(crate) fn parse_sidebar_viewport(
   }
 }
 
+pub(crate) fn is_single_ascii_digit_query(query: &str) -> bool {
+  query.chars().count() == 1 && query.chars().all(|char| char.is_ascii_digit())
+}
+
 pub(crate) fn candidate_from_evidence(
   observation_index: usize,
   node: &ViewEvidenceNode,
@@ -85,9 +89,7 @@ pub(crate) fn candidate_from_evidence(
   // discarded as noise, but a lone digit at the playlist-row x threshold is
   // real playlist evidence, not noise — narrow the drop to non-numeric or
   // non-playlist-x single chars only.
-  let is_single_digit_playlist_row = label.chars().count() == 1
-    && label.chars().all(|char| char.is_ascii_digit())
-    && bounds.x >= 24.0;
+  let is_single_digit_playlist_row = is_single_ascii_digit_query(label) && bounds.x >= 24.0;
   if label.chars().count() < 2 && !is_single_digit_playlist_row {
     return None;
   }

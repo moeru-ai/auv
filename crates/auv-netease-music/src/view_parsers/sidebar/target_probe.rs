@@ -14,6 +14,7 @@ const OCR_TEXT_PREVIEW_LIMIT: usize = 200;
 
 pub(crate) const PROBE_SIDEBAR_ENHANCED_V1: &str = "probe_sidebar_enhanced_v1";
 pub(crate) const PROBE_FULL_WINDOW_FALLBACK_V1: &str = "probe_full_window_fallback_v1";
+pub(crate) const LS_OCR_FULL_WINDOW_FALLBACK_NOTE: &str = "ls_ocr_full_window_fallback";
 
 const PROBE_DEFAULT_RECOGNITION_LANGUAGES: &[&str] = &["zh-Hans", "en-US"];
 // NOTICE(a6c-7d): live Case B had playlist OCR bbox y=809 vs sidebar_bounds bottom=808.
@@ -193,6 +194,18 @@ pub(crate) fn probe_parse_viewport_bounds(
       sidebar_bounds.width,
       sidebar_bounds.height + PROBE_FULL_WINDOW_VIEWPORT_BOTTOM_PADDING,
     )
+  } else {
+    sidebar_bounds
+  }
+}
+
+pub(crate) fn ls_parse_viewport_bounds_for_sidebar_ocr(
+  sidebar_bounds: ViewBounds,
+  sidebar_region_count: usize,
+  numeric_query: bool,
+) -> ViewBounds {
+  if numeric_query && sidebar_region_count == 0 {
+    probe_parse_viewport_bounds(sidebar_bounds, PROBE_FULL_WINDOW_FALLBACK_V1)
   } else {
     sidebar_bounds
   }
@@ -660,6 +673,25 @@ mod tests {
   fn probe_parse_viewport_bounds_unchanged_on_sidebar_profile() {
     let sidebar_bounds = sample_sidebar_bounds();
     let viewport = probe_parse_viewport_bounds(sidebar_bounds, PROBE_SIDEBAR_ENHANCED_V1);
+
+    assert_eq!(viewport, sidebar_bounds);
+  }
+
+  #[test]
+  fn ls_parse_viewport_bounds_uses_full_window_padding_for_empty_numeric_query() {
+    let sidebar_bounds = sample_sidebar_bounds();
+    let expanded = ls_parse_viewport_bounds_for_sidebar_ocr(sidebar_bounds, 0, true);
+
+    assert_eq!(
+      expanded.height,
+      sidebar_bounds.height + PROBE_FULL_WINDOW_VIEWPORT_BOTTOM_PADDING
+    );
+  }
+
+  #[test]
+  fn ls_parse_viewport_bounds_unchanged_when_sidebar_has_regions() {
+    let sidebar_bounds = sample_sidebar_bounds();
+    let viewport = ls_parse_viewport_bounds_for_sidebar_ocr(sidebar_bounds, 3, true);
 
     assert_eq!(viewport, sidebar_bounds);
   }

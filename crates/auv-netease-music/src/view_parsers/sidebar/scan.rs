@@ -13,6 +13,9 @@ pub(crate) fn scan_sidebar_with_observer(
   finish_sidebar_scan(top_seek, loop_outcome, scroll_amount, scroll_settle_ms)
 }
 
+pub(crate) const QUERY_SCAN_SKIPPED_TOP_REWIND_LIMIT: &str = "query_scan_skipped_top_rewind";
+pub(crate) const QUERY_SCAN_TOP_REWIND_APPLIED_LIMIT: &str = "query_scan_top_rewind_applied";
+
 pub(crate) fn scan_sidebar_with_observer_until_query(
   observer: &mut impl SidebarScanObserver,
   options: ScanOptions,
@@ -21,11 +24,26 @@ pub(crate) fn scan_sidebar_with_observer_until_query(
   scroll_settle_ms: u64,
   query: &str,
 ) -> PlaylistSidebarScan {
-  let top_seek = scroll_to_top_by_motion(observer, top_seek_scroll_budget(options.max_scrolls));
-  observer.reset_collection_phase();
   let normalized_query = normalize_identity(query);
-  let loop_outcome =
+  let query_already_visible = observer.observe_probe().ok().is_some_and(|observation| {
+    observation_satisfies_query(&observation, normalized_query.as_str())
+  });
+
+  let top_seek = if query_already_visible {
+    // NOTICE(a6c-10b): query-target already in viewport; top rewind would scroll
+    // selected numeric labels away before collection starts.
+    TopSeekOutcome::default()
+  } else {
+    scroll_to_top_by_motion(observer, top_seek_scroll_budget(options.max_scrolls))
+  };
+  observer.reset_collection_phase();
+  let mut loop_outcome =
     scan_with_collection_policy_impl(observer, options, category, Some(normalized_query.as_str()));
+  loop_outcome.known_limits.push(if query_already_visible {
+    QUERY_SCAN_SKIPPED_TOP_REWIND_LIMIT.to_string()
+  } else {
+    QUERY_SCAN_TOP_REWIND_APPLIED_LIMIT.to_string()
+  });
   finish_sidebar_scan(top_seek, loop_outcome, scroll_amount, scroll_settle_ms)
 }
 
