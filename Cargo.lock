@@ -628,6 +628,15 @@ name = "auv-query-readiness"
 version = "0.0.1"
 
 [[package]]
+name = "auv-scan"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "auv-stage-status"
 version = "0.0.1"
 dependencies = [

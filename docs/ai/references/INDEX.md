@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **243** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **244** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -313,7 +313,8 @@ Single-viewport **2D temporal scan**; complements
 separate INDEX lane — taxonomy deferred until S1/S2 lands. SceneBridge inspect → S3.
 
 - [`2026-07-02-auv-scan-s0-charter.md`](2026-07-02-auv-scan-s0-charter.md) — design charter
-- [`2026-07-02-auv-scan-s1-temporal-core-plan.md`](2026-07-02-auv-scan-s1-temporal-core-plan.md) — implementation plan (not started)
+- [`2026-07-02-auv-scan-s1-temporal-core-plan.md`](2026-07-02-auv-scan-s1-temporal-core-plan.md) — implementation plan (step 1 landed)
+- [`2026-07-02-auv-scan-s1-slice1-frame-contract-handoff.md`](2026-07-02-auv-scan-s1-slice1-frame-contract-handoff.md) — slice 1 handoff (`crates/auv-scan`, `scan-frame-v0`)
 
 ### `core/recognition` — Active
 

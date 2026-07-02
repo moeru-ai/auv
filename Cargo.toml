@@ -10,6 +10,7 @@ members = [
   "crates/auv-compare",
   "crates/auv-file",
   "crates/auv-query-readiness",
+  "crates/auv-scan",
   "crates/auv-stage-status",
   "crates/auv-qqmusic",
   "crates/auv-driver",

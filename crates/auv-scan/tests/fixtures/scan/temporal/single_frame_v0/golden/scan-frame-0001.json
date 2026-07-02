@@ -1,0 +1,19 @@
+{
+  "schema_version": "scan-frame-v0",
+  "frame_id": "frame-0001",
+  "sequence_index": 0,
+  "captured_at_millis": 1700000000000,
+  "window_bounds": {
+    "x": 0,
+    "y": 0,
+    "width": 800,
+    "height": 600
+  },
+  "viewport_bounds": null,
+  "image": {
+    "file_name": "frame-0001.png",
+    "width": 8,
+    "height": 8,
+    "media_type": "image/png"
+  }
+}
