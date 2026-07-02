@@ -1,0 +1,24 @@
+{
+  "scenario": "association_ambiguous_v0",
+  "previous": [
+    {
+      "observation_id": "o0-a1",
+      "label": "dup"
+    },
+    {
+      "observation_id": "o0-a2",
+      "label": "dup"
+    }
+  ],
+  "current": [
+    {
+      "observation_id": "o1-a",
+      "label": "dup"
+    }
+  ],
+  "expect": {
+    "kind": "ambiguous_association",
+    "label": "dup",
+    "diagnostic_code": "ambiguous_association"
+  }
+}

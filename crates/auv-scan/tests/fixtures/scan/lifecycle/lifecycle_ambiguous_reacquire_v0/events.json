@@ -1,0 +1,17 @@
+{
+  "scenario": "lifecycle_ambiguous_reacquire_v0",
+  "expect": {
+    "verdict": "ambiguous_reacquire",
+    "track_id": "track-a"
+  },
+  "events": [
+    {
+      "event": "ambiguous_reacquire",
+      "track_id": "track-a",
+      "evidence": {
+        "kind": "reacquire",
+        "ref_id": "ambiguous"
+      }
+    }
+  ]
+}

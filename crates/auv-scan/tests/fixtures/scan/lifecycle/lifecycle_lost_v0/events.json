@@ -1,0 +1,33 @@
+{
+  "scenario": "lifecycle_lost_v0",
+  "expect": {
+    "verdict": "lost",
+    "track_id": "track-a"
+  },
+  "events": [
+    {
+      "event": "observed",
+      "observation_id": "o0",
+      "evidence": {
+        "kind": "observation",
+        "ref_id": "o0"
+      }
+    },
+    {
+      "event": "reacquisition_needed",
+      "track_id": "track-a",
+      "evidence": {
+        "kind": "coverage",
+        "ref_id": "needed"
+      }
+    },
+    {
+      "event": "lost",
+      "track_id": "track-a",
+      "evidence": {
+        "kind": "reacquire",
+        "ref_id": "not-found"
+      }
+    }
+  ]
+}

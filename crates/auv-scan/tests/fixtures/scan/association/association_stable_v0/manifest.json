@@ -1,0 +1,21 @@
+{
+  "scenario": "association_stable_v0",
+  "previous": [
+    {
+      "observation_id": "o0-a",
+      "label": "item-a"
+    }
+  ],
+  "current": [
+    {
+      "observation_id": "o1-a",
+      "label": "item-a"
+    }
+  ],
+  "expect": {
+    "kind": "linked",
+    "track_id": "track-item-a",
+    "previous_observation_id": "o0-a",
+    "current_observation_id": "o1-a"
+  }
+}

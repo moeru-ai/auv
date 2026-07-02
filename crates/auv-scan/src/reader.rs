@@ -167,6 +167,11 @@ pub fn summarize_scan_frame_text(frame: &ScanFrame) -> String {
   )
 }
 
+/// Replay frames from an artifact directory (read-only; no driver or capture).
+pub fn replay_scan_frames_from_dir(dir: &Path) -> Result<ScanFrameBundle, ScanInspectError> {
+  load_scan_frames_from_dir(dir)
+}
+
 #[cfg(test)]
 mod test_support {
   use super::*;
@@ -190,10 +195,14 @@ mod tests {
   use crate::artifact::{frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
   use crate::fixture::build_frame_from_fixture;
   use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
-  use crate::producer::produce_frame_from_fixture_dir;
+  use crate::producer::{produce_frame_from_fixture_dir, produce_frames_from_fixture_dir};
 
   fn single_frame_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/single_frame_v0")
+  }
+
+  fn two_frame_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/two_frame_v0")
   }
 
   fn temp_dir(label: &str) -> PathBuf {
@@ -385,6 +394,32 @@ mod tests {
     assert_eq!(bundle.frames.len(), 1);
     assert_eq!(bundle.frames[0], produced.frame);
     verify_frame_image_dimensions(&out_dir, &bundle.frames[0]).expect("verify");
+    cleanup(&out_dir);
+  }
+
+  #[test]
+  fn load_scan_frames_from_dir_returns_two_sorted() {
+    let fixture_dir = two_frame_fixture_dir();
+    let out_dir = temp_dir("two-frame-load");
+    cleanup(&out_dir);
+    produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
+    let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
+    assert_eq!(bundle.frames.len(), 2);
+    assert_eq!(bundle.frames[0].sequence_index, 0);
+    assert_eq!(bundle.frames[1].sequence_index, 1);
+    cleanup(&out_dir);
+  }
+
+  #[test]
+  fn replay_scan_frames_does_not_invoke_capture() {
+    let fixture_dir = two_frame_fixture_dir();
+    let out_dir = temp_dir("two-frame-replay");
+    cleanup(&out_dir);
+    produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
+    let bundle = replay_scan_frames_from_dir(&out_dir).expect("replay");
+    assert_eq!(bundle.frames.len(), 2);
+    assert_eq!(bundle.frames[0].frame_id, "frame-0001");
+    assert_eq!(bundle.frames[1].frame_id, "frame-0002");
     cleanup(&out_dir);
   }
 }

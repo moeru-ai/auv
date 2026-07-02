@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **248** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **272** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -306,7 +306,7 @@ view-parser IR 与 inspect 消费
 - [`2026-05-29-view-parser-v0-overview.md`](2026-05-29-view-parser-v0-overview.md)
 - [`2026-05-29-view-parser-view-memory-v0.md`](2026-05-29-view-parser-view-memory-v0.md)
 
-#### scan line (S) — note entry (8)
+#### scan line (S) — note entry (11)
 
 Single-viewport **2D temporal scan**; complements
 [`scroll-scan` design](2026-05-21-scroll-scan-design.md) page-loop evidence. **Not** a
@@ -319,6 +319,9 @@ separate INDEX lane — taxonomy deferred until S1/S2 lands. SceneBridge inspect
 - [`2026-07-02-auv-scan-s1-s2-s4-gan-spec.md`](2026-07-02-auv-scan-s1-s2-s4-gan-spec.md) — S1-2/3/4 GAN spec (sprints, rubric, risks; producer Option A in-crate)
 - [`2026-07-02-auv-scan-s1-slice2-producer-handoff.md`](2026-07-02-auv-scan-s1-slice2-producer-handoff.md) — slice 2 handoff (producer wiring)
 - [`2026-07-02-auv-scan-s1-slice3-read-side-handoff.md`](2026-07-02-auv-scan-s1-slice3-read-side-handoff.md) — slice 3 handoff (crate-local reader)
+- [`2026-07-02-auv-scan-s1-s4a-multi-frame-handoff.md`](2026-07-02-auv-scan-s1-s4a-multi-frame-handoff.md) — S1-4a handoff (two-frame artifacts + replay)
+- [`2026-07-03-auv-scan-s4-anchor-lifecycle-charter.md`](2026-07-03-auv-scan-s4-anchor-lifecycle-charter.md) — S4 lifecycle charter (evidence-first; docs-only)
+- [`2026-07-02-auv-scan-s4-lifecycle-evaluator-handoff.md`](2026-07-02-auv-scan-s4-lifecycle-evaluator-handoff.md) — S4 evaluator v1 handoff (motion/association/coverage read-models)
 - [`2026-07-03-s-line-streaming-observation-substrate.md`](2026-07-03-s-line-streaming-observation-substrate.md) — S0-S6 direction, A/B/S/M/G lane boundaries, and first acceptance gates
 
 ### `core/recognition` — Active

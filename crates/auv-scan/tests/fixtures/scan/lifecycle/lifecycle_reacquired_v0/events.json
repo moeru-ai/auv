@@ -1,0 +1,49 @@
+{
+  "scenario": "lifecycle_reacquired_v0",
+  "expect": {
+    "verdict": "reacquired",
+    "track_id": "track-a"
+  },
+  "events": [
+    {
+      "event": "observed",
+      "observation_id": "o0",
+      "evidence": {
+        "kind": "observation",
+        "ref_id": "o0"
+      }
+    },
+    {
+      "event": "association_linked",
+      "track_id": "track-a",
+      "evidence": {
+        "kind": "association",
+        "ref_id": "link-0"
+      }
+    },
+    {
+      "event": "stale",
+      "reason_code": "no_new_observation",
+      "evidence": {
+        "kind": "coverage",
+        "ref_id": "stale-0"
+      }
+    },
+    {
+      "event": "reacquisition_needed",
+      "track_id": "track-a",
+      "evidence": {
+        "kind": "coverage",
+        "ref_id": "reacquire-needed"
+      }
+    },
+    {
+      "event": "reacquired",
+      "track_id": "track-a",
+      "evidence": {
+        "kind": "reacquire",
+        "ref_id": "hit-0"
+      }
+    }
+  ]
+}

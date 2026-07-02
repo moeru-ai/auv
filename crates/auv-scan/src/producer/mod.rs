@@ -51,6 +51,28 @@ struct FixtureManifest {
   image: ScanImageRef,
 }
 
+#[derive(Debug, Deserialize)]
+struct MultiFrameFixtureEntry {
+  frame_id: String,
+  sequence_index: u32,
+  captured_at_millis: u64,
+  window_bounds: ScanBounds,
+  viewport_bounds: Option<ScanBounds>,
+  image: ScanImageRef,
+}
+
+#[derive(Debug, Deserialize)]
+struct MultiFrameFixtureManifest {
+  scenario: String,
+  frames: Vec<MultiFrameFixtureEntry>,
+}
+
+/// Result of a successful multi-frame produce/write batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProducedFrameBatch {
+  pub produced: Vec<ProducedFrame>,
+}
+
 /// Build a validated [`ScanFrame`] from capture metadata and image dimensions.
 pub fn build_scan_frame(
   meta: FrameCaptureMeta,
@@ -129,6 +151,18 @@ pub fn write_frame_with_image(
   }
 }
 
+fn fixture_meta_from_entry(entry: MultiFrameFixtureEntry) -> FrameCaptureMeta {
+  FrameCaptureMeta {
+    frame_id: entry.frame_id,
+    sequence_index: entry.sequence_index,
+    captured_at_millis: entry.captured_at_millis,
+    window_bounds: entry.window_bounds,
+    viewport_bounds: entry.viewport_bounds,
+    image_file_name: entry.image.file_name,
+    media_type: entry.image.media_type,
+  }
+}
+
 fn fixture_meta_from_manifest(manifest: FixtureManifest) -> FrameCaptureMeta {
   let _scenario = manifest.scenario;
   FrameCaptureMeta {
@@ -180,6 +214,71 @@ pub fn produce_frame_from_fixture_dir(
   write_frame_with_image(out_dir, &frame, &image_bytes)
 }
 
+fn load_multi_frame_fixture(
+  fixture_dir: &Path,
+) -> Result<Vec<(ScanFrame, Vec<u8>)>, ScanProducerError> {
+  let manifest_path = fixture_dir.join(MANIFEST_FILE);
+  let manifest_bytes = fs::read(&manifest_path)?;
+  let manifest: MultiFrameFixtureManifest = serde_json::from_slice(&manifest_bytes)?;
+  let _scenario = manifest.scenario;
+  if manifest.frames.is_empty() {
+    return Err(ScanProducerError::NoFramesInFixture);
+  }
+  let mut frames = Vec::with_capacity(manifest.frames.len());
+  let mut seen_frame_ids = std::collections::HashSet::new();
+  let mut seen_sequence_indices = std::collections::HashSet::new();
+  for entry in manifest.frames {
+    if !seen_frame_ids.insert(entry.frame_id.clone()) {
+      return Err(ScanProducerError::DuplicateFrameId {
+        frame_id: entry.frame_id,
+      });
+    }
+    if !seen_sequence_indices.insert(entry.sequence_index) {
+      return Err(ScanProducerError::DuplicateSequenceIndex {
+        sequence_index: entry.sequence_index,
+      });
+    }
+    let image_path = fixture_dir.join(&entry.image.file_name);
+    if !image_path.is_file() {
+      return Err(ScanProducerError::MissingImage {
+        path: image_path.display().to_string(),
+      });
+    }
+    let image_bytes = fs::read(&image_path)?;
+    let (image_width, image_height) = png_dimensions(&image_bytes)?;
+    let frame = build_scan_frame(fixture_meta_from_entry(entry), image_width, image_height)?;
+    frames.push((frame, image_bytes));
+  }
+  frames.sort_by_key(|(frame, _)| frame.sequence_index);
+  Ok(frames)
+}
+
+fn rollback_produced_frames(produced: &[ProducedFrame]) {
+  for frame in produced.iter().rev() {
+    let _ = fs::remove_file(&frame.json_path);
+    let _ = fs::remove_file(&frame.image_path);
+  }
+}
+
+/// Hermetic multi-frame producer: each frame uses `write_frame_with_image` (single write path).
+pub fn produce_frames_from_fixture_dir(
+  fixture_dir: &Path,
+  out_dir: &Path,
+) -> Result<ProducedFrameBatch, ScanProducerError> {
+  let frames = load_multi_frame_fixture(fixture_dir)?;
+  let mut produced = Vec::with_capacity(frames.len());
+  for (frame, image_bytes) in frames {
+    match write_frame_with_image(out_dir, &frame, &image_bytes) {
+      Ok(produced_frame) => produced.push(produced_frame),
+      Err(err) => {
+        rollback_produced_frames(&produced);
+        return Err(err);
+      }
+    }
+  }
+  Ok(ProducedFrameBatch { produced })
+}
+
 #[cfg(test)]
 mod tests {
   use std::path::PathBuf;
@@ -192,6 +291,10 @@ mod tests {
 
   fn single_frame_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/single_frame_v0")
+  }
+
+  fn two_frame_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/two_frame_v0")
   }
 
   fn sample_meta() -> FrameCaptureMeta {
@@ -367,5 +470,120 @@ mod tests {
     };
     let err = frame_from_capture(&capture, sample_meta()).expect_err("zero");
     assert!(matches!(err, ScanProducerError::ZeroImageDimension));
+  }
+
+  #[test]
+  fn produce_two_frame_fixture_writes_monotonic_indices() {
+    let fixture_dir = two_frame_fixture_dir();
+    let out_dir =
+      std::env::temp_dir().join(format!("auv-scan-produce-two-frame-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&out_dir);
+    let batch = produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
+    assert_eq!(batch.produced.len(), 2);
+    assert!(out_dir.join(frame_artifact_file_name(0)).is_file());
+    assert!(out_dir.join(frame_artifact_file_name(1)).is_file());
+    assert_eq!(batch.produced[0].frame.sequence_index, 0);
+    assert_eq!(batch.produced[1].frame.sequence_index, 1);
+    let _ = fs::remove_dir_all(&out_dir);
+  }
+
+  #[test]
+  fn produce_two_frame_fixture_matches_golden() {
+    let fixture_dir = two_frame_fixture_dir();
+    let out_dir = std::env::temp_dir().join(format!(
+      "auv-scan-produce-two-golden-{}",
+      std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&out_dir);
+    let batch = produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
+    for (index, produced) in batch.produced.iter().enumerate() {
+      let golden_path = fixture_dir
+        .join("golden")
+        .join(frame_artifact_file_name(index as u32));
+      let golden = read_frame_artifact(&golden_path).expect("golden");
+      let read_back = read_frame_artifact(&produced.json_path).expect("read");
+      assert_eq!(read_back, golden);
+    }
+    let _ = fs::remove_dir_all(&out_dir);
+  }
+
+  #[test]
+  fn two_frame_ids_are_unique() {
+    let fixture_dir = two_frame_fixture_dir();
+    let out_dir =
+      std::env::temp_dir().join(format!("auv-scan-two-frame-ids-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&out_dir);
+    let batch = produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
+    let ids: Vec<_> = batch
+      .produced
+      .iter()
+      .map(|p| p.frame.frame_id.as_str())
+      .collect();
+    assert_eq!(ids, vec!["frame-0001", "frame-0002"]);
+    let _ = fs::remove_dir_all(&out_dir);
+  }
+
+  #[test]
+  fn produce_two_frame_fixture_rejects_duplicate_sequence_index() {
+    let fixture_dir = two_frame_fixture_dir();
+    let temp_fixture = std::env::temp_dir().join(format!(
+      "auv-scan-two-frame-dup-seq-fixture-{}",
+      std::process::id()
+    ));
+    let out_dir = std::env::temp_dir().join(format!(
+      "auv-scan-two-frame-dup-seq-out-{}",
+      std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&temp_fixture);
+    let _ = fs::remove_dir_all(&out_dir);
+    fs::create_dir_all(&temp_fixture).expect("temp fixture");
+    fs::copy(
+      fixture_dir.join("frame-0001.png"),
+      temp_fixture.join("frame-0001.png"),
+    )
+    .expect("copy frame 1");
+    fs::copy(
+      fixture_dir.join("frame-0002.png"),
+      temp_fixture.join("frame-0002.png"),
+    )
+    .expect("copy frame 2");
+    let mut manifest: serde_json::Value =
+      serde_json::from_slice(&fs::read(fixture_dir.join(MANIFEST_FILE)).expect("read manifest"))
+        .expect("parse manifest");
+    manifest["frames"][1]["sequence_index"] = serde_json::Value::from(0);
+    fs::write(
+      temp_fixture.join(MANIFEST_FILE),
+      serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+    )
+    .expect("write manifest");
+
+    let err = produce_frames_from_fixture_dir(&temp_fixture, &out_dir).expect_err("duplicate seq");
+    assert!(matches!(
+      err,
+      ScanProducerError::DuplicateSequenceIndex { sequence_index: 0 }
+    ));
+    let _ = fs::remove_dir_all(&temp_fixture);
+    let _ = fs::remove_dir_all(&out_dir);
+  }
+
+  #[test]
+  fn produce_two_frame_fixture_rolls_back_on_late_write_failure() {
+    let fixture_dir = two_frame_fixture_dir();
+    let out_dir = std::env::temp_dir().join(format!(
+      "auv-scan-two-frame-rollback-{}",
+      std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&out_dir);
+    fs::create_dir_all(out_dir.join(frame_artifact_file_name(1))).expect("poison path");
+
+    let err = produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect_err("late failure");
+    assert!(matches!(
+      err,
+      ScanProducerError::Artifact(crate::artifact::ScanArtifactError::Io(_))
+    ));
+    assert!(!out_dir.join(frame_artifact_file_name(0)).exists());
+    assert!(!out_dir.join("frame-0001.png").exists());
+    assert!(!out_dir.join("frame-0002.png").exists());
+    let _ = fs::remove_dir_all(&out_dir);
   }
 }
