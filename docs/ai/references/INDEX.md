@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **241** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **243** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -34,6 +34,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | 看 core lane 路线图 | [`2026-06-13-auv-core-lane-roadmap.md`](2026-06-13-auv-core-lane-roadmap.md) |
 | 看 invoke / CLI 设计 | [`2026-06-11-auv-cli-invoke-driver-console-design.md`](2026-06-11-auv-cli-invoke-driver-console-design.md) |
 | 看 inspect viewer 设计 | [`2026-05-19-trace-run-inspect-design.md`](2026-05-19-trace-run-inspect-design.md) |
+| 看 scan / temporal 线 (S) | [`2026-07-02-auv-scan-s0-charter.md`](2026-07-02-auv-scan-s0-charter.md) |
 | 看设计系统 / viewer UI | [`../../design/README.md`](../../design/README.md) |
 | 查 agent 写作规范 | 仓库根 [`AGENTS.md`](../../../AGENTS.md) |
 | 查已归档 AX copilot | [`../../archive/verticals/ax-copilot/`](../../archive/verticals/ax-copilot/) |
@@ -304,6 +305,15 @@ view-parser IR 与 inspect 消费
 - [`2026-05-29-view-parser-trace-layout-v0.md`](2026-05-29-view-parser-trace-layout-v0.md)
 - [`2026-05-29-view-parser-v0-overview.md`](2026-05-29-view-parser-v0-overview.md)
 - [`2026-05-29-view-parser-view-memory-v0.md`](2026-05-29-view-parser-view-memory-v0.md)
+
+#### scan line (S) — note entry (2)
+
+Single-viewport **2D temporal scan**; complements
+[`scroll-scan` design](2026-05-21-scroll-scan-design.md) page-loop evidence. **Not** a
+separate INDEX lane — taxonomy deferred until S1/S2 lands. SceneBridge inspect → S3.
+
+- [`2026-07-02-auv-scan-s0-charter.md`](2026-07-02-auv-scan-s0-charter.md) — design charter
+- [`2026-07-02-auv-scan-s1-temporal-core-plan.md`](2026-07-02-auv-scan-s1-temporal-core-plan.md) — implementation plan (not started)
 
 ### `core/recognition` — Active
 
