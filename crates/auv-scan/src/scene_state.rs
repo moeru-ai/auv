@@ -97,7 +97,7 @@ fn label_for_track_id(track_id: &str) -> Option<&str> {
   track_id.strip_prefix("track-")
 }
 
-fn observations_input_valid(
+pub(crate) fn observations_match_bundle(
   bundle: &ScanFrameBundle,
   observations: &[Vec<FrameObservation>],
 ) -> bool {
@@ -374,7 +374,7 @@ pub fn build_scene_state_product(
     }
   };
 
-  let observations_valid = observations_input_valid(&input.bundle, &input.observations_by_frame);
+  let observations_valid = observations_match_bundle(&input.bundle, &input.observations_by_frame);
   let associations = if observations_valid {
     associations_for_bundle(&input.bundle, &input.observations_by_frame)
   } else {
@@ -443,8 +443,14 @@ pub fn build_scene_state_product(
   })
 }
 
-/// Metadata-only text summary for inspect cards (no IO).
+/// Metadata-only L2 summary (no IO). Full consumption surface uses [`crate::format_scene_state_inspect_text`].
 pub fn summarize_scene_state_text(product: &SceneStateProduct) -> String {
+  let recommended = product
+    .recommended_observations
+    .iter()
+    .map(|req| req.code.as_str())
+    .collect::<Vec<_>>()
+    .join(",");
   let mut lines = vec![
     format!("as_of_frame_id={}", product.as_of_frame_id),
     format!(
@@ -452,6 +458,7 @@ pub fn summarize_scene_state_text(product: &SceneStateProduct) -> String {
       product.action_readiness.ready, product.action_readiness.blocking_codes
     ),
     format!("tracks={}", product.tracks.len()),
+    format!("recommended=[{recommended}]"),
   ];
   for track in &product.tracks {
     lines.push(format!(
@@ -469,148 +476,13 @@ pub fn summarize_scene_state_text(product: &SceneStateProduct) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::lifecycle::TransitionEvidence;
   use crate::producer::{produce_frame_from_fixture_dir, produce_frames_from_fixture_dir};
   use crate::reader::load_scan_frames_from_dir;
-  use serde::Deserialize;
-  use std::path::{Path, PathBuf};
-
-  #[derive(Debug, Deserialize)]
-  struct ObservationFixture {
-    observation_id: String,
-    label: String,
-  }
-
-  #[derive(Debug, Deserialize)]
-  struct LifecycleEventFixture {
-    event: String,
-    observation_id: Option<String>,
-    track_id: Option<String>,
-    reason_code: Option<String>,
-    evidence: EvidenceFixture,
-  }
-
-  #[derive(Debug, Deserialize)]
-  struct EvidenceFixture {
-    kind: String,
-    ref_id: String,
-  }
-
-  #[derive(Debug, Deserialize)]
-  struct SceneExpectFixture {
-    as_of_frame_id: Option<String>,
-    identity: Option<String>,
-    last_seen_frame_id: Option<String>,
-    latest_observation_present: Option<bool>,
-    visibility: Option<String>,
-    action_ready: Option<bool>,
-    blocking_codes: Option<Vec<String>>,
-    lifecycle_blocking: Option<String>,
-  }
-
-  #[derive(Debug, Deserialize)]
-  struct SceneFixture {
-    scenario: String,
-    frame_fixture: String,
-    observations_by_frame: Vec<Vec<ObservationFixture>>,
-    lifecycle_events: Option<Vec<LifecycleEventFixture>>,
-    expect: SceneExpectFixture,
-  }
-
-  fn parse_lifecycle_event(raw: &LifecycleEventFixture) -> LifecycleEvent {
-    let evidence = TransitionEvidence {
-      kind: raw.evidence.kind.clone(),
-      ref_id: raw.evidence.ref_id.clone(),
-    };
-    match raw.event.as_str() {
-      "observed" => LifecycleEvent::Observed {
-        observation_id: raw.observation_id.clone().expect("observation_id"),
-        evidence,
-      },
-      "association_linked" => LifecycleEvent::AssociationLinked {
-        track_id: raw.track_id.clone().expect("track_id"),
-        evidence,
-      },
-      "stale" => LifecycleEvent::Stale {
-        reason_code: raw.reason_code.clone().expect("reason_code"),
-        evidence,
-      },
-      "reacquisition_needed" => LifecycleEvent::ReacquisitionNeeded {
-        track_id: raw.track_id.clone().expect("track_id"),
-        evidence,
-      },
-      "reacquired" => LifecycleEvent::Reacquired {
-        track_id: raw.track_id.clone().expect("track_id"),
-        evidence,
-      },
-      "lost" => LifecycleEvent::Lost {
-        track_id: raw.track_id.clone().expect("track_id"),
-        evidence,
-      },
-      "ambiguous_reacquire" => LifecycleEvent::AmbiguousReacquire {
-        track_id: raw.track_id.clone().expect("track_id"),
-        evidence,
-      },
-      "observation_failed" => LifecycleEvent::ObservationFailed {
-        reason_code: raw.reason_code.clone().expect("reason_code"),
-        evidence,
-      },
-      other => panic!("unknown lifecycle event: {other}"),
-    }
-  }
-
-  fn load_scene_fixture(scenario_dir: &str) -> SceneFixture {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan/scene")
-      .join(scenario_dir)
-      .join("manifest.json");
-    let text = std::fs::read_to_string(&path).expect("read fixture");
-    serde_json::from_str(&text).expect("parse fixture")
-  }
-
-  fn observations_from_fixture(raw: &[Vec<ObservationFixture>]) -> Vec<Vec<FrameObservation>> {
-    raw
-      .iter()
-      .map(|frame| {
-        frame
-          .iter()
-          .map(|obs| FrameObservation {
-            observation_id: obs.observation_id.clone(),
-            label: obs.label.clone(),
-          })
-          .collect()
-      })
-      .collect()
-  }
-
-  fn bundle_from_frame_fixture(scenario_dir: &str, frame_fixture: &str) -> ScanFrameBundle {
-    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan")
-      .join(frame_fixture);
-    let out_dir = std::env::temp_dir().join(format!(
-      "auv-scan-scene-{}-{}-{}",
-      scenario_dir,
-      frame_fixture.replace('/', "-"),
-      std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&out_dir);
-    produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
-    let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
-    let _ = std::fs::remove_dir_all(&out_dir);
-    bundle
-  }
+  use crate::scene_fixture_support::{SceneFixture, load_scene_fixture, scene_input_from_fixture};
+  use std::path::PathBuf;
 
   fn build_from_scene_fixture(scenario_dir: &str) -> SceneStateProduct {
-    let fixture = load_scene_fixture(scenario_dir);
-    let lifecycle_events = fixture
-      .lifecycle_events
-      .as_ref()
-      .map(|events| events.iter().map(parse_lifecycle_event).collect::<Vec<_>>());
-    let input = SceneStateInput {
-      bundle: bundle_from_frame_fixture(scenario_dir, &fixture.frame_fixture),
-      observations_by_frame: observations_from_fixture(&fixture.observations_by_frame),
-      lifecycle_events,
-    };
+    let input = scene_input_from_fixture(scenario_dir);
     build_scene_state_product(&input).expect("build scene state")
   }
 

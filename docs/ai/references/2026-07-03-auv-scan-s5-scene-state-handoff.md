@@ -47,7 +47,7 @@ If fewer than two frames are present, S5a degrades motion to `MotionResult::Unkn
 ## Non-goals
 
 - Durable `scan-scene-state-v0` wire
-- B-line / `run_read` / viewer (→ S5b)
+- B-line / `run_read` / viewer (→ S6b candidate, owner sign-off)
 - `OutOfViewport` / motion-driven visibility
 - `CoverageView` ≠ substrate `CoverageLedger` (lightweight S3 view)
 

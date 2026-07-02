@@ -324,6 +324,7 @@ separate INDEX lane — taxonomy deferred until S1/S2 lands. SceneBridge inspect
 - [`2026-07-02-auv-scan-s4-lifecycle-evaluator-handoff.md`](2026-07-02-auv-scan-s4-lifecycle-evaluator-handoff.md) — S4 evaluator v1 handoff (motion/association/coverage read-models)
 - [`2026-07-03-auv-scan-s5-scene-state-charter.md`](2026-07-03-auv-scan-s5-scene-state-charter.md) — S5 scene state charter (L2 draft answers; docs-only)
 - [`2026-07-03-auv-scan-s5-scene-state-handoff.md`](2026-07-03-auv-scan-s5-scene-state-handoff.md) — S5a scene product builder handoff
+- [`2026-07-03-auv-scan-s6a-scene-state-inspect-handoff.md`](2026-07-03-auv-scan-s6a-scene-state-inspect-handoff.md) — S6a L3 inspect consumption handoff (memory-only projection)
 - [`2026-07-03-s-line-streaming-observation-substrate.md`](2026-07-03-s-line-streaming-observation-substrate.md) — S0-S6 direction, A/B/S/M/G lane boundaries, and first acceptance gates
 
 ### `core/recognition` — Active

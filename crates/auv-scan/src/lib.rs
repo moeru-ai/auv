@@ -2,6 +2,8 @@
 
 #[cfg(test)]
 mod fixture;
+#[cfg(test)]
+mod scene_fixture_support;
 
 pub mod artifact;
 pub mod association;
@@ -12,6 +14,7 @@ pub mod motion;
 pub mod producer;
 pub mod reader;
 pub mod scene_state;
+pub mod scene_state_inspect;
 
 pub use artifact::{
   ScanArtifactError, frame_artifact_file_name, read_frame_artifact, write_frame_artifact,
@@ -44,4 +47,8 @@ pub use scene_state::{
   ActionReadiness, IdentityAssessment, ObservationRequest, SceneDiagnostic, SceneDraftAnswers,
   SceneStateError, SceneStateInput, SceneStateProduct, TrackSceneSummary, VisibilityAssessment,
   build_scene_state_product, summarize_scene_state_text,
+};
+pub use scene_state_inspect::{
+  SceneStateInspect, SceneStateListSummary, build_scene_state_inspect,
+  format_scene_state_inspect_text, summarize_scene_state_inspect,
 };

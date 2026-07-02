@@ -14,7 +14,7 @@ S5 packages S1–S4 scan evidence into **product-consumable draft answers** to t
 | L0 | `scan-frame-v0` | read-only |
 | L1 | motion / association / coverage / lifecycle read-models | compose inputs |
 | **L2** | `SceneStateInput` + `SceneStateProduct` | **new crate contract** (memory + fixture JSON) |
-| L3 | B-line inspect summary | S5b; owner sign-off |
+| L3 | in-memory inspect projection | S6a (landed); charter旧称 S5b — see [S6a handoff](2026-07-03-auv-scan-s6a-scene-state-inspect-handoff.md); B-line/run_read bridge remains S6b candidate |
 
 `SceneStateInput.observations_by_frame` is intentional: observations are not in `scan-frame-v0` wire yet.
 
