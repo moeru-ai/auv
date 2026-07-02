@@ -1,0 +1,50 @@
+{
+  "scenario": "scene_lost_v0",
+  "frame_fixture": "temporal/two_frame_v0",
+  "observations_by_frame": [
+    [
+      {
+        "observation_id": "o0",
+        "label": "widget"
+      }
+    ],
+    [
+      {
+        "observation_id": "o1",
+        "label": "widget"
+      }
+    ]
+  ],
+  "lifecycle_events": [
+    {
+      "event": "observed",
+      "observation_id": "o0",
+      "evidence": {
+        "kind": "observation",
+        "ref_id": "o0"
+      }
+    },
+    {
+      "event": "reacquisition_needed",
+      "track_id": "track-widget",
+      "evidence": {
+        "kind": "coverage",
+        "ref_id": "needed"
+      }
+    },
+    {
+      "event": "lost",
+      "track_id": "track-widget",
+      "evidence": {
+        "kind": "reacquire",
+        "ref_id": "not-found"
+      }
+    }
+  ],
+  "expect": {
+    "as_of_frame_id": "frame-0002",
+    "identity": "linked",
+    "action_ready": false,
+    "blocking_codes": ["lifecycle_lost"]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "scenario": "scene_stable_v0",
+  "frame_fixture": "temporal/two_frame_v0",
+  "observations_by_frame": [
+    [
+      {
+        "observation_id": "o0",
+        "label": "widget"
+      }
+    ],
+    [
+      {
+        "observation_id": "o1",
+        "label": "widget"
+      }
+    ]
+  ],
+  "lifecycle_events": null,
+  "expect": {
+    "as_of_frame_id": "frame-0002",
+    "identity": "linked",
+    "last_seen_frame_id": "frame-0002",
+    "latest_observation_present": true,
+    "visibility": "visible",
+    "action_ready": true,
+    "blocking_codes": []
+  }
+}

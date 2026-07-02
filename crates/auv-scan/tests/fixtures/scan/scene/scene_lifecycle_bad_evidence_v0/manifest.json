@@ -1,0 +1,34 @@
+{
+  "scenario": "scene_lifecycle_bad_evidence_v0",
+  "frame_fixture": "temporal/two_frame_v0",
+  "observations_by_frame": [
+    [
+      {
+        "observation_id": "o0",
+        "label": "widget"
+      }
+    ],
+    [
+      {
+        "observation_id": "o1",
+        "label": "widget"
+      }
+    ]
+  ],
+  "lifecycle_events": [
+    {
+      "event": "lost",
+      "track_id": "track-widget",
+      "evidence": {
+        "kind": "",
+        "ref_id": "bad"
+      }
+    }
+  ],
+  "expect": {
+    "as_of_frame_id": "frame-0002",
+    "identity": "linked",
+    "action_ready": false,
+    "lifecycle_blocking": "lifecycle_missing_evidence"
+  }
+}

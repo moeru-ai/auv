@@ -1,0 +1,11 @@
+{
+  "scenario": "scene_missing_observations_v0",
+  "frame_fixture": "temporal/two_frame_v0",
+  "observations_by_frame": [],
+  "lifecycle_events": null,
+  "expect": {
+    "as_of_frame_id": "frame-0002",
+    "action_ready": false,
+    "blocking_codes": ["missing_observations"]
+  }
+}

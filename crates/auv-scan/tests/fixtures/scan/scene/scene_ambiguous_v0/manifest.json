@@ -1,0 +1,30 @@
+{
+  "scenario": "scene_ambiguous_v0",
+  "frame_fixture": "temporal/two_frame_v0",
+  "observations_by_frame": [
+    [
+      {
+        "observation_id": "o0-a1",
+        "label": "dup"
+      },
+      {
+        "observation_id": "o0-a2",
+        "label": "dup"
+      }
+    ],
+    [
+      {
+        "observation_id": "o1-a",
+        "label": "dup"
+      }
+    ]
+  ],
+  "lifecycle_events": null,
+  "expect": {
+    "as_of_frame_id": "frame-0002",
+    "identity": "ambiguous",
+    "visibility": "unknown",
+    "action_ready": false,
+    "blocking_codes": ["ambiguous_association"]
+  }
+}

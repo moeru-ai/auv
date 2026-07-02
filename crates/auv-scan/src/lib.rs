@@ -11,6 +11,7 @@ pub mod lifecycle;
 pub mod motion;
 pub mod producer;
 pub mod reader;
+pub mod scene_state;
 
 pub use artifact::{
   ScanArtifactError, frame_artifact_file_name, read_frame_artifact, write_frame_artifact,
@@ -38,4 +39,9 @@ pub use producer::{
 pub use reader::{
   ScanFrameBundle, ScanInspectError, load_scan_frames_from_dir, replay_scan_frames_from_dir,
   summarize_scan_frame_text, verify_frame_image_dimensions,
+};
+pub use scene_state::{
+  ActionReadiness, IdentityAssessment, ObservationRequest, SceneDiagnostic, SceneDraftAnswers,
+  SceneStateError, SceneStateInput, SceneStateProduct, TrackSceneSummary, VisibilityAssessment,
+  build_scene_state_product, summarize_scene_state_text,
 };
