@@ -2611,6 +2611,68 @@ mod tests {
     );
   }
 
+  #[test]
+  fn viewer_renders_view_parser_list_filter_hooks() {
+    assert!(
+      super::VIEWER_HTML.contains("runListFilters"),
+      "viewer should track active run list filters"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("runMatchesListFilters"),
+      "viewer should filter runs by view_parser_summary predicates"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("function visibleRunsForList(runs, filters)"),
+      "viewer should expose pure visibleRunsForList(runs, filters)"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("function activeRunHiddenByFilters(activeRunId, runs, filters)"),
+      "viewer should expose pure activeRunHiddenByFilters(activeRunId, runs, filters)"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("renderRunListFilterChips"),
+      "viewer should render run list filter chips"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("run-list-filters"),
+      "viewer should mount run list filter chips container"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("resetRunListFilterUiOnLoadFailure"),
+      "viewer should reset filter UI when loadRuns fails"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("renderRunListFilterBanner"),
+      "viewer should render active-run-hidden filter banner"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("run-list-filter-banner"),
+      "viewer should mount run list filter banner"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("toggleRunListFilter"),
+      "viewer should toggle individual run list filters"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("clearRunListFilters"),
+      "viewer should clear all run list filters"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("latest_verification_status")
+        && super::VIEWER_HTML.contains("status_code"),
+      "failed filter should use verification status and run status_code"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("has_known_limits")
+        && super::VIEWER_HTML.contains("latest_outcome"),
+      "limits and stale filters should use view_parser_summary fields"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("selfTestRunListFilters"),
+      "viewer should self-test run list filter predicates"
+    );
+  }
+
   #[tokio::test]
   async fn assets_route_serves_known_design_svgs_with_svg_mime() {
     let root = temp_dir("inspect-server-assets-route");

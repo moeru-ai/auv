@@ -146,6 +146,19 @@
     background: var(--brand);
     color: #fff;
   }
+  .chip:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .run-list-filter-banner {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--shell-line);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--fg-2);
+  }
 
   .run-list { overflow: auto; flex: 1; }
   .run-row {
@@ -809,9 +822,7 @@
         <span class="spacer"></span>
         <span class="right" id="run-count">—</span>
       </div>
-      <div class="filter-chips">
-        <button class="chip active">all</button>
-      </div>
+      <div class="filter-chips" id="run-list-filters"></div>
       <div class="run-list" id="run-list">
         <div class="run-row empty">loading runs…</div>
       </div>
@@ -824,6 +835,7 @@
         <span id="main-status"></span>
       </div>
       <div id="view-parser-proof" hidden></div>
+      <div id="run-list-filter-banner" class="run-list-filter-banner" hidden></div>
       <div class="placeholder" id="main-body">
         <div>select a run from the sidebar.</div>
         <div>this viewer reads <code>/runs</code> and renders the AUV trace contract.</div>
@@ -1436,6 +1448,129 @@
     }
   }
 
+  function runListFilterDefinitions() {
+    return [
+      { key: "failed", label: "failed" },
+      { key: "stale", label: "stale" },
+      { key: "limits", label: "limits" },
+    ];
+  }
+
+  function runMatchesListFilterKey(run, key) {
+    const summary = (run && run.view_parser_summary) || {};
+    if (key === "failed") {
+      return summary.latest_verification_status === "failed"
+        || (run && run.status_code === "error");
+    }
+    if (key === "stale") {
+      return summary.latest_outcome === "stale";
+    }
+    if (key === "limits") {
+      return summary.has_known_limits === true;
+    }
+    return true;
+  }
+
+  function runMatchesListFilters(run, filters) {
+    if (!filters || filters.size === 0) return true;
+    for (const key of filters) {
+      if (!runMatchesListFilterKey(run, key)) return false;
+    }
+    return true;
+  }
+
+  function visibleRunsForList(runs, filters) {
+    const list = Array.isArray(runs) ? runs : [];
+    return list.filter(function (run) {
+      return runMatchesListFilters(run, filters);
+    });
+  }
+
+  function activeRunHiddenByFilters(activeRunId, runs, filters) {
+    if (!activeRunId || !filters || filters.size === 0) return false;
+    const list = Array.isArray(runs) ? runs : [];
+    if (!list.some(function (run) {
+      return run && run.run_id === activeRunId;
+    })) {
+      return false;
+    }
+    return !visibleRunsForList(runs, filters).some(function (run) {
+      return run && run.run_id === activeRunId;
+    });
+  }
+
+  function renderRunListFilterChips(options) {
+    const enabled = !options || options.enabled !== false;
+    const container = document.getElementById("run-list-filters");
+    if (!container) return;
+    container.innerHTML = "";
+    const allActive = state.runListFilters.size === 0;
+    container.appendChild(el("button", {
+      className: "chip" + (allActive && enabled ? " active" : ""),
+      type: "button",
+      disabled: !enabled,
+      onClick: function () {
+        if (enabled) clearRunListFilters();
+      },
+    }, ["all"]));
+    for (const def of runListFilterDefinitions()) {
+      const isActive = state.runListFilters.has(def.key);
+      container.appendChild(el("button", {
+        className: "chip" + (isActive && enabled ? " active" : ""),
+        type: "button",
+        disabled: !enabled,
+        onClick: function () {
+          if (enabled) toggleRunListFilter(def.key);
+        },
+      }, [def.label]));
+    }
+  }
+
+  function toggleRunListFilter(key) {
+    if (state.runListFilters.has(key)) {
+      state.runListFilters.delete(key);
+    } else {
+      state.runListFilters.add(key);
+    }
+    renderRunListFilterChips({ enabled: true });
+    renderRunList();
+  }
+
+  function clearRunListFilters() {
+    state.runListFilters.clear();
+    renderRunListFilterChips({ enabled: true });
+    renderRunList();
+  }
+
+  function resetRunListFilterUiOnLoadFailure() {
+    const banner = document.getElementById("run-list-filter-banner");
+    if (banner) {
+      banner.hidden = true;
+      banner.innerHTML = "";
+    }
+    const count = document.getElementById("run-count");
+    if (count) count.textContent = "—";
+    renderRunListFilterChips({ enabled: false });
+  }
+
+  function renderRunListFilterBanner() {
+    const banner = document.getElementById("run-list-filter-banner");
+    if (!banner) return;
+    if (!activeRunHiddenByFilters(state.activeRunId, state.runs, state.runListFilters)) {
+      banner.hidden = true;
+      banner.innerHTML = "";
+      return;
+    }
+    banner.hidden = false;
+    banner.innerHTML = "";
+    banner.appendChild(el("span", null, ["Selected run hidden by filters."]));
+    banner.appendChild(el("button", {
+      className: "chip",
+      type: "button",
+      onClick: function () { clearRunListFilters(); },
+    }, ["Clear filters"]));
+  }
+
   function renderViewParserListBadges(summary) {
     if (!summary || !summary.has_proof) return null;
     const badges = [];
@@ -1515,19 +1650,36 @@
     ws: null,
     streamRunId: null,
     retryScheduled: false,
+    runListFilters: new Set(),
   };
 
   function renderRunList() {
     const list = document.getElementById("run-list");
     list.innerHTML = "";
-    if (state.runs.length === 0) {
+    const total = state.runs.length;
+    const visible = visibleRunsForList(state.runs, state.runListFilters);
+    const countEl = document.getElementById("run-count");
+    if (countEl) {
+      if (state.runListFilters.size === 0) {
+        countEl.textContent = String(total);
+      } else {
+        countEl.textContent = visible.length + " / " + total;
+      }
+    }
+    if (total === 0) {
       list.appendChild(el("div", { className: "run-row empty" }, ["no runs recorded yet."]));
+      renderRunListFilterBanner();
       return;
     }
-    for (const run of state.runs) {
+    if (visible.length === 0) {
+      list.appendChild(el("div", { className: "run-row empty" }, ["no runs match filters."]));
+      renderRunListFilterBanner();
+      return;
+    }
+    for (const run of visible) {
       list.appendChild(renderRun(run, run.run_id === state.activeRunId, selectRun));
     }
-    document.getElementById("run-count").textContent = state.runs.length;
+    renderRunListFilterBanner();
   }
 
   function setMainHeader(run, loading) {
@@ -3925,8 +4077,10 @@
       state.runs = runs;
       state.fetchedAt = Date.now();
       setConnection(true, location.host + "/runs");
+      renderRunListFilterChips({ enabled: true });
       renderRunList();
     } catch (err) {
+      resetRunListFilterUiOnLoadFailure();
       setConnection(false, "/runs (" + err.message + ")");
       const list = document.getElementById("run-list");
       list.innerHTML = "";
@@ -4004,6 +4158,116 @@
     );
   }
   selfTestSourceReadinessRef();
+
+  function selfTestRunListFilters() {
+    const emptyFilters = new Set();
+    const anyRun = { run_id: "r0", status_code: "ok", view_parser_summary: {} };
+    console.assert(runMatchesListFilters(anyRun, emptyFilters), "empty filters should match any run");
+
+    const staleRun = {
+      run_id: "r1",
+      status_code: "ok",
+      view_parser_summary: { latest_outcome: "stale" },
+    };
+    const staleOnly = new Set(["stale"]);
+    console.assert(runMatchesListFilters(staleRun, staleOnly), "stale filter should match stale outcome");
+    console.assert(
+      !runMatchesListFilters({
+        run_id: "r2",
+        status_code: "ok",
+        view_parser_summary: { latest_outcome: "reacquired" },
+      }, staleOnly),
+      "stale filter should not match reacquired outcome"
+    );
+
+    const limitsOnly = new Set(["limits"]);
+    console.assert(
+      runMatchesListFilters({
+        run_id: "r3",
+        status_code: "ok",
+        view_parser_summary: { has_known_limits: true },
+      }, limitsOnly),
+      "limits filter should match has_known_limits"
+    );
+
+    const failedOnly = new Set(["failed"]);
+    console.assert(
+      runMatchesListFilters({
+        run_id: "r4",
+        status_code: "ok",
+        view_parser_summary: { latest_verification_status: "failed" },
+      }, failedOnly),
+      "failed filter should match verification failed"
+    );
+    console.assert(
+      runMatchesListFilters({
+        run_id: "r5",
+        status_code: "error",
+        view_parser_summary: {},
+      }, failedOnly),
+      "failed filter should match run status_code error"
+    );
+    console.assert(
+      !runMatchesListFilters({
+        run_id: "r6",
+        status_code: "ok",
+        view_parser_summary: {
+          latest_outcome: "not_found",
+          latest_verification_status: "passed",
+        },
+      }, failedOnly),
+      "failed filter should not match not_found with passed verification"
+    );
+
+    const staleAndLimits = new Set(["stale", "limits"]);
+    console.assert(
+      runMatchesListFilters({
+        run_id: "r7",
+        status_code: "ok",
+        view_parser_summary: { latest_outcome: "stale", has_known_limits: true },
+      }, staleAndLimits),
+      "AND filters should match when both predicates hold"
+    );
+    console.assert(
+      !runMatchesListFilters({
+        run_id: "r8",
+        status_code: "ok",
+        view_parser_summary: { latest_outcome: "stale", has_known_limits: false },
+      }, staleAndLimits),
+      "AND filters should not match when one predicate fails"
+    );
+    console.assert(
+      !runMatchesListFilters({
+        run_id: "r9",
+        status_code: "ok",
+        view_parser_summary: {},
+      }, staleOnly),
+      "degraded summary should not match stale filter"
+    );
+
+    console.assert(
+      visibleRunsForList([staleRun, anyRun], staleOnly).length === 1,
+      "visibleRunsForList should filter in place"
+    );
+    const runs = [staleRun, anyRun];
+    console.assert(
+      activeRunHiddenByFilters("r0", runs, staleOnly),
+      "active run should be hidden when filters exclude it"
+    );
+    console.assert(
+      !activeRunHiddenByFilters("r0", runs, emptyFilters),
+      "active run should not be hidden with empty filters"
+    );
+    console.assert(
+      !activeRunHiddenByFilters("missing", runs, staleOnly),
+      "unknown active run id should not trigger filter-hidden banner"
+    );
+    console.assert(
+      !activeRunHiddenByFilters("missing", runs, emptyFilters),
+      "unknown active run id should not be hidden with empty filters"
+    );
+  }
+  selfTestRunListFilters();
 
   loadRuns();
 })();

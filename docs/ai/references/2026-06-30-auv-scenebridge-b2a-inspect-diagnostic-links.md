@@ -37,7 +37,7 @@ Card **Artifacts** shortcut chips use the same resolution rules as the diagnosti
 ## Non-goals
 
 - No cross-run compare
-- No list filter / sort
+- No list filter / sort — **list filter shipped in [B2b](2026-06-30-auv-scenebridge-b2b-inspect-list-filter.md)**
 - **No further `/runs` API changes** (B1c already ships `view_parser_summary` on list rows)
 - No A-line producer expansion
 - No new inspect HTTP endpoints
@@ -54,8 +54,8 @@ this slice.
 
 ## Key files
 
-- [`src/inspect_server_viewer.html`](../../src/inspect_server_viewer.html) — diagnostic links, resolve-then-jump helpers
-- [`src/inspect_server/mod.rs`](../../src/inspect_server/mod.rs) — `viewer_renders_view_parser_diagnostic_links_hooks`
+- [`src/inspect_server_viewer.html`](../../../src/inspect_server_viewer.html) — diagnostic links, resolve-then-jump helpers
+- [`src/inspect_server/mod.rs`](../../../src/inspect_server/mod.rs) — `viewer_renders_view_parser_diagnostic_links_hooks`
 - [B1 handoff](2026-06-30-auv-scenebridge-b1-inspect-viewer-consumption.md) (proof panel + list badges)
 
 ## Validation

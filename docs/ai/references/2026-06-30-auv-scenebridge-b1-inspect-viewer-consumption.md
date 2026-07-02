@@ -126,6 +126,7 @@ if (!merged.view_parser_summary && previous && previous.view_parser_summary) {
 - `src/inspect_server_viewer.html` — panel, list badges, narrow refresh
 - [A8 proof graduation](2026-06-30-auv-scenebridge-a8-proof-graduation.md)
 - [B2a diagnostic links](2026-06-30-auv-scenebridge-b2a-inspect-diagnostic-links.md) — in-run proof card navigation (viewer-only)
+- [B2b list filter](2026-06-30-auv-scenebridge-b2b-inspect-list-filter.md) — client-side run list filters (viewer-only)
 
 ## Validation
 
