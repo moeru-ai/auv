@@ -14,6 +14,9 @@ pub const LINUX_DESKTOP_CAPABILITIES: &[&str] = &[
   "desktop.capture-ax-tree",
   "desktop.recognize-image-text",
   "desktop.probe-permissions",
+  "clipboard.snapshot",
+  "clipboard.restore",
+  "clipboard.set-text",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,6 +40,6 @@ pub fn linux_driver_descriptor() -> LinuxDriverDescriptor {
   LinuxDriverDescriptor {
     id: "linux.desktop",
     platform: PlatformKind::Linux,
-    summary: "Linux Wayland desktop driver: display capture, AT-SPI window/accessibility observation, Tesseract OCR, and portal readiness probes.",
+    summary: "Linux Wayland desktop driver: display capture, AT-SPI window/accessibility observation, Tesseract OCR, text clipboard, and portal readiness probes.",
   }
 }

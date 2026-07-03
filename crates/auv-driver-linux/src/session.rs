@@ -10,6 +10,7 @@ use auv_driver::window::Window;
 
 use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
 use crate::capture::{capture_display, capture_region, list_displays};
+use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot};
 use crate::driver::LinuxDriverSession;
 use crate::error::invalid_input;
 use crate::input::{click_at, press_key, scroll_at, type_text};
@@ -47,6 +48,11 @@ pub struct AccessibilityApi<'a> {
   session: &'a LinuxDriverSession,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ClipboardApi<'a> {
+  session: &'a LinuxDriverSession,
+}
+
 impl LinuxDriverSession {
   pub fn display(&self) -> DisplayApi<'_> {
     DisplayApi { session: self }
@@ -70,6 +76,10 @@ impl LinuxDriverSession {
 
   pub fn accessibility(&self) -> AccessibilityApi<'_> {
     AccessibilityApi { session: self }
+  }
+
+  pub fn clipboard(&self) -> ClipboardApi<'_> {
+    ClipboardApi { session: self }
   }
 }
 
@@ -245,6 +255,24 @@ impl InputApi<'_> {
   pub fn press_key(&self, options: KeyPressOptions) -> DriverResult<InputActionResult> {
     let _ = self.session;
     press_key(options)
+  }
+}
+
+impl ClipboardApi<'_> {
+  /// Reads the current Wayland clipboard text, or an empty string when no text
+  /// payload is present.
+  pub fn snapshot(&self) -> DriverResult<String> {
+    snapshot(&self.session.state)
+  }
+
+  /// Writes a previously captured text snapshot back to the Wayland clipboard.
+  pub fn restore(&self, snapshot: &str) -> DriverResult<()> {
+    restore_clipboard(&self.session.state, snapshot)
+  }
+
+  /// Installs `text` as the Wayland clipboard's UTF-8 text payload.
+  pub fn set_text(&self, text: &str) -> DriverResult<()> {
+    set_clipboard_text(&self.session.state, text)
   }
 }
 
