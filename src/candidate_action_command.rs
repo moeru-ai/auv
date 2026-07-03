@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_os = "macos")]
 use crate::ax_recognition::{AxBestSelectionStrategy, AxRecognitionPolicy};
 #[cfg(target_os = "macos")]
 use crate::ax_recognition::{AxRecognitionRuntimeContext, map_ax_tree_to_recognition_result};
+use crate::candidate_action_decision::CandidateActionExecutionSideEffect;
 use crate::candidate_action_decision::CandidateActionKind;
 #[cfg(target_os = "macos")]
 use crate::candidate_action_decision::MacosCandidateActionExecutor;
@@ -11,15 +11,14 @@ use crate::candidate_action_decision::MacosCandidateActionExecutor;
 use crate::candidate_action_decision::{
   CandidateActionDecisionRequest, CandidateActionExecutionConsent,
   CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
-  CandidateActionExecutionSideEffect, CandidateActionPostActionProbe,
-  execute_and_record_single_candidate_action, record_candidate_action_decision_artifact,
+  CandidateActionPostActionProbe, execute_and_record_single_candidate_action,
+  record_candidate_action_decision_artifact,
 };
 #[cfg(target_os = "macos")]
 use crate::candidate_promotion::ConsentProvenance;
+use crate::candidate_promotion::PromotionRefusal;
 #[cfg(target_os = "macos")]
-use crate::candidate_promotion::{
-  ActionPermission, CandidatePromotion, ConsentGrade, PromotionRefusal,
-};
+use crate::candidate_promotion::{ActionPermission, CandidatePromotion, ConsentGrade};
 #[cfg(target_os = "macos")]
 use crate::candidate_promotion_recording::record_candidate_promotion_artifact_with_recognition_projection;
 #[cfg(target_os = "macos")]
@@ -34,7 +33,6 @@ use crate::model::now_millis;
 use crate::stability::StabilityPolicy;
 #[cfg(target_os = "macos")]
 use auv_driver::Driver;
-#[cfg(target_os = "macos")]
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 #[cfg(target_os = "macos")]
 use std::thread;

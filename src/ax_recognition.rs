@@ -7,13 +7,12 @@ use std::fs;
 #[cfg(target_os = "macos")]
 use std::path::Path;
 
-#[cfg(target_os = "macos")]
 use crate::candidate_promotion::PromotionProjection;
 #[cfg(target_os = "macos")]
 use crate::contract::{
-  ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
-  RecognitionSurface, RecognizedItem,
+  ArtifactRef, RecognitionBox, RecognitionScope, RecognitionSource, RecognitionSurface,
 };
+use crate::contract::{RecognitionResult, RecognizedItem};
 #[cfg(target_os = "macos")]
 use crate::model::{AuvResult, now_millis};
 #[cfg(target_os = "macos")]
@@ -350,6 +349,7 @@ fn window_frame_from_snapshot(snapshot: &ObservedAxTreeSnapshot) -> Option<&Obse
     .map(|node| &node.bounds)
 }
 
+#[cfg(target_os = "macos")]
 fn select_best(
   filtered: &[RecognizedItem],
   policy: &AxRecognitionPolicy,
@@ -435,6 +435,8 @@ fn non_empty_string(value: &str) -> Option<String> {
   }
 }
 
+#[cfg(target_os = "macos")]
+#[cfg(target_os = "macos")]
 fn ax_recognition_temp_json_path(label: &str) -> std::path::PathBuf {
   std::env::temp_dir().join(format!(
     "auv-ax-recognition-{}-{}-{}.json",
