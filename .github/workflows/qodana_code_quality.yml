@@ -55,7 +55,8 @@ jobs:
           path: ${{ runner.temp }}/qodana/results/
           retention-days: 14
 
-  # PR blocking + main/releases push alignment. Not run on schedule/workflow_dispatch.
+  # PR runs consume Qodana as incremental analysis; push runs keep main/releases
+  # aligned to the same blocking subset. Not run on schedule/workflow_dispatch.
   qodana-gate:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest

@@ -1,7 +1,7 @@
 # AUV Qodana Operating Model
 
 Durable reference for how AUV consumes Qodana across observatory (full scan),
-PR gate (blocking), and debt research. Canonical config lives in
+PR/push gate (blocking), and debt research. Canonical config lives in
 [`qodana.yaml`](../../../qodana.yaml) and [`.qodana/profiles/`](../../../.qodana/profiles/).
 
 ## Problem
@@ -16,7 +16,7 @@ quality map with layered consumption, not profile amputation to quiet CI.
 | Layer | Profile | CI job | Branch protection | Purpose |
 |-------|---------|--------|-------------------|---------|
 | Observatory | `qodana.recommended` | `qodana-observatory` | No | Full signal, Cloud trends, debt hotspots |
-| PR/push gate | bootstrap narrow (non-terminal) | `qodana-gate` | Yes (manual setup) | PR blocking + main/releases push alignment |
+| PR/push gate | bootstrap narrow (non-terminal) | `qodana-gate` | Yes (manual setup) | Incremental PR blocking + main/releases push alignment |
 | Debt research | Observatory output | — | No | Campaigns, architecture review, baseline prep |
 
 `cargo check` / `clippy` in [`.github/workflows/check.yml`](../../../.github/workflows/check.yml)
@@ -89,6 +89,37 @@ into baseline.
 - `DuplicatedCode`, `RsUnnecessaryQualifications`, and other maintainability families
 - Consume via Qodana Cloud trends, SARIF, and focused campaigns
 - Do not `enabled: false` these globally to quiet PRs
+
+## Incremental analysis semantics
+
+Qodana gate is consumed in two distinct runtime modes:
+
+- **`pull_request`**: treat `qodana-gate` as **incremental analysis**. In GitHub
+  Actions PR context, Qodana automatically compares the PR head against the
+  merge base and reports newly introduced problems in the changed scope.
+- **`push` → `main` / `releases/*`**: treat `qodana-gate` as a **post-merge
+  alignment run**. This keeps the mainline on the same blocking subset after
+  merge or direct push, but it is not the primary debt-observation channel.
+
+`qodana-observatory` remains the regular/full observation lane for trends,
+technical-debt discovery, and campaign input.
+
+## Formatting inspection policy
+
+Qodana formatting inspection is intentionally **deferred** from the current gate
+profile.
+
+Reason:
+
+- Rust formatting is already authoritatively enforced by `cargo fmt --check`
+- enabling Qodana formatting now would mostly duplicate Rustfmt signal without
+  first proving additional value for non-Rust or IDE-style-governed files
+
+Future reopening trigger:
+
+- if Qodana formatting demonstrates value beyond Rustfmt (for example in
+  non-Rust files or cross-language style drift), enable it first in
+  observatory, then evaluate whether any subset belongs in gate
 
 ### Registered false positives (path exclude; inspections stay on)
 
@@ -173,3 +204,6 @@ tool concession).
 - [Rust linter](https://www.jetbrains.com/help/qodana/rust.html)
 - [GitHub Actions](https://www.jetbrains.com/help/qodana/github.html)
 - [Baseline](https://www.jetbrains.com/help/qodana/baseline.html)
+- [Analyze pull requests](https://www.jetbrains.com/help/qodana/analyze-pr.html)
+- [Inspect code formatting](https://www.jetbrains.com/help/qodana/inspect-code-formatting.html)
+- [Incremental analysis](https://www.jetbrains.com/help/qodana/inspect-your-code.html#Incremental+analysis)
