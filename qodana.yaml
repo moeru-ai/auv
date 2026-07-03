@@ -15,8 +15,26 @@ bootstrap: |
   cargo fetch --locked
   cargo metadata --format-version 1 --all-features > /dev/null
 
+# Keep Qodana focused on actionable Rust hygiene and correctness gates. The
+# broader recommended profile currently reports mostly style/refactor backlog
+# such as DuplicatedCode and RsUnnecessaryQualifications; those are useful
+# refactor signals, but they are too noisy for this repository's CI gate.
 profile:
-  name: qodana.recommended
+  name: qodana.sanity
+
+include:
+  - name: CargoUnusedDependency
+  - name: RsConstantConditionIf
+  - name: RsDeprecation
+  - name: RsFunctionCannotHaveSelf
+  - name: RsLiveness
+  - name: RsUnreachablePatterns
+  - name: RsUnusedImport
+  - name: TomlUnresolvedReference
+
+failureConditions:
+  severityThresholds:
+    any: 0
 
 exclude:
   - name: All
