@@ -8,7 +8,7 @@
 //!
 //! Commands:
 //!   permissions                    probe Wayland/XDG portal readiness
-//!   displays                       list xcap-visible displays
+//!   displays                       list Wayland xdg-output-visible displays
 //!   windows                        list AT-SPI-visible windows
 //!   resolve <title-substr>         resolve a window by title substring
 //!   capture-screen [out.png]       capture the primary display to a PNG

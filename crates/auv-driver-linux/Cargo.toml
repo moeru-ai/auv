@@ -12,5 +12,6 @@ serde.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 leptess.workspace = true
-xcap.workspace = true
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 zbus.workspace = true

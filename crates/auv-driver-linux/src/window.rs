@@ -9,9 +9,6 @@ use crate::capture::capture_display;
 use crate::error::{invalid_input, not_found};
 
 #[cfg(target_os = "linux")]
-const WINDOW_CAPTURE_BACKEND: &str = "atspi.extents+xcap.linux.display.crop";
-
-#[cfg(target_os = "linux")]
 pub fn list_windows() -> DriverResult<Vec<Window>> {
   atspi::list_windows()
 }
@@ -35,10 +32,12 @@ pub fn capture_window(window: &Window) -> DriverResult<Capture> {
     image: crop,
     bounds: window.frame,
     scale_factor: display.capture.scale_factor,
-    backend: WINDOW_CAPTURE_BACKEND.to_string(),
-    fallback_reason: Some(
-      "window pixels were cropped from display capture using AT-SPI window extents".to_string(),
-    ),
+    backend: format!("atspi.extents+{}.crop", display.capture.backend),
+    fallback_reason: display.capture.fallback_reason.or_else(|| {
+      Some(
+        "window pixels were cropped from display capture using AT-SPI window extents".to_string(),
+      )
+    }),
   })
 }
 

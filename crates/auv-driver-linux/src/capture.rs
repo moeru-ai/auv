@@ -3,23 +3,18 @@ use auv_driver::display::{Display, ObservedDisplays};
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::{CoordinateSpace, Rect};
 
-use crate::error::{backend, invalid_input, not_found};
+use crate::error::{backend, invalid_input};
+use display::{list_targets, resolve_for_region, selected_target_or_none};
+
+mod display;
 
 #[cfg(target_os = "linux")]
-const CAPTURE_BACKEND: &str = "xcap.linux";
-
-#[derive(Clone, Debug)]
-struct DisplayTarget {
-  index: usize,
-  display: Display,
-}
+const PORTAL_CAPTURE_BACKEND: &str = "xdg-desktop-portal.screenshot";
 
 #[cfg(target_os = "linux")]
 pub fn list_displays() -> DriverResult<ObservedDisplays> {
-  let monitors = xcap::Monitor::all()
-    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   Ok(ObservedDisplays {
-    displays: display_targets_from_monitors(&monitors)?
+    displays: list_targets()?
       .into_iter()
       .map(|target| target.display)
       .collect(),
@@ -33,33 +28,24 @@ pub fn list_displays() -> DriverResult<ObservedDisplays> {
 
 #[cfg(target_os = "linux")]
 pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
-  let monitors = xcap::Monitor::all()
-    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
-  let targets = display_targets_from_monitors(&monitors)?;
-  let target = resolve_display_target(&targets, selector)?;
-  let monitor = monitors
-    .get(target.index)
-    .ok_or_else(|| not_found(format!("display index {}", target.index)))?;
-  let image = match monitor.capture_image() {
-    Ok(image) => image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
-      .ok_or_else(|| backend("failed to decode captured display RGBA image"))?,
-    Err(primary_error) => portal_screenshot().map_err(|fallback_error| {
-      backend(format!(
-        "failed to capture display via xcap ({primary_error}); portal screenshot fallback failed ({fallback_error})"
-      ))
-    })?,
+  let target = selected_target_or_none(selector)?;
+  let captured = if let Some(target) = &target {
+    capture_area(target.display.frame, target.display.frame)?
+  } else {
+    capture_full()?
   };
+  let display = target
+    .map(|target| target.display)
+    .unwrap_or_else(|| synthetic_display_from_image(&captured.image));
+  let scale_factor = capture_scale_factor(&captured.image, display.frame, display.scale_factor);
   let capture = Capture {
-    image,
-    bounds: target.display.frame,
-    scale_factor: target.display.scale_factor,
-    backend: CAPTURE_BACKEND.to_string(),
-    fallback_reason: None,
+    image: captured.image,
+    bounds: display.frame,
+    scale_factor,
+    backend: captured.backend,
+    fallback_reason: captured.fallback_reason,
   };
-  Ok(DisplayCapture {
-    display: target.display,
-    capture,
-  })
+  Ok(DisplayCapture { display, capture })
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -71,28 +57,16 @@ pub fn capture_display(_selector: Option<&str>) -> DriverResult<DisplayCapture> 
 
 #[cfg(target_os = "linux")]
 pub fn capture_region(selector: Option<&str>, region: Rect) -> DriverResult<RegionCapture> {
-  let monitors = xcap::Monitor::all()
-    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
-  let targets = display_targets_from_monitors(&monitors)?;
-  let target = resolve_display_for_region(&targets, selector, region)?;
-  let monitor = monitors
-    .get(target.index)
-    .ok_or_else(|| not_found(format!("display index {}", target.index)))?;
-  let local_x = integral_capture_dimension("x", region.origin.x - target.display.frame.origin.x)?;
-  let local_y = integral_capture_dimension("y", region.origin.y - target.display.frame.origin.y)?;
-  let width = integral_positive_capture_dimension("width", region.size.width)?;
-  let height = integral_positive_capture_dimension("height", region.size.height)?;
-  let image = monitor
-    .capture_region(local_x, local_y, width, height)
-    .map_err(|error| backend(format!("failed to capture display region: {error}")))?;
-  let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
-    .ok_or_else(|| backend("failed to decode captured region RGBA image"))?;
+  let targets = list_targets()?;
+  let target = resolve_for_region(&targets, selector, region)?;
+  let captured = capture_area(region, target.display.frame)?;
+  let scale_factor = capture_scale_factor(&captured.image, region, target.display.scale_factor);
   let capture = Capture {
-    image,
+    image: captured.image,
     bounds: region,
-    scale_factor: target.display.scale_factor,
-    backend: CAPTURE_BACKEND.to_string(),
-    fallback_reason: None,
+    scale_factor,
+    backend: captured.backend,
+    fallback_reason: captured.fallback_reason,
   };
   Ok(RegionCapture {
     display: target.display,
@@ -107,114 +81,88 @@ pub fn capture_region(_selector: Option<&str>, _region: Rect) -> DriverResult<Re
   ))
 }
 
+struct CapturedImage {
+  image: image::RgbaImage,
+  backend: String,
+  fallback_reason: Option<String>,
+}
+
 #[cfg(target_os = "linux")]
-fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec<DisplayTarget>> {
-  if monitors.is_empty() {
-    return Err(not_found("display"));
-  }
-  monitors
-    .iter()
-    .enumerate()
-    .map(|(index, monitor)| {
-      let x = monitor
-        .x()
-        .map_err(|error| backend(format!("failed to read display x: {error}")))?
-        as f64;
-      let y = monitor
-        .y()
-        .map_err(|error| backend(format!("failed to read display y: {error}")))?
-        as f64;
-      let width = monitor
-        .width()
-        .map_err(|error| backend(format!("failed to read display width: {error}")))?
-        as f64;
-      let height = monitor
-        .height()
-        .map_err(|error| backend(format!("failed to read display height: {error}")))?
-        as f64;
-      let scale_factor = monitor
-        .scale_factor()
-        .map_err(|error| backend(format!("failed to read display scale: {error}")))?
-        as f64;
-      let native_id = monitor
-        .id()
-        .map_err(|error| backend(format!("failed to read display id: {error}")))?
-        .to_string();
-      Ok(DisplayTarget {
-        index,
-        display: Display {
-          id: native_id,
-          name: Some(format!("display_{index}")),
-          frame: Rect::new(x, y, width, height),
-          coordinate_space: CoordinateSpace::Screen,
-          scale_factor,
-          is_primary: monitor
-            .is_primary()
-            .map_err(|error| backend(format!("failed to read display primary flag: {error}")))?,
-          is_builtin: None,
-        },
-      })
-    })
-    .collect()
+fn capture_full() -> DriverResult<CapturedImage> {
+  Ok(CapturedImage {
+    image: portal_screenshot()?,
+    backend: PORTAL_CAPTURE_BACKEND.to_string(),
+    fallback_reason: None,
+  })
 }
 
-fn resolve_display_target(
-  targets: &[DisplayTarget],
-  selector: Option<&str>,
-) -> DriverResult<DisplayTarget> {
-  if let Some(selector) = selector {
-    let selector = selector.trim();
-    return targets
-      .iter()
-      .find(|target| {
-        target.display.id == selector
-          || target
-            .display
-            .name
-            .as_deref()
-            .is_some_and(|display_ref| display_ref == selector)
-      })
-      .cloned()
-      .ok_or_else(|| not_found(format!("display {selector:?}")));
-  }
-
-  targets
-    .iter()
-    .find(|target| target.display.is_primary)
-    .or_else(|| targets.first())
-    .cloned()
-    .ok_or_else(|| not_found("primary display"))
+#[cfg(target_os = "linux")]
+fn capture_area(region: Rect, source_bounds: Rect) -> DriverResult<CapturedImage> {
+  Ok(CapturedImage {
+    image: crop_portal_screenshot_to_region(portal_screenshot()?, source_bounds, region)?,
+    backend: format!("{PORTAL_CAPTURE_BACKEND}.crop"),
+    fallback_reason: Some(
+      "region pixels were cropped from portal screenshot using Wayland xdg-output logical bounds"
+        .to_string(),
+    ),
+  })
 }
 
-fn resolve_display_for_region(
-  targets: &[DisplayTarget],
-  selector: Option<&str>,
+#[cfg(target_os = "linux")]
+fn synthetic_display_from_image(image: &image::RgbaImage) -> Display {
+  Display {
+    id: "portal-screenshot".to_string(),
+    name: Some("XDG desktop portal screenshot".to_string()),
+    frame: Rect::new(
+      0.0,
+      0.0,
+      f64::from(image.width()),
+      f64::from(image.height()),
+    ),
+    coordinate_space: CoordinateSpace::Screen,
+    scale_factor: 1.0,
+    is_primary: true,
+    is_builtin: None,
+  }
+}
+
+#[cfg(target_os = "linux")]
+fn crop_portal_screenshot_to_region(
+  image: image::RgbaImage,
+  source_bounds: Rect,
   region: Rect,
-) -> DriverResult<DisplayTarget> {
-  let selected = if selector.is_some() {
-    vec![resolve_display_target(targets, selector)?]
-  } else {
-    targets.to_vec()
-  };
-  selected
-    .into_iter()
-    .find(|target| rect_contains_rect(target.display.frame, region))
-    .ok_or_else(|| not_found("display containing region"))
-}
-
-fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
-  candidate.origin.x >= container.origin.x
-    && candidate.origin.y >= container.origin.y
-    && candidate.origin.x + candidate.size.width <= container.origin.x + container.size.width
-    && candidate.origin.y + candidate.size.height <= container.origin.y + container.size.height
-}
-
-fn integral_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
-  if value.fract() != 0.0 {
+) -> DriverResult<image::RgbaImage> {
+  if source_bounds.size.width <= 0.0 || source_bounds.size.height <= 0.0 {
+    return Err(invalid_input("source bounds must be positive"));
+  }
+  let scale_x = f64::from(image.width()) / source_bounds.size.width;
+  let scale_y = f64::from(image.height()) / source_bounds.size.height;
+  let x = scaled_capture_dimension("x", region.origin.x - source_bounds.origin.x, scale_x)?;
+  let y = scaled_capture_dimension("y", region.origin.y - source_bounds.origin.y, scale_y)?;
+  let width = scaled_positive_capture_dimension("width", region.size.width, scale_x)?;
+  let height = scaled_positive_capture_dimension("height", region.size.height, scale_y)?;
+  if x + width > image.width() || y + height > image.height() {
     return Err(invalid_input(format!(
-      "region {name} must be an integer in backend capture units"
+      "region {:?} exceeds portal screenshot bounds {}x{}",
+      region,
+      image.width(),
+      image.height()
     )));
   }
+  Ok(image::imageops::crop_imm(&image, x, y, width, height).to_image())
+}
+
+#[cfg(target_os = "linux")]
+fn capture_scale_factor(image: &image::RgbaImage, bounds: Rect, default: f64) -> f64 {
+  if bounds.size.width <= 0.0 {
+    return default;
+  }
+  f64::from(image.width()) / bounds.size.width
+}
+
+#[cfg(target_os = "linux")]
+fn scaled_capture_dimension(name: &str, value: f64, scale: f64) -> DriverResult<u32> {
+  let value = (value * scale).round();
   if !(0.0..=f64::from(u32::MAX)).contains(&value) {
     return Err(invalid_input(format!(
       "region {name} must be within u32 capture bounds"
@@ -223,8 +171,9 @@ fn integral_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
   Ok(value as u32)
 }
 
-fn integral_positive_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
-  let value = integral_capture_dimension(name, value)?;
+#[cfg(target_os = "linux")]
+fn scaled_positive_capture_dimension(name: &str, value: f64, scale: f64) -> DriverResult<u32> {
+  let value = scaled_capture_dimension(name, value, scale)?;
   if value == 0 {
     return Err(invalid_input(format!("region {name} must be positive")));
   }
@@ -264,10 +213,10 @@ fn portal_screenshot() -> DriverResult<image::RgbaImage> {
   .map_err(|error| backend(format!("failed to create screenshot portal proxy: {error}")))?;
   let mut options = HashMap::new();
   options.insert("handle_token", Value::from(handle_token.as_str()));
-  // NOTICE(gnome-screenshot-portal): GNOME Wayland rejects the non-portal
-  // capture protocol used by xcap in this environment. Keep this fallback
-  // interactive so the compositor/user owns screenshot consent; replace with
-  // ScreenCast/PipeWire when the owner approves the capture stream slice.
+  // NOTICE(linux-portal-screenshot): GNOME Wayland does not expose a stable
+  // non-portal screenshot API for ordinary clients. Keep this interactive so
+  // the compositor/user owns screenshot consent; replace with ScreenCast or
+  // PipeWire when the owner approves the capture stream slice.
   options.insert("interactive", Value::from(true));
   options.insert("modal", Value::from(true));
   proxy
@@ -375,32 +324,26 @@ mod tests {
   use super::*;
 
   #[test]
-  fn display_resolution_prefers_primary() {
-    let targets = vec![
-      DisplayTarget {
-        index: 0,
-        display: display("left", false),
-      },
-      DisplayTarget {
-        index: 1,
-        display: display("primary", true),
-      },
-    ];
+  fn portal_crop_maps_logical_bounds_to_screenshot_pixels() {
+    let mut image = image::RgbaImage::new(100, 50);
+    image.put_pixel(20, 10, image::Rgba([1, 2, 3, 4]));
 
-    let selected = resolve_display_target(&targets, None).expect("display resolves");
+    // ROOT CAUSE:
+    //
+    // If the portal returned an image in a different pixel size than GNOME's
+    // logical display bounds, direct coordinate cropping rejected valid regions.
+    //
+    // Before the fix, a logical 200x100 display could not crop from a 100x50
+    // portal image. The fix maps source bounds to image pixels before cropping.
+    let cropped = crop_portal_screenshot_to_region(
+      image,
+      Rect::new(0.0, 0.0, 200.0, 100.0),
+      Rect::new(40.0, 20.0, 20.0, 20.0),
+    )
+    .expect("portal crop maps through source bounds");
 
-    assert_eq!(selected.display.id, "primary");
-  }
-
-  fn display(id: &str, is_primary: bool) -> Display {
-    Display {
-      id: id.to_string(),
-      name: None,
-      frame: Rect::new(0.0, 0.0, 100.0, 100.0),
-      coordinate_space: CoordinateSpace::Screen,
-      scale_factor: 1.0,
-      is_primary,
-      is_builtin: None,
-    }
+    assert_eq!(cropped.width(), 10);
+    assert_eq!(cropped.height(), 10);
+    assert_eq!(*cropped.get_pixel(0, 0), image::Rgba([1, 2, 3, 4]));
   }
 }
