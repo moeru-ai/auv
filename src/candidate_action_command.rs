@@ -36,7 +36,6 @@ use auv_driver::Driver;
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 #[cfg(target_os = "macos")]
 use std::thread;
-#[cfg(target_os = "macos")]
 use std::time::Duration;
 const CANDIDATE_ACTION_PROPOSAL_ARTIFACT_ROLE: &str = "candidate-action-proposal";
 const CANDIDATE_ACTION_PROPOSAL_ARTIFACT_VERSION: &str = "candidate_action_proposal_artifact_v0";
