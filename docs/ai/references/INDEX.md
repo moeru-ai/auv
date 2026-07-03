@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **276** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **277** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -37,6 +37,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | 看 scan / temporal 线 (S) | [`2026-07-02-auv-scan-s0-charter.md`](2026-07-02-auv-scan-s0-charter.md) |
 | 看设计系统 / viewer UI | [`../../design/README.md`](../../design/README.md) |
 | 查 agent 写作规范 | 仓库根 [`AGENTS.md`](../../../AGENTS.md) |
+| 看 Qodana 分层运营 | [`2026-07-03-auv-qodana-operating-model.md`](2026-07-03-auv-qodana-operating-model.md) |
 | 查已归档 AX copilot | [`../../archive/verticals/ax-copilot/`](../../archive/verticals/ax-copilot/) |
 
 ## Lane 总览
@@ -60,7 +61,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | `archive/skill-bundle-retirement` | Retired | SkillBundle / recipe 退役记录 | 5 |
 | `archive/phase-history` | Historical | Phase 1–3 冻结与验收 | 5 |
 | `archive/ax-copilot` | Archived vertical | macOS AX copilot；见 docs/archive/verticals/ax-copilot/ | 2 |
-| `misc` | Mixed | 跨 lane 或尚未归入单一主题的笔记 | 34 |
+| `misc` | Mixed | 跨 lane 或尚未归入单一主题的笔记 | 35 |
 
 ## 按 Lane 列出
 
@@ -609,7 +610,7 @@ macOS AX copilot；见 docs/archive/verticals/ax-copilot/
 - [`2026-05-21-repo-state-closure.md`](2026-05-21-repo-state-closure.md)
 - [`2026-05-28-surface-analyze-closure.md`](2026-05-28-surface-analyze-closure.md)
 
-#### design (6)
+#### design (7)
 
 - [`2026-05-21-scroll-scan-design.md`](2026-05-21-scroll-scan-design.md)
 - [`2026-06-02-background-scroll-policy-design.md`](2026-06-02-background-scroll-policy-design.md)
@@ -617,6 +618,7 @@ macOS AX copilot；见 docs/archive/verticals/ax-copilot/
 - [`2026-06-04-ultralytics-inference-adapter-design.md`](2026-06-04-ultralytics-inference-adapter-design.md)
 - [`2026-06-11-media-windows-now-playing-design.md`](2026-06-11-media-windows-now-playing-design.md)
 - [`2026-06-11-runtime-legacy-retirement-design.md`](2026-06-11-runtime-legacy-retirement-design.md)
+- [`2026-07-03-auv-qodana-operating-model.md`](2026-07-03-auv-qodana-operating-model.md)
 
 #### evidence (1)
 

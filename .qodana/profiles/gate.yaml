@@ -1,12 +1,9 @@
 ####################################################################################################################
-# WARNING: Do not store sensitive information in this file, as its contents will be included in the Qodana report. #
-####################################################################################################################
-
-# Default local entry and policy sample for Qodana in this repo.
-# CI executes the complete configs under .qodana/profiles/{observatory,gate}.yaml;
-# repeated bootstrap/exclude blocks there are intentional until a stable overlay
-# composition model is adopted in a future follow-up.
+# Gate profile — PR/push blocking subset (bootstrap narrow set; non-terminal).
+# NOTICE(qodana-bootstrap-gate): non-terminal; removal condition: migrate to recommended-derived advisory model after gate stable 2-4 weeks.
+# CI executes this file directly as a complete config.
 # See docs/ai/references/2026-07-03-auv-qodana-operating-model.md
+####################################################################################################################
 
 version: "1.0"
 linter: qodana-rust
@@ -19,6 +16,34 @@ bootstrap: |
   mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR"
   cargo fetch --locked
   cargo metadata --format-version 1 --all-features > /dev/null
+
+# Bootstrap step 4: temporary narrow gate on empty base until advisory/blocking split lands.
+profile:
+  base:
+    name: empty
+  inspections:
+    - inspection: CargoUnusedDependency
+      enabled: true
+    - inspection: RsConstantConditionIf
+      enabled: true
+    - inspection: RsDeprecation
+      enabled: true
+    - inspection: RsFunctionCannotHaveSelf
+      enabled: true
+    - inspection: RsLiveness
+      enabled: true
+    - inspection: RsUnreachablePatterns
+      enabled: true
+    - inspection: RsUnusedImport
+      enabled: true
+    - inspection: RsUnresolvedPath
+      enabled: true
+    - inspection: TomlUnresolvedReference
+      enabled: true
+
+failureConditions:
+  severityThresholds:
+    any: 0
 
 exclude:
   # NOTICE(qodana-environment_limitation): editor and archived docs are out of scan scope.
