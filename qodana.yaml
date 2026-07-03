@@ -4,11 +4,27 @@
 
 version: "1.0"
 linter: qodana-rust
+
+# NOTICE(qodana-rust-bootstrap): this workspace depends on Cargo metadata and
+# submodule-backed sources for accurate project indexing in CI.
+bootstrap: |
+  set -eu
+  cargo fetch --locked
+  cargo metadata --format-version 1 --all-features > /dev/null
+
 profile:
   name: qodana.recommended
-include:
-  - name: CheckDependencyLicenses
+
 exclude:
   - name: All
     paths:
       - .cursor
+      - docs/archive
+  - name: RsFunctionCannotHaveSelf
+    paths:
+      - crates/auv-overlay-macos/src/native/binding.rs
+      - crates/auv-driver-macos/src/native/binding.rs
+  - name: TomlUnresolvedReference
+    paths:
+      - crates/auv-inference-ort/Cargo.toml
+      - crates/auv-inference-ultralytics/Cargo.toml

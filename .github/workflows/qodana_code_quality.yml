@@ -7,6 +7,10 @@ on:
       - main
       - 'releases/*'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   qodana:
     runs-on: ubuntu-latest
@@ -15,10 +19,11 @@ jobs:
       pull-requests: write
       checks: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
+          submodules: recursive
       - name: Qodana Scan
         uses: JetBrains/qodana-action@v2026.1
         with:
