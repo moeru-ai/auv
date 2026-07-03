@@ -17,9 +17,9 @@ pub fn group() -> CommandGroup {
   args = NO_ARGS,
 )]
 fn media_control_now_playing(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  // TODO(invoke-media-control-typed-api): media control still depends on root
-  // driver/media crate routing. Move a typed API out of the root driver and
-  // back it with `auv_media_macos` before enabling this invoke command.
+  // TODO(invoke-media-control-typed-api): media report population is deferred
+  // with command enablement; Task 4 cannot activate this previously deferred
+  // command before a typed media control API is accepted.
   Err(
     "mediaControl.nowPlaying requires a typed media control API moved out of the root driver and backed by auv_media_macos"
       .to_string(),

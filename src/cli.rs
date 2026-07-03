@@ -244,6 +244,7 @@ pub enum CliCommand {
   Invoke {
     request: InvokeRequest,
     inspect: InspectClientOptions,
+    output: auv_cli_invoke::InvokeOutputOptions,
   },
   Inspect {
     run_id: String,
@@ -1101,7 +1102,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
     }
 
     invoke_arguments.push(arguments[index].clone());
-    if matches!(argument, "--dry-run" | "--help" | "-h") {
+    if !auv_cli_invoke::invoke_argument_consumes_value(argument) {
       index += 1;
       continue;
     }
@@ -1122,6 +1123,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
       target_application_id,
       inputs,
       dry_run,
+      output,
     } => Ok(CliCommand::Invoke {
       request: InvokeRequest {
         command_id,
@@ -1133,6 +1135,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
         dry_run,
       },
       inspect,
+      output,
     }),
   }
 }
@@ -4363,7 +4366,9 @@ mod tests {
     .expect("invoke inspect options should parse");
 
     match command {
-      CliCommand::Invoke { request, inspect } => {
+      CliCommand::Invoke {
+        request, inspect, ..
+      } => {
         assert_eq!(request.command_id, "window.capture");
         assert!(!request.dry_run);
         assert_eq!(inspect.store_root.as_deref(), Some("/tmp/auv-store"));
@@ -4388,7 +4393,9 @@ mod tests {
     .expect("invoke input value that looks like an inspect option should parse");
 
     match command {
-      CliCommand::Invoke { request, inspect } => {
+      CliCommand::Invoke {
+        request, inspect, ..
+      } => {
         assert_eq!(request.command_id, "input.typeText");
         assert_eq!(
           request.inputs.get("text").map(String::as_str),
@@ -4423,6 +4430,69 @@ mod tests {
           request.target.application_id.as_deref(),
           Some("com.tencent.QQMusicMac")
         );
+      }
+      other => panic!("unexpected command: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_output_options_before_and_after_command() {
+    let before = parse_cli(&[
+      "invoke".to_string(),
+      "--json".to_string(),
+      "display.list".to_string(),
+      "--detail".to_string(),
+    ])
+    .expect("invoke output options before command should parse");
+    let after = parse_cli(&[
+      "invoke".to_string(),
+      "display.list".to_string(),
+      "--detail".to_string(),
+      "--json".to_string(),
+    ])
+    .expect("invoke output options after command should parse");
+
+    match (before, after) {
+      (
+        CliCommand::Invoke {
+          request: before_request,
+          output: before_output,
+          ..
+        },
+        CliCommand::Invoke {
+          request: after_request,
+          output: after_output,
+          ..
+        },
+      ) => {
+        assert_eq!(before_request.command_id, "display.list");
+        assert_eq!(after_request.command_id, "display.list");
+        assert_eq!(before_output, after_output);
+        assert!(before_output.json);
+        assert!(before_output.detail);
+      }
+      other => panic!("unexpected commands: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_output_flag_does_not_consume_command_input_flag() {
+    let command = parse_cli(&[
+      "invoke".to_string(),
+      "input.key".to_string(),
+      "--json".to_string(),
+      "--key".to_string(),
+      "Cmd+L".to_string(),
+    ])
+    .expect("invoke output flag followed by command input should parse");
+
+    match command {
+      CliCommand::Invoke {
+        request, output, ..
+      } => {
+        assert!(output.json);
+        assert_eq!(request.command_id, "input.key");
+        assert_eq!(request.inputs.get("key").map(String::as_str), Some("Cmd+L"));
       }
       other => panic!("unexpected command: {other:?}"),
     }

@@ -20,7 +20,7 @@ use auv_cli::minecraft::{
   run_minecraft_query_wired_live_action,
 };
 use auv_cli::minecraft_verification::query_wired_verification_readable;
-use auv_cli::model::{InvokeRequest, RunStatus};
+use auv_cli::model::InvokeRequest;
 use auv_cli::{build_default_runtime, build_runtime_with_store_root};
 use auv_tracing_driver::run_builder::RunSpec;
 use cli::{CliCommand, InspectClientOptions, help_text, parse_cli};
@@ -1348,45 +1348,18 @@ async fn run() -> Result<(), String> {
       }
       println!("output: {}", output.value.output_dir.display());
     }
-    CliCommand::Invoke { request, inspect } => {
+    CliCommand::Invoke {
+      request,
+      inspect,
+      output,
+    } => {
       let recording = build_recording_for_inspect(&project_root, &inspect)?;
       let registry = auv_cli_invoke::default_registry();
       let result = auv_cli_invoke::invoke_recorded(&recording, &registry, request)?;
-      println!("runId: {}", result.run_id);
-      println!("status: {}", result.status.as_str());
-      println!("output: {}", result.output_summary);
-      println!(
-        "operatorSummary: terminal={} failure={} artifactCount={} summary={}",
-        result.status == RunStatus::Completed,
-        result.failure_message.as_ref().is_some(),
-        result.artifact_paths.len(),
-        result.output_summary,
-      );
-      if let Some(result_dir) = result.signals.get("result_dir") {
-        println!("operatorResultDir: {result_dir}");
-      }
-      if let Some(status) = result.signals.get("status") {
-        println!("operatorResultStatus: {status}");
-      }
-      if let Some(reason) = result.signals.get("status_reason") {
-        println!("operatorResultReason: {reason}");
-      }
-      if let Some(count) = result.signals.get("result_artifact_count") {
-        println!("operatorResultArtifactCount: {count}");
-      }
-      for artifact in &result.artifact_paths {
-        println!("artifact: {}", artifact.display());
-      }
+      auv_cli_invoke::render_invoke_result(&result, output)?;
 
-      if let Some(failure) = &result.failure_message {
-        return Err(format!(
-          "{} (inspect with `auv inspect {}`)",
-          failure, result.run_id
-        ));
-      }
-
-      if result.status == RunStatus::Failed {
-        return Err(format!("run {} finished in failed state", result.run_id));
+      if result.status == auv_cli_invoke::RunStatus::Failed {
+        process::exit(1);
       }
     }
     CliCommand::Inspect { run_id, store_root } => {
@@ -2411,11 +2384,12 @@ fn build_recording_for_inspect(
   let mut recorders: Vec<Arc<dyn auv_tracing_driver::RunRecorder>> = Vec::new();
 
   if let Some((url, token)) = server_target {
-    recorders.push(Arc::new(auv_tracing_driver::InspectServerRunRecorder::new(
-      url,
-      token,
-      inspect.require_server_write,
-    )));
+    let warn_optional_failures = inspect.server_url.is_some()
+      || matches!(inspect.server_write, cli::InspectWriteSetting::Enabled);
+    recorders.push(Arc::new(
+      auv_tracing_driver::InspectServerRunRecorder::new(url, token, inspect.require_server_write)
+        .with_optional_failure_warnings(warn_optional_failures),
+    ));
   }
 
   let recorder: Arc<dyn auv_tracing_driver::RunRecorder> = match recorders.len() {
