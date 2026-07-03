@@ -911,10 +911,10 @@ fn run_query_wired_live_action_core<E: QueryLiveClickExecutor>(
     wire_spatial_query_manifest_to_action(&query.manifest, &query.manifest_path, executor);
 
   let (verifications, witness_absent_limit_needed) =
-    self::verification::build_query_wired_post_action_verifications(
+    verification::build_query_wired_post_action_verifications(
       context,
       &wiring,
-      self::verification::QueryWiredPostActionVerificationInput {
+      verification::QueryWiredPostActionVerificationInput {
         telemetry_witness: inputs.telemetry_witness.as_ref(),
         input_target_block: inputs.target_block,
         manifest_target_block: query.manifest.target_block,
@@ -1156,6 +1156,7 @@ pub fn texture_sweep_status(report: &TextureSweepReport) -> TraceStatusCode {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use auv_game_minecraft::QueryActionWiringLineage;
   use auv_tracing_driver::RunRecordingBackend;
   use auv_tracing_driver::recording::NoopRunRecorder;
   use auv_tracing_driver::run_builder::RunSpec;
@@ -1176,7 +1177,7 @@ mod tests {
     ]
   }
 
-  fn write_sample_bundle(temp: &std::path::Path) -> PathBuf {
+  fn write_sample_bundle(temp: &Path) -> PathBuf {
     let bundle_dir = temp.join("bundle");
     let screenshots_dir = bundle_dir.join("screenshots");
     let frames_dir = bundle_dir.join("spatial_frames");
@@ -1216,7 +1217,7 @@ mod tests {
     .expect("frame write");
     let manifest = auv_game_minecraft::SpatialBundleManifest {
       schema_version: auv_game_minecraft::SPATIAL_BUNDLE_SCHEMA_VERSION,
-      source_run: auv_game_minecraft::SourceRunSummary {
+      source_run: SourceRunSummary {
         source_run_id: "run_1".to_string(),
         source_operation: "auv.minecraft.bridge".to_string(),
         source_run_type: "execute".to_string(),
@@ -1623,7 +1624,7 @@ mod tests {
     let _ = fs::remove_dir_all(temp);
   }
 
-  fn write_blocked_training_package_fixture(root: &std::path::Path) -> PathBuf {
+  fn write_blocked_training_package_fixture(root: &Path) -> PathBuf {
     let training_dir = root.join("training-package");
     fs::create_dir_all(training_dir.join("frames")).expect("frames dir");
     fs::create_dir_all(training_dir.join("compat/nerfstudio")).expect("compat dir");
@@ -1731,7 +1732,7 @@ mod tests {
     training_dir.join("run.json")
   }
 
-  fn write_training_job_fixture(root: &std::path::Path) -> PathBuf {
+  fn write_training_job_fixture(root: &Path) -> PathBuf {
     let result_dir = root.join("trainer-output/nerfstudio-splatfacto");
     fs::create_dir_all(result_dir.join("nerfstudio_models")).expect("models dir");
     fs::write(result_dir.join("config.yml"), b"trainer: splatfacto\n").expect("config");
@@ -1872,7 +1873,7 @@ mod tests {
     let _ = fs::remove_dir_all(temp);
   }
 
-  fn write_training_result_manifest_for_fetch(root: &std::path::Path) -> PathBuf {
+  fn write_training_result_manifest_for_fetch(root: &Path) -> PathBuf {
     let result_dir = root.join("trainer-output/nerfstudio-splatfacto");
     let manifest = auv_game_minecraft::TrainingResultManifest {
       schema_version: 1,
@@ -1906,11 +1907,7 @@ mod tests {
     manifest_path
   }
 
-  fn assert_run_store_excludes_secret(
-    store: &LocalStore,
-    run: &auv_tracing_driver::store::CanonicalRun,
-    secret: &str,
-  ) {
+  fn assert_run_store_excludes_secret(store: &LocalStore, run: &CanonicalRun, secret: &str) {
     let serialized_run =
       serde_json::to_string(run).expect("run snapshot should serialize for leak scan");
     assert!(
@@ -2038,7 +2035,7 @@ mod tests {
     let _ = fs::remove_dir_all(temp);
   }
 
-  fn write_d11_artifact_manifest_for_semantic(root: &std::path::Path) -> PathBuf {
+  fn write_d11_artifact_manifest_for_semantic(root: &Path) -> PathBuf {
     let normalized_result_dir = root.join("normalized-result");
     fs::create_dir_all(normalized_result_dir.join("nerfstudio_models")).expect("models dir");
     fs::write(
@@ -2646,11 +2643,11 @@ mod tests {
     }
   }
 
-  impl auv_game_minecraft::QueryLiveClickExecutor for CountingQueryLiveClickExecutor {
+  impl QueryLiveClickExecutor for CountingQueryLiveClickExecutor {
     fn attempt_click(
       &self,
       _window_point: auv_driver::geometry::WindowPoint,
-      _lineage: &auv_game_minecraft::QueryActionWiringLineage,
+      _lineage: &QueryActionWiringLineage,
     ) -> Result<String, String> {
       self.calls.set(self.calls.get() + 1);
       if let Some(message) = &self.dispatch_error {
@@ -2666,7 +2663,7 @@ mod tests {
   }
 
   fn write_mc18_semantic_fixture(
-    temp: &std::path::Path,
+    temp: &Path,
     _target_block: auv_game_minecraft::BlockPosition,
     frame: auv_game_minecraft::MinecraftSpatialFrame,
   ) -> PathBuf {
@@ -2801,7 +2798,7 @@ mod tests {
 
   fn read_operation_result_artifact(
     store: &LocalStore,
-    run: &auv_tracing_driver::store::CanonicalRun,
+    run: &CanonicalRun,
   ) -> crate::contract::OperationResult {
     let artifact = run
       .artifacts
@@ -2882,7 +2879,7 @@ mod tests {
     let operation_result = read_operation_result_artifact(&store, &run);
     assert_eq!(
       operation_result.operation_id,
-      self::query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID
+      QUERY_WIRED_LIVE_ACTION_OPERATION_ID
     );
     assert_eq!(
       operation_result.status,
@@ -3372,7 +3369,7 @@ mod tests {
     let writer = std::thread::spawn(move || {
       std::thread::sleep(std::time::Duration::from_millis(25));
       let body = serde_json::to_string(&writer_frame).expect("frame should serialize");
-      let mut file = std::fs::OpenOptions::new()
+      let mut file = fs::OpenOptions::new()
         .append(true)
         .open(&writer_path)
         .expect("telemetry sample should open for append");

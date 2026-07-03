@@ -439,13 +439,13 @@ mod tests {
     ));
     std::fs::create_dir_all(&temp).expect("temp dir should create");
     let path = temp.join("telemetry.jsonl");
-    std::fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000)))
+    fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000)))
       .expect("telemetry should write");
 
     let writer_path = path.clone();
     let handle = thread::spawn(move || {
       thread::sleep(Duration::from_millis(25));
-      std::fs::write(
+      fs::write(
         &writer_path,
         format!(
           "{}\n{}\n",
@@ -464,7 +464,7 @@ mod tests {
     handle.join().expect("writer thread should join");
     assert_eq!(frame.spatial_frame_id, "frame-2");
     assert_eq!(frame.monotonic_timestamp_ms, 1100);
-    let _ = std::fs::remove_dir_all(temp);
+    let _ = fs::remove_dir_all(temp);
   }
 
   #[test]

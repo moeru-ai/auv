@@ -349,10 +349,8 @@ mod tests {
     assert_eq!(source.as_deref(), Some("我喜欢的音乐"));
   }
 
-  fn fake_recognition(
-    regions: Vec<(&str, f64, f64, f64, f64)>,
-  ) -> auv_driver::vision::TextRecognition {
-    auv_driver::vision::TextRecognition {
+  fn fake_recognition(regions: Vec<(&str, f64, f64, f64, f64)>) -> TextRecognition {
+    TextRecognition {
       text: regions
         .iter()
         .map(|(text, _, _, _, _)| *text)

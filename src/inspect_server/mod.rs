@@ -3083,7 +3083,7 @@ mod tests {
       .expect("run should persist");
   }
 
-  fn write_list_degraded_run(store: &LocalStore, root: &std::path::Path, run_id: &str) {
+  fn write_list_degraded_run(store: &LocalStore, root: &Path, run_id: &str) {
     write_test_run(store, RunId::new(run_id), None);
     let spans_path = root.join("runs").join(run_id).join("spans.jsonl");
     fs::write(
@@ -3094,11 +3094,7 @@ mod tests {
     .expect("corrupt spans should write");
   }
 
-  fn write_test_run_with_read_side_contracts(
-    store: &LocalStore,
-    root: &std::path::Path,
-    run_id: RunId,
-  ) {
+  fn write_test_run_with_read_side_contracts(store: &LocalStore, root: &Path, run_id: RunId) {
     let span_id = SpanId::new("0000000000000001");
     let run = RunRecordV1Alpha1 {
       api_version: RUN_API_VERSION.to_string(),

@@ -16,6 +16,7 @@
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::Rect;
 use auv_driver::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
+use auv_driver::window::Window;
 
 use crate::error::invalid_input;
 
@@ -52,9 +53,7 @@ pub struct AxTreeSnapshot {
 }
 
 /// Captures the accessibility tree for `window` via UI Automation.
-pub fn snapshot_window(
-  window: &auv_driver::window::Window,
-) -> auv_driver::error::DriverResult<AxTreeSnapshot> {
+pub fn snapshot_window(window: &Window) -> DriverResult<AxTreeSnapshot> {
   native::snapshot_window(window)
 }
 
@@ -64,10 +63,7 @@ pub fn snapshot_window(
 /// then `IUIAutomationElement::SetFocus` performs the action. Callers should
 /// refresh the snapshot and retry when the tree changes between observation
 /// and action.
-pub fn focus_node(
-  window: &auv_driver::window::Window,
-  node_path: &str,
-) -> DriverResult<InputActionResult> {
+pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
   let indices = child_indices(node_path)?;
   native::focus_node(window, &indices)?;
   Ok(InputActionResult {
@@ -85,10 +81,7 @@ pub fn focus_node(
 /// `SelectionItemPattern::Select` is preferred because result containers such
 /// as WinUI `GridViewItem` expose semantic selection. `InvokePattern::Invoke`
 /// is the typed fallback for actionable nodes that do not expose selection.
-pub fn select_node(
-  window: &auv_driver::window::Window,
-  node_path: &str,
-) -> DriverResult<InputActionResult> {
+pub fn select_node(window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
   let indices = child_indices(node_path)?;
   let selected_pattern = native::select_node(window, &indices)?;
   Ok(InputActionResult {

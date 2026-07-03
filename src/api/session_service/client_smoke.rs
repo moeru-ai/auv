@@ -3,6 +3,7 @@
 //! Real [`SessionServiceClient`] over loopback TCP — the external client
 //! perspective on CreateSession, Invoke, and GetOperation.
 
+use std::future::Future;
 use std::path::PathBuf;
 
 use auv_api_proto::v1::session as proto;
@@ -18,7 +19,7 @@ use crate::api::session_service::transport::{
 async fn with_smoke_server<T, F, Fut>(store_root: PathBuf, f: F) -> T
 where
   F: FnOnce(SessionServiceClient<Channel>) -> Fut,
-  Fut: std::future::Future<Output = T>,
+  Fut: Future<Output = T>,
 {
   let cleanup_root = store_root.clone();
   let config = SessionApiServeConfig {

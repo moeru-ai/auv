@@ -3,9 +3,10 @@ use std::path::PathBuf;
 
 pub mod query_live_action;
 
+#[cfg(target_os = "macos")]
+use self::query_live_action::InvokeWindowPointClickExecutor;
 use self::query_live_action::{
-  InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
-  build_osu_query_wired_live_action_operation_result,
+  QUERY_WIRED_LIVE_ACTION_OPERATION_ID, build_osu_query_wired_live_action_operation_result,
   stage_osu_query_wired_live_action_operation_result,
 };
 use auv_game_osu::{
@@ -388,7 +389,7 @@ pub fn run_osu_visual_truth_spatial_query(
   capture_phase: CapturePhase,
   object_kind: Option<ObjectKind>,
   output_dir: PathBuf,
-) -> AuvResult<RecordedOperationOutput<auv_game_osu::VisualTruthSpatialQueryOutput>> {
+) -> AuvResult<RecordedOperationOutput<VisualTruthSpatialQueryOutput>> {
   recording.run_recorded_operation(
     RunSpec::new(RunType::Execute, "auv.osu.query_visual_truth_spatial"),
     "osu query visual truth spatial target",

@@ -424,7 +424,7 @@ fn operation_span_record(name: &str, attributes: Attributes) -> SpanRecordV1Alph
 fn record_event_with_id(
   run: &mut RecordingRun,
   span_id: &crate::trace::SpanId,
-  event_id: crate::trace::EventId,
+  event_id: EventId,
   name: &str,
   message: Option<String>,
   artifact_ids: Vec<crate::trace::ArtifactId>,

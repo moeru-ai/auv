@@ -1,6 +1,7 @@
+use std::error::Error;
 use std::fmt;
 
-pub type DriverResult<T> = std::result::Result<T, DriverError>;
+pub type DriverResult<T> = Result<T, DriverError>;
 
 #[derive(Debug)]
 pub enum DriverError {
@@ -48,4 +49,4 @@ impl fmt::Display for DriverError {
   }
 }
 
-impl std::error::Error for DriverError {}
+impl Error for DriverError {}

@@ -878,7 +878,7 @@ fn balatro_fixture_dir() -> PathBuf {
 
 fn load_fixture(fixture_name: &str) -> Result<Fixture, Box<dyn Error>> {
   let fixture_path = balatro_fixture_dir().join(format!("{fixture_name}.json"));
-  let fixture: Fixture = serde_json::from_str(&std::fs::read_to_string(&fixture_path)?)?;
+  let fixture: Fixture = serde_json::from_str(&fs::read_to_string(&fixture_path)?)?;
   Ok(fixture)
 }
 
@@ -896,7 +896,7 @@ fn assert_fixture_metadata(fixture_name: &str, fixture: &Fixture) {
 }
 
 fn load_class_names(path: &Path, fixture_name: &str) -> Result<Vec<String>, Box<dyn Error>> {
-  let contents = std::fs::read_to_string(path).map_err(|err| {
+  let contents = fs::read_to_string(path).map_err(|err| {
     format!(
       "{fixture_name}: failed to read Balatro class file {}: {err}",
       path.display()

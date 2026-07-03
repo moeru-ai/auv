@@ -223,14 +223,14 @@ mod tests {
     std::env::temp_dir().join(format!("auv_tmatch_test_{name}.png"))
   }
 
-  fn write_gray_png(path: &std::path::Path, width: u32, height: u32, fill: u8) {
+  fn write_gray_png(path: &Path, width: u32, height: u32, fill: u8) {
     let img = GrayImage::from_pixel(width, height, Luma([fill]));
     img.save(path).expect("should save png");
   }
 
   // Writes a non-uniform pattern (checkerboard of `lo` and `hi`) into a region.
   fn write_pattern_png(
-    path: &std::path::Path,
+    path: &Path,
     width: u32,
     height: u32,
     bg: u8,

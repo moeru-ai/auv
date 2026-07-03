@@ -331,17 +331,17 @@ pub fn query_3dgs_training_result(
   let mut known_limits = BTreeSet::new();
   known_limits.extend(semantic_manifest.known_limits.iter().cloned());
   known_limits.insert(
-        "MC-12 closes block-only spatial query evidence over MC-10 semantic manifests; it does not grade model quality or claim Gaussian-native inference"
-            .to_string(),
-    );
+    "MC-12 closes block-only spatial query evidence over MC-10 semantic manifests; it does not grade model quality or claim Gaussian-native inference"
+      .to_string(),
+  );
   known_limits.insert(
-        "projection_reference is a scene-packet fallback reference backend, not a checkpoint-native Gaussian query core"
-            .to_string(),
-    );
+    "projection_reference is a scene-packet fallback reference backend, not a checkpoint-native Gaussian query core"
+      .to_string(),
+  );
   known_limits.insert(
-        "MC-12 does not add entity query, anchor/label query, render preview, or dedicated read-side viewer consumption"
-            .to_string(),
-    );
+    "MC-12 does not add entity query, anchor/label query, render preview, or dedicated read-side viewer consumption"
+      .to_string(),
+  );
   if inputs.use_checkpoint_native_provider {
     known_limits.insert(MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT.to_string());
   }
@@ -1668,14 +1668,14 @@ mod tests {
   fn write_normalized_result_fixture(temp: &TempDir, with_checkpoint: bool) {
     let normalized_dir = temp.path().join("normalized");
     let models_dir = normalized_dir.join("nerfstudio_models");
-    std::fs::create_dir_all(&models_dir).expect("models dir");
-    std::fs::write(
+    fs::create_dir_all(&models_dir).expect("models dir");
+    fs::write(
       normalized_dir.join("config.yml"),
       "trainer: nerfstudio.splatfacto\n",
     )
     .expect("config");
     if with_checkpoint {
-      std::fs::write(models_dir.join("step-000001.ckpt"), b"fake-checkpoint").expect("checkpoint");
+      fs::write(models_dir.join("step-000001.ckpt"), b"fake-checkpoint").expect("checkpoint");
     }
   }
 

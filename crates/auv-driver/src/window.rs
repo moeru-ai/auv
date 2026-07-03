@@ -207,8 +207,8 @@ mod tests {
         is_minimized: Some(false),
         is_visible: Some(true),
       }),
-      focus_disturbance: crate::input::DisturbanceLevel::None,
-      mouse_disturbance: crate::input::DisturbanceLevel::None,
+      focus_disturbance: DisturbanceLevel::None,
+      mouse_disturbance: DisturbanceLevel::None,
     };
 
     let encoded = serde_json::to_value(&result).expect("serialize");

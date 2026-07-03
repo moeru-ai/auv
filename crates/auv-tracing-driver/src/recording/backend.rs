@@ -112,7 +112,7 @@ impl RunRecordingBackend {
     self.store.replace_run_snapshot(snapshot)
   }
 
-  pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<std::path::PathBuf> {
+  pub fn run_dir(&self, run_id: impl AsRef<str>) -> AuvResult<PathBuf> {
     self.store.run_dir(run_id)
   }
 
@@ -120,7 +120,7 @@ impl RunRecordingBackend {
     &self,
     run_id: &RunId,
     index: usize,
-    artifact: crate::artifact::ProducedArtifact,
+    artifact: ProducedArtifact,
     span_id: &SpanId,
     event_id: Option<crate::trace::EventId>,
   ) -> AuvResult<ArtifactRecordV1Alpha1> {
@@ -321,7 +321,7 @@ impl RecordingHandle {
       summary: None,
       failure: None,
     };
-    let run = crate::run_builder::RecordingRun::new(run, root_span, self.recording.recorder());
+    let run = RecordingRun::new(run, root_span, self.recording.recorder());
     if self.recording.requires_successful_delivery() && !run.recording_errors().is_empty() {
       return Err(format!(
         "run recording delivery failed: {}",

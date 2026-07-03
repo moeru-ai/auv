@@ -59,8 +59,8 @@ use auv_view::{
   ScrollBoundarySummary, TopSeekOutcome, VIEW_IR_SCHEMA_VERSION, ViewAction, ViewAnchor, ViewAxis,
   ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind,
   ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord, ViewRegionRecord,
-  ViewScrollable, ViewViewportRecord, confidence_from_ocr, draw_rect, normalize_identity,
-  reconstruct, slug, viewport_contains_center, viewport_fingerprint,
+  ViewScrollable, ViewViewportRecord, confidence_from_ocr, normalize_identity, reconstruct, slug,
+  viewport_contains_center, viewport_fingerprint,
 };
 use clap::ValueEnum;
 use image::{Rgba, RgbaImage};
@@ -81,6 +81,8 @@ use auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot;
 use auv_driver_macos::types::ObservedAxNode;
 #[cfg(target_os = "macos")]
 use auv_driver_macos::{MacosDriver, MacosDriverSession};
+#[cfg(target_os = "macos")]
+use auv_view::draw_rect;
 
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
 pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
@@ -128,7 +130,7 @@ impl Inputs {
   pub fn with_defaults() -> Self {
     Self {
       app_id: DEFAULT_APP_ID.to_string(),
-      artifact_dir: std::path::PathBuf::from(DEFAULT_ARTIFACT_DIR),
+      artifact_dir: PathBuf::from(DEFAULT_ARTIFACT_DIR),
       max_scrolls: DEFAULT_MAX_SCROLLS,
       scroll_amount: 300.0,
       scroll_settle_ms: DEFAULT_SCROLL_SETTLE_MS,
