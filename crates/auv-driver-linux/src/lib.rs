@@ -2,8 +2,10 @@
 //!
 //! The first Linux slice is intentionally Wayland-friendly and capability
 //! oriented: it exposes shared driver/session types, records portal readiness,
-//! and validates live desktop capture through `xcap`. RemoteDesktop/libei input
-//! delivery is reserved until the portal session lifecycle is wired end to end.
+//! and validates live desktop capture through XDG desktop portal screenshots
+//! plus Wayland xdg-output display geometry.
+//! RemoteDesktop/libei input delivery is reserved until the portal session
+//! lifecycle is wired end to end.
 
 mod accessibility;
 mod atspi;
