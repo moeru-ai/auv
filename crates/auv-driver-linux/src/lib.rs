@@ -10,10 +10,12 @@
 mod accessibility;
 mod atspi;
 mod capture;
+mod clipboard;
 mod descriptor;
 mod driver;
 mod error;
 pub mod input;
+mod native;
 pub mod ocr;
 mod permission;
 mod session;
@@ -24,5 +26,7 @@ pub use descriptor::{LINUX_DESKTOP_CAPABILITIES, LinuxDriverDescriptor, linux_dr
 pub use driver::{LinuxDriver, LinuxDriverSession};
 pub use ocr::{OcrError, recognize_text_in_rgba};
 pub use permission::{LinuxPortalProbe, PortalInterfaceProbe, probe_portals};
-pub use session::{AccessibilityApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};
+pub use session::{
+  AccessibilityApi, ClipboardApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi,
+};
 pub use vision::{OcrMatch, OcrMatches};

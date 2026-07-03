@@ -1,6 +1,9 @@
+use std::sync::{Arc, Mutex};
+
 use auv_driver::{Driver, DriverDescriptor, DriverResult, DriverSession};
 
 use crate::descriptor::{LinuxDriverDescriptor, linux_driver_descriptor};
+use crate::native::portal::ClipboardSession;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LinuxDriver;
@@ -15,9 +18,14 @@ impl LinuxDriver {
   }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct LinuxDriverSession {
-  pub(crate) _private: (),
+  pub(crate) state: Arc<Mutex<LinuxDriverSessionState>>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct LinuxDriverSessionState {
+  pub(crate) clipboard_session: Option<ClipboardSession>,
 }
 
 impl LinuxDriverSession {
@@ -34,7 +42,9 @@ impl Driver for LinuxDriver {
   }
 
   fn open_local(&self) -> DriverResult<Self::Session> {
-    Ok(LinuxDriverSession { _private: () })
+    Ok(LinuxDriverSession {
+      state: Arc::new(Mutex::new(LinuxDriverSessionState::default())),
+    })
   }
 }
 

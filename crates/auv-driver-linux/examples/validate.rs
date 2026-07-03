@@ -17,6 +17,7 @@
 //!   ocr <title-substr>             OCR a window capture and print recognized text
 //!   ax <title-substr>              capture a window accessibility tree
 //!   coords <title-substr>          round-trip a window/screen point mapping
+//!   clipboard                      snapshot -> set -> read-back -> restore
 //!   input-boundary                 print current RemoteDesktop/libei boundary
 
 use std::error::Error;
@@ -68,6 +69,7 @@ fn run() -> Run {
     "ocr" => ocr(&session, arg(rest, 0, "title-substr")?),
     "ax" => ax(&session, arg(rest, 0, "title-substr")?),
     "coords" => coords(&session, arg(rest, 0, "title-substr")?),
+    "clipboard" => clipboard(&session),
     "input-boundary" => input_boundary(&session),
     other => {
       eprintln!("unknown command: {other}\n");
@@ -253,6 +255,24 @@ fn coords(session: &LinuxDriverSession, substr: &str) -> Run {
   Ok(())
 }
 
+fn clipboard(session: &LinuxDriverSession) -> Run {
+  let clipboard = session.clipboard();
+  let original = clipboard.snapshot()?;
+  println!("original clipboard = {original:?}");
+
+  let probe = "auv-validate-linux-clipboard";
+  clipboard.set_text(probe)?;
+  let read_back = clipboard.snapshot()?;
+  println!("read-back clipboard = {read_back:?}");
+  assert_eq!(read_back, probe, "clipboard set/read mismatch");
+
+  clipboard.restore(&original)?;
+  let restored = clipboard.snapshot()?;
+  assert_eq!(restored, original, "clipboard restore mismatch");
+  println!("clipboard roundtrip OK");
+  Ok(())
+}
+
 fn input_boundary(session: &LinuxDriverSession) -> Run {
   let probe = session.permission().probe_linux();
   println!("RemoteDesktop portal: {:?}", probe.remote_desktop);
@@ -308,6 +328,6 @@ where
 
 fn print_usage() {
   eprintln!(
-    "usage: cargo run -p auv-driver-linux --example validate -- <permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|coords|input-boundary> ..."
+    "usage: cargo run -p auv-driver-linux --example validate -- <permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|coords|clipboard|input-boundary> ..."
   );
 }
