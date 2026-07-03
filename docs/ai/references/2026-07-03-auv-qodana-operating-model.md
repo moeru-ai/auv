@@ -1,10 +1,8 @@
 # AUV Qodana Operating Model
 
 Durable reference for how AUV consumes Qodana across observatory (full scan),
-PR/push gate (blocking), and debt research. CI executes the complete configs in
-[`.qodana/profiles/`](../../../.qodana/profiles/). The repository-root
-[`qodana.yaml`](../../../qodana.yaml) is the default local entry and policy
-sample, not an automatically merged shared source for those CI profiles.
+PR gate (blocking), and debt research. Canonical config lives in
+[`qodana.yaml`](../../../qodana.yaml) and [`.qodana/profiles/`](../../../.qodana/profiles/).
 
 ## Problem
 
@@ -18,7 +16,7 @@ quality map with layered consumption, not profile amputation to quiet CI.
 | Layer | Profile | CI job | Branch protection | Purpose |
 |-------|---------|--------|-------------------|---------|
 | Observatory | `qodana.recommended` | `qodana-observatory` | No | Full signal, Cloud trends, debt hotspots |
-| PR/push gate | `recommended` derived (bootstrap narrow during transition) | `qodana-gate` | Yes | Block actionable regressions on PRs and keep `main` aligned after merge |
+| PR/push gate | bootstrap narrow (non-terminal) | `qodana-gate` | Yes (manual setup) | PR blocking + main/releases push alignment |
 | Debt research | Observatory output | — | No | Campaigns, architecture review, baseline prep |
 
 `cargo check` / `clippy` in [`.github/workflows/check.yml`](../../../.github/workflows/check.yml)
@@ -29,9 +27,10 @@ observations Qodana alone can surface.
 
 ### A. Observatory must not be hollowed out
 
-`observatory.yaml` may only apply:
+`observatory.yaml` is a **profile overlay only**. Suppressions live exclusively in
+root [`qodana.yaml`](../../../qodana.yaml):
 
-1. The documented suppressions repeated in the CI profile config itself
+1. Shared path excludes (environment / false positive / archived lane)
 2. Proven false-positive suppressions (`false_positive`)
 3. Environment-limitation suppressions (`environment_limitation`)
 
@@ -44,7 +43,7 @@ narrow inspections.
 Gate profiles must evolve in this order (no skipping steps):
 
 1. Start from `profile.base: qodana.recommended`
-2. Apply documented path excludes with in-config `NOTICE`
+2. Apply shared path excludes from root `qodana.yaml` (in-config `NOTICE` there)
 3. Mark debt-family inspections advisory-only in gate (do not `enabled: false`
    globally); prefer severity / failure policy over disabling
 4. Temporary bootstrap narrowing: remove individual inspections from gate only,
@@ -127,14 +126,36 @@ When enabled: maintainer exports `qodana.sarif.json` from Cloud, commits to
 repo, gate uses `--baseline qodana.sarif.json --fail-threshold N` to block only
 **new** gate-family problems.
 
-## Config layout
+## CI trigger matrix
+
+| Event | `qodana-observatory` | `qodana-gate` |
+|-------|----------------------|---------------|
+| `pull_request` | skipped | runs |
+| `push` → `main` / `releases/*` | runs | runs |
+| `schedule` (weekly) | runs | **skipped** |
+| `workflow_dispatch` | runs | **skipped** |
+
+Branch protection (repo setting, not in this repo): bind required check to
+`qodana-gate` after merge. Observatory does not block merges.
+
+## Config layout (shared source + profile overlay)
+
+Qodana reads repository-root [`qodana.yaml`](../../../qodana.yaml) by default.
+CI jobs pass `--profile-path` to select the inspection profile overlay only;
+`--config` is **not** used (it would replace the entire config).
 
 ```
-qodana.yaml                        # default local entry + policy sample; not auto-merged into CI profiles
-.qodana/profiles/observatory.yaml  # complete observatory CI config
-.qodana/profiles/gate.yaml         # complete gate CI config
-.github/workflows/qodana_code_quality.yml  # dual jobs
+qodana.yaml                           # single source: bootstrap + exclude + NOTICE
+.qodana/profiles/observatory.yaml     # profile overlay: qodana.recommended
+.qodana/profiles/gate.yaml            # profile overlay: bootstrap narrow set + NOTICE
+.github/workflows/qodana_code_quality.yml
+  observatory: --profile-path .qodana/profiles/observatory.yaml
+  gate:        --profile-path .qodana/profiles/gate.yaml --fail-threshold 0
 ```
+
+Profile resolution order (JetBrains): CLI `--profile-path` overrides
+`qodana.yaml` `profile.*`; bootstrap and exclude always come from root
+`qodana.yaml` when `--config` is omitted.
 
 ## Open PR convergence
 

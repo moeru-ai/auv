@@ -2,10 +2,8 @@
 # WARNING: Do not store sensitive information in this file, as its contents will be included in the Qodana report. #
 ####################################################################################################################
 
-# Default local entry and policy sample for Qodana in this repo.
-# CI executes the complete configs under .qodana/profiles/{observatory,gate}.yaml;
-# repeated bootstrap/exclude blocks there are intentional until a stable overlay
-# composition model is adopted in a future follow-up.
+# Shared bootstrap and path excludes for all Qodana CI jobs.
+# CI reads this file by default; jobs select profile overlays via --profile-path.
 # See docs/ai/references/2026-07-03-auv-qodana-operating-model.md
 
 version: "1.0"

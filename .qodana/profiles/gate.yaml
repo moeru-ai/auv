@@ -1,21 +1,10 @@
 ####################################################################################################################
-# Gate profile — PR/push blocking subset (bootstrap narrow set; non-terminal).
+# Gate profile overlay — bootstrap narrow blocking subset (non-terminal).
 # NOTICE(qodana-bootstrap-gate): non-terminal; removal condition: migrate to recommended-derived advisory model after gate stable 2-4 weeks.
-# CI executes this file directly as a complete config.
+# Shared bootstrap/exclude live in repository-root qodana.yaml.
+# Quality gate threshold is set in CI via --fail-threshold 0 (not in this file).
 # See docs/ai/references/2026-07-03-auv-qodana-operating-model.md
 ####################################################################################################################
-
-version: "1.0"
-linter: qodana-rust
-
-# NOTICE(qodana-environment_limitation): Cargo metadata and submodules required for accurate Rust indexing in CI.
-bootstrap: |
-  set -eu
-  export CARGO_HOME="${CARGO_HOME:-/tmp/qodana-cargo-home}"
-  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/qodana-target}"
-  mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR"
-  cargo fetch --locked
-  cargo metadata --format-version 1 --all-features > /dev/null
 
 # Bootstrap step 4: temporary narrow gate on empty base until advisory/blocking split lands.
 profile:
@@ -40,40 +29,3 @@ profile:
       enabled: true
     - inspection: TomlUnresolvedReference
       enabled: true
-
-failureConditions:
-  severityThresholds:
-    any: 0
-
-exclude:
-  # NOTICE(qodana-environment_limitation): editor and archived docs are out of scan scope.
-  - name: All
-    paths:
-      - .cursor
-      - docs/archive
-  # NOTICE(qodana-false_positive): swift-bridge generated bindings use `self` in FFI shims.
-  - name: RsFunctionCannotHaveSelf
-    paths:
-      - crates/auv-overlay-macos/src/native/binding.rs
-      - crates/auv-driver-macos/src/native/binding.rs
-  # NOTICE(qodana-false_positive): optional inference features are not resolved in default metadata graphs.
-  - name: TomlUnresolvedReference
-    paths:
-      - crates/auv-inference-ort/Cargo.toml
-      - crates/auv-inference-ultralytics/Cargo.toml
-  # NOTICE(qodana-false_positive): intentional `if false` test stubs in macOS session helpers.
-  - name: RsConstantConditionIf
-    paths:
-      - crates/auv-driver-macos/src/session.rs
-  # NOTICE(qodana-archived_lane_exemption): minecraft vertical is frozen; deprecations are expected.
-  - name: RsDeprecation
-    paths:
-      - crates/auv-game-minecraft
-  # NOTICE(qodana-false_positive): cfg(feature) catch-all arm is unreachable in single-feature CI builds.
-  - name: RsUnreachablePatterns
-    paths:
-      - crates/auv-inference-ort/src/lib.rs
-  # NOTICE(qodana-false_positive): `reason` is consumed by unreachable! macro expansion.
-  - name: RsLiveness
-    paths:
-      - src/inference_recognition.rs
