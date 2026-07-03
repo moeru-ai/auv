@@ -4,10 +4,11 @@ use std::path::PathBuf;
 pub mod query_live_action;
 
 use self::query_live_action::{
-  InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
-  build_osu_query_wired_live_action_operation_result,
+  QUERY_WIRED_LIVE_ACTION_OPERATION_ID, build_osu_query_wired_live_action_operation_result,
   stage_osu_query_wired_live_action_operation_result,
 };
+#[cfg(target_os = "macos")]
+use self::query_live_action::InvokeWindowPointClickExecutor;
 use auv_game_osu::{
   BenchmarkInputs, BenchmarkOutput, CapturePhase, DatasetExportInputs, DatasetExportOutput,
   DetectionEvalInputs, DetectionEvalOutput, DetectionEvalQualityOutput, DetectionEvalWitnessInputs,

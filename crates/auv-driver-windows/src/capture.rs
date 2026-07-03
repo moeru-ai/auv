@@ -11,10 +11,14 @@ use auv_driver::display::{Display, ObservedDisplays};
 #[cfg(not(target_os = "windows"))]
 use auv_driver::error::DriverError;
 use auv_driver::error::DriverResult;
-use auv_driver::geometry::{CoordinateSpace, Rect};
+#[cfg(target_os = "windows")]
+use auv_driver::geometry::CoordinateSpace;
+use auv_driver::geometry::Rect;
 use auv_driver::window::Window;
 
-use crate::error::{backend, invalid_input, not_found};
+#[cfg(target_os = "windows")]
+use crate::error::backend;
+use crate::error::{invalid_input, not_found};
 
 /// Capture backend tag recorded on every produced display/region [`Capture`].
 #[cfg(target_os = "windows")]

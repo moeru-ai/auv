@@ -4735,6 +4735,7 @@ mod tests {
   }
 
   #[test]
+  #[cfg(target_os = "macos")]
   fn deck_atlas_can_load_from_setup_cache() {
     let root = unique_temp_dir("balatro-setup-cache-load");
     let cache_dir = root.join("cache");

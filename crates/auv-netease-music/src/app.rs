@@ -7,7 +7,7 @@ use crate::run_live_scan;
 use crate::views::player::PlayerView;
 #[cfg(target_os = "macos")]
 use crate::views::player::classify_bottom_playback_control_state;
-use crate::views::screen::{self, ScreenView};
+use crate::views::screen::ScreenView;
 use crate::views::sidebar::SidebarView;
 #[cfg(target_os = "macos")]
 use auv_driver::Capture;
@@ -258,7 +258,7 @@ impl LiveObservationProvider {
         )
         .map_err(|error| format!("live observation full-window OCR failed: {error}"))?;
       let recognition = recognition_in_window_space(recognition, &capture);
-      screen::classify_screen(
+      crate::views::screen::classify_screen(
         &recognition,
         Size::new(window.frame.size.width, window.frame.size.height),
       )

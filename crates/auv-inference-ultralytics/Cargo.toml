@@ -46,7 +46,6 @@ auv-inference-common = { path = "../auv-inference-common" }
 image = { workspace = true, features = ["jpeg"] }
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
 ultralytics-inference.workspace = true
 
 [dev-dependencies]

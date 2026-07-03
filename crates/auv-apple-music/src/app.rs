@@ -5,7 +5,6 @@
 //! `AppleMusic.exe`. This module wraps the driver's window selector into a
 //! single typed result so command implementations stay driver-agnostic.
 
-use auv_driver::selector::{App, Window as WindowSel, WindowSelector};
 use auv_driver::window::Window;
 
 /// Default process name for Apple Music on Windows (Microsoft Store edition).
@@ -45,6 +44,7 @@ impl Default for ResolveOptions {
 #[cfg(target_os = "windows")]
 pub fn resolve_window(options: &ResolveOptions) -> Result<Option<AppleMusicWindow>, String> {
   use auv_driver::Driver;
+  use auv_driver::selector::{App, Window as WindowSel, WindowSelector};
   use auv_driver_windows::WindowsDriver;
 
   let session = WindowsDriver::new()

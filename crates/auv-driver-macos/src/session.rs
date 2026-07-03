@@ -4,6 +4,12 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
+use crate::driver::MacosDriverSession;
+use crate::native::ocr::NativeOcrTextCapture;
+use crate::native::types::{ObservedRect, ObservedWindow, ObservedWindowSnapshot};
+use crate::native::window::ListWindowsOptions;
+use crate::support::{build_window_candidates, parse_app_selector, resolve_app_ref};
+use crate::types::{WindowRef as NativeWindowRef, WindowSelection};
 use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver::display::{Display, ObservedDisplays};
 use auv_driver::error::{DriverError, DriverResult};
@@ -24,14 +30,6 @@ use auv_driver::window::{
   WindowMutationOptions, WindowMutationPath, WindowMutationPolicy, WindowMutationResult,
   WindowMutationVerification, WindowRef, WindowState,
 };
-use image::RgbaImage;
-
-use crate::driver::MacosDriverSession;
-use crate::native::ocr::NativeOcrTextCapture;
-use crate::native::types::{ObservedRect, ObservedWindow, ObservedWindowSnapshot};
-use crate::native::window::ListWindowsOptions;
-use crate::support::{build_window_candidates, parse_app_selector, resolve_app_ref};
-use crate::types::{WindowRef as NativeWindowRef, WindowSelection};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct OcrMatch {
@@ -1763,7 +1761,7 @@ fn capture_display_xcap(selector: Option<&str>) -> DriverResult<DisplayCapture> 
   let image = monitor
     .capture_image()
     .map_err(|error| backend(format!("failed to capture display: {error}")))?;
-  let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
+  let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
   let capture = Capture {
     image,
@@ -1799,7 +1797,7 @@ fn capture_region_xcap(selector: Option<&str>, region: Rect) -> DriverResult<Reg
   let image = monitor
     .capture_region(local_x, local_y, width, height)
     .map_err(|error| backend(format!("failed to capture display region: {error}")))?;
-  let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
+  let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured region RGBA image"))?;
   let capture = Capture {
     image,
@@ -1971,7 +1969,7 @@ fn capture_window_swift(window: &Window) -> DriverResult<Capture> {
     .map_err(|error| backend(format!("native capture returned invalid width: {error}")))?;
   let height = u32::try_from(capture.image_height)
     .map_err(|error| backend(format!("native capture returned invalid height: {error}")))?;
-  let image = RgbaImage::from_raw(width, height, capture.rgba_bytes)
+  let image = image::RgbaImage::from_raw(width, height, capture.rgba_bytes)
     .ok_or_else(|| backend("failed to decode native captured window RGBA image"))?;
   let scale_factor = if window.frame.size.width > 0.0 {
     f64::from(width) / window.frame.size.width
@@ -2014,7 +2012,7 @@ fn capture_window_xcap(window: &Window, fallback_reason: Option<String>) -> Driv
   } else {
     1.0
   };
-  let image = RgbaImage::from_raw(width, height, image.into_raw())
+  let image = image::RgbaImage::from_raw(width, height, image.into_raw())
     .ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
   Ok(Capture {
     image,

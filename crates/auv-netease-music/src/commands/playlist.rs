@@ -3,7 +3,7 @@ use std::fmt;
 use auv_view::{ParserDiagnostic, ScanAppContext, ScanWindowContext, ViewBounds};
 use serde::{Deserialize, Serialize};
 
-use crate::{Inputs, PlaybackControlState, PlaylistSelectTarget, run_live_scan_until_query};
+use crate::{Inputs, PlaybackControlState, PlaylistSelectTarget};
 
 const PLAYLIST_SELECT_BOTTOM_SAFE_PADDING: f64 = 128.0;
 
@@ -1110,6 +1110,8 @@ fn resolve_playlist_target_for_query(
   ),
   String,
 > {
+  use crate::run_live_scan_until_query;
+
   std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| {
     format!(
       "failed to create {}: {error}",

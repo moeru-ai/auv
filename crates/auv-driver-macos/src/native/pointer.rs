@@ -130,6 +130,7 @@ fn teach_click_result(
 
 #[cfg(test)]
 mod tests {
+  #[cfg(target_os = "macos")]
   use super::*;
 
   #[cfg(target_os = "macos")]

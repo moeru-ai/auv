@@ -9,7 +9,9 @@ use rosu_map::Beatmap;
 use rosu_map::section::hit_objects::HitObjectKind;
 use serde::{Deserialize, Serialize};
 
-use crate::projection::{PlayfieldProjection, ProjectionArtifact};
+#[cfg(target_os = "macos")]
+use crate::projection::PlayfieldProjection;
+use crate::projection::ProjectionArtifact;
 use crate::visual_eval::{
   DetectorEvalProvenance, FrameDetections, FrameKey, LabelMap, VisualEvalReport,
   evaluate_visual_truth_with_provenance,

@@ -65,6 +65,7 @@ fn action_result(operation: &str, response: NativeActionResponse) -> AuvResult<(
 
 #[cfg(test)]
 mod tests {
+  #[cfg(target_os = "macos")]
   use super::*;
 
   #[cfg(target_os = "macos")]

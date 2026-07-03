@@ -88,15 +88,12 @@ auv-game-minecraft = { path = "crates/auv-game-minecraft" }
 auv-inference-common = { path = "crates/auv-inference-common" }
 auv-driver = { path = "crates/auv-driver" }
 auv-driver-macos = { path = "crates/auv-driver-macos" }
-auv-overlay-macos = { path = "crates/auv-overlay-macos" }
 auv-cli-invoke = { path = "crates/auv-cli-invoke" }
 auv-api-proto = { path = "crates/auv-api-proto" }
-auv-steam = { path = "crates/auv-steam" }
 auv-tracing-driver = { path = "crates/auv-tracing-driver" }
 auv-scan = { path = "crates/auv-scan" }
 auv-view = { path = "crates/auv-view" }
 axum = { version = "0.8", features = ["ws"] }
-semver = "1"
 serde.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
@@ -106,7 +103,6 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 tonic = { version = "0.14", features = ["transport"] }
 tracing = "0.1"
-xcap.workspace = true
 image.workspace = true
 reqwest.workspace = true
 libc = "0.2"
