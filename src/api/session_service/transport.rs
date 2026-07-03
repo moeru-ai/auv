@@ -162,9 +162,6 @@ impl SessionServiceGrpc {
 
 #[tonic::async_trait]
 impl SessionService for SessionServiceGrpc {
-  type StreamSessionEventsStream =
-    std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<proto::SessionEvent, Status>> + Send>>;
-
   async fn create_session(
     &self,
     request: Request<proto::CreateSessionRequest>,
@@ -203,6 +200,9 @@ impl SessionService for SessionServiceGrpc {
       .await
       .map(Response::new)
   }
+
+  type StreamSessionEventsStream =
+    std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<proto::SessionEvent, Status>> + Send>>;
 
   async fn stream_session_events(
     &self,

@@ -72,13 +72,6 @@ impl RunRecorder for CompositeRunRecorder {
     }
   }
 
-  fn requires_successful_delivery(&self) -> bool {
-    self
-      .recorders
-      .iter()
-      .any(|recorder| recorder.requires_successful_delivery())
-  }
-
   fn record_artifact_bytes(
     &self,
     run_id: &RunId,
@@ -100,6 +93,13 @@ impl RunRecorder for CompositeRunRecorder {
         failures.join("; ")
       ))
     }
+  }
+
+  fn requires_successful_delivery(&self) -> bool {
+    self
+      .recorders
+      .iter()
+      .any(|recorder| recorder.requires_successful_delivery())
   }
 }
 

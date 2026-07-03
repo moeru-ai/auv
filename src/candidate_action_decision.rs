@@ -1212,10 +1212,6 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
       }
     }
   }
-
-  fn readiness_debug(&self) -> Option<serde_json::Value> {
-    self.readiness_debug.clone()
-  }
 }
 
 #[cfg(target_os = "macos")]
@@ -2614,6 +2610,10 @@ mod tests {
       Ok(self.result.clone())
     }
 
+    fn readiness_debug(&self) -> Option<serde_json::Value> {
+      None
+    }
+
     fn verify_after_execution(
       &mut self,
       plan: &CandidateActionDeliveryPlan,
@@ -2621,7 +2621,7 @@ mod tests {
       candidate: &crate::contract::Candidate,
       candidate_ref: Option<&crate::contract::CandidateRef>,
       input_action_result: &auv_driver::InputActionResult,
-      evidence_artifacts: &[crate::contract::ArtifactRef],
+      evidence_artifacts: &[ArtifactRef],
     ) -> AuvResult<Vec<crate::contract::VerificationResult>> {
       self.verification_calls += 1;
       assert!(

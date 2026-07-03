@@ -5,8 +5,12 @@ use std::sync::Arc;
 use rmcp::{
   ErrorData as McpError, ServerHandler, ServiceExt,
   handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-  model::{CallToolResult, Content, JsonObject, ServerCapabilities, ServerInfo},
-  tool, tool_handler, tool_router,
+  model::{
+    CallToolResult, Content, JsonObject, ListToolsResult, PaginatedRequestParam,
+    ServerCapabilities, ServerInfo,
+  },
+  service::{RequestContext, RoleServer},
+  tool, tool_router,
   transport::stdio,
 };
 use schemars::JsonSchema;
@@ -154,8 +158,24 @@ impl McpServer {
   }
 }
 
-#[tool_handler(router = self.tool_router)]
 impl ServerHandler for McpServer {
+  async fn call_tool(
+    &self,
+    request: rmcp::model::CallToolRequestParam,
+    context: RequestContext<RoleServer>,
+  ) -> Result<CallToolResult, McpError> {
+    let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+    self.tool_router.call(tcc).await
+  }
+
+  async fn list_tools(
+    &self,
+    _request: Option<PaginatedRequestParam>,
+    _context: RequestContext<RoleServer>,
+  ) -> Result<ListToolsResult, McpError> {
+    Ok(ListToolsResult::with_all_items(self.tool_router.list_all()))
+  }
+
   fn get_info(&self) -> ServerInfo {
     ServerInfo {
       instructions: Some(
