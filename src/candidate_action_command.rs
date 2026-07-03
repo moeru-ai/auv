@@ -1,34 +1,45 @@
-use std::thread;
-use std::time::Duration;
-
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "macos")]
 use crate::ax_recognition::{AxBestSelectionStrategy, AxRecognitionPolicy};
 #[cfg(target_os = "macos")]
 use crate::ax_recognition::{AxRecognitionRuntimeContext, map_ax_tree_to_recognition_result};
+use crate::candidate_action_decision::CandidateActionKind;
 #[cfg(target_os = "macos")]
 use crate::candidate_action_decision::MacosCandidateActionExecutor;
+#[cfg(target_os = "macos")]
 use crate::candidate_action_decision::{
   CandidateActionDecisionRequest, CandidateActionExecutionConsent,
   CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
-  CandidateActionExecutionSideEffect, CandidateActionKind, CandidateActionPostActionProbe,
+  CandidateActionExecutionSideEffect, CandidateActionPostActionProbe,
   execute_and_record_single_candidate_action, record_candidate_action_decision_artifact,
 };
 #[cfg(target_os = "macos")]
 use crate::candidate_promotion::ConsentProvenance;
+#[cfg(target_os = "macos")]
 use crate::candidate_promotion::{
   ActionPermission, CandidatePromotion, ConsentGrade, PromotionRefusal,
 };
 #[cfg(target_os = "macos")]
 use crate::candidate_promotion_recording::record_candidate_promotion_artifact_with_recognition_projection;
+#[cfg(target_os = "macos")]
 use crate::candidate_promotion_recording::{
   CandidatePromotionArtifactRequest, CandidatePromotionConsentInput,
   explicit_consent_for_candidate_promotion, freshness_from_capture_backed_recognition,
 };
-use crate::model::{AuvResult, now_millis};
+use crate::model::AuvResult;
+#[cfg(target_os = "macos")]
+use crate::model::now_millis;
+#[cfg(target_os = "macos")]
 use crate::stability::StabilityPolicy;
+#[cfg(target_os = "macos")]
 use auv_driver::Driver;
+#[cfg(target_os = "macos")]
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
+#[cfg(target_os = "macos")]
+use std::thread;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 const CANDIDATE_ACTION_PROPOSAL_ARTIFACT_ROLE: &str = "candidate-action-proposal";
 const CANDIDATE_ACTION_PROPOSAL_ARTIFACT_VERSION: &str = "candidate_action_proposal_artifact_v0";
 const OPENAI_RESPONSES_API_URL: &str = "https://api.openai.com/v1/responses";

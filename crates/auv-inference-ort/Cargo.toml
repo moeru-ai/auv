@@ -40,4 +40,3 @@ xnnpack = ["runtime", "ort/xnnpack"]
 auv-inference-common = { path = "../auv-inference-common" }
 ndarray.workspace = true
 ort = { workspace = true, optional = true }
-thiserror.workspace = true

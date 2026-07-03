@@ -53,14 +53,16 @@ use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 // the `Sidebar*` candidate flavors, the scan-loop functions) stay in this
 // crate because they consume NetEase-shaped observations.
 use auv_driver::{RatioRect, Size};
+#[cfg(target_os = "macos")]
+use auv_view::draw_rect;
 use auv_view::{
   AnchorStrength, BoundaryConfidence, CandidateRole, Confidence, LandmarkUse, ParserDiagnostic,
   ReconstructionOutput, ReconstructionPolicy, ScanAppContext, ScanOptions, ScanWindowContext,
   ScrollBoundarySummary, TopSeekOutcome, VIEW_IR_SCHEMA_VERSION, ViewAction, ViewAnchor, ViewAxis,
   ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind,
   ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord, ViewRegionRecord,
-  ViewScrollable, ViewViewportRecord, confidence_from_ocr, draw_rect, normalize_identity,
-  reconstruct, slug, viewport_contains_center, viewport_fingerprint,
+  ViewScrollable, ViewViewportRecord, confidence_from_ocr, normalize_identity, reconstruct, slug,
+  viewport_contains_center, viewport_fingerprint,
 };
 use clap::ValueEnum;
 use image::{Rgba, RgbaImage};

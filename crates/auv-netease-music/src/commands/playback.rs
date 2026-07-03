@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use auv_driver::vision::TextRecognitionOptions;
-use auv_view::{ParserDiagnostic, ScanAppContext, ScanWindowContext, ViewBounds};
+use auv_view::{ParserDiagnostic, ScanAppContext, ScanWindowContext};
 use comfy_table::{Cell, Table, presets::NOTHING};
 use serde::{Deserialize, Serialize};
 
@@ -220,6 +220,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     Size, WindowClickStrategy, WindowPoint,
   };
   use auv_driver_macos::MacosDriver;
+  use auv_view::ViewBounds;
 
   std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| {
     format!(

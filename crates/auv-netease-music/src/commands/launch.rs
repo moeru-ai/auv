@@ -1,11 +1,10 @@
 //! Ensure the Windows NetEase Cloud Music application has a visible window.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::windows::{DEFAULT_PROCESS_NAME, ResolveOptions, resolve_window};
+use crate::windows::ResolveOptions;
 
 const POLL_INTERVAL_MS: u64 = 250;
 const FORCE_RENDERER_ACCESSIBILITY_ARG: &str = "--force-renderer-accessibility";
@@ -71,12 +70,15 @@ pub fn run_open_window(inputs: &OpenWindowInputs) -> Result<LaunchResult, String
 
 #[cfg(target_os = "windows")]
 mod platform {
+  use std::path::PathBuf;
   use std::process::Command;
+  use std::time::{Duration, Instant};
 
   use auv_driver::Driver;
   use auv_driver_windows::WindowsDriver;
 
   use super::*;
+  use crate::windows::{DEFAULT_PROCESS_NAME, ResolveOptions, resolve_window};
 
   pub fn run(inputs: &OpenWindowInputs) -> Result<LaunchResult, String> {
     let mut result = LaunchResult::new(inputs);
@@ -192,6 +194,8 @@ mod tests {
 
   #[test]
   fn default_open_window_inputs_target_cloudmusic() {
+    use crate::windows::DEFAULT_PROCESS_NAME;
+
     let inputs = OpenWindowInputs::default();
 
     assert_eq!(inputs.resolve.process_name, DEFAULT_PROCESS_NAME);

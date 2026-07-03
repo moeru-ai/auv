@@ -1,7 +1,7 @@
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
-use crate::scroll::policies::detection_motion::{MotionDetectionPolicy, MotionEvidence};
+use crate::scroll::policies::detection_motion::MotionEvidence;
 use crate::view_parsers::sidebar::classify_sidebar_text;
 use crate::{
   SidebarCandidateKind, SidebarViewportCandidate, SidebarViewportObservation, ViewBounds,
@@ -547,6 +547,7 @@ pub(crate) fn capture_sidebar_target_probe(
     &recognition,
   );
   let sidebar_crop = crate::crop_image(&capture.image, sidebar_bounds, capture.scale_factor);
+  use crate::scroll::policies::detection_motion::MotionDetectionPolicy;
   let scroll_motion = previous_sidebar_crop
     .as_ref()
     .map(|previous| MotionDetectionPolicy::default().compare(previous, &sidebar_crop));
