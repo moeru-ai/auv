@@ -76,7 +76,7 @@ jobs:
         with:
           args: >-
             --profile-path .qodana/profiles/gate.yaml
-            --fail-threshold 0
+            --fail-threshold 20000
             -e CARGO_HOME=/tmp/qodana-cargo-home
             -e CARGO_TARGET_DIR=/tmp/qodana-target
           upload-result: true

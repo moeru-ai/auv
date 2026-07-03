@@ -19,13 +19,17 @@ bootstrap: |
   cargo metadata --format-version 1 --all-features > /dev/null
 
 exclude:
-  # NOTICE(qodana-environment_limitation): editor and archived docs are out of scan scope.
+  # NOTICE(qodana-environment_limitation): editor state and archived references are out of scan scope.
   - name: All
     paths:
       - .cursor
       - docs/archive
+      # NOTICE(qodana-source_scope): fixture/document asset payloads are out of scan scope; Qodana here is used for source semantics and formal code quality.
+      - "**/*.md"
       - "**/*.json"
       - "**/*.svg"
+  # NOTICE(qodana-no-spellcheck): spelling churn in identifiers, fixtures, and mixed-language docs is not part of this lane's quality signal.
+  - name: SpellCheckingInspection
   # NOTICE(qodana-false_positive): swift-bridge generated bindings use `self` in FFI shims.
   - name: RsFunctionCannotHaveSelf
     paths:
