@@ -97,7 +97,7 @@ fn main() -> Result<(), String> {
   let target_block = parse_block_position(&target_block.ok_or("--target-block is required")?)?;
   let telemetry_witness = telemetry_sample.map(|pre| QueryWiredLiveActionTelemetryWitness {
     pre_telemetry_sample: pre,
-    post_telemetry_sample: post_telemetry_sample,
+    post_telemetry_sample,
   });
   let output = run_minecraft_query_wired_live_action(
     &runtime.recording().handle(),

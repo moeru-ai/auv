@@ -4451,7 +4451,7 @@ mod tests {
         status_code: TraceStatusCode::Ok,
         started_at_millis: 1,
         finished_at_millis: Some(2),
-        root_span_id: root_span_id,
+        root_span_id,
         attributes: BTreeMap::new(),
         summary: Some("orphan inspect summary".to_string()),
         failure: None,

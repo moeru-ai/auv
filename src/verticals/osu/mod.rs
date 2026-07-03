@@ -276,7 +276,7 @@ fn stage_osu_detection_eval_witness_quality_artifacts(
     })?;
   } else if !quality_dir.join("osu-detection-eval-quality.json").exists() {
     let _quality = build_detection_eval_quality(&auv_game_osu::DetectionEvalQualityInputs {
-      witness_manifest_path: witness_manifest_path,
+      witness_manifest_path,
       output_dir: quality_dir.clone(),
     })?;
   }
