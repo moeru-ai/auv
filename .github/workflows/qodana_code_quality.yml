@@ -1,6 +1,9 @@
 name: Qodana
 on:
   workflow_dispatch:
+  schedule:
+    # Weekly observatory scan (Monday 06:00 UTC).
+    - cron: '0 6 * * 1'
   pull_request:
   push:
     branches:
@@ -8,29 +11,83 @@ on:
       - 'releases/*'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.job }}
   cancel-in-progress: true
 
 jobs:
-  qodana:
+  qodana-observatory:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Qodana Observatory Scan
+        id: qodana-observatory
+        uses: JetBrains/qodana-action@v2026.1
+        with:
+          args: >-
+            --profile-path .qodana/profiles/observatory.yaml
+            -e CARGO_HOME=/tmp/qodana-cargo-home
+            -e CARGO_TARGET_DIR=/tmp/qodana-target
+          upload-result: true
+          artifact-name: qodana-observatory-report
+          use-annotations: true
+        env:
+          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
+          QODANA_ENDPOINT: https://qodana.cloud
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ runner.temp }}/qodana/results/qodana.sarif.json
+          category: qodana-observatory
+      - name: Upload results artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qodana-observatory-results
+          path: ${{ runner.temp }}/qodana/results/
+          retention-days: 14
+
+  # PR blocking + main/releases push alignment. Not run on schedule/workflow_dispatch.
+  qodana-gate:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
       checks: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           submodules: recursive
-      - name: Qodana Scan
+      - name: Qodana Gate Scan
         uses: JetBrains/qodana-action@v2026.1
         with:
           args: >-
-            --linter qodana-rust
+            --profile-path .qodana/profiles/gate.yaml
+            --fail-threshold 0
             -e CARGO_HOME=/tmp/qodana-cargo-home
             -e CARGO_TARGET_DIR=/tmp/qodana-target
+          upload-result: true
+          artifact-name: qodana-gate-report
+          use-annotations: true
+          post-pr-comment: true
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           QODANA_ENDPOINT: https://qodana.cloud
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ runner.temp }}/qodana/results/qodana.sarif.json
+          category: qodana-gate

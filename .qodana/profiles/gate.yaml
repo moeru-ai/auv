@@ -1,0 +1,31 @@
+####################################################################################################################
+# Gate profile overlay — bootstrap narrow blocking subset (non-terminal).
+# NOTICE(qodana-bootstrap-gate): non-terminal; removal condition: migrate to recommended-derived advisory model after gate stable 2-4 weeks.
+# Shared bootstrap/exclude live in repository-root qodana.yaml.
+# Quality gate threshold is set in CI via --fail-threshold 0 (not in this file).
+# See docs/ai/references/2026-07-03-auv-qodana-operating-model.md
+####################################################################################################################
+
+# Bootstrap step 4: temporary narrow gate on empty base until advisory/blocking split lands.
+profile:
+  base:
+    name: empty
+  inspections:
+    - inspection: CargoUnusedDependency
+      enabled: true
+    - inspection: RsConstantConditionIf
+      enabled: true
+    - inspection: RsDeprecation
+      enabled: true
+    - inspection: RsFunctionCannotHaveSelf
+      enabled: true
+    - inspection: RsLiveness
+      enabled: true
+    - inspection: RsUnreachablePatterns
+      enabled: true
+    - inspection: RsUnusedImport
+      enabled: true
+    - inspection: RsUnresolvedPath
+      enabled: true
+    - inspection: TomlUnresolvedReference
+      enabled: true

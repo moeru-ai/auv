@@ -1,0 +1,9 @@
+####################################################################################################################
+# Observatory profile overlay — qodana.recommended only.
+# Shared bootstrap/exclude live in repository-root qodana.yaml (single source of truth).
+# Guardrail A: do not add exclude/bootstrap/enabled:false here.
+# See docs/ai/references/2026-07-03-auv-qodana-operating-model.md
+####################################################################################################################
+
+profile:
+  name: qodana.recommended
