@@ -233,8 +233,7 @@ impl AccessibilityApi<'_> {
 
 impl InputApi<'_> {
   pub fn click_at(&self, point: Point, click: Click) -> DriverResult<InputActionResult> {
-    let _ = self.session;
-    click_at(point, click)
+    click_at(&self.session.state, point, click)
   }
 
   pub fn scroll_at(
@@ -243,18 +242,15 @@ impl InputApi<'_> {
     scroll: Scroll,
     settle: std::time::Duration,
   ) -> DriverResult<InputActionResult> {
-    let _ = self.session;
-    scroll_at(point, scroll, settle)
+    scroll_at(&self.session.state, point, scroll, settle)
   }
 
   pub fn type_text(&self, text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
-    let _ = self.session;
-    type_text(text, options)
+    type_text(&self.session.state, text, options)
   }
 
   pub fn press_key(&self, options: KeyPressOptions) -> DriverResult<InputActionResult> {
-    let _ = self.session;
-    press_key(options)
+    press_key(&self.session.state, options)
   }
 }
 

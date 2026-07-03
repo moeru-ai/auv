@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use auv_driver::{Driver, DriverDescriptor, DriverResult, DriverSession};
 
 use crate::descriptor::{LinuxDriverDescriptor, linux_driver_descriptor};
-use crate::native::portal::ClipboardSession;
+use crate::native::portal::{ClipboardSession, InputSession};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LinuxDriver;
@@ -26,6 +26,7 @@ pub struct LinuxDriverSession {
 #[derive(Debug, Default)]
 pub(crate) struct LinuxDriverSessionState {
   pub(crate) clipboard_session: Option<ClipboardSession>,
+  pub(crate) input_session: Option<InputSession>,
 }
 
 impl LinuxDriverSession {
