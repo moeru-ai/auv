@@ -93,12 +93,12 @@ exclude:
   # suppress repository-management noise instead.
   - name: SSBasedInspection
   - name: IgnoreFileDuplicateEntry
+  # NOTICE(qodana-cloud_noise): observatory reports were dominated by thousands
+  # of low-value `Annotator` results from Rust source files, mostly empty-message
+  # entries and "Conditionally disabled code". Gate keeps explicit Rust blocking
+  # inspections (`RsUnresolvedPath`, `RsUnusedImport`, etc.), so suppress the
+  # broad IDE-highlighting aggregate here until Cloud/Rust signal is trustworthy.
   - name: Annotator
-    paths:
-      - crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe/witness/failed_expected_slots.json
-      - crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe/broken/bad_schema/detection_bundle.json
-      - crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe/broken/bad_schema
-      - crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe/witness
   - name: YAMLSchemaValidation
     paths:
       - .qodana/profiles/qodana.yaml
