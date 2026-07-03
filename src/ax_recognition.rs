@@ -8,11 +8,12 @@ use std::fs;
 use std::path::Path;
 
 use crate::candidate_promotion::PromotionProjection;
+use crate::contract::RecognitionResult;
 #[cfg(target_os = "macos")]
 use crate::contract::{
   ArtifactRef, RecognitionBox, RecognitionScope, RecognitionSource, RecognitionSurface,
+  RecognizedItem,
 };
-use crate::contract::{RecognitionResult, RecognizedItem};
 #[cfg(target_os = "macos")]
 use crate::model::{AuvResult, now_millis};
 #[cfg(target_os = "macos")]
