@@ -6,12 +6,14 @@ use std::process::ExitCode;
 use auv_driver::RatioRect;
 use auv_driver::vision::TextRecognitionOptions;
 use auv_media_macos::OutputFormat;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::output::{build_playlist_json_output, playlist_view_memory_report};
+use crate::output::{
+  build_playlist_json_output, playlist_view_memory_report, render_playlist_human_output,
+};
 use crate::{
-  DailyRecommendedPlayInputs, Inputs, OpenWindowInputs, PlaybackStatusInputs, PlaylistCategory,
-  PlaylistSidebarScan, SongListInputs, run_daily_recommended_play,
+  Confidence, DailyRecommendedPlayInputs, Inputs, OpenWindowInputs, PlaybackStatusInputs,
+  PlaylistCategory, PlaylistSidebarScan, SongListInputs, run_daily_recommended_play,
   run_daily_recommended_songs_scan, run_live_scan, run_live_scan_until_query, run_open_window,
   run_playback_status_probe, run_playlist_play, run_playlist_play_candidate_id,
   run_playlist_select,
@@ -118,11 +120,40 @@ pub(crate) enum OutputMode {
   JsonFile(PathBuf),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum PlaylistOutputFormat {
+  Json,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum PlaylistConfidenceArg {
+  High,
+  Medium,
+  Low,
+}
+
+impl PlaylistConfidenceArg {
+  fn into_confidence(self) -> Confidence {
+    match self {
+      Self::High => Confidence::High,
+      Self::Medium => Confidence::Medium,
+      Self::Low => Confidence::Low,
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PlaylistOutputOptions {
+  pub mode: OutputMode,
+  pub detail: bool,
+  pub min_confidence: Option<Confidence>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PlaylistCommand {
   pub inputs: Inputs,
   pub query: Option<String>,
-  pub output: OutputMode,
+  pub output: PlaylistOutputOptions,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -459,6 +490,12 @@ struct PlaylistLsArgs {
   json: bool,
   #[arg(long = "json-out")]
   json_out: Option<PathBuf>,
+  #[arg(long = "format", value_enum)]
+  format: Option<PlaylistOutputFormat>,
+  #[arg(long = "detail")]
+  detail: bool,
+  #[arg(long = "min-confidence", value_enum)]
+  min_confidence: Option<PlaylistConfidenceArg>,
   #[arg(long = "app-id")]
   app_id: Option<String>,
   #[arg(long = "artifact-dir")]
@@ -664,10 +701,17 @@ fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
     }
   }
   let query = args.filter.or(query);
-  let output = match args.json_out {
+  let mode = match args.json_out {
     Some(path) => OutputMode::JsonFile(path),
-    None if args.json => OutputMode::Json,
+    None if args.json || args.format == Some(PlaylistOutputFormat::Json) => OutputMode::Json,
     None => OutputMode::Human,
+  };
+  let output = PlaylistOutputOptions {
+    mode,
+    detail: args.detail,
+    min_confidence: args
+      .min_confidence
+      .map(PlaylistConfidenceArg::into_confidence),
   };
   Ok(PlaylistCommand {
     inputs,
@@ -1008,6 +1052,9 @@ mod tests {
       filter: None,
       json: false,
       json_out: None,
+      format: None,
+      detail: false,
+      min_confidence: None,
       app_id: None,
       artifact_dir: None,
       store_root: None,
@@ -1140,7 +1187,9 @@ mod tests {
     };
 
     assert_eq!(command.query, None);
-    assert_eq!(command.output, OutputMode::Human);
+    assert_eq!(command.output.mode, OutputMode::Human);
+    assert!(!command.output.detail);
+    assert_eq!(command.output.min_confidence, None);
   }
 
   #[test]
@@ -1183,7 +1232,7 @@ mod tests {
     let command = parse_playlist_command(&["auv-netease-music", "playlist", "ls"]);
 
     assert_eq!(command.query, None);
-    assert_eq!(command.output, OutputMode::Human);
+    assert_eq!(command.output.mode, OutputMode::Human);
   }
 
   #[test]
@@ -1244,9 +1293,52 @@ mod tests {
     ]);
 
     assert_eq!(
-      command.output,
+      command.output.mode,
       OutputMode::JsonFile(PathBuf::from("/tmp/playlists.json"))
     );
+  }
+
+  #[test]
+  fn clap_playlist_format_json_aliases_stdout_json() {
+    let command =
+      parse_playlist_command(&["auv-netease-music", "playlist", "ls", "--format", "json"]);
+
+    assert_eq!(command.output.mode, OutputMode::Json);
+  }
+
+  #[test]
+  fn clap_playlist_json_out_precedes_format_json() {
+    let command = parse_playlist_command(&[
+      "auv-netease-music",
+      "playlist",
+      "ls",
+      "--format",
+      "json",
+      "--json-out",
+      "/tmp/playlists.json",
+    ]);
+
+    assert_eq!(
+      command.output.mode,
+      OutputMode::JsonFile(PathBuf::from("/tmp/playlists.json"))
+    );
+  }
+
+  #[test]
+  fn clap_playlist_maps_detail_and_min_confidence() {
+    let command = parse_playlist_command(&[
+      "auv-netease-music",
+      "playlist",
+      "ls",
+      "daily",
+      "--detail",
+      "--min-confidence",
+      "medium",
+    ]);
+
+    assert_eq!(command.query.as_deref(), Some("daily"));
+    assert!(command.output.detail);
+    assert_eq!(command.output.min_confidence, Some(Confidence::Medium));
   }
 
   #[test]
@@ -1694,28 +1786,34 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
   }
 
   let view_memory = playlist_view_memory_report(gate_enabled, view_memory_write);
+  let scan_cache_path = cmd
+    .inputs
+    .artifact_dir
+    .join(crate::PLAYLIST_SCAN_CACHE_FILE);
   let output = build_playlist_json_output(
     &scan,
     cmd.query.as_deref(),
+    cmd.output.min_confidence,
+    scan_cache_path.clone(),
     view_memory,
     run_id.clone(),
     ls_known_limits.clone(),
   );
 
-  match &cmd.output {
+  match &cmd.output.mode {
     OutputMode::Human => {
-      println!("{}", scan.to_human_readable());
-      if let Some(run_id) = &run_id {
-        println!("run_id: {run_id}");
-      }
-      if ls_known_limits.is_empty() {
-        println!("known_limits: (none)");
-      } else {
-        println!("known_limits:");
-        for limit in &ls_known_limits {
-          println!("  - {limit}");
-        }
-      }
+      println!(
+        "{}",
+        render_playlist_human_output(
+          &scan,
+          cmd.query.as_deref(),
+          cmd.output.min_confidence,
+          cmd.output.detail,
+          run_id.as_deref(),
+          &ls_known_limits,
+          Some(scan_cache_path.to_string_lossy().as_ref()),
+        )
+      );
       ExitCode::SUCCESS
     }
     OutputMode::Json => match serde_json::to_string_pretty(&output) {

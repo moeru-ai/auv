@@ -107,7 +107,7 @@ mod tests {
     write_minimal_run(&store, "run-summary-persist");
 
     let result = fixture_observe_invoke_result("run-summary-persist");
-    let summary = OperationSummary::capture(&result, "fixture.observe");
+    let summary = OperationSummary::capture(&result);
     persist_operation_summary(&store, &result, &summary).expect("persist should succeed");
 
     let loaded = store
@@ -176,7 +176,7 @@ mod tests {
     fs::set_permissions(&run_dir, permissions).expect("run dir should be read-only");
 
     let result = fixture_observe_invoke_result("run-summary-persist-fail");
-    let summary = OperationSummary::capture(&result, "fixture.observe");
+    let summary = OperationSummary::capture(&result);
     let limits = record_invoke_summary(&store, &result, &summary);
     assert_eq!(
       limits,

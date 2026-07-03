@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::InvokeReport;
 use crate::arg::ArgSpec;
 use auv_tracing_driver::ProducedArtifact;
 
@@ -21,6 +22,7 @@ pub struct InvokeCommandOutput {
   pub notes: Vec<String>,
   pub artifacts: Vec<ProducedArtifact>,
   pub known_limits: Vec<String>,
+  pub report: Option<InvokeReport>,
   /// Human-readable boundary claim produced by the handler for this execution.
   ///
   /// This is intentionally not a structured `VerificationResult`: direct
@@ -43,6 +45,7 @@ impl InvokeCommandOutput {
       notes: Vec::new(),
       artifacts: Vec::new(),
       known_limits: Vec::new(),
+      report: None,
       verification: None,
     }
   }
@@ -149,11 +152,12 @@ mod tests {
   use super::InvokeCommandOutput;
 
   #[test]
-  fn command_output_defaults_evidence_fields_to_empty() {
+  fn command_output_defaults_evidence_and_report_fields_to_empty() {
     let output = InvokeCommandOutput::new("observed");
 
     assert!(output.artifacts.is_empty());
     assert!(output.known_limits.is_empty());
+    assert!(output.report.is_none());
     assert!(output.verification.is_none());
   }
 }

@@ -108,6 +108,8 @@ pub struct InspectServerRunRecorder {
   base_url: String,
   token: Option<String>,
   required: bool,
+  warn_optional_failures: bool,
+  optional_failure_reported: Arc<Mutex<bool>>,
 }
 
 impl InspectServerRunRecorder {
@@ -116,14 +118,30 @@ impl InspectServerRunRecorder {
       base_url: base_url.trim_end_matches('/').to_string(),
       token,
       required,
+      warn_optional_failures: true,
+      optional_failure_reported: Arc::new(Mutex::new(false)),
     }
+  }
+
+  pub fn with_optional_failure_warnings(mut self, warn: bool) -> Self {
+    self.warn_optional_failures = warn;
+    self
   }
 
   fn handle_failure(&self, message: String) -> AuvResult<()> {
     if self.required {
       Err(message)
+    } else if !self.warn_optional_failures {
+      Ok(())
     } else {
-      eprintln!("warning: {message}");
+      let mut reported = self
+        .optional_failure_reported
+        .lock()
+        .map_err(|_| "inspect server failure state lock poisoned".to_string())?;
+      if !*reported {
+        eprintln!("warning: {message}; suppressing further optional inspect server write warnings");
+        *reported = true;
+      }
       Ok(())
     }
   }

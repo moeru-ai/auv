@@ -312,19 +312,23 @@ mod tests {
   #[test]
   fn join_flags_runtime_status_mismatch() {
     let operation = sample_operation("run-mismatch");
-    let summary = OperationSummary::capture(
-      &InvokeResult {
-        run_id: "run-mismatch".to_string(),
-        producer_span_id: SpanId::new("0000000000000001"),
-        status: RunStatus::Failed,
-        output_summary: "runtime failed".to_string(),
-        signals: BTreeMap::new(),
-        artifacts: Vec::new(),
-        artifact_paths: Vec::new(),
-        failure_message: Some("boom".to_string()),
-      },
-      "fixture.observe",
-    );
+    let summary = OperationSummary::capture(&InvokeResult {
+      run_id: "run-mismatch".to_string(),
+      producer_span_id: SpanId::new("0000000000000001"),
+      command_id: "fixture.observe".to_string(),
+      command_summary: "Observe fixture.".to_string(),
+      status: RunStatus::Failed,
+      output_summary: "runtime failed".to_string(),
+      backend: None,
+      signals: BTreeMap::new(),
+      notes: Vec::new(),
+      known_limits: Vec::new(),
+      verification: None,
+      report: None,
+      artifacts: Vec::new(),
+      artifact_paths: Vec::new(),
+      failure_message: Some("boom".to_string()),
+    });
     let (command_id, roles) = join_args("fixture.observe");
 
     let joined = join_operation_summary(&operation, Some(&summary), command_id, roles);
@@ -431,19 +435,23 @@ mod tests {
       &operation,
       &stored_summary,
     );
-    let override_summary = OperationSummary::capture(
-      &InvokeResult {
-        run_id: "run-override".to_string(),
-        producer_span_id: SpanId::new("0000000000000001"),
-        status: RunStatus::Completed,
-        output_summary: "process-local override wins".to_string(),
-        signals: BTreeMap::new(),
-        artifacts: Vec::new(),
-        artifact_paths: Vec::new(),
-        failure_message: None,
-      },
-      "fixture.observe",
-    );
+    let override_summary = OperationSummary::capture(&InvokeResult {
+      run_id: "run-override".to_string(),
+      producer_span_id: SpanId::new("0000000000000001"),
+      command_id: "fixture.observe".to_string(),
+      command_summary: "Observe fixture.".to_string(),
+      status: RunStatus::Completed,
+      output_summary: "process-local override wins".to_string(),
+      backend: None,
+      signals: BTreeMap::new(),
+      notes: Vec::new(),
+      known_limits: Vec::new(),
+      verification: None,
+      report: None,
+      artifacts: Vec::new(),
+      artifact_paths: Vec::new(),
+      failure_message: None,
+    });
 
     let loaded = load_joined_operation_summary(&store, "run-override", Some(&override_summary))
       .expect("load should succeed");

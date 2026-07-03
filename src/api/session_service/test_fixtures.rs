@@ -146,19 +146,23 @@ pub fn music_search_operation(run_id: &str) -> OperationResult {
 pub fn music_runtime_summary(run_id: &str) -> OperationSummary {
   let mut signals = std::collections::BTreeMap::new();
   signals.insert("now_playing".to_string(), "track-x".to_string());
-  OperationSummary::capture(
-    &InvokeResult {
-      run_id: run_id.to_string(),
-      producer_span_id: SpanId::new("0000000000000001"),
-      status: RunStatus::Completed,
-      output_summary: "did the thing".to_string(),
-      signals,
-      artifacts: Vec::new(),
-      artifact_paths: Vec::new(),
-      failure_message: None,
-    },
-    "music.search",
-  )
+  OperationSummary::capture(&InvokeResult {
+    run_id: run_id.to_string(),
+    producer_span_id: SpanId::new("0000000000000001"),
+    command_id: "music.search".to_string(),
+    command_summary: "Search music.".to_string(),
+    status: RunStatus::Completed,
+    output_summary: "did the thing".to_string(),
+    backend: None,
+    signals,
+    notes: Vec::new(),
+    known_limits: Vec::new(),
+    verification: None,
+    report: None,
+    artifacts: Vec::new(),
+    artifact_paths: Vec::new(),
+    failure_message: None,
+  })
 }
 
 pub fn fixture_observe_invoke_result(run_id: &str) -> InvokeResult {
@@ -170,9 +174,16 @@ pub fn fixture_observe_invoke_result(run_id: &str) -> InvokeResult {
   InvokeResult {
     run_id: run_id.to_string(),
     producer_span_id: SpanId::new("0000000000000001"),
+    command_id: "fixture.observe".to_string(),
+    command_summary: "Observe fixture.".to_string(),
     status: RunStatus::Completed,
     output_summary: "fixture observed".to_string(),
+    backend: None,
     signals,
+    notes: Vec::new(),
+    known_limits: Vec::new(),
+    verification: None,
+    report: None,
     artifacts: Vec::new(),
     artifact_paths: Vec::new(),
     failure_message: None,
@@ -183,9 +194,16 @@ pub fn invoke_result_matching_summary(run_id: &str, summary: &OperationSummary) 
   InvokeResult {
     run_id: run_id.to_string(),
     producer_span_id: SpanId::new("0000000000000001"),
+    command_id: summary.command_id().to_string(),
+    command_summary: String::new(),
     status: summary.status(),
     output_summary: summary.output_summary().to_string(),
+    backend: None,
     signals: summary.signals().clone(),
+    notes: Vec::new(),
+    known_limits: Vec::new(),
+    verification: None,
+    report: None,
     artifacts: Vec::new(),
     artifact_paths: Vec::new(),
     failure_message: summary.failure_message().map(str::to_string),

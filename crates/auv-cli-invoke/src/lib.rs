@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 
+use clap::{Arg, ArgAction, Command};
+
 extern crate self as auv_cli_invoke;
 
 pub mod arg;
@@ -14,6 +16,7 @@ pub mod help;
 pub mod model;
 pub mod recorded;
 pub mod registry;
+pub mod render;
 pub mod summary;
 
 pub use arg::ArgSpec;
@@ -23,12 +26,16 @@ pub use command::{
   InvokeCommandResult, InvokeNamespace,
 };
 pub use help::{render_command_help, render_help_index};
-pub use model::{ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
+pub use model::{
+  ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection,
+  InvokeRequest, InvokeResult, RunStatus,
+};
 pub use recorded::{
   invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_session,
   invoke_resolved_recorded_in_span,
 };
 pub use registry::{InvokeRegistry, default_registry};
+pub use render::{render_invoke_result, render_to_string, write_rendered};
 pub use summary::{
   OperationSummary, OperationSummaryCache, OperationSummaryRecord, OperationSummarySource,
 };
@@ -43,76 +50,161 @@ pub enum InvokeCliParse {
     target_application_id: Option<String>,
     inputs: BTreeMap<String, String>,
     dry_run: bool,
+    output: InvokeOutputOptions,
   },
 }
 
 pub fn parse_invoke_args(arguments: &[String]) -> Result<InvokeCliParse, String> {
-  if arguments.len() < 2 {
+  let tokens = normalize_invoke_arguments(arguments);
+  if tokens.is_empty() {
     return Ok(InvokeCliParse::Help { command_id: None });
   }
 
-  if matches!(arguments[1].as_str(), "--help" | "-h" | "help") {
+  if tokens.is_empty() || tokens.first().is_some_and(|token| token == "help") {
     return Ok(InvokeCliParse::Help { command_id: None });
   }
 
-  let command_id = arguments[1].clone();
-  if arguments.len() == 3 && matches!(arguments[2].as_str(), "--help" | "-h") {
-    return Ok(InvokeCliParse::Help {
-      command_id: Some(command_id),
-    });
+  let normalized = normalize_for_clap(&tokens)?;
+  if let Some(help) = normalized.help {
+    return Ok(help);
   }
 
-  let mut target_application_id = None;
-  let mut inputs = BTreeMap::new();
-  let mut dry_run = false;
-  let mut index = 2;
-
-  while index < arguments.len() {
-    let argument = &arguments[index];
-    if !argument.starts_with("--") {
-      return Err(format!("unexpected positional argument {argument}"));
-    }
-
-    if argument == "--dry-run" {
-      dry_run = true;
-      index += 1;
-      continue;
-    }
-
-    if index + 1 >= arguments.len() {
-      return Err(format!("flag {argument} requires a value"));
-    }
-
-    let value = arguments[index + 1].clone();
-    match argument.as_str() {
-      "--target" => {
-        target_application_id = Some(value);
-      }
-      "--label" => {
-        inputs.insert("label".to_string(), value);
-      }
-      other => {
-        let key = other.trim_start_matches("--");
-        inputs.insert(key.to_string(), value);
-      }
-    }
-
-    index += 2;
+  let matches = invoke_cli_command()
+    .try_get_matches_from(normalized.clap_arguments)
+    .map_err(|error| error.to_string())?;
+  let command_id = matches
+    .get_one::<String>("command_id")
+    .cloned()
+    .ok_or_else(|| "missing invoke command id".to_string())?;
+  let mut inputs = normalized.inputs;
+  if let Some(label) = matches.get_one::<String>("label") {
+    inputs.insert("label".to_string(), label.clone());
   }
 
   Ok(InvokeCliParse::Invoke {
     command_id,
-    target_application_id,
+    target_application_id: matches.get_one::<String>("target").cloned(),
     inputs,
-    dry_run,
+    dry_run: matches.get_flag("dry_run"),
+    output: InvokeOutputOptions {
+      json: matches.get_flag("json") || matches.get_flag("format"),
+      detail: matches.get_flag("detail"),
+    },
+  })
+}
+
+pub fn invoke_argument_consumes_value(argument: &str) -> bool {
+  match argument {
+    "--dry-run" | "--detail" | "--json" | "--format" | "--help" | "-h" => false,
+    other => other.starts_with("--"),
+  }
+}
+
+struct NormalizedInvokeArguments {
+  clap_arguments: Vec<String>,
+  inputs: BTreeMap<String, String>,
+  help: Option<InvokeCliParse>,
+}
+
+fn normalize_invoke_arguments(arguments: &[String]) -> Vec<String> {
+  match arguments.first().map(String::as_str) {
+    Some("invoke") => arguments.iter().skip(1).cloned().collect(),
+    _ => arguments.to_vec(),
+  }
+}
+
+fn invoke_cli_command() -> Command {
+  Command::new("invoke")
+    .disable_help_flag(true)
+    .arg(Arg::new("command_id").index(1).value_name("command-id"))
+    .arg(
+      Arg::new("dry_run")
+        .long("dry-run")
+        .action(ArgAction::SetTrue),
+    )
+    .arg(
+      Arg::new("target")
+        .long("target")
+        .value_name("bundle-id")
+        .num_args(1),
+    )
+    .arg(
+      Arg::new("label")
+        .long("label")
+        .value_name("value")
+        .num_args(1),
+    )
+    .arg(Arg::new("detail").long("detail").action(ArgAction::SetTrue))
+    .arg(Arg::new("json").long("json").action(ArgAction::SetTrue))
+    .arg(
+      Arg::new("format")
+        .long("format")
+        .action(ArgAction::SetTrue)
+        .hide(true),
+    )
+}
+
+fn normalize_for_clap(tokens: &[String]) -> Result<NormalizedInvokeArguments, String> {
+  let mut clap_arguments = vec!["invoke".to_string()];
+  let mut inputs = BTreeMap::new();
+  let mut command_id = None;
+  let mut index = 0;
+
+  while index < tokens.len() {
+    let token = &tokens[index];
+    match token.as_str() {
+      "--help" | "-h" => {
+        return Ok(NormalizedInvokeArguments {
+          clap_arguments,
+          inputs,
+          help: Some(InvokeCliParse::Help { command_id }),
+        });
+      }
+      "--dry-run" | "--detail" | "--json" | "--format" => {
+        clap_arguments.push(token.clone());
+        index += 1;
+      }
+      "--target" | "--label" => {
+        clap_arguments.push(token.clone());
+        if let Some(value) = tokens.get(index + 1) {
+          clap_arguments.push(value.clone());
+          index += 2;
+        } else {
+          index += 1;
+        }
+      }
+      flag if flag.starts_with("--") => {
+        let Some(value) = tokens.get(index + 1) else {
+          return Err(format!("flag {flag} requires a value"));
+        };
+        let key = flag.trim_start_matches("--");
+        inputs.insert(key.to_string(), value.clone());
+        index += 2;
+      }
+      positional => {
+        if command_id.is_none() {
+          command_id = Some(positional.to_string());
+          clap_arguments.push(positional.to_string());
+          index += 1;
+        } else {
+          return Err(format!("unexpected positional argument {positional}"));
+        }
+      }
+    }
+  }
+
+  Ok(NormalizedInvokeArguments {
+    clap_arguments,
+    inputs,
+    help: None,
   })
 }
 
 #[cfg(test)]
 mod tests {
   use super::{
-    CommandGroup, InvokeNamespace, InvokeRegistry, default_registry, render_command_help,
-    render_help_index,
+    CommandGroup, InvokeNamespace, InvokeOutputOptions, InvokeRegistry, default_registry,
+    invoke_cli_command, render_command_help, render_help_index,
   };
 
   #[test]
@@ -121,6 +213,9 @@ mod tests {
     let help = render_help_index(&registry);
 
     assert!(help.contains("DISPLAY\n"));
+    assert!(help.contains("--json"));
+    assert!(help.contains("--detail"));
+    assert!(!help.contains("--format"));
     assert!(help.contains("  display.list"));
     assert!(help.contains("WINDOW\n"));
     assert!(help.contains("  window.capture"));
@@ -203,12 +298,174 @@ mod tests {
         target_application_id,
         inputs,
         dry_run,
+        output,
       } => {
         assert_eq!(command_id, "input.key");
         assert_eq!(target_application_id.as_deref(), Some("com.example.App"));
         assert!(dry_run);
+        assert_eq!(output, InvokeOutputOptions::default());
         assert_eq!(inputs.get("label").map(String::as_str), Some("smoke"));
         assert_eq!(inputs.get("key").map(String::as_str), Some("Return"));
+      }
+      other => panic!("unexpected parse result: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_json_before_and_after_command_match() {
+    let before = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "--json".to_string(),
+      "display.list".to_string(),
+    ])
+    .expect("json before command should parse");
+    let after = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "display.list".to_string(),
+      "--json".to_string(),
+    ])
+    .expect("json after command should parse");
+
+    assert_eq!(before, after);
+  }
+
+  #[test]
+  fn parse_invoke_detail_keeps_human_output_mode() {
+    let parsed = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "display.list".to_string(),
+      "--detail".to_string(),
+    ])
+    .expect("detail should parse");
+
+    match parsed {
+      crate::InvokeCliParse::Invoke { output, .. } => {
+        assert!(output.detail);
+        assert!(!output.json);
+      }
+      other => panic!("unexpected parse result: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_format_bare_alias_matches_json() {
+    let format = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "display.list".to_string(),
+      "--format".to_string(),
+    ])
+    .expect("bare format alias should parse");
+    let json = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "display.list".to_string(),
+      "--json".to_string(),
+    ])
+    .expect("json should parse");
+
+    assert_eq!(format, json);
+  }
+
+  #[test]
+  fn parse_invoke_help_hides_format_alias() {
+    let help = invoke_cli_command().render_help().to_string();
+
+    assert!(help.contains("--json"));
+    assert!(!help.contains("--format"));
+  }
+
+  #[test]
+  fn parse_invoke_preserves_known_and_unknown_command_inputs() {
+    let parsed = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "input.key".to_string(),
+      "--label".to_string(),
+      "Foo".to_string(),
+      "--key".to_string(),
+      "Cmd+L".to_string(),
+      "--settle_ms".to_string(),
+      "250".to_string(),
+    ])
+    .expect("command inputs should parse");
+
+    match parsed {
+      crate::InvokeCliParse::Invoke { inputs, .. } => {
+        assert_eq!(inputs.get("label").map(String::as_str), Some("Foo"));
+        assert_eq!(inputs.get("key").map(String::as_str), Some("Cmd+L"));
+        assert_eq!(inputs.get("settle_ms").map(String::as_str), Some("250"));
+      }
+      other => panic!("unexpected parse result: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_target_and_dry_run_keep_existing_behavior() {
+    let parsed = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "input.key".to_string(),
+      "--dry-run".to_string(),
+      "--target".to_string(),
+      "com.example.App".to_string(),
+    ])
+    .expect("target and dry-run should parse");
+
+    match parsed {
+      crate::InvokeCliParse::Invoke {
+        target_application_id,
+        dry_run,
+        ..
+      } => {
+        assert!(dry_run);
+        assert_eq!(target_application_id.as_deref(), Some("com.example.App"));
+      }
+      other => panic!("unexpected parse result: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_help_forms_preserve_existing_behavior() {
+    let index_help = crate::parse_invoke_args(&["invoke".to_string(), "--help".to_string()])
+      .expect("invoke --help should parse");
+    let help_command = crate::parse_invoke_args(&["invoke".to_string(), "help".to_string()])
+      .expect("invoke help should parse");
+    let command_help = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "window.capture".to_string(),
+      "--help".to_string(),
+    ])
+    .expect("invoke command help should parse");
+
+    assert_eq!(index_help, crate::InvokeCliParse::Help { command_id: None });
+    assert_eq!(
+      help_command,
+      crate::InvokeCliParse::Help { command_id: None }
+    );
+    assert_eq!(
+      command_help,
+      crate::InvokeCliParse::Help {
+        command_id: Some("window.capture".to_string())
+      }
+    );
+  }
+
+  #[test]
+  fn parse_invoke_unknown_flags_become_inputs() {
+    let parsed = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "input.typeText".to_string(),
+      "--text".to_string(),
+      "hello".to_string(),
+      "--replace_existing".to_string(),
+      "true".to_string(),
+    ])
+    .expect("unknown invoke inputs should parse");
+
+    match parsed {
+      crate::InvokeCliParse::Invoke { inputs, .. } => {
+        assert_eq!(inputs.get("text").map(String::as_str), Some("hello"));
+        assert_eq!(
+          inputs.get("replace_existing").map(String::as_str),
+          Some("true")
+        );
       }
       other => panic!("unexpected parse result: {other:?}"),
     }

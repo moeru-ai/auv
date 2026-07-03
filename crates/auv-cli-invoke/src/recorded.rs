@@ -141,9 +141,16 @@ pub fn invoke_resolved_recorded_in_span(
       return Ok(InvokeResult {
         run_id: run.id().to_string(),
         producer_span_id: command_span.id().clone(),
+        command_id: command.id.to_string(),
+        command_summary: command.summary.to_string(),
         status: RunStatus::Failed,
         output_summary,
+        backend: None,
         signals: Default::default(),
+        notes: Vec::new(),
+        known_limits: Vec::new(),
+        verification: None,
+        report: None,
         artifacts: Vec::new(),
         artifact_paths: Vec::new(),
         failure_message: Some(failure_message),
@@ -205,9 +212,16 @@ pub fn invoke_resolved_recorded_in_span(
       return Ok(InvokeResult {
         run_id: run.id().to_string(),
         producer_span_id: command_span.id().clone(),
+        command_id: command.id.to_string(),
+        command_summary: command.summary.to_string(),
         status: RunStatus::Failed,
         output_summary,
+        backend: output.backend,
         signals: output.signals,
+        notes: output.notes,
+        known_limits: output.known_limits,
+        verification: output.verification,
+        report: output.report,
         artifacts: failure.recorded.records,
         artifact_paths: failure.recorded.paths,
         failure_message: Some(failure_message),
@@ -234,9 +248,16 @@ pub fn invoke_resolved_recorded_in_span(
   Ok(InvokeResult {
     run_id: run.id().to_string(),
     producer_span_id: command_span.id().clone(),
+    command_id: command.id.to_string(),
+    command_summary: command.summary.to_string(),
     status: RunStatus::Completed,
     output_summary: output.summary,
+    backend: output.backend,
     signals: output.signals,
+    notes: output.notes,
+    known_limits: output.known_limits,
+    verification: output.verification,
+    report: output.report,
     artifacts: artifact_records,
     artifact_paths,
     failure_message: None,
@@ -288,7 +309,8 @@ mod tests {
 
   use crate::{
     CommandGroup, ExecutionTarget, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
-    InvokeNamespace, InvokeRegistry, InvokeRequest, RunStatus, arg::NO_ARGS,
+    InvokeNamespace, InvokeRegistry, InvokeReport, InvokeReportField, InvokeReportSection,
+    InvokeRequest, RunStatus, arg::NO_ARGS,
   };
 
   const FIXTURE_COMMAND_ID: &str = "fixture.recorded";
@@ -316,6 +338,23 @@ mod tests {
 
   fn fixture_handler(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     let mut output = InvokeCommandOutput::new("fixture observed");
+    output.backend = Some("fixture.backend".to_string());
+    output.notes.push("fixture note".to_string());
+    output.known_limits.push("fixture limit".to_string());
+    output.verification = Some("read-only; no semantic success claim".to_string());
+    output.report = Some(InvokeReport {
+      fields: vec![InvokeReportField {
+        label: "Result".to_string(),
+        value: "Observed".to_string(),
+      }],
+      sections: vec![InvokeReportSection {
+        title: "Fixture".to_string(),
+        fields: vec![InvokeReportField {
+          label: "Signal".to_string(),
+          value: "observed".to_string(),
+        }],
+      }],
+    });
     output
       .signals
       .insert("fixture".to_string(), "observed".to_string());
@@ -328,6 +367,27 @@ mod tests {
 
   fn artifact_failing_handler(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     let mut output = InvokeCommandOutput::new("artifact output");
+    output.backend = Some("fixture.artifact.backend".to_string());
+    output
+      .notes
+      .push("artifact failure fixture note".to_string());
+    output
+      .known_limits
+      .push("artifact failure fixture limit".to_string());
+    output.verification = Some("capture-only; no semantic success claim".to_string());
+    output.report = Some(InvokeReport {
+      fields: vec![InvokeReportField {
+        label: "Result".to_string(),
+        value: "Artifact pending".to_string(),
+      }],
+      sections: vec![InvokeReportSection {
+        title: "Artifact Failure Fixture".to_string(),
+        fields: vec![InvokeReportField {
+          label: "Backend".to_string(),
+          value: "fixture.artifact.backend".to_string(),
+        }],
+      }],
+    });
     output.artifacts.push(ProducedArtifact {
       kind: "missing-fixture-artifact".to_string(),
       source_path: temp_dir("missing-artifact-source").join("missing.txt"),
@@ -391,6 +451,8 @@ mod tests {
     .expect("invoke should succeed");
 
     assert_eq!(result.status, RunStatus::Completed);
+    assert_eq!(result.command_id, FIXTURE_COMMAND_ID);
+    assert_eq!(result.command_summary, "Fixture recorded invoke command.");
     assert_eq!(result.output_summary, "fixture observed");
     let canonical = recording
       .read_run(result.run_id.as_str())
@@ -418,6 +480,50 @@ mod tests {
         .events
         .iter()
         .any(|event| event.span_id == command_span.span_id && event.name == "run.completed")
+    );
+
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_recorded_propagates_report_and_detail_evidence() {
+    let (recording, store_root) = recording("success-report");
+    let registry = fixture_registry();
+
+    let result = super::invoke_recorded(
+      &recording,
+      &registry,
+      InvokeRequest {
+        command_id: FIXTURE_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      },
+    )
+    .expect("invoke should succeed");
+
+    assert_eq!(result.backend.as_deref(), Some("fixture.backend"));
+    assert_eq!(result.notes, vec!["fixture note"]);
+    assert_eq!(result.known_limits, vec!["fixture limit"]);
+    assert_eq!(
+      result.verification.as_deref(),
+      Some("read-only; no semantic success claim")
+    );
+    assert_eq!(
+      result.report,
+      Some(InvokeReport {
+        fields: vec![InvokeReportField {
+          label: "Result".to_string(),
+          value: "Observed".to_string(),
+        }],
+        sections: vec![InvokeReportSection {
+          title: "Fixture".to_string(),
+          fields: vec![InvokeReportField {
+            label: "Signal".to_string(),
+            value: "observed".to_string(),
+          }],
+        }],
+      })
     );
 
     let _ = fs::remove_dir_all(store_root);
@@ -572,6 +678,13 @@ mod tests {
     .expect("handler failure should return an inspectable result");
 
     assert_eq!(result.status, RunStatus::Failed);
+    assert_eq!(result.command_id, FAILING_COMMAND_ID);
+    assert_eq!(result.command_summary, "Failing recorded invoke command.");
+    assert_eq!(result.backend, None);
+    assert!(result.notes.is_empty());
+    assert!(result.known_limits.is_empty());
+    assert_eq!(result.verification, None);
+    assert_eq!(result.report, None);
     assert!(
       result
         .failure_message
@@ -615,6 +728,34 @@ mod tests {
     .expect("artifact recording failure should return an inspectable result");
 
     assert_eq!(result.status, RunStatus::Failed);
+    assert_eq!(result.command_id, ARTIFACT_FAILING_COMMAND_ID);
+    assert_eq!(
+      result.command_summary,
+      "Artifact failing recorded invoke command."
+    );
+    assert_eq!(result.backend.as_deref(), Some("fixture.artifact.backend"));
+    assert_eq!(result.notes, vec!["artifact failure fixture note"]);
+    assert_eq!(result.known_limits, vec!["artifact failure fixture limit"]);
+    assert_eq!(
+      result.verification.as_deref(),
+      Some("capture-only; no semantic success claim")
+    );
+    assert_eq!(
+      result.report,
+      Some(InvokeReport {
+        fields: vec![InvokeReportField {
+          label: "Result".to_string(),
+          value: "Artifact pending".to_string(),
+        }],
+        sections: vec![InvokeReportSection {
+          title: "Artifact Failure Fixture".to_string(),
+          fields: vec![InvokeReportField {
+            label: "Backend".to_string(),
+            value: "fixture.artifact.backend".to_string(),
+          }],
+        }],
+      })
+    );
     assert!(
       result
         .failure_message

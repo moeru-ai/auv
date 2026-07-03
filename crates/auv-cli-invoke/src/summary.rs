@@ -115,10 +115,10 @@ pub struct OperationSummary {
 impl OperationSummary {
   /// Capture the summary view from an invoke result, cloning only the
   /// `InvokeResult`-sourced summary fields and the invoke `command_id`.
-  pub fn capture(result: &InvokeResult, command_id: &str) -> Self {
+  pub fn capture(result: &InvokeResult) -> Self {
     Self {
       run_id: result.run_id.clone(),
-      command_id: command_id.to_string(),
+      command_id: result.command_id.clone(),
       status: result.status.clone(),
       output_summary: result.output_summary.clone(),
       signals: result.signals.clone(),
@@ -209,8 +209,8 @@ impl OperationSummaryCache {
   }
 
   /// Capture and record the summary for an invoke result in one step.
-  pub fn record_result(&mut self, result: &InvokeResult, command_id: &str) {
-    self.record(OperationSummary::capture(result, command_id));
+  pub fn record_result(&mut self, result: &InvokeResult) {
+    self.record(OperationSummary::capture(result));
   }
 
   /// Read the cached summary for a run, if present.
@@ -244,9 +244,16 @@ mod tests {
     InvokeResult {
       run_id: run_id.to_string(),
       producer_span_id: SpanId::new("0000000000000001"),
+      command_id: "fixture.observe".to_string(),
+      command_summary: "Observe fixture.".to_string(),
       status: RunStatus::Completed,
       output_summary: "fixture observed".to_string(),
+      backend: None,
       signals,
+      notes: Vec::new(),
+      known_limits: Vec::new(),
+      verification: None,
+      report: None,
       artifacts: Vec::new(),
       artifact_paths: Vec::new(),
       failure_message: None,
@@ -271,9 +278,16 @@ mod tests {
     let result = InvokeResult {
       run_id: "run-summary-failed".to_string(),
       producer_span_id: SpanId::new("0000000000000002"),
+      command_id: "fixture.fail".to_string(),
+      command_summary: "Fail fixture.".to_string(),
       status: RunStatus::Failed,
       output_summary: "failed summary".to_string(),
+      backend: None,
       signals: BTreeMap::new(),
+      notes: Vec::new(),
+      known_limits: Vec::new(),
+      verification: None,
+      report: None,
       artifacts: Vec::new(),
       artifact_paths: Vec::new(),
       failure_message: Some("boom".to_string()),
@@ -286,7 +300,7 @@ mod tests {
   #[test]
   fn operation_summary_captures_invoke_result_summary_fields() {
     let result = completed_result("run-capture");
-    let summary = OperationSummary::capture(&result, "fixture.observe");
+    let summary = OperationSummary::capture(&result);
 
     assert_eq!(summary.run_id(), "run-capture");
     assert_eq!(summary.command_id(), "fixture.observe");
@@ -304,7 +318,7 @@ mod tests {
     let mut cache = OperationSummaryCache::new();
     assert!(cache.is_empty());
 
-    cache.record_result(&completed_result("run-cached"), "fixture.observe");
+    cache.record_result(&completed_result("run-cached"));
 
     assert_eq!(cache.len(), 1);
     let cached = cache.get("run-cached").expect("summary should be cached");
@@ -321,11 +335,11 @@ mod tests {
   #[test]
   fn summary_cache_record_replaces_existing_run_entry() {
     let mut cache = OperationSummaryCache::new();
-    cache.record_result(&completed_result("run-dup"), "fixture.observe");
+    cache.record_result(&completed_result("run-dup"));
 
     let mut updated = completed_result("run-dup");
     updated.output_summary = "second observation".to_string();
-    cache.record_result(&updated, "fixture.observe");
+    cache.record_result(&updated);
 
     assert_eq!(cache.len(), 1);
     assert_eq!(

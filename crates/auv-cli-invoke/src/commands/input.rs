@@ -7,6 +7,7 @@ use crate::{
   },
   invoke_command,
 };
+use crate::{InvokeReport, InvokeReportField};
 #[cfg(target_os = "macos")]
 use auv_tracing_driver::{ProducedArtifact, now_millis};
 
@@ -277,6 +278,10 @@ fn press_key_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     "auv-driver-macos.input",
     &result,
   )
+  .map(|mut output| {
+    attach_input_key_report(&mut output, key, Some("active app"), &result);
+    output
+  })
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -543,6 +548,48 @@ fn input_action_output(
   Ok(output)
 }
 
+fn input_key_report(
+  key: &str,
+  target: Option<&str>,
+  backend: Option<&str>,
+  result: &auv_driver::InputActionResult,
+) -> InvokeReport {
+  let mut fields = vec![
+    report_field("Result", "delivered"),
+    report_field("Key", key),
+    report_field("Target", target.unwrap_or("active app")),
+    report_field("Path", format!("{:?}", result.selected_path)),
+  ];
+  if let Some(backend) = backend {
+    fields.push(report_field("Backend", backend));
+  }
+  InvokeReport {
+    fields,
+    sections: Vec::new(),
+  }
+}
+
+fn attach_input_key_report(
+  output: &mut InvokeCommandOutput,
+  key: &str,
+  target: Option<&str>,
+  result: &auv_driver::InputActionResult,
+) {
+  output.report = Some(input_key_report(
+    key,
+    target,
+    output.backend.as_deref(),
+    result,
+  ));
+}
+
+fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
+  InvokeReportField {
+    label: label.to_string(),
+    value: value.into(),
+  }
+}
+
 #[cfg(target_os = "macos")]
 fn input_action_artifact(
   result: &auv_driver::InputActionResult,
@@ -568,6 +615,7 @@ fn input_action_artifact(
 #[cfg(test)]
 mod click_window_point_tests {
   use super::*;
+  use auv_driver::{InputActionResult, InputDeliveryPath};
   use std::collections::BTreeMap;
 
   #[test]
@@ -635,5 +683,33 @@ mod click_window_point_tests {
     let point = resolve_click_window_point(&inputs, "input.clickWindowPoint", Some(&window))
       .expect("relative pair");
     assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
+  }
+
+  #[test]
+  fn input_key_report_includes_delivered_key_target_and_backend() {
+    let result = InputActionResult::single_success(InputDeliveryPath::ForegroundSystemEvents);
+
+    let mut output = InvokeCommandOutput::new("pressed key in active app");
+    output.backend = Some("auv-driver-macos.input".to_string());
+    attach_input_key_report(&mut output, "Cmd+L", Some("active app"), &result);
+    assert!(
+      output.report.is_some(),
+      "input.key live path calls this helper after driver delivery, so this stable helper test verifies report population without sending a real key"
+    );
+    let report = output.report.as_ref().expect("report should be set");
+
+    assert_eq!(field_value(&report, "Result"), "delivered");
+    assert_eq!(field_value(&report, "Key"), "Cmd+L");
+    assert_eq!(field_value(&report, "Target"), "active app");
+    assert_eq!(field_value(&report, "Backend"), "auv-driver-macos.input");
+  }
+
+  fn field_value<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
+    report
+      .fields
+      .iter()
+      .find(|field| field.label == label)
+      .map(|field| field.value.as_str())
+      .expect("field should exist")
   }
 }

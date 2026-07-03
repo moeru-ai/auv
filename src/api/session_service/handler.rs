@@ -128,7 +128,7 @@ impl SessionApiHandler {
     result: &auv_cli_invoke::InvokeResult,
     recording: &RunRecordingBackend,
   ) -> proto::InvokeResponse {
-    let summary = OperationSummary::capture(result, command_id);
+    let summary = OperationSummary::capture(result);
     // NOTICE(api-p11-invoke-partial-success): invoke already finished; summary
     // persistence failure must not surface as an invoke error (clients must not
     // blind-retry non-idempotent commands). Durability gaps go to known_limits.

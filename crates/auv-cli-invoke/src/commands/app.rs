@@ -3,6 +3,7 @@ use crate::{
   arg::{NO_ARGS, TARGET_ARGS},
   invoke_command,
 };
+use crate::{InvokeReport, InvokeReportField, InvokeReportSection};
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("app", "APP")
@@ -48,8 +49,13 @@ fn probe_permissions_impl() -> InvokeCommandResult {
     .permission()
     .probe()
     .map_err(|error| error.to_string())?;
+  Ok(permission_probe_output(&permissions))
+}
+
+fn permission_probe_output(permissions: &auv_driver::PermissionProbe) -> InvokeCommandOutput {
   let mut output = InvokeCommandOutput::new("macOS permissions probed");
   output.backend = Some("auv-driver-macos.permission".to_string());
+  output.report = Some(permission_report(&permissions));
   output.signals.insert(
     "permission.screen_recording".to_string(),
     permissions.screen_recording.as_str().to_string(),
@@ -70,10 +76,79 @@ fn probe_permissions_impl() -> InvokeCommandResult {
   output
     .known_limits
     .push("app.probePermissions records current permission status only; it does not verify an application workflow.".to_string());
-  Ok(output)
+  output
 }
 
 #[cfg(not(target_os = "macos"))]
 fn probe_permissions_impl() -> InvokeCommandResult {
   Err("app.probePermissions is only available on macOS".to_string())
+}
+
+fn permission_report(permissions: &auv_driver::PermissionProbe) -> InvokeReport {
+  InvokeReport {
+    fields: vec![report_field("Result", "permissions probed")],
+    sections: vec![InvokeReportSection {
+      title: "Permissions".to_string(),
+      fields: vec![
+        report_field("Screen Recording", permissions.screen_recording.as_str()),
+        report_field("ScreenCaptureKit", permissions.screen_capture_kit.as_str()),
+        report_field("Accessibility", permissions.accessibility.as_str()),
+        report_field(
+          "Automation to System Events",
+          permissions.automation_to_system_events.as_str(),
+        ),
+      ],
+    }],
+  }
+}
+
+fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
+  InvokeReportField {
+    label: label.to_string(),
+    value: value.into(),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use auv_driver::{PermissionProbe, PermissionStatus};
+
+  use super::*;
+
+  #[test]
+  fn permission_report_groups_readable_statuses() {
+    let permissions = PermissionProbe {
+      screen_recording: PermissionStatus::Granted,
+      screen_capture_kit: PermissionStatus::Missing,
+      accessibility: PermissionStatus::Unknown,
+      automation_to_system_events: PermissionStatus::Granted,
+    };
+
+    let output = permission_probe_output(&permissions);
+    assert!(
+      output.report.is_some(),
+      "app.probePermissions live path calls this helper after OS probing, so this stable helper test verifies report population without requiring live permission state"
+    );
+    let report = output.report.as_ref().expect("report should be set");
+    let section = &report.sections[0];
+
+    assert_eq!(report.fields[0].value, "permissions probed");
+    assert_eq!(section.title, "Permissions");
+    assert_eq!(field_value(section, "Screen Recording"), "granted");
+    assert_eq!(field_value(section, "ScreenCaptureKit"), "missing");
+    assert_eq!(field_value(section, "Accessibility"), "unknown");
+    assert_eq!(
+      field_value(section, "Automation to System Events"),
+      "granted"
+    );
+  }
+
+  fn field_value<'a>(section: &'a InvokeReportSection, label: &str) -> &'a str {
+    section
+      .fields
+      .iter()
+      .find(|field| field.label == label)
+      .map(|field| field.value.as_str())
+      .expect("field should exist")
+  }
 }

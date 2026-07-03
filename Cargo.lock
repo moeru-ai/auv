@@ -410,10 +410,13 @@ dependencies = [
 name = "auv-cli-invoke"
 version = "0.0.1"
 dependencies = [
+ "anstream",
+ "anstyle",
  "auv-cli-invoke-macros",
  "auv-driver",
  "auv-driver-macos",
  "auv-tracing-driver",
+ "clap",
  "serde",
  "serde_json",
 ]
