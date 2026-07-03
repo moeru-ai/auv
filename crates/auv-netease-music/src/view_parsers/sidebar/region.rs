@@ -1,8 +1,11 @@
 use crate::*;
+use auv_driver::Size;
+use auv_driver::geometry::{Point, WindowPoint};
+use auv_driver::window::Window;
 
 pub(crate) fn detect_sidebar_region(
   manual: Option<RatioRect>,
-  window_size: auv_driver::Size,
+  window_size: Size,
   recognition: &TextRecognition,
 ) -> Result<ViewRegionRecord, ParserDiagnostic> {
   if let Some(region) = manual {
@@ -72,7 +75,7 @@ pub(crate) fn detect_sidebar_region(
   )))
 }
 
-fn min_playlist_sidebar_body_height(window_size: auv_driver::Size) -> f64 {
+fn min_playlist_sidebar_body_height(window_size: Size) -> f64 {
   // NOTICE: Heuristic minimum playlist sidebar body height for logged-in layouts.
   // This is not a stable contract; tune against live SIGNOFF probes when the client
   // layout shifts.
@@ -90,7 +93,7 @@ fn min_playlist_sidebar_body_height(window_size: auv_driver::Size) -> f64 {
   ratio.max(floor).min(cap)
 }
 
-fn expand_sidebar_playlist_body_top(y_marker: f64, window_size: auv_driver::Size) -> f64 {
+fn expand_sidebar_playlist_body_top(y_marker: f64, window_size: Size) -> f64 {
   let bottom = playlist_sidebar_bottom(window_size);
   let fallback_y = fallback_playlist_sidebar_region(window_size)
     .bounds
@@ -114,12 +117,12 @@ pub(crate) enum DefaultScreenRestoreReason {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DefaultScreenRestore {
   pub(crate) reason: DefaultScreenRestoreReason,
-  pub(crate) point: auv_driver::Point,
+  pub(crate) point: Point,
 }
 
 pub(crate) fn detect_default_screen_restore(
   recognition: &TextRecognition,
-  window_size: auv_driver::Size,
+  window_size: Size,
 ) -> Option<DefaultScreenRestore> {
   let screen = screen::classify_screen(recognition, window_size);
   let point = match screen.state() {
@@ -133,18 +136,18 @@ pub(crate) fn detect_default_screen_restore(
   })
 }
 
-pub(crate) fn song_detail_restore_point(_window_size: auv_driver::Size) -> auv_driver::Point {
+pub(crate) fn song_detail_restore_point(_window_size: Size) -> Point {
   // NOTICE: This is a learned window-local logical point for the song-detail
   // back affordance. The older heuristic point `(40, 48)` landed left and below
   // the actual clickable target in the live macOS client.
-  auv_driver::Point::new(82.602, 16.336)
+  Point::new(82.602, 16.336)
 }
 
 #[cfg(target_os = "macos")]
 pub(crate) fn click_default_screen_restore(
   session: &MacosDriverSession,
-  window: &auv_driver::Window,
-  point: auv_driver::Point,
+  window: &Window,
+  point: Point,
 ) -> Result<(), String> {
   let lease = session
     .window()
@@ -173,7 +176,7 @@ pub(crate) fn click_default_screen_restore(
   Ok(())
 }
 
-pub(crate) fn playlist_sidebar_bottom(window_size: auv_driver::Size) -> f64 {
+pub(crate) fn playlist_sidebar_bottom(window_size: Size) -> f64 {
   // Guard against non-positive / NaN heights before clamping. `f64::clamp`
   // panics on `min > max` (and on NaN bounds), and `(h - 82).clamp(0, h)`
   // becomes `clamp(_, 0, -h)` when `h < 0`. Treat such windows as having
@@ -182,7 +185,7 @@ pub(crate) fn playlist_sidebar_bottom(window_size: auv_driver::Size) -> f64 {
   (height - 82.0).clamp(0.0, height)
 }
 
-pub(crate) fn broad_sidebar_probe_bounds(window_size: auv_driver::Size) -> ViewBounds {
+pub(crate) fn broad_sidebar_probe_bounds(window_size: Size) -> ViewBounds {
   // Floor window width at 0 before computing the probe. The
   // `(.max(280)).min(width * 0.42)` shape silently yields a negative probe
   // width when the input width is negative, which corrupts downstream
@@ -192,14 +195,14 @@ pub(crate) fn broad_sidebar_probe_bounds(window_size: auv_driver::Size) -> ViewB
   ViewBounds::new(0.0, 0.0, probe_width, playlist_sidebar_bottom(window_size))
 }
 
-pub(crate) fn sidebar_scroll_anchor(bounds: ViewBounds) -> auv_driver::WindowPoint {
-  auv_driver::WindowPoint::new(
+pub(crate) fn sidebar_scroll_anchor(bounds: ViewBounds) -> WindowPoint {
+  WindowPoint::new(
     bounds.x + bounds.width * 0.5,
     bounds.y + bounds.height * 0.75,
   )
 }
 
-pub(crate) fn fallback_playlist_sidebar_region(window_size: auv_driver::Size) -> ViewRegionRecord {
+pub(crate) fn fallback_playlist_sidebar_region(window_size: Size) -> ViewRegionRecord {
   // NOTICE(netease-sidebar-fallback): if OCR misses section headers, avoid the
   // full left rail because it can target library/navigation rows such as
   // "我喜欢的音乐". Start near the observed playlist section band instead;
@@ -229,10 +232,7 @@ pub(crate) fn sidebar_region_record(bounds: ViewBounds) -> ViewRegionRecord {
   }
 }
 
-pub(crate) fn ratio_to_window_bounds(
-  region: RatioRect,
-  window_size: auv_driver::Size,
-) -> ViewBounds {
+pub(crate) fn ratio_to_window_bounds(region: RatioRect, window_size: Size) -> ViewBounds {
   ViewBounds::new(
     region.x * window_size.width,
     region.y * window_size.height,

@@ -349,23 +349,17 @@ pub(crate) fn build_page_observation_snapshot(
     .collect::<Vec<_>>();
   let observation_count = page_observations.len();
   let mut detail = serde_json::Map::new();
-  detail.insert(
-    "page_index".to_string(),
-    serde_json::Value::from(page_index),
-  );
+  detail.insert("page_index".to_string(), Value::from(page_index));
   detail.insert(
     "observation_count".to_string(),
-    serde_json::Value::from(observation_count),
+    Value::from(observation_count),
   );
   detail.insert(
     "new_observation_count".to_string(),
-    serde_json::Value::from(new_observation_count),
+    Value::from(new_observation_count),
   );
   if let Some(path) = &screenshot_path {
-    detail.insert(
-      "screenshot_artifact".to_string(),
-      serde_json::Value::from(path.clone()),
-    );
+    detail.insert("screenshot_artifact".to_string(), Value::from(path.clone()));
   }
 
   let mut known_limits = Vec::new();
@@ -407,7 +401,7 @@ pub(crate) fn build_page_observation_snapshot(
     capture_contract_ref: None,
     evidence,
     nodes,
-    detail: serde_json::Value::Object(detail),
+    detail: Value::Object(detail),
     known_limits,
   }
 }

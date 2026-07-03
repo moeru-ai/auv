@@ -129,10 +129,7 @@ fn spatial_query_manifest_matches_report(
     && report.target_semantics == manifest.target_semantics
 }
 
-fn unique_matching_report<'a, T>(
-  reports: &'a [T],
-  mut matches: impl FnMut(&'a T) -> bool,
-) -> Option<&'a T> {
+fn unique_matching_report<T>(reports: &[T], mut matches: impl FnMut(&T) -> bool) -> Option<&T> {
   let mut iter = reports.iter().filter(|report| matches(report));
   let first = iter.next()?;
   if iter.next().is_some() {

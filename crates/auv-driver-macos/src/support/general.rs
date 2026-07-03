@@ -50,7 +50,7 @@ pub fn group_ocr_matches_into_rows(matches: &[&OcrTextMatch]) -> Vec<ObservedOcr
     if let Some(existing) = rows.last_mut() {
       let existing_center_y = existing.bounds.y as f64 + (existing.bounds.height as f64 / 2.0);
       let vertical_threshold =
-        ((existing.bounds.height.max(matched.bounds.height)) as f64 * 1.5).max(36.0);
+        ((existing.bounds.height.max(matched.bounds.height) as f64) * 1.5).max(36.0);
       if (center_y - existing_center_y).abs() <= vertical_threshold {
         existing.bounds = union_rects(&existing.bounds, &matched.bounds);
         if !existing

@@ -434,7 +434,7 @@ where
     job_url: submission.job_url,
     readiness_blocker: submission.blocker,
     probe_command: "ns-train --help".to_string(),
-    probe_succeeded: std::process::Command::new("ns-train")
+    probe_succeeded: Command::new("ns-train")
       .arg("--help")
       .status()
       .map(|status| status.success())
@@ -479,15 +479,12 @@ where
 }
 
 fn default_submit_job(request: &TrainingLaunchJobRequest) -> TrainingLaunchJobSubmission {
-  match run_submit_command(request) {
-    Ok(submission) => submission,
-    Err(error) => TrainingLaunchJobSubmission {
-      status: TrainingLaunchJobStatus::Failed,
-      job_id: None,
-      job_url: None,
-      blocker: Some(error),
-    },
-  }
+  run_submit_command(request).unwrap_or_else(|error| TrainingLaunchJobSubmission {
+    status: TrainingLaunchJobStatus::Failed,
+    job_id: None,
+    job_url: None,
+    blocker: Some(error),
+  })
 }
 
 fn run_submit_command(

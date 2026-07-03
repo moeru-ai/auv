@@ -570,9 +570,9 @@ fn setup_cache_dir(explicit: Option<&Path>) -> Result<PathBuf, CliError> {
   if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
     return Ok(home.join(".cache").join("auv").join("game-balatro"));
   }
-  Err(CliError::Message(format!(
-    "could not resolve Balatro setup cache directory; pass --cache-dir"
-  )))
+  Err(CliError::Message(
+    "could not resolve Balatro setup cache directory; pass --cache-dir".to_string(),
+  ))
 }
 
 fn resolve_setup_love_path(args: &SetupArgs) -> Result<PathBuf, CliError> {
@@ -807,8 +807,8 @@ fn deferred(command: &'static str, reason: &'static str) -> Result<(), CliError>
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 struct CardReadResult {
-  slot: crate::model::SlotId,
-  bbox: auv_inference_common::BoundingBox,
+  slot: SlotId,
+  bbox: BoundingBox,
   confidence: f32,
   reading: CardReadValue,
   evidence: CardReadEvidence,
@@ -824,9 +824,9 @@ enum ObjectReadZone {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 struct ObjectReadResult {
-  slot: crate::model::SlotId,
+  slot: SlotId,
   kind: String,
-  bbox: auv_inference_common::BoundingBox,
+  bbox: BoundingBox,
   confidence: f32,
   reading: ObjectReadValue,
   evidence: ObjectReadEvidence,
@@ -896,7 +896,7 @@ struct PackChoice {
   hover_ocr_region: Option<RatioRect>,
   #[serde(skip_serializing_if = "Option::is_none")]
   hover_error: Option<String>,
-  bbox: auv_inference_common::BoundingBox,
+  bbox: BoundingBox,
   confidence: f32,
 }
 
@@ -4446,7 +4446,7 @@ fn window_point_from_consumable(
   window_point_from_frame_point(state, window, bbox_center_point(consumable.bbox))
 }
 
-fn bbox_center_point(bbox: auv_inference_common::BoundingBox) -> Point {
+fn bbox_center_point(bbox: BoundingBox) -> Point {
   Point::new(
     f64::from((bbox.x1 + bbox.x2) / 2.0),
     f64::from((bbox.y1 + bbox.y2) / 2.0),
@@ -5348,7 +5348,7 @@ mod tests {
 
   #[test]
   fn operation_summary_strips_bbox_and_trace_details() {
-    let mut payload = serde_json::json!({
+    let mut payload = json!({
       "operation": "cards.select",
       "target": "Balatro",
       "selected_cards": [
@@ -5390,7 +5390,7 @@ mod tests {
 
   #[test]
   fn operation_details_are_left_intact_when_not_stripped() {
-    let payload = serde_json::json!({
+    let payload = json!({
       "operation": "cards.select",
       "selected_cards": [
         {

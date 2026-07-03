@@ -362,9 +362,8 @@ pub fn build_scene_state_product(
     .clone();
 
   // NOTICE(scan-s5a): motion exposed for context; not used in readiness / visibility / presence.
-  let motion = match estimate_viewport_motion(&input.bundle) {
-    Ok(motion) => motion,
-    Err(crate::motion::MotionError::InsufficientFrames { found }) => {
+  let motion = estimate_viewport_motion(&input.bundle).unwrap_or_else(|error| match error {
+    crate::motion::MotionError::InsufficientFrames { found } => {
       MotionResult::Unknown(MotionUnknown {
         code: "motion_unknown".into(),
         message: format!(
@@ -372,7 +371,7 @@ pub fn build_scene_state_product(
         ),
       })
     }
-  };
+  });
 
   let observations_valid = observations_match_bundle(&input.bundle, &input.observations_by_frame);
   let associations = if observations_valid {

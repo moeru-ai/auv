@@ -703,10 +703,10 @@ fn run_external_holdout_render(
   })
 }
 
-fn select_holdout_frame<'a>(
-  scene_packet_manifest: &'a ScenePacketManifest,
+fn select_holdout_frame(
+  scene_packet_manifest: &ScenePacketManifest,
   holdout_frame_index: Option<usize>,
-) -> Option<&'a ScenePacketFrameRecord> {
+) -> Option<&ScenePacketFrameRecord> {
   let mut in_game_frames = scene_packet_manifest
     .frames
     .iter()

@@ -680,7 +680,7 @@ pub fn record_candidate_action_execution_artifact(
     "g3-binding-fact",
     &format!("{}-binding-fact", request.artifact_label),
     "MC-5 G3 binding fact recorded through the existing operation-result seam.",
-    &serde_json::json!({
+    &json!({
       "artifact_version": "g3_binding_fact_v0",
       "producer": "candidate_action_execution",
       "run_id": context.run_id(),
@@ -2313,7 +2313,7 @@ mod tests {
         width: 300,
         height: 80,
       },
-      serde_json::json!({
+      json!({
         "x": 0.0,
         "y": 0.0,
         "width": 500.0,
@@ -2330,7 +2330,7 @@ mod tests {
     focused: bool,
   ) -> RecognitionResult {
     let capture_artifact = sample_artifact_ref();
-    let target_bounds = serde_json::json!({
+    let target_bounds = json!({
       "x": box_.x,
       "y": box_.y,
       "width": box_.width,
@@ -2451,7 +2451,7 @@ mod tests {
           width: 300,
           height: 80,
         },
-        serde_json::json!({
+        json!({
           "x": 0.0,
           "y": 0.0,
           "width": 500.0,
@@ -2467,7 +2467,7 @@ mod tests {
           width: 300,
           height: 80,
         },
-        serde_json::json!({
+        json!({
           "x": 0.0,
           "y": 0.0,
           "width": 500.0,
@@ -4095,7 +4095,7 @@ mod tests {
       );
       return;
     };
-    let expected_window_frame = serde_json::json!({
+    let expected_window_frame = json!({
       "x": expected_window_frame.origin.x,
       "y": expected_window_frame.origin.y,
       "width": expected_window_frame.size.width,

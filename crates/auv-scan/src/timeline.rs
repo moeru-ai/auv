@@ -282,7 +282,7 @@ mod tests {
   fn build_scan_timeline_matches_two_frame_manifest() {
     let fixture_dir = two_frame_fixture_dir();
     let out_dir = next_temp_dir("timeline-manifest");
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = fs::remove_dir_all(&out_dir);
     produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
     let timeline = build_scan_timeline_from_bundle(&bundle);
@@ -290,7 +290,7 @@ mod tests {
     assert_eq!(timeline.segments.len(), 1);
 
     let manifest_path = fixture_dir.join("manifest.json");
-    let manifest_text = std::fs::read_to_string(&manifest_path).expect("read manifest");
+    let manifest_text = fs::read_to_string(&manifest_path).expect("read manifest");
     let manifest: TwoFrameManifest = serde_json::from_str(&manifest_text).expect("parse manifest");
 
     match &timeline.segments[0].motion {
@@ -305,43 +305,43 @@ mod tests {
       }
       other => panic!("expected estimated motion, got {other:?}"),
     }
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = fs::remove_dir_all(&out_dir);
   }
 
   #[test]
   fn write_read_timeline_artifact_roundtrip() {
     let fixture_dir = two_frame_fixture_dir();
     let out_dir = next_temp_dir("timeline-roundtrip");
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = fs::remove_dir_all(&out_dir);
     produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
     let timeline = build_scan_timeline_from_bundle(&bundle);
     let written = write_timeline_artifact(&out_dir, &timeline).expect("write");
     let read_back = read_timeline_artifact(&written).expect("read");
     assert_eq!(read_back, timeline);
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = fs::remove_dir_all(&out_dir);
   }
 
   #[test]
   fn read_timeline_artifact_rejects_unknown_schema_version() {
     let dir = next_temp_dir("timeline-bad-schema");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
     let path = dir.join(SCAN_TIMELINE_ARTIFACT_FILE_NAME);
-    std::fs::write(
+    fs::write(
       &path,
       r#"{"schema_version":"scan-timeline-v99","segments":[],"diagnostics":[]}"#,
     )
     .unwrap();
     let err = read_timeline_artifact(&path).expect_err("schema");
     assert!(matches!(err, TimelineError::SchemaMismatch { .. }));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
   }
 
   #[test]
   fn write_timeline_artifact_allows_empty_segments_with_diagnostics() {
     let dir = next_temp_dir("timeline-empty-segments");
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
     let bundle = handbuilt_bundle(vec![sample_frame("only", 0, 0)]);
     let timeline = build_scan_timeline_from_bundle(&bundle);
     assert!(timeline.segments.is_empty());
@@ -366,7 +366,7 @@ mod tests {
     let written_three = write_timeline_artifact(&dir, &timeline_three).expect("write three");
     let read_three = read_timeline_artifact(&written_three).expect("read three");
     assert_eq!(read_three, timeline_three);
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
   }
 
   #[test]
@@ -395,20 +395,20 @@ mod tests {
   #[test]
   fn load_scan_frames_rejects_duplicate_sequence_index_in_directory() {
     let dir = next_temp_dir("timeline-duplicate-reader");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
     let frame_a = sample_frame("frame-a", 0, 0);
     let frame_b = sample_frame("frame-b", 0, 12);
     let json_a = serde_json::to_string_pretty(&frame_a).unwrap();
     let json_b = serde_json::to_string_pretty(&frame_b).unwrap();
-    std::fs::write(dir.join("scan-frame-0001.json"), json_a).unwrap();
-    std::fs::write(dir.join("scan-frame-0002.json"), json_b).unwrap();
+    fs::write(dir.join("scan-frame-0001.json"), json_a).unwrap();
+    fs::write(dir.join("scan-frame-0002.json"), json_b).unwrap();
     let err = load_scan_frames_from_dir(&dir).expect_err("duplicate sequence_index");
     assert!(matches!(
       err,
       ScanInspectError::DuplicateSequenceIndex { .. }
     ));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
   }
 
   #[test]
@@ -430,7 +430,7 @@ mod tests {
   fn format_scan_timeline_text_includes_markers() {
     let fixture_dir = two_frame_fixture_dir();
     let out_dir = next_temp_dir("timeline-text");
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = fs::remove_dir_all(&out_dir);
     produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
     let timeline = build_scan_timeline_from_bundle(&bundle);
@@ -438,6 +438,6 @@ mod tests {
     assert!(text.contains("[timeline.segment]"));
     assert!(text.contains("[timeline.motion]"));
     assert!(text.contains("delta_y=12"));
-    let _ = std::fs::remove_dir_all(&out_dir);
+    let _ = fs::remove_dir_all(&out_dir);
   }
 }

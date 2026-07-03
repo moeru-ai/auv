@@ -184,10 +184,6 @@ impl RunRecorder for InspectServerRunRecorder {
     result.or_else(|message| self.handle_failure(message))
   }
 
-  fn requires_successful_delivery(&self) -> bool {
-    self.required
-  }
-
   fn record_artifact_bytes(
     &self,
     run_id: &RunId,
@@ -251,6 +247,10 @@ impl RunRecorder for InspectServerRunRecorder {
         Ok(())
       }
     })
+  }
+
+  fn requires_successful_delivery(&self) -> bool {
+    self.required
   }
 }
 

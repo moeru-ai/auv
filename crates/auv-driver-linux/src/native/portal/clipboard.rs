@@ -106,13 +106,12 @@ impl ClipboardSession {
       Ok(fd) => fd,
       Err(error) => {
         if self.owns_selection {
-          return Ok(
-            self
-              .text
-              .lock()
-              .expect("clipboard owner text lock poisoned")
-              .clone(),
-          );
+          let text = self
+            .text
+            .lock()
+            .expect("clipboard owner text lock poisoned")
+            .clone();
+          return Ok(text);
         }
         let message = error.to_string();
         if message.contains("NoSelection")
@@ -120,11 +119,10 @@ impl ClipboardSession {
           || message.contains("Failed to selection read")
         {
           return Ok(String::new());
-        } else {
-          return Err(backend(format!(
-            "failed to read portal clipboard text: {error}"
-          )));
         }
+        Err(backend(format!(
+          "failed to read portal clipboard text: {error}"
+        )))
       }
     };
     let std_fd = StdOwnedFd::from(fd);

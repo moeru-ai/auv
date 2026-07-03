@@ -1063,7 +1063,7 @@ mod tests {
     let store = LocalStore::new(root.clone()).expect("should initialize");
     let run = dummy_run("run_duplicate_artifact_id");
     let span_a = dummy_span(&run.root_span_id);
-    let span_b_id = crate::trace::SpanId::new("0000000000000002");
+    let span_b_id = SpanId::new("0000000000000002");
     let span_b = dummy_span(&span_b_id);
     let artifact_a = dummy_artifact(&span_a.span_id);
     let artifact_b = ArtifactRecordV1Alpha1 {
@@ -1192,17 +1192,17 @@ mod tests {
   }
 
   fn temp_dir(label: &str) -> PathBuf {
-    let path = env::temp_dir().join(format!("auv-{}-{}", label, crate::time::now_millis()));
+    let path = env::temp_dir().join(format!("auv-{}-{}", label, now_millis()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
   }
 
   fn dummy_run(run_id: &str) -> RunRecordV1Alpha1 {
-    let root_span_id = crate::trace::SpanId::new("0000000000000001");
+    let root_span_id = SpanId::new("0000000000000001");
     RunRecordV1Alpha1 {
       api_version: RUN_API_VERSION.to_string(),
-      run_id: crate::trace::RunId::new(run_id),
+      run_id: RunId::new(run_id),
       trace_id: crate::trace::TraceId::new("00000000000000000000000000000001"),
       run_type: RunType::Command,
       state: TraceState::Ended,
@@ -1216,9 +1216,9 @@ mod tests {
     }
   }
 
-  fn dummy_span(span_id: &crate::trace::SpanId) -> SpanRecordV1Alpha1 {
+  fn dummy_span(span_id: &SpanId) -> SpanRecordV1Alpha1 {
     SpanRecordV1Alpha1 {
-      api_version: crate::trace::SPAN_API_VERSION.to_string(),
+      api_version: SPAN_API_VERSION.to_string(),
       span_id: span_id.clone(),
       parent_span_id: None,
       name: "auv.command".to_string(),
@@ -1232,10 +1232,10 @@ mod tests {
     }
   }
 
-  fn dummy_event(span_id: &crate::trace::SpanId) -> EventRecordV1Alpha1 {
+  fn dummy_event(span_id: &SpanId) -> EventRecordV1Alpha1 {
     EventRecordV1Alpha1 {
-      api_version: crate::trace::EVENT_API_VERSION.to_string(),
-      event_id: crate::trace::EventId::new("event_1"),
+      api_version: EVENT_API_VERSION.to_string(),
+      event_id: EventId::new("event_1"),
       span_id: span_id.clone(),
       name: "command.resolved".to_string(),
       timestamp_millis: 100,
@@ -1245,10 +1245,10 @@ mod tests {
     }
   }
 
-  fn dummy_artifact(span_id: &crate::trace::SpanId) -> ArtifactRecordV1Alpha1 {
+  fn dummy_artifact(span_id: &SpanId) -> ArtifactRecordV1Alpha1 {
     ArtifactRecordV1Alpha1 {
-      api_version: crate::trace::ARTIFACT_API_VERSION.to_string(),
-      artifact_id: crate::trace::ArtifactId::new("artifact_0001"),
+      api_version: ARTIFACT_API_VERSION.to_string(),
+      artifact_id: ArtifactId::new("artifact_0001"),
       span_id: span_id.clone(),
       event_id: None,
       role: "driver.output".to_string(),

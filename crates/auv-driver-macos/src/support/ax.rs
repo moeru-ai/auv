@@ -261,11 +261,11 @@ pub fn ax_node_center(node: &ObservedAxNode) -> (f64, f64) {
 /// plus a role bias toward pressable roles (AXButton, AXCheckBox, AXLink,
 /// AXMenuItem). The role bias breaks ties when a button is wrapped by a
 /// same-sized group element with no role of its own.
-pub fn find_ax_node_at_point<'a>(
-  snapshot: &'a ObservedAxTreeSnapshot,
+pub fn find_ax_node_at_point(
+  snapshot: &ObservedAxTreeSnapshot,
   x: f64,
   y: f64,
-) -> Option<&'a ObservedAxNode> {
+) -> Option<&ObservedAxNode> {
   snapshot
     .nodes
     .iter()

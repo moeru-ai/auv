@@ -806,8 +806,8 @@ mod tests {
     serde_json::to_vec_pretty(&json).map_err(|error| error.to_string())
   }
 
-  fn sample_reacquire_evidence() -> crate::view_memory::ReacquireTraceEvidence {
-    crate::view_memory::ReacquireTraceEvidence {
+  fn sample_reacquire_evidence() -> ReacquireTraceEvidence {
+    ReacquireTraceEvidence {
       scope_id: "playlist_sidebar".into(),
       target_kind: "label".into(),
       outcome: "reacquired".into(),
@@ -856,7 +856,7 @@ mod tests {
     let span = run
       .spans
       .iter()
-      .find(|span| span.name == auv_view::memory::SPAN_MEMORY_WRITE)
+      .find(|span| span.name == SPAN_MEMORY_WRITE)
       .expect("memory_write span");
     assert_eq!(span.attributes.len(), 6);
     assert_eq!(
@@ -881,12 +881,7 @@ mod tests {
       persist_playlist_ls_artifacts(&store_root, &scan, &inputs, false).expect("persist");
     let store = LocalStore::new(store_root.clone()).expect("store");
     let run = store.read_run(&persisted.lineage.run_id).expect("run");
-    assert!(
-      !run
-        .spans
-        .iter()
-        .any(|span| span.name == auv_view::memory::SPAN_MEMORY_WRITE)
-    );
+    assert!(!run.spans.iter().any(|span| span.name == SPAN_MEMORY_WRITE));
     let _ = std::fs::remove_dir_all(&root);
   }
 
@@ -964,7 +959,7 @@ mod tests {
       run
         .spans
         .iter()
-        .any(|span| span.name == auv_view::memory::SPAN_REACQUIRE_MEMORY_LOAD)
+        .any(|span| span.name == SPAN_REACQUIRE_MEMORY_LOAD)
     );
     assert!(
       run

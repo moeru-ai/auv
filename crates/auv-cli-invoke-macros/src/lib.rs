@@ -47,10 +47,10 @@ pub fn invoke_command(attr: TokenStream, item: TokenStream) -> TokenStream {
   let mut output = item.to_string();
   output.push('\n');
   output.push_str(&generated);
-  match output.parse() {
-    Ok(tokens) => tokens,
-    Err(_) => compile_error("invoke_command generated invalid Rust"),
-  }
+  output.parse().map_or_else(
+    |_| compile_error("invoke_command generated invalid Rust"),
+    |tokens| tokens,
+  )
 }
 
 fn find_function_name(item: TokenStream) -> Option<String> {

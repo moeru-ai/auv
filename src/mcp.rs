@@ -544,7 +544,7 @@ mod tests {
         ),
       })
       .await?;
-    let invoke_json: serde_json::Value = serde_json::from_str(
+    let invoke_json: Value = serde_json::from_str(
       &invoke
         .content
         .first()
@@ -570,7 +570,7 @@ mod tests {
     );
     assert_eq!(
       invoke_json.get("signals"),
-      Some(&serde_json::Value::Object(Default::default()))
+      Some(&Value::Object(Default::default()))
     );
     assert_eq!(
       invoke_json
@@ -594,7 +594,7 @@ mod tests {
         ),
       })
       .await?;
-    let inspect_json: serde_json::Value = serde_json::from_str(
+    let inspect_json: Value = serde_json::from_str(
       &inspect
         .content
         .first()
@@ -630,7 +630,7 @@ mod tests {
         ),
       })
       .await?;
-    let failed_invoke_json: serde_json::Value = serde_json::from_str(
+    let failed_invoke_json: Value = serde_json::from_str(
       &failed_invoke
         .content
         .first()
@@ -671,7 +671,7 @@ mod tests {
         ),
       })
       .await?;
-    let failed_inspect_json: serde_json::Value = serde_json::from_str(
+    let failed_inspect_json: Value = serde_json::from_str(
       &failed_inspect
         .content
         .first()
@@ -754,6 +754,6 @@ mod tests {
   }
 
   fn temp_dir(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()))
+    std::env::temp_dir().join(format!("auv-{}-{}", label, now_millis()))
   }
 }

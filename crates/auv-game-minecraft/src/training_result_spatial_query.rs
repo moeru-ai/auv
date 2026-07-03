@@ -743,21 +743,21 @@ fn run_command_provider_backend(
   }
 
   let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-  let answer = match serde_json::from_str::<TrainingResultSpatialQueryAnswer>(&stdout) {
-    Ok(answer) => answer,
-    Err(error) => TrainingResultSpatialQueryAnswer {
-      status: TrainingResultSpatialQueryStatus::Failed,
-      reason: Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid),
-      message: Some(format!(
-        "failed to parse MC-12 spatial query command output: {error}"
-      )),
-      basis_frame_id: None,
-      visibility: None,
-      screen_point: None,
-      match_radius_px: None,
-      confidence: None,
-    },
-  };
+  let answer =
+    serde_json::from_str::<TrainingResultSpatialQueryAnswer>(&stdout).unwrap_or_else(|error| {
+      TrainingResultSpatialQueryAnswer {
+        status: TrainingResultSpatialQueryStatus::Failed,
+        reason: Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid),
+        message: Some(format!(
+          "failed to parse MC-12 spatial query command output: {error}"
+        )),
+        basis_frame_id: None,
+        visibility: None,
+        screen_point: None,
+        match_radius_px: None,
+        confidence: None,
+      }
+    });
 
   Ok(BackendOutcome {
     answer,

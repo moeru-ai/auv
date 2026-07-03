@@ -8605,7 +8605,7 @@ mod tests {
       summary: super::OsuVisualTruthSpatialQueryManifestSummary,
     ) -> super::OsuVisualTruthSpatialQueryManifestLineage {
       super::OsuVisualTruthSpatialQueryManifestLineage {
-        artifact: super::ArtifactRefLineage {
+        artifact: ArtifactRefLineage {
           run_id: RunId::new("run_osu_readiness"),
           artifact_id: ArtifactId::new(artifact_id),
           span_id: SpanId::new("span_osu_readiness"),

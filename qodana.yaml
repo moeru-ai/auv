@@ -93,3 +93,12 @@ exclude:
   # suppress repository-management noise instead.
   - name: SSBasedInspection
   - name: IgnoreFileDuplicateEntry
+  - name: Annotator
+    paths:
+      - crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe/witness/failed_expected_slots.json
+      - crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe/broken/bad_schema/detection_bundle.json
+      - crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe/broken/bad_schema
+      - crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe/witness
+  - name: YAMLSchemaValidation
+    paths:
+      - .qodana/profiles/qodana.yaml
