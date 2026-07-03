@@ -1,19 +1,24 @@
-use std::fs;
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
+#[cfg(target_os = "macos")]
 use crate::candidate_promotion::PromotionProjection;
+#[cfg(target_os = "macos")]
 use crate::contract::{
   ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
   RecognitionSurface, RecognizedItem,
 };
+#[cfg(target_os = "macos")]
 use crate::model::{AuvResult, now_millis};
-use auv_tracing_driver::recorded_operation::RecordedOperationContext;
-
 #[cfg(target_os = "macos")]
 use auv_driver_macos::types::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
+#[cfg(target_os = "macos")]
+use auv_tracing_driver::recorded_operation::RecordedOperationContext;
+#[cfg(target_os = "macos")]
+use serde_json::json;
+#[cfg(target_os = "macos")]
+use std::fs;
+#[cfg(target_os = "macos")]
+use std::path::Path;
 
 const AX_RECOGNITION_ARTIFACT_ROLE: &str = "ax-recognition";
 const AX_RECOGNITION_BRIDGE_VERSION: &str = "ax-tree-recognitionresult.v0";

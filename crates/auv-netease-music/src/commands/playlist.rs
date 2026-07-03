@@ -3,7 +3,9 @@ use std::fmt;
 use auv_view::{ParserDiagnostic, ScanAppContext, ScanWindowContext, ViewBounds};
 use serde::{Deserialize, Serialize};
 
-use crate::{Inputs, PlaybackControlState, PlaylistSelectTarget, run_live_scan_until_query};
+#[cfg(target_os = "macos")]
+use crate::run_live_scan_until_query;
+use crate::{Inputs, PlaybackControlState, PlaylistSelectTarget};
 
 const PLAYLIST_SELECT_BOTTOM_SAFE_PADDING: f64 = 128.0;
 

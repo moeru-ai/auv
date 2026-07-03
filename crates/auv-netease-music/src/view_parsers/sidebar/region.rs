@@ -1,6 +1,7 @@
 use crate::*;
 use auv_driver::Size;
 use auv_driver::geometry::{Point, WindowPoint};
+#[cfg(target_os = "macos")]
 use auv_driver::window::Window;
 
 pub(crate) fn detect_sidebar_region(

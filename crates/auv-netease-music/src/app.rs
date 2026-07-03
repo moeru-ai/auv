@@ -7,7 +7,9 @@ use crate::run_live_scan;
 use crate::views::player::PlayerView;
 #[cfg(target_os = "macos")]
 use crate::views::player::classify_bottom_playback_control_state;
-use crate::views::screen::{self, ScreenView};
+#[cfg(target_os = "macos")]
+use crate::views::screen;
+use crate::views::screen::ScreenView;
 use crate::views::sidebar::SidebarView;
 #[cfg(target_os = "macos")]
 use auv_driver::Capture;

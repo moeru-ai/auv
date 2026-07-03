@@ -130,7 +130,10 @@ fn teach_click_result(
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+  #[cfg(target_os = "macos")]
+  use super::action_result;
+  #[cfg(target_os = "macos")]
+  use crate::native::types::NativeActionResponse;
 
   #[cfg(target_os = "macos")]
   #[test]

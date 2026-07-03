@@ -65,7 +65,10 @@ fn action_result(operation: &str, response: NativeActionResponse) -> AuvResult<(
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+  #[cfg(target_os = "macos")]
+  use super::decode_clipboard_snapshot;
+  #[cfg(target_os = "macos")]
+  use crate::native::types::NativeClipboardSnapshotResponse;
 
   #[cfg(target_os = "macos")]
   #[test]

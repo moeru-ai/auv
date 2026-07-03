@@ -178,7 +178,10 @@ fn action_result(operation: &str, response: NativeActionResponse) -> AuvResult<(
 
 #[cfg(test)]
 mod tests {
-  use super::*;
+  #[cfg(target_os = "macos")]
+  use super::action_result;
+  #[cfg(target_os = "macos")]
+  use crate::native::types::NativeActionResponse;
 
   #[cfg(target_os = "macos")]
   #[test]

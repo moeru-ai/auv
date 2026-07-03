@@ -1,7 +1,9 @@
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
-use crate::scroll::policies::detection_motion::{MotionDetectionPolicy, MotionEvidence};
+#[cfg(target_os = "macos")]
+use crate::scroll::policies::detection_motion::MotionDetectionPolicy;
+use crate::scroll::policies::detection_motion::MotionEvidence;
 use crate::view_parsers::sidebar::classify_sidebar_text;
 use crate::{
   SidebarCandidateKind, SidebarViewportCandidate, SidebarViewportObservation, ViewBounds,

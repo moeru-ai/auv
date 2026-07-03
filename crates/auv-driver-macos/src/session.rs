@@ -24,6 +24,7 @@ use auv_driver::window::{
   WindowMutationOptions, WindowMutationPath, WindowMutationPolicy, WindowMutationResult,
   WindowMutationVerification, WindowRef, WindowState,
 };
+#[cfg(target_os = "macos")]
 use image::RgbaImage;
 
 use crate::driver::MacosDriverSession;
