@@ -12,8 +12,6 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-use serde::de::DeserializeOwned;
-
 use crate::candidate_action_decision::{
   CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
 };
@@ -50,6 +48,7 @@ use auv_game_osu::{
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
+use serde::de::DeserializeOwned;
 
 pub struct MinecraftTelemetrySampleArtifactLineage {
   pub artifact: ArtifactRefLineage,
@@ -9159,7 +9158,7 @@ mod tests {
       0,
       crate::minecraft::MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE,
       "bundle-run.json",
-      &serde_json::json!({
+      &json!({
         "schema_version": bundle_manifest.schema_version,
         "source_run": bundle_manifest.source_run,
         "counts": bundle_manifest.counts,
@@ -10530,7 +10529,7 @@ mod tests {
       0,
       CANDIDATE_PROMOTION_ARTIFACT_ROLE,
       "candidate-promotion-source.json",
-      &serde_json::json!({"fixture": "candidate-promotion"}),
+      &json!({"fixture": "candidate-promotion"}),
     );
 
     let ready_decision = candidate_action_decision_artifact(
@@ -10692,7 +10691,7 @@ mod tests {
       0,
       CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
       "candidate-action-decision-source.json",
-      &serde_json::json!({"fixture": "candidate-action-decision"}),
+      &json!({"fixture": "candidate-action-decision"}),
     );
     let operation_result_artifact = stage_json_artifact(
       &store,
@@ -10702,7 +10701,7 @@ mod tests {
       1,
       "operation-result",
       "candidate-action-operation-result.json",
-      &serde_json::json!({"fixture": "operation-result"}),
+      &json!({"fixture": "operation-result"}),
     );
 
     let ready_execution = candidate_action_execution_artifact(
@@ -12245,7 +12244,7 @@ mod tests {
       0,
       crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
       "minecraft-3dgs-training-result-query.json",
-      &serde_json::json!({"status": "answered"}),
+      &json!({"status": "answered"}),
     );
     let operation_result = stage_json_artifact(
       &store,
@@ -12300,7 +12299,7 @@ mod tests {
       0,
       crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
       "minecraft-3dgs-training-result-query.json",
-      &serde_json::json!({"schema_version": 1, "status": "answered"}),
+      &json!({"schema_version": 1, "status": "answered"}),
     );
     let operation_result = stage_json_artifact(
       &store,
