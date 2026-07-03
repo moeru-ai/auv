@@ -10,6 +10,17 @@
 profile:
   base:
     name: empty
+  groups:
+    - group: ALL
+      ignore:
+        # NOTICE(qodana-source_scope): gate should not fail on markdown, json
+        # fixtures, or svg artwork; this lane is about source-code quality.
+        - "*.md"
+        - "**/*.md"
+        - "*.json"
+        - "**/*.json"
+        - "*.svg"
+        - "**/*.svg"
   inspections:
     - inspection: CargoUnusedDependency
       enabled: true

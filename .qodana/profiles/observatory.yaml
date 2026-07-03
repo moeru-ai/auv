@@ -7,3 +7,15 @@
 
 profile:
   name: qodana.recommended
+  groups:
+    - group: ALL
+      ignore:
+        # NOTICE(qodana-source_scope): fixture/document asset payloads are out
+        # of scan scope; observatory keeps source semantics, not content-asset
+        # lint on markdown, json fixtures, or svg artwork.
+        - "*.md"
+        - "**/*.md"
+        - "*.json"
+        - "**/*.json"
+        - "*.svg"
+        - "**/*.svg"

@@ -24,10 +24,6 @@ exclude:
     paths:
       - .cursor
       - docs/archive
-      # NOTICE(qodana-source_scope): fixture/document asset payloads are out of scan scope; Qodana here is used for source semantics and formal code quality.
-      - "**/*.md"
-      - "**/*.json"
-      - "**/*.svg"
   # NOTICE(qodana-no-spellcheck): spelling churn in identifiers, fixtures, and mixed-language docs is not part of this lane's quality signal.
   - name: SpellCheckingInspection
   # NOTICE(qodana-false_positive): swift-bridge generated bindings use `self` in FFI shims.
