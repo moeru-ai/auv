@@ -24,6 +24,8 @@ exclude:
     paths:
       - .cursor
       - docs/archive
+      - "**/*.json"
+      - "**/*.svg"
   # NOTICE(qodana-false_positive): swift-bridge generated bindings use `self` in FFI shims.
   - name: RsFunctionCannotHaveSelf
     paths:
