@@ -20,7 +20,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
       actions: read
     steps:
       - uses: actions/checkout@v6
@@ -41,12 +40,10 @@ jobs:
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           QODANA_ENDPOINT: https://qodana.cloud
-      - name: Upload SARIF to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: ${{ runner.temp }}/qodana/results/qodana.sarif.json
-          category: qodana-observatory
+      # NOTICE(qodana-sarif-compat): GitHub Code Scanning currently rejects
+      # Qodana SARIF when it contains empty-message `Annotator` results.
+      # Keep observatory in Qodana Cloud + workflow artifacts until we add
+      # a sanitizer step or JetBrains/GitHub compatibility lands upstream.
       - name: Upload results artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -62,7 +59,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
       checks: write
       pull-requests: write
     steps:
@@ -86,9 +82,6 @@ jobs:
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           QODANA_ENDPOINT: https://qodana.cloud
-      - name: Upload SARIF to GitHub Code Scanning
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: ${{ runner.temp }}/qodana/results/qodana.sarif.json
-          category: qodana-gate
+      # NOTICE(qodana-sarif-compat): same compatibility boundary as observatory.
+      # Gate still blocks via Qodana exit status / fail-threshold / PR comment,
+      # but does not upload invalid SARIF into GitHub Code Scanning for now.
