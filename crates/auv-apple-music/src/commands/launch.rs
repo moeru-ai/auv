@@ -11,11 +11,14 @@
 //! Only step 1 is executed on non-Windows targets; steps 2 and 3 are
 //! Windows-only.
 
-use std::time::{Duration, Instant};
-
 use serde::{Deserialize, Serialize};
 
-use crate::app::{APPLE_MUSIC_TITLE, AppleMusicWindow, ResolveOptions, resolve_window};
+use crate::app::{AppleMusicWindow, ResolveOptions, resolve_window};
+
+#[cfg(target_os = "windows")]
+use crate::app::APPLE_MUSIC_TITLE;
+#[cfg(target_os = "windows")]
+use std::time::{Duration, Instant};
 
 // NOTICE(apple-music-store-aumid): Microsoft Store apps launch by
 // AppUserModelID, not executable path. Prefer `Get-StartApps` at runtime

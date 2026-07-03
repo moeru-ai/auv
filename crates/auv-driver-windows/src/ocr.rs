@@ -5,8 +5,11 @@
 //! image pixel coordinates. Mapping pixel coordinates back into screen or
 //! window space stays with the caller, exactly like the macOS driver.
 
+#[cfg(target_os = "windows")]
 use auv_driver::geometry::Rect;
-use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
+#[cfg(target_os = "windows")]
+use auv_driver::vision::RecognizedText;
+use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 
 /// Errors raised while running Windows system OCR.
 #[derive(Debug, thiserror::Error)]

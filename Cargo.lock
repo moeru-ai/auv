@@ -353,7 +353,6 @@ dependencies = [
  "auv-driver-macos",
  "clap",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -364,7 +363,6 @@ dependencies = [
  "auv-driver-macos",
  "clap",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -381,9 +379,7 @@ dependencies = [
  "auv-game-osu",
  "auv-inference-common",
  "auv-media-macos",
- "auv-overlay-macos",
  "auv-scan",
- "auv-steam",
  "auv-tracing-driver",
  "auv-view",
  "axum",
@@ -394,7 +390,6 @@ dependencies = [
  "reqwest 0.12.28",
  "rmcp",
  "schemars",
- "semver",
  "serde",
  "serde_json",
  "swift-bridge-build",
@@ -405,7 +400,6 @@ dependencies = [
  "tonic",
  "tower",
  "tracing",
- "xcap",
 ]
 
 [[package]]
@@ -500,7 +494,6 @@ dependencies = [
  "auv-inference-ultralytics",
  "auv-stage-status",
  "auv-tracing-driver",
- "auv-view",
  "clap",
  "hf-hub",
  "image",
@@ -563,7 +556,6 @@ dependencies = [
  "auv-inference-common",
  "ndarray",
  "ort",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -578,7 +570,6 @@ dependencies = [
  "ndarray",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tokio",
  "tower",
  "ultralytics-inference",
@@ -626,7 +617,6 @@ dependencies = [
  "auv-driver-macos",
  "clap",
  "serde",
- "serde_json",
 ]
 
 [[package]]

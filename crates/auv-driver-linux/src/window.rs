@@ -1,12 +1,13 @@
+#[cfg(target_os = "linux")]
+use crate::atspi;
+#[cfg(target_os = "linux")]
+use crate::capture::capture_display;
+use crate::error::{invalid_input, not_found};
 use auv_driver::capture::Capture;
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::Rect;
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::window::Window;
-
-use crate::atspi;
-use crate::capture::capture_display;
-use crate::error::{invalid_input, not_found};
 
 #[cfg(target_os = "linux")]
 pub fn list_windows() -> DriverResult<Vec<Window>> {
@@ -134,7 +135,7 @@ fn matches_text(value: &str, matcher: &TextMatcher) -> bool {
   }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn crop_capture_to_window(capture: &Capture, frame: Rect) -> DriverResult<image::RgbaImage> {
   let scale_x = f64::from(capture.image.width()) / capture.bounds.size.width;
   let scale_y = f64::from(capture.image.height()) / capture.bounds.size.height;

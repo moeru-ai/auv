@@ -1,11 +1,15 @@
 //! Ensure the Windows NetEase Cloud Music application has a visible window.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::windows::{DEFAULT_PROCESS_NAME, ResolveOptions, resolve_window};
+use crate::windows::{DEFAULT_PROCESS_NAME, ResolveOptions};
+
+#[cfg(target_os = "windows")]
+use crate::windows::resolve_window;
+#[cfg(target_os = "windows")]
+use std::time::{Duration, Instant};
 
 const POLL_INTERVAL_MS: u64 = 250;
 const FORCE_RENDERER_ACCESSIBILITY_ARG: &str = "--force-renderer-accessibility";

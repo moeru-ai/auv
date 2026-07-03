@@ -6,6 +6,9 @@
 //! resolved `HWND` so a single occluded or background window can be captured
 //! without compositing the whole display.
 
+#[cfg(target_os = "windows")]
+use crate::error::backend;
+use crate::error::{invalid_input, not_found};
 use auv_driver::capture::{Capture, DisplayCapture, RegionCapture};
 use auv_driver::display::{Display, ObservedDisplays};
 #[cfg(not(target_os = "windows"))]
@@ -13,8 +16,6 @@ use auv_driver::error::DriverError;
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::{CoordinateSpace, Rect};
 use auv_driver::window::Window;
-
-use crate::error::{backend, invalid_input, not_found};
 
 /// Capture backend tag recorded on every produced display/region [`Capture`].
 #[cfg(target_os = "windows")]

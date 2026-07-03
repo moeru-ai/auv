@@ -1,9 +1,19 @@
-use auv_driver::capture::{Capture, DisplayCapture, RegionCapture};
-use auv_driver::display::{Display, ObservedDisplays};
+#[cfg(target_os = "linux")]
+use auv_driver::capture::Capture;
+use auv_driver::capture::{DisplayCapture, RegionCapture};
+#[cfg(target_os = "linux")]
+use auv_driver::display::Display;
+use auv_driver::display::ObservedDisplays;
 use auv_driver::error::DriverResult;
-use auv_driver::geometry::{CoordinateSpace, Rect};
+#[cfg(target_os = "linux")]
+use auv_driver::geometry::CoordinateSpace;
+use auv_driver::geometry::Rect;
 
-use crate::error::{backend, invalid_input};
+#[cfg(target_os = "linux")]
+use crate::error::backend;
+#[cfg(any(target_os = "linux", test))]
+use crate::error::invalid_input;
+#[cfg(target_os = "linux")]
 use display::{list_targets, resolve_for_region, selected_target_or_none};
 
 mod display;
@@ -126,7 +136,7 @@ fn synthetic_display_from_image(image: &image::RgbaImage) -> Display {
   }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn crop_portal_screenshot_to_region(
   image: image::RgbaImage,
   source_bounds: Rect,
@@ -160,7 +170,7 @@ fn capture_scale_factor(image: &image::RgbaImage, bounds: Rect, default: f64) ->
   f64::from(image.width()) / bounds.size.width
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn scaled_capture_dimension(name: &str, value: f64, scale: f64) -> DriverResult<u32> {
   let value = (value * scale).round();
   if !(0.0..=f64::from(u32::MAX)).contains(&value) {
@@ -171,7 +181,7 @@ fn scaled_capture_dimension(name: &str, value: f64, scale: f64) -> DriverResult<
   Ok(value as u32)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 fn scaled_positive_capture_dimension(name: &str, value: f64, scale: f64) -> DriverResult<u32> {
   let value = scaled_capture_dimension(name, value, scale)?;
   if value == 0 {
