@@ -174,7 +174,7 @@
    SEMANTIC ELEMENTS
    ============================================================ */
 body, .auv-prose {
-  font-family: var(--auv-font-sans);
+  font-family: var(--auv-font-sans), sans-serif;
   font-size: var(--auv-fs-body);
   line-height: var(--auv-lh-body);
   color: var(--auv-ink);
@@ -185,7 +185,7 @@ body, .auv-prose {
 }
 
 h1, .auv-h1 {
-  font-family: var(--auv-font-sans);
+  font-family: var(--auv-font-sans), sans-serif;
   font-weight: 500;
   font-size: var(--auv-fs-h1);
   line-height: var(--auv-lh-tight);
@@ -194,7 +194,7 @@ h1, .auv-h1 {
   margin: 0;
 }
 h2, .auv-h2 {
-  font-family: var(--auv-font-sans);
+  font-family: var(--auv-font-sans), sans-serif;
   font-weight: 500;
   font-size: var(--auv-fs-h2);
   line-height: var(--auv-lh-snug);
@@ -203,7 +203,7 @@ h2, .auv-h2 {
   margin: 0;
 }
 h3, .auv-h3 {
-  font-family: var(--auv-font-sans);
+  font-family: var(--auv-font-sans), sans-serif;
   font-weight: 500;
   font-size: var(--auv-fs-h3);
   line-height: var(--auv-lh-snug);
@@ -211,7 +211,7 @@ h3, .auv-h3 {
   margin: 0;
 }
 h4, .auv-h4 {
-  font-family: var(--auv-font-mono-ui);
+  font-family: var(--auv-font-mono-ui), monospace;
   font-weight: 500;
   font-size: var(--auv-fs-h4);
   line-height: var(--auv-lh-snug);
@@ -220,7 +220,7 @@ h4, .auv-h4 {
 }
 
 p, .auv-p {
-  font-family: var(--auv-font-sans);
+  font-family: var(--auv-font-sans), sans-serif;
   font-size: var(--auv-fs-body);
   line-height: var(--auv-lh-body);
   color: var(--auv-ink-2);
@@ -230,7 +230,7 @@ p, .auv-p {
 
 /* "Meta" — the tiny uppercase labels above ids, versions, dates */
 .auv-meta {
-  font-family: var(--auv-font-mono-ui);
+  font-family: var(--auv-font-mono-ui), monospace;
   font-size: var(--auv-fs-micro);
   font-weight: 500;
   letter-spacing: var(--auv-tracking-caps);
@@ -240,7 +240,7 @@ p, .auv-p {
 
 /* IDs — recipe ids, run ids, bundle ids. */
 .auv-id, code, kbd, samp {
-  font-family: var(--auv-font-mono);
+  font-family: var(--auv-font-mono), monospace;
   font-size: 0.92em;
   font-weight: 400;
   color: var(--auv-ink);
@@ -254,7 +254,7 @@ code {
 
 /* Code block / terminal */
 pre, .auv-code, .auv-terminal {
-  font-family: var(--auv-font-mono);
+  font-family: var(--auv-font-mono), monospace;
   font-size: var(--auv-fs-sm);
   line-height: var(--auv-lh-snug);
   color: var(--auv-shell-fg);
@@ -274,7 +274,7 @@ pre, .auv-code, .auv-terminal {
   height: 20px;
   padding: 0 8px 0 6px;
   border-radius: var(--auv-radius-1);
-  font-family: var(--auv-font-mono-ui);
+  font-family: var(--auv-font-mono-ui), monospace;
   font-size: var(--auv-fs-xs);
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -312,7 +312,7 @@ pre, .auv-code, .auv-terminal {
   height: 32px;
   padding: 0 14px;
   border-radius: var(--auv-radius-2);
-  font-family: var(--auv-font-mono-ui);
+  font-family: var(--auv-font-mono-ui), monospace;
   font-size: var(--auv-fs-sm);
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -357,7 +357,7 @@ pre, .auv-code, .auv-terminal {
   border-left: 2px solid var(--auv-boundary);
   background: var(--auv-boundary-soft);
   padding: var(--auv-space-3) var(--auv-space-4);
-  font-family: var(--auv-font-sans);
+  font-family: var(--auv-font-sans), sans-serif;
   font-size: var(--auv-fs-sm);
   color: var(--auv-ink);
 }
@@ -365,7 +365,7 @@ pre, .auv-code, .auv-terminal {
   border-left: 2px solid var(--auv-frozen);
   background: var(--auv-frozen-soft);
   padding: var(--auv-space-3) var(--auv-space-4);
-  font-family: var(--auv-font-sans);
+  font-family: var(--auv-font-sans), sans-serif;
   font-size: var(--auv-fs-sm);
   color: var(--auv-ink);
 }

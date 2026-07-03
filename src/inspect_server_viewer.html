@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>auv inspect viewer</title>
@@ -46,7 +46,7 @@
     height: 100%;
     background: var(--shell);
     color: var(--fg);
-    font-family: var(--font-sans);
+    font-family: var(--font-sans), sans-serif;
     overflow: hidden;
   }
   @keyframes auv-pulse {
@@ -74,10 +74,10 @@
   }
   .top-bar .logo { width: 22px; height: 22px; image-rendering: pixelated; }
   .top-bar .brand-name {
-    font-family: var(--font-mono); font-size: 13px; font-weight: 500;
+    font-family: var(--font-mono), monospace; font-size: 13px; font-weight: 500;
   }
   .top-bar .crumb {
-    font-family: var(--font-mono); font-size: 12px; color: var(--fg-3);
+    font-family: var(--font-mono), monospace; font-size: 12px; color: var(--fg-3);
   }
   .top-bar .spacer { flex: 1; }
   .conn-pill {
@@ -86,7 +86,7 @@
     background: var(--shell-2);
     border: 1px solid var(--running);
     color: var(--running);
-    font-family: var(--font-ui); font-size: 12px; font-weight: 500;
+    font-family: var(--font-ui), sans-serif; font-size: 12px; font-weight: 500;
   }
   .conn-pill.bad {
     border-color: var(--failed);
@@ -98,7 +98,7 @@
   }
   .conn-pill.live .dot { animation: auv-pulse 1.2s linear infinite; }
   .conn-endpoint {
-    font-family: var(--font-mono); font-size: 11px; color: var(--fg-2);
+    font-family: var(--font-mono), monospace; font-size: 11px; color: var(--fg-2);
   }
 
   /* Main split */
@@ -120,13 +120,13 @@
     background: var(--shell-2);
   }
   .pane-header .label {
-    font-family: var(--font-ui); font-size: 10px; letter-spacing: 0.8px;
+    font-family: var(--font-ui), sans-serif; font-size: 10px; letter-spacing: 0.8px;
     text-transform: uppercase; font-weight: 600;
     color: var(--fg-3);
   }
   .pane-header .spacer { flex: 1; }
   .pane-header .right {
-    font-family: var(--font-mono); font-size: 11px; color: var(--fg-3);
+    font-family: var(--font-mono), monospace; font-size: 11px; color: var(--fg-3);
   }
 
   .filter-chips {
@@ -135,7 +135,7 @@
     display: flex; gap: 6px; flex-wrap: wrap;
   }
   .chip {
-    font-family: var(--font-ui); font-size: 11px; font-weight: 500;
+    font-family: var(--font-ui), sans-serif; font-size: 11px; font-weight: 500;
     padding: 3px 8px; border-radius: 2px;
     border: 1px solid var(--shell-line);
     background: transparent; color: var(--fg-2);
@@ -179,16 +179,16 @@
     display: flex; align-items: center; gap: 8px;
   }
   .run-row .row-id {
-    font-family: var(--font-mono); font-size: 12px;
+    font-family: var(--font-mono), monospace; font-size: 12px;
     color: var(--fg); line-height: 1.35;
     word-break: break-all;
   }
   .run-row .row-summary {
-    font-family: var(--font-sans); font-size: 12px;
+    font-family: var(--font-sans), sans-serif; font-size: 12px;
     color: var(--fg-2); line-height: 1.4;
   }
   .run-row .row-meta {
-    font-family: var(--font-mono); font-size: 10px; color: var(--fg-3);
+    font-family: var(--font-mono), monospace; font-size: 10px; color: var(--fg-3);
     display: flex; gap: 12px;
   }
   .run-row .row-meta .right { margin-left: auto; }
@@ -197,7 +197,7 @@
   }
   .run-row.empty {
     display: block; padding: 20px 16px;
-    color: var(--fg-3); font-family: var(--font-mono); font-size: 12px;
+    color: var(--fg-3); font-family: var(--font-mono), monospace; font-size: 12px;
   }
 
   /* Status pill */
@@ -206,7 +206,7 @@
     height: 20px; padding: 0 8px 0 6px; border-radius: 2px;
     border: 1px solid currentColor;
     background: transparent;
-    font-family: var(--font-ui); font-size: 11px; font-weight: 500;
+    font-family: var(--font-ui), sans-serif; font-size: 11px; font-weight: 500;
   }
   .status-pill .dot {
     width: 7px; height: 7px; border-radius: 50%;
@@ -220,7 +220,7 @@
   .status-pill.s-candidate { color: var(--candidate); }
 
   .run-type-chip {
-    font-family: var(--font-ui); font-size: 10px; font-weight: 500;
+    font-family: var(--font-ui), sans-serif; font-size: 10px; font-weight: 500;
     color: var(--fg-3); border: 1px solid var(--shell-line);
     padding: 1px 6px; border-radius: 2px; letter-spacing: 0.4px;
   }
@@ -236,7 +236,7 @@
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     color: var(--fg-3);
-    font-family: var(--font-mono); font-size: 13px;
+    font-family: var(--font-mono), monospace; font-size: 13px;
     gap: 14px;
   }
   .placeholder .sigil {
@@ -244,7 +244,7 @@
     opacity: 0.6;
   }
   .placeholder code {
-    font-family: var(--font-mono); color: var(--fg-2);
+    font-family: var(--font-mono), monospace; color: var(--fg-2);
     background: var(--shell-2);
     border: 1px solid var(--shell-line);
     padding: 2px 6px; border-radius: 2px;
@@ -266,7 +266,7 @@
     position: sticky; top: 0; z-index: 2;
     background: var(--shell-2);
     border-bottom: 1px solid var(--shell-line);
-    font-family: var(--font-ui); font-size: 10px; font-weight: 600;
+    font-family: var(--font-ui), sans-serif; font-size: 10px; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.8px; color: var(--fg-3);
   }
   .span-row {
@@ -279,7 +279,7 @@
     color: var(--fg);
     cursor: pointer;
     padding-top: 7px; padding-bottom: 7px;
-    font-family: var(--font-mono); font-size: 12.5px;
+    font-family: var(--font-mono), monospace; font-size: 12.5px;
   }
   .span-row:hover,
   .span-row.active {
@@ -307,7 +307,7 @@
   .span-empty {
     padding: 20px 16px;
     color: var(--fg-3);
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 12px;
   }
 
@@ -333,30 +333,30 @@
     align-items: center;
     gap: 14px;
     color: var(--fg-3);
-    font-family: var(--font-sans); font-size: 13px;
+    font-family: var(--font-sans), sans-serif; font-size: 13px;
   }
   .span-detail .sparkle { width: 24px; height: 24px; image-rendering: pixelated; flex: none; }
   .span-detail .head {
     display: flex; gap: 10px; align-items: center;
   }
   .span-detail .kind {
-    font-family: var(--font-ui); font-size: 10px;
+    font-family: var(--font-ui), sans-serif; font-size: 10px;
     letter-spacing: 0.8px; text-transform: uppercase;
     font-weight: 600; color: var(--fg-3);
   }
   .span-detail .name {
-    font-family: var(--font-mono); font-size: 13px;
+    font-family: var(--font-mono), monospace; font-size: 13px;
     color: var(--brand-soft);
   }
   .span-detail .span-id {
-    font-family: var(--font-mono); font-size: 11px;
+    font-family: var(--font-mono), monospace; font-size: 11px;
     color: var(--fg-3);
   }
   .span-detail .attrs {
     display: grid;
     grid-template-columns: max-content 1fr;
     row-gap: 4px; column-gap: 16px;
-    font-family: var(--font-mono); font-size: 12px;
+    font-family: var(--font-mono), monospace; font-size: 12px;
   }
   .span-detail .attrs .k { color: var(--fg-3); }
   .span-detail .attrs .v {
@@ -364,7 +364,7 @@
     word-break: break-all;
   }
   .span-detail .attrs-empty {
-    font-family: var(--font-mono); font-size: 11.5px;
+    font-family: var(--font-mono), monospace; font-size: 11.5px;
     color: var(--fg-3);
   }
 
@@ -378,7 +378,7 @@
     grid-template-columns: 70px 160px 60px 1fr;
     gap: 12px;
     padding: 4px 20px;
-    font-family: var(--font-mono); font-size: 12px;
+    font-family: var(--font-mono), monospace; font-size: 12px;
     line-height: 1.45;
   }
   .event-row.live {
@@ -394,7 +394,7 @@
   .event-empty {
     padding: 20px;
     color: var(--fg-3);
-    font-family: var(--font-mono); font-size: 12px;
+    font-family: var(--font-mono), monospace; font-size: 12px;
   }
 
   /* Artifact panel (C.3b) */
@@ -441,7 +441,7 @@
     background: rgba(0, 155, 166, 0.16);
     border-radius: 2px;
     padding: 1px 4px;
-    font-family: var(--font-ui);
+    font-family: var(--font-ui), sans-serif;
     font-size: 9px;
     letter-spacing: 0.5px;
     text-transform: uppercase;
@@ -460,19 +460,19 @@
     min-width: 0; flex: 1;
   }
   .artifact-row .role {
-    font-family: var(--font-mono); font-size: 11.5px;
+    font-family: var(--font-mono), monospace; font-size: 11.5px;
     color: var(--fg);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .artifact-row .file {
-    font-family: var(--font-mono); font-size: 10.5px;
+    font-family: var(--font-mono), monospace; font-size: 10.5px;
     color: var(--fg-3);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .artifact-empty {
     padding: 20px;
     color: var(--fg-3);
-    font-family: var(--font-mono); font-size: 12px;
+    font-family: var(--font-mono), monospace; font-size: 12px;
   }
 
   .artifact-preview {
@@ -484,7 +484,7 @@
     display: flex; flex-direction: column; align-items: center;
     gap: 12px; text-align: center;
     color: var(--fg-3);
-    font-family: var(--font-sans); font-size: 12px;
+    font-family: var(--font-sans), sans-serif; font-size: 12px;
   }
   .artifact-preview .inspector {
     width: 96px; height: 112px; image-rendering: pixelated;
@@ -493,7 +493,7 @@
     color: var(--fg-2);
   }
   .artifact-preview .count {
-    color: var(--fg-4); font-family: var(--font-mono); font-size: 10.5px;
+    color: var(--fg-4); font-family: var(--font-mono), monospace; font-size: 10.5px;
   }
   .artifact-preview.detail {
     padding: 14px 16px;
@@ -503,7 +503,7 @@
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 4px 14px;
-    font-family: var(--font-mono); font-size: 11.5px;
+    font-family: var(--font-mono), monospace; font-size: 11.5px;
   }
   .artifact-preview .attrs .k { color: var(--fg-3); }
   .artifact-preview .attrs .v {
@@ -534,7 +534,7 @@
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 4px 12px;
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 11px;
   }
   .artifact-preview .evidence-summary .k { color: var(--fg-3); }
@@ -559,12 +559,12 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 11px;
   }
   .artifact-preview .surface-nodes-head .k {
     color: var(--fg-3);
-    font-family: var(--font-ui);
+    font-family: var(--font-ui), sans-serif;
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.8px;
@@ -591,7 +591,7 @@
   }
   .artifact-preview .surface-node-detail.empty {
     color: var(--fg-3);
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 11px;
   }
   .artifact-preview .surface-node-detail-head {
@@ -602,7 +602,7 @@
   }
   .artifact-preview .surface-node-detail-head .k {
     color: var(--fg-3);
-    font-family: var(--font-ui);
+    font-family: var(--font-ui), sans-serif;
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.8px;
@@ -610,7 +610,7 @@
   }
   .artifact-preview .surface-node-detail-head .v {
     color: var(--brand-soft);
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 11px;
     word-break: break-word;
     text-align: right;
@@ -619,7 +619,7 @@
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 4px 10px;
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 11px;
   }
   .artifact-preview .surface-node-detail-grid .k {
@@ -638,7 +638,7 @@
     background: var(--shell-3);
     padding: 10px;
     color: var(--fg-2);
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 10.5px;
     line-height: 1.45;
     white-space: pre-wrap;
@@ -668,18 +668,18 @@
   }
   .artifact-preview .surface-node-title {
     color: var(--fg);
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 11.5px;
   }
   .artifact-preview .surface-node-meta {
     color: var(--fg-3);
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 10.5px;
     word-break: break-word;
   }
   .artifact-preview .surface-node.more {
     color: var(--fg-3);
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 10.5px;
     padding-top: 8px;
     border-top: 1px solid var(--shell-line);
@@ -687,7 +687,7 @@
   .artifact-preview .surface pre {
     margin: 0; padding: 14px;
     color: var(--fg-2);
-    font-family: var(--font-mono); font-size: 11.5px;
+    font-family: var(--font-mono), monospace; font-size: 11.5px;
     line-height: 1.5; white-space: pre-wrap; word-break: break-word;
   }
   .artifact-preview .surface.binary {
@@ -699,13 +699,13 @@
       );
     display: flex; align-items: center; justify-content: center;
     color: var(--fg-2);
-    font-family: var(--font-ui); font-size: 11px; letter-spacing: 0.4px;
+    font-family: var(--font-ui), sans-serif; font-size: 11px; letter-spacing: 0.4px;
     min-height: 220px;
   }
   .artifact-preview .surface.error {
     background: var(--shell-3);
     color: var(--failed);
-    font-family: var(--font-mono); font-size: 12px;
+    font-family: var(--font-mono), monospace; font-size: 12px;
     padding: 14px;
   }
   .artifact-preview .json-summary {
@@ -716,7 +716,7 @@
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 4px 12px;
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 11px;
   }
   .artifact-preview .json-summary .k { color: var(--fg-3); }
@@ -753,13 +753,13 @@
     flex-wrap: wrap;
   }
   #view-parser-proof .view-parser-proof-query {
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 12px;
     font-weight: 600;
     color: var(--fg);
   }
   #view-parser-proof .view-parser-proof-section-label {
-    font-family: var(--font-ui);
+    font-family: var(--font-ui), sans-serif;
     font-size: 10px;
     letter-spacing: 0.6px;
     text-transform: uppercase;
@@ -768,7 +768,7 @@
     margin-bottom: 4px;
   }
   #view-parser-proof .view-parser-proof-geometry {
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 10px;
     color: var(--fg-3);
     line-height: 1.4;
@@ -781,7 +781,7 @@
     display: grid;
     grid-template-columns: max-content 1fr;
     gap: 4px 12px;
-    font-family: var(--font-mono);
+    font-family: var(--font-mono), monospace;
     font-size: 11px;
   }
   #view-parser-proof .json-summary .k { color: var(--fg-3); }

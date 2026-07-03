@@ -1,5 +1,5 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><link rel="stylesheet" href="card.css"></head>
+<html lang="en"><head><title>Component Cursors</title><meta charset="utf-8"><link rel="stylesheet" href="card.css"></head>
 <body><div class="card">
   <div class="row">
     <div class="meta">components · cursors</div>
@@ -11,26 +11,26 @@
     <!-- you -->
     <div style="background:#fbfaf6; border:1px solid #d8d5cb; border-radius:6px; padding:14px; display:flex; flex-direction:column; align-items:center; gap:10px;">
       <img src="../assets/cursor-you.svg" alt="" style="width:48px; height:48px; image-rendering:pixelated;">
-      <div style="display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; background:#2a3a52; color:#fff; font-family:var(--auv-font-mono); font-size:11px; font-weight:600;">you</div>
-      <div style="font-family:var(--auv-font-sans); font-size:11px; color:#5a5e66; text-align:center; line-height:1.4;">Human pointer. Slate body, no accent. Renders alongside the auv cursor in trace overlays.</div>
+      <div style="display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; background:#2a3a52; color:#fff; font-family:var(--auv-font-mono), monospace; font-size:11px; font-weight:600;">you</div>
+      <div style="font-family:var(--auv-font-sans), sans-serif; font-size:11px; color:#5a5e66; text-align:center; line-height:1.4;">Human pointer. Slate body, no accent. Renders alongside the auv cursor in trace overlays.</div>
     </div>
 
     <!-- auv default -->
     <div style="background:#fbfaf6; border:1px solid #d8d5cb; border-radius:6px; padding:14px; display:flex; flex-direction:column; align-items:center; gap:10px;">
       <img src="../assets/cursor-auv.svg" alt="" style="width:48px; height:48px; image-rendering:pixelated;">
-      <div style="display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; background:#009ba6; color:#fff; font-family:var(--auv-font-mono); font-size:11px; font-weight:600;">auv · replay</div>
-      <div style="font-family:var(--auv-font-sans); font-size:11px; color:#5a5e66; text-align:center; line-height:1.4;">Replay cursor. Cyan body, lime crook accent. Shown during recipe step execution.</div>
+      <div style="display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; background:#009ba6; color:#fff; font-family:var(--auv-font-mono), monospace; font-size:11px; font-weight:600;">auv · replay</div>
+      <div style="font-family:var(--auv-font-sans), sans-serif; font-size:11px; color:#5a5e66; text-align:center; line-height:1.4;">Replay cursor. Cyan body, lime crook accent. Shown during recipe step execution.</div>
     </div>
 
     <!-- auv click -->
     <div style="background:#fbfaf6; border:1px solid #d8d5cb; border-radius:6px; padding:14px; display:flex; flex-direction:column; align-items:center; gap:10px;">
       <img src="../assets/cursor-auv-click.svg" alt="" style="width:48px; height:48px; image-rendering:pixelated;">
-      <div style="display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; background:#009ba6; color:#fff; font-family:var(--auv-font-mono); font-size:11px; font-weight:600;">auv · click</div>
-      <div style="font-family:var(--auv-font-sans); font-size:11px; color:#5a5e66; text-align:center; line-height:1.4;">Click state. Adds a 4-ray lime burst at the moment of pointer disturbance.</div>
+      <div style="display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; background:#009ba6; color:#fff; font-family:var(--auv-font-mono), monospace; font-size:11px; font-weight:600;">auv · click</div>
+      <div style="font-family:var(--auv-font-sans), sans-serif; font-size:11px; color:#5a5e66; text-align:center; line-height:1.4;">Click state. Adds a 4-ray lime burst at the moment of pointer disturbance.</div>
     </div>
   </div>
 
-  <div style="border-top:1px solid #e6e4dc; padding-top:10px; font-family:var(--auv-font-sans); font-size:12px; color:#5a5e66; line-height:1.5;">
-    Pair a cursor with a pill-shaped label (8px radius cap, 3px vertical padding, mono 11px) and an optional second-line meta chip carrying the active <code style="font-family:var(--auv-font-mono);">step_id</code> + <code style="font-family:var(--auv-font-mono);">disturbance</code>.
+  <div style="border-top:1px solid #e6e4dc; padding-top:10px; font-family:var(--auv-font-sans), sans-serif; font-size:12px; color:#5a5e66; line-height:1.5;">
+    Pair a cursor with a pill-shaped label (8px radius cap, 3px vertical padding, mono 11px) and an optional second-line meta chip carrying the active <code style="font-family:var(--auv-font-mono), monospace;">step_id</code> + <code style="font-family:var(--auv-font-mono), monospace;">disturbance</code>.
   </div>
 </div></body></html>

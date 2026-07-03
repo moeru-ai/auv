@@ -1,8 +1,8 @@
 <!doctype html>
-<html><head><meta charset="utf-8">
+<html lang="en"><head><title>Brand Replay Cursor</title><meta charset="utf-8">
 <link rel="stylesheet" href="../colors_and_type.css">
 <style>
-  html, body { margin:0; background:transparent; font-family: var(--auv-font-sans); color: var(--auv-ink); }
+  html, body { margin:0; background:transparent; font-family: var(--auv-font-sans), sans-serif; color: var(--auv-ink); }
   .frame {
     box-sizing: border-box;
     background: #f8f6f1;
@@ -29,23 +29,23 @@
     display: flex; align-items: center; gap:8px;
     margin-bottom: -1px; height: 28px;
     border: 1px solid #d8d5cb; border-bottom: 0;
-    font-family: var(--auv-font-sans);
+    font-family: var(--auv-font-sans), sans-serif;
     font-size: 12px; font-weight: 500; color: #15171a;
   }
   .urlbar {
     background:#f1efe8; border:1px solid #e0ddd3; border-radius:8px;
     margin: 12px 16px 14px;
     padding: 7px 12px;
-    font-family: var(--auv-font-mono); font-size: 11.5px; color:#5a5e66;
+    font-family: var(--auv-font-mono), monospace; font-size: 11.5px; color:#5a5e66;
     display:flex; align-items:center; gap:10px;
   }
   .nav { color:#8a8e96; font-size:14px; display:flex; gap:6px; }
 
   .body { padding: 0 18px 22px; }
-  .steps { display:flex; align-items:center; gap:14px; padding: 6px 0 16px; font-family: var(--auv-font-sans); font-size:13px; }
+  .steps { display:flex; align-items:center; gap:14px; padding: 6px 0 16px; font-family: var(--auv-font-sans), sans-serif; font-size:13px; }
   .step { display:flex; align-items:center; gap:8px; color:#8a8e96; }
   .step.active { color:#15171a; font-weight:500; }
-  .step .n { width:18px; height:18px; border-radius:50%; background:#e6e4dc; color:#8a8e96; display:inline-flex; align-items:center; justify-content:center; font-family:var(--auv-font-mono); font-size:10.5px; font-weight:600; }
+  .step .n { width:18px; height:18px; border-radius:50%; background:#e6e4dc; color:#8a8e96; display:inline-flex; align-items:center; justify-content:center; font-family:var(--auv-font-mono), monospace; font-size:10.5px; font-weight:600; }
   .step.active .n { background:#15171a; color:#fbf8f3; }
   .step .bar { width:36px; height:1px; background:#d8d5cb; }
 
@@ -62,19 +62,19 @@
     background: linear-gradient(135deg, #f9d3a0 0%, #f6a6a8 60%, #ef879d 100%);
     border-radius: 8px;
     display:flex; align-items:center; justify-content:center;
-    color:#15171a; font-family:var(--auv-font-mono); font-size:10px;
+    color:#15171a; font-family:var(--auv-font-mono), monospace; font-size:10px;
     border: 1px solid #ecc695;
   }
   .meta { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1; }
-  .title { font-family:var(--auv-font-sans); font-size:15px; font-weight:600; color:#15171a; }
-  .sub { font-family:var(--auv-font-sans); font-size:12px; color:#5a5e66; }
-  .price { font-family:var(--auv-font-sans); font-size:13px; font-weight:500; color:#15171a; margin-top:2px; }
+  .title { font-family:var(--auv-font-sans), sans-serif; font-size:15px; font-weight:600; color:#15171a; }
+  .sub { font-family:var(--auv-font-sans), sans-serif; font-size:12px; color:#5a5e66; }
+  .price { font-family:var(--auv-font-sans), sans-serif; font-size:13px; font-weight:500; color:#15171a; margin-top:2px; }
 
   .btn-primary {
     background:#15171a; color:#fbf8f3; border:0;
     border-radius:8px;
     padding:0 16px; height:36px;
-    font-family: var(--auv-font-sans); font-size:13px; font-weight:500;
+    font-family: var(--auv-font-sans), sans-serif; font-size:13px; font-weight:500;
     cursor:default;
   }
 
@@ -90,7 +90,7 @@
     transform: translate(14px, 14px);
     padding: 3px 8px;
     border-radius: 999px;
-    font-family: var(--auv-font-mono);
+    font-family: var(--auv-font-mono), monospace;
     font-size: 11px; font-weight: 600;
     color: #ffffff;
     white-space: nowrap;
@@ -109,7 +109,7 @@
   .cursor-meta {
     position:absolute;
     transform: translate(14px, 38px);
-    font-family: var(--auv-font-mono);
+    font-family: var(--auv-font-mono), monospace;
     font-size: 10px; color: #5a5e66;
     background: rgba(255,255,255,0.85);
     border: 1px solid #e0ddd3;
