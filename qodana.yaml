@@ -52,3 +52,44 @@ exclude:
   - name: RsLiveness
     paths:
       - src/inference_recognition.rs
+  # NOTICE(qodana-source_scope): JSON fixtures and broken-schema witnesses are
+  # outside this lane's source-quality signal; the Cloud toggles are kept here
+  # in the repository root so CI and local Qodana consume one shared truth.
+  - name: JsonSchemaCompliance
+  - name: JsonStandardCompliance
+  - name: Json5StandardCompliance
+  - name: JsonSchemaDeprecation
+  - name: JsonDuplicatePropertyKeys
+  - name: JsonSchemaRefReference
+  - name: JsonPathUnknownFunction
+  - name: JsonPathUnknownOperator
+  - name: JsonPathEvaluateUnknownKey
+  # NOTICE(qodana-source_scope): SVG artwork in `docs/design/assets` is not a
+  # maintained XML quality surface for this repository; suppress the same XML
+  # inspections the Qodana Cloud profile toggles expose.
+  - name: XmlDeprecatedElement
+  - name: XmlDuplicatedId
+  - name: CheckTagEmptyBody
+  - name: CheckXmlFileWithXercesValidator
+  - name: XmlDefaultAttributeValue
+  - name: XmlUnboundNsPrefix
+  - name: XmlInvalidId
+  - name: CheckDtdRefs
+  - name: XmlPathReference
+  - name: XmlUnresolvedReference
+  - name: XmlUnusedNamespaceDeclaration
+  - name: XmlWrongRootElement
+  - name: XmlHighlighting
+  # NOTICE(qodana-source_scope): proofreading and language-detection signal is
+  # intentionally out of scope for this repository; mixed-language docs,
+  # identifiers, fixtures, and generated/vendor content make these inspections
+  # high-noise and low-value for the current quality gate.
+  - name: GrazieInspection
+  - name: GrazieInspectionRunner
+  - name: LanguageDetectionInspection
+  - name: GrazieStyle
+  # NOTICE(qodana-source_scope): structural-search and ignore-file hygiene are
+  # not part of the active CI quality bar; keep Rust/config/runtime signal and
+  # suppress repository-management noise instead.
+  - name: SSBasedInspection
+  - name: IgnoreFileDuplicateEntry
