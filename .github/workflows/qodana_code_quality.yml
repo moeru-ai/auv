@@ -29,8 +29,8 @@ jobs:
         with:
           args: >-
             --linter qodana-rust
+            -e CARGO_HOME=/tmp/qodana-cargo-home
+            -e CARGO_TARGET_DIR=/tmp/qodana-target
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           QODANA_ENDPOINT: https://qodana.cloud
-          CARGO_HOME: /tmp/qodana-cargo-home
-          CARGO_TARGET_DIR: /tmp/qodana-target
