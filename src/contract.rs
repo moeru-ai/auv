@@ -640,7 +640,7 @@ mod tests {
 
   #[test]
   fn artifact_ref_is_owned_by_tracing_driver_boundary() {
-    fn accepts_driver_ref(_value: auv_tracing_driver::ArtifactRef) {}
+    fn accepts_driver_ref(_value: ArtifactRef) {}
 
     let artifact_ref = ArtifactRef {
       run_id: RunId::new("run_type_identity"),

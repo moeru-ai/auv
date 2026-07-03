@@ -17,6 +17,7 @@ pub use session::{
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process;
 use std::sync::Arc;
 
 use axum::body::{Body, to_bytes};
@@ -32,7 +33,7 @@ use tokio::sync::broadcast;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::contract::{ObservationSnapshot, VerificationResult};
-use crate::model::AuvResult;
+use crate::model::{AuvResult, now_millis};
 use crate::run_read::{CandidatePromotionLineage, DetectorRecognitionLineage};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::{RunId, RunRecordV1Alpha1, TraceState};
@@ -287,15 +288,15 @@ pub async fn serve(
     .map_err(|error| format!("failed to read inspect server address: {error}"))?;
   println!("inspect server: http://{local_address}");
   if config.write.enabled {
-    let session = session::InspectServerSession {
+    let session = InspectServerSession {
       url: format!("http://{local_address}"),
       store_root: store.root().display().to_string(),
       write_enabled: true,
       write_token: config.write.token.clone(),
-      pid: std::process::id(),
-      started_at_millis: crate::model::now_millis(),
+      pid: process::id(),
+      started_at_millis: now_millis(),
     };
-    session::write_inspect_session(&session)?;
+    write_inspect_session(&session)?;
   }
   axum::serve(listener, router_with_config(store, recorder, config.write))
     .await
@@ -800,10 +801,7 @@ fn apply_update(
   }
 }
 
-fn run_immutable_metadata_differs(
-  existing: &auv_tracing_driver::trace::RunRecordV1Alpha1,
-  next: &auv_tracing_driver::trace::RunRecordV1Alpha1,
-) -> bool {
+fn run_immutable_metadata_differs(existing: &RunRecordV1Alpha1, next: &RunRecordV1Alpha1) -> bool {
   existing.api_version != next.api_version
     || existing.run_id != next.run_id
     || existing.trace_id != next.trace_id
@@ -3096,7 +3094,11 @@ mod tests {
     .expect("corrupt spans should write");
   }
 
-  fn write_test_run_with_read_side_contracts(store: &LocalStore, root: &Path, run_id: RunId) {
+  fn write_test_run_with_read_side_contracts(
+    store: &LocalStore,
+    root: &std::path::Path,
+    run_id: RunId,
+  ) {
     let span_id = SpanId::new("0000000000000001");
     let run = RunRecordV1Alpha1 {
       api_version: RUN_API_VERSION.to_string(),

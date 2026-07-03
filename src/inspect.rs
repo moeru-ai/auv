@@ -826,7 +826,7 @@ pub fn render_run_text(
   {
     output.push_str("- none\n");
   } else {
-    let mut rendered_report_artifacts = std::collections::BTreeSet::new();
+    let mut rendered_report_artifacts = BTreeSet::new();
     for manifest_lineage in minecraft_training_package_manifests {
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
         unique_matching_report(minecraft_training_package_inspect_reports, |lineage| {
@@ -3408,10 +3408,10 @@ mod tests {
         verification_reference: Some("verification-1".to_string()),
       }];
     let minecraft_telemetry_sample_artifacts = vec![MinecraftTelemetrySampleArtifactLineage {
-      artifact: crate::run_read::ArtifactRefLineage {
+      artifact: ArtifactRefLineage {
         run_id: run.run.run_id.clone(),
-        artifact_id: auv_tracing_driver::trace::ArtifactId::new("artifact_mc1".to_string()),
-        span_id: auv_tracing_driver::trace::SpanId::new("span_mc1".to_string()),
+        artifact_id: ArtifactId::new("artifact_mc1".to_string()),
+        span_id: SpanId::new("span_mc1".to_string()),
         captured_event_id: None,
         role: Some("telemetry-sample".to_string()),
         path: Some("artifacts/telemetry.jsonl".to_string()),

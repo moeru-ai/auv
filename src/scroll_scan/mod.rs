@@ -19,12 +19,17 @@ use observation::{
 };
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process;
 
 use crate::contract::{ObservationSnapshot, RecognitionResult, SurfaceNode};
+use crate::model::now_millis;
 use crate::model::{AuvResult, ExecutionTarget, InvokeRequest, InvokeResult, RunStatus};
+use crate::runtime::Runtime;
 use auv_tracing_driver::RecordingHandle;
+use auv_tracing_driver::run_builder::RunSpec;
 use auv_tracing_driver::trace::{RunId, SpanId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -310,12 +315,9 @@ pub struct ScanWindowRegionOptions {
 // JSON recipe execution. Reintroduce hook composition only as typed Rust
 // interaction hooks once `auv-tracing-interaction` owns macro-operation
 // recording.
-pub fn scan_window_region(
-  runtime: &crate::runtime::Runtime,
-  options: ScanWindowRegionOptions,
-) -> AuvResult<auv_tracing_driver::trace::RunId> {
+pub fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> AuvResult<RunId> {
   let recording = runtime.recording().handle();
-  let mut run = recording.start_run(auv_tracing_driver::run_builder::RunSpec::new(
+  let mut run = recording.start_run(RunSpec::new(
     auv_tracing_driver::trace::RunType::Execute,
     "auv.scan.window_region",
   ))?;
@@ -351,7 +353,7 @@ pub fn scan_window_region(
 
 fn scan_window_region_into_run(
   recording: &RecordingHandle,
-  runtime: &crate::runtime::Runtime,
+  runtime: &Runtime,
   run: &mut auv_tracing_driver::run_builder::RecordingRun,
   root: &auv_tracing_driver::run_builder::SpanRef,
   options: ScanWindowRegionOptions,
@@ -709,7 +711,7 @@ fn region_inputs(target: &ScanTarget) -> BTreeMap<String, String> {
 
 fn scan_window_region_page(
   recording: &RecordingHandle,
-  runtime: &crate::runtime::Runtime,
+  runtime: &Runtime,
   run: &mut auv_tracing_driver::run_builder::RecordingRun,
   root: &auv_tracing_driver::run_builder::SpanRef,
   page_index: usize,
@@ -1156,7 +1158,7 @@ fn scroll_boundary_name(boundary: ScrollBoundary) -> &'static str {
 
 fn invoke_scan_command(
   _recording: &RecordingHandle,
-  runtime: &crate::runtime::Runtime,
+  runtime: &Runtime,
   run: &mut auv_tracing_driver::run_builder::RecordingRun,
   root: &auv_tracing_driver::run_builder::SpanRef,
   request: InvokeRequest,
@@ -1247,7 +1249,7 @@ fn first_artifact_record_with_extension<'a>(
   extension: &str,
 ) -> Option<&'a auv_tracing_driver::trace::ArtifactRecordV1Alpha1> {
   result.artifacts.iter().find(|artifact| {
-    std::path::Path::new(&artifact.path)
+    Path::new(&artifact.path)
       .extension()
       .and_then(|value| value.to_str())
       .is_some_and(|value| value.eq_ignore_ascii_case(extension))
@@ -1336,7 +1338,7 @@ impl ListItemCandidateContextArtifact {
 
 fn enrich_list_item_observations_with_crops(
   recording: &RecordingHandle,
-  _runtime: &crate::runtime::Runtime,
+  _runtime: &Runtime,
   run: &mut auv_tracing_driver::run_builder::RecordingRun,
   root: &auv_tracing_driver::run_builder::SpanRef,
   page_index: usize,
@@ -1502,11 +1504,11 @@ fn crop_list_item_image(source: &Path, bounds: &ScanRect, label: &str) -> AuvRes
     crop.width as u32,
     crop.height as u32,
   );
-  let path = std::env::temp_dir().join(format!(
+  let path = env::temp_dir().join(format!(
     "auv-{}-{}-{}.png",
     sanitize_scan_artifact_component(label),
-    std::process::id(),
-    crate::model::now_millis()
+    process::id(),
+    now_millis()
   ));
   cropped
     .save(&path)
@@ -1542,11 +1544,11 @@ fn write_list_item_context_artifact(
   crop_artifact: &Path,
   text_fragments: &[String],
 ) -> AuvResult<PathBuf> {
-  let path = std::env::temp_dir().join(format!(
+  let path = env::temp_dir().join(format!(
     "auv-list-item-context-{}-{}-{}.json",
     sanitize_scan_artifact_component(&observation.observation_id),
-    std::process::id(),
-    crate::model::now_millis()
+    process::id(),
+    now_millis()
   ));
   let payload = build_list_item_context_payload(observation, crop_artifact, text_fragments);
   let rendered = serde_json::to_string_pretty(&payload)
@@ -1662,11 +1664,11 @@ fn stage_scan_artifact(
 }
 
 fn write_scan_artifact(artifact: &ScrollScanArtifact) -> AuvResult<PathBuf> {
-  let path = std::env::temp_dir().join(format!(
+  let path = env::temp_dir().join(format!(
     "auv-scroll-scan-{}-{}-{}.json",
     artifact.scan_id,
-    std::process::id(),
-    crate::model::now_millis()
+    process::id(),
+    now_millis()
   ));
   let rendered = serde_json::to_string_pretty(artifact)
     .map_err(|error| format!("failed to render scan artifact JSON: {error}"))?;
@@ -1682,6 +1684,7 @@ mod tests {
   use std::collections::BTreeMap;
   use std::env;
   use std::fs;
+  use std::process;
   use std::sync::atomic::{AtomicU64, Ordering};
 
   use auv_tracing_driver::store::LocalStore;
@@ -2819,9 +2822,9 @@ mod tests {
 
   fn write_temp_json_artifact(label: &str, raw: &str) -> PathBuf {
     let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
+    let path = env::temp_dir().join(format!(
       "auv-scroll-scan-{label}-{}-{counter}.json",
-      std::process::id()
+      process::id()
     ));
     fs::write(&path, raw).expect("write temp json artifact");
     path
@@ -2829,9 +2832,9 @@ mod tests {
 
   fn write_temp_png_artifact(label: &str, rgba: [u8; 4]) -> PathBuf {
     let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
+    let path = env::temp_dir().join(format!(
       "auv-scroll-scan-{label}-{}-{counter}.png",
-      std::process::id()
+      process::id()
     ));
     let image = RgbaImage::from_pixel(24, 24, Rgba(rgba));
     image.save(&path).expect("write temp png artifact");
@@ -2873,18 +2876,15 @@ mod tests {
     }
   }
 
-  fn scroll_scan_test_runtime(
-    project_root: PathBuf,
-    store_root: PathBuf,
-  ) -> crate::runtime::Runtime {
-    crate::runtime::Runtime::new(
+  fn scroll_scan_test_runtime(project_root: PathBuf, store_root: PathBuf) -> Runtime {
+    Runtime::new(
       project_root,
       LocalStore::new(store_root).expect("store should initialize"),
     )
   }
 
   fn temp_dir(label: &str) -> PathBuf {
-    let path = env::temp_dir().join(format!("auv-{}-{}", label, crate::model::now_millis()));
+    let path = env::temp_dir().join(format!("auv-{}-{}", label, now_millis()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path

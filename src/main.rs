@@ -1462,7 +1462,7 @@ fn stage_operation_result_artifact(
       json
     })
     .map_err(|error| format!("failed to serialize minecraft operation result: {error}"))?;
-  let artifact_path = std::env::temp_dir().join(format!(
+  let artifact_path = env::temp_dir().join(format!(
     "auv-minecraft-operation-result-{}-{}.json",
     context.run_id(),
     auv_cli::model::now_millis()
@@ -1694,7 +1694,7 @@ fn run_minecraft_projection_bridge(
     })?;
 
   runtime.run_recorded_operation(
-    auv_tracing_driver::run_builder::RunSpec::new(
+    RunSpec::new(
       auv_tracing_driver::trace::RunType::Execute,
       "auv.minecraft.bridge",
     ),
@@ -1778,7 +1778,7 @@ fn run_minecraft_projection_bridge(
           &projected,
           raycast_hit.as_ref(),
         );
-        let overlay_path = std::env::temp_dir().join(format!(
+        let overlay_path = env::temp_dir().join(format!(
           "auv-minecraft-overlay-{}-{}.png",
           context.run_id(),
           auv_cli::model::now_millis()
@@ -1930,7 +1930,7 @@ fn stage_minecraft_projection_artifact(
   projection_artifact.validate()?;
   let artifact_json = serde_json::to_string_pretty(projection_artifact)
     .map_err(|error| format!("failed to serialize minecraft projection artifact: {error}"))?;
-  let artifact_path = std::env::temp_dir().join(format!(
+  let artifact_path = env::temp_dir().join(format!(
     "auv-minecraft-projection-{}-{}.json",
     context.run_id(),
     auv_cli::model::now_millis()
@@ -1953,7 +1953,7 @@ fn stage_minecraft_projection_calibration_artifact(
 ) -> Result<(PathBuf, auv_cli::contract::ArtifactRef), String> {
   let artifact_json = serde_json::to_string_pretty(calibration_artifact)
     .map_err(|error| format!("failed to serialize minecraft calibration artifact: {error}"))?;
-  let artifact_path = std::env::temp_dir().join(format!(
+  let artifact_path = env::temp_dir().join(format!(
     "auv-minecraft-projection-calibration-{}-{}.json",
     context.run_id(),
     auv_cli::model::now_millis()
@@ -2070,7 +2070,7 @@ fn run_minecraft_calibrate_projection(
             &projected,
             raycast_hit.as_ref(),
           );
-          let overlay_path = std::env::temp_dir().join(format!(
+          let overlay_path = env::temp_dir().join(format!(
             "auv-minecraft-overlay-{}-{}.png",
             context.run_id(),
             auv_cli::model::now_millis()
@@ -2296,7 +2296,7 @@ fn shell_quote_hint_path(path: &str) -> String {
 
 fn format_query_wired_inspect_hint(
   run_id: impl std::fmt::Display,
-  inspect: &cli::InspectClientOptions,
+  inspect: &InspectClientOptions,
 ) -> String {
   if let Some(store_root) = inspect.store_root.as_deref() {
     let store_root = shell_quote_hint_path(store_root);
@@ -2326,7 +2326,7 @@ fn resolve_inspect_serve_write_token(
   }
 
   if let Some(path) = &write.token_file {
-    let token = std::fs::read_to_string(path)
+    let token = fs::read_to_string(path)
       .map_err(|error| format!("failed to read write token file {path}: {error}"))?
       .trim()
       .to_string();
@@ -2334,11 +2334,7 @@ fn resolve_inspect_serve_write_token(
   }
 
   if write.enabled && !write.no_token {
-    let token = format!(
-      "session-{}-{}",
-      std::process::id(),
-      auv_cli::model::now_millis()
-    );
+    let token = format!("session-{}-{}", process::id(), auv_cli::model::now_millis());
     return normalize_write_token("generated write token", token).map(Some);
   }
 
@@ -2485,7 +2481,7 @@ fn resolve_client_token(inspect: &InspectClientOptions) -> Result<Option<String>
     return normalize_write_token("--inspect-server-token", token.clone()).map(Some);
   }
   if let Some(path) = &inspect.server_token_file {
-    let token = std::fs::read_to_string(path)
+    let token = fs::read_to_string(path)
       .map_err(|error| format!("failed to read inspect server token file {path}: {error}"))?
       .trim()
       .to_string();
@@ -2495,17 +2491,15 @@ fn resolve_client_token(inspect: &InspectClientOptions) -> Result<Option<String>
 }
 
 fn temp_runtime_store_root() -> PathBuf {
-  std::env::temp_dir().join(format!(
+  env::temp_dir().join(format!(
     "auv-runtime-store-{}-{}",
-    std::process::id(),
+    process::id(),
     auv_cli::model::now_millis()
   ))
 }
 
 #[cfg(test)]
 mod tests {
-  use std::fs;
-  use std::path::Path;
   use std::sync::Mutex;
 
   use image::{Rgb, RgbImage};
@@ -2516,9 +2510,9 @@ mod tests {
 
   #[test]
   fn format_query_wired_inspect_hint_omits_store_root_when_default_store() {
-    let inspect = cli::InspectClientOptions {
+    let inspect = InspectClientOptions {
       store_root: None,
-      ..cli::InspectClientOptions::default()
+      ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
     assert_eq!(
@@ -2529,9 +2523,9 @@ mod tests {
 
   #[test]
   fn format_query_wired_inspect_hint_echoes_custom_store_root() {
-    let inspect = cli::InspectClientOptions {
+    let inspect = InspectClientOptions {
       store_root: Some("/tmp/mc20-store".to_string()),
-      ..cli::InspectClientOptions::default()
+      ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
     assert_eq!(
@@ -2542,9 +2536,9 @@ mod tests {
 
   #[test]
   fn format_query_wired_inspect_hint_quotes_store_root_with_whitespace() {
-    let inspect = cli::InspectClientOptions {
+    let inspect = InspectClientOptions {
       store_root: Some("/tmp/mc20 store".to_string()),
-      ..cli::InspectClientOptions::default()
+      ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
     assert_eq!(
@@ -2555,9 +2549,9 @@ mod tests {
 
   #[test]
   fn format_query_wired_inspect_hint_quotes_store_root_with_single_quote() {
-    let inspect = cli::InspectClientOptions {
+    let inspect = InspectClientOptions {
       store_root: Some("/tmp/mc20'store".to_string()),
-      ..cli::InspectClientOptions::default()
+      ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
     assert_eq!(
@@ -2568,9 +2562,9 @@ mod tests {
 
   #[test]
   fn format_query_wired_inspect_hint_quotes_store_root_with_shell_metacharacters() {
-    let inspect = cli::InspectClientOptions {
+    let inspect = InspectClientOptions {
       store_root: Some("/tmp/(mc20)[store]".to_string()),
-      ..cli::InspectClientOptions::default()
+      ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
     assert_eq!(
@@ -2597,7 +2591,7 @@ mod tests {
 
   #[test]
   fn inspect_serve_write_token_rejects_empty_token_file() {
-    let path = std::env::temp_dir().join(format!(
+    let path = env::temp_dir().join(format!(
       "auv-empty-write-token-{}.txt",
       auv_cli::model::now_millis()
     ));
@@ -2650,7 +2644,7 @@ mod tests {
 
   #[test]
   fn inspect_server_target_prefers_explicit_url_and_token_file() {
-    let path = std::env::temp_dir().join(format!(
+    let path = env::temp_dir().join(format!(
       "auv-client-write-token-{}.txt",
       auv_cli::model::now_millis()
     ));
@@ -2676,14 +2670,14 @@ mod tests {
   #[test]
   fn required_inspect_server_write_rejects_missing_target() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
       "auv-missing-inspect-session-{}",
       auv_cli::model::now_millis()
     ));
     fs::create_dir_all(&root).expect("session dir should write");
     let session_path = root.join("session.json");
     unsafe {
-      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+      env::set_var("AUV_INSPECT_SESSION", &session_path);
     }
     let inspect = InspectClientOptions {
       server_write: cli::InspectWriteSetting::Enabled,
@@ -2697,7 +2691,7 @@ mod tests {
     };
 
     unsafe {
-      std::env::remove_var("AUV_INSPECT_SESSION");
+      env::remove_var("AUV_INSPECT_SESSION");
     }
     let _ = fs::remove_dir_all(root);
     assert!(error.contains("inspect server write is required"));
@@ -2706,16 +2700,16 @@ mod tests {
   #[test]
   fn required_missing_server_with_local_write_disabled_does_not_leave_temp_store() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
       "auv-missing-required-server-no-local-{}",
       auv_cli::model::now_millis()
     ));
     fs::create_dir_all(&root).expect("session dir should write");
     let session_path = root.join("session.json");
     unsafe {
-      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+      env::set_var("AUV_INSPECT_SESSION", &session_path);
     }
-    let prefix = format!("auv-runtime-store-{}-", std::process::id());
+    let prefix = format!("auv-runtime-store-{}-", process::id());
     let before = temp_runtime_store_entries(&prefix);
     let inspect = InspectClientOptions {
       local_write: cli::InspectWriteSetting::Disabled,
@@ -2731,7 +2725,7 @@ mod tests {
     let after = temp_runtime_store_entries(&prefix);
 
     unsafe {
-      std::env::remove_var("AUV_INSPECT_SESSION");
+      env::remove_var("AUV_INSPECT_SESSION");
     }
     let _ = fs::remove_dir_all(root);
     assert!(error.contains("inspect server write is required"));
@@ -2740,7 +2734,7 @@ mod tests {
 
   #[test]
   fn recording_for_inspect_uses_cleanup_temp_store_when_local_write_disabled() {
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
       "auv-recording-no-local-{}",
       auv_cli::model::now_millis()
     ));
@@ -2764,7 +2758,7 @@ mod tests {
   #[test]
   fn optional_inspect_server_write_ignores_malformed_discovered_session() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
       "auv-malformed-inspect-session-{}",
       auv_cli::model::now_millis()
     ));
@@ -2778,7 +2772,7 @@ mod tests {
         .expect("session file permissions should change");
     }
     unsafe {
-      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+      env::set_var("AUV_INSPECT_SESSION", &session_path);
     }
     let inspect = InspectClientOptions {
       server_write: cli::InspectWriteSetting::Default,
@@ -2789,7 +2783,7 @@ mod tests {
     let runtime = build_runtime_for_inspect(&root, &inspect);
 
     unsafe {
-      std::env::remove_var("AUV_INSPECT_SESSION");
+      env::remove_var("AUV_INSPECT_SESSION");
     }
     let _ = fs::remove_dir_all(root);
     assert!(runtime.is_ok());
@@ -2798,7 +2792,7 @@ mod tests {
   #[test]
   fn required_inspect_server_write_rejects_malformed_discovered_session() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
       "auv-required-malformed-inspect-session-{}",
       auv_cli::model::now_millis()
     ));
@@ -2812,7 +2806,7 @@ mod tests {
         .expect("session file permissions should change");
     }
     unsafe {
-      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+      env::set_var("AUV_INSPECT_SESSION", &session_path);
     }
     let inspect = InspectClientOptions {
       server_write: cli::InspectWriteSetting::Default,
@@ -2826,7 +2820,7 @@ mod tests {
     };
 
     unsafe {
-      std::env::remove_var("AUV_INSPECT_SESSION");
+      env::remove_var("AUV_INSPECT_SESSION");
     }
     let _ = fs::remove_dir_all(root);
     assert!(error.contains("failed to parse inspect session"));
@@ -2835,7 +2829,7 @@ mod tests {
   #[test]
   fn default_discovery_ignores_non_local_session_url() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = std::env::temp_dir().join(format!(
+    let root = env::temp_dir().join(format!(
       "auv-remote-inspect-session-{}",
       auv_cli::model::now_millis()
     ));
@@ -2861,7 +2855,7 @@ mod tests {
         .expect("session file permissions should change");
     }
     unsafe {
-      std::env::set_var("AUV_INSPECT_SESSION", &session_path);
+      env::set_var("AUV_INSPECT_SESSION", &session_path);
     }
     let inspect = InspectClientOptions {
       server_write: cli::InspectWriteSetting::Default,
@@ -2873,14 +2867,14 @@ mod tests {
       resolve_inspect_server_target(&inspect).expect("optional discovery should ignore remote URL");
 
     unsafe {
-      std::env::remove_var("AUV_INSPECT_SESSION");
+      env::remove_var("AUV_INSPECT_SESSION");
     }
     let _ = fs::remove_dir_all(root);
     assert_eq!(target, None);
   }
 
   fn mc2_temp_dir(label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("auv-{label}-{}", auv_cli::model::now_millis()));
+    let path = env::temp_dir().join(format!("auv-{label}-{}", auv_cli::model::now_millis()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
@@ -3348,7 +3342,7 @@ mod tests {
   }
 
   fn temp_runtime_store_entries(prefix: &str) -> Vec<String> {
-    let mut entries = fs::read_dir(std::env::temp_dir())
+    let mut entries = fs::read_dir(env::temp_dir())
       .expect("temp dir should read")
       .filter_map(|entry| {
         let entry = entry.ok()?;

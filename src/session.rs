@@ -466,6 +466,7 @@ impl SessionObservationProvider for BufferedObservationProvider {
 
 #[cfg(test)]
 mod tests {
+  use crate::contract::{VERIFICATION_RESULT_API_VERSION, VerificationMethod};
   use std::cell::RefCell;
   use std::rc::Rc;
 
@@ -640,9 +641,9 @@ mod tests {
   #[test]
   fn verify_records_existing_verification_result_contract() {
     let mut session = SessionRuntime::new(SessionOptions::default());
-    let verification = crate::contract::VerificationResult {
-      api_version: crate::contract::VERIFICATION_RESULT_API_VERSION.to_string(),
-      method: crate::contract::VerificationMethod::SemanticMatch,
+    let verification = VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+      method: VerificationMethod::SemanticMatch,
       executed: true,
       state_changed: true,
       semantic_matched: Some(true),

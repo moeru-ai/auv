@@ -4708,11 +4708,9 @@ mod tests {
       CliCommand::CandidateActionRun { request, .. } => {
         assert_eq!(
           request.action,
-          Some(
-            auv_cli::candidate_action_decision::CandidateActionKind::TypeText {
-              text: "hello from auv".to_string(),
-            }
-          )
+          Some(CandidateActionKind::TypeText {
+            text: "hello from auv".to_string(),
+          })
         );
       }
       other => panic!("unexpected command: {other:?}"),

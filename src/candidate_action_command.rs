@@ -947,7 +947,7 @@ impl CandidateActionProposer for OpenAiResponsesCandidateActionProposer {
     // the blocking client inside a dedicated thread so proposer mode cannot
     // panic on Tokio runtime shutdown. Revisit when this command path becomes
     // async end-to-end.
-    let response_json = std::thread::spawn(move || -> AuvResult<serde_json::Value> {
+    let response_json = thread::spawn(move || -> AuvResult<serde_json::Value> {
       let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_millis(OPENAI_RESPONSES_TIMEOUT_MS))
         .build()
@@ -1079,7 +1079,7 @@ fn self_minted_execution_consent(
     candidate_local_id: decision.candidate_local_id.clone(),
     approved_action: CandidateActionExecutionConsentAction::from_action(action),
     provenance: ConsentProvenance::DevSelfMinted,
-    grade: crate::candidate_promotion::ConsentGrade::DevOnly,
+    grade: ConsentGrade::DevOnly,
     approved_at_millis: now_millis(),
     evidence_note: request.execution_evidence_note.clone(),
   })
