@@ -1,0 +1,8 @@
+{
+  "scenario": "coverage_no_observation_v0",
+  "frame_fixture": "temporal/two_frame_v0",
+  "observations_by_frame": [
+    [],
+    []
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "scenario": "coverage_stable_v0",
+  "frame_fixture": "temporal/two_frame_v0",
+  "observations_by_frame": [
+    [
+      {
+        "observation_id": "o0",
+        "label": "widget"
+      }
+    ],
+    [
+      {
+        "observation_id": "o1",
+        "label": "widget"
+      }
+    ]
+  ]
+}

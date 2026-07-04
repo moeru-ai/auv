@@ -153,4 +153,11 @@ pub const FIXTURE_DIR: ArgSpec = ArgSpec {
   help: "Directory containing a single-frame scan fixture (manifest.json + PNG).",
 };
 pub const SCAN_FRAME_ARGS: &[ArgSpec] = &[FIXTURE_DIR];
+pub const COVERAGE_FIXTURE_DIR: ArgSpec = ArgSpec {
+  flag: "--fixture-dir",
+  value_name: "PATH",
+  required: true,
+  help: "Directory containing a coverage scenario manifest (manifest.json); frame PNGs are resolved via frame_fixture cross-reference, not stored in this directory.",
+};
+pub const SCAN_COVERAGE_ARGS: &[ArgSpec] = &[COVERAGE_FIXTURE_DIR];
 pub const NO_ARGS: &[ArgSpec] = &[];

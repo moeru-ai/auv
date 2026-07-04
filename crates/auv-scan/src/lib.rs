@@ -41,8 +41,9 @@ pub use motion::{
 #[cfg(feature = "live-capture")]
 pub use producer::live::produce_frame_from_capture;
 pub use producer::{
-  FrameCaptureMeta, ProducedFrame, ProducedFrameBatch, ScanProducerError, bounds_to_scan_bounds,
-  bounds_to_scan_bounds_f64, build_scan_frame, frame_from_capture, produce_frame_from_fixture_dir,
+  CoverageProducerError, FrameCaptureMeta, ProducedCoverage, ProducedFrame, ProducedFrameBatch,
+  ScanProducerError, bounds_to_scan_bounds, bounds_to_scan_bounds_f64, build_scan_frame,
+  frame_from_capture, produce_coverage_from_fixture_dir, produce_frame_from_fixture_dir,
   produce_frames_from_fixture_dir, write_frame_with_image,
 };
 pub use reader::{

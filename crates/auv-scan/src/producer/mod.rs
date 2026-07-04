@@ -3,6 +3,7 @@
 //! NOTICE(scan-s1-slice-2): fixture and live **must** share `write_frame_with_image`
 //! → `write_frame_artifact`. Fail-closed: no degraded/partial artifacts on disk.
 
+mod coverage;
 mod error;
 
 #[cfg(feature = "live-capture")]
@@ -16,6 +17,7 @@ use serde::Deserialize;
 use crate::artifact::write_frame_artifact;
 use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
 
+pub use coverage::{CoverageProducerError, ProducedCoverage, produce_coverage_from_fixture_dir};
 pub use error::ScanProducerError;
 
 /// Metadata supplied by a capture site when building a [`ScanFrame`].

@@ -337,6 +337,7 @@ Single-viewport **2D temporal scan** / **S-line observation read-model v1 (herme
 - [`2026-07-06-auv-scan-s7-invoke-frame-producer-handoff.md`](2026-07-06-auv-scan-s7-invoke-frame-producer-handoff.md) — S7 invoke `scan.frame` fixture producer (runtime artifact bridge; not lane graduation)
 - [`2026-07-07-auv-scan-s8a-coverage-wire-handoff.md`](2026-07-07-auv-scan-s8a-coverage-wire-handoff.md) — S8a `scan-coverage-v0` crate-local wire/IO (`coverage_view_to_wire` projection only; S3 stage remains `partial`)
 - [`2026-07-08-auv-scan-s8b-scene-coverage-consumer-handoff.md`](2026-07-08-auv-scan-s8b-scene-coverage-consumer-handoff.md) — S8b scene_state durable coverage consumer (`coverage_wire_to_view` inverse projection; whole-product parity; S3 substrate remains `partial`)
+- [`2026-07-09-auv-scan-s8c-coverage-producer-handoff.md`](2026-07-09-auv-scan-s8c-coverage-producer-handoff.md) — S8c runtime coverage producer (`produce_coverage_from_fixture_dir` + `scan.coverage` invoke staging; S3 substrate remains `partial` until S8d inspect durable read)
 
 ### `core/recognition` — Active
 

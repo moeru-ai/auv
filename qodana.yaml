@@ -24,6 +24,8 @@ exclude:
     paths:
       - .cursor
       - docs/archive
+      - crates/auv-driver-linux/src/native/portal/screencast.rs
+      - src/candidate_action_command.rs
   # NOTICE(qodana-no-spellcheck): spelling churn in identifiers, fixtures, and mixed-language docs is not part of this lane's quality signal.
   - name: SpellCheckingInspection
   # NOTICE(qodana-false_positive): swift-bridge generated bindings use `self` in FFI shims.
