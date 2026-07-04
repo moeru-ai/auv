@@ -134,6 +134,8 @@ fn last_seen_frame_id(
   None
 }
 
+// NOTICE(s9b-deferral): N-frame adjacent associations are durable in `scan-tracks-v0`;
+// this helper still uses only the last frame pair for scene_state (S5a scope).
 fn associations_for_bundle(
   bundle: &ScanFrameBundle,
   observations_by_frame: &[Vec<FrameObservation>],

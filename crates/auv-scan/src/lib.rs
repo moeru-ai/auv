@@ -17,6 +17,7 @@ pub mod reader;
 pub mod scene_state;
 pub mod scene_state_inspect;
 pub mod timeline;
+pub mod tracks;
 
 pub use artifact::{
   ScanArtifactError, frame_artifact_file_name, read_frame_artifact, write_frame_artifact,
@@ -65,4 +66,10 @@ pub use timeline::{
   SCAN_TIMELINE_SCHEMA_VERSION, ScanTimelineWire, TimelineDiagnosticWire, TimelineError,
   TimelineMotionWire, TimelineSegmentWire, build_scan_timeline_from_bundle,
   format_scan_timeline_text, read_timeline_artifact, write_timeline_artifact,
+};
+pub use tracks::{
+  AssociationDiagnosticWire, AssociationResultWire, DIAG_OBSERVATIONS_FRAME_MISMATCH,
+  SCAN_TRACKS_ARTIFACT_FILE_NAME, SCAN_TRACKS_SCHEMA_VERSION, ScanTracksWire, TrackSegmentWire,
+  TracksDiagnosticWire, TracksError, build_scan_tracks_from_bundle, format_scan_tracks_text,
+  read_tracks_artifact, write_tracks_artifact,
 };

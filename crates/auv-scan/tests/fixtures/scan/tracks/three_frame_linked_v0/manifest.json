@@ -1,0 +1,46 @@
+{
+  "scenario": "three_frame_linked_v0",
+  "frame_fixture": "temporal/three_frame_v0",
+  "observations_by_frame": [
+    [
+      {
+        "observation_id": "o0",
+        "label": "widget"
+      }
+    ],
+    [
+      {
+        "observation_id": "o1",
+        "label": "widget"
+      }
+    ],
+    [
+      {
+        "observation_id": "o2",
+        "label": "widget"
+      }
+    ]
+  ],
+  "segments": [
+    {
+      "associations": [
+        {
+          "status": "linked",
+          "track_id": "track-widget",
+          "previous_observation_id": "o0",
+          "current_observation_id": "o1"
+        }
+      ]
+    },
+    {
+      "associations": [
+        {
+          "status": "linked",
+          "track_id": "track-widget",
+          "previous_observation_id": "o1",
+          "current_observation_id": "o2"
+        }
+      ]
+    }
+  ]
+}
