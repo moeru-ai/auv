@@ -1,0 +1,71 @@
+{
+  "scenario": "three_frame_v0",
+  "segments": [
+    {
+      "delta_x": 0,
+      "delta_y": 12,
+      "confidence": 1.0
+    },
+    {
+      "delta_x": 0,
+      "delta_y": 8,
+      "confidence": 1.0
+    }
+  ],
+  "frames": [
+    {
+      "frame_id": "frame-0001",
+      "sequence_index": 0,
+      "captured_at_millis": 1700000000000,
+      "window_bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 800,
+        "height": 600
+      },
+      "viewport_bounds": null,
+      "image": {
+        "file_name": "frame-0001.png",
+        "width": 8,
+        "height": 8,
+        "media_type": "image/png"
+      }
+    },
+    {
+      "frame_id": "frame-0002",
+      "sequence_index": 1,
+      "captured_at_millis": 1700000001000,
+      "window_bounds": {
+        "x": 0,
+        "y": 12,
+        "width": 800,
+        "height": 600
+      },
+      "viewport_bounds": null,
+      "image": {
+        "file_name": "frame-0002.png",
+        "width": 8,
+        "height": 8,
+        "media_type": "image/png"
+      }
+    },
+    {
+      "frame_id": "frame-0003",
+      "sequence_index": 2,
+      "captured_at_millis": 1700000002000,
+      "window_bounds": {
+        "x": 0,
+        "y": 20,
+        "width": 800,
+        "height": 600
+      },
+      "viewport_bounds": null,
+      "image": {
+        "file_name": "frame-0003.png",
+        "width": 8,
+        "height": 8,
+        "media_type": "image/png"
+      }
+    }
+  ]
+}

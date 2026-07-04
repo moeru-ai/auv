@@ -116,7 +116,7 @@ artifact read/write + documented reject paths + golden fixtures) enter `graduate
 | `SCAN_TIMELINE_ARTIFACT_FILE_NAME` | Directory artifact name (`scan-timeline.json`) |
 | `ScanTimelineWire`, `TimelineSegmentWire`, `TimelineMotionWire`, `TimelineDiagnosticWire` | Timeline wire shapes |
 | `TimelineError` | Timeline artifact reject semantics |
-| `DIAG_INSUFFICIENT_FRAMES`, `DIAG_UNSUPPORTED_FRAME_COUNT` | Two-frame bounded diagnostic codes |
+| `DIAG_INSUFFICIENT_FRAMES`, `DIAG_UNSUPPORTED_FRAME_COUNT` | Bounded diagnostic codes (`unsupported_frame_count` deprecated-by-production per [S9a](2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md); builder emits `insufficient_frames` only when `< 2` frames) |
 | `read_timeline_artifact`, `write_timeline_artifact` | Timeline JSON IO |
 
 #### `crate-local public API` (all other `lib.rs` re-exports)

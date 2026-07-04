@@ -72,7 +72,9 @@ Motion delta algorithm: **only** via existing `estimate_viewport_motion` (`motio
 
 ## Build rules
 
-| `frames.len()` | Result |
+> **Superseded by [S9a](2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md):** builder now emits N-1 segments when `len >= 2`; table below is historical S1-4b policy.
+
+| `frames.len()` | Result (S1-4b historical) |
 |----------------|--------|
 | `< 2` | `segments=[]`, diagnostic `insufficient_frames` |
 | `== 2` | One segment; motion from `estimate_viewport_motion` |
@@ -105,7 +107,7 @@ git diff --check
 
 | Item | Notes |
 |------|-------|
-| N-1 multi-segment timeline | S1-4c+ |
+| N-1 multi-segment timeline | **Landed in [S9a](2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md)** |
 | Root `inspect_run` timeline block | B-line / run_read slice |
 | `motion_unstable` via image diff | New fixture + scroll_scan donor |
 | Runtime run artifact producer | Not S1-4b |

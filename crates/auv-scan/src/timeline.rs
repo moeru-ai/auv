@@ -1,7 +1,7 @@
-//! Two-frame adjacent segment timeline (`scan-timeline-v0`) — crate-local directory artifact.
+//! Adjacent-segment timeline (`scan-timeline-v0`) — crate-local directory artifact.
 //!
-//! NOTICE(s1-4b): TWO-FRAME ADJACENT SEGMENT ONLY — exactly one segment when len==2;
-//! not scan-frame-v0 extension; not run-level artifact; not N-1 multi-segment timeline.
+//! NOTICE(s9a-contract-revision): Builder emits N-1 adjacent segments when `len >= 2`;
+//! S1-4b two-frame-only cap removed. Wire schema unchanged (`scan-timeline-v0`).
 
 use std::fs;
 use std::io::Write;
@@ -10,13 +10,14 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::motion::{MotionError, MotionResult, estimate_viewport_motion};
+use crate::motion::{MotionResult, estimate_viewport_motion_between};
 use crate::reader::ScanFrameBundle;
 
 pub const SCAN_TIMELINE_SCHEMA_VERSION: &str = "scan-timeline-v0";
 pub const SCAN_TIMELINE_ARTIFACT_FILE_NAME: &str = "scan-timeline.json";
 
 pub const DIAG_INSUFFICIENT_FRAMES: &str = "insufficient_frames";
+// NOTICE(s9a-legacy): S1-4b diagnostic code; builder no longer emits this (deprecated-by-production).
 pub const DIAG_UNSUPPORTED_FRAME_COUNT: &str = "unsupported_frame_count";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -84,18 +85,11 @@ fn motion_to_wire(motion: MotionResult) -> TimelineMotionWire {
 fn insufficient_frames_diagnostic(found: usize) -> TimelineDiagnosticWire {
   TimelineDiagnosticWire {
     code: DIAG_INSUFFICIENT_FRAMES.into(),
-    message: format!("timeline requires exactly two frames for adjacent segment, found {found}"),
+    message: format!("timeline requires at least two frames for adjacent segments, found {found}"),
   }
 }
 
-fn unsupported_frame_count_diagnostic(found: usize) -> TimelineDiagnosticWire {
-  TimelineDiagnosticWire {
-    code: DIAG_UNSUPPORTED_FRAME_COUNT.into(),
-    message: format!("S1-4b supports two-frame bundles only, found {found}"),
-  }
-}
-
-/// Build a two-frame adjacent timeline wire from a frame bundle.
+/// Build an adjacent multi-segment timeline wire from a frame bundle (`N-1` segments when `N >= 2`).
 pub fn build_scan_timeline_from_bundle(bundle: &ScanFrameBundle) -> ScanTimelineWire {
   let frame_count = bundle.frames.len();
   if frame_count < 2 {
@@ -105,36 +99,26 @@ pub fn build_scan_timeline_from_bundle(bundle: &ScanFrameBundle) -> ScanTimeline
       diagnostics: vec![insufficient_frames_diagnostic(frame_count)],
     };
   }
-  if frame_count > 2 {
-    return ScanTimelineWire {
-      schema_version: SCAN_TIMELINE_SCHEMA_VERSION.to_string(),
-      segments: Vec::new(),
-      diagnostics: vec![unsupported_frame_count_diagnostic(frame_count)],
-    };
-  }
 
-  let first = &bundle.frames[0];
-  let second = &bundle.frames[1];
-  let motion = match estimate_viewport_motion(bundle) {
-    Ok(motion) => motion_to_wire(motion),
-    Err(MotionError::InsufficientFrames { found }) => {
-      return ScanTimelineWire {
-        schema_version: SCAN_TIMELINE_SCHEMA_VERSION.to_string(),
-        segments: Vec::new(),
-        diagnostics: vec![insufficient_frames_diagnostic(found)],
-      };
-    }
-  };
+  let segments = bundle
+    .frames
+    .windows(2)
+    .map(|window| {
+      let first = &window[0];
+      let second = &window[1];
+      TimelineSegmentWire {
+        from_frame_id: first.frame_id.clone(),
+        to_frame_id: second.frame_id.clone(),
+        from_sequence_index: first.sequence_index,
+        to_sequence_index: second.sequence_index,
+        motion: motion_to_wire(estimate_viewport_motion_between(first, second)),
+      }
+    })
+    .collect();
 
   ScanTimelineWire {
     schema_version: SCAN_TIMELINE_SCHEMA_VERSION.to_string(),
-    segments: vec![TimelineSegmentWire {
-      from_frame_id: first.frame_id.clone(),
-      to_frame_id: second.frame_id.clone(),
-      from_sequence_index: first.sequence_index,
-      to_sequence_index: second.sequence_index,
-      motion,
-    }],
+    segments,
     diagnostics: Vec::new(),
   }
 }
@@ -236,6 +220,10 @@ mod tests {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/two_frame_v0")
   }
 
+  fn three_frame_fixture_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/three_frame_v0")
+  }
+
   #[derive(Debug, Deserialize)]
   struct TwoFrameManifestMotion {
     delta_x: i64,
@@ -246,6 +234,18 @@ mod tests {
   #[derive(Debug, Deserialize)]
   struct TwoFrameManifest {
     motion: TwoFrameManifestMotion,
+  }
+
+  #[derive(Debug, Deserialize)]
+  struct ThreeFrameManifestSegment {
+    delta_x: i64,
+    delta_y: i64,
+    confidence: f64,
+  }
+
+  #[derive(Debug, Deserialize)]
+  struct ThreeFrameManifest {
+    segments: Vec<ThreeFrameManifestSegment>,
   }
 
   fn sample_frame(frame_id: &str, sequence_index: u32, y: i64) -> ScanFrame {
@@ -309,6 +309,53 @@ mod tests {
   }
 
   #[test]
+  fn build_scan_timeline_matches_three_frame_manifest() {
+    let fixture_dir = three_frame_fixture_dir();
+    let out_dir = next_temp_dir("timeline-three-manifest");
+    let _ = fs::remove_dir_all(&out_dir);
+    produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
+    let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
+    let timeline = build_scan_timeline_from_bundle(&bundle);
+    assert!(timeline.diagnostics.is_empty());
+    assert_eq!(timeline.segments.len(), 2);
+
+    let manifest_path = fixture_dir.join("manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path).expect("read manifest");
+    let manifest: ThreeFrameManifest =
+      serde_json::from_str(&manifest_text).expect("parse manifest");
+    assert_eq!(manifest.segments.len(), 2);
+
+    for (segment, expected) in timeline.segments.iter().zip(manifest.segments.iter()) {
+      match &segment.motion {
+        TimelineMotionWire::Estimated {
+          delta_x,
+          delta_y,
+          confidence,
+        } => {
+          assert_eq!(*delta_x, expected.delta_x);
+          assert_eq!(*delta_y, expected.delta_y);
+          assert_eq!(*confidence, expected.confidence);
+        }
+        other => panic!("expected estimated motion, got {other:?}"),
+      }
+    }
+    let _ = fs::remove_dir_all(&out_dir);
+  }
+
+  #[test]
+  fn build_scan_timeline_four_frame_handbuilt_smoke() {
+    let bundle = handbuilt_bundle(vec![
+      sample_frame("a", 0, 0),
+      sample_frame("b", 1, 12),
+      sample_frame("c", 2, 20),
+      sample_frame("d", 3, 28),
+    ]);
+    let timeline = build_scan_timeline_from_bundle(&bundle);
+    assert!(timeline.diagnostics.is_empty());
+    assert_eq!(timeline.segments.len(), 3);
+  }
+
+  #[test]
   fn write_read_timeline_artifact_roundtrip() {
     let fixture_dir = two_frame_fixture_dir();
     let out_dir = next_temp_dir("timeline-roundtrip");
@@ -358,11 +405,8 @@ mod tests {
       sample_frame("c", 2, 2),
     ]);
     let timeline_three = build_scan_timeline_from_bundle(&three_frame_bundle);
-    assert!(timeline_three.segments.is_empty());
-    assert_eq!(
-      timeline_three.diagnostics[0].code,
-      DIAG_UNSUPPORTED_FRAME_COUNT
-    );
+    assert_eq!(timeline_three.segments.len(), 2);
+    assert!(timeline_three.diagnostics.is_empty());
     let written_three = write_timeline_artifact(&dir, &timeline_three).expect("write three");
     let read_three = read_timeline_artifact(&written_three).expect("read three");
     assert_eq!(read_three, timeline_three);
@@ -378,18 +422,6 @@ mod tests {
     let text = format_scan_timeline_text(&timeline);
     assert!(text.contains("[timeline.diagnostic]"));
     assert!(text.contains(DIAG_INSUFFICIENT_FRAMES));
-  }
-
-  #[test]
-  fn build_scan_timeline_unsupported_frame_count() {
-    let bundle = handbuilt_bundle(vec![
-      sample_frame("a", 0, 0),
-      sample_frame("b", 1, 1),
-      sample_frame("c", 2, 2),
-    ]);
-    let timeline = build_scan_timeline_from_bundle(&bundle);
-    assert!(timeline.segments.is_empty());
-    assert_eq!(timeline.diagnostics[0].code, DIAG_UNSUPPORTED_FRAME_COUNT);
   }
 
   #[test]

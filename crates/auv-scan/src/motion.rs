@@ -2,6 +2,7 @@
 
 use thiserror::Error;
 
+use crate::frame::ScanFrame;
 use crate::reader::ScanFrameBundle;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -29,26 +30,35 @@ pub enum MotionError {
   InsufficientFrames { found: usize },
 }
 
-/// Estimate viewport motion between the first two frames in `bundle` (2D window_bounds delta).
+/// Estimate viewport motion between two adjacent frames (2D `window_bounds` delta).
+pub(crate) fn estimate_viewport_motion_between(
+  first: &ScanFrame,
+  second: &ScanFrame,
+) -> MotionResult {
+  if second.sequence_index <= first.sequence_index {
+    return MotionResult::Unknown(MotionUnknown {
+      code: "motion_unknown".into(),
+      message: "non-monotonic sequence_index between adjacent frames".into(),
+    });
+  }
+  MotionResult::Estimated(MotionEstimate {
+    delta_x: second.window_bounds.x - first.window_bounds.x,
+    delta_y: second.window_bounds.y - first.window_bounds.y,
+    confidence: 1.0,
+  })
+}
+
+/// Estimate viewport motion between the first two frames in `bundle` (two-frame helper).
 pub fn estimate_viewport_motion(bundle: &ScanFrameBundle) -> Result<MotionResult, MotionError> {
   if bundle.frames.len() < 2 {
     return Err(MotionError::InsufficientFrames {
       found: bundle.frames.len(),
     });
   }
-  let first = &bundle.frames[0];
-  let second = &bundle.frames[1];
-  if second.sequence_index <= first.sequence_index {
-    return Ok(MotionResult::Unknown(MotionUnknown {
-      code: "motion_unknown".into(),
-      message: "non-monotonic sequence_index between first two frames".into(),
-    }));
-  }
-  Ok(MotionResult::Estimated(MotionEstimate {
-    delta_x: second.window_bounds.x - first.window_bounds.x,
-    delta_y: second.window_bounds.y - first.window_bounds.y,
-    confidence: 1.0,
-  }))
+  Ok(estimate_viewport_motion_between(
+    &bundle.frames[0],
+    &bundle.frames[1],
+  ))
 }
 
 #[cfg(test)]
