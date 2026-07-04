@@ -121,9 +121,9 @@ impl ClipboardSession {
         {
           return Ok(String::new());
         }
-        Err(backend(format!(
+        return Err(backend(format!(
           "failed to read portal clipboard text: {error}"
-        )))
+        )));
       }
     };
     let std_fd = StdOwnedFd::from(fd);

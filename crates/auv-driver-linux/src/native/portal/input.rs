@@ -13,6 +13,7 @@ use super::request::{
   PORTAL_DESTINATION, create_remote_desktop_session, portal_proxy, session_connection,
   session_request,
 };
+use super::{ScreenCastStream, decode_streams, select_monitor_sources};
 
 const REMOTE_DESKTOP_INTERFACE: &str = "org.freedesktop.portal.RemoteDesktop";
 const DEVICE_KEYBOARD: u32 = 1;
@@ -35,6 +36,7 @@ pub struct InputSession {
   connection: Connection,
   session_handle: OwnedObjectPath,
   devices: u32,
+  streams: Vec<ScreenCastStream>,
 }
 
 impl std::fmt::Debug for InputSession {
@@ -43,6 +45,7 @@ impl std::fmt::Debug for InputSession {
       .debug_struct("InputSession")
       .field("session_handle", &self.session_handle)
       .field("devices", &self.devices)
+      .field("streams", &self.streams)
       .finish()
   }
 }
@@ -60,7 +63,14 @@ impl InputSession {
       &session_handle,
       options,
     )?;
+    select_monitor_sources(&connection, &session_handle)?;
     let results = start_remote_desktop(&connection, &session_handle)?;
+    let streams = decode_streams(&results)?;
+    if streams.is_empty() {
+      return Err(backend(
+        "remote desktop portal started without screencast streams",
+      ));
+    }
     let devices = results
       .get("devices")
       .and_then(|value| u32::try_from(value).ok())
@@ -74,6 +84,7 @@ impl InputSession {
       connection,
       session_handle,
       devices,
+      streams,
     })
   }
 
@@ -97,14 +108,12 @@ impl InputSession {
 
   pub fn click_at(&mut self, point: Point, click: Click) -> DriverResult<Option<String>> {
     self.require_pointer()?;
-    // TODO(linux-portal-input-stream): Absolute motion ideally needs a
-    // ScreenCast stream id and logical-size mapping. GNOME rejects stream `0`
-    // as an invalid position in local validation; replace this fallback with
-    // explicit ScreenCast mapping when the capture stream slice lands.
-    let fallback_reason = match self.notify_pointer_motion_absolute(0, point) {
+    let (stream_id, stream_point) = self.resolve_stream_point(point)?;
+    let fallback_reason = match self.notify_pointer_motion_absolute(stream_id, stream_point) {
       Ok(()) => None,
       Err(error) => Some(format!(
-        "absolute pointer motion was unavailable ({error}); clicked at current pointer position"
+        "absolute pointer motion was unavailable for stream {stream_id} at {:?} ({error}); clicked at current pointer position",
+        stream_point
       )),
     };
     let (count, interval) = match click {
@@ -220,6 +229,16 @@ impl InputSession {
     } else {
       Ok(())
     }
+  }
+
+  fn resolve_stream_point(&self, point: Point) -> DriverResult<(u32, Point)> {
+    let Some(stream) = self.streams.iter().find(|stream| stream.contains(point)) else {
+      return Err(backend(format!(
+        "no screencast stream contains point {:?}; streams={:?}",
+        point, self.streams
+      )));
+    };
+    Ok((stream.id, stream.local_point(point)?))
   }
 }
 
