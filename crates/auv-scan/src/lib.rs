@@ -8,6 +8,7 @@ mod scene_fixture_support;
 pub mod artifact;
 pub mod association;
 pub mod coverage;
+pub mod coverage_artifact;
 pub mod frame;
 pub mod lifecycle;
 pub mod motion;
@@ -25,6 +26,10 @@ pub use association::{
 };
 pub use coverage::{
   CompletenessClaim, CoverageEntry, CoverageView, NegativeEvidence, build_coverage_view,
+};
+pub use coverage_artifact::{
+  CoverageArtifactError, SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_SCHEMA_VERSION,
+  ScanCoverageWire, coverage_view_to_wire, read_coverage_artifact, write_coverage_artifact,
 };
 pub use frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
 pub use lifecycle::{

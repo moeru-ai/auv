@@ -1,0 +1,15 @@
+{
+  "schema_version": "scan-coverage-v0",
+  "entries": [
+    {
+      "track_id": "track-widget",
+      "last_seen_frame_id": "frame-0002",
+      "observation_count": 2
+    }
+  ],
+  "open_uncertainty_codes": [],
+  "negative_evidence": [],
+  "completeness": {
+    "status": "complete"
+  }
+}

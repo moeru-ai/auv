@@ -95,7 +95,7 @@ runtime producer, observation-in-frame closure, and durable S3–S5 wires land.
 | **S2** two-frame motion | Explicit estimate or `motion_unknown` | `landed proof` | `motion.rs`, `timeline.rs` ([s4b](2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md)); metadata `window_bounds` delta — `scan-timeline-v0` wire/IO bounded language: [2026-07-05 review](2026-07-05-auv-s1-bounded-contract-graduation-review.md) |
 | **S2** association | Stable identity + ambiguity diagnostic | `landed proof` | `association.rs`; `association_stable_v0`, `association_ambiguous_v0` fixtures |
 | **S2** N-frame / durable tracks | Bounded sequence motion; `scan-tracks` wire | `hold` | `DIAG_UNSUPPORTED_FRAME_COUNT` when frame count ≠ 2; tracks wire not implemented |
-| **S3** coverage ledger | Regions, freshness, negative evidence, completeness | `partial` | `coverage.rs` → `CoverageView` (in-memory); not substrate `CoverageLedger` wire |
+| **S3** coverage ledger | Regions, freshness, negative evidence, completeness | `partial` | `coverage.rs` → `CoverageView` (in-memory); S8a adds `landed proof` for `scan-coverage-v0` wire/IO cluster — see [S8a handoff](2026-07-07-auv-scan-s8a-coverage-wire-handoff.md); **S3 substrate stage remains `partial`** until producer (S8c) + consumer (S8b/S8d) chain lands |
 | **S4** anchor lifecycle | observed → stale → reacquired \| lost with evidence | `partial` | [lifecycle evaluator](2026-07-02-auv-scan-s4-lifecycle-evaluator-handoff.md); baked `lifecycle_events` — not hot-path derived |
 | **S5** scene state product | Answer S0 five questions without re-running scanner | `partial` | [S5a handoff](2026-07-03-auv-scan-s5-scene-state-handoff.md); `observations_by_frame` external to frame wire |
 | **S5** durable product wire | `scan-scene-state-v0` | `defer` | Explicit non-goal in S5/S6 handoffs |
@@ -205,7 +205,7 @@ Evidence that would **upgrade** (future review only, not automatic):
 
 | Trigger | Possible upgrade |
 | --- | --- |
-| Durable `scan-coverage-v0` + golden reader | S3 `partial` → `landed proof` for coverage wire |
+| Durable `scan-coverage-v0` + golden reader | S3 `partial` → `landed proof` for **coverage wire cluster only** (S8a merged — see [S8a handoff](2026-07-07-auv-scan-s8a-coverage-wire-handoff.md)); **S3 substrate stage stays `partial`** until producer + consumer chain |
 | Runtime invoke writes `scan-frame-*` into real runs | Runtime `hold` → `partial` bridge |
 | `inspect_server` consumes `SceneStateListSummary` without new semantics | B-line `partial` → `landed proof` for inspect consumption |
 | N-frame timeline fixture (3+ frames) with regression on two-frame tests | S2 `helper proof only` → stronger temporal proof |
@@ -217,7 +217,7 @@ Evidence that would **upgrade** (future review only, not automatic):
 Priority order — **registration only; this review does not approve implementation:**
 
 1. **S1 wire gap closure** — Add minimal `quality_flags` / binding metadata to `scan-frame-v0` with golden migration, **or** add `NOTICE` deferrals at `ScanFrame` for each roadmap field intentionally omitted. Bounded contract boundary frozen in [`2026-07-05-auv-s1-bounded-contract-graduation-review.md`](2026-07-05-auv-s1-bounded-contract-graduation-review.md).
-2. **S3 durable `scan-coverage-v0`** — First real ledger artifact beside frame dir; golden round-trip.
+2. ~~**S3 durable `scan-coverage-v0`**~~ — **S8a:** `scan-coverage-v0` wire/IO cluster has `landed proof` evidence; **S3 substrate stage remains `partial`** until S8b consume + S8c runtime producer — see [S8a handoff](2026-07-07-auv-scan-s8a-coverage-wire-handoff.md).
 3. **Invoke/runtime frame producer** — Catalog command writing `scan-frame-*.json` into implicit run storage via existing producer APIs (`live-capture` feature-gated).
 4. **S1-4c N-frame adjacent timeline** — Extend `build_scan_timeline_from_bundle` beyond two frames; 3+ frame fixture.
 5. **B-line S6b+** — `inspect_server` / viewer consumption of `SceneStateListSummary` when owner explicitly approves inspect surface expansion.

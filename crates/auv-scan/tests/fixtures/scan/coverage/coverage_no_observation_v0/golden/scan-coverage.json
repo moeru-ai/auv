@@ -1,0 +1,15 @@
+{
+  "schema_version": "scan-coverage-v0",
+  "entries": [],
+  "open_uncertainty_codes": [],
+  "negative_evidence": [
+    {
+      "code": "no_new_observation",
+      "after_frame_id": "frame-0002"
+    }
+  ],
+  "completeness": {
+    "status": "incomplete",
+    "reason": "open uncertainties or negative evidence remain"
+  }
+}

@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **280** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **281** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -311,7 +311,7 @@ view-parser IR 与 inspect 消费
 - [`2026-05-29-view-parser-v0-overview.md`](2026-05-29-view-parser-v0-overview.md)
 - [`2026-05-29-view-parser-view-memory-v0.md`](2026-05-29-view-parser-view-memory-v0.md)
 
-#### scan line (S) — note entry (19)
+#### scan line (S) — note entry (20)
 
 Single-viewport **2D temporal scan** / **S-line observation read-model v1 (hermetic)**; complements
 [`scroll-scan` design](2026-05-21-scroll-scan-design.md) page-loop evidence. S1–S6b-1 landed in `crates/auv-scan`; S7 invoke frame producer landed in `crates/auv-cli-invoke` (`scan.frame`); whole-line substrate graduation **`hold`** — see [graduation review](2026-07-04-auv-s-line-graduation-review.md); S1 bounded artifact contracts documented — see [bounded contract review](2026-07-05-auv-s1-bounded-contract-graduation-review.md).
@@ -335,6 +335,7 @@ Single-viewport **2D temporal scan** / **S-line observation read-model v1 (herme
 - [`2026-07-04-auv-s-line-graduation-review.md`](2026-07-04-auv-s-line-graduation-review.md) — S-line graduation review / state-of-lane audit
 - [`2026-07-05-auv-s1-bounded-contract-graduation-review.md`](2026-07-05-auv-s1-bounded-contract-graduation-review.md) — S1 bounded contract graduation review (artifact/wire/IO only)
 - [`2026-07-06-auv-scan-s7-invoke-frame-producer-handoff.md`](2026-07-06-auv-scan-s7-invoke-frame-producer-handoff.md) — S7 invoke `scan.frame` fixture producer (runtime artifact bridge; not lane graduation)
+- [`2026-07-07-auv-scan-s8a-coverage-wire-handoff.md`](2026-07-07-auv-scan-s8a-coverage-wire-handoff.md) — S8a `scan-coverage-v0` crate-local wire/IO (`coverage_view_to_wire` projection only; S3 stage remains `partial`)
 
 ### `core/recognition` — Active
 

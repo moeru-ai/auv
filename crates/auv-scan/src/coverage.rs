@@ -1,4 +1,7 @@
-//! Optional coverage analysis view derived from frames and association (no durable wire v0).
+//! In-memory coverage evaluator and read-model (`CoverageView`).
+//!
+//! NOTICE(s8a): durable wire lives in `coverage_artifact.rs`;
+//! evaluator + `CoverageView` remain in-memory by design.
 
 use crate::association::AssociationResult;
 use crate::reader::ScanFrameBundle;
