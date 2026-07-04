@@ -438,7 +438,7 @@ mod tests {
         .expect("unix epoch")
         .as_nanos()
     ));
-    std::fs::create_dir_all(&temp).expect("temp dir should create");
+    fs::create_dir_all(&temp).expect("temp dir should create");
     let path = temp.join("telemetry.jsonl");
     fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000)))
       .expect("telemetry should write");
@@ -477,9 +477,9 @@ mod tests {
         .expect("unix epoch")
         .as_nanos()
     ));
-    std::fs::create_dir_all(&temp).expect("temp dir should create");
+    fs::create_dir_all(&temp).expect("temp dir should create");
     let path = temp.join("telemetry.jsonl");
-    std::fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000)))
+    fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000)))
       .expect("telemetry should write");
 
     let frame = read_latest_spatial_frame_newer_than(&path, 1000, TailFrameWaitConfig::new(20, 5))
@@ -488,6 +488,6 @@ mod tests {
 
     assert_eq!(frame.spatial_frame_id, "frame-1");
     assert_eq!(frame.monotonic_timestamp_ms, 1000);
-    let _ = std::fs::remove_dir_all(temp);
+    let _ = fs::remove_dir_all(temp);
   }
 }
