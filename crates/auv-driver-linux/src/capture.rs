@@ -1,4 +1,7 @@
 #[cfg(target_os = "linux")]
+use std::sync::{Arc, Mutex};
+
+#[cfg(target_os = "linux")]
 use auv_driver::capture::Capture;
 use auv_driver::capture::{DisplayCapture, RegionCapture};
 #[cfg(target_os = "linux")]
@@ -10,11 +13,13 @@ use auv_driver::geometry::CoordinateSpace;
 use auv_driver::geometry::Rect;
 
 #[cfg(target_os = "linux")]
+use crate::driver::LinuxDriverSessionState;
+#[cfg(target_os = "linux")]
 use crate::error::backend;
 #[cfg(any(target_os = "linux", test))]
 use crate::error::invalid_input;
 #[cfg(target_os = "linux")]
-use crate::native::portal::{ScreenCastFrame, capture_monitor_frame};
+use crate::native::portal::{ScreenCastFrame, ScreenCastSession};
 #[cfg(target_os = "linux")]
 use display::{list_targets, resolve_for_region, selected_target_or_none};
 
@@ -41,10 +46,13 @@ pub fn list_displays() -> DriverResult<ObservedDisplays> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
+pub fn capture_display(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  selector: Option<&str>,
+) -> DriverResult<DisplayCapture> {
   let target = selected_target_or_none(selector)?;
   let target_bounds = target.as_ref().map(|target| target.display.frame);
-  match capture_monitor_frame(target_bounds) {
+  match capture_monitor_frame_for_session(state, target_bounds) {
     Ok(frame) => {
       let display = target
         .map(|target| target.display)
@@ -99,10 +107,14 @@ pub fn capture_display(_selector: Option<&str>) -> DriverResult<DisplayCapture> 
 }
 
 #[cfg(target_os = "linux")]
-pub fn capture_region(selector: Option<&str>, region: Rect) -> DriverResult<RegionCapture> {
+pub fn capture_region(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  selector: Option<&str>,
+  region: Rect,
+) -> DriverResult<RegionCapture> {
   let targets = list_targets()?;
   let target = resolve_for_region(&targets, selector, region)?;
-  let captured = match capture_monitor_frame(Some(target.display.frame)) {
+  let captured = match capture_monitor_frame_for_session(state, Some(target.display.frame)) {
     Ok(frame) => CapturedImage {
       image: crop_portal_screenshot_to_region(frame.image, target.display.frame, region)?,
       backend: format!("{PORTAL_SCREENCAST_BACKEND}.crop"),
@@ -142,6 +154,22 @@ struct CapturedImage {
   image: image::RgbaImage,
   backend: String,
   fallback_reason: Option<String>,
+}
+
+#[cfg(target_os = "linux")]
+fn capture_monitor_frame_for_session(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  target_bounds: Option<Rect>,
+) -> DriverResult<ScreenCastFrame> {
+  let mut state = state.lock().expect("linux driver session state poisoned");
+  if state.screencast_session.is_none() {
+    state.screencast_session = Some(ScreenCastSession::open()?);
+  }
+  state
+    .screencast_session
+    .as_mut()
+    .expect("screencast session was just initialized")
+    .capture_monitor_frame(target_bounds)
 }
 
 #[cfg(target_os = "linux")]

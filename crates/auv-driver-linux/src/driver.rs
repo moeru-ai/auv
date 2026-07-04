@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use auv_driver::{Driver, DriverDescriptor, DriverResult, DriverSession};
 
 use crate::descriptor::{LinuxDriverDescriptor, linux_driver_descriptor};
-use crate::native::portal::{ClipboardSession, InputSession};
+use crate::native::portal::{ClipboardSession, InputSession, ScreenCastSession};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LinuxDriver;
@@ -25,8 +25,14 @@ pub struct LinuxDriverSession {
 
 #[derive(Debug, Default)]
 pub(crate) struct LinuxDriverSessionState {
+  // TODO(linux-portal-remote-desktop-shared-session): input and clipboard use
+  // separate RemoteDesktop sessions, so live validation still requests those
+  // permissions separately. Merge only after an owner-approved slice defines
+  // combined RequestClipboard/SelectDevices/Start and clipboard transfer
+  // thread ownership.
   pub(crate) clipboard_session: Option<ClipboardSession>,
   pub(crate) input_session: Option<InputSession>,
+  pub(crate) screencast_session: Option<ScreenCastSession>,
 }
 
 impl LinuxDriverSession {

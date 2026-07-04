@@ -3,7 +3,7 @@
 //! Usage:
 //!
 //! ```text
-//! cargo run -p auv-driver-linux --example validate -- <command> [args]
+//! cargo run -p auv-driver-linux --example validate -- <command> [args] [<command> [args] ...]
 //! ```
 //!
 //! Commands:
@@ -23,6 +23,14 @@
 //!   scroll <x> <y> <delta-y>       scroll through the portal
 //!   click <x> <y>                  click through the portal
 //!   input-boundary                 print current RemoteDesktop/libei boundary
+//!
+//! Multiple commands run in one LinuxDriverSession. Use `--` between commands
+//! when an optional argument would otherwise be ambiguous:
+//!
+//! ```text
+//! cargo run -p auv-driver-linux --example validate -- permissions clipboard type-text "hello"
+//! cargo run -p auv-driver-linux --example validate -- capture-screen -- clipboard
+//! ```
 
 use std::error::Error;
 
@@ -35,6 +43,12 @@ use auv_driver::window::Window;
 use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
 
 type Run = Result<(), Box<dyn Error>>;
+
+#[derive(Debug, PartialEq, Eq)]
+struct Invocation {
+  command: String,
+  args: Vec<String>,
+}
 
 fn main() {
   if let Err(error) = run() {
@@ -49,17 +63,37 @@ fn run() -> Run {
     print_usage();
     return Ok(());
   };
+  if command == "--" {
+    return Err("expected command before separator".into());
+  }
+  let invocations = parse_invocations(&args)?;
   let session = LinuxDriver::new().open_local()?;
-  let rest = &args[1..];
 
-  match command.as_str() {
-    "permissions" => permissions(&session),
-    "displays" => displays(&session),
-    "windows" => windows(&session),
-    "resolve" => resolve(&session, arg(rest, 0, "title-substr")?),
-    "capture-screen" => capture_screen(&session, rest.first().map(String::as_str)),
+  for (index, invocation) in invocations.iter().enumerate() {
+    if invocations.len() > 1 {
+      println!(
+        "\n== validate {} / {}: {} ==",
+        index + 1,
+        invocations.len(),
+        invocation.command
+      );
+    }
+    run_invocation(&session, invocation)?;
+  }
+
+  Ok(())
+}
+
+fn run_invocation(session: &LinuxDriverSession, invocation: &Invocation) -> Run {
+  let rest = &invocation.args;
+  match invocation.command.as_str() {
+    "permissions" => permissions(session),
+    "displays" => displays(session),
+    "windows" => windows(session),
+    "resolve" => resolve(session, arg(rest, 0, "title-substr")?),
+    "capture-screen" => capture_screen(session, rest.first().map(String::as_str)),
     "capture-region" => capture_region(
-      &session,
+      session,
       parse(rest, 0)?,
       parse(rest, 1)?,
       parse(rest, 2)?,
@@ -67,24 +101,86 @@ fn run() -> Run {
       rest.get(4).map(String::as_str),
     ),
     "capture-window" => capture_window(
-      &session,
+      session,
       arg(rest, 0, "title-substr")?,
       rest.get(1).map(String::as_str),
     ),
-    "ocr" => ocr(&session, arg(rest, 0, "title-substr")?),
-    "ax" => ax(&session, arg(rest, 0, "title-substr")?),
-    "coords" => coords(&session, arg(rest, 0, "title-substr")?),
-    "clipboard" => clipboard(&session),
-    "type-text" => type_text(&session, arg(rest, 0, "text")?),
-    "press" => press(&session, arg(rest, 0, "key")?),
-    "scroll" => scroll(&session, parse(rest, 0)?, parse(rest, 1)?, parse(rest, 2)?),
-    "click" => click(&session, parse(rest, 0)?, parse(rest, 1)?),
-    "input-boundary" => input_boundary(&session),
+    "ocr" => ocr(session, arg(rest, 0, "title-substr")?),
+    "ax" => ax(session, arg(rest, 0, "title-substr")?),
+    "coords" => coords(session, arg(rest, 0, "title-substr")?),
+    "clipboard" => clipboard(session),
+    "type-text" => type_text(session, arg(rest, 0, "text")?),
+    "press" => press(session, arg(rest, 0, "key")?),
+    "scroll" => scroll(session, parse(rest, 0)?, parse(rest, 1)?, parse(rest, 2)?),
+    "click" => click(session, parse(rest, 0)?, parse(rest, 1)?),
+    "input-boundary" => input_boundary(session),
     other => {
       eprintln!("unknown command: {other}\n");
       print_usage();
       Ok(())
     }
+  }
+}
+
+fn parse_invocations(args: &[String]) -> Result<Vec<Invocation>, Box<dyn Error>> {
+  let mut invocations = Vec::new();
+  let mut index = 0;
+
+  while index < args.len() {
+    if args[index] == "--" {
+      return Err("expected command after separator".into());
+    }
+
+    let command = args[index].clone();
+    let Some((min_args, max_args)) = command_arity(&command) else {
+      return Err(format!("unknown command: {command}").into());
+    };
+    index += 1;
+
+    let mut command_args = Vec::new();
+    while index < args.len() && command_args.len() < max_args {
+      if args[index] == "--" {
+        index += 1;
+        break;
+      }
+      if command_args.len() >= min_args && command_arity(&args[index]).is_some() {
+        break;
+      }
+      command_args.push(args[index].clone());
+      index += 1;
+    }
+
+    if command_args.len() < min_args {
+      return Err(
+        format!(
+          "{} expects at least {} argument(s), got {}",
+          command,
+          min_args,
+          command_args.len()
+        )
+        .into(),
+      );
+    }
+
+    invocations.push(Invocation {
+      command,
+      args: command_args,
+    });
+  }
+
+  Ok(invocations)
+}
+
+fn command_arity(command: &str) -> Option<(usize, usize)> {
+  match command {
+    "permissions" | "displays" | "windows" | "clipboard" | "input-boundary" => Some((0, 0)),
+    "capture-screen" => Some((0, 1)),
+    "resolve" | "ocr" | "ax" | "coords" | "type-text" | "press" => Some((1, 1)),
+    "capture-window" => Some((1, 2)),
+    "click" => Some((2, 2)),
+    "scroll" => Some((3, 3)),
+    "capture-region" => Some((4, 5)),
+    _ => None,
   }
 }
 
@@ -370,6 +466,83 @@ where
 
 fn print_usage() {
   eprintln!(
-    "usage: cargo run -p auv-driver-linux --example validate -- <permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|coords|clipboard|type-text|press|scroll|click|input-boundary> ..."
+    "usage: cargo run -p auv-driver-linux --example validate -- <command> [args] [<command> [args] ...]\n\
+commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|coords|clipboard|type-text|press|scroll|click|input-boundary"
   );
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parses_multiple_zero_arg_invocations() {
+    let invocations = parse(["permissions", "windows", "input-boundary"]);
+
+    assert_eq!(
+      invocations,
+      vec![
+        invocation("permissions", []),
+        invocation("windows", []),
+        invocation("input-boundary", [])
+      ]
+    );
+  }
+
+  #[test]
+  fn parses_mixed_invocations_with_fixed_args() {
+    let invocations = parse([
+      "resolve", "Terminal", "click", "10", "20", "press", "Return",
+    ]);
+
+    assert_eq!(
+      invocations,
+      vec![
+        invocation("resolve", ["Terminal"]),
+        invocation("click", ["10", "20"]),
+        invocation("press", ["Return"])
+      ]
+    );
+  }
+
+  #[test]
+  fn optional_args_stop_at_next_command() {
+    let invocations = parse(["capture-screen", "clipboard"]);
+
+    assert_eq!(
+      invocations,
+      vec![
+        invocation("capture-screen", []),
+        invocation("clipboard", [])
+      ]
+    );
+  }
+
+  #[test]
+  fn explicit_separator_disambiguates_optional_args() {
+    let invocations = parse(["capture-screen", "--", "clipboard"]);
+
+    assert_eq!(
+      invocations,
+      vec![
+        invocation("capture-screen", []),
+        invocation("clipboard", [])
+      ]
+    );
+  }
+
+  fn parse<const N: usize>(args: [&str; N]) -> Vec<Invocation> {
+    let args = args
+      .into_iter()
+      .map(ToString::to_string)
+      .collect::<Vec<_>>();
+    parse_invocations(&args).expect("args should parse")
+  }
+
+  fn invocation<const N: usize>(command: &str, args: [&str; N]) -> Invocation {
+    Invocation {
+      command: command.to_string(),
+      args: args.into_iter().map(ToString::to_string).collect(),
+    }
+  }
 }

@@ -148,32 +148,68 @@ pub fn decode_streams(
   )
 }
 
-pub fn capture_monitor_frame(target_bounds: Option<Rect>) -> DriverResult<ScreenCastFrame> {
-  let connection = session_connection()?;
-  let session_handle = create_session(&connection, SCREENCAST_INTERFACE)?;
-  let result = capture_monitor_frame_in_session(&connection, &session_handle, target_bounds);
-  let close_result = close_session(&connection, &session_handle);
-  match (result, close_result) {
-    (Ok(frame), _) => Ok(frame),
-    (Err(error), Ok(())) => Err(error),
-    (Err(error), Err(close_error)) => Err(backend(format!(
-      "{error}; also failed to close screencast portal session: {close_error}"
-    ))),
+#[derive(Debug)]
+pub struct ScreenCastSession {
+  connection: Connection,
+  session_handle: OwnedObjectPath,
+  streams: Vec<ScreenCastStream>,
+}
+
+impl ScreenCastSession {
+  pub fn open() -> DriverResult<Self> {
+    let connection = session_connection()?;
+    let session_handle = create_session(&connection, SCREENCAST_INTERFACE)?;
+    match start_session(connection, session_handle) {
+      Ok(session) => Ok(session),
+      Err(error) => Err(error),
+    }
+  }
+
+  pub fn capture_monitor_frame(
+    &mut self,
+    target_bounds: Option<Rect>,
+  ) -> DriverResult<ScreenCastFrame> {
+    let stream = select_stream(&self.streams, target_bounds)?.clone();
+    let fd = open_pipewire_remote(&self.connection, &self.session_handle)?;
+    let image = read_pipewire_frame(fd.into(), stream.id)?;
+    Ok(ScreenCastFrame { stream, image })
   }
 }
 
-fn capture_monitor_frame_in_session(
-  connection: &Connection,
-  session_handle: &OwnedObjectPath,
-  target_bounds: Option<Rect>,
-) -> DriverResult<ScreenCastFrame> {
-  select_monitor_sources(connection, session_handle)?;
-  let results = start_screencast(connection, session_handle)?;
-  let streams = decode_streams(&results)?;
-  let stream = select_stream(&streams, target_bounds)?.clone();
-  let fd = open_pipewire_remote(connection, session_handle)?;
-  let image = read_pipewire_frame(fd.into(), stream.id)?;
-  Ok(ScreenCastFrame { stream, image })
+impl Drop for ScreenCastSession {
+  fn drop(&mut self) {
+    let _ = close_session(&self.connection, &self.session_handle);
+  }
+}
+
+fn start_session(
+  connection: Connection,
+  session_handle: OwnedObjectPath,
+) -> DriverResult<ScreenCastSession> {
+  let result = select_monitor_sources(&connection, &session_handle)
+    .and_then(|()| start_screencast(&connection, &session_handle))
+    .and_then(|results| decode_streams(&results));
+  let streams = match result {
+    Ok(streams) => streams,
+    Err(error) => {
+      let close_result = close_session(&connection, &session_handle);
+      return match close_result {
+        Ok(()) => Err(error),
+        Err(close_error) => Err(backend(format!(
+          "{error}; also failed to close screencast portal session: {close_error}"
+        ))),
+      };
+    }
+  };
+  if streams.is_empty() {
+    close_session(&connection, &session_handle)?;
+    return Err(backend("screencast portal started without streams"));
+  }
+  Ok(ScreenCastSession {
+    connection,
+    session_handle,
+    streams,
+  })
 }
 
 fn start_screencast(
