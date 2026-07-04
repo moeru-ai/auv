@@ -208,6 +208,7 @@ fn parse_frame_line(bytes: &[u8]) -> Result<Option<MinecraftSpatialFrame>, Strin
 
 #[cfg(test)]
 mod tests {
+  use std::fs;
   use std::io::Cursor;
   use std::thread;
   use std::time::Duration;
