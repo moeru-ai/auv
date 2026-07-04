@@ -146,4 +146,11 @@ pub const REGION_ARGS: &[ArgSpec] = &[
   REGION_HEIGHT,
   LABEL,
 ];
+pub const FIXTURE_DIR: ArgSpec = ArgSpec {
+  flag: "--fixture-dir",
+  value_name: "PATH",
+  required: true,
+  help: "Directory containing a single-frame scan fixture (manifest.json + PNG).",
+};
+pub const SCAN_FRAME_ARGS: &[ArgSpec] = &[FIXTURE_DIR];
 pub const NO_ARGS: &[ArgSpec] = &[];

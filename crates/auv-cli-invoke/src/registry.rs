@@ -54,6 +54,7 @@ pub fn default_registry() -> InvokeRegistry {
     commands::overlay::group(),
     commands::media_control::group(),
     commands::fixture::group(),
+    commands::scan::group(),
   ])
 }
 

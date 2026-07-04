@@ -103,7 +103,7 @@ runtime producer, observation-in-frame closure, and durable S3–S5 wires land.
 | **Keyframes** (pipeline step) | `ScanKeyframe` selection | `hold` | Roadmap types only — no implementation |
 | **B-line bridge** | Consume summary product, not raw frame JSON | `partial` | [S6a](2026-07-03-auv-scan-s6a-scene-state-inspect-handoff.md), [S6b-1](2026-07-03-auv-scan-s6b-scene-state-run-read-handoff.md); no viewer |
 | **M/G guardrail** | Optional cold-path only | `pass` | Zero game/SLAM coupling in S core |
-| **Runtime invoke** | Implicit run recording writes scan artifacts | `hold` | No catalog scan command; S6b-1 uses test-staged `scan-scene-state-input-v0` |
+| **Runtime invoke** | Implicit run recording writes scan artifacts | `hold` | S7 landed `scan.frame` (`scan-frame-v0` + `scan-frame-image` via fixture producer) — see [S7 handoff](2026-07-06-auv-scan-s7-invoke-frame-producer-handoff.md); **evidence toward** `partial` bridge only; runtime producer lane **not** graduated (live capture, multi-frame, read-side gaps remain) |
 | **TERMS_AND_CONCEPTS** | Durable vocabulary for locked wires | `hold` | S0 TODO unfulfilled; provisional staging wire excluded |
 
 ### First acceptance batch (substrate doc)

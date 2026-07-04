@@ -4,5 +4,6 @@ pub mod fixture;
 pub mod input;
 pub mod media_control;
 pub mod overlay;
+pub mod scan;
 pub mod screen;
 pub mod window;

@@ -63,6 +63,7 @@ pub enum InvokeNamespace {
   Overlay,
   MediaControl,
   Fixture,
+  Scan,
 }
 
 impl InvokeNamespace {
@@ -76,6 +77,7 @@ impl InvokeNamespace {
       Self::Overlay => "overlay",
       Self::MediaControl => "mediaControl",
       Self::Fixture => "fixture",
+      Self::Scan => "scan",
     }
   }
 }

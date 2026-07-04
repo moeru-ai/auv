@@ -411,10 +411,12 @@ dependencies = [
  "auv-cli-invoke-macros",
  "auv-driver",
  "auv-driver-macos",
+ "auv-scan",
  "auv-tracing-driver",
  "clap",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

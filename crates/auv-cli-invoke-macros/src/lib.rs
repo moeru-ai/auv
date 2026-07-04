@@ -139,8 +139,9 @@ fn namespace_for_group_literal(group: &str) -> Result<&'static str, String> {
     "\"overlay\"" => Ok("Overlay"),
     "\"mediaControl\"" => Ok("MediaControl"),
     "\"fixture\"" => Ok("Fixture"),
+    "\"scan\"" => Ok("Scan"),
     _ => Err(format!(
-      "invoke_command unknown group {group}; expected one of: display, screen, window, input, app, overlay, mediaControl, fixture"
+      "invoke_command unknown group {group}; expected one of: display, screen, window, input, app, overlay, mediaControl, fixture, scan"
     )),
   }
 }
@@ -162,6 +163,7 @@ mod tests {
       namespace_for_group_literal("\"mediaControl\""),
       Ok("MediaControl")
     );
+    assert_eq!(namespace_for_group_literal("\"scan\""), Ok("Scan"));
   }
 
   #[test]

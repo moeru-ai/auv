@@ -223,6 +223,8 @@ mod tests {
     assert!(help.contains("  input.key"));
     assert!(help.contains("MEDIA CONTROL\n"));
     assert!(help.contains("  mediaControl.nowPlaying"));
+    assert!(help.contains("SCAN\n"));
+    assert!(help.contains("  scan.frame"));
     assert!(!help.contains("STEAM\n"));
     assert!(!help.contains("  steam.library.list.v0"));
     assert!(!help.contains("debug."));
@@ -581,6 +583,7 @@ mod tests {
       "mediaControl.next",
       "mediaControl.previous",
       "fixture.observe",
+      "scan.frame",
     ] {
       assert!(registry.resolve(id).is_some(), "{id} should be registered");
     }

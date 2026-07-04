@@ -15,7 +15,9 @@ repository.workspace = true
 [dependencies]
 auv-cli-invoke-macros = { path = "../auv-cli-invoke-macros" }
 auv-driver = { path = "../auv-driver" }
+auv-scan = { path = "../auv-scan" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
+tempfile = "3"
 anstream = "1"
 anstyle = "1"
 clap = { version = "4.5", features = ["derive"] }
