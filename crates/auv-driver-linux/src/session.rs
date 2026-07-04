@@ -112,7 +112,7 @@ impl DisplayApi<'_> {
         "display.capture cannot activate an application without an application target",
       ));
     }
-    capture_display(options.display.as_deref())
+    capture_display(&self.session.state, options.display.as_deref())
   }
 
   pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
@@ -130,7 +130,7 @@ impl DisplayApi<'_> {
     let region = options
       .region
       .ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
-    capture_region(options.display.as_deref(), region)
+    capture_region(&self.session.state, options.display.as_deref(), region)
   }
 }
 
@@ -147,7 +147,7 @@ impl WindowApi<'_> {
 
   pub fn capture(&self, window: &Window) -> DriverResult<Capture> {
     let _ = self.session;
-    capture_window(window)
+    capture_window(&self.session.state, window)
   }
 
   pub fn to_screen_point(&self, window: &Window, point: WindowPoint) -> DriverResult<ScreenPoint> {
