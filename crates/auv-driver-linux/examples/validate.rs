@@ -16,6 +16,8 @@
 //!   capture-window <substr> [out]  capture a window to a PNG
 //!   ocr <title-substr>             OCR a window capture and print recognized text
 //!   ax <title-substr>              capture a window accessibility tree
+//!   focus-node <title-substr> <path>
+//!   select-node <title-substr> <path>
 //!   coords <title-substr>          round-trip a window/screen point mapping
 //!   clipboard                      snapshot -> set -> read-back -> restore
 //!   type-text <text>               type text through RemoteDesktop portal
@@ -107,6 +109,16 @@ fn run_invocation(session: &LinuxDriverSession, invocation: &Invocation) -> Run 
     ),
     "ocr" => ocr(session, arg(rest, 0, "title-substr")?),
     "ax" => ax(session, arg(rest, 0, "title-substr")?),
+    "focus-node" => focus_node(
+      session,
+      arg(rest, 0, "title-substr")?,
+      arg(rest, 1, "node-path")?,
+    ),
+    "select-node" => select_node(
+      session,
+      arg(rest, 0, "title-substr")?,
+      arg(rest, 1, "node-path")?,
+    ),
     "coords" => coords(session, arg(rest, 0, "title-substr")?),
     "clipboard" => clipboard(session),
     "type-text" => type_text(session, arg(rest, 0, "text")?),
@@ -176,6 +188,7 @@ fn command_arity(command: &str) -> Option<(usize, usize)> {
     "permissions" | "displays" | "windows" | "clipboard" | "input-boundary" => Some((0, 0)),
     "capture-screen" => Some((0, 1)),
     "resolve" | "ocr" | "ax" | "coords" | "type-text" | "press" => Some((1, 1)),
+    "focus-node" | "select-node" => Some((2, 2)),
     "capture-window" => Some((1, 2)),
     "click" => Some((2, 2)),
     "scroll" => Some((3, 3)),
@@ -350,6 +363,26 @@ fn ax(session: &LinuxDriverSession, substr: &str) -> Run {
   Ok(())
 }
 
+fn focus_node(session: &LinuxDriverSession, substr: &str, node_path: &str) -> Run {
+  let window = find_window(session, substr)?;
+  let result = session.accessibility().focus_node(&window, node_path)?;
+  println!(
+    "focused node {node_path} in window {:?}: {result:?}",
+    window.title
+  );
+  Ok(())
+}
+
+fn select_node(session: &LinuxDriverSession, substr: &str, node_path: &str) -> Run {
+  let window = find_window(session, substr)?;
+  let result = session.accessibility().select_node(&window, node_path)?;
+  println!(
+    "selected node {node_path} in window {:?}: {result:?}",
+    window.title
+  );
+  Ok(())
+}
+
 fn coords(session: &LinuxDriverSession, substr: &str) -> Run {
   let window = find_window(session, substr)?;
   let local = WindowPoint::new(10.0, 20.0);
@@ -470,7 +503,7 @@ where
 fn print_usage() {
   eprintln!(
     "usage: cargo run -p auv-driver-linux --example validate -- <command> [args] [<command> [args] ...]\n\
-commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|coords|clipboard|type-text|press|scroll|click|input-boundary"
+commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|focus-node|select-node|coords|clipboard|type-text|press|scroll|click|input-boundary"
   );
 }
 

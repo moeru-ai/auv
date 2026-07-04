@@ -21,6 +21,8 @@ pub const LINUX_DESKTOP_CAPABILITIES: &[&str] = &[
   "control.scroll-point",
   "control.type-text",
   "control.press-key",
+  "control.focus-ax-node",
+  "control.select-ax-node",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
