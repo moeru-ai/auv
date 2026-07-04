@@ -12,7 +12,9 @@ pub const WINDOW_REF_PREFIX: &str = "atspi:";
 const REGISTRY_DEST: &str = "org.a11y.atspi.Registry";
 const ROOT_PATH: &str = "/org/a11y/atspi/accessible/root";
 const ACCESSIBLE_IFACE: &str = "org.a11y.atspi.Accessible";
+const ACTION_IFACE: &str = "org.a11y.atspi.Action";
 const COMPONENT_IFACE: &str = "org.a11y.atspi.Component";
+const SELECTION_IFACE: &str = "org.a11y.atspi.Selection";
 const STATE_FOCUSED: u32 = 12;
 
 pub const MAX_DEPTH: usize = 40;
@@ -35,6 +37,16 @@ pub struct Node {
 pub struct TreeSnapshot {
   pub window_ref: String,
   pub nodes: Vec<Node>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ActionResult {
+  pub action_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FocusResult {
+  pub fallback_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,13 +142,129 @@ pub fn snapshot_window(window: &Window) -> DriverResult<TreeSnapshot> {
   })
 }
 
-pub fn focus_window(window: &Window) -> DriverResult<()> {
-  let reference = ObjectRef::decode(&window.reference.id)?;
+pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<FocusResult> {
+  let root = ObjectRef::decode(&window.reference.id)?;
+  let indices = child_indices(node_path)?;
   let connection = connect()?;
-  component_proxy(&connection, &reference)?
+  let references = resolve_path_chain(&connection, &root, &indices)?;
+  match focus_nearest_accessible(node_path, &connection, &references) {
+    Ok(result) => Ok(result),
+    Err(focus_error) => {
+      let Some(child_index) = indices.last().copied() else {
+        return Err(focus_error);
+      };
+      let parent = references
+        .get(references.len().saturating_sub(2))
+        .ok_or_else(|| backend(focus_error.to_string()))?;
+      match select_child(&connection, parent, child_index, &focus_error.to_string()) {
+        Ok(result) => Ok(FocusResult {
+          fallback_reason: Some(format!(
+            "AT-SPI node {node_path} did not accept GrabFocus; used parent {} instead",
+            result.action_name
+          )),
+        }),
+        Err(_) => Err(focus_error),
+      }
+    }
+  }
+}
+
+pub fn select_node(window: &Window, node_path: &str) -> DriverResult<ActionResult> {
+  let root = ObjectRef::decode(&window.reference.id)?;
+  let indices = child_indices(node_path)?;
+  let connection = connect()?;
+  let references = resolve_path_chain(&connection, &root, &indices)?;
+  let reference = references
+    .last()
+    .expect("resolve_path_chain always includes root");
+  match select_action(&connection, reference) {
+    Ok(action) => Ok(ActionResult {
+      action_name: action.name,
+    }),
+    Err(action_error) => {
+      let action_error = action_error.to_string();
+      let Some(child_index) = indices.last().copied() else {
+        return Err(backend(action_error));
+      };
+      let parent = references
+        .get(references.len().saturating_sub(2))
+        .ok_or_else(|| backend(action_error.clone()))?;
+      select_child(&connection, parent, child_index, &action_error)
+    }
+  }
+}
+
+fn focus_accessible(connection: &Connection, reference: &ObjectRef) -> DriverResult<()> {
+  component_proxy(connection, reference)?
     .call_method("GrabFocus", &())
-    .map_err(|error| backend(format!("failed to focus AT-SPI window: {error}")))?;
+    .map_err(|error| backend(format!("failed to focus AT-SPI node: {error}")))?;
   Ok(())
+}
+
+fn resolve_path_chain(
+  connection: &Connection,
+  root: &ObjectRef,
+  indices: &[usize],
+) -> DriverResult<Vec<ObjectRef>> {
+  let mut current = root.clone();
+  let mut references = vec![current.clone()];
+  for index in indices {
+    let children = children(connection, &current)?;
+    current = children.get(*index).cloned().ok_or_else(|| {
+      invalid_input(format!(
+        "AT-SPI node path references child index {index}, but current node has {} children",
+        children.len()
+      ))
+    })?;
+    references.push(current.clone());
+  }
+  Ok(references)
+}
+
+fn focus_nearest_accessible(
+  requested_path: &str,
+  connection: &Connection,
+  references: &[ObjectRef],
+) -> DriverResult<FocusResult> {
+  let mut failures = Vec::new();
+  for (depth, reference) in references.iter().enumerate().rev() {
+    match focus_accessible(connection, reference) {
+      Ok(()) if depth + 1 == references.len() => {
+        return Ok(FocusResult {
+          fallback_reason: None,
+        });
+      }
+      Ok(()) => {
+        return Ok(FocusResult {
+          fallback_reason: Some(format!(
+            "AT-SPI node {requested_path} did not accept GrabFocus; focused ancestor depth {depth} instead"
+          )),
+        });
+      }
+      Err(error) => failures.push(error.to_string()),
+    }
+  }
+  Err(backend(format!(
+    "no node in AT-SPI path {requested_path:?} accepted GrabFocus; failures={failures:?}"
+  )))
+}
+
+fn child_indices(path: &str) -> DriverResult<Vec<usize>> {
+  let mut parts = path.split('/');
+  if parts.next() != Some("0") {
+    return Err(invalid_input(format!(
+      "AT-SPI node path {path:?} must start at root 0"
+    )));
+  }
+  parts
+    .map(|part| {
+      part.parse::<usize>().map_err(|_| {
+        invalid_input(format!(
+          "AT-SPI node path {path:?} contains invalid child index {part:?}"
+        ))
+      })
+    })
+    .collect()
 }
 
 fn connect() -> DriverResult<Connection> {
@@ -318,6 +446,134 @@ fn component_proxy<'a>(
   .map_err(|error| backend(format!("failed to create AT-SPI Component proxy: {error}")))
 }
 
+fn action_proxy<'a>(
+  connection: &'a Connection,
+  reference: &'a ObjectRef,
+) -> DriverResult<Proxy<'a>> {
+  Proxy::new(
+    connection,
+    reference.dest.as_str(),
+    object_path(reference.path.as_str())?,
+    ACTION_IFACE,
+  )
+  .map_err(|error| backend(format!("failed to create AT-SPI Action proxy: {error}")))
+}
+
+fn selection_proxy<'a>(
+  connection: &'a Connection,
+  reference: &'a ObjectRef,
+) -> DriverResult<Proxy<'a>> {
+  Proxy::new(
+    connection,
+    reference.dest.as_str(),
+    object_path(reference.path.as_str())?,
+    SELECTION_IFACE,
+  )
+  .map_err(|error| backend(format!("failed to create AT-SPI Selection proxy: {error}")))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Action {
+  index: i32,
+  name: String,
+}
+
+fn select_action(connection: &Connection, reference: &ObjectRef) -> DriverResult<Action> {
+  let actions = actions(connection, reference)?;
+  let action = preferred_action(&actions).ok_or_else(|| {
+    backend(format!(
+      "AT-SPI node exposes no supported selectable action; actions={actions:?}"
+    ))
+  })?;
+  let proxy = action_proxy(connection, reference)?;
+  let succeeded: bool = proxy.call("DoAction", &(action.index)).map_err(|error| {
+    backend(format!(
+      "failed to perform AT-SPI action {:?}: {error}",
+      action.name
+    ))
+  })?;
+  if !succeeded {
+    return Err(backend(format!(
+      "AT-SPI action {:?} returned false",
+      action.name
+    )));
+  }
+  Ok(action.clone())
+}
+
+fn actions(connection: &Connection, reference: &ObjectRef) -> DriverResult<Vec<Action>> {
+  let proxy = action_proxy(connection, reference)?;
+  let all_actions: zbus::Result<Vec<(String, String, String, String)>> =
+    proxy.call("GetActions", &());
+  if let Ok(actions) = all_actions {
+    return Ok(
+      actions
+        .into_iter()
+        .enumerate()
+        .map(|(index, (name, _, _, _))| Action {
+          index: i32::try_from(index).expect("AT-SPI action index should fit i32"),
+          name,
+        })
+        .collect(),
+    );
+  }
+  let count = proxy
+    .call("GetNActions", &())
+    .or_else(|_| proxy.get_property::<i32>("NActions"))
+    .map_err(|error| {
+      backend(format!(
+        "failed to read AT-SPI action count for selectable node: {error}"
+      ))
+    })?;
+  let mut actions = Vec::new();
+  for index in 0..count {
+    let name: String = proxy.call("GetName", &(index)).map_err(|error| {
+      backend(format!(
+        "failed to read AT-SPI action name {index}: {error}"
+      ))
+    })?;
+    actions.push(Action { index, name });
+  }
+  Ok(actions)
+}
+
+fn preferred_action(actions: &[Action]) -> Option<&Action> {
+  const PREFERRED: &[&str] = &["click", "press", "activate", "select"];
+  for preferred in PREFERRED {
+    if let Some(action) = actions
+      .iter()
+      .find(|action| action.name.eq_ignore_ascii_case(preferred))
+    {
+      return Some(action);
+    }
+  }
+  actions.first()
+}
+
+fn select_child(
+  connection: &Connection,
+  parent: &ObjectRef,
+  child_index: usize,
+  action_error: &str,
+) -> DriverResult<ActionResult> {
+  let child_index = i32::try_from(child_index)
+    .map_err(|error| invalid_input(format!("AT-SPI child index is too large: {error}")))?;
+  let proxy = selection_proxy(connection, parent)?;
+  let succeeded: bool = proxy.call("SelectChild", &(child_index)).map_err(|error| {
+    backend(format!(
+      "AT-SPI node exposed no action ({action_error}); parent Selection.SelectChild failed: {error}"
+    ))
+  })?;
+  if !succeeded {
+    return Err(backend(format!(
+      "AT-SPI node exposed no action ({action_error}); parent Selection.SelectChild returned false"
+    )));
+  }
+  Ok(ActionResult {
+    action_name: "Selection.SelectChild".to_string(),
+  })
+}
+
 fn object_path(path: &str) -> DriverResult<ObjectPath<'_>> {
   ObjectPath::try_from(path)
     .map_err(|error| invalid_input(format!("invalid AT-SPI object path {path:?}: {error}")))
@@ -380,6 +636,50 @@ mod tests {
   #[test]
   fn atspi_window_ref_rejects_non_atspi_reference() {
     assert!(ObjectRef::decode("42").is_err());
+  }
+
+  #[test]
+  fn child_indices_parse_snapshot_paths() {
+    let parsed = child_indices("0/12/3").expect("path parses");
+
+    assert_eq!(parsed, vec![12, 3]);
+  }
+
+  #[test]
+  fn child_indices_reject_paths_outside_root() {
+    let error = child_indices("1/2").expect_err("invalid root is rejected");
+
+    assert!(error.to_string().contains("must start at root 0"));
+  }
+
+  #[test]
+  fn preferred_action_uses_semantic_action_before_first_action() {
+    let actions = vec![
+      Action {
+        index: 0,
+        name: "show-menu".to_string(),
+      },
+      Action {
+        index: 1,
+        name: "click".to_string(),
+      },
+    ];
+
+    let selected = preferred_action(&actions).expect("action selected");
+
+    assert_eq!(selected.index, 1);
+  }
+
+  #[test]
+  fn preferred_action_falls_back_to_first_action() {
+    let actions = vec![Action {
+      index: 3,
+      name: "show-menu".to_string(),
+    }];
+
+    let selected = preferred_action(&actions).expect("action selected");
+
+    assert_eq!(selected.index, 3);
   }
 
   #[test]

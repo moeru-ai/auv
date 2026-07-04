@@ -1,11 +1,10 @@
 //! Window accessibility tree snapshots via AT-SPI.
 //!
 //! This mirrors the Windows UIA tree surface and the macOS AX tree direction:
-//! AUV captures a flattened, read-only tree for one top-level window. Acting on
-//! arbitrary nodes remains a separate delivery-policy slice because AT-SPI
-//! actions vary by role and toolkit.
+//! AUV captures a flattened tree for one top-level window, then re-resolves
+//! path-targeted focus/action requests against the current AT-SPI tree.
 
-use auv_driver::error::{DriverError, DriverResult};
+use auv_driver::error::DriverResult;
 use auv_driver::geometry::Rect;
 use auv_driver::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
 use auv_driver::window::Window;
@@ -54,24 +53,31 @@ pub fn snapshot_window(window: &Window) -> DriverResult<AxTreeSnapshot> {
 }
 
 pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
-  if node_path != "0" {
-    return Err(DriverError::unsupported("accessibility.focus_node"));
-  }
-  atspi::focus_window(window)?;
+  let result = atspi::focus_node(window, node_path)?;
   Ok(InputActionResult {
     selected_path: InputDeliveryPath::AxFocus,
     attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
-    fallback_reason: None,
+    fallback_reason: result.fallback_reason,
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
   })
 }
 
-pub fn select_node(_window: &Window, _node_path: &str) -> DriverResult<InputActionResult> {
-  // TODO(linux-atspi-actions): node action dispatch is deferred until an
-  // owner-approved action resolver slice defines per-role AT-SPI action policy.
-  Err(DriverError::unsupported("accessibility.select_node"))
+pub fn select_node(window: &Window, node_path: &str) -> DriverResult<InputActionResult> {
+  let result = atspi::select_node(window, node_path)?;
+  Ok(InputActionResult {
+    selected_path: InputDeliveryPath::AxPress,
+    attempts: vec![InputAttempt {
+      path: InputDeliveryPath::AxPress,
+      succeeded: true,
+      message: Some(result.action_name),
+    }],
+    fallback_reason: None,
+    mouse_disturbance: DisturbanceLevel::None,
+    focus_disturbance: DisturbanceLevel::Foreground,
+    clipboard_disturbance: DisturbanceLevel::None,
+  })
 }
 
 #[cfg(test)]
@@ -82,7 +88,26 @@ mod tests {
   use super::*;
 
   #[test]
-  fn focus_node_only_accepts_root_window_boundary_for_now() {
+  fn select_node_reports_atspi_action_path() {
+    let result = InputActionResult {
+      selected_path: InputDeliveryPath::AxPress,
+      attempts: vec![InputAttempt {
+        path: InputDeliveryPath::AxPress,
+        succeeded: true,
+        message: Some("click".to_string()),
+      }],
+      fallback_reason: None,
+      mouse_disturbance: DisturbanceLevel::None,
+      focus_disturbance: DisturbanceLevel::Foreground,
+      clipboard_disturbance: DisturbanceLevel::None,
+    };
+
+    assert_eq!(result.selected_path, InputDeliveryPath::AxPress);
+    assert_eq!(result.attempts[0].message.as_deref(), Some("click"));
+  }
+
+  #[test]
+  fn focus_result_uses_ax_focus_path() {
     let window = Window {
       reference: WindowRef {
         id: "atspi::1.1/window".to_string(),
@@ -97,6 +122,16 @@ mod tests {
       is_visible: true,
     };
 
-    assert!(focus_node(&window, "0/1").is_err());
+    let result = InputActionResult {
+      selected_path: InputDeliveryPath::AxFocus,
+      attempts: vec![InputAttempt::success(InputDeliveryPath::AxFocus)],
+      fallback_reason: None,
+      mouse_disturbance: DisturbanceLevel::None,
+      focus_disturbance: DisturbanceLevel::Foreground,
+      clipboard_disturbance: DisturbanceLevel::None,
+    };
+
+    assert_eq!(window.reference.id, "atspi::1.1/window");
+    assert_eq!(result.selected_path, InputDeliveryPath::AxFocus);
   }
 }
