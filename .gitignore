@@ -79,6 +79,11 @@ dist-ssr
 .runs/
 docs/notes/
 
+# Java
+**/.gradle/
+devtools/**/build/loom-cache/
+devtools/auv-game-minecraft/bin/
+
 # Temporary fixture artifact emitted by scroll-scan tests.
 scan-page-*-observe.json
 
