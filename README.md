@@ -184,6 +184,7 @@ reusable GUI operations.
 
 AUV is meant to work with coding agents and agent products such as:
 
+- [Apeira](https://apeira.moeru.ai)
 - [Codex](https://chatgpt.com/codex/)
 - [Claude Code](https://claude.com/product/claude-code)
 - [Pi Agent](https://github.com/earendil-works/pi)
