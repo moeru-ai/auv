@@ -63,4 +63,13 @@ pub mod portal {
       Err(DriverError::unsupported("linux.portal.input"))
     }
   }
+
+  #[derive(Debug, Default)]
+  pub struct ScreenCastSession;
+
+  impl ScreenCastSession {
+    pub fn open_monitor() -> DriverResult<Self> {
+      Err(DriverError::unsupported("linux.portal.screencast"))
+    }
+  }
 }

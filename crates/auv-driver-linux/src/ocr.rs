@@ -9,6 +9,7 @@ use std::fmt;
 
 use auv_driver::geometry::Rect;
 use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
+#[cfg(target_os = "linux")]
 use image::ImageEncoder;
 
 #[derive(Debug)]

@@ -100,7 +100,10 @@ fn capture_display_from_captured(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn capture_display(_selector: Option<&str>) -> DriverResult<DisplayCapture> {
+pub fn capture_display(
+  _state: &std::sync::Arc<std::sync::Mutex<crate::driver::LinuxDriverSessionState>>,
+  _selector: Option<&str>,
+) -> DriverResult<DisplayCapture> {
   Err(auv_driver::error::DriverError::unsupported(
     "display.capture",
   ))
@@ -144,7 +147,11 @@ pub fn capture_region(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn capture_region(_selector: Option<&str>, _region: Rect) -> DriverResult<RegionCapture> {
+pub fn capture_region(
+  _state: &std::sync::Arc<std::sync::Mutex<crate::driver::LinuxDriverSessionState>>,
+  _selector: Option<&str>,
+  _region: Rect,
+) -> DriverResult<RegionCapture> {
   Err(auv_driver::error::DriverError::unsupported(
     "display.capture_region",
   ))

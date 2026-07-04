@@ -12,6 +12,7 @@ use crate::error::{invalid_input, not_found};
 use crate::native::portal::capture_window_frame;
 use auv_driver::capture::Capture;
 use auv_driver::error::DriverResult;
+#[cfg(any(target_os = "linux", test))]
 use auv_driver::geometry::Rect;
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::window::Window;
@@ -58,7 +59,10 @@ pub fn capture_window(
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn capture_window(_window: &Window) -> DriverResult<Capture> {
+pub fn capture_window(
+  _state: &std::sync::Arc<std::sync::Mutex<crate::driver::LinuxDriverSessionState>>,
+  _window: &Window,
+) -> DriverResult<Capture> {
   Err(auv_driver::error::DriverError::unsupported(
     "window.capture",
   ))
