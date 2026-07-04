@@ -311,7 +311,7 @@ view-parser IR 与 inspect 消费
 - [`2026-05-29-view-parser-v0-overview.md`](2026-05-29-view-parser-v0-overview.md)
 - [`2026-05-29-view-parser-view-memory-v0.md`](2026-05-29-view-parser-view-memory-v0.md)
 
-#### scan line (S) — note entry (20)
+#### scan line (S) — note entry (26)
 
 Single-viewport **2D temporal scan** / **S-line observation read-model v1 (hermetic)**; complements
 [`scroll-scan` design](2026-05-21-scroll-scan-design.md) page-loop evidence. S1–S6b-1 landed in `crates/auv-scan`; S7 invoke frame producer landed in `crates/auv-cli-invoke` (`scan.frame`); whole-line substrate graduation **`hold`** — see [graduation review](2026-07-04-auv-s-line-graduation-review.md); S1 bounded artifact contracts documented — see [bounded contract review](2026-07-05-auv-s1-bounded-contract-graduation-review.md).
@@ -339,8 +339,16 @@ Single-viewport **2D temporal scan** / **S-line observation read-model v1 (herme
 - [`2026-07-08-auv-scan-s8b-scene-coverage-consumer-handoff.md`](2026-07-08-auv-scan-s8b-scene-coverage-consumer-handoff.md) — S8b scene_state durable coverage consumer (`coverage_wire_to_view` inverse projection; whole-product parity; S3 substrate remains `partial`)
 - [`2026-07-09-auv-scan-s8c-coverage-producer-handoff.md`](2026-07-09-auv-scan-s8c-coverage-producer-handoff.md) — S8c runtime coverage producer (`produce_coverage_from_fixture_dir` + `scan.coverage` invoke staging; S3 substrate remains `partial` until S8d inspect durable read)
 - [`2026-07-10-auv-scan-s8d-inspect-coverage-handoff.md`](2026-07-10-auv-scan-s8d-inspect-coverage-handoff.md) — S8d inspect durable read (`scene_state_read` hydrates `scan-coverage-v0`; S8 fixture-first chain `landed proof`; S3 ledger substrate remains `partial`)
-- [`2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md`]
-- [`2026-07-10-auv-scan-s9b-adjacent-tracks-wire-handoff.md`](2026-07-10-auv-scan-s9b-adjacent-tracks-wire-handoff.md) — S9b N-frame adjacent multi-segment tracks wire (`scan-tracks-v0`; tracks substrate row remains `hold`)(2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md) — S9a N-frame adjacent multi-segment timeline builder (`scan-timeline-v0` semantic revision; tracks row remains `hold`)
+- [`2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md`](2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md) — S9a N-frame adjacent multi-segment timeline builder (`scan-timeline-v0` semantic revision; tracks row remains `hold`)
+- [`2026-07-10-auv-scan-s9b-adjacent-tracks-wire-handoff.md`](2026-07-10-auv-scan-s9b-adjacent-tracks-wire-handoff.md) — S9b N-frame adjacent multi-segment tracks wire (`scan-tracks-v0`; tracks substrate row remains `hold`)
+
+#### surface slam direction — roadmap entry (1)
+
+Direction after pausing S-line implementation at S9b: build a **2D interactive
+surface model** from video-stream evidence before considering 3DGS, SLAM
+backends, or game telemetry as main lines.
+
+- [`2026-07-05-auv-surface-slam-direction.md`](2026-07-05-auv-surface-slam-direction.md) — Surface SLAM direction (`2D video -> stable interactive surface model`; YOLO as one evidence channel; spatial grounding deferred)
 
 ### `core/recognition` — Active
 
