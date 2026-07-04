@@ -163,7 +163,7 @@ fn capture_monitor_frame_for_session(
 ) -> DriverResult<ScreenCastFrame> {
   let mut state = state.lock().expect("linux driver session state poisoned");
   if state.screencast_session.is_none() {
-    state.screencast_session = Some(ScreenCastSession::open()?);
+    state.screencast_session = Some(ScreenCastSession::open_monitor()?);
   }
   state
     .screencast_session
