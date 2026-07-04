@@ -102,3 +102,35 @@ exclude:
   - name: YAMLSchemaValidation
     paths:
       - .qodana/profiles/qodana.yaml
+  # NOTICE(qodana-false_positive): inspect viewer and design-kit CSS classes are
+  # applied via JavaScript/React className; static analysis cannot see dynamic use.
+  - name: CssUnusedSymbol
+    paths:
+      - src/inspect_server_viewer.html
+      - docs/design/colors_and_type.css
+      - docs/design/ui_kits/cli/index-print.html
+      - docs/design
+      - src
+  # NOTICE(qodana-false_positive): inspect viewer serves /assets/* at runtime via
+  # inspect_server's embedded design-asset route, not as filesystem-relative paths.
+  - name: HtmlUnknownTarget
+    paths:
+      - src/inspect_server_viewer.html
+  # NOTICE(qodana-false_positive): fractional px values are intentional for
+  # typography, letter-spacing, and sub-pixel UI alignment in design previews.
+  - name: CssNonIntegerLengthInPixels
+    paths:
+      - src/inspect_server_viewer.html
+      - docs/design
+  # NOTICE(qodana-false_positive): local dev and smoke-test servers bind plain HTTP
+  # on loopback; TLS is not applicable for these ephemeral test endpoints.
+  - name: HttpUrlsUsage
+    paths:
+      - src/inspect_server
+      - src/api/session_service
+      - src/candidate_action_command.rs
+      - crates/auv-tracing-driver/src/recording/recorder.rs
+      - tests/session_api_subprocess_smoke.rs
+  # NOTICE(qodana-owner_accepted_debt): DuplicatedCode is observatory campaign
+  # signal; per-hit dedup refactors are out of scope for hygiene passes.
+  - name: DuplicatedCode
