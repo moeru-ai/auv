@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **278** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **279** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -34,7 +34,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | 看 core lane 路线图 | [`2026-06-13-auv-core-lane-roadmap.md`](2026-06-13-auv-core-lane-roadmap.md) |
 | 看 invoke / CLI 设计 | [`2026-06-11-auv-cli-invoke-driver-console-design.md`](2026-06-11-auv-cli-invoke-driver-console-design.md) |
 | 看 inspect viewer 设计 | [`2026-05-19-trace-run-inspect-design.md`](2026-05-19-trace-run-inspect-design.md) |
-| 看 scan / temporal 线 (S) | [`2026-07-04-auv-s-line-graduation-review.md`](2026-07-04-auv-s-line-graduation-review.md)（状态审计）· [`2026-07-02-auv-scan-s0-charter.md`](2026-07-02-auv-scan-s0-charter.md) |
+| 看 scan / temporal 线 (S) | [`2026-07-05-auv-s1-bounded-contract-graduation-review.md`](2026-07-05-auv-s1-bounded-contract-graduation-review.md)（S1 bounded contracts）· [`2026-07-04-auv-s-line-graduation-review.md`](2026-07-04-auv-s-line-graduation-review.md)（状态审计）· [`2026-07-02-auv-scan-s0-charter.md`](2026-07-02-auv-scan-s0-charter.md) |
 | 看设计系统 / viewer UI | [`../../design/README.md`](../../design/README.md) |
 | 查 agent 写作规范 | 仓库根 [`AGENTS.md`](../../../AGENTS.md) |
 | 看 Qodana 分层运营 | [`2026-07-03-auv-qodana-operating-model.md`](2026-07-03-auv-qodana-operating-model.md) |
@@ -44,7 +44,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 
 | Lane | 状态 | 说明 | 篇数 |
 |---|---|---|---:|
-| `core/runtime` | Active | AUV core runtime、contract、graduation、query-readiness | 31 |
+| `core/runtime` | Active | AUV core runtime、contract、graduation、query-readiness | 32 |
 | `core/invoke-cli` | Active | invoke 路由、CLI handler、catalog | 14 |
 | `core/api-mcp` | Active | session API、proto、MCP 前端 | 11 |
 | `core/inspect-trace` | Active | run 录制、inspect viewer、trace | 6 |
@@ -75,7 +75,7 @@ AUV core runtime、contract、graduation、query-readiness
 - [`2026-06-29-auv-core-a3-stage-status-triad-helper-design.md`](2026-06-29-auv-core-a3-stage-status-triad-helper-design.md)
 - [`2026-06-29-auv-core-x1-third-vertical-scouting-design.md`](2026-06-29-auv-core-x1-third-vertical-scouting-design.md)
 
-#### graduation-review (6)
+#### graduation-review (7)
 
 - [`2026-06-27-auv-core-a-query-readiness-graduation-review.md`](2026-06-27-auv-core-a-query-readiness-graduation-review.md)
 - [`2026-06-28-auv-core-a2-stage-quality-graduation-review.md`](2026-06-28-auv-core-a2-stage-quality-graduation-review.md)
@@ -83,6 +83,7 @@ AUV core runtime、contract、graduation、query-readiness
 - [`2026-06-30-auv-core-x3-third-donor-graduation-review.md`](2026-06-30-auv-core-x3-third-donor-graduation-review.md)
 - [`2026-06-30-auv-core-x5-post-x4-third-donor-graduation-review.md`](2026-06-30-auv-core-x5-post-x4-third-donor-graduation-review.md)
 - [`2026-07-04-auv-s-line-graduation-review.md`](2026-07-04-auv-s-line-graduation-review.md) — S-line state-of-lane audit (`hold` substrate; S1 narrow graduation candidate)
+- [`2026-07-05-auv-s1-bounded-contract-graduation-review.md`](2026-07-05-auv-s1-bounded-contract-graduation-review.md) — S1 bounded artifact/wire/IO graduation review (`60214d2`; frame + timeline only)
 
 #### matrix (1)
 
@@ -310,10 +311,10 @@ view-parser IR 与 inspect 消费
 - [`2026-05-29-view-parser-v0-overview.md`](2026-05-29-view-parser-v0-overview.md)
 - [`2026-05-29-view-parser-view-memory-v0.md`](2026-05-29-view-parser-view-memory-v0.md)
 
-#### scan line (S) — note entry (14)
+#### scan line (S) — note entry (18)
 
 Single-viewport **2D temporal scan** / **S-line observation read-model v1 (hermetic)**; complements
-[`scroll-scan` design](2026-05-21-scroll-scan-design.md) page-loop evidence. S1–S6b-1 landed in `crates/auv-scan`; whole-line substrate graduation **`hold`** — see [graduation review](2026-07-04-auv-s-line-graduation-review.md).
+[`scroll-scan` design](2026-05-21-scroll-scan-design.md) page-loop evidence. S1–S6b-1 landed in `crates/auv-scan`; whole-line substrate graduation **`hold`** — see [graduation review](2026-07-04-auv-s-line-graduation-review.md); S1 bounded artifact contracts documented — see [bounded contract review](2026-07-05-auv-s1-bounded-contract-graduation-review.md).
 
 - [`2026-07-02-auv-scan-s0-charter.md`](2026-07-02-auv-scan-s0-charter.md) — design charter
 - [`2026-07-02-auv-scan-s1-temporal-core-plan.md`](2026-07-02-auv-scan-s1-temporal-core-plan.md) — implementation plan (step 1 landed)
@@ -323,7 +324,7 @@ Single-viewport **2D temporal scan** / **S-line observation read-model v1 (herme
 - [`2026-07-02-auv-scan-s1-slice2-producer-handoff.md`](2026-07-02-auv-scan-s1-slice2-producer-handoff.md) — slice 2 handoff (producer wiring)
 - [`2026-07-02-auv-scan-s1-slice3-read-side-handoff.md`](2026-07-02-auv-scan-s1-slice3-read-side-handoff.md) — slice 3 handoff (crate-local reader)
 - [`2026-07-02-auv-scan-s1-s4a-multi-frame-handoff.md`](2026-07-02-auv-scan-s1-s4a-multi-frame-handoff.md) — S1-4a handoff (two-frame artifacts + replay)
-- [`2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md`](2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md) — S1-4b two-frame adjacent timeline (`scan-timeline-v0` crate-local JSON)
+- [`2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md`](2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md) — S1-4b two-frame adjacent timeline (directory-level `scan-timeline-v0` wire; bounded contract per [2026-07-05 review](2026-07-05-auv-s1-bounded-contract-graduation-review.md))
 - [`2026-07-03-auv-scan-s4-anchor-lifecycle-charter.md`](2026-07-03-auv-scan-s4-anchor-lifecycle-charter.md) — S4 lifecycle charter (evidence-first; docs-only)
 - [`2026-07-02-auv-scan-s4-lifecycle-evaluator-handoff.md`](2026-07-02-auv-scan-s4-lifecycle-evaluator-handoff.md) — S4 evaluator v1 handoff (motion/association/coverage read-models)
 - [`2026-07-03-auv-scan-s5-scene-state-charter.md`](2026-07-03-auv-scan-s5-scene-state-charter.md) — S5 scene state charter (L2 draft answers; docs-only)
@@ -332,6 +333,7 @@ Single-viewport **2D temporal scan** / **S-line observation read-model v1 (herme
 - [`2026-07-03-auv-scan-s6b-scene-state-run-read-handoff.md`](2026-07-03-auv-scan-s6b-scene-state-run-read-handoff.md) — S6b-1 run-read text bridge (`inspect_run` + provisional `scan-scene-state-input-v0` staging)
 - [`2026-07-03-s-line-streaming-observation-substrate.md`](2026-07-03-s-line-streaming-observation-substrate.md) — S0-S6 direction, A/B/S/M/G lane boundaries, and first acceptance gates
 - [`2026-07-04-auv-s-line-graduation-review.md`](2026-07-04-auv-s-line-graduation-review.md) — S-line graduation review / state-of-lane audit
+- [`2026-07-05-auv-s1-bounded-contract-graduation-review.md`](2026-07-05-auv-s1-bounded-contract-graduation-review.md) — S1 bounded contract graduation review (artifact/wire/IO only)
 
 ### `core/recognition` — Active
 

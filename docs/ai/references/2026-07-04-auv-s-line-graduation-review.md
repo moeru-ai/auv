@@ -75,7 +75,7 @@ cargo test scene_state_read  # 5 passed (root crate, S6b-1)
 | --- | --- |
 | **Whole S-line as streaming observation substrate** | **`hold`** |
 | **S1 contract cluster** (`scan-frame-v0` + producer + reader + two-frame batch) | **`candidate for narrow contract graduation`** (review language) |
-| **S2 minimal temporal** (motion, association, `scan-timeline-v0`) | **`helper proof only`** |
+| **S2 minimal temporal** (motion, association, `scan-timeline-v0`) | **`helper proof only`** — wire/IO bounded boundary in [2026-07-05 bounded contract review](2026-07-05-auv-s1-bounded-contract-graduation-review.md); motion semantics unchanged |
 | **S3–S5 product stack** | **`hold`** (`partial` evidence — in-memory read models) |
 | **B-line bridge (S6a + S6b-1)** | **`partial`** — CLI text only; no viewer / `inspect_server` |
 | **Substrate S6 (model backends)** | **`defer`** (clean — no creep) |
@@ -92,7 +92,7 @@ runtime producer, observation-in-frame closure, and durable S3–S5 wires land.
 | **S0** charter & five questions | Vocabulary + auditable question set | `landed proof` (docs) | [S0 charter](2026-07-02-auv-scan-s0-charter.md); `SceneDraftAnswers` in `scene_state.rs` |
 | **S1** frame binding & artifact | Versioned `scan-frame-v0`, round-trip, strict validation | `landed proof` | [slice1](2026-07-02-auv-scan-s1-slice1-frame-contract-handoff.md)–[slice3](2026-07-02-auv-scan-s1-slice3-read-side-handoff.md), [s4a](2026-07-02-auv-scan-s1-s4a-multi-frame-handoff.md); `artifact.rs`, `frame.rs`, `producer/`, `reader.rs` |
 | **S1** roadmap extras | `quality_flags`, surface binding, pose, latency envelope | `hold` / missing | `ScanFrame` has bounds fields only — no `quality_flags` or `surface_ref` on wire |
-| **S2** two-frame motion | Explicit estimate or `motion_unknown` | `landed proof` | `motion.rs`, `timeline.rs` ([s4b](2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md)); metadata `window_bounds` delta |
+| **S2** two-frame motion | Explicit estimate or `motion_unknown` | `landed proof` | `motion.rs`, `timeline.rs` ([s4b](2026-07-03-auv-scan-s1-s4b-motion-timeline-handoff.md)); metadata `window_bounds` delta — `scan-timeline-v0` wire/IO bounded language: [2026-07-05 review](2026-07-05-auv-s1-bounded-contract-graduation-review.md) |
 | **S2** association | Stable identity + ambiguity diagnostic | `landed proof` | `association.rs`; `association_stable_v0`, `association_ambiguous_v0` fixtures |
 | **S2** N-frame / durable tracks | Bounded sequence motion; `scan-tracks` wire | `hold` | `DIAG_UNSUPPORTED_FRAME_COUNT` when frame count ≠ 2; tracks wire not implemented |
 | **S3** coverage ledger | Regions, freshness, negative evidence, completeness | `partial` | `coverage.rs` → `CoverageView` (in-memory); not substrate `CoverageLedger` wire |
@@ -216,7 +216,7 @@ Evidence that would **upgrade** (future review only, not automatic):
 
 Priority order — **registration only; this review does not approve implementation:**
 
-1. **S1 wire gap closure** — Add minimal `quality_flags` / binding metadata to `scan-frame-v0` with golden migration, **or** add `NOTICE` deferrals at `ScanFrame` for each roadmap field intentionally omitted.
+1. **S1 wire gap closure** — Add minimal `quality_flags` / binding metadata to `scan-frame-v0` with golden migration, **or** add `NOTICE` deferrals at `ScanFrame` for each roadmap field intentionally omitted. Bounded contract boundary frozen in [`2026-07-05-auv-s1-bounded-contract-graduation-review.md`](2026-07-05-auv-s1-bounded-contract-graduation-review.md).
 2. **S3 durable `scan-coverage-v0`** — First real ledger artifact beside frame dir; golden round-trip.
 3. **Invoke/runtime frame producer** — Catalog command writing `scan-frame-*.json` into implicit run storage via existing producer APIs (`live-capture` feature-gated).
 4. **S1-4c N-frame adjacent timeline** — Extend `build_scan_timeline_from_bundle` beyond two frames; 3+ frame fixture.
@@ -228,7 +228,7 @@ Priority order — **registration only; this review does not approve implementat
 
 - [ ] Must-pass harness green on cited SHA (`49cb750` or successor)
 - [ ] Accept **`hold`** on whole-line streaming substrate graduation
-- [ ] Accept **`candidate for narrow contract graduation`** language for S1 cluster only
+- [ ] Accept **`candidate for narrow contract graduation`** language for S1 cluster only (refined: **`graduate bounded`** frame + two-frame timeline wire in [2026-07-05 bounded contract review](2026-07-05-auv-s1-bounded-contract-graduation-review.md))
 - [ ] Accept external name **S-line observation read-model v1 (hermetic)**
 - [ ] Acknowledge `scan-scene-state-input-v0` is **provisional** — not TERMS / not durable contract
 - [ ] Acknowledge S3–S5 are **in-memory read models** until durable wires land
