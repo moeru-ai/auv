@@ -8,11 +8,22 @@ use crate::scene_state::{
 };
 
 /// Whether scene-state inspect hydrated coverage from a durable wire or in-memory evaluator.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub enum CoverageInspectSource {
   InMemory,
   Durable,
 }
+
+impl PartialEq for CoverageInspectSource {
+  fn eq(&self, other: &Self) -> bool {
+    matches!(
+      (self, other),
+      (Self::InMemory, Self::InMemory) | (Self::Durable, Self::Durable)
+    )
+  }
+}
+
+impl Eq for CoverageInspectSource {}
 
 /// L3 in-memory consumption surface. NOT a durable wire or read cache.
 #[derive(Clone, Debug, PartialEq)]
