@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::candidate_action_decision::{CandidateActionExecutionSideEffect, CandidateActionKind};
+use crate::candidate_promotion::PromotionRefusal;
 use crate::model::AuvResult;
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 
@@ -18,7 +19,6 @@ use crate::candidate_action_decision::{
 use crate::candidate_promotion::{
   ActionPermission, CandidatePromotion, ConsentGrade, ConsentProvenance,
 };
-use crate::candidate_promotion::PromotionRefusal;
 #[cfg(target_os = "macos")]
 use crate::candidate_promotion_recording::{
   CandidatePromotionArtifactRequest, CandidatePromotionConsentInput,
