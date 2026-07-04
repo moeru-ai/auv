@@ -28,8 +28,9 @@ pub use coverage::{
   CompletenessClaim, CoverageEntry, CoverageView, NegativeEvidence, build_coverage_view,
 };
 pub use coverage_artifact::{
-  CoverageArtifactError, SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_SCHEMA_VERSION,
-  ScanCoverageWire, coverage_view_to_wire, read_coverage_artifact, write_coverage_artifact,
+  CoverageArtifactError, SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_ARTIFACT_ROLE,
+  SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire, coverage_view_to_wire, read_coverage_artifact,
+  write_coverage_artifact,
 };
 pub use frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
 pub use lifecycle::{
@@ -56,7 +57,7 @@ pub use scene_state::{
   build_scene_state_product, summarize_scene_state_text,
 };
 pub use scene_state_inspect::{
-  SceneStateInspect, SceneStateListSummary, build_scene_state_inspect,
+  CoverageInspectSource, SceneStateInspect, SceneStateListSummary, build_scene_state_inspect,
   format_scene_state_inspect_text, summarize_scene_state_inspect,
 };
 pub use timeline::{

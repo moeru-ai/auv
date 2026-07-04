@@ -7,6 +7,13 @@ use crate::scene_state::{
   build_scene_state_product, observations_match_bundle,
 };
 
+/// Whether scene-state inspect hydrated coverage from a durable wire or in-memory evaluator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CoverageInspectSource {
+  InMemory,
+  Durable,
+}
+
 /// L3 in-memory consumption surface. NOT a durable wire or read cache.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneStateInspect {
@@ -15,6 +22,7 @@ pub struct SceneStateInspect {
   pub bundle_frame_count: usize,
   pub observations_frame_count: usize,
   pub observations_input_valid: bool,
+  pub coverage_source: CoverageInspectSource,
 }
 
 /// List/badge projection (mirrors ViewParserListSummary intent).
@@ -37,11 +45,17 @@ pub fn build_scene_state_inspect(
   let observations_frame_count = input.observations_by_frame.len();
   let observations_input_valid =
     observations_match_bundle(&input.bundle, &input.observations_by_frame);
+  let coverage_source = if input.coverage_wire.is_some() {
+    CoverageInspectSource::Durable
+  } else {
+    CoverageInspectSource::InMemory
+  };
   Ok(SceneStateInspect {
     product,
     bundle_frame_count,
     observations_frame_count,
     observations_input_valid,
+    coverage_source,
   })
 }
 
@@ -72,6 +86,15 @@ pub fn format_scene_state_inspect_text(inspect: &SceneStateInspect) -> String {
     inspect.bundle_frame_count,
     inspect.observations_frame_count,
     inspect.observations_input_valid,
+  ));
+
+  let coverage_source = match inspect.coverage_source {
+    CoverageInspectSource::Durable => "durable",
+    CoverageInspectSource::InMemory => "in_memory",
+  };
+  lines.push(format!(
+    "[scene.coverage] source={coverage_source} entry_count={}",
+    product.coverage.entries.len(),
   ));
 
   lines.push(format!(
@@ -144,6 +167,7 @@ mod tests {
   use super::*;
   use crate::scene_fixture_support::scene_input_from_fixture;
 
+  const SECTION_COVERAGE: &str = "[scene.coverage]";
   const SECTION_INPUT: &str = "[scene.input]";
   const SECTION_READINESS: &str = "[scene.readiness]";
   const SECTION_TRACK: &str = "[scene.track]";
@@ -159,6 +183,7 @@ mod tests {
   fn assert_all_section_markers(text: &str) {
     for marker in [
       SECTION_INPUT,
+      SECTION_COVERAGE,
       SECTION_READINESS,
       SECTION_TRACK,
       SECTION_RECOMMENDED,
@@ -177,6 +202,7 @@ mod tests {
     let inspect = build_scene_state_inspect(&input).expect("inspect");
     let product = build_scene_state_product(&input).expect("product");
     assert_eq!(inspect.product, product);
+    assert_eq!(inspect.coverage_source, CoverageInspectSource::Durable);
   }
 
   #[test]
@@ -303,12 +329,14 @@ mod tests {
     let inspect = build_inspect_from_fixture("scene_stable_v0");
     let text = format_scene_state_inspect_text(&inspect);
     let input_pos = text.find(SECTION_INPUT).expect("input");
+    let coverage_pos = text.find(SECTION_COVERAGE).expect("coverage");
     let readiness_pos = text.find(SECTION_READINESS).expect("readiness");
     let track_pos = text.find(SECTION_TRACK).expect("track");
     let recommended_pos = text.find(SECTION_RECOMMENDED).expect("recommended");
     let diagnostics_pos = text.find(SECTION_DIAGNOSTICS).expect("diagnostics");
     let draft_pos = text.find(SECTION_DRAFT).expect("draft");
-    assert!(input_pos < readiness_pos);
+    assert!(input_pos < coverage_pos);
+    assert!(coverage_pos < readiness_pos);
     assert!(readiness_pos < track_pos);
     assert!(track_pos < recommended_pos);
     assert!(recommended_pos < diagnostics_pos);

@@ -7,8 +7,9 @@ use crate::{
   invoke_command,
 };
 use auv_scan::{
-  SCAN_COVERAGE_ARTIFACT_FILE_NAME, artifact::frame_artifact_file_name,
-  produce_coverage_from_fixture_dir, produce_frame_from_fixture_dir,
+  SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_ARTIFACT_ROLE,
+  artifact::frame_artifact_file_name, produce_coverage_from_fixture_dir,
+  produce_frame_from_fixture_dir,
 };
 use auv_tracing_driver::{ProducedArtifact, now_millis};
 use tempfile::TempDir;
@@ -138,7 +139,7 @@ fn coverage_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     "scan.coverage resolves frame PNGs via manifest frame_fixture cross-reference under .../scan/coverage/<scenario>/ layout only.".to_string(),
   );
   output.artifacts.push(ProducedArtifact {
-    kind: "scan-coverage-v0".to_string(),
+    kind: SCAN_COVERAGE_ARTIFACT_ROLE.to_string(),
     source_path: json_source,
     preferred_name: SCAN_COVERAGE_ARTIFACT_FILE_NAME.to_string(),
     note: Some(
@@ -179,7 +180,10 @@ mod tests {
   use std::path::PathBuf;
   use std::sync::Arc;
 
-  use auv_scan::{SCAN_COVERAGE_ARTIFACT_FILE_NAME, read_coverage_artifact, read_frame_artifact};
+  use auv_scan::{
+    SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_ARTIFACT_ROLE, read_coverage_artifact,
+    read_frame_artifact,
+  };
   use auv_tracing_driver::{LocalStore, MemoryRunRecorder, RunRecordingBackend, TraceStatusCode};
 
   use crate::{
@@ -434,7 +438,7 @@ mod tests {
     result
       .artifacts
       .iter()
-      .find(|artifact| artifact.role == "scan-coverage-v0")
+      .find(|artifact| artifact.role == SCAN_COVERAGE_ARTIFACT_ROLE)
       .expect("scan-coverage-v0 artifact record");
 
     let json_staged = result

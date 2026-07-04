@@ -355,7 +355,7 @@ fn build_track_summaries(
 /// coverage-derived fields (`product.coverage`, blocking codes from coverage, visibility
 /// paths that read `coverage.negative_evidence`). Associations and track identity still
 /// come from observations. When `None`, coverage is computed in-memory via
-/// `build_coverage_view` (legacy until S8c runtime producer).
+/// `build_coverage_view` when the run has no `scan-coverage-v0` artifact.
 pub fn build_scene_state_product(
   input: &SceneStateInput,
 ) -> Result<SceneStateProduct, SceneStateError> {

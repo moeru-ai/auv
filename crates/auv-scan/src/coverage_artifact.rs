@@ -14,6 +14,7 @@ use crate::coverage::{CompletenessClaim, CoverageEntry, CoverageView, NegativeEv
 
 pub const SCAN_COVERAGE_SCHEMA_VERSION: &str = "scan-coverage-v0";
 pub const SCAN_COVERAGE_ARTIFACT_FILE_NAME: &str = "scan-coverage.json";
+pub const SCAN_COVERAGE_ARTIFACT_ROLE: &str = "scan-coverage-v0";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScanCoverageWire {

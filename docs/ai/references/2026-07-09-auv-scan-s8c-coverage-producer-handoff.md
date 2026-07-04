@@ -164,7 +164,8 @@ assert_eq!(produced.wire, golden);
 ## Graduation language
 
 - **S8c** = runtime coverage producer helper proof (fixture-first invoke → `scan-coverage-v0` run role)
-- **S3 substrate stage remains `partial`** until **S8d** inspect/run_read consumes staged coverage
+- **S8d** = inspect durable read — see [S8d handoff](2026-07-10-auv-scan-s8d-inspect-coverage-handoff.md)
+- **S3 ledger substrate stage remains `partial`** — in-memory `CoverageView` is still the default substrate; **S8 fixture-first durable coverage chain `landed proof`** (S8a–S8d) ≠ whole S3 graduated
 - S8a = wire/IO · S8b = scene consumer · **S8c = producer** · S8d = inspect durable — do not mix lanes
 - `producer chain landed proof` ≠ whole S3 graduated
 

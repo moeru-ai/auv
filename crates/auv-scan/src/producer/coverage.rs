@@ -13,8 +13,8 @@
 //! Producer chain: `build_coverage_view` (evaluator) → `coverage_view_to_wire` (projection only) →
 //! `write_coverage_artifact`. `coverage_view_to_wire` must not accept bundle/associations and recompute.
 //!
-//! TODO(s8c-fallback): S8d may hydrate scene_state from run `scan-coverage-v0`; this slice does not
-//! remove `coverage_wire: None` in-memory fallback.
+//! NOTICE(s8d-fallback-boundary): in-memory `build_coverage_view` fallback remains when run has
+//! zero `scan-coverage-v0` artifacts; durable wire is authoritative when exactly one artifact is present.
 
 use std::fs;
 use std::path::{Path, PathBuf};
