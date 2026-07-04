@@ -115,7 +115,9 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
   for app in applications {
     for child in children(&connection, &app.reference)? {
       let accessible = accessible(&connection, child)?;
-      if accessible.role == "window" && rect_has_area(accessible.bounds) {
+      if matches!(accessible.role.as_str(), "window" | "frame" | "dialog")
+        && rect_has_area(accessible.bounds)
+      {
         windows.push(window_from_accessible(
           &app,
           &accessible,
