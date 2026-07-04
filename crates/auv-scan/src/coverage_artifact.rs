@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coverage::{CompletenessClaim, CoverageView};
+use crate::coverage::{CompletenessClaim, CoverageEntry, CoverageView, NegativeEvidence};
 
 pub const SCAN_COVERAGE_SCHEMA_VERSION: &str = "scan-coverage-v0";
 pub const SCAN_COVERAGE_ARTIFACT_FILE_NAME: &str = "scan-coverage.json";
@@ -89,6 +89,48 @@ fn completeness_to_wire(claim: &CompletenessClaim) -> CompletenessWire {
       reason: reason.clone(),
     },
   }
+}
+
+fn completeness_from_wire(wire: &CompletenessWire) -> CompletenessClaim {
+  match wire {
+    CompletenessWire::Complete => CompletenessClaim::Complete,
+    CompletenessWire::Incomplete { reason } => CompletenessClaim::Incomplete {
+      reason: reason.clone(),
+    },
+  }
+}
+
+/// Hydrate an in-memory [`CoverageView`] from durable wire. Does not recompute coverage.
+pub(crate) fn coverage_wire_to_view(wire: &ScanCoverageWire) -> CoverageView {
+  CoverageView {
+    entries: wire
+      .entries
+      .iter()
+      .map(|entry| CoverageEntry {
+        track_id: entry.track_id.clone(),
+        last_seen_frame_id: entry.last_seen_frame_id.clone(),
+        observation_count: entry.observation_count,
+      })
+      .collect(),
+    open_uncertainty_codes: wire.open_uncertainty_codes.clone(),
+    negative_evidence: wire
+      .negative_evidence
+      .iter()
+      .map(|evidence| NegativeEvidence {
+        code: evidence.code.clone(),
+        after_frame_id: evidence.after_frame_id.clone(),
+      })
+      .collect(),
+    completeness: completeness_from_wire(&wire.completeness),
+  }
+}
+
+/// Read `scan-coverage.json` from a scan frame directory.
+#[cfg(test)]
+pub(crate) fn read_coverage_artifact_from_scan_dir(
+  dir: &Path,
+) -> Result<ScanCoverageWire, CoverageArtifactError> {
+  read_coverage_artifact(&dir.join(SCAN_COVERAGE_ARTIFACT_FILE_NAME))
 }
 
 pub fn write_coverage_artifact(
@@ -205,6 +247,35 @@ mod tests {
   }
 
   static ARTIFACT_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
+
+  #[test]
+  fn coverage_wire_to_view_roundtrip() {
+    for view in [
+      stable_coverage_view(),
+      no_observation_coverage_view(),
+      ambiguous_coverage_view(),
+    ] {
+      let wire = coverage_view_to_wire(&view);
+      let roundtrip = coverage_wire_to_view(&wire);
+      assert_eq!(roundtrip, view);
+    }
+  }
+
+  #[test]
+  fn read_coverage_artifact_from_scan_dir_roundtrip() {
+    let wire = coverage_view_to_wire(&stable_coverage_view());
+    let seq = ARTIFACT_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
+    let out_dir = env::temp_dir().join(format!(
+      "auv-scan-coverage-scan-dir-{}-{}",
+      process::id(),
+      seq
+    ));
+    let _ = fs::remove_dir_all(&out_dir);
+    write_coverage_artifact(&out_dir, &wire).expect("write");
+    let read_back = read_coverage_artifact_from_scan_dir(&out_dir).expect("read dir");
+    assert_eq!(read_back, wire);
+    let _ = fs::remove_dir_all(&out_dir);
+  }
 
   #[test]
   fn write_read_coverage_artifact_roundtrip() {

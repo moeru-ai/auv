@@ -176,6 +176,7 @@ fn wire_to_scene_state_input(
     },
     observations_by_frame,
     lifecycle_events,
+    coverage_wire: None,
   })
 }
 

@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Deserialize;
 
 use crate::association::FrameObservation;
+use crate::coverage_artifact::read_coverage_artifact_from_scan_dir;
 use crate::lifecycle::{LifecycleEvent, TransitionEvidence};
 use crate::producer::produce_frames_from_fixture_dir;
 use crate::reader::{ScanFrameBundle, load_scan_frames_from_dir};
@@ -143,6 +144,26 @@ pub(crate) fn bundle_from_frame_fixture(
   bundle
 }
 
+pub(crate) fn coverage_golden_scenario_for_scene(scene_scenario: &str) -> Option<&'static str> {
+  match scene_scenario {
+    "scene_stable_v0" => Some("coverage_stable_v0"),
+    "scene_stale_v0" => Some("coverage_no_observation_v0"),
+    "scene_ambiguous_v0" => Some("coverage_ambiguous_v0"),
+    _ => None,
+  }
+}
+
+pub(crate) fn coverage_wire_from_scene_fixture(
+  scenario_dir: &str,
+) -> Option<crate::coverage_artifact::ScanCoverageWire> {
+  let golden = coverage_golden_scenario_for_scene(scenario_dir)?;
+  let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    .join("tests/fixtures/scan/coverage")
+    .join(golden)
+    .join("golden");
+  Some(read_coverage_artifact_from_scan_dir(&dir).expect("read coverage golden"))
+}
+
 pub(crate) fn scene_input_from_fixture(scenario_dir: &str) -> SceneStateInput {
   let fixture = load_scene_fixture(scenario_dir);
   let lifecycle_events = fixture
@@ -153,5 +174,6 @@ pub(crate) fn scene_input_from_fixture(scenario_dir: &str) -> SceneStateInput {
     bundle: bundle_from_frame_fixture(scenario_dir, &fixture.frame_fixture),
     observations_by_frame: observations_from_fixture(&fixture.observations_by_frame),
     lifecycle_events,
+    coverage_wire: coverage_wire_from_scene_fixture(scenario_dir),
   }
 }

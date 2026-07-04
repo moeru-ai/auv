@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::association::{AssociationResult, FrameObservation, associate_adjacent_frames};
 use crate::coverage::{CoverageView, build_coverage_view};
+use crate::coverage_artifact::{ScanCoverageWire, coverage_wire_to_view};
 use crate::lifecycle::{LifecycleError, LifecycleEvent, LifecycleVerdict, evaluate_lifecycle};
 use crate::motion::{MotionResult, MotionUnknown, estimate_viewport_motion};
 use crate::reader::ScanFrameBundle;
@@ -15,6 +16,9 @@ pub struct SceneStateInput {
   pub bundle: ScanFrameBundle,
   pub observations_by_frame: Vec<Vec<FrameObservation>>,
   pub lifecycle_events: Option<Vec<LifecycleEvent>>,
+  /// When `Some`, durable coverage is authoritative only for coverage-derived fields
+  /// (see `build_scene_state_product`). Associations still computed for tracks.
+  pub coverage_wire: Option<ScanCoverageWire>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -346,6 +350,12 @@ fn build_track_summaries(
 }
 
 /// Build an in-memory scene state product from frames, observations, and optional lifecycle events.
+///
+/// When `input.coverage_wire` is `Some`, durable coverage is authoritative only for
+/// coverage-derived fields (`product.coverage`, blocking codes from coverage, visibility
+/// paths that read `coverage.negative_evidence`). Associations and track identity still
+/// come from observations. When `None`, coverage is computed in-memory via
+/// `build_coverage_view` (legacy until S8c runtime producer).
 pub fn build_scene_state_product(
   input: &SceneStateInput,
 ) -> Result<SceneStateProduct, SceneStateError> {
@@ -379,7 +389,10 @@ pub fn build_scene_state_product(
   } else {
     Vec::new()
   };
-  let coverage = build_coverage_view(&input.bundle, &associations);
+  let coverage = match &input.coverage_wire {
+    Some(wire) => coverage_wire_to_view(wire),
+    None => build_coverage_view(&input.bundle, &associations),
+  };
   let (lifecycle, lifecycle_input_error) = evaluate_lifecycle_optional(&input.lifecycle_events);
 
   let blocking_codes = collect_blocking_codes(
@@ -477,7 +490,9 @@ mod tests {
   use super::*;
   use crate::producer::{produce_frame_from_fixture_dir, produce_frames_from_fixture_dir};
   use crate::reader::load_scan_frames_from_dir;
-  use crate::scene_fixture_support::{SceneFixture, load_scene_fixture, scene_input_from_fixture};
+  use crate::scene_fixture_support::{
+    SceneFixture, coverage_wire_from_scene_fixture, load_scene_fixture, scene_input_from_fixture,
+  };
   use std::path::PathBuf;
 
   fn build_from_scene_fixture(scenario_dir: &str) -> SceneStateProduct {
@@ -549,6 +564,30 @@ mod tests {
         assert_eq!(track.visibility_assessment, parse_visibility(visibility));
       }
     }
+  }
+
+  fn assert_durable_coverage_parity(scenario_dir: &str) {
+    let mut input = scene_input_from_fixture(scenario_dir);
+    input.coverage_wire = None;
+    let in_memory = build_scene_state_product(&input).expect("in-memory scene");
+    input.coverage_wire = coverage_wire_from_scene_fixture(scenario_dir);
+    let durable = build_scene_state_product(&input).expect("durable scene");
+    assert_eq!(in_memory, durable);
+  }
+
+  #[test]
+  fn scene_durable_coverage_parity_stable() {
+    assert_durable_coverage_parity("scene_stable_v0");
+  }
+
+  #[test]
+  fn scene_durable_coverage_parity_stale() {
+    assert_durable_coverage_parity("scene_stale_v0");
+  }
+
+  #[test]
+  fn scene_durable_coverage_parity_ambiguous() {
+    assert_durable_coverage_parity("scene_ambiguous_v0");
   }
 
   #[test]
@@ -632,6 +671,7 @@ mod tests {
         label: "widget".into(),
       }]],
       lifecycle_events: None,
+      coverage_wire: None,
     };
     let product = build_scene_state_product(&input).expect("single frame scene");
     assert!(matches!(
@@ -675,6 +715,7 @@ mod tests {
         }],
       ],
       lifecycle_events: Some(Vec::new()),
+      coverage_wire: None,
     };
     let product = build_scene_state_product(&input).expect("scene state");
     assert!(

@@ -170,6 +170,16 @@ mod tests {
   }
 
   #[test]
+  fn inspect_durable_coverage_smoke() {
+    let mut input = scene_input_from_fixture("scene_stable_v0");
+    input.coverage_wire =
+      crate::scene_fixture_support::coverage_wire_from_scene_fixture("scene_stable_v0");
+    let inspect = build_scene_state_inspect(&input).expect("inspect");
+    let product = build_scene_state_product(&input).expect("product");
+    assert_eq!(inspect.product, product);
+  }
+
+  #[test]
   fn inspect_product_matches_direct_build() {
     let input = scene_input_from_fixture("scene_stable_v0");
     let inspect = build_scene_state_inspect(&input).expect("inspect");
