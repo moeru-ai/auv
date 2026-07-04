@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_os = "macos")]
 use crate::candidate_promotion::PromotionProjection;
+use crate::contract::RecognitionResult;
 #[cfg(target_os = "macos")]
 use crate::contract::{
-  ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
-  RecognitionSurface, RecognizedItem,
+  ArtifactRef, RecognitionBox, RecognitionScope, RecognitionSource, RecognitionSurface,
+  RecognizedItem,
 };
 #[cfg(target_os = "macos")]
-use crate::model::{AuvResult, now_millis};
+use crate::model::AuvResult;
 #[cfg(target_os = "macos")]
 use auv_driver_macos::types::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 #[cfg(target_os = "macos")]
@@ -348,6 +348,7 @@ fn window_frame_from_snapshot(snapshot: &ObservedAxTreeSnapshot) -> Option<&Obse
     .map(|node| &node.bounds)
 }
 
+#[cfg(target_os = "macos")]
 fn select_best(
   filtered: &[RecognizedItem],
   policy: &AxRecognitionPolicy,
@@ -433,11 +434,12 @@ fn non_empty_string(value: &str) -> Option<String> {
   }
 }
 
+#[cfg(target_os = "macos")]
 fn ax_recognition_temp_json_path(label: &str) -> std::path::PathBuf {
   std::env::temp_dir().join(format!(
     "auv-ax-recognition-{}-{}-{}.json",
     sanitize_artifact_label(label),
-    now_millis(),
+    crate::model::now_millis(),
     std::process::id()
   ))
 }
