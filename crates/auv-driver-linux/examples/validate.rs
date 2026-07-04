@@ -298,6 +298,9 @@ fn capture_window(session: &LinuxDriverSession, substr: &str, out: Option<&str>)
     captured.image.height(),
     captured.backend
   );
+  if let Some(reason) = captured.fallback_reason {
+    println!("fallback_reason: {reason}");
+  }
   Ok(())
 }
 

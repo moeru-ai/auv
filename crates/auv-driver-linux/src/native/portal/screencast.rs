@@ -24,6 +24,7 @@ use super::request::{
 
 const SCREENCAST_INTERFACE: &str = "org.freedesktop.portal.ScreenCast";
 const SOURCE_MONITOR: u32 = 1;
+const SOURCE_WINDOW: u32 = 2;
 const CURSOR_HIDDEN: u32 = 1;
 const PIPEWIRE_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -97,14 +98,27 @@ pub fn select_monitor_sources(
   connection: &Connection,
   session_handle: &OwnedObjectPath,
 ) -> DriverResult<()> {
-  select_sources(connection, session_handle)?;
+  select_sources(connection, session_handle, SOURCE_MONITOR, true)?;
   Ok(())
 }
 
-fn select_sources(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<()> {
+pub fn select_window_sources(
+  connection: &Connection,
+  session_handle: &OwnedObjectPath,
+) -> DriverResult<()> {
+  select_sources(connection, session_handle, SOURCE_WINDOW, false)?;
+  Ok(())
+}
+
+fn select_sources(
+  connection: &Connection,
+  session_handle: &OwnedObjectPath,
+  source_type: u32,
+  multiple: bool,
+) -> DriverResult<()> {
   let mut options = HashMap::new();
-  options.insert("types", Value::from(SOURCE_MONITOR));
-  options.insert("multiple", Value::from(true));
+  options.insert("types", Value::from(source_type));
+  options.insert("multiple", Value::from(multiple));
   options.insert("cursor_mode", Value::from(CURSOR_HIDDEN));
   session_request(
     connection,
@@ -156,10 +170,19 @@ pub struct ScreenCastSession {
 }
 
 impl ScreenCastSession {
-  pub fn open() -> DriverResult<Self> {
+  pub fn open_monitor() -> DriverResult<Self> {
     let connection = session_connection()?;
     let session_handle = create_session(&connection, SCREENCAST_INTERFACE)?;
-    match start_session(connection, session_handle) {
+    match start_session(connection, session_handle, select_monitor_sources) {
+      Ok(session) => Ok(session),
+      Err(error) => Err(error),
+    }
+  }
+
+  pub fn open_window() -> DriverResult<Self> {
+    let connection = session_connection()?;
+    let session_handle = create_session(&connection, SCREENCAST_INTERFACE)?;
+    match start_session(connection, session_handle, select_window_sources) {
       Ok(session) => Ok(session),
       Err(error) => Err(error),
     }
@@ -170,6 +193,13 @@ impl ScreenCastSession {
     target_bounds: Option<Rect>,
   ) -> DriverResult<ScreenCastFrame> {
     let stream = select_stream(&self.streams, target_bounds)?.clone();
+    let fd = open_pipewire_remote(&self.connection, &self.session_handle)?;
+    let image = read_pipewire_frame(fd.into(), stream.id)?;
+    Ok(ScreenCastFrame { stream, image })
+  }
+
+  pub fn capture_window_frame(&mut self) -> DriverResult<ScreenCastFrame> {
+    let stream = select_window_stream(&self.streams)?.clone();
     let fd = open_pipewire_remote(&self.connection, &self.session_handle)?;
     let image = read_pipewire_frame(fd.into(), stream.id)?;
     Ok(ScreenCastFrame { stream, image })
@@ -185,8 +215,9 @@ impl Drop for ScreenCastSession {
 fn start_session(
   connection: Connection,
   session_handle: OwnedObjectPath,
+  select_sources: fn(&Connection, &OwnedObjectPath) -> DriverResult<()>,
 ) -> DriverResult<ScreenCastSession> {
-  let result = select_monitor_sources(&connection, &session_handle)
+  let result = select_sources(&connection, &session_handle)
     .and_then(|()| start_screencast(&connection, &session_handle))
     .and_then(|results| decode_streams(&results));
   let streams = match result {
@@ -210,6 +241,11 @@ fn start_session(
     session_handle,
     streams,
   })
+}
+
+pub fn capture_window_frame() -> DriverResult<ScreenCastFrame> {
+  let mut session = ScreenCastSession::open_window()?;
+  session.capture_window_frame()
 }
 
 fn start_screencast(
@@ -265,6 +301,14 @@ fn select_stream<'a>(
   streams
     .first()
     .ok_or_else(|| backend("screencast start response contained no streams"))
+}
+
+fn select_window_stream(streams: &[ScreenCastStream]) -> DriverResult<&ScreenCastStream> {
+  streams
+    .iter()
+    .find(|stream| stream.source_type == Some(SOURCE_WINDOW))
+    .or_else(|| streams.first())
+    .ok_or_else(|| backend("screencast window source response contained no streams"))
 }
 
 fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
@@ -629,5 +673,30 @@ mod tests {
     .expect("xRGB converts");
 
     assert_eq!(dest, [1, 2, 3, 255]);
+  }
+
+  #[test]
+  fn window_stream_prefers_window_source_type() {
+    let monitor = ScreenCastStream {
+      id: 1,
+      position: None,
+      size: None,
+      source_type: Some(SOURCE_MONITOR),
+      mapping_id: None,
+      pipewire_serial: None,
+    };
+    let window = ScreenCastStream {
+      id: 2,
+      position: None,
+      size: None,
+      source_type: Some(SOURCE_WINDOW),
+      mapping_id: None,
+      pipewire_serial: None,
+    };
+
+    let streams = [monitor, window];
+    let selected = select_window_stream(&streams).expect("stream selected");
+
+    assert_eq!(selected.id, 2);
   }
 }
