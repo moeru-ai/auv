@@ -63,18 +63,20 @@ pub(super) fn session_request(
 pub(super) fn create_remote_desktop_session(
   connection: &Connection,
 ) -> DriverResult<OwnedObjectPath> {
+  create_session(connection, "org.freedesktop.portal.RemoteDesktop")
+}
+
+pub(super) fn create_session(
+  connection: &Connection,
+  interface: &'static str,
+) -> DriverResult<OwnedObjectPath> {
   let session_handle_token = portal_token("session");
   let mut options = HashMap::new();
   options.insert(
     "session_handle_token",
     Value::from(session_handle_token.as_str()),
   );
-  let results = call_request(
-    connection,
-    "org.freedesktop.portal.RemoteDesktop",
-    "CreateSession",
-    options,
-  )?;
+  let results = call_request(connection, interface, "CreateSession", options)?;
   if let Some(value) = results.get("session_handle") {
     if let Ok(handle) = <&str>::try_from(value) {
       return OwnedObjectPath::try_from(handle.to_string())
@@ -82,6 +84,23 @@ pub(super) fn create_remote_desktop_session(
     }
   }
   expected_session_path(connection, &session_handle_token)
+}
+
+pub(super) fn close_session(
+  connection: &Connection,
+  session_handle: &OwnedObjectPath,
+) -> DriverResult<()> {
+  let session = Proxy::new(
+    connection,
+    PORTAL_DESTINATION,
+    session_handle.clone(),
+    "org.freedesktop.portal.Session",
+  )
+  .map_err(|error| backend(format!("failed to create portal session proxy: {error}")))?;
+  session
+    .call_method("Close", &())
+    .map_err(|error| backend(format!("failed to close portal session: {error}")))?;
+  Ok(())
 }
 
 pub(super) fn portal_token(prefix: &str) -> String {

@@ -10,8 +10,7 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use crate::error::backend;
 
 use super::request::{
-  PORTAL_DESTINATION, create_remote_desktop_session, portal_proxy, session_connection,
-  session_request,
+  close_session, create_remote_desktop_session, portal_proxy, session_connection, session_request,
 };
 use super::{ScreenCastStream, decode_streams, select_monitor_sources};
 
@@ -266,20 +265,6 @@ fn start_remote_desktop(
       ))
     })?;
   super::request::wait_response(&mut responses, REMOTE_DESKTOP_INTERFACE, "Start")
-}
-
-fn close_session(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<()> {
-  let session = Proxy::new(
-    connection,
-    PORTAL_DESTINATION,
-    session_handle.clone(),
-    "org.freedesktop.portal.Session",
-  )
-  .map_err(|error| backend(format!("failed to create portal session proxy: {error}")))?;
-  session
-    .call_method("Close", &())
-    .map_err(|error| backend(format!("failed to close portal session: {error}")))?;
-  Ok(())
 }
 
 #[cfg(test)]

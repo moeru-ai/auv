@@ -14,12 +14,16 @@ use crate::error::backend;
 #[cfg(any(target_os = "linux", test))]
 use crate::error::invalid_input;
 #[cfg(target_os = "linux")]
+use crate::native::portal::{ScreenCastFrame, capture_monitor_frame};
+#[cfg(target_os = "linux")]
 use display::{list_targets, resolve_for_region, selected_target_or_none};
 
 mod display;
 
 #[cfg(target_os = "linux")]
 const PORTAL_CAPTURE_BACKEND: &str = "xdg-desktop-portal.screenshot";
+#[cfg(target_os = "linux")]
+const PORTAL_SCREENCAST_BACKEND: &str = "xdg-desktop-portal.screencast.pipewire";
 
 #[cfg(target_os = "linux")]
 pub fn list_displays() -> DriverResult<ObservedDisplays> {
@@ -39,11 +43,40 @@ pub fn list_displays() -> DriverResult<ObservedDisplays> {
 #[cfg(target_os = "linux")]
 pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
   let target = selected_target_or_none(selector)?;
-  let captured = if let Some(target) = &target {
-    capture_area(target.display.frame, target.display.frame)?
-  } else {
-    capture_full()?
-  };
+  let target_bounds = target.as_ref().map(|target| target.display.frame);
+  match capture_monitor_frame(target_bounds) {
+    Ok(frame) => {
+      let display = target
+        .map(|target| target.display)
+        .unwrap_or_else(|| display_from_screencast_frame(&frame));
+      let scale_factor = capture_scale_factor(&frame.image, display.frame, display.scale_factor);
+      let capture = Capture {
+        image: frame.image,
+        bounds: display.frame,
+        scale_factor,
+        backend: PORTAL_SCREENCAST_BACKEND.to_string(),
+        fallback_reason: None,
+      };
+      Ok(DisplayCapture { display, capture })
+    }
+    Err(error) => {
+      let captured = match target.as_ref() {
+        Some(target) => capture_area(target.display.frame, target.display.frame)?,
+        None => capture_full()?,
+      };
+      capture_display_from_captured(
+        target,
+        with_primary_capture_failure(captured, PORTAL_SCREENCAST_BACKEND, &error.to_string()),
+      )
+    }
+  }
+}
+
+#[cfg(target_os = "linux")]
+fn capture_display_from_captured(
+  target: Option<display::DisplayTarget>,
+  captured: CapturedImage,
+) -> DriverResult<DisplayCapture> {
   let display = target
     .map(|target| target.display)
     .unwrap_or_else(|| synthetic_display_from_image(&captured.image));
@@ -69,7 +102,21 @@ pub fn capture_display(_selector: Option<&str>) -> DriverResult<DisplayCapture> 
 pub fn capture_region(selector: Option<&str>, region: Rect) -> DriverResult<RegionCapture> {
   let targets = list_targets()?;
   let target = resolve_for_region(&targets, selector, region)?;
-  let captured = capture_area(region, target.display.frame)?;
+  let captured = match capture_monitor_frame(Some(target.display.frame)) {
+    Ok(frame) => CapturedImage {
+      image: crop_portal_screenshot_to_region(frame.image, target.display.frame, region)?,
+      backend: format!("{PORTAL_SCREENCAST_BACKEND}.crop"),
+      fallback_reason: Some(
+        "region pixels were cropped from PipeWire screencast using Wayland xdg-output logical bounds"
+          .to_string(),
+      ),
+    },
+    Err(error) => with_primary_capture_failure(
+      capture_area(region, target.display.frame)?,
+      PORTAL_SCREENCAST_BACKEND,
+      &error.to_string(),
+    ),
+  };
   let scale_factor = capture_scale_factor(&captured.image, region, target.display.scale_factor);
   let capture = Capture {
     image: captured.image,
@@ -134,6 +181,47 @@ fn synthetic_display_from_image(image: &image::RgbaImage) -> Display {
     is_primary: true,
     is_builtin: None,
   }
+}
+
+#[cfg(target_os = "linux")]
+fn display_from_screencast_frame(frame: &ScreenCastFrame) -> Display {
+  let bounds = frame.stream.logical_rect().unwrap_or_else(|| {
+    Rect::new(
+      0.0,
+      0.0,
+      f64::from(frame.image.width()),
+      f64::from(frame.image.height()),
+    )
+  });
+  Display {
+    id: frame
+      .stream
+      .mapping_id
+      .clone()
+      .unwrap_or_else(|| format!("pipewire-stream-{}", frame.stream.id)),
+    name: frame.stream.mapping_id.clone(),
+    frame: bounds,
+    coordinate_space: CoordinateSpace::Screen,
+    scale_factor: capture_scale_factor(&frame.image, bounds, 1.0),
+    is_primary: true,
+    is_builtin: None,
+  }
+}
+
+#[cfg(target_os = "linux")]
+fn with_primary_capture_failure(
+  mut captured: CapturedImage,
+  primary_backend: &str,
+  primary_error: &str,
+) -> CapturedImage {
+  let fallback = captured
+    .fallback_reason
+    .take()
+    .unwrap_or_else(|| format!("used {PORTAL_CAPTURE_BACKEND} fallback"));
+  captured.fallback_reason = Some(format!(
+    "{primary_backend} failed ({primary_error}); {fallback}"
+  ));
+  captured
 }
 
 #[cfg(any(target_os = "linux", test))]
