@@ -15,7 +15,8 @@ use zbus::zvariant::{OwnedFd, OwnedObjectPath, OwnedValue, Value};
 use crate::error::backend;
 
 use super::request::{
-  PORTAL_DESTINATION, create_remote_desktop_session, portal_proxy, session_connection,
+  PORTAL_DESTINATION, create_remote_desktop_session, portal_proxy, portal_request_proxy,
+  session_connection,
 };
 
 const CLIPBOARD_INTERFACE: &str = "org.freedesktop.portal.Clipboard";
@@ -120,9 +121,9 @@ impl ClipboardSession {
         {
           return Ok(String::new());
         }
-        Err(backend(format!(
+        return Err(backend(format!(
           "failed to read portal clipboard text: {error}"
-        )))
+        )));
       }
     };
     let std_fd = StdOwnedFd::from(fd);
@@ -165,6 +166,7 @@ fn start_remote_desktop(
 ) -> DriverResult<HashMap<String, OwnedValue>> {
   let handle_token = super::request::portal_token("start");
   let request = portal_request_proxy(connection, &handle_token)?;
+  let mut responses = super::request::response_signal(&request, REMOTE_DESKTOP_INTERFACE, "Start")?;
   let proxy = portal_proxy(connection, REMOTE_DESKTOP_INTERFACE)?;
   let mut options = HashMap::new();
   options.insert("handle_token", Value::from(handle_token.as_str()));
@@ -175,7 +177,7 @@ fn start_remote_desktop(
         "failed to start remote desktop portal session: {error}"
       ))
     })?;
-  wait_response(&request, REMOTE_DESKTOP_INTERFACE, "Start")
+  super::request::wait_response(&mut responses, REMOTE_DESKTOP_INTERFACE, "Start")
 }
 
 fn spawn_transfer_thread(
@@ -319,66 +321,6 @@ fn close_session(connection: &Connection, session_handle: &OwnedObjectPath) -> D
     .call_method("Close", &())
     .map_err(|error| backend(format!("failed to close portal session: {error}")))?;
   Ok(())
-}
-
-fn portal_request_proxy<'a>(
-  connection: &'a Connection,
-  handle_token: &str,
-) -> DriverResult<Proxy<'a>> {
-  let unique_name = connection
-    .unique_name()
-    .ok_or_else(|| backend("session bus connection has no unique name"))?
-    .trim_start_matches(':')
-    .replace('.', "_");
-  let path = format!("/org/freedesktop/portal/desktop/request/{unique_name}/{handle_token}");
-  Proxy::new(
-    connection,
-    PORTAL_DESTINATION,
-    path,
-    "org.freedesktop.portal.Request",
-  )
-  .map_err(|error| backend(format!("failed to create portal request proxy: {error}")))
-}
-
-fn wait_response(
-  request: &Proxy<'_>,
-  interface: &'static str,
-  method: &'static str,
-) -> DriverResult<HashMap<String, OwnedValue>> {
-  let mut responses = request.receive_signal("Response").map_err(|error| {
-    backend(format!(
-      "failed to subscribe to {interface}.{method} response: {error}"
-    ))
-  })?;
-  let response = responses
-    .next()
-    .ok_or_else(|| backend(format!("{interface}.{method} did not return a response")))?;
-  let (code, results): (u32, HashMap<String, OwnedValue>) =
-    response.body().deserialize().map_err(|error| {
-      backend(format!(
-        "failed to decode {interface}.{method} response: {error}"
-      ))
-    })?;
-  if code == 0 {
-    Ok(results)
-  } else {
-    Err(portal_response_error(interface, method, code))
-  }
-}
-
-fn portal_response_error(
-  interface: &'static str,
-  method: &'static str,
-  code: u32,
-) -> auv_driver::error::DriverError {
-  let reason = match code {
-    1 => "cancelled or denied by the portal",
-    2 => "failed",
-    _ => "returned an unknown response code",
-  };
-  backend(format!(
-    "{interface}.{method} {reason} (response code {code})"
-  ))
 }
 
 #[cfg(test)]

@@ -18,13 +18,18 @@
 //!   ax <title-substr>              capture a window accessibility tree
 //!   coords <title-substr>          round-trip a window/screen point mapping
 //!   clipboard                      snapshot -> set -> read-back -> restore
+//!   type-text <text>               type text through RemoteDesktop portal
+//!   press <key>                    press a key or shortcut through the portal
+//!   scroll <x> <y> <delta-y>       scroll through the portal
+//!   click <x> <y>                  click through the portal
 //!   input-boundary                 print current RemoteDesktop/libei boundary
 
 use std::error::Error;
 
 use auv_driver::Driver;
 use auv_driver::capture::CaptureOptions;
-use auv_driver::geometry::{RatioRect, Rect, WindowPoint};
+use auv_driver::geometry::{Point, RatioRect, Rect, WindowPoint};
+use auv_driver::input::{Click, KeyPressOptions, Scroll, TypeTextOptions};
 use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
 use auv_driver::window::Window;
 use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
@@ -70,6 +75,10 @@ fn run() -> Run {
     "ax" => ax(&session, arg(rest, 0, "title-substr")?),
     "coords" => coords(&session, arg(rest, 0, "title-substr")?),
     "clipboard" => clipboard(&session),
+    "type-text" => type_text(&session, arg(rest, 0, "text")?),
+    "press" => press(&session, arg(rest, 0, "key")?),
+    "scroll" => scroll(&session, parse(rest, 0)?, parse(rest, 1)?, parse(rest, 2)?),
+    "click" => click(&session, parse(rest, 0)?, parse(rest, 1)?),
     "input-boundary" => input_boundary(&session),
     other => {
       eprintln!("unknown command: {other}\n");
@@ -273,11 +282,44 @@ fn clipboard(session: &LinuxDriverSession) -> Run {
   Ok(())
 }
 
+fn type_text(session: &LinuxDriverSession, text: &str) -> Run {
+  let result = session
+    .input()
+    .type_text(text, TypeTextOptions::default())?;
+  println!("type-text result: {result:?}");
+  Ok(())
+}
+
+fn press(session: &LinuxDriverSession, key: &str) -> Run {
+  let result = session.input().press_key(KeyPressOptions {
+    key: key.to_string(),
+    ..KeyPressOptions::default()
+  })?;
+  println!("press result: {result:?}");
+  Ok(())
+}
+
+fn scroll(session: &LinuxDriverSession, x: f64, y: f64, delta_y: f64) -> Run {
+  let result = session.input().scroll_at(
+    Point::new(x, y),
+    Scroll::new(0.0, delta_y),
+    std::time::Duration::from_millis(100),
+  )?;
+  println!("scroll result: {result:?}");
+  Ok(())
+}
+
+fn click(session: &LinuxDriverSession, x: f64, y: f64) -> Run {
+  let result = session.input().click_at(Point::new(x, y), Click::Single)?;
+  println!("click result: {result:?}");
+  Ok(())
+}
+
 fn input_boundary(session: &LinuxDriverSession) -> Run {
   let probe = session.permission().probe_linux();
   println!("RemoteDesktop portal: {:?}", probe.remote_desktop);
   println!(
-    "input delivery is intentionally unsupported in this slice; wire portal/libei before using click/type/scroll"
+    "input delivery uses the RemoteDesktop portal Notify* path; click coordinates may fall back to the current pointer until ScreenCast stream mapping lands"
   );
   println!(
     "reserved result shape: {:?}",
@@ -328,6 +370,6 @@ where
 
 fn print_usage() {
   eprintln!(
-    "usage: cargo run -p auv-driver-linux --example validate -- <permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|coords|clipboard|input-boundary> ..."
+    "usage: cargo run -p auv-driver-linux --example validate -- <permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|coords|clipboard|type-text|press|scroll|click|input-boundary> ..."
   );
 }

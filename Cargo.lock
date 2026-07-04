@@ -441,6 +441,7 @@ dependencies = [
  "auv-driver",
  "image",
  "leptess",
+ "pipewire",
  "serde",
  "wayland-client 0.31.14",
  "wayland-protocols 0.32.12",

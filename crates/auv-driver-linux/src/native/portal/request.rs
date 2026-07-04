@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use auv_driver::error::DriverResult;
 use zbus::blocking::{Connection, Proxy};
+use zbus::message::Message;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use crate::error::backend;
@@ -30,17 +31,44 @@ pub(super) fn call_request(
 ) -> DriverResult<HashMap<String, OwnedValue>> {
   let handle_token = portal_token("request");
   let request = portal_request_proxy(connection, &handle_token)?;
+  let mut responses = response_signal(&request, interface, method)?;
   let proxy = portal_proxy(connection, interface)?;
   let mut options = options;
   options.insert("handle_token", Value::from(handle_token.as_str()));
   proxy
     .call_method(method, &(options))
     .map_err(|error| backend(format!("failed to call {interface}.{method}: {error}")))?;
-  wait_response(&request, interface, method)
+  wait_response(&mut responses, interface, method)
+}
+
+pub(super) fn session_request(
+  connection: &Connection,
+  interface: &'static str,
+  method: &'static str,
+  session_handle: &OwnedObjectPath,
+  options: HashMap<&str, Value<'_>>,
+) -> DriverResult<HashMap<String, OwnedValue>> {
+  let handle_token = portal_token("request");
+  let request = portal_request_proxy(connection, &handle_token)?;
+  let mut responses = response_signal(&request, interface, method)?;
+  let proxy = portal_proxy(connection, interface)?;
+  let mut options = options;
+  options.insert("handle_token", Value::from(handle_token.as_str()));
+  proxy
+    .call_method(method, &(session_handle, options))
+    .map_err(|error| backend(format!("failed to call {interface}.{method}: {error}")))?;
+  wait_response(&mut responses, interface, method)
 }
 
 pub(super) fn create_remote_desktop_session(
   connection: &Connection,
+) -> DriverResult<OwnedObjectPath> {
+  create_session(connection, "org.freedesktop.portal.RemoteDesktop")
+}
+
+pub(super) fn create_session(
+  connection: &Connection,
+  interface: &'static str,
 ) -> DriverResult<OwnedObjectPath> {
   let session_handle_token = portal_token("session");
   let mut options = HashMap::new();
@@ -48,12 +76,7 @@ pub(super) fn create_remote_desktop_session(
     "session_handle_token",
     Value::from(session_handle_token.as_str()),
   );
-  let results = call_request(
-    connection,
-    "org.freedesktop.portal.RemoteDesktop",
-    "CreateSession",
-    options,
-  )?;
+  let results = call_request(connection, interface, "CreateSession", options)?;
   if let Some(value) = results.get("session_handle") {
     if let Ok(handle) = <&str>::try_from(value) {
       return OwnedObjectPath::try_from(handle.to_string())
@@ -61,6 +84,23 @@ pub(super) fn create_remote_desktop_session(
     }
   }
   expected_session_path(connection, &session_handle_token)
+}
+
+pub(super) fn close_session(
+  connection: &Connection,
+  session_handle: &OwnedObjectPath,
+) -> DriverResult<()> {
+  let session = Proxy::new(
+    connection,
+    PORTAL_DESTINATION,
+    session_handle.clone(),
+    "org.freedesktop.portal.Session",
+  )
+  .map_err(|error| backend(format!("failed to create portal session proxy: {error}")))?;
+  session
+    .call_method("Close", &())
+    .map_err(|error| backend(format!("failed to close portal session: {error}")))?;
+  Ok(())
 }
 
 pub(super) fn portal_token(prefix: &str) -> String {
@@ -74,16 +114,23 @@ pub(super) fn portal_token(prefix: &str) -> String {
   )
 }
 
-fn wait_response(
-  request: &Proxy<'_>,
+pub(super) fn response_signal<'a>(
+  request: &'a Proxy<'_>,
   interface: &'static str,
   method: &'static str,
-) -> DriverResult<HashMap<String, OwnedValue>> {
-  let mut responses = request.receive_signal("Response").map_err(|error| {
+) -> DriverResult<impl Iterator<Item = Message> + 'a> {
+  request.receive_signal("Response").map_err(|error| {
     backend(format!(
       "failed to subscribe to {interface}.{method} response: {error}"
     ))
-  })?;
+  })
+}
+
+pub(super) fn wait_response(
+  responses: &mut impl Iterator<Item = Message>,
+  interface: &'static str,
+  method: &'static str,
+) -> DriverResult<HashMap<String, OwnedValue>> {
   let response = responses
     .next()
     .ok_or_else(|| backend(format!("{interface}.{method} did not return a response")))?;
@@ -107,7 +154,7 @@ fn wait_response(
   }
 }
 
-fn portal_request_proxy<'a>(
+pub(super) fn portal_request_proxy<'a>(
   connection: &'a Connection,
   handle_token: &str,
 ) -> DriverResult<Proxy<'a>> {
