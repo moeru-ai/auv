@@ -8,7 +8,10 @@
 //! lifecycle is wired end to end.
 
 mod accessibility;
+#[cfg(target_os = "linux")]
 mod atspi;
+#[cfg(not(target_os = "linux"))]
+mod atspi_stub;
 mod capture;
 mod clipboard;
 mod descriptor;
@@ -21,6 +24,8 @@ mod permission;
 mod session;
 pub mod vision;
 mod window;
+#[cfg(not(target_os = "linux"))]
+pub(crate) use atspi_stub as atspi;
 
 pub use descriptor::{LINUX_DESKTOP_CAPABILITIES, LinuxDriverDescriptor, linux_driver_descriptor};
 pub use driver::{LinuxDriver, LinuxDriverSession};

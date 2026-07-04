@@ -4160,7 +4160,7 @@ fn load_deck_atlas() -> Option<RgbaImage> {
   None
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(test, target_os = "macos"))]
 fn load_deck_atlas_from_setup_cache(cache_dir: &Path) -> Option<RgbaImage> {
   let deck_atlas_path = cache_dir.join(DECK_ATLAS_CACHE_FILE);
   if !deck_atlas_path.exists() {
