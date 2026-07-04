@@ -8,6 +8,8 @@
 
 **S9a only:** `scan-timeline-v0` builder contract revision — from「exactly 2 frames or `unsupported_frame_count`」to「`>= 2` frames => N-1 adjacent segments; `< 2` => `insufficient_frames`」. Wire schema unchanged.
 
+**Related:** adjacent association tracks wire → [S9b](2026-07-10-auv-scan-s9b-adjacent-tracks-wire-handoff.md).
+
 **NOT this slice:** scene_state semantic upgrade; `inspect_run` / `inspect_server`; `scan-tracks-v0`; association algorithm upgrade; continuity verdict / ID switch policy; runtime invoke / live capture.
 
 ## Builder policy (S9a)
@@ -50,4 +52,4 @@ git diff --check
 
 ## Graduation note
 
-S9a = **landed proof** for N-frame **adjacent multi-segment timeline builder**. S2 **tracks** row remains **`hold`** (`scan-tracks-v0` not implemented). Motion semantics remain metadata-proxy **helper proof only**.
+S9a = **landed proof** for N-frame **adjacent multi-segment timeline builder**. S2 **tracks substrate** row remains **`hold`** ([S9b](2026-07-10-auv-scan-s9b-adjacent-tracks-wire-handoff.md) landed `scan-tracks-v0` wire only). Motion semantics remain metadata-proxy **helper proof only**.

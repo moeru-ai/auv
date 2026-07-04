@@ -94,7 +94,8 @@ list these four names as a single inventory):
 | Surface | Owning module(s) | Durable JSON wire? | Default class |
 | --- | --- | --- | --- |
 | **ScanFrame** | `frame.rs`, `artifact.rs`, `reader.rs` (loader) | Yes — `scan-frame-v0` | Filter → `graduate bounded` |
-| **Timeline** | `timeline.rs`, `motion.rs` (input) | Yes — `scan-timeline-v0` | Filter → `graduate bounded` (two-frame bounded) |
+| **Timeline** | `timeline.rs`, `motion.rs` (input) | Yes — `scan-timeline-v0` | Filter → `graduate bounded` (N-1 adjacent per [S9a](2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md)) |
+| **Tracks** | `tracks.rs`, `association.rs` (input) | Yes — `scan-tracks-v0` | Filter → `graduate bounded` (N-1 adjacent per [S9b](2026-07-10-auv-scan-s9b-adjacent-tracks-wire-handoff.md)) |
 | **scene_state** | `scene_state.rs`, `association.rs`, `coverage.rs`, `lifecycle.rs` | No | `hold` |
 | **inspect summary** | `scene_state_inspect.rs`, root `scene_state_read.rs` | No (`NOTICE`: no `Serialize`) | `hold` |
 
@@ -118,6 +119,12 @@ artifact read/write + documented reject paths + golden fixtures) enter `graduate
 | `TimelineError` | Timeline artifact reject semantics |
 | `DIAG_INSUFFICIENT_FRAMES`, `DIAG_UNSUPPORTED_FRAME_COUNT` | Bounded diagnostic codes (`unsupported_frame_count` deprecated-by-production per [S9a](2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md); builder emits `insufficient_frames` only when `< 2` frames) |
 | `read_timeline_artifact`, `write_timeline_artifact` | Timeline JSON IO |
+| `SCAN_TRACKS_SCHEMA_VERSION` | Schema gate (`"scan-tracks-v0"`) |
+| `SCAN_TRACKS_ARTIFACT_FILE_NAME` | Directory artifact name (`scan-tracks.json`) |
+| `ScanTracksWire`, `TrackSegmentWire`, `AssociationResultWire`, `TracksDiagnosticWire`, `AssociationDiagnosticWire` | Tracks wire shapes (two diagnostic layers) |
+| `TracksError` | Tracks artifact reject semantics |
+| `DIAG_OBSERVATIONS_FRAME_MISMATCH` | Bundle-level diagnostic code |
+| `read_tracks_artifact`, `write_tracks_artifact` | Tracks JSON IO |
 
 #### `crate-local public API` (all other `lib.rs` re-exports)
 
@@ -132,6 +139,7 @@ artifact read/write + documented reject paths + golden fixtures) enter `graduate
 | **Scene state (L2)** | `ActionReadiness`, `IdentityAssessment`, `ObservationRequest`, `SceneDiagnostic`, `SceneDraftAnswers`, `SceneStateError`, `SceneStateInput`, `SceneStateProduct`, `TrackSceneSummary`, `VisibilityAssessment`, `build_scene_state_product`, `summarize_scene_state_text` |
 | **Inspect (L3)** | `SceneStateInspect`, `SceneStateListSummary`, `build_scene_state_inspect`, `format_scene_state_inspect_text`, `summarize_scene_state_inspect` |
 | **Timeline builder / text** | `build_scan_timeline_from_bundle`, `format_scan_timeline_text` |
+| **Tracks builder / text** | `build_scan_tracks_from_bundle`, `format_scan_tracks_text` |
 
 #### `provisional staging` (root crate, not `auv_scan` re-export)
 
@@ -151,7 +159,8 @@ Answers **Q1 — which types may graduate**:
 | Cluster | Verdict | Frozen bounded boundary | Explicitly not graduated |
 | --- | --- | --- | --- |
 | **ScanFrame** | **`graduate bounded`** | `scan-frame-v0` field set; `scan-frame-NNNN.json`; `read`/`write_frame_artifact`; `validate_wire` + `ScanArtifactError` paths | Roadmap extras (`quality_flags`, surface binding, pose); observations not in frame wire |
-| **Timeline** | **`graduate bounded`** | `scan-timeline-v0` wire + IO; **exactly two frames** → one adjacent segment or diagnostics; diagnostic codes above | N-frame timeline; `window_bounds` delta as visual-motion proof; not a run-level substrate envelope — parent S2 motion row stays **`helper proof only`** |
+| **Timeline** | **`graduate bounded`** | `scan-timeline-v0` wire + IO; N-1 adjacent segments when `>= 2` frames ([S9a](2026-07-10-auv-scan-s9a-nframe-adjacent-timeline-handoff.md)); diagnostic codes above | `window_bounds` delta as visual-motion proof; not a run-level substrate envelope — parent S2 motion row stays **`helper proof only`** |
+| **Tracks** | **`graduate bounded`** | `scan-tracks-v0` wire + IO; N-1 adjacent association segments when `>= 2` frames + aligned observations ([S9b](2026-07-10-auv-scan-s9b-adjacent-tracks-wire-handoff.md)); two diagnostic layers; `track_id` segment-local only | Track rollup; scene_state consumer; identity continuity verdict; not a run-level substrate envelope — parent S2 tracks row stays **`hold`** |
 | **scene_state** | **`hold`** | Inventory only: `SceneStateProduct` is a crate-local read-model seam; hermetic tests prove usability | No durable wire; no cross-crate stability; `observations_by_frame` external to frame artifacts |
 | **inspect summary** | **`hold`** | Inventory only: S6b-1 text bridge exists (`inspect_run`) | No wire; no section-order contract; no `SceneStateListSummary` cross-crate API; viewer/`inspect_server` zero consumption |
 
