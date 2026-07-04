@@ -1,7 +1,7 @@
 # AUV Scan S1：Slice 2–4 工程实施计划（Producer → Read → Temporal）
 
 **Date:** 2026-07-02  
-**Status:** implementation plan — **not started**（plan only，不写代码）  
+**Status:** implementation plan — **S1-2 / S1-3 / S1-4a / S1-4b landed** on `main`; S1-4c+ N-frame timeline still **blocked** (see [S-line graduation review](2026-07-04-auv-s-line-graduation-review.md))
 **Companion spec:** [GAN implementation spec](2026-07-02-auv-scan-s1-s2-s4-gan-spec.md)（产品目标、评估 rubric、风险登记 — 本文档侧重工程切片清单）  
 **Prerequisite:** [S0 charter](2026-07-02-auv-scan-s0-charter.md)、[S1 temporal core plan](2026-07-02-auv-scan-s1-temporal-core-plan.md)、[S1 Slice 1 handoff](2026-07-02-auv-scan-s1-slice1-frame-contract-handoff.md)（`scan-frame-v0` 已落地）  
 **Owner 重排:** 原 S1 step 2（motion）延后；顺序为 **S1-2 producer → S1-3 read-side → S1-4 multi-frame 大纲**。
