@@ -37,6 +37,7 @@ impl LatestFrameScan {
 #[deprecated(
   note = "live MC-2 bridge must use read_latest_spatial_frame_from_tail; the full-scan variant exists only for tests/imports"
 )]
+#[allow(deprecated)]
 pub fn read_latest_spatial_frame(path: &Path) -> Result<LatestFrameScan, String> {
   let file = std::fs::File::open(path).map_err(|error| {
     format!(
@@ -207,6 +208,7 @@ fn parse_frame_line(bytes: &[u8]) -> Result<Option<MinecraftSpatialFrame>, Strin
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
   use std::fs;
   use std::io::Cursor;

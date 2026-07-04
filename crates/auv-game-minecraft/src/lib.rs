@@ -34,6 +34,7 @@ pub use dataset::{
   SpatialBundleCounts, SpatialBundleDirectory, SpatialBundleInputs, SpatialBundleManifest,
   SpatialBundleOutput, SpatialBundleSourceArtifact, export_spatial_bundle,
 };
+#[allow(deprecated)]
 pub use ingest::{
   LatestFrameScan, TailFrameWaitConfig, read_latest_spatial_frame,
   read_latest_spatial_frame_from_tail, read_latest_spatial_frame_newer_than,

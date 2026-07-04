@@ -179,6 +179,7 @@ fn backend_error<R>(error: ort::Error<R>) -> InferenceError {
 
 #[cfg(feature = "runtime")]
 fn execution_providers(provider: ExecutionProvider) -> Vec<ort::ep::ExecutionProviderDispatch> {
+  #[allow(unreachable_patterns)]
   match provider {
     ExecutionProvider::Cpu => vec![ort::ep::CPU::default().build()],
     #[cfg(feature = "coreml")]

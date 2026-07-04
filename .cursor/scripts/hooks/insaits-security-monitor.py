@@ -78,10 +78,16 @@ logging.basicConfig(
 log = logging.getLogger("insaits-hook")
 
 # Try importing InsAIts SDK
+_insAItsMonitor: Any = None
+insAItsMonitor: Any = None
 try:
-    from insa_its import insAItsMonitor
+    from insa_its import insAItsMonitor as _insAItsMonitor
+
+    insAItsMonitor = _insAItsMonitor
     INSAITS_AVAILABLE: bool = True
 except ImportError:
+    _insAItsMonitor = None
+    insAItsMonitor = None
     INSAITS_AVAILABLE = False
 
 # --- Constants ---
@@ -206,14 +212,15 @@ def main() -> None:
         sys.exit(0)
 
     # Wrap SDK calls so an internal error does not crash the hook
+    result: Dict[str, Any] = {}
     try:
-        monitor: insAItsMonitor = insAItsMonitor(
+        monitor = insAItsMonitor(
             session_name="claude-code-hook",
             dev_mode=os.environ.get(
                 "INSAITS_DEV_MODE", "false"
             ).lower() in ("1", "true", "yes"),
         )
-        result: Dict[str, Any] = monitor.send_message(
+        result = monitor.send_message(
             text=text[:MAX_SCAN_LENGTH],
             sender_id="claude-code",
             llm_id=os.environ.get("INSAITS_MODEL", DEFAULT_MODEL),

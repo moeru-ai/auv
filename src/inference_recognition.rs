@@ -327,7 +327,7 @@ fn projected_item(
 fn project_box(bounds: &BoundingBox, projection: &RuntimeProjectionKind) -> RecognitionBox {
   match projection {
     RuntimeProjectionKind::Unavailable { reason } => {
-      unreachable!("project_box called without runtime projection: {reason}")
+      unreachable!("project_box called without runtime projection: {}", reason)
     }
     // NOTICE(detector-runtime-identity-projection-v0): v0 only permits mapping
     // when the caller truthfully states that runtime capture space is identical

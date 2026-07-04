@@ -2490,20 +2490,20 @@ mod no_steal_tests {
 
   #[test]
   fn input_api_exposes_explicit_global_hid_scroll_method() {
-    if false {
-      let session = MacosDriverSession { _private: () };
+    // NOTICE(compile-only-api-check): nested fn is type-checked but never called (no HID side effects).
+    fn assert_api_compiles(session: MacosDriverSession) {
       let _ = session.input().scroll_global_hid(
         Point::new(20.0, 30.0),
         Scroll::new(0.0, -120.0),
         Duration::ZERO,
       );
     }
+    let _ = assert_api_compiles;
   }
 
   #[test]
   fn input_api_exposes_foreground_text_and_key_methods() {
-    if false {
-      let session = MacosDriverSession { _private: () };
+    fn assert_api_compiles(session: MacosDriverSession) {
       let _ = session.input().type_text(
         "hello",
         TypeTextOptions {
@@ -2516,14 +2516,15 @@ mod no_steal_tests {
         settle: Duration::ZERO,
       });
     }
+    let _ = assert_api_compiles;
   }
 
   #[test]
   fn permission_api_exposes_probe_method() {
-    if false {
-      let session = MacosDriverSession { _private: () };
+    fn assert_api_compiles(session: MacosDriverSession) {
       let _ = session.permission().probe();
     }
+    let _ = assert_api_compiles;
   }
 
   #[test]

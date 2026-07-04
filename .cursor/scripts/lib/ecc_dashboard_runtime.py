@@ -53,7 +53,7 @@ def build_terminal_launch(
         )
 
     if resolved_system_name == 'Darwin':
-        return (['open', '-a', 'Terminal', path], {})
+        return ['open', '-a', 'Terminal', path], {}
 
     return (
         ['x-terminal-emulator', '-e', 'bash', '-lc', 'cd -- "$1"; exec bash', 'bash', path],
