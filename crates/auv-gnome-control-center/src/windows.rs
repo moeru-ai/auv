@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use auv_driver::Window;
+use auv_driver::{Rect, Window};
 use serde::{Deserialize, Serialize};
 
 use crate::app::{APP_ID, DISPLAY_NAME, PROCESS_NAME, SETTINGS_WINDOW};
@@ -25,6 +25,9 @@ impl Default for ResolveOptions {
 pub struct OpenWindowReport {
   pub window_found: bool,
   pub window_title: Option<String>,
+  pub window_ref: Option<String>,
+  pub app_name: Option<String>,
+  pub frame: Option<Rect>,
   pub app_id: &'static str,
   pub process_name: &'static str,
   pub steps: Vec<InteractionStep>,
@@ -56,8 +59,7 @@ mod platform {
         report
           .steps
           .push(InteractionStep::new("resolve", StepOutcome::Found));
-        report.window_found = true;
-        report.window_title = window.title.clone();
+        record_window(&mut report, &window);
         return Ok((window, report));
       }
       Err(DriverError::NotFound { .. }) => {
@@ -82,8 +84,7 @@ mod platform {
           report
             .steps
             .push(InteractionStep::new("wait", StepOutcome::Found));
-          report.window_found = true;
-          report.window_title = window.title.clone();
+          record_window(&mut report, &window);
           return Ok((window, report));
         }
         Err(DriverError::NotFound { .. }) if Instant::now() < deadline => {
@@ -153,10 +154,21 @@ mod platform {
   }
 }
 
+fn record_window(report: &mut OpenWindowReport, window: &Window) {
+  report.window_found = true;
+  report.window_title = window.title.clone();
+  report.window_ref = Some(window.reference.id.clone());
+  report.app_name = window.app_name.clone();
+  report.frame = Some(window.frame);
+}
+
 fn report() -> OpenWindowReport {
   OpenWindowReport {
     window_found: false,
     window_title: None,
+    window_ref: None,
+    app_name: None,
+    frame: None,
     app_id: APP_ID,
     process_name: PROCESS_NAME,
     steps: Vec::new(),

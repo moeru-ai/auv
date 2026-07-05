@@ -424,7 +424,7 @@ fn ax(session: &LinuxDriverSession, substr: &str) -> Run {
     snapshot.window_ref,
     snapshot.nodes.len()
   );
-  for node in snapshot.nodes.iter().take(80) {
+  for node in snapshot.nodes.iter().take(220) {
     println!(
       "  depth={} path={} type={:?} name={:?} id={:?} focused={} bounds={:?}",
       node.depth,
@@ -436,8 +436,8 @@ fn ax(session: &LinuxDriverSession, substr: &str) -> Run {
       node.bounds
     );
   }
-  if snapshot.nodes.len() > 80 {
-    println!("  ... {} more nodes", snapshot.nodes.len() - 80);
+  if snapshot.nodes.len() > 220 {
+    println!("  ... {} more nodes", snapshot.nodes.len() - 220);
   }
   Ok(())
 }

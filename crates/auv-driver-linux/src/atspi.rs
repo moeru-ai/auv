@@ -16,6 +16,8 @@ const ACTION_IFACE: &str = "org.a11y.atspi.Action";
 const COMPONENT_IFACE: &str = "org.a11y.atspi.Component";
 const SELECTION_IFACE: &str = "org.a11y.atspi.Selection";
 const STATE_FOCUSED: u32 = 12;
+const COORD_TYPE_SCREEN: u32 = 0;
+const COORD_TYPE_WINDOW: u32 = 1;
 
 pub const MAX_DEPTH: usize = 40;
 pub const MAX_NODES: usize = 2_000;
@@ -179,21 +181,13 @@ pub fn select_node(window: &Window, node_path: &str) -> DriverResult<ActionResul
   let reference = references
     .last()
     .expect("resolve_path_chain always includes root");
-  match select_action(&connection, reference) {
-    Ok(action) => Ok(ActionResult {
-      action_name: action.name,
-    }),
-    Err(action_error) => {
-      let action_error = action_error.to_string();
-      let Some(child_index) = indices.last().copied() else {
-        return Err(backend(action_error));
-      };
-      let parent = references
-        .get(references.len().saturating_sub(2))
-        .ok_or_else(|| backend(action_error.clone()))?;
-      select_child(&connection, parent, child_index, &action_error)
-    }
-  }
+  // TODO(linux-atspi-selection-only): `Selection.SelectChild` can change list
+  // selection without activating a row, as seen in GNOME Settings/libadwaita.
+  // Keep activation strict until the driver grows a separate selection-only API.
+  let action = select_action(&connection, reference)?;
+  Ok(ActionResult {
+    action_name: action.name,
+  })
 }
 
 fn focus_accessible(connection: &Connection, reference: &ObjectRef) -> DriverResult<()> {
@@ -322,7 +316,7 @@ fn accessible(connection: &Connection, reference: ObjectRef) -> DriverResult<Acc
   let accessible_id = property_string(&proxy, "AccessibleId").unwrap_or_default();
   let focused = state_contains(&proxy, STATE_FOCUSED).unwrap_or(false);
   drop(proxy);
-  let bounds = extents(connection, &reference).unwrap_or_default();
+  let bounds = extents(connection, &reference, COORD_TYPE_SCREEN).unwrap_or_default();
   Ok(Accessible {
     name,
     description,
@@ -351,10 +345,23 @@ fn children(connection: &Connection, reference: &ObjectRef) -> DriverResult<Vec<
   )
 }
 
-fn extents(connection: &Connection, reference: &ObjectRef) -> DriverResult<Rect> {
+fn accessible_in_tree(connection: &Connection, reference: ObjectRef) -> DriverResult<Accessible> {
+  let mut accessible = accessible(connection, reference.clone())?;
+  // NOTICE(linux-atspi-wayland-extents): GTK/libadwaita on Wayland can report
+  // `(0, 0)` for every child when `ATSPI_COORD_TYPE_SCREEN` is requested,
+  // especially under compositor layouts such as PaperWM. Window coordinates
+  // preserve the relative UI layout for observation. Do not treat these node
+  // bounds as RemoteDesktop portal screen coordinates without an explicit
+  // compositor/window-position mapping.
+  accessible.bounds =
+    extents(connection, &reference, COORD_TYPE_WINDOW).unwrap_or(accessible.bounds);
+  Ok(accessible)
+}
+
+fn extents(connection: &Connection, reference: &ObjectRef, coord_type: u32) -> DriverResult<Rect> {
   let proxy = component_proxy(connection, reference)?;
   let (x, y, width, height): (i32, i32, i32, i32) = proxy
-    .call("GetExtents", &(0u32,))
+    .call("GetExtents", &(coord_type,))
     .map_err(|error| backend(format!("failed to read AT-SPI extents: {error}")))?;
   Ok(Rect::new(
     f64::from(x),
@@ -374,7 +381,7 @@ fn walk(
   if nodes.len() >= MAX_NODES {
     return Ok(());
   }
-  let node = accessible(connection, reference.clone())?;
+  let node = accessible_in_tree(connection, reference.clone())?;
   let child_count = node.child_count;
   nodes.push(Node {
     depth,
