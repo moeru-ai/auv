@@ -821,8 +821,8 @@
     gap: 10px;
   }
   #action-transition-lineage .action-transition-card.mismatch {
-    border-color: var(--warn, #e6a700);
-    box-shadow: inset 0 0 0 1px rgba(230, 167, 0, 0.25);
+    border-color: var(--candidate);
+    box-shadow: inset 0 0 0 1px rgba(180, 106, 20, 0.25);
   }
   #action-transition-lineage .action-transition-card-head {
     display: flex;
@@ -848,11 +848,11 @@
   #action-transition-lineage .action-transition-mismatch-banner {
     font-family: var(--font-mono), monospace;
     font-size: 11px;
-    color: var(--warn, #e6a700);
+    color: var(--candidate);
     padding: 6px 8px;
     border-radius: 4px;
-    background: rgba(230, 167, 0, 0.12);
-    border: 1px solid rgba(230, 167, 0, 0.35);
+    background: var(--candidate-soft);
+    border: 1px solid var(--candidate-line);
   }
   #action-transition-lineage .json-summary {
     border: 1px solid var(--shell-line);
