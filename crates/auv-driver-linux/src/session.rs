@@ -5,7 +5,8 @@ use auv_driver::display::ObservedDisplays;
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::{Point, RatioRect, ScreenPoint, WindowPoint};
 use auv_driver::input::{
-  Click, InputActionResult, KeyPressOptions, PasteTextOptions, Scroll, TypeTextOptions, WaitOptions,
+  Click, ClickOptions, InputActionResult, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll,
+  ScrollDeliveryCandidate, ScrollOptions, TypeTextOptions, WaitOptions,
 };
 use auv_driver::permission::PermissionProbe;
 use auv_driver::selector::WindowSelector;
@@ -220,6 +221,71 @@ impl WindowApi<'_> {
       point.y - window.frame.origin.y,
     ))
   }
+
+  pub fn click(
+    &self,
+    window: &Window,
+    point: WindowPoint,
+    options: ClickOptions,
+  ) -> DriverResult<InputActionResult> {
+    if matches!(options.policy, InputPolicy::BackgroundOnly) {
+      return Err(invalid_input(
+        "linux window.click cannot use background_only input policy",
+      ));
+    }
+    // TODO(linux-window-targeted-background-input): `window_strategy` is a
+    // macOS background-routing selector. Linux currently has only foreground
+    // RemoteDesktop portal delivery; revisit if a compositor or portal exposes
+    // verified window-targeted pointer delivery.
+    let _ = options.window_strategy;
+    let screen_point = self.to_screen_point(window, point)?.point();
+    let mut result = self.session.input().click_at(screen_point, options.click)?;
+    add_foreground_window_fallback_reason(
+      &mut result,
+      "linux window.click used foreground RemoteDesktop portal input; Wayland window-targeted background pointer delivery is not available in this slice",
+    );
+    Ok(result)
+  }
+
+  pub fn scroll(
+    &self,
+    window: &Window,
+    point: WindowPoint,
+    scroll: Scroll,
+    options: ScrollOptions,
+  ) -> DriverResult<InputActionResult> {
+    if matches!(options.policy, InputPolicy::BackgroundOnly) {
+      return Err(invalid_input(
+        "linux window.scroll cannot use background_only input policy",
+      ));
+    }
+    if matches!(options.policy, InputPolicy::BackgroundPreferred)
+      && !options
+        .delivery_strategy
+        .candidates
+        .contains(&ScrollDeliveryCandidate::ForegroundHid)
+    {
+      return Err(invalid_input(
+        "linux window.scroll needs ForegroundHid in the delivery strategy because Wayland background window scroll is not available in this slice",
+      ));
+    }
+    let screen_point = self.to_screen_point(window, point)?.point();
+    let mut result = self
+      .session
+      .input()
+      .scroll_at(screen_point, scroll, options.settle)?;
+    add_foreground_window_fallback_reason(
+      &mut result,
+      "linux window.scroll used foreground RemoteDesktop portal input; Wayland window-targeted background wheel delivery is not available in this slice",
+    );
+    Ok(result)
+  }
+}
+
+fn add_foreground_window_fallback_reason(result: &mut InputActionResult, reason: &str) {
+  if result.fallback_reason.is_none() {
+    result.fallback_reason = Some(reason.to_string());
+  }
 }
 
 impl VisionApi<'_> {
@@ -430,5 +496,63 @@ mod tests {
       .expect_err("activation is rejected before portal capture");
 
     assert!(error.to_string().contains("cannot activate Linux Wayland"));
+  }
+
+  #[test]
+  fn window_click_rejects_background_only_policy() {
+    let window = sample_window();
+    let error = session()
+      .window()
+      .click(
+        &window,
+        WindowPoint::new(1.0, 1.0),
+        ClickOptions {
+          policy: InputPolicy::BackgroundOnly,
+          ..ClickOptions::default()
+        },
+      )
+      .expect_err("background-only window click is rejected before portal input");
+
+    assert!(error.to_string().contains("background_only"));
+  }
+
+  #[test]
+  fn window_scroll_rejects_background_only_policy() {
+    let window = sample_window();
+    let error = session()
+      .window()
+      .scroll(
+        &window,
+        WindowPoint::new(1.0, 1.0),
+        Scroll::new(0.0, 10.0),
+        ScrollOptions {
+          policy: InputPolicy::BackgroundOnly,
+          ..ScrollOptions::default()
+        },
+      )
+      .expect_err("background-only window scroll is rejected before portal input");
+
+    assert!(error.to_string().contains("background_only"));
+  }
+
+  #[test]
+  fn window_scroll_requires_foreground_candidate_for_background_preferred_policy() {
+    let window = sample_window();
+    let error = session()
+      .window()
+      .scroll(
+        &window,
+        WindowPoint::new(1.0, 1.0),
+        Scroll::new(0.0, 10.0),
+        ScrollOptions {
+          delivery_strategy: auv_driver::input::ScrollDeliveryStrategy {
+            candidates: vec![ScrollDeliveryCandidate::WindowTargetedWheel],
+          },
+          ..ScrollOptions::default()
+        },
+      )
+      .expect_err("foreground fallback must be explicitly allowed");
+
+    assert!(error.to_string().contains("ForegroundHid"));
   }
 }

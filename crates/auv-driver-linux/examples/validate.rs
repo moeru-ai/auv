@@ -29,6 +29,8 @@
 //!   press <key>                    press a key or shortcut through the portal
 //!   scroll <x> <y> <delta-y>       scroll through the portal
 //!   click <x> <y>                  click through the portal
+//!   window-click <substr> <x> <y>  click window-local point
+//!   window-scroll <substr> <x> <y> <delta-y>
 //!   input-boundary                 print current RemoteDesktop/libei boundary
 //!
 //! Multiple commands run in one LinuxDriverSession. Use `--` between commands
@@ -45,7 +47,8 @@ use auv_driver::Driver;
 use auv_driver::capture::CaptureOptions;
 use auv_driver::geometry::{Point, RatioRect, Rect, WindowPoint};
 use auv_driver::input::{
-  Click, KeyPressOptions, PasteTextOptions, Scroll, TypeTextOptions, WaitOptions,
+  Click, ClickOptions, KeyPressOptions, PasteTextOptions, Scroll, ScrollOptions, TypeTextOptions,
+  WaitOptions,
 };
 use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
 use auv_driver::window::Window;
@@ -147,6 +150,19 @@ fn run_invocation(session: &LinuxDriverSession, invocation: &Invocation) -> Run 
     "press" => press(session, arg(rest, 0, "key")?),
     "scroll" => scroll(session, parse(rest, 0)?, parse(rest, 1)?, parse(rest, 2)?),
     "click" => click(session, parse(rest, 0)?, parse(rest, 1)?),
+    "window-click" => window_click(
+      session,
+      arg(rest, 0, "title-substr")?,
+      parse(rest, 1)?,
+      parse(rest, 2)?,
+    ),
+    "window-scroll" => window_scroll(
+      session,
+      arg(rest, 0, "title-substr")?,
+      parse(rest, 1)?,
+      parse(rest, 2)?,
+      parse(rest, 3)?,
+    ),
     "input-boundary" => input_boundary(session),
     other => {
       eprintln!("unknown command: {other}\n");
@@ -215,7 +231,8 @@ fn command_arity(command: &str) -> Option<(usize, usize)> {
     "focus-node" | "select-node" | "find-window-text" | "wait-window-text" => Some((2, 2)),
     "capture-window" => Some((1, 2)),
     "click" => Some((2, 2)),
-    "scroll" => Some((3, 3)),
+    "scroll" | "window-click" => Some((3, 3)),
+    "window-scroll" => Some((4, 4)),
     "capture-region" => Some((4, 5)),
     _ => None,
   }
@@ -531,6 +548,35 @@ fn click(session: &LinuxDriverSession, x: f64, y: f64) -> Run {
   Ok(())
 }
 
+fn window_click(session: &LinuxDriverSession, substr: &str, x: f64, y: f64) -> Run {
+  let window = find_window(session, substr)?;
+  let result = session
+    .window()
+    .click(&window, WindowPoint::new(x, y), ClickOptions::default())?;
+  println!(
+    "window-click {:?} point={:?} result: {result:?}",
+    window.title,
+    WindowPoint::new(x, y)
+  );
+  Ok(())
+}
+
+fn window_scroll(session: &LinuxDriverSession, substr: &str, x: f64, y: f64, delta_y: f64) -> Run {
+  let window = find_window(session, substr)?;
+  let result = session.window().scroll(
+    &window,
+    WindowPoint::new(x, y),
+    Scroll::new(0.0, delta_y),
+    ScrollOptions::default(),
+  )?;
+  println!(
+    "window-scroll {:?} point={:?} delta_y={delta_y} result: {result:?}",
+    window.title,
+    WindowPoint::new(x, y)
+  );
+  Ok(())
+}
+
 fn input_boundary(session: &LinuxDriverSession) -> Run {
   let probe = session.permission().probe_linux();
   println!("RemoteDesktop portal: {:?}", probe.remote_desktop);
@@ -587,7 +633,7 @@ where
 fn print_usage() {
   eprintln!(
     "usage: cargo run -p auv-driver-linux --example validate -- <command> [args] [<command> [args] ...]\n\
-commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|find-window-text|wait-window-text|ax|focus-node|select-node|coords|clipboard|copy|paste|paste-text|type-text|press|scroll|click|input-boundary"
+commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|find-window-text|wait-window-text|ax|focus-node|select-node|coords|clipboard|copy|paste|paste-text|type-text|press|scroll|click|window-click|window-scroll|input-boundary"
   );
 }
 
@@ -619,6 +665,10 @@ mod tests {
       "click",
       "10",
       "20",
+      "window-click",
+      "Terminal",
+      "10",
+      "20",
       "find-window-text",
       "Terminal",
       "Shell",
@@ -633,6 +683,7 @@ mod tests {
       vec![
         invocation("resolve", ["Terminal"]),
         invocation("click", ["10", "20"]),
+        invocation("window-click", ["Terminal", "10", "20"]),
         invocation("find-window-text", ["Terminal", "Shell"]),
         invocation("paste-text", ["hello"]),
         invocation("press", ["Return"])
