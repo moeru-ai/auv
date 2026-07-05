@@ -70,6 +70,9 @@ pub enum CliCommand {
   InvokeHelp {
     command_id: Option<String>,
   },
+  VerticalsHelp,
+  MinecraftHelp,
+  OsuHelp,
   AppProbe {
     bundle_id: String,
     output_dir: Option<String>,
@@ -312,6 +315,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "session" => parse_session(arguments),
     "mcp" => parse_mcp(arguments),
     "invoke" => parse_invoke(arguments),
+    "verticals" => parse_verticals(arguments),
     "minecraft" => parse_minecraft(arguments),
     "skill" => {
       Err("skill commands have been removed; use app-local Rust commands instead".to_string())
@@ -350,11 +354,6 @@ USAGE
   auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
   auv session serve [--host <host>] [--port <port>] [--store-root <path>]
   auv mcp serve
-
-REFERENCE VERTICALS
-  auv minecraft --help
-  auv osu --help
-  These are reference verticals for spatial-result consumption research, not the default AUV product path.
 
 NOTES
   - Names are provisional and reflect the current phase-0/1 runtime skeleton.
@@ -703,23 +702,48 @@ fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
   })
 }
 
+fn parse_help_only_invocation(arguments: &[String], command: &str) -> AuvResult<bool> {
+  match arguments.get(1).map(String::as_str) {
+    None => Ok(true),
+    Some("help") | Some("--help") | Some("-h") => {
+      if arguments.len() == 2 {
+        Ok(true)
+      } else {
+        let extra = arguments[2..].join(" ");
+        Err(format!(
+          "unexpected {command} help argument(s) {extra:?}; use `auv {command} --help`"
+        ))
+      }
+    }
+    _ => Ok(false),
+  }
+}
+
+fn parse_verticals(arguments: &[String]) -> AuvResult<CliCommand> {
+  if parse_help_only_invocation(arguments, "verticals")? {
+    return Ok(CliCommand::VerticalsHelp);
+  }
+  let other = arguments.get(1).map(String::as_str).unwrap_or("<missing>");
+  Err(format!(
+    "unknown verticals argument {other}; verticals is a help-only index — use `auv verticals --help`"
+  ))
+}
+
 fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 2 {
-    return Err(
-      "usage: auv osu <benchmark|dispatch|export-dataset|eval-detections|vision-demo> ..."
-        .to_string(),
-    );
+  if parse_help_only_invocation(arguments, "osu")? {
+    return Ok(CliCommand::OsuHelp);
   }
 
-  match arguments[1].as_str() {
-    "benchmark" => parse_osu_benchmark(arguments),
-    "dispatch" => parse_osu_dispatch(arguments),
-    "export-dataset" => parse_osu_export_dataset(arguments),
-    "eval-detections" => parse_osu_eval_detections(arguments),
-    "vision-demo" => parse_osu_vision_demo(arguments),
-    other => Err(format!(
-      "unknown osu subcommand {other}; use `auv osu benchmark`, `auv osu dispatch`, `auv osu export-dataset`, `auv osu eval-detections`, or `auv osu vision-demo`"
+  match arguments.get(1).map(String::as_str) {
+    Some("benchmark") => parse_osu_benchmark(arguments),
+    Some("dispatch") => parse_osu_dispatch(arguments),
+    Some("export-dataset") => parse_osu_export_dataset(arguments),
+    Some("eval-detections") => parse_osu_eval_detections(arguments),
+    Some("vision-demo") => parse_osu_vision_demo(arguments),
+    Some(other) => Err(format!(
+      "unknown osu subcommand {other}; use `auv osu --help` for full usage"
     )),
+    None => unreachable!("help-only osu invocations return before subcommand match"),
   }
 }
 
@@ -1141,43 +1165,43 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 }
 
 fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
-  if arguments.len() < 2 {
-    return Err(
-      "usage: auv minecraft <bridge|calibrate-projection|live-click|query-wired-live-click|export-spatial-bundle|export-3dgs-scene-packet|export-3dgs-training-package|prepare-3dgs-training|launch-3dgs-training-job|collect-3dgs-training-job-result|fetch-3dgs-training-result-artifacts|validate-3dgs-training-result|query-3dgs-training-result|inspect-3dgs-training-result-holdout|measure-3dgs-holdout-render-quality|prepare-texture-sweep|build-texture-sweep-samples|eval-texture-sweep> ..."
-        .to_string(),
-    );
+  if parse_help_only_invocation(arguments, "minecraft")? {
+    return Ok(CliCommand::MinecraftHelp);
   }
 
-  match arguments[1].as_str() {
-    "bridge" => parse_minecraft_bridge(arguments),
-    "calibrate-projection" => parse_minecraft_calibrate_projection(arguments),
-    "live-click" => parse_minecraft_live_click(arguments),
-    "query-wired-live-click" => parse_minecraft_query_wired_live_click(arguments),
-    "export-spatial-bundle" => parse_minecraft_export_spatial_bundle(arguments),
-    "export-3dgs-scene-packet" => parse_minecraft_export_3dgs_scene_packet(arguments),
-    "export-3dgs-training-package" => parse_minecraft_export_3dgs_training_package(arguments),
-    "prepare-3dgs-training" => parse_minecraft_prepare_3dgs_training(arguments),
-    "launch-3dgs-training-job" => parse_minecraft_launch_3dgs_training_job(arguments),
-    "collect-3dgs-training-job-result" => {
+  match arguments.get(1).map(String::as_str) {
+    Some("bridge") => parse_minecraft_bridge(arguments),
+    Some("calibrate-projection") => parse_minecraft_calibrate_projection(arguments),
+    Some("live-click") => parse_minecraft_live_click(arguments),
+    Some("query-wired-live-click") => parse_minecraft_query_wired_live_click(arguments),
+    Some("export-spatial-bundle") => parse_minecraft_export_spatial_bundle(arguments),
+    Some("export-3dgs-scene-packet") => parse_minecraft_export_3dgs_scene_packet(arguments),
+    Some("export-3dgs-training-package") => parse_minecraft_export_3dgs_training_package(arguments),
+    Some("prepare-3dgs-training") => parse_minecraft_prepare_3dgs_training(arguments),
+    Some("launch-3dgs-training-job") => parse_minecraft_launch_3dgs_training_job(arguments),
+    Some("collect-3dgs-training-job-result") => {
       parse_minecraft_collect_3dgs_training_job_result(arguments)
     }
-    "fetch-3dgs-training-result-artifacts" => {
+    Some("fetch-3dgs-training-result-artifacts") => {
       parse_minecraft_fetch_3dgs_training_result_artifacts(arguments)
     }
-    "validate-3dgs-training-result" => parse_minecraft_validate_3dgs_training_result(arguments),
-    "query-3dgs-training-result" => parse_minecraft_query_3dgs_training_result(arguments),
-    "inspect-3dgs-training-result-holdout" => {
+    Some("validate-3dgs-training-result") => {
+      parse_minecraft_validate_3dgs_training_result(arguments)
+    }
+    Some("query-3dgs-training-result") => parse_minecraft_query_3dgs_training_result(arguments),
+    Some("inspect-3dgs-training-result-holdout") => {
       parse_minecraft_inspect_3dgs_training_result_holdout(arguments)
     }
-    "measure-3dgs-holdout-render-quality" => {
+    Some("measure-3dgs-holdout-render-quality") => {
       parse_minecraft_measure_3dgs_holdout_render_quality(arguments)
     }
-    "prepare-texture-sweep" => parse_minecraft_prepare_texture_sweep(arguments),
-    "build-texture-sweep-samples" => parse_minecraft_build_texture_sweep_samples(arguments),
-    "eval-texture-sweep" => parse_minecraft_eval_texture_sweep(arguments),
-    other => Err(format!(
-      "unknown minecraft subcommand {other}; expected bridge, calibrate-projection, live-click, query-wired-live-click, export-spatial-bundle, export-3dgs-scene-packet, export-3dgs-training-package, prepare-3dgs-training, launch-3dgs-training-job, collect-3dgs-training-job-result, fetch-3dgs-training-result-artifacts, validate-3dgs-training-result, query-3dgs-training-result, inspect-3dgs-training-result-holdout, measure-3dgs-holdout-render-quality, prepare-texture-sweep, build-texture-sweep-samples, or eval-texture-sweep"
+    Some("prepare-texture-sweep") => parse_minecraft_prepare_texture_sweep(arguments),
+    Some("build-texture-sweep-samples") => parse_minecraft_build_texture_sweep_samples(arguments),
+    Some("eval-texture-sweep") => parse_minecraft_eval_texture_sweep(arguments),
+    Some(other) => Err(format!(
+      "unknown minecraft subcommand {other}; use `auv minecraft --help` for full usage"
     )),
+    None => unreachable!("help-only minecraft invocations return before subcommand match"),
   }
 }
 
@@ -2610,13 +2634,21 @@ mod tests {
   }
 
   #[test]
-  fn help_text_exposes_reference_vertical_entrypoints_only() {
+  fn help_text_is_core_only() {
     let help = help_text();
 
-    assert!(help.contains("REFERENCE VERTICALS"));
-    assert!(help.contains("auv minecraft --help"));
-    assert!(help.contains("auv osu --help"));
-    assert!(help.contains("reference verticals"));
+    for omitted in [
+      "REFERENCE VERTICALS",
+      "minecraft",
+      "osu",
+      "verticals",
+      "reference verticals",
+    ] {
+      assert!(
+        !help.contains(omitted),
+        "top-level help should not mention vertical surface: {omitted}"
+      );
+    }
 
     for omitted in [
       "auv minecraft bridge",
@@ -2632,11 +2664,86 @@ mod tests {
   }
 
   #[test]
+  fn parse_verticals_help_command() {
+    let command = parse_cli(&["verticals".to_string(), "--help".to_string()])
+      .expect("verticals --help should parse");
+    assert!(matches!(command, CliCommand::VerticalsHelp));
+  }
+
+  #[test]
+  fn parse_verticals_bare_command_as_help() {
+    let command =
+      parse_cli(&["verticals".to_string()]).expect("bare verticals should parse as help");
+    assert!(matches!(command, CliCommand::VerticalsHelp));
+  }
+
+  #[test]
+  fn parse_verticals_rejects_execution_namespace() {
+    let error = parse_cli(&["verticals".to_string(), "minecraft".to_string()])
+      .expect_err("verticals minecraft should fail");
+    assert!(error.contains("help-only index"));
+  }
+
+  #[test]
+  fn parse_verticals_help_rejects_trailing_arguments() {
+    let error = parse_cli(&[
+      "verticals".to_string(),
+      "help".to_string(),
+      "extra".to_string(),
+    ])
+    .expect_err("verticals help extra should fail");
+    assert!(error.contains("unexpected verticals help argument"));
+  }
+
+  #[test]
+  fn parse_minecraft_help_command() {
+    let command = parse_cli(&["minecraft".to_string(), "--help".to_string()])
+      .expect("minecraft --help should parse");
+    assert!(matches!(command, CliCommand::MinecraftHelp));
+  }
+
+  #[test]
+  fn parse_minecraft_bare_command_as_help() {
+    let command =
+      parse_cli(&["minecraft".to_string()]).expect("bare minecraft should parse as help");
+    assert!(matches!(command, CliCommand::MinecraftHelp));
+  }
+
+  #[test]
+  fn parse_minecraft_help_rejects_trailing_arguments() {
+    let error = parse_cli(&[
+      "minecraft".to_string(),
+      "--help".to_string(),
+      "junk".to_string(),
+    ])
+    .expect_err("minecraft --help junk should fail");
+    assert!(error.contains("unexpected minecraft help argument"));
+  }
+
+  #[test]
+  fn parse_osu_help_command() {
+    let command =
+      parse_cli(&["osu".to_string(), "--help".to_string()]).expect("osu --help should parse");
+    assert!(matches!(command, CliCommand::OsuHelp));
+  }
+
+  #[test]
+  fn parse_osu_bare_command_as_help() {
+    let command = parse_cli(&["osu".to_string()]).expect("bare osu should parse as help");
+    assert!(matches!(command, CliCommand::OsuHelp));
+  }
+
+  #[test]
+  fn parse_osu_help_rejects_trailing_arguments() {
+    let error = parse_cli(&["osu".to_string(), "help".to_string(), "extra".to_string()])
+      .expect_err("osu help extra should fail");
+    assert!(error.contains("unexpected osu help argument"));
+  }
+
+  #[test]
   fn help_text_keeps_candidate_action_as_note_only() {
     let help = help_text();
-    let usage_end = help
-      .find("REFERENCE VERTICALS")
-      .expect("reference section should exist");
+    let usage_end = help.find("NOTES").expect("notes section should exist");
     let usage = &help[..usage_end];
 
     assert!(

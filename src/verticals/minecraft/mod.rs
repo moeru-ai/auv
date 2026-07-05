@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub mod help;
 pub mod query_live_action;
 pub mod session;
 pub mod verification;
