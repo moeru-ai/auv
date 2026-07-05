@@ -106,6 +106,9 @@ AUV core runtime、contract、graduation、query-readiness
 - [`2026-06-30-auv-core-c2-prep-admission-dispatch-read-side-vocabulary-alignment.md`](2026-06-30-auv-core-c2-prep-admission-dispatch-read-side-vocabulary-alignment.md)
 - [`2026-06-30-auv-core-c3-d2-verification-outcome-read-side-projection.md`](2026-06-30-auv-core-c3-d2-verification-outcome-read-side-projection.md)
 - [`2026-06-30-auv-core-c3-post-action-verification-outcome-boundary.md`](2026-06-30-auv-core-c3-post-action-verification-outcome-boundary.md)
+- [`2026-07-05-auv-core-action-seam-audit-handoff.md`](2026-07-05-auv-core-action-seam-audit-handoff.md) — Core action seam read-only audit (L8a plan vs L8b reconciled effective; Slice 2 locks to L8b)
+- [`2026-07-05-auv-core-action-seam-l8b-reconnect-handoff.md`](2026-07-05-auv-core-action-seam-l8b-reconnect-handoff.md) — L8b reconciled effective decision + `plan_delivery_mismatch` hard acceptance
+- [`2026-07-05-auv-core-action-transition-lineage-read-handoff.md`](2026-07-05-auv-core-action-transition-lineage-read-handoff.md) — `ActionTransitionLineage` read-side projection (L8b effective, L8a comparator)
 
 #### review (5)
 
