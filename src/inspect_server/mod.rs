@@ -980,8 +980,9 @@ impl IntoResponse for InspectHttpError {
 mod tests {
   use std::collections::BTreeMap;
   use std::fs;
+  use std::io::Write;
   use std::path::Path;
-  use std::process::Command;
+  use std::process::{Command, Stdio};
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -2476,11 +2477,25 @@ eval(scriptBody);
 "##;
     let script = script_template.replace("__VIEWER_HTML__", &format!("{:?}", super::VIEWER_HTML));
 
-    let output = Command::new("node")
-      .arg("-e")
-      .arg(script)
-      .output()
+    let mut child = Command::new("node")
+      .arg("-")
+      .stdin(Stdio::piped())
+      .stdout(Stdio::piped())
+      .stderr(Stdio::piped())
+      .spawn()
       .expect("node should be available to execute viewer self-test");
+    {
+      let stdin = child
+        .stdin
+        .as_mut()
+        .expect("node child stdin should be available");
+      stdin
+        .write_all(script.as_bytes())
+        .expect("viewer self-test script should write to node stdin");
+    }
+    let output = child
+      .wait_with_output()
+      .expect("node child should return viewer self-test output");
 
     assert!(
       output.status.success(),
