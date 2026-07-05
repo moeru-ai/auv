@@ -2353,7 +2353,6 @@ class Element {
       if (segments[i]) classes.push(segments[i]);
     }
     if (selectorWithoutHidden.startsWith(".")) {
-      classes.unshift(selectorWithoutHidden.slice(1));
       tag = null;
     }
     if (selectorWithoutHidden.startsWith("#") && selectorWithoutHidden.includes(".")) {
@@ -2424,6 +2423,7 @@ function registerElement(document, tagName, id) {
 
 const document = new Document();
 registerElement(document, "div", "action-transition-lineage").hidden = true;
+registerElement(document, "div", "netease-select-proof-hint").hidden = true;
 registerElement(document, "div", "view-parser-proof").hidden = true;
 registerElement(document, "div", "conn").className = "conn-pill bad";
 registerElement(document, "div", "conn-label");
@@ -2824,6 +2824,34 @@ eval(scriptBody);
     assert_eq!(run["view_parser_summary"]["has_proof"], false);
 
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn viewer_renders_netease_select_proof_hint_hooks() {
+    assert!(
+      super::VIEWER_HTML.contains("netease-select-proof-hint"),
+      "viewer payload should mount the netease select proof hint panel"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("renderNeteaseSelectProofHint"),
+      "viewer payload should render netease select proof hint"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("auv.netease.playlist.select"),
+      "viewer payload should match netease select proof run root span"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("NetEase playlist select proof"),
+      "viewer payload should use generic netease select proof label"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("selfTestNeteaseSelectProofHint"),
+      "viewer payload should self-test netease select proof hint"
+    );
+    assert!(
+      !super::VIEWER_HTML.contains("ACP-1 (selectProof)"),
+      "viewer payload must not use selectProof-specific hint wording"
+    );
   }
 
   #[test]

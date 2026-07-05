@@ -811,6 +811,21 @@
     background: var(--shell);
   }
   #action-transition-lineage[hidden] { display: none; }
+  #netease-select-proof-hint {
+    margin: 0.75rem 1rem 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--shell-line);
+    background: var(--shell-2);
+    color: var(--fg-2);
+    font-size: 0.8125rem;
+    letter-spacing: 0.01em;
+  }
+  #netease-select-proof-hint[hidden] { display: none; }
+  #netease-select-proof-hint .netease-select-proof-hint-label {
+    color: var(--fg);
+    font-weight: 500;
+  }
   #action-transition-lineage .action-transition-card {
     border: 1px solid var(--shell-line);
     border-radius: 4px;
@@ -906,6 +921,7 @@
         <span class="right" id="main-crumb"></span>
         <span id="main-status"></span>
       </div>
+      <div id="netease-select-proof-hint" hidden></div>
       <div id="view-parser-proof" hidden></div>
       <div id="action-transition-lineage" hidden></div>
       <div id="run-list-filter-banner" class="run-list-filter-banner" hidden></div>
@@ -1123,6 +1139,39 @@
     if (!panel) return;
     panel.innerHTML = "";
     panel.hidden = true;
+  }
+
+  function clearNeteaseSelectProofHint() {
+    const panel = document.getElementById("netease-select-proof-hint");
+    if (!panel) return;
+    panel.innerHTML = "";
+    panel.hidden = true;
+  }
+
+  function neteasePlaylistSelectProofVisible(run, spans, artifacts) {
+    if (!run || !Array.isArray(artifacts) || !Array.isArray(spans)) return false;
+    const hasArtifact = artifacts.some(function (artifact) {
+      return artifact && artifact.role === PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE;
+    });
+    if (!hasArtifact) return false;
+    const rootSpan = spans.find(function (span) {
+      return span && (span.parent_span_id == null || span.parent_span_id === "");
+    });
+    return !!(rootSpan && rootSpan.name === "auv.netease.playlist.select");
+  }
+
+  function renderNeteaseSelectProofHint(run, spans, artifacts) {
+    const panel = document.getElementById("netease-select-proof-hint");
+    if (!panel) return;
+    if (!neteasePlaylistSelectProofVisible(run, spans, artifacts)) {
+      clearNeteaseSelectProofHint();
+      return;
+    }
+    panel.innerHTML = "";
+    panel.hidden = false;
+    panel.appendChild(el("span", { className: "netease-select-proof-hint-label" }, [
+      "NetEase playlist select proof",
+    ]));
   }
 
   function hasViewParserProof(run) {
@@ -1686,11 +1735,13 @@
       setMainHeader(state.activeRun, false);
       renderViewParserProof(state.activeRun);
       renderActionTransitionLineage(state.activeRun);
+      renderNeteaseSelectProofHint(state.activeRun, state.spans, state.artifacts);
       renderRunList();
     } catch (err) {
       if (state.activeRunId !== runId) return;
       clearViewParserProof();
       clearActionTransitionLineage();
+      clearNeteaseSelectProofHint();
     }
   }
 
@@ -1951,6 +2002,7 @@
     closeStream();
     clearViewParserProof();
     clearActionTransitionLineage();
+    clearNeteaseSelectProofHint();
     state.activeRunId = runId;
     state.activeRun = state.runs.find(function (r) { return r.run_id === runId; }) || null;
     state.spans = [];
@@ -2015,10 +2067,12 @@
       renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
       renderViewParserProof(state.activeRun);
       renderActionTransitionLineage(state.activeRun);
+      renderNeteaseSelectProofHint(state.activeRun, state.spans, state.artifacts);
     } catch (err) {
       if (state.activeRunId !== runId) return;
       clearViewParserProof();
       clearActionTransitionLineage();
+      clearNeteaseSelectProofHint();
       setConnection(false, "/runs/:id (" + err.message + ")");
       renderPlaceholder([
         "failed to load run detail.",
@@ -4616,6 +4670,34 @@
     console.assert(panel.hidden, "panel should hide after clear");
   }
   selfTestActionTransitionLineage();
+
+  function selfTestNeteaseSelectProofHint() {
+    const hintPanel = document.getElementById("netease-select-proof-hint");
+    console.assert(!!hintPanel, "netease-select-proof-hint panel should exist in DOM");
+
+    const run = { run_id: "run_netease_hint" };
+    const spans = [{
+      span_id: "span_root",
+      parent_span_id: null,
+      name: "auv.netease.playlist.select",
+    }];
+    const artifacts = [{ role: PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, artifact_id: "art_1" }];
+
+    renderNeteaseSelectProofHint(run, spans, artifacts);
+    console.assert(!hintPanel.hidden, "hint should show for netease select proof run");
+    console.assert(
+      hintPanel.textContent.indexOf("NetEase playlist select proof") >= 0,
+      "generic hint label should render"
+    );
+    console.assert(
+      hintPanel.textContent.toLowerCase().indexOf("selectproof") < 0,
+      "hint must not include invoke-specific wording"
+    );
+
+    clearNeteaseSelectProofHint();
+    console.assert(hintPanel.hidden, "hint should hide after clear");
+  }
+  selfTestNeteaseSelectProofHint();
 
   loadRuns();
 })();
