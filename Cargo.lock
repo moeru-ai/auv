@@ -556,6 +556,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-gnome-control-center"
+version = "0.0.1"
+dependencies = [
+ "auv-driver",
+ "auv-driver-linux",
+ "clap",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "auv-inference-common"
 version = "0.0.1"
 dependencies = [

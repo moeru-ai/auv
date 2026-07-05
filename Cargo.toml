@@ -21,6 +21,7 @@ members = [
   "crates/auv-game-balatro",
   "crates/auv-game-minecraft",
   "crates/auv-game-osu",
+  "crates/auv-gnome-control-center",
   "crates/auv-inference-common",
   "crates/auv-inference-ort",
   "crates/auv-inference-ultralytics",

@@ -27,6 +27,7 @@ mod window;
 #[cfg(not(target_os = "linux"))]
 pub(crate) use atspi_stub as atspi;
 
+pub use accessibility::{AxNode, AxTreeSnapshot};
 pub use descriptor::{LINUX_DESKTOP_CAPABILITIES, LinuxDriverDescriptor, linux_driver_descriptor};
 pub use driver::{LinuxDriver, LinuxDriverSession};
 pub use ocr::{OcrError, recognize_text_in_rgba};
