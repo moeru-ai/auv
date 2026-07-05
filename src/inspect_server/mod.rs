@@ -981,6 +981,7 @@ mod tests {
   use std::collections::BTreeMap;
   use std::fs;
   use std::path::Path;
+  use std::process::Command;
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -2199,8 +2200,294 @@ mod tests {
       html.contains("--brand: #00c4d2"),
       "viewer payload should inline the canonical brand token"
     );
+    assert!(
+      html.contains("action-transition-lineage"),
+      "viewer payload should include action transition lineage panel (L9)"
+    );
+    assert!(
+      html.contains("selfTestActionTransitionLineage"),
+      "viewer payload should self-test action transition lineage rendering"
+    );
 
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn viewer_action_transition_self_test_executes_in_node() {
+    let script_template = r##"const html = __VIEWER_HTML__;
+const start = html.indexOf("<script>");
+const end = html.lastIndexOf("</script>");
+if (start < 0 || end < 0 || end <= start) {
+  throw new Error("viewer HTML missing inline script");
+}
+const scriptBody = html.slice(start + "<script>".length, end);
+
+class TextNode {
+  constructor(text, ownerDocument) {
+    this.nodeType = 3;
+    this.text = String(text);
+    this.ownerDocument = ownerDocument;
+    this.parentNode = null;
+  }
+  get textContent() {
+    return this.text;
+  }
+  set textContent(value) {
+    this.text = String(value);
+  }
+}
+
+class Element {
+  constructor(tagName, ownerDocument) {
+    this.tagName = String(tagName).toUpperCase();
+    this.ownerDocument = ownerDocument;
+    this.attributes = {};
+    this.dataset = {};
+    this.children = [];
+    this.parentNode = null;
+    this.hidden = false;
+    this._className = "";
+    this._listeners = new Map();
+  }
+  appendChild(child) {
+    if (child == null) return child;
+    child.parentNode = this;
+    this.children.push(child);
+    return child;
+  }
+  setAttribute(name, value) {
+    const normalized = String(name);
+    const rendered = String(value);
+    this.attributes[normalized] = rendered;
+    if (normalized === "id") {
+      this.id = rendered;
+      this.ownerDocument._elementsById.set(rendered, this);
+    } else if (normalized === "class") {
+      this.className = rendered;
+    }
+  }
+  addEventListener(name, handler) {
+    if (!this._listeners.has(name)) this._listeners.set(name, []);
+    this._listeners.get(name).push(handler);
+  }
+  get className() {
+    return this._className;
+  }
+  set className(value) {
+    this._className = String(value);
+    this.attributes.class = this._className;
+  }
+  get textContent() {
+    return this.children.map((child) => child.textContent).join("");
+  }
+  set textContent(value) {
+    this.children = [new TextNode(String(value), this.ownerDocument)];
+  }
+  get innerHTML() {
+    return this._innerHTML || "";
+  }
+  set innerHTML(value) {
+    this._innerHTML = String(value);
+    this.children = [];
+  }
+  get lastChild() {
+    return this.children.length ? this.children[this.children.length - 1] : null;
+  }
+  get childNodes() {
+    return this.children;
+  }
+  get classList() {
+    const self = this;
+    function ownClasses() {
+      return (self.className || "").split(/\s+/).filter(Boolean);
+    }
+    function write(next) {
+      self.className = next.join(" ");
+    }
+    return {
+      add(...names) {
+        const next = ownClasses();
+        for (const name of names) {
+          if (!next.includes(name)) next.push(name);
+        }
+        write(next);
+      },
+      remove(...names) {
+        write(ownClasses().filter((name) => !names.includes(name)));
+      },
+      toggle(name, force) {
+        const exists = ownClasses().includes(name);
+        const shouldHave = force == null ? !exists : !!force;
+        if (shouldHave && !exists) this.add(name);
+        if (!shouldHave && exists) this.remove(name);
+        return shouldHave;
+      },
+      contains(name) {
+        return ownClasses().includes(name);
+      },
+    };
+  }
+  removeAttribute(name) {
+    const normalized = String(name);
+    delete this.attributes[normalized];
+    if (normalized === "hidden") this.hidden = false;
+  }
+  scrollIntoView() {}
+  matches(selector) {
+    if (!selector) return false;
+    const trimmed = selector.trim();
+    if (!trimmed) return false;
+    let tag = null;
+    let id = null;
+    const classes = [];
+    const hiddenRequired = trimmed.includes("[hidden]");
+    const selectorWithoutHidden = trimmed.replace("[hidden]", "");
+    const segments = selectorWithoutHidden.split(".");
+    if (segments[0].startsWith("#")) {
+      id = segments[0].slice(1);
+    } else if (segments[0]) {
+      tag = segments[0].toUpperCase();
+    }
+    for (let i = 1; i < segments.length; i++) {
+      if (segments[i]) classes.push(segments[i]);
+    }
+    if (selectorWithoutHidden.startsWith(".")) {
+      classes.unshift(selectorWithoutHidden.slice(1));
+      tag = null;
+    }
+    if (selectorWithoutHidden.startsWith("#") && selectorWithoutHidden.includes(".")) {
+      const firstDot = selectorWithoutHidden.indexOf(".");
+      id = selectorWithoutHidden.slice(1, firstDot);
+      classes.length = 0;
+      selectorWithoutHidden
+        .slice(firstDot + 1)
+        .split(".")
+        .filter(Boolean)
+        .forEach((value) => classes.push(value));
+    }
+    if (tag && this.tagName !== tag) return false;
+    if (id && this.id !== id) return false;
+    if (hiddenRequired && !this.hidden) return false;
+    if (classes.length) {
+      const ownClasses = (this.className || "").split(/\s+/).filter(Boolean);
+      if (!classes.every((cls) => ownClasses.includes(cls))) return false;
+    }
+    return true;
+  }
+  querySelector(selector) {
+    for (const child of this.children) {
+      if (child instanceof Element) {
+        if (child.matches(selector)) return child;
+        const nested = child.querySelector(selector);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
+  querySelectorAll(selector, results = []) {
+    for (const child of this.children) {
+      if (child instanceof Element) {
+        if (child.matches(selector)) results.push(child);
+        child.querySelectorAll(selector, results);
+      }
+    }
+    return results;
+  }
+}
+
+class Document {
+  constructor() {
+    this._elementsById = new Map();
+    this.body = new Element("body", this);
+  }
+  createElement(tagName) {
+    return new Element(tagName, this);
+  }
+  createTextNode(text) {
+    return new TextNode(text, this);
+  }
+  getElementById(id) {
+    return this._elementsById.get(String(id)) || null;
+  }
+  querySelector(selector) {
+    return this.body.querySelector(selector);
+  }
+}
+
+function registerElement(document, tagName, id) {
+  const node = document.createElement(tagName);
+  node.setAttribute("id", id);
+  document.body.appendChild(node);
+  return node;
+}
+
+const document = new Document();
+registerElement(document, "div", "action-transition-lineage").hidden = true;
+registerElement(document, "div", "view-parser-proof").hidden = true;
+registerElement(document, "div", "conn").className = "conn-pill bad";
+registerElement(document, "div", "conn-label");
+registerElement(document, "div", "conn-endpoint");
+registerElement(document, "div", "main-label");
+registerElement(document, "div", "main-crumb");
+registerElement(document, "div", "main-status");
+registerElement(document, "div", "main-body");
+registerElement(document, "div", "run-list");
+registerElement(document, "div", "run-count");
+registerElement(document, "div", "run-list-filters");
+registerElement(document, "div", "span-tree");
+registerElement(document, "div", "span-detail");
+registerElement(document, "div", "event-list");
+registerElement(document, "div", "event-count");
+registerElement(document, "div", "artifact-list");
+registerElement(document, "div", "artifact-preview");
+registerElement(document, "div", "artifact-count");
+registerElement(document, "div", "artifact-panel").hidden = true;
+registerElement(document, "div", "events-rail").hidden = true;
+registerElement(document, "div", "run-list-filter-banner").hidden = true;
+registerElement(document, "button", "run-list-filter-toggle");
+registerElement(document, "div", "run-list-filter-menu");
+registerElement(document, "button", "run-list-filter-clear");
+registerElement(document, "button", "reload");
+registerElement(document, "div", "connection");
+
+const noop = () => {};
+const fetch = () => Promise.resolve({
+  ok: true,
+  json: async () => [],
+  text: async () => "",
+});
+
+globalThis.window = globalThis;
+globalThis.document = document;
+globalThis.fetch = fetch;
+globalThis.console = console;
+globalThis.setTimeout = setTimeout;
+globalThis.clearTimeout = clearTimeout;
+globalThis.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+globalThis.cancelAnimationFrame = clearTimeout;
+globalThis.WebSocket = function WebSocket() {
+  this.close = noop;
+  this.addEventListener = noop;
+};
+globalThis.location = { origin: "http://127.0.0.1:8765" };
+globalThis.navigator = { userAgent: "node" };
+
+eval(scriptBody);
+"##;
+    let script = script_template.replace("__VIEWER_HTML__", &format!("{:?}", super::VIEWER_HTML));
+
+    let output = Command::new("node")
+      .arg("-e")
+      .arg(script)
+      .output()
+      .expect("node should be available to execute viewer self-test");
+
+    assert!(
+      output.status.success(),
+      "viewer self-test should execute without runtime errors\nstdout:\n{}\nstderr:\n{}",
+      String::from_utf8_lossy(&output.stdout),
+      String::from_utf8_lossy(&output.stderr)
+    );
   }
 
   #[tokio::test]
@@ -2522,6 +2809,40 @@ mod tests {
     assert_eq!(run["view_parser_summary"]["has_proof"], false);
 
     let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn viewer_renders_action_transition_lineage_hooks() {
+    assert!(
+      super::VIEWER_HTML.contains("action-transition-lineage"),
+      "viewer payload should mount the action transition lineage panel"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("renderActionTransitionLineage"),
+      "viewer payload should render action_transition_lineage entries"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("action_transition_lineage"),
+      "viewer payload should read action_transition_lineage from run detail"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("refreshViewParserProofFromRunDetail")
+        && super::VIEWER_HTML.contains("renderActionTransitionLineage(state.activeRun)"),
+      "viewer payload should refresh action transition lineage on narrow run refetch"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("!Array.isArray(merged.action_transition_lineage)")
+        && super::VIEWER_HTML.contains("previous.action_transition_lineage"),
+      "viewer payload should preserve action_transition_lineage across mergeRunDetail"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("startsWith(\"plan_delivery_mismatch\")"),
+      "viewer payload should detect prefixed plan_delivery_mismatch limits"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("selfTestActionTransitionLineage"),
+      "viewer payload should self-test action transition lineage rendering"
+    );
   }
 
   #[test]
