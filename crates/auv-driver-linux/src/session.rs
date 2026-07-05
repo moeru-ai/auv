@@ -1,9 +1,11 @@
+use std::thread;
+
 use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver::display::ObservedDisplays;
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::{Point, RatioRect, ScreenPoint, WindowPoint};
 use auv_driver::input::{
-  Click, InputActionResult, KeyPressOptions, PasteTextOptions, Scroll, TypeTextOptions,
+  Click, InputActionResult, KeyPressOptions, PasteTextOptions, Scroll, TypeTextOptions, WaitOptions,
 };
 use auv_driver::permission::PermissionProbe;
 use auv_driver::selector::WindowSelector;
@@ -14,7 +16,7 @@ use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_win
 use crate::capture::{capture_display, capture_region, list_displays};
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot};
 use crate::driver::LinuxDriverSession;
-use crate::error::invalid_input;
+use crate::error::{invalid_input, not_found};
 use crate::input::{click_at, copy, paste, paste_text, press_key, scroll_at, type_text};
 use crate::permission::{LinuxPortalProbe, probe_portals};
 use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
@@ -148,8 +150,57 @@ impl WindowApi<'_> {
   }
 
   pub fn capture(&self, window: &Window) -> DriverResult<Capture> {
-    let _ = self.session;
+    self.capture_with(window, CaptureOptions::default())
+  }
+
+  pub fn capture_with(&self, window: &Window, options: CaptureOptions) -> DriverResult<Capture> {
+    if options.display.is_some() || options.region.is_some() || options.window.is_some() {
+      return Err(invalid_input(
+        "window.capture_with does not accept display, region, or nested window capture options",
+      ));
+    }
+    if let Activation::ActivateFirst { .. } = options.activation {
+      return Err(invalid_input(
+        "window.capture_with cannot activate Linux Wayland windows in this slice",
+      ));
+    }
     capture_window(&self.session.state, window)
+  }
+
+  pub fn find_text(
+    &self,
+    window: &Window,
+    query: &str,
+    region: RatioRect,
+    wait: WaitOptions,
+  ) -> DriverResult<OcrMatches> {
+    let started = std::time::Instant::now();
+    loop {
+      let capture = self.capture(window)?;
+      let matches = self
+        .session
+        .vision()
+        .find_text_in_capture(&capture, query, region)?;
+      if !matches.matches.is_empty() || started.elapsed() >= wait.timeout {
+        return Ok(matches);
+      }
+      thread::sleep(wait.poll_interval);
+    }
+  }
+
+  pub fn wait_text(
+    &self,
+    window: &Window,
+    query: &str,
+    region: RatioRect,
+    wait: WaitOptions,
+  ) -> DriverResult<OcrMatches> {
+    let matches = self.find_text(window, query, region, wait)?;
+    if matches.matches.is_empty() {
+      Err(not_found(format!("text {query:?} before timeout")))
+    } else {
+      Ok(matches)
+    }
   }
 
   pub fn to_screen_point(&self, window: &Window, point: WindowPoint) -> DriverResult<ScreenPoint> {
@@ -343,5 +394,41 @@ mod tests {
       .expect("point maps");
 
     assert_eq!(point, WindowPoint::new(25.0, 30.0));
+  }
+
+  #[test]
+  fn window_capture_with_rejects_nested_capture_options() {
+    let window = sample_window();
+    let error = session()
+      .window()
+      .capture_with(
+        &window,
+        CaptureOptions {
+          window: Some(window.reference.clone()),
+          ..CaptureOptions::default()
+        },
+      )
+      .expect_err("nested window capture is rejected before portal capture");
+
+    assert!(error.to_string().contains("window.capture_with"));
+  }
+
+  #[test]
+  fn window_capture_with_rejects_activation_on_linux() {
+    let window = sample_window();
+    let error = session()
+      .window()
+      .capture_with(
+        &window,
+        CaptureOptions {
+          activation: Activation::ActivateFirst {
+            settle: std::time::Duration::ZERO,
+          },
+          ..CaptureOptions::default()
+        },
+      )
+      .expect_err("activation is rejected before portal capture");
+
+    assert!(error.to_string().contains("cannot activate Linux Wayland"));
   }
 }
