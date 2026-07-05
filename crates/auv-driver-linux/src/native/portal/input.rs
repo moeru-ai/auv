@@ -105,16 +105,10 @@ impl InputSession {
     key_result
   }
 
-  pub fn click_at(&mut self, point: Point, click: Click) -> DriverResult<Option<String>> {
+  pub fn click_at(&mut self, point: Point, click: Click) -> DriverResult<()> {
     self.require_pointer()?;
     let (stream_id, stream_point) = self.resolve_stream_point(point)?;
-    let fallback_reason = match self.notify_pointer_motion_absolute(stream_id, stream_point) {
-      Ok(()) => None,
-      Err(error) => Some(format!(
-        "absolute pointer motion was unavailable for stream {stream_id} at {:?} ({error}); clicked at current pointer position",
-        stream_point
-      )),
-    };
+    self.notify_pointer_motion_absolute(stream_id, stream_point)?;
     let (count, interval) = match click {
       Click::Single => (1, Duration::ZERO),
       Click::Double { interval } => (2, interval),
@@ -126,7 +120,7 @@ impl InputSession {
         std::thread::sleep(interval);
       }
     }
-    Ok(fallback_reason)
+    Ok(())
   }
 
   pub fn scroll(&mut self, scroll: Scroll) -> DriverResult<()> {

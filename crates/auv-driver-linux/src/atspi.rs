@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use auv_driver::error::DriverResult;
-use auv_driver::geometry::{CoordinateSpace, Rect};
+use auv_driver::geometry::{CoordinateSpace, Point, Rect};
 use auv_driver::window::{Window, WindowRef};
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
@@ -114,7 +114,7 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
     .collect::<DriverResult<Vec<_>>>()?;
   let mut windows = Vec::new();
 
-  for app in applications {
+  for app in &applications {
     for child in children(&connection, &app.reference)? {
       let accessible = accessible(&connection, child)?;
       if matches!(accessible.role.as_str(), "window" | "frame" | "dialog")
@@ -128,6 +128,7 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
       }
     }
   }
+  apply_shell_stage_window_origins(&connection, &applications, &mut windows);
 
   Ok(windows)
 }
@@ -620,6 +621,120 @@ fn window_from_accessible(app: &Application, accessible: &Accessible, is_main: b
   }
 }
 
+fn apply_shell_stage_window_origins(
+  connection: &Connection,
+  applications: &[Application],
+  windows: &mut [Window],
+) {
+  let Ok(stage_rects) = shell_stage_rects(connection, applications) else {
+    return;
+  };
+  if stage_rects.is_empty() {
+    return;
+  }
+
+  for window in windows {
+    if !needs_shell_stage_origin(window) {
+      continue;
+    }
+    if let Some(origin) = matching_stage_origin(window.frame, &stage_rects) {
+      window.frame.origin = origin;
+    }
+  }
+}
+
+fn shell_stage_rects(
+  connection: &Connection,
+  applications: &[Application],
+) -> DriverResult<Vec<Rect>> {
+  let mut rects = Vec::new();
+  for app in applications
+    .iter()
+    .filter(|app| app.name == "gnome-shell" || app.accessible_id == "org.gnome.Shell")
+  {
+    for child in children(connection, &app.reference)? {
+      let accessible = accessible(connection, child)?;
+      if accessible.name != "Main stage" {
+        continue;
+      }
+      let mut nodes = Vec::new();
+      walk(
+        connection,
+        &accessible.reference,
+        0,
+        "0".to_string(),
+        &mut nodes,
+      )?;
+      rects.extend(
+        nodes
+          .into_iter()
+          .map(|node| node.bounds)
+          .filter(|rect| rect_is_stage_candidate(*rect)),
+      );
+    }
+  }
+  Ok(rects)
+}
+
+fn needs_shell_stage_origin(window: &Window) -> bool {
+  // NOTICE(linux-remote-desktop-screen-point): On GNOME Wayland, GTK/libadwaita
+  // top-level AT-SPI `ATSPI_COORD_TYPE_SCREEN` extents can report `(0, 0)` even
+  // when the RemoteDesktop portal expects compositor/global screen points. GNOME
+  // Shell's stage tree exposes global window content rects in the same session,
+  // so use it only as a conservative origin repair for otherwise unusable
+  // top-level frames.
+  window.app_name.as_deref() != Some("gnome-shell")
+    && point_is_origin(window.frame.origin)
+    && rect_has_area(window.frame)
+}
+
+fn matching_stage_origin(frame: Rect, stage_rects: &[Rect]) -> Option<Point> {
+  let mut origins = Vec::new();
+  for rect in stage_rects {
+    if !same_size(frame, *rect) || point_is_origin(rect.origin) {
+      continue;
+    }
+    if !origins
+      .iter()
+      .any(|origin| same_point(*origin, rect.origin))
+    {
+      origins.push(rect.origin);
+    }
+  }
+  match origins.as_slice() {
+    [origin] => Some(*origin),
+    _ => None,
+  }
+}
+
+fn rect_is_stage_candidate(rect: Rect) -> bool {
+  rect_has_area(rect)
+    && rect.origin.x.is_finite()
+    && rect.origin.y.is_finite()
+    && rect.size.width.is_finite()
+    && rect.size.height.is_finite()
+    && rect.origin.x.abs() < 100_000.0
+    && rect.origin.y.abs() < 100_000.0
+    && rect.size.width < 100_000.0
+    && rect.size.height < 100_000.0
+}
+
+fn same_size(left: Rect, right: Rect) -> bool {
+  same_scalar(left.size.width, right.size.width) && same_scalar(left.size.height, right.size.height)
+}
+
+fn same_point(left: Point, right: Point) -> bool {
+  same_scalar(left.x, right.x) && same_scalar(left.y, right.y)
+}
+
+fn point_is_origin(point: Point) -> bool {
+  same_scalar(point.x, 0.0) && same_scalar(point.y, 0.0)
+}
+
+fn same_scalar(left: f64, right: f64) -> bool {
+  (left - right).abs() <= 0.5
+}
+
 fn rect_has_area(rect: Rect) -> bool {
   rect.size.width > 0.0 && rect.size.height > 0.0
 }
@@ -721,5 +836,44 @@ mod tests {
     assert_eq!(window.app_name.as_deref(), Some("gnome-control-center"));
     assert_eq!(window.app_bundle_id.as_deref(), Some("org.gnome.Settings"));
     assert!(window.reference.id.starts_with(WINDOW_REF_PREFIX));
+  }
+
+  #[test]
+  fn matching_stage_origin_uses_unique_same_size_stage_rect() {
+    let origin = matching_stage_origin(
+      Rect::new(0.0, 0.0, 980.0, 1077.0),
+      &[
+        Rect::new(1727.0, 30.0, 1030.0, 1127.0),
+        Rect::new(1752.0, 55.0, 980.0, 1077.0),
+      ],
+    );
+
+    assert_eq!(origin, Some(Point::new(1752.0, 55.0)));
+  }
+
+  #[test]
+  fn matching_stage_origin_rejects_ambiguous_same_size_stage_rects() {
+    let origin = matching_stage_origin(
+      Rect::new(0.0, 0.0, 980.0, 1077.0),
+      &[
+        Rect::new(1752.0, 55.0, 980.0, 1077.0),
+        Rect::new(20.0, 40.0, 980.0, 1077.0),
+      ],
+    );
+
+    assert_eq!(origin, None);
+  }
+
+  #[test]
+  fn matching_stage_origin_deduplicates_nested_same_origin_rects() {
+    let origin = matching_stage_origin(
+      Rect::new(0.0, 0.0, 980.0, 1077.0),
+      &[
+        Rect::new(1752.0, 55.0, 980.0, 1077.0),
+        Rect::new(1752.1, 55.0, 980.0, 1077.0),
+      ],
+    );
+
+    assert_eq!(origin, Some(Point::new(1752.0, 55.0)));
   }
 }

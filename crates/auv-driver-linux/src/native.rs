@@ -47,7 +47,7 @@ pub mod portal {
   pub struct InputSession;
 
   impl InputSession {
-    pub fn click_at(&mut self, _point: Point, _click: Click) -> DriverResult<Option<String>> {
+    pub fn click_at(&mut self, _point: Point, _click: Click) -> DriverResult<()> {
       Err(DriverError::unsupported("linux.portal.input"))
     }
 
