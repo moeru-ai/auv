@@ -192,4 +192,6 @@ rg 'action_resolver_decision\.clone\(\)' src/candidate_action_decision.rs
 
 ## 9. Next gate
 
-Proceed on **app packaging** or **product** slices only with explicit owner naming. Before any future “seam graduation” claim, cite **this R2 doc** plus R1 — not ACP handoffs alone.
+Proceed on **app packaging** slices only with explicit owner naming and cite **this R2 doc** plus [L8 R1](2026-07-05-auv-core-l8-closeout-review.md) for seam claims — **not** ACP handoffs alone.
+
+**ACP-B (second app):** see [qqmusic ACP-B1 gate/handoff](2026-07-06-auv-qqmusic-acp-b1-gate-handoff.md). Second-app pack pass remains orthogonal to seam re-proof per [ACP gate](2026-07-05-auv-core-app-command-pack-gate.md#orthogonality-callout-mandatory-in-every-acp-handoff).

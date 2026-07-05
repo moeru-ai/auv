@@ -3,6 +3,8 @@
 **Date:** 2026-07-05  
 **Prerequisite:** [ACP gate](2026-07-05-auv-core-app-command-pack-gate.md), [L8 closeout](2026-07-05-auv-core-l8-closeout-review.md), [L9 inspect surface](2026-07-05-auv-core-l9-inspect-surface-handoff.md)
 
+> **Orthogonality:** ACP-1 packaging success does not re-validate or close the L8b candidate-action seam. See [ACP gate orthogonality callout](2026-07-05-auv-core-app-command-pack-gate.md#orthogonality-callout-mandatory-in-every-acp-handoff).
+
 ## Pack identity
 
 | Field | Value |

@@ -3,6 +3,8 @@
 **Date:** 2026-07-05  
 **Prerequisite:** [ACP-1 handoff](2026-07-05-auv-netease-music-acp-1-handoff.md), [ACP gate](2026-07-05-auv-core-app-command-pack-gate.md)
 
+> **Orthogonality:** ACP-2 observe packaging does not re-validate the L8b seam. Pack pass ≠ seam re-proof — see [ACP gate](2026-07-05-auv-core-app-command-pack-gate.md#orthogonality-callout-mandatory-in-every-acp-handoff).
+
 ## Pack identity
 
 | Field | Value |

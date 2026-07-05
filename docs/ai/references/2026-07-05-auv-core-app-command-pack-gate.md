@@ -5,9 +5,13 @@
 
 ## Gate conditions (all required)
 
-1. [L8 closeout](2026-07-05-auv-core-l8-closeout-review.md) verdict ∈ `{ close, close_for_core_seam_surface_gap_only }`
+1. [L8 closeout](2026-07-05-auv-core-l8-closeout-review.md) verdict ∈ `{ close, close_for_core_seam_surface_gap_only }` (or [L8-R2](2026-07-06-auv-core-l8-r2-post-acp-closeout-review.md) `close_with_documented_gaps` for continued packaging)
 2. [L9 inspect surface](2026-07-05-auv-core-l9-inspect-surface-handoff.md) viewer hard acceptance green
 3. Owner names target app + command pack slice
+
+## Orthogonality callout (mandatory in every ACP handoff)
+
+> **Pack pass ≠ seam re-proof.** Completing an App Command Pack (hermetic invoke + persist + inspect JSON) does **not** upgrade the [L8](2026-07-05-auv-core-l8-closeout-review.md) / [L8-R2](2026-07-06-auv-core-l8-r2-post-acp-closeout-review.md) core action seam verdict. ACP lanes do not write `candidate-action-execution`, `action_resolver_decision`, or `ActionTransitionLineage` producer facts unless a separate owner-approved L8b slice says so.
 
 ## Reuse (do not reinvent)
 

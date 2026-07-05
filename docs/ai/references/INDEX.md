@@ -526,6 +526,8 @@ osu benchmark；G-series 需单独 owner 批准
 
 - [`2026-07-05-auv-netease-music-acp-1-handoff.md`](2026-07-05-auv-netease-music-acp-1-handoff.md)
 - [`2026-07-05-auv-netease-music-acp-2-handoff.md`](2026-07-05-auv-netease-music-acp-2-handoff.md)
+- [`2026-07-06-auv-qqmusic-acp-b1-gate-handoff.md`](2026-07-06-auv-qqmusic-acp-b1-gate-handoff.md) — ACP-B forced decisions (qqmusic second app)
+- [`2026-07-06-auv-qqmusic-acp-b2-handoff.md`](2026-07-06-auv-qqmusic-acp-b2-handoff.md) — ACP-B2 act bootstrap landed
 
 #### implementation-plan (3)
 
