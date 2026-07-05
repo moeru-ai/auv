@@ -1,0 +1,31 @@
+export default [
+  {
+    files: [
+      '**/*.rs',
+      '**/*.toml',
+      '**/*.md',
+      '**/*.yml',
+      '**/*.yaml',
+      '**/*.json',
+      '**/*.ts',
+      '**/*.tsx',
+      '**/*.js',
+      '**/*.mjs',
+    ],
+    ignores: [
+      '**/.git/**',
+      '**/.idea/**',
+      '**/.turbo/**',
+      '**/.vscode/**',
+      '**/build/**',
+      '**/coverage/**',
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/target/**',
+      '**/Cargo.lock',
+      '**/package-lock.json',
+      '**/pnpm-lock.yaml',
+      '**/yarn.lock',
+    ],
+  },
+]
