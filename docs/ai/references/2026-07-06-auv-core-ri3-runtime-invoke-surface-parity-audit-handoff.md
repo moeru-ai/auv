@@ -162,16 +162,17 @@ Two candidates ranked by **core surface impact**, not packaging sample count.
 
 ## 8. default_registry command inventory (2026-07-06)
 
-Enumerated via `cargo run -- invoke --help`. **52** command ids across namespaces:
+Enumerated from the command list rendered by `cargo run -- invoke --help`,
+excluding usage/help headings. **61** command ids across namespaces:
 
 | Namespace | Count | Parity tier (summary) |
 |-----------|------:|------------------------|
 | `display.*` | 4 | partial — capture signals; no capture-contract artifact |
 | `screen.*` | 8 | partial — screenshots + OCR signals; recognition/capture-contract gaps |
-| `window.*` | 12 | partial — mix of capture, OCR, AX stubs (`TODO(invoke-window-*)`) |
-| `input.*` | 12 | mixed — `typeText`/`key` stronger; `pasteText` IAR gap; AX/smartPress root-coupled |
+| `window.*` | 13 | partial — mix of capture, OCR, AX stubs (`TODO(invoke-window-*)`) |
+| `input.*` | 13 | mixed — `typeText`/`key` stronger; `pasteText` IAR gap; AX/smartPress root-coupled |
 | `app.*` | 2 | partial — permissions probe / activate |
-| `overlay.*` | 11 | partial — visual-only; root session coupling |
+| `overlay.*` | 12 | partial — visual-only; root session coupling |
 | `mediaControl.*` | 6 | partial — root media backend coupling |
 | `fixture.*` | 1 | proof-grade (deterministic) |
 | `scan.*` | 2 | proof-grade (hermetic fixture → typed scan artifacts) |
