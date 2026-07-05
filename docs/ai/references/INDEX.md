@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **299** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **302** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -38,6 +38,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | 看设计系统 / viewer UI | [`../../design/README.md`](../../design/README.md) |
 | 查 agent 写作规范 | 仓库根 [`AGENTS.md`](../../../AGENTS.md) |
 | 看 Qodana 分层运营 | [`2026-07-03-auv-qodana-operating-model.md`](2026-07-03-auv-qodana-operating-model.md) |
+| 看 Godot dev-time render observation | [`2026-07-05-auv-godot-devtime-render-observation-design.md`](2026-07-05-auv-godot-devtime-render-observation-design.md) |
 | 查已归档 AX copilot | [`../../archive/verticals/ax-copilot/`](../../archive/verticals/ax-copilot/) |
 
 ## Lane 总览
@@ -58,6 +59,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | `vertical/netease-music` | Product crate | 网易云音乐 app-local 命令 | 12 |
 | `vertical/qqmusic` | Historical evidence | QQ 音乐早期探针与 GLM 证据 | 8 |
 | `vertical/game-observe` | Observe-only | Steam/STS 等 observe-only fixture | 4 |
+| `vertical/godot` | Proposed vertical | AUV direct-connects to the current AIRI-owned Godot Stage dev observation adapter; no AIRI bridge disconnect, screenshot, OCR, or remote-debug-first assumption | 2 |
 | `archive/skill-bundle-retirement` | Retired | SkillBundle / recipe 退役记录 | 5 |
 | `archive/phase-history` | Historical | Phase 1–3 冻结与验收 | 5 |
 | `archive/ax-copilot` | Archived vertical | macOS AX copilot；见 docs/archive/verticals/ax-copilot/ | 2 |
@@ -584,6 +586,15 @@ Steam/STS 等 observe-only fixture
 
 - [`2026-06-06-game-slay-the-spire-observe-only-recognition-fixture-boundary.md`](2026-06-06-game-slay-the-spire-observe-only-recognition-fixture-boundary.md)
 
+### `vertical/godot` — Proposed vertical
+
+AUV direct-connects to the current AIRI-owned Godot Stage dev observation adapter; remote debug is a future candidate adapter, not the current first-slice mainline
+
+#### design (2)
+
+- [`2026-07-05-auv-godot-devtime-render-observation-design.md`](2026-07-05-auv-godot-devtime-render-observation-design.md) — Godot dev-time render observation (edge-light compositor intermediate stages)
+- [`2026-07-05-auv-godot-remote-debug-simplification.md`](2026-07-05-auv-godot-remote-debug-simplification.md) — Remote debug simplification proposal; reviewed as not the current mainline without debugger-host/editor-plugin proof
+
 ### `archive/skill-bundle-retirement` — Retired
 
 SkillBundle / recipe 退役记录
@@ -644,7 +655,7 @@ macOS AX copilot；见 docs/archive/verticals/ax-copilot/
 - [`2026-05-21-repo-state-closure.md`](2026-05-21-repo-state-closure.md)
 - [`2026-05-28-surface-analyze-closure.md`](2026-05-28-surface-analyze-closure.md)
 
-#### design (7)
+#### design (8)
 
 - [`2026-05-21-scroll-scan-design.md`](2026-05-21-scroll-scan-design.md)
 - [`2026-06-02-background-scroll-policy-design.md`](2026-06-02-background-scroll-policy-design.md)
@@ -653,6 +664,14 @@ macOS AX copilot；见 docs/archive/verticals/ax-copilot/
 - [`2026-06-11-media-windows-now-playing-design.md`](2026-06-11-media-windows-now-playing-design.md)
 - [`2026-06-11-runtime-legacy-retirement-design.md`](2026-06-11-runtime-legacy-retirement-design.md)
 - [`2026-07-03-auv-qodana-operating-model.md`](2026-07-03-auv-qodana-operating-model.md)
+
+#### implementation (1)
+
+- [`2026-07-05-auv-feature-gates-implementation-guide.md`](2026-07-05-auv-feature-gates-implementation-guide.md) — Feature gates implementation guide (outdated, see lessons-learned)
+
+#### lessons-learned (1)
+
+- [`2026-07-05-auv-feature-gates-lessons-learned.md`](2026-07-05-auv-feature-gates-lessons-learned.md) — Why feature gates failed: core modules depend on game-specific types
 
 #### evidence (1)
 

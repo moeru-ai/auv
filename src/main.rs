@@ -1184,6 +1184,62 @@ async fn run() -> Result<(), String> {
         output.analysis.annotation_candidates.len()
       );
     }
+    CliCommand::GodotCapabilityQuery { json } => {
+      let capabilities =
+        auv_godot::query_current_capabilities().map_err(|error| error.to_string())?;
+      if json {
+        println!(
+          "{}",
+          serde_json::to_string_pretty(&capabilities)
+            .map_err(|error| format!("failed to serialize Godot capabilities: {error}"))?
+        );
+      } else {
+        println!("transport: {}", capabilities.transport);
+        println!("pid: {}", capabilities.process.pid);
+        println!(
+          "projectPath: {}",
+          capabilities.process.project_path.display()
+        );
+        println!(
+          "airiBridgeConnected: {}",
+          capabilities.process.airi_bridge_connected
+        );
+        println!("features: {}", capabilities.features.join(", "));
+        println!("renderStages: {}", capabilities.render_stages.join(", "));
+        println!("cameraPresets: {}", capabilities.camera_presets.join(", "));
+      }
+    }
+    CliCommand::GodotRenderObserve {
+      output_dir,
+      stages,
+      json,
+    } => {
+      let artifact = auv_godot::export_current_render_observation(output_dir, stages)
+        .map_err(|error| error.to_string())?;
+      if json {
+        println!(
+          "{}",
+          serde_json::to_string_pretty(&artifact)
+            .map_err(|error| format!("failed to serialize Godot render observation: {error}"))?
+        );
+      } else {
+        println!("status: exported");
+        println!("outputDir: {}", artifact.output_dir.display());
+        println!("manifest: {}", artifact.manifest_path.display());
+        println!("finalScreenshot: {}", artifact.final_capture.path.display());
+        println!("stages: {}", artifact.request.stages.join(", "));
+        println!("files: {}", artifact.export.exported_files.len());
+        if let Some(path) = &artifact.context_files.context {
+          println!("context: {}", path.display());
+        }
+        if let Some(path) = &artifact.context_files.view_snapshot {
+          println!("viewSnapshot: {}", path.display());
+        }
+        if let Some(path) = &artifact.context_files.scene {
+          println!("scene: {}", path.display());
+        }
+      }
+    }
     CliCommand::OsuBenchmark {
       beatmap_path,
       output_dir,

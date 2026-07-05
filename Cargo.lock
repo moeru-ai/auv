@@ -377,6 +377,7 @@ dependencies = [
  "auv-game-balatro",
  "auv-game-minecraft",
  "auv-game-osu",
+ "auv-godot",
  "auv-inference-common",
  "auv-media-macos",
  "auv-scan",
@@ -545,6 +546,14 @@ dependencies = [
 [[package]]
 name = "auv-godot"
 version = "0.0.1"
+dependencies = [
+ "auv-driver",
+ "auv-driver-windows",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tungstenite",
+]
 
 [[package]]
 name = "auv-inference-common"

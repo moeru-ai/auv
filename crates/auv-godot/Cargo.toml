@@ -12,3 +12,11 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+auv-driver = { path = "../auv-driver" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tungstenite.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+auv-driver-windows = { path = "../auv-driver-windows" }

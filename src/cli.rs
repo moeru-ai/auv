@@ -80,6 +80,14 @@ pub enum CliCommand {
   AppAnalyze {
     query: String,
   },
+  GodotCapabilityQuery {
+    json: bool,
+  },
+  GodotRenderObserve {
+    output_dir: String,
+    stages: Vec<String>,
+    json: bool,
+  },
   OsuBenchmark {
     beatmap_path: String,
     output_dir: Option<String>,
@@ -310,6 +318,7 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "candidate-action" => parse_candidate_action(arguments),
     "list-commands" => Ok(CliCommand::ListCommandsTombstone),
     "app" => parse_app(arguments),
+    "godot" => parse_godot(arguments),
     "osu" => parse_osu(arguments),
     "inspect" => parse_inspect(arguments),
     "session" => parse_session(arguments),
@@ -349,6 +358,8 @@ USAGE
   auv permissions check [--json]
   auv app probe <bundle-id> [--output-dir <dir>]
   auv app analyze <probe-dir-or-probe-json>
+  auv godot capability-query [--json]
+  auv godot render-observe --output-dir <dir> [--stage <stage>]... [--json]
   auv invoke <command-id> [--dry-run] [--target <application-id>] [--label <text>] [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]
   auv inspect <run-id> [--store-root <path>]
   auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]
@@ -671,6 +682,77 @@ fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
       "unknown app subcommand {other}; use `auv app probe` or `auv app analyze`"
     )),
   }
+}
+
+fn parse_godot(arguments: &[String]) -> AuvResult<CliCommand> {
+  if arguments.len() < 2 || arguments[1] == "--help" || arguments[1] == "-h" {
+    return Err(
+      "usage: auv godot capability-query [--json] | auv godot render-observe --output-dir <dir> [--stage <stage>]... [--json]"
+        .to_string(),
+    );
+  }
+
+  match arguments[1].as_str() {
+    "capability-query" | "capabilities" => {
+      let mut json = false;
+      for argument in &arguments[2..] {
+        match argument.as_str() {
+          "--json" => json = true,
+          other => {
+            return Err(format!(
+              "unknown godot capability-query option {other}; expected --json"
+            ));
+          }
+        }
+      }
+
+      Ok(CliCommand::GodotCapabilityQuery { json })
+    }
+    "render-observe" => parse_godot_render_observe(arguments),
+    other => Err(format!(
+      "unknown godot subcommand {other}; supported subcommands: capability-query, render-observe"
+    )),
+  }
+}
+
+fn parse_godot_render_observe(arguments: &[String]) -> AuvResult<CliCommand> {
+  let mut output_dir = None;
+  let mut stages = Vec::new();
+  let mut json = false;
+  let mut index = 2;
+  while index < arguments.len() {
+    match arguments[index].as_str() {
+      "--output-dir" => {
+        index += 1;
+        if index >= arguments.len() {
+          return Err("missing value for --output-dir".to_string());
+        }
+        output_dir = Some(arguments[index].clone());
+      }
+      "--stage" => {
+        index += 1;
+        if index >= arguments.len() {
+          return Err("missing value for --stage".to_string());
+        }
+        stages.push(arguments[index].clone());
+      }
+      "--json" => json = true,
+      other => {
+        return Err(format!(
+          "unknown godot render-observe option {other}; expected --output-dir, --stage, or --json"
+        ));
+      }
+    }
+    index += 1;
+  }
+
+  Ok(CliCommand::GodotRenderObserve {
+    output_dir: output_dir.ok_or_else(|| {
+      "usage: auv godot render-observe --output-dir <dir> [--stage <stage>]... [--json]".to_string()
+    })?,
+    stages,
+    json,
+  })
 }
 
 fn parse_app_probe(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -2603,6 +2685,49 @@ mod tests {
   }
 
   #[test]
+  fn parse_godot_capability_query() {
+    let command = parse_cli(&[
+      "godot".to_string(),
+      "capability-query".to_string(),
+      "--json".to_string(),
+    ])
+    .expect("godot capability query should parse");
+
+    assert!(matches!(
+      command,
+      CliCommand::GodotCapabilityQuery { json: true }
+    ));
+  }
+
+  #[test]
+  fn parse_godot_render_observe() {
+    let command = parse_cli(&[
+      "godot".to_string(),
+      "render-observe".to_string(),
+      "--output-dir".to_string(),
+      "artifacts/godot-observe".to_string(),
+      "--stage".to_string(),
+      "final".to_string(),
+      "--stage".to_string(),
+      "avatar-edge-mask".to_string(),
+      "--json".to_string(),
+    ])
+    .expect("godot render observe should parse");
+
+    let CliCommand::GodotRenderObserve {
+      output_dir,
+      stages,
+      json,
+    } = command
+    else {
+      panic!("unexpected command");
+    };
+    assert_eq!(output_dir, "artifacts/godot-observe");
+    assert_eq!(stages, vec!["final", "avatar-edge-mask"]);
+    assert!(json);
+  }
+
+  #[test]
   fn help_text_lists_list_commands_tombstone() {
     let help = help_text();
 
@@ -2620,6 +2745,8 @@ mod tests {
       "auv permissions check [--json]",
       "auv app probe <bundle-id> [--output-dir <dir>]",
       "auv app analyze <probe-dir-or-probe-json>",
+      "auv godot capability-query [--json]",
+      "auv godot render-observe --output-dir <dir> [--stage <stage>]... [--json]",
       "auv invoke <command-id>",
       "auv inspect <run-id> [--store-root <path>]",
       "auv inspect serve [--host <host>] [--port <port>] [--store-root <path>] [--enable-write] [--write-token <token>] [--write-token-file <path>] [--no-write-token]",
