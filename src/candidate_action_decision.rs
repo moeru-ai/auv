@@ -3546,7 +3546,8 @@ mod tests {
     assert_eq!(run.artifacts[3].role, "candidate-action-execution");
     let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
       .expect("execute-and-record run should inspect");
-    assert!(inspect.contains("Candidate Action Execution Lineage:"));
+    assert!(inspect.contains("[candidate.action.execution.lineage] (ledger)"));
+    assert!(inspect.contains("[action.transition.lineage] (seam surface)"));
     assert!(inspect.contains("input_delivery=attempted"));
     assert!(inspect.contains("selected_path=window_targeted_mouse"));
 
@@ -4476,7 +4477,8 @@ mod tests {
 
     let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
       .expect("recorded L8b smoke should inspect");
-    assert!(inspect.contains("Candidate Action Execution Lineage:"));
+    assert!(inspect.contains("[candidate.action.execution.lineage] (ledger)"));
+    assert!(inspect.contains("[action.transition.lineage] (seam surface)"));
     assert!(inspect.contains("input_delivery=attempted"));
     assert!(inspect.contains("verification=activation_only+post_action:semantic_match"));
     assert!(inspect.contains("semantic_matched=true"));

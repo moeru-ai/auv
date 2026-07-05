@@ -2695,7 +2695,63 @@ pub fn render_run_text(
     }
   }
 
-  output.push_str("\nCandidate Action Execution Lineage:\n");
+  output.push_str("\n[action.transition.lineage] (seam surface)\n");
+  output.push_str(
+    "Seam read surface: ActionTransitionLineage is the canonical action seam projection for inspect.\n",
+  );
+  if action_transition_lineage.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for lineage in action_transition_lineage {
+      output.push_str(&format!(
+        "- artifact={} status={} execution_id={} candidate={} verification_outcome={} issue={}\n",
+        lineage.artifact.artifact_id,
+        render_action_transition_lineage_status(&lineage.status),
+        lineage.execution_id.as_deref().unwrap_or("n/a"),
+        lineage
+          .pre_state
+          .candidate_local_id
+          .as_deref()
+          .unwrap_or("n/a"),
+        lineage.verification.verification_outcome,
+        lineage.issue.as_deref().unwrap_or("n/a"),
+      ));
+      if let Some(effective) = &lineage.effective_decision {
+        output.push_str(&format!(
+          "  effective_decision: operation={} selected_method={} primary_method={} policy={}\n",
+          effective.operation,
+          effective.selected_method,
+          effective.primary_method,
+          effective.policy,
+        ));
+      }
+      if let Some(planned) = &lineage.planned_decision {
+        output.push_str(&format!(
+          "  planned_decision: operation={} selected_method={} primary_method={} policy={}\n",
+          planned.operation, planned.selected_method, planned.primary_method, planned.policy,
+        ));
+      }
+      if let Some(driver) = &lineage.driver_result {
+        output.push_str(&format!(
+          "  driver_result: selected_path={:?} attempts={} fallback_reason={}\n",
+          driver.selected_path,
+          driver.attempts.len(),
+          driver.fallback_reason.as_deref().unwrap_or("n/a"),
+        ));
+      }
+      if !lineage.known_limits.is_empty() {
+        output.push_str(&format!(
+          "  known_limits={}\n",
+          lineage.known_limits.join(" | ")
+        ));
+      }
+    }
+  }
+
+  output.push_str("\n[candidate.action.execution.lineage] (ledger)\n");
+  output.push_str(
+    "Execution ledger: flat consent/closure/detail fields; prefer action.transition.lineage for seam reads.\n",
+  );
   if candidate_action_execution_lineage.is_empty() {
     output.push_str("- none\n");
   } else {
@@ -2744,56 +2800,6 @@ pub fn render_run_text(
           .map(|value| value.to_string())
           .unwrap_or_else(|| "n/a".to_string()),
       ));
-      if !lineage.known_limits.is_empty() {
-        output.push_str(&format!(
-          "  known_limits={}\n",
-          lineage.known_limits.join(" | ")
-        ));
-      }
-    }
-  }
-
-  output.push_str("\n[action.transition.lineage]\n");
-  if action_transition_lineage.is_empty() {
-    output.push_str("- none\n");
-  } else {
-    for lineage in action_transition_lineage {
-      output.push_str(&format!(
-        "- artifact={} status={} execution_id={} candidate={} verification_outcome={} issue={}\n",
-        lineage.artifact.artifact_id,
-        render_action_transition_lineage_status(&lineage.status),
-        lineage.execution_id.as_deref().unwrap_or("n/a"),
-        lineage
-          .pre_state
-          .candidate_local_id
-          .as_deref()
-          .unwrap_or("n/a"),
-        lineage.verification.verification_outcome,
-        lineage.issue.as_deref().unwrap_or("n/a"),
-      ));
-      if let Some(effective) = &lineage.effective_decision {
-        output.push_str(&format!(
-          "  effective_decision: operation={} selected_method={} primary_method={} policy={}\n",
-          effective.operation,
-          effective.selected_method,
-          effective.primary_method,
-          effective.policy,
-        ));
-      }
-      if let Some(planned) = &lineage.planned_decision {
-        output.push_str(&format!(
-          "  planned_decision: operation={} selected_method={} primary_method={} policy={}\n",
-          planned.operation, planned.selected_method, planned.primary_method, planned.policy,
-        ));
-      }
-      if let Some(driver) = &lineage.driver_result {
-        output.push_str(&format!(
-          "  driver_result: selected_path={:?} attempts={} fallback_reason={}\n",
-          driver.selected_path,
-          driver.attempts.len(),
-          driver.fallback_reason.as_deref().unwrap_or("n/a"),
-        ));
-      }
       if !lineage.known_limits.is_empty() {
         output.push_str(&format!(
           "  known_limits={}\n",
@@ -4561,7 +4567,18 @@ mod tests {
     assert!(output.contains("paired_inspect_artifact=artifact_mc12_query_inspect"));
 
     assert!(output.contains("normalized_artifacts=3"));
-    assert!(output.contains("Candidate Action Execution Lineage:"));
+    assert!(output.contains("[action.transition.lineage] (seam surface)"));
+    assert!(output.contains("[candidate.action.execution.lineage] (ledger)"));
+    let atl_pos = output
+      .find("[action.transition.lineage]")
+      .expect("atl section should be present");
+    let cael_pos = output
+      .find("[candidate.action.execution.lineage]")
+      .expect("cael section should be present");
+    assert!(
+      atl_pos < cael_pos,
+      "seam surface section should precede ledger section"
+    );
     assert!(output.contains("artifact=artifact_candidate_action_execution"));
     assert!(output.contains("execution_id=execution_end_turn"));
     assert!(output.contains("input_delivery=attempted"));
@@ -4574,7 +4591,6 @@ mod tests {
     assert!(output.contains("consent=consent_execute_end_turn"));
     assert!(output.contains("consent_provenance=human_gesture"));
     assert!(output.contains("consent_grade=human_approved"));
-    assert!(output.contains("[action.transition.lineage]"));
     assert!(output.contains("effective_decision:"));
     assert!(output.contains("driver_result:"));
   }

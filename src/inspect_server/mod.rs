@@ -2827,6 +2827,14 @@ eval(scriptBody);
   }
 
   #[test]
+  fn viewer_seam_panel_does_not_reference_cael() {
+    assert!(
+      !super::VIEWER_HTML.contains("candidate_action_execution_lineage"),
+      "viewer seam panel must not reference candidate_action_execution_lineage"
+    );
+  }
+
+  #[test]
   fn viewer_renders_netease_select_proof_hint_hooks() {
     assert!(
       super::VIEWER_HTML.contains("netease-select-proof-hint"),
@@ -2843,6 +2851,10 @@ eval(scriptBody);
     assert!(
       super::VIEWER_HTML.contains("NetEase playlist select proof"),
       "viewer payload should use generic netease select proof label"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("packaging lane only"),
+      "viewer payload should disambiguate packaging hint from seam surface"
     );
     assert!(
       super::VIEWER_HTML.contains("selfTestNeteaseSelectProofHint"),
@@ -2881,6 +2893,10 @@ eval(scriptBody);
     assert!(
       super::VIEWER_HTML.contains("startsWith(\"plan_delivery_mismatch\")"),
       "viewer payload should detect prefixed plan_delivery_mismatch limits"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("actionTransitionIssueHeadline"),
+      "viewer payload should map action transition issue codes to headlines"
     );
     assert!(
       super::VIEWER_HTML.contains("selfTestActionTransitionLineage"),
