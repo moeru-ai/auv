@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+pub mod help;
 pub mod query_live_action;
 
 #[cfg(target_os = "macos")]

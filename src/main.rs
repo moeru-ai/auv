@@ -101,6 +101,18 @@ async fn run() -> Result<(), String> {
     CliCommand::Help => {
       print!("{}", help_text());
     }
+    CliCommand::VerticalsHelp => {
+      print!("{}", auv_cli::verticals::help::render_verticals_help());
+    }
+    CliCommand::MinecraftHelp => {
+      print!(
+        "{}",
+        auv_cli::verticals::minecraft::help::render_minecraft_help()
+      );
+    }
+    CliCommand::OsuHelp => {
+      print!("{}", auv_cli::verticals::osu::help::render_osu_help());
+    }
     CliCommand::PermissionCheck { .. } => {
       unreachable!("permission check is handled before runtime setup")
     }

@@ -8,6 +8,7 @@
 //! names such as `crate::minecraft` remain compatibility re-exports in `lib.rs`.
 
 pub mod balatro;
+pub mod help;
 pub mod minecraft;
 pub mod osu;
 pub(crate) mod query_wired_live_action_status;
