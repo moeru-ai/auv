@@ -1,7 +1,7 @@
 # AUV Core L9-R2 — Core Action Seam Final Closeout Review
 
-**Date:** 2026-07-06  
-**Prerequisites:** [L8 closeout](2026-07-05-auv-core-l8-closeout-review.md) (`close_for_core_seam_surface_gap_only`), [L9 inspect surface](2026-07-05-auv-core-l9-inspect-surface-handoff.md), [L9-R1 landed](2026-07-06-auv-core-l9-r1-inspect-surface-closeout-landed.md)  
+**Date:** 2026-07-06
+**Prerequisites:** [L8 closeout](2026-07-05-auv-core-l8-closeout-review.md) (`close_for_core_seam_surface_gap_only`), [L9 inspect surface](2026-07-05-auv-core-l9-inspect-surface-handoff.md), [L9-R1 landed](2026-07-06-auv-core-l9-r1-inspect-surface-closeout-landed.md)
 **Slice:** docs-only evidence review — no runtime, viewer, MCP, or ACP-C changes
 
 > **Owner summary（中文）：** L8 已确认 producer/read-model/compatibility 核心层合格，唯一缺口是 viewer 未消费 `action_transition_lineage`。L9 补齐 viewer 面板，L9-R1 固化 ATL 消费纪律（issue 硬表、hint 次级、CLI seam-first、viewer 零 CAEL）。本审查对照代码与测试复验五条强制问题；**核心 action seam 可从 `close_for_core_seam_surface_gap_only` 升级为正式 `close`**。ACP-C 仍属 packaging lane，需 owner 点名第三 app，与 seam 毕业正交。
