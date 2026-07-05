@@ -11555,6 +11555,7 @@ mod tests {
       source_promotion_id: "promotion_ready".to_string(),
       source_decision_id: "decision_ready".to_string(),
       candidate_local_id: "promoted-item_end_turn".to_string(),
+      action_resolver_decision: None,
       operation_result: full_execution.operation_result.clone(),
       verification_result: full_execution.verification_result.clone(),
       detail: json!({
@@ -11605,6 +11606,99 @@ mod tests {
       transitions[0].verification.verification_outcome,
       "activation_only"
     );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn action_transition_lineage_marks_legacy_missing_driver_as_partial() {
+    let root = temp_dir("run-read-action-transition-legacy-missing-driver");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_action_transition_legacy_missing_driver");
+    let span = dummy_span(&run.root_span_id);
+    let source_decision_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+      "candidate-action-decision-source.json",
+      &json!({"fixture": "candidate-action-decision"}),
+    );
+    let full_execution = candidate_action_execution_artifact(
+      ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_decision_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_decision_artifact.event_id.clone(),
+      },
+      None,
+      "execution_legacy_missing_driver",
+    );
+    let legacy = LegacyExecutionFixture {
+      artifact_version: "candidate_action_execution_artifact_v0".to_string(),
+      execution_id: "execution_legacy_missing_driver".to_string(),
+      source_candidate_action_decision_artifact: ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_decision_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_decision_artifact.event_id.clone(),
+      },
+      source_candidate_promotion_artifact: None,
+      operation_result_artifact: None,
+      source_promotion_id: "promotion_ready".to_string(),
+      source_decision_id: "decision_ready".to_string(),
+      candidate_local_id: "promoted-item_end_turn".to_string(),
+      action_resolver_decision: Some(full_execution.action_resolver_decision.clone()),
+      operation_result: full_execution.operation_result.clone(),
+      verification_result: full_execution.verification_result.clone(),
+      detail: json!({
+        "input_delivery": "attempted",
+        "operation_status": "completed",
+      }),
+      known_limits: vec!["legacy fixture missing input_action_result".to_string()],
+    };
+
+    let artifacts = vec![
+      source_decision_artifact,
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        1,
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        "candidate-action-execution-legacy-missing-driver.json",
+        &legacy,
+      ),
+    ];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_action_transition_legacy_missing_driver")
+      .expect("run should read back");
+    let transitions = extract_action_transition_lineage(&store, &canonical)
+      .expect("action transition lineage should extract");
+    assert_eq!(transitions.len(), 1);
+    assert_eq!(
+      transitions[0].status,
+      ActionTransitionLineageStatus::Partial
+    );
+    assert_eq!(
+      transitions[0].issue.as_deref(),
+      Some("missing_input_action_result")
+    );
+    assert!(transitions[0].effective_decision.is_some());
+    assert!(transitions[0].driver_result.is_none());
 
     let _ = fs::remove_dir_all(root);
   }
@@ -11899,6 +11993,8 @@ mod tests {
     source_promotion_id: String,
     source_decision_id: String,
     candidate_local_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    action_resolver_decision: Option<ActionResolverDecision>,
     operation_result: OperationResult,
     verification_result: VerificationResult,
     detail: serde_json::Value,
