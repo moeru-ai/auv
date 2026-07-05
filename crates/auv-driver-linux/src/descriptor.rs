@@ -20,7 +20,10 @@ pub const LINUX_DESKTOP_CAPABILITIES: &[&str] = &[
   "control.click-point",
   "control.scroll-point",
   "control.type-text",
+  "control.paste-text-preserve-clipboard",
   "control.press-key",
+  "control.copy",
+  "control.paste",
   "control.focus-ax-node",
   "control.select-ax-node",
 ];
