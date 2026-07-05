@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **296** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **299** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -521,9 +521,10 @@ osu benchmark；G-series 需单独 owner 批准
 - [`2026-06-03-netease-cloud-music-domain-api-design.md`](2026-06-03-netease-cloud-music-domain-api-design.md)
 - [`2026-07-03-cli-output-contract-design.md`](2026-07-03-cli-output-contract-design.md)
 
-#### handoff (1)
+#### handoff (2)
 
 - [`2026-07-05-auv-netease-music-acp-1-handoff.md`](2026-07-05-auv-netease-music-acp-1-handoff.md)
+- [`2026-07-05-auv-netease-music-acp-2-handoff.md`](2026-07-05-auv-netease-music-acp-2-handoff.md)
 
 #### implementation-plan (3)
 

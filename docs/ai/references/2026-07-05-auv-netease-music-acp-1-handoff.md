@@ -82,5 +82,5 @@ git diff --check
 | Slice | Gate |
 |-------|------|
 | ACP-1c | Run-detail hint `NetEase playlist select proof` (generic; landed) |
-| ACP-2 | Live `playlist ls` invoke or additional commands |
+| ACP-2 | Hermetic `netease.playlist.sidebarScanProof` (see [ACP-2 handoff](2026-07-05-auv-netease-music-acp-2-handoff.md)) |
 | L8b reconnect | Owner-approved; failing evidence required |
