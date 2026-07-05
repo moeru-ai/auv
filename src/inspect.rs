@@ -10,6 +10,7 @@ use crate::contract::{
 };
 use crate::model::AuvResult;
 use crate::run_read::{
+  ActionTransitionLineage, ActionTransitionLineageStatus,
   BalatroCardDetectionEvalWitnessInspectReportLineage,
   BalatroCardDetectionEvalWitnessManifestLineage, BalatroCardDetectionQualityInspectReportLineage,
   BalatroCardDetectionQualityManifestLineage, BalatroCardDetectionSemanticInspectReportLineage,
@@ -182,6 +183,13 @@ pub fn list_candidate_action_execution_lineage(
   crate::run_read::list_candidate_action_execution_lineage(store, run_id)
 }
 
+pub fn list_action_transition_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<ActionTransitionLineage>> {
+  crate::run_read::list_action_transition_lineage(store, run_id)
+}
+
 pub fn list_view_memory_writes(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ViewMemory>> {
   crate::inspect_view_parser::list_view_memory_writes(store, run_id)
 }
@@ -198,6 +206,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let candidate_promotion_lineage = list_candidate_promotion_lineage(store, run_id)?;
   let candidate_action_decision_lineage = list_candidate_action_decision_lineage(store, run_id)?;
   let candidate_action_execution_lineage = list_candidate_action_execution_lineage(store, run_id)?;
+  let action_transition_lineage = list_action_transition_lineage(store, run_id)?;
   let minecraft_projection_artifacts = list_minecraft_projection_artifacts(store, run_id)?;
   let minecraft_telemetry_sample_artifacts =
     list_minecraft_telemetry_sample_artifacts(store, run_id)?;
@@ -305,6 +314,7 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &candidate_promotion_lineage,
     &candidate_action_decision_lineage,
     &candidate_action_execution_lineage,
+    &action_transition_lineage,
     &minecraft_projection_artifacts,
     &minecraft_telemetry_sample_artifacts,
     &minecraft_spatial_bundle_manifests,
@@ -404,6 +414,7 @@ pub fn render_run_text(
   candidate_promotion_lineage: &[CandidatePromotionLineage],
   candidate_action_decision_lineage: &[CandidateActionDecisionLineage],
   candidate_action_execution_lineage: &[CandidateActionExecutionLineage],
+  action_transition_lineage: &[ActionTransitionLineage],
   minecraft_projection_artifacts: &[auv_game_minecraft::artifact::MinecraftProjectionArtifact],
   minecraft_telemetry_sample_artifacts: &[MinecraftTelemetrySampleArtifactLineage],
   minecraft_spatial_bundle_manifests: &[MinecraftSpatialBundleManifestLineage],
@@ -2742,7 +2753,65 @@ pub fn render_run_text(
     }
   }
 
+  output.push_str("\n[action.transition.lineage]\n");
+  if action_transition_lineage.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for lineage in action_transition_lineage {
+      output.push_str(&format!(
+        "- artifact={} status={} execution_id={} candidate={} verification_outcome={} issue={}\n",
+        lineage.artifact.artifact_id,
+        render_action_transition_lineage_status(&lineage.status),
+        lineage.execution_id.as_deref().unwrap_or("n/a"),
+        lineage
+          .pre_state
+          .candidate_local_id
+          .as_deref()
+          .unwrap_or("n/a"),
+        lineage.verification.verification_outcome,
+        lineage.issue.as_deref().unwrap_or("n/a"),
+      ));
+      if let Some(effective) = &lineage.effective_decision {
+        output.push_str(&format!(
+          "  effective_decision: operation={} selected_method={} primary_method={} policy={}\n",
+          effective.operation,
+          effective.selected_method,
+          effective.primary_method,
+          effective.policy,
+        ));
+      }
+      if let Some(planned) = &lineage.planned_decision {
+        output.push_str(&format!(
+          "  planned_decision: operation={} selected_method={} primary_method={} policy={}\n",
+          planned.operation, planned.selected_method, planned.primary_method, planned.policy,
+        ));
+      }
+      if let Some(driver) = &lineage.driver_result {
+        output.push_str(&format!(
+          "  driver_result: selected_path={:?} attempts={} fallback_reason={}\n",
+          driver.selected_path,
+          driver.attempts.len(),
+          driver.fallback_reason.as_deref().unwrap_or("n/a"),
+        ));
+      }
+      if !lineage.known_limits.is_empty() {
+        output.push_str(&format!(
+          "  known_limits={}\n",
+          lineage.known_limits.join(" | ")
+        ));
+      }
+    }
+  }
+
   output
+}
+
+fn render_action_transition_lineage_status(status: &ActionTransitionLineageStatus) -> &'static str {
+  match status {
+    ActionTransitionLineageStatus::Ready => "ready",
+    ActionTransitionLineageStatus::Partial => "partial",
+    ActionTransitionLineageStatus::Malformed => "malformed",
+  }
 }
 
 fn render_detector_status(
@@ -2931,6 +3000,8 @@ mod tests {
     VerificationResult,
   };
   use crate::run_read::{
+    ActionResolverDecisionProjection, ActionTransitionLineage, ActionTransitionLineageStatus,
+    ActionTransitionPostState, ActionTransitionPreState, ActionTransitionVerificationProjection,
     ArtifactRefLineage, CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
     CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
     CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
@@ -3372,6 +3443,76 @@ mod tests {
       consent_provenance: Some("human_gesture".to_string()),
       consent_grade: Some("human_approved".to_string()),
       side_effect: Some("single_input_delivered".to_string()),
+      known_limits: vec![
+        "activation_only verification records input delivery, not semantic success".to_string(),
+      ],
+      issue: None,
+    }];
+    let action_transition_lineage = vec![ActionTransitionLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_candidate_action_execution"),
+        span_id: SpanId::new("span_root"),
+        captured_event_id: Some(EventId::new("event_candidate_action_execution")),
+        role: Some("candidate-action-execution".to_string()),
+        path: Some("artifacts/candidate-action-execution.json".to_string()),
+        summary: Some("candidate action execution".to_string()),
+        resolved: true,
+      },
+      status: ActionTransitionLineageStatus::Ready,
+      execution_id: Some("execution_end_turn".to_string()),
+      pre_state: ActionTransitionPreState {
+        source_candidate_promotion_artifact: None,
+        source_promotion_id: Some("promotion_end_turn".to_string()),
+        candidate_local_id: Some("promoted-item_end_turn".to_string()),
+      },
+      effective_decision: Some(ActionResolverDecisionProjection {
+        version: "v0".to_string(),
+        operation: "candidate.action.execute_single".to_string(),
+        target_query: "End Turn".to_string(),
+        primary_method: "pointer-click".to_string(),
+        selected_method: "pointer-click".to_string(),
+        fallback_allowed: false,
+        fallback_used: false,
+        fallback_reason: None,
+        policy: "candidate-coordinate-pointer".to_string(),
+        cursor_disturbance: "warp-visible".to_string(),
+        press_mechanism: "pointer-click".to_string(),
+      }),
+      planned_decision: Some(ActionResolverDecisionProjection {
+        version: "v0".to_string(),
+        operation: "candidate.action.decide_only".to_string(),
+        target_query: "End Turn".to_string(),
+        primary_method: "pointer-click".to_string(),
+        selected_method: "pointer-click".to_string(),
+        fallback_allowed: false,
+        fallback_used: false,
+        fallback_reason: None,
+        policy: "candidate-coordinate-pointer".to_string(),
+        cursor_disturbance: "warp-visible".to_string(),
+        press_mechanism: "pointer-click".to_string(),
+      }),
+      driver_result: Some(auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      )),
+      post_state: ActionTransitionPostState {
+        operation_result_artifact: Some(ArtifactRefLineage {
+          run_id: run_id.clone(),
+          artifact_id: ArtifactId::new("artifact_operation_result"),
+          span_id: SpanId::new("span_root"),
+          captured_event_id: Some(EventId::new("event_operation_result")),
+          role: Some("operation-result".to_string()),
+          path: Some("artifacts/operation-result.json".to_string()),
+          summary: Some("operation result".to_string()),
+          resolved: true,
+        }),
+        operation_status: Some("completed".to_string()),
+      },
+      verification: ActionTransitionVerificationProjection {
+        verification_outcome: "activation_only".to_string(),
+        verification_reason: None,
+        semantic_matched: None,
+      },
       known_limits: vec![
         "activation_only verification records input delivery, not semantic success".to_string(),
       ],
@@ -4234,6 +4375,7 @@ mod tests {
       &candidate_promotion_lineage,
       &candidate_action_decision_lineage,
       &candidate_action_execution_lineage,
+      &action_transition_lineage,
       &minecraft_projection_artifacts,
       &minecraft_telemetry_sample_artifacts,
       &[],
@@ -4432,6 +4574,9 @@ mod tests {
     assert!(output.contains("consent=consent_execute_end_turn"));
     assert!(output.contains("consent_provenance=human_gesture"));
     assert!(output.contains("consent_grade=human_approved"));
+    assert!(output.contains("[action.transition.lineage]"));
+    assert!(output.contains("effective_decision:"));
+    assert!(output.contains("driver_result:"));
   }
 
   #[test]
@@ -4460,6 +4605,7 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
       &[],
       &[],
       &[],
@@ -4765,6 +4911,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       &manifests,
       &[],
       &[],
@@ -4932,6 +5079,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       &manifests,
       &[],
       &[],
@@ -5067,6 +5215,7 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
       &[],
       &[],
       &[],
@@ -5266,6 +5415,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       &summaries,
       &[],
       &[],
@@ -5433,6 +5583,7 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
       &[],
       &[],
       &[],
@@ -5661,6 +5812,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       &[job_manifest],
       &duplicate_reports,
       &[],
@@ -5858,6 +6010,7 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
       &[],
       &[],
       &[],
@@ -6069,6 +6222,7 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
       &[],
       &[],
       &[],
@@ -6313,6 +6467,7 @@ mod tests {
       &[],
       &[],
       &[],
+      &[],
       &[holdout_manifest],
       &duplicate_reports,
       &[],
@@ -6428,6 +6583,7 @@ mod tests {
 
     let output = render_run_text(
       &run,
+      &[],
       &[],
       &[],
       &[],

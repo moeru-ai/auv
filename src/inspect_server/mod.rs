@@ -380,6 +380,9 @@ async fn get_run(
   let candidate_action_execution_lineage =
     crate::run_read::extract_candidate_action_execution_lineage(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
+  let action_transition_lineage =
+    crate::run_read::extract_action_transition_lineage(state.store.as_ref(), &run)
+      .map_err(InspectHttpError::from_store)?;
   let view_parser =
     crate::inspect_view_parser::build_view_parser_inspect_for_run(state.store.as_ref(), &run)
       .map_err(InspectHttpError::from_store)?;
@@ -395,6 +398,7 @@ async fn get_run(
       candidate_promotion_lineage,
       candidate_action_decision_lineage,
       candidate_action_execution_lineage,
+      action_transition_lineage,
       view_parser,
       view_parser_summary,
     })
@@ -610,6 +614,8 @@ struct InspectRunResponse {
   candidate_action_decision_lineage: Vec<crate::run_read::CandidateActionDecisionLineage>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   candidate_action_execution_lineage: Vec<crate::run_read::CandidateActionExecutionLineage>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  action_transition_lineage: Vec<crate::run_read::ActionTransitionLineage>,
   view_parser: ViewParserInspect,
   view_parser_summary: ViewParserListSummary,
 }
@@ -2132,6 +2138,15 @@ mod tests {
     assert_eq!(
       run["candidate_action_execution_lineage"][0]["consent_id"],
       "consent_execute_end_turn"
+    );
+    assert_eq!(run["action_transition_lineage"][0]["status"], "ready");
+    assert_eq!(
+      run["action_transition_lineage"][0]["effective_decision"]["selected_method"],
+      "pointer-click"
+    );
+    assert_eq!(
+      run["action_transition_lineage"][0]["verification"]["verification_outcome"],
+      "activation_only"
     );
     assert!(
       run.get("spans").is_none(),

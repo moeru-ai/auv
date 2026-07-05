@@ -12,6 +12,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
+use crate::action_resolver_decision::ActionResolverDecision;
 use crate::candidate_action_decision::{
   CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
 };
@@ -1296,6 +1297,83 @@ pub struct CandidateActionExecutionLineage {
   pub issue: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionTransitionLineageStatus {
+  Ready,
+  Partial,
+  Malformed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ActionResolverDecisionProjection {
+  pub version: String,
+  pub operation: String,
+  pub target_query: String,
+  pub primary_method: String,
+  pub selected_method: String,
+  pub fallback_allowed: bool,
+  pub fallback_used: bool,
+  pub fallback_reason: Option<String>,
+  pub policy: String,
+  pub cursor_disturbance: String,
+  pub press_mechanism: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ActionTransitionPreState {
+  pub source_candidate_promotion_artifact: Option<ArtifactRefLineage>,
+  pub source_promotion_id: Option<String>,
+  pub candidate_local_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ActionTransitionPostState {
+  pub operation_result_artifact: Option<ArtifactRefLineage>,
+  pub operation_status: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ActionTransitionVerificationProjection {
+  pub verification_outcome: String,
+  pub verification_reason: Option<String>,
+  pub semantic_matched: Option<bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ActionTransitionLineage {
+  pub artifact: ArtifactRefLineage,
+  pub status: ActionTransitionLineageStatus,
+  pub execution_id: Option<String>,
+  pub pre_state: ActionTransitionPreState,
+  pub effective_decision: Option<ActionResolverDecisionProjection>,
+  pub planned_decision: Option<ActionResolverDecisionProjection>,
+  pub driver_result: Option<auv_driver::InputActionResult>,
+  pub post_state: ActionTransitionPostState,
+  pub verification: ActionTransitionVerificationProjection,
+  pub known_limits: Vec<String>,
+  pub issue: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+struct LegacyCandidateActionExecutionArtifact {
+  pub artifact_version: Option<String>,
+  pub execution_id: Option<String>,
+  pub source_candidate_action_decision_artifact: Option<ArtifactRef>,
+  pub source_candidate_promotion_artifact: Option<ArtifactRef>,
+  pub operation_result_artifact: Option<ArtifactRef>,
+  pub source_promotion_id: Option<String>,
+  pub source_decision_id: Option<String>,
+  pub candidate_local_id: Option<String>,
+  pub action_resolver_decision: Option<ActionResolverDecision>,
+  pub input_action_result: Option<auv_driver::InputActionResult>,
+  pub operation_result: Option<OperationResult>,
+  pub verification_result: Option<VerificationResult>,
+  pub detail: Option<serde_json::Value>,
+  #[serde(default)]
+  pub known_limits: Vec<String>,
+}
+
 pub(crate) fn list_verifications(
   store: &LocalStore,
   run_id: &str,
@@ -1434,6 +1512,14 @@ pub(crate) fn list_candidate_action_execution_lineage(
 ) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
   let run = store.read_run(run_id)?;
   extract_candidate_action_execution_lineage(store, &run)
+}
+
+pub fn list_action_transition_lineage(
+  store: &LocalStore,
+  run_id: &str,
+) -> AuvResult<Vec<ActionTransitionLineage>> {
+  let run = store.read_run(run_id)?;
+  extract_action_transition_lineage(store, &run)
 }
 
 pub(crate) fn list_minecraft_projection_artifacts(
@@ -5581,6 +5667,44 @@ pub(crate) fn extract_candidate_action_execution_lineage(
   Ok(lineage)
 }
 
+pub(crate) fn extract_action_transition_lineage(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> AuvResult<Vec<ActionTransitionLineage>> {
+  let mut lineage = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE {
+      continue;
+    }
+
+    let execution_artifact = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    if !is_json_mime(&artifact.mime_type) {
+      lineage.push(malformed_action_transition_lineage(
+        execution_artifact,
+        format!(
+          "candidate-action-execution artifact mime_type {} is not JSON",
+          artifact.mime_type
+        ),
+      ));
+      continue;
+    }
+
+    match read_candidate_action_execution_for_transition(store, run.run.run_id.as_str(), artifact) {
+      Ok(ActionTransitionExecutionRead::Canonical(execution)) => lineage.push(
+        action_transition_lineage_entry(store, run, artifact, execution),
+      ),
+      Ok(ActionTransitionExecutionRead::Legacy(legacy)) => lineage.push(
+        legacy_action_transition_lineage_entry(run, artifact, legacy),
+      ),
+      Err(error) => lineage.push(malformed_action_transition_lineage(
+        execution_artifact,
+        error,
+      )),
+    }
+  }
+  Ok(lineage)
+}
+
 fn is_json_mime(mime_type: &str) -> bool {
   mime_type == "application/json" || mime_type.ends_with("+json")
 }
@@ -5834,6 +5958,365 @@ fn candidate_action_execution_lineage_entry(
       &execution.side_effect,
     )),
     known_limits: execution.known_limits,
+    issue,
+  }
+}
+
+fn project_action_resolver_decision(
+  decision: &ActionResolverDecision,
+) -> ActionResolverDecisionProjection {
+  ActionResolverDecisionProjection {
+    version: decision.version.clone(),
+    operation: decision.operation.clone(),
+    target_query: decision.target_query.clone(),
+    primary_method: decision.primary_method.clone(),
+    selected_method: decision.selected_method.clone(),
+    fallback_allowed: decision.fallback_allowed,
+    fallback_used: decision.fallback_used,
+    fallback_reason: decision.fallback_reason.clone(),
+    policy: decision.policy.clone(),
+    cursor_disturbance: decision.cursor_disturbance.clone(),
+    press_mechanism: decision.press_mechanism.clone(),
+  }
+}
+
+enum ActionTransitionExecutionRead {
+  Canonical(CandidateActionExecutionArtifact),
+  Legacy(LegacyCandidateActionExecutionArtifact),
+}
+
+fn read_candidate_action_execution_for_transition(
+  store: &LocalStore,
+  run_id: &str,
+  artifact: &ArtifactRecordV1Alpha1,
+) -> AuvResult<ActionTransitionExecutionRead> {
+  let (file, artifact_path) = open_artifact_file(
+    store,
+    run_id,
+    artifact,
+    CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+  )?;
+  let value: serde_json::Value =
+    serde_json::from_reader(BufReader::new(file)).map_err(|error| {
+      format!(
+        "failed to parse {} artifact {} for run {} from {}: {}",
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        artifact.artifact_id,
+        run_id,
+        artifact_path.display(),
+        error
+      )
+    })?;
+
+  if let Ok(execution) = serde_json::from_value::<CandidateActionExecutionArtifact>(value.clone()) {
+    return Ok(ActionTransitionExecutionRead::Canonical(execution));
+  }
+
+  serde_json::from_value::<LegacyCandidateActionExecutionArtifact>(value)
+    .map(ActionTransitionExecutionRead::Legacy)
+    .map_err(|error| {
+      format!(
+        "failed to parse {} artifact {} for run {} from {}: {}",
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        artifact.artifact_id,
+        run_id,
+        artifact_path.display(),
+        error
+      )
+    })
+}
+
+fn read_candidate_action_decision_artifact(
+  store: &LocalStore,
+  run: &CanonicalRun,
+  reference: &ArtifactRef,
+) -> Option<CandidateActionDecisionArtifact> {
+  let resolved = resolve_artifact_ref(run, reference);
+  if !resolved.resolved {
+    return None;
+  }
+  let record = run.artifacts.iter().find(|artifact| {
+    artifact.artifact_id == reference.artifact_id && artifact.span_id == reference.span_id
+  })?;
+  if !is_json_mime(&record.mime_type) {
+    return None;
+  }
+  read_artifact_json::<CandidateActionDecisionArtifact>(
+    store,
+    run.run.run_id.as_str(),
+    record,
+    CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+  )
+  .ok()
+}
+
+fn action_transition_verification_projection(
+  execution: &CandidateActionExecutionArtifact,
+) -> ActionTransitionVerificationProjection {
+  let claims = operation_result_verification_claims(&execution.operation_result);
+  let focus: Vec<&VerificationResult> = if claims.is_empty() {
+    vec![&execution.verification_result]
+  } else {
+    claims
+  };
+
+  if focus.is_empty() {
+    return ActionTransitionVerificationProjection {
+      verification_outcome: "absent".to_string(),
+      verification_reason: execution
+        .operation_result
+        .known_limits
+        .first()
+        .cloned()
+        .or_else(|| {
+          Some("no VerificationResult on operation-result; Layer 3 evidence absent".to_string())
+        }),
+      semantic_matched: None,
+    };
+  }
+
+  let (verification_outcome, verification_reason) =
+    project_verification_outcome_from_claims(&focus);
+  let semantic_matched = focus
+    .iter()
+    .find(|claim| claim.semantic_matched.is_some())
+    .or_else(|| focus.first())
+    .and_then(|claim| claim.semantic_matched);
+
+  ActionTransitionVerificationProjection {
+    verification_outcome,
+    verification_reason,
+    semantic_matched,
+  }
+}
+
+fn legacy_action_transition_verification_projection(
+  operation_result: Option<&OperationResult>,
+  verification_result: Option<&VerificationResult>,
+) -> ActionTransitionVerificationProjection {
+  if let Some(operation_result) = operation_result {
+    let claims = operation_result_verification_claims(operation_result);
+    let focus: Vec<&VerificationResult> = if claims.is_empty() {
+      verification_result.into_iter().collect()
+    } else {
+      claims
+    };
+
+    if !focus.is_empty() {
+      let (verification_outcome, verification_reason) =
+        project_verification_outcome_from_claims(&focus);
+      let semantic_matched = focus
+        .iter()
+        .find(|claim| claim.semantic_matched.is_some())
+        .or_else(|| focus.first())
+        .and_then(|claim| claim.semantic_matched);
+      return ActionTransitionVerificationProjection {
+        verification_outcome,
+        verification_reason,
+        semantic_matched,
+      };
+    }
+  }
+
+  if let Some(verification_result) = verification_result {
+    let focus = vec![verification_result];
+    let (verification_outcome, verification_reason) =
+      project_verification_outcome_from_claims(&focus);
+    return ActionTransitionVerificationProjection {
+      verification_outcome,
+      verification_reason,
+      semantic_matched: verification_result.semantic_matched,
+    };
+  }
+
+  ActionTransitionVerificationProjection {
+    verification_outcome: "absent".to_string(),
+    verification_reason: Some(
+      "no VerificationResult on operation-result; Layer 3 evidence absent".to_string(),
+    ),
+    semantic_matched: None,
+  }
+}
+
+fn classify_action_transition_lineage(
+  execution: &CandidateActionExecutionArtifact,
+  effective_decision: Option<&ActionResolverDecisionProjection>,
+  planned_decision: Option<&ActionResolverDecisionProjection>,
+  known_limits: &[String],
+) -> (ActionTransitionLineageStatus, Option<String>) {
+  let mut issue = None;
+  let mut status = ActionTransitionLineageStatus::Ready;
+
+  if effective_decision.is_none() {
+    return (
+      ActionTransitionLineageStatus::Partial,
+      Some("missing_action_resolver_decision".to_string()),
+    );
+  }
+
+  let has_plan_delivery_mismatch = known_limits
+    .iter()
+    .any(|limit| limit.starts_with("plan_delivery_mismatch:"));
+
+  if has_plan_delivery_mismatch {
+    status = ActionTransitionLineageStatus::Partial;
+  }
+
+  if let (Some(planned), Some(effective)) = (planned_decision, effective_decision) {
+    if planned.selected_method != effective.selected_method && !has_plan_delivery_mismatch {
+      status = ActionTransitionLineageStatus::Partial;
+      issue = Some(format!(
+        "plan_effective_method_divergence: planned={} effective={}",
+        planned.selected_method, effective.selected_method
+      ));
+    }
+  }
+
+  if execution.input_action_result.attempts.is_empty()
+    && detail_string(&execution.detail, &["input_delivery"]) != Some("not_attempted".to_string())
+  {
+    status = ActionTransitionLineageStatus::Partial;
+    issue = issue.or(Some("missing_input_action_result".to_string()));
+  }
+
+  (status, issue)
+}
+
+fn action_transition_lineage_entry(
+  store: &LocalStore,
+  run: &CanonicalRun,
+  artifact: &ArtifactRecordV1Alpha1,
+  execution: CandidateActionExecutionArtifact,
+) -> ActionTransitionLineage {
+  let source_candidate_promotion_artifact = execution
+    .source_candidate_promotion_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let operation_result_artifact = execution
+    .operation_result_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let planned_decision = read_candidate_action_decision_artifact(
+    store,
+    run,
+    &execution.source_candidate_action_decision_artifact,
+  )
+  .map(|decision| project_action_resolver_decision(&decision.action_resolver_decision));
+  let effective_decision = Some(project_action_resolver_decision(
+    &execution.action_resolver_decision,
+  ));
+  let driver_result = Some(execution.input_action_result.clone());
+  let known_limits = execution.known_limits.clone();
+  let (status, issue) = classify_action_transition_lineage(
+    &execution,
+    effective_decision.as_ref(),
+    planned_decision.as_ref(),
+    &known_limits,
+  );
+  let verification = action_transition_verification_projection(&execution);
+
+  ActionTransitionLineage {
+    artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
+    status,
+    execution_id: Some(execution.execution_id),
+    pre_state: ActionTransitionPreState {
+      source_candidate_promotion_artifact,
+      source_promotion_id: Some(execution.source_promotion_id),
+      candidate_local_id: Some(execution.candidate_local_id),
+    },
+    effective_decision,
+    planned_decision,
+    driver_result,
+    post_state: ActionTransitionPostState {
+      operation_result_artifact,
+      operation_status: detail_string(&execution.detail, &["operation_status"]),
+    },
+    verification,
+    known_limits,
+    issue,
+  }
+}
+
+fn malformed_action_transition_lineage(
+  artifact: ArtifactRefLineage,
+  issue: String,
+) -> ActionTransitionLineage {
+  ActionTransitionLineage {
+    artifact,
+    status: ActionTransitionLineageStatus::Malformed,
+    execution_id: None,
+    pre_state: ActionTransitionPreState {
+      source_candidate_promotion_artifact: None,
+      source_promotion_id: None,
+      candidate_local_id: None,
+    },
+    effective_decision: None,
+    planned_decision: None,
+    driver_result: None,
+    post_state: ActionTransitionPostState {
+      operation_result_artifact: None,
+      operation_status: None,
+    },
+    verification: ActionTransitionVerificationProjection {
+      verification_outcome: "absent".to_string(),
+      verification_reason: None,
+      semantic_matched: None,
+    },
+    known_limits: Vec::new(),
+    issue: Some(issue),
+  }
+}
+
+fn legacy_action_transition_lineage_entry(
+  run: &CanonicalRun,
+  artifact: &ArtifactRecordV1Alpha1,
+  legacy: LegacyCandidateActionExecutionArtifact,
+) -> ActionTransitionLineage {
+  let source_candidate_promotion_artifact = legacy
+    .source_candidate_promotion_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let operation_result_artifact = legacy
+    .operation_result_artifact
+    .as_ref()
+    .map(|reference| resolve_artifact_ref(run, reference));
+  let effective_decision = legacy
+    .action_resolver_decision
+    .as_ref()
+    .map(project_action_resolver_decision);
+  let verification = legacy_action_transition_verification_projection(
+    legacy.operation_result.as_ref(),
+    legacy.verification_result.as_ref(),
+  );
+  let issue = if effective_decision.is_none() {
+    Some("missing_action_resolver_decision".to_string())
+  } else if legacy.input_action_result.is_none() {
+    Some("missing_input_action_result".to_string())
+  } else {
+    None
+  };
+
+  ActionTransitionLineage {
+    artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
+    status: ActionTransitionLineageStatus::Partial,
+    execution_id: legacy.execution_id,
+    pre_state: ActionTransitionPreState {
+      source_candidate_promotion_artifact,
+      source_promotion_id: legacy.source_promotion_id,
+      candidate_local_id: legacy.candidate_local_id,
+    },
+    effective_decision,
+    planned_decision: None,
+    driver_result: legacy.input_action_result,
+    post_state: ActionTransitionPostState {
+      operation_result_artifact,
+      operation_status: legacy
+        .detail
+        .as_ref()
+        .and_then(|detail| detail_string(detail, &["operation_status"])),
+    },
+    verification,
+    known_limits: legacy.known_limits,
     issue,
   }
 }
@@ -7386,7 +7869,7 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    ArtifactRefLineage, CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+    ActionTransitionLineageStatus, ArtifactRefLineage, CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
     CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE, CANDIDATE_PROMOTION_ARTIFACT_ROLE,
     CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState,
     CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus,
@@ -7402,9 +7885,10 @@ mod tests {
     derive_minecraft_training_result_quality_baseline_report,
     derive_minecraft_training_result_quality_verdict,
     derive_minecraft_training_result_spatial_query_action_readiness,
-    derive_osu_query_wired_live_action_summary, extract_candidate_action_decision_lineage,
-    extract_candidate_action_execution_lineage, extract_candidate_promotion_lineage,
-    extract_detector_recognition_lineage, extract_minecraft_holdout_render_quality_inspect_reports,
+    derive_osu_query_wired_live_action_summary, extract_action_transition_lineage,
+    extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
+    extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
+    extract_minecraft_holdout_render_quality_inspect_reports,
     extract_minecraft_holdout_render_quality_manifests,
     extract_minecraft_training_job_inspect_reports, extract_minecraft_training_job_manifests,
     extract_minecraft_training_launch_inspect_reports, extract_minecraft_training_launch_manifests,
@@ -7418,7 +7902,7 @@ mod tests {
     extract_minecraft_training_result_semantic_inspect_reports,
     extract_minecraft_training_result_semantic_manifests,
     extract_minecraft_training_result_spatial_query_manifests, extract_observation_snapshots,
-    extract_verifications, list_candidate_action_decision_lineage,
+    extract_verifications, list_action_transition_lineage, list_candidate_action_decision_lineage,
     list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
     list_detector_recognition_lineage, list_minecraft_query_wired_live_action_summaries,
     list_minecraft_spatial_bundle_manifests, list_minecraft_training_job_inspect_reports,
@@ -10886,6 +11370,242 @@ mod tests {
         .expect("candidate action execution lineage should list");
     assert_eq!(listed, extracted);
 
+    let transitions = extract_action_transition_lineage(&store, &canonical)
+      .expect("action transition lineage should extract");
+    assert_eq!(transitions.len(), 5);
+    assert_eq!(transitions[0].status, ActionTransitionLineageStatus::Ready);
+    assert_eq!(
+      transitions[0]
+        .effective_decision
+        .as_ref()
+        .map(|decision| decision.selected_method.as_str()),
+      Some("pointer-click")
+    );
+    assert!(transitions[0].driver_result.is_some());
+    assert_eq!(
+      transitions[0].verification.verification_outcome,
+      "activation_only"
+    );
+    assert_eq!(transitions[3].verification.verification_outcome, "passed");
+    assert_eq!(
+      transitions[4].status,
+      ActionTransitionLineageStatus::Malformed
+    );
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn action_transition_lineage_surfaces_plan_delivery_mismatch_from_l8b() {
+    let root = temp_dir("run-read-action-transition-mismatch");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_action_transition_mismatch");
+    let span = dummy_span(&run.root_span_id);
+
+    let mut l8a = candidate_action_decision_artifact(
+      None,
+      "decision_ax_plan",
+      "promotion_ready",
+      "promoted-item_end_turn",
+    );
+    l8a.action_resolver_decision.selected_method = "ax-action".to_string();
+    l8a.action_resolver_decision.primary_method = "ax-action".to_string();
+    l8a.action_resolver_decision.policy = "candidate-ax-node".to_string();
+
+    let decision_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+      "candidate-action-decision-ax-plan.json",
+      &l8a,
+    );
+    let operation_result_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      1,
+      "operation-result",
+      "candidate-action-operation-result.json",
+      &json!({"fixture": "operation-result"}),
+    );
+
+    let mut execution = candidate_action_execution_artifact(
+      ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: decision_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: decision_artifact.event_id.clone(),
+      },
+      Some(ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: operation_result_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: operation_result_artifact.event_id.clone(),
+      }),
+      "execution_plan_delivery_mismatch",
+    );
+    execution.action_resolver_decision.selected_method = "pointer-click".to_string();
+    execution
+      .known_limits
+      .push("plan_delivery_mismatch: l8a_selected=ax-action effective=pointer-click".to_string());
+
+    let artifacts = vec![
+      decision_artifact,
+      operation_result_artifact,
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        2,
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        "candidate-action-execution-mismatch.json",
+        &execution,
+      ),
+    ];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_action_transition_mismatch")
+      .expect("run should read back");
+    let transitions = extract_action_transition_lineage(&store, &canonical)
+      .expect("action transition lineage should extract");
+    assert_eq!(transitions.len(), 1);
+    assert_eq!(
+      transitions[0].status,
+      ActionTransitionLineageStatus::Partial
+    );
+    assert_eq!(
+      transitions[0]
+        .planned_decision
+        .as_ref()
+        .map(|decision| decision.selected_method.as_str()),
+      Some("ax-action")
+    );
+    assert_eq!(
+      transitions[0]
+        .effective_decision
+        .as_ref()
+        .map(|decision| decision.selected_method.as_str()),
+      Some("pointer-click")
+    );
+    assert!(
+      transitions[0]
+        .known_limits
+        .iter()
+        .any(|limit| limit.starts_with("plan_delivery_mismatch:"))
+    );
+
+    let listed = list_action_transition_lineage(&store, "run_read_action_transition_mismatch")
+      .expect("action transition lineage should list");
+    assert_eq!(listed, transitions);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn action_transition_lineage_marks_legacy_missing_decision_as_partial() {
+    let root = temp_dir("run-read-action-transition-legacy-missing-decision");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run = dummy_run("run_read_action_transition_legacy_missing_decision");
+    let span = dummy_span(&run.root_span_id);
+    let source_decision_artifact = stage_json_artifact(
+      &store,
+      &root,
+      &run.run_id,
+      &span.span_id,
+      0,
+      CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
+      "candidate-action-decision-source.json",
+      &json!({"fixture": "candidate-action-decision"}),
+    );
+    let full_execution = candidate_action_execution_artifact(
+      ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_decision_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_decision_artifact.event_id.clone(),
+      },
+      None,
+      "execution_legacy_missing_decision",
+    );
+    let legacy = LegacyExecutionFixture {
+      artifact_version: "candidate_action_execution_artifact_v0".to_string(),
+      execution_id: "execution_legacy_missing_decision".to_string(),
+      source_candidate_action_decision_artifact: ArtifactRef {
+        run_id: run.run_id.clone(),
+        artifact_id: source_decision_artifact.artifact_id.clone(),
+        span_id: span.span_id.clone(),
+        captured_event_id: source_decision_artifact.event_id.clone(),
+      },
+      source_candidate_promotion_artifact: None,
+      operation_result_artifact: None,
+      source_promotion_id: "promotion_ready".to_string(),
+      source_decision_id: "decision_ready".to_string(),
+      candidate_local_id: "promoted-item_end_turn".to_string(),
+      operation_result: full_execution.operation_result.clone(),
+      verification_result: full_execution.verification_result.clone(),
+      detail: json!({
+        "input_delivery": "attempted",
+        "operation_status": "completed",
+      }),
+      known_limits: vec!["legacy fixture missing decision and driver result".to_string()],
+    };
+
+    let artifacts = vec![
+      source_decision_artifact,
+      stage_json_artifact(
+        &store,
+        &root,
+        &run.run_id,
+        &span.span_id,
+        1,
+        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+        "candidate-action-execution-legacy-missing-decision.json",
+        &legacy,
+      ),
+    ];
+
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run,
+        spans: vec![span],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("run snapshot should persist");
+
+    let canonical = store
+      .read_run("run_read_action_transition_legacy_missing_decision")
+      .expect("run should read back");
+    let transitions = extract_action_transition_lineage(&store, &canonical)
+      .expect("action transition lineage should extract");
+    assert_eq!(transitions.len(), 1);
+    assert_eq!(
+      transitions[0].status,
+      ActionTransitionLineageStatus::Partial
+    );
+    assert_eq!(
+      transitions[0].issue.as_deref(),
+      Some("missing_action_resolver_decision")
+    );
+    assert_eq!(
+      transitions[0].verification.verification_outcome,
+      "activation_only"
+    );
+
     let _ = fs::remove_dir_all(root);
   }
 
@@ -11167,6 +11887,22 @@ mod tests {
         "activation_only verification records input delivery, not semantic success".to_string(),
       ],
     }
+  }
+
+  #[derive(Serialize)]
+  struct LegacyExecutionFixture {
+    artifact_version: String,
+    execution_id: String,
+    source_candidate_action_decision_artifact: ArtifactRef,
+    source_candidate_promotion_artifact: Option<ArtifactRef>,
+    operation_result_artifact: Option<ArtifactRef>,
+    source_promotion_id: String,
+    source_decision_id: String,
+    candidate_local_id: String,
+    operation_result: OperationResult,
+    verification_result: VerificationResult,
+    detail: serde_json::Value,
+    known_limits: Vec<String>,
   }
 
   fn candidate_action_execution_with_semantic_artifact(
