@@ -572,6 +572,12 @@ pub fn build_candidate_action_execution_artifact(
   let verification_summary =
     execution_verification_summary(&verification_result, &request.post_action_verifications);
   let operation_completed = readiness_ready && succeeded && semantic_matched != Some(false);
+  let plan = delivery_plan(candidate, decision)?;
+  let (action_resolver_decision, reconcile_known_limits) = reconcile_effective_decision(
+    &decision.action_resolver_decision,
+    &plan,
+    &input_action_result,
+  );
   let operation_result = OperationResult {
     api_version: crate::contract::OPERATION_RESULT_API_VERSION.to_string(),
     run_id: execution_run_id,
@@ -622,8 +628,13 @@ pub fn build_candidate_action_execution_artifact(
     "source_decision_id": decision.decision_id,
     "candidate_local_id": candidate.candidate_local_id,
     "action": decision_action(decision),
+    "plan_method": decision.action_resolver_decision.selected_method,
+    "effective_method": action_resolver_decision.selected_method,
     "readiness_debug": request.readiness_debug.clone().unwrap_or(serde_json::Value::Null),
   });
+
+  let mut known_limits = execution_known_limits(promotion, candidate);
+  known_limits.extend(reconcile_known_limits);
 
   Ok(CandidateActionExecutionArtifact {
     artifact_version: CANDIDATE_ACTION_EXECUTION_ARTIFACT_VERSION.to_string(),
@@ -634,7 +645,7 @@ pub fn build_candidate_action_execution_artifact(
     source_promotion_id: promotion.promotion_id.clone(),
     source_decision_id: decision.decision_id.clone(),
     candidate_local_id: candidate.candidate_local_id.clone(),
-    action_resolver_decision: decision.action_resolver_decision.clone(),
+    action_resolver_decision,
     consent,
     readiness,
     input_action_result,
@@ -646,7 +657,7 @@ pub fn build_candidate_action_execution_artifact(
       CandidateActionExecutionSideEffect::BlockedNotReady
     },
     detail,
-    known_limits: execution_known_limits(promotion, candidate),
+    known_limits,
   })
 }
 
@@ -903,6 +914,84 @@ pub fn delivery_plan(
     window_y,
     click_count: 1,
   })
+}
+
+fn effective_selected_method_from_input(
+  delivery_plan: &CandidateActionDeliveryPlan,
+  input_action_result: &auv_driver::InputActionResult,
+) -> (String, Option<String>) {
+  match input_action_result.selected_path {
+    auv_driver::InputDeliveryPath::WindowTargetedMouse => ("pointer-click".to_string(), None),
+    auv_driver::InputDeliveryPath::AxPress => ("ax-action".to_string(), None),
+    auv_driver::InputDeliveryPath::WindowTargetedKeyboard => {
+      ("window-targeted-type-text".to_string(), None)
+    }
+    unknown_path => (
+      delivery_plan.selected_method.clone(),
+      Some(format!(
+        "effective_method_unmapped_delivery_path: selected_path={}",
+        serde_json::to_string(&unknown_path).unwrap_or_else(|_| "\"unknown\"".to_string())
+      )),
+    ),
+  }
+}
+
+fn apply_effective_method_metadata(decision: &mut ActionResolverDecision, effective_method: &str) {
+  match effective_method {
+    "pointer-click" => {
+      decision.cursor_disturbance = "warp-visible".to_string();
+      decision.press_mechanism = "pointer-click".to_string();
+    }
+    "ax-action" => {
+      decision.cursor_disturbance = "none".to_string();
+      decision.press_mechanism = "ax-action".to_string();
+    }
+    "window-targeted-type-text" => {
+      decision.cursor_disturbance = "none".to_string();
+      decision.press_mechanism = "window-targeted-type-text".to_string();
+    }
+    _ => {}
+  }
+}
+
+pub(crate) fn reconcile_effective_decision(
+  l8a_plan: &ActionResolverDecision,
+  delivery_plan: &CandidateActionDeliveryPlan,
+  input_action_result: &auv_driver::InputActionResult,
+) -> (ActionResolverDecision, Vec<String>) {
+  let (effective_method, unmapped_path_limit) =
+    effective_selected_method_from_input(delivery_plan, input_action_result);
+  let plan_delivery_mismatch = l8a_plan.selected_method != effective_method;
+
+  let mut reconciled = l8a_plan.clone();
+  reconciled.selected_method = effective_method.clone();
+  reconciled.fallback_used = input_action_result.fallback_reason.is_some()
+    || plan_delivery_mismatch
+    || l8a_plan.fallback_used;
+  reconciled.fallback_reason = input_action_result.fallback_reason.clone().or_else(|| {
+    if plan_delivery_mismatch {
+      Some(format!(
+        "l8a plan selected {} but delivery used {}",
+        l8a_plan.selected_method, effective_method
+      ))
+    } else {
+      None
+    }
+  });
+  apply_effective_method_metadata(&mut reconciled, &effective_method);
+
+  let mut extra_known_limits = Vec::new();
+  if let Some(limit) = unmapped_path_limit {
+    extra_known_limits.push(limit);
+  }
+  if plan_delivery_mismatch {
+    extra_known_limits.push(format!(
+      "plan_delivery_mismatch: l8a_selected={} effective={}",
+      l8a_plan.selected_method, effective_method
+    ));
+  }
+
+  (reconciled, extra_known_limits)
 }
 
 fn candidate_box_center(candidate: &Candidate) -> Result<(f64, f64), CandidateActionDecisionError> {
@@ -2265,7 +2354,7 @@ mod tests {
     CandidateActionPostActionProbe, PostActionWindowAlive,
     build_candidate_action_decision_artifact, build_candidate_action_execution_artifact,
     enforce_action_specific_readiness, execute_and_record_single_candidate_action,
-    execute_single_candidate_action, expected_ax_focus_target,
+    execute_single_candidate_action, expected_ax_focus_target, reconcile_effective_decision,
     record_candidate_action_decision_artifact, record_candidate_action_execution_artifact,
     window_matches_plan,
   };
@@ -2275,6 +2364,7 @@ mod tests {
     observe_focused_ax_until_settled,
   };
   use crate::AuvResult;
+  use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::build_runtime_with_store_root;
   use crate::candidate_promotion::{CandidatePromotion, ConsentGrade, ConsentProvenance};
   use crate::candidate_promotion_recording::{
@@ -2696,6 +2786,168 @@ mod tests {
         });
     build_candidate_action_decision_artifact(&promotion, &request)
       .expect("type-text decision artifact should build")
+  }
+
+  #[test]
+  fn reconcile_effective_decision_records_plan_delivery_mismatch_for_ax_plan_pointer_delivery() {
+    let l8a_plan = ActionResolverDecision::new(ActionResolverDecisionInput {
+      operation: "candidate.action.decide_only",
+      target_query: "Text Area",
+      primary_method: "ax-action",
+      selected_method: "ax-action",
+      fallback_allowed: false,
+      fallback_used: false,
+      fallback_reason: None,
+      policy: "candidate-ax-node",
+      cursor_disturbance: "none",
+      press_mechanism: "ax-action",
+    });
+    let delivery_plan = CandidateActionDeliveryPlan {
+      action: CandidateActionKind::Click,
+      selected_method: "pointer-click".to_string(),
+      target_grounding: TargetGrounding::Coordinate,
+      target_query: "Text Area".to_string(),
+      focused_target: false,
+      window_number: Some(11),
+      window_title: Some("Untitled".to_string()),
+      app_bundle_id: Some("com.apple.TextEdit".to_string()),
+      expected_window_frame: None,
+      window_x: 160.0,
+      window_y: 60.0,
+      click_count: 1,
+    };
+    let input_action_result = auv_driver::InputActionResult::single_success(
+      auv_driver::InputDeliveryPath::WindowTargetedMouse,
+    );
+
+    let (reconciled, limits) =
+      reconcile_effective_decision(&l8a_plan, &delivery_plan, &input_action_result);
+
+    assert_eq!(reconciled.selected_method, "pointer-click");
+    assert_ne!(l8a_plan.selected_method, reconciled.selected_method);
+    assert!(
+      limits.iter().any(|limit| limit
+        .starts_with("plan_delivery_mismatch: l8a_selected=ax-action effective=pointer-click")),
+      "limits={limits:?}"
+    );
+  }
+
+  #[test]
+  fn reconcile_effective_decision_aligned_coordinate_plan_has_no_mismatch() {
+    let l8a_plan = ActionResolverDecision::new(ActionResolverDecisionInput {
+      operation: "candidate.action.decide_only",
+      target_query: "Text Area",
+      primary_method: "pointer-click",
+      selected_method: "pointer-click",
+      fallback_allowed: false,
+      fallback_used: false,
+      fallback_reason: None,
+      policy: "candidate-coordinate-pointer",
+      cursor_disturbance: "warp-visible",
+      press_mechanism: "pointer-click",
+    });
+    let delivery_plan = CandidateActionDeliveryPlan {
+      action: CandidateActionKind::Click,
+      selected_method: "pointer-click".to_string(),
+      target_grounding: TargetGrounding::Coordinate,
+      target_query: "Text Area".to_string(),
+      focused_target: false,
+      window_number: Some(11),
+      window_title: None,
+      app_bundle_id: Some("com.apple.TextEdit".to_string()),
+      expected_window_frame: None,
+      window_x: 160.0,
+      window_y: 60.0,
+      click_count: 1,
+    };
+    let input_action_result = auv_driver::InputActionResult::single_success(
+      auv_driver::InputDeliveryPath::WindowTargetedMouse,
+    );
+
+    let (reconciled, limits) =
+      reconcile_effective_decision(&l8a_plan, &delivery_plan, &input_action_result);
+
+    assert_eq!(reconciled.selected_method, "pointer-click");
+    assert!(limits.is_empty());
+  }
+
+  #[test]
+  fn build_execution_artifact_records_plan_delivery_mismatch_when_l8a_ax_plan_delivers_pointer() {
+    let promotion = promoted_artifact();
+    let mut decision = decision_artifact();
+    decision.action_resolver_decision.selected_method = "ax-action".to_string();
+    decision.action_resolver_decision.primary_method = "ax-action".to_string();
+    decision.action_resolver_decision.policy = "candidate-ax-node".to_string();
+    let request = execution_request();
+
+    let artifact = build_candidate_action_execution_artifact(
+      &promotion,
+      &decision,
+      &request,
+      RunId::new("run_l8b_plan_delivery_mismatch"),
+      auv_driver::InputActionResult::single_success(
+        auv_driver::InputDeliveryPath::WindowTargetedMouse,
+      ),
+    )
+    .expect("execution artifact should build");
+
+    assert_eq!(
+      artifact.action_resolver_decision.selected_method,
+      "pointer-click"
+    );
+    assert_eq!(artifact.detail["plan_method"], json!("ax-action"));
+    assert_eq!(artifact.detail["effective_method"], json!("pointer-click"));
+    assert!(
+      artifact
+        .known_limits
+        .iter()
+        .any(|limit| limit.starts_with("plan_delivery_mismatch:")),
+      "known_limits={:?}",
+      artifact.known_limits
+    );
+  }
+
+  #[test]
+  fn reconcile_effective_decision_records_unmapped_delivery_path_limit() {
+    let l8a_plan = ActionResolverDecision::new(ActionResolverDecisionInput {
+      operation: "candidate.action.decide_only",
+      target_query: "Text Area",
+      primary_method: "pointer-click",
+      selected_method: "pointer-click",
+      fallback_allowed: false,
+      fallback_used: false,
+      fallback_reason: None,
+      policy: "candidate-coordinate-pointer",
+      cursor_disturbance: "warp-visible",
+      press_mechanism: "pointer-click",
+    });
+    let delivery_plan = CandidateActionDeliveryPlan {
+      action: CandidateActionKind::Click,
+      selected_method: "pointer-click".to_string(),
+      target_grounding: TargetGrounding::Coordinate,
+      target_query: "Text Area".to_string(),
+      focused_target: false,
+      window_number: Some(11),
+      window_title: None,
+      app_bundle_id: Some("com.apple.TextEdit".to_string()),
+      expected_window_frame: None,
+      window_x: 160.0,
+      window_y: 60.0,
+      click_count: 1,
+    };
+    let input_action_result =
+      auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::ClipboardPaste);
+
+    let (reconciled, limits) =
+      reconcile_effective_decision(&l8a_plan, &delivery_plan, &input_action_result);
+
+    assert_eq!(reconciled.selected_method, "pointer-click");
+    assert!(
+      limits
+        .iter()
+        .any(|limit| limit.starts_with("effective_method_unmapped_delivery_path: selected_path=")),
+      "limits={limits:?}"
+    );
   }
 
   #[test]
