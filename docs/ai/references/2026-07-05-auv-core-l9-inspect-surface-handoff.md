@@ -44,4 +44,4 @@ Viewer reads **`ActionTransitionLineage` only** — not `candidate_action_execut
 
 ## Next gate
 
-[App Command Pack gate](2026-07-05-auv-core-app-command-pack-gate.md) — owner-triggered after L9 acceptance.
+[L9-R1 closeout](2026-07-06-auv-core-l9-r1-inspect-surface-closeout-landed.md) — ATL consumption discipline (issue hard table, hint secondary, CLI seam-first). [App Command Pack gate](2026-07-05-auv-core-app-command-pack-gate.md) remains owner-triggered; do not open ACP-C before L9-R1 merge gate G1–G7.

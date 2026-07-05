@@ -111,6 +111,8 @@ AUV core runtime、contract、graduation、query-readiness
 - [`2026-07-05-auv-core-action-transition-lineage-read-handoff.md`](2026-07-05-auv-core-action-transition-lineage-read-handoff.md) — `ActionTransitionLineage` read-side projection (L8b effective, L8a comparator)
 - [`2026-07-05-auv-core-l8-closeout-review.md`](2026-07-05-auv-core-l8-closeout-review.md) — L8 closeout: producer/read-model/compatibility/drift verdict (`close_for_core_seam_surface_gap_only`)
 - [`2026-07-05-auv-core-l9-inspect-surface-handoff.md`](2026-07-05-auv-core-l9-inspect-surface-handoff.md) — L9 viewer surface for `action_transition_lineage` (mismatch, partial, verification)
+- [`2026-07-06-auv-core-l9-r1-inspect-surface-closeout-handoff.md`](2026-07-06-auv-core-l9-r1-inspect-surface-closeout-handoff.md) — L9-R1 ATL consumption discipline (issue hard table, hint secondary, CLI seam-first)
+- [`2026-07-06-auv-core-l9-r1-inspect-surface-closeout-landed.md`](2026-07-06-auv-core-l9-r1-inspect-surface-closeout-landed.md) — L9-R1 landed (merge gate G1–G7)
 - [`2026-07-05-auv-core-app-command-pack-gate.md`](2026-07-05-auv-core-app-command-pack-gate.md) — App Command Pack entry gate (post L8+L9)
 - [`2026-07-05-auv-core-surface-memory-lane-discipline.md`](2026-07-05-auv-core-surface-memory-lane-discipline.md) — S/Surface Memory independent lane discipline
 
