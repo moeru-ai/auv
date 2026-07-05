@@ -1,0 +1,105 @@
+{
+  "schema_version": "view-ir-v0",
+  "app": {
+    "app_id": "com.netease.163music",
+    "name": "网易云音乐",
+    "version": null
+  },
+  "window": {
+    "id": "hermetic-window",
+    "title": null,
+    "bounds": {
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1057.0,
+      "height": 752.0
+    }
+  },
+  "sidebar_region": {
+    "bounds": {
+      "x": 0.0,
+      "y": 220.0,
+      "width": 240.0,
+      "height": 400.0
+    }
+  },
+  "observations": [],
+  "reconstruction": {
+    "root": {
+      "id": "root.sidebar",
+      "kind": "collection",
+      "bounds": {
+        "x": 0.0,
+        "y": 0.0,
+        "width": 240.0,
+        "height": 400.0
+      },
+      "anchors": [],
+      "landmarks": [],
+      "actions": [],
+      "evidence": [],
+      "children": [
+        {
+          "id": "item.hermetic.test",
+          "kind": "item",
+          "label": "Hermetic Fixture Playlist",
+          "bounds": {
+            "x": 32.0,
+            "y": 74.0,
+            "width": 120.0,
+            "height": 20.0
+          },
+          "anchors": [
+            {
+              "id": "anchor.hermetic.test",
+              "label": "Hermetic Fixture Playlist",
+              "strength": "strong",
+              "bounds": {
+                "x": 32.0,
+                "y": 74.0,
+                "width": 120.0,
+                "height": 20.0
+              },
+              "evidence_ids": []
+            }
+          ],
+          "landmarks": [],
+          "actions": [],
+          "evidence": [],
+          "children": []
+        }
+      ]
+    },
+    "anchor_index": [],
+    "landmark_index": []
+  },
+  "projection": {
+    "sections": [
+      {
+        "id": "section.hermetic.created",
+        "kind": "my_playlists",
+        "label": "创建的歌单",
+        "items": [
+          {
+            "id": "item.hermetic.test",
+            "label": "Hermetic Fixture Playlist",
+            "confidence": "high",
+            "candidate_id": "obs1.candidate.hermetic.test",
+            "anchor_id": "anchor.hermetic.test"
+          }
+        ]
+      }
+    ]
+  },
+  "boundary": {
+    "top": "unknown",
+    "bottom": "unknown",
+    "left": "unknown",
+    "right": "unknown"
+  },
+  "diagnostics": [],
+  "known_limits": [
+    "hermetic_fixture_only",
+    "proof_class:hermetic"
+  ]
+}

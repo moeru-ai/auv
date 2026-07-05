@@ -1,5 +1,6 @@
 mod help;
 mod select_proof;
+mod sidebar_scan_proof;
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -11,17 +12,31 @@ pub use select_proof::{
   SELECT_PROOF_COMMAND_ID, build_select_result_from_fixture_dir, hermetic_select_proof_fixture_dir,
   select_proof_handler,
 };
+pub use sidebar_scan_proof::{
+  SIDEBAR_SCAN_PROOF_COMMAND_ID, build_scan_from_fixture_dir,
+  hermetic_sidebar_scan_proof_fixture_dir, sidebar_scan_proof_handler,
+};
 
 pub fn netease_registry() -> InvokeRegistry {
-  InvokeRegistry::from_groups(vec![CommandGroup::new("netease", "NETEASE").group(
-    CommandGroup::new("playlist", "Playlist").command(command::spec(
-      select_proof::SELECT_PROOF_COMMAND_ID,
-      InvokeNamespace::Fixture,
-      "Hermetic playlist select proof from fixture dir",
-      select_proof::SELECT_PROOF_ARGS,
-      select_proof::select_proof_handler,
-    )),
-  )])
+  InvokeRegistry::from_groups(vec![
+    CommandGroup::new("netease", "NETEASE").group(
+      CommandGroup::new("playlist", "Playlist")
+        .command(command::spec(
+          select_proof::SELECT_PROOF_COMMAND_ID,
+          InvokeNamespace::Fixture,
+          "Hermetic playlist select proof from fixture dir",
+          select_proof::SELECT_PROOF_ARGS,
+          select_proof::select_proof_handler,
+        ))
+        .command(command::spec(
+          sidebar_scan_proof::SIDEBAR_SCAN_PROOF_COMMAND_ID,
+          InvokeNamespace::Fixture,
+          "Hermetic playlist sidebar scan proof from fixture dir",
+          sidebar_scan_proof::SIDEBAR_SCAN_PROOF_ARGS,
+          sidebar_scan_proof::sidebar_scan_proof_handler,
+        )),
+    ),
+  ])
 }
 
 /// Dispatch `auv-netease-music invoke …` without touching root `default_registry()`.
