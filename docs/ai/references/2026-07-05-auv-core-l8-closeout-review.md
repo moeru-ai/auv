@@ -122,6 +122,8 @@ Core producer + read-model + compatibility **core** layers pass. The only materi
 
 Proceed to **L9 Inspect Surface** (viewer only). Do not reopen L8b producer unless a new failing evidence appears.
 
+**Superseded by:** [L9-R2 final closeout](2026-07-06-auv-core-l9-r2-core-action-seam-final-closeout-review.md) — seam upgraded to **`close`** after L9 + L9-R1.
+
 ---
 
 ## Validation commands (recorded)

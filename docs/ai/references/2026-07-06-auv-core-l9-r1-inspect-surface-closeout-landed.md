@@ -58,3 +58,5 @@ git diff --check
 ## Next gate
 
 ACP-C only after owner names third app **and** needs packaging + inspect discipline re-proof on a distant domain. Otherwise continue core lane work without adding pack sample count.
+
+**Follow-on:** [L9-R2 core action seam final closeout](2026-07-06-auv-core-l9-r2-core-action-seam-final-closeout-review.md) — formal upgrade L8 `close_for_core_seam_surface_gap_only` → **`close`**.
