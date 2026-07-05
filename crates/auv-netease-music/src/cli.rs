@@ -240,6 +240,7 @@ pub(crate) enum Command {
   Control(ControlCommand),
   Seek(SeekCommand),
   PlaybackStatus(PlaybackStatusCommand),
+  Invoke(InvokeArgs),
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -276,6 +277,8 @@ enum CliSubcommand {
   Seek(SeekArgs),
   /// Experimental current playback probes.
   Playback(PlaybackArgs),
+  /// App-local invoke commands (hermetic proof surfaces).
+  Invoke(InvokeArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -323,6 +326,13 @@ struct SeekArgs {
   /// Only act when this app owns the now-playing slot (default: NetEase).
   #[arg(long = "app-id")]
   app_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Args)]
+pub(crate) struct InvokeArgs {
+  /// Arguments passed to the app-local invoke dispatcher (`<command> [options]`).
+  #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+  args: Vec<String>,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -573,6 +583,7 @@ fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
     }
     CliSubcommand::Seek(args) => parse_seek(args),
     CliSubcommand::Playback(args) => parse_playback(args),
+    CliSubcommand::Invoke(args) => Ok(Command::Invoke(args)),
   }
 }
 
@@ -1022,6 +1033,7 @@ pub fn run() -> ExitCode {
     Ok(Command::Control(cmd)) => run_control(cmd),
     Ok(Command::Seek(cmd)) => run_seek(cmd),
     Ok(Command::PlaybackStatus(cmd)) => run_playback_status(cmd),
+    Ok(Command::Invoke(args)) => crate::invoke::run(&args.args),
     Err(error) => {
       if error.starts_with("error:") {
         eprint!("{error}");

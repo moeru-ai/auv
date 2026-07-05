@@ -591,6 +591,7 @@ dependencies = [
 name = "auv-netease-music"
 version = "0.0.1"
 dependencies = [
+ "auv-cli-invoke",
  "auv-driver",
  "auv-driver-macos",
  "auv-driver-windows",

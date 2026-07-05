@@ -1,0 +1,59 @@
+{
+  "command": "playlist.select",
+  "query": "hermetic-fixture",
+  "app": {
+    "app_id": "com.netease.163music",
+    "name": "网易云音乐",
+    "version": null
+  },
+  "window": {
+    "id": "hermetic-window",
+    "title": null,
+    "bounds": {
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1057.0,
+      "height": 752.0
+    }
+  },
+  "target": {
+    "label": "Hermetic Fixture Playlist",
+    "section_id": "section.hermetic.created",
+    "section_kind": "my_playlists",
+    "item_id": "item.hermetic.test",
+    "anchor_id": "anchor.item.hermetic.test",
+    "candidate_id": "item.hermetic.test",
+    "observation_index": 0,
+    "bounds": {
+      "x": 59.0,
+      "y": 405.0,
+      "width": 120.0,
+      "height": 20.0
+    }
+  },
+  "steps": [
+    {
+      "name": "reacquire-target",
+      "target_bounds": {
+        "x": 59.0,
+        "y": 405.0,
+        "width": 120.0,
+        "height": 20.0
+      },
+      "delivery_path": null,
+      "fallback_reason": null
+    }
+  ],
+  "verification": {
+    "status": "passed",
+    "method": "main_title_ocr_full_window_v1",
+    "observed_title": "Hermetic Fixture Playlist",
+    "artifact": null,
+    "note": "hermetic fixture; no live capture"
+  },
+  "diagnostics": [],
+  "known_limits": [
+    "hermetic_fixture_only",
+    "proof_class:hermetic"
+  ]
+}

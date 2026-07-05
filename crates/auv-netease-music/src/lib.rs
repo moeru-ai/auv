@@ -4,6 +4,7 @@ pub mod app;
 pub mod cli;
 pub mod commands;
 pub mod interaction;
+pub mod invoke;
 pub mod output;
 pub mod recording;
 pub mod scroll;
