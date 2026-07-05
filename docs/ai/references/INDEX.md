@@ -114,6 +114,7 @@ AUV core runtime、contract、graduation、query-readiness
 - [`2026-07-06-auv-core-l9-r1-inspect-surface-closeout-handoff.md`](2026-07-06-auv-core-l9-r1-inspect-surface-closeout-handoff.md) — L9-R1 ATL consumption discipline (issue hard table, hint secondary, CLI seam-first)
 - [`2026-07-06-auv-core-l9-r1-inspect-surface-closeout-landed.md`](2026-07-06-auv-core-l9-r1-inspect-surface-closeout-landed.md) — L9-R1 landed (merge gate G1–G7)
 - [`2026-07-06-auv-core-l9-r2-core-action-seam-final-closeout-review.md`](2026-07-06-auv-core-l9-r2-core-action-seam-final-closeout-review.md) — L9-R2 final closeout: core action seam `close` (upgrade from L8 `close_for_core_seam_surface_gap_only`)
+- [`2026-07-06-auv-core-ri3-runtime-invoke-surface-parity-audit-handoff.md`](2026-07-06-auv-core-ri3-runtime-invoke-surface-parity-audit-handoff.md) — RI3-A audit: runtime invoke / command seam inventory (post L9-R2 close)
 - [`2026-07-05-auv-core-app-command-pack-gate.md`](2026-07-05-auv-core-app-command-pack-gate.md) — App Command Pack entry gate (post L8+L9)
 - [`2026-07-05-auv-core-surface-memory-lane-discipline.md`](2026-07-05-auv-core-surface-memory-lane-discipline.md) — S/Surface Memory independent lane discipline
 

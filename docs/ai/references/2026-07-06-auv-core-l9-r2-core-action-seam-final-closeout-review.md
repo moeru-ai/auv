@@ -148,5 +148,6 @@ rg 'candidate_action_execution_lineage' src/inspect_server_viewer.html  # expect
 ## Next gate
 
 - **Core lane:** proceed without reopening L8b/L9 unless falsifier above appears.
+- **RI3-A:** [Runtime invoke surface parity audit](2026-07-06-auv-core-ri3-runtime-invoke-surface-parity-audit-handoff.md) — active core question after seam `close`; owner picks RI3-B from Table 3.
 - **Packaging lane:** ACP-C only after owner names third app; re-proof inspect discipline on distant domain if needed.
 - **Optional:** TERMS_AND_CONCEPTS close-status note (owner-triggered).
