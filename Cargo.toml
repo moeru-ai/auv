@@ -9,6 +9,7 @@ members = [
   "crates/auv-cli-invoke",
   "crates/auv-compare",
   "crates/auv-file",
+  "crates/auv-godot",
   "crates/auv-query-readiness",
   "crates/auv-scan",
   "crates/auv-stage-status",
