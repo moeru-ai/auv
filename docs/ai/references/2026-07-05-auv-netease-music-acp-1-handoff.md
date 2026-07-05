@@ -74,8 +74,10 @@ git diff --check
 
 ## ACP-1c landed (viewer)
 
-- Run-detail panel `#netease-select-proof-hint` when root span is `auv.netease.playlist.select` and artifacts include `netease-playlist-select-result`.
-- Generic label only: **NetEase playlist select proof** (no `selectProof` wording).
+Superseded by ACP-2c unified panel — see [ACP-2 handoff](2026-07-05-auv-netease-music-acp-2-handoff.md#acp-2c-landed-viewer).
+
+- Run-detail panel `#netease-proof-hint` (unified) shows **NetEase playlist select proof** when root span is `auv.netease.playlist.select` and artifacts include `netease-playlist-select-result`.
+- Generic labels only (no `selectProof` wording).
 
 ## Next slices (not ACP-1)
 

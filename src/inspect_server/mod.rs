@@ -2423,7 +2423,7 @@ function registerElement(document, tagName, id) {
 
 const document = new Document();
 registerElement(document, "div", "action-transition-lineage").hidden = true;
-registerElement(document, "div", "netease-select-proof-hint").hidden = true;
+registerElement(document, "div", "netease-proof-hint").hidden = true;
 registerElement(document, "div", "view-parser-proof").hidden = true;
 registerElement(document, "div", "conn").className = "conn-pill bad";
 registerElement(document, "div", "conn-label");
@@ -2827,30 +2827,48 @@ eval(scriptBody);
   }
 
   #[test]
-  fn viewer_renders_netease_select_proof_hint_hooks() {
+  fn viewer_renders_netease_proof_hint_hooks() {
     assert!(
-      super::VIEWER_HTML.contains("netease-select-proof-hint"),
-      "viewer payload should mount the netease select proof hint panel"
+      super::VIEWER_HTML.contains("netease-proof-hint"),
+      "viewer payload should mount the unified netease proof hint panel"
     );
     assert!(
-      super::VIEWER_HTML.contains("renderNeteaseSelectProofHint"),
-      "viewer payload should render netease select proof hint"
+      !super::VIEWER_HTML.contains("netease-select-proof-hint"),
+      "viewer payload should not retain the old select-only hint id"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("renderNeteaseProofHint"),
+      "viewer payload should render unified netease proof hint"
     );
     assert!(
       super::VIEWER_HTML.contains("auv.netease.playlist.select"),
       "viewer payload should match netease select proof run root span"
     );
     assert!(
+      super::VIEWER_HTML.contains("auv.netease.playlist.ls"),
+      "viewer payload should match netease sidebar scan proof run root span"
+    );
+    assert!(
       super::VIEWER_HTML.contains("NetEase playlist select proof"),
       "viewer payload should use generic netease select proof label"
     );
     assert!(
-      super::VIEWER_HTML.contains("selfTestNeteaseSelectProofHint"),
-      "viewer payload should self-test netease select proof hint"
+      super::VIEWER_HTML.contains("NetEase playlist sidebar scan proof"),
+      "viewer payload should use generic netease sidebar scan proof label"
+    );
+    assert!(
+      super::VIEWER_HTML.contains("selfTestNeteaseProofHint"),
+      "viewer payload should self-test unified netease proof hint"
     );
     assert!(
       !super::VIEWER_HTML.contains("ACP-1 (selectProof)"),
       "viewer payload must not use selectProof-specific hint wording"
+    );
+    assert!(
+      !super::VIEWER_HTML
+        .to_lowercase()
+        .contains("sidebarscanproof"),
+      "viewer payload must not use sidebar scan invoke command id in hint copy"
     );
   }
 

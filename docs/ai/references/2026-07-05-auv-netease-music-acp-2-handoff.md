@@ -56,7 +56,29 @@ Same as ACP-1: `InvokeNamespace::Fixture` is an internal placeholder when buildi
 - View-memory / reacquire / lineage manifest to artifact-dir
 - L8b, S-line expansion, transport/playback commands
 - `GET /runs` list schema changes
-- **ACP-2c viewer hint** (defer to unified proof-pack inspect design)
+- Invoke vs product run distinction in viewer (see ACP-2c limits)
+
+## ACP-2c landed (viewer)
+
+Unified run-detail panel `#netease-proof-hint` in [`inspect_server_viewer.html`](../../../src/inspect_server_viewer.html):
+
+| Match | Label |
+|-------|-------|
+| Root span `auv.netease.playlist.select` + artifact `netease-playlist-select-result` | NetEase playlist select proof |
+| Root span `auv.netease.playlist.ls` + artifact `netease-playlist-sidebar-scan` | NetEase playlist sidebar scan proof |
+
+**Limits:** viewer does not distinguish invoke `sidebarScanProof` from product `playlist ls --store-root` (shared RunSpec + artifact). Labels are generic; no invoke command ids in copy.
+
+This is **viewer polish only** — not new inspect read surface or product-ready pack graduation.
+
+## ACP-2 hermetic packaging complete
+
+Documents the minimum hermetic observe + act packaging slice for NetEase Music (not product-ready or full ACP product closure):
+
+| Slice | Invoke | RunSpec | Artifact | Viewer |
+|-------|--------|---------|----------|--------|
+| ACP-1 act | `selectProof` | `auv.netease.playlist.select` | `netease-playlist-select-result` | unified hint row |
+| ACP-2 observe | `sidebarScanProof` | `auv.netease.playlist.ls` | `netease-playlist-sidebar-scan` | unified hint row |
 
 ## Persist-only `Inputs`
 
@@ -66,6 +88,7 @@ ACP-2 invoke constructs **minimal** [`Inputs`](../../../crates/auv-netease-music
 
 ```sh
 cargo fmt --check && cargo check
+cargo test -p auv-cli inspect_server::tests::viewer_renders_netease_proof_hint_hooks
 cargo test -p auv-netease-music sidebar_scan_proof
 cargo test -p auv-netease-music select_proof
 cargo test -p auv-netease-music recording::
@@ -75,9 +98,7 @@ git diff --check
 
 `invoke --help` must list **both** `netease.playlist.selectProof` and `netease.playlist.sidebarScanProof`.
 
-## Pack graduation (ACP-1 + ACP-2)
-
-Minimum observe + act hermetic pack:
+## Hermetic packaging reference (ACP-1 + ACP-2)
 
 | Slice | Invoke id | RunSpec | Artifact role |
 |-------|-----------|---------|---------------|
@@ -88,7 +109,8 @@ Minimum observe + act hermetic pack:
 
 | Slice | Gate |
 |-------|------|
-| ACP-2c | Unified proof-pack viewer / inspect panel (defer) |
+| Invoke vs product viewer distinction | Owner-approved; span/event or artifact `proof_class` signal |
+| Unified proof-pack deep-read panel | Owner-approved |
 | Live `netease.playlist.ls` invoke | Owner-approved |
 | Scan→select chained invoke | Owner-approved |
 | L8b reconnect | Failing evidence required |

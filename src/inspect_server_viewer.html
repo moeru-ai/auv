@@ -811,7 +811,7 @@
     background: var(--shell);
   }
   #action-transition-lineage[hidden] { display: none; }
-  #netease-select-proof-hint {
+  #netease-proof-hint {
     margin: 0.75rem 1rem 0;
     padding: 0.5rem 0.75rem;
     border-radius: 0.5rem;
@@ -820,9 +820,12 @@
     color: var(--fg-2);
     font-size: 0.8125rem;
     letter-spacing: 0.01em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
   }
-  #netease-select-proof-hint[hidden] { display: none; }
-  #netease-select-proof-hint .netease-select-proof-hint-label {
+  #netease-proof-hint[hidden] { display: none; }
+  #netease-proof-hint .netease-proof-hint-label {
     color: var(--fg);
     font-weight: 500;
   }
@@ -921,7 +924,7 @@
         <span class="right" id="main-crumb"></span>
         <span id="main-status"></span>
       </div>
-      <div id="netease-select-proof-hint" hidden></div>
+      <div id="netease-proof-hint" hidden></div>
       <div id="view-parser-proof" hidden></div>
       <div id="action-transition-lineage" hidden></div>
       <div id="run-list-filter-banner" class="run-list-filter-banner" hidden></div>
@@ -1133,6 +1136,7 @@
 
   const VIEW_MEMORY_ARTIFACT_ROLE = "view-memory";
   const PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE = "netease-playlist-select-result";
+  const PLAYLIST_SIDEBAR_SCAN_ARTIFACT_ROLE = "netease-playlist-sidebar-scan";
 
   function clearViewParserProof() {
     const panel = document.getElementById("view-parser-proof");
@@ -1141,37 +1145,55 @@
     panel.hidden = true;
   }
 
-  function clearNeteaseSelectProofHint() {
-    const panel = document.getElementById("netease-select-proof-hint");
+  function clearNeteaseProofHint() {
+    const panel = document.getElementById("netease-proof-hint");
     if (!panel) return;
     panel.innerHTML = "";
     panel.hidden = true;
   }
 
-  function neteasePlaylistSelectProofVisible(run, spans, artifacts) {
-    if (!run || !Array.isArray(artifacts) || !Array.isArray(spans)) return false;
-    const hasArtifact = artifacts.some(function (artifact) {
-      return artifact && artifact.role === PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE;
-    });
-    if (!hasArtifact) return false;
+  function neteaseProofRootSpanName(spans) {
+    if (!Array.isArray(spans)) return null;
     const rootSpan = spans.find(function (span) {
       return span && (span.parent_span_id == null || span.parent_span_id === "");
     });
-    return !!(rootSpan && rootSpan.name === "auv.netease.playlist.select");
+    return rootSpan ? rootSpan.name : null;
   }
 
-  function renderNeteaseSelectProofHint(run, spans, artifacts) {
-    const panel = document.getElementById("netease-select-proof-hint");
+  function neteaseProofHintLabels(run, spans, artifacts) {
+    if (!run || !Array.isArray(artifacts) || !Array.isArray(spans)) return [];
+    const labels = [];
+    const rootName = neteaseProofRootSpanName(spans);
+    const hasSelectArtifact = artifacts.some(function (artifact) {
+      return artifact && artifact.role === PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE;
+    });
+    const hasScanArtifact = artifacts.some(function (artifact) {
+      return artifact && artifact.role === PLAYLIST_SIDEBAR_SCAN_ARTIFACT_ROLE;
+    });
+    if (rootName === "auv.netease.playlist.select" && hasSelectArtifact) {
+      labels.push("NetEase playlist select proof");
+    }
+    if (rootName === "auv.netease.playlist.ls" && hasScanArtifact) {
+      labels.push("NetEase playlist sidebar scan proof");
+    }
+    return labels;
+  }
+
+  function renderNeteaseProofHint(run, spans, artifacts) {
+    const panel = document.getElementById("netease-proof-hint");
     if (!panel) return;
-    if (!neteasePlaylistSelectProofVisible(run, spans, artifacts)) {
-      clearNeteaseSelectProofHint();
+    const labels = neteaseProofHintLabels(run, spans, artifacts);
+    if (labels.length === 0) {
+      clearNeteaseProofHint();
       return;
     }
     panel.innerHTML = "";
     panel.hidden = false;
-    panel.appendChild(el("span", { className: "netease-select-proof-hint-label" }, [
-      "NetEase playlist select proof",
-    ]));
+    for (let index = 0; index < labels.length; index += 1) {
+      panel.appendChild(el("span", { className: "netease-proof-hint-label" }, [
+        labels[index],
+      ]));
+    }
   }
 
   function hasViewParserProof(run) {
@@ -1735,13 +1757,13 @@
       setMainHeader(state.activeRun, false);
       renderViewParserProof(state.activeRun);
       renderActionTransitionLineage(state.activeRun);
-      renderNeteaseSelectProofHint(state.activeRun, state.spans, state.artifacts);
+      renderNeteaseProofHint(state.activeRun, state.spans, state.artifacts);
       renderRunList();
     } catch (err) {
       if (state.activeRunId !== runId) return;
       clearViewParserProof();
       clearActionTransitionLineage();
-      clearNeteaseSelectProofHint();
+      clearNeteaseProofHint();
     }
   }
 
@@ -2002,7 +2024,7 @@
     closeStream();
     clearViewParserProof();
     clearActionTransitionLineage();
-    clearNeteaseSelectProofHint();
+    clearNeteaseProofHint();
     state.activeRunId = runId;
     state.activeRun = state.runs.find(function (r) { return r.run_id === runId; }) || null;
     state.spans = [];
@@ -2067,12 +2089,12 @@
       renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
       renderViewParserProof(state.activeRun);
       renderActionTransitionLineage(state.activeRun);
-      renderNeteaseSelectProofHint(state.activeRun, state.spans, state.artifacts);
+      renderNeteaseProofHint(state.activeRun, state.spans, state.artifacts);
     } catch (err) {
       if (state.activeRunId !== runId) return;
       clearViewParserProof();
       clearActionTransitionLineage();
-      clearNeteaseSelectProofHint();
+      clearNeteaseProofHint();
       setConnection(false, "/runs/:id (" + err.message + ")");
       renderPlaceholder([
         "failed to load run detail.",
@@ -4671,9 +4693,9 @@
   }
   selfTestActionTransitionLineage();
 
-  function selfTestNeteaseSelectProofHint() {
-    const hintPanel = document.getElementById("netease-select-proof-hint");
-    console.assert(!!hintPanel, "netease-select-proof-hint panel should exist in DOM");
+  function selfTestNeteaseProofHint() {
+    const hintPanel = document.getElementById("netease-proof-hint");
+    console.assert(!!hintPanel, "netease-proof-hint panel should exist in DOM");
 
     const run = { run_id: "run_netease_hint" };
     const spans = [{
@@ -4683,21 +4705,43 @@
     }];
     const artifacts = [{ role: PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, artifact_id: "art_1" }];
 
-    renderNeteaseSelectProofHint(run, spans, artifacts);
+    renderNeteaseProofHint(run, spans, artifacts);
     console.assert(!hintPanel.hidden, "hint should show for netease select proof run");
     console.assert(
       hintPanel.textContent.indexOf("NetEase playlist select proof") >= 0,
-      "generic hint label should render"
+      "generic select hint label should render"
     );
     console.assert(
       hintPanel.textContent.toLowerCase().indexOf("selectproof") < 0,
       "hint must not include invoke-specific wording"
     );
 
-    clearNeteaseSelectProofHint();
+    const lsRun = { run_id: "run_netease_ls_hint" };
+    const lsSpans = [{
+      span_id: "span_root_ls",
+      parent_span_id: null,
+      name: "auv.netease.playlist.ls",
+    }];
+    const lsArtifacts = [{
+      role: PLAYLIST_SIDEBAR_SCAN_ARTIFACT_ROLE,
+      artifact_id: "art_scan_1",
+    }];
+
+    renderNeteaseProofHint(lsRun, lsSpans, lsArtifacts);
+    console.assert(!hintPanel.hidden, "hint should show for netease sidebar scan proof run");
+    console.assert(
+      hintPanel.textContent.indexOf("NetEase playlist sidebar scan proof") >= 0,
+      "generic sidebar scan hint label should render"
+    );
+    console.assert(
+      hintPanel.textContent.toLowerCase().indexOf("sidebarscan") < 0,
+      "hint must not include invoke-specific sidebar scan wording"
+    );
+
+    clearNeteaseProofHint();
     console.assert(hintPanel.hidden, "hint should hide after clear");
   }
-  selfTestNeteaseSelectProofHint();
+  selfTestNeteaseProofHint();
 
   loadRuns();
 })();
