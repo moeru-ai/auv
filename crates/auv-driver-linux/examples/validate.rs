@@ -15,6 +15,8 @@
 //!   capture-region <x> <y> <w> <h> [out.png]
 //!   capture-window <substr> [out]  capture a window to a PNG
 //!   ocr <title-substr>             OCR a window capture and print recognized text
+//!   find-window-text <substr> <query>
+//!   wait-window-text <substr> <query>
 //!   ax <title-substr>              capture a window accessibility tree
 //!   focus-node <title-substr> <path>
 //!   select-node <title-substr> <path>
@@ -42,7 +44,9 @@ use std::error::Error;
 use auv_driver::Driver;
 use auv_driver::capture::CaptureOptions;
 use auv_driver::geometry::{Point, RatioRect, Rect, WindowPoint};
-use auv_driver::input::{Click, KeyPressOptions, PasteTextOptions, Scroll, TypeTextOptions};
+use auv_driver::input::{
+  Click, KeyPressOptions, PasteTextOptions, Scroll, TypeTextOptions, WaitOptions,
+};
 use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
 use auv_driver::window::Window;
 use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
@@ -111,6 +115,18 @@ fn run_invocation(session: &LinuxDriverSession, invocation: &Invocation) -> Run 
       rest.get(1).map(String::as_str),
     ),
     "ocr" => ocr(session, arg(rest, 0, "title-substr")?),
+    "find-window-text" => find_window_text(
+      session,
+      arg(rest, 0, "title-substr")?,
+      arg(rest, 1, "query")?,
+      false,
+    ),
+    "wait-window-text" => find_window_text(
+      session,
+      arg(rest, 0, "title-substr")?,
+      arg(rest, 1, "query")?,
+      true,
+    ),
     "ax" => ax(session, arg(rest, 0, "title-substr")?),
     "focus-node" => focus_node(
       session,
@@ -196,7 +212,7 @@ fn command_arity(command: &str) -> Option<(usize, usize)> {
     }
     "capture-screen" => Some((0, 1)),
     "resolve" | "ocr" | "ax" | "coords" | "paste-text" | "type-text" | "press" => Some((1, 1)),
-    "focus-node" | "select-node" => Some((2, 2)),
+    "focus-node" | "select-node" | "find-window-text" | "wait-window-text" => Some((2, 2)),
     "capture-window" => Some((1, 2)),
     "click" => Some((2, 2)),
     "scroll" => Some((3, 3)),
@@ -340,6 +356,44 @@ fn ocr(session: &LinuxDriverSession, substr: &str) -> Run {
   }
   if recognition.regions.len() > 80 {
     println!("  ... {} more regions", recognition.regions.len() - 80);
+  }
+  Ok(())
+}
+
+fn find_window_text(session: &LinuxDriverSession, substr: &str, query: &str, wait: bool) -> Run {
+  let window = find_window(session, substr)?;
+  let region = RatioRect::new(0.0, 0.0, 1.0, 1.0);
+  let wait_options = WaitOptions::default();
+  let matches = if wait {
+    session
+      .window()
+      .wait_text(&window, query, region, wait_options)?
+  } else {
+    session
+      .window()
+      .find_text(&window, query, region, wait_options)?
+  };
+  println!(
+    "{} {:?} query={query:?} matches={}",
+    if wait {
+      "wait-window-text"
+    } else {
+      "find-window-text"
+    },
+    window.title,
+    matches.matches.len()
+  );
+  for matched in matches.matches.iter().take(20) {
+    println!(
+      "  {:?} conf={} bounds={:?} point={:?}",
+      matched.text,
+      matched.confidence,
+      matched.bounds,
+      matched.action_point()
+    );
+  }
+  if matches.matches.len() > 20 {
+    println!("  ... {} more matches", matches.matches.len() - 20);
   }
   Ok(())
 }
@@ -533,7 +587,7 @@ where
 fn print_usage() {
   eprintln!(
     "usage: cargo run -p auv-driver-linux --example validate -- <command> [args] [<command> [args] ...]\n\
-commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|focus-node|select-node|coords|clipboard|copy|paste|paste-text|type-text|press|scroll|click|input-boundary"
+commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|find-window-text|wait-window-text|ax|focus-node|select-node|coords|clipboard|copy|paste|paste-text|type-text|press|scroll|click|input-boundary"
   );
 }
 
@@ -565,6 +619,9 @@ mod tests {
       "click",
       "10",
       "20",
+      "find-window-text",
+      "Terminal",
+      "Shell",
       "paste-text",
       "hello",
       "press",
@@ -576,6 +633,7 @@ mod tests {
       vec![
         invocation("resolve", ["Terminal"]),
         invocation("click", ["10", "20"]),
+        invocation("find-window-text", ["Terminal", "Shell"]),
         invocation("paste-text", ["hello"]),
         invocation("press", ["Return"])
       ]

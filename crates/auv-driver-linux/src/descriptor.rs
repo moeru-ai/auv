@@ -13,6 +13,8 @@ pub const LINUX_DESKTOP_CAPABILITIES: &[&str] = &[
   "desktop.capture-window",
   "desktop.capture-ax-tree",
   "desktop.recognize-image-text",
+  "desktop.find-window-text",
+  "desktop.wait-window-text",
   "desktop.probe-permissions",
   "clipboard.snapshot",
   "clipboard.restore",
