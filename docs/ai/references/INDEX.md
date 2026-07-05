@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **281** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **295** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -44,12 +44,12 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 
 | Lane | 状态 | 说明 | 篇数 |
 |---|---|---|---:|
-| `core/runtime` | Active | AUV core runtime、contract、graduation、query-readiness | 32 |
+| `core/runtime` | Active | AUV core runtime、contract、graduation、query-readiness | 39 |
 | `core/invoke-cli` | Active | invoke 路由、CLI handler、catalog | 14 |
-| `core/api-mcp` | Active | session API、proto、MCP 前端 | 11 |
+| `core/api-mcp` | Active | session API、proto、MCP 前端 | 19 |
 | `core/inspect-trace` | Active | run 录制、inspect viewer、trace | 6 |
 | `core/driver-macos` | Active | auv-driver、macOS 输入/窗口/权限 | 20 |
-| `core/view-parser` | Active | view-parser IR 与 inspect 消费 | 14 |
+| `core/view-parser` | Active | view-parser IR 与 inspect 消费 | 40 |
 | `core/scenebridge` | Active | cross-app scene identity / grounding | 8 |
 | `core/recognition` | Active | RecognitionResult、detector 边界 | 5 |
 | `vertical/minecraft` | Paused vertical | Minecraft 3D spatial 探针；MC20 pause decision 已落地 | 58 |
@@ -61,7 +61,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | `archive/skill-bundle-retirement` | Retired | SkillBundle / recipe 退役记录 | 5 |
 | `archive/phase-history` | Historical | Phase 1–3 冻结与验收 | 5 |
 | `archive/ax-copilot` | Archived vertical | macOS AX copilot；见 docs/archive/verticals/ax-copilot/ | 2 |
-| `misc` | Mixed | 跨 lane 或尚未归入单一主题的笔记 | 35 |
+| `misc` | Mixed | 跨 lane 或尚未归入单一主题的笔记 | 38 |
 
 ## 按 Lane 列出
 
@@ -109,6 +109,10 @@ AUV core runtime、contract、graduation、query-readiness
 - [`2026-07-05-auv-core-action-seam-audit-handoff.md`](2026-07-05-auv-core-action-seam-audit-handoff.md) — Core action seam read-only audit (L8a plan vs L8b reconciled effective; Slice 2 locks to L8b)
 - [`2026-07-05-auv-core-action-seam-l8b-reconnect-handoff.md`](2026-07-05-auv-core-action-seam-l8b-reconnect-handoff.md) — L8b reconciled effective decision + `plan_delivery_mismatch` hard acceptance
 - [`2026-07-05-auv-core-action-transition-lineage-read-handoff.md`](2026-07-05-auv-core-action-transition-lineage-read-handoff.md) — `ActionTransitionLineage` read-side projection (L8b effective, L8a comparator)
+- [`2026-07-05-auv-core-l8-closeout-review.md`](2026-07-05-auv-core-l8-closeout-review.md) — L8 closeout: producer/read-model/compatibility/drift verdict (`close_for_core_seam_surface_gap_only`)
+- [`2026-07-05-auv-core-l9-inspect-surface-handoff.md`](2026-07-05-auv-core-l9-inspect-surface-handoff.md) — L9 viewer surface for `action_transition_lineage` (mismatch, partial, verification)
+- [`2026-07-05-auv-core-app-command-pack-gate.md`](2026-07-05-auv-core-app-command-pack-gate.md) — App Command Pack entry gate (post L8+L9)
+- [`2026-07-05-auv-core-surface-memory-lane-discipline.md`](2026-07-05-auv-core-surface-memory-lane-discipline.md) — S/Surface Memory independent lane discipline
 
 #### review (5)
 
