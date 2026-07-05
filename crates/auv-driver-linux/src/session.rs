@@ -2,7 +2,9 @@ use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, R
 use auv_driver::display::ObservedDisplays;
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::{Point, RatioRect, ScreenPoint, WindowPoint};
-use auv_driver::input::{Click, InputActionResult, KeyPressOptions, Scroll, TypeTextOptions};
+use auv_driver::input::{
+  Click, InputActionResult, KeyPressOptions, PasteTextOptions, Scroll, TypeTextOptions,
+};
 use auv_driver::permission::PermissionProbe;
 use auv_driver::selector::WindowSelector;
 use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
@@ -13,7 +15,7 @@ use crate::capture::{capture_display, capture_region, list_displays};
 use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot};
 use crate::driver::LinuxDriverSession;
 use crate::error::invalid_input;
-use crate::input::{click_at, press_key, scroll_at, type_text};
+use crate::input::{click_at, copy, paste, paste_text, press_key, scroll_at, type_text};
 use crate::permission::{LinuxPortalProbe, probe_portals};
 use crate::vision::{OcrMatches, find_text_in_capture, recognize_text_in_capture};
 use crate::window::{capture_window, list_windows, resolve_window};
@@ -251,6 +253,24 @@ impl InputApi<'_> {
 
   pub fn press_key(&self, options: KeyPressOptions) -> DriverResult<InputActionResult> {
     press_key(&self.session.state, options)
+  }
+
+  /// Issues Ctrl+C against the current foreground target through the
+  /// RemoteDesktop portal.
+  pub fn copy(&self) -> DriverResult<()> {
+    copy(&self.session.state)
+  }
+
+  /// Issues Ctrl+V against the current foreground target through the
+  /// RemoteDesktop portal.
+  pub fn paste(&self) -> DriverResult<()> {
+    paste(&self.session.state)
+  }
+
+  /// Temporarily installs text on the Wayland clipboard, pastes it through the
+  /// RemoteDesktop portal, and restores the prior text snapshot.
+  pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<()> {
+    paste_text(&self.session.state, options)
   }
 }
 

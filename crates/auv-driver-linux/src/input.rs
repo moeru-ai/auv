@@ -8,7 +8,11 @@ use auv_driver::error::DriverResult;
 use auv_driver::geometry::Point;
 use auv_driver::input::{
   Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
-  KeyPressOptions, Scroll, TextSubmit, TypeTextOptions,
+  KeyPressOptions, PasteTextOptions, Scroll, TextSubmit, TypeTextOptions,
+};
+
+use crate::clipboard::{
+  restore as restore_clipboard, set_text as set_clipboard_text, snapshot as snapshot_clipboard,
 };
 
 pub(crate) fn click_at(
@@ -72,6 +76,54 @@ pub(crate) fn press_key(
   })?;
   sleep_if_nonzero(options.settle);
   Ok(keyboard_result())
+}
+
+pub(crate) fn copy(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<()> {
+  with_input_session(state, |session| {
+    session.key_chord(&[keysym::CONTROL_L], keysym::for_char('c')?)
+  })
+}
+
+pub(crate) fn paste(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<()> {
+  with_input_session(state, |session| {
+    session.key_chord(&[keysym::CONTROL_L], keysym::for_char('v')?)
+  })
+}
+
+pub(crate) fn paste_text(
+  state: &Arc<Mutex<LinuxDriverSessionState>>,
+  options: PasteTextOptions,
+) -> DriverResult<()> {
+  let snapshot = snapshot_clipboard(state)?;
+  let result = (|| {
+    set_clipboard_text(state, &options.text)?;
+    with_input_session(state, |session| {
+      if options.replace_existing {
+        session.key_chord(&[keysym::CONTROL_L], keysym::for_char('a')?)?;
+      }
+      session.key_chord(&[keysym::CONTROL_L], keysym::for_char('v')?)?;
+      match options.submit {
+        TextSubmit::No => {}
+        TextSubmit::Return | TextSubmit::Search | TextSubmit::Done | TextSubmit::Go => {
+          session.key_press(keysym::RETURN)?;
+        }
+      }
+      Ok(())
+    })?;
+    sleep_if_nonzero(options.settle);
+    Ok(())
+  })();
+  let restore_result = restore_clipboard(state, &snapshot);
+  match (result, restore_result) {
+    (Ok(()), Ok(())) => Ok(()),
+    (Err(action_error), Ok(())) => Err(action_error),
+    (Ok(()), Err(restore_error)) => Err(crate::error::backend(format!(
+      "pasted text but failed to restore clipboard: {restore_error}"
+    ))),
+    (Err(action_error), Err(restore_error)) => Err(crate::error::backend(format!(
+      "{action_error}; additionally failed to restore clipboard: {restore_error}"
+    ))),
+  }
 }
 
 pub fn reserved_input_result(reason: impl Into<String>) -> InputActionResult {

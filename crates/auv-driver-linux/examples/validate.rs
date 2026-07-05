@@ -20,6 +20,9 @@
 //!   select-node <title-substr> <path>
 //!   coords <title-substr>          round-trip a window/screen point mapping
 //!   clipboard                      snapshot -> set -> read-back -> restore
+//!   copy                           send Ctrl+C through RemoteDesktop portal
+//!   paste                          send Ctrl+V through RemoteDesktop portal
+//!   paste-text <text>              paste text and restore clipboard
 //!   type-text <text>               type text through RemoteDesktop portal
 //!   press <key>                    press a key or shortcut through the portal
 //!   scroll <x> <y> <delta-y>       scroll through the portal
@@ -39,7 +42,7 @@ use std::error::Error;
 use auv_driver::Driver;
 use auv_driver::capture::CaptureOptions;
 use auv_driver::geometry::{Point, RatioRect, Rect, WindowPoint};
-use auv_driver::input::{Click, KeyPressOptions, Scroll, TypeTextOptions};
+use auv_driver::input::{Click, KeyPressOptions, PasteTextOptions, Scroll, TypeTextOptions};
 use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
 use auv_driver::window::Window;
 use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
@@ -121,6 +124,9 @@ fn run_invocation(session: &LinuxDriverSession, invocation: &Invocation) -> Run 
     ),
     "coords" => coords(session, arg(rest, 0, "title-substr")?),
     "clipboard" => clipboard(session),
+    "copy" => copy(session),
+    "paste" => paste(session),
+    "paste-text" => paste_text(session, arg(rest, 0, "text")?),
     "type-text" => type_text(session, arg(rest, 0, "text")?),
     "press" => press(session, arg(rest, 0, "key")?),
     "scroll" => scroll(session, parse(rest, 0)?, parse(rest, 1)?, parse(rest, 2)?),
@@ -185,9 +191,11 @@ fn parse_invocations(args: &[String]) -> Result<Vec<Invocation>, Box<dyn Error>>
 
 fn command_arity(command: &str) -> Option<(usize, usize)> {
   match command {
-    "permissions" | "displays" | "windows" | "clipboard" | "input-boundary" => Some((0, 0)),
+    "permissions" | "displays" | "windows" | "clipboard" | "copy" | "paste" | "input-boundary" => {
+      Some((0, 0))
+    }
     "capture-screen" => Some((0, 1)),
-    "resolve" | "ocr" | "ax" | "coords" | "type-text" | "press" => Some((1, 1)),
+    "resolve" | "ocr" | "ax" | "coords" | "paste-text" | "type-text" | "press" => Some((1, 1)),
     "focus-node" | "select-node" => Some((2, 2)),
     "capture-window" => Some((1, 2)),
     "click" => Some((2, 2)),
@@ -422,6 +430,28 @@ fn type_text(session: &LinuxDriverSession, text: &str) -> Run {
   Ok(())
 }
 
+fn copy(session: &LinuxDriverSession) -> Run {
+  session.input().copy()?;
+  println!("copy sent");
+  Ok(())
+}
+
+fn paste(session: &LinuxDriverSession) -> Run {
+  session.input().paste()?;
+  println!("paste sent");
+  Ok(())
+}
+
+fn paste_text(session: &LinuxDriverSession, text: &str) -> Run {
+  session.input().paste_text(PasteTextOptions {
+    text: text.to_string(),
+    replace_existing: false,
+    ..PasteTextOptions::default()
+  })?;
+  println!("paste-text sent and clipboard restore attempted");
+  Ok(())
+}
+
 fn press(session: &LinuxDriverSession, key: &str) -> Run {
   let result = session.input().press_key(KeyPressOptions {
     key: key.to_string(),
@@ -503,7 +533,7 @@ where
 fn print_usage() {
   eprintln!(
     "usage: cargo run -p auv-driver-linux --example validate -- <command> [args] [<command> [args] ...]\n\
-commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|focus-node|select-node|coords|clipboard|type-text|press|scroll|click|input-boundary"
+commands: permissions|displays|windows|resolve|capture-screen|capture-region|capture-window|ocr|ax|focus-node|select-node|coords|clipboard|copy|paste|paste-text|type-text|press|scroll|click|input-boundary"
   );
 }
 
@@ -513,13 +543,15 @@ mod tests {
 
   #[test]
   fn parses_multiple_zero_arg_invocations() {
-    let invocations = parse(["permissions", "windows", "input-boundary"]);
+    let invocations = parse(["permissions", "windows", "copy", "paste", "input-boundary"]);
 
     assert_eq!(
       invocations,
       vec![
         invocation("permissions", []),
         invocation("windows", []),
+        invocation("copy", []),
+        invocation("paste", []),
         invocation("input-boundary", [])
       ]
     );
@@ -528,7 +560,15 @@ mod tests {
   #[test]
   fn parses_mixed_invocations_with_fixed_args() {
     let invocations = parse([
-      "resolve", "Terminal", "click", "10", "20", "press", "Return",
+      "resolve",
+      "Terminal",
+      "click",
+      "10",
+      "20",
+      "paste-text",
+      "hello",
+      "press",
+      "Return",
     ]);
 
     assert_eq!(
@@ -536,6 +576,7 @@ mod tests {
       vec![
         invocation("resolve", ["Terminal"]),
         invocation("click", ["10", "20"]),
+        invocation("paste-text", ["hello"]),
         invocation("press", ["Return"])
       ]
     );
