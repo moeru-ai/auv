@@ -617,10 +617,13 @@ dependencies = [
 name = "auv-qqmusic"
 version = "0.0.1"
 dependencies = [
+ "auv-cli-invoke",
  "auv-driver",
  "auv-driver-macos",
+ "auv-tracing-driver",
  "clap",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

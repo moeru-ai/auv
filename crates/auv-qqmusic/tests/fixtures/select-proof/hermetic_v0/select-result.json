@@ -1,0 +1,23 @@
+{
+  "command": "search.results.select",
+  "steps": [
+    {
+      "step_id": "select-result",
+      "summary": "hermetic fixture single-click on anchored search result",
+      "input_action_result": null
+    }
+  ],
+  "anchor": {
+    "text": "Cure For Me",
+    "confidence": 0.92,
+    "point": {
+      "x": 412.0,
+      "y": 318.0
+    }
+  },
+  "unsupported": null,
+  "known_limits": [
+    "hermetic_fixture_only",
+    "proof_class:hermetic"
+  ]
+}

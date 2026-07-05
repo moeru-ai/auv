@@ -12,7 +12,10 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+auv-cli-invoke = { path = "../auv-cli-invoke" }
 auv-driver = { path = "../auv-driver" }
 auv-driver-macos = { path = "../auv-driver-macos" }
+auv-tracing-driver = { path = "../auv-tracing-driver" }
 clap = { version = "4", features = ["derive"] }
 serde.workspace = true
+serde_json.workspace = true

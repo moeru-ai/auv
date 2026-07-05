@@ -23,6 +23,15 @@ struct CliArgs {
 enum CliCommand {
   /// Search QQMusic and operate on search results.
   Search(SearchArgs),
+  /// App-local invoke commands (hermetic proofs; not in root default_registry).
+  Invoke(InvokeArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+pub(crate) struct InvokeArgs {
+  /// Arguments passed to the app-local invoke dispatcher (`<command> [options]`).
+  #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+  args: Vec<String>,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -92,39 +101,47 @@ where
   T: Into<std::ffi::OsString> + Clone,
 {
   let args = CliArgs::try_parse_from(args)?;
-  Ok(match args.command {
-    CliCommand::Search(search) => match search.results {
-      None => SearchCommand::Search(SearchSubmit::defaults_with_query(search.query.ok_or_else(
-        || {
-          clap::Error::raw(
-            ErrorKind::MissingRequiredArgument,
-            "auv-qqmusic search requires <query>",
-          )
-        },
-      )?)),
-      Some(SearchSubcommand::Results(results)) => match results.command {
-        SearchResultsSubcommand::Select(args) => {
-          SearchCommand::Results(SearchResultsAction::Select(SearchResultsSelect {
-            app_id: args.app_id,
-            query: args.query,
-            anchor: args.anchor,
-            settle_ms: args.settle_ms,
-            anchor_timeout_ms: args.anchor_timeout_ms,
-          }))
-        }
-        SearchResultsSubcommand::Click(args) => {
-          validate_click_args(&args)?;
-          SearchCommand::Results(SearchResultsAction::Click(SearchResultsClick {
-            app_id: args.app_id,
-            query: args.query,
-            anchor: args.anchor,
-            row: args.row,
-            candidate_ref_json: args.candidate_ref,
-            settle_ms: args.settle_ms,
-            anchor_timeout_ms: args.anchor_timeout_ms,
-          }))
-        }
+  match args.command {
+    CliCommand::Invoke(_) => Err(clap::Error::raw(
+      ErrorKind::InvalidSubcommand,
+      "parse_from does not support invoke; use auv-qqmusic invoke",
+    )),
+    CliCommand::Search(search) => search_command_from_search_args(search),
+  }
+}
+
+fn search_command_from_search_args(search: SearchArgs) -> Result<SearchCommand, clap::Error> {
+  Ok(match search.results {
+    None => SearchCommand::Search(SearchSubmit::defaults_with_query(search.query.ok_or_else(
+      || {
+        clap::Error::raw(
+          ErrorKind::MissingRequiredArgument,
+          "auv-qqmusic search requires <query>",
+        )
       },
+    )?)),
+    Some(SearchSubcommand::Results(results)) => match results.command {
+      SearchResultsSubcommand::Select(args) => {
+        SearchCommand::Results(SearchResultsAction::Select(SearchResultsSelect {
+          app_id: args.app_id,
+          query: args.query,
+          anchor: args.anchor,
+          settle_ms: args.settle_ms,
+          anchor_timeout_ms: args.anchor_timeout_ms,
+        }))
+      }
+      SearchResultsSubcommand::Click(args) => {
+        validate_click_args(&args)?;
+        SearchCommand::Results(SearchResultsAction::Click(SearchResultsClick {
+          app_id: args.app_id,
+          query: args.query,
+          anchor: args.anchor,
+          row: args.row,
+          candidate_ref_json: args.candidate_ref,
+          settle_ms: args.settle_ms,
+          anchor_timeout_ms: args.anchor_timeout_ms,
+        }))
+      }
     },
   })
 }
@@ -158,13 +175,30 @@ fn validate_click_args(args: &SearchResultsClickArgs) -> Result<(), clap::Error>
 }
 
 pub fn run() -> ExitCode {
-  let command = match parse_from(std::env::args_os()) {
+  let cli = match CliArgs::try_parse_from(std::env::args_os()) {
+    Ok(cli) => cli,
+    Err(error) => {
+      let _ = error.print();
+      return ExitCode::from(2);
+    }
+  };
+
+  if let CliCommand::Invoke(args) = cli.command {
+    return crate::invoke::run(&args.args);
+  }
+
+  let CliCommand::Search(search) = cli.command else {
+    unreachable!("invoke handled above");
+  };
+
+  let command = match search_command_from_search_args(search) {
     Ok(command) => command,
     Err(error) => {
       let _ = error.print();
       return ExitCode::from(2);
     }
   };
+
   let mut driver = match MacosQqMusicDriver::open_local() {
     Ok(driver) => driver,
     Err(error) => {

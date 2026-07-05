@@ -1,5 +1,7 @@
 pub mod cli;
 pub mod driver;
+mod invoke;
+mod recording;
 pub mod search;
 
 pub use driver::{MacosQqMusicDriver, OperationResult, QqMusicDriver};
