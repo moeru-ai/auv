@@ -40,6 +40,7 @@ pub fn open_or_resolve(options: &ResolveOptions) -> Result<(Window, OpenWindowRe
 #[cfg(target_os = "linux")]
 mod platform {
   use std::process::Command;
+  use std::process::Stdio;
   use std::time::Instant;
 
   use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
@@ -71,6 +72,9 @@ mod platform {
     }
 
     Command::new(PROCESS_NAME)
+      .stdin(Stdio::null())
+      .stdout(Stdio::null())
+      .stderr(Stdio::null())
       .spawn()
       .map_err(|error| format!("failed to launch {PROCESS_NAME}: {error}"))?;
     report

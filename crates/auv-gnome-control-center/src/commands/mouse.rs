@@ -101,14 +101,15 @@ pub fn run_natural_scrolling_toggle(
 
 #[cfg(target_os = "linux")]
 mod platform {
+  use std::process::Command;
+
   use auv_driver::{Click, ClickOptions, Driver};
   use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
 
   use super::*;
-  use crate::app::{MOUSE_PAGE, NATURAL_SCROLLING, POINTER_SPEED};
-  use crate::views::{
-    SettingsNode, find_labeled_node, find_slider_near_label, find_switch_near_label, visible_labels,
-  };
+  use crate::app::{MOUSE_PAGE, NATURAL_SCROLLING, POINTER_SPEED, TRADITIONAL_SCROLLING};
+  use crate::commands::{click_visible_labeled_node_with_delivery, select_visible_labeled_node};
+  use crate::views::{SettingsNode, find_slider_near_label, visible_labels};
   use crate::windows::{ResolveOptions, open_or_resolve};
 
   pub fn run_set(inputs: &PointerSpeedSetInputs) -> Result<PointerSpeedSetResult, String> {
@@ -214,42 +215,36 @@ mod platform {
     let mut steps = open_report.steps.clone();
     let mouse_node = select_mouse_page(session, window, &mut steps)?;
     std::thread::sleep(Duration::from_millis(350));
-    let nodes = snapshot_nodes(session, window)?;
-    let switch_node = find_switch_near_label(&nodes, NATURAL_SCROLLING).ok_or_else(|| {
-      format!(
-        "could not find natural scrolling switch near [{}]; visible labels: {}",
-        NATURAL_SCROLLING.display(),
-        visible_labels(&nodes).join(" | ")
-      )
-    })?;
-    let observed_value_before = switch_node.value.clone();
-    let delivery = session
-      .accessibility()
-      .select_node(window, &switch_node.path)
-      .map_err(|error| {
-        format!(
-          "failed to toggle natural scrolling switch {} at {}: {error}",
-          switch_node.label, switch_node.path
-        )
-      })?;
+
+    let natural_scroll_before = read_natural_scroll_setting()?;
+    let target = if natural_scroll_before {
+      TRADITIONAL_SCROLLING
+    } else {
+      NATURAL_SCROLLING
+    };
+    let (switch_node, delivery) = click_visible_labeled_node_with_delivery(
+      session,
+      window,
+      target,
+      "toggle-natural-scrolling",
+      &mut steps,
+    )?;
     std::thread::sleep(Duration::from_millis(250));
-    let observed_value_after = snapshot_nodes(session, window)
-      .ok()
-      .and_then(|nodes| find_switch_near_label(&nodes, NATURAL_SCROLLING))
-      .and_then(|node| node.value);
-    steps.push(
-      InteractionStep::new("toggle-natural-scrolling", StepOutcome::Selected)
-        .target(switch_node.label.clone())
-        .note(format!("{delivery:?}")),
-    );
+    let natural_scroll_after = read_natural_scroll_setting()?;
+    if natural_scroll_after == natural_scroll_before {
+      return Err(format!(
+        "clicked {}, but natural-scroll remained {}",
+        switch_node.label, natural_scroll_after
+      ));
+    }
     Ok(NaturalScrollingToggleResult {
       command: "mouse.toggle-natural-scrolling",
       window: open_report,
       steps,
       mouse_node,
       switch_node,
-      observed_value_before,
-      observed_value_after,
+      observed_value_before: Some(natural_scroll_before.to_string()),
+      observed_value_after: Some(natural_scroll_after.to_string()),
       delivery,
     })
   }
@@ -259,29 +254,7 @@ mod platform {
     window: &auv_driver::Window,
     steps: &mut Vec<InteractionStep>,
   ) -> Result<MatchedNode, String> {
-    let nodes = snapshot_nodes(session, window)?;
-    let matched = find_labeled_node(&nodes, MOUSE_PAGE).ok_or_else(|| {
-      format!(
-        "could not find one of [{}]; visible labels: {}",
-        MOUSE_PAGE.display(),
-        visible_labels(&nodes).join(" | ")
-      )
-    })?;
-    let delivery = session
-      .accessibility()
-      .select_node(window, &matched.path)
-      .map_err(|error| {
-        format!(
-          "failed to select mouse settings page {} at {}: {error}",
-          matched.label, matched.path
-        )
-      })?;
-    steps.push(
-      InteractionStep::new("select-mouse", StepOutcome::Selected)
-        .target(matched.label.clone())
-        .note(format!("{delivery:?}")),
-    );
-    Ok(matched)
+    select_visible_labeled_node(session, window, MOUSE_PAGE, "select-mouse", steps)
   }
 
   fn snapshot_nodes(
@@ -293,6 +266,30 @@ mod platform {
       .snapshot_window(window)
       .map_err(|error| format!("failed to capture AT-SPI tree: {error}"))?;
     Ok(snapshot.nodes.iter().map(SettingsNode::from).collect())
+  }
+
+  fn read_natural_scroll_setting() -> Result<bool, String> {
+    let output = Command::new("gsettings")
+      .args([
+        "get",
+        "org.gnome.desktop.peripherals.mouse",
+        "natural-scroll",
+      ])
+      .output()
+      .map_err(|error| format!("failed to run gsettings: {error}"))?;
+    if !output.status.success() {
+      return Err(format!(
+        "gsettings natural-scroll read failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+      ));
+    }
+    match String::from_utf8_lossy(&output.stdout).trim() {
+      "true" => Ok(true),
+      "false" => Ok(false),
+      value => Err(format!(
+        "unexpected gsettings natural-scroll value: {value}"
+      )),
+    }
   }
 
   fn slider_click_point(

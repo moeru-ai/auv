@@ -26,11 +26,11 @@ pub(crate) fn click_at(
 
 pub(crate) fn scroll_at(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
-  _point: Point,
+  point: Point,
   scroll: Scroll,
   settle: Duration,
 ) -> DriverResult<InputActionResult> {
-  with_input_session(state, |session| session.scroll(scroll))?;
+  with_input_session(state, |session| session.scroll_at(point, scroll))?;
   sleep_if_nonzero(settle);
   Ok(pointer_result())
 }

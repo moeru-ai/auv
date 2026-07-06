@@ -6,13 +6,14 @@ pub const DISPLAY_NAME: &str = "GNOME Control Center";
 
 pub const SETTINGS_WINDOW: LabelSet = LabelSet::new(&["设置", "Settings", "GNOME Control Center"]);
 pub const SYSTEM_PAGE: LabelSet = LabelSet::new(&["系统", "System"]);
-pub const SYSTEM_DETAILS_PAGE: LabelSet =
-  LabelSet::new(&["系统详情", "About", "System Details", "Details"]);
+pub const ABOUT_PAGE: LabelSet = LabelSet::new(&["关于", "About"]);
+pub const SYSTEM_DETAILS_PAGE: LabelSet = LabelSet::new(&["系统详情", "System Details"]);
 pub const COPY_BUTTON: LabelSet = LabelSet::new(&["复制", "Copy"]);
 pub const MOUSE_PAGE: LabelSet =
   LabelSet::new(&["鼠标与触摸板", "鼠标", "Mouse & Touchpad", "Mouse"]);
 pub const POINTER_SPEED: LabelSet = LabelSet::new(&["指针速度", "Pointer Speed"]);
-pub const NATURAL_SCROLLING: LabelSet = LabelSet::new(&["自然滚动", "Natural Scrolling"]);
+pub const NATURAL_SCROLLING: LabelSet = LabelSet::new(&["自然", "Natural"]);
+pub const TRADITIONAL_SCROLLING: LabelSet = LabelSet::new(&["传统", "Traditional"]);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LabelSet {
