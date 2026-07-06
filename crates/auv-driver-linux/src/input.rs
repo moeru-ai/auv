@@ -20,19 +20,19 @@ pub(crate) fn click_at(
   point: Point,
   click: Click,
 ) -> DriverResult<InputActionResult> {
-  let fallback_reason = with_input_session(state, |session| session.click_at(point, click))?;
-  Ok(pointer_result(fallback_reason))
+  with_input_session(state, |session| session.click_at(point, click))?;
+  Ok(pointer_result())
 }
 
 pub(crate) fn scroll_at(
   state: &Arc<Mutex<LinuxDriverSessionState>>,
-  _point: Point,
+  point: Point,
   scroll: Scroll,
   settle: Duration,
 ) -> DriverResult<InputActionResult> {
-  with_input_session(state, |session| session.scroll(scroll))?;
+  with_input_session(state, |session| session.scroll_at(point, scroll))?;
   sleep_if_nonzero(settle);
-  Ok(pointer_result(None))
+  Ok(pointer_result())
 }
 
 pub(crate) fn type_text(
@@ -170,13 +170,13 @@ fn keyboard_result() -> InputActionResult {
   }
 }
 
-fn pointer_result(fallback_reason: Option<String>) -> InputActionResult {
+fn pointer_result() -> InputActionResult {
   InputActionResult {
     selected_path: InputDeliveryPath::ForegroundSystemEvents,
     attempts: vec![InputAttempt::success(
       InputDeliveryPath::ForegroundSystemEvents,
     )],
-    fallback_reason,
+    fallback_reason: None,
     mouse_disturbance: DisturbanceLevel::Temporary,
     focus_disturbance: DisturbanceLevel::Unknown,
     clipboard_disturbance: DisturbanceLevel::None,
