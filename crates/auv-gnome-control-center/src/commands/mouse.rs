@@ -1,9 +1,12 @@
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
 use auv_driver::{InputActionResult, WindowPoint};
 use serde::{Deserialize, Serialize};
 
-use crate::interaction::{InteractionStep, StepOutcome};
+use crate::interaction::InteractionStep;
+#[cfg(target_os = "linux")]
+use crate::interaction::StepOutcome;
 use crate::views::MatchedNode;
 use crate::windows::OpenWindowReport;
 

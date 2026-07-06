@@ -3,9 +3,13 @@ use std::time::Duration;
 use auv_driver::{Rect, Window};
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "linux")]
 use crate::app::{APP_ID, DISPLAY_NAME, PROCESS_NAME, SETTINGS_WINDOW};
-use crate::interaction::{InteractionStep, StepOutcome};
+use crate::interaction::InteractionStep;
+#[cfg(target_os = "linux")]
+use crate::interaction::StepOutcome;
 
+#[cfg(target_os = "linux")]
 const POLL_INTERVAL_MS: u64 = 250;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,6 +162,7 @@ mod platform {
   }
 }
 
+#[cfg(target_os = "linux")]
 fn record_window(report: &mut OpenWindowReport, window: &Window) {
   report.window_found = true;
   report.window_title = window.title.clone();
@@ -166,6 +171,7 @@ fn record_window(report: &mut OpenWindowReport, window: &Window) {
   report.frame = Some(window.frame);
 }
 
+#[cfg(target_os = "linux")]
 fn report() -> OpenWindowReport {
   OpenWindowReport {
     window_found: false,

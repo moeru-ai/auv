@@ -55,6 +55,10 @@ pub mod portal {
       Err(DriverError::unsupported("linux.portal.input"))
     }
 
+    pub fn scroll_at(&mut self, _point: Point, _scroll: Scroll) -> DriverResult<()> {
+      Err(DriverError::unsupported("linux.portal.input"))
+    }
+
     pub fn key_press(&mut self, _keysym: i32) -> DriverResult<()> {
       Err(DriverError::unsupported("linux.portal.input"))
     }
