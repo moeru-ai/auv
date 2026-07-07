@@ -3,7 +3,7 @@
 //! recognition evidence -> [本闸门] -> contract::Candidate。
 //! 默认拒绝:缺任一前置即返回带类型理由的 `Refused`。
 //! 本类型不是 action-result schema:它在 recognition -> candidate 边，
-//! 位于 ActionResolverDecision / InputActionResult 上游，不复制它们。
+//! 位于 input delivery / operation verification evidence 上游，不复制它们。
 
 use serde::{Deserialize, Serialize};
 
