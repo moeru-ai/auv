@@ -24,6 +24,7 @@ auv-driver = { path = "../auv-driver" }
 auv-inference-common = { path = "../auv-inference-common" }
 auv-inference-ort = { path = "../auv-inference-ort", optional = true }
 auv-inference-ultralytics = { path = "../auv-inference-ultralytics" }
+auv-task-object-detection = { path = "../auv-task-object-detection", features = ["ultralytics"] }
 clap = { version = "4.5", features = ["derive"] }
 hf-hub = { version = "1.0.0-rc.1", features = ["blocking", "rustls-tls"] }
 image.workspace = true

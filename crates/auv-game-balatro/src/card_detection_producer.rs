@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use auv_file::{JsonFileReadError, read_json_file as read_json_file_helper};
-use auv_inference_common::DetectionSet;
+use auv_task_object_detection::DetectionResult;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -47,8 +47,8 @@ pub struct ExpectedSlotsManifest {
 pub struct LoadedDetectionBundle {
   pub bundle_dir: PathBuf,
   pub manifest: CardDetectionBundleManifest,
-  pub ui_detections: DetectionSet,
-  pub entities_detections: DetectionSet,
+  pub ui_detections: DetectionResult,
+  pub entities_detections: DetectionResult,
 }
 
 pub fn resolve_bundle_manifest_path(bundle_input: &Path) -> PathBuf {
@@ -90,8 +90,8 @@ pub fn load_detection_bundle(bundle_input: &Path) -> Result<LoadedDetectionBundl
 
   let ui_path = bundle_dir.join(&manifest.ui_detection_set_path);
   let entities_path = bundle_dir.join(&manifest.entities_detection_set_path);
-  let ui_detections = read_json_file::<DetectionSet>(&ui_path, "balatro ui detection set")?;
-  let entities_detections = read_json_file::<DetectionSet>(&entities_path, "balatro entities detection set")?;
+  let ui_detections = read_json_file::<DetectionResult>(&ui_path, "balatro ui detection result")?;
+  let entities_detections = read_json_file::<DetectionResult>(&entities_path, "balatro entities detection result")?;
 
   Ok(LoadedDetectionBundle {
     bundle_dir,

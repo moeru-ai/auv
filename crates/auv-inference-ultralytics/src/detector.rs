@@ -1,17 +1,18 @@
-use crate::convert::detection_set_from_result;
 use crate::device::InferenceDevice;
-use auv_inference_common::{DetectionOptions, DetectionSet, ImageFrame, InferenceError, InferenceResult, ModelConfig, ModelId};
+use auv_inference_common::{ImageFrame, InferenceError, InferenceResult, ModelConfig, ModelId};
 use image::{DynamicImage, ImageReader};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use ultralytics_inference::{InferenceConfig, YOLOModel};
+use ultralytics_inference::{Boxes, InferenceConfig, Results, YOLOModel};
 
 #[derive(Clone, Debug)]
 pub struct UltralyticsModelConfig {
   pub model_id: ModelId,
   pub model_path: PathBuf,
   pub input_size: Option<u32>,
-  pub options: DetectionOptions,
+  pub confidence_threshold: f32,
+  pub iou_threshold: f32,
+  pub max_detections: usize,
   pub device: InferenceDevice,
   pub class_names_override: Option<Vec<String>>,
 }
@@ -22,35 +23,67 @@ impl From<ModelConfig> for UltralyticsModelConfig {
       model_id: value.model_id,
       model_path: value.model_path,
       input_size: value.input_size,
-      options: DetectionOptions::default(),
+      confidence_threshold: 0.25,
+      iou_threshold: 0.45,
+      max_detections: 300,
       device: InferenceDevice::Cpu,
       class_names_override: None,
     }
   }
 }
 
-pub struct UltralyticsDetector {
+pub struct UltralyticsSession {
   model_id: ModelId,
   class_names_override: Option<Vec<String>>,
   model: Mutex<YOLOModel>,
 }
 
-impl std::fmt::Debug for UltralyticsDetector {
+impl std::fmt::Debug for UltralyticsSession {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     formatter
-      .debug_struct("UltralyticsDetector")
+      .debug_struct("UltralyticsSession")
       .field("model_id", &self.model_id)
       .field("class_names_override", &self.class_names_override)
       .finish_non_exhaustive()
   }
 }
 
-impl UltralyticsDetector {
+#[derive(Clone, Debug)]
+pub struct UltralyticsPrediction {
+  model_id: ModelId,
+  class_names_override: Option<Vec<String>>,
+  // TODO(ultralytics-batch-results): This backend stores the upstream result
+  // vector but exposes only the first image result because the current public
+  // session API accepts one image at a time. Re-open if batch prediction is
+  // added to `UltralyticsSession`.
+  results: Vec<Results>,
+}
+
+#[derive(Debug)]
+pub struct UltralyticsResult<'a> {
+  result: &'a Results,
+  class_names_override: Option<&'a [String]>,
+}
+
+#[derive(Debug)]
+pub struct UltralyticsBoxes<'a> {
+  boxes: &'a Boxes,
+  result: &'a Results,
+  class_names_override: Option<&'a [String]>,
+}
+
+impl UltralyticsSession {
   pub fn load(config: UltralyticsModelConfig) -> InferenceResult<Self> {
     validate_config(&config)?;
     require_model_path(&config.model_path)?;
 
-    let inference_config = build_inference_config(config.input_size, config.options, config.device.clone());
+    let inference_config = build_inference_config(
+      config.input_size,
+      config.confidence_threshold,
+      config.iou_threshold,
+      config.max_detections,
+      config.device.clone(),
+    );
     let model = YOLOModel::load_with_config(&config.model_path, inference_config).map_err(backend_error)?;
 
     Ok(Self {
@@ -60,7 +93,7 @@ impl UltralyticsDetector {
     })
   }
 
-  pub fn detect_path(&self, path: impl AsRef<Path>) -> InferenceResult<DetectionSet> {
+  pub fn predict_path(&self, path: impl AsRef<Path>) -> InferenceResult<UltralyticsPrediction> {
     let path = path.as_ref();
     let image = load_image_path(path)?;
     let source = path.to_string_lossy().into_owned();
@@ -68,10 +101,15 @@ impl UltralyticsDetector {
       let mut model = self.lock_model()?;
       model.predict_image(&image, source).map_err(backend_error)?
     };
-    self.convert_first_result(results)
+
+    Ok(UltralyticsPrediction {
+      model_id: self.model_id.clone(),
+      class_names_override: self.class_names_override.clone(),
+      results,
+    })
   }
 
-  pub fn detect_frame(&self, frame: &ImageFrame) -> InferenceResult<DetectionSet> {
+  pub fn predict_frame(&self, frame: &ImageFrame) -> InferenceResult<UltralyticsPrediction> {
     validate_frame_size(frame)?;
 
     let image = DynamicImage::ImageRgb8(frame.image.clone());
@@ -79,7 +117,12 @@ impl UltralyticsDetector {
       let mut model = self.lock_model()?;
       model.predict_image(&image, "<frame>".to_string()).map_err(backend_error)?
     };
-    self.convert_first_result(results)
+
+    Ok(UltralyticsPrediction {
+      model_id: self.model_id.clone(),
+      class_names_override: self.class_names_override.clone(),
+      results,
+    })
   }
 
   fn lock_model(&self) -> InferenceResult<std::sync::MutexGuard<'_, YOLOModel>> {
@@ -87,10 +130,105 @@ impl UltralyticsDetector {
       reason: err.to_string(),
     })
   }
+}
 
-  fn convert_first_result(&self, results: Vec<ultralytics_inference::Results>) -> InferenceResult<DetectionSet> {
-    let result = results.into_iter().next().ok_or(InferenceError::MissingResult)?;
-    detection_set_from_result(&self.model_id, &result, self.class_names_override.as_deref())
+impl UltralyticsPrediction {
+  pub fn model_id(&self) -> &ModelId {
+    &self.model_id
+  }
+
+  pub fn first_result(&self) -> InferenceResult<UltralyticsResult<'_>> {
+    let result = self.results.first().ok_or(InferenceError::MissingResult)?;
+
+    Ok(UltralyticsResult {
+      result,
+      class_names_override: self.class_names_override.as_deref(),
+    })
+  }
+
+  pub fn first_boxes(&self) -> InferenceResult<Option<UltralyticsBoxes<'_>>> {
+    let result = self.results.first().ok_or(InferenceError::MissingResult)?;
+    let boxes = result.boxes.as_ref();
+
+    Ok(boxes.map(|boxes| UltralyticsBoxes {
+      boxes,
+      result,
+      class_names_override: self.class_names_override.as_deref(),
+    }))
+  }
+}
+
+impl UltralyticsResult<'_> {
+  pub fn image_width(&self) -> u32 {
+    self.result.orig_shape.1
+  }
+
+  pub fn image_height(&self) -> u32 {
+    self.result.orig_shape.0
+  }
+
+  pub fn boxes(&self) -> Option<UltralyticsBoxes<'_>> {
+    let boxes = self.result.boxes.as_ref()?;
+
+    Some(UltralyticsBoxes {
+      boxes,
+      result: self.result,
+      class_names_override: self.class_names_override,
+    })
+  }
+}
+
+impl UltralyticsBoxes<'_> {
+  fn checked_index(&self, index: usize) -> InferenceResult<usize> {
+    if index < self.len() {
+      return Ok(index);
+    }
+
+    Err(InferenceError::Backend {
+      message: format!("ultralytics box index {index} out of range for {} boxes", self.len()),
+    })
+  }
+
+  pub fn len(&self) -> usize {
+    self.boxes.len()
+  }
+
+  pub fn image_width(&self) -> u32 {
+    self.result.orig_shape.1
+  }
+
+  pub fn image_height(&self) -> u32 {
+    self.result.orig_shape.0
+  }
+
+  pub fn class_id(&self, index: usize) -> InferenceResult<usize> {
+    let index = self.checked_index(index)?;
+    Ok(self.boxes.cls()[index] as usize)
+  }
+
+  pub fn confidence(&self, index: usize) -> InferenceResult<f32> {
+    let index = self.checked_index(index)?;
+    Ok(self.boxes.conf()[index])
+  }
+
+  pub fn xyxy(&self, index: usize) -> InferenceResult<[f32; 4]> {
+    let index = self.checked_index(index)?;
+    let xyxy = self.boxes.xyxy();
+    Ok([
+      xyxy[[index, 0]],
+      xyxy[[index, 1]],
+      xyxy[[index, 2]],
+      xyxy[[index, 3]],
+    ])
+  }
+
+  pub fn label(&self, index: usize) -> InferenceResult<String> {
+    let class_id = self.class_id(index)?;
+    if let Some(class_names) = self.class_names_override {
+      return class_names.get(class_id).cloned().ok_or(InferenceError::MissingClassLabel { class_id });
+    }
+
+    self.result.names.get(&class_id).cloned().ok_or(InferenceError::MissingClassLabel { class_id })
   }
 }
 
@@ -101,12 +239,12 @@ fn validate_config(config: &UltralyticsModelConfig) -> InferenceResult<()> {
     return Err(InferenceError::InvalidInputSize { input_size });
   }
 
-  validate_threshold("confidence", config.options.confidence_threshold)?;
-  validate_threshold("iou", config.options.iou_threshold)?;
+  validate_threshold("confidence", config.confidence_threshold)?;
+  validate_threshold("iou", config.iou_threshold)?;
 
-  if config.options.max_detections == 0 {
+  if config.max_detections == 0 {
     return Err(InferenceError::InvalidMaxDetections {
-      max_detections: config.options.max_detections,
+      max_detections: config.max_detections,
     });
   }
 
@@ -135,11 +273,17 @@ fn require_model_path(path: &Path) -> InferenceResult<()> {
   })
 }
 
-fn build_inference_config(input_size: Option<u32>, options: DetectionOptions, device: InferenceDevice) -> InferenceConfig {
+fn build_inference_config(
+  input_size: Option<u32>,
+  confidence_threshold: f32,
+  iou_threshold: f32,
+  max_detections: usize,
+  device: InferenceDevice,
+) -> InferenceConfig {
   let mut config = InferenceConfig::new()
-    .with_confidence(options.confidence_threshold)
-    .with_iou(options.iou_threshold)
-    .with_max_det(options.max_detections)
+    .with_confidence(confidence_threshold)
+    .with_iou(iou_threshold)
+    .with_max_det(max_detections)
     .with_device(device.into())
     .with_save(false);
 
@@ -175,16 +319,21 @@ fn validate_frame_size(frame: &ImageFrame) -> InferenceResult<()> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use auv_inference_common::{DetectionOptions, ImageFrame, InferenceError, ModelId};
   use image::RgbImage;
+  use ndarray::{Array2, Array3};
+  use std::collections::HashMap;
   use std::path::PathBuf;
+  use std::sync::Arc;
+  use ultralytics_inference::Speed;
 
   fn valid_config() -> UltralyticsModelConfig {
     UltralyticsModelConfig {
       model_id: ModelId("test-model".to_string()),
       model_path: PathBuf::from("does-not-exist.onnx"),
       input_size: Some(640),
-      options: DetectionOptions::default(),
+      confidence_threshold: 0.25,
+      iou_threshold: 0.45,
+      max_detections: 300,
       device: InferenceDevice::Cpu,
       class_names_override: None,
     }
@@ -192,14 +341,14 @@ mod tests {
 
   #[test]
   fn missing_model_rejected_before_backend_load() {
-    let err = UltralyticsDetector::load(valid_config()).unwrap_err();
+    let err = UltralyticsSession::load(valid_config()).unwrap_err();
 
     assert!(matches!(err, InferenceError::MissingModel { .. }), "expected MissingModel, got {err:?}");
   }
 
   #[test]
   fn zero_input_size_rejected() {
-    let err = UltralyticsDetector::load(UltralyticsModelConfig {
+    let err = UltralyticsSession::load(UltralyticsModelConfig {
       input_size: Some(0),
       ..valid_config()
     })
@@ -210,11 +359,8 @@ mod tests {
 
   #[test]
   fn nan_confidence_rejected() {
-    let err = UltralyticsDetector::load(UltralyticsModelConfig {
-      options: DetectionOptions {
-        confidence_threshold: f32::NAN,
-        ..DetectionOptions::default()
-      },
+    let err = UltralyticsSession::load(UltralyticsModelConfig {
+      confidence_threshold: f32::NAN,
       ..valid_config()
     })
     .unwrap_err();
@@ -233,11 +379,8 @@ mod tests {
 
   #[test]
   fn zero_max_detections_rejected() {
-    let err = UltralyticsDetector::load(UltralyticsModelConfig {
-      options: DetectionOptions {
-        max_detections: 0,
-        ..DetectionOptions::default()
-      },
+    let err = UltralyticsSession::load(UltralyticsModelConfig {
+      max_detections: 0,
       ..valid_config()
     })
     .unwrap_err();
@@ -247,7 +390,7 @@ mod tests {
 
   #[test]
   fn empty_class_names_override_rejected() {
-    let err = UltralyticsDetector::load(UltralyticsModelConfig {
+    let err = UltralyticsSession::load(UltralyticsModelConfig {
       class_names_override: Some(Vec::new()),
       ..valid_config()
     })
@@ -289,5 +432,134 @@ mod tests {
     std::fs::remove_file(&path).unwrap();
 
     assert!(matches!(err, InferenceError::ImageDecode { .. }), "expected ImageDecode, got {err:?}");
+  }
+
+  #[test]
+  fn first_boxes_requires_result() {
+    let prediction = UltralyticsPrediction {
+      model_id: ModelId("test-model".to_string()),
+      class_names_override: None,
+      results: Vec::new(),
+    };
+
+    let err = prediction.first_boxes().unwrap_err();
+
+    assert!(matches!(err, InferenceError::MissingResult), "expected MissingResult, got {err:?}");
+  }
+
+  #[test]
+  fn first_result_allows_empty_detection_output() {
+    let prediction = UltralyticsPrediction {
+      model_id: ModelId("test-model".to_string()),
+      class_names_override: None,
+      results: vec![Results::new(
+        Array3::zeros((8, 8, 3)),
+        "test.png".to_string(),
+        Arc::new(HashMap::new()),
+        Speed::default(),
+        (8, 8),
+      )],
+    };
+
+    let result = prediction.first_result().expect("result should exist");
+
+    assert_eq!(result.image_width(), 8);
+    assert_eq!(result.image_height(), 8);
+    assert!(result.boxes().is_none(), "empty detections should not be an error");
+    assert!(prediction.first_boxes().unwrap().is_none(), "empty detections should return no boxes");
+  }
+
+  #[test]
+  fn override_missing_class_id_does_not_fall_back_to_backend_names() {
+    // ROOT CAUSE:
+    //
+    // If a caller supplied class names but omitted a detected class id,
+    // label lookup could silently fall back to backend names instead of
+    // preserving the authoritative override list.
+    //
+    // Before the fix, class id 1 resolved to `backend-one`.
+    // The fix keeps override labels authoritative whenever they are supplied.
+    let prediction = UltralyticsPrediction {
+      model_id: ModelId("test-model".to_string()),
+      class_names_override: Some(vec!["override-zero".to_string()]),
+      results: vec![result_with_box_for_class(1, Some("backend-one"))],
+    };
+
+    let boxes = prediction.first_boxes().expect("result should exist").expect("boxes should exist");
+    let error = boxes.label(0).expect_err("missing override label should fail");
+
+    assert!(matches!(error, InferenceError::MissingClassLabel { class_id: 1 }));
+  }
+
+  #[test]
+  fn uses_override_label_when_present() {
+    let prediction = UltralyticsPrediction {
+      model_id: ModelId("test-model".to_string()),
+      class_names_override: Some(vec!["override-zero".to_string(), "override-one".to_string()]),
+      results: vec![result_with_box_for_class(1, Some("backend-one"))],
+    };
+
+    let boxes = prediction.first_boxes().expect("result should exist").expect("boxes should exist");
+
+    assert_eq!(boxes.len(), 1);
+    assert_eq!(boxes.image_width(), 8);
+    assert_eq!(boxes.image_height(), 8);
+    assert_eq!(boxes.class_id(0).unwrap(), 1);
+    assert_eq!(boxes.confidence(0).unwrap(), 0.9);
+    assert_eq!(boxes.xyxy(0).unwrap(), [1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(boxes.label(0).unwrap(), "override-one");
+  }
+
+  #[test]
+  fn uses_backend_names_without_override() {
+    let prediction = UltralyticsPrediction {
+      model_id: ModelId("test-model".to_string()),
+      class_names_override: None,
+      results: vec![result_with_box_for_class(1, Some("backend-one"))],
+    };
+
+    let boxes = prediction.first_boxes().expect("result should exist").expect("boxes should exist");
+
+    assert_eq!(prediction.model_id(), &ModelId("test-model".to_string()));
+    assert_eq!(boxes.label(0).unwrap(), "backend-one");
+  }
+
+  #[test]
+  fn out_of_range_box_accessors_return_backend_error() {
+    let prediction = UltralyticsPrediction {
+      model_id: ModelId("test-model".to_string()),
+      class_names_override: None,
+      results: vec![result_with_box_for_class(1, Some("backend-one"))],
+    };
+
+    let boxes = prediction.first_boxes().expect("result should exist").expect("boxes should exist");
+
+    for error in [
+      boxes.class_id(1).unwrap_err(),
+      boxes.confidence(1).unwrap_err(),
+      boxes.xyxy(1).unwrap_err(),
+      boxes.label(1).unwrap_err(),
+    ] {
+      match error {
+        InferenceError::Backend { message } => {
+          assert_eq!(message, "ultralytics box index 1 out of range for 1 boxes");
+        }
+        other => panic!("expected Backend error, got {other:?}"),
+      }
+    }
+  }
+
+  fn result_with_box_for_class(class_id: usize, backend_name: Option<&str>) -> Results {
+    let mut names = HashMap::new();
+    if let Some(backend_name) = backend_name {
+      names.insert(class_id, backend_name.to_string());
+    }
+
+    let mut result = Results::new(Array3::zeros((8, 8, 3)), "test.png".to_string(), Arc::new(names), Speed::default(), (8, 8));
+    result.boxes = Some(Boxes::new(
+      Array2::from_shape_vec((1, 6), vec![1.0, 2.0, 3.0, 4.0, 0.9, class_id as f32]).expect("test box shape should be valid"),
+      result.orig_shape,
+    ));
+    result
   }
 }

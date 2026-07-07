@@ -24,10 +24,10 @@ fn detection_fixture_eval_writes_report_with_provenance() {
   assert_eq!(result.visual_eval_report.spurious_detection_count, 0);
 
   let provenance = result.visual_eval_report.detector_provenance.expect("detector provenance should be recorded");
-  assert_eq!(provenance.model_id, "test-osu-fixture-detector");
-  assert_eq!(provenance.label_map_source, "inline_fixture_dir");
+  assert_eq!(provenance.model_id, "direct_detection_result");
+  assert_eq!(provenance.label_map_source, "detection_result_dir");
 
-  assert_eq!(result.detection_eval_manifest.detector_model_id, "test-osu-fixture-detector");
+  assert_eq!(result.detection_eval_manifest.detector_model_id, "direct_detection_result");
   assert!(result.output_dir.join("visual_eval_report.json").exists());
   assert!(result.output_dir.join("detection_eval_manifest.json").exists());
 }

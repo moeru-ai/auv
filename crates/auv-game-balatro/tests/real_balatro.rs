@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use auv_game_balatro::config::BalatroModelConfig;
 use auv_game_balatro::observation::observe_image;
 use auv_game_balatro::output::write_json_file;
-use auv_inference_common::{Detection, render_annotated_image};
+use auv_task_object_detection::{Detection, render_annotated_image};
 use image::ImageReader;
 
 #[test]

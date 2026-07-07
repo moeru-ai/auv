@@ -1,10 +1,13 @@
+// NOTICE(object-detection-render-owner): This renderer moves from
+// `auv-inference-common` because it depends on object detection task types.
+// Task 2 deletes the old common copy, leaving this crate as the sole owner.
 use crate::{BoundingBox, Detection};
 use image::{Rgb, RgbImage};
 
 /// Draws detection boxes into an RGB image for local inspection/debug artifacts.
 ///
-/// NOTICE: The rendered image is a debug aid. `DetectionSet` remains the
-/// authoritative structured output for inference consumers.
+/// NOTICE: The rendered image is a debug aid. `DetectionResult` remains the
+/// authoritative structured output for task consumers.
 pub fn render_annotated_image(image: &RgbImage, detections: &[Detection]) -> RgbImage {
   let mut annotated = image.clone();
   if annotated.width() == 0 || annotated.height() == 0 {

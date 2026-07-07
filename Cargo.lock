@@ -378,9 +378,9 @@ dependencies = [
  "auv-game-minecraft",
  "auv-game-osu",
  "auv-godot",
- "auv-inference-common",
  "auv-media-macos",
  "auv-scan",
+ "auv-task-object-detection",
  "auv-tracing-driver",
  "auv-view",
  "axum",
@@ -497,6 +497,7 @@ dependencies = [
  "auv-inference-ort",
  "auv-inference-ultralytics",
  "auv-stage-status",
+ "auv-task-object-detection",
  "auv-tracing-driver",
  "clap",
  "hf-hub",
@@ -535,6 +536,7 @@ dependencies = [
  "auv-inference-common",
  "auv-query-readiness",
  "auv-stage-status",
+ "auv-task-object-detection",
  "auv-tracing-driver",
  "image",
  "rosu-map",
@@ -589,16 +591,11 @@ dependencies = [
 name = "auv-inference-ultralytics"
 version = "0.0.1"
 dependencies = [
- "auv-cli",
  "auv-inference-common",
- "auv-tracing-driver",
- "axum",
  "image",
  "ndarray",
  "serde",
  "serde_json",
- "tokio",
- "tower",
  "ultralytics-inference",
 ]
 
@@ -681,6 +678,19 @@ dependencies = [
  "serde_json",
  "steamlocate",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "auv-task-object-detection"
+version = "0.0.1"
+dependencies = [
+ "auv-inference-common",
+ "auv-inference-ultralytics",
+ "image",
+ "ndarray",
+ "serde",
+ "serde_json",
+ "ultralytics-inference",
 ]
 
 [[package]]

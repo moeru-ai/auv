@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **304** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **305** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -64,7 +64,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | `archive/skill-bundle-retirement` | Retired | SkillBundle / recipe 退役记录 | 5 |
 | `archive/phase-history` | Historical | Phase 1–3 冻结与验收 | 5 |
 | `archive/ax-copilot` | Archived vertical | macOS AX copilot；见 docs/archive/verticals/ax-copilot/ | 2 |
-| `misc` | Mixed | 跨 lane 或尚未归入单一主题的笔记 | 38 |
+| `misc` | Mixed | 跨 lane 或尚未归入单一主题的笔记 | 39 |
 
 ## 按 Lane 列出
 
@@ -710,11 +710,12 @@ macOS AX copilot；见 docs/archive/verticals/ax-copilot/
 - [`2026-06-11-frontend-convention-v0.md`](2026-06-11-frontend-convention-v0.md)
 - [`2026-06-26-apple-music-windows-command-reference.md`](2026-06-26-apple-music-windows-command-reference.md)
 
-#### plan (3)
+#### plan (4)
 
 - [`2026-06-14-c1-completion-plan.md`](2026-06-14-c1-completion-plan.md)
 - [`2026-06-14-core-lane-short-term-plan-c1d-c3.md`](2026-06-14-core-lane-short-term-plan-c1d-c3.md)
 - [`2026-06-18-auv-mc5-onward-execution-plan.md`](2026-06-18-auv-mc5-onward-execution-plan.md)
+- [`2026-07-07-inference-task-object-detection-simplification-plan.md`](2026-07-07-inference-task-object-detection-simplification-plan.md)
 
 #### research (1)
 

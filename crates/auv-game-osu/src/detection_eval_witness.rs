@@ -412,7 +412,7 @@ mod tests {
     assert_eq!(output.manifest.spatial_matched_frames, 1);
     assert_eq!(output.manifest.frame_witnesses.len(), 3);
     assert!(output.manifest.source_visual_eval_report_path.contains("visual_eval_report.json"));
-    assert_eq!(output.manifest.detector_model_id.as_deref(), Some("test-osu-fixture-detector"));
+    assert_eq!(output.manifest.detector_model_id.as_deref(), Some("direct_detection_result"));
     assert!(output.manifest_path.exists());
     assert!(output.inspect_report_path.exists());
   }

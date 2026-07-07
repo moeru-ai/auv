@@ -25,6 +25,7 @@ members = [
   "crates/auv-inference-common",
   "crates/auv-inference-ort",
   "crates/auv-inference-ultralytics",
+  "crates/auv-task-object-detection",
   "crates/auv-media-macos",
   "crates/auv-netease-music",
   "crates/auv-overlay-macos",
@@ -89,7 +90,7 @@ auv-game-osu = { path = "crates/auv-game-osu" }
 auv-game-balatro = { path = "crates/auv-game-balatro" }
 auv-game-minecraft = { path = "crates/auv-game-minecraft" }
 auv-godot = { path = "crates/auv-godot" }
-auv-inference-common = { path = "crates/auv-inference-common" }
+auv-task-object-detection = { path = "crates/auv-task-object-detection" }
 auv-driver = { path = "crates/auv-driver" }
 auv-driver-macos = { path = "crates/auv-driver-macos" }
 auv-cli-invoke = { path = "crates/auv-cli-invoke" }

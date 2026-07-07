@@ -1,6 +1,6 @@
-use auv_inference_common::{DetectionOptions, ModelId, render_annotated_image};
-use auv_inference_ultralytics::{InferenceDevice, UltralyticsDetector, UltralyticsModelConfig};
-use image::{ImageFormat, ImageReader};
+use auv_inference_common::ModelId;
+use auv_inference_ultralytics::{InferenceDevice, UltralyticsModelConfig, UltralyticsSession};
+use serde::Serialize;
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufWriter, Error as IoError, ErrorKind, Write};
@@ -15,12 +15,40 @@ struct Args {
   classes: Option<PathBuf>,
   image: PathBuf,
   json_out: PathBuf,
-  annotated_out: Option<PathBuf>,
   confidence: f32,
   iou: f32,
   max_detections: usize,
   input_size: u32,
   device: InferenceDevice,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonPrediction {
+  model_id: String,
+  image_size: JsonImageSize,
+  detections: Vec<JsonDetection>,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonImageSize {
+  width: u32,
+  height: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonDetection {
+  class_id: usize,
+  label: String,
+  confidence: f32,
+  bbox: JsonBoundingBox,
+}
+
+#[derive(Debug, Serialize)]
+struct JsonBoundingBox {
+  x1: f32,
+  y1: f32,
+  x2: f32,
+  y2: f32,
 }
 
 impl Args {
@@ -37,7 +65,6 @@ impl Args {
     let mut classes = None;
     let mut image = None;
     let mut json_out = None;
-    let mut annotated_out = None;
     let mut confidence = 0.25;
     let mut iou = 0.45;
     let mut max_detections = 300;
@@ -52,7 +79,6 @@ impl Args {
         "--classes" => classes = Some(PathBuf::from(next_value(&mut args, &flag)?)),
         "--image" => image = Some(PathBuf::from(next_value(&mut args, &flag)?)),
         "--json-out" => json_out = Some(PathBuf::from(next_value(&mut args, &flag)?)),
-        "--annotated-out" => annotated_out = Some(PathBuf::from(next_value(&mut args, &flag)?)),
         "--confidence" => confidence = parse_value(&flag, next_value(&mut args, &flag)?)?,
         "--iou" => iou = parse_value(&flag, next_value(&mut args, &flag)?)?,
         "--max-detections" => max_detections = parse_value(&flag, next_value(&mut args, &flag)?)?,
@@ -67,7 +93,6 @@ impl Args {
       classes,
       image: required(image, "--image")?,
       json_out: required(json_out, "--json-out")?,
-      annotated_out,
       confidence,
       iou,
       max_detections,
@@ -82,39 +107,53 @@ fn main() -> ExampleResult<()> {
 }
 
 fn run(args: Args) -> ExampleResult<()> {
-  if let Some(path) = &args.annotated_out {
-    require_png_path(path)?;
-  }
-
-  let detector = UltralyticsDetector::load(UltralyticsModelConfig {
+  let session = UltralyticsSession::load(UltralyticsModelConfig {
     model_id: model_id_from_path(&args.model),
     model_path: args.model,
     input_size: Some(args.input_size),
-    options: DetectionOptions {
-      confidence_threshold: args.confidence,
-      iou_threshold: args.iou,
-      max_detections: args.max_detections,
-    },
+    confidence_threshold: args.confidence,
+    iou_threshold: args.iou,
+    max_detections: args.max_detections,
     device: args.device,
     class_names_override: load_class_names(args.classes.as_deref())?,
   })?;
 
-  let detections = detector.detect_path(&args.image)?;
-  write_json(&args.json_out, &detections)?;
+  let prediction = session.predict_path(&args.image)?;
+  let json_prediction = build_json_prediction(&prediction)?;
+  write_json(&args.json_out, &json_prediction)?;
 
-  if let Some(path) = &args.annotated_out {
-    let image = ImageReader::open(&args.image)?.decode()?.to_rgb8();
-    let annotated = render_annotated_image(&image, &detections.detections);
-    annotated.save_with_format(path, ImageFormat::Png)?;
-  }
-
-  println!("detections: {}", detections.detections.len());
+  println!("detections: {}", json_prediction.detections.len());
   println!("json: {}", args.json_out.display());
-  if let Some(path) = &args.annotated_out {
-    println!("annotated: {}", path.display());
-  }
 
   Ok(())
+}
+
+fn build_json_prediction(prediction: &auv_inference_ultralytics::UltralyticsPrediction) -> ExampleResult<JsonPrediction> {
+  let result = prediction.first_result()?;
+  let detections = if let Some(boxes) = result.boxes() {
+    let mut detections = Vec::with_capacity(boxes.len());
+    for index in 0..boxes.len() {
+      let [x1, y1, x2, y2] = boxes.xyxy(index)?;
+      detections.push(JsonDetection {
+        class_id: boxes.class_id(index)?,
+        label: boxes.label(index)?,
+        confidence: boxes.confidence(index)?,
+        bbox: JsonBoundingBox { x1, y1, x2, y2 },
+      });
+    }
+    detections
+  } else {
+    Vec::new()
+  };
+
+  Ok(JsonPrediction {
+    model_id: prediction.model_id().0.clone(),
+    image_size: JsonImageSize {
+      width: result.image_width(),
+      height: result.image_height(),
+    },
+    detections,
+  })
 }
 
 fn load_class_names(path: Option<&Path>) -> ExampleResult<Option<Vec<String>>> {
@@ -125,14 +164,11 @@ fn load_class_names(path: Option<&Path>) -> ExampleResult<Option<Vec<String>>> {
   Ok(Some(names))
 }
 
-fn write_json(path: &Path, detections: &auv_inference_common::DetectionSet) -> ExampleResult<()> {
+fn write_json(path: &Path, prediction: &JsonPrediction) -> ExampleResult<()> {
   let file = File::create(path)?;
   let mut writer = BufWriter::new(file);
-  serde_json::to_writer_pretty(&mut writer, detections)?;
+  serde_json::to_writer_pretty(&mut writer, prediction)?;
   writer.write_all(b"\n")?;
-  // BufWriter::drop silently swallows flush errors, which would let this CLI
-  // exit 0 with truncated JSON on the rare write-on-drop failure. Flush
-  // explicitly so the error surfaces.
   writer.flush()?;
   Ok(())
 }
@@ -156,14 +192,6 @@ where
 
 fn required<T>(value: Option<T>, flag: &str) -> ExampleResult<T> {
   value.ok_or_else(|| invalid(format!("{flag} is required")))
-}
-
-fn require_png_path(path: &Path) -> ExampleResult<()> {
-  if path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| extension.eq_ignore_ascii_case("png")) {
-    return Ok(());
-  }
-
-  Err(invalid(format!("--annotated-out must point to a .png file: {}", path.display())))
 }
 
 fn invalid(message: String) -> Box<dyn Error> {
@@ -192,13 +220,5 @@ mod tests {
     assert_eq!(args.max_detections, 300);
     assert_eq!(args.input_size, 640);
     assert_eq!(args.device, InferenceDevice::Cpu);
-  }
-
-  #[test]
-  fn annotated_output_requires_png_path() {
-    assert!(require_png_path(Path::new("detections.png")).is_ok());
-    assert!(require_png_path(Path::new("detections.PNG")).is_ok());
-    assert!(require_png_path(Path::new("detections.jpg")).is_err());
-    assert!(require_png_path(Path::new("detections")).is_err());
   }
 }
