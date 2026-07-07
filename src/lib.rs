@@ -3,7 +3,6 @@ pub mod api;
 pub mod app;
 pub mod candidate_promotion;
 pub mod contract;
-pub mod inference_recognition;
 pub mod inspect;
 pub mod inspect_scene_state;
 pub mod inspect_server;

@@ -378,7 +378,6 @@ dependencies = [
  "auv-game-minecraft",
  "auv-game-osu",
  "auv-godot",
- "auv-inference-common",
  "auv-media-macos",
  "auv-scan",
  "auv-task-object-detection",
