@@ -25,6 +25,7 @@ members = [
   "crates/auv-inference-common",
   "crates/auv-inference-ort",
   "crates/auv-inference-ultralytics",
+  "crates/auv-task-object-detection",
   "crates/auv-media-macos",
   "crates/auv-netease-music",
   "crates/auv-overlay-macos",

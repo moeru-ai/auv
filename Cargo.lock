@@ -684,6 +684,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-task-object-detection"
+version = "0.0.1"
+dependencies = [
+ "auv-inference-common",
+ "image",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "auv-tracing-driver"
 version = "0.0.1"
 dependencies = [
