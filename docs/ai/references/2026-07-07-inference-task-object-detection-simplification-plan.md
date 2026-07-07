@@ -30,7 +30,7 @@ Modify:
 - `crates/auv-inference-ultralytics/src/detector.rs`: rename/reshape backend wrapper as session.
 - `crates/auv-inference-ultralytics/src/convert.rs`: delete or replace with backend accessors.
 - `crates/auv-inference-ultralytics/src/lib.rs`: export backend session/prediction types.
-- `crates/auv-inference-ultralytics/examples/detect.rs`: move or rewrite as task crate example.
+- `crates/auv-inference-ultralytics/examples/detect.rs`: keep as a backend-only prediction JSON example.
 - `crates/auv-game-balatro/Cargo.toml`: depend on `auv-task-object-detection`.
 - `crates/auv-game-balatro/src/*.rs`: import detection task types from the task crate.
 - `crates/auv-game-osu/Cargo.toml`: depend on `auv-task-object-detection`.
@@ -399,7 +399,11 @@ git commit -m "refactor(auv-inference-common): keep only inference primitives"
 - Modify: `crates/auv-inference-ultralytics/src/detector.rs`
 - Delete: `crates/auv-inference-ultralytics/src/convert.rs`
 - Modify: `crates/auv-inference-ultralytics/src/lib.rs`
-- Modify: `crates/auv-inference-ultralytics/src/device.rs`
+- Modify: `crates/auv-inference-ultralytics/examples/detect.rs`
+- Delete: `crates/auv-inference-ultralytics/tests/detection_set_boundary.rs`
+- Delete: `crates/auv-inference-ultralytics/tests/fixture_parity.rs`
+- Delete: `crates/auv-inference-ultralytics/tests/slay_the_spire_observe_only_boundary.rs`
+- Modify: `crates/auv-inference-ultralytics/src/device.rs` only if required by compile errors; avoid unnecessary changes.
 
 - [ ] **Step 1: Remove `auv-cli` dev-dependency**
 
@@ -572,7 +576,34 @@ fn valid_config() -> UltralyticsModelConfig {
 }
 ```
 
-- [ ] **Step 7: Run backend tests**
+- [ ] **Step 7: Delete stale integration tests**
+
+Delete the old integration tests that depend on the removed detection task
+types, root `auv-cli` runtime bridge, or old dev-dependencies:
+
+```text
+crates/auv-inference-ultralytics/tests/detection_set_boundary.rs
+crates/auv-inference-ultralytics/tests/fixture_parity.rs
+crates/auv-inference-ultralytics/tests/slay_the_spire_observe_only_boundary.rs
+```
+
+These tests cannot remain in `auv-inference-ultralytics` after this crate
+becomes backend-only. Replacement object-detection conversion coverage belongs
+in Task 4 under `auv-task-object-detection`.
+
+- [ ] **Step 8: Rewrite the backend example**
+
+Update `crates/auv-inference-ultralytics/examples/detect.rs` so it uses
+`UltralyticsSession::predict_path` and writes a backend prediction JSON derived
+from `UltralyticsPrediction::first_boxes()`. The backend crate example must not
+import `DetectionOptions`, `DetectionSet`, `render_annotated_image`, or
+`UltralyticsDetector`.
+
+The example may keep producing a JSON file for manual backend smoke use, but it
+must not produce annotated detection PNGs; annotated output is an object
+detection task concern and moves to the task crate after Task 4.
+
+- [ ] **Step 9: Run backend tests**
 
 Run:
 
@@ -582,11 +613,11 @@ cargo test -p auv-inference-ultralytics
 
 Expected: backend crate tests compile without `Detection`, `DetectionResult`, or `auv-cli`.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add crates/auv-inference-ultralytics
-git rm crates/auv-inference-ultralytics/src/convert.rs
+git rm crates/auv-inference-ultralytics/src/convert.rs crates/auv-inference-ultralytics/tests/detection_set_boundary.rs crates/auv-inference-ultralytics/tests/fixture_parity.rs crates/auv-inference-ultralytics/tests/slay_the_spire_observe_only_boundary.rs
 git commit -m "refactor(auv-inference-ultralytics): expose backend prediction session"
 ```
 
@@ -1053,10 +1084,6 @@ git commit -m "refactor(auv-game-osu): consume object detection task result"
 **Files:**
 - Delete: `src/inference_recognition.rs`
 - Modify: `src/lib.rs`
-- Delete: `crates/auv-inference-ultralytics/tests/detection_set_boundary.rs`
-- Delete: `crates/auv-inference-ultralytics/tests/fixture_parity.rs`
-- Delete: `crates/auv-inference-ultralytics/tests/slay_the_spire_observe_only_boundary.rs`
-- Modify: `crates/auv-inference-ultralytics/examples/detect.rs`
 
 - [ ] **Step 1: Delete root detector bridge module**
 
@@ -1072,58 +1099,7 @@ In `src/lib.rs`, remove:
 pub mod inference_recognition;
 ```
 
-- [ ] **Step 2: Delete old inference-ultralytics integration tests**
-
-Delete:
-
-```text
-crates/auv-inference-ultralytics/tests/detection_set_boundary.rs
-crates/auv-inference-ultralytics/tests/fixture_parity.rs
-crates/auv-inference-ultralytics/tests/slay_the_spire_observe_only_boundary.rs
-```
-
-These tests validate the old `DetectionSet` and `DetectionEvidenceManifest` stack and the old root recognition bridge. The replacement coverage lives in `auv-task-object-detection`.
-
-- [ ] **Step 3: Move example to task crate or rewrite it**
-
-The existing `crates/auv-inference-ultralytics/examples/detect.rs` produces detection JSON and annotated output, so move it to:
-
-```text
-crates/auv-task-object-detection/examples/detect.rs
-```
-
-Update imports:
-
-```rust
-use auv_task_object_detection::{
-  DetectionOptions, UltralyticsObjectDetector, UltralyticsObjectDetectorConfig,
-  render_annotated_image,
-};
-use auv_inference_common::ModelId;
-use auv_inference_ultralytics::InferenceDevice;
-```
-
-Update write function signature:
-
-```rust
-fn write_json(path: &Path, detections: &auv_task_object_detection::DetectionResult) -> ExampleResult<()> {
-  let json = serde_json::to_string_pretty(detections)?;
-  fs::write(path, format!("{json}\n"))?;
-  Ok(())
-}
-```
-
-- [ ] **Step 4: Remove old example if it no longer matches backend scope**
-
-Delete:
-
-```text
-crates/auv-inference-ultralytics/examples/detect.rs
-```
-
-Keep backend examples out of this task unless they demonstrate `UltralyticsSession::predict_*` without producing task detection artifacts.
-
-- [ ] **Step 5: Search for removed symbols**
+- [ ] **Step 2: Search for removed symbols**
 
 Run:
 
@@ -1133,11 +1109,11 @@ rg "DetectionSet|DetectionEvidenceManifest|SourceImageEvidence|ProjectionBasis|D
 
 Expected: no matches for deleted symbols except unrelated `auv_driver::geometry::ProjectionBasis` and the new task crate `render_annotated_image`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git rm src/inference_recognition.rs crates/auv-inference-ultralytics/tests/detection_set_boundary.rs crates/auv-inference-ultralytics/tests/fixture_parity.rs crates/auv-inference-ultralytics/tests/slay_the_spire_observe_only_boundary.rs crates/auv-inference-ultralytics/examples/detect.rs
-git add src/lib.rs crates/auv-task-object-detection/examples
+git rm src/inference_recognition.rs
+git add src/lib.rs
 git commit -m "refactor(inference): remove detector manifest recognition bridge"
 ```
 
