@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-30  
 **Status:** **final closeout + pause decision** — the approved session API unary lane
-and P13 external client smoke are closed for their named scope. This note records
+and external client smoke coverage are closed for their named scope. This note records
 what landed from P1 through P13, which gaps are intentional deferrals, and which
 owner-named triggers would reopen work. **No new implementation is approved by this
 note.**
@@ -10,7 +10,7 @@ note.**
 ## One-line summary
 
 The session API **unary** surface (`CreateSession` / `Invoke` / `GetOperation`) and
-**P13 external client smoke** are landed and test-backed. **`StreamSessionEvents`**
+external client smoke coverage are landed and test-backed. **`StreamSessionEvents`**
 remains unwired (P10 deferred). Session **Invoke → `OperationResult` persistence**
 is **closed by API-R2**; MCP/CLI catalog invoke join-artifact divergence is
 **frozen session-only by API-R2b-A**. Further API lane work requires an explicit
@@ -20,7 +20,7 @@ owner-named slice; pause does not imply P10 or R2b-impl is "next."
 
 ```text
 unary 已有：CreateSession / Invoke / GetOperation
-external smoke 已有：P13
+external smoke 已有：transport gRPC + API-S1 subprocess
 stream 仍未启用：P10 defer
 session Invoke -> OperationResult：closed by API-R2
 MCP/CLI invoke -> join artifacts：frozen open by API-R2b-A
@@ -44,9 +44,9 @@ Pointers: [R2 handoff](2026-06-30-auv-api-r2-invoke-operation-result-handoff.md)
 | Statement | Meaning | Evidence |
 | --- | --- | --- |
 | Unary landed | All three unary RPCs wired through handler + loopback gRPC transport | [`handler.rs`](../../src/api/session_service/handler.rs), [`transport.rs`](../../src/api/session_service/transport.rs) |
-| External smoke landed | Real `SessionServiceClient` over loopback TCP | [P13 handoff](2026-06-30-auv-api-p13-external-client-smoke-handoff.md), [`client_smoke.rs`](../../src/api/session_service/client_smoke.rs) |
+| External smoke landed | Real `SessionServiceClient` over loopback TCP | `transport.rs` gRPC tests and [API-S1 subprocess smoke](2026-06-30-auv-api-s1-subprocess-smoke-handoff.md) |
 | Stream not enabled | `StreamSessionEvents` returns `UNIMPLEMENTED` / `NotWired` | [`transport.rs` L206–212](../../src/api/session_service/transport.rs), [`handler.rs` L208–225](../../src/api/session_service/handler.rs) |
-| Session Invoke → OperationResult | Happy path persists synthetic `operation-result` on session `Invoke` (API-R2) | [R2 handoff](2026-06-30-auv-api-r2-invoke-operation-result-handoff.md), [`client_smoke.rs`](../../src/api/session_service/client_smoke.rs) `session_api_smoke_invoke_then_get_operation_round_trips` |
+| Session Invoke → OperationResult | Happy path persists synthetic `operation-result` on session `Invoke` (API-R2) | [R2 handoff](2026-06-30-auv-api-r2-invoke-operation-result-handoff.md), `transport::grpc_invoke_and_get_operation_round_trips`, `session_api_subprocess_smoke_invoke_then_get_operation_round_trips` |
 
 ## Scope boundary
 
@@ -85,7 +85,7 @@ not mean every proto RPC is fully featured.
 | **P9** | Loopback gRPC | `transport.rs` | `CreateSession`, `Invoke`, `GetOperation` over tonic |
 | **P11** | Summary durability | [`2026-06-30-auv-api-p11-summary-durability-handoff.md`](2026-06-30-auv-api-p11-summary-durability-handoff.md) | `operation-summary` artifact persisted on `Invoke` |
 | **P12** | Identity / role closeout | [`2026-06-30-auv-api-p12-identity-role-semantics-closeout.md`](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md) | Wire `operation_id` = `command_id`; `ArtifactRef.role` from catalog |
-| **P13** | External client smoke | [`2026-06-30-auv-api-p13-external-client-smoke-handoff.md`](2026-06-30-auv-api-p13-external-client-smoke-handoff.md) | Three gRPC smoke journeys; Journey B green post-R2 invoke→GetOperation round-trip |
+| **P13** | External client smoke | [`2026-06-30-auv-api-p13-external-client-smoke-handoff.md`](2026-06-30-auv-api-p13-external-client-smoke-handoff.md) | Historical dedicated smoke module; later retired as redundant with transport gRPC tests and API-S1 |
 | **S1** | Subprocess loopback smoke | [`2026-06-30-auv-api-s1-subprocess-smoke-handoff.md`](2026-06-30-auv-api-s1-subprocess-smoke-handoff.md) | `auv session serve` subprocess proof via `CARGO_BIN_EXE_auv` |
 
 ## Frozen capability matrix
@@ -96,7 +96,7 @@ not mean every proto RPC is fully featured.
 | `Invoke` (blocking unary) | **landed** | Records run + `operation-summary` + synthetic `operation-result` (R2); returns `InvokeResponse` |
 | `GetOperation` (with persisted skeleton) | **landed** | Two-source join when `operation-result` artifact exists |
 | `GetOperation` after fresh `Invoke` (happy path) | **landed (R2)** | Round-trip succeeds when persist succeeds; `PersistedOperationRequired` on durability failure / missing skeleton |
-| External client smoke (P13) | **landed** | `cargo test session_api_smoke` |
+| External client smoke | **landed** | `cargo test grpc_invoke_and_get_operation_round_trips`; `cargo test --test session_api_subprocess_smoke` |
 | Subprocess loopback smoke (S1) | **landed** | `cargo test --test session_api_subprocess_smoke` |
 | `StreamSessionEvents` (P10) | **deferred** | Transport `UNIMPLEMENTED`; handler `NotWired` |
 | `json_payload` envelope (P3 OD5) | **deferred** | Provisional decoder only; owner-named envelope slice required |
@@ -120,7 +120,7 @@ These rules are part of the pause boundary.
 ### 1. Invoke → GetOperation happy path is landed; edge failures are not regressions
 
 Session `Invoke` persists synthetic `OperationResult` on the happy path (API-R2).
-P13 Journey B asserts invoke→GetOperation round-trip success post-R2.
+The transport gRPC and API-S1 subprocess smokes assert invoke→GetOperation round-trip success post-R2.
 `PersistedOperationRequired` still applies when durability writes fail or no
 skeleton exists. Treating those edge cases as P12 identity regressions is **wrong**.
 
@@ -137,9 +137,9 @@ the other is a category error (see API-P4 §D).
 
 ### 4. P13 smoke ≠ production external API
 
-P13 uses in-process loopback TCP and hermetic fixtures. It does not certify
-remote access, TLS, or gRPC reflection. The subprocess `auv session serve`
-loopback path is covered separately by API-S1.
+The in-process transport tests use loopback TCP and hermetic fixtures. They do
+not certify remote access, TLS, or gRPC reflection. The subprocess `auv session
+serve` loopback path is covered separately by API-S1.
 
 ### 5. Pause does not unlock adjacent lanes
 
@@ -148,7 +148,7 @@ merger, controller, planner, or action lease work.
 
 ## Anti-misread rule (main point)
 
-> **API-P14 closeout means "the approved unary session API lane + P13/S1 smoke are
+> **API-P14 closeout means "the approved unary session API lane + transport/API-S1 smoke are
 > done for their named scope."** It does **not** mean "P10 stream or
 > R2b-impl is the obvious next implementation."
 
@@ -192,13 +192,13 @@ Readers verifying this pause record against the repo:
 
 ```sh
 cargo test session_service
-cargo test session_api_smoke
+cargo test grpc_invoke_and_get_operation_round_trips
 cargo test --test session_api_subprocess_smoke
 git diff --check
 ```
 
-Expected: `session_service` includes handler, mapper, summary, transport, and
-`client_smoke` tests; `session_api_smoke` runs three external-client journeys;
+Expected: `session_service` includes handler, mapper, summary, and transport
+tests; the transport gRPC round-trip covers in-process client/server behavior;
 `session_api_subprocess_smoke` runs the subprocess loopback proof.
 
 ## Related

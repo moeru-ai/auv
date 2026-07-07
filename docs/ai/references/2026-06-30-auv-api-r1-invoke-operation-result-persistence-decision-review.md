@@ -175,7 +175,7 @@ implementation slice only — not P10, not MCP merge.
 cargo fmt --check
 cargo check
 cargo test session_service
-cargo test session_api_smoke
+cargo test --test session_api_subprocess_smoke
 git diff --check
 ```
 

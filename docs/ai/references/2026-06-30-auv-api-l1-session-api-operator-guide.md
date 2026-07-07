@@ -75,8 +75,7 @@ Expected for `fixture.observe` on the happy path:
 - `output_summary == "fixture observed"`
 - `known_limits` includes `auv.api.session.invoke_synthetic_operation_result`
 
-Automated proof: P13 Journey B in
-[`client_smoke.rs`](../../src/api/session_service/client_smoke.rs);
+Automated proof: `transport::grpc_invoke_and_get_operation_round_trips`;
 subprocess proof: API-S1 integration test.
 
 ## What Invoke records
@@ -175,7 +174,7 @@ full manual smoke recipe.
 
 ```sh
 cargo run --quiet -- session serve --help
-cargo test session_api_smoke
+cargo test grpc_invoke_and_get_operation_round_trips
 cargo test --test session_api_subprocess_smoke
 git diff --check
 ```

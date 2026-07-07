@@ -6,6 +6,13 @@
 
 **Predecessor:** [API-P12 identity / role closeout](2026-06-30-auv-api-p12-identity-role-semantics-closeout.md)
 
+## Current repository note
+
+The dedicated `src/api/session_service/client_smoke.rs` module described below
+has since been removed as redundant. Equivalent loopback gRPC coverage remains in
+`src/api/session_service/transport.rs`, and the stronger real-binary path is
+covered by `tests/session_api_subprocess_smoke.rs`.
+
 ## Problem
 
 Before P13, session API correctness was proven mostly from **inside** the crate:
@@ -27,9 +34,10 @@ that deferral; it now asserts the happy-path round-trip after R2 landed.
 
 ## Smoke journeys
 
-All journeys live in `src/api/session_service/client_smoke.rs` and use a real
-`SessionServiceClient` against `bind_session_api` + `serve_on_listener` on
-`127.0.0.1:0`.
+These journeys originally lived in `src/api/session_service/client_smoke.rs` and
+used a real `SessionServiceClient` against `bind_session_api` +
+`serve_on_listener` on `127.0.0.1:0`. That dedicated module was later retired in
+favor of the existing transport-level gRPC tests plus the subprocess smoke.
 
 ### Journey A — Unary invoke (green)
 
@@ -75,7 +83,6 @@ exploration with the CLI server:
 cargo run --quiet -- session serve --store-root /tmp/auv-smoke
 
 # Terminal 2 — run automated external-client smoke
-cargo test session_api_smoke
 cargo test --test session_api_subprocess_smoke
 ```
 
@@ -94,8 +101,8 @@ grpcurl -plaintext \
 
 | Piece | Location |
 | --- | --- |
-| External client smoke tests | `session_service/client_smoke.rs` |
-| Module wiring | `session_service/mod.rs` (`#[cfg(test)] mod client_smoke`) |
+| External client smoke tests | Retired; covered by `transport.rs` gRPC tests and `tests/session_api_subprocess_smoke.rs` |
+| Module wiring | Retired |
 | Journey C fixtures | existing `test_fixtures::persist_operation_result_and_summary_run` |
 | Server boot (reused, not refactored) | `transport::bind_session_api`, `serve_on_listener` |
 
@@ -126,7 +133,6 @@ transport internals.
 ```sh
 cargo fmt --check
 cargo check
-cargo test session_api_smoke
 cargo test --test session_api_subprocess_smoke
 git diff --check
 ```

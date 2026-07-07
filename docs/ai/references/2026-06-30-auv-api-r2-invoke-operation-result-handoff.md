@@ -99,7 +99,7 @@ the **first** match, mirroring `read_operation_result` and P11 summary behavior.
 | Persist failure | `operation_result_store` (unix) | `operation_result_persist_failed` limit |
 | Handler round-trip | `handler::invoke_then_get_operation_round_trips` | Fresh invoke → get_operation success |
 | gRPC round-trip | `transport::grpc_invoke_and_get_operation_round_trips` | Same over tonic |
-| External smoke | `client_smoke::session_api_smoke_invoke_then_get_operation_round_trips` | P13 Journey B (flipped to success) |
+| External smoke | `session_api_subprocess_smoke_invoke_then_get_operation_round_trips` | API-S1 real-binary gRPC path |
 | Dual persist failure | `handler::get_operation_reports_runtime_summary_unavailable_after_summary_persist_failure` | Both summary + operation-result persist limits on invoke |
 
 ## Non-goals (R2)
@@ -117,7 +117,7 @@ the **first** match, mirroring `read_operation_result` and P11 summary behavior.
 cargo fmt --check
 cargo check
 cargo test session_service
-cargo test session_api_smoke
+cargo test --test session_api_subprocess_smoke
 git diff --check
 ```
 
