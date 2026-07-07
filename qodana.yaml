@@ -50,10 +50,6 @@ exclude:
   - name: RsUnreachablePatterns
     paths:
       - crates/auv-inference-ort/src/lib.rs
-  # NOTICE(qodana-false_positive): `reason` is consumed by unreachable! macro expansion.
-  - name: RsLiveness
-    paths:
-      - src/inference_recognition.rs
   # NOTICE(qodana-source_scope): JSON fixtures and broken-schema witnesses are
   # outside this lane's source-quality signal; the Cloud toggles are kept here
   # in the repository root so CI and local Qodana consume one shared truth.
