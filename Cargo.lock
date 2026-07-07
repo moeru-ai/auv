@@ -589,16 +589,11 @@ dependencies = [
 name = "auv-inference-ultralytics"
 version = "0.0.1"
 dependencies = [
- "auv-cli",
  "auv-inference-common",
- "auv-tracing-driver",
- "axum",
  "image",
  "ndarray",
  "serde",
  "serde_json",
- "tokio",
- "tower",
  "ultralytics-inference",
 ]
 
