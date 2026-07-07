@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **302** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **304** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -16,6 +16,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | 后缀 / 类型 | 用途 |
 |---|---|
 | `design` | 已接受或待批准的功能/边界设计 |
+| `spec` | 已批准或待批准的范围说明 |
 | `plan` / `implementation-plan` | 实现步骤与依赖顺序 |
 | `handoff` | 切片完成后的交接说明 |
 | `evidence` / `evidence-pack` | 可复现证据、benchmark、smoke 记录 |
@@ -45,7 +46,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 
 | Lane | 状态 | 说明 | 篇数 |
 |---|---|---|---:|
-| `core/runtime` | Active | AUV core runtime、contract、graduation、query-readiness | 39 |
+| `core/runtime` | Active | AUV core runtime、contract、graduation、query-readiness | 41 |
 | `core/invoke-cli` | Active | invoke 路由、CLI handler、catalog | 14 |
 | `core/api-mcp` | Active | session API、proto、MCP 前端 | 19 |
 | `core/inspect-trace` | Active | run 录制、inspect viewer、trace | 6 |
@@ -91,6 +92,10 @@ AUV core runtime、contract、graduation、query-readiness
 
 - [`2026-06-27-auv-core-spatial-result-consumption-proof-matrix.md`](2026-06-27-auv-core-spatial-result-consumption-proof-matrix.md)
 
+#### spec (1)
+
+- [`2026-07-07-archived-candidate-action-removal-spec.md`](2026-07-07-archived-candidate-action-removal-spec.md)
+
 #### note (15)
 
 - [`2026-06-27-auv-core-b1-json-file-helper-extraction.md`](2026-06-27-auv-core-b1-json-file-helper-extraction.md)
@@ -131,6 +136,10 @@ AUV core runtime、contract、graduation、query-readiness
 #### roadmap (1)
 
 - [`2026-06-13-auv-core-lane-roadmap.md`](2026-06-13-auv-core-lane-roadmap.md)
+
+#### plan (1)
+
+- [`2026-07-07-archived-candidate-action-removal-plan.md`](2026-07-07-archived-candidate-action-removal-plan.md)
 
 ### `core/invoke-cli` — Active
 
