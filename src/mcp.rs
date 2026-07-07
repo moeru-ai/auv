@@ -41,13 +41,6 @@ impl McpServer {
     store.map_err(invalid_params)
   }
 
-  fn runtime(&self, store_root: Option<String>) -> Result<crate::runtime::Runtime, McpError> {
-    let runtime = match store_root {
-      Some(root) => build_runtime_with_store_root(self.project_root.clone(), PathBuf::from(root)),
-      None => build_default_runtime(self.project_root.clone()),
-    };
-    runtime.map_err(invalid_params)
-  }
 }
 
 #[tool_router(router = tool_router)]
@@ -239,6 +232,7 @@ pub async fn serve_stdio(project_root: PathBuf) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::model::now_millis;
   use rmcp::{
     ClientHandler, ServiceExt,
     model::{CallToolRequestParam, ClientInfo},
