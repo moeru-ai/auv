@@ -683,9 +683,12 @@ name = "auv-task-object-detection"
 version = "0.0.1"
 dependencies = [
  "auv-inference-common",
+ "auv-inference-ultralytics",
  "image",
+ "ndarray",
  "serde",
  "serde_json",
+ "ultralytics-inference",
 ]
 
 [[package]]

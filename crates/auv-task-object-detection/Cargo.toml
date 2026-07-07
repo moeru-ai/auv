@@ -12,10 +12,17 @@ documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+ultralytics = ["dep:auv-inference-ultralytics"]
+
 [dependencies]
 auv-inference-common = { path = "../auv-inference-common" }
+auv-inference-ultralytics = { path = "../auv-inference-ultralytics", optional = true }
 image.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+ndarray.workspace = true
 serde_json.workspace = true
+ultralytics-inference.workspace = true
