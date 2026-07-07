@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use auv_inference_common::{Detection, DetectionSet, ImageSize, InferenceError};
+use auv_inference_common::{ImageSize, InferenceError};
+use auv_task_object_detection::{BoundingBox, Detection, DetectionResult};
 use image::RgbImage;
 use thiserror::Error;
 
@@ -43,8 +44,8 @@ pub fn build_state_from_detections(
   detections: BalatroDetectionSets,
   no_cache: bool,
 ) -> BalatroState {
-  let raw_entities = evidence_from_set(&detections.entities);
-  let raw_ui = evidence_from_set(&detections.ui);
+  let raw_entities = evidence_from_result(&detections.entities, "balatro-entities");
+  let raw_ui = evidence_from_result(&detections.ui, "balatro-ui");
   let mut entity_detections = detections.entities.detections;
   let mut ui_detections = detections.ui.detections;
 
@@ -126,13 +127,13 @@ fn diagnostics_for_detections(entities: &[Detection], ui: &[Detection]) -> Vec<B
   Vec::new()
 }
 
-fn evidence_from_set(set: &DetectionSet) -> Vec<ObjectEvidence> {
-  set
+fn evidence_from_result(result: &DetectionResult, model: &str) -> Vec<ObjectEvidence> {
+  result
     .detections
     .iter()
     .cloned()
     .map(|detection| ObjectEvidence {
-      model: set.model_id.0.clone(),
+      model: model.to_owned(),
       detection,
     })
     .collect()
@@ -318,10 +319,10 @@ fn append_voucher_layout_candidate(items: &mut Vec<StoreItem>, image_width: u32,
   });
 }
 
-fn voucher_layout_bbox(image_width: u32, image_height: u32) -> auv_inference_common::BoundingBox {
+fn voucher_layout_bbox(image_width: u32, image_height: u32) -> BoundingBox {
   let width = image_width.max(1) as f32;
   let height = image_height.max(1) as f32;
-  auv_inference_common::BoundingBox {
+  BoundingBox {
     x1: width * 0.22,
     y1: height * 0.58,
     x2: width * 0.39,
@@ -329,7 +330,7 @@ fn voucher_layout_bbox(image_width: u32, image_height: u32) -> auv_inference_com
   }
 }
 
-fn bbox_overlap_ratio(left: auv_inference_common::BoundingBox, right: auv_inference_common::BoundingBox) -> f32 {
+fn bbox_overlap_ratio(left: BoundingBox, right: BoundingBox) -> f32 {
   let x1 = left.x1.max(right.x1);
   let y1 = left.y1.max(right.y1);
   let x2 = left.x2.min(right.x2);
@@ -355,7 +356,8 @@ fn center_x(detection: &Detection) -> f32 {
 
 #[cfg(test)]
 mod tests {
-  use auv_inference_common::{BoundingBox, Detection, DetectionSet, ImageSize, ModelId};
+  use auv_inference_common::ImageSize;
+  use auv_task_object_detection::{BoundingBox, Detection, DetectionResult};
   use image::{Rgb, RgbImage};
 
   use super::*;
@@ -462,9 +464,9 @@ mod tests {
     assert_eq!(state.frame.image_size, image_size(&image));
     assert_eq!(state.phase, BalatroPhase::Playing);
     assert_eq!(state.raw_entities.len(), 4);
-    assert_eq!(state.raw_entities[0].model, "entities-test");
+    assert_eq!(state.raw_entities[0].model, "balatro-entities");
     assert_eq!(state.raw_ui.len(), 2);
-    assert_eq!(state.raw_ui[0].model, "ui-test");
+    assert_eq!(state.raw_ui[0].model, "balatro-ui");
     assert!(state.scores.chips.is_none());
     assert!(state.rounds.cash.is_none());
     assert!(state.diagnostics.is_empty());
@@ -683,13 +685,11 @@ mod tests {
 
   fn detection_sets_for_image(image: &RgbImage, entities: Vec<Detection>, ui: Vec<Detection>) -> BalatroDetectionSets {
     BalatroDetectionSets {
-      entities: DetectionSet {
-        model_id: ModelId("entities-test".to_owned()),
+      entities: DetectionResult {
         image_size: image_size(image),
         detections: entities,
       },
-      ui: DetectionSet {
-        model_id: ModelId("ui-test".to_owned()),
+      ui: DetectionResult {
         image_size: image_size(image),
         detections: ui,
       },

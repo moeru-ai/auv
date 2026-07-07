@@ -1,20 +1,20 @@
 use std::path::Path;
 
-use auv_inference_common::{DetectionOptions, DetectionSet, InferenceResult, ModelId};
-use auv_inference_ultralytics::{UltralyticsDetector, UltralyticsModelConfig};
+use auv_inference_common::{InferenceResult, ModelId};
+use auv_task_object_detection::{DetectionOptions, DetectionResult, UltralyticsObjectDetector, UltralyticsObjectDetectorConfig};
 
 use crate::config::{BalatroModelConfig, load_class_names};
 
 #[derive(Debug)]
 pub struct BalatroDetectors {
-  entities: UltralyticsDetector,
-  ui: UltralyticsDetector,
+  entities: UltralyticsObjectDetector,
+  ui: UltralyticsObjectDetector,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BalatroDetectionSets {
-  pub entities: DetectionSet,
-  pub ui: DetectionSet,
+  pub entities: DetectionResult,
+  pub ui: DetectionResult,
 }
 
 impl BalatroDetectors {
@@ -22,7 +22,7 @@ impl BalatroDetectors {
     let config = config.resolve().map_err(|error| auv_inference_common::InferenceError::Backend {
       message: error.to_string(),
     })?;
-    let entities = UltralyticsDetector::load(UltralyticsModelConfig {
+    let entities = UltralyticsObjectDetector::load(UltralyticsObjectDetectorConfig {
       model_id: ModelId("balatro-entities".to_owned()),
       model_path: config.entities_model,
       input_size: Some(640),
@@ -30,7 +30,7 @@ impl BalatroDetectors {
       device: config.device.clone(),
       class_names_override: Some(load_class_names(&config.entities_classes)?),
     })?;
-    let ui = UltralyticsDetector::load(UltralyticsModelConfig {
+    let ui = UltralyticsObjectDetector::load(UltralyticsObjectDetectorConfig {
       model_id: ModelId("balatro-ui".to_owned()),
       model_path: config.ui_model,
       input_size: Some(640),

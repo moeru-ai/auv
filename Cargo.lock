@@ -497,6 +497,7 @@ dependencies = [
  "auv-inference-ort",
  "auv-inference-ultralytics",
  "auv-stage-status",
+ "auv-task-object-detection",
  "auv-tracing-driver",
  "clap",
  "hf-hub",

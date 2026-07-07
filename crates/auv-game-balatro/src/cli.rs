@@ -9,8 +9,8 @@ use auv_driver::geometry::{Point, RatioRect, Rect, WindowPoint};
 use auv_driver::input::{ClickOptions, InputPolicy};
 use auv_driver::selector::{App, Window};
 use auv_driver::vision::TextRecognitionOptions;
-use auv_inference_common::BoundingBox;
 use auv_inference_ultralytics::InferenceDevice;
+use auv_task_object_detection::BoundingBox;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use image::{ImageError, RgbaImage};
 use serde::Serialize;
@@ -3985,7 +3985,7 @@ mod tests {
     ScoreState, SlotId, StoreItem, StoreItemKind, StoreState,
   };
   use auv_inference_common::ImageSize;
-  use auv_inference_common::{BoundingBox, Detection};
+  use auv_task_object_detection::{BoundingBox, Detection};
 
   fn button(id: &str, x1: f32, confidence: f32) -> ButtonTarget {
     ButtonTarget {

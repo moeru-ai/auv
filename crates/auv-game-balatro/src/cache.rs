@@ -1,4 +1,4 @@
-use auv_inference_common::{BoundingBox, Detection};
+use auv_task_object_detection::{BoundingBox, Detection};
 use image::RgbImage;
 
 use crate::model::CacheHint;

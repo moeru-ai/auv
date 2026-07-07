@@ -6,7 +6,7 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
-use auv_inference_common::Detection;
+use auv_task_object_detection::Detection;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 

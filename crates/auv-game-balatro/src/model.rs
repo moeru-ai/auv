@@ -1,6 +1,7 @@
 use std::fmt;
 
-use auv_inference_common::{BoundingBox, Detection, ImageSize};
+use auv_inference_common::ImageSize;
+use auv_task_object_detection::{BoundingBox, Detection};
 use serde::{Deserialize, Serialize};
 
 pub const BALATRO_STATE_SCHEMA_VERSION: &str = "auv.game.balatro.state.v0";
