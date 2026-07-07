@@ -40,7 +40,6 @@ impl McpServer {
     };
     store.map_err(invalid_params)
   }
-
 }
 
 #[tool_router(router = tool_router)]
