@@ -47,9 +47,7 @@ pub fn resolve_window(options: &ResolveOptions) -> Result<Option<AppleMusicWindo
   use auv_driver::selector::{App, Window as WindowSel, WindowSelector};
   use auv_driver_windows::WindowsDriver;
 
-  let session = WindowsDriver::new()
-    .open_local()
-    .map_err(|e| format!("windows driver open failed: {e}"))?;
+  let session = WindowsDriver::new().open_local().map_err(|e| format!("windows driver open failed: {e}"))?;
 
   // Prefer matching by process name (app name) so we find the window even if
   // the title has been localised. Fall back to title-only when process name

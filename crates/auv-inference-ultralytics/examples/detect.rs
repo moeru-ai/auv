@@ -121,12 +121,7 @@ fn load_class_names(path: Option<&Path>) -> ExampleResult<Option<Vec<String>>> {
   let Some(path) = path else {
     return Ok(None);
   };
-  let names = std::fs::read_to_string(path)?
-    .lines()
-    .map(str::trim)
-    .filter(|line| !line.is_empty())
-    .map(str::to_string)
-    .collect();
+  let names = std::fs::read_to_string(path)?.lines().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string).collect();
   Ok(Some(names))
 }
 
@@ -143,19 +138,12 @@ fn write_json(path: &Path, detections: &auv_inference_common::DetectionSet) -> E
 }
 
 fn model_id_from_path(path: &Path) -> ModelId {
-  let id = path
-    .file_stem()
-    .or_else(|| path.file_name())
-    .and_then(|value| value.to_str())
-    .unwrap_or("ultralytics-model")
-    .to_string();
+  let id = path.file_stem().or_else(|| path.file_name()).and_then(|value| value.to_str()).unwrap_or("ultralytics-model").to_string();
   ModelId(id)
 }
 
 fn next_value(args: &mut impl Iterator<Item = String>, flag: &str) -> ExampleResult<String> {
-  args
-    .next()
-    .ok_or_else(|| invalid(format!("{flag} requires a value")))
+  args.next().ok_or_else(|| invalid(format!("{flag} requires a value")))
 }
 
 fn parse_value<T>(flag: &str, value: String) -> ExampleResult<T>
@@ -163,9 +151,7 @@ where
   T: FromStr,
   T::Err: std::fmt::Display,
 {
-  value
-    .parse()
-    .map_err(|err| invalid(format!("invalid value for {flag}: {err}")))
+  value.parse().map_err(|err| invalid(format!("invalid value for {flag}: {err}")))
 }
 
 fn required<T>(value: Option<T>, flag: &str) -> ExampleResult<T> {
@@ -173,18 +159,11 @@ fn required<T>(value: Option<T>, flag: &str) -> ExampleResult<T> {
 }
 
 fn require_png_path(path: &Path) -> ExampleResult<()> {
-  if path
-    .extension()
-    .and_then(|extension| extension.to_str())
-    .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
-  {
+  if path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| extension.eq_ignore_ascii_case("png")) {
     return Ok(());
   }
 
-  Err(invalid(format!(
-    "--annotated-out must point to a .png file: {}",
-    path.display()
-  )))
+  Err(invalid(format!("--annotated-out must point to a .png file: {}", path.display())))
 }
 
 fn invalid(message: String) -> Box<dyn Error> {

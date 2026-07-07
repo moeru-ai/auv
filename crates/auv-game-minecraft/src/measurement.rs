@@ -40,24 +40,16 @@ impl TextureSweepThresholds {
         "repetitive".to_string(),
       ],
       per_pack_duration_seconds: 30.0,
-      refuse_on_noise_rule:
-        "exclude refused noisy frames from metrics, but require at least one exercised refusal"
-          .to_string(),
+      refuse_on_noise_rule: "exclude refused noisy frames from metrics, but require at least one exercised refusal".to_string(),
     }
   }
 
   pub fn validate(&self) -> MeasurementResult<()> {
     if !self.pose_error_p95_max_px.is_finite() || self.pose_error_p95_max_px <= 0.0 {
-      return Err(format!(
-        "pose_error_p95_max_px must be positive finite, got {}",
-        self.pose_error_p95_max_px
-      ));
+      return Err(format!("pose_error_p95_max_px must be positive finite, got {}", self.pose_error_p95_max_px));
     }
     if !self.occlusion_iou_min.is_finite() || !(0.0..=1.0).contains(&self.occlusion_iou_min) {
-      return Err(format!(
-        "occlusion_iou_min must be between 0 and 1, got {}",
-        self.occlusion_iou_min
-      ));
+      return Err(format!("occlusion_iou_min must be between 0 and 1, got {}", self.occlusion_iou_min));
     }
     if self.resource_pack_count == 0 {
       return Err("resource_pack_count must be greater than 0".to_string());
@@ -66,10 +58,7 @@ impl TextureSweepThresholds {
       return Err("required_texture_profiles must not be empty".to_string());
     }
     if !self.per_pack_duration_seconds.is_finite() || self.per_pack_duration_seconds <= 0.0 {
-      return Err(format!(
-        "per_pack_duration_seconds must be positive finite, got {}",
-        self.per_pack_duration_seconds
-      ));
+      return Err(format!("per_pack_duration_seconds must be positive finite, got {}", self.per_pack_duration_seconds));
     }
     if self.refuse_on_noise_rule.trim().is_empty() {
       return Err("refuse_on_noise_rule must be defined".to_string());
@@ -103,35 +92,20 @@ impl TextureSweepSampleSource {
       return Err("texture sweep sample source generator must not be empty".to_string());
     }
     if self.source_run_ids.is_empty() {
-      return Err(
-        "real MC-6 texture sweep samples must cite at least one source run id".to_string(),
-      );
+      return Err("real MC-6 texture sweep samples must cite at least one source run id".to_string());
     }
-    if self
-      .source_run_ids
-      .iter()
-      .any(|run_id| run_id.trim().is_empty())
-    {
+    if self.source_run_ids.iter().any(|run_id| run_id.trim().is_empty()) {
       return Err("real MC-6 texture sweep source run ids must not be empty".to_string());
     }
     if self.bundle_manifest_paths.is_empty() {
-      return Err(
-        "real MC-6 texture sweep samples must cite at least one bundle manifest path".to_string(),
-      );
+      return Err("real MC-6 texture sweep samples must cite at least one bundle manifest path".to_string());
     }
-    if self
-      .bundle_manifest_paths
-      .iter()
-      .any(|path| path.trim().is_empty())
-    {
+    if self.bundle_manifest_paths.iter().any(|path| path.trim().is_empty()) {
       return Err("real MC-6 texture sweep bundle manifest paths must not be empty".to_string());
     }
     let generator = self.generator.to_ascii_lowercase();
     if generator.contains("fixture") || generator.contains("smoke") || generator.contains("test") {
-      return Err(format!(
-        "real MC-6 texture sweep source generator must not be fixture/smoke/test data, got {:?}",
-        self.generator
-      ));
+      return Err(format!("real MC-6 texture sweep source generator must not be fixture/smoke/test data, got {:?}", self.generator));
     }
     Ok(())
   }
@@ -180,32 +154,21 @@ pub struct TextureSweepReportRow {
   pub passed: bool,
 }
 
-pub fn evaluate_texture_sweep(
-  inputs: &TextureSweepInputs,
-) -> MeasurementResult<TextureSweepReport> {
+pub fn evaluate_texture_sweep(inputs: &TextureSweepInputs) -> MeasurementResult<TextureSweepReport> {
   inputs.thresholds.validate()?;
   let sample_set = read_sample_set(&inputs.samples_path)?;
   if inputs.require_real_source {
     sample_set
       .source
       .as_ref()
-      .ok_or_else(|| {
-        "real MC-6 texture sweep evaluation requires a sample source block".to_string()
-      })?
+      .ok_or_else(|| "real MC-6 texture sweep evaluation requires a sample source block".to_string())?
       .validate_real_source()?;
   }
   let mut report = build_texture_sweep_report(&sample_set.samples, inputs.thresholds.clone())?;
   report.source = sample_set.source;
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create minecraft texture sweep output directory {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
-  write_report(
-    &inputs.output_dir.join("texture_sweep_report.json"),
-    &report,
-  )?;
+  fs::create_dir_all(&inputs.output_dir)
+    .map_err(|error| format!("failed to create minecraft texture sweep output directory {}: {error}", inputs.output_dir.display()))?;
+  write_report(&inputs.output_dir.join("texture_sweep_report.json"), &report)?;
   Ok(report)
 }
 
@@ -214,64 +177,23 @@ pub fn build_texture_sweep_report(
   thresholds: TextureSweepThresholds,
 ) -> MeasurementResult<TextureSweepReport> {
   thresholds.validate()?;
-  let mut pack_names = samples
-    .iter()
-    .map(|sample| sample.resource_pack.clone())
-    .collect::<BTreeSet<_>>()
-    .into_iter()
-    .collect::<Vec<_>>();
+  let mut pack_names = samples.iter().map(|sample| sample.resource_pack.clone()).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>();
   pack_names.sort();
 
   let mut rows = Vec::new();
   for pack in &pack_names {
-    let pack_samples = samples
-      .iter()
-      .filter(|sample| sample.resource_pack == *pack)
-      .collect::<Vec<_>>();
-    let texture_profile = pack_samples
-      .first()
-      .map(|sample| sample.texture_profile.clone())
-      .unwrap_or_default();
-    if pack_samples
-      .iter()
-      .any(|sample| sample.texture_profile != texture_profile)
-    {
-      return Err(format!(
-        "resource pack {pack} has mixed texture profiles; split the samples before evaluation"
-      ));
+    let pack_samples = samples.iter().filter(|sample| sample.resource_pack == *pack).collect::<Vec<_>>();
+    let texture_profile = pack_samples.first().map(|sample| sample.texture_profile.clone()).unwrap_or_default();
+    if pack_samples.iter().any(|sample| sample.texture_profile != texture_profile) {
+      return Err(format!("resource pack {pack} has mixed texture profiles; split the samples before evaluation"));
     }
-    let refused_noise_count = pack_samples
-      .iter()
-      .filter(|sample| sample.refused_noise)
-      .count();
-    let accepted = pack_samples
-      .iter()
-      .filter(|sample| !sample.refused_noise)
-      .collect::<Vec<_>>();
-    let pose_error_p95_px = percentile_95(
-      accepted
-        .iter()
-        .map(|sample| sample.pose_error_px)
-        .collect::<Vec<_>>(),
-    )?;
-    let min_occlusion_iou = min_finite(
-      accepted
-        .iter()
-        .map(|sample| sample.occlusion_iou)
-        .collect::<Vec<_>>(),
-    )?;
-    let duration_seconds = max_finite(
-      pack_samples
-        .iter()
-        .map(|sample| sample.duration_seconds)
-        .collect::<Vec<_>>(),
-    )?;
-    let pose_passed = pose_error_p95_px
-      .map(|value| value < thresholds.pose_error_p95_max_px)
-      .unwrap_or(false);
-    let occlusion_passed = min_occlusion_iou
-      .map(|value| value > thresholds.occlusion_iou_min)
-      .unwrap_or(false);
+    let refused_noise_count = pack_samples.iter().filter(|sample| sample.refused_noise).count();
+    let accepted = pack_samples.iter().filter(|sample| !sample.refused_noise).collect::<Vec<_>>();
+    let pose_error_p95_px = percentile_95(accepted.iter().map(|sample| sample.pose_error_px).collect::<Vec<_>>())?;
+    let min_occlusion_iou = min_finite(accepted.iter().map(|sample| sample.occlusion_iou).collect::<Vec<_>>())?;
+    let duration_seconds = max_finite(pack_samples.iter().map(|sample| sample.duration_seconds).collect::<Vec<_>>())?;
+    let pose_passed = pose_error_p95_px.map(|value| value < thresholds.pose_error_p95_max_px).unwrap_or(false);
+    let occlusion_passed = min_occlusion_iou.map(|value| value > thresholds.occlusion_iou_min).unwrap_or(false);
     let duration_passed = duration_seconds >= thresholds.per_pack_duration_seconds;
     rows.push(TextureSweepReportRow {
       resource_pack: pack.clone(),
@@ -288,24 +210,11 @@ pub fn build_texture_sweep_report(
     });
   }
 
-  let covered_texture_profiles = rows
-    .iter()
-    .map(|row| row.texture_profile.clone())
-    .collect::<BTreeSet<_>>()
-    .into_iter()
-    .collect::<Vec<_>>();
-  let expected_profiles = thresholds
-    .required_texture_profiles
-    .iter()
-    .cloned()
-    .collect::<BTreeSet<_>>();
-  let covered_profiles = covered_texture_profiles
-    .iter()
-    .cloned()
-    .collect::<BTreeSet<_>>();
-  let noise_refusal_exercised = samples
-    .iter()
-    .any(|sample| sample.refused_noise && counts_as_exercised_noise_refusal(sample.refusal_reason));
+  let covered_texture_profiles = rows.iter().map(|row| row.texture_profile.clone()).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>();
+  let expected_profiles = thresholds.required_texture_profiles.iter().cloned().collect::<BTreeSet<_>>();
+  let covered_profiles = covered_texture_profiles.iter().cloned().collect::<BTreeSet<_>>();
+  let noise_refusal_exercised =
+    samples.iter().any(|sample| sample.refused_noise && counts_as_exercised_noise_refusal(sample.refusal_reason));
   let actual_resource_pack_count = rows.len();
   let expected_resource_pack_count = thresholds.resource_pack_count;
   let passed = actual_resource_pack_count == thresholds.resource_pack_count
@@ -345,18 +254,9 @@ fn counts_as_exercised_noise_refusal(reason: Option<MismatchRefusalReason>) -> b
 }
 
 fn read_sample_set(path: &Path) -> MeasurementResult<TextureSweepSampleSet> {
-  let bytes = fs::read(path).map_err(|error| {
-    format!(
-      "failed to read minecraft texture sweep samples {}: {error}",
-      path.display()
-    )
-  })?;
-  serde_json::from_slice::<TextureSweepSampleSet>(&bytes).map_err(|error| {
-    format!(
-      "failed to parse minecraft texture sweep samples {}: {error}",
-      path.display()
-    )
-  })
+  let bytes = fs::read(path).map_err(|error| format!("failed to read minecraft texture sweep samples {}: {error}", path.display()))?;
+  serde_json::from_slice::<TextureSweepSampleSet>(&bytes)
+    .map_err(|error| format!("failed to parse minecraft texture sweep samples {}: {error}", path.display()))
 }
 
 fn write_report(path: &Path, report: &TextureSweepReport) -> MeasurementResult<()> {
@@ -366,22 +266,14 @@ fn write_report(path: &Path, report: &TextureSweepReport) -> MeasurementResult<(
       json
     })
     .map_err(|error| format!("failed to serialize minecraft texture sweep report: {error}"))?;
-  fs::write(path, json.as_bytes()).map_err(|error| {
-    format!(
-      "failed to write minecraft texture sweep report {}: {error}",
-      path.display()
-    )
-  })
+  fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write minecraft texture sweep report {}: {error}", path.display()))
 }
 
 fn percentile_95(mut values: Vec<f64>) -> MeasurementResult<Option<f64>> {
   if values.is_empty() {
     return Ok(None);
   }
-  if values
-    .iter()
-    .any(|value| !value.is_finite() || *value < 0.0)
-  {
+  if values.iter().any(|value| !value.is_finite() || *value < 0.0) {
     return Err("pose_error_px samples must be finite and non-negative".to_string());
   }
   values.sort_by(|left, right| left.total_cmp(right));
@@ -403,10 +295,7 @@ fn max_finite(values: Vec<f64>) -> MeasurementResult<f64> {
   if values.is_empty() {
     return Ok(0.0);
   }
-  if values
-    .iter()
-    .any(|value| !value.is_finite() || *value < 0.0)
-  {
+  if values.iter().any(|value| !value.is_finite() || *value < 0.0) {
     return Err("duration_seconds samples must be finite and non-negative".to_string());
   }
   Ok(values.into_iter().fold(0.0, f64::max))
@@ -416,13 +305,7 @@ fn max_finite(values: Vec<f64>) -> MeasurementResult<f64> {
 mod tests {
   use super::*;
 
-  fn sample(
-    resource_pack: &str,
-    texture_profile: &str,
-    pose_error_px: f64,
-    occlusion_iou: f64,
-    refused_noise: bool,
-  ) -> TextureSweepSample {
+  fn sample(resource_pack: &str, texture_profile: &str, pose_error_px: f64, occlusion_iou: f64, refused_noise: bool) -> TextureSweepSample {
     TextureSweepSample {
       resource_pack: resource_pack.to_string(),
       texture_profile: texture_profile.to_string(),
@@ -434,11 +317,7 @@ mod tests {
     }
   }
 
-  fn refused_sample_with_reason(
-    resource_pack: &str,
-    texture_profile: &str,
-    reason: MismatchRefusalReason,
-  ) -> TextureSweepSample {
+  fn refused_sample_with_reason(resource_pack: &str, texture_profile: &str, reason: MismatchRefusalReason) -> TextureSweepSample {
     TextureSweepSample {
       resource_pack: resource_pack.to_string(),
       texture_profile: texture_profile.to_string(),
@@ -457,10 +336,7 @@ mod tests {
     assert_eq!(thresholds.pose_error_p95_max_px, 8.0);
     assert_eq!(thresholds.occlusion_iou_min, 0.85);
     assert_eq!(thresholds.resource_pack_count, 3);
-    assert_eq!(
-      thresholds.required_texture_profiles,
-      vec!["rich", "flat_color", "repetitive"]
-    );
+    assert_eq!(thresholds.required_texture_profiles, vec!["rich", "flat_color", "repetitive"]);
     assert_eq!(thresholds.per_pack_duration_seconds, 30.0);
     assert!(thresholds.refuse_on_noise_rule.contains("require"));
   }
@@ -477,18 +353,13 @@ mod tests {
       sample("repeat-pack", "repetitive", 5.0, 0.89, false),
     ];
 
-    let report = build_texture_sweep_report(&samples, TextureSweepThresholds::mc6_v0())
-      .expect("report should build");
+    let report = build_texture_sweep_report(&samples, TextureSweepThresholds::mc6_v0()).expect("report should build");
 
     assert_eq!(report.schema_version, 1);
     assert_eq!(report.actual_resource_pack_count, 3);
     assert!(report.noise_refusal_exercised);
     assert!(report.passed);
-    let rich = report
-      .rows
-      .iter()
-      .find(|row| row.resource_pack == "rich-pack")
-      .expect("rich row");
+    let rich = report.rows.iter().find(|row| row.resource_pack == "rich-pack").expect("rich row");
     assert_eq!(rich.sample_count, 2);
     assert_eq!(rich.refused_noise_count, 1);
     assert_eq!(rich.pose_error_p95_px, Some(7.0));
@@ -500,16 +371,11 @@ mod tests {
     let samples = vec![
       sample("rich-pack", "rich", 2.0, 0.95, false),
       sample("flat-pack", "flat_color", 4.0, 0.92, false),
-      refused_sample_with_reason(
-        "flat-pack",
-        "flat_color",
-        MismatchRefusalReason::ScreenshotUnavailable,
-      ),
+      refused_sample_with_reason("flat-pack", "flat_color", MismatchRefusalReason::ScreenshotUnavailable),
       sample("repeat-pack", "repetitive", 3.0, 0.93, false),
     ];
 
-    let report = build_texture_sweep_report(&samples, TextureSweepThresholds::mc6_v0())
-      .expect("report should build");
+    let report = build_texture_sweep_report(&samples, TextureSweepThresholds::mc6_v0()).expect("report should build");
 
     assert!(!report.noise_refusal_exercised);
     assert!(!report.passed);
@@ -524,21 +390,12 @@ mod tests {
       sample("repeat-pack", "repetitive", 3.0, 0.93, false),
     ];
 
-    let report = build_texture_sweep_report(&samples, TextureSweepThresholds::mc6_v0())
-      .expect("report should build");
+    let report = build_texture_sweep_report(&samples, TextureSweepThresholds::mc6_v0()).expect("report should build");
 
     assert!(!report.passed);
-    let rich = report
-      .rows
-      .iter()
-      .find(|row| row.resource_pack == "rich-pack")
-      .expect("rich row");
+    let rich = report.rows.iter().find(|row| row.resource_pack == "rich-pack").expect("rich row");
     assert!(!rich.pose_passed);
-    let flat = report
-      .rows
-      .iter()
-      .find(|row| row.resource_pack == "flat-pack")
-      .expect("flat row");
+    let flat = report.rows.iter().find(|row| row.resource_pack == "flat-pack").expect("flat row");
     assert!(!flat.occlusion_passed);
   }
 
@@ -560,11 +417,7 @@ mod tests {
         samples: vec![
           sample("rich-pack", "rich", 2.0, 0.95, false),
           sample("flat-pack", "flat_color", 4.0, 0.92, false),
-          refused_sample_with_reason(
-            "flat-pack",
-            "flat_color",
-            MismatchRefusalReason::MenuLoadingScreen,
-          ),
+          refused_sample_with_reason("flat-pack", "flat_color", MismatchRefusalReason::MenuLoadingScreen),
           sample("repeat-pack", "repetitive", 3.0, 0.93, false),
         ],
       })
@@ -599,11 +452,7 @@ mod tests {
         samples: vec![
           sample("rich-pack", "rich", 2.0, 0.95, false),
           sample("flat-pack", "flat_color", 4.0, 0.92, false),
-          refused_sample_with_reason(
-            "flat-pack",
-            "flat_color",
-            MismatchRefusalReason::MenuLoadingScreen,
-          ),
+          refused_sample_with_reason("flat-pack", "flat_color", MismatchRefusalReason::MenuLoadingScreen),
           sample("repeat-pack", "repetitive", 3.0, 0.93, false),
         ],
       })
@@ -632,9 +481,7 @@ mod tests {
       known_limits: Vec::new(),
     };
 
-    let error = source
-      .validate_real_source()
-      .expect_err("fixture-like generator should be rejected");
+    let error = source.validate_real_source().expect_err("fixture-like generator should be rejected");
 
     assert!(error.contains("fixture/smoke/test"));
   }
@@ -649,8 +496,6 @@ mod tests {
       known_limits: Vec::new(),
     };
 
-    source
-      .validate_real_source()
-      .expect("real source provenance should validate");
+    source.validate_real_source().expect("real source provenance should validate");
   }
 }

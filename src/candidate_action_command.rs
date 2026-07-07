@@ -10,20 +10,16 @@ use crate::ax_recognition::{AxBestSelectionStrategy, AxRecognitionPolicy};
 use crate::ax_recognition::{AxRecognitionRuntimeContext, map_ax_tree_to_recognition_result};
 #[cfg(target_os = "macos")]
 use crate::candidate_action_decision::{
-  CandidateActionDecisionRequest, CandidateActionExecutionConsent,
-  CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
-  CandidateActionPostActionProbe, MacosCandidateActionExecutor,
-  execute_and_record_single_candidate_action, record_candidate_action_decision_artifact,
+  CandidateActionDecisionRequest, CandidateActionExecutionConsent, CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
+  CandidateActionPostActionProbe, MacosCandidateActionExecutor, execute_and_record_single_candidate_action,
+  record_candidate_action_decision_artifact,
 };
 #[cfg(target_os = "macos")]
-use crate::candidate_promotion::{
-  ActionPermission, CandidatePromotion, ConsentGrade, ConsentProvenance,
-};
+use crate::candidate_promotion::{ActionPermission, CandidatePromotion, ConsentGrade, ConsentProvenance};
 #[cfg(target_os = "macos")]
 use crate::candidate_promotion_recording::{
-  CandidatePromotionArtifactRequest, CandidatePromotionConsentInput,
-  explicit_consent_for_candidate_promotion, freshness_from_capture_backed_recognition,
-  record_candidate_promotion_artifact_with_recognition_projection,
+  CandidatePromotionArtifactRequest, CandidatePromotionConsentInput, explicit_consent_for_candidate_promotion,
+  freshness_from_capture_backed_recognition, record_candidate_promotion_artifact_with_recognition_projection,
 };
 use crate::model::now_millis;
 #[cfg(target_os = "macos")]
@@ -98,10 +94,7 @@ impl CandidateActionCommandRequest {
           return Err("--intent must not be empty".to_string());
         }
         if proposer_model.trim().is_empty() {
-          return Err(
-            "--proposer-model or AUV_MODEL_PROPOSER_MODEL is required when --intent is set"
-              .to_string(),
-          );
+          return Err("--proposer-model or AUV_MODEL_PROPOSER_MODEL is required when --intent is set".to_string());
         }
       }
     }
@@ -109,9 +102,7 @@ impl CandidateActionCommandRequest {
       return Err("--stable-frames must be greater than 0".to_string());
     }
     if self.dev_self_minted_consent && self.human_gesture_consent {
-      return Err(
-        "--dev-self-minted-consent cannot be combined with --human-gesture-consent".to_string(),
-      );
+      return Err("--dev-self-minted-consent cannot be combined with --human-gesture-consent".to_string());
     }
     if self.human_gesture_timeout_ms == 0 {
       return Err("--human-gesture-timeout-ms must be greater than 0".to_string());
@@ -142,17 +133,11 @@ impl CandidateActionCommandRequest {
   fn mode(&self) -> AuvResult<CandidateActionCommandMode> {
     if let Some(intent) = self.intent.as_deref() {
       if self.query.is_some() || self.role.is_some() || self.action.is_some() {
-        return Err(
-          "--intent cannot be combined with --query, --role, --action, or --text".to_string(),
-        );
+        return Err("--intent cannot be combined with --query, --role, --action, or --text".to_string());
       }
       return Ok(CandidateActionCommandMode::ModelProposal {
         intent: intent.to_string(),
-        proposer_model: self
-          .proposer_model
-          .clone()
-          .or_else(|| read_env_trimmed("AUV_MODEL_PROPOSER_MODEL"))
-          .unwrap_or_default(),
+        proposer_model: self.proposer_model.clone().or_else(|| read_env_trimmed("AUV_MODEL_PROPOSER_MODEL")).unwrap_or_default(),
         proposer_base_url: self
           .proposer_base_url
           .clone()
@@ -161,18 +146,9 @@ impl CandidateActionCommandRequest {
       });
     }
 
-    let query = self
-      .query
-      .clone()
-      .ok_or_else(|| "--query is required".to_string())?;
-    let role = self
-      .role
-      .clone()
-      .ok_or_else(|| "--role is required".to_string())?;
-    let action = self
-      .action
-      .clone()
-      .ok_or_else(|| "--action is required when --intent is not set".to_string())?;
+    let query = self.query.clone().ok_or_else(|| "--query is required".to_string())?;
+    let role = self.role.clone().ok_or_else(|| "--role is required".to_string())?;
+    let action = self.action.clone().ok_or_else(|| "--action is required when --intent is not set".to_string())?;
     Ok(CandidateActionCommandMode::Direct {
       query,
       role,
@@ -312,8 +288,7 @@ pub fn execute_candidate_action_command(
 ) -> AuvResult<CandidateActionCommandOutput> {
   request.validate()?;
   let plan = prepare_candidate_action_plan(context, request)?;
-  let human_gesture_approval =
-    request_human_gesture_approval(context, request, &plan.approval_target_summary)?;
+  let human_gesture_approval = request_human_gesture_approval(context, request, &plan.approval_target_summary)?;
   if human_gesture_approval.is_some() {
     // NOTICE(candidate-action-human-approval-frontmost-restore):
     // LocalAuthentication can transiently make the approval UI the frontmost
@@ -324,22 +299,14 @@ pub fn execute_candidate_action_command(
     activate_app(&request.app_bundle_id)?;
     context.record_event(
       "candidate.action.command.target.reactivated",
-      Some(format!(
-        "reactivated target app {} after human approval before execution readiness",
-        request.app_bundle_id
-      )),
+      Some(format!("reactivated target app {} after human approval before execution readiness", request.app_bundle_id)),
     );
   }
 
-  let latest = plan
-    .observations
-    .last()
-    .ok_or_else(|| "candidate action command captured no observations".to_string())?;
+  let latest = plan.observations.last().ok_or_else(|| "candidate action command captured no observations".to_string())?;
 
-  let mut promotion_request = CandidatePromotionArtifactRequest::new(
-    request.promotion_id.clone(),
-    format!("{}-promotion", request.promotion_id),
-  );
+  let mut promotion_request =
+    CandidatePromotionArtifactRequest::new(request.promotion_id.clone(), format!("{}-promotion", request.promotion_id));
   promotion_request.source_recognition_artifact = plan.recognition_artifact_ref.clone();
   promotion_request.stability_policy = StabilityPolicy {
     min_frames: request.stable_frames,
@@ -354,25 +321,16 @@ pub fn execute_candidate_action_command(
     )
     .map_err(|error| error.to_string())?,
   );
-  promotion_request.permission =
-    promotion_permission_for_request(request, latest, human_gesture_approval.as_ref())?;
+  promotion_request.permission = promotion_permission_for_request(request, latest, human_gesture_approval.as_ref())?;
 
   let (promotion_artifact_ref, promotion) =
-    record_candidate_promotion_artifact_with_recognition_projection(
-      context,
-      &plan.observations,
-      &promotion_request,
-    )?;
+    record_candidate_promotion_artifact_with_recognition_projection(context, &plan.observations, &promotion_request)?;
 
   if let CandidatePromotion::Refused { reasons } = &promotion.decision {
     let refusal_labels = promotion_refusal_labels(reasons);
     context.record_event(
       "candidate.action.command.promotion.refused",
-      Some(format!(
-        "promotion {} refused before decide/execute: {}",
-        promotion_artifact_ref.artifact_id,
-        refusal_labels.join(", ")
-      )),
+      Some(format!("promotion {} refused before decide/execute: {}", promotion_artifact_ref.artifact_id, refusal_labels.join(", "))),
     );
     return Ok(CandidateActionCommandOutput {
       status: CandidateActionCommandStatus::PromotionRefused,
@@ -386,36 +344,23 @@ pub fn execute_candidate_action_command(
 
   context.record_event(
     "candidate.action.command.promotion.ready",
-    Some(format!(
-      "promotion {} recorded; building action decision",
-      promotion_artifact_ref.artifact_id
-    )),
+    Some(format!("promotion {} recorded; building action decision", promotion_artifact_ref.artifact_id)),
   );
 
-  let decision_request = CandidateActionDecisionRequest::new(
-    request.decision_id.clone(),
-    format!("{}-decision", request.decision_id),
-  )
-  .with_action(plan.action.clone())
-  .with_source_candidate_promotion_artifact(promotion_artifact_ref.clone());
-  let (decision_artifact_ref, decision) =
-    record_candidate_action_decision_artifact(context, &promotion, &decision_request)?;
+  let decision_request = CandidateActionDecisionRequest::new(request.decision_id.clone(), format!("{}-decision", request.decision_id))
+    .with_action(plan.action.clone())
+    .with_source_candidate_promotion_artifact(promotion_artifact_ref.clone());
+  let (decision_artifact_ref, decision) = record_candidate_action_decision_artifact(context, &promotion, &decision_request)?;
 
   context.record_event(
     "candidate.action.command.execution.begin",
-    Some(format!(
-      "decision {} recorded; executing one approved candidate action",
-      decision_artifact_ref.artifact_id
-    )),
+    Some(format!("decision {} recorded; executing one approved candidate action", decision_artifact_ref.artifact_id)),
   );
 
-  let execution_request = CandidateActionExecutionRequest::new(
-    request.execution_id.clone(),
-    format!("{}-execution", request.execution_id),
-  )
-  .with_source_candidate_action_decision_artifact(decision_artifact_ref.clone())
-  .with_action(plan.action.clone())
-  .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
+  let execution_request = CandidateActionExecutionRequest::new(request.execution_id.clone(), format!("{}-execution", request.execution_id))
+    .with_source_candidate_action_decision_artifact(decision_artifact_ref.clone())
+    .with_action(plan.action.clone())
+    .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
   let execution_request = match execution_consent_for_request(
     request,
     &promotion,
@@ -424,23 +369,14 @@ pub fn execute_candidate_action_command(
     human_gesture_approval.as_ref(),
     &plan.action,
   ) {
-    Some(ExecutionConsentForRequest::DevSelfMinted(consent)) => execution_request
-      .allow_dev_self_minted_consent()
-      .with_consent(consent),
-    Some(ExecutionConsentForRequest::HumanGesture(consent)) => {
-      execution_request.with_consent(consent)
-    }
+    Some(ExecutionConsentForRequest::DevSelfMinted(consent)) => execution_request.allow_dev_self_minted_consent().with_consent(consent),
+    Some(ExecutionConsentForRequest::HumanGesture(consent)) => execution_request.with_consent(consent),
     None => execution_request,
   };
 
   let mut executor = MacosCandidateActionExecutor::default();
-  let (execution_artifact_ref, execution) = execute_and_record_single_candidate_action(
-    context,
-    &mut executor,
-    &promotion,
-    &decision,
-    &execution_request,
-  )?;
+  let (execution_artifact_ref, execution) =
+    execute_and_record_single_candidate_action(context, &mut executor, &promotion, &decision, &execution_request)?;
 
   Ok(CandidateActionCommandOutput {
     status: command_status_for_execution_side_effect(&execution.side_effect),
@@ -452,16 +388,10 @@ pub fn execute_candidate_action_command(
   })
 }
 
-fn command_status_for_execution_side_effect(
-  side_effect: &CandidateActionExecutionSideEffect,
-) -> CandidateActionCommandStatus {
+fn command_status_for_execution_side_effect(side_effect: &CandidateActionExecutionSideEffect) -> CandidateActionCommandStatus {
   match side_effect {
-    CandidateActionExecutionSideEffect::SingleInputDelivered => {
-      CandidateActionCommandStatus::ExecutedSingleAction
-    }
-    CandidateActionExecutionSideEffect::BlockedNotReady => {
-      CandidateActionCommandStatus::BlockedNotReady
-    }
+    CandidateActionExecutionSideEffect::SingleInputDelivered => CandidateActionCommandStatus::ExecutedSingleAction,
+    CandidateActionExecutionSideEffect::BlockedNotReady => CandidateActionCommandStatus::BlockedNotReady,
   }
 }
 
@@ -492,15 +422,11 @@ fn prepare_candidate_action_plan(
       role,
       action.label()
     ),
-    CandidateActionCommandMode::ModelProposal { intent, .. } => format!(
-      "capturing {} AX frame(s) for app {} for model intent {:?}",
-      request.stable_frames, request.app_bundle_id, intent
-    ),
+    CandidateActionCommandMode::ModelProposal { intent, .. } => {
+      format!("capturing {} AX frame(s) for app {} for model intent {:?}", request.stable_frames, request.app_bundle_id, intent)
+    }
   };
-  context.record_event(
-    "candidate.action.command.observe.begin",
-    Some(observation_label),
-  );
+  context.record_event("candidate.action.command.observe.begin", Some(observation_label));
 
   let observation = capture_candidate_action_observations(context, request, &mode)?;
 
@@ -525,22 +451,12 @@ fn prepare_candidate_action_plan(
       proposer_model,
       proposer_base_url,
     } => {
-      let proposer =
-        OpenAiResponsesCandidateActionProposer::from_request(&proposer_model, &proposer_base_url)?;
-      let latest = observation
-        .wide_observations
-        .last()
-        .ok_or_else(|| "candidate action command captured no observations".to_string())?;
+      let proposer = OpenAiResponsesCandidateActionProposer::from_request(&proposer_model, &proposer_base_url)?;
+      let latest = observation.wide_observations.last().ok_or_else(|| "candidate action command captured no observations".to_string())?;
       let proposal = proposer.propose(&request.app_bundle_id, latest, &intent)?;
-      let narrowed =
-        narrow_observations_for_model_proposal(&observation.wide_observations, &proposal)?;
-      let proposal_artifact_id = Some(record_model_proposal_artifact(
-        context,
-        request,
-        observation.recorded_recognition_artifact_ref.clone(),
-        &narrowed,
-        &proposal,
-      )?);
+      let narrowed = narrow_observations_for_model_proposal(&observation.wide_observations, &proposal)?;
+      let proposal_artifact_id =
+        Some(record_model_proposal_artifact(context, request, observation.recorded_recognition_artifact_ref.clone(), &narrowed, &proposal)?);
       let selected_path = proposal.selected_item_path.clone();
       let selected_action = proposal.selected_action.label().to_string();
       Ok(PreparedCandidateActionPlan {
@@ -548,10 +464,7 @@ fn prepare_candidate_action_plan(
         observations: narrowed,
         recognition_artifact_ref: observation.recorded_recognition_artifact_ref,
         proposal_artifact_id,
-        approval_target_summary: format!(
-          "intent {:?} -> path {:?} action {}",
-          intent, selected_path, selected_action
-        ),
+        approval_target_summary: format!("intent {:?} -> path {:?} action {}", intent, selected_path, selected_action),
       })
     }
   }
@@ -605,21 +518,12 @@ fn capture_candidate_action_observations(
       }
     }
 
-    let capture =
-      auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&request.app_bundle_id, 8, 80)?;
+    let capture = auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(&request.app_bundle_id, 8, 80)?;
     let report = auv_driver_macos::native::ax_tree::render_ax_tree_report(&capture);
-    let ax_report_path = std::env::temp_dir().join(format!(
-      "auv-candidate-action-command-ax-{}-{}-{}.txt",
-      frame_index,
-      now_millis(),
-      std::process::id()
-    ));
-    std::fs::write(&ax_report_path, report).map_err(|error| {
-      format!(
-        "failed to write temporary AX tree report {}: {error}",
-        ax_report_path.display()
-      )
-    })?;
+    let ax_report_path =
+      std::env::temp_dir().join(format!("auv-candidate-action-command-ax-{}-{}-{}.txt", frame_index, now_millis(), std::process::id()));
+    std::fs::write(&ax_report_path, report)
+      .map_err(|error| format!("failed to write temporary AX tree report {}: {error}", ax_report_path.display()))?;
 
     let recognition_id = format!("{}-frame-{}", request.promotion_id, frame_index);
     let policy = AxRecognitionPolicy {
@@ -628,15 +532,12 @@ fn capture_candidate_action_observations(
       require_bounds: true,
       best_selection: AxBestSelectionStrategy::None,
     };
-    let window_number =
-      resolve_target_window_number(&request.app_bundle_id, &capture.snapshot.window_title)?;
+    let window_number = resolve_target_window_number(&request.app_bundle_id, &capture.snapshot.window_title)?;
     let (_, ax_tree_artifact_ref) = context.stage_artifact_file_with_ref(
       "ax-tree",
       &ax_report_path,
       format!("{recognition_id}.txt"),
-      Some(format!(
-        "Source AX tree artifact for candidate action command frame {frame_index}."
-      )),
+      Some(format!("Source AX tree artifact for candidate action command frame {frame_index}.")),
     )?;
     let mut recognition = map_ax_tree_to_recognition_result(
       &capture.snapshot,
@@ -664,30 +565,19 @@ fn capture_candidate_action_observations(
         rendered
       })
       .map_err(|error| format!("failed to encode AX recognition result JSON: {error}"))?;
-    let recognition_source_path =
-      std::env::temp_dir().join(format!("{}-recognition.json", recognition_id));
-    std::fs::write(&recognition_source_path, recognition_json).map_err(|error| {
-      format!(
-        "failed to write AX recognition temp artifact {}: {error}",
-        recognition_source_path.display()
-      )
-    })?;
+    let recognition_source_path = std::env::temp_dir().join(format!("{}-recognition.json", recognition_id));
+    std::fs::write(&recognition_source_path, recognition_json)
+      .map_err(|error| format!("failed to write AX recognition temp artifact {}: {error}", recognition_source_path.display()))?;
     let (_, recorded_recognition_artifact_ref) = context.stage_artifact_file_with_ref(
       "ax-recognition",
       &recognition_source_path,
       format!("{recognition_id}-recognition.json"),
-      Some(
-        "AX tree-backed RecognitionResult runtime artifact for candidate-action command"
-          .to_string(),
-      ),
+      Some("AX tree-backed RecognitionResult runtime artifact for candidate-action command".to_string()),
     )?;
     let _ = std::fs::remove_file(&recognition_source_path);
     context.record_event(
       "ax.recognition.artifact_recorded",
-      Some(format!(
-        "recorded {} from AX tree {}",
-        recorded_recognition_artifact_ref.artifact_id, ax_tree_artifact_ref.artifact_id
-      )),
+      Some(format!("recorded {} from AX tree {}", recorded_recognition_artifact_ref.artifact_id, ax_tree_artifact_ref.artifact_id)),
     );
     let _ = std::fs::remove_file(&ax_report_path);
     recognition_artifact_ref = Some(recorded_recognition_artifact_ref);
@@ -707,11 +597,8 @@ fn capture_candidate_action_observations(
 #[cfg(target_os = "macos")]
 fn resolve_target_window_number(app_bundle_id: &str, window_title: &str) -> AuvResult<Option<i64>> {
   let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver
-    .open_local()
-    .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
-  let mut selector =
-    auv_driver::WindowSelector::default().owned_by(auv_driver::App::bundle_id(app_bundle_id));
+  let session = driver.open_local().map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+  let mut selector = auv_driver::WindowSelector::default().owned_by(auv_driver::App::bundle_id(app_bundle_id));
   selector.main_visible = true;
   if !window_title.trim().is_empty() {
     selector = selector.title_exact(window_title);
@@ -728,24 +615,14 @@ fn refilter_recognition_frame(
   policy: AxRecognitionPolicy,
   frame_index: usize,
 ) -> AuvResult<crate::contract::RecognitionResult> {
-  let filtered = recognition
-    .all
-    .iter()
-    .filter(|item| recognized_item_matches_policy(item, &policy))
-    .cloned()
-    .collect::<Vec<_>>();
+  let filtered = recognition.all.iter().filter(|item| recognized_item_matches_policy(item, &policy)).cloned().collect::<Vec<_>>();
   let best = match policy.best_selection {
     AxBestSelectionStrategy::None => None,
     AxBestSelectionStrategy::SingleFilteredItem if filtered.len() == 1 => filtered.first().cloned(),
     AxBestSelectionStrategy::SingleFilteredItem => None,
     AxBestSelectionStrategy::HighestScore => filtered
       .iter()
-      .max_by(|left, right| {
-        left
-          .provider_score
-          .partial_cmp(&right.provider_score)
-          .unwrap_or(std::cmp::Ordering::Equal)
-      })
+      .max_by(|left, right| left.provider_score.partial_cmp(&right.provider_score).unwrap_or(std::cmp::Ordering::Equal))
       .cloned(),
   };
   recognition.filtered = filtered;
@@ -757,9 +634,7 @@ fn refilter_recognition_frame(
   if recognition.best.is_none() {
     append_known_limit(
       &mut recognition.known_limits,
-      format!(
-        "frame {frame_index} has no single deterministic AX target after direct filter narrowing"
-      ),
+      format!("frame {frame_index} has no single deterministic AX target after direct filter narrowing"),
     );
   }
   Ok(recognition)
@@ -773,11 +648,8 @@ fn narrow_observations_for_model_proposal(
     .iter()
     .enumerate()
     .map(|(frame_index, recognition)| {
-      let selected_item = recognition
-        .all
-        .iter()
-        .find(|item| recognized_item_path(item) == Some(proposal.selected_item_path.as_str()))
-        .cloned();
+      let selected_item =
+        recognition.all.iter().find(|item| recognized_item_path(item) == Some(proposal.selected_item_path.as_str())).cloned();
       let mut narrowed = recognition.clone();
       narrowed.filtered = selected_item.iter().cloned().collect();
       narrowed.best = selected_item;
@@ -795,9 +667,7 @@ fn narrow_observations_for_model_proposal(
       if narrowed.best.is_none() {
         append_known_limit(
           &mut narrowed.known_limits,
-          format!(
-            "frame {frame_index} no longer contains the model-proposed AX path; stability may refuse"
-          ),
+          format!("frame {frame_index} no longer contains the model-proposed AX path; stability may refuse"),
         );
       }
       Ok(narrowed)
@@ -813,20 +683,13 @@ fn record_model_proposal_artifact(
   observations: &[crate::contract::RecognitionResult],
   proposal: &ModelSelectionProposal,
 ) -> AuvResult<String> {
-  let latest = observations
-    .last()
-    .ok_or_else(|| "proposal recording requires at least one narrowed observation".to_string())?;
-  let selected = latest.best.as_ref().ok_or_else(|| {
-    "proposal-selected target must remain addressable in latest frame".to_string()
-  })?;
+  let latest = observations.last().ok_or_else(|| "proposal recording requires at least one narrowed observation".to_string())?;
+  let selected = latest.best.as_ref().ok_or_else(|| "proposal-selected target must remain addressable in latest frame".to_string())?;
   let artifact = CandidateActionProposalArtifact {
     artifact_version: CANDIDATE_ACTION_PROPOSAL_ARTIFACT_VERSION.to_string(),
     proposal_id: request.proposal_id.clone(),
     source_recognition_artifact,
-    observed_recognition_ids: observations
-      .iter()
-      .map(|recognition| recognition.recognition_id.clone())
-      .collect(),
+    observed_recognition_ids: observations.iter().map(|recognition| recognition.recognition_id.clone()).collect(),
     proposal_input_recognition_id: latest.recognition_id.clone(),
     intent: proposal.intent.clone(),
     provider: proposal.provider.clone(),
@@ -854,21 +717,15 @@ fn record_model_proposal_artifact(
       rendered.push('\n');
       rendered
     })
-    .map_err(|error| {
-      format!("failed to encode candidate-action proposal artifact JSON: {error}")
-    })?;
+    .map_err(|error| format!("failed to encode candidate-action proposal artifact JSON: {error}"))?;
   let artifact_source_path = std::env::temp_dir().join(format!(
     "auv-candidate-action-proposal-{}-{}-{}.json",
     sanitize_artifact_label(&request.proposal_id),
     now_millis(),
     std::process::id()
   ));
-  std::fs::write(&artifact_source_path, rendered).map_err(|error| {
-    format!(
-      "failed to write candidate-action proposal temp artifact {}: {error}",
-      artifact_source_path.display()
-    )
-  })?;
+  std::fs::write(&artifact_source_path, rendered)
+    .map_err(|error| format!("failed to write candidate-action proposal temp artifact {}: {error}", artifact_source_path.display()))?;
   let (_, artifact_ref) = context.stage_artifact_file_with_ref(
     CANDIDATE_ACTION_PROPOSAL_ARTIFACT_ROLE,
     &artifact_source_path,
@@ -890,8 +747,7 @@ fn record_model_proposal_artifact(
 
 impl OpenAiResponsesCandidateActionProposer {
   fn from_request(model: &str, endpoint: &str) -> AuvResult<Self> {
-    let api_key = read_env_trimmed("OPENAI_API_KEY")
-      .ok_or_else(|| "OPENAI_API_KEY is required for --intent proposer mode".to_string())?;
+    let api_key = read_env_trimmed("OPENAI_API_KEY").ok_or_else(|| "OPENAI_API_KEY is required for --intent proposer mode".to_string())?;
     Ok(Self {
       api_key,
       model: model.to_string(),
@@ -907,11 +763,7 @@ impl CandidateActionProposer for OpenAiResponsesCandidateActionProposer {
     observation: &crate::contract::RecognitionResult,
     intent: &str,
   ) -> AuvResult<ModelSelectionProposal> {
-    let observed_items = observation
-      .all
-      .iter()
-      .map(observed_item_for_model)
-      .collect::<Vec<_>>();
+    let observed_items = observation.all.iter().map(observed_item_for_model).collect::<Vec<_>>();
     if observed_items.is_empty() {
       return Err("model proposer requires at least one observed AX item".to_string());
     }
@@ -964,24 +816,17 @@ impl CandidateActionProposer for OpenAiResponsesCandidateActionProposer {
         .map_err(|error| format!("candidate-action proposer HTTP request failed: {error}"))?;
       if !response.status().is_success() {
         let status = response.status();
-        let body = response
-          .text()
-          .unwrap_or_else(|_| "<failed to read error body>".to_string());
-        return Err(format!(
-          "candidate-action proposer HTTP request failed with status {status}: {body}"
-        ));
+        let body = response.text().unwrap_or_else(|_| "<failed to read error body>".to_string());
+        return Err(format!("candidate-action proposer HTTP request failed with status {status}: {body}"));
       }
-      response.json::<serde_json::Value>().map_err(|error| {
-        format!("failed to decode candidate-action proposer JSON response: {error}")
-      })
+      response.json::<serde_json::Value>().map_err(|error| format!("failed to decode candidate-action proposer JSON response: {error}"))
     })
     .join()
     .map_err(|_| "candidate-action proposer HTTP thread panicked".to_string())??;
-    let response_text = response_output_text(&response_json).ok_or_else(|| {
-      "candidate-action proposer response did not contain output_text".to_string()
-    })?;
-    let parsed: ModelProposalResponse = serde_json::from_str(&response_text)
-      .map_err(|error| format!("failed to parse candidate-action proposer JSON text: {error}"))?;
+    let response_text =
+      response_output_text(&response_json).ok_or_else(|| "candidate-action proposer response did not contain output_text".to_string())?;
+    let parsed: ModelProposalResponse =
+      serde_json::from_str(&response_text).map_err(|error| format!("failed to parse candidate-action proposer JSON text: {error}"))?;
     let selected_action = parse_model_selected_action(&parsed)?;
     Ok(ModelSelectionProposal {
       provider: "openai.responses".to_string(),
@@ -1039,16 +884,8 @@ fn promotion_permission_for_request(
         recognition,
         CandidatePromotionConsentInput {
           granted_by: approval.granted_by.clone(),
-          scope_note: human_gesture_scope_note(
-            &request.promotion_scope_note,
-            approval,
-            "candidate_promotion_only",
-          ),
-          evidence_note: human_gesture_evidence_note(
-            &request.promotion_evidence_note,
-            approval,
-            request.human_gesture_timeout_ms,
-          ),
+          scope_note: human_gesture_scope_note(&request.promotion_scope_note, approval, "candidate_promotion_only"),
+          evidence_note: human_gesture_evidence_note(&request.promotion_evidence_note, approval, request.human_gesture_timeout_ms),
           approved_at_millis: approval.approved_at_millis,
           provenance: ConsentProvenance::HumanGesture,
         },
@@ -1104,19 +941,16 @@ fn execution_consent_for_request(
   action: &CandidateActionKind,
 ) -> Option<ExecutionConsentForRequest> {
   if let Some(approval) = human_gesture_approval {
-    return Some(ExecutionConsentForRequest::HumanGesture(
-      human_gesture_execution_consent(
-        request,
-        promotion,
-        decision,
-        decision_artifact_ref,
-        approval,
-        action,
-      ),
-    ));
+    return Some(ExecutionConsentForRequest::HumanGesture(human_gesture_execution_consent(
+      request,
+      promotion,
+      decision,
+      decision_artifact_ref,
+      approval,
+      action,
+    )));
   }
-  self_minted_execution_consent(request, promotion, decision, decision_artifact_ref, action)
-    .map(ExecutionConsentForRequest::DevSelfMinted)
+  self_minted_execution_consent(request, promotion, decision, decision_artifact_ref, action).map(ExecutionConsentForRequest::DevSelfMinted)
 }
 
 #[cfg(target_os = "macos")]
@@ -1132,11 +966,7 @@ fn human_gesture_execution_consent(
     consent_id: format!("consent-{}", request.execution_id),
     execution_id: request.execution_id.clone(),
     granted_by: approval.granted_by.clone(),
-    scope_note: human_gesture_scope_note(
-      &request.execution_scope_note,
-      approval,
-      "execute_single_candidate_action",
-    ),
+    scope_note: human_gesture_scope_note(&request.execution_scope_note, approval, "execute_single_candidate_action"),
     run_id: decision_artifact_ref.run_id.as_str().to_string(),
     source_promotion_id: promotion.promotion_id.clone(),
     source_decision_id: decision.decision_id.clone(),
@@ -1145,11 +975,7 @@ fn human_gesture_execution_consent(
     provenance: ConsentProvenance::HumanGesture,
     grade: ConsentGrade::HumanApproved,
     approved_at_millis: approval.approved_at_millis,
-    evidence_note: human_gesture_evidence_note(
-      &request.execution_evidence_note,
-      approval,
-      request.human_gesture_timeout_ms,
-    ),
+    evidence_note: human_gesture_evidence_note(&request.execution_evidence_note, approval, request.human_gesture_timeout_ms),
   }
 }
 
@@ -1191,10 +1017,7 @@ fn request_human_gesture_approval(
       let approved_at_millis = response.approved_at_unix_ms.unwrap_or_else(now_millis);
       context.record_event(
         "candidate.action.command.consent.approved",
-        Some(format!(
-          "human gesture approval granted via {} by {} at {}",
-          mechanism, granted_by, approved_at_millis
-        )),
+        Some(format!("human gesture approval granted via {} by {} at {}", mechanism, granted_by, approved_at_millis)),
       );
       Ok(Some(HumanGestureApproval {
         granted_by,
@@ -1228,10 +1051,7 @@ fn human_gesture_granted_by(request: &CandidateActionCommandRequest, mechanism: 
 }
 
 #[cfg(target_os = "macos")]
-fn human_gesture_prompt_reason(
-  request: &CandidateActionCommandRequest,
-  approval_target_summary: &str,
-) -> String {
+fn human_gesture_prompt_reason(request: &CandidateActionCommandRequest, approval_target_summary: &str) -> String {
   format!(
     "Approve one AUV candidate action for app {} targeting {}. This approval is limited to promotion {} and execution {}.",
     request.app_bundle_id, approval_target_summary, request.promotion_id, request.execution_id
@@ -1239,33 +1059,19 @@ fn human_gesture_prompt_reason(
 }
 
 #[cfg(target_os = "macos")]
-fn human_gesture_scope_note(
-  base_note: &str,
-  approval: &HumanGestureApproval,
-  scope_binding: &str,
-) -> String {
-  format!(
-    "{base_note}; consent_grade=human_approved; provenance=human_gesture; mechanism={}; binding={scope_binding}",
-    approval.mechanism
-  )
+fn human_gesture_scope_note(base_note: &str, approval: &HumanGestureApproval, scope_binding: &str) -> String {
+  format!("{base_note}; consent_grade=human_approved; provenance=human_gesture; mechanism={}; binding={scope_binding}", approval.mechanism)
 }
 
 #[cfg(target_os = "macos")]
-fn human_gesture_evidence_note(
-  base_note: &str,
-  approval: &HumanGestureApproval,
-  timeout_ms: u64,
-) -> String {
+fn human_gesture_evidence_note(base_note: &str, approval: &HumanGestureApproval, timeout_ms: u64) -> String {
   format!(
     "{base_note}; human approval minted via {}; approved_at_millis={}; timeout_ms={timeout_ms}",
     approval.mechanism, approval.approved_at_millis
   )
 }
 
-fn recognized_item_matches_policy(
-  item: &crate::contract::RecognizedItem,
-  policy: &AxRecognitionPolicy,
-) -> bool {
+fn recognized_item_matches_policy(item: &crate::contract::RecognizedItem, policy: &AxRecognitionPolicy) -> bool {
   if policy.require_bounds && (item.box_.width <= 0 || item.box_.height <= 0) {
     return false;
   }
@@ -1290,31 +1096,11 @@ fn recognized_item_matches_policy(
 fn recognized_item_search_text(item: &crate::contract::RecognizedItem) -> String {
   [
     item.text.as_deref().unwrap_or(""),
-    item
-      .detail
-      .get("title")
-      .and_then(serde_json::Value::as_str)
-      .unwrap_or(""),
-    item
-      .detail
-      .get("description")
-      .and_then(serde_json::Value::as_str)
-      .unwrap_or(""),
-    item
-      .detail
-      .get("identifier")
-      .and_then(serde_json::Value::as_str)
-      .unwrap_or(""),
-    item
-      .detail
-      .get("placeholder")
-      .and_then(serde_json::Value::as_str)
-      .unwrap_or(""),
-    item
-      .detail
-      .get("value")
-      .and_then(serde_json::Value::as_str)
-      .unwrap_or(""),
+    item.detail.get("title").and_then(serde_json::Value::as_str).unwrap_or(""),
+    item.detail.get("description").and_then(serde_json::Value::as_str).unwrap_or(""),
+    item.detail.get("identifier").and_then(serde_json::Value::as_str).unwrap_or(""),
+    item.detail.get("placeholder").and_then(serde_json::Value::as_str).unwrap_or(""),
+    item.detail.get("value").and_then(serde_json::Value::as_str).unwrap_or(""),
   ]
   .join(" ")
 }
@@ -1334,10 +1120,7 @@ fn observed_item_for_model(item: &crate::contract::RecognizedItem) -> ProposalOb
     kind: item.kind.clone(),
     text: item.text.clone(),
     role: recognized_item_role(item).map(str::to_string),
-    focused: item
-      .detail
-      .get("focused")
-      .and_then(serde_json::Value::as_bool),
+    focused: item.detail.get("focused").and_then(serde_json::Value::as_bool),
     bounds: ProposalObservedRect {
       x: item.box_.x,
       y: item.box_.y,
@@ -1351,46 +1134,27 @@ fn parse_model_selected_action(parsed: &ModelProposalResponse) -> AuvResult<Cand
   match parsed.selected_action_kind.as_str() {
     "click" => Ok(CandidateActionKind::Click),
     "type_text" | "type-text" => {
-      let text = parsed
-        .selected_action_text
-        .clone()
-        .ok_or_else(|| "type_text proposal requires selected_action_text".to_string())?;
+      let text = parsed.selected_action_text.clone().ok_or_else(|| "type_text proposal requires selected_action_text".to_string())?;
       if text.trim().is_empty() {
         return Err("type_text proposal requires non-empty selected_action_text".to_string());
       }
       Ok(CandidateActionKind::TypeText { text })
     }
-    other => Err(format!(
-      "invalid proposer selected_action_kind {other:?}; expected click or type_text"
-    )),
+    other => Err(format!("invalid proposer selected_action_kind {other:?}; expected click or type_text")),
   }
 }
 
 fn response_output_text(value: &serde_json::Value) -> Option<String> {
-  value
-    .get("output_text")
-    .and_then(serde_json::Value::as_str)
-    .map(str::to_string)
-    .or_else(|| {
-      value
-        .get("output")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|output| {
-          output.iter().find_map(|item| {
-            item
-              .get("content")
-              .and_then(serde_json::Value::as_array)
-              .and_then(|content| {
-                content.iter().find_map(|entry| {
-                  entry
-                    .get("text")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-                })
-              })
-          })
-        })
+  value.get("output_text").and_then(serde_json::Value::as_str).map(str::to_string).or_else(|| {
+    value.get("output").and_then(serde_json::Value::as_array).and_then(|output| {
+      output.iter().find_map(|item| {
+        item
+          .get("content")
+          .and_then(serde_json::Value::as_array)
+          .and_then(|content| content.iter().find_map(|entry| entry.get("text").and_then(serde_json::Value::as_str).map(str::to_string)))
+      })
     })
+  })
 }
 
 fn append_known_limit(known_limits: &mut Vec<String>, value: impl Into<String>) {
@@ -1401,18 +1165,11 @@ fn append_known_limit(known_limits: &mut Vec<String>, value: impl Into<String>) 
 }
 
 fn read_env_trimmed(key: &str) -> Option<String> {
-  std::env::var(key)
-    .ok()
-    .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty())
+  std::env::var(key).ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
 }
 
 fn normalize_for_matching(value: &str) -> String {
-  value
-    .chars()
-    .filter(|character| !character.is_whitespace())
-    .collect::<String>()
-    .to_lowercase()
+  value.chars().filter(|character| !character.is_whitespace()).collect::<String>().to_lowercase()
 }
 
 #[cfg(target_os = "macos")]
@@ -1456,13 +1213,8 @@ fn activate_app(app_bundle_id: &str) -> AuvResult<()> {
   use std::process::Command;
 
   let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver
-    .open_local()
-    .map_err(|error| format!("failed to open macOS driver session: {error}"))?;
-  let windows = session
-    .window()
-    .list()
-    .map_err(|error| format!("failed to list windows before activation: {error}"))?;
+  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver session: {error}"))?;
+  let windows = session.window().list().map_err(|error| format!("failed to list windows before activation: {error}"))?;
   let target = windows
     .into_iter()
     .find(|window| window.app_bundle_id.as_deref() == Some(app_bundle_id))
@@ -1490,18 +1242,11 @@ fn activate_app(app_bundle_id: &str) -> AuvResult<()> {
   // window input exposes a verified foreground transition result.
   let output = Command::new("/usr/bin/osascript")
     .arg("-e")
-    .arg(format!(
-      "tell application id {} to activate",
-      applescript_string_literal(app_bundle_id)
-    ))
+    .arg(format!("tell application id {} to activate", applescript_string_literal(app_bundle_id)))
     .output()
     .map_err(|error| format!("failed to run osascript activation: {error}"))?;
   if !output.status.success() {
-    return Err(format!(
-      "osascript activation failed with status {}: {}",
-      output.status,
-      String::from_utf8_lossy(&output.stderr).trim()
-    ));
+    return Err(format!("osascript activation failed with status {}: {}", output.status, String::from_utf8_lossy(&output.stderr).trim()));
   }
   wait_for_frontmost_app(app_bundle_id, Duration::from_millis(1_500))?;
   Ok(())
@@ -1532,9 +1277,7 @@ fn current_frontmost_bundle_id() -> AuvResult<Option<String>> {
 
   let output = Command::new("/usr/bin/osascript")
     .arg("-e")
-    .arg(
-      "tell application \"System Events\" to get bundle identifier of first application process whose frontmost is true",
-    )
+    .arg("tell application \"System Events\" to get bundle identifier of first application process whose frontmost is true")
     .output()
     .map_err(|error| format!("failed to query frontmost app bundle id: {error}"))?;
   if !output.status.success() {
@@ -1560,18 +1303,13 @@ mod tests {
   use std::thread;
 
   use super::{
-    CandidateActionCommandRequest, CandidateActionCommandStatus, CandidateActionProposer,
-    ModelProposalResponse, ModelSelectionProposal, OpenAiResponsesCandidateActionProposer,
-    command_status_for_execution_side_effect, narrow_observations_for_model_proposal,
-    normalize_for_matching, parse_model_selected_action, recognized_item_matches_policy,
-    response_output_text,
+    CandidateActionCommandRequest, CandidateActionCommandStatus, CandidateActionProposer, ModelProposalResponse, ModelSelectionProposal,
+    OpenAiResponsesCandidateActionProposer, command_status_for_execution_side_effect, narrow_observations_for_model_proposal,
+    normalize_for_matching, parse_model_selected_action, recognized_item_matches_policy, response_output_text,
   };
   use crate::ax_recognition::{AxBestSelectionStrategy, AxRecognitionPolicy};
   use crate::candidate_action_decision::{CandidateActionExecutionSideEffect, CandidateActionKind};
-  use crate::contract::{
-    RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface,
-    RecognizedItem,
-  };
+  use crate::contract::{RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem};
   use serde_json::json;
 
   fn base_request() -> CandidateActionCommandRequest {
@@ -1614,10 +1352,7 @@ mod tests {
   fn validation_requires_granted_by_when_dev_self_minted_consent_is_enabled() {
     let mut request = base_request();
     request.dev_self_minted_consent = true;
-    assert_eq!(
-      request.validate(),
-      Err("--granted-by is required when --dev-self-minted-consent is set".to_string())
-    );
+    assert_eq!(request.validate(), Err("--granted-by is required when --dev-self-minted-consent is set".to_string()));
   }
 
   #[test]
@@ -1626,20 +1361,14 @@ mod tests {
     request.dev_self_minted_consent = true;
     request.human_gesture_consent = true;
     request.granted_by = "dev".to_string();
-    assert_eq!(
-      request.validate(),
-      Err("--dev-self-minted-consent cannot be combined with --human-gesture-consent".to_string())
-    );
+    assert_eq!(request.validate(), Err("--dev-self-minted-consent cannot be combined with --human-gesture-consent".to_string()));
   }
 
   #[test]
   fn validation_rejects_zero_human_gesture_timeout() {
     let mut request = base_request();
     request.human_gesture_timeout_ms = 0;
-    assert_eq!(
-      request.validate(),
-      Err("--human-gesture-timeout-ms must be greater than 0".to_string())
-    );
+    assert_eq!(request.validate(), Err("--human-gesture-timeout-ms must be greater than 0".to_string()));
   }
 
   #[test]
@@ -1649,10 +1378,7 @@ mod tests {
       text: String::new(),
     });
 
-    assert_eq!(
-      request.validate(),
-      Err("--text must not be empty when --action type-text".to_string())
-    );
+    assert_eq!(request.validate(), Err("--text must not be empty when --action type-text".to_string()));
   }
 
   #[test]
@@ -1662,12 +1388,7 @@ mod tests {
     request.query = None;
     request.role = None;
     request.action = None;
-    assert_eq!(
-      request.validate(),
-      Err(
-        "--proposer-model or AUV_MODEL_PROPOSER_MODEL is required when --intent is set".to_string()
-      )
-    );
+    assert_eq!(request.validate(), Err("--proposer-model or AUV_MODEL_PROPOSER_MODEL is required when --intent is set".to_string()));
   }
 
   #[test]
@@ -1675,40 +1396,24 @@ mod tests {
     let mut request = base_request();
     request.intent = Some("type hello".to_string());
     request.proposer_model = Some("gpt-5.5".to_string());
-    assert_eq!(
-      request.validate(),
-      Err("--intent cannot be combined with --query, --role, --action, or --text".to_string())
-    );
+    assert_eq!(request.validate(), Err("--intent cannot be combined with --query, --role, --action, or --text".to_string()));
   }
 
   #[test]
   fn command_status_strings_are_stable() {
-    assert_eq!(
-      CandidateActionCommandStatus::PromotionRefused.as_str(),
-      "promotion_refused"
-    );
-    assert_eq!(
-      CandidateActionCommandStatus::ExecutedSingleAction.as_str(),
-      "executed_single_action"
-    );
-    assert_eq!(
-      CandidateActionCommandStatus::BlockedNotReady.as_str(),
-      "blocked_not_ready"
-    );
+    assert_eq!(CandidateActionCommandStatus::PromotionRefused.as_str(), "promotion_refused");
+    assert_eq!(CandidateActionCommandStatus::ExecutedSingleAction.as_str(), "executed_single_action");
+    assert_eq!(CandidateActionCommandStatus::BlockedNotReady.as_str(), "blocked_not_ready");
   }
 
   #[test]
   fn command_status_tracks_execution_side_effect() {
     assert_eq!(
-      command_status_for_execution_side_effect(
-        &CandidateActionExecutionSideEffect::SingleInputDelivered
-      ),
+      command_status_for_execution_side_effect(&CandidateActionExecutionSideEffect::SingleInputDelivered),
       CandidateActionCommandStatus::ExecutedSingleAction
     );
     assert_eq!(
-      command_status_for_execution_side_effect(
-        &CandidateActionExecutionSideEffect::BlockedNotReady
-      ),
+      command_status_for_execution_side_effect(&CandidateActionExecutionSideEffect::BlockedNotReady),
       CandidateActionCommandStatus::BlockedNotReady
     );
   }
@@ -1771,13 +1476,8 @@ mod tests {
   #[test]
   fn response_output_text_reads_top_level_and_nested_shapes() {
     assert_eq!(
-      response_output_text(
-        &json!({"output_text": "{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}"})
-      ),
-      Some(
-        "{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}"
-          .to_string()
-      )
+      response_output_text(&json!({"output_text": "{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}"})),
+      Some("{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}".to_string())
     );
     assert_eq!(
       response_output_text(&json!({
@@ -1791,10 +1491,7 @@ mod tests {
           }
         ]
       })),
-      Some(
-        "{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}"
-          .to_string()
-      )
+      Some("{\"selected_item_path\":\"/p\",\"selected_action_kind\":\"click\",\"reason\":\"ok\"}".to_string())
     );
   }
 
@@ -1817,29 +1514,13 @@ mod tests {
       raw_response_json: json!({}),
     };
 
-    let narrowed = narrow_observations_for_model_proposal(&observations, &proposal)
-      .expect("narrowing should work");
+    let narrowed = narrow_observations_for_model_proposal(&observations, &proposal).expect("narrowing should work");
 
     assert_eq!(narrowed.len(), 2);
-    assert_eq!(
-      narrowed[0]
-        .best
-        .as_ref()
-        .and_then(|item| item.text.as_deref()),
-      Some("Draft 0")
-    );
-    assert_eq!(
-      narrowed[1]
-        .best
-        .as_ref()
-        .and_then(|item| item.text.as_deref()),
-      Some("Draft 1")
-    );
+    assert_eq!(narrowed[0].best.as_ref().and_then(|item| item.text.as_deref()), Some("Draft 0"));
+    assert_eq!(narrowed[1].best.as_ref().and_then(|item| item.text.as_deref()), Some("Draft 1"));
     assert_eq!(narrowed[0].filtered.len(), 1);
-    assert_eq!(
-      narrowed[0].detail["selection_provenance"]["kind"],
-      json!("model_proposal")
-    );
+    assert_eq!(narrowed[0].detail["selection_provenance"]["kind"], json!("model_proposal"));
   }
 
   #[test]
@@ -1915,11 +1596,7 @@ mod tests {
       endpoint: format!("http://{address}/v1/responses"),
     };
     let proposal = proposer
-      .propose(
-        "com.apple.TextEdit",
-        &sample_wide_recognition("frame-1", "/window/textarea", "Draft 1"),
-        "focus the main text area",
-      )
+      .propose("com.apple.TextEdit", &sample_wide_recognition("frame-1", "/window/textarea", "Draft 1"), "focus the main text area")
       .expect("proposal should succeed inside tokio runtime");
     server.join().expect("server thread should finish");
 
@@ -1928,11 +1605,7 @@ mod tests {
     assert_eq!(proposal.selected_action, CandidateActionKind::Click);
   }
 
-  fn sample_wide_recognition(
-    recognition_id: &str,
-    matching_path: &str,
-    matching_text: &str,
-  ) -> RecognitionResult {
+  fn sample_wide_recognition(recognition_id: &str, matching_path: &str, matching_text: &str) -> RecognitionResult {
     let matching = RecognizedItem {
       item_id: format!("ax:{matching_path}:0"),
       kind: "AXTextArea".to_string(),
@@ -1999,9 +1672,7 @@ fn press_shortcut(shortcut: &str) -> AuvResult<()> {
   use auv_driver::Driver;
 
   let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver
-    .open_local()
-    .map_err(|error| format!("failed to open macOS driver session: {error}"))?;
+  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver session: {error}"))?;
   let _ = session
     .input()
     .press_key(auv_driver::input::KeyPressOptions {

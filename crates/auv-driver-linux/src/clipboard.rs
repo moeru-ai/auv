@@ -39,10 +39,5 @@ fn with_clipboard_session<T>(
   if state.clipboard_session.is_none() {
     state.clipboard_session = Some(PortalClipboard::open()?);
   }
-  operation(
-    state
-      .clipboard_session
-      .as_mut()
-      .expect("clipboard session was just initialized"),
-  )
+  operation(state.clipboard_session.as_mut().expect("clipboard session was just initialized"))
 }

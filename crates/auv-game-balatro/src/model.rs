@@ -242,13 +242,7 @@ mod tests {
 
   #[test]
   fn phase_serializes_as_snake_case() {
-    assert_eq!(
-      serde_json::to_string(&BalatroPhase::Store).unwrap(),
-      "\"store\""
-    );
-    assert_eq!(
-      serde_json::to_string(&BalatroPhase::GameOver).unwrap(),
-      "\"game_over\""
-    );
+    assert_eq!(serde_json::to_string(&BalatroPhase::Store).unwrap(), "\"store\"");
+    assert_eq!(serde_json::to_string(&BalatroPhase::GameOver).unwrap(), "\"game_over\"");
   }
 }

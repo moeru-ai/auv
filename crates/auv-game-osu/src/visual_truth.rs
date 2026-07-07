@@ -52,73 +52,36 @@ pub fn build_visual_truth_manifest(
   dispatch_trace: &[DispatchSample],
   capture_trace: &[CaptureTraceSample],
 ) -> Result<VisualTruthManifest, String> {
-  let schedule_by_object = schedule
-    .iter()
-    .map(|action| (action.object_index, action))
-    .collect::<HashMap<_, _>>();
-  let dispatch_by_object = dispatch_trace
-    .iter()
-    .map(|sample| (sample.object_index, sample))
-    .collect::<HashMap<_, _>>();
-  let capture_by_object = capture_trace
-    .iter()
-    .map(|sample| (sample.object_index, sample))
-    .collect::<HashMap<_, _>>();
+  let schedule_by_object = schedule.iter().map(|action| (action.object_index, action)).collect::<HashMap<_, _>>();
+  let dispatch_by_object = dispatch_trace.iter().map(|sample| (sample.object_index, sample)).collect::<HashMap<_, _>>();
+  let capture_by_object = capture_trace.iter().map(|sample| (sample.object_index, sample)).collect::<HashMap<_, _>>();
   let mut frames = Vec::new();
 
   for capture_sample in capture_trace {
     let scheduled_action = schedule_by_object
       .get(&capture_sample.object_index)
-      .ok_or_else(|| {
-        format!(
-          "capture trace references missing scheduled action for object {}",
-          capture_sample.object_index
-        )
-      })?;
+      .ok_or_else(|| format!("capture trace references missing scheduled action for object {}", capture_sample.object_index))?;
     let dispatch_sample = dispatch_by_object
       .get(&capture_sample.object_index)
-      .ok_or_else(|| {
-        format!(
-          "capture trace references missing dispatch sample for object {}",
-          capture_sample.object_index
-        )
-      })?;
+      .ok_or_else(|| format!("capture trace references missing dispatch sample for object {}", capture_sample.object_index))?;
 
     if scheduled_action.object_kind != capture_sample.object_kind {
-      return Err(format!(
-        "object {} kind mismatch between schedule and capture trace",
-        capture_sample.object_index
-      ));
+      return Err(format!("object {} kind mismatch between schedule and capture trace", capture_sample.object_index));
     }
     if dispatch_sample.object_kind != capture_sample.object_kind {
-      return Err(format!(
-        "object {} kind mismatch between dispatch trace and capture trace",
-        capture_sample.object_index
-      ));
+      return Err(format!("object {} kind mismatch between dispatch trace and capture trace", capture_sample.object_index));
     }
     if scheduled_action.scheduled_time_ms != capture_sample.scheduled_time_ms {
-      return Err(format!(
-        "object {} scheduled time mismatch between schedule and capture trace",
-        capture_sample.object_index
-      ));
+      return Err(format!("object {} scheduled time mismatch between schedule and capture trace", capture_sample.object_index));
     }
     if dispatch_sample.scheduled_time_ms != capture_sample.scheduled_time_ms {
-      return Err(format!(
-        "object {} scheduled time mismatch between dispatch trace and capture trace",
-        capture_sample.object_index
-      ));
+      return Err(format!("object {} scheduled time mismatch between dispatch trace and capture trace", capture_sample.object_index));
     }
     if dispatch_sample.actual_dispatch_time_ms != capture_sample.actual_dispatch_time_ms {
-      return Err(format!(
-        "object {} dispatch time mismatch between dispatch trace and capture trace",
-        capture_sample.object_index
-      ));
+      return Err(format!("object {} dispatch time mismatch between dispatch trace and capture trace", capture_sample.object_index));
     }
     if dispatch_sample.dispatch_error_ms != capture_sample.dispatch_error_ms {
-      return Err(format!(
-        "object {} dispatch error mismatch between dispatch trace and capture trace",
-        capture_sample.object_index
-      ));
+      return Err(format!("object {} dispatch error mismatch between dispatch trace and capture trace", capture_sample.object_index));
     }
 
     for capture in &capture_sample.captures {
@@ -142,16 +105,10 @@ pub fn build_visual_truth_manifest(
 
   for object_index in capture_by_object.keys() {
     if !schedule_by_object.contains_key(object_index) {
-      return Err(format!(
-        "capture trace references missing scheduled action for object {}",
-        object_index
-      ));
+      return Err(format!("capture trace references missing scheduled action for object {}", object_index));
     }
     if !dispatch_by_object.contains_key(object_index) {
-      return Err(format!(
-        "capture trace references missing dispatch sample for object {}",
-        object_index
-      ));
+      return Err(format!("capture trace references missing dispatch sample for object {}", object_index));
     }
   }
 
@@ -266,27 +223,15 @@ mod tests {
 
     assert_eq!(manifest.schema_version, 1);
     assert_eq!(manifest.frames.len(), 2);
-    assert_eq!(
-      manifest.frames[0].capture.phase,
-      CapturePhase::BeforeDispatch
-    );
-    assert_eq!(
-      manifest.frames[0].expected_object.expected_playfield_x,
-      256.0
-    );
-    assert_eq!(
-      manifest.frames[0].expected_object.expected_playfield_y,
-      192.0
-    );
+    assert_eq!(manifest.frames[0].capture.phase, CapturePhase::BeforeDispatch);
+    assert_eq!(manifest.frames[0].expected_object.expected_playfield_x, 256.0);
+    assert_eq!(manifest.frames[0].expected_object.expected_playfield_y, 192.0);
     assert_eq!(manifest.frames[0].expected_object.circle_size, 4.0);
     assert_eq!(manifest.frames[0].expected_object.approach_rate, 9.5);
     assert_eq!(manifest.frames[0].expected_object.overall_difficulty, 8.0);
     assert_eq!(manifest.frames[1].capture.file_name, "after.png");
     assert_eq!(manifest.frames[1].capture.relative_to_dispatch_ms, 16);
-    assert_eq!(
-      manifest.frames[1].capture.fallback_reason.as_deref(),
-      Some("fallback")
-    );
+    assert_eq!(manifest.frames[1].capture.fallback_reason.as_deref(), Some("fallback"));
   }
 
   #[test]

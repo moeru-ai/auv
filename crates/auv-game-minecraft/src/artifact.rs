@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use auv_driver::geometry::{
-  CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect,
-};
+use auv_driver::geometry::{CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect};
 use auv_tracing_driver::EvidenceCorrelationKey;
 
 use crate::types::{MinecraftProjectedPoint, MinecraftSpatialFrame, ProjectionVisibility};
@@ -62,10 +60,7 @@ impl MinecraftProjectionArtifact {
       screenshot_artifact_ref: frame.screenshot_artifact_ref.clone(),
       mc_capture_skew_ms: frame.mc_capture_skew_ms,
       viewport_bounds: ProjectionViewportBounds::from_rect(frame.viewport.bounds()),
-      visibility: projected_point
-        .as_ref()
-        .map(|point| point.visibility)
-        .unwrap_or(ProjectionVisibility::OutsideWindow),
+      visibility: projected_point.as_ref().map(|point| point.visibility).unwrap_or(ProjectionVisibility::OutsideWindow),
       projected_point,
       raycast_block_id: frame.raycast_hit.as_ref().map(|hit| hit.block_id.clone()),
       screen_state: frame.screen_state.clone(),
@@ -81,11 +76,7 @@ impl MinecraftProjectionArtifact {
   }
 
   pub fn to_core_projection_basis(&self) -> ProjectionBasis {
-    let basis_id = self
-      .projected_point
-      .as_ref()
-      .map(|point| point.basis_frame_id.clone())
-      .unwrap_or_else(|| self.spatial_frame_id.clone());
+    let basis_id = self.projected_point.as_ref().map(|point| point.basis_frame_id.clone()).unwrap_or_else(|| self.spatial_frame_id.clone());
     let mut basis = ProjectionBasis::new(
       basis_id,
       self.monotonic_timestamp_ms,
@@ -94,9 +85,7 @@ impl MinecraftProjectionArtifact {
       ProjectionDerivationFamily::CameraMatrix,
     );
     if let Some(projected_point) = &self.projected_point {
-      basis = basis
-        .with_confidence(projected_point.confidence)
-        .with_match_radius_px(projected_point.match_radius_px);
+      basis = basis.with_confidence(projected_point.confidence).with_match_radius_px(projected_point.match_radius_px);
     } else {
       basis = basis.with_known_limit("minecraft projection artifact has no projected point");
     }
@@ -107,11 +96,8 @@ impl MinecraftProjectionArtifact {
   }
 
   pub fn to_core_evidence_correlation_key(&self) -> EvidenceCorrelationKey {
-    let basis_frame_id = self
-      .projected_point
-      .as_ref()
-      .map(|point| point.basis_frame_id.clone())
-      .unwrap_or_else(|| self.spatial_frame_id.clone());
+    let basis_frame_id =
+      self.projected_point.as_ref().map(|point| point.basis_frame_id.clone()).unwrap_or_else(|| self.spatial_frame_id.clone());
     EvidenceCorrelationKey::new(basis_frame_id)
   }
 
@@ -143,16 +129,10 @@ impl MinecraftProjectionArtifact {
         }
       }
       if projected_point.match_radius_px <= 0.0 {
-        return Err(format!(
-          "projection artifact must have positive match_radius_px, got {}",
-          projected_point.match_radius_px
-        ));
+        return Err(format!("projection artifact must have positive match_radius_px, got {}", projected_point.match_radius_px));
       }
       if !(0.0..=1.0).contains(&projected_point.confidence) {
-        return Err(format!(
-          "projection artifact confidence must be between 0 and 1, got {}",
-          projected_point.confidence
-        ));
+        return Err(format!("projection artifact confidence must be between 0 and 1, got {}", projected_point.confidence));
       }
     }
     Ok(())
@@ -163,8 +143,8 @@ impl MinecraftProjectionArtifact {
 mod tests {
   use super::*;
   use crate::types::{
-    BlockFace, BlockPosition, MinecraftProjectedPoint, MinecraftSpatialFrame, NearbyBlock,
-    NearbyEntity, PlayerPose, ProjectionVisibility, RaycastHit, Vec3, Viewport,
+    BlockFace, BlockPosition, MinecraftProjectedPoint, MinecraftSpatialFrame, NearbyBlock, NearbyEntity, PlayerPose, ProjectionVisibility,
+    RaycastHit, Vec3, Viewport,
   };
 
   fn test_frame() -> MinecraftSpatialFrame {
@@ -222,8 +202,7 @@ mod tests {
 
     artifact.validate().expect("artifact should validate");
     let json = serde_json::to_string(&artifact).expect("serialize artifact");
-    let decoded: MinecraftProjectionArtifact =
-      serde_json::from_str(&json).expect("deserialize artifact");
+    let decoded: MinecraftProjectionArtifact = serde_json::from_str(&json).expect("deserialize artifact");
     assert_eq!(decoded, artifact);
   }
 
@@ -245,10 +224,7 @@ mod tests {
 
     let artifact = MinecraftProjectionArtifact::for_frame(&frame, None, None);
 
-    assert_eq!(
-      artifact.screenshot_artifact_ref.as_deref(),
-      Some("artifact://screenshot-1")
-    );
+    assert_eq!(artifact.screenshot_artifact_ref.as_deref(), Some("artifact://screenshot-1"));
     assert_eq!(artifact.mc_capture_skew_ms, Some(180));
     assert_eq!(artifact.screen_state.as_deref(), Some("menu"));
   }
@@ -282,14 +258,8 @@ mod tests {
     assert_eq!(basis.basis_id, "frame-1");
     assert_eq!(basis.timestamp_millis, 1_000);
     assert_eq!(basis.source_space, ProjectionSourceSpace::World);
-    assert_eq!(
-      basis.projected_coordinate_space,
-      CoordinateSpace::Window("minecraft_viewport".to_string())
-    );
-    assert_eq!(
-      basis.derivation_family,
-      ProjectionDerivationFamily::CameraMatrix
-    );
+    assert_eq!(basis.projected_coordinate_space, CoordinateSpace::Window("minecraft_viewport".to_string()));
+    assert_eq!(basis.derivation_family, ProjectionDerivationFamily::CameraMatrix);
     assert_eq!(basis.confidence, 0.8);
     assert_eq!(basis.match_radius_px, Some(12.0));
   }
@@ -320,9 +290,6 @@ mod tests {
     let artifact = MinecraftProjectionArtifact::for_frame(&test_frame(), None, None)
       .with_mismatch_refusal_reason(Some(MismatchRefusalReason::MenuLoadingScreen));
 
-    assert_eq!(
-      artifact.mismatch_refusal_reason,
-      Some(MismatchRefusalReason::MenuLoadingScreen)
-    );
+    assert_eq!(artifact.mismatch_refusal_reason, Some(MismatchRefusalReason::MenuLoadingScreen));
   }
 }

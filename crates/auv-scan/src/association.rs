@@ -35,19 +35,13 @@ fn new_track_id(label: &str) -> String {
 }
 
 /// Associate observations across adjacent frames by normalized label equality.
-pub fn associate_adjacent_frames(
-  previous: &[FrameObservation],
-  current: &[FrameObservation],
-) -> Vec<AssociationResult> {
+pub fn associate_adjacent_frames(previous: &[FrameObservation], current: &[FrameObservation]) -> Vec<AssociationResult> {
   if previous.is_empty() && current.is_empty() {
     return Vec::new();
   }
   let mut results = Vec::new();
   for obs in current {
-    let matches: Vec<_> = previous
-      .iter()
-      .filter(|prev| prev.label == obs.label)
-      .collect();
+    let matches: Vec<_> = previous.iter().filter(|prev| prev.label == obs.label).collect();
     match matches.len() {
       0 => results.push(AssociationResult::NewTrack {
         track_id: new_track_id(&obs.label),
@@ -107,10 +101,7 @@ mod tests {
   }
 
   fn load_association_fixture(scenario_dir: &str) -> AssociationFixture {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan/association")
-      .join(scenario_dir)
-      .join("manifest.json");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/association").join(scenario_dir).join("manifest.json");
     let text = std::fs::read_to_string(&path).expect("read fixture");
     serde_json::from_str(&text).expect("parse fixture")
   }
@@ -129,10 +120,7 @@ mod tests {
   fn associate_adjacent_frames_links_stable_label_fixture() {
     let fixture = load_association_fixture("association_stable_v0");
     assert_eq!(fixture.scenario, "association_stable_v0");
-    let results = associate_adjacent_frames(
-      &observations(&fixture.previous),
-      &observations(&fixture.current),
-    );
+    let results = associate_adjacent_frames(&observations(&fixture.previous), &observations(&fixture.current));
     let expect: LinkedExpect = serde_json::from_value(fixture.expect).expect("linked expect");
     assert_eq!(expect.kind, "linked");
     assert_eq!(results.len(), 1);
@@ -152,10 +140,7 @@ mod tests {
   fn associate_adjacent_frames_emits_ambiguous_association_fixture() {
     let fixture = load_association_fixture("association_ambiguous_v0");
     assert_eq!(fixture.scenario, "association_ambiguous_v0");
-    let results = associate_adjacent_frames(
-      &observations(&fixture.previous),
-      &observations(&fixture.current),
-    );
+    let results = associate_adjacent_frames(&observations(&fixture.previous), &observations(&fixture.current));
     let expect: AmbiguousExpect = serde_json::from_value(fixture.expect).expect("ambiguous expect");
     assert_eq!(expect.kind, "ambiguous_association");
     assert!(matches!(

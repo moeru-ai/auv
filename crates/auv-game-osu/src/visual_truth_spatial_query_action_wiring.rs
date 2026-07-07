@@ -6,15 +6,13 @@ use auv_file::{JsonFileReadError, read_json_file as read_json_file_helper};
 use crate::benchmark::{CapturePhase, ObjectKind};
 use crate::projection::PlayfieldProjection;
 use crate::visual_truth::VisualTruthManifest;
-use crate::visual_truth_spatial_query::{
-  VisualTruthSpatialQueryManifest, VisualTruthSpatialQueryStatus,
-};
+use crate::visual_truth_spatial_query::{VisualTruthSpatialQueryManifest, VisualTruthSpatialQueryStatus};
 use crate::visual_truth_spatial_query_action::{
-  VisualTruthSpatialQueryActionEligibility, VisualTruthSpatialQueryActionReadiness,
-  derive_visual_truth_spatial_query_action_readiness,
+  VisualTruthSpatialQueryActionEligibility, VisualTruthSpatialQueryActionReadiness, derive_visual_truth_spatial_query_action_readiness,
 };
 
-pub const OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT: &str = "osu_query_wired_live_action_capture_space_readiness_live_window_dispatch_no_gameplay_verification";
+pub const OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT: &str =
+  "osu_query_wired_live_action_capture_space_readiness_live_window_dispatch_no_gameplay_verification";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VisualTruthQueryActionWiringLineage {
@@ -37,11 +35,7 @@ pub struct VisualTruthQueryActionWiringOutcome {
 }
 
 pub trait VisualTruthQueryLiveClickExecutor {
-  fn attempt_click(
-    &self,
-    window_point: WindowPoint,
-    lineage: &VisualTruthQueryActionWiringLineage,
-  ) -> Result<String, String>;
+  fn attempt_click(&self, window_point: WindowPoint, lineage: &VisualTruthQueryActionWiringLineage) -> Result<String, String>;
 }
 
 pub fn wire_visual_truth_spatial_query_manifest_to_action(
@@ -53,14 +47,7 @@ pub fn wire_visual_truth_spatial_query_manifest_to_action(
   let readiness = derive_visual_truth_spatial_query_action_readiness(manifest);
   let mut known_limits = manifest.known_limits.clone();
   known_limits.push(OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT.to_string());
-  wire_readiness_to_action(
-    manifest,
-    &readiness,
-    lineage,
-    live_projection,
-    known_limits,
-    executor,
-  )
+  wire_readiness_to_action(manifest, &readiness, lineage, live_projection, known_limits, executor)
 }
 
 pub fn visual_truth_query_action_wiring_lineage_from_manifest(
@@ -91,10 +78,7 @@ fn wire_readiness_to_action(
         return VisualTruthQueryActionWiringOutcome {
           attempted: false,
           action_eligibility: readiness.eligibility,
-          refusal_reason: Some(
-            "click_ready eligibility missing live window_point from playfield projection; defensive refusal"
-              .to_string(),
-          ),
+          refusal_reason: Some("click_ready eligibility missing live window_point from playfield projection; defensive refusal".to_string()),
           pixel_point,
           window_point: None,
           click_summary: None,
@@ -123,8 +107,7 @@ fn wire_readiness_to_action(
         },
       }
     }
-    VisualTruthSpatialQueryActionEligibility::AnswerNonClickable
-    | VisualTruthSpatialQueryActionEligibility::NotConsumable => {
+    VisualTruthSpatialQueryActionEligibility::AnswerNonClickable | VisualTruthSpatialQueryActionEligibility::NotConsumable => {
       VisualTruthQueryActionWiringOutcome {
         attempted: false,
         action_eligibility: readiness.eligibility,
@@ -138,25 +121,12 @@ fn wire_readiness_to_action(
   }
 }
 
-fn resolve_live_window_point(
-  manifest: &VisualTruthSpatialQueryManifest,
-  live_projection: &PlayfieldProjection,
-) -> Option<WindowPoint> {
-  let visual_truth_manifest = read_json_file::<VisualTruthManifest>(
-    Path::new(&manifest.source_visual_truth_manifest_path),
-    "osu visual truth manifest",
-  )
-  .ok()?;
-  let frame = find_target_frame(
-    &visual_truth_manifest,
-    manifest.object_index,
-    &manifest.capture_phase,
-    manifest.object_kind.as_ref(),
-  )?;
-  let (window_x, window_y) = live_projection.to_window_point(
-    frame.expected_object.expected_playfield_x,
-    frame.expected_object.expected_playfield_y,
-  );
+fn resolve_live_window_point(manifest: &VisualTruthSpatialQueryManifest, live_projection: &PlayfieldProjection) -> Option<WindowPoint> {
+  let visual_truth_manifest =
+    read_json_file::<VisualTruthManifest>(Path::new(&manifest.source_visual_truth_manifest_path), "osu visual truth manifest").ok()?;
+  let frame = find_target_frame(&visual_truth_manifest, manifest.object_index, &manifest.capture_phase, manifest.object_kind.as_ref())?;
+  let (window_x, window_y) =
+    live_projection.to_window_point(frame.expected_object.expected_playfield_x, frame.expected_object.expected_playfield_y);
   Some(WindowPoint::new(window_x, window_y))
 }
 
@@ -195,8 +165,7 @@ mod tests {
   use crate::projection::ProjectionArtifact;
   use crate::visual_truth::{CaptureFrame, ExpectedObjectTruth, VisualTruthFrame};
   use crate::visual_truth_spatial_query::{
-    VisualTruthPixelVisibility, VisualTruthSpatialQueryBackend, VisualTruthSpatialQueryReason,
-    VisualTruthSpatialQueryStatus,
+    VisualTruthPixelVisibility, VisualTruthSpatialQueryBackend, VisualTruthSpatialQueryReason, VisualTruthSpatialQueryStatus,
   };
 
   struct CountingExecutor {
@@ -216,21 +185,12 @@ mod tests {
   }
 
   impl VisualTruthQueryLiveClickExecutor for CountingExecutor {
-    fn attempt_click(
-      &self,
-      _window_point: WindowPoint,
-      _lineage: &VisualTruthQueryActionWiringLineage,
-    ) -> Result<String, String> {
+    fn attempt_click(&self, _window_point: WindowPoint, _lineage: &VisualTruthQueryActionWiringLineage) -> Result<String, String> {
       self.calls.set(self.calls.get() + 1);
       if let Some(error) = &self.error {
         return Err(error.clone());
       }
-      Ok(
-        self
-          .summary
-          .clone()
-          .unwrap_or_else(|| "clicked".to_string()),
-      )
+      Ok(self.summary.clone().unwrap_or_else(|| "clicked".to_string()))
     }
   }
 
@@ -280,11 +240,7 @@ mod tests {
       }],
     };
     let manifest_path = root.join("visual_truth_manifest.json");
-    fs::write(
-      &manifest_path,
-      serde_json::to_string_pretty(&manifest).expect("serialize manifest"),
-    )
-    .expect("write manifest");
+    fs::write(&manifest_path, serde_json::to_string_pretty(&manifest).expect("serialize manifest")).expect("write manifest");
     let projection = PlayfieldProjection::for_capture(800.0, 600.0, 4.0).expect("projection");
     let projection_artifact = ProjectionArtifact {
       source_window_bounds: crate::projection::ProjectionBounds {
@@ -305,11 +261,8 @@ mod tests {
       derivation_method: crate::projection::ProjectionDerivationMethod::LayoutRule,
       verification_reference: None,
     };
-    fs::write(
-      root.join("projection.json"),
-      serde_json::to_string_pretty(&projection_artifact).expect("serialize projection"),
-    )
-    .expect("write projection");
+    fs::write(root.join("projection.json"), serde_json::to_string_pretty(&projection_artifact).expect("serialize projection"))
+      .expect("write projection");
     manifest_path
   }
 
@@ -320,12 +273,7 @@ mod tests {
       visual_truth_semantic_manifest_path: "/tmp/semantic.json".to_string(),
       source_run_artifact_dir: "/tmp/run".to_string(),
       source_visual_truth_manifest_path: visual_truth_manifest_path.display().to_string(),
-      source_projection_path: visual_truth_manifest_path
-        .parent()
-        .expect("parent")
-        .join("projection.json")
-        .display()
-        .to_string(),
+      source_projection_path: visual_truth_manifest_path.parent().expect("parent").join("projection.json").display().to_string(),
       object_index: 0,
       capture_phase: CapturePhase::BeforeDispatch,
       object_kind: None,
@@ -342,9 +290,7 @@ mod tests {
     }
   }
 
-  fn lineage_for(
-    manifest: &VisualTruthSpatialQueryManifest,
-  ) -> VisualTruthQueryActionWiringLineage {
+  fn lineage_for(manifest: &VisualTruthSpatialQueryManifest) -> VisualTruthQueryActionWiringLineage {
     visual_truth_query_action_wiring_lineage_from_manifest(manifest, Path::new("/tmp/query.json"))
   }
 
@@ -361,32 +307,16 @@ mod tests {
     let executor = CountingExecutor::success("live click dispatched");
     let projection = live_projection();
 
-    let outcome = wire_visual_truth_spatial_query_manifest_to_action(
-      &manifest,
-      &lineage,
-      &projection,
-      &executor,
-    );
+    let outcome = wire_visual_truth_spatial_query_manifest_to_action(&manifest, &lineage, &projection, &executor);
 
     assert_eq!(executor.calls.get(), 1);
     assert!(outcome.attempted);
-    assert_eq!(
-      outcome.action_eligibility,
-      VisualTruthSpatialQueryActionEligibility::ClickReady
-    );
+    assert_eq!(outcome.action_eligibility, VisualTruthSpatialQueryActionEligibility::ClickReady);
     assert_eq!(outcome.pixel_point, Some((400.0, 300.0)));
     assert_eq!(outcome.window_point, Some(WindowPoint::new(400.0, 300.0)));
-    assert_eq!(
-      outcome.click_summary.as_deref(),
-      Some("live click dispatched")
-    );
+    assert_eq!(outcome.click_summary.as_deref(), Some("live click dispatched"));
     assert!(outcome.refusal_reason.is_none());
-    assert!(
-      outcome
-        .known_limits
-        .iter()
-        .any(|limit| limit == OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT)
-    );
+    assert!(outcome.known_limits.iter().any(|limit| limit == OSU_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT));
   }
 
   #[test]
@@ -401,23 +331,12 @@ mod tests {
     let executor = CountingExecutor::success("should not run");
     let projection = live_projection();
 
-    let outcome = wire_visual_truth_spatial_query_manifest_to_action(
-      &manifest,
-      &lineage,
-      &projection,
-      &executor,
-    );
+    let outcome = wire_visual_truth_spatial_query_manifest_to_action(&manifest, &lineage, &projection, &executor);
 
     assert_eq!(executor.calls.get(), 0);
     assert!(!outcome.attempted);
-    assert_eq!(
-      outcome.action_eligibility,
-      VisualTruthSpatialQueryActionEligibility::AnswerNonClickable
-    );
-    assert_eq!(
-      outcome.refusal_reason.as_deref(),
-      Some("pixel_visibility=outside_capture")
-    );
+    assert_eq!(outcome.action_eligibility, VisualTruthSpatialQueryActionEligibility::AnswerNonClickable);
+    assert_eq!(outcome.refusal_reason.as_deref(), Some("pixel_visibility=outside_capture"));
     assert!(outcome.click_summary.is_none());
   }
 
@@ -435,23 +354,12 @@ mod tests {
     let executor = CountingExecutor::success("should not run");
     let projection = live_projection();
 
-    let outcome = wire_visual_truth_spatial_query_manifest_to_action(
-      &manifest,
-      &lineage,
-      &projection,
-      &executor,
-    );
+    let outcome = wire_visual_truth_spatial_query_manifest_to_action(&manifest, &lineage, &projection, &executor);
 
     assert_eq!(executor.calls.get(), 0);
     assert!(!outcome.attempted);
-    assert_eq!(
-      outcome.action_eligibility,
-      VisualTruthSpatialQueryActionEligibility::NotConsumable
-    );
-    assert_eq!(
-      outcome.refusal_reason.as_deref(),
-      Some("status=failed reason=target_absent_from_visual_truth")
-    );
+    assert_eq!(outcome.action_eligibility, VisualTruthSpatialQueryActionEligibility::NotConsumable);
+    assert_eq!(outcome.refusal_reason.as_deref(), Some("status=failed reason=target_absent_from_visual_truth"));
     assert!(outcome.click_summary.is_none());
   }
 
@@ -465,24 +373,14 @@ mod tests {
     let executor = CountingExecutor::success("should not run");
     let projection = live_projection();
 
-    let outcome = wire_visual_truth_spatial_query_manifest_to_action(
-      &manifest,
-      &lineage,
-      &projection,
-      &executor,
-    );
+    let outcome = wire_visual_truth_spatial_query_manifest_to_action(&manifest, &lineage, &projection, &executor);
 
     assert_eq!(executor.calls.get(), 0);
     assert!(!outcome.attempted);
-    assert_eq!(
-      outcome.action_eligibility,
-      VisualTruthSpatialQueryActionEligibility::ClickReady
-    );
+    assert_eq!(outcome.action_eligibility, VisualTruthSpatialQueryActionEligibility::ClickReady);
     assert_eq!(
       outcome.refusal_reason.as_deref(),
-      Some(
-        "click_ready eligibility missing live window_point from playfield projection; defensive refusal"
-      )
+      Some("click_ready eligibility missing live window_point from playfield projection; defensive refusal")
     );
   }
 }

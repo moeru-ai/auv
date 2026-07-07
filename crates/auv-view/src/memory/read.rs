@@ -33,22 +33,14 @@ impl Default for MemoryReadConfig {
   }
 }
 
-pub fn read_memory(
-  memory: ViewMemory,
-  config: &MemoryReadConfig,
-  current_baseline_width: Option<u32>,
-) -> MemoryReadOutcome {
+pub fn read_memory(memory: ViewMemory, config: &MemoryReadConfig, current_baseline_width: Option<u32>) -> MemoryReadOutcome {
   if memory.schema_version != VIEW_MEMORY_SCHEMA_VERSION {
     return MemoryReadOutcome::Rejected {
       reason: StaleReason::SchemaMismatch,
     };
   }
 
-  if config
-    .now_millis
-    .saturating_sub(memory.last_reconstructed_at_millis)
-    > config.hard_ttl_millis
-  {
+  if config.now_millis.saturating_sub(memory.last_reconstructed_at_millis) > config.hard_ttl_millis {
     return MemoryReadOutcome::Rejected {
       reason: StaleReason::MemoryRejectedAtFreshness,
     };

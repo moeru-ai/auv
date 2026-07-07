@@ -11,8 +11,7 @@ pub fn memory_file_path(artifact_dir: &Path, scope_id: &str) -> PathBuf {
 }
 
 pub fn serialize_memory_bytes(memory: &ViewMemory) -> Result<Vec<u8>, String> {
-  serde_json::to_vec_pretty(memory)
-    .map_err(|error| format!("failed to serialize ViewMemory: {error}"))
+  serde_json::to_vec_pretty(memory).map_err(|error| format!("failed to serialize ViewMemory: {error}"))
 }
 
 // NOTICE(view-memory-lineage-wire-v0): Wire form for ViewMemory.source_reconstruction_ref
@@ -23,11 +22,9 @@ pub fn view_memory_lineage_ref_wire(run_id: &str, scan_artifact_id: &str) -> Str
 
 pub fn write_memory_file(path: &Path, memory: &ViewMemory) -> Result<(), String> {
   if let Some(parent) = path.parent() {
-    std::fs::create_dir_all(parent)
-      .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    std::fs::create_dir_all(parent).map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
   }
-  let json = serde_json::to_string_pretty(memory)
-    .map_err(|error| format!("failed to serialize ViewMemory: {error}"))?;
+  let json = serde_json::to_string_pretty(memory).map_err(|error| format!("failed to serialize ViewMemory: {error}"))?;
   std::fs::write(path, json).map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
@@ -36,11 +33,7 @@ pub fn parse_memory_file(path: &Path) -> Option<ViewMemory> {
   serde_json::from_str(&json).ok()
 }
 
-pub fn load_memory_file(
-  path: &Path,
-  config: &MemoryReadConfig,
-  current_baseline_width: Option<u32>,
-) -> Option<ViewMemory> {
+pub fn load_memory_file(path: &Path, config: &MemoryReadConfig, current_baseline_width: Option<u32>) -> Option<ViewMemory> {
   let json = std::fs::read_to_string(path).ok()?;
   let memory: ViewMemory = serde_json::from_str(&json).ok()?;
   match read_memory(memory, config, current_baseline_width) {
@@ -54,17 +47,11 @@ mod tests {
   use super::ViewMemory;
   use super::*;
   use crate::ViewBounds;
-  use crate::memory::{
-    ARTIFACT_DIR_BRIDGE_RUN_ID, MemoryReadConfig, VIEW_MEMORY_SCHEMA_VERSION,
-    ViewMemoryScopeSnapshot,
-  };
+  use crate::memory::{ARTIFACT_DIR_BRIDGE_RUN_ID, MemoryReadConfig, VIEW_MEMORY_SCHEMA_VERSION, ViewMemoryScopeSnapshot};
 
   #[test]
   fn view_memory_lineage_ref_wire_formats_scan_artifact_pointer() {
-    assert_eq!(
-      view_memory_lineage_ref_wire("run_abc", "artifact_0001"),
-      "run_id=run_abc artifact_id=artifact_0001"
-    );
+    assert_eq!(view_memory_lineage_ref_wire("run_abc", "artifact_0001"), "run_id=run_abc artifact_id=artifact_0001");
   }
 
   #[test]
@@ -90,10 +77,7 @@ mod tests {
     };
     let bytes = serialize_memory_bytes(&memory).expect("serialize");
     let decoded: ViewMemory = serde_json::from_slice(&bytes).expect("decode");
-    assert_eq!(
-      decoded.source_reconstruction_ref,
-      memory.source_reconstruction_ref
-    );
+    assert_eq!(decoded.source_reconstruction_ref, memory.source_reconstruction_ref);
   }
 
   #[test]

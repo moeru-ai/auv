@@ -48,13 +48,9 @@ mod native {
 
   use auv_driver::permission::PermissionStatus;
   use windows::Win32::Foundation::{CloseHandle, HANDLE};
-  use windows::Win32::Security::{
-    GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation, TokenUIAccess,
-  };
+  use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation, TokenUIAccess};
   use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
-  use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentProcessId, OpenProcessToken,
-  };
+  use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, OpenProcessToken};
   use windows::core::Result as WindowsResult;
 
   use super::WindowsPermissionProbe;
@@ -73,10 +69,7 @@ mod native {
   pub(super) fn probe() -> WindowsPermissionProbe {
     let token = open_process_token();
     let (elevated, ui_access) = match &token {
-      Ok(guard) => (
-        status_from(query_elevation(guard.0)),
-        status_from(query_ui_access(guard.0)),
-      ),
+      Ok(guard) => (status_from(query_elevation(guard.0)), status_from(query_ui_access(guard.0))),
       Err(_) => (PermissionStatus::Unknown, PermissionStatus::Unknown),
     };
     WindowsPermissionProbe {
@@ -113,13 +106,7 @@ mod native {
     let mut ui_access = 0u32;
     let mut return_length = 0u32;
     unsafe {
-      GetTokenInformation(
-        token,
-        TokenUIAccess,
-        Some(&mut ui_access as *mut u32 as *mut c_void),
-        size_of::<u32>() as u32,
-        &mut return_length,
-      )
+      GetTokenInformation(token, TokenUIAccess, Some(&mut ui_access as *mut u32 as *mut c_void), size_of::<u32>() as u32, &mut return_length)
     }?;
     Ok(ui_access != 0)
   }

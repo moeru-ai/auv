@@ -2,13 +2,10 @@ use auv_driver::geometry::WindowPoint;
 use auv_query_readiness::{DerivedActionReadiness, format_query_not_consumable_refusal};
 
 use crate::input_target::projected_window_point;
-use crate::training_result_spatial_query::{
-  TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryStatus,
-};
+use crate::training_result_spatial_query::{TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryStatus};
 use crate::types::{MinecraftProjectedPoint, ProjectionVisibility};
 
-pub type TrainingResultSpatialQueryActionEligibility =
-  auv_query_readiness::DerivedActionEligibility;
+pub type TrainingResultSpatialQueryActionEligibility = auv_query_readiness::DerivedActionEligibility;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrainingResultSpatialQueryActionReadiness {
@@ -17,9 +14,7 @@ pub struct TrainingResultSpatialQueryActionReadiness {
   pub refusal_reason: Option<String>,
 }
 
-pub fn derive_action_readiness(
-  manifest: &TrainingResultSpatialQueryManifest,
-) -> TrainingResultSpatialQueryActionReadiness {
+pub fn derive_action_readiness(manifest: &TrainingResultSpatialQueryManifest) -> TrainingResultSpatialQueryActionReadiness {
   if manifest.status != TrainingResultSpatialQueryStatus::Answered {
     let derived = DerivedActionReadiness::not_consumable(format_query_not_consumable_refusal(
       manifest.status.as_str(),
@@ -33,8 +28,7 @@ pub fn derive_action_readiness(
   }
 
   let Some(visibility) = manifest.visibility else {
-    let derived =
-      DerivedActionReadiness::answer_non_clickable("answered query missing visibility witness");
+    let derived = DerivedActionReadiness::answer_non_clickable("answered query missing visibility witness");
     return TrainingResultSpatialQueryActionReadiness {
       eligibility: derived.eligibility,
       window_point: None,
@@ -46,10 +40,7 @@ pub fn derive_action_readiness(
     screen_point: manifest.screen_point,
     visibility,
     match_radius_px: manifest.match_radius_px.unwrap_or(8.0),
-    basis_frame_id: manifest
-      .basis_frame_id
-      .clone()
-      .unwrap_or_else(|| "unknown".to_string()),
+    basis_frame_id: manifest.basis_frame_id.clone().unwrap_or_else(|| "unknown".to_string()),
     confidence: manifest.confidence.unwrap_or(0.0),
   };
 
@@ -62,9 +53,7 @@ pub fn derive_action_readiness(
     };
   }
 
-  let derived = DerivedActionReadiness::answer_non_clickable(answer_non_clickable_refusal_reason(
-    visibility, manifest,
-  ));
+  let derived = DerivedActionReadiness::answer_non_clickable(answer_non_clickable_refusal_reason(visibility, manifest));
   TrainingResultSpatialQueryActionReadiness {
     eligibility: derived.eligibility,
     window_point: None,
@@ -72,10 +61,7 @@ pub fn derive_action_readiness(
   }
 }
 
-fn answer_non_clickable_refusal_reason(
-  visibility: ProjectionVisibility,
-  manifest: &TrainingResultSpatialQueryManifest,
-) -> String {
+fn answer_non_clickable_refusal_reason(visibility: ProjectionVisibility, manifest: &TrainingResultSpatialQueryManifest) -> String {
   if visibility != ProjectionVisibility::Visible {
     return format!("visibility={}", visibility_label(visibility));
   }
@@ -100,8 +86,7 @@ mod tests {
 
   use super::*;
   use crate::training_result_spatial_query::{
-    TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest,
-    TrainingResultSpatialQueryReason,
+    TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryReason,
   };
   use crate::types::{BlockPosition, MinecraftTargetSemantics};
 
@@ -142,10 +127,7 @@ mod tests {
   fn click_ready_when_answered_visible_and_screen_point_present() {
     let readiness = derive_action_readiness(&base_manifest());
 
-    assert_eq!(
-      readiness.eligibility,
-      TrainingResultSpatialQueryActionEligibility::ClickReady
-    );
+    assert_eq!(readiness.eligibility, TrainingResultSpatialQueryActionEligibility::ClickReady);
     assert_eq!(readiness.window_point, Some(WindowPoint::new(854.0, 480.0)));
     assert!(readiness.refusal_reason.is_none());
   }
@@ -158,15 +140,9 @@ mod tests {
 
     let readiness = derive_action_readiness(&manifest);
 
-    assert_eq!(
-      readiness.eligibility,
-      TrainingResultSpatialQueryActionEligibility::AnswerNonClickable
-    );
+    assert_eq!(readiness.eligibility, TrainingResultSpatialQueryActionEligibility::AnswerNonClickable);
     assert!(readiness.window_point.is_none());
-    assert_eq!(
-      readiness.refusal_reason.as_deref(),
-      Some("visibility=outside_window")
-    );
+    assert_eq!(readiness.refusal_reason.as_deref(), Some("visibility=outside_window"));
   }
 
   #[test]
@@ -179,15 +155,9 @@ mod tests {
 
     let readiness = derive_action_readiness(&manifest);
 
-    assert_eq!(
-      readiness.eligibility,
-      TrainingResultSpatialQueryActionEligibility::NotConsumable
-    );
+    assert_eq!(readiness.eligibility, TrainingResultSpatialQueryActionEligibility::NotConsumable);
     assert!(readiness.window_point.is_none());
-    assert_eq!(
-      readiness.refusal_reason.as_deref(),
-      Some("status=failed reason=target_block_absent_from_scene_packet")
-    );
+    assert_eq!(readiness.refusal_reason.as_deref(), Some("status=failed reason=target_block_absent_from_scene_packet"));
   }
 
   #[test]
@@ -200,14 +170,8 @@ mod tests {
 
     let readiness = derive_action_readiness(&manifest);
 
-    assert_eq!(
-      readiness.eligibility,
-      TrainingResultSpatialQueryActionEligibility::NotConsumable
-    );
-    assert_eq!(
-      readiness.refusal_reason.as_deref(),
-      Some("status=blocked reason=semantic_source_not_ready")
-    );
+    assert_eq!(readiness.eligibility, TrainingResultSpatialQueryActionEligibility::NotConsumable);
+    assert_eq!(readiness.refusal_reason.as_deref(), Some("status=blocked reason=semantic_source_not_ready"));
   }
 
   #[test]
@@ -217,14 +181,8 @@ mod tests {
 
     let readiness = derive_action_readiness(&manifest);
 
-    assert_eq!(
-      readiness.eligibility,
-      TrainingResultSpatialQueryActionEligibility::AnswerNonClickable
-    );
-    assert_eq!(
-      readiness.refusal_reason.as_deref(),
-      Some("visibility=behind_camera")
-    );
+    assert_eq!(readiness.eligibility, TrainingResultSpatialQueryActionEligibility::AnswerNonClickable);
+    assert_eq!(readiness.refusal_reason.as_deref(), Some("visibility=behind_camera"));
   }
 
   #[test]
@@ -234,14 +192,8 @@ mod tests {
 
     let readiness = derive_action_readiness(&manifest);
 
-    assert_eq!(
-      readiness.eligibility,
-      TrainingResultSpatialQueryActionEligibility::AnswerNonClickable
-    );
-    assert_eq!(
-      readiness.refusal_reason.as_deref(),
-      Some("visibility=visible missing_screen_point")
-    );
+    assert_eq!(readiness.eligibility, TrainingResultSpatialQueryActionEligibility::AnswerNonClickable);
+    assert_eq!(readiness.refusal_reason.as_deref(), Some("visibility=visible missing_screen_point"));
   }
 
   #[test]
@@ -251,13 +203,7 @@ mod tests {
 
     let readiness = derive_action_readiness(&manifest);
 
-    assert_eq!(
-      readiness.eligibility,
-      TrainingResultSpatialQueryActionEligibility::AnswerNonClickable
-    );
-    assert_eq!(
-      readiness.refusal_reason.as_deref(),
-      Some("answered query missing visibility witness")
-    );
+    assert_eq!(readiness.eligibility, TrainingResultSpatialQueryActionEligibility::AnswerNonClickable);
+    assert_eq!(readiness.refusal_reason.as_deref(), Some("answered query missing visibility witness"));
   }
 }

@@ -31,10 +31,7 @@ impl fmt::Display for MediaError {
       MediaError::Native {
         message,
         recovery_hint,
-      } => write!(
-        f,
-        "macos now-playing read failed: {message}; recovery={recovery_hint}"
-      ),
+      } => write!(f, "macos now-playing read failed: {message}; recovery={recovery_hint}"),
     }
   }
 }

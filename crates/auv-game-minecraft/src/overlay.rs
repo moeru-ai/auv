@@ -4,11 +4,7 @@ use crate::types::{MinecraftProjectedPoint, RaycastHit};
 
 const RAYCAST_MARKER_SIZE: i32 = 4;
 
-pub fn render_projection_overlay(
-  mut image: RgbImage,
-  projected: &MinecraftProjectedPoint,
-  raycast_hit: Option<&RaycastHit>,
-) -> RgbImage {
+pub fn render_projection_overlay(mut image: RgbImage, projected: &MinecraftProjectedPoint, raycast_hit: Option<&RaycastHit>) -> RgbImage {
   let width = image.width();
   let height = image.height();
   if width == 0 || height == 0 {
@@ -19,24 +15,8 @@ pub fn render_projection_overlay(
     let center_x = screen_point.x.round() as i32;
     let center_y = screen_point.y.round() as i32;
     let radius = projected.match_radius_px.round().max(1.0) as i32;
-    draw_crosshair(
-      &mut image,
-      center_x,
-      center_y,
-      radius,
-      Rgb([255, 0, 0]),
-      width,
-      height,
-    );
-    draw_box(
-      &mut image,
-      center_x,
-      center_y,
-      radius,
-      Rgb([255, 255, 0]),
-      width,
-      height,
-    );
+    draw_crosshair(&mut image, center_x, center_y, radius, Rgb([255, 0, 0]), width, height);
+    draw_box(&mut image, center_x, center_y, radius, Rgb([255, 255, 0]), width, height);
   }
 
   if raycast_hit.is_some() {
@@ -46,15 +26,7 @@ pub fn render_projection_overlay(
   image
 }
 
-fn draw_crosshair(
-  image: &mut RgbImage,
-  center_x: i32,
-  center_y: i32,
-  radius: i32,
-  color: Rgb<u8>,
-  width: u32,
-  height: u32,
-) {
+fn draw_crosshair(image: &mut RgbImage, center_x: i32, center_y: i32, radius: i32, color: Rgb<u8>, width: u32, height: u32) {
   let Some((min_x, max_x)) = clip_range(center_x - radius, center_x + radius, width) else {
     return;
   };
@@ -76,15 +48,7 @@ fn draw_crosshair(
   }
 }
 
-fn draw_box(
-  image: &mut RgbImage,
-  center_x: i32,
-  center_y: i32,
-  radius: i32,
-  color: Rgb<u8>,
-  width: u32,
-  height: u32,
-) {
+fn draw_box(image: &mut RgbImage, center_x: i32, center_y: i32, radius: i32, color: Rgb<u8>, width: u32, height: u32) {
   let Some((min_x, max_x)) = clip_range(center_x - radius, center_x + radius, width) else {
     return;
   };

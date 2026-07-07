@@ -5,8 +5,8 @@ use auv_driver::display::ObservedDisplays;
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::{Point, RatioRect, ScreenPoint, WindowPoint};
 use auv_driver::input::{
-  Click, ClickOptions, InputActionResult, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll,
-  ScrollDeliveryCandidate, ScrollOptions, TypeTextOptions, WaitOptions,
+  Click, ClickOptions, InputActionResult, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions,
+  TypeTextOptions, WaitOptions,
 };
 use auv_driver::permission::PermissionProbe;
 use auv_driver::selector::WindowSelector;
@@ -108,14 +108,10 @@ impl DisplayApi<'_> {
   pub fn capture(&self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
     let _ = self.session;
     if options.window.is_some() || options.region.is_some() {
-      return Err(invalid_input(
-        "display.capture does not accept window or region capture options",
-      ));
+      return Err(invalid_input("display.capture does not accept window or region capture options"));
     }
     if let Activation::ActivateFirst { .. } = options.activation {
-      return Err(invalid_input(
-        "display.capture cannot activate an application without an application target",
-      ));
+      return Err(invalid_input("display.capture cannot activate an application without an application target"));
     }
     capture_display(&self.session.state, options.display.as_deref())
   }
@@ -123,18 +119,12 @@ impl DisplayApi<'_> {
   pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
     let _ = self.session;
     if options.window.is_some() {
-      return Err(invalid_input(
-        "display.capture_region does not accept nested window capture options",
-      ));
+      return Err(invalid_input("display.capture_region does not accept nested window capture options"));
     }
     if let Activation::ActivateFirst { .. } = options.activation {
-      return Err(invalid_input(
-        "display.capture_region cannot activate an application without an application target",
-      ));
+      return Err(invalid_input("display.capture_region cannot activate an application without an application target"));
     }
-    let region = options
-      .region
-      .ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
+    let region = options.region.ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
     capture_region(&self.session.state, options.display.as_deref(), region)
   }
 }
@@ -156,32 +146,19 @@ impl WindowApi<'_> {
 
   pub fn capture_with(&self, window: &Window, options: CaptureOptions) -> DriverResult<Capture> {
     if options.display.is_some() || options.region.is_some() || options.window.is_some() {
-      return Err(invalid_input(
-        "window.capture_with does not accept display, region, or nested window capture options",
-      ));
+      return Err(invalid_input("window.capture_with does not accept display, region, or nested window capture options"));
     }
     if let Activation::ActivateFirst { .. } = options.activation {
-      return Err(invalid_input(
-        "window.capture_with cannot activate Linux Wayland windows in this slice",
-      ));
+      return Err(invalid_input("window.capture_with cannot activate Linux Wayland windows in this slice"));
     }
     capture_window(&self.session.state, window)
   }
 
-  pub fn find_text(
-    &self,
-    window: &Window,
-    query: &str,
-    region: RatioRect,
-    wait: WaitOptions,
-  ) -> DriverResult<OcrMatches> {
+  pub fn find_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     let started = std::time::Instant::now();
     loop {
       let capture = self.capture(window)?;
-      let matches = self
-        .session
-        .vision()
-        .find_text_in_capture(&capture, query, region)?;
+      let matches = self.session.vision().find_text_in_capture(&capture, query, region)?;
       if !matches.matches.is_empty() || started.elapsed() >= wait.timeout {
         return Ok(matches);
       }
@@ -189,13 +166,7 @@ impl WindowApi<'_> {
     }
   }
 
-  pub fn wait_text(
-    &self,
-    window: &Window,
-    query: &str,
-    region: RatioRect,
-    wait: WaitOptions,
-  ) -> DriverResult<OcrMatches> {
+  pub fn wait_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     let matches = self.find_text(window, query, region, wait)?;
     if matches.matches.is_empty() {
       Err(not_found(format!("text {query:?} before timeout")))
@@ -207,31 +178,18 @@ impl WindowApi<'_> {
   pub fn to_screen_point(&self, window: &Window, point: WindowPoint) -> DriverResult<ScreenPoint> {
     let _ = self.session;
     let point = point.point();
-    Ok(ScreenPoint::new(
-      window.frame.origin.x + point.x,
-      window.frame.origin.y + point.y,
-    ))
+    Ok(ScreenPoint::new(window.frame.origin.x + point.x, window.frame.origin.y + point.y))
   }
 
   pub fn to_window_point(&self, window: &Window, point: ScreenPoint) -> DriverResult<WindowPoint> {
     let _ = self.session;
     let point = point.point();
-    Ok(WindowPoint::new(
-      point.x - window.frame.origin.x,
-      point.y - window.frame.origin.y,
-    ))
+    Ok(WindowPoint::new(point.x - window.frame.origin.x, point.y - window.frame.origin.y))
   }
 
-  pub fn click(
-    &self,
-    window: &Window,
-    point: WindowPoint,
-    options: ClickOptions,
-  ) -> DriverResult<InputActionResult> {
+  pub fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
     if matches!(options.policy, InputPolicy::BackgroundOnly) {
-      return Err(invalid_input(
-        "linux window.click cannot use background_only input policy",
-      ));
+      return Err(invalid_input("linux window.click cannot use background_only input policy"));
     }
     // TODO(linux-window-targeted-background-input): `window_strategy` is a
     // macOS background-routing selector. Linux currently has only foreground
@@ -247,33 +205,19 @@ impl WindowApi<'_> {
     Ok(result)
   }
 
-  pub fn scroll(
-    &self,
-    window: &Window,
-    point: WindowPoint,
-    scroll: Scroll,
-    options: ScrollOptions,
-  ) -> DriverResult<InputActionResult> {
+  pub fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
     if matches!(options.policy, InputPolicy::BackgroundOnly) {
-      return Err(invalid_input(
-        "linux window.scroll cannot use background_only input policy",
-      ));
+      return Err(invalid_input("linux window.scroll cannot use background_only input policy"));
     }
     if matches!(options.policy, InputPolicy::BackgroundPreferred)
-      && !options
-        .delivery_strategy
-        .candidates
-        .contains(&ScrollDeliveryCandidate::ForegroundHid)
+      && !options.delivery_strategy.candidates.contains(&ScrollDeliveryCandidate::ForegroundHid)
     {
       return Err(invalid_input(
         "linux window.scroll needs ForegroundHid in the delivery strategy because Wayland background window scroll is not available in this slice",
       ));
     }
     let screen_point = self.to_screen_point(window, point)?.point();
-    let mut result = self
-      .session
-      .input()
-      .scroll_at(screen_point, scroll, options.settle)?;
+    let mut result = self.session.input().scroll_at(screen_point, scroll, options.settle)?;
     add_foreground_window_fallback_reason(
       &mut result,
       "linux window.scroll used foreground RemoteDesktop portal input; Wayland window-targeted background wheel delivery is not available in this slice",
@@ -289,11 +233,7 @@ fn add_foreground_window_fallback_reason(result: &mut InputActionResult, reason:
 }
 
 impl VisionApi<'_> {
-  pub fn recognize_text_in_capture(
-    &self,
-    capture: &Capture,
-    region: RatioRect,
-  ) -> DriverResult<TextRecognition> {
+  pub fn recognize_text_in_capture(&self, capture: &Capture, region: RatioRect) -> DriverResult<TextRecognition> {
     self.recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default())
   }
 
@@ -307,18 +247,8 @@ impl VisionApi<'_> {
     recognize_text_in_capture(capture, region, &options)
   }
 
-  pub fn find_text_in_capture(
-    &self,
-    capture: &Capture,
-    query: &str,
-    region: RatioRect,
-  ) -> DriverResult<OcrMatches> {
-    self.find_text_in_capture_with_options(
-      capture,
-      query,
-      region,
-      TextRecognitionOptions::default(),
-    )
+  pub fn find_text_in_capture(&self, capture: &Capture, query: &str, region: RatioRect) -> DriverResult<OcrMatches> {
+    self.find_text_in_capture_with_options(capture, query, region, TextRecognitionOptions::default())
   }
 
   pub fn find_text_in_capture_with_options(
@@ -355,12 +285,7 @@ impl InputApi<'_> {
     click_at(&self.session.state, point, click)
   }
 
-  pub fn scroll_at(
-    &self,
-    point: Point,
-    scroll: Scroll,
-    settle: std::time::Duration,
-  ) -> DriverResult<InputActionResult> {
+  pub fn scroll_at(&self, point: Point, scroll: Scroll, settle: std::time::Duration) -> DriverResult<InputActionResult> {
     scroll_at(&self.session.state, point, scroll, settle)
   }
 
@@ -442,10 +367,7 @@ mod tests {
   fn window_point_converts_to_screen_point() {
     let window = sample_window();
 
-    let point = session()
-      .window()
-      .to_screen_point(&window, WindowPoint::new(25.0, 30.0))
-      .expect("point maps");
+    let point = session().window().to_screen_point(&window, WindowPoint::new(25.0, 30.0)).expect("point maps");
 
     assert_eq!(point, ScreenPoint::new(125.0, 230.0));
   }
@@ -454,10 +376,7 @@ mod tests {
   fn screen_point_converts_to_window_point() {
     let window = sample_window();
 
-    let point = session()
-      .window()
-      .to_window_point(&window, ScreenPoint::new(125.0, 230.0))
-      .expect("point maps");
+    let point = session().window().to_window_point(&window, ScreenPoint::new(125.0, 230.0)).expect("point maps");
 
     assert_eq!(point, WindowPoint::new(25.0, 30.0));
   }

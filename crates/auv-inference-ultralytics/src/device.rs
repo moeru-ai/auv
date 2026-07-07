@@ -66,11 +66,7 @@ fn parse_indexed_device(value: &str, provider: &str) -> Option<Result<usize, Str
   if index.is_empty() {
     return Some(Err(format!("{provider} device index must not be empty")));
   }
-  Some(
-    index
-      .parse::<usize>()
-      .map_err(|_| format!("invalid {provider} device index: {index}")),
-  )
+  Some(index.parse::<usize>().map_err(|_| format!("invalid {provider} device index: {index}")))
 }
 
 #[cfg(test)]
@@ -79,18 +75,9 @@ mod tests {
 
   #[test]
   fn parses_cpu_and_indexed_gpu_devices() {
-    assert_eq!(
-      "cpu".parse::<InferenceDevice>().unwrap(),
-      InferenceDevice::Cpu
-    );
-    assert_eq!(
-      "cuda:1".parse::<InferenceDevice>().unwrap(),
-      InferenceDevice::Cuda(1)
-    );
-    assert_eq!(
-      "tensorrt".parse::<InferenceDevice>().unwrap(),
-      InferenceDevice::TensorRt(0)
-    );
+    assert_eq!("cpu".parse::<InferenceDevice>().unwrap(), InferenceDevice::Cpu);
+    assert_eq!("cuda:1".parse::<InferenceDevice>().unwrap(), InferenceDevice::Cuda(1));
+    assert_eq!("tensorrt".parse::<InferenceDevice>().unwrap(), InferenceDevice::TensorRt(0));
   }
 
   #[test]
@@ -101,10 +88,7 @@ mod tests {
   #[test]
   fn rejects_malformed_indexed_provider_prefixes() {
     for value in ["cudafoo", "directmlfoo", "tensorrtxyz", "rocmbar"] {
-      assert!(
-        value.parse::<InferenceDevice>().is_err(),
-        "{value} should reject malformed indexed provider prefix"
-      );
+      assert!(value.parse::<InferenceDevice>().is_err(), "{value} should reject malformed indexed provider prefix");
     }
   }
 
@@ -118,10 +102,7 @@ mod tests {
       "tensorrt:not-a-number",
       "rocm:-1",
     ] {
-      assert!(
-        value.parse::<InferenceDevice>().is_err(),
-        "{value} should reject malformed indexed provider index"
-      );
+      assert!(value.parse::<InferenceDevice>().is_err(), "{value} should reject malformed indexed provider index");
     }
   }
 }

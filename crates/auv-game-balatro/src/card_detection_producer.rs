@@ -63,10 +63,7 @@ pub fn bundle_dir_from_input(bundle_input: &Path) -> PathBuf {
   if bundle_input.is_dir() {
     bundle_input.to_path_buf()
   } else {
-    bundle_input
-      .parent()
-      .map(Path::to_path_buf)
-      .unwrap_or_else(|| PathBuf::from("."))
+    bundle_input.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
   }
 }
 
@@ -75,16 +72,10 @@ pub fn load_detection_bundle(bundle_input: &Path) -> Result<LoadedDetectionBundl
   let bundle_dir = bundle_dir_from_input(bundle_input);
 
   if !manifest_path.is_file() {
-    return Err(format!(
-      "missing detection bundle manifest {}",
-      manifest_path.display()
-    ));
+    return Err(format!("missing detection bundle manifest {}", manifest_path.display()));
   }
 
-  let manifest = read_json_file::<CardDetectionBundleManifest>(
-    &manifest_path,
-    "balatro card detection bundle manifest",
-  )?;
+  let manifest = read_json_file::<CardDetectionBundleManifest>(&manifest_path, "balatro card detection bundle manifest")?;
 
   if manifest.schema_version != CARD_DETECTION_BUNDLE_SCHEMA_VERSION {
     return Err(format!(
@@ -100,8 +91,7 @@ pub fn load_detection_bundle(bundle_input: &Path) -> Result<LoadedDetectionBundl
   let ui_path = bundle_dir.join(&manifest.ui_detection_set_path);
   let entities_path = bundle_dir.join(&manifest.entities_detection_set_path);
   let ui_detections = read_json_file::<DetectionSet>(&ui_path, "balatro ui detection set")?;
-  let entities_detections =
-    read_json_file::<DetectionSet>(&entities_path, "balatro entities detection set")?;
+  let entities_detections = read_json_file::<DetectionSet>(&entities_path, "balatro entities detection set")?;
 
   Ok(LoadedDetectionBundle {
     bundle_dir,
@@ -142,10 +132,7 @@ mod tests {
   #[test]
   fn loads_positive_detection_bundle_fixture() {
     let bundle = load_detection_bundle(&fixture_root()).expect("bundle");
-    assert_eq!(
-      bundle.manifest.schema_version,
-      CARD_DETECTION_BUNDLE_SCHEMA_VERSION
-    );
+    assert_eq!(bundle.manifest.schema_version, CARD_DETECTION_BUNDLE_SCHEMA_VERSION);
     assert_eq!(bundle.manifest.frame.image_size.width, 1280);
     assert!(!bundle.ui_detections.detections.is_empty());
     assert!(!bundle.entities_detections.detections.is_empty());

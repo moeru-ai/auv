@@ -63,13 +63,9 @@ impl OrtSession {
     let mut builder = Session::builder().map_err(backend_error)?;
     let providers = execution_providers(config.execution_provider);
     if !providers.is_empty() {
-      builder = builder
-        .with_execution_providers(providers)
-        .map_err(backend_error)?;
+      builder = builder.with_execution_providers(providers).map_err(backend_error)?;
     }
-    let model = builder
-      .commit_from_file(&config.model_path)
-      .map_err(backend_error)?;
+    let model = builder.commit_from_file(&config.model_path).map_err(backend_error)?;
 
     Ok(Self {
       model: Mutex::new(model),
@@ -77,21 +73,14 @@ impl OrtSession {
   }
 
   pub fn run_f32(&self, input: F32Tensor) -> InferenceResult<Vec<F32Tensor>> {
-    let array = ArrayD::from_shape_vec(IxDyn(&input.shape), input.data).map_err(|error| {
-      InferenceError::Backend {
-        message: error.to_string(),
-      }
+    let array = ArrayD::from_shape_vec(IxDyn(&input.shape), input.data).map_err(|error| InferenceError::Backend {
+      message: error.to_string(),
     })?;
     let tensor = TensorRef::from_array_view(array.view()).map_err(backend_error)?;
-    let mut model = self
-      .model
-      .lock()
-      .map_err(|error| InferenceError::SessionUnavailable {
-        reason: error.to_string(),
-      })?;
-    let outputs = model
-      .run(vec![(input.name, tensor)])
-      .map_err(backend_error)?;
+    let mut model = self.model.lock().map_err(|error| InferenceError::SessionUnavailable {
+      reason: error.to_string(),
+    })?;
+    let outputs = model.run(vec![(input.name, tensor)]).map_err(backend_error)?;
 
     outputs
       .keys()
@@ -140,10 +129,7 @@ pub fn softmax(logits: &[f32]) -> Vec<f32> {
   let Some(max) = logits.iter().copied().reduce(f32::max) else {
     return Vec::new();
   };
-  let exp = logits
-    .iter()
-    .map(|value| (*value - max).exp())
-    .collect::<Vec<_>>();
+  let exp = logits.iter().map(|value| (*value - max).exp()).collect::<Vec<_>>();
   let sum = exp.iter().sum::<f32>();
   if sum == 0.0 || !sum.is_finite() {
     return vec![0.0; logits.len()];
@@ -205,9 +191,7 @@ mod tests {
   use auv_inference_common::InferenceError;
   use std::path::PathBuf;
 
-  use crate::{
-    ExecutionProvider, OrtModelConfig, OrtSession, TopPrediction, provider_name, softmax, top1,
-  };
+  use crate::{ExecutionProvider, OrtModelConfig, OrtSession, TopPrediction, provider_name, softmax, top1};
 
   #[test]
   fn missing_model_is_rejected_before_backend_load() {
@@ -223,18 +207,9 @@ mod tests {
 
   #[test]
   fn provider_names_match_onnx_runtime_identifiers() {
-    assert_eq!(
-      provider_name(ExecutionProvider::Cpu),
-      "CPUExecutionProvider"
-    );
-    assert_eq!(
-      provider_name(ExecutionProvider::CoreMl),
-      "CoreMLExecutionProvider"
-    );
-    assert_eq!(
-      provider_name(ExecutionProvider::Cuda),
-      "CUDAExecutionProvider"
-    );
+    assert_eq!(provider_name(ExecutionProvider::Cpu), "CPUExecutionProvider");
+    assert_eq!(provider_name(ExecutionProvider::CoreMl), "CoreMLExecutionProvider");
+    assert_eq!(provider_name(ExecutionProvider::Cuda), "CUDAExecutionProvider");
   }
 
   #[test]

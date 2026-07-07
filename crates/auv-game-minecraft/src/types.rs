@@ -53,20 +53,12 @@ impl BlockPosition {
   }
 
   pub fn center(self) -> Vec3 {
-    Vec3::new(
-      f64::from(self.x) + 0.5,
-      f64::from(self.y) + 0.5,
-      f64::from(self.z) + 0.5,
-    )
+    Vec3::new(f64::from(self.x) + 0.5, f64::from(self.y) + 0.5, f64::from(self.z) + 0.5)
   }
 
   pub fn face_center(self, face: BlockFace) -> Vec3 {
     let offset = face.face_center_offset();
-    Vec3::new(
-      f64::from(self.x) + offset.x,
-      f64::from(self.y) + offset.y,
-      f64::from(self.z) + offset.z,
-    )
+    Vec3::new(f64::from(self.x) + offset.x, f64::from(self.y) + offset.y, f64::from(self.z) + offset.z)
   }
 
   pub fn aabb_corners(self) -> [Vec3; 8] {
@@ -198,12 +190,7 @@ impl MinecraftBlockTarget {
   }
 
   pub fn aim_point(&self) -> Vec3 {
-    self.precise_point.unwrap_or_else(|| {
-      self
-        .face
-        .map(|face| self.block_pos.face_center(face))
-        .unwrap_or_else(|| self.block_pos.center())
-    })
+    self.precise_point.unwrap_or_else(|| self.face.map(|face| self.block_pos.face_center(face)).unwrap_or_else(|| self.block_pos.center()))
   }
 }
 
@@ -226,10 +213,8 @@ pub fn mc6_projection_target_for_frame(
       if let Some(raycast_hit) = &frame.raycast_hit
         && raycast_hit.block_pos == target_block
       {
-        let precise_point =
-          estimate_raycast_hit_point(frame.player_pose, raycast_hit).filter(|point| {
-            point_lies_on_target_face(*point, raycast_hit.block_pos, raycast_hit.face)
-          });
+        let precise_point = estimate_raycast_hit_point(frame.player_pose, raycast_hit)
+          .filter(|point| point_lies_on_target_face(*point, raycast_hit.block_pos, raycast_hit.face));
         return MinecraftBlockTarget {
           block_pos: target_block,
           face: Some(raycast_hit.face),
@@ -264,11 +249,7 @@ fn estimate_raycast_hit_point(player_pose: PlayerPose, raycast_hit: &RaycastHit)
     return None;
   }
 
-  Some(Vec3::new(
-    eye.x + direction.x * t,
-    eye.y + direction.y * t,
-    eye.z + direction.z * t,
-  ))
+  Some(Vec3::new(eye.x + direction.x * t, eye.y + direction.y * t, eye.z + direction.z * t))
 }
 
 fn point_lies_on_target_face(point: Vec3, block_pos: BlockPosition, face: BlockFace) -> bool {
@@ -317,11 +298,7 @@ fn point_lies_on_target_face(point: Vec3, block_pos: BlockPosition, face: BlockF
 fn forward_direction(player_pose: PlayerPose) -> Vec3 {
   let yaw_radians = player_pose.yaw.to_radians();
   let pitch_radians = player_pose.pitch.to_radians();
-  Vec3::new(
-    -yaw_radians.sin() * pitch_radians.cos(),
-    -pitch_radians.sin(),
-    yaw_radians.cos() * pitch_radians.cos(),
-  )
+  Vec3::new(-yaw_radians.sin() * pitch_radians.cos(), -pitch_radians.sin(), yaw_radians.cos() * pitch_radians.cos())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -412,11 +389,7 @@ mod tests {
 
     for (face, expected_aim_point) in cases {
       let frame = frame_with_raycast_hit(target_block, face);
-      let target = mc6_projection_target_for_frame(
-        target_block,
-        &frame,
-        MinecraftTargetSemantics::HitFaceCenter,
-      );
+      let target = mc6_projection_target_for_frame(target_block, &frame, MinecraftTargetSemantics::HitFaceCenter);
 
       assert_eq!(target.block_pos, target_block);
       assert_eq!(target.face, Some(face));
@@ -430,11 +403,7 @@ mod tests {
     let target_block = BlockPosition::new(511, 73, 728);
     let frame = frame_with_raycast_hit(BlockPosition::new(512, 73, 728), BlockFace::East);
 
-    let target = mc6_projection_target_for_frame(
-      target_block,
-      &frame,
-      MinecraftTargetSemantics::HitFaceCenter,
-    );
+    let target = mc6_projection_target_for_frame(target_block, &frame, MinecraftTargetSemantics::HitFaceCenter);
 
     assert_eq!(target.block_pos, target_block);
     assert_eq!(target.face, None);
@@ -451,11 +420,7 @@ mod tests {
       pitch: 4.349989,
     };
 
-    let target = mc6_projection_target_for_frame(
-      target_block,
-      &frame,
-      MinecraftTargetSemantics::HitFaceCenter,
-    );
+    let target = mc6_projection_target_for_frame(target_block, &frame, MinecraftTargetSemantics::HitFaceCenter);
 
     let precise_point = target.precise_point.expect("precise point");
     assert!((precise_point.x - 511.1096707599318).abs() < 1e-6);

@@ -662,8 +662,7 @@ mod tests {
     assert_eq!(value["captured_event_id"], json!("event_01"));
     assert!(value.get("captured_at_millis").is_none());
 
-    let parsed: ArtifactRef =
-      serde_json::from_value(value).expect("artifact ref should deserialize");
+    let parsed: ArtifactRef = serde_json::from_value(value).expect("artifact ref should deserialize");
     assert_eq!(parsed, artifact_ref());
   }
 
@@ -700,8 +699,7 @@ mod tests {
     assert_eq!(value["candidate_local_id"], json!("row#1"));
     assert!(value.get("candidate_id").is_none());
 
-    let parsed: CandidateRef =
-      serde_json::from_value(value).expect("candidate ref should deserialize");
+    let parsed: CandidateRef = serde_json::from_value(value).expect("candidate ref should deserialize");
     assert_eq!(parsed, reference);
   }
 
@@ -746,14 +744,10 @@ mod tests {
     assert_eq!(value["selector"]["any_of"][0]["source"], json!("ax"));
     assert_eq!(value["selector"]["any_of"][1]["source"], json!("ocr"));
     assert_eq!(value["selector"]["any_of"][2]["source"], json!("row"));
-    assert_eq!(
-      value["selector"]["any_of"][1]["min_provider_score"],
-      json!(0.75)
-    );
+    assert_eq!(value["selector"]["any_of"][1]["min_provider_score"], json!(0.75));
     assert!(value["selector"]["any_of"][1].get("confidence").is_none());
 
-    let parsed: CandidateQuery =
-      serde_json::from_value(value).expect("candidate query should deserialize");
+    let parsed: CandidateQuery = serde_json::from_value(value).expect("candidate query should deserialize");
     assert_eq!(parsed, query);
   }
 
@@ -853,16 +847,12 @@ mod tests {
     assert_eq!(value["scope"]["surface"], json!("window"));
     assert_eq!(value["best"]["box"]["x"], json!(2155));
     assert_eq!(value["filtered"][1]["box"]["width"], json!(196));
-    assert_eq!(
-      value["all"][2]["detail"]["reject_reason"],
-      json!("below_min_provider_score")
-    );
+    assert_eq!(value["all"][2]["detail"]["reject_reason"], json!("below_min_provider_score"));
     assert_eq!(value["best"]["provider_score"], json!(0.97));
     assert!(value["best"].get("box_").is_none());
     assert!(value.get("confidence").is_none());
 
-    let parsed: RecognitionResult =
-      serde_json::from_value(value).expect("recognition result should deserialize");
+    let parsed: RecognitionResult = serde_json::from_value(value).expect("recognition result should deserialize");
     assert_eq!(parsed, result);
   }
 
@@ -905,8 +895,7 @@ mod tests {
     assert_eq!(value["filtered"], json!([]));
     assert_eq!(value["all"], json!([]));
 
-    let parsed: RecognitionResult =
-      serde_json::from_value(value).expect("empty recognition result should deserialize");
+    let parsed: RecognitionResult = serde_json::from_value(value).expect("empty recognition result should deserialize");
     assert_eq!(parsed, result);
   }
 
@@ -965,8 +954,7 @@ mod tests {
     assert_eq!(value["recognized_item_id"], json!("row#1"));
     assert_eq!(value["provider_score"], json!(0.97));
 
-    let parsed: SurfaceNode =
-      serde_json::from_value(value).expect("surface node should deserialize");
+    let parsed: SurfaceNode = serde_json::from_value(value).expect("surface node should deserialize");
     assert_eq!(parsed, node);
   }
 
@@ -1038,13 +1026,9 @@ mod tests {
     let value = serde_json::to_value(&result).expect("operation result should serialize");
     assert_eq!(value["status"], json!("completed"));
     assert_eq!(value["output"]["kind"], json!("candidates"));
-    assert_eq!(
-      value["output"]["candidates"][0]["target_spec"]["grounding"],
-      json!("ocr_anchor")
-    );
+    assert_eq!(value["output"]["candidates"][0]["target_spec"]["grounding"], json!("ocr_anchor"));
 
-    let parsed: OperationResult =
-      serde_json::from_value(value).expect("operation result should deserialize");
+    let parsed: OperationResult = serde_json::from_value(value).expect("operation result should deserialize");
     assert_eq!(parsed, result);
   }
 
@@ -1094,10 +1078,7 @@ mod tests {
     let value = serde_json::to_value(&candidate).expect("candidate should serialize");
     assert_eq!(value["target_spec"]["grounding"], json!("visual_row"));
     assert_eq!(value["target_spec"]["row_index"], json!(2));
-    assert_eq!(
-      value["liveness"]["preconditions"]["anchor_recheck"],
-      serde_json::Value::Null
-    );
+    assert_eq!(value["liveness"]["preconditions"]["anchor_recheck"], serde_json::Value::Null);
 
     let parsed: Candidate = serde_json::from_value(value).expect("candidate should deserialize");
     assert_eq!(parsed, candidate);
@@ -1138,21 +1119,11 @@ mod tests {
 
     let value = serde_json::to_value(&result).expect("verification result should serialize");
     assert_eq!(value["failure_layer"], json!("state_changed_no_match"));
-    assert_eq!(
-      value["consumed_candidate_ref"]["candidate_local_id"],
-      json!("row#1")
-    );
-    assert_eq!(
-      value["consumed_node_ref"]["node_id"],
-      json!("obs_0001_0001")
-    );
-    assert_eq!(
-      value["consumed_recognition_id"],
-      json!("music_search_results")
-    );
+    assert_eq!(value["consumed_candidate_ref"]["candidate_local_id"], json!("row#1"));
+    assert_eq!(value["consumed_node_ref"]["node_id"], json!("obs_0001_0001"));
+    assert_eq!(value["consumed_recognition_id"], json!("music_search_results"));
 
-    let parsed: VerificationResult =
-      serde_json::from_value(value).expect("verification result should deserialize");
+    let parsed: VerificationResult = serde_json::from_value(value).expect("verification result should deserialize");
     assert_eq!(parsed, result);
   }
 
@@ -1171,20 +1142,17 @@ mod tests {
     ];
     for method in methods {
       let value = serde_json::to_value(&method).expect("method should serialize");
-      let parsed: VerificationMethod =
-        serde_json::from_value(value).expect("method should deserialize");
+      let parsed: VerificationMethod = serde_json::from_value(value).expect("method should deserialize");
       assert_eq!(parsed, method);
     }
   }
 
   #[test]
   fn verification_method_built_in_variants_serialize_as_snake_case_kind() {
-    let value =
-      serde_json::to_value(&VerificationMethod::TextVisible).expect("method should serialize");
+    let value = serde_json::to_value(&VerificationMethod::TextVisible).expect("method should serialize");
     assert_eq!(value, json!({ "kind": "text_visible" }));
 
-    let value = serde_json::to_value(&VerificationMethod::NoProgressBoundary)
-      .expect("method should serialize");
+    let value = serde_json::to_value(&VerificationMethod::NoProgressBoundary).expect("method should serialize");
     assert_eq!(value, json!({ "kind": "no_progress_boundary" }));
   }
 
@@ -1194,10 +1162,7 @@ mod tests {
       name: "music.now_playing".to_string(),
     })
     .expect("custom method should serialize");
-    assert_eq!(
-      value,
-      json!({ "kind": "custom", "name": "music.now_playing" })
-    );
+    assert_eq!(value, json!({ "kind": "custom", "name": "music.now_playing" }));
   }
 
   #[test]
@@ -1210,8 +1175,7 @@ mod tests {
       "evidence": [],
       "observed_label": null
     });
-    let parsed: VerificationResult =
-      serde_json::from_value(legacy).expect("legacy verification should decode");
+    let parsed: VerificationResult = serde_json::from_value(legacy).expect("legacy verification should decode");
     assert_eq!(
       parsed.method,
       VerificationMethod::Custom {
@@ -1275,8 +1239,7 @@ mod tests {
     ] {
       let value = serde_json::to_value(source).expect("source should serialize");
       assert_eq!(value, json!(wire));
-      let parsed: ObservationSource =
-        serde_json::from_value(json!(wire)).expect("source should deserialize");
+      let parsed: ObservationSource = serde_json::from_value(json!(wire)).expect("source should deserialize");
       assert_eq!(parsed, source);
     }
   }
@@ -1309,23 +1272,13 @@ mod tests {
     };
 
     let value = serde_json::to_value(&snapshot).expect("snapshot should serialize");
-    assert_eq!(
-      value["snapshot_id"],
-      json!("snapshot_run_001_span_001_0001")
-    );
+    assert_eq!(value["snapshot_id"], json!("snapshot_run_001_span_001_0001"));
     assert_eq!(value["source"], json!("merged"));
     assert_eq!(value["scope"]["surface"], json!("window"));
     assert_eq!(value["nodes"].as_array().expect("nodes array").len(), 2);
-    assert_eq!(
-      value["known_limits"]
-        .as_array()
-        .expect("limits array")
-        .len(),
-      2
-    );
+    assert_eq!(value["known_limits"].as_array().expect("limits array").len(), 2);
 
-    let parsed: ObservationSnapshot =
-      serde_json::from_value(value).expect("snapshot should deserialize");
+    let parsed: ObservationSnapshot = serde_json::from_value(value).expect("snapshot should deserialize");
     assert_eq!(parsed, snapshot);
   }
 
@@ -1347,8 +1300,7 @@ mod tests {
     };
 
     let value = serde_json::to_value(&snapshot).expect("snapshot should serialize");
-    let parsed: ObservationSnapshot =
-      serde_json::from_value(value).expect("snapshot should deserialize");
+    let parsed: ObservationSnapshot = serde_json::from_value(value).expect("snapshot should deserialize");
     assert_eq!(parsed, snapshot);
     assert!(parsed.nodes.is_empty());
   }
@@ -1372,13 +1324,9 @@ mod tests {
 
     let value = serde_json::to_value(&snapshot).expect("snapshot should serialize");
     assert_eq!(value["source"], json!("ax"));
-    assert!(
-      value["capture_contract_ref"].is_null(),
-      "ax snapshot may not have a capture contract"
-    );
+    assert!(value["capture_contract_ref"].is_null(), "ax snapshot may not have a capture contract");
 
-    let parsed: ObservationSnapshot =
-      serde_json::from_value(value).expect("snapshot should deserialize");
+    let parsed: ObservationSnapshot = serde_json::from_value(value).expect("snapshot should deserialize");
     assert_eq!(parsed, snapshot);
   }
 
@@ -1441,12 +1389,8 @@ mod tests {
       "known_limits": []
     });
 
-    let parsed: OperationResult =
-      serde_json::from_value(json).expect("legacy result should deserialize");
-    assert!(
-      parsed.verifications.is_empty(),
-      "missing verifications field must default to an empty list, preserving back-compat"
-    );
+    let parsed: OperationResult = serde_json::from_value(json).expect("legacy result should deserialize");
+    assert!(parsed.verifications.is_empty(), "missing verifications field must default to an empty list, preserving back-compat");
 
     let reserialized = serde_json::to_value(&parsed).expect("result should re-serialize");
     assert!(
@@ -1473,11 +1417,7 @@ mod tests {
     };
 
     let value = serde_json::to_value(&result).expect("result should serialize");
-    assert_eq!(
-      value["verifications"].as_array().map(|a| a.len()),
-      Some(2),
-      "multi-claim verifications must round-trip"
-    );
+    assert_eq!(value["verifications"].as_array().map(|a| a.len()), Some(2), "multi-claim verifications must round-trip");
     let parsed: OperationResult = serde_json::from_value(value).expect("result should deserialize");
     assert_eq!(parsed.verifications.len(), 2);
   }

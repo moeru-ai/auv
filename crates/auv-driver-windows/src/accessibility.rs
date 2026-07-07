@@ -91,8 +91,7 @@ pub fn select_node(window: &Window, node_path: &str) -> DriverResult<InputAction
       succeeded: true,
       message: Some(selected_pattern.to_string()),
     }],
-    fallback_reason: (selected_pattern == "InvokePattern.Invoke")
-      .then_some("SelectionItemPattern was unavailable".to_string()),
+    fallback_reason: (selected_pattern == "InvokePattern.Invoke").then_some("SelectionItemPattern was unavailable".to_string()),
     mouse_disturbance: DisturbanceLevel::None,
     focus_disturbance: DisturbanceLevel::Foreground,
     clipboard_disturbance: DisturbanceLevel::None,
@@ -102,18 +101,10 @@ pub fn select_node(window: &Window, node_path: &str) -> DriverResult<InputAction
 fn child_indices(path: &str) -> DriverResult<Vec<usize>> {
   let mut parts = path.split('/');
   if parts.next() != Some("0") {
-    return Err(invalid_input(format!(
-      "UIA node path {path:?} must start at root 0"
-    )));
+    return Err(invalid_input(format!("UIA node path {path:?} must start at root 0")));
   }
   parts
-    .map(|part| {
-      part.parse::<usize>().map_err(|_| {
-        invalid_input(format!(
-          "UIA node path {path:?} contains invalid child index {part:?}"
-        ))
-      })
-    })
+    .map(|part| part.parse::<usize>().map_err(|_| invalid_input(format!("UIA node path {path:?} contains invalid child index {part:?}"))))
     .collect()
 }
 
@@ -123,12 +114,7 @@ fn child_indices(path: &str) -> DriverResult<Vec<usize>> {
 /// edges in physical screen pixels; this converts them to an origin/size
 /// rectangle in the same screen space as window frames.
 fn rect_from_edges(left: i32, top: i32, right: i32, bottom: i32) -> Rect {
-  Rect::new(
-    f64::from(left),
-    f64::from(top),
-    f64::from(right - left),
-    f64::from(bottom - top),
-  )
+  Rect::new(f64::from(left), f64::from(top), f64::from(right - left), f64::from(bottom - top))
 }
 
 #[cfg(target_os = "windows")]
@@ -136,13 +122,10 @@ mod native {
   use auv_driver::error::DriverResult;
   use auv_driver::geometry::Rect;
   use auv_driver::window::Window;
-  use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
-  };
+  use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize};
   use windows::Win32::UI::Accessibility::{
-    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern,
-    IUIAutomationSelectionItemPattern, IUIAutomationTreeWalker, IUIAutomationValuePattern,
-    UIA_InvokePatternId, UIA_SelectionItemPatternId, UIA_ValuePatternId,
+    CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern,
+    IUIAutomationTreeWalker, IUIAutomationValuePattern, UIA_InvokePatternId, UIA_SelectionItemPatternId, UIA_ValuePatternId,
   };
   use windows::core::{BSTR, Result as WindowsResult};
 
@@ -177,16 +160,12 @@ mod native {
     let hwnd = window_handle(window)?;
     let _com = init_com();
 
-    let automation: IUIAutomation =
-      unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
-        .map_err(|error| backend(format!("failed to create UI Automation client: {error}")))?;
-    let root = unsafe { automation.ElementFromHandle(hwnd) }
-      .map_err(|error| backend(format!("failed to resolve window UI element: {error}")))?;
-    let walker = unsafe { automation.ControlViewWalker() }.map_err(|error| {
-      backend(format!(
-        "failed to get UI Automation control walker: {error}"
-      ))
-    })?;
+    let automation: IUIAutomation = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+      .map_err(|error| backend(format!("failed to create UI Automation client: {error}")))?;
+    let root =
+      unsafe { automation.ElementFromHandle(hwnd) }.map_err(|error| backend(format!("failed to resolve window UI element: {error}")))?;
+    let walker =
+      unsafe { automation.ControlViewWalker() }.map_err(|error| backend(format!("failed to get UI Automation control walker: {error}")))?;
 
     let mut nodes = Vec::new();
     walk(&walker, &root, 0, "0".to_string(), &mut nodes);
@@ -198,60 +177,36 @@ mod native {
 
   pub(super) fn focus_node(window: &Window, child_indices: &[usize]) -> DriverResult<()> {
     let (_com, element) = resolve_element(window, child_indices)?;
-    unsafe { element.SetFocus() }
-      .map_err(|error| backend(format!("failed to focus UIA node: {error}")))
+    unsafe { element.SetFocus() }.map_err(|error| backend(format!("failed to focus UIA node: {error}")))
   }
 
-  pub(super) fn select_node(
-    window: &Window,
-    child_indices: &[usize],
-  ) -> DriverResult<&'static str> {
+  pub(super) fn select_node(window: &Window, child_indices: &[usize]) -> DriverResult<&'static str> {
     let (_com, element) = resolve_element(window, child_indices)?;
-    if let Ok(pattern) = unsafe {
-      element.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId)
-    } {
-      unsafe { pattern.Select() }
-        .map_err(|error| backend(format!("failed to select UIA node: {error}")))?;
+    if let Ok(pattern) = unsafe { element.GetCurrentPatternAs::<IUIAutomationSelectionItemPattern>(UIA_SelectionItemPatternId) } {
+      unsafe { pattern.Select() }.map_err(|error| backend(format!("failed to select UIA node: {error}")))?;
       return Ok("SelectionItemPattern.Select");
     }
-    let pattern =
-      unsafe { element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) }
-        .map_err(|error| {
-          backend(format!(
-            "UIA node supports neither SelectionItemPattern nor InvokePattern: {error}"
-          ))
-        })?;
-    unsafe { pattern.Invoke() }
-      .map_err(|error| backend(format!("failed to invoke UIA node: {error}")))?;
+    let pattern = unsafe { element.GetCurrentPatternAs::<IUIAutomationInvokePattern>(UIA_InvokePatternId) }
+      .map_err(|error| backend(format!("UIA node supports neither SelectionItemPattern nor InvokePattern: {error}")))?;
+    unsafe { pattern.Invoke() }.map_err(|error| backend(format!("failed to invoke UIA node: {error}")))?;
     Ok("InvokePattern.Invoke")
   }
 
-  fn resolve_element(
-    window: &Window,
-    child_indices: &[usize],
-  ) -> DriverResult<(ComGuard, IUIAutomationElement)> {
+  fn resolve_element(window: &Window, child_indices: &[usize]) -> DriverResult<(ComGuard, IUIAutomationElement)> {
     let hwnd = window_handle(window)?;
     let com = init_com();
-    let automation: IUIAutomation =
-      unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
-        .map_err(|error| backend(format!("failed to create UI Automation client: {error}")))?;
-    let mut element = unsafe { automation.ElementFromHandle(hwnd) }
-      .map_err(|error| backend(format!("failed to resolve window UI element: {error}")))?;
-    let walker = unsafe { automation.ControlViewWalker() }.map_err(|error| {
-      backend(format!(
-        "failed to get UI Automation control walker: {error}"
-      ))
-    })?;
+    let automation: IUIAutomation = unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+      .map_err(|error| backend(format!("failed to create UI Automation client: {error}")))?;
+    let mut element =
+      unsafe { automation.ElementFromHandle(hwnd) }.map_err(|error| backend(format!("failed to resolve window UI element: {error}")))?;
+    let walker =
+      unsafe { automation.ControlViewWalker() }.map_err(|error| backend(format!("failed to get UI Automation control walker: {error}")))?;
     for index in child_indices {
-      let mut child = unsafe { walker.GetFirstChildElement(&element) }
-        .map_err(|error| backend(format!("failed to resolve UIA child 0: {error}")))?;
+      let mut child =
+        unsafe { walker.GetFirstChildElement(&element) }.map_err(|error| backend(format!("failed to resolve UIA child 0: {error}")))?;
       for sibling_index in 0..*index {
-        child = unsafe { walker.GetNextSiblingElement(&child) }.map_err(|error| {
-          backend(format!(
-            "failed to resolve UIA child {}: {error}",
-            sibling_index + 1
-          ))
-        })?;
+        child = unsafe { walker.GetNextSiblingElement(&child) }
+          .map_err(|error| backend(format!("failed to resolve UIA child {}: {error}", sibling_index + 1)))?;
       }
       element = child;
     }
@@ -261,13 +216,7 @@ mod native {
   /// Depth-first traversal that appends each visited element, then descends
   /// through its control-view children. Traversal stops widening once the node
   /// budget is exhausted and stops descending past the depth limit.
-  fn walk(
-    walker: &IUIAutomationTreeWalker,
-    element: &IUIAutomationElement,
-    depth: usize,
-    path: String,
-    nodes: &mut Vec<AxNode>,
-  ) {
+  fn walk(walker: &IUIAutomationTreeWalker, element: &IUIAutomationElement, depth: usize, path: String, nodes: &mut Vec<AxNode>) {
     if nodes.len() >= MAX_NODES {
       return;
     }
@@ -297,9 +246,7 @@ mod native {
       value: value_or_none(element),
       automation_id: bstr_or_default(unsafe { element.CurrentAutomationId() }),
       class_name: bstr_or_default(unsafe { element.CurrentClassName() }),
-      focused: unsafe { element.CurrentHasKeyboardFocus() }
-        .map(|value| value.as_bool())
-        .unwrap_or(false),
+      focused: unsafe { element.CurrentHasKeyboardFocus() }.map(|value| value.as_bool()).unwrap_or(false),
       bounds: bounds_or_default(element),
     }
   }
@@ -309,9 +256,7 @@ mod native {
   }
 
   fn value_or_none(element: &IUIAutomationElement) -> Option<String> {
-    let pattern =
-      unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }
-        .ok()?;
+    let pattern = unsafe { element.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId) }.ok()?;
     let value = unsafe { pattern.CurrentValue() }.ok()?.to_string();
     (!value.is_empty()).then_some(value)
   }
@@ -339,10 +284,7 @@ mod native {
     Err(DriverError::unsupported("accessibility.focus_node"))
   }
 
-  pub(super) fn select_node(
-    _window: &Window,
-    _child_indices: &[usize],
-  ) -> DriverResult<&'static str> {
+  pub(super) fn select_node(_window: &Window, _child_indices: &[usize]) -> DriverResult<&'static str> {
     Err(DriverError::unsupported("accessibility.select_node"))
   }
 }

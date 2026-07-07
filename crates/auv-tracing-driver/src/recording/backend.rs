@@ -14,9 +14,8 @@ use crate::run_builder::{RecordingRun, RunFinish, RunSpec, SpanRef};
 use crate::store::{CanonicalRun, LocalStore};
 use crate::time::now_millis;
 use crate::trace::{
-  ArtifactRecordV1Alpha1, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, SpanId,
-  SpanRecordV1Alpha1, TraceFailure, TraceState, TraceStatusCode, new_event_id, new_run_id,
-  new_span_id, new_trace_id,
+  ArtifactRecordV1Alpha1, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, SpanId, SpanRecordV1Alpha1, TraceFailure, TraceState,
+  TraceStatusCode, new_event_id, new_run_id, new_span_id, new_trace_id,
 };
 
 use super::recorder::{NoopRunRecorder, RunRecorder};
@@ -124,9 +123,7 @@ impl RunRecordingBackend {
     span_id: &SpanId,
     event_id: Option<crate::trace::EventId>,
   ) -> AuvResult<ArtifactRecordV1Alpha1> {
-    self
-      .store
-      .stage_artifact(run_id, index, artifact, span_id, event_id)
+    self.store.stage_artifact(run_id, index, artifact, span_id, event_id)
   }
 
   pub fn stage_artifact_file(
@@ -137,9 +134,7 @@ impl RunRecordingBackend {
     event_id: Option<crate::trace::EventId>,
     artifact: ArtifactFileSource,
   ) -> AuvResult<ArtifactRecordV1Alpha1> {
-    self
-      .store
-      .stage_artifact_file(run_id, index, span_id, event_id, artifact)
+    self.store.stage_artifact_file(run_id, index, span_id, event_id, artifact)
   }
 
   pub fn stage_artifact_bytes(
@@ -150,17 +145,10 @@ impl RunRecordingBackend {
     event_id: Option<crate::trace::EventId>,
     artifact: crate::artifact::ArtifactBytesSource,
   ) -> AuvResult<ArtifactRecordV1Alpha1> {
-    self
-      .store
-      .stage_artifact_bytes(run_id, index, span_id, event_id, artifact)
+    self.store.stage_artifact_bytes(run_id, index, span_id, event_id, artifact)
   }
 
-  pub fn record_artifact_bytes(
-    &self,
-    run_id: &RunId,
-    artifact: &ArtifactRecordV1Alpha1,
-    path: &Path,
-  ) -> AuvResult<()> {
+  pub fn record_artifact_bytes(&self, run_id: &RunId, artifact: &ArtifactRecordV1Alpha1, path: &Path) -> AuvResult<()> {
     self.recorder.record_artifact_bytes(run_id, artifact, path)
   }
 
@@ -174,13 +162,7 @@ impl RunRecordingBackend {
 
     for artifact in artifacts {
       let event_id = new_event_id();
-      match self.stage_artifact(
-        run.id(),
-        run.artifact_count(),
-        artifact,
-        span.id(),
-        Some(event_id.clone()),
-      ) {
+      match self.stage_artifact(run.id(), run.artifact_count(), artifact, span.id(), Some(event_id.clone())) {
         Ok(stored_artifact) => {
           let staged_path = match self.run_dir(run.id()) {
             Ok(run_dir) => run_dir.join(&stored_artifact.path),
@@ -226,14 +208,7 @@ impl RunRecordingBackend {
           }
         }
         Err(error) => {
-          record_event_with_id(
-            run,
-            span.id(),
-            event_id,
-            "artifact.failed",
-            Some(format!("artifact staging failed: {error}")),
-            Vec::new(),
-          );
+          record_event_with_id(run, span.id(), event_id, "artifact.failed", Some(format!("artifact staging failed: {error}")), Vec::new());
           return Err(ArtifactRecordingFailure {
             recorded,
             message: error,
@@ -286,14 +261,8 @@ impl RecordingHandle {
     );
     let started = now_millis();
     let mut run_attributes = spec.attributes.clone();
-    run_attributes.insert(
-      crate::trace::RUN_ATTR_DEVICE_ID.to_string(),
-      serde_json::Value::String(spec.device_id.as_str().to_string()),
-    );
-    run_attributes.insert(
-      crate::trace::RUN_ATTR_SESSION_ID.to_string(),
-      serde_json::Value::String(spec.session_id.as_str().to_string()),
-    );
+    run_attributes.insert(crate::trace::RUN_ATTR_DEVICE_ID.to_string(), serde_json::Value::String(spec.device_id.as_str().to_string()));
+    run_attributes.insert(crate::trace::RUN_ATTR_SESSION_ID.to_string(), serde_json::Value::String(spec.session_id.as_str().to_string()));
     let run = RunRecordV1Alpha1 {
       api_version: crate::trace::RUN_API_VERSION.to_string(),
       run_id: run_id.clone(),
@@ -323,10 +292,7 @@ impl RecordingHandle {
     };
     let run = RecordingRun::new(run, root_span, self.recording.recorder());
     if self.recording.requires_successful_delivery() && !run.recording_errors().is_empty() {
-      return Err(format!(
-        "run recording delivery failed: {}",
-        run.recording_errors().join("; ")
-      ));
+      return Err(format!("run recording delivery failed: {}", run.recording_errors().join("; ")));
     }
     Ok(run)
   }
@@ -353,10 +319,7 @@ impl RecordingHandle {
       recording_errors.push(error);
     }
     if !recording_errors.is_empty() {
-      return Err(format!(
-        "run recording delivery failed: {}",
-        recording_errors.join("; ")
-      ));
+      return Err(format!("run recording delivery failed: {}", recording_errors.join("; ")));
     }
     Ok(run_id)
   }
@@ -422,9 +385,7 @@ impl RecordingHandle {
     );
     let staged_path = self.recording.run_dir(run.id())?.join(&artifact.path);
     run.record_artifact(artifact.clone());
-    self
-      .recording
-      .record_artifact_bytes(run.id(), &artifact, &staged_path)?;
+    self.recording.record_artifact_bytes(run.id(), &artifact, &staged_path)?;
     Ok(staged_path)
   }
 
@@ -476,9 +437,7 @@ impl RecordingHandle {
       captured_event_id: Some(event_id),
     };
     run.record_artifact(artifact.clone());
-    self
-      .recording
-      .record_artifact_bytes(run.id(), &artifact, &staged_path)?;
+    self.recording.record_artifact_bytes(run.id(), &artifact, &staged_path)?;
     Ok((staged_path, artifact_ref))
   }
 }
@@ -504,14 +463,8 @@ fn record_event_with_id(
 }
 
 fn render_artifact_event(artifact: &ArtifactRecordV1Alpha1) -> String {
-  let note = artifact
-    .summary
-    .clone()
-    .unwrap_or_else(|| "n/a".to_string());
-  format!(
-    "{} kind={} path={} note={}",
-    artifact.artifact_id, artifact.role, artifact.path, note
-  )
+  let note = artifact.summary.clone().unwrap_or_else(|| "n/a".to_string());
+  format!("{} kind={} path={} note={}", artifact.artifact_id, artifact.role, artifact.path, note)
 }
 
 #[cfg(test)]
@@ -528,23 +481,15 @@ mod tests {
 
   #[test]
   fn record_produced_artifacts_records_paths_events_and_snapshot_artifacts() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-recording-produced-artifacts-{}",
-      crate::time::now_millis()
-    ));
-    let source = std::env::temp_dir().join(format!(
-      "auv-recording-produced-source-{}.txt",
-      crate::time::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-recording-produced-artifacts-{}", crate::time::now_millis()));
+    let source = std::env::temp_dir().join(format!("auv-recording-produced-source-{}.txt", crate::time::now_millis()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::write(&source, "artifact body").expect("artifact source should write");
 
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let recording = RunRecordingBackend::local_only(store);
     let handle = recording.handle();
-    let mut run = handle
-      .start_run(RunSpec::new(RunType::Command, "test.command"))
-      .expect("run should start");
+    let mut run = handle.start_run(RunSpec::new(RunType::Command, "test.command")).expect("run should start");
     let span = run.root_span();
 
     let recorded = recording
@@ -567,10 +512,7 @@ mod tests {
     assert_eq!(snapshot.artifacts.len(), 1);
     assert_eq!(snapshot.events.len(), 1);
     assert_eq!(snapshot.events[0].name, "artifact.captured");
-    assert_eq!(
-      snapshot.events[0].artifact_ids,
-      vec![snapshot.artifacts[0].artifact_id.clone()]
-    );
+    assert_eq!(snapshot.events[0].artifact_ids, vec![snapshot.artifacts[0].artifact_id.clone()]);
 
     handle
       .finish_run(
@@ -589,14 +531,8 @@ mod tests {
 
   #[test]
   fn recording_backend_cleans_temporary_store_on_drop() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-recording-temp-store-cleanup-{}",
-      crate::time::now_millis()
-    ));
-    let source = std::env::temp_dir().join(format!(
-      "auv-recording-temp-source-{}.txt",
-      crate::time::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-recording-temp-store-cleanup-{}", crate::time::now_millis()));
+    let source = std::env::temp_dir().join(format!("auv-recording-temp-source-{}.txt", crate::time::now_millis()));
     std::fs::write(&source, "artifact body").expect("artifact source should write");
     {
       let store = LocalStore::new(root.clone()).expect("store should initialize");
@@ -617,13 +553,7 @@ mod tests {
           },
         )
         .expect("temporary artifact should stage");
-      assert!(
-        recording
-          .run_dir("run_temp_cleanup")
-          .expect("run dir")
-          .join(artifact.path)
-          .exists()
-      );
+      assert!(recording.run_dir("run_temp_cleanup").expect("run dir").join(artifact.path).exists());
       assert!(root.exists());
     }
 

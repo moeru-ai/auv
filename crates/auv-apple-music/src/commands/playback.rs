@@ -135,34 +135,26 @@ mod platform {
   use auv_driver::vision::TextRecognitionOptions;
   use auv_driver_windows::WindowsDriver;
 
-  use super::{
-    BOTTOM_BAR_TOP, MetadataSource, PlaybackState, PlaybackStatus, PlaybackStatusInputs,
-  };
+  use super::{BOTTOM_BAR_TOP, MetadataSource, PlaybackState, PlaybackStatus, PlaybackStatusInputs};
   use crate::app::resolve_window;
 
   pub fn run(inputs: &PlaybackStatusInputs) -> Result<PlaybackStatus, String> {
     let mut diagnostics: Vec<String> = Vec::new();
 
     // --- Resolve window ---
-    let apple_window = resolve_window(&inputs.resolve)?
-      .ok_or_else(|| "Apple Music window not found — is the app running?".to_string())?;
+    let apple_window = resolve_window(&inputs.resolve)?.ok_or_else(|| "Apple Music window not found — is the app running?".to_string())?;
 
     let window = &apple_window.window;
     let window_title = window.title.clone();
 
     // --- Open driver session ---
-    let session = WindowsDriver::new()
-      .open_local()
-      .map_err(|e| format!("windows driver open failed: {e}"))?;
+    let session = WindowsDriver::new().open_local().map_err(|e| format!("windows driver open failed: {e}"))?;
 
     // --- Playback state via UIA ---
     let (state, mut ax_track, mut ax_artist) = probe_via_ax(&session, window, &mut diagnostics);
 
     // --- Capture window (always, for OCR fallback + optional artifact) ---
-    let capture = session
-      .window()
-      .capture(window)
-      .map_err(|e| format!("window capture failed: {e}"))?;
+    let capture = session.window().capture(window).map_err(|e| format!("window capture failed: {e}"))?;
 
     // --- Artifact save ---
     let artifact = if let Some(dir) = &inputs.artifact_dir {
@@ -244,9 +236,7 @@ mod platform {
           "Pause" => PlaybackState::Playing,
           "Play" => PlaybackState::Paused,
           other => {
-            diagnostics.push(format!(
-              "unexpected TransportControl_PlayPauseStop name: {other:?}"
-            ));
+            diagnostics.push(format!("unexpected TransportControl_PlayPauseStop name: {other:?}"));
             PlaybackState::Unknown
           }
         };
@@ -318,11 +308,7 @@ mod platform {
     diagnostics: &mut Vec<String>,
   ) -> (Option<String>, Option<String>) {
     let region = RatioRect::new(0.0, BOTTOM_BAR_TOP, 1.0, 1.0 - BOTTOM_BAR_TOP);
-    let recognition = match session.vision().recognize_text_in_capture_with_options(
-      capture,
-      region,
-      TextRecognitionOptions::default(),
-    ) {
+    let recognition = match session.vision().recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default()) {
       Ok(r) => r,
       Err(e) => {
         diagnostics.push(format!("bottom-bar OCR failed: {e}"));
@@ -333,12 +319,8 @@ mod platform {
     // The bottom bar on Apple Music typically shows the title on the first
     // line and the artist on the second. Filter out very short strings (icons,
     // single-char labels) and time stamps that look like "0:00".
-    let lines: Vec<String> = recognition
-      .regions
-      .iter()
-      .filter(|r| r.text.len() > 2 && !looks_like_timestamp(&r.text))
-      .map(|r| r.text.clone())
-      .collect();
+    let lines: Vec<String> =
+      recognition.regions.iter().filter(|r| r.text.len() > 2 && !looks_like_timestamp(&r.text)).map(|r| r.text.clone()).collect();
 
     let track = lines.first().cloned();
     let artist = lines.get(1).cloned();
@@ -355,21 +337,12 @@ mod platform {
   }
 
   /// Saves the capture image to `dir` and returns the file path string.
-  fn save_artifact(
-    dir: &std::path::Path,
-    capture: &auv_driver::capture::Capture,
-  ) -> Result<String, String> {
+  fn save_artifact(dir: &std::path::Path, capture: &auv_driver::capture::Capture) -> Result<String, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("create artifact dir failed: {e}"))?;
 
-    let ts = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .map(|d| d.as_millis())
-      .unwrap_or(0);
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     let path = dir.join(format!("apple-music-playback-{ts}.png"));
-    capture
-      .image
-      .save(&path)
-      .map_err(|e| format!("save PNG failed: {e}"))?;
+    capture.image.save(&path).map_err(|e| format!("save PNG failed: {e}"))?;
     Ok(path.to_string_lossy().into_owned())
   }
 

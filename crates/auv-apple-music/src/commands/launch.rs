@@ -128,16 +128,8 @@ pub fn run_open_window(inputs: &OpenWindowInputs) -> Result<LaunchResult, String
   {
     let discovered = discover_registered_app_user_model_ids();
     match &discovered {
-      Ok(ids) if !ids.is_empty() => result.push(
-        "discover-launch-target",
-        "found",
-        Some(format!("app_ids={}", ids.join(", "))),
-      ),
-      Ok(_) => result.push(
-        "discover-launch-target",
-        "not-found",
-        Some("Get-StartApps returned no Apple Music AppID".to_string()),
-      ),
+      Ok(ids) if !ids.is_empty() => result.push("discover-launch-target", "found", Some(format!("app_ids={}", ids.join(", ")))),
+      Ok(_) => result.push("discover-launch-target", "not-found", Some("Get-StartApps returned no Apple Music AppID".to_string())),
       Err(error) => result.push("discover-launch-target", "failed", Some(error.clone())),
     }
 
@@ -149,11 +141,7 @@ pub fn run_open_window(inputs: &OpenWindowInputs) -> Result<LaunchResult, String
           break;
         }
         Err(error) => {
-          result.push(
-            "launch",
-            "failed",
-            Some(format!("app_id={app_id}; {error}")),
-          );
+          result.push("launch", "failed", Some(format!("app_id={app_id}; {error}")));
         }
       }
     }
@@ -176,24 +164,13 @@ pub fn run_open_window(inputs: &OpenWindowInputs) -> Result<LaunchResult, String
         }
         std::thread::sleep(interval);
       }
-      result.push(
-        "wait",
-        "timeout",
-        Some(format!(
-          "window '{}' did not appear within {}ms",
-          APPLE_MUSIC_TITLE, inputs.settle_ms
-        )),
-      );
+      result.push("wait", "timeout", Some(format!("window '{}' did not appear within {}ms", APPLE_MUSIC_TITLE, inputs.settle_ms)));
     }
   }
 
   #[cfg(not(target_os = "windows"))]
   {
-    result.push(
-      "launch",
-      "unsupported",
-      Some("Apple Music launch is only supported on Windows".to_string()),
-    );
+    result.push("launch", "unsupported", Some("Apple Music launch is only supported on Windows".to_string()));
   }
 
   Ok(result)
@@ -218,18 +195,13 @@ fn discover_registered_app_user_model_ids() -> Result<Vec<String>, String> {
   if !output.status.success() {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     return Err(if stderr.is_empty() {
-      format!(
-        "Get-StartApps discovery exited with status {}",
-        output.status
-      )
+      format!("Get-StartApps discovery exited with status {}", output.status)
     } else {
       format!("Get-StartApps discovery failed: {stderr}")
     });
   }
 
-  Ok(parse_app_user_model_ids(&String::from_utf8_lossy(
-    &output.stdout,
-  )))
+  Ok(parse_app_user_model_ids(&String::from_utf8_lossy(&output.stdout)))
 }
 
 fn parse_app_user_model_ids(output: &str) -> Vec<String> {
@@ -245,10 +217,7 @@ fn parse_app_user_model_ids(output: &str) -> Vec<String> {
 
 fn app_user_model_id_candidates(discovered: Vec<String>) -> Vec<String> {
   let mut ids = Vec::new();
-  for app_id in discovered
-    .into_iter()
-    .chain(FALLBACK_APP_USER_MODEL_IDS.iter().map(|id| id.to_string()))
-  {
+  for app_id in discovered.into_iter().chain(FALLBACK_APP_USER_MODEL_IDS.iter().map(|id| id.to_string())) {
     if ids.iter().any(|existing| existing == &app_id) {
       continue;
     }
@@ -267,10 +236,7 @@ fn launch_via_shell_uri(app_id: &str) -> Result<(), String> {
   use std::process::Command;
 
   let target = format!("shell:AppsFolder\\{app_id}");
-  Command::new("explorer.exe")
-    .arg(&target)
-    .spawn()
-    .map_err(|e| format!("explorer.exe launch failed: {e}"))?;
+  Command::new("explorer.exe").arg(&target).spawn().map_err(|e| format!("explorer.exe launch failed: {e}"))?;
   Ok(())
 }
 
@@ -280,14 +246,10 @@ mod tests {
 
   #[test]
   fn parse_app_user_model_ids_trims_empty_lines_and_duplicates() {
-    let ids = parse_app_user_model_ids(
-      "\r\n  AppleInc.AppleMusicWin_nzyj5cx40ttqa!App  \r\n\r\nAppleInc.AppleMusicWin_nzyj5cx40ttqa!App\r\n",
-    );
+    let ids =
+      parse_app_user_model_ids("\r\n  AppleInc.AppleMusicWin_nzyj5cx40ttqa!App  \r\n\r\nAppleInc.AppleMusicWin_nzyj5cx40ttqa!App\r\n");
 
-    assert_eq!(
-      ids,
-      vec!["AppleInc.AppleMusicWin_nzyj5cx40ttqa!App".to_string()]
-    );
+    assert_eq!(ids, vec!["AppleInc.AppleMusicWin_nzyj5cx40ttqa!App".to_string()]);
   }
 
   #[test]
@@ -299,12 +261,6 @@ mod tests {
 
     assert_eq!(ids[0], "AppleInc.AppleMusicWin_nzyj5cx40ttqa!AppleMusic");
     assert_eq!(ids[1], "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App");
-    assert_eq!(
-      ids
-        .iter()
-        .filter(|id| id.as_str() == "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App")
-        .count(),
-      1
-    );
+    assert_eq!(ids.iter().filter(|id| id.as_str() == "AppleInc.AppleMusicWin_nzyj5cx40ttqa!App").count(), 1);
   }
 }

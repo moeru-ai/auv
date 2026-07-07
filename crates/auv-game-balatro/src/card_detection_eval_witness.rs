@@ -9,9 +9,7 @@ use auv_file::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::card_detection_producer::{
-  ExpectedSlotEntry, LoadedDetectionBundle, load_detection_bundle, load_expected_slots,
-};
+use crate::card_detection_producer::{ExpectedSlotEntry, LoadedDetectionBundle, load_detection_bundle, load_expected_slots};
 use crate::card_detection_semantic::{CardDetectionSemanticManifest, CardDetectionSemanticStatus};
 use crate::card_detection_spatial_query::CardDetectionSpatialQueryManifest;
 use crate::card_detection_spatial_query::slot_detections;
@@ -164,12 +162,8 @@ impl CardDetectionEvalWitnessReason {
 pub fn build_card_detection_eval_witness(
   inputs: &CardDetectionEvalWitnessInputs,
 ) -> CardDetectionEvalWitnessResult<CardDetectionEvalWitnessOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create card detection eval witness output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir)
+    .map_err(|error| format!("failed to create card detection eval witness output dir {}: {error}", inputs.output_dir.display()))?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
   let known_limits = BTreeSet::from([BALATRO_X4_WITNESS_KNOWN_LIMIT.to_string()]);
@@ -186,14 +180,8 @@ pub fn build_card_detection_eval_witness(
   let manifest = CardDetectionEvalWitnessManifest {
     schema_version: CARD_DETECTION_EVAL_WITNESS_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
-    card_detection_semantic_manifest_path: inputs
-      .card_detection_semantic_manifest_path
-      .display()
-      .to_string(),
-    card_detection_spatial_query_manifest_path: inputs
-      .card_detection_spatial_query_manifest_path
-      .display()
-      .to_string(),
+    card_detection_semantic_manifest_path: inputs.card_detection_semantic_manifest_path.display().to_string(),
+    card_detection_spatial_query_manifest_path: inputs.card_detection_spatial_query_manifest_path.display().to_string(),
     expected_slots_path: inputs.expected_slots_path.display().to_string(),
     source_detection_bundle_dir: eval
       .map(|report| report.source_detection_bundle_dir.clone())
@@ -201,18 +189,10 @@ pub fn build_card_detection_eval_witness(
     expected_slot_count: eval.map(|report| report.expected_slot_count).unwrap_or(0),
     scored_slot_count: eval.map(|report| report.scored_slot_count).unwrap_or(0),
     unscored_slot_count: eval.map(|report| report.unscored_slot_count).unwrap_or(0),
-    below_confidence_slot_count: eval
-      .map(|report| report.below_confidence_slot_count)
-      .unwrap_or(0),
-    quality_backend: eval
-      .map(|report| report.quality_backend)
-      .unwrap_or(CardDetectionQualityBackend::UltralyticsOnnxEntities),
-    detector_model_id: eval
-      .and_then(|report| report.detector_model_id.clone())
-      .or(gate.detector_model_id.clone()),
-    slot_scores: eval
-      .map(|report| report.slot_scores.clone())
-      .unwrap_or_default(),
+    below_confidence_slot_count: eval.map(|report| report.below_confidence_slot_count).unwrap_or(0),
+    quality_backend: eval.map(|report| report.quality_backend).unwrap_or(CardDetectionQualityBackend::UltralyticsOnnxEntities),
+    detector_model_id: eval.and_then(|report| report.detector_model_id.clone()).or(gate.detector_model_id.clone()),
+    slot_scores: eval.map(|report| report.slot_scores.clone()).unwrap_or_default(),
     status: gate.status,
     reason: gate.reason,
     known_limits: known_limits.into_iter().collect(),
@@ -226,9 +206,7 @@ pub fn build_card_detection_eval_witness(
     generated_at_millis,
     card_detection_eval_witness_manifest_path: manifest_path.display().to_string(),
     card_detection_semantic_manifest_path: manifest.card_detection_semantic_manifest_path.clone(),
-    card_detection_spatial_query_manifest_path: manifest
-      .card_detection_spatial_query_manifest_path
-      .clone(),
+    card_detection_spatial_query_manifest_path: manifest.card_detection_spatial_query_manifest_path.clone(),
     expected_slots_path: manifest.expected_slots_path.clone(),
     source_detection_bundle_dir: manifest.source_detection_bundle_dir.clone(),
     expected_slot_count: manifest.expected_slot_count,
@@ -273,12 +251,7 @@ struct WitnessGateEvaluation {
 }
 
 fn spatial_query_manifest_readable(path: &Path) -> bool {
-  path.is_file()
-    && read_json_file::<CardDetectionSpatialQueryManifest>(
-      path,
-      "balatro card detection spatial query manifest",
-    )
-    .is_ok()
+  path.is_file() && read_json_file::<CardDetectionSpatialQueryManifest>(path, "balatro card detection spatial query manifest").is_ok()
 }
 
 fn query_lineage_matches_semantic(
@@ -286,10 +259,8 @@ fn query_lineage_matches_semantic(
   semantic_manifest: &CardDetectionSemanticManifest,
   spatial_query_manifest: &CardDetectionSpatialQueryManifest,
 ) -> bool {
-  spatial_query_manifest.card_detection_semantic_manifest_path
-    == semantic_manifest_path.display().to_string()
-    && spatial_query_manifest.source_detection_bundle_dir
-      == semantic_manifest.source_detection_bundle_dir
+  spatial_query_manifest.card_detection_semantic_manifest_path == semantic_manifest_path.display().to_string()
+    && spatial_query_manifest.source_detection_bundle_dir == semantic_manifest.source_detection_bundle_dir
 }
 
 fn evaluate_witness_gate(
@@ -298,8 +269,7 @@ fn evaluate_witness_gate(
   expected_slots_path: &Path,
   warnings: &mut BTreeSet<String>,
 ) -> WitnessGateEvaluation {
-  let spatial_query_manifest_readable =
-    spatial_query_manifest_readable(spatial_query_manifest_path);
+  let spatial_query_manifest_readable = spatial_query_manifest_readable(spatial_query_manifest_path);
 
   if !semantic_manifest_path.is_file() {
     return WitnessGateEvaluation {
@@ -315,26 +285,24 @@ fn evaluate_witness_gate(
     };
   }
 
-  let semantic_manifest = match read_json_file::<CardDetectionSemanticManifest>(
-    semantic_manifest_path,
-    "balatro card detection semantic manifest",
-  ) {
-    Ok(manifest) => manifest,
-    Err(error) => {
-      warnings.insert(error);
-      return WitnessGateEvaluation {
-        status: CardDetectionEvalWitnessStatus::Failed,
-        reason: Some(CardDetectionEvalWitnessReason::SemanticFailed),
-        semantic_manifest: None,
-        spatial_query_manifest: None,
-        spatial_query_manifest_readable,
-        source_detection_bundle_dir: String::new(),
-        detector_model_id: None,
-        expected_slots_readable: false,
-        eval_report: None,
-      };
-    }
-  };
+  let semantic_manifest =
+    match read_json_file::<CardDetectionSemanticManifest>(semantic_manifest_path, "balatro card detection semantic manifest") {
+      Ok(manifest) => manifest,
+      Err(error) => {
+        warnings.insert(error);
+        return WitnessGateEvaluation {
+          status: CardDetectionEvalWitnessStatus::Failed,
+          reason: Some(CardDetectionEvalWitnessReason::SemanticFailed),
+          semantic_manifest: None,
+          spatial_query_manifest: None,
+          spatial_query_manifest_readable,
+          source_detection_bundle_dir: String::new(),
+          detector_model_id: None,
+          expected_slots_readable: false,
+          eval_report: None,
+        };
+      }
+    };
 
   if semantic_manifest.semantic_status != CardDetectionSemanticStatus::Ready {
     let reason = match semantic_manifest.semantic_status {
@@ -392,11 +360,7 @@ fn evaluate_witness_gate(
     }
   };
 
-  if !query_lineage_matches_semantic(
-    semantic_manifest_path,
-    &semantic_manifest,
-    &spatial_query_manifest,
-  ) {
+  if !query_lineage_matches_semantic(semantic_manifest_path, &semantic_manifest, &spatial_query_manifest) {
     let source_detection_bundle_dir = semantic_manifest.source_detection_bundle_dir.clone();
     return WitnessGateEvaluation {
       status: CardDetectionEvalWitnessStatus::Blocked,
@@ -480,10 +444,7 @@ fn evaluate_witness_gate(
   }
 }
 
-fn build_eval_report(
-  bundle: &LoadedDetectionBundle,
-  expected_slots: &[ExpectedSlotEntry],
-) -> CardDetectionEvalReport {
+fn build_eval_report(bundle: &LoadedDetectionBundle, expected_slots: &[ExpectedSlotEntry]) -> CardDetectionEvalReport {
   let mut slot_scores = Vec::new();
   let mut scored_slot_count = 0usize;
   let mut below_confidence_slot_count = 0usize;
@@ -512,9 +473,7 @@ fn build_eval_report(
   }
 
   let expected_slot_count = expected_slots.len();
-  let unscored_slot_count = expected_slot_count
-    .saturating_sub(scored_slot_count)
-    .max(below_confidence_slot_count);
+  let unscored_slot_count = expected_slot_count.saturating_sub(scored_slot_count).max(below_confidence_slot_count);
 
   CardDetectionEvalReport {
     schema_version: 1,
@@ -566,12 +525,8 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::card_detection_semantic::{
-    CardDetectionSemanticValidationInputs, validate_card_detection_semantic,
-  };
-  use crate::card_detection_spatial_query::{
-    CardDetectionSpatialQueryInputs, query_card_detection_spatial,
-  };
+  use crate::card_detection_semantic::{CardDetectionSemanticValidationInputs, validate_card_detection_semantic};
+  use crate::card_detection_spatial_query::{CardDetectionSpatialQueryInputs, query_card_detection_spatial};
   use crate::model::{ObjectZone, SlotId};
   use std::path::PathBuf;
 
@@ -598,11 +553,7 @@ mod tests {
     .manifest_path
   }
 
-  fn witness_inputs(
-    bundle: PathBuf,
-    expected_slots_path: PathBuf,
-    temp: &tempfile::TempDir,
-  ) -> CardDetectionEvalWitnessInputs {
+  fn witness_inputs(bundle: PathBuf, expected_slots_path: PathBuf, temp: &tempfile::TempDir) -> CardDetectionEvalWitnessInputs {
     let semantic_path = semantic_manifest_for(bundle, temp);
     let query_path = query_manifest_for(&semantic_path, temp);
     CardDetectionEvalWitnessInputs {
@@ -616,26 +567,14 @@ mod tests {
   #[test]
   fn witness_ready_full_coverage() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let output = build_card_detection_eval_witness(&witness_inputs(
-      fixture_root(),
-      fixture_root().join("expected_slots.json"),
-      &temp,
-    ))
-    .expect("witness");
+    let output = build_card_detection_eval_witness(&witness_inputs(fixture_root(), fixture_root().join("expected_slots.json"), &temp))
+      .expect("witness");
 
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionEvalWitnessStatus::Ready
-    );
+    assert_eq!(output.manifest.status, CardDetectionEvalWitnessStatus::Ready);
     assert_eq!(output.manifest.expected_slot_count, 3);
     assert_eq!(output.manifest.scored_slot_count, 3);
     assert_eq!(output.manifest.slot_scores.len(), 3);
-    assert!(
-      output
-        .manifest
-        .card_detection_spatial_query_manifest_path
-        .contains("balatro-card-detection-spatial-query.json")
-    );
+    assert!(output.manifest.card_detection_spatial_query_manifest_path.contains("balatro-card-detection-spatial-query.json"));
     assert!(output.manifest_path.exists());
     assert!(output.inspect_report_path.exists());
   }
@@ -643,8 +582,7 @@ mod tests {
   #[test]
   fn witness_blocked_when_semantic_not_ready() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let semantic_path =
-      semantic_manifest_for(fixture_root().join("broken/empty_detections"), &temp);
+    let semantic_path = semantic_manifest_for(fixture_root().join("broken/empty_detections"), &temp);
     let output = build_card_detection_eval_witness(&CardDetectionEvalWitnessInputs {
       card_detection_semantic_manifest_path: semantic_path,
       card_detection_spatial_query_manifest_path: temp.path().join("missing-query.json"),
@@ -653,35 +591,20 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionEvalWitnessStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(CardDetectionEvalWitnessReason::SemanticNotReady)
-    );
+    assert_eq!(output.manifest.status, CardDetectionEvalWitnessStatus::Blocked);
+    assert_eq!(output.manifest.reason, Some(CardDetectionEvalWitnessReason::SemanticNotReady));
     assert!(output.manifest.slot_scores.is_empty());
   }
 
   #[test]
   fn witness_failed_when_expected_slots_unreadable() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let output = build_card_detection_eval_witness(&witness_inputs(
-      fixture_root(),
-      fixture_root().join("witness/failed_expected_slots.json"),
-      &temp,
-    ))
-    .expect("witness");
+    let output =
+      build_card_detection_eval_witness(&witness_inputs(fixture_root(), fixture_root().join("witness/failed_expected_slots.json"), &temp))
+        .expect("witness");
 
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionEvalWitnessStatus::Failed
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(CardDetectionEvalWitnessReason::ExpectedSlotsParseFailed)
-    );
+    assert_eq!(output.manifest.status, CardDetectionEvalWitnessStatus::Failed);
+    assert_eq!(output.manifest.reason, Some(CardDetectionEvalWitnessReason::ExpectedSlotsParseFailed));
     assert!(output.manifest.slot_scores.is_empty());
   }
 
@@ -697,14 +620,8 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionEvalWitnessStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(CardDetectionEvalWitnessReason::MissingQueryManifest)
-    );
+    assert_eq!(output.manifest.status, CardDetectionEvalWitnessStatus::Blocked);
+    assert_eq!(output.manifest.reason, Some(CardDetectionEvalWitnessReason::MissingQueryManifest));
   }
 
   #[test]
@@ -721,14 +638,8 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionEvalWitnessStatus::Failed
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(CardDetectionEvalWitnessReason::QueryManifestParseFailed)
-    );
+    assert_eq!(output.manifest.status, CardDetectionEvalWitnessStatus::Failed);
+    assert_eq!(output.manifest.reason, Some(CardDetectionEvalWitnessReason::QueryManifestParseFailed));
   }
 
   #[test]
@@ -744,14 +655,8 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionEvalWitnessStatus::Failed
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(CardDetectionEvalWitnessReason::SemanticFailed)
-    );
+    assert_eq!(output.manifest.status, CardDetectionEvalWitnessStatus::Failed);
+    assert_eq!(output.manifest.reason, Some(CardDetectionEvalWitnessReason::SemanticFailed));
   }
 
   #[test]
@@ -760,15 +665,11 @@ mod tests {
     let semantic_path = semantic_manifest_for(fixture_root(), &temp);
     let query_path = query_manifest_for(&semantic_path, &temp);
     let missing_bundle = temp.path().join("missing-bundle");
-    let mut semantic_manifest =
-      read_json_file::<CardDetectionSemanticManifest>(&semantic_path, "semantic")
-        .expect("read semantic");
+    let mut semantic_manifest = read_json_file::<CardDetectionSemanticManifest>(&semantic_path, "semantic").expect("read semantic");
     semantic_manifest.source_detection_bundle_dir = missing_bundle.display().to_string();
     let broken_semantic = temp.path().join("broken-semantic.json");
     write_json_file(&broken_semantic, &semantic_manifest).expect("write semantic");
-    let mut query_manifest =
-      read_json_file::<CardDetectionSpatialQueryManifest>(&query_path, "query")
-        .expect("read query");
+    let mut query_manifest = read_json_file::<CardDetectionSpatialQueryManifest>(&query_path, "query").expect("read query");
     query_manifest.card_detection_semantic_manifest_path = broken_semantic.display().to_string();
     query_manifest.source_detection_bundle_dir = missing_bundle.display().to_string();
     let broken_query = temp.path().join("broken-query.json");
@@ -781,14 +682,8 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionEvalWitnessStatus::Failed
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(CardDetectionEvalWitnessReason::BundleUnavailable)
-    );
+    assert_eq!(output.manifest.status, CardDetectionEvalWitnessStatus::Failed);
+    assert_eq!(output.manifest.reason, Some(CardDetectionEvalWitnessReason::BundleUnavailable));
   }
 
   #[test]
@@ -796,14 +691,8 @@ mod tests {
     let temp = tempfile::tempdir().expect("tempdir");
     let semantic_path = semantic_manifest_for(fixture_root(), &temp);
     let query_path = query_manifest_for(&semantic_path, &temp);
-    let mut query_manifest =
-      read_json_file::<CardDetectionSpatialQueryManifest>(&query_path, "query")
-        .expect("read query");
-    query_manifest.card_detection_semantic_manifest_path = temp
-      .path()
-      .join("other-semantic.json")
-      .display()
-      .to_string();
+    let mut query_manifest = read_json_file::<CardDetectionSpatialQueryManifest>(&query_path, "query").expect("read query");
+    query_manifest.card_detection_semantic_manifest_path = temp.path().join("other-semantic.json").display().to_string();
     let mismatched_query = temp.path().join("mismatched-query.json");
     write_json_file(&mismatched_query, &query_manifest).expect("write query");
     let output = build_card_detection_eval_witness(&CardDetectionEvalWitnessInputs {
@@ -814,14 +703,8 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionEvalWitnessStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(CardDetectionEvalWitnessReason::QueryLineageMismatch)
-    );
+    assert_eq!(output.manifest.status, CardDetectionEvalWitnessStatus::Blocked);
+    assert_eq!(output.manifest.reason, Some(CardDetectionEvalWitnessReason::QueryLineageMismatch));
   }
 
   #[test]
@@ -829,8 +712,7 @@ mod tests {
     let temp = tempfile::tempdir().expect("tempdir");
     let ready_semantic = semantic_manifest_for(fixture_root(), &temp);
     let query_path = query_manifest_for(&ready_semantic, &temp);
-    let blocked_semantic =
-      semantic_manifest_for(fixture_root().join("broken/empty_detections"), &temp);
+    let blocked_semantic = semantic_manifest_for(fixture_root().join("broken/empty_detections"), &temp);
     let output = build_card_detection_eval_witness(&CardDetectionEvalWitnessInputs {
       card_detection_semantic_manifest_path: blocked_semantic,
       card_detection_spatial_query_manifest_path: query_path,
@@ -839,13 +721,7 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionEvalWitnessStatus::Blocked
-    );
-    assert!(
-      output.inspect_report.spatial_query_manifest_readable,
-      "query file readability must be probed independently of semantic gate"
-    );
+    assert_eq!(output.manifest.status, CardDetectionEvalWitnessStatus::Blocked);
+    assert!(output.inspect_report.spatial_query_manifest_readable, "query file readability must be probed independently of semantic gate");
   }
 }

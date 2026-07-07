@@ -163,14 +163,8 @@ pub fn query_installed_apps(
 ) -> Result<LibraryQueryResult, LibraryDiagnostic> {
   let resolved_scope = resolve_scope(&query)?;
   let normalized_name = query.name.as_deref().map(normalize_match_text);
-  let apps = apps
-    .into_iter()
-    .filter(|app| {
-      normalized_name
-        .as_ref()
-        .is_none_or(|needle| normalize_match_text(&app.name).contains(needle))
-    })
-    .collect();
+  let apps =
+    apps.into_iter().filter(|app| normalized_name.as_ref().is_none_or(|needle| normalize_match_text(&app.name).contains(needle))).collect();
 
   Ok(LibraryQueryResult {
     query,
@@ -204,10 +198,7 @@ where
 
   pub fn query(&self, query: LibraryQuery) -> Result<LibraryQueryResult, LibraryDiagnostic> {
     resolve_scope(&query)?;
-    let read = self
-      .source
-      .installed_apps()
-      .map_err(|error| LibraryDiagnostic::error("steam_not_found", error.to_string(), None))?;
+    let read = self.source.installed_apps().map_err(|error| LibraryDiagnostic::error("steam_not_found", error.to_string(), None))?;
     query_installed_apps(query, read.apps, read.diagnostics)
   }
 }
@@ -234,11 +225,7 @@ impl InstalledAppSource for SteamlocateSource {
     let mut apps = Vec::new();
     let mut diagnostics = Vec::new();
 
-    for library in self
-      .steam_dir
-      .libraries()
-      .map_err(|_| SteamError::NotFound)?
-    {
+    for library in self.steam_dir.libraries().map_err(|_| SteamError::NotFound)? {
       let library = match library {
         Ok(library) => library,
         Err(error) => {
@@ -263,15 +250,10 @@ impl InstalledAppSource for SteamlocateSource {
             continue;
           }
         };
-        let manifest_path = library
-          .path()
-          .join("steamapps")
-          .join(format!("appmanifest_{}.acf", app.app_id));
+        let manifest_path = library.path().join("steamapps").join(format!("appmanifest_{}.acf", app.app_id));
         apps.push(SteamInstalledApp {
           appid: app.app_id,
-          name: app
-            .name
-            .unwrap_or_else(|| format!("Steam App {}", app.app_id)),
+          name: app.name.unwrap_or_else(|| format!("Steam App {}", app.app_id)),
           install_dir: app.install_dir,
           library_path: library.path().display().to_string(),
           manifest_path: manifest_path.display().to_string(),
@@ -287,11 +269,7 @@ impl InstalledAppSource for SteamlocateSource {
 }
 
 fn normalize_match_text(value: &str) -> String {
-  value
-    .split_whitespace()
-    .collect::<Vec<_>>()
-    .join(" ")
-    .to_ascii_lowercase()
+  value.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -386,9 +364,7 @@ mod tests {
       source: LibrarySource::Auto,
     };
 
-    let diagnostic = store
-      .query(query)
-      .expect_err("source failure should map to diagnostic");
+    let diagnostic = store.query(query).expect_err("source failure should map to diagnostic");
 
     assert_eq!(diagnostic.code, "steam_not_found");
     assert_eq!(diagnostic.severity, LibraryDiagnosticSeverity::Error);
@@ -556,8 +532,7 @@ mod tests {
       Some("/tmp/Steam/steamapps/appmanifest_1.acf".to_string()),
     )];
 
-    let result = query_installed_apps(query, vec![fake_app(2379780, "Balatro")], diagnostics)
-      .expect("query should succeed");
+    let result = query_installed_apps(query, vec![fake_app(2379780, "Balatro")], diagnostics).expect("query should succeed");
 
     assert_eq!(result.apps.len(), 1);
     assert_eq!(result.diagnostics[0].code, "manifest_parse_failed");

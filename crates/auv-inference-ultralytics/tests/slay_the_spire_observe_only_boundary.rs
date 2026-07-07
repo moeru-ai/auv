@@ -1,13 +1,12 @@
 use auv_cli::build_runtime_with_store_root;
 use auv_cli::contract::{RecognitionScope, RecognitionSurface};
 use auv_cli::inference_recognition::{
-  BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy,
-  RuntimeProjection, RuntimeProjectionKind, record_detector_manifest_recognition_artifact,
+  BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy, RuntimeProjection, RuntimeProjectionKind,
+  record_detector_manifest_recognition_artifact,
 };
 use auv_inference_common::{
-  BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest,
-  DetectionSet, ImageSize, ModelId, ModelRunMetadata, ProjectionBasis, SourceImageEvidence,
-  SourceImageRef,
+  BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest, DetectionSet, ImageSize, ModelId,
+  ModelRunMetadata, ProjectionBasis, SourceImageEvidence, SourceImageRef,
 };
 use auv_tracing_driver::run_builder::RunSpec;
 use auv_tracing_driver::trace::RunType;
@@ -17,8 +16,7 @@ use std::fs;
 use std::path::PathBuf;
 
 #[test]
-fn slay_the_spire_manual_fixture_stays_observe_only_and_emits_readable_lineage()
--> Result<(), Box<dyn Error>> {
+fn slay_the_spire_manual_fixture_stays_observe_only_and_emits_readable_lineage() -> Result<(), Box<dyn Error>> {
   let root = temp_dir("slay-the-spire-observe-only");
   let project_root = root.join("project");
   let store_root = root.join("store");
@@ -88,8 +86,7 @@ fn slay_the_spire_manual_fixture_stays_observe_only_and_emits_readable_lineage()
       },
       coordinate_space: DetectionCoordinateSpace::SourceImagePixels,
       projection_basis: ProjectionBasis::Unavailable {
-        reason: "manual Slay the Spire fixture does not provide display/window projection"
-          .to_string(),
+        reason: "manual Slay the Spire fixture does not provide display/window projection".to_string(),
       },
     },
     model_run: ModelRunMetadata {
@@ -112,8 +109,7 @@ fn slay_the_spire_manual_fixture_stays_observe_only_and_emits_readable_lineage()
     RunSpec::new(RunType::Execute, "auv.game.slay_the_spire.observe_only"),
     "Slay the Spire observe-only recognition fixture",
     |context| {
-      let mut request =
-        DetectorRecognitionArtifactRequest::new("recognition_slay_the_spire_fixture");
+      let mut request = DetectorRecognitionArtifactRequest::new("recognition_slay_the_spire_fixture");
       request.scope = RecognitionScope {
         surface: RecognitionSurface::Region,
         display_ref: None,
@@ -138,8 +134,7 @@ fn slay_the_spire_manual_fixture_stays_observe_only_and_emits_readable_lineage()
         best_selection: BestSelectionStrategy::None,
       };
       request.artifact_label = "slay-the-spire-observe-only".to_string();
-      request.artifact_note =
-        "Observe-only Slay the Spire detector-backed RecognitionResult fixture.".to_string();
+      request.artifact_note = "Observe-only Slay the Spire detector-backed RecognitionResult fixture.".to_string();
       record_detector_manifest_recognition_artifact(
         context,
         &manifest,
@@ -152,49 +147,22 @@ fn slay_the_spire_manual_fixture_stays_observe_only_and_emits_readable_lineage()
     },
   )?;
 
-  let inspect_text =
-    auv_cli::inspect::inspect_run(runtime.recording().store(), recorded.run_id.as_str())?;
-  assert!(
-    inspect_text.contains("Detector Recognition Lineage:"),
-    "inspect text should expose detector recognition lineage"
-  );
-  assert!(
-    inspect_text.contains("backend=manual-fixture"),
-    "inspect text should preserve manual fixture backend provenance"
-  );
-  assert!(
-    inspect_text.contains("model=slay-the-spire-manual-fixture-v0"),
-    "inspect text should preserve manual fixture model identity"
-  );
+  let inspect_text = auv_cli::inspect::inspect_run(runtime.recording().store(), recorded.run_id.as_str())?;
+  assert!(inspect_text.contains("Detector Recognition Lineage:"), "inspect text should expose detector recognition lineage");
+  assert!(inspect_text.contains("backend=manual-fixture"), "inspect text should preserve manual fixture backend provenance");
+  assert!(inspect_text.contains("model=slay-the-spire-manual-fixture-v0"), "inspect text should preserve manual fixture model identity");
 
-  let lineage = auv_cli::inspect::list_detector_recognition_lineage(
-    runtime.recording().store(),
-    recorded.run_id.as_str(),
-  )?;
+  let lineage = auv_cli::inspect::list_detector_recognition_lineage(runtime.recording().store(), recorded.run_id.as_str())?;
   assert_eq!(lineage.len(), 1);
   let lineage = &lineage[0];
   assert_eq!(serde_json::to_value(&lineage.status)?, json!("ready"));
   assert_eq!(lineage.backend.as_deref(), Some("manual-fixture"));
-  assert_eq!(
-    lineage.model_id.as_deref(),
-    Some("slay-the-spire-manual-fixture-v0")
-  );
+  assert_eq!(lineage.model_id.as_deref(), Some("slay-the-spire-manual-fixture-v0"));
   assert_eq!(lineage.all_count, Some(4));
   assert_eq!(lineage.filtered_count, Some(4));
-  assert_eq!(
-    lineage
-      .capture_artifact
-      .as_ref()
-      .and_then(|artifact| artifact.role.as_deref()),
-    Some("capture-image")
-  );
-  assert!(
-    !lineage.evidence_artifacts.is_empty(),
-    "lineage should preserve evidence artifact refs"
-  );
-  assert!(lineage.known_limits.contains(
-    &"no action or clickability semantics are attached to end_turn_button_region".to_string()
-  ));
+  assert_eq!(lineage.capture_artifact.as_ref().and_then(|artifact| artifact.role.as_deref()), Some("capture-image"));
+  assert!(!lineage.evidence_artifacts.is_empty(), "lineage should preserve evidence artifact refs");
+  assert!(lineage.known_limits.contains(&"no action or clickability semantics are attached to end_turn_button_region".to_string()));
 
   assert_no_forbidden_keys(
     "slay_the_spire_observe_only",
@@ -217,10 +185,7 @@ fn assert_no_forbidden_keys(fixture_name: &str, value: &Value, forbidden_keys: &
   match value {
     Value::Object(map) => {
       for (key, nested) in map {
-        assert!(
-          !forbidden_keys.contains(&key.as_str()),
-          "{fixture_name}: observe-only lineage JSON must not contain forbidden key {key:?}"
-        );
+        assert!(!forbidden_keys.contains(&key.as_str()), "{fixture_name}: observe-only lineage JSON must not contain forbidden key {key:?}");
         assert_no_forbidden_keys(fixture_name, nested, forbidden_keys);
       }
     }

@@ -2,23 +2,16 @@ use std::path::PathBuf;
 
 use auv_game_minecraft::verify::{QueryWiredPostActionWitness, WorldDiffFailure, WorldDiffVerdict};
 use auv_game_minecraft::{
-  BlockPosition, MinecraftSpatialFrame, QueryActionWiringOutcome, TailFrameWaitConfig,
-  verify_query_wired_live_action_semantic,
+  BlockPosition, MinecraftSpatialFrame, QueryActionWiringOutcome, TailFrameWaitConfig, verify_query_wired_live_action_semantic,
 };
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 
 use super::{MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE, QueryWiredLiveActionTelemetryWitness};
-use crate::contract::{
-  ArtifactRef, FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
-  VerificationResult,
-};
+use crate::contract::{ArtifactRef, FailureLayer, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult};
 
 const MC20_POST_FRAME_WAIT: TailFrameWaitConfig = TailFrameWaitConfig::new(750, 25);
 
-pub fn map_world_diff_verdict_to_verification_result(
-  verdict: &WorldDiffVerdict,
-  evidence: Vec<ArtifactRef>,
-) -> VerificationResult {
+pub fn map_world_diff_verdict_to_verification_result(verdict: &WorldDiffVerdict, evidence: Vec<ArtifactRef>) -> VerificationResult {
   let failure_layer = match verdict.failure {
     None => None,
     Some(WorldDiffFailure::VerificationUnreliable) => Some(FailureLayer::VerificationUnreliable),
@@ -57,9 +50,7 @@ pub fn build_query_wired_witness_absent_verification() -> VerificationResult {
   )
 }
 
-pub fn build_query_wired_witness_capture_failed_verification(
-  reason: impl Into<String>,
-) -> VerificationResult {
+pub fn build_query_wired_witness_capture_failed_verification(reason: impl Into<String>) -> VerificationResult {
   let mut verification = build_query_wired_witness_absent_verification();
   verification.observed_label = Some(reason.into());
   verification
@@ -124,34 +115,22 @@ pub fn build_query_wired_post_action_verifications(
     }
   };
 
-  let post_sample_path = witness
-    .post_telemetry_sample
-    .as_ref()
-    .unwrap_or(&witness.pre_telemetry_sample);
-  let post = match auv_game_minecraft::read_latest_spatial_frame_newer_than(
-    post_sample_path,
-    pre.monotonic_timestamp_ms,
-    MC20_POST_FRAME_WAIT,
-  ) {
-    Ok(Some(frame)) => frame,
-    Ok(None) => {
-      return (
-        vec![build_query_wired_witness_capture_failed_verification(
-          format!(
-            "no valid minecraft post frame found in {}",
-            post_sample_path.display()
-          ),
-        )],
-        false,
-      );
-    }
-    Err(error) => {
-      return (
-        vec![build_query_wired_witness_capture_failed_verification(error)],
-        false,
-      );
-    }
-  };
+  let post_sample_path = witness.post_telemetry_sample.as_ref().unwrap_or(&witness.pre_telemetry_sample);
+  let post =
+    match auv_game_minecraft::read_latest_spatial_frame_newer_than(post_sample_path, pre.monotonic_timestamp_ms, MC20_POST_FRAME_WAIT) {
+      Ok(Some(frame)) => frame,
+      Ok(None) => {
+        return (
+          vec![build_query_wired_witness_capture_failed_verification(
+            format!("no valid minecraft post frame found in {}", post_sample_path.display()),
+          )],
+          false,
+        );
+      }
+      Err(error) => {
+        return (vec![build_query_wired_witness_capture_failed_verification(error)], false);
+      }
+    };
 
   let verdict = verify_query_wired_live_action_semantic(&QueryWiredPostActionWitness {
     target_block: input.manifest_target_block,
@@ -200,11 +179,8 @@ pub fn stage_minecraft_spatial_frame_artifact(
       json
     })
     .map_err(|error| format!("failed to serialize minecraft spatial frame: {error}"))?;
-  let artifact_path = std::env::temp_dir().join(format!(
-    "auv-minecraft-spatial-frame-{}-{}.json",
-    context.run_id(),
-    crate::model::now_millis()
-  ));
+  let artifact_path =
+    std::env::temp_dir().join(format!("auv-minecraft-spatial-frame-{}-{}.json", context.run_id(), crate::model::now_millis()));
   std::fs::write(&artifact_path, artifact_json.as_bytes())
     .map_err(|error| format!("failed to write minecraft spatial frame artifact: {error}"))?;
   let staged = context.stage_artifact_file_with_ref(

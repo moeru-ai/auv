@@ -14,31 +14,26 @@ mod trace;
 mod write;
 
 pub use inspect::{
-  GeometryProofSummary, IdentityProofSummary, MemoryProofSummary,
-  PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, ReacquisitionRecord, ReplayProofSummary,
-  ResolutionProofSummary, VerificationProofSummary, ViewParserInspect, ViewParserListSummary,
-  ViewParserReacquireWire, ViewParserSelectResultWire, ViewParserSelectStepWire,
-  ViewParserSelectTargetWire, ViewParserSelectVerificationWire, ViewResolutionSummary,
+  GeometryProofSummary, IdentityProofSummary, MemoryProofSummary, PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, ReacquisitionRecord,
+  ReplayProofSummary, ResolutionProofSummary, VerificationProofSummary, ViewParserInspect, ViewParserListSummary, ViewParserReacquireWire,
+  ViewParserSelectResultWire, ViewParserSelectStepWire, ViewParserSelectTargetWire, ViewParserSelectVerificationWire, ViewResolutionSummary,
   format_view_resolution_summary_text, summarize_view_parser_inspect,
 };
 pub use reacquire::{
-  ReacquireCandidate, ReacquireConfig, ReacquireObservation, ReacquireOutcome, ReacquireStrategy,
-  ReacquireTarget, ReacquiredNode, reacquire,
+  ReacquireCandidate, ReacquireConfig, ReacquireObservation, ReacquireOutcome, ReacquireStrategy, ReacquireTarget, ReacquiredNode, reacquire,
 };
 pub use reacquire_adapter::{ReacquireDriverAdapter, outcome_label, strategy_name};
 pub use read::{MemoryReadConfig, MemoryReadOutcome, StaleReason, read_memory};
 pub use store::{
-  load_memory_file, memory_file_name, memory_file_path, parse_memory_file, serialize_memory_bytes,
-  view_memory_lineage_ref_wire, write_memory_file,
+  load_memory_file, memory_file_name, memory_file_path, parse_memory_file, serialize_memory_bytes, view_memory_lineage_ref_wire,
+  write_memory_file,
 };
 pub use trace::{
-  ATTR_MEMORY_ANCHOR_COUNT, ATTR_MEMORY_EVICTION_COUNT, ATTR_MEMORY_LANDMARK_COUNT,
-  ATTR_MEMORY_LAST_RECONSTRUCTED_AT_MILLIS, ATTR_MEMORY_LOAD_MEMORY_ID,
-  ATTR_MEMORY_LOAD_SOURCE_RUN_ID, ATTR_MEMORY_MEMORY_ID, ATTR_MEMORY_NODE_SNAPSHOT_COUNT,
-  ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND, ATTR_REACQUIRE_OBSERVATION_COUNT, ATTR_REACQUIRE_OUTCOME,
-  ATTR_REACQUIRE_SCOPE_ID, ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY, ATTR_REACQUIRE_STAGE_USED,
-  ATTR_REACQUIRE_TARGET_KIND, SPAN_MEMORY_WRITE, SPAN_REACQUIRE_MEMORY_LOAD,
-  SPAN_REACQUIRE_ROOT_PREFIX, SPAN_REACQUIRE_STAGE_PREFIX, memory_write_span_attributes,
+  ATTR_MEMORY_ANCHOR_COUNT, ATTR_MEMORY_EVICTION_COUNT, ATTR_MEMORY_LANDMARK_COUNT, ATTR_MEMORY_LAST_RECONSTRUCTED_AT_MILLIS,
+  ATTR_MEMORY_LOAD_MEMORY_ID, ATTR_MEMORY_LOAD_SOURCE_RUN_ID, ATTR_MEMORY_MEMORY_ID, ATTR_MEMORY_NODE_SNAPSHOT_COUNT,
+  ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND, ATTR_REACQUIRE_OBSERVATION_COUNT, ATTR_REACQUIRE_OUTCOME, ATTR_REACQUIRE_SCOPE_ID,
+  ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY, ATTR_REACQUIRE_STAGE_USED, ATTR_REACQUIRE_TARGET_KIND, SPAN_MEMORY_WRITE,
+  SPAN_REACQUIRE_MEMORY_LOAD, SPAN_REACQUIRE_ROOT_PREFIX, SPAN_REACQUIRE_STAGE_PREFIX, memory_write_span_attributes,
   reacquire_memory_load_span_attributes, reacquire_root_span_name, reacquire_stage_span_name,
 };
 pub use write::{ARTIFACT_DIR_BRIDGE_RUN_ID, MemoryWriteInput, build_memory_id, try_build_memory};
@@ -48,8 +43,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  Confidence, ParserDiagnostic, VIEW_IR_SCHEMA_VERSION, ViewAnchor, ViewBounds, ViewLandmark,
-  ViewNodeKind, ViewNodeRecord, ViewReconstructionRecord,
+  Confidence, ParserDiagnostic, VIEW_IR_SCHEMA_VERSION, ViewAnchor, ViewBounds, ViewLandmark, ViewNodeKind, ViewNodeRecord,
+  ViewReconstructionRecord,
 };
 
 pub const VIEW_MEMORY_SCHEMA_VERSION: &str = "view-memory-v0";
@@ -123,10 +118,7 @@ pub fn snapshot_from_node(
     parent,
     section_hint,
     bounds_window_local: Some(node.bounds),
-    viewport_fingerprint_hint: node
-      .label
-      .as_ref()
-      .map(|label| crate::normalize_identity(label)),
+    viewport_fingerprint_hint: node.label.as_ref().map(|label| crate::normalize_identity(label)),
     last_seen_observation_index: observation_index,
     confidence: Confidence::Medium,
   }
@@ -149,31 +141,14 @@ pub fn collect_node_snapshots(
     section_hint
   };
 
-  out.insert(
-    node.id.clone(),
-    snapshot_from_node(
-      node,
-      parent.clone(),
-      section_hint.clone(),
-      observation_index,
-    ),
-  );
+  out.insert(node.id.clone(), snapshot_from_node(node, parent.clone(), section_hint.clone(), observation_index));
 
   for child in &node.children {
-    collect_node_snapshots(
-      child,
-      Some(node.id.clone()),
-      section_hint.clone(),
-      observation_index,
-      out,
-    );
+    collect_node_snapshots(child, Some(node.id.clone()), section_hint.clone(), observation_index, out);
   }
 }
 
-pub fn memory_from_reconstruction_parts(
-  input: MemoryWriteInput<'_>,
-  reconstruction: &ViewReconstructionRecord,
-) -> Option<ViewMemory> {
+pub fn memory_from_reconstruction_parts(input: MemoryWriteInput<'_>, reconstruction: &ViewReconstructionRecord) -> Option<ViewMemory> {
   if !input.clean {
     return None;
   }
@@ -304,9 +279,6 @@ mod tests {
 
   #[test]
   fn memory_id_stable_for_app_scope_pair() {
-    assert_eq!(
-      build_memory_id("com.netease.163music", "playlist_sidebar"),
-      "com.netease.163music:playlist_sidebar"
-    );
+    assert_eq!(build_memory_id("com.netease.163music", "playlist_sidebar"), "com.netease.163music:playlist_sidebar");
   }
 }

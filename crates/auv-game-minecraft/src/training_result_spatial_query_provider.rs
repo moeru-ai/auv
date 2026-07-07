@@ -3,14 +3,12 @@ use std::path::{Path, PathBuf};
 use crate::closed_scene_toy_fixture::load_closed_scene_fixture;
 use crate::scene_packet::ScenePacketManifest;
 use crate::training_result_semantic::{
-  TrainingResultSemanticCheckpointRecord, TrainingResultSemanticManifest,
-  TrainingResultSemanticStatus, collect_checkpoint_files,
+  TrainingResultSemanticCheckpointRecord, TrainingResultSemanticManifest, TrainingResultSemanticStatus, collect_checkpoint_files,
 };
 use crate::training_result_spatial_query::{
-  BackendOutcome, TrainingResultSpatialQueryAnswer, TrainingResultSpatialQueryInputs,
-  TrainingResultSpatialQueryKind, TrainingResultSpatialQueryReason,
-  TrainingResultSpatialQueryRequest, TrainingResultSpatialQueryResult,
-  TrainingResultSpatialQueryStatus, run_projection_reference_backend,
+  BackendOutcome, TrainingResultSpatialQueryAnswer, TrainingResultSpatialQueryInputs, TrainingResultSpatialQueryKind,
+  TrainingResultSpatialQueryReason, TrainingResultSpatialQueryRequest, TrainingResultSpatialQueryResult, TrainingResultSpatialQueryStatus,
+  run_projection_reference_backend,
 };
 use crate::types::BlockPosition;
 
@@ -37,30 +35,15 @@ pub struct CheckpointNativeProviderOutcome {
 }
 
 impl CheckpointNativeProviderInputs {
-  pub fn from_spatial_query(
-    semantic_manifest: &TrainingResultSemanticManifest,
-    inputs: &TrainingResultSpatialQueryInputs,
-  ) -> Self {
+  pub fn from_spatial_query(semantic_manifest: &TrainingResultSemanticManifest, inputs: &TrainingResultSpatialQueryInputs) -> Self {
     Self {
       request: TrainingResultSpatialQueryRequest {
-        source_training_result_artifact_manifest_path: semantic_manifest
-          .source_training_result_artifact_manifest_path
-          .clone(),
-        source_training_result_manifest_path: semantic_manifest
-          .source_training_result_manifest_path
-          .clone(),
-        source_training_job_manifest_path: semantic_manifest
-          .source_training_job_manifest_path
-          .clone(),
-        source_training_launch_plan_path: semantic_manifest
-          .source_training_launch_plan_path
-          .clone(),
-        source_training_package_manifest_path: semantic_manifest
-          .source_training_package_manifest_path
-          .clone(),
-        source_scene_packet_manifest_path: semantic_manifest
-          .source_scene_packet_manifest_path
-          .clone(),
+        source_training_result_artifact_manifest_path: semantic_manifest.source_training_result_artifact_manifest_path.clone(),
+        source_training_result_manifest_path: semantic_manifest.source_training_result_manifest_path.clone(),
+        source_training_job_manifest_path: semantic_manifest.source_training_job_manifest_path.clone(),
+        source_training_launch_plan_path: semantic_manifest.source_training_launch_plan_path.clone(),
+        source_training_package_manifest_path: semantic_manifest.source_training_package_manifest_path.clone(),
+        source_scene_packet_manifest_path: semantic_manifest.source_scene_packet_manifest_path.clone(),
         source_bundle_manifest_paths: semantic_manifest.source_bundle_manifest_paths.clone(),
         source_run_ids: semantic_manifest.source_run_ids.clone(),
         trainer_backend: semantic_manifest.trainer_backend.clone(),
@@ -109,24 +92,12 @@ impl ClosedSceneToyProviderInputs {
   ) -> Self {
     Self {
       request: TrainingResultSpatialQueryRequest {
-        source_training_result_artifact_manifest_path: semantic_manifest
-          .source_training_result_artifact_manifest_path
-          .clone(),
-        source_training_result_manifest_path: semantic_manifest
-          .source_training_result_manifest_path
-          .clone(),
-        source_training_job_manifest_path: semantic_manifest
-          .source_training_job_manifest_path
-          .clone(),
-        source_training_launch_plan_path: semantic_manifest
-          .source_training_launch_plan_path
-          .clone(),
-        source_training_package_manifest_path: semantic_manifest
-          .source_training_package_manifest_path
-          .clone(),
-        source_scene_packet_manifest_path: semantic_manifest
-          .source_scene_packet_manifest_path
-          .clone(),
+        source_training_result_artifact_manifest_path: semantic_manifest.source_training_result_artifact_manifest_path.clone(),
+        source_training_result_manifest_path: semantic_manifest.source_training_result_manifest_path.clone(),
+        source_training_job_manifest_path: semantic_manifest.source_training_job_manifest_path.clone(),
+        source_training_launch_plan_path: semantic_manifest.source_training_launch_plan_path.clone(),
+        source_training_package_manifest_path: semantic_manifest.source_training_package_manifest_path.clone(),
+        source_scene_packet_manifest_path: semantic_manifest.source_scene_packet_manifest_path.clone(),
         source_bundle_manifest_paths: semantic_manifest.source_bundle_manifest_paths.clone(),
         source_run_ids: semantic_manifest.source_run_ids.clone(),
         trainer_backend: semantic_manifest.trainer_backend.clone(),
@@ -159,8 +130,7 @@ pub(crate) fn run_checkpoint_native_provider_backend(
   scene_packet_dir: &Path,
   inputs: &TrainingResultSpatialQueryInputs,
 ) -> TrainingResultSpatialQueryResult<BackendOutcome> {
-  let provider_inputs =
-    CheckpointNativeProviderInputs::from_spatial_query(semantic_manifest, inputs);
+  let provider_inputs = CheckpointNativeProviderInputs::from_spatial_query(semantic_manifest, inputs);
 
   if semantic_manifest.semantic_status != TrainingResultSemanticStatus::Ready {
     return Ok(
@@ -189,10 +159,7 @@ pub(crate) fn run_checkpoint_native_provider_backend(
     return Ok(
       blocked_answer(
         TrainingResultSpatialQueryReason::SemanticSourceNotReady,
-        format!(
-          "MC-15 checkpoint_native provider blocked: normalized config missing at {}",
-          provider_inputs.config_path.display()
-        ),
+        format!("MC-15 checkpoint_native provider blocked: normalized config missing at {}", provider_inputs.config_path.display()),
       )
       .into_backend_outcome(),
     );
@@ -242,8 +209,7 @@ pub(crate) fn run_checkpoint_native_provider_backend(
   }
 
   let checkpoint_basis = checkpoint_basis_frame_id(&checkpoint_files);
-  let reference_outcome =
-    run_projection_reference_backend(scene_packet_manifest, scene_packet_dir, inputs)?;
+  let reference_outcome = run_projection_reference_backend(scene_packet_manifest, scene_packet_dir, inputs)?;
 
   let answer = match reference_outcome.answer.status {
     TrainingResultSpatialQueryStatus::Answered => TrainingResultSpatialQueryAnswer {
@@ -259,10 +225,7 @@ pub(crate) fn run_checkpoint_native_provider_backend(
     other_status => TrainingResultSpatialQueryAnswer {
       status: other_status,
       reason: reference_outcome.answer.reason,
-      message: reference_outcome
-        .answer
-        .message
-        .or_else(|| Some(MC15_V1_PROVIDER_MESSAGE.to_string())),
+      message: reference_outcome.answer.message.or_else(|| Some(MC15_V1_PROVIDER_MESSAGE.to_string())),
       basis_frame_id: Some(checkpoint_basis),
       visibility: reference_outcome.answer.visibility,
       screen_point: reference_outcome.answer.screen_point,
@@ -279,11 +242,8 @@ pub(crate) fn run_closed_scene_toy_provider_backend(
   inputs: &TrainingResultSpatialQueryInputs,
   closed_scene_fixture_path: Option<&Path>,
 ) -> TrainingResultSpatialQueryResult<BackendOutcome> {
-  let provider_inputs = ClosedSceneToyProviderInputs::from_spatial_query(
-    semantic_manifest,
-    inputs,
-    closed_scene_fixture_path.map(Path::to_path_buf),
-  );
+  let provider_inputs =
+    ClosedSceneToyProviderInputs::from_spatial_query(semantic_manifest, inputs, closed_scene_fixture_path.map(Path::to_path_buf));
 
   if semantic_manifest.semantic_status != TrainingResultSemanticStatus::Ready {
     return Ok(
@@ -319,10 +279,7 @@ pub(crate) fn run_closed_scene_toy_provider_backend(
     return Ok(
       toy_blocked_answer(
         TrainingResultSpatialQueryReason::ProviderOutputInvalid,
-        format!(
-          "MC-18 closed_scene_toy provider blocked: closed-scene fixture missing at {}",
-          fixture_path.display()
-        ),
+        format!("MC-18 closed_scene_toy provider blocked: closed-scene fixture missing at {}", fixture_path.display()),
       )
       .into_backend_outcome(),
     );
@@ -334,27 +291,18 @@ pub(crate) fn run_closed_scene_toy_provider_backend(
       return Ok(
         toy_failed_answer(
           TrainingResultSpatialQueryReason::ProviderOutputInvalid,
-          format!(
-            "MC-18 closed_scene_toy provider failed: {}",
-            error.message()
-          ),
+          format!("MC-18 closed_scene_toy provider failed: {}", error.message()),
         )
         .into_backend_outcome(),
       );
     }
   };
 
-  let answer = crate::closed_scene_toy_fixture::resolve_closed_label_answer(
-    &fixture,
-    &provider_inputs.request,
-  );
+  let answer = crate::closed_scene_toy_fixture::resolve_closed_label_answer(&fixture, &provider_inputs.request);
   Ok(ClosedSceneToyProviderOutcome { answer }.into_backend_outcome())
 }
 
-fn blocked_answer(
-  reason: TrainingResultSpatialQueryReason,
-  message: impl Into<String>,
-) -> CheckpointNativeProviderOutcome {
+fn blocked_answer(reason: TrainingResultSpatialQueryReason, message: impl Into<String>) -> CheckpointNativeProviderOutcome {
   CheckpointNativeProviderOutcome {
     answer: TrainingResultSpatialQueryAnswer {
       status: TrainingResultSpatialQueryStatus::Blocked,
@@ -369,17 +317,11 @@ fn blocked_answer(
   }
 }
 
-fn toy_blocked_answer(
-  reason: TrainingResultSpatialQueryReason,
-  message: impl Into<String>,
-) -> ClosedSceneToyProviderOutcome {
+fn toy_blocked_answer(reason: TrainingResultSpatialQueryReason, message: impl Into<String>) -> ClosedSceneToyProviderOutcome {
   toy_status_answer(TrainingResultSpatialQueryStatus::Blocked, reason, message)
 }
 
-fn toy_failed_answer(
-  reason: TrainingResultSpatialQueryReason,
-  message: impl Into<String>,
-) -> ClosedSceneToyProviderOutcome {
+fn toy_failed_answer(reason: TrainingResultSpatialQueryReason, message: impl Into<String>) -> ClosedSceneToyProviderOutcome {
   toy_status_answer(TrainingResultSpatialQueryStatus::Failed, reason, message)
 }
 
@@ -402,10 +344,7 @@ fn toy_status_answer(
   }
 }
 
-fn failed_answer(
-  reason: TrainingResultSpatialQueryReason,
-  message: impl Into<String>,
-) -> CheckpointNativeProviderOutcome {
+fn failed_answer(reason: TrainingResultSpatialQueryReason, message: impl Into<String>) -> CheckpointNativeProviderOutcome {
   CheckpointNativeProviderOutcome {
     answer: TrainingResultSpatialQueryAnswer {
       status: TrainingResultSpatialQueryStatus::Failed,
@@ -430,9 +369,7 @@ fn checkpoint_basis_frame_id(checkpoints: &[TrainingResultSemanticCheckpointReco
 }
 
 fn compare_checkpoint_steps(left: &str, right: &str) -> std::cmp::Ordering {
-  checkpoint_step_number(left)
-    .cmp(&checkpoint_step_number(right))
-    .then_with(|| left.cmp(right))
+  checkpoint_step_number(left).cmp(&checkpoint_step_number(right)).then_with(|| left.cmp(right))
 }
 
 fn checkpoint_step_number(path: &str) -> u64 {
@@ -446,24 +383,15 @@ fn checkpoint_step_number(path: &str) -> u64 {
 }
 
 fn path_is_symlink(path: &Path) -> bool {
-  path
-    .symlink_metadata()
-    .map(|metadata| metadata.file_type().is_symlink())
-    .unwrap_or(false)
+  path.symlink_metadata().map(|metadata| metadata.file_type().is_symlink()).unwrap_or(false)
 }
 
 fn is_real_file(path: &Path) -> bool {
-  path
-    .metadata()
-    .map(|metadata| metadata.is_file())
-    .unwrap_or(false)
+  path.metadata().map(|metadata| metadata.is_file()).unwrap_or(false)
 }
 
 fn is_real_dir(path: &Path) -> bool {
-  path
-    .metadata()
-    .map(|metadata| metadata.is_dir())
-    .unwrap_or(false)
+  path.metadata().map(|metadata| metadata.is_dir()).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -473,8 +401,7 @@ mod tests {
   use crate::training_result::TrainingResultStatus;
   use crate::training_result_semantic::TrainingResultSemanticManifest;
   use crate::types::{
-    BlockFace, MinecraftSpatialFrame, MinecraftTargetSemantics, PlayerPose, ProjectionVisibility,
-    RaycastHit, Vec3, Viewport,
+    BlockFace, MinecraftSpatialFrame, MinecraftTargetSemantics, PlayerPose, ProjectionVisibility, RaycastHit, Vec3, Viewport,
   };
   use std::fs;
   use tempfile::TempDir;
@@ -503,11 +430,7 @@ mod tests {
     fs::write(&config_path, "trainer: nerfstudio.splatfacto\n").expect("config");
 
     if with_checkpoint {
-      fs::write(
-        models_dir.join("step-000001.ckpt"),
-        b"fake-checkpoint-bytes",
-      )
-      .expect("ckpt");
+      fs::write(models_dir.join("step-000001.ckpt"), b"fake-checkpoint-bytes").expect("ckpt");
     }
 
     let manifest = TrainingResultSemanticManifest {
@@ -607,18 +530,12 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-      false,
-    );
+    let (semantic_manifest_path, _) =
+      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
-      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
-        .expect("parse semantic");
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let scene_packet_manifest: ScenePacketManifest =
-      serde_json::from_slice(&fs::read(&scene_packet_manifest_path).expect("read scene packet"))
-        .expect("parse scene packet");
+      serde_json::from_slice(&fs::read(&scene_packet_manifest_path).expect("read scene packet")).expect("parse scene packet");
     let inputs = TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
       target_block,
@@ -639,17 +556,8 @@ mod tests {
     )
     .expect("checkpoint missing should return outcome");
 
-    assert_eq!(
-      outcome.answer.status,
-      TrainingResultSpatialQueryStatus::Blocked
-    );
-    assert!(
-      outcome
-        .answer
-        .message
-        .as_deref()
-        .is_some_and(|message| message.contains("no readable checkpoint"))
-    );
+    assert_eq!(outcome.answer.status, TrainingResultSpatialQueryStatus::Blocked);
+    assert!(outcome.answer.message.as_deref().is_some_and(|message| message.contains("no readable checkpoint")));
   }
 
   #[test]
@@ -657,18 +565,11 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-      true,
-    );
+    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, true);
     let semantic_manifest: TrainingResultSemanticManifest =
-      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
-        .expect("parse semantic");
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let scene_packet_manifest: ScenePacketManifest =
-      serde_json::from_slice(&fs::read(&scene_packet_manifest_path).expect("read scene packet"))
-        .expect("parse scene packet");
+      serde_json::from_slice(&fs::read(&scene_packet_manifest_path).expect("read scene packet")).expect("parse scene packet");
     let inputs = TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
       target_block,
@@ -689,21 +590,9 @@ mod tests {
     )
     .expect("checkpoint present should answer");
 
-    assert_eq!(
-      outcome.answer.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      outcome.answer.basis_frame_id.as_deref(),
-      Some("checkpoint:step-000001.ckpt")
-    );
-    assert!(
-      outcome
-        .answer
-        .message
-        .as_deref()
-        .is_some_and(|message| message.contains("Gaussian render inference is deferred"))
-    );
+    assert_eq!(outcome.answer.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(outcome.answer.basis_frame_id.as_deref(), Some("checkpoint:step-000001.ckpt"));
+    assert!(outcome.answer.message.as_deref().is_some_and(|message| message.contains("Gaussian render inference is deferred")));
     assert!(outcome.answer.screen_point.is_some());
   }
 
@@ -712,18 +601,12 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Blocked,
-      &scene_packet_manifest_path,
-      true,
-    );
+    let (semantic_manifest_path, _) =
+      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Blocked, &scene_packet_manifest_path, true);
     let semantic_manifest: TrainingResultSemanticManifest =
-      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
-        .expect("parse semantic");
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let scene_packet_manifest: ScenePacketManifest =
-      serde_json::from_slice(&fs::read(&scene_packet_manifest_path).expect("read scene packet"))
-        .expect("parse scene packet");
+      serde_json::from_slice(&fs::read(&scene_packet_manifest_path).expect("read scene packet")).expect("parse scene packet");
     let inputs = TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
       target_block,
@@ -744,14 +627,8 @@ mod tests {
     )
     .expect("semantic blocked should return outcome");
 
-    assert_eq!(
-      outcome.answer.status,
-      TrainingResultSpatialQueryStatus::Blocked
-    );
-    assert_eq!(
-      outcome.answer.reason,
-      Some(TrainingResultSpatialQueryReason::SemanticSourceNotReady)
-    );
+    assert_eq!(outcome.answer.status, TrainingResultSpatialQueryStatus::Blocked);
+    assert_eq!(outcome.answer.reason, Some(TrainingResultSpatialQueryReason::SemanticSourceNotReady));
   }
 
   fn spatial_query_inputs(
@@ -773,9 +650,7 @@ mod tests {
   }
 
   fn mc18_fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/mc18")
-      .join(name)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mc18").join(name)
   }
 
   #[test]
@@ -783,39 +658,17 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-      false,
-    );
+    let (semantic_manifest_path, _) =
+      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
-      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
-        .expect("parse semantic");
-    let inputs = spatial_query_inputs(
-      semantic_manifest_path,
-      target_block,
-      temp.path().join("query-output"),
-    );
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
+    let inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));
 
-    let outcome = run_closed_scene_toy_provider_backend(&semantic_manifest, &inputs, None)
-      .expect("missing fixture should return outcome");
+    let outcome = run_closed_scene_toy_provider_backend(&semantic_manifest, &inputs, None).expect("missing fixture should return outcome");
 
-    assert_eq!(
-      outcome.answer.status,
-      TrainingResultSpatialQueryStatus::Blocked
-    );
-    assert_eq!(
-      outcome.answer.reason,
-      Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid)
-    );
-    assert!(
-      outcome
-        .answer
-        .message
-        .as_deref()
-        .is_some_and(|message| message.contains("fixture path missing"))
-    );
+    assert_eq!(outcome.answer.status, TrainingResultSpatialQueryStatus::Blocked);
+    assert_eq!(outcome.answer.reason, Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid));
+    assert!(outcome.answer.message.as_deref().is_some_and(|message| message.contains("fixture path missing")));
   }
 
   #[test]
@@ -823,32 +676,16 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Blocked,
-      &scene_packet_manifest_path,
-      false,
-    );
+    let (semantic_manifest_path, _) =
+      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Blocked, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
-      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
-        .expect("parse semantic");
-    let inputs = spatial_query_inputs(
-      semantic_manifest_path,
-      target_block,
-      temp.path().join("query-output"),
-    );
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
+    let inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));
 
-    let outcome = run_closed_scene_toy_provider_backend(&semantic_manifest, &inputs, None)
-      .expect("semantic blocked should return outcome");
+    let outcome = run_closed_scene_toy_provider_backend(&semantic_manifest, &inputs, None).expect("semantic blocked should return outcome");
 
-    assert_eq!(
-      outcome.answer.status,
-      TrainingResultSpatialQueryStatus::Blocked
-    );
-    assert_eq!(
-      outcome.answer.reason,
-      Some(TrainingResultSpatialQueryReason::SemanticSourceNotReady)
-    );
+    assert_eq!(outcome.answer.status, TrainingResultSpatialQueryStatus::Blocked);
+    assert_eq!(outcome.answer.reason, Some(TrainingResultSpatialQueryReason::SemanticSourceNotReady));
   }
 
   #[test]
@@ -856,41 +693,19 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(511, 73, 728);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-      false,
-    );
+    let (semantic_manifest_path, _) =
+      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
-      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
-        .expect("parse semantic");
-    let mut inputs = spatial_query_inputs(
-      semantic_manifest_path,
-      target_block,
-      temp.path().join("query-output"),
-    );
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
+    let mut inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));
     inputs.target_face = Some(BlockFace::North);
 
-    let outcome = run_closed_scene_toy_provider_backend(
-      &semantic_manifest,
-      &inputs,
-      Some(mc18_fixture_path("visible.json").as_path()),
-    )
-    .expect("visible fixture should answer");
+    let outcome = run_closed_scene_toy_provider_backend(&semantic_manifest, &inputs, Some(mc18_fixture_path("visible.json").as_path()))
+      .expect("visible fixture should answer");
 
-    assert_eq!(
-      outcome.answer.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      outcome.answer.basis_frame_id.as_deref(),
-      Some("closed_scene_toy:mc18-smoke-v1:frame-0003")
-    );
-    assert_eq!(
-      outcome.answer.visibility,
-      Some(ProjectionVisibility::Visible)
-    );
+    assert_eq!(outcome.answer.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(outcome.answer.basis_frame_id.as_deref(), Some("closed_scene_toy:mc18-smoke-v1:frame-0003"));
+    assert_eq!(outcome.answer.visibility, Some(ProjectionVisibility::Visible));
     assert!(outcome.answer.screen_point.is_some());
   }
 
@@ -899,37 +714,19 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(511, 73, 728);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-      false,
-    );
+    let (semantic_manifest_path, _) =
+      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
-      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
-        .expect("parse semantic");
-    let mut inputs = spatial_query_inputs(
-      semantic_manifest_path,
-      target_block,
-      temp.path().join("query-output"),
-    );
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
+    let mut inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));
     inputs.target_face = Some(BlockFace::North);
 
-    let outcome = run_closed_scene_toy_provider_backend(
-      &semantic_manifest,
-      &inputs,
-      Some(mc18_fixture_path("outside_window.json").as_path()),
-    )
-    .expect("outside_window fixture should answer");
+    let outcome =
+      run_closed_scene_toy_provider_backend(&semantic_manifest, &inputs, Some(mc18_fixture_path("outside_window.json").as_path()))
+        .expect("outside_window fixture should answer");
 
-    assert_eq!(
-      outcome.answer.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      outcome.answer.visibility,
-      Some(ProjectionVisibility::OutsideWindow)
-    );
+    assert_eq!(outcome.answer.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(outcome.answer.visibility, Some(ProjectionVisibility::OutsideWindow));
     assert!(outcome.answer.screen_point.is_some());
   }
 
@@ -938,37 +735,18 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(511, 73, 728);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-      false,
-    );
+    let (semantic_manifest_path, _) =
+      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
-      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic"))
-        .expect("parse semantic");
-    let inputs = spatial_query_inputs(
-      semantic_manifest_path,
-      target_block,
-      temp.path().join("query-output"),
-    );
+      serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
+    let inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));
     let corrupt_fixture = temp.path().join("corrupt.json");
     fs::write(&corrupt_fixture, b"{not-json").expect("write corrupt");
 
-    let outcome = run_closed_scene_toy_provider_backend(
-      &semantic_manifest,
-      &inputs,
-      Some(corrupt_fixture.as_path()),
-    )
-    .expect("corrupt fixture should return outcome");
+    let outcome = run_closed_scene_toy_provider_backend(&semantic_manifest, &inputs, Some(corrupt_fixture.as_path()))
+      .expect("corrupt fixture should return outcome");
 
-    assert_eq!(
-      outcome.answer.status,
-      TrainingResultSpatialQueryStatus::Failed
-    );
-    assert_eq!(
-      outcome.answer.reason,
-      Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid)
-    );
+    assert_eq!(outcome.answer.status, TrainingResultSpatialQueryStatus::Failed);
+    assert_eq!(outcome.answer.reason, Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid));
   }
 }

@@ -20,10 +20,7 @@ pub(crate) enum PlaylistQueryResolution {
   Ambiguous,
 }
 
-pub(crate) fn playlist_label_match_tier(
-  normalized_label: &str,
-  normalized_query: &str,
-) -> PlaylistLabelMatchTier {
+pub(crate) fn playlist_label_match_tier(normalized_label: &str, normalized_query: &str) -> PlaylistLabelMatchTier {
   if normalized_query.is_empty() {
     return PlaylistLabelMatchTier::None;
   }
@@ -36,10 +33,7 @@ pub(crate) fn playlist_label_match_tier(
   PlaylistLabelMatchTier::None
 }
 
-pub(crate) fn resolve_playlist_query_from_labels(
-  labels: &[&str],
-  query: &str,
-) -> PlaylistQueryResolution {
+pub(crate) fn resolve_playlist_query_from_labels(labels: &[&str], query: &str) -> PlaylistQueryResolution {
   let normalized_query = normalize_identity(query);
   if normalized_query.is_empty() {
     return PlaylistQueryResolution::NotFound;
@@ -76,9 +70,7 @@ pub(crate) fn resolve_playlist_query_from_labels(
   PlaylistQueryResolution::NotFound
 }
 
-pub(crate) fn playlist_query_resolution_is_unique_exact(
-  resolution: PlaylistQueryResolution,
-) -> bool {
+pub(crate) fn playlist_query_resolution_is_unique_exact(resolution: PlaylistQueryResolution) -> bool {
   matches!(
     resolution,
     PlaylistQueryResolution::Unique {
@@ -104,9 +96,7 @@ pub(crate) fn filter_labels_by_resolution<'a>(
         PlaylistQueryResolution::Unique {
           mode: PlaylistQueryMatchMode::Contains,
         } => tier == PlaylistLabelMatchTier::Contains,
-        PlaylistQueryResolution::Ambiguous => {
-          tier == PlaylistLabelMatchTier::Exact || tier == PlaylistLabelMatchTier::Contains
-        }
+        PlaylistQueryResolution::Ambiguous => tier == PlaylistLabelMatchTier::Exact || tier == PlaylistLabelMatchTier::Contains,
         PlaylistQueryResolution::NotFound => false,
       }
     })
@@ -152,17 +142,9 @@ mod tests {
 
   #[test]
   fn scan_query_seen_requires_unique_exact_match() {
-    assert!(playlist_query_resolution_is_unique_exact(
-      resolve_playlist_query_from_labels(&["3"], "3")
-    ));
-    assert!(!playlist_query_resolution_is_unique_exact(
-      resolve_playlist_query_from_labels(&["43"], "3")
-    ));
-    assert!(playlist_query_resolution_is_unique_exact(
-      resolve_playlist_query_from_labels(&["43", "3"], "3")
-    ));
-    assert!(!playlist_query_resolution_is_unique_exact(
-      resolve_playlist_query_from_labels(&["43", "13"], "3")
-    ));
+    assert!(playlist_query_resolution_is_unique_exact(resolve_playlist_query_from_labels(&["3"], "3")));
+    assert!(!playlist_query_resolution_is_unique_exact(resolve_playlist_query_from_labels(&["43"], "3")));
+    assert!(playlist_query_resolution_is_unique_exact(resolve_playlist_query_from_labels(&["43", "3"], "3")));
+    assert!(!playlist_query_resolution_is_unique_exact(resolve_playlist_query_from_labels(&["43", "13"], "3")));
   }
 }

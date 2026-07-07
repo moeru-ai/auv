@@ -1,8 +1,6 @@
 use crate::convert::detection_set_from_result;
 use crate::device::InferenceDevice;
-use auv_inference_common::{
-  DetectionOptions, DetectionSet, ImageFrame, InferenceError, InferenceResult, ModelConfig, ModelId,
-};
+use auv_inference_common::{DetectionOptions, DetectionSet, ImageFrame, InferenceError, InferenceResult, ModelConfig, ModelId};
 use image::{DynamicImage, ImageReader};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -52,10 +50,8 @@ impl UltralyticsDetector {
     validate_config(&config)?;
     require_model_path(&config.model_path)?;
 
-    let inference_config =
-      build_inference_config(config.input_size, config.options, config.device.clone());
-    let model =
-      YOLOModel::load_with_config(&config.model_path, inference_config).map_err(backend_error)?;
+    let inference_config = build_inference_config(config.input_size, config.options, config.device.clone());
+    let model = YOLOModel::load_with_config(&config.model_path, inference_config).map_err(backend_error)?;
 
     Ok(Self {
       model_id: config.model_id,
@@ -81,35 +77,20 @@ impl UltralyticsDetector {
     let image = DynamicImage::ImageRgb8(frame.image.clone());
     let results = {
       let mut model = self.lock_model()?;
-      model
-        .predict_image(&image, "<frame>".to_string())
-        .map_err(backend_error)?
+      model.predict_image(&image, "<frame>".to_string()).map_err(backend_error)?
     };
     self.convert_first_result(results)
   }
 
   fn lock_model(&self) -> InferenceResult<std::sync::MutexGuard<'_, YOLOModel>> {
-    self
-      .model
-      .lock()
-      .map_err(|err| InferenceError::SessionUnavailable {
-        reason: err.to_string(),
-      })
+    self.model.lock().map_err(|err| InferenceError::SessionUnavailable {
+      reason: err.to_string(),
+    })
   }
 
-  fn convert_first_result(
-    &self,
-    results: Vec<ultralytics_inference::Results>,
-  ) -> InferenceResult<DetectionSet> {
-    let result = results
-      .into_iter()
-      .next()
-      .ok_or(InferenceError::MissingResult)?;
-    detection_set_from_result(
-      &self.model_id,
-      &result,
-      self.class_names_override.as_deref(),
-    )
+  fn convert_first_result(&self, results: Vec<ultralytics_inference::Results>) -> InferenceResult<DetectionSet> {
+    let result = results.into_iter().next().ok_or(InferenceError::MissingResult)?;
+    detection_set_from_result(&self.model_id, &result, self.class_names_override.as_deref())
   }
 }
 
@@ -154,11 +135,7 @@ fn require_model_path(path: &Path) -> InferenceResult<()> {
   })
 }
 
-fn build_inference_config(
-  input_size: Option<u32>,
-  options: DetectionOptions,
-  device: InferenceDevice,
-) -> InferenceConfig {
+fn build_inference_config(input_size: Option<u32>, options: DetectionOptions, device: InferenceDevice) -> InferenceConfig {
   let mut config = InferenceConfig::new()
     .with_confidence(options.confidence_threshold)
     .with_iou(options.iou_threshold)
@@ -217,10 +194,7 @@ mod tests {
   fn missing_model_rejected_before_backend_load() {
     let err = UltralyticsDetector::load(valid_config()).unwrap_err();
 
-    assert!(
-      matches!(err, InferenceError::MissingModel { .. }),
-      "expected MissingModel, got {err:?}"
-    );
+    assert!(matches!(err, InferenceError::MissingModel { .. }), "expected MissingModel, got {err:?}");
   }
 
   #[test]
@@ -231,10 +205,7 @@ mod tests {
     })
     .unwrap_err();
 
-    assert!(
-      matches!(err, InferenceError::InvalidInputSize { input_size: 0 }),
-      "expected InvalidInputSize, got {err:?}"
-    );
+    assert!(matches!(err, InferenceError::InvalidInputSize { input_size: 0 }), "expected InvalidInputSize, got {err:?}");
   }
 
   #[test]
@@ -271,13 +242,7 @@ mod tests {
     })
     .unwrap_err();
 
-    assert!(
-      matches!(
-        err,
-        InferenceError::InvalidMaxDetections { max_detections: 0 }
-      ),
-      "expected InvalidMaxDetections, got {err:?}"
-    );
+    assert!(matches!(err, InferenceError::InvalidMaxDetections { max_detections: 0 }), "expected InvalidMaxDetections, got {err:?}");
   }
 
   #[test]
@@ -288,10 +253,7 @@ mod tests {
     })
     .unwrap_err();
 
-    assert!(
-      matches!(err, InferenceError::EmptyClassList),
-      "expected EmptyClassList, got {err:?}"
-    );
+    assert!(matches!(err, InferenceError::EmptyClassList), "expected EmptyClassList, got {err:?}");
   }
 
   #[test]
@@ -315,26 +277,17 @@ mod tests {
   fn path_image_open_errors_stay_io_layer() {
     let err = load_image_path("missing-input-image.png").unwrap_err();
 
-    assert!(
-      matches!(err, InferenceError::Io { .. }),
-      "expected Io, got {err:?}"
-    );
+    assert!(matches!(err, InferenceError::Io { .. }), "expected Io, got {err:?}");
   }
 
   #[test]
   fn path_image_decode_errors_stay_image_decode_layer() {
-    let path = std::env::temp_dir().join(format!(
-      "auv-ultralytics-invalid-image-{}.txt",
-      std::process::id()
-    ));
+    let path = std::env::temp_dir().join(format!("auv-ultralytics-invalid-image-{}.txt", std::process::id()));
     std::fs::write(&path, b"not an image").unwrap();
 
     let err = load_image_path(&path).unwrap_err();
     std::fs::remove_file(&path).unwrap();
 
-    assert!(
-      matches!(err, InferenceError::ImageDecode { .. }),
-      "expected ImageDecode, got {err:?}"
-    );
+    assert!(matches!(err, InferenceError::ImageDecode { .. }), "expected ImageDecode, got {err:?}");
   }
 }

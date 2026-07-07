@@ -12,12 +12,9 @@ pub mod views;
 pub mod windows;
 
 pub use commands::mouse::{
-  NaturalScrollingToggleInputs, NaturalScrollingToggleResult, PointerSpeedRoundtripInputs,
-  PointerSpeedRoundtripResult, PointerSpeedSetInputs, PointerSpeedSetResult,
-  run_natural_scrolling_toggle, run_pointer_speed_roundtrip, run_pointer_speed_set,
+  NaturalScrollingToggleInputs, NaturalScrollingToggleResult, PointerSpeedRoundtripInputs, PointerSpeedRoundtripResult,
+  PointerSpeedSetInputs, PointerSpeedSetResult, run_natural_scrolling_toggle, run_pointer_speed_roundtrip, run_pointer_speed_set,
 };
-pub use commands::system_details::{
-  CopySystemDetailsInputs, CopySystemDetailsResult, run_copy_system_details,
-};
+pub use commands::system_details::{CopySystemDetailsInputs, CopySystemDetailsResult, run_copy_system_details};
 pub use commands::{OpenInputs, OpenResult, run_open};
 pub use interaction::{InteractionStep, StepOutcome};

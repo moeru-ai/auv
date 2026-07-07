@@ -119,12 +119,8 @@ fn capture_region_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     return Ok(dry_run_output(input.command_id));
   }
 
-  let region = Rect::new(
-    required_f64(&input, "x")?,
-    required_f64(&input, "y")?,
-    required_f64(&input, "width")?,
-    required_f64(&input, "height")?,
-  );
+  let region =
+    Rect::new(required_f64(&input, "x")?, required_f64(&input, "y")?, required_f64(&input, "width")?, required_f64(&input, "height")?);
   let driver = auv_driver_macos::MacosDriver::new();
   let session = driver.open_local().map_err(|error| error.to_string())?;
   let capture = session
@@ -136,31 +132,16 @@ fn capture_region_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     .map_err(|error| error.to_string())?;
 
   let mut output = InvokeCommandOutput::new("screen region captured");
-  output.backend = Some(format!(
-    "auv-driver-macos.display.{}",
-    capture.capture.backend
-  ));
-  output
-    .signals
-    .insert("display.id".to_string(), capture.display.id);
-  output.signals.insert(
-    "capture.width".to_string(),
-    capture.capture.image.width().to_string(),
-  );
-  output.signals.insert(
-    "capture.height".to_string(),
-    capture.capture.image.height().to_string(),
-  );
+  output.backend = Some(format!("auv-driver-macos.display.{}", capture.capture.backend));
+  output.signals.insert("display.id".to_string(), capture.display.id);
+  output.signals.insert("capture.width".to_string(), capture.capture.image.width().to_string());
+  output.signals.insert("capture.height".to_string(), capture.capture.image.height().to_string());
   // TODO(invoke-capture-contract-artifacts): this records the captured pixels
   // and basic dimensions, but not the standalone capture-contract artifact.
   // Add it after the direct-invoke contract JSON shape is accepted in
   // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
   let source_path = invoke_artifact_path(input.command_id, "region-capture", "png");
-  capture
-    .capture
-    .image
-    .save(&source_path)
-    .map_err(|error| format!("failed to write screen.captureRegion artifact: {error}"))?;
+  capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen.captureRegion artifact: {error}"))?;
   output.artifacts.push(ProducedArtifact {
     kind: "screen-region-capture".to_string(),
     source_path,
@@ -168,10 +149,7 @@ fn capture_region_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     note: Some("Region screenshot captured by screen.captureRegion.".to_string()),
   });
   output.verification = Some("capture-only; no semantic success claim".to_string());
-  output.known_limits.push(
-    "screen.captureRegion records a region screenshot only; it does not verify UI semantics."
-      .to_string(),
-  );
+  output.known_limits.push("screen.captureRegion records a region screenshot only; it does not verify UI semantics.".to_string());
   Ok(output)
 }
 
@@ -203,19 +181,14 @@ fn find_screen_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCom
   let wait_options = WaitOptions::default();
   let started = Instant::now();
   loop {
-    let capture = session
-      .display()
-      .capture(CaptureOptions::default())
-      .map_err(|error| error.to_string())?;
+    let capture = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
     let matches = session
       .vision()
       .find_text_in_capture(&capture.capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0))
       .map_err(|error| error.to_string())?;
     if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
       if wait && matches.matches.is_empty() {
-        return Err(format!(
-          "screen.waitForText did not find text {query:?} before timeout"
-        ));
+        return Err(format!("screen.waitForText did not find text {query:?} before timeout"));
       }
       let mut output = text_matches_output(
         input.command_id,
@@ -228,11 +201,7 @@ fn find_screen_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCom
       // recognition-result artifact with query/bounds/confidence. Add that
       // after the artifact shape is accepted in the direct-command handoff.
       let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
-      capture
-        .capture
-        .image
-        .save(&source_path)
-        .map_err(|error| format!("failed to write screen OCR screenshot artifact: {error}"))?;
+      capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen OCR screenshot artifact: {error}"))?;
       output.artifacts.push(ProducedArtifact {
         kind: "screen-ocr-screenshot".to_string(),
         source_path,
@@ -266,53 +235,29 @@ fn click_screen_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult 
   let query = required_input(&input, "query")?;
   let driver = auv_driver_macos::MacosDriver::new();
   let session = driver.open_local().map_err(|error| error.to_string())?;
-  let capture = session
-    .display()
-    .capture(CaptureOptions::default())
-    .map_err(|error| error.to_string())?;
-  let matches = session
-    .vision()
-    .find_text_in_capture(&capture.capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0))
-    .map_err(|error| error.to_string())?;
-  let matched = matches
-    .best_match()
-    .ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?;
+  let capture = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
+  let matches =
+    session.vision().find_text_in_capture(&capture.capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
+  let matched = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?;
   let point = matched.action_point();
-  session
-    .input()
-    .click_at(point, Click::Single)
-    .map_err(|error| error.to_string())?;
+  session.input().click_at(point, Click::Single).map_err(|error| error.to_string())?;
 
-  let mut output = text_matches_output(
-    input.command_id,
-    "auv-driver-macos.input",
-    matches.matches.len(),
-    Some(matched.text.as_str()),
-  );
+  let mut output = text_matches_output(input.command_id, "auv-driver-macos.input", matches.matches.len(), Some(matched.text.as_str()));
   // TODO(invoke-recognition-result-artifacts): clickText records the OCR
   // source screenshot used for target resolution, but not the structured
   // recognition-result artifact. Add it with screen.findText once the
   // direct-invoke recognition artifact shape is accepted.
   let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
-  capture
-    .capture
-    .image
-    .save(&source_path)
-    .map_err(|error| format!("failed to write screen click OCR screenshot artifact: {error}"))?;
+  capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen click OCR screenshot artifact: {error}"))?;
   output.artifacts.push(ProducedArtifact {
     kind: "screen-ocr-screenshot".to_string(),
     source_path,
     preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
     note: Some("Screenshot used to resolve screen.clickText OCR target.".to_string()),
   });
-  output
-    .signals
-    .insert("click.x".to_string(), point.x.to_string());
-  output
-    .signals
-    .insert("click.y".to_string(), point.y.to_string());
-  output.verification =
-    Some("activation-only; semantic success requires a separate verification result".to_string());
+  output.signals.insert("click.x".to_string(), point.x.to_string());
+  output.signals.insert("click.y".to_string(), point.y.to_string());
+  output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
   output
     .known_limits
     .push("screen.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
@@ -335,22 +280,15 @@ fn required_input<'a>(input: &'a InvokeCommandInput<'_>, name: &str) -> Result<&
 
 fn required_f64(input: &InvokeCommandInput<'_>, name: &str) -> Result<f64, String> {
   let value = required_input(input, name)?;
-  value
-    .parse::<f64>()
-    .map_err(|error| format!("invalid --{name} value {value:?}: {error}"))
+  value.parse::<f64>().map_err(|error| format!("invalid --{name} value {value:?}: {error}"))
 }
 
-fn reject_target_activation(
-  input: &InvokeCommandInput<'_>,
-  command_id: &str,
-) -> Result<(), String> {
+fn reject_target_activation(input: &InvokeCommandInput<'_>, command_id: &str) -> Result<(), String> {
   if input.target_application_id.is_some() {
     // TODO(invoke-screen-activation): target activation for screen capture/OCR
     // needs a typed app activation lease before these handlers can honor
     // --target without returning to the root driver adapter.
-    return Err(format!(
-      "{command_id} cannot use --target until typed app activation is available"
-    ));
+    return Err(format!("{command_id} cannot use --target until typed app activation is available"));
   }
   Ok(())
 }
@@ -370,21 +308,12 @@ fn invoke_artifact_path(command_id: &str, label: &str, extension: &str) -> std::
   ))
 }
 
-fn text_matches_output(
-  command_id: &str,
-  backend: &str,
-  count: usize,
-  best_text: Option<&str>,
-) -> InvokeCommandOutput {
+fn text_matches_output(command_id: &str, backend: &str, count: usize, best_text: Option<&str>) -> InvokeCommandOutput {
   let mut output = InvokeCommandOutput::new(format!("{command_id} matched {count} text region(s)"));
   output.backend = Some(backend.to_string());
-  output
-    .signals
-    .insert("match.count".to_string(), count.to_string());
+  output.signals.insert("match.count".to_string(), count.to_string());
   if let Some(best_text) = best_text {
-    output
-      .signals
-      .insert("match.best_text".to_string(), best_text.to_string());
+    output.signals.insert("match.best_text".to_string(), best_text.to_string());
   }
   output
 }

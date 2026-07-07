@@ -197,26 +197,10 @@ pub struct ObservedAxTreeSnapshot {
 }
 
 pub fn compute_combined_bounds(displays: &[ObservedDisplay]) -> ObservedRect {
-  let min_x = displays
-    .iter()
-    .map(|display| display.bounds.x)
-    .min()
-    .unwrap_or(0);
-  let min_y = displays
-    .iter()
-    .map(|display| display.bounds.y)
-    .min()
-    .unwrap_or(0);
-  let max_x = displays
-    .iter()
-    .map(|display| display.bounds.x + display.bounds.width)
-    .max()
-    .unwrap_or(0);
-  let max_y = displays
-    .iter()
-    .map(|display| display.bounds.y + display.bounds.height)
-    .max()
-    .unwrap_or(0);
+  let min_x = displays.iter().map(|display| display.bounds.x).min().unwrap_or(0);
+  let min_y = displays.iter().map(|display| display.bounds.y).min().unwrap_or(0);
+  let max_x = displays.iter().map(|display| display.bounds.x + display.bounds.width).max().unwrap_or(0);
+  let max_y = displays.iter().map(|display| display.bounds.y + display.bounds.height).max().unwrap_or(0);
 
   ObservedRect {
     x: min_x,

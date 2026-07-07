@@ -13,14 +13,12 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use crate::action_resolver_decision::ActionResolverDecision;
-use crate::candidate_action_decision::{
-  CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
-};
+use crate::candidate_action_decision::{CandidateActionDecisionArtifact, CandidateActionExecutionArtifact};
 use crate::candidate_promotion::{CandidatePromotion, PromotionProjection, PromotionRefusal};
 use crate::candidate_promotion_recording::CandidatePromotionArtifact;
 use crate::contract::{
-  ArtifactRef, FailureLayer, ObservationSnapshot, OperationOutput, OperationResult,
-  OperationStatus, RecognitionResult, RecognitionSource, VerificationMethod, VerificationResult,
+  ArtifactRef, FailureLayer, ObservationSnapshot, OperationOutput, OperationResult, OperationStatus, RecognitionResult, RecognitionSource,
+  VerificationMethod, VerificationResult,
 };
 use crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID;
 use crate::model::AuvResult;
@@ -30,21 +28,16 @@ use crate::stability::{StabilityAssessment, StabilityRejection};
 use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
 use auv_game_minecraft::dataset::{SourceRunSummary, SpatialBundleCounts};
 use auv_game_minecraft::{
-  TrainingCompatibilityViewReport, TrainingLaunchInspectReport, TrainingLaunchJobInspectReport,
-  TrainingLaunchJobManifest, TrainingLaunchPlanManifest, TrainingPackageCounts,
-  TrainingPackageInspectReport, TrainingPackageManifest, TrainingResultArtifactFetchInspectReport,
-  TrainingResultArtifactFetchManifest, TrainingResultHoldoutPreviewInspectReport,
-  TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport,
-  TrainingResultHoldoutRenderQualityManifest, TrainingResultInspectReport, TrainingResultManifest,
-  TrainingResultSemanticCheckpointRecord, TrainingResultSemanticInspectReport,
-  TrainingResultSemanticManifest, TrainingResultSpatialQueryInspectReport,
-  TrainingResultSpatialQueryManifest, derive_action_readiness,
+  TrainingCompatibilityViewReport, TrainingLaunchInspectReport, TrainingLaunchJobInspectReport, TrainingLaunchJobManifest,
+  TrainingLaunchPlanManifest, TrainingPackageCounts, TrainingPackageInspectReport, TrainingPackageManifest,
+  TrainingResultArtifactFetchInspectReport, TrainingResultArtifactFetchManifest, TrainingResultHoldoutPreviewInspectReport,
+  TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport, TrainingResultHoldoutRenderQualityManifest,
+  TrainingResultInspectReport, TrainingResultManifest, TrainingResultSemanticCheckpointRecord, TrainingResultSemanticInspectReport,
+  TrainingResultSemanticManifest, TrainingResultSpatialQueryInspectReport, TrainingResultSpatialQueryManifest, derive_action_readiness,
 };
 use auv_game_osu::{
-  DetectionEvalQualityInspectReport, DetectionEvalQualityManifest,
-  DetectionEvalWitnessInspectReport, DetectionEvalWitnessManifest,
-  VisualTruthSemanticInspectReport, VisualTruthSemanticManifest,
-  VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
+  DetectionEvalQualityInspectReport, DetectionEvalQualityManifest, DetectionEvalWitnessInspectReport, DetectionEvalWitnessManifest,
+  VisualTruthSemanticInspectReport, VisualTruthSemanticManifest, VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
   derive_visual_truth_spatial_query_action_readiness,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
@@ -852,9 +845,7 @@ pub struct MinecraftTrainingResultArtifactSummary {
   pub byte_size: Option<u64>,
 }
 
-impl From<auv_game_minecraft::TrainingResultArtifactRecord>
-  for MinecraftTrainingResultArtifactSummary
-{
+impl From<auv_game_minecraft::TrainingResultArtifactRecord> for MinecraftTrainingResultArtifactSummary {
   fn from(value: auv_game_minecraft::TrainingResultArtifactRecord) -> Self {
     Self {
       relative_path: value.relative_path,
@@ -1374,25 +1365,18 @@ struct LegacyCandidateActionExecutionArtifact {
   pub known_limits: Vec<String>,
 }
 
-pub(crate) fn list_verifications(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<VerificationResult>> {
+pub(crate) fn list_verifications(store: &LocalStore, run_id: &str) -> AuvResult<Vec<VerificationResult>> {
   let run = store.read_run(run_id)?;
   extract_verifications(store, &run)
 }
 
-pub(crate) fn extract_verifications(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<Vec<VerificationResult>> {
+pub(crate) fn extract_verifications(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<VerificationResult>> {
   let mut verifications = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
       continue;
     }
-    let operation_result: OperationResult =
-      read_artifact_json(store, run.run.run_id.as_str(), artifact, "operation-result")?;
+    let operation_result: OperationResult = read_artifact_json(store, run.run.run_id.as_str(), artifact, "operation-result")?;
     if !operation_result.verifications.is_empty() {
       verifications.extend(operation_result.verifications);
       continue;
@@ -1413,17 +1397,13 @@ pub(crate) fn extract_verifications(
 /// This is the storage-side half of the API-P4 `GetOperation` read path; the
 /// two-source join with the runtime summary lives in
 /// `crate::api::session_service::summary`.
-pub fn read_operation_result(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Option<OperationResult>> {
+pub fn read_operation_result(store: &LocalStore, run_id: &str) -> AuvResult<Option<OperationResult>> {
   let run = store.read_run(run_id)?;
   for artifact in &run.artifacts {
     if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
       continue;
     }
-    let operation_result: OperationResult =
-      read_artifact_json(store, run.run.run_id.as_str(), artifact, "operation-result")?;
+    let operation_result: OperationResult = read_artifact_json(store, run.run.run_id.as_str(), artifact, "operation-result")?;
     return Ok(Some(operation_result));
   }
   Ok(None)
@@ -1434,111 +1414,71 @@ pub fn read_operation_result(
 /// Scans the run's artifacts for the first `operation-summary` JSON record,
 /// mirroring [`read_operation_result`]. Returns `Ok(None)` when the run exists
 /// but recorded no operation summary artifact.
-pub fn read_operation_summary(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Option<auv_cli_invoke::OperationSummary>> {
+pub fn read_operation_summary(store: &LocalStore, run_id: &str) -> AuvResult<Option<auv_cli_invoke::OperationSummary>> {
   use auv_cli_invoke::OperationSummaryRecord;
 
   let run = store.read_run(run_id)?;
   for artifact in &run.artifacts {
-    if artifact.role != crate::contract::OPERATION_SUMMARY_ARTIFACT_ROLE
-      || !is_json_mime(&artifact.mime_type)
-    {
+    if artifact.role != crate::contract::OPERATION_SUMMARY_ARTIFACT_ROLE || !is_json_mime(&artifact.mime_type) {
       continue;
     }
-    let record: OperationSummaryRecord = read_artifact_json(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      "operation-summary",
-    )?;
+    let record: OperationSummaryRecord = read_artifact_json(store, run.run.run_id.as_str(), artifact, "operation-summary")?;
     return Ok(Some(auv_cli_invoke::OperationSummary::from_record(record)));
   }
   Ok(None)
 }
 
-pub(crate) fn list_observation_snapshots(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<ObservationSnapshot>> {
+pub(crate) fn list_observation_snapshots(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ObservationSnapshot>> {
   let run = store.read_run(run_id)?;
   extract_observation_snapshots(store, &run)
 }
 
-pub(crate) fn extract_observation_snapshots(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<Vec<ObservationSnapshot>> {
+pub(crate) fn extract_observation_snapshots(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<ObservationSnapshot>> {
   let mut snapshots = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != "scroll-scan" || !is_json_mime(&artifact.mime_type) {
       continue;
     }
-    let scroll_scan_artifact: ScrollScanArtifact =
-      read_artifact_json(store, run.run.run_id.as_str(), artifact, "scroll-scan")?;
+    let scroll_scan_artifact: ScrollScanArtifact = read_artifact_json(store, run.run.run_id.as_str(), artifact, "scroll-scan")?;
     snapshots.extend(scroll_scan_artifact.snapshots);
   }
   Ok(snapshots)
 }
 
-pub(crate) fn list_detector_recognition_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<DetectorRecognitionLineage>> {
+pub(crate) fn list_detector_recognition_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<DetectorRecognitionLineage>> {
   let run = store.read_run(run_id)?;
   extract_detector_recognition_lineage(store, &run)
 }
 
-pub(crate) fn list_candidate_promotion_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<CandidatePromotionLineage>> {
+pub(crate) fn list_candidate_promotion_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<CandidatePromotionLineage>> {
   let run = store.read_run(run_id)?;
   extract_candidate_promotion_lineage(store, &run)
 }
 
-pub(crate) fn list_candidate_action_decision_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<CandidateActionDecisionLineage>> {
+pub(crate) fn list_candidate_action_decision_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<CandidateActionDecisionLineage>> {
   let run = store.read_run(run_id)?;
   extract_candidate_action_decision_lineage(store, &run)
 }
 
-pub(crate) fn list_candidate_action_execution_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
+pub(crate) fn list_candidate_action_execution_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
   let run = store.read_run(run_id)?;
   extract_candidate_action_execution_lineage(store, &run)
 }
 
-pub fn list_action_transition_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<ActionTransitionLineage>> {
+pub fn list_action_transition_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ActionTransitionLineage>> {
   let run = store.read_run(run_id)?;
   extract_action_transition_lineage(store, &run)
 }
 
-pub(crate) fn list_minecraft_projection_artifacts(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<MinecraftProjectionArtifact>> {
+pub(crate) fn list_minecraft_projection_artifacts(store: &LocalStore, run_id: &str) -> AuvResult<Vec<MinecraftProjectionArtifact>> {
   let run = store.read_run(run_id)?;
   extract_minecraft_projection_artifacts(store, &run)
 }
 
-pub(crate) fn extract_minecraft_projection_artifacts(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<Vec<MinecraftProjectionArtifact>> {
+pub(crate) fn extract_minecraft_projection_artifacts(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<MinecraftProjectionArtifact>> {
   let mut artifacts = Vec::new();
   for artifact in &run.artifacts {
-    if artifact.role != crate::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
-      || !is_json_mime(&artifact.mime_type)
-    {
+    if artifact.role != crate::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE || !is_json_mime(&artifact.mime_type) {
       continue;
     }
 
@@ -1682,10 +1622,7 @@ pub(crate) fn extract_minecraft_holdout_render_quality_manifests(
       manifests.push(MinecraftHoldoutRenderQualityManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft holdout render quality manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft holdout render quality manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -1726,10 +1663,7 @@ pub(crate) fn extract_minecraft_holdout_render_quality_inspect_reports(
       reports.push(MinecraftHoldoutRenderQualityInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "minecraft holdout render quality inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft holdout render quality inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -1810,10 +1744,7 @@ pub(crate) fn extract_osu_visual_truth_semantic_manifests(
       manifests.push(OsuVisualTruthSemanticManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "osu visual truth semantic manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("osu visual truth semantic manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -1854,10 +1785,7 @@ pub(crate) fn extract_osu_visual_truth_semantic_inspect_reports(
       reports.push(OsuVisualTruthSemanticInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "osu visual truth semantic inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("osu visual truth semantic inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -1898,10 +1826,7 @@ pub(crate) fn extract_osu_visual_truth_spatial_query_manifests(
       manifests.push(OsuVisualTruthSpatialQueryManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "osu visual truth spatial query manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("osu visual truth spatial query manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -1942,10 +1867,7 @@ pub(crate) fn extract_osu_visual_truth_spatial_query_inspect_reports(
       reports.push(OsuVisualTruthSpatialQueryInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "osu visual truth spatial query inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("osu visual truth spatial query inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2018,10 +1940,7 @@ pub(crate) fn extract_osu_detection_eval_witness_manifests(
       manifests.push(OsuDetectionEvalWitnessManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "osu detection eval witness manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("osu detection eval witness manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2062,10 +1981,7 @@ pub(crate) fn extract_osu_detection_eval_witness_inspect_reports(
       reports.push(OsuDetectionEvalWitnessInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "osu detection eval witness inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("osu detection eval witness inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2106,10 +2022,7 @@ pub(crate) fn extract_osu_detection_eval_quality_manifests(
       manifests.push(OsuDetectionEvalQualityManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "osu detection eval quality manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("osu detection eval quality manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2150,10 +2063,7 @@ pub(crate) fn extract_osu_detection_eval_quality_inspect_reports(
       reports.push(OsuDetectionEvalQualityInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "osu detection eval quality inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("osu detection eval quality inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2259,10 +2169,7 @@ pub(crate) fn extract_balatro_card_detection_semantic_manifests(
       manifests.push(BalatroCardDetectionSemanticManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "balatro card detection semantic manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("balatro card detection semantic manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2304,10 +2211,7 @@ pub(crate) fn extract_balatro_card_detection_semantic_inspect_reports(
       reports.push(BalatroCardDetectionSemanticInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "balatro card detection semantic inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("balatro card detection semantic inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2349,10 +2253,7 @@ pub(crate) fn extract_balatro_card_detection_spatial_query_manifests(
       manifests.push(BalatroCardDetectionSpatialQueryManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "balatro card detection spatial query manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("balatro card detection spatial query manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2394,10 +2295,7 @@ pub(crate) fn extract_balatro_card_detection_spatial_query_inspect_reports(
       reports.push(BalatroCardDetectionSpatialQueryInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "balatro card detection spatial query inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("balatro card detection spatial query inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2439,10 +2337,7 @@ pub(crate) fn extract_balatro_card_detection_eval_witness_manifests(
       manifests.push(BalatroCardDetectionEvalWitnessManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "balatro card detection eval witness manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("balatro card detection eval witness manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2484,10 +2379,7 @@ pub(crate) fn extract_balatro_card_detection_eval_witness_inspect_reports(
       reports.push(BalatroCardDetectionEvalWitnessInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "balatro card detection eval witness inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("balatro card detection eval witness inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2529,10 +2421,7 @@ pub(crate) fn extract_balatro_card_detection_quality_manifests(
       manifests.push(BalatroCardDetectionQualityManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "balatro card detection quality manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("balatro card detection quality manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2574,10 +2463,7 @@ pub(crate) fn extract_balatro_card_detection_quality_inspect_reports(
       reports.push(BalatroCardDetectionQualityInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "balatro card detection quality inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("balatro card detection quality inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2671,8 +2557,8 @@ fn osu_spatial_query_manifest_summary_for_action_readiness(
   summary: &OsuVisualTruthSpatialQueryManifestSummary,
 ) -> Result<VisualTruthSpatialQueryManifest, String> {
   use auv_game_osu::{
-    CapturePhase, ObjectKind, VisualTruthPixelVisibility, VisualTruthSpatialQueryBackend,
-    VisualTruthSpatialQueryReason, VisualTruthSpatialQueryStatus,
+    CapturePhase, ObjectKind, VisualTruthPixelVisibility, VisualTruthSpatialQueryBackend, VisualTruthSpatialQueryReason,
+    VisualTruthSpatialQueryStatus,
   };
   let capture_phase = match summary.capture_phase.as_str() {
     "before_dispatch" => CapturePhase::BeforeDispatch,
@@ -2699,9 +2585,7 @@ fn osu_spatial_query_manifest_summary_for_action_readiness(
     None => None,
     Some(reason) => Some(match reason {
       "semantic_source_not_ready" => VisualTruthSpatialQueryReason::SemanticSourceNotReady,
-      "target_absent_from_visual_truth" => {
-        VisualTruthSpatialQueryReason::TargetAbsentFromVisualTruth
-      }
+      "target_absent_from_visual_truth" => VisualTruthSpatialQueryReason::TargetAbsentFromVisualTruth,
       "projection_unavailable" => VisualTruthSpatialQueryReason::ProjectionUnavailable,
       other => return Err(format!("unknown query reason {other}")),
     }),
@@ -2715,9 +2599,7 @@ fn osu_spatial_query_manifest_summary_for_action_readiness(
     }),
   };
   let query_backend = match summary.query_backend.as_str() {
-    "playfield_projection_reference" => {
-      VisualTruthSpatialQueryBackend::PlayfieldProjectionReference
-    }
+    "playfield_projection_reference" => VisualTruthSpatialQueryBackend::PlayfieldProjectionReference,
     other => return Err(format!("unknown query backend {other}")),
   };
   Ok(VisualTruthSpatialQueryManifest {
@@ -2782,10 +2664,7 @@ pub(crate) fn extract_minecraft_spatial_bundle_manifests(
       manifests.push(MinecraftSpatialBundleManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft spatial bundle artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft spatial bundle artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2827,10 +2706,7 @@ pub(crate) fn extract_minecraft_training_launch_manifests(
       manifests.push(MinecraftTrainingLaunchManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft training launch artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training launch artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2871,10 +2747,7 @@ pub(crate) fn extract_minecraft_training_launch_inspect_reports(
       reports.push(MinecraftTrainingLaunchInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "minecraft training launch inspect artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training launch inspect artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2915,10 +2788,7 @@ pub(crate) fn extract_minecraft_training_job_manifests(
       manifests.push(MinecraftTrainingJobManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft training job artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training job artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -2959,10 +2829,7 @@ pub(crate) fn extract_minecraft_training_job_inspect_reports(
       reports.push(MinecraftTrainingJobInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "minecraft training job inspect artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training job inspect artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3003,10 +2870,7 @@ pub(crate) fn extract_minecraft_training_result_manifests(
       manifests.push(MinecraftTrainingResultManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft training result artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3047,10 +2911,7 @@ pub(crate) fn extract_minecraft_training_result_inspect_reports(
       reports.push(MinecraftTrainingResultInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "minecraft training result inspect artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result inspect artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3091,10 +2952,7 @@ pub(crate) fn extract_minecraft_training_result_artifact_fetch_manifests(
       manifests.push(MinecraftTrainingResultArtifactFetchManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft training result artifact fetch manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result artifact fetch manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3135,10 +2993,7 @@ pub(crate) fn extract_minecraft_training_result_artifact_fetch_inspect_reports(
       reports.push(MinecraftTrainingResultArtifactFetchInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "minecraft training result artifact fetch inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result artifact fetch inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3179,10 +3034,7 @@ pub(crate) fn extract_minecraft_training_result_semantic_manifests(
       manifests.push(MinecraftTrainingResultSemanticManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft training result semantic manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result semantic manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3223,10 +3075,7 @@ pub(crate) fn extract_minecraft_training_result_semantic_inspect_reports(
       reports.push(MinecraftTrainingResultSemanticInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "minecraft training result semantic inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result semantic inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3267,10 +3116,7 @@ pub(crate) fn extract_minecraft_training_result_spatial_query_manifests(
       manifests.push(MinecraftTrainingResultSpatialQueryManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft training result spatial query manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result spatial query manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3311,10 +3157,7 @@ pub(crate) fn extract_minecraft_training_result_spatial_query_inspect_reports(
       reports.push(MinecraftTrainingResultSpatialQueryInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "minecraft training result spatial query inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result spatial query inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3371,10 +3214,7 @@ pub(crate) fn extract_minecraft_training_result_holdout_preview_manifests(
       manifests.push(MinecraftTrainingResultHoldoutPreviewManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft training result holdout preview manifest mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result holdout preview manifest mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3407,9 +3247,7 @@ pub(crate) fn extract_minecraft_training_result_holdout_preview_inspect_reports(
 ) -> AuvResult<Vec<MinecraftTrainingResultHoldoutPreviewInspectReportLineage>> {
   let mut reports = Vec::new();
   for artifact in &run.artifacts {
-    if artifact.role
-      != crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_ROLE
-    {
+    if artifact.role != crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_ROLE {
       continue;
     }
     let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
@@ -3417,10 +3255,7 @@ pub(crate) fn extract_minecraft_training_result_holdout_preview_inspect_reports(
       reports.push(MinecraftTrainingResultHoldoutPreviewInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "minecraft training result holdout preview inspect mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training result holdout preview inspect mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -3540,39 +3375,23 @@ fn operation_acknowledged_message(output: &OperationOutput) -> Option<String> {
 }
 
 fn query_artifact_id_from_operation_result(operation_result: &OperationResult) -> Option<String> {
-  operation_result
-    .evidence_artifacts
-    .first()
-    .map(|artifact| artifact.artifact_id.as_str().to_string())
-    .or_else(|| {
-      operation_result
-        .freshness_basis
-        .as_ref()
-        .and_then(|basis| basis.source_artifact.as_ref())
-        .map(|artifact| artifact.artifact_id.as_str().to_string())
-    })
+  operation_result.evidence_artifacts.first().map(|artifact| artifact.artifact_id.as_str().to_string()).or_else(|| {
+    operation_result
+      .freshness_basis
+      .as_ref()
+      .and_then(|basis| basis.source_artifact.as_ref())
+      .map(|artifact| artifact.artifact_id.as_str().to_string())
+  })
 }
 
-fn find_query_wired_live_action_operation_result(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Option<(ArtifactRefLineage, OperationResult)> {
+fn find_query_wired_live_action_operation_result(store: &LocalStore, run: &CanonicalRun) -> Option<(ArtifactRefLineage, OperationResult)> {
   for artifact in &run.artifacts {
     if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
       continue;
     }
-    let parsed = read_artifact_json::<OperationResult>(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      "operation-result",
-    )
-    .ok()?;
+    let parsed = read_artifact_json::<OperationResult>(store, run.run.run_id.as_str(), artifact, "operation-result").ok()?;
     if parsed.operation_id == QUERY_WIRED_LIVE_ACTION_OPERATION_ID {
-      return Some((
-        artifact_record_lineage(run.run.run_id.clone(), artifact),
-        parsed,
-      ));
+      return Some((artifact_record_lineage(run.run.run_id.clone(), artifact), parsed));
     }
   }
   None
@@ -3582,9 +3401,7 @@ fn derive_dispatch_evidence_from_events(run: &CanonicalRun) -> (Option<String>, 
   let mut dispatch_command = None;
   let mut dispatch_outcome = None;
   for event in &run.events {
-    if event.name == "command.resolved"
-      && event.message.as_deref() == Some("resolved input.clickWindowPoint")
-    {
+    if event.name == "command.resolved" && event.message.as_deref() == Some("resolved input.clickWindowPoint") {
       dispatch_command = Some("input.clickWindowPoint".to_string());
       dispatch_outcome = Some("resolved".to_string());
     }
@@ -3611,12 +3428,7 @@ fn map_action_eligibility_to_readiness_class(donor: &str) -> Option<String> {
 
 // NOTICE(core-c2-d2): reader-side provenance only — Core-C1 source_readiness_ref.
 fn format_source_readiness_ref(parts: &[(&str, &str)]) -> String {
-  parts
-    .iter()
-    .filter(|(_, value)| !value.is_empty())
-    .map(|(key, value)| format!("{key}={value}"))
-    .collect::<Vec<_>>()
-    .join(" ")
+  parts.iter().filter(|(_, value)| !value.is_empty()).map(|(key, value)| format!("{key}={value}")).collect::<Vec<_>>().join(" ")
 }
 
 fn format_query_manifest_source_readiness_ref(artifact_id: &str, run_id: &str) -> String {
@@ -3635,14 +3447,9 @@ fn format_derived_readiness_source_readiness_ref(query_artifact_id: &str, run_id
   ])
 }
 
-fn format_outcome_event_source_readiness_ref(
-  event_name: &str,
-  operation_result_artifact_id: Option<&str>,
-) -> String {
+fn format_outcome_event_source_readiness_ref(event_name: &str, operation_result_artifact_id: Option<&str>) -> String {
   let mut parts = vec![("kind", "outcome_event"), ("event", event_name)];
-  if let Some(operation_result_artifact_id) =
-    operation_result_artifact_id.filter(|artifact_id| !artifact_id.is_empty())
-  {
+  if let Some(operation_result_artifact_id) = operation_result_artifact_id.filter(|artifact_id| !artifact_id.is_empty()) {
     parts.push(("operation_result_artifact_id", operation_result_artifact_id));
   }
   format_source_readiness_ref(&parts)
@@ -3661,16 +3468,12 @@ fn classify_minecraft_manifest_source_readiness_lookup(
   match extract_result {
     Err(_) => None,
     Ok(manifests) => {
-      let matching = manifests
-        .iter()
-        .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id);
+      let matching = manifests.iter().find(|manifest| manifest.artifact.artifact_id.as_str() == query_id);
       Some(match matching {
         None => SourceReadinessManifestLookup::CleanMiss,
-        Some(lineage) if lineage.manifest.is_some() => {
-          SourceReadinessManifestLookup::MatchedValidManifest {
-            artifact_id: lineage.artifact.artifact_id.as_str().to_string(),
-          }
-        }
+        Some(lineage) if lineage.manifest.is_some() => SourceReadinessManifestLookup::MatchedValidManifest {
+          artifact_id: lineage.artifact.artifact_id.as_str().to_string(),
+        },
         Some(_) => SourceReadinessManifestLookup::MatchedParseFailure,
       })
     }
@@ -3684,16 +3487,12 @@ fn classify_osu_manifest_source_readiness_lookup(
   match extract_result {
     Err(_) => None,
     Ok(manifests) => {
-      let matching = manifests
-        .iter()
-        .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id);
+      let matching = manifests.iter().find(|manifest| manifest.artifact.artifact_id.as_str() == query_id);
       Some(match matching {
         None => SourceReadinessManifestLookup::CleanMiss,
-        Some(lineage) if lineage.manifest.is_some() => {
-          SourceReadinessManifestLookup::MatchedValidManifest {
-            artifact_id: lineage.artifact.artifact_id.as_str().to_string(),
-          }
-        }
+        Some(lineage) if lineage.manifest.is_some() => SourceReadinessManifestLookup::MatchedValidManifest {
+          artifact_id: lineage.artifact.artifact_id.as_str().to_string(),
+        },
         Some(_) => SourceReadinessManifestLookup::MatchedParseFailure,
       })
     }
@@ -3710,20 +3509,15 @@ fn resolve_query_wired_live_action_source_readiness_ref(
 ) -> Option<String> {
   if let Some(query_id) = query_artifact_id {
     return match manifest_lookup? {
-      SourceReadinessManifestLookup::MatchedValidManifest { artifact_id } => Some(
-        format_query_manifest_source_readiness_ref(artifact_id.as_str(), run_id),
-      ),
-      SourceReadinessManifestLookup::CleanMiss => Some(
-        format_derived_readiness_source_readiness_ref(query_id, run_id),
-      ),
+      SourceReadinessManifestLookup::MatchedValidManifest { artifact_id } => {
+        Some(format_query_manifest_source_readiness_ref(artifact_id.as_str(), run_id))
+      }
+      SourceReadinessManifestLookup::CleanMiss => Some(format_derived_readiness_source_readiness_ref(query_id, run_id)),
       SourceReadinessManifestLookup::MatchedParseFailure => None,
     };
   }
   if has_outcome_event {
-    return Some(format_outcome_event_source_readiness_ref(
-      outcome_event_name,
-      operation_result_artifact_id,
-    ));
+    return Some(format_outcome_event_source_readiness_ref(outcome_event_name, operation_result_artifact_id));
   }
   None
 }
@@ -3744,9 +3538,7 @@ fn format_operation_result_verification_source(artifact_id: &str, run_id: &str) 
   ])
 }
 
-fn operation_result_verification_claims(
-  operation_result: &OperationResult,
-) -> Vec<&VerificationResult> {
+fn operation_result_verification_claims(operation_result: &OperationResult) -> Vec<&VerificationResult> {
   if !operation_result.verifications.is_empty() {
     return operation_result.verifications.iter().collect();
   }
@@ -3775,24 +3567,14 @@ fn verification_failure_layer_label(layer: FailureLayer) -> &'static str {
 }
 
 fn verification_claim_reason_snippet(verification: &VerificationResult) -> Option<String> {
-  if let Some(observed_label) = verification
-    .observed_label
-    .as_deref()
-    .filter(|label| !label.is_empty())
-  {
+  if let Some(observed_label) = verification.observed_label.as_deref().filter(|label| !label.is_empty()) {
     return Some(observed_label.to_string());
   }
-  verification
-    .failure_layer
-    .map(verification_failure_layer_label)
-    .map(str::to_string)
+  verification.failure_layer.map(verification_failure_layer_label).map(str::to_string)
 }
 
 fn build_verification_reason_from_claims(claims: &[&VerificationResult]) -> Option<String> {
-  let mut parts = claims
-    .iter()
-    .filter_map(|claim| verification_claim_reason_snippet(claim))
-    .collect::<Vec<_>>();
+  let mut parts = claims.iter().filter_map(|claim| verification_claim_reason_snippet(claim)).collect::<Vec<_>>();
   parts.dedup();
   if parts.is_empty() {
     None
@@ -3801,14 +3583,8 @@ fn build_verification_reason_from_claims(claims: &[&VerificationResult]) -> Opti
   }
 }
 
-fn project_verification_outcome_from_claims(
-  claims: &[&VerificationResult],
-) -> (String, Option<String>) {
-  let semantic_claims = claims
-    .iter()
-    .copied()
-    .filter(|claim| !is_activation_only_verification(claim))
-    .collect::<Vec<_>>();
+fn project_verification_outcome_from_claims(claims: &[&VerificationResult]) -> (String, Option<String>) {
+  let semantic_claims = claims.iter().copied().filter(|claim| !is_activation_only_verification(claim)).collect::<Vec<_>>();
   let focus: &[&VerificationResult] = if semantic_claims.is_empty() {
     claims
   } else {
@@ -3816,34 +3592,20 @@ fn project_verification_outcome_from_claims(
   };
 
   for claim in focus {
-    if matches!(
-      claim.failure_layer,
-      Some(FailureLayer::VerificationUnreliable)
-    ) {
-      return (
-        "unreliable".to_string(),
-        build_verification_reason_from_claims(focus),
-      );
+    if matches!(claim.failure_layer, Some(FailureLayer::VerificationUnreliable)) {
+      return ("unreliable".to_string(), build_verification_reason_from_claims(focus));
     }
   }
 
   for claim in focus {
-    if matches!(
-      claim.failure_layer,
-      Some(FailureLayer::SemanticMismatch | FailureLayer::StateChangedNoMatch)
-    ) || claim.semantic_matched == Some(false)
+    if matches!(claim.failure_layer, Some(FailureLayer::SemanticMismatch | FailureLayer::StateChangedNoMatch))
+      || claim.semantic_matched == Some(false)
     {
-      return (
-        "failed".to_string(),
-        build_verification_reason_from_claims(focus),
-      );
+      return ("failed".to_string(), build_verification_reason_from_claims(focus));
     }
   }
 
-  if focus
-    .iter()
-    .all(|claim| is_activation_only_verification(claim))
-  {
+  if focus.iter().all(|claim| is_activation_only_verification(claim)) {
     return (
       "activation_only".to_string(),
       build_verification_reason_from_claims(focus)
@@ -3851,30 +3613,15 @@ fn project_verification_outcome_from_claims(
     );
   }
 
-  if focus
-    .iter()
-    .any(|claim| claim.semantic_matched == Some(true))
-  {
-    return (
-      "passed".to_string(),
-      build_verification_reason_from_claims(focus),
-    );
+  if focus.iter().any(|claim| claim.semantic_matched == Some(true)) {
+    return ("passed".to_string(), build_verification_reason_from_claims(focus));
   }
 
-  if focus
-    .iter()
-    .any(|claim| claim.state_changed && claim.semantic_matched.is_none())
-  {
-    return (
-      "inconclusive".to_string(),
-      build_verification_reason_from_claims(focus),
-    );
+  if focus.iter().any(|claim| claim.state_changed && claim.semantic_matched.is_none()) {
+    return ("inconclusive".to_string(), build_verification_reason_from_claims(focus));
   }
 
-  (
-    "absent".to_string(),
-    Some("verification claims present but not mappable to a read-side outcome".to_string()),
-  )
+  ("absent".to_string(), Some("verification claims present but not mappable to a read-side outcome".to_string()))
 }
 
 fn resolve_query_wired_live_action_verification_projection(
@@ -3887,10 +3634,7 @@ fn resolve_query_wired_live_action_verification_projection(
   if !attempted {
     return QueryWiredLiveActionVerificationProjection {
       verification_outcome: "not_attempted".to_string(),
-      verification_source: Some(format_source_readiness_ref(&[(
-        "kind",
-        "layer1_no_dispatch",
-      )])),
+      verification_source: Some(format_source_readiness_ref(&[("kind", "layer1_no_dispatch")])),
       verification_reason: refusal_reason
         .filter(|reason| !reason.is_empty() && *reason != "none")
         .map(str::to_string)
@@ -3902,27 +3646,25 @@ fn resolve_query_wired_live_action_verification_projection(
     return QueryWiredLiveActionVerificationProjection {
       verification_outcome: "absent".to_string(),
       verification_source: None,
-      verification_reason: Some(
-        "attempted=true but operation-result artifact missing on read path".to_string(),
-      ),
+      verification_reason: Some("attempted=true but operation-result artifact missing on read path".to_string()),
     };
   };
 
-  let verification_source = operation_result_artifact_id
-    .map(|artifact_id| format_operation_result_verification_source(artifact_id, run_id));
+  let verification_source = operation_result_artifact_id.map(|artifact_id| format_operation_result_verification_source(artifact_id, run_id));
   let claims = operation_result_verification_claims(operation_result);
   if claims.is_empty() {
     return QueryWiredLiveActionVerificationProjection {
       verification_outcome: "absent".to_string(),
       verification_source,
-      verification_reason: operation_result.known_limits.first().cloned().or_else(|| {
-        Some("no VerificationResult on operation-result; Layer 3 evidence absent".to_string())
-      }),
+      verification_reason: operation_result
+        .known_limits
+        .first()
+        .cloned()
+        .or_else(|| Some("no VerificationResult on operation-result; Layer 3 evidence absent".to_string())),
     };
   }
 
-  let (verification_outcome, verification_reason) =
-    project_verification_outcome_from_claims(&claims);
+  let (verification_outcome, verification_reason) = project_verification_outcome_from_claims(&claims);
   QueryWiredLiveActionVerificationProjection {
     verification_outcome,
     verification_source,
@@ -3934,10 +3676,7 @@ pub fn derive_minecraft_query_wired_live_action_summary(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Option<MinecraftQueryWiredLiveActionSummary> {
-  let outcome_event = run
-    .events
-    .iter()
-    .find(|event| event.name == "minecraft.query_wired_live_action.outcome");
+  let outcome_event = run.events.iter().find(|event| event.name == "minecraft.query_wired_live_action.outcome");
   let operation_result_pair = find_query_wired_live_action_operation_result(store, run);
   if outcome_event.is_none() && operation_result_pair.is_none() {
     return None;
@@ -3946,27 +3685,19 @@ pub fn derive_minecraft_query_wired_live_action_summary(
   let mut issue = None;
   let (attempted, action_eligibility, refusal_reason) = if let Some(event) = outcome_event {
     let message = event.message.as_deref().unwrap_or("");
-    let attempted =
-      parse_event_message_field(message, "attempted").is_some_and(|value| value == "true");
-    let action_eligibility =
-      parse_event_message_field(message, "action_eligibility").unwrap_or_else(|| "n/a".to_string());
-    let refusal_reason =
-      parse_event_message_field(message, "refusal_reason").filter(|value| value != "none");
+    let attempted = parse_event_message_field(message, "attempted").is_some_and(|value| value == "true");
+    let action_eligibility = parse_event_message_field(message, "action_eligibility").unwrap_or_else(|| "n/a".to_string());
+    let refusal_reason = parse_event_message_field(message, "refusal_reason").filter(|value| value != "none");
     (attempted, action_eligibility, refusal_reason)
   } else {
     (false, "n/a".to_string(), None)
   };
 
-  let inputs_event = run
-    .events
-    .iter()
-    .find(|event| event.name == "minecraft.query_wired_live_action.inputs");
-  let target_app = inputs_event
-    .and_then(|event| event.message.as_deref())
-    .and_then(|message| parse_event_message_field(message, "target_app"));
-  let target_title = inputs_event
-    .and_then(|event| event.message.as_deref())
-    .and_then(|message| parse_event_message_field(message, "target_title"));
+  let inputs_event = run.events.iter().find(|event| event.name == "minecraft.query_wired_live_action.inputs");
+  let target_app =
+    inputs_event.and_then(|event| event.message.as_deref()).and_then(|message| parse_event_message_field(message, "target_app"));
+  let target_title =
+    inputs_event.and_then(|event| event.message.as_deref()).and_then(|message| parse_event_message_field(message, "target_title"));
 
   let (operation_result_artifact_id, query_artifact_id, operation_status, operation_message) =
     if let Some((ref artifact_ref, ref operation_result)) = operation_result_pair {
@@ -3983,18 +3714,13 @@ pub fn derive_minecraft_query_wired_live_action_summary(
   let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
 
   let run_id = run.run.run_id.as_str();
-  let manifest_extract = query_artifact_id
-    .as_deref()
-    .map(|_| extract_minecraft_training_result_spatial_query_manifests(store, run));
+  let manifest_extract = query_artifact_id.as_deref().map(|_| extract_minecraft_training_result_spatial_query_manifests(store, run));
 
   let mut window_point = None;
   let mut mc14_action_eligibility = None;
   if let Some(query_id) = query_artifact_id.as_deref() {
     if let Some(Ok(ref manifests)) = manifest_extract {
-      if let Some(lineage) = manifests
-        .iter()
-        .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id)
-      {
+      if let Some(lineage) = manifests.iter().find(|manifest| manifest.artifact.artifact_id.as_str() == query_id) {
         let readiness = derive_minecraft_training_result_spatial_query_action_readiness(lineage);
         mc14_action_eligibility = Some(readiness.action_eligibility);
         window_point = readiness.window_point;
@@ -4005,14 +3731,10 @@ pub fn derive_minecraft_query_wired_live_action_summary(
     }
   }
 
-  let readiness_donor = mc14_action_eligibility
-    .as_deref()
-    .unwrap_or(action_eligibility.as_str());
+  let readiness_donor = mc14_action_eligibility.as_deref().unwrap_or(action_eligibility.as_str());
   let readiness_class = map_action_eligibility_to_readiness_class(readiness_donor);
   let manifest_lookup = query_artifact_id.as_deref().and_then(|query_id| {
-    manifest_extract.as_ref().and_then(|extract_result| {
-      classify_minecraft_manifest_source_readiness_lookup(query_id, extract_result)
-    })
+    manifest_extract.as_ref().and_then(|extract_result| classify_minecraft_manifest_source_readiness_lookup(query_id, extract_result))
   });
   let source_readiness_ref = resolve_query_wired_live_action_source_readiness_ref(
     run_id,
@@ -4062,71 +3784,39 @@ fn find_osu_query_wired_live_action_operation_result(
     if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
       continue;
     }
-    let parsed = read_artifact_json::<OperationResult>(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      "operation-result",
-    )
-    .ok()?;
+    let parsed = read_artifact_json::<OperationResult>(store, run.run.run_id.as_str(), artifact, "operation-result").ok()?;
     if parsed.operation_id == OSU_QUERY_WIRED_LIVE_ACTION_OPERATION_ID {
-      return Some((
-        artifact_record_lineage(run.run.run_id.clone(), artifact),
-        parsed,
-      ));
+      return Some((artifact_record_lineage(run.run.run_id.clone(), artifact), parsed));
     }
   }
   None
 }
 
-pub fn derive_osu_query_wired_live_action_summary(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Option<OsuQueryWiredLiveActionSummary> {
-  let outcome_event = run
-    .events
-    .iter()
-    .find(|event| event.name == "osu.query_wired_live_action.outcome");
+pub fn derive_osu_query_wired_live_action_summary(store: &LocalStore, run: &CanonicalRun) -> Option<OsuQueryWiredLiveActionSummary> {
+  let outcome_event = run.events.iter().find(|event| event.name == "osu.query_wired_live_action.outcome");
   let operation_result_pair = find_osu_query_wired_live_action_operation_result(store, run);
   if outcome_event.is_none() && operation_result_pair.is_none() {
     return None;
   }
 
   let mut issue = None;
-  let (attempted, action_eligibility, refusal_reason, pixel_point, window_point) =
-    if let Some(event) = outcome_event {
-      let message = event.message.as_deref().unwrap_or("");
-      let attempted =
-        parse_event_message_field(message, "attempted").is_some_and(|value| value == "true");
-      let action_eligibility = parse_event_message_field(message, "action_eligibility")
-        .unwrap_or_else(|| "n/a".to_string());
-      let refusal_reason =
-        parse_event_message_field(message, "refusal_reason").filter(|value| value != "none");
-      let pixel_point =
-        parse_event_message_field(message, "pixel_point").filter(|value| value != "none");
-      let window_point =
-        parse_event_message_field(message, "window_point").filter(|value| value != "none");
-      (
-        attempted,
-        action_eligibility,
-        refusal_reason,
-        pixel_point,
-        window_point,
-      )
-    } else {
-      (false, "n/a".to_string(), None, None, None)
-    };
+  let (attempted, action_eligibility, refusal_reason, pixel_point, window_point) = if let Some(event) = outcome_event {
+    let message = event.message.as_deref().unwrap_or("");
+    let attempted = parse_event_message_field(message, "attempted").is_some_and(|value| value == "true");
+    let action_eligibility = parse_event_message_field(message, "action_eligibility").unwrap_or_else(|| "n/a".to_string());
+    let refusal_reason = parse_event_message_field(message, "refusal_reason").filter(|value| value != "none");
+    let pixel_point = parse_event_message_field(message, "pixel_point").filter(|value| value != "none");
+    let window_point = parse_event_message_field(message, "window_point").filter(|value| value != "none");
+    (attempted, action_eligibility, refusal_reason, pixel_point, window_point)
+  } else {
+    (false, "n/a".to_string(), None, None, None)
+  };
 
-  let inputs_event = run
-    .events
-    .iter()
-    .find(|event| event.name == "osu.query_wired_live_action.inputs");
-  let target_app = inputs_event
-    .and_then(|event| event.message.as_deref())
-    .and_then(|message| parse_event_message_field(message, "target_app"));
-  let target_title = inputs_event
-    .and_then(|event| event.message.as_deref())
-    .and_then(|message| parse_event_message_field(message, "target_title"));
+  let inputs_event = run.events.iter().find(|event| event.name == "osu.query_wired_live_action.inputs");
+  let target_app =
+    inputs_event.and_then(|event| event.message.as_deref()).and_then(|message| parse_event_message_field(message, "target_app"));
+  let target_title =
+    inputs_event.and_then(|event| event.message.as_deref()).and_then(|message| parse_event_message_field(message, "target_title"));
 
   let (operation_result_artifact_id, query_artifact_id, operation_status, operation_message) =
     if let Some((ref artifact_ref, ref operation_result)) = operation_result_pair {
@@ -4143,17 +3833,12 @@ pub fn derive_osu_query_wired_live_action_summary(
   let (dispatch_command, dispatch_outcome) = derive_dispatch_evidence_from_events(run);
 
   let run_id = run.run.run_id.as_str();
-  let manifest_extract = query_artifact_id
-    .as_deref()
-    .map(|_| extract_osu_visual_truth_spatial_query_manifests(store, run));
+  let manifest_extract = query_artifact_id.as_deref().map(|_| extract_osu_visual_truth_spatial_query_manifests(store, run));
 
   let mut readiness_class = map_action_eligibility_to_readiness_class(&action_eligibility);
   if let Some(query_id) = query_artifact_id.as_deref() {
     if let Some(Ok(ref manifests)) = manifest_extract {
-      if let Some(lineage) = manifests
-        .iter()
-        .find(|manifest| manifest.artifact.artifact_id.as_str() == query_id)
-      {
+      if let Some(lineage) = manifests.iter().find(|manifest| manifest.artifact.artifact_id.as_str() == query_id) {
         let readiness = derive_osu_visual_truth_spatial_query_action_readiness(lineage);
         readiness_class = map_action_eligibility_to_readiness_class(&readiness.action_eligibility);
         if readiness.issue.is_some() {
@@ -4164,9 +3849,7 @@ pub fn derive_osu_query_wired_live_action_summary(
   }
 
   let manifest_lookup = query_artifact_id.as_deref().and_then(|query_id| {
-    manifest_extract.as_ref().and_then(|extract_result| {
-      classify_osu_manifest_source_readiness_lookup(query_id, extract_result)
-    })
+    manifest_extract.as_ref().and_then(|extract_result| classify_osu_manifest_source_readiness_lookup(query_id, extract_result))
   });
   let source_readiness_ref = resolve_query_wired_live_action_source_readiness_ref(
     run_id,
@@ -4213,11 +3896,7 @@ pub(crate) fn list_osu_query_wired_live_action_summaries(
   run_id: &str,
 ) -> AuvResult<Vec<OsuQueryWiredLiveActionSummary>> {
   let run = store.read_run(run_id)?;
-  Ok(
-    derive_osu_query_wired_live_action_summary(store, &run)
-      .into_iter()
-      .collect(),
-  )
+  Ok(derive_osu_query_wired_live_action_summary(store, &run).into_iter().collect())
 }
 
 pub(crate) fn list_minecraft_query_wired_live_action_summaries(
@@ -4225,11 +3904,7 @@ pub(crate) fn list_minecraft_query_wired_live_action_summaries(
   run_id: &str,
 ) -> AuvResult<Vec<MinecraftQueryWiredLiveActionSummary>> {
   let run = store.read_run(run_id)?;
-  Ok(
-    derive_minecraft_query_wired_live_action_summary(store, &run)
-      .into_iter()
-      .collect(),
-  )
+  Ok(derive_minecraft_query_wired_live_action_summary(store, &run).into_iter().collect())
 }
 
 pub const QUALITY_BASELINE_PROFILE_V1_JSON: &str =
@@ -4308,10 +3983,7 @@ pub struct QualityBaselineEvidenceBundle {
   pub collection_issues: Vec<String>,
 }
 
-pub fn quality_baseline_report_for_run(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<MinecraftTrainingResultQualityBaselineReportSummary> {
+pub fn quality_baseline_report_for_run(store: &LocalStore, run_id: &str) -> AuvResult<MinecraftTrainingResultQualityBaselineReportSummary> {
   let profile = quality_baseline_profile_v1()?;
   let bundle = collect_quality_baseline_evidence_for_run(store, run_id, &profile)?;
   Ok(derive_minecraft_training_result_quality_baseline_report(
@@ -4324,14 +3996,10 @@ pub fn quality_baseline_report_for_run(
 }
 
 pub fn quality_baseline_profile_v1() -> Result<QualityBaselineProfile, String> {
-  serde_json::from_str(QUALITY_BASELINE_PROFILE_V1_JSON)
-    .map_err(|error| format!("parse quality baseline profile v1 fixture: {error}"))
+  serde_json::from_str(QUALITY_BASELINE_PROFILE_V1_JSON).map_err(|error| format!("parse quality baseline profile v1 fixture: {error}"))
 }
 
-fn spatial_query_matches_profile(
-  manifest: &MinecraftTrainingResultSpatialQueryManifestSummary,
-  profile: &QualityBaselineProfile,
-) -> bool {
+fn spatial_query_matches_profile(manifest: &MinecraftTrainingResultSpatialQueryManifestSummary, profile: &QualityBaselineProfile) -> bool {
   manifest.training_result_semantic_manifest_path == profile.training_result_semantic_manifest_path
     && manifest.target_block == profile.query_target_block
     && manifest.target_face.as_deref() == profile.query_target_face.as_deref()
@@ -4344,10 +4012,7 @@ fn holdout_preview_matches_profile(
 ) -> bool {
   manifest.training_result_semantic_manifest_path == profile.training_result_semantic_manifest_path
     && manifest.holdout_frame_index == profile.holdout_frame_index
-    && manifest
-      .basis_checkpoint_path
-      .as_deref()
-      .is_some_and(|path| path.ends_with(&profile.basis_checkpoint_suffix))
+    && manifest.basis_checkpoint_path.as_deref().is_some_and(|path| path.ends_with(&profile.basis_checkpoint_suffix))
 }
 
 fn holdout_render_quality_matches_profile(
@@ -4356,15 +4021,10 @@ fn holdout_render_quality_matches_profile(
 ) -> bool {
   manifest.training_result_semantic_manifest_path == profile.training_result_semantic_manifest_path
     && manifest.holdout_frame_index == profile.holdout_frame_index
-    && manifest
-      .basis_checkpoint_path
-      .as_deref()
-      .is_some_and(|path| path.ends_with(&profile.basis_checkpoint_suffix))
+    && manifest.basis_checkpoint_path.as_deref().is_some_and(|path| path.ends_with(&profile.basis_checkpoint_suffix))
 }
 
-fn spatial_query_evidence_from_summary(
-  summary: &MinecraftTrainingResultSpatialQueryManifestSummary,
-) -> QualityBaselineSpatialQueryEvidence {
+fn spatial_query_evidence_from_summary(summary: &MinecraftTrainingResultSpatialQueryManifestSummary) -> QualityBaselineSpatialQueryEvidence {
   QualityBaselineSpatialQueryEvidence {
     status: summary.status.clone(),
     visibility: summary.visibility.clone(),
@@ -4386,21 +4046,13 @@ fn holdout_witness_evidence_from_summary(
     holdout_frame_index: summary.holdout_frame_index,
     basis_checkpoint_path: summary.basis_checkpoint_path.clone(),
     holdout_screenshot_path: summary.holdout_screenshot_path.clone(),
-    spatial_frame_id: summary
-      .holdout_frame
-      .as_ref()
-      .map(|frame| frame.spatial_frame_id.clone()),
+    spatial_frame_id: summary.holdout_frame.as_ref().map(|frame| frame.spatial_frame_id.clone()),
   }
 }
 
-fn render_quality_evidence_from_summary(
-  summary: &MinecraftHoldoutRenderQualityManifestSummary,
-) -> QualityBaselineRenderQualityEvidence {
-  let (l1_mean, mse, psnr) = summary
-    .metrics
-    .as_ref()
-    .map(|metrics| (metrics.l1_mean, metrics.mse, metrics.psnr))
-    .unwrap_or((None, None, None));
+fn render_quality_evidence_from_summary(summary: &MinecraftHoldoutRenderQualityManifestSummary) -> QualityBaselineRenderQualityEvidence {
+  let (l1_mean, mse, psnr) =
+    summary.metrics.as_ref().map(|metrics| (metrics.l1_mean, metrics.mse, metrics.psnr)).unwrap_or((None, None, None));
   QualityBaselineRenderQualityEvidence {
     status: summary.status.clone(),
     verdict: summary.verdict.clone(),
@@ -4412,9 +4064,7 @@ fn render_quality_evidence_from_summary(
   }
 }
 
-fn build_quality_baseline_trust_notes(
-  render_quality: Option<&QualityBaselineRenderQualityEvidence>,
-) -> Vec<String> {
+fn build_quality_baseline_trust_notes(render_quality: Option<&QualityBaselineRenderQualityEvidence>) -> Vec<String> {
   let mut notes = vec![
     "MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference".to_string(),
     "MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence".to_string(),
@@ -4453,8 +4103,7 @@ pub fn derive_minecraft_training_result_quality_baseline_report(
   }
   if let Some(manifest) = render_quality {
     if !holdout_render_quality_matches_profile(manifest, profile) {
-      issues
-        .push("holdout render quality manifest does not match baseline profile pins".to_string());
+      issues.push("holdout render quality manifest does not match baseline profile pins".to_string());
     }
   }
 
@@ -4494,27 +4143,18 @@ pub fn derive_minecraft_training_result_quality_baseline_report(
   }
 }
 
-fn read_holdout_preview_summary_from_path(
-  path: &str,
-) -> Result<MinecraftTrainingResultHoldoutPreviewManifestSummary, String> {
-  let bytes = fs::read_to_string(path)
-    .map_err(|error| format!("read holdout preview manifest at {path}: {error}"))?;
-  let manifest: TrainingResultHoldoutPreviewManifest = serde_json::from_str(&bytes)
-    .map_err(|error| format!("parse holdout preview manifest at {path}: {error}"))?;
-  Ok(MinecraftTrainingResultHoldoutPreviewManifestSummary::from(
-    manifest,
-  ))
+fn read_holdout_preview_summary_from_path(path: &str) -> Result<MinecraftTrainingResultHoldoutPreviewManifestSummary, String> {
+  let bytes = fs::read_to_string(path).map_err(|error| format!("read holdout preview manifest at {path}: {error}"))?;
+  let manifest: TrainingResultHoldoutPreviewManifest =
+    serde_json::from_str(&bytes).map_err(|error| format!("parse holdout preview manifest at {path}: {error}"))?;
+  Ok(MinecraftTrainingResultHoldoutPreviewManifestSummary::from(manifest))
 }
 
 fn select_matching_spatial_query_manifest(
   manifests: &[MinecraftTrainingResultSpatialQueryManifestLineage],
   profile: &QualityBaselineProfile,
 ) -> Option<MinecraftTrainingResultSpatialQueryManifestSummary> {
-  manifests
-    .iter()
-    .filter_map(|lineage| lineage.manifest.as_ref())
-    .find(|manifest| spatial_query_matches_profile(manifest, profile))
-    .cloned()
+  manifests.iter().filter_map(|lineage| lineage.manifest.as_ref()).find(|manifest| spatial_query_matches_profile(manifest, profile)).cloned()
 }
 
 fn select_matching_holdout_preview_manifest(
@@ -4541,10 +4181,7 @@ fn select_matching_holdout_render_quality_manifest(
       manifests
         .iter()
         .filter_map(|lineage| lineage.manifest.as_ref())
-        .find(|manifest| {
-          manifest.training_result_semantic_manifest_path
-            == profile.training_result_semantic_manifest_path
-        })
+        .find(|manifest| manifest.training_result_semantic_manifest_path == profile.training_result_semantic_manifest_path)
         .cloned()
     })
 }
@@ -4571,19 +4208,14 @@ fn find_spatial_query_manifest_in_store(
   store: &LocalStore,
   profile: &QualityBaselineProfile,
 ) -> Option<MinecraftTrainingResultSpatialQueryManifestSummary> {
-  if let Some(run_id) = profile
-    .recorded_run_ids
-    .as_ref()
-    .and_then(|ids| ids.mc12.as_deref())
-  {
+  if let Some(run_id) = profile.recorded_run_ids.as_ref().and_then(|ids| ids.mc12.as_deref()) {
     if let Some(manifest) = find_spatial_query_manifest_in_run(store, run_id, profile) {
       return Some(manifest);
     }
   }
   let runs = store.list_runs().ok()?;
   for run in runs.iter().rev() {
-    if let Some(manifest) = find_spatial_query_manifest_in_run(store, run.run_id.as_str(), profile)
-    {
+    if let Some(manifest) = find_spatial_query_manifest_in_run(store, run.run_id.as_str(), profile) {
       return Some(manifest);
     }
   }
@@ -4594,20 +4226,14 @@ fn find_holdout_preview_manifest_in_store(
   store: &LocalStore,
   profile: &QualityBaselineProfile,
 ) -> Option<MinecraftTrainingResultHoldoutPreviewManifestSummary> {
-  if let Some(run_id) = profile
-    .recorded_run_ids
-    .as_ref()
-    .and_then(|ids| ids.mc16.as_deref())
-  {
+  if let Some(run_id) = profile.recorded_run_ids.as_ref().and_then(|ids| ids.mc16.as_deref()) {
     if let Some(manifest) = find_holdout_preview_manifest_in_run(store, run_id, profile) {
       return Some(manifest);
     }
   }
   let runs = store.list_runs().ok()?;
   for run in runs.iter().rev() {
-    if let Some(manifest) =
-      find_holdout_preview_manifest_in_run(store, run.run_id.as_str(), profile)
-    {
+    if let Some(manifest) = find_holdout_preview_manifest_in_run(store, run.run_id.as_str(), profile) {
       return Some(manifest);
     }
   }
@@ -4619,19 +4245,15 @@ pub fn collect_quality_baseline_evidence_for_run(
   run_id: &str,
   profile: &QualityBaselineProfile,
 ) -> AuvResult<QualityBaselineEvidenceBundle> {
-  let spatial_query_manifests =
-    list_minecraft_training_result_spatial_query_manifests(store, run_id)?;
-  let holdout_preview_manifests =
-    list_minecraft_training_result_holdout_preview_manifests(store, run_id)?;
+  let spatial_query_manifests = list_minecraft_training_result_spatial_query_manifests(store, run_id)?;
+  let holdout_preview_manifests = list_minecraft_training_result_holdout_preview_manifests(store, run_id)?;
   let render_quality_manifests = list_minecraft_holdout_render_quality_manifests(store, run_id)?;
 
-  let render_quality =
-    select_matching_holdout_render_quality_manifest(&render_quality_manifests, profile);
+  let render_quality = select_matching_holdout_render_quality_manifest(&render_quality_manifests, profile);
 
   let mut collection_issues = Vec::new();
 
-  let mut holdout_preview =
-    select_matching_holdout_preview_manifest(&holdout_preview_manifests, profile);
+  let mut holdout_preview = select_matching_holdout_preview_manifest(&holdout_preview_manifests, profile);
   if holdout_preview.is_none() {
     holdout_preview = find_holdout_preview_manifest_in_store(store, profile);
   }
@@ -4657,12 +4279,10 @@ pub fn collect_quality_baseline_evidence_for_run(
   })
 }
 
-pub const QUALITY_BASELINE_VERDICT_THRESHOLDS_PROBE_V1_JSON: &str = include_str!(
-  "../crates/auv-game-minecraft/tests/fixtures/mc17-d3/baseline-verdict-thresholds-v1-probe.json"
-);
-pub const QUALITY_BASELINE_VERDICT_THRESHOLDS_TRAINED_RENDER_V1_JSON: &str = include_str!(
-  "../crates/auv-game-minecraft/tests/fixtures/mc17-d3/baseline-verdict-thresholds-v1-trained-render.json"
-);
+pub const QUALITY_BASELINE_VERDICT_THRESHOLDS_PROBE_V1_JSON: &str =
+  include_str!("../crates/auv-game-minecraft/tests/fixtures/mc17-d3/baseline-verdict-thresholds-v1-probe.json");
+pub const QUALITY_BASELINE_VERDICT_THRESHOLDS_TRAINED_RENDER_V1_JSON: &str =
+  include_str!("../crates/auv-game-minecraft/tests/fixtures/mc17-d3/baseline-verdict-thresholds-v1-trained-render.json");
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct QualityBaselineSpatialQueryThresholds {
@@ -4736,17 +4356,14 @@ pub struct MinecraftQualityBaselineReportWithVerdicts {
   pub verdicts: MinecraftQualityBaselineDualVerdicts,
 }
 
-pub fn quality_baseline_verdict_thresholds_probe_v1()
--> Result<QualityBaselineVerdictThresholds, String> {
+pub fn quality_baseline_verdict_thresholds_probe_v1() -> Result<QualityBaselineVerdictThresholds, String> {
   serde_json::from_str(QUALITY_BASELINE_VERDICT_THRESHOLDS_PROBE_V1_JSON)
     .map_err(|error| format!("parse quality baseline verdict thresholds probe v1 fixture: {error}"))
 }
 
-pub fn quality_baseline_verdict_thresholds_trained_render_v1()
--> Result<QualityBaselineVerdictThresholds, String> {
-  serde_json::from_str(QUALITY_BASELINE_VERDICT_THRESHOLDS_TRAINED_RENDER_V1_JSON).map_err(
-    |error| format!("parse quality baseline verdict thresholds trained_render v1 fixture: {error}"),
-  )
+pub fn quality_baseline_verdict_thresholds_trained_render_v1() -> Result<QualityBaselineVerdictThresholds, String> {
+  serde_json::from_str(QUALITY_BASELINE_VERDICT_THRESHOLDS_TRAINED_RENDER_V1_JSON)
+    .map_err(|error| format!("parse quality baseline verdict thresholds trained_render v1 fixture: {error}"))
 }
 
 fn check_spatial_query_stage(
@@ -4772,20 +4389,13 @@ fn check_spatial_query_stage(
   }
   let mut reasons = Vec::new();
   if evidence.status != thresholds.required_status {
-    reasons.push(format!(
-      "status={} expected required_status={}",
-      evidence.status, thresholds.required_status
-    ));
+    reasons.push(format!("status={} expected required_status={}", evidence.status, thresholds.required_status));
   }
   if let Some(required_visibility) = thresholds.required_visibility.as_deref() {
     match evidence.visibility.as_deref() {
       Some(visibility) if visibility == required_visibility => {}
-      Some(visibility) => reasons.push(format!(
-        "visibility={visibility} expected required_visibility={required_visibility}"
-      )),
-      None => reasons.push(format!(
-        "visibility missing expected required_visibility={required_visibility}"
-      )),
+      Some(visibility) => reasons.push(format!("visibility={visibility} expected required_visibility={required_visibility}")),
+      None => reasons.push(format!("visibility missing expected required_visibility={required_visibility}")),
     }
   }
   let outcome = if reasons.is_empty() {
@@ -4868,16 +4478,10 @@ fn check_render_quality_stage(
   }
   let mut reasons = Vec::new();
   if evidence.status != thresholds.required_status {
-    reasons.push(format!(
-      "status={} expected required_status={}",
-      evidence.status, thresholds.required_status
-    ));
+    reasons.push(format!("status={} expected required_status={}", evidence.status, thresholds.required_status));
   }
   if evidence.verdict != thresholds.required_verdict {
-    reasons.push(format!(
-      "verdict={} expected required_verdict={}",
-      evidence.verdict, thresholds.required_verdict
-    ));
+    reasons.push(format!("verdict={} expected required_verdict={}", evidence.verdict, thresholds.required_verdict));
   }
   if thresholds.require_image_size_match && !evidence.image_size_match {
     reasons.push("image_size_match=false expected true".to_string());
@@ -4903,11 +4507,9 @@ fn check_render_quality_stage(
       None => reasons.push("psnr missing for threshold evaluation".to_string()),
     }
   }
-  let has_metric_threshold_miss = reasons.iter().any(|reason| {
-    reason.contains("exceeds l1_mean_max=")
-      || reason.contains("exceeds mse_max=")
-      || reason.contains("below psnr_min=")
-  });
+  let has_metric_threshold_miss = reasons
+    .iter()
+    .any(|reason| reason.contains("exceeds l1_mean_max=") || reason.contains("exceeds mse_max=") || reason.contains("below psnr_min="));
   let outcome = if reasons.is_empty() {
     "pass".to_string()
   } else if has_metric_threshold_miss {
@@ -4940,18 +4542,14 @@ fn aggregate_quality_verdict(
   }
   if stage_checks.iter().any(|check| {
     check.outcome == "fail"
-      && check.reasons.iter().any(|reason| {
-        reason.contains("exceeds l1_mean_max=")
-          || reason.contains("exceeds mse_max=")
-          || reason.contains("below psnr_min=")
-      })
+      && check
+        .reasons
+        .iter()
+        .any(|reason| reason.contains("exceeds l1_mean_max=") || reason.contains("exceeds mse_max=") || reason.contains("below psnr_min="))
   }) {
     return "fail".to_string();
   }
-  if stage_checks
-    .iter()
-    .any(|check| check.outcome == "partial" || check.outcome == "fail")
-  {
+  if stage_checks.iter().any(|check| check.outcome == "partial" || check.outcome == "fail") {
     return "partial".to_string();
   }
   "blocked".to_string()
@@ -4974,28 +4572,14 @@ pub fn derive_minecraft_training_result_quality_verdict(
   baseline: &MinecraftTrainingResultQualityBaselineReportSummary,
   thresholds: &QualityBaselineVerdictThresholds,
 ) -> MinecraftTrainingResultQualityVerdictSummary {
-  let spatial_check = check_spatial_query_stage(
-    baseline.spatial_query.as_ref(),
-    &thresholds.thresholds.spatial_query,
-  );
-  let holdout_check = check_holdout_witness_stage(
-    baseline.holdout_witness.as_ref(),
-    &thresholds.thresholds.holdout_witness,
-  );
-  let render_check = check_render_quality_stage(
-    baseline.render_quality.as_ref(),
-    &thresholds.thresholds.render_quality,
-  );
+  let spatial_check = check_spatial_query_stage(baseline.spatial_query.as_ref(), &thresholds.thresholds.spatial_query);
+  let holdout_check = check_holdout_witness_stage(baseline.holdout_witness.as_ref(), &thresholds.thresholds.holdout_witness);
+  let render_check = check_render_quality_stage(baseline.render_quality.as_ref(), &thresholds.thresholds.render_quality);
   let stage_checks = vec![spatial_check, holdout_check, render_check];
   let quality_verdict = aggregate_quality_verdict(baseline, &stage_checks);
   let trust_notes = build_quality_verdict_trust_notes(baseline, thresholds);
   let issue = if baseline.evidence_coverage != "complete" {
-    baseline.issue.clone().or_else(|| {
-      Some(format!(
-        "evidence_coverage={} blocks threshold verdict evaluation",
-        baseline.evidence_coverage
-      ))
-    })
+    baseline.issue.clone().or_else(|| Some(format!("evidence_coverage={} blocks threshold verdict evaluation", baseline.evidence_coverage)))
   } else {
     baseline.issue.clone()
   };
@@ -5017,9 +4601,7 @@ pub fn quality_baseline_verdict_for_run(
   thresholds: &QualityBaselineVerdictThresholds,
 ) -> AuvResult<MinecraftTrainingResultQualityVerdictSummary> {
   let baseline = quality_baseline_report_for_run(store, run_id)?;
-  Ok(derive_minecraft_training_result_quality_verdict(
-    &baseline, thresholds,
-  ))
+  Ok(derive_minecraft_training_result_quality_verdict(&baseline, thresholds))
 }
 
 pub fn quality_baseline_report_with_verdicts_for_run(
@@ -5042,47 +4624,21 @@ fn spatial_query_manifest_summary_for_action_readiness(
   summary: &MinecraftTrainingResultSpatialQueryManifestSummary,
 ) -> Result<TrainingResultSpatialQueryManifest, String> {
   let target_block = parse_spatial_query_target_block(&summary.target_block)?;
-  let target_face = summary
-    .target_face
-    .as_deref()
-    .map(parse_spatial_query_target_face)
-    .transpose()?;
+  let target_face = summary.target_face.as_deref().map(parse_spatial_query_target_face).transpose()?;
   let target_semantics = parse_spatial_query_target_semantics(&summary.target_semantics)?;
   let query_kind = parse_spatial_query_kind(&summary.query_kind)?;
   let status = parse_spatial_query_status(&summary.status)?;
-  let reason = summary
-    .reason
-    .as_deref()
-    .map(parse_spatial_query_reason)
-    .transpose()?;
-  let visibility = summary
-    .visibility
-    .as_deref()
-    .map(parse_spatial_query_visibility)
-    .transpose()?;
-  let screen_point = summary
-    .screen_point
-    .as_deref()
-    .map(parse_spatial_query_screen_point)
-    .transpose()?;
-  let selected_backend = summary
-    .selected_backend
-    .as_deref()
-    .map(parse_spatial_query_backend)
-    .transpose()?;
-  let comparison_verdict = summary
-    .comparison_verdict
-    .as_deref()
-    .map(parse_spatial_query_comparison_verdict)
-    .transpose()?;
+  let reason = summary.reason.as_deref().map(parse_spatial_query_reason).transpose()?;
+  let visibility = summary.visibility.as_deref().map(parse_spatial_query_visibility).transpose()?;
+  let screen_point = summary.screen_point.as_deref().map(parse_spatial_query_screen_point).transpose()?;
+  let selected_backend = summary.selected_backend.as_deref().map(parse_spatial_query_backend).transpose()?;
+  let comparison_verdict = summary.comparison_verdict.as_deref().map(parse_spatial_query_comparison_verdict).transpose()?;
 
   Ok(TrainingResultSpatialQueryManifest {
     schema_version: summary.schema_version,
     generated_at_millis: 0,
     training_result_semantic_manifest_path: summary.training_result_semantic_manifest_path.clone(),
-    source_training_result_artifact_manifest_path: summary
-      .source_training_result_artifact_manifest_path
-      .clone(),
+    source_training_result_artifact_manifest_path: summary.source_training_result_artifact_manifest_path.clone(),
     source_training_result_manifest_path: summary.source_training_result_manifest_path.clone(),
     source_training_job_manifest_path: summary.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: summary.source_training_launch_plan_path.clone(),
@@ -5110,24 +4666,14 @@ fn spatial_query_manifest_summary_for_action_readiness(
   })
 }
 
-fn parse_spatial_query_target_block(
-  label: &str,
-) -> Result<auv_game_minecraft::BlockPosition, String> {
+fn parse_spatial_query_target_block(label: &str) -> Result<auv_game_minecraft::BlockPosition, String> {
   let parts: Vec<&str> = label.split(',').collect();
   if parts.len() != 3 {
-    return Err(format!(
-      "invalid spatial query target_block label `{label}`"
-    ));
+    return Err(format!("invalid spatial query target_block label `{label}`"));
   }
-  let x = parts[0]
-    .parse::<i32>()
-    .map_err(|error| format!("invalid spatial query target_block x `{label}`: {error}"))?;
-  let y = parts[1]
-    .parse::<i32>()
-    .map_err(|error| format!("invalid spatial query target_block y `{label}`: {error}"))?;
-  let z = parts[2]
-    .parse::<i32>()
-    .map_err(|error| format!("invalid spatial query target_block z `{label}`: {error}"))?;
+  let x = parts[0].parse::<i32>().map_err(|error| format!("invalid spatial query target_block x `{label}`: {error}"))?;
+  let y = parts[1].parse::<i32>().map_err(|error| format!("invalid spatial query target_block y `{label}`: {error}"))?;
+  let z = parts[2].parse::<i32>().map_err(|error| format!("invalid spatial query target_block z `{label}`: {error}"))?;
   Ok(auv_game_minecraft::BlockPosition::new(x, y, z))
 }
 
@@ -5143,30 +4689,22 @@ fn parse_spatial_query_target_face(label: &str) -> Result<auv_game_minecraft::Bl
   }
 }
 
-fn parse_spatial_query_target_semantics(
-  label: &str,
-) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
+fn parse_spatial_query_target_semantics(label: &str) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
   match label {
     "hit_face_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter),
     "block_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::BlockCenter),
-    other => Err(format!(
-      "invalid spatial query target_semantics label `{other}`"
-    )),
+    other => Err(format!("invalid spatial query target_semantics label `{other}`")),
   }
 }
 
-fn parse_spatial_query_kind(
-  label: &str,
-) -> Result<auv_game_minecraft::TrainingResultSpatialQueryKind, String> {
+fn parse_spatial_query_kind(label: &str) -> Result<auv_game_minecraft::TrainingResultSpatialQueryKind, String> {
   match label {
     "block_projection" => Ok(auv_game_minecraft::TrainingResultSpatialQueryKind::BlockProjection),
     other => Err(format!("invalid spatial query query_kind label `{other}`")),
   }
 }
 
-fn parse_spatial_query_status(
-  label: &str,
-) -> Result<auv_game_minecraft::TrainingResultSpatialQueryStatus, String> {
+fn parse_spatial_query_status(label: &str) -> Result<auv_game_minecraft::TrainingResultSpatialQueryStatus, String> {
   match label {
     "answered" => Ok(auv_game_minecraft::TrainingResultSpatialQueryStatus::Answered),
     "blocked" => Ok(auv_game_minecraft::TrainingResultSpatialQueryStatus::Blocked),
@@ -5175,32 +4713,18 @@ fn parse_spatial_query_status(
   }
 }
 
-fn parse_spatial_query_reason(
-  label: &str,
-) -> Result<auv_game_minecraft::TrainingResultSpatialQueryReason, String> {
+fn parse_spatial_query_reason(label: &str) -> Result<auv_game_minecraft::TrainingResultSpatialQueryReason, String> {
   match label {
-    "semantic_source_not_ready" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::SemanticSourceNotReady)
-    }
-    "target_block_absent_from_scene_packet" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket)
-    }
-    "reference_projection_failed" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::ReferenceProjectionFailed)
-    }
-    "provider_command_failed" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::ProviderCommandFailed)
-    }
-    "provider_output_invalid" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::ProviderOutputInvalid)
-    }
+    "semantic_source_not_ready" => Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::SemanticSourceNotReady),
+    "target_block_absent_from_scene_packet" => Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket),
+    "reference_projection_failed" => Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::ReferenceProjectionFailed),
+    "provider_command_failed" => Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::ProviderCommandFailed),
+    "provider_output_invalid" => Ok(auv_game_minecraft::TrainingResultSpatialQueryReason::ProviderOutputInvalid),
     other => Err(format!("invalid spatial query reason label `{other}`")),
   }
 }
 
-fn parse_spatial_query_visibility(
-  label: &str,
-) -> Result<auv_game_minecraft::ProjectionVisibility, String> {
+fn parse_spatial_query_visibility(label: &str) -> Result<auv_game_minecraft::ProjectionVisibility, String> {
   match label {
     "visible" => Ok(auv_game_minecraft::ProjectionVisibility::Visible),
     "behind_camera" => Ok(auv_game_minecraft::ProjectionVisibility::BehindCamera),
@@ -5213,57 +4737,31 @@ fn parse_spatial_query_visibility(
 fn parse_spatial_query_screen_point(label: &str) -> Result<auv_driver::geometry::Point, String> {
   let parts: Vec<&str> = label.split(',').collect();
   if parts.len() != 2 {
-    return Err(format!(
-      "invalid spatial query screen_point label `{label}`"
-    ));
+    return Err(format!("invalid spatial query screen_point label `{label}`"));
   }
-  let x = parts[0]
-    .parse::<f64>()
-    .map_err(|error| format!("invalid spatial query screen_point x `{label}`: {error}"))?;
-  let y = parts[1]
-    .parse::<f64>()
-    .map_err(|error| format!("invalid spatial query screen_point y `{label}`: {error}"))?;
+  let x = parts[0].parse::<f64>().map_err(|error| format!("invalid spatial query screen_point x `{label}`: {error}"))?;
+  let y = parts[1].parse::<f64>().map_err(|error| format!("invalid spatial query screen_point y `{label}`: {error}"))?;
   Ok(auv_driver::geometry::Point::new(x, y))
 }
 
-fn parse_spatial_query_backend(
-  label: &str,
-) -> Result<auv_game_minecraft::TrainingResultSpatialQueryBackend, String> {
+fn parse_spatial_query_backend(label: &str) -> Result<auv_game_minecraft::TrainingResultSpatialQueryBackend, String> {
   match label {
-    "command_provider" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::CommandProvider)
-    }
-    "checkpoint_native" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::CheckpointNative)
-    }
+    "command_provider" => Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::CommandProvider),
+    "checkpoint_native" => Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::CheckpointNative),
     "closed_scene_toy" => Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::ClosedSceneToy),
-    "projection_reference" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::ProjectionReference)
-    }
-    other => Err(format!(
-      "invalid spatial query selected_backend label `{other}`"
-    )),
+    "projection_reference" => Ok(auv_game_minecraft::TrainingResultSpatialQueryBackend::ProjectionReference),
+    other => Err(format!("invalid spatial query selected_backend label `{other}`")),
   }
 }
 
-fn parse_spatial_query_comparison_verdict(
-  label: &str,
-) -> Result<auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict, String> {
+fn parse_spatial_query_comparison_verdict(label: &str) -> Result<auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict, String> {
   match label {
     "match" => Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::Match),
     "divergent" => Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::Divergent),
-    "provider_only" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::ProviderOnly)
-    }
-    "reference_only" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly)
-    }
-    "not_comparable" => {
-      Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::NotComparable)
-    }
-    other => Err(format!(
-      "invalid spatial query comparison_verdict label `{other}`"
-    )),
+    "provider_only" => Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::ProviderOnly),
+    "reference_only" => Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly),
+    "not_comparable" => Ok(auv_game_minecraft::TrainingResultSpatialQueryComparisonVerdict::NotComparable),
+    other => Err(format!("invalid spatial query comparison_verdict label `{other}`")),
   }
 }
 
@@ -5282,10 +4780,7 @@ pub(crate) fn extract_minecraft_training_package_manifests(
       manifests.push(MinecraftTrainingPackageManifestLineage {
         artifact: artifact_ref,
         manifest: None,
-        issue: Some(format!(
-          "minecraft training package artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training package artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -5329,10 +4824,7 @@ pub(crate) fn extract_minecraft_training_package_inspect_reports(
       reports.push(MinecraftTrainingPackageInspectReportLineage {
         artifact: artifact_ref,
         report: None,
-        issue: Some(format!(
-          "minecraft training package inspect artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft training package inspect artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
@@ -5377,33 +4869,23 @@ pub(crate) fn extract_minecraft_telemetry_sample_artifacts(
         artifact: artifact_ref,
         line_count: None,
         byte_size: None,
-        issue: Some(format!(
-          "minecraft telemetry sample artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("minecraft telemetry sample artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
 
-    let parsed = read_telemetry_artifact_summary(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      crate::contract::TELEMETRY_SAMPLE_ARTIFACT_ROLE,
-    );
+    let parsed = read_telemetry_artifact_summary(store, run.run.run_id.as_str(), artifact, crate::contract::TELEMETRY_SAMPLE_ARTIFACT_ROLE);
 
     match parsed {
-      Ok((artifact_path, line_count, byte_size)) => {
-        artifacts.push(MinecraftTelemetrySampleArtifactLineage {
-          artifact: ArtifactRefLineage {
-            path: Some(artifact_path.display().to_string()),
-            ..artifact_ref
-          },
-          line_count: Some(line_count),
-          byte_size: Some(byte_size),
-          issue: None,
-        })
-      }
+      Ok((artifact_path, line_count, byte_size)) => artifacts.push(MinecraftTelemetrySampleArtifactLineage {
+        artifact: ArtifactRefLineage {
+          path: Some(artifact_path.display().to_string()),
+          ..artifact_ref
+        },
+        line_count: Some(line_count),
+        byte_size: Some(byte_size),
+        issue: None,
+      }),
       Err(error) => artifacts.push(MinecraftTelemetrySampleArtifactLineage {
         artifact: artifact_ref,
         line_count: None,
@@ -5415,10 +4897,7 @@ pub(crate) fn extract_minecraft_telemetry_sample_artifacts(
   Ok(artifacts)
 }
 
-pub(crate) fn extract_detector_recognition_lineage(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<Vec<DetectorRecognitionLineage>> {
+pub(crate) fn extract_detector_recognition_lineage(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<DetectorRecognitionLineage>> {
   let mut lineage = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != DETECTOR_RECOGNITION_ARTIFACT_ROLE {
@@ -5444,27 +4923,15 @@ pub(crate) fn extract_detector_recognition_lineage(
         filtered_count: None,
         best_item_id: None,
         known_limits: Vec::new(),
-        issue: Some(format!(
-          "detector-recognition artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("detector-recognition artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
 
-    let parsed = read_artifact_json::<RecognitionResult>(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      DETECTOR_RECOGNITION_ARTIFACT_ROLE,
-    );
+    let parsed = read_artifact_json::<RecognitionResult>(store, run.run.run_id.as_str(), artifact, DETECTOR_RECOGNITION_ARTIFACT_ROLE);
 
     match parsed {
-      Ok(recognition) => lineage.push(detector_recognition_lineage_entry(
-        run,
-        artifact,
-        recognition,
-      )),
+      Ok(recognition) => lineage.push(detector_recognition_lineage_entry(run, artifact, recognition)),
       Err(error) => lineage.push(DetectorRecognitionLineage {
         artifact: detector_artifact,
         status: DetectorRecognitionLineageStatus::Malformed,
@@ -5489,10 +4956,7 @@ pub(crate) fn extract_detector_recognition_lineage(
   Ok(lineage)
 }
 
-pub(crate) fn extract_candidate_promotion_lineage(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<Vec<CandidatePromotionLineage>> {
+pub(crate) fn extract_candidate_promotion_lineage(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<CandidatePromotionLineage>> {
   let mut lineage = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != CANDIDATE_PROMOTION_ARTIFACT_ROLE {
@@ -5530,20 +4994,13 @@ pub(crate) fn extract_candidate_promotion_lineage(
         refusal_reasons: Vec::new(),
         promoted_candidate_local_ids: Vec::new(),
         known_limits: Vec::new(),
-        issue: Some(format!(
-          "candidate-promotion artifact mime_type {} is not JSON",
-          artifact.mime_type
-        )),
+        issue: Some(format!("candidate-promotion artifact mime_type {} is not JSON", artifact.mime_type)),
       });
       continue;
     }
 
-    let parsed = read_artifact_json::<CandidatePromotionArtifact>(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      CANDIDATE_PROMOTION_ARTIFACT_ROLE,
-    );
+    let parsed =
+      read_artifact_json::<CandidatePromotionArtifact>(store, run.run.run_id.as_str(), artifact, CANDIDATE_PROMOTION_ARTIFACT_ROLE);
 
     match parsed {
       Ok(promotion) => lineage.push(candidate_promotion_lineage_entry(run, artifact, promotion)),
@@ -5597,10 +5054,7 @@ pub(crate) fn extract_candidate_action_decision_lineage(
     if !is_json_mime(&artifact.mime_type) {
       lineage.push(malformed_candidate_action_decision_lineage(
         decision_artifact,
-        format!(
-          "candidate-action-decision artifact mime_type {} is not JSON",
-          artifact.mime_type
-        ),
+        format!("candidate-action-decision artifact mime_type {} is not JSON", artifact.mime_type),
       ));
       continue;
     }
@@ -5613,13 +5067,8 @@ pub(crate) fn extract_candidate_action_decision_lineage(
     );
 
     match parsed {
-      Ok(decision) => lineage.push(candidate_action_decision_lineage_entry(
-        run, artifact, decision,
-      )),
-      Err(error) => lineage.push(malformed_candidate_action_decision_lineage(
-        decision_artifact,
-        error,
-      )),
+      Ok(decision) => lineage.push(candidate_action_decision_lineage_entry(run, artifact, decision)),
+      Err(error) => lineage.push(malformed_candidate_action_decision_lineage(decision_artifact, error)),
     }
   }
   Ok(lineage)
@@ -5639,10 +5088,7 @@ pub(crate) fn extract_candidate_action_execution_lineage(
     if !is_json_mime(&artifact.mime_type) {
       lineage.push(malformed_candidate_action_execution_lineage(
         execution_artifact,
-        format!(
-          "candidate-action-execution artifact mime_type {} is not JSON",
-          artifact.mime_type
-        ),
+        format!("candidate-action-execution artifact mime_type {} is not JSON", artifact.mime_type),
       ));
       continue;
     }
@@ -5655,22 +5101,14 @@ pub(crate) fn extract_candidate_action_execution_lineage(
     );
 
     match parsed {
-      Ok(execution) => lineage.push(candidate_action_execution_lineage_entry(
-        run, artifact, execution,
-      )),
-      Err(error) => lineage.push(malformed_candidate_action_execution_lineage(
-        execution_artifact,
-        error,
-      )),
+      Ok(execution) => lineage.push(candidate_action_execution_lineage_entry(run, artifact, execution)),
+      Err(error) => lineage.push(malformed_candidate_action_execution_lineage(execution_artifact, error)),
     }
   }
   Ok(lineage)
 }
 
-pub(crate) fn extract_action_transition_lineage(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<Vec<ActionTransitionLineage>> {
+pub(crate) fn extract_action_transition_lineage(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<ActionTransitionLineage>> {
   let mut lineage = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE {
@@ -5681,25 +5119,17 @@ pub(crate) fn extract_action_transition_lineage(
     if !is_json_mime(&artifact.mime_type) {
       lineage.push(malformed_action_transition_lineage(
         execution_artifact,
-        format!(
-          "candidate-action-execution artifact mime_type {} is not JSON",
-          artifact.mime_type
-        ),
+        format!("candidate-action-execution artifact mime_type {} is not JSON", artifact.mime_type),
       ));
       continue;
     }
 
     match read_candidate_action_execution_for_transition(store, run.run.run_id.as_str(), artifact) {
-      Ok(ActionTransitionExecutionRead::Canonical(execution)) => lineage.push(
-        action_transition_lineage_entry(store, run, artifact, execution),
-      ),
-      Ok(ActionTransitionExecutionRead::Legacy(legacy)) => lineage.push(
-        legacy_action_transition_lineage_entry(run, artifact, legacy),
-      ),
-      Err(error) => lineage.push(malformed_action_transition_lineage(
-        execution_artifact,
-        error,
-      )),
+      Ok(ActionTransitionExecutionRead::Canonical(execution)) => {
+        lineage.push(action_transition_lineage_entry(store, run, artifact, execution))
+      }
+      Ok(ActionTransitionExecutionRead::Legacy(legacy)) => lineage.push(legacy_action_transition_lineage_entry(run, artifact, legacy)),
+      Err(error) => lineage.push(malformed_action_transition_lineage(execution_artifact, error)),
     }
   }
   Ok(lineage)
@@ -5714,23 +5144,10 @@ fn detector_recognition_lineage_entry(
   artifact: &ArtifactRecordV1Alpha1,
   recognition: RecognitionResult,
 ) -> DetectorRecognitionLineage {
-  let capture_artifact = recognition
-    .scope
-    .capture_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
-  let capture_contract_artifact = recognition
-    .scope
-    .capture_contract_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
-  let evidence_artifacts = recognition
-    .evidence
-    .iter()
-    .map(|reference| resolve_artifact_ref(run, reference))
-    .collect::<Vec<_>>();
-  let (status, issue) =
-    classify_detector_recognition_lineage(&recognition, capture_artifact.as_ref());
+  let capture_artifact = recognition.scope.capture_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
+  let capture_contract_artifact = recognition.scope.capture_contract_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
+  let evidence_artifacts = recognition.evidence.iter().map(|reference| resolve_artifact_ref(run, reference)).collect::<Vec<_>>();
+  let (status, issue) = classify_detector_recognition_lineage(&recognition, capture_artifact.as_ref());
 
   DetectorRecognitionLineage {
     artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
@@ -5758,16 +5175,8 @@ fn candidate_promotion_lineage_entry(
   artifact: &ArtifactRecordV1Alpha1,
   promotion: CandidatePromotionArtifact,
 ) -> CandidatePromotionLineage {
-  let source_recognition_artifact = promotion
-    .source_recognition_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
-  let capture_artifact = promotion
-    .recognition
-    .scope
-    .capture_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
+  let source_recognition_artifact = promotion.source_recognition_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
+  let capture_artifact = promotion.recognition.scope.capture_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
   let freshness_source_artifact = promotion
     .promotion_context
     .freshness
@@ -5776,15 +5185,9 @@ fn candidate_promotion_lineage_entry(
     .map(|reference| resolve_artifact_ref(run, reference));
   let permission = promotion.promotion_context.permission.as_ref();
   let consent = permission.and_then(|permission| permission.consent.as_ref());
-  let (status, issue) = classify_candidate_promotion_lineage(
-    &promotion,
-    source_recognition_artifact.as_ref(),
-    capture_artifact.as_ref(),
-  );
-  let (decision_kind, refusal_reasons, promoted_candidate_local_ids) =
-    promotion_decision_summary(&promotion.decision);
-  let (stability_kind, stability_observed_frames, stability_reason) =
-    stability_summary(&promotion.stability_assessment);
+  let (status, issue) = classify_candidate_promotion_lineage(&promotion, source_recognition_artifact.as_ref(), capture_artifact.as_ref());
+  let (decision_kind, refusal_reasons, promoted_candidate_local_ids) = promotion_decision_summary(&promotion.decision);
+  let (stability_kind, stability_observed_frames, stability_reason) = stability_summary(&promotion.stability_assessment);
 
   CandidatePromotionLineage {
     artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
@@ -5828,14 +5231,9 @@ fn candidate_action_decision_lineage_entry(
   artifact: &ArtifactRecordV1Alpha1,
   decision: CandidateActionDecisionArtifact,
 ) -> CandidateActionDecisionLineage {
-  let source_candidate_promotion_artifact = decision
-    .source_candidate_promotion_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
-  let (status, issue) = classify_candidate_action_decision_lineage(
-    &decision,
-    source_candidate_promotion_artifact.as_ref(),
-  );
+  let source_candidate_promotion_artifact =
+    decision.source_candidate_promotion_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
+  let (status, issue) = classify_candidate_action_decision_lineage(&decision, source_candidate_promotion_artifact.as_ref());
 
   CandidateActionDecisionLineage {
     artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
@@ -5862,10 +5260,7 @@ fn candidate_action_decision_lineage_entry(
   }
 }
 
-fn malformed_candidate_action_decision_lineage(
-  artifact: ArtifactRefLineage,
-  issue: String,
-) -> CandidateActionDecisionLineage {
+fn malformed_candidate_action_decision_lineage(artifact: ArtifactRefLineage, issue: String) -> CandidateActionDecisionLineage {
   CandidateActionDecisionLineage {
     artifact,
     status: CandidateActionDecisionLineageStatus::Malformed,
@@ -5896,18 +5291,10 @@ fn candidate_action_execution_lineage_entry(
   artifact: &ArtifactRecordV1Alpha1,
   execution: CandidateActionExecutionArtifact,
 ) -> CandidateActionExecutionLineage {
-  let source_candidate_action_decision_artifact = Some(resolve_artifact_ref(
-    run,
-    &execution.source_candidate_action_decision_artifact,
-  ));
-  let source_candidate_promotion_artifact = execution
-    .source_candidate_promotion_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
-  let operation_result_artifact = execution
-    .operation_result_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
+  let source_candidate_action_decision_artifact = Some(resolve_artifact_ref(run, &execution.source_candidate_action_decision_artifact));
+  let source_candidate_promotion_artifact =
+    execution.source_candidate_promotion_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
+  let operation_result_artifact = execution.operation_result_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
   let (status, issue) = classify_candidate_action_execution_lineage(
     &execution,
     source_candidate_action_decision_artifact.as_ref(),
@@ -5936,10 +5323,7 @@ fn candidate_action_execution_lineage_entry(
     selected_method: Some(execution.action_resolver_decision.selected_method),
     input_delivery: detail_string(&execution.detail, &["input_delivery"]),
     selected_path: detail_string(&execution.detail, &["selected_path"]),
-    attempts: execution
-      .detail
-      .get("attempt_count")
-      .and_then(|value| value.as_u64().and_then(|count| usize::try_from(count).ok())),
+    attempts: execution.detail.get("attempt_count").and_then(|value| value.as_u64().and_then(|count| usize::try_from(count).ok())),
     attempts_succeeded: execution
       .detail
       .get("attempts_succeeded")
@@ -5954,17 +5338,13 @@ fn candidate_action_execution_lineage_entry(
     consent_granted_by: Some(execution.consent.granted_by),
     consent_provenance: Some(consent_provenance_string(&execution.consent.provenance)),
     consent_grade: Some(consent_grade_string(&execution.consent.grade)),
-    side_effect: Some(candidate_action_execution_side_effect_string(
-      &execution.side_effect,
-    )),
+    side_effect: Some(candidate_action_execution_side_effect_string(&execution.side_effect)),
     known_limits: execution.known_limits,
     issue,
   }
 }
 
-fn project_action_resolver_decision(
-  decision: &ActionResolverDecision,
-) -> ActionResolverDecisionProjection {
+fn project_action_resolver_decision(decision: &ActionResolverDecision) -> ActionResolverDecisionProjection {
   ActionResolverDecisionProjection {
     version: decision.version.clone(),
     operation: decision.operation.clone(),
@@ -5990,40 +5370,32 @@ fn read_candidate_action_execution_for_transition(
   run_id: &str,
   artifact: &ArtifactRecordV1Alpha1,
 ) -> AuvResult<ActionTransitionExecutionRead> {
-  let (file, artifact_path) = open_artifact_file(
-    store,
-    run_id,
-    artifact,
-    CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
-  )?;
-  let value: serde_json::Value =
-    serde_json::from_reader(BufReader::new(file)).map_err(|error| {
-      format!(
-        "failed to parse {} artifact {} for run {} from {}: {}",
-        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
-        artifact.artifact_id,
-        run_id,
-        artifact_path.display(),
-        error
-      )
-    })?;
+  let (file, artifact_path) = open_artifact_file(store, run_id, artifact, CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE)?;
+  let value: serde_json::Value = serde_json::from_reader(BufReader::new(file)).map_err(|error| {
+    format!(
+      "failed to parse {} artifact {} for run {} from {}: {}",
+      CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+      artifact.artifact_id,
+      run_id,
+      artifact_path.display(),
+      error
+    )
+  })?;
 
   if let Ok(execution) = serde_json::from_value::<CandidateActionExecutionArtifact>(value.clone()) {
     return Ok(ActionTransitionExecutionRead::Canonical(execution));
   }
 
-  serde_json::from_value::<LegacyCandidateActionExecutionArtifact>(value)
-    .map(ActionTransitionExecutionRead::Legacy)
-    .map_err(|error| {
-      format!(
-        "failed to parse {} artifact {} for run {} from {}: {}",
-        CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
-        artifact.artifact_id,
-        run_id,
-        artifact_path.display(),
-        error
-      )
-    })
+  serde_json::from_value::<LegacyCandidateActionExecutionArtifact>(value).map(ActionTransitionExecutionRead::Legacy).map_err(|error| {
+    format!(
+      "failed to parse {} artifact {} for run {} from {}: {}",
+      CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+      artifact.artifact_id,
+      run_id,
+      artifact_path.display(),
+      error
+    )
+  })
 }
 
 fn read_candidate_action_decision_artifact(
@@ -6035,24 +5407,15 @@ fn read_candidate_action_decision_artifact(
   if !resolved.resolved {
     return None;
   }
-  let record = run.artifacts.iter().find(|artifact| {
-    artifact.artifact_id == reference.artifact_id && artifact.span_id == reference.span_id
-  })?;
+  let record =
+    run.artifacts.iter().find(|artifact| artifact.artifact_id == reference.artifact_id && artifact.span_id == reference.span_id)?;
   if !is_json_mime(&record.mime_type) {
     return None;
   }
-  read_artifact_json::<CandidateActionDecisionArtifact>(
-    store,
-    run.run.run_id.as_str(),
-    record,
-    CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
-  )
-  .ok()
+  read_artifact_json::<CandidateActionDecisionArtifact>(store, run.run.run_id.as_str(), record, CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE).ok()
 }
 
-fn action_transition_verification_projection(
-  execution: &CandidateActionExecutionArtifact,
-) -> ActionTransitionVerificationProjection {
+fn action_transition_verification_projection(execution: &CandidateActionExecutionArtifact) -> ActionTransitionVerificationProjection {
   let claims = operation_result_verification_claims(&execution.operation_result);
   let focus: Vec<&VerificationResult> = if claims.is_empty() {
     vec![&execution.verification_result]
@@ -6068,20 +5431,14 @@ fn action_transition_verification_projection(
         .known_limits
         .first()
         .cloned()
-        .or_else(|| {
-          Some("no VerificationResult on operation-result; Layer 3 evidence absent".to_string())
-        }),
+        .or_else(|| Some("no VerificationResult on operation-result; Layer 3 evidence absent".to_string())),
       semantic_matched: None,
     };
   }
 
-  let (verification_outcome, verification_reason) =
-    project_verification_outcome_from_claims(&focus);
-  let semantic_matched = focus
-    .iter()
-    .find(|claim| claim.semantic_matched.is_some())
-    .or_else(|| focus.first())
-    .and_then(|claim| claim.semantic_matched);
+  let (verification_outcome, verification_reason) = project_verification_outcome_from_claims(&focus);
+  let semantic_matched =
+    focus.iter().find(|claim| claim.semantic_matched.is_some()).or_else(|| focus.first()).and_then(|claim| claim.semantic_matched);
 
   ActionTransitionVerificationProjection {
     verification_outcome,
@@ -6103,13 +5460,9 @@ fn legacy_action_transition_verification_projection(
     };
 
     if !focus.is_empty() {
-      let (verification_outcome, verification_reason) =
-        project_verification_outcome_from_claims(&focus);
-      let semantic_matched = focus
-        .iter()
-        .find(|claim| claim.semantic_matched.is_some())
-        .or_else(|| focus.first())
-        .and_then(|claim| claim.semantic_matched);
+      let (verification_outcome, verification_reason) = project_verification_outcome_from_claims(&focus);
+      let semantic_matched =
+        focus.iter().find(|claim| claim.semantic_matched.is_some()).or_else(|| focus.first()).and_then(|claim| claim.semantic_matched);
       return ActionTransitionVerificationProjection {
         verification_outcome,
         verification_reason,
@@ -6120,8 +5473,7 @@ fn legacy_action_transition_verification_projection(
 
   if let Some(verification_result) = verification_result {
     let focus = vec![verification_result];
-    let (verification_outcome, verification_reason) =
-      project_verification_outcome_from_claims(&focus);
+    let (verification_outcome, verification_reason) = project_verification_outcome_from_claims(&focus);
     return ActionTransitionVerificationProjection {
       verification_outcome,
       verification_reason,
@@ -6131,9 +5483,7 @@ fn legacy_action_transition_verification_projection(
 
   ActionTransitionVerificationProjection {
     verification_outcome: "absent".to_string(),
-    verification_reason: Some(
-      "no VerificationResult on operation-result; Layer 3 evidence absent".to_string(),
-    ),
+    verification_reason: Some("no VerificationResult on operation-result; Layer 3 evidence absent".to_string()),
     semantic_matched: None,
   }
 }
@@ -6148,15 +5498,10 @@ fn classify_action_transition_lineage(
   let mut status = ActionTransitionLineageStatus::Ready;
 
   if effective_decision.is_none() {
-    return (
-      ActionTransitionLineageStatus::Partial,
-      Some("missing_action_resolver_decision".to_string()),
-    );
+    return (ActionTransitionLineageStatus::Partial, Some("missing_action_resolver_decision".to_string()));
   }
 
-  let has_plan_delivery_mismatch = known_limits
-    .iter()
-    .any(|limit| limit.starts_with("plan_delivery_mismatch:"));
+  let has_plan_delivery_mismatch = known_limits.iter().any(|limit| limit.starts_with("plan_delivery_mismatch:"));
 
   if has_plan_delivery_mismatch {
     status = ActionTransitionLineageStatus::Partial;
@@ -6165,10 +5510,7 @@ fn classify_action_transition_lineage(
   if let (Some(planned), Some(effective)) = (planned_decision, effective_decision) {
     if planned.selected_method != effective.selected_method && !has_plan_delivery_mismatch {
       status = ActionTransitionLineageStatus::Partial;
-      issue = Some(format!(
-        "plan_effective_method_divergence: planned={} effective={}",
-        planned.selected_method, effective.selected_method
-      ));
+      issue = Some(format!("plan_effective_method_divergence: planned={} effective={}", planned.selected_method, effective.selected_method));
     }
   }
 
@@ -6188,31 +5530,16 @@ fn action_transition_lineage_entry(
   artifact: &ArtifactRecordV1Alpha1,
   execution: CandidateActionExecutionArtifact,
 ) -> ActionTransitionLineage {
-  let source_candidate_promotion_artifact = execution
-    .source_candidate_promotion_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
-  let operation_result_artifact = execution
-    .operation_result_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
-  let planned_decision = read_candidate_action_decision_artifact(
-    store,
-    run,
-    &execution.source_candidate_action_decision_artifact,
-  )
-  .map(|decision| project_action_resolver_decision(&decision.action_resolver_decision));
-  let effective_decision = Some(project_action_resolver_decision(
-    &execution.action_resolver_decision,
-  ));
+  let source_candidate_promotion_artifact =
+    execution.source_candidate_promotion_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
+  let operation_result_artifact = execution.operation_result_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
+  let planned_decision = read_candidate_action_decision_artifact(store, run, &execution.source_candidate_action_decision_artifact)
+    .map(|decision| project_action_resolver_decision(&decision.action_resolver_decision));
+  let effective_decision = Some(project_action_resolver_decision(&execution.action_resolver_decision));
   let driver_result = Some(execution.input_action_result.clone());
   let known_limits = execution.known_limits.clone();
-  let (status, issue) = classify_action_transition_lineage(
-    &execution,
-    effective_decision.as_ref(),
-    planned_decision.as_ref(),
-    &known_limits,
-  );
+  let (status, issue) =
+    classify_action_transition_lineage(&execution, effective_decision.as_ref(), planned_decision.as_ref(), &known_limits);
   let verification = action_transition_verification_projection(&execution);
 
   ActionTransitionLineage {
@@ -6237,10 +5564,7 @@ fn action_transition_lineage_entry(
   }
 }
 
-fn malformed_action_transition_lineage(
-  artifact: ArtifactRefLineage,
-  issue: String,
-) -> ActionTransitionLineage {
+fn malformed_action_transition_lineage(artifact: ArtifactRefLineage, issue: String) -> ActionTransitionLineage {
   ActionTransitionLineage {
     artifact,
     status: ActionTransitionLineageStatus::Malformed,
@@ -6272,22 +5596,11 @@ fn legacy_action_transition_lineage_entry(
   artifact: &ArtifactRecordV1Alpha1,
   legacy: LegacyCandidateActionExecutionArtifact,
 ) -> ActionTransitionLineage {
-  let source_candidate_promotion_artifact = legacy
-    .source_candidate_promotion_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
-  let operation_result_artifact = legacy
-    .operation_result_artifact
-    .as_ref()
-    .map(|reference| resolve_artifact_ref(run, reference));
-  let effective_decision = legacy
-    .action_resolver_decision
-    .as_ref()
-    .map(project_action_resolver_decision);
-  let verification = legacy_action_transition_verification_projection(
-    legacy.operation_result.as_ref(),
-    legacy.verification_result.as_ref(),
-  );
+  let source_candidate_promotion_artifact =
+    legacy.source_candidate_promotion_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
+  let operation_result_artifact = legacy.operation_result_artifact.as_ref().map(|reference| resolve_artifact_ref(run, reference));
+  let effective_decision = legacy.action_resolver_decision.as_ref().map(project_action_resolver_decision);
+  let verification = legacy_action_transition_verification_projection(legacy.operation_result.as_ref(), legacy.verification_result.as_ref());
   let issue = if effective_decision.is_none() {
     Some("missing_action_resolver_decision".to_string())
   } else if legacy.input_action_result.is_none() {
@@ -6310,10 +5623,7 @@ fn legacy_action_transition_lineage_entry(
     driver_result: legacy.input_action_result,
     post_state: ActionTransitionPostState {
       operation_result_artifact,
-      operation_status: legacy
-        .detail
-        .as_ref()
-        .and_then(|detail| detail_string(detail, &["operation_status"])),
+      operation_status: legacy.detail.as_ref().and_then(|detail| detail_string(detail, &["operation_status"])),
     },
     verification,
     known_limits: legacy.known_limits,
@@ -6321,10 +5631,7 @@ fn legacy_action_transition_lineage_entry(
   }
 }
 
-fn malformed_candidate_action_execution_lineage(
-  artifact: ArtifactRefLineage,
-  issue: String,
-) -> CandidateActionExecutionLineage {
+fn malformed_candidate_action_execution_lineage(artifact: ArtifactRefLineage, issue: String) -> CandidateActionExecutionLineage {
   CandidateActionExecutionLineage {
     artifact,
     status: CandidateActionExecutionLineageStatus::Malformed,
@@ -6357,15 +5664,8 @@ fn malformed_candidate_action_execution_lineage(
   }
 }
 
-fn candidate_action_execution_closure_state(
-  execution: &CandidateActionExecutionArtifact,
-) -> CandidateActionExecutionClosureState {
-  if execution
-    .detail
-    .get("readiness")
-    .and_then(|value| value.as_str())
-    == Some("not_ready")
-  {
+fn candidate_action_execution_closure_state(execution: &CandidateActionExecutionArtifact) -> CandidateActionExecutionClosureState {
+  if execution.detail.get("readiness").and_then(|value| value.as_str()) == Some("not_ready") {
     return CandidateActionExecutionClosureState::BlockedByReadiness;
   }
 
@@ -6388,10 +5688,7 @@ fn classify_detector_recognition_lineage(
   capture_artifact: Option<&DetectorRecognitionArtifactRefLineage>,
 ) -> (DetectorRecognitionLineageStatus, Option<String>) {
   if recognition.scope.capture_artifact.is_none() {
-    return (
-      DetectorRecognitionLineageStatus::MissingCaptureArtifact,
-      Some("scope.capture_artifact is missing".to_string()),
-    );
+    return (DetectorRecognitionLineageStatus::MissingCaptureArtifact, Some("scope.capture_artifact is missing".to_string()));
   }
   if let Some(capture_artifact) = capture_artifact
     && !capture_artifact.resolved
@@ -6402,10 +5699,7 @@ fn classify_detector_recognition_lineage(
     );
   }
   if recognition.evidence.is_empty() {
-    return (
-      DetectorRecognitionLineageStatus::MissingEvidence,
-      Some("recognition evidence list is empty".to_string()),
-    );
+    return (DetectorRecognitionLineageStatus::MissingEvidence, Some("recognition evidence list is empty".to_string()));
   }
   (DetectorRecognitionLineageStatus::Ready, None)
 }
@@ -6416,43 +5710,29 @@ fn classify_candidate_promotion_lineage(
   capture_artifact: Option<&ArtifactRefLineage>,
 ) -> (CandidatePromotionLineageStatus, Option<String>) {
   if promotion.source_recognition_artifact.is_none() {
-    return (
-      CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact,
-      Some("source_recognition_artifact is missing".to_string()),
-    );
+    return (CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact, Some("source_recognition_artifact is missing".to_string()));
   }
   if let Some(source_recognition_artifact) = source_recognition_artifact
     && !source_recognition_artifact.resolved
   {
     return (
       CandidatePromotionLineageStatus::SourceRecognitionArtifactUnresolved,
-      Some(
-        "source_recognition_artifact could not be resolved from recorded run artifacts".to_string(),
-      ),
+      Some("source_recognition_artifact could not be resolved from recorded run artifacts".to_string()),
     );
   }
   if promotion.recognition.scope.capture_artifact.is_none() {
-    return (
-      CandidatePromotionLineageStatus::MissingCaptureArtifact,
-      Some("recognition.scope.capture_artifact is missing".to_string()),
-    );
+    return (CandidatePromotionLineageStatus::MissingCaptureArtifact, Some("recognition.scope.capture_artifact is missing".to_string()));
   }
   if let Some(capture_artifact) = capture_artifact
     && !capture_artifact.resolved
   {
     return (
       CandidatePromotionLineageStatus::CaptureArtifactUnresolved,
-      Some(
-        "recognition.scope.capture_artifact could not be resolved from recorded run artifacts"
-          .to_string(),
-      ),
+      Some("recognition.scope.capture_artifact could not be resolved from recorded run artifacts".to_string()),
     );
   }
   if promotion.recognition.evidence.is_empty() {
-    return (
-      CandidatePromotionLineageStatus::MissingRecognitionEvidence,
-      Some("embedded recognition evidence list is empty".to_string()),
-    );
+    return (CandidatePromotionLineageStatus::MissingRecognitionEvidence, Some("embedded recognition evidence list is empty".to_string()));
   }
   (CandidatePromotionLineageStatus::Ready, None)
 }
@@ -6472,10 +5752,7 @@ fn classify_candidate_action_decision_lineage(
   {
     return (
       CandidateActionDecisionLineageStatus::SourceCandidatePromotionArtifactUnresolved,
-      Some(
-        "source_candidate_promotion_artifact could not be resolved from recorded run artifacts"
-          .to_string(),
-      ),
+      Some("source_candidate_promotion_artifact could not be resolved from recorded run artifacts".to_string()),
     );
   }
   (CandidateActionDecisionLineageStatus::Ready, None)
@@ -6489,10 +5766,7 @@ fn classify_candidate_action_execution_lineage(
   if !source_candidate_action_decision_artifact.is_some_and(|artifact| artifact.resolved) {
     return (
       CandidateActionExecutionLineageStatus::SourceCandidateActionDecisionArtifactUnresolved,
-      Some(
-        "source_candidate_action_decision_artifact could not be resolved from recorded run artifacts"
-          .to_string(),
-      ),
+      Some("source_candidate_action_decision_artifact could not be resolved from recorded run artifacts".to_string()),
     );
   }
   if execution.operation_result_artifact.is_none() {
@@ -6506,17 +5780,10 @@ fn classify_candidate_action_execution_lineage(
   {
     return (
       CandidateActionExecutionLineageStatus::OperationResultArtifactUnresolved,
-      Some(
-        "operation_result_artifact could not be resolved from recorded run artifacts".to_string(),
-      ),
+      Some("operation_result_artifact could not be resolved from recorded run artifacts".to_string()),
     );
   }
-  if execution
-    .detail
-    .get("readiness")
-    .and_then(|value| value.as_str())
-    == Some("not_ready")
-  {
+  if execution.detail.get("readiness").and_then(|value| value.as_str()) == Some("not_ready") {
     return (
       CandidateActionExecutionLineageStatus::BlockedNotReady,
       execution
@@ -6546,14 +5813,9 @@ fn artifact_record_lineage(
   }
 }
 
-fn resolve_artifact_ref(
-  run: &CanonicalRun,
-  reference: &ArtifactRef,
-) -> DetectorRecognitionArtifactRefLineage {
+fn resolve_artifact_ref(run: &CanonicalRun, reference: &ArtifactRef) -> DetectorRecognitionArtifactRefLineage {
   let resolved = if reference.run_id == run.run.run_id {
-    run.artifacts.iter().find(|artifact| {
-      artifact.artifact_id == reference.artifact_id && artifact.span_id == reference.span_id
-    })
+    run.artifacts.iter().find(|artifact| artifact.artifact_id == reference.artifact_id && artifact.span_id == reference.span_id)
   } else {
     None
   };
@@ -6587,9 +5849,7 @@ fn projection_kind(projection: &PromotionProjection) -> String {
 
 fn consent_scope_string(scope: &crate::candidate_promotion::ConsentScope) -> String {
   match scope {
-    crate::candidate_promotion::ConsentScope::CandidatePromotionOnly => {
-      "candidate_promotion_only".to_string()
-    }
+    crate::candidate_promotion::ConsentScope::CandidatePromotionOnly => "candidate_promotion_only".to_string(),
   }
 }
 
@@ -6609,19 +5869,13 @@ fn consent_grade_string(grade: &crate::candidate_promotion::ConsentGrade) -> Str
 
 fn consent_action_string(action: &crate::candidate_promotion::ConsentAction) -> String {
   match action {
-    crate::candidate_promotion::ConsentAction::PromoteRecognitionToCandidate => {
-      "promote_recognition_to_candidate".to_string()
-    }
+    crate::candidate_promotion::ConsentAction::PromoteRecognitionToCandidate => "promote_recognition_to_candidate".to_string(),
   }
 }
 
-fn candidate_action_side_effect_string(
-  side_effect: &crate::candidate_action_decision::CandidateActionSideEffect,
-) -> String {
+fn candidate_action_side_effect_string(side_effect: &crate::candidate_action_decision::CandidateActionSideEffect) -> String {
   match side_effect {
-    crate::candidate_action_decision::CandidateActionSideEffect::NoneDecideOnly => {
-      "none_decide_only".to_string()
-    }
+    crate::candidate_action_decision::CandidateActionSideEffect::NoneDecideOnly => "none_decide_only".to_string(),
   }
 }
 
@@ -6629,12 +5883,8 @@ fn candidate_action_execution_side_effect_string(
   side_effect: &crate::candidate_action_decision::CandidateActionExecutionSideEffect,
 ) -> String {
   match side_effect {
-    crate::candidate_action_decision::CandidateActionExecutionSideEffect::SingleInputDelivered => {
-      "single_input_delivered".to_string()
-    }
-    crate::candidate_action_decision::CandidateActionExecutionSideEffect::BlockedNotReady => {
-      "blocked_not_ready".to_string()
-    }
+    crate::candidate_action_decision::CandidateActionExecutionSideEffect::SingleInputDelivered => "single_input_delivered".to_string(),
+    crate::candidate_action_decision::CandidateActionExecutionSideEffect::BlockedNotReady => "blocked_not_ready".to_string(),
   }
 }
 
@@ -6643,11 +5893,7 @@ fn stability_summary(assessment: &StabilityAssessment) -> (String, Option<u32>, 
     StabilityAssessment::Stable {
       observed_frames, ..
     } => ("stable".to_string(), Some(*observed_frames), None),
-    StabilityAssessment::Unstable { reason } => (
-      "unstable".to_string(),
-      None,
-      Some(stability_rejection_string(reason)),
-    ),
+    StabilityAssessment::Unstable { reason } => ("unstable".to_string(), None, Some(stability_rejection_string(reason))),
   }
 }
 
@@ -6680,19 +5926,10 @@ fn stability_rejection_string(reason: &StabilityRejection) -> String {
 
 fn promotion_decision_summary(decision: &CandidatePromotion) -> (String, Vec<String>, Vec<String>) {
   match decision {
-    CandidatePromotion::Refused { reasons } => (
-      "refused".to_string(),
-      reasons.iter().map(promotion_refusal_string).collect(),
-      Vec::new(),
-    ),
-    CandidatePromotion::Promoted { candidates, .. } => (
-      "promoted".to_string(),
-      Vec::new(),
-      candidates
-        .iter()
-        .map(|candidate| candidate.candidate_local_id.clone())
-        .collect(),
-    ),
+    CandidatePromotion::Refused { reasons } => ("refused".to_string(), reasons.iter().map(promotion_refusal_string).collect(), Vec::new()),
+    CandidatePromotion::Promoted { candidates, .. } => {
+      ("promoted".to_string(), Vec::new(), candidates.iter().map(|candidate| candidate.candidate_local_id.clone()).collect())
+    }
   }
 }
 
@@ -6721,11 +5958,7 @@ fn read_artifact_json<T: DeserializeOwned>(
 ) -> AuvResult<T> {
   let (file, artifact_path) = open_artifact_file(store, run_id, artifact, artifact_role)?;
   serde_json::from_reader(BufReader::new(file)).map_err(|error| {
-    format!(
-      "failed to parse {artifact_role} artifact {} for run {run_id} from {}: {error}",
-      artifact.artifact_id,
-      artifact_path.display()
-    )
+    format!("failed to parse {artifact_role} artifact {} for run {run_id} from {}: {error}", artifact.artifact_id, artifact_path.display())
   })
 }
 
@@ -6735,17 +5968,9 @@ fn open_artifact_file(
   artifact: &ArtifactRecordV1Alpha1,
   artifact_role: &str,
 ) -> AuvResult<(fs::File, PathBuf)> {
-  let (_, artifact_path) = store.artifact_file_scoped(
-    run_id,
-    artifact.artifact_id.as_str(),
-    Some(artifact.span_id.as_str()),
-  )?;
+  let (_, artifact_path) = store.artifact_file_scoped(run_id, artifact.artifact_id.as_str(), Some(artifact.span_id.as_str()))?;
   let file = fs::File::open(&artifact_path).map_err(|error| {
-    format!(
-      "failed to open {artifact_role} artifact {} for run {run_id} from {}: {error}",
-      artifact.artifact_id,
-      artifact_path.display()
-    )
+    format!("failed to open {artifact_role} artifact {} for run {run_id} from {}: {error}", artifact.artifact_id, artifact_path.display())
   })?;
   Ok((file, artifact_path))
 }
@@ -6756,31 +5981,17 @@ fn read_telemetry_artifact_summary(
   artifact: &ArtifactRecordV1Alpha1,
   artifact_role: &str,
 ) -> AuvResult<(PathBuf, usize, u64)> {
-  let (_, artifact_path) = store.artifact_file_scoped(
-    run_id,
-    artifact.artifact_id.as_str(),
-    Some(artifact.span_id.as_str()),
-  )?;
+  let (_, artifact_path) = store.artifact_file_scoped(run_id, artifact.artifact_id.as_str(), Some(artifact.span_id.as_str()))?;
   let metadata = fs::metadata(&artifact_path).map_err(|error| {
-    format!(
-      "failed to stat {artifact_role} artifact {} for run {run_id} from {}: {error}",
-      artifact.artifact_id,
-      artifact_path.display()
-    )
+    format!("failed to stat {artifact_role} artifact {} for run {run_id} from {}: {error}", artifact.artifact_id, artifact_path.display())
   })?;
   let (file, _) = open_artifact_file(store, run_id, artifact, artifact_role)?;
-  let line_count = BufReader::new(file)
-    .lines()
-    .try_fold(0usize, |count, line| {
-      let line = line.map_err(|error| {
-        format!(
-          "failed to read {artifact_role} artifact {} for run {run_id} from {}: {error}",
-          artifact.artifact_id,
-          artifact_path.display()
-        )
-      })?;
-      Ok::<_, String>(count + usize::from(!line.trim().is_empty()))
+  let line_count = BufReader::new(file).lines().try_fold(0usize, |count, line| {
+    let line = line.map_err(|error| {
+      format!("failed to read {artifact_role} artifact {} for run {run_id} from {}: {error}", artifact.artifact_id, artifact_path.display())
     })?;
+    Ok::<_, String>(count + usize::from(!line.trim().is_empty()))
+  })?;
   Ok((artifact_path, line_count, metadata.len()))
 }
 
@@ -6803,8 +6014,7 @@ impl From<TrainingLaunchPlanManifest> for MinecraftTrainingLaunchManifestSummary
     Self {
       schema_version: value.schema_version,
       source_training_package_manifest_path: value.source_training_package_manifest_path,
-      source_training_package_inspect_report_path: value
-        .source_training_package_inspect_report_path,
+      source_training_package_inspect_report_path: value.source_training_package_inspect_report_path,
       source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
       source_bundle_manifest_paths: value.source_bundle_manifest_paths,
       source_run_ids: value.source_run_ids,
@@ -6832,9 +6042,7 @@ impl From<TrainingLaunchInspectReport> for MinecraftTrainingLaunchInspectReportS
       source_run_ids: value.source_run_ids,
       compatibility_status: format!("{:?}", value.compatibility_status),
       trainer_readiness: format!("{:?}", value.trainer_readiness),
-      readiness_blocker: value
-        .readiness_blocker
-        .map(|blocker| format!("{blocker:?}")),
+      readiness_blocker: value.readiness_blocker.map(|blocker| format!("{blocker:?}")),
       probe_command: value.probe_command,
       probe_succeeded: value.probe_succeeded,
       exported_frame_count: value.exported_frame_count,
@@ -6858,8 +6066,7 @@ impl From<TrainingLaunchJobManifest> for MinecraftTrainingJobManifestSummary {
       schema_version: value.schema_version,
       source_training_launch_plan_path: value.source_training_launch_plan_path,
       source_training_package_manifest_path: value.source_training_package_manifest_path,
-      source_training_package_inspect_report_path: value
-        .source_training_package_inspect_report_path,
+      source_training_package_inspect_report_path: value.source_training_package_inspect_report_path,
       source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
       source_bundle_manifest_paths: value.source_bundle_manifest_paths,
       source_run_ids: value.source_run_ids,
@@ -6880,9 +6087,7 @@ impl From<TrainingLaunchJobManifest> for MinecraftTrainingJobManifestSummary {
       status: value.status.as_str().to_string(),
       job_id: value.job_id,
       job_url: value.job_url,
-      readiness_blocker: value
-        .readiness_blocker
-        .map(|blocker| format!("{blocker:?}")),
+      readiness_blocker: value.readiness_blocker.map(|blocker| format!("{blocker:?}")),
       known_limits: value.known_limits,
     }
   }
@@ -6908,9 +6113,7 @@ impl From<TrainingLaunchJobInspectReport> for MinecraftTrainingJobInspectReportS
       status: value.status.as_str().to_string(),
       job_id: value.job_id,
       job_url: value.job_url,
-      readiness_blocker: value
-        .readiness_blocker
-        .map(|blocker| format!("{blocker:?}")),
+      readiness_blocker: value.readiness_blocker.map(|blocker| format!("{blocker:?}")),
       probe_command: value.probe_command,
       probe_succeeded: value.probe_succeeded,
       exported_frame_count: value.exported_frame_count,
@@ -6943,11 +6146,7 @@ impl From<TrainingResultManifest> for MinecraftTrainingResultManifestSummary {
       result_dir: value.result_dir,
       exported_frame_count: value.exported_frame_count,
       skipped_frame_count: value.skipped_frame_count,
-      result_artifacts: value
-        .result_artifacts
-        .into_iter()
-        .map(MinecraftTrainingResultArtifactSummary::from)
-        .collect(),
+      result_artifacts: value.result_artifacts.into_iter().map(MinecraftTrainingResultArtifactSummary::from).collect(),
       known_limits: value.known_limits,
     }
   }
@@ -6969,9 +6168,7 @@ impl From<TrainingResultInspectReport> for MinecraftTrainingResultInspectReportS
       source_job_status: value.source_job_status.as_str().to_string(),
       status: value.status.as_str().to_string(),
       status_message: value.status_message,
-      status_reason: value
-        .status_reason
-        .map(|reason| reason.as_str().to_string()),
+      status_reason: value.status_reason.map(|reason| reason.as_str().to_string()),
       job_id: value.job_id,
       job_url: value.job_url,
       result_dir: value.result_dir,
@@ -6984,9 +6181,7 @@ impl From<TrainingResultInspectReport> for MinecraftTrainingResultInspectReportS
   }
 }
 
-impl From<TrainingResultArtifactFetchManifest>
-  for MinecraftTrainingResultArtifactFetchManifestSummary
-{
+impl From<TrainingResultArtifactFetchManifest> for MinecraftTrainingResultArtifactFetchManifestSummary {
   fn from(value: TrainingResultArtifactFetchManifest) -> Self {
     Self {
       schema_version: value.schema_version,
@@ -7004,24 +6199,17 @@ impl From<TrainingResultArtifactFetchManifest>
       source_result_status_reason: value.source_result_status_reason,
       source_result_dir: value.source_result_dir,
       normalized_result_dir: value.normalized_result_dir,
-      normalized_artifacts: value
-        .normalized_artifacts
-        .into_iter()
-        .map(MinecraftTrainingResultNormalizedArtifactSummary::from)
-        .collect(),
+      normalized_artifacts: value.normalized_artifacts.into_iter().map(MinecraftTrainingResultNormalizedArtifactSummary::from).collect(),
       known_limits: value.known_limits,
     }
   }
 }
 
-impl From<TrainingResultArtifactFetchInspectReport>
-  for MinecraftTrainingResultArtifactFetchInspectReportSummary
-{
+impl From<TrainingResultArtifactFetchInspectReport> for MinecraftTrainingResultArtifactFetchInspectReportSummary {
   fn from(value: TrainingResultArtifactFetchInspectReport) -> Self {
     Self {
       schema_version: value.schema_version,
-      training_result_artifact_fetch_manifest_path: value
-        .training_result_artifact_fetch_manifest_path,
+      training_result_artifact_fetch_manifest_path: value.training_result_artifact_fetch_manifest_path,
       source_training_result_manifest_path: value.source_training_result_manifest_path,
       source_training_job_manifest_path: value.source_training_job_manifest_path,
       source_training_launch_plan_path: value.source_training_launch_plan_path,
@@ -7050,9 +6238,7 @@ fn spatial_query_block_label(block: auv_game_minecraft::BlockPosition) -> String
   format!("{},{},{}", block.x, block.y, block.z)
 }
 
-fn spatial_query_optional_block_face_label(
-  face: Option<auv_game_minecraft::BlockFace>,
-) -> Option<String> {
+fn spatial_query_optional_block_face_label(face: Option<auv_game_minecraft::BlockFace>) -> Option<String> {
   face.map(|value| match value {
     auv_game_minecraft::BlockFace::Up => "up".to_string(),
     auv_game_minecraft::BlockFace::Down => "down".to_string(),
@@ -7063,9 +6249,7 @@ fn spatial_query_optional_block_face_label(
   })
 }
 
-fn spatial_query_target_semantics_label(
-  semantics: auv_game_minecraft::MinecraftTargetSemantics,
-) -> String {
+fn spatial_query_target_semantics_label(semantics: auv_game_minecraft::MinecraftTargetSemantics) -> String {
   match semantics {
     auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter => "hit_face_center".to_string(),
     auv_game_minecraft::MinecraftTargetSemantics::BlockCenter => "block_center".to_string(),
@@ -7074,9 +6258,7 @@ fn spatial_query_target_semantics_label(
 
 fn spatial_query_kind_label(kind: auv_game_minecraft::TrainingResultSpatialQueryKind) -> String {
   match kind {
-    auv_game_minecraft::TrainingResultSpatialQueryKind::BlockProjection => {
-      "block_projection".to_string()
-    }
+    auv_game_minecraft::TrainingResultSpatialQueryKind::BlockProjection => "block_projection".to_string(),
   }
 }
 
@@ -7093,15 +6275,11 @@ fn spatial_query_screen_point_label(point: auv_driver::geometry::Point) -> Strin
   format!("{},{}", point.x, point.y)
 }
 
-fn spatial_query_manifest_fields(
-  value: &TrainingResultSpatialQueryManifest,
-) -> MinecraftTrainingResultSpatialQueryManifestSummary {
+fn spatial_query_manifest_fields(value: &TrainingResultSpatialQueryManifest) -> MinecraftTrainingResultSpatialQueryManifestSummary {
   MinecraftTrainingResultSpatialQueryManifestSummary {
     schema_version: value.schema_version,
     training_result_semantic_manifest_path: value.training_result_semantic_manifest_path.clone(),
-    source_training_result_artifact_manifest_path: value
-      .source_training_result_artifact_manifest_path
-      .clone(),
+    source_training_result_artifact_manifest_path: value.source_training_result_artifact_manifest_path.clone(),
     source_training_result_manifest_path: value.source_training_result_manifest_path.clone(),
     source_training_job_manifest_path: value.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: value.source_training_launch_plan_path.clone(),
@@ -7116,9 +6294,7 @@ fn spatial_query_manifest_fields(
     target_block: spatial_query_block_label(value.target_block),
     target_face: spatial_query_optional_block_face_label(value.target_face),
     target_semantics: spatial_query_target_semantics_label(value.target_semantics),
-    selected_backend: value
-      .selected_backend
-      .map(|backend| backend.as_str().to_string()),
+    selected_backend: value.selected_backend.map(|backend| backend.as_str().to_string()),
     status: value.status.as_str().to_string(),
     reason: value.reason.map(|reason| reason.as_str().to_string()),
     visibility: value.visibility.map(spatial_query_visibility_label),
@@ -7126,16 +6302,12 @@ fn spatial_query_manifest_fields(
     match_radius_px: value.match_radius_px,
     confidence: value.confidence,
     basis_frame_id: value.basis_frame_id.clone(),
-    comparison_verdict: value
-      .comparison_verdict
-      .map(|verdict| verdict.as_str().to_string()),
+    comparison_verdict: value.comparison_verdict.map(|verdict| verdict.as_str().to_string()),
     known_limits: value.known_limits.clone(),
   }
 }
 
-impl From<auv_game_minecraft::HoldoutRenderQualityMetrics>
-  for MinecraftHoldoutRenderQualityMetricsSummary
-{
+impl From<auv_game_minecraft::HoldoutRenderQualityMetrics> for MinecraftHoldoutRenderQualityMetricsSummary {
   fn from(value: auv_game_minecraft::HoldoutRenderQualityMetrics) -> Self {
     Self {
       l1_mean: value.l1_mean,
@@ -7145,16 +6317,13 @@ impl From<auv_game_minecraft::HoldoutRenderQualityMetrics>
   }
 }
 
-impl From<TrainingResultHoldoutRenderQualityManifest>
-  for MinecraftHoldoutRenderQualityManifestSummary
-{
+impl From<TrainingResultHoldoutRenderQualityManifest> for MinecraftHoldoutRenderQualityManifestSummary {
   fn from(value: TrainingResultHoldoutRenderQualityManifest) -> Self {
     Self {
       schema_version: value.schema_version,
       training_result_semantic_manifest_path: value.training_result_semantic_manifest_path,
       holdout_preview_manifest_path: value.holdout_preview_manifest_path,
-      source_training_result_artifact_manifest_path: value
-        .source_training_result_artifact_manifest_path,
+      source_training_result_artifact_manifest_path: value.source_training_result_artifact_manifest_path,
       source_training_result_manifest_path: value.source_training_result_manifest_path,
       source_training_job_manifest_path: value.source_training_job_manifest_path,
       source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
@@ -7163,9 +6332,7 @@ impl From<TrainingResultHoldoutRenderQualityManifest>
       basis_checkpoint_path: value.basis_checkpoint_path,
       rendered_image_path: value.rendered_image_path,
       image_size_match: value.image_size_match,
-      metrics: value
-        .metrics
-        .map(MinecraftHoldoutRenderQualityMetricsSummary::from),
+      metrics: value.metrics.map(MinecraftHoldoutRenderQualityMetricsSummary::from),
       status: value.status.as_str().to_string(),
       reason: value.reason.map(|reason| reason.as_str().to_string()),
       verdict: value.verdict.as_str().to_string(),
@@ -7174,18 +6341,14 @@ impl From<TrainingResultHoldoutRenderQualityManifest>
   }
 }
 
-impl From<TrainingResultHoldoutRenderQualityInspectReport>
-  for MinecraftHoldoutRenderQualityInspectReportSummary
-{
+impl From<TrainingResultHoldoutRenderQualityInspectReport> for MinecraftHoldoutRenderQualityInspectReportSummary {
   fn from(value: TrainingResultHoldoutRenderQualityInspectReport) -> Self {
     Self {
       schema_version: value.schema_version,
-      training_result_holdout_render_quality_manifest_path: value
-        .training_result_holdout_render_quality_manifest_path,
+      training_result_holdout_render_quality_manifest_path: value.training_result_holdout_render_quality_manifest_path,
       training_result_semantic_manifest_path: value.training_result_semantic_manifest_path,
       holdout_preview_manifest_path: value.holdout_preview_manifest_path,
-      source_training_result_artifact_manifest_path: value
-        .source_training_result_artifact_manifest_path,
+      source_training_result_artifact_manifest_path: value.source_training_result_artifact_manifest_path,
       source_training_result_manifest_path: value.source_training_result_manifest_path,
       source_training_job_manifest_path: value.source_training_job_manifest_path,
       source_scene_packet_manifest_path: value.source_scene_packet_manifest_path,
@@ -7194,9 +6357,7 @@ impl From<TrainingResultHoldoutRenderQualityInspectReport>
       basis_checkpoint_path: value.basis_checkpoint_path,
       rendered_image_path: value.rendered_image_path,
       image_size_match: value.image_size_match,
-      metrics: value
-        .metrics
-        .map(MinecraftHoldoutRenderQualityMetricsSummary::from),
+      metrics: value.metrics.map(MinecraftHoldoutRenderQualityMetricsSummary::from),
       status: value.status.as_str().to_string(),
       reason: value.reason.map(|reason| reason.as_str().to_string()),
       verdict: value.verdict.as_str().to_string(),
@@ -7206,25 +6367,19 @@ impl From<TrainingResultHoldoutRenderQualityInspectReport>
   }
 }
 
-impl From<TrainingResultSpatialQueryManifest>
-  for MinecraftTrainingResultSpatialQueryManifestSummary
-{
+impl From<TrainingResultSpatialQueryManifest> for MinecraftTrainingResultSpatialQueryManifestSummary {
   fn from(value: TrainingResultSpatialQueryManifest) -> Self {
     spatial_query_manifest_fields(&value)
   }
 }
 
-impl From<TrainingResultSpatialQueryInspectReport>
-  for MinecraftTrainingResultSpatialQueryInspectReportSummary
-{
+impl From<TrainingResultSpatialQueryInspectReport> for MinecraftTrainingResultSpatialQueryInspectReportSummary {
   fn from(value: TrainingResultSpatialQueryInspectReport) -> Self {
     let manifest_fields = spatial_query_manifest_fields(&TrainingResultSpatialQueryManifest {
       schema_version: value.schema_version,
       generated_at_millis: value.generated_at_millis,
       training_result_semantic_manifest_path: value.training_result_semantic_manifest_path.clone(),
-      source_training_result_artifact_manifest_path: value
-        .source_training_result_artifact_manifest_path
-        .clone(),
+      source_training_result_artifact_manifest_path: value.source_training_result_artifact_manifest_path.clone(),
       source_training_result_manifest_path: value.source_training_result_manifest_path.clone(),
       source_training_job_manifest_path: value.source_training_job_manifest_path.clone(),
       source_training_launch_plan_path: value.source_training_launch_plan_path.clone(),
@@ -7252,23 +6407,13 @@ impl From<TrainingResultSpatialQueryInspectReport>
     });
     Self {
       schema_version: manifest_fields.schema_version,
-      training_result_spatial_query_manifest_path: value
-        .training_result_spatial_query_manifest_path
-        .clone(),
-      training_result_semantic_manifest_path: manifest_fields
-        .training_result_semantic_manifest_path
-        .clone(),
-      source_training_result_artifact_manifest_path: manifest_fields
-        .source_training_result_artifact_manifest_path
-        .clone(),
-      source_training_result_manifest_path: manifest_fields
-        .source_training_result_manifest_path
-        .clone(),
+      training_result_spatial_query_manifest_path: value.training_result_spatial_query_manifest_path.clone(),
+      training_result_semantic_manifest_path: manifest_fields.training_result_semantic_manifest_path.clone(),
+      source_training_result_artifact_manifest_path: manifest_fields.source_training_result_artifact_manifest_path.clone(),
+      source_training_result_manifest_path: manifest_fields.source_training_result_manifest_path.clone(),
       source_training_job_manifest_path: manifest_fields.source_training_job_manifest_path.clone(),
       source_training_launch_plan_path: manifest_fields.source_training_launch_plan_path.clone(),
-      source_training_package_manifest_path: manifest_fields
-        .source_training_package_manifest_path
-        .clone(),
+      source_training_package_manifest_path: manifest_fields.source_training_package_manifest_path.clone(),
       source_scene_packet_manifest_path: manifest_fields.source_scene_packet_manifest_path.clone(),
       source_bundle_manifest_paths: manifest_fields.source_bundle_manifest_paths.clone(),
       source_run_ids: manifest_fields.source_run_ids.clone(),
@@ -7289,14 +6434,10 @@ impl From<TrainingResultSpatialQueryInspectReport>
       basis_frame_id: manifest_fields.basis_frame_id.clone(),
       comparison_verdict: manifest_fields.comparison_verdict.clone(),
       provider_status: value.provider_status.as_str().to_string(),
-      provider_reason: value
-        .provider_reason
-        .map(|reason| reason.as_str().to_string()),
+      provider_reason: value.provider_reason.map(|reason| reason.as_str().to_string()),
       provider_message: value.provider_message.clone(),
       reference_status: value.reference_status.as_str().to_string(),
-      reference_reason: value
-        .reference_reason
-        .map(|reason| reason.as_str().to_string()),
+      reference_reason: value.reference_reason.map(|reason| reason.as_str().to_string()),
       reference_basis_frame_id: value.reference_basis_frame_id.clone(),
       reference_source_frame_json_path: value.reference_source_frame_json_path.clone(),
       reference_screenshot_path: value.reference_screenshot_path.clone(),
@@ -7307,9 +6448,7 @@ impl From<TrainingResultSpatialQueryInspectReport>
   }
 }
 
-impl From<TrainingResultSemanticCheckpointRecord>
-  for MinecraftTrainingResultSemanticCheckpointSummary
-{
+impl From<TrainingResultSemanticCheckpointRecord> for MinecraftTrainingResultSemanticCheckpointSummary {
   fn from(value: TrainingResultSemanticCheckpointRecord) -> Self {
     Self {
       relative_path: value.relative_path,
@@ -7318,9 +6457,7 @@ impl From<TrainingResultSemanticCheckpointRecord>
   }
 }
 
-impl From<auv_game_minecraft::HoldoutFrameWitness>
-  for MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary
-{
+impl From<auv_game_minecraft::HoldoutFrameWitness> for MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary {
   fn from(value: auv_game_minecraft::HoldoutFrameWitness) -> Self {
     Self {
       frame_index: value.frame_index,
@@ -7331,15 +6468,12 @@ impl From<auv_game_minecraft::HoldoutFrameWitness>
   }
 }
 
-impl From<TrainingResultHoldoutPreviewManifest>
-  for MinecraftTrainingResultHoldoutPreviewManifestSummary
-{
+impl From<TrainingResultHoldoutPreviewManifest> for MinecraftTrainingResultHoldoutPreviewManifestSummary {
   fn from(value: TrainingResultHoldoutPreviewManifest) -> Self {
     Self {
       schema_version: value.schema_version,
       training_result_semantic_manifest_path: value.training_result_semantic_manifest_path,
-      source_training_result_artifact_manifest_path: value
-        .source_training_result_artifact_manifest_path,
+      source_training_result_artifact_manifest_path: value.source_training_result_artifact_manifest_path,
       source_training_result_manifest_path: value.source_training_result_manifest_path,
       source_training_job_manifest_path: value.source_training_job_manifest_path,
       source_training_launch_plan_path: value.source_training_launch_plan_path,
@@ -7351,9 +6485,7 @@ impl From<TrainingResultHoldoutPreviewManifest>
       job_backend: value.job_backend,
       normalized_result_dir: value.normalized_result_dir,
       holdout_frame_index: value.holdout_frame_index,
-      holdout_frame: value
-        .holdout_frame
-        .map(MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary::from),
+      holdout_frame: value.holdout_frame.map(MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary::from),
       basis_checkpoint_path: value.basis_checkpoint_path,
       holdout_screenshot_path: value.holdout_screenshot_path,
       reference_overlay_path: value.reference_overlay_path,
@@ -7364,17 +6496,13 @@ impl From<TrainingResultHoldoutPreviewManifest>
   }
 }
 
-impl From<TrainingResultHoldoutPreviewInspectReport>
-  for MinecraftTrainingResultHoldoutPreviewInspectReportSummary
-{
+impl From<TrainingResultHoldoutPreviewInspectReport> for MinecraftTrainingResultHoldoutPreviewInspectReportSummary {
   fn from(value: TrainingResultHoldoutPreviewInspectReport) -> Self {
     Self {
       schema_version: value.schema_version,
-      training_result_holdout_preview_manifest_path: value
-        .training_result_holdout_preview_manifest_path,
+      training_result_holdout_preview_manifest_path: value.training_result_holdout_preview_manifest_path,
       training_result_semantic_manifest_path: value.training_result_semantic_manifest_path,
-      source_training_result_artifact_manifest_path: value
-        .source_training_result_artifact_manifest_path,
+      source_training_result_artifact_manifest_path: value.source_training_result_artifact_manifest_path,
       source_training_result_manifest_path: value.source_training_result_manifest_path,
       source_training_job_manifest_path: value.source_training_job_manifest_path,
       source_training_launch_plan_path: value.source_training_launch_plan_path,
@@ -7386,9 +6514,7 @@ impl From<TrainingResultHoldoutPreviewInspectReport>
       job_backend: value.job_backend,
       normalized_result_dir: value.normalized_result_dir,
       holdout_frame_index: value.holdout_frame_index,
-      holdout_frame: value
-        .holdout_frame
-        .map(MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary::from),
+      holdout_frame: value.holdout_frame.map(MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary::from),
       basis_checkpoint_path: value.basis_checkpoint_path,
       holdout_screenshot_path: value.holdout_screenshot_path,
       reference_overlay_path: value.reference_overlay_path,
@@ -7407,8 +6533,7 @@ impl From<TrainingResultSemanticManifest> for MinecraftTrainingResultSemanticMan
   fn from(value: TrainingResultSemanticManifest) -> Self {
     Self {
       schema_version: value.schema_version,
-      source_training_result_artifact_manifest_path: value
-        .source_training_result_artifact_manifest_path,
+      source_training_result_artifact_manifest_path: value.source_training_result_artifact_manifest_path,
       source_training_result_manifest_path: value.source_training_result_manifest_path,
       source_training_job_manifest_path: value.source_training_job_manifest_path,
       source_training_launch_plan_path: value.source_training_launch_plan_path,
@@ -7421,33 +6546,24 @@ impl From<TrainingResultSemanticManifest> for MinecraftTrainingResultSemanticMan
       source_result_status: value.source_result_status.as_str().to_string(),
       normalized_result_dir: value.normalized_result_dir,
       semantic_status: value.semantic_status.as_str().to_string(),
-      semantic_reason: value
-        .semantic_reason
-        .map(|reason| reason.as_str().to_string()),
+      semantic_reason: value.semantic_reason.map(|reason| reason.as_str().to_string()),
       config_path: value.config_path,
       models_dir_path: value.models_dir_path,
       status_snapshot_path: value.status_snapshot_path,
       config_trainer: value.config_trainer,
-      checkpoint_files: value
-        .checkpoint_files
-        .into_iter()
-        .map(MinecraftTrainingResultSemanticCheckpointSummary::from)
-        .collect(),
+      checkpoint_files: value.checkpoint_files.into_iter().map(MinecraftTrainingResultSemanticCheckpointSummary::from).collect(),
       checkpoint_count: value.checkpoint_count,
       known_limits: value.known_limits,
     }
   }
 }
 
-impl From<TrainingResultSemanticInspectReport>
-  for MinecraftTrainingResultSemanticInspectReportSummary
-{
+impl From<TrainingResultSemanticInspectReport> for MinecraftTrainingResultSemanticInspectReportSummary {
   fn from(value: TrainingResultSemanticInspectReport) -> Self {
     Self {
       schema_version: value.schema_version,
       training_result_semantic_manifest_path: value.training_result_semantic_manifest_path,
-      source_training_result_artifact_manifest_path: value
-        .source_training_result_artifact_manifest_path,
+      source_training_result_artifact_manifest_path: value.source_training_result_artifact_manifest_path,
       source_training_result_manifest_path: value.source_training_result_manifest_path,
       source_training_job_manifest_path: value.source_training_job_manifest_path,
       source_training_launch_plan_path: value.source_training_launch_plan_path,
@@ -7460,9 +6576,7 @@ impl From<TrainingResultSemanticInspectReport>
       source_result_status: value.source_result_status.as_str().to_string(),
       normalized_result_dir: value.normalized_result_dir,
       semantic_status: value.semantic_status.as_str().to_string(),
-      semantic_reason: value
-        .semantic_reason
-        .map(|reason| reason.as_str().to_string()),
+      semantic_reason: value.semantic_reason.map(|reason| reason.as_str().to_string()),
       config_yaml_parsed: value.config_yaml_parsed,
       config_trainer: value.config_trainer,
       config_backend_matches: value.config_backend_matches,
@@ -7475,9 +6589,7 @@ impl From<TrainingResultSemanticInspectReport>
   }
 }
 
-impl From<auv_game_minecraft::TrainingResultNormalizedArtifactRecord>
-  for MinecraftTrainingResultNormalizedArtifactSummary
-{
+impl From<auv_game_minecraft::TrainingResultNormalizedArtifactRecord> for MinecraftTrainingResultNormalizedArtifactSummary {
   fn from(value: auv_game_minecraft::TrainingResultNormalizedArtifactRecord) -> Self {
     Self {
       kind: value.kind.as_str().to_string(),
@@ -7549,10 +6661,7 @@ impl From<&DetectionEvalQualityManifest> for OsuDetectionEvalQualityManifestSumm
       verdict: manifest.verdict.as_str().to_string(),
       label_recall: manifest.metrics.as_ref().and_then(|m| m.label_recall),
       spatial_recall: manifest.metrics.as_ref().and_then(|m| m.spatial_recall),
-      spurious_detection_count: manifest
-        .metrics
-        .as_ref()
-        .map(|m| m.spurious_detection_count),
+      spurious_detection_count: manifest.metrics.as_ref().map(|m| m.spurious_detection_count),
     }
   }
 }
@@ -7581,9 +6690,7 @@ impl From<&VisualTruthSemanticManifest> for OsuVisualTruthSemanticManifestSummar
       beatmap_path: manifest.beatmap_path.clone(),
       frame_count: manifest.frame_count,
       semantic_status: manifest.semantic_status.as_str().to_string(),
-      semantic_reason: manifest
-        .semantic_reason
-        .map(|reason| reason.as_str().to_string()),
+      semantic_reason: manifest.semantic_reason.map(|reason| reason.as_str().to_string()),
       known_limits: manifest.known_limits.clone(),
     }
   }
@@ -7596,9 +6703,7 @@ impl From<&VisualTruthSemanticInspectReport> for OsuVisualTruthSemanticInspectRe
       visual_truth_semantic_manifest_path: report.visual_truth_semantic_manifest_path.clone(),
       source_run_artifact_dir: report.source_run_artifact_dir.clone(),
       semantic_status: report.semantic_status.as_str().to_string(),
-      semantic_reason: report
-        .semantic_reason
-        .map(|reason| reason.as_str().to_string()),
+      semantic_reason: report.semantic_reason.map(|reason| reason.as_str().to_string()),
       visual_truth_manifest_readable: report.visual_truth_manifest_readable,
       projection_readable: report.projection_readable,
       projection_eval_ready: report.projection_eval_ready,
@@ -7608,9 +6713,7 @@ impl From<&VisualTruthSemanticInspectReport> for OsuVisualTruthSemanticInspectRe
   }
 }
 
-impl From<&auv_game_balatro::CardDetectionSemanticManifest>
-  for BalatroCardDetectionSemanticManifestSummary
-{
+impl From<&auv_game_balatro::CardDetectionSemanticManifest> for BalatroCardDetectionSemanticManifestSummary {
   fn from(manifest: &auv_game_balatro::CardDetectionSemanticManifest) -> Self {
     Self {
       schema_version: manifest.schema_version,
@@ -7621,25 +6724,19 @@ impl From<&auv_game_balatro::CardDetectionSemanticManifest>
       ui_detection_count: manifest.ui_detection_count,
       entities_detection_count: manifest.entities_detection_count,
       semantic_status: manifest.semantic_status.as_str().to_string(),
-      semantic_reason: manifest
-        .semantic_reason
-        .map(|reason| reason.as_str().to_string()),
+      semantic_reason: manifest.semantic_reason.map(|reason| reason.as_str().to_string()),
       known_limits: manifest.known_limits.clone(),
     }
   }
 }
 
-impl From<&auv_game_balatro::CardDetectionSemanticInspectReport>
-  for BalatroCardDetectionSemanticInspectReportSummary
-{
+impl From<&auv_game_balatro::CardDetectionSemanticInspectReport> for BalatroCardDetectionSemanticInspectReportSummary {
   fn from(report: &auv_game_balatro::CardDetectionSemanticInspectReport) -> Self {
     Self {
       schema_version: report.schema_version,
       card_detection_semantic_manifest_path: report.card_detection_semantic_manifest_path.clone(),
       semantic_status: report.semantic_status.as_str().to_string(),
-      semantic_reason: report
-        .semantic_reason
-        .map(|reason| reason.as_str().to_string()),
+      semantic_reason: report.semantic_reason.map(|reason| reason.as_str().to_string()),
       detection_bundle_readable: report.detection_bundle_readable,
       detection_sets_non_empty: report.detection_sets_non_empty,
       warnings: report.warnings.clone(),
@@ -7648,9 +6745,7 @@ impl From<&auv_game_balatro::CardDetectionSemanticInspectReport>
   }
 }
 
-impl From<&auv_game_balatro::CardDetectionSpatialQueryManifest>
-  for BalatroCardDetectionSpatialQueryManifestSummary
-{
+impl From<&auv_game_balatro::CardDetectionSpatialQueryManifest> for BalatroCardDetectionSpatialQueryManifestSummary {
   fn from(manifest: &auv_game_balatro::CardDetectionSpatialQueryManifest) -> Self {
     Self {
       schema_version: manifest.schema_version,
@@ -7667,15 +6762,11 @@ impl From<&auv_game_balatro::CardDetectionSpatialQueryManifest>
   }
 }
 
-impl From<&auv_game_balatro::CardDetectionSpatialQueryInspectReport>
-  for BalatroCardDetectionSpatialQueryInspectReportSummary
-{
+impl From<&auv_game_balatro::CardDetectionSpatialQueryInspectReport> for BalatroCardDetectionSpatialQueryInspectReportSummary {
   fn from(report: &auv_game_balatro::CardDetectionSpatialQueryInspectReport) -> Self {
     Self {
       schema_version: report.schema_version,
-      card_detection_spatial_query_manifest_path: report
-        .card_detection_spatial_query_manifest_path
-        .clone(),
+      card_detection_spatial_query_manifest_path: report.card_detection_spatial_query_manifest_path.clone(),
       target_zone: report.target_zone.clone(),
       target_index: report.target_index,
       query_backend: report.query_backend.as_str().to_string(),
@@ -7688,16 +6779,12 @@ impl From<&auv_game_balatro::CardDetectionSpatialQueryInspectReport>
   }
 }
 
-impl From<&auv_game_balatro::CardDetectionEvalWitnessManifest>
-  for BalatroCardDetectionEvalWitnessManifestSummary
-{
+impl From<&auv_game_balatro::CardDetectionEvalWitnessManifest> for BalatroCardDetectionEvalWitnessManifestSummary {
   fn from(manifest: &auv_game_balatro::CardDetectionEvalWitnessManifest) -> Self {
     Self {
       schema_version: manifest.schema_version,
       card_detection_semantic_manifest_path: manifest.card_detection_semantic_manifest_path.clone(),
-      card_detection_spatial_query_manifest_path: manifest
-        .card_detection_spatial_query_manifest_path
-        .clone(),
+      card_detection_spatial_query_manifest_path: manifest.card_detection_spatial_query_manifest_path.clone(),
       expected_slots_path: manifest.expected_slots_path.clone(),
       source_detection_bundle_dir: manifest.source_detection_bundle_dir.clone(),
       expected_slot_count: manifest.expected_slot_count,
@@ -7713,19 +6800,13 @@ impl From<&auv_game_balatro::CardDetectionEvalWitnessManifest>
   }
 }
 
-impl From<&auv_game_balatro::CardDetectionEvalWitnessInspectReport>
-  for BalatroCardDetectionEvalWitnessInspectReportSummary
-{
+impl From<&auv_game_balatro::CardDetectionEvalWitnessInspectReport> for BalatroCardDetectionEvalWitnessInspectReportSummary {
   fn from(report: &auv_game_balatro::CardDetectionEvalWitnessInspectReport) -> Self {
     Self {
       schema_version: report.schema_version,
-      card_detection_eval_witness_manifest_path: report
-        .card_detection_eval_witness_manifest_path
-        .clone(),
+      card_detection_eval_witness_manifest_path: report.card_detection_eval_witness_manifest_path.clone(),
       card_detection_semantic_manifest_path: report.card_detection_semantic_manifest_path.clone(),
-      card_detection_spatial_query_manifest_path: report
-        .card_detection_spatial_query_manifest_path
-        .clone(),
+      card_detection_spatial_query_manifest_path: report.card_detection_spatial_query_manifest_path.clone(),
       expected_slots_path: report.expected_slots_path.clone(),
       source_detection_bundle_dir: report.source_detection_bundle_dir.clone(),
       expected_slot_count: report.expected_slot_count,
@@ -7745,48 +6826,33 @@ impl From<&auv_game_balatro::CardDetectionEvalWitnessInspectReport>
   }
 }
 
-impl From<&auv_game_balatro::CardDetectionQualityManifest>
-  for BalatroCardDetectionQualityManifestSummary
-{
+impl From<&auv_game_balatro::CardDetectionQualityManifest> for BalatroCardDetectionQualityManifestSummary {
   fn from(manifest: &auv_game_balatro::CardDetectionQualityManifest) -> Self {
     Self {
       schema_version: manifest.schema_version,
-      card_detection_eval_witness_manifest_path: manifest
-        .card_detection_eval_witness_manifest_path
-        .clone(),
+      card_detection_eval_witness_manifest_path: manifest.card_detection_eval_witness_manifest_path.clone(),
       witness_status: manifest.witness_status.as_str().to_string(),
       status: manifest.status.as_str().to_string(),
       verdict: manifest.verdict.as_str().to_string(),
-      quality_backend: manifest
-        .quality_backend
-        .map(|backend| backend.as_str().to_string()),
+      quality_backend: manifest.quality_backend.map(|backend| backend.as_str().to_string()),
       expected_slot_count: manifest.metrics.as_ref().map(|m| m.expected_slot_count),
       scored_slot_count: manifest.metrics.as_ref().map(|m| m.scored_slot_count),
       unscored_slot_count: manifest.metrics.as_ref().map(|m| m.unscored_slot_count),
-      slot_coverage_ratio: manifest
-        .metrics
-        .as_ref()
-        .and_then(|m| m.slot_coverage_ratio),
+      slot_coverage_ratio: manifest.metrics.as_ref().and_then(|m| m.slot_coverage_ratio),
     }
   }
 }
 
-impl From<&auv_game_balatro::CardDetectionQualityInspectReport>
-  for BalatroCardDetectionQualityInspectReportSummary
-{
+impl From<&auv_game_balatro::CardDetectionQualityInspectReport> for BalatroCardDetectionQualityInspectReportSummary {
   fn from(report: &auv_game_balatro::CardDetectionQualityInspectReport) -> Self {
     Self {
       schema_version: report.schema_version,
       card_detection_quality_manifest_path: report.card_detection_quality_manifest_path.clone(),
-      card_detection_eval_witness_manifest_path: report
-        .card_detection_eval_witness_manifest_path
-        .clone(),
+      card_detection_eval_witness_manifest_path: report.card_detection_eval_witness_manifest_path.clone(),
       witness_status: report.witness_status.as_str().to_string(),
       status: report.status.as_str().to_string(),
       verdict: report.verdict.as_str().to_string(),
-      quality_backend: report
-        .quality_backend
-        .map(|backend| backend.as_str().to_string()),
+      quality_backend: report.quality_backend.map(|backend| backend.as_str().to_string()),
       slot_coverage_ratio_available: report.slot_coverage_ratio_available,
     }
   }
@@ -7812,9 +6878,7 @@ impl From<&VisualTruthSpatialQueryManifest> for OsuVisualTruthSpatialQueryManife
       query_backend: manifest.query_backend.as_str().to_string(),
       status: manifest.status.as_str().to_string(),
       reason: manifest.reason.map(|reason| reason.as_str().to_string()),
-      pixel_visibility: manifest
-        .pixel_visibility
-        .map(|visibility| visibility.as_str().to_string()),
+      pixel_visibility: manifest.pixel_visibility.map(|visibility| visibility.as_str().to_string()),
       pixel_x: manifest.pixel_x,
       pixel_y: manifest.pixel_y,
       match_radius_px: manifest.match_radius_px,
@@ -7825,15 +6889,11 @@ impl From<&VisualTruthSpatialQueryManifest> for OsuVisualTruthSpatialQueryManife
   }
 }
 
-impl From<&VisualTruthSpatialQueryInspectReport>
-  for OsuVisualTruthSpatialQueryInspectReportSummary
-{
+impl From<&VisualTruthSpatialQueryInspectReport> for OsuVisualTruthSpatialQueryInspectReportSummary {
   fn from(report: &VisualTruthSpatialQueryInspectReport) -> Self {
     Self {
       schema_version: report.schema_version,
-      visual_truth_spatial_query_manifest_path: report
-        .visual_truth_spatial_query_manifest_path
-        .clone(),
+      visual_truth_spatial_query_manifest_path: report.visual_truth_spatial_query_manifest_path.clone(),
       visual_truth_semantic_manifest_path: report.visual_truth_semantic_manifest_path.clone(),
       object_index: report.object_index,
       capture_phase: match report.capture_phase {
@@ -7843,9 +6903,7 @@ impl From<&VisualTruthSpatialQueryInspectReport>
       query_backend: report.query_backend.as_str().to_string(),
       status: report.status.as_str().to_string(),
       reason: report.reason.map(|reason| reason.as_str().to_string()),
-      pixel_visibility: report
-        .pixel_visibility
-        .map(|visibility| visibility.as_str().to_string()),
+      pixel_visibility: report.pixel_visibility.map(|visibility| visibility.as_str().to_string()),
       semantic_status: report.semantic_status.as_str().to_string(),
       warnings: report.warnings.clone(),
       known_limits: report.known_limits.clone(),
@@ -7854,8 +6912,8 @@ impl From<&VisualTruthSpatialQueryInspectReport>
 }
 
 pub use crate::view_parser_read::{
-  build_view_parser_inspect, build_view_resolution_summary, extract_playlist_select_result_wires,
-  extract_reacquisition_records, extract_view_memory_writes, list_view_memory_writes,
+  build_view_parser_inspect, build_view_resolution_summary, extract_playlist_select_result_wires, extract_reacquisition_records,
+  extract_view_memory_writes, list_view_memory_writes,
 };
 
 #[cfg(test)]
@@ -7869,99 +6927,73 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    ActionTransitionLineageStatus, ArtifactRefLineage, CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE,
-    CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE, CANDIDATE_PROMOTION_ARTIFACT_ROLE,
-    CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState,
-    CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus,
-    DETECTOR_RECOGNITION_ARTIFACT_ROLE, DetectorRecognitionLineageStatus,
-    MinecraftHoldoutRenderQualityManifestSummary, MinecraftHoldoutRenderQualityMetricsSummary,
-    MinecraftSpatialBundleManifestSummary,
-    MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary,
-    MinecraftTrainingResultHoldoutPreviewManifestSummary,
-    MinecraftTrainingResultQualityBaselineReportSummary,
-    MinecraftTrainingResultSpatialQueryManifestLineage,
-    MinecraftTrainingResultSpatialQueryManifestSummary,
-    derive_minecraft_query_wired_live_action_summary,
-    derive_minecraft_training_result_quality_baseline_report,
-    derive_minecraft_training_result_quality_verdict,
-    derive_minecraft_training_result_spatial_query_action_readiness,
-    derive_osu_query_wired_live_action_summary, extract_action_transition_lineage,
-    extract_candidate_action_decision_lineage, extract_candidate_action_execution_lineage,
-    extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
-    extract_minecraft_holdout_render_quality_inspect_reports,
-    extract_minecraft_holdout_render_quality_manifests,
+    ActionTransitionLineageStatus, ArtifactRefLineage, CANDIDATE_ACTION_DECISION_ARTIFACT_ROLE, CANDIDATE_ACTION_EXECUTION_ARTIFACT_ROLE,
+    CANDIDATE_PROMOTION_ARTIFACT_ROLE, CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState,
+    CandidateActionExecutionLineageStatus, CandidatePromotionLineageStatus, DETECTOR_RECOGNITION_ARTIFACT_ROLE,
+    DetectorRecognitionLineageStatus, MinecraftHoldoutRenderQualityManifestSummary, MinecraftHoldoutRenderQualityMetricsSummary,
+    MinecraftSpatialBundleManifestSummary, MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary,
+    MinecraftTrainingResultHoldoutPreviewManifestSummary, MinecraftTrainingResultQualityBaselineReportSummary,
+    MinecraftTrainingResultSpatialQueryManifestLineage, MinecraftTrainingResultSpatialQueryManifestSummary,
+    derive_minecraft_query_wired_live_action_summary, derive_minecraft_training_result_quality_baseline_report,
+    derive_minecraft_training_result_quality_verdict, derive_minecraft_training_result_spatial_query_action_readiness,
+    derive_osu_query_wired_live_action_summary, extract_action_transition_lineage, extract_candidate_action_decision_lineage,
+    extract_candidate_action_execution_lineage, extract_candidate_promotion_lineage, extract_detector_recognition_lineage,
+    extract_minecraft_holdout_render_quality_inspect_reports, extract_minecraft_holdout_render_quality_manifests,
     extract_minecraft_training_job_inspect_reports, extract_minecraft_training_job_manifests,
     extract_minecraft_training_launch_inspect_reports, extract_minecraft_training_launch_manifests,
-    extract_minecraft_training_package_inspect_reports,
-    extract_minecraft_training_package_manifests,
-    extract_minecraft_training_result_artifact_fetch_inspect_reports,
-    extract_minecraft_training_result_artifact_fetch_manifests,
-    extract_minecraft_training_result_holdout_preview_inspect_reports,
-    extract_minecraft_training_result_holdout_preview_manifests,
+    extract_minecraft_training_package_inspect_reports, extract_minecraft_training_package_manifests,
+    extract_minecraft_training_result_artifact_fetch_inspect_reports, extract_minecraft_training_result_artifact_fetch_manifests,
+    extract_minecraft_training_result_holdout_preview_inspect_reports, extract_minecraft_training_result_holdout_preview_manifests,
     extract_minecraft_training_result_inspect_reports, extract_minecraft_training_result_manifests,
-    extract_minecraft_training_result_semantic_inspect_reports,
-    extract_minecraft_training_result_semantic_manifests,
-    extract_minecraft_training_result_spatial_query_manifests, extract_observation_snapshots,
-    extract_verifications, list_action_transition_lineage, list_candidate_action_decision_lineage,
-    list_candidate_action_execution_lineage, list_candidate_promotion_lineage,
-    list_detector_recognition_lineage, list_minecraft_query_wired_live_action_summaries,
-    list_minecraft_spatial_bundle_manifests, list_minecraft_training_job_inspect_reports,
-    list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports,
-    list_minecraft_training_launch_manifests, list_minecraft_training_package_inspect_reports,
-    list_minecraft_training_package_manifests,
-    list_minecraft_training_result_artifact_fetch_inspect_reports,
-    list_minecraft_training_result_artifact_fetch_manifests,
+    extract_minecraft_training_result_semantic_inspect_reports, extract_minecraft_training_result_semantic_manifests,
+    extract_minecraft_training_result_spatial_query_manifests, extract_observation_snapshots, extract_verifications,
+    list_action_transition_lineage, list_candidate_action_decision_lineage, list_candidate_action_execution_lineage,
+    list_candidate_promotion_lineage, list_detector_recognition_lineage, list_minecraft_query_wired_live_action_summaries,
+    list_minecraft_spatial_bundle_manifests, list_minecraft_training_job_inspect_reports, list_minecraft_training_job_manifests,
+    list_minecraft_training_launch_inspect_reports, list_minecraft_training_launch_manifests,
+    list_minecraft_training_package_inspect_reports, list_minecraft_training_package_manifests,
+    list_minecraft_training_result_artifact_fetch_inspect_reports, list_minecraft_training_result_artifact_fetch_manifests,
     list_minecraft_training_result_inspect_reports, list_minecraft_training_result_manifests,
-    list_minecraft_training_result_semantic_inspect_reports,
-    list_minecraft_training_result_semantic_manifests,
-    list_minecraft_training_result_spatial_query_inspect_reports,
-    list_minecraft_training_result_spatial_query_manifests, list_observation_snapshots,
-    list_verifications, quality_baseline_profile_v1, quality_baseline_verdict_thresholds_probe_v1,
+    list_minecraft_training_result_semantic_inspect_reports, list_minecraft_training_result_semantic_manifests,
+    list_minecraft_training_result_spatial_query_inspect_reports, list_minecraft_training_result_spatial_query_manifests,
+    list_observation_snapshots, list_verifications, quality_baseline_profile_v1, quality_baseline_verdict_thresholds_probe_v1,
     quality_baseline_verdict_thresholds_trained_render_v1,
   };
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::candidate_action_decision::{
-    CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
-    CandidateActionExecutionConsent, CandidateActionExecutionConsentAction,
-    CandidateActionExecutionSideEffect, CandidateActionSideEffect,
+    CandidateActionDecisionArtifact, CandidateActionExecutionArtifact, CandidateActionExecutionConsent,
+    CandidateActionExecutionConsentAction, CandidateActionExecutionSideEffect, CandidateActionSideEffect,
   };
   use crate::candidate_promotion::{
-    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
-    PromotionContext, PromotionProjection, PromotionRefusal, StabilityInput,
+    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope, PromotionContext, PromotionProjection,
+    PromotionRefusal, StabilityInput,
   };
   use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
-    ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION,
-    ObservationSnapshot, ObservationSource, OperationOutput, OperationResult, OperationStatus,
-    RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
-    TargetGrounding, TargetSpec, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
-    VerificationResult,
+    ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot, ObservationSource, OperationOutput,
+    OperationResult, OperationStatus, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
+    TargetGrounding, TargetSpec, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::scroll_scan::{
-    CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster,
-    ScanPageRecord, ScanRegion, ScanTarget, ScrollBoundaryCandidate, ScrollScanArtifact,
-    SectionCandidate, StopEvidence, StopPolicy, StopReason,
+    CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster, ScanPageRecord, ScanRegion, ScanTarget,
+    ScrollBoundaryCandidate, ScrollScanArtifact, SectionCandidate, StopEvidence, StopPolicy, StopReason,
   };
   use crate::stability::{StabilityAssessment, StabilityPolicy, StabilityRejection};
   use auv_game_minecraft::dataset::{SourceRunSummary, SpatialBundleCounts};
   use auv_game_minecraft::{
-    TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingLaunchInspectReport,
-    TrainingLaunchJobBlocker, TrainingLaunchJobCounts, TrainingLaunchJobInspectReport,
-    TrainingLaunchJobManifest, TrainingLaunchJobStatus, TrainingLaunchPlanManifest,
-    TrainingLaunchReadiness, TrainingLaunchReadinessBlocker, TrainingPackageCounts,
-    TrainingPackageInspectReport, TrainingPackageManifest,
-    TrainingResultArtifactFetchInspectReport, TrainingResultArtifactFetchManifest,
-    TrainingResultArtifactFetchReason, TrainingResultArtifactFetchStatus,
-    TrainingResultArtifactRecord, TrainingResultInspectReport, TrainingResultManifest,
-    TrainingResultNormalizedArtifactKind, TrainingResultReason,
-    TrainingResultSemanticInspectReport, TrainingResultSemanticManifest,
+    TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingLaunchInspectReport, TrainingLaunchJobBlocker,
+    TrainingLaunchJobCounts, TrainingLaunchJobInspectReport, TrainingLaunchJobManifest, TrainingLaunchJobStatus, TrainingLaunchPlanManifest,
+    TrainingLaunchReadiness, TrainingLaunchReadinessBlocker, TrainingPackageCounts, TrainingPackageInspectReport, TrainingPackageManifest,
+    TrainingResultArtifactFetchInspectReport, TrainingResultArtifactFetchManifest, TrainingResultArtifactFetchReason,
+    TrainingResultArtifactFetchStatus, TrainingResultArtifactRecord, TrainingResultInspectReport, TrainingResultManifest,
+    TrainingResultNormalizedArtifactKind, TrainingResultReason, TrainingResultSemanticInspectReport, TrainingResultSemanticManifest,
     TrainingResultSemanticStatus, TrainingResultStatus,
   };
   use auv_tracing_driver::ArtifactFileSource;
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
-    ArtifactId, ArtifactRecordV1Alpha1, EventId, RUN_API_VERSION, RunId, RunRecordV1Alpha1,
-    RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    ArtifactId, ArtifactRecordV1Alpha1, EventId, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId,
+    SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
 
   #[test]
@@ -7971,18 +7003,10 @@ mod tests {
     let run = dummy_run("run_read_contracts");
     let span = dummy_span(&run.root_span_id);
 
-    let legacy_verification = verification(
-      VerificationMethod::TextVisible,
-      Some("legacy verification".to_string()),
-    );
-    let top_level_verification = verification(
-      VerificationMethod::SemanticMatch,
-      Some("top-level verification".to_string()),
-    );
-    let duplicate_legacy_verification = verification(
-      VerificationMethod::StateChanged,
-      Some("legacy duplicate should be ignored".to_string()),
-    );
+    let legacy_verification = verification(VerificationMethod::TextVisible, Some("legacy verification".to_string()));
+    let top_level_verification = verification(VerificationMethod::SemanticMatch, Some("top-level verification".to_string()));
+    let duplicate_legacy_verification =
+      verification(VerificationMethod::StateChanged, Some("legacy duplicate should be ignored".to_string()));
     let observation_snapshot = dummy_observation_snapshot(&run.run_id, &span.span_id);
 
     let operation_legacy = OperationResult {
@@ -8045,36 +7069,9 @@ mod tests {
     };
 
     let artifacts = vec![
-      stage_json_artifact(
-        &store,
-        &root,
-        &run.run_id,
-        &span.span_id,
-        0,
-        "operation-result",
-        "verify-legacy.json",
-        &operation_legacy,
-      ),
-      stage_json_artifact(
-        &store,
-        &root,
-        &run.run_id,
-        &span.span_id,
-        1,
-        "operation-result",
-        "music-result-play.json",
-        &operation_top_level,
-      ),
-      stage_json_artifact(
-        &store,
-        &root,
-        &run.run_id,
-        &span.span_id,
-        2,
-        "scroll-scan",
-        "scroll-scan.json",
-        &scroll_scan_artifact,
-      ),
+      stage_json_artifact(&store, &root, &run.run_id, &span.span_id, 0, "operation-result", "verify-legacy.json", &operation_legacy),
+      stage_json_artifact(&store, &root, &run.run_id, &span.span_id, 1, "operation-result", "music-result-play.json", &operation_top_level),
+      stage_json_artifact(&store, &root, &run.run_id, &span.span_id, 2, "scroll-scan", "scroll-scan.json", &scroll_scan_artifact),
     ];
 
     store
@@ -8086,25 +7083,16 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_contracts")
-      .expect("run should read back");
+    let canonical = store.read_run("run_read_contracts").expect("run should read back");
 
-    let extracted_verifications =
-      extract_verifications(&store, &canonical).expect("verifications should extract");
-    assert_eq!(
-      extracted_verifications,
-      vec![legacy_verification.clone(), top_level_verification.clone()]
-    );
-    let listed_verifications =
-      list_verifications(&store, "run_read_contracts").expect("verifications should list");
+    let extracted_verifications = extract_verifications(&store, &canonical).expect("verifications should extract");
+    assert_eq!(extracted_verifications, vec![legacy_verification.clone(), top_level_verification.clone()]);
+    let listed_verifications = list_verifications(&store, "run_read_contracts").expect("verifications should list");
     assert_eq!(listed_verifications, extracted_verifications);
 
-    let extracted_snapshots = extract_observation_snapshots(&store, &canonical)
-      .expect("observation snapshots should extract");
+    let extracted_snapshots = extract_observation_snapshots(&store, &canonical).expect("observation snapshots should extract");
     assert_eq!(extracted_snapshots, vec![observation_snapshot.clone()]);
-    let listed_snapshots = list_observation_snapshots(&store, "run_read_contracts")
-      .expect("observation snapshots should list");
+    let listed_snapshots = list_observation_snapshots(&store, "run_read_contracts").expect("observation snapshots should list");
     assert_eq!(listed_snapshots, extracted_snapshots);
 
     let _ = fs::remove_dir_all(root);
@@ -8120,11 +7108,9 @@ mod tests {
     let manifest = TrainingResultArtifactFetchManifest {
       schema_version: 1,
       generated_at_millis: 1,
-      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-        .to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -8182,35 +7168,23 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_mc7_d11_fetch_manifest")
-      .expect("run should read back");
+    let canonical = store.read_run("run_read_mc7_d11_fetch_manifest").expect("run should read back");
 
-    let extracted = extract_minecraft_training_result_artifact_fetch_manifests(&store, &canonical)
-      .expect("manifest should extract");
+    let extracted = extract_minecraft_training_result_artifact_fetch_manifests(&store, &canonical).expect("manifest should extract");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .manifest
-      .as_ref()
-      .expect("summary should be present");
+    let summary = extracted[0].manifest.as_ref().expect("summary should be present");
     assert_eq!(summary.normalized_artifacts.len(), 3);
     assert_eq!(summary.normalized_artifacts[0].kind, "config");
     assert_eq!(summary.normalized_artifacts[0].relative_path, "config.yml");
-    assert_eq!(
-      summary.normalized_artifacts[0].absolute_path,
-      "/tmp/result/normalized-result/config.yml"
-    );
+    assert_eq!(summary.normalized_artifacts[0].absolute_path, "/tmp/result/normalized-result/config.yml");
     assert!(summary.normalized_artifacts[0].readable);
     assert_eq!(summary.normalized_artifacts[0].byte_size, Some(128));
     assert_eq!(summary.normalized_artifacts[1].kind, "models_directory");
     assert_eq!(summary.normalized_artifacts[1].byte_size, None);
     assert_eq!(summary.normalized_artifacts[2].kind, "status_snapshot");
 
-    let listed = list_minecraft_training_result_artifact_fetch_manifests(
-      &store,
-      "run_read_mc7_d11_fetch_manifest",
-    )
-    .expect("manifest should list");
+    let listed =
+      list_minecraft_training_result_artifact_fetch_manifests(&store, "run_read_mc7_d11_fetch_manifest").expect("manifest should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -8226,13 +7200,10 @@ mod tests {
     let report = TrainingResultArtifactFetchInspectReport {
       schema_version: 1,
       generated_at_millis: 1,
-      training_result_artifact_fetch_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-        .to_string(),
+      training_result_artifact_fetch_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
       source_run_ids: vec!["run-a".to_string()],
@@ -8240,11 +7211,7 @@ mod tests {
       job_backend: "remote".to_string(),
       source_job_status: TrainingResultStatus::Submitted,
       source_result_status: TrainingResultStatus::Blocked,
-      source_result_status_reason: Some(
-        TrainingResultReason::RemoteStatusUnavailable
-          .as_str()
-          .to_string(),
-      ),
+      source_result_status_reason: Some(TrainingResultReason::RemoteStatusUnavailable.as_str().to_string()),
       fetch_status: TrainingResultArtifactFetchStatus::Blocked,
       fetch_reason: Some(TrainingResultArtifactFetchReason::SourceResultBlocked),
       source_result_dir: "/tmp/result/trainer-output".to_string(),
@@ -8276,36 +7243,20 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_mc7_d11_fetch_inspect")
-      .expect("run should read back");
+    let canonical = store.read_run("run_read_mc7_d11_fetch_inspect").expect("run should read back");
 
-    let extracted =
-      extract_minecraft_training_result_artifact_fetch_inspect_reports(&store, &canonical)
-        .expect("report should extract");
+    let extracted = extract_minecraft_training_result_artifact_fetch_inspect_reports(&store, &canonical).expect("report should extract");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .report
-      .as_ref()
-      .expect("summary should be present");
+    let summary = extracted[0].report.as_ref().expect("summary should be present");
     assert_eq!(summary.fetch_status, "blocked");
-    assert_eq!(
-      summary.fetch_reason.as_deref(),
-      Some("source_result_blocked")
-    );
+    assert_eq!(summary.fetch_reason.as_deref(), Some("source_result_blocked"));
     assert!(!summary.source_result_dir_exists);
     assert!(!summary.required_artifacts_present);
     assert_eq!(summary.normalized_artifact_count, 0);
-    assert_eq!(
-      summary.source_result_status_reason.as_deref(),
-      Some("remote_status_unavailable")
-    );
+    assert_eq!(summary.source_result_status_reason.as_deref(), Some("remote_status_unavailable"));
 
-    let listed = list_minecraft_training_result_artifact_fetch_inspect_reports(
-      &store,
-      "run_read_mc7_d11_fetch_inspect",
-    )
-    .expect("report should list");
+    let listed =
+      list_minecraft_training_result_artifact_fetch_inspect_reports(&store, "run_read_mc7_d11_fetch_inspect").expect("report should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -8350,34 +7301,19 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_mc7_d11_fetch_issues")
-      .expect("run should read back");
+    let canonical = store.read_run("run_read_mc7_d11_fetch_issues").expect("run should read back");
 
     let manifest_lineage =
-      extract_minecraft_training_result_artifact_fetch_manifests(&store, &canonical)
-        .expect("manifest lineage should extract");
+      extract_minecraft_training_result_artifact_fetch_manifests(&store, &canonical).expect("manifest lineage should extract");
     assert_eq!(manifest_lineage.len(), 1);
     assert!(manifest_lineage[0].manifest.is_none());
-    assert!(
-      manifest_lineage[0]
-        .issue
-        .as_deref()
-        .is_some_and(|issue| issue.contains("mime_type text/plain is not JSON"))
-    );
+    assert!(manifest_lineage[0].issue.as_deref().is_some_and(|issue| issue.contains("mime_type text/plain is not JSON")));
 
     let report_lineage =
-      extract_minecraft_training_result_artifact_fetch_inspect_reports(&store, &canonical)
-        .expect("report lineage should extract");
+      extract_minecraft_training_result_artifact_fetch_inspect_reports(&store, &canonical).expect("report lineage should extract");
     assert_eq!(report_lineage.len(), 1);
     assert!(report_lineage[0].report.is_none());
-    assert!(
-      report_lineage[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse")
-    );
+    assert!(report_lineage[0].issue.as_deref().unwrap_or_default().contains("failed to parse"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -8392,13 +7328,10 @@ mod tests {
     let manifest = TrainingResultSemanticManifest {
       schema_version: 1,
       generated_at_millis: 99,
-      source_training_result_artifact_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-        .to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -8441,30 +7374,19 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_mc10_semantic_manifest")
-      .expect("run should read back");
+    let canonical = store.read_run("run_read_mc10_semantic_manifest").expect("run should read back");
 
-    let extracted = extract_minecraft_training_result_semantic_manifests(&store, &canonical)
-      .expect("manifest should extract");
+    let extracted = extract_minecraft_training_result_semantic_manifests(&store, &canonical).expect("manifest should extract");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .manifest
-      .as_ref()
-      .expect("summary should be present");
+    let summary = extracted[0].manifest.as_ref().expect("summary should be present");
     assert_eq!(summary.semantic_status, "ready");
     assert_eq!(summary.checkpoint_count, 1);
     assert_eq!(summary.checkpoint_files.len(), 1);
-    assert_eq!(
-      summary.checkpoint_files[0].relative_path,
-      "step-000001.ckpt"
-    );
+    assert_eq!(summary.checkpoint_files[0].relative_path, "step-000001.ckpt");
     let serialized = serde_json::to_string(summary).expect("summary should serialize");
     assert!(!serialized.contains("generated_at_millis"));
 
-    let listed =
-      list_minecraft_training_result_semantic_manifests(&store, "run_read_mc10_semantic_manifest")
-        .expect("manifest should list");
+    let listed = list_minecraft_training_result_semantic_manifests(&store, "run_read_mc10_semantic_manifest").expect("manifest should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -8480,15 +7402,11 @@ mod tests {
     let report = TrainingResultSemanticInspectReport {
       schema_version: 1,
       generated_at_millis: 99,
-      training_result_semantic_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
-      source_training_result_artifact_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-        .to_string(),
+      training_result_semantic_manifest_path: "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -8529,28 +7447,19 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_mc10_semantic_inspect")
-      .expect("run should read back");
+    let canonical = store.read_run("run_read_mc10_semantic_inspect").expect("run should read back");
 
-    let extracted = extract_minecraft_training_result_semantic_inspect_reports(&store, &canonical)
-      .expect("report should extract");
+    let extracted = extract_minecraft_training_result_semantic_inspect_reports(&store, &canonical).expect("report should extract");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .report
-      .as_ref()
-      .expect("summary should be present");
+    let summary = extracted[0].report.as_ref().expect("summary should be present");
     assert!(summary.config_yaml_parsed);
     assert!(summary.config_backend_matches);
     assert_eq!(summary.checkpoint_count, 1);
     let serialized = serde_json::to_string(summary).expect("summary should serialize");
     assert!(!serialized.contains("generated_at_millis"));
 
-    let listed = list_minecraft_training_result_semantic_inspect_reports(
-      &store,
-      "run_read_mc10_semantic_inspect",
-    )
-    .expect("report should list");
+    let listed =
+      list_minecraft_training_result_semantic_inspect_reports(&store, "run_read_mc10_semantic_inspect").expect("report should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -8583,19 +7492,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_result_semantic_manifests(
-      &store,
-      "run_read_mc10_semantic_manifest_non_json",
-    )
-    .expect("manifest lineage should list");
+    let extracted = list_minecraft_training_result_semantic_manifests(&store, "run_read_mc10_semantic_manifest_non_json")
+      .expect("manifest lineage should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].manifest.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .is_some_and(|issue| issue.contains("mime_type text/plain is not JSON"))
-    );
+    assert!(extracted[0].issue.as_deref().is_some_and(|issue| issue.contains("mime_type text/plain is not JSON")));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -8628,20 +7529,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_result_semantic_inspect_reports(
-      &store,
-      "run_read_mc10_semantic_inspect_malformed",
-    )
-    .expect("report lineage should list");
+    let extracted = list_minecraft_training_result_semantic_inspect_reports(&store, "run_read_mc10_semantic_inspect_malformed")
+      .expect("report lineage should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].report.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("failed to parse"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -8649,8 +7541,8 @@ mod tests {
   #[test]
   fn minecraft_training_result_holdout_preview_manifest_lineage_reads_summary() {
     use auv_game_minecraft::{
-      HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewStatus,
-      TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
+      HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewStatus, TrainingResultHoldoutPreviewInspectReport,
+      TrainingResultHoldoutPreviewManifest,
     };
     let root = temp_dir("run-read-mc16-holdout-manifest");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
@@ -8665,15 +7557,11 @@ mod tests {
     let manifest = TrainingResultHoldoutPreviewManifest {
       schema_version: 1,
       generated_at_millis: 1,
-      training_result_semantic_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
-      source_training_result_artifact_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-        .to_string(),
+      training_result_semantic_manifest_path: "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
@@ -8693,14 +7581,9 @@ mod tests {
     let inspect_report = TrainingResultHoldoutPreviewInspectReport {
       schema_version: 1,
       generated_at_millis: 1,
-      training_result_holdout_preview_manifest_path:
-        "/tmp/holdout/minecraft-3dgs-training-result-holdout-preview.json".to_string(),
-      training_result_semantic_manifest_path: manifest
-        .training_result_semantic_manifest_path
-        .clone(),
-      source_training_result_artifact_manifest_path: manifest
-        .source_training_result_artifact_manifest_path
-        .clone(),
+      training_result_holdout_preview_manifest_path: "/tmp/holdout/minecraft-3dgs-training-result-holdout-preview.json".to_string(),
+      training_result_semantic_manifest_path: manifest.training_result_semantic_manifest_path.clone(),
+      source_training_result_artifact_manifest_path: manifest.source_training_result_artifact_manifest_path.clone(),
       source_training_result_manifest_path: manifest.source_training_result_manifest_path.clone(),
       source_training_job_manifest_path: manifest.source_training_job_manifest_path.clone(),
       source_training_launch_plan_path: manifest.source_training_launch_plan_path.clone(),
@@ -8757,28 +7640,17 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_mc16_holdout_manifest")
-      .expect("run should read back");
-    let extracted = extract_minecraft_training_result_holdout_preview_manifests(&store, &canonical)
-      .expect("extract holdout manifests");
+    let canonical = store.read_run("run_read_mc16_holdout_manifest").expect("run should read back");
+    let extracted = extract_minecraft_training_result_holdout_preview_manifests(&store, &canonical).expect("extract holdout manifests");
     assert_eq!(extracted.len(), 1);
     let summary = extracted[0].manifest.as_ref().expect("summary");
     assert_eq!(summary.status, "ready");
     assert_eq!(summary.holdout_frame_index, 6);
-    assert_eq!(
-      summary.basis_checkpoint_path.as_deref(),
-      Some("/tmp/normalized/nerfstudio_models/step-000001.ckpt")
-    );
+    assert_eq!(summary.basis_checkpoint_path.as_deref(), Some("/tmp/normalized/nerfstudio_models/step-000001.ckpt"));
 
-    let reports =
-      extract_minecraft_training_result_holdout_preview_inspect_reports(&store, &canonical)
-        .expect("extract holdout inspect");
+    let reports = extract_minecraft_training_result_holdout_preview_inspect_reports(&store, &canonical).expect("extract holdout inspect");
     assert_eq!(reports.len(), 1);
-    assert_eq!(
-      reports[0].report.as_ref().unwrap().holdout_frame_selection,
-      "last_in_game"
-    );
+    assert_eq!(reports[0].report.as_ref().unwrap().holdout_frame_selection, "last_in_game");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -8786,9 +7658,8 @@ mod tests {
   #[test]
   fn minecraft_holdout_render_quality_manifest_lineage_reads_summary() {
     use auv_game_minecraft::{
-      HoldoutFrameWitness, HoldoutPreviewStatus, HoldoutRenderQualityBackend,
-      HoldoutRenderQualityMetrics, HoldoutRenderQualityStatus, HoldoutRenderQualityVerdict,
-      TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport,
+      HoldoutFrameWitness, HoldoutPreviewStatus, HoldoutRenderQualityBackend, HoldoutRenderQualityMetrics, HoldoutRenderQualityStatus,
+      HoldoutRenderQualityVerdict, TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport,
       TrainingResultHoldoutRenderQualityManifest,
     };
     let root = temp_dir("run-read-mc17-holdout-quality-manifest");
@@ -8804,15 +7675,11 @@ mod tests {
     let holdout_preview_manifest = TrainingResultHoldoutPreviewManifest {
       schema_version: 1,
       generated_at_millis: 1,
-      training_result_semantic_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
-      source_training_result_artifact_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-        .to_string(),
+      training_result_semantic_manifest_path: "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle.json".to_string()],
@@ -8832,32 +7699,15 @@ mod tests {
     let manifest = TrainingResultHoldoutRenderQualityManifest {
       schema_version: 1,
       generated_at_millis: 1,
-      training_result_semantic_manifest_path: holdout_preview_manifest
-        .training_result_semantic_manifest_path
-        .clone(),
-      holdout_preview_manifest_path:
-        "/tmp/holdout/minecraft-3dgs-training-result-holdout-preview.json".to_string(),
-      source_training_result_artifact_manifest_path: holdout_preview_manifest
-        .source_training_result_artifact_manifest_path
-        .clone(),
-      source_training_result_manifest_path: holdout_preview_manifest
-        .source_training_result_manifest_path
-        .clone(),
-      source_training_job_manifest_path: holdout_preview_manifest
-        .source_training_job_manifest_path
-        .clone(),
-      source_training_launch_plan_path: holdout_preview_manifest
-        .source_training_launch_plan_path
-        .clone(),
-      source_training_package_manifest_path: holdout_preview_manifest
-        .source_training_package_manifest_path
-        .clone(),
-      source_scene_packet_manifest_path: holdout_preview_manifest
-        .source_scene_packet_manifest_path
-        .clone(),
-      source_bundle_manifest_paths: holdout_preview_manifest
-        .source_bundle_manifest_paths
-        .clone(),
+      training_result_semantic_manifest_path: holdout_preview_manifest.training_result_semantic_manifest_path.clone(),
+      holdout_preview_manifest_path: "/tmp/holdout/minecraft-3dgs-training-result-holdout-preview.json".to_string(),
+      source_training_result_artifact_manifest_path: holdout_preview_manifest.source_training_result_artifact_manifest_path.clone(),
+      source_training_result_manifest_path: holdout_preview_manifest.source_training_result_manifest_path.clone(),
+      source_training_job_manifest_path: holdout_preview_manifest.source_training_job_manifest_path.clone(),
+      source_training_launch_plan_path: holdout_preview_manifest.source_training_launch_plan_path.clone(),
+      source_training_package_manifest_path: holdout_preview_manifest.source_training_package_manifest_path.clone(),
+      source_scene_packet_manifest_path: holdout_preview_manifest.source_scene_packet_manifest_path.clone(),
+      source_bundle_manifest_paths: holdout_preview_manifest.source_bundle_manifest_paths.clone(),
       source_run_ids: holdout_preview_manifest.source_run_ids.clone(),
       trainer_backend: holdout_preview_manifest.trainer_backend.clone(),
       job_backend: holdout_preview_manifest.job_backend.clone(),
@@ -8885,15 +7735,10 @@ mod tests {
     let inspect_report = TrainingResultHoldoutRenderQualityInspectReport {
       schema_version: 1,
       generated_at_millis: 1,
-      training_result_holdout_render_quality_manifest_path:
-        "/tmp/holdout/minecraft-3dgs-holdout-render-quality.json".to_string(),
-      training_result_semantic_manifest_path: manifest
-        .training_result_semantic_manifest_path
-        .clone(),
+      training_result_holdout_render_quality_manifest_path: "/tmp/holdout/minecraft-3dgs-holdout-render-quality.json".to_string(),
+      training_result_semantic_manifest_path: manifest.training_result_semantic_manifest_path.clone(),
       holdout_preview_manifest_path: manifest.holdout_preview_manifest_path.clone(),
-      source_training_result_artifact_manifest_path: manifest
-        .source_training_result_artifact_manifest_path
-        .clone(),
+      source_training_result_artifact_manifest_path: manifest.source_training_result_artifact_manifest_path.clone(),
       source_training_result_manifest_path: manifest.source_training_result_manifest_path.clone(),
       source_training_job_manifest_path: manifest.source_training_job_manifest_path.clone(),
       source_training_launch_plan_path: manifest.source_training_launch_plan_path.clone(),
@@ -8955,11 +7800,9 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_mc17_holdout_quality_manifest")
-      .expect("run should read back");
-    let extracted = extract_minecraft_holdout_render_quality_manifests(&store, &canonical)
-      .expect("extract holdout render quality manifests");
+    let canonical = store.read_run("run_read_mc17_holdout_quality_manifest").expect("run should read back");
+    let extracted =
+      extract_minecraft_holdout_render_quality_manifests(&store, &canonical).expect("extract holdout render quality manifests");
     assert_eq!(extracted.len(), 1);
     let summary = extracted[0].manifest.as_ref().expect("summary");
     assert_eq!(summary.status, "ready");
@@ -8967,8 +7810,8 @@ mod tests {
     assert_eq!(summary.image_size_match, true);
     assert_eq!(summary.metrics.as_ref().unwrap().l1_mean, Some(0.01));
 
-    let reports = extract_minecraft_holdout_render_quality_inspect_reports(&store, &canonical)
-      .expect("extract holdout render quality inspect");
+    let reports =
+      extract_minecraft_holdout_render_quality_inspect_reports(&store, &canonical).expect("extract holdout render quality inspect");
     assert_eq!(reports.len(), 1);
     assert_eq!(reports[0].report.as_ref().unwrap().holdout_frame_index, 6);
 
@@ -8979,8 +7822,7 @@ mod tests {
   fn minecraft_training_result_spatial_query_manifest_lineage_reads_summary() {
     use auv_driver::geometry::Point;
     use auv_game_minecraft::{
-      BlockPosition, TrainingResultSpatialQueryBackend,
-      TrainingResultSpatialQueryComparisonVerdict, TrainingResultSpatialQueryKind,
+      BlockPosition, TrainingResultSpatialQueryBackend, TrainingResultSpatialQueryComparisonVerdict, TrainingResultSpatialQueryKind,
       TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryStatus,
     };
     let root = temp_dir("run-read-mc13-query-manifest");
@@ -8992,13 +7834,10 @@ mod tests {
       schema_version: 1,
       generated_at_millis: 99,
       training_result_semantic_manifest_path: "/tmp/semantic.json".to_string(),
-      source_training_result_artifact_manifest_path:
-        "/tmp/d11/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-      source_training_result_manifest_path: "/tmp/d7/minecraft-3dgs-training-result.json"
-        .to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/d11/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/d7/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/d6/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/d5/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/d5/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -9042,33 +7881,17 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = extract_minecraft_training_result_spatial_query_manifests(
-      &store,
-      &store.read_run("run_read_mc13_query_manifest").expect("run"),
-    )
-    .expect("manifest should extract");
+    let extracted =
+      extract_minecraft_training_result_spatial_query_manifests(&store, &store.read_run("run_read_mc13_query_manifest").expect("run"))
+        .expect("manifest should extract");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .manifest
-      .as_ref()
-      .expect("summary should be present");
+    let summary = extracted[0].manifest.as_ref().expect("summary should be present");
     assert_eq!(summary.status, "answered");
     assert_eq!(summary.target_block, "511,73,728");
-    assert_eq!(
-      summary.selected_backend.as_deref(),
-      Some("projection_reference")
-    );
+    assert_eq!(summary.selected_backend.as_deref(), Some("projection_reference"));
     assert_eq!(summary.visibility.as_deref(), Some("visible"));
     assert!(summary.screen_point.is_some());
-    assert_eq!(
-      list_minecraft_training_result_spatial_query_manifests(
-        &store,
-        "run_read_mc13_query_manifest"
-      )
-      .expect("list")
-      .len(),
-      1
-    );
+    assert_eq!(list_minecraft_training_result_spatial_query_manifests(&store, "run_read_mc13_query_manifest").expect("list").len(), 1);
 
     let readiness = derive_minecraft_training_result_spatial_query_action_readiness(&extracted[0]);
     assert_eq!(readiness.action_eligibility, "click_ready");
@@ -9124,19 +7947,13 @@ mod tests {
       }
     }
 
-    let click_ready = super::derive_osu_visual_truth_spatial_query_action_readiness(&lineage(
-      "artifact_click_ready",
-      base_summary(),
-    ));
+    let click_ready = super::derive_osu_visual_truth_spatial_query_action_readiness(&lineage("artifact_click_ready", base_summary()));
     assert_eq!(click_ready.action_eligibility, "click_ready");
     assert!(click_ready.pixel_point.is_some());
 
     let mut outside = base_summary();
     outside.pixel_visibility = Some("outside_capture".to_string());
-    let outside_capture = super::derive_osu_visual_truth_spatial_query_action_readiness(&lineage(
-      "artifact_outside_capture",
-      outside,
-    ));
+    let outside_capture = super::derive_osu_visual_truth_spatial_query_action_readiness(&lineage("artifact_outside_capture", outside));
     assert_eq!(outside_capture.action_eligibility, "answer_non_clickable");
 
     let mut failed = base_summary();
@@ -9145,10 +7962,7 @@ mod tests {
     failed.pixel_visibility = None;
     failed.pixel_x = None;
     failed.pixel_y = None;
-    let not_consumable = super::derive_osu_visual_truth_spatial_query_action_readiness(&lineage(
-      "artifact_failed",
-      failed,
-    ));
+    let not_consumable = super::derive_osu_visual_truth_spatial_query_action_readiness(&lineage("artifact_failed", failed));
     assert_eq!(not_consumable.action_eligibility, "not_consumable");
   }
 
@@ -9168,29 +7982,20 @@ mod tests {
         resolved: true,
       },
       manifest: None,
-      issue: Some(
-        "minecraft training result spatial query manifest mime_type text/plain is not JSON"
-          .to_string(),
-      ),
+      issue: Some("minecraft training result spatial query manifest mime_type text/plain is not JSON".to_string()),
     };
 
     let readiness = derive_minecraft_training_result_spatial_query_action_readiness(&lineage);
     assert_eq!(readiness.action_eligibility, "n/a");
     assert!(readiness.window_point.is_none());
-    assert!(
-      readiness
-        .issue
-        .as_deref()
-        .is_some_and(|issue| issue.contains("mime_type"))
-    );
+    assert!(readiness.issue.as_deref().is_some_and(|issue| issue.contains("mime_type")));
   }
 
   #[test]
   fn minecraft_training_result_spatial_query_inspect_report_lineage_reads_summary() {
     use auv_game_minecraft::{
-      BlockPosition, TrainingResultSpatialQueryBackend,
-      TrainingResultSpatialQueryComparisonVerdict, TrainingResultSpatialQueryInspectReport,
-      TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest,
+      BlockPosition, TrainingResultSpatialQueryBackend, TrainingResultSpatialQueryComparisonVerdict,
+      TrainingResultSpatialQueryInspectReport, TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest,
       TrainingResultSpatialQueryStatus,
     };
     let root = temp_dir("run-read-mc13-query-inspect");
@@ -9202,13 +8007,10 @@ mod tests {
       schema_version: 1,
       generated_at_millis: 99,
       training_result_semantic_manifest_path: "/tmp/semantic.json".to_string(),
-      source_training_result_artifact_manifest_path:
-        "/tmp/d11/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-      source_training_result_manifest_path: "/tmp/d7/minecraft-3dgs-training-result.json"
-        .to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/d11/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/d7/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/d6/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/d5/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/d5/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -9235,22 +8037,13 @@ mod tests {
     let inspect = TrainingResultSpatialQueryInspectReport {
       schema_version: shared_manifest.schema_version,
       generated_at_millis: shared_manifest.generated_at_millis,
-      training_result_spatial_query_manifest_path:
-        "/tmp/query/minecraft-3dgs-training-result-query.json".to_string(),
-      training_result_semantic_manifest_path: shared_manifest
-        .training_result_semantic_manifest_path
-        .clone(),
-      source_training_result_artifact_manifest_path: shared_manifest
-        .source_training_result_artifact_manifest_path
-        .clone(),
-      source_training_result_manifest_path: shared_manifest
-        .source_training_result_manifest_path
-        .clone(),
+      training_result_spatial_query_manifest_path: "/tmp/query/minecraft-3dgs-training-result-query.json".to_string(),
+      training_result_semantic_manifest_path: shared_manifest.training_result_semantic_manifest_path.clone(),
+      source_training_result_artifact_manifest_path: shared_manifest.source_training_result_artifact_manifest_path.clone(),
+      source_training_result_manifest_path: shared_manifest.source_training_result_manifest_path.clone(),
       source_training_job_manifest_path: shared_manifest.source_training_job_manifest_path.clone(),
       source_training_launch_plan_path: shared_manifest.source_training_launch_plan_path.clone(),
-      source_training_package_manifest_path: shared_manifest
-        .source_training_package_manifest_path
-        .clone(),
+      source_training_package_manifest_path: shared_manifest.source_training_package_manifest_path.clone(),
       source_scene_packet_manifest_path: shared_manifest.source_scene_packet_manifest_path.clone(),
       source_bundle_manifest_paths: shared_manifest.source_bundle_manifest_paths.clone(),
       source_run_ids: shared_manifest.source_run_ids.clone(),
@@ -9276,9 +8069,7 @@ mod tests {
       reference_status: TrainingResultSpatialQueryStatus::Answered,
       reference_reason: None,
       reference_basis_frame_id: Some("frame-355416".to_string()),
-      reference_source_frame_json_path: Some(
-        "/tmp/scene-packet/frames/frame_000001.json".to_string(),
-      ),
+      reference_source_frame_json_path: Some("/tmp/scene-packet/frames/frame_000001.json".to_string()),
       reference_screenshot_path: None,
       scene_packet_frame_count: 12,
       warnings: vec!["provider not configured".to_string()],
@@ -9305,16 +8096,10 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_result_spatial_query_inspect_reports(
-      &store,
-      "run_read_mc13_query_inspect",
-    )
-    .expect("inspect should list");
+    let extracted =
+      list_minecraft_training_result_spatial_query_inspect_reports(&store, "run_read_mc13_query_inspect").expect("inspect should list");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .report
-      .as_ref()
-      .expect("summary should be present");
+    let summary = extracted[0].report.as_ref().expect("summary should be present");
     assert_eq!(summary.provider_status, "blocked");
     assert_eq!(summary.reference_status, "answered");
     assert_eq!(summary.scene_packet_frame_count, 12);
@@ -9351,20 +8136,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_result_spatial_query_manifests(
-      &store,
-      "run_read_mc13_query_manifest_mime",
-    )
-    .expect("manifest lineage should list");
+    let extracted = list_minecraft_training_result_spatial_query_manifests(&store, "run_read_mc13_query_manifest_mime")
+      .expect("manifest lineage should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].manifest.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("mime_type")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("mime_type"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -9397,20 +8173,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_result_spatial_query_inspect_reports(
-      &store,
-      "run_read_mc13_query_inspect_malformed",
-    )
-    .expect("report lineage should list");
+    let extracted = list_minecraft_training_result_spatial_query_inspect_reports(&store, "run_read_mc13_query_inspect_malformed")
+      .expect("report lineage should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].report.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("failed to parse"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -9422,16 +8189,8 @@ mod tests {
     let run = dummy_run("run_read_detector_recognition");
     let span = dummy_span(&run.root_span_id);
 
-    let capture_artifact = stage_text_artifact(
-      &store,
-      &root,
-      &run.run_id,
-      &span.span_id,
-      0,
-      "capture-image",
-      "capture.png",
-      "fake capture body",
-    );
+    let capture_artifact =
+      stage_text_artifact(&store, &root, &run.run_id, &span.span_id, 0, "capture-image", "capture.png", "fake capture body");
     let ready_recognition = detector_recognition_result(
       &run.run_id,
       &span.span_id,
@@ -9554,53 +8313,23 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_detector_recognition")
-      .expect("run should read back");
-    let extracted = extract_detector_recognition_lineage(&store, &canonical)
-      .expect("detector recognition lineage should extract");
+    let canonical = store.read_run("run_read_detector_recognition").expect("run should read back");
+    let extracted = extract_detector_recognition_lineage(&store, &canonical).expect("detector recognition lineage should extract");
     assert_eq!(extracted.len(), 5);
     assert_eq!(extracted[0].status, DetectorRecognitionLineageStatus::Ready);
-    assert_eq!(
-      extracted[0].backend.as_deref(),
-      Some("ultralytics-inference")
-    );
+    assert_eq!(extracted[0].backend.as_deref(), Some("ultralytics-inference"));
     assert_eq!(extracted[0].model_id.as_deref(), Some("games-balatro-ui"));
     assert_eq!(extracted[0].all_count, Some(2));
     assert_eq!(extracted[0].filtered_count, Some(1));
-    assert_eq!(
-      extracted[0]
-        .capture_artifact
-        .as_ref()
-        .and_then(|artifact| artifact.role.as_deref()),
-      Some("capture-image")
-    );
-    assert_eq!(
-      extracted[1].status,
-      DetectorRecognitionLineageStatus::MissingCaptureArtifact
-    );
-    assert_eq!(
-      extracted[2].status,
-      DetectorRecognitionLineageStatus::MissingEvidence
-    );
-    assert_eq!(
-      extracted[3].status,
-      DetectorRecognitionLineageStatus::CaptureArtifactUnresolved
-    );
-    assert_eq!(
-      extracted[4].status,
-      DetectorRecognitionLineageStatus::Malformed
-    );
-    assert!(
-      extracted[4]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse detector-recognition artifact")
-    );
+    assert_eq!(extracted[0].capture_artifact.as_ref().and_then(|artifact| artifact.role.as_deref()), Some("capture-image"));
+    assert_eq!(extracted[1].status, DetectorRecognitionLineageStatus::MissingCaptureArtifact);
+    assert_eq!(extracted[2].status, DetectorRecognitionLineageStatus::MissingEvidence);
+    assert_eq!(extracted[3].status, DetectorRecognitionLineageStatus::CaptureArtifactUnresolved);
+    assert_eq!(extracted[4].status, DetectorRecognitionLineageStatus::Malformed);
+    assert!(extracted[4].issue.as_deref().unwrap_or_default().contains("failed to parse detector-recognition artifact"));
 
-    let listed = list_detector_recognition_lineage(&store, "run_read_detector_recognition")
-      .expect("detector recognition lineage should list");
+    let listed =
+      list_detector_recognition_lineage(&store, "run_read_detector_recognition").expect("detector recognition lineage should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -9670,8 +8399,7 @@ mod tests {
       .expect("run snapshot should persist");
 
     let listed =
-      list_minecraft_spatial_bundle_manifests(&store, "run_read_minecraft_spatial_bundle")
-        .expect("spatial bundle manifests should list");
+      list_minecraft_spatial_bundle_manifests(&store, "run_read_minecraft_spatial_bundle").expect("spatial bundle manifests should list");
     assert_eq!(listed.len(), 1);
     let manifest = listed[0].manifest.as_ref().expect("summary should parse");
     assert_eq!(manifest.source_run.source_run_id, "source_run_1");
@@ -9742,28 +8470,17 @@ mod tests {
 
     let extracted = extract_minecraft_training_package_manifests(
       &store,
-      &store
-        .read_run("run_read_minecraft_training_package_manifest")
-        .expect("run should read back"),
+      &store.read_run("run_read_minecraft_training_package_manifest").expect("run should read back"),
     )
     .expect("training package manifests should extract");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .manifest
-      .as_ref()
-      .expect("summary should parse");
-    assert_eq!(
-      summary.source_scene_packet_manifest_path,
-      "/tmp/scene-packet/run.json"
-    );
+    let summary = extracted[0].manifest.as_ref().expect("summary should parse");
+    assert_eq!(summary.source_scene_packet_manifest_path, "/tmp/scene-packet/run.json");
     assert_eq!(summary.counts.frames, 6);
     assert_eq!(summary.compatibility_views[0].view_name, "nerfstudio");
 
-    let listed = list_minecraft_training_package_manifests(
-      &store,
-      "run_read_minecraft_training_package_manifest",
-    )
-    .expect("training package manifests should list");
+    let listed = list_minecraft_training_package_manifests(&store, "run_read_minecraft_training_package_manifest")
+      .expect("training package manifests should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -9829,25 +8546,17 @@ mod tests {
 
     let extracted = extract_minecraft_training_package_inspect_reports(
       &store,
-      &store
-        .read_run("run_read_minecraft_training_package_inspect")
-        .expect("run should read back"),
+      &store.read_run("run_read_minecraft_training_package_inspect").expect("run should read back"),
     )
     .expect("training package inspect reports should extract");
     assert_eq!(extracted.len(), 1);
     let summary = extracted[0].report.as_ref().expect("summary should parse");
-    assert_eq!(
-      summary.training_package_manifest_path,
-      "/tmp/package/run.json"
-    );
+    assert_eq!(summary.training_package_manifest_path, "/tmp/package/run.json");
     assert_eq!(summary.counts.compatibility_exported_frames, 2);
     assert_eq!(summary.warnings.len(), 1);
 
-    let listed = list_minecraft_training_package_inspect_reports(
-      &store,
-      "run_read_minecraft_training_package_inspect",
-    )
-    .expect("training package inspect reports should list");
+    let listed = list_minecraft_training_package_inspect_reports(&store, "run_read_minecraft_training_package_inspect")
+      .expect("training package inspect reports should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -9880,20 +8589,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_package_manifests(
-      &store,
-      "run_read_minecraft_training_package_manifest_non_json",
-    )
-    .expect("training package manifests should list");
+    let extracted = list_minecraft_training_package_manifests(&store, "run_read_minecraft_training_package_manifest_non_json")
+      .expect("training package manifests should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].manifest.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("mime_type")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("mime_type"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -9925,20 +8625,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_package_inspect_reports(
-      &store,
-      "run_read_minecraft_training_package_inspect_malformed",
-    )
-    .expect("training package inspect reports should list");
+    let extracted = list_minecraft_training_package_inspect_reports(&store, "run_read_minecraft_training_package_inspect_malformed")
+      .expect("training package inspect reports should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].report.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse minecraft-3dgs-training-package-inspect artifact")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("failed to parse minecraft-3dgs-training-package-inspect artifact"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -9973,7 +8664,8 @@ mod tests {
       transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
       export_report_path: "compat/nerfstudio/export_report.json".to_string(),
       suggested_output_dir: "/tmp/output/trainer-output/nerfstudio-splatfacto".to_string(),
-      launch_command: "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/output/trainer-output/nerfstudio-splatfacto".to_string(),
+      launch_command:
+        "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/output/trainer-output/nerfstudio-splatfacto".to_string(),
       known_limits: vec!["launch prep only".to_string()],
     };
 
@@ -9999,29 +8691,18 @@ mod tests {
 
     let extracted = extract_minecraft_training_launch_manifests(
       &store,
-      &store
-        .read_run("run_read_minecraft_training_launch_manifest")
-        .expect("run should read back"),
+      &store.read_run("run_read_minecraft_training_launch_manifest").expect("run should read back"),
     )
     .expect("training launch manifests should extract");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .manifest
-      .as_ref()
-      .expect("summary should parse");
-    assert_eq!(
-      summary.source_training_package_manifest_path,
-      "/tmp/package/run.json"
-    );
+    let summary = extracted[0].manifest.as_ref().expect("summary should parse");
+    assert_eq!(summary.source_training_package_manifest_path, "/tmp/package/run.json");
     assert_eq!(summary.counts.frames, 6);
     assert_eq!(summary.compatibility_view_name, "nerfstudio");
     assert_eq!(summary.trainer_backend, "nerfstudio.splatfacto");
 
-    let listed = list_minecraft_training_launch_manifests(
-      &store,
-      "run_read_minecraft_training_launch_manifest",
-    )
-    .expect("training launch manifests should list");
+    let listed = list_minecraft_training_launch_manifests(&store, "run_read_minecraft_training_launch_manifest")
+      .expect("training launch manifests should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -10037,8 +8718,7 @@ mod tests {
     let report = TrainingLaunchInspectReport {
       schema_version: 1,
       generated_at_millis: 1,
-      training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -10077,29 +8757,18 @@ mod tests {
 
     let extracted = extract_minecraft_training_launch_inspect_reports(
       &store,
-      &store
-        .read_run("run_read_minecraft_training_launch_inspect")
-        .expect("run should read back"),
+      &store.read_run("run_read_minecraft_training_launch_inspect").expect("run should read back"),
     )
     .expect("training launch inspect reports should extract");
     assert_eq!(extracted.len(), 1);
     let summary = extracted[0].report.as_ref().expect("summary should parse");
-    assert_eq!(
-      summary.training_launch_manifest_path,
-      "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-    );
+    assert_eq!(summary.training_launch_manifest_path, "/tmp/launch/minecraft-3dgs-training-launch-plan.json");
     assert_eq!(summary.compatibility_status, "Partial");
     assert_eq!(summary.trainer_readiness, "Blocked");
-    assert_eq!(
-      summary.readiness_blocker.as_deref(),
-      Some("TrainerCommandUnavailable")
-    );
+    assert_eq!(summary.readiness_blocker.as_deref(), Some("TrainerCommandUnavailable"));
 
-    let listed = list_minecraft_training_launch_inspect_reports(
-      &store,
-      "run_read_minecraft_training_launch_inspect",
-    )
-    .expect("training launch inspect reports should list");
+    let listed = list_minecraft_training_launch_inspect_reports(&store, "run_read_minecraft_training_launch_inspect")
+      .expect("training launch inspect reports should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -10115,8 +8784,7 @@ mod tests {
     let manifest = TrainingLaunchJobManifest {
       schema_version: 1,
       generated_at_millis: 1,
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_training_package_inspect_report_path: "/tmp/package/inspect_report.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
@@ -10140,7 +8808,8 @@ mod tests {
       transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
       export_report_path: "compat/nerfstudio/export_report.json".to_string(),
       suggested_output_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
-      launch_command: "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+      launch_command: "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/job/trainer-output/nerfstudio-splatfacto"
+        .to_string(),
       status: TrainingLaunchJobStatus::Submitted,
       job_id: Some("job-123".to_string()),
       job_url: Some("https://jobs.example/job-123".to_string()),
@@ -10170,27 +8839,18 @@ mod tests {
 
     let extracted = extract_minecraft_training_job_manifests(
       &store,
-      &store
-        .read_run("run_read_minecraft_training_job_manifest")
-        .expect("run should read back"),
+      &store.read_run("run_read_minecraft_training_job_manifest").expect("run should read back"),
     )
     .expect("training job manifests should extract");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .manifest
-      .as_ref()
-      .expect("summary should parse");
-    assert_eq!(
-      summary.source_training_launch_plan_path,
-      "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-    );
+    let summary = extracted[0].manifest.as_ref().expect("summary should parse");
+    assert_eq!(summary.source_training_launch_plan_path, "/tmp/launch/minecraft-3dgs-training-launch-plan.json");
     assert_eq!(summary.status, "submitted");
     assert_eq!(summary.job_backend, "remote");
     assert_eq!(summary.counts.compatibility_exported_frames, 4);
 
     let listed =
-      list_minecraft_training_job_manifests(&store, "run_read_minecraft_training_job_manifest")
-        .expect("training job manifests should list");
+      list_minecraft_training_job_manifests(&store, "run_read_minecraft_training_job_manifest").expect("training job manifests should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -10207,8 +8867,7 @@ mod tests {
       schema_version: 1,
       generated_at_millis: 1,
       training_launch_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -10255,25 +8914,17 @@ mod tests {
 
     let extracted = extract_minecraft_training_job_inspect_reports(
       &store,
-      &store
-        .read_run("run_read_minecraft_training_job_inspect")
-        .expect("run should read back"),
+      &store.read_run("run_read_minecraft_training_job_inspect").expect("run should read back"),
     )
     .expect("training job inspect reports should extract");
     assert_eq!(extracted.len(), 1);
     let summary = extracted[0].report.as_ref().expect("summary should parse");
     assert_eq!(summary.status, "blocked");
-    assert_eq!(
-      summary.readiness_blocker.as_deref(),
-      Some("MissingAuthentication")
-    );
+    assert_eq!(summary.readiness_blocker.as_deref(), Some("MissingAuthentication"));
     assert_eq!(summary.exported_frame_count, 4);
 
-    let listed = list_minecraft_training_job_inspect_reports(
-      &store,
-      "run_read_minecraft_training_job_inspect",
-    )
-    .expect("training job inspect reports should list");
+    let listed = list_minecraft_training_job_inspect_reports(&store, "run_read_minecraft_training_job_inspect")
+      .expect("training job inspect reports should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -10306,20 +8957,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_job_manifests(
-      &store,
-      "run_read_minecraft_training_job_manifest_non_json",
-    )
-    .expect("training job manifests should list");
+    let extracted = list_minecraft_training_job_manifests(&store, "run_read_minecraft_training_job_manifest_non_json")
+      .expect("training job manifests should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].manifest.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("mime_type")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("mime_type"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -10351,20 +8993,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_job_inspect_reports(
-      &store,
-      "run_read_minecraft_training_job_inspect_malformed",
-    )
-    .expect("training job inspect reports should list");
+    let extracted = list_minecraft_training_job_inspect_reports(&store, "run_read_minecraft_training_job_inspect_malformed")
+      .expect("training job inspect reports should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].report.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse minecraft-3dgs-training-job-inspect artifact")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("failed to parse minecraft-3dgs-training-job-inspect artifact"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -10380,8 +9013,7 @@ mod tests {
       schema_version: 1,
       generated_at_millis: 1,
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -10428,29 +9060,18 @@ mod tests {
 
     let extracted = extract_minecraft_training_result_manifests(
       &store,
-      &store
-        .read_run("run_read_minecraft_training_result_manifest")
-        .expect("run should read back"),
+      &store.read_run("run_read_minecraft_training_result_manifest").expect("run should read back"),
     )
     .expect("training result manifests should extract");
     assert_eq!(extracted.len(), 1);
-    let summary = extracted[0]
-      .manifest
-      .as_ref()
-      .expect("summary should parse");
+    let summary = extracted[0].manifest.as_ref().expect("summary should parse");
     assert_eq!(summary.status, "succeeded");
-    assert_eq!(
-      summary.status_message.as_deref(),
-      Some("provider succeeded")
-    );
+    assert_eq!(summary.status_message.as_deref(), Some("provider succeeded"));
     assert_eq!(summary.source_job_status, "submitted");
     assert_eq!(summary.result_artifacts.len(), 1);
 
-    let listed = list_minecraft_training_result_manifests(
-      &store,
-      "run_read_minecraft_training_result_manifest",
-    )
-    .expect("training result manifests should list");
+    let listed = list_minecraft_training_result_manifests(&store, "run_read_minecraft_training_result_manifest")
+      .expect("training result manifests should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -10468,8 +9089,7 @@ mod tests {
       generated_at_millis: 1,
       training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-        .to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
       source_run_ids: vec!["run_a".to_string()],
@@ -10512,29 +9132,18 @@ mod tests {
 
     let extracted = extract_minecraft_training_result_inspect_reports(
       &store,
-      &store
-        .read_run("run_read_minecraft_training_result_inspect")
-        .expect("run should read back"),
+      &store.read_run("run_read_minecraft_training_result_inspect").expect("run should read back"),
     )
     .expect("training result inspect reports should extract");
     assert_eq!(extracted.len(), 1);
     let summary = extracted[0].report.as_ref().expect("summary should parse");
     assert_eq!(summary.status, "failed");
-    assert_eq!(
-      summary.status_message.as_deref(),
-      Some("legacy adapter failure")
-    );
-    assert_eq!(
-      summary.status_reason.as_deref(),
-      Some("result_artifacts_missing")
-    );
+    assert_eq!(summary.status_message.as_deref(), Some("legacy adapter failure"));
+    assert_eq!(summary.status_reason.as_deref(), Some("result_artifacts_missing"));
     assert!(!summary.key_result_artifacts_present);
 
-    let listed = list_minecraft_training_result_inspect_reports(
-      &store,
-      "run_read_minecraft_training_result_inspect",
-    )
-    .expect("training result inspect reports should list");
+    let listed = list_minecraft_training_result_inspect_reports(&store, "run_read_minecraft_training_result_inspect")
+      .expect("training result inspect reports should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -10567,20 +9176,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_result_manifests(
-      &store,
-      "run_read_minecraft_training_result_manifest_non_json",
-    )
-    .expect("training result manifests should list");
+    let extracted = list_minecraft_training_result_manifests(&store, "run_read_minecraft_training_result_manifest_non_json")
+      .expect("training result manifests should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].manifest.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("mime_type")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("mime_type"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -10612,20 +9212,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_launch_manifests(
-      &store,
-      "run_read_minecraft_training_launch_manifest_non_json",
-    )
-    .expect("training launch manifests should list");
+    let extracted = list_minecraft_training_launch_manifests(&store, "run_read_minecraft_training_launch_manifest_non_json")
+      .expect("training launch manifests should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].manifest.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("mime_type")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("mime_type"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -10657,20 +9248,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_launch_inspect_reports(
-      &store,
-      "run_read_minecraft_training_launch_inspect_malformed",
-    )
-    .expect("training launch inspect reports should list");
+    let extracted = list_minecraft_training_launch_inspect_reports(&store, "run_read_minecraft_training_launch_inspect_malformed")
+      .expect("training launch inspect reports should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].report.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse minecraft-3dgs-training-launch-inspect artifact")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("failed to parse minecraft-3dgs-training-launch-inspect artifact"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -10702,20 +9284,11 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let extracted = list_minecraft_training_result_inspect_reports(
-      &store,
-      "run_read_minecraft_training_result_inspect_malformed",
-    )
-    .expect("training result inspect reports should list");
+    let extracted = list_minecraft_training_result_inspect_reports(&store, "run_read_minecraft_training_result_inspect_malformed")
+      .expect("training result inspect reports should list");
     assert_eq!(extracted.len(), 1);
     assert!(extracted[0].report.is_none());
-    assert!(
-      extracted[0]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse minecraft-3dgs-training-result-inspect artifact")
-    );
+    assert!(extracted[0].issue.as_deref().unwrap_or_default().contains("failed to parse minecraft-3dgs-training-result-inspect artifact"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -10727,16 +9300,8 @@ mod tests {
     let run = dummy_run("run_read_candidate_promotion");
     let span = dummy_span(&run.root_span_id);
 
-    let capture_artifact = stage_text_artifact(
-      &store,
-      &root,
-      &run.run_id,
-      &span.span_id,
-      0,
-      "capture-image",
-      "capture.png",
-      "fake capture body",
-    );
+    let capture_artifact =
+      stage_text_artifact(&store, &root, &run.run_id, &span.span_id, 0, "capture-image", "capture.png", "fake capture body");
     let source_recognition_artifact = stage_json_artifact(
       &store,
       &root,
@@ -10938,62 +9503,25 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_candidate_promotion")
-      .expect("run should read back");
-    let extracted = extract_candidate_promotion_lineage(&store, &canonical)
-      .expect("candidate promotion lineage should extract");
+    let canonical = store.read_run("run_read_candidate_promotion").expect("run should read back");
+    let extracted = extract_candidate_promotion_lineage(&store, &canonical).expect("candidate promotion lineage should extract");
     assert_eq!(extracted.len(), 5);
     assert_eq!(extracted[0].status, CandidatePromotionLineageStatus::Ready);
     assert_eq!(extracted[0].decision_kind.as_deref(), Some("promoted"));
-    assert_eq!(
-      extracted[0].freshness_source_operation_id.as_deref(),
-      Some("observe.window.capture")
-    );
-    assert_eq!(
-      extracted[0].consent_scope.as_deref(),
-      Some("candidate_promotion_only")
-    );
-    assert_eq!(
-      extracted[0].consent_approved_action.as_deref(),
-      Some("promote_recognition_to_candidate")
-    );
-    assert_eq!(
-      extracted[0].consent_recognition_id.as_deref(),
-      Some("promotion_ready_frame_1")
-    );
-    assert_eq!(
-      extracted[0].promoted_candidate_local_ids,
-      vec!["promoted-item_end_turn".to_string()]
-    );
+    assert_eq!(extracted[0].freshness_source_operation_id.as_deref(), Some("observe.window.capture"));
+    assert_eq!(extracted[0].consent_scope.as_deref(), Some("candidate_promotion_only"));
+    assert_eq!(extracted[0].consent_approved_action.as_deref(), Some("promote_recognition_to_candidate"));
+    assert_eq!(extracted[0].consent_recognition_id.as_deref(), Some("promotion_ready_frame_1"));
+    assert_eq!(extracted[0].promoted_candidate_local_ids, vec!["promoted-item_end_turn".to_string()]);
     assert_eq!(extracted[1].status, CandidatePromotionLineageStatus::Ready);
     assert_eq!(extracted[1].decision_kind.as_deref(), Some("refused"));
-    assert_eq!(
-      extracted[1].refusal_reasons,
-      vec!["stability_unproven: InsufficientFrames { have: 1, need: 3 }".to_string()]
-    );
-    assert_eq!(
-      extracted[2].status,
-      CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact
-    );
-    assert_eq!(
-      extracted[3].status,
-      CandidatePromotionLineageStatus::CaptureArtifactUnresolved
-    );
-    assert_eq!(
-      extracted[4].status,
-      CandidatePromotionLineageStatus::Malformed
-    );
-    assert!(
-      extracted[4]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse candidate-promotion artifact")
-    );
+    assert_eq!(extracted[1].refusal_reasons, vec!["stability_unproven: InsufficientFrames { have: 1, need: 3 }".to_string()]);
+    assert_eq!(extracted[2].status, CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact);
+    assert_eq!(extracted[3].status, CandidatePromotionLineageStatus::CaptureArtifactUnresolved);
+    assert_eq!(extracted[4].status, CandidatePromotionLineageStatus::Malformed);
+    assert!(extracted[4].issue.as_deref().unwrap_or_default().contains("failed to parse candidate-promotion artifact"));
 
-    let listed = list_candidate_promotion_lineage(&store, "run_read_candidate_promotion")
-      .expect("candidate promotion lineage should list");
+    let listed = list_candidate_promotion_lineage(&store, "run_read_candidate_promotion").expect("candidate promotion lineage should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -11027,12 +9555,8 @@ mod tests {
       "promotion_ready",
       "promoted-item_end_turn",
     );
-    let missing_source_decision = candidate_action_decision_artifact(
-      None,
-      "decision_missing_source",
-      "promotion_ready",
-      "promoted-item_end_turn",
-    );
+    let missing_source_decision =
+      candidate_action_decision_artifact(None, "decision_missing_source", "promotion_ready", "promoted-item_end_turn");
     let unresolved_source_decision = candidate_action_decision_artifact(
       Some(ArtifactRef {
         run_id: run.run_id.clone(),
@@ -11098,64 +9622,24 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_candidate_action_decision")
-      .expect("run should read back");
-    let extracted = extract_candidate_action_decision_lineage(&store, &canonical)
-      .expect("candidate action decision lineage should extract");
+    let canonical = store.read_run("run_read_candidate_action_decision").expect("run should read back");
+    let extracted = extract_candidate_action_decision_lineage(&store, &canonical).expect("candidate action decision lineage should extract");
     assert_eq!(extracted.len(), 4);
-    assert_eq!(
-      extracted[0].status,
-      CandidateActionDecisionLineageStatus::Ready
-    );
+    assert_eq!(extracted[0].status, CandidateActionDecisionLineageStatus::Ready);
     assert_eq!(extracted[0].decision_id.as_deref(), Some("decision_ready"));
-    assert_eq!(
-      extracted[0].resolver_operation.as_deref(),
-      Some("candidate.action.decide_only")
-    );
-    assert_eq!(
-      extracted[0].selected_method.as_deref(),
-      Some("pointer-click")
-    );
-    assert_eq!(
-      extracted[0].side_effect.as_deref(),
-      Some("none_decide_only")
-    );
-    assert_eq!(
-      extracted[0].input_delivery.as_deref(),
-      Some("not_attempted")
-    );
-    assert_eq!(
-      extracted[0].operation_result.as_deref(),
-      Some("not_produced")
-    );
-    assert_eq!(
-      extracted[0].verification_result.as_deref(),
-      Some("not_produced")
-    );
-    assert_eq!(
-      extracted[1].status,
-      CandidateActionDecisionLineageStatus::MissingSourceCandidatePromotionArtifact
-    );
-    assert_eq!(
-      extracted[2].status,
-      CandidateActionDecisionLineageStatus::SourceCandidatePromotionArtifactUnresolved
-    );
-    assert_eq!(
-      extracted[3].status,
-      CandidateActionDecisionLineageStatus::Malformed
-    );
-    assert!(
-      extracted[3]
-        .issue
-        .as_deref()
-        .unwrap_or_default()
-        .contains("failed to parse candidate-action-decision artifact")
-    );
+    assert_eq!(extracted[0].resolver_operation.as_deref(), Some("candidate.action.decide_only"));
+    assert_eq!(extracted[0].selected_method.as_deref(), Some("pointer-click"));
+    assert_eq!(extracted[0].side_effect.as_deref(), Some("none_decide_only"));
+    assert_eq!(extracted[0].input_delivery.as_deref(), Some("not_attempted"));
+    assert_eq!(extracted[0].operation_result.as_deref(), Some("not_produced"));
+    assert_eq!(extracted[0].verification_result.as_deref(), Some("not_produced"));
+    assert_eq!(extracted[1].status, CandidateActionDecisionLineageStatus::MissingSourceCandidatePromotionArtifact);
+    assert_eq!(extracted[2].status, CandidateActionDecisionLineageStatus::SourceCandidatePromotionArtifactUnresolved);
+    assert_eq!(extracted[3].status, CandidateActionDecisionLineageStatus::Malformed);
+    assert!(extracted[3].issue.as_deref().unwrap_or_default().contains("failed to parse candidate-action-decision artifact"));
 
-    let listed =
-      list_candidate_action_decision_lineage(&store, "run_read_candidate_action_decision")
-        .expect("candidate action decision lineage should list");
+    let listed = list_candidate_action_decision_lineage(&store, "run_read_candidate_action_decision")
+      .expect("candidate action decision lineage should list");
     assert_eq!(listed, extracted);
 
     let _ = fs::remove_dir_all(root);
@@ -11308,89 +9792,40 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_candidate_action_execution")
-      .expect("run should read back");
-    let extracted = extract_candidate_action_execution_lineage(&store, &canonical)
-      .expect("candidate action execution lineage should extract");
+    let canonical = store.read_run("run_read_candidate_action_execution").expect("run should read back");
+    let extracted =
+      extract_candidate_action_execution_lineage(&store, &canonical).expect("candidate action execution lineage should extract");
     assert_eq!(extracted.len(), 5);
-    assert_eq!(
-      extracted[0].status,
-      CandidateActionExecutionLineageStatus::Ready
-    );
-    assert_eq!(
-      extracted[0].execution_id.as_deref(),
-      Some("execution_ready")
-    );
+    assert_eq!(extracted[0].status, CandidateActionExecutionLineageStatus::Ready);
+    assert_eq!(extracted[0].execution_id.as_deref(), Some("execution_ready"));
     assert_eq!(extracted[0].input_delivery.as_deref(), Some("attempted"));
-    assert_eq!(
-      extracted[0].selected_path.as_deref(),
-      Some("window_targeted_mouse")
-    );
+    assert_eq!(extracted[0].selected_path.as_deref(), Some("window_targeted_mouse"));
     assert_eq!(extracted[0].operation_status.as_deref(), Some("completed"));
-    assert_eq!(
-      extracted[0].verification.as_deref(),
-      Some("activation_only")
-    );
-    assert_eq!(
-      extracted[0].closure_state,
-      CandidateActionExecutionClosureState::SemanticOpen
-    );
+    assert_eq!(extracted[0].verification.as_deref(), Some("activation_only"));
+    assert_eq!(extracted[0].closure_state, CandidateActionExecutionClosureState::SemanticOpen);
     assert_eq!(extracted[0].semantic_matched, None);
     assert_eq!(extracted[0].attempts, Some(1));
     assert_eq!(extracted[0].attempts_succeeded, Some(1));
-    assert_eq!(
-      extracted[1].status,
-      CandidateActionExecutionLineageStatus::MissingOperationResultArtifact
-    );
-    assert_eq!(
-      extracted[2].status,
-      CandidateActionExecutionLineageStatus::SourceCandidateActionDecisionArtifactUnresolved
-    );
-    assert_eq!(
-      extracted[3].status,
-      CandidateActionExecutionLineageStatus::Ready
-    );
-    assert_eq!(
-      extracted[3].verification.as_deref(),
-      Some("activation_only+post_action:semantic_match")
-    );
-    assert_eq!(
-      extracted[3].closure_state,
-      CandidateActionExecutionClosureState::EvidenceClosed
-    );
+    assert_eq!(extracted[1].status, CandidateActionExecutionLineageStatus::MissingOperationResultArtifact);
+    assert_eq!(extracted[2].status, CandidateActionExecutionLineageStatus::SourceCandidateActionDecisionArtifactUnresolved);
+    assert_eq!(extracted[3].status, CandidateActionExecutionLineageStatus::Ready);
+    assert_eq!(extracted[3].verification.as_deref(), Some("activation_only+post_action:semantic_match"));
+    assert_eq!(extracted[3].closure_state, CandidateActionExecutionClosureState::EvidenceClosed);
     assert_eq!(extracted[3].semantic_matched, Some(true));
-    assert_eq!(
-      extracted[4].status,
-      CandidateActionExecutionLineageStatus::Malformed
-    );
+    assert_eq!(extracted[4].status, CandidateActionExecutionLineageStatus::Malformed);
 
-    let listed =
-      list_candidate_action_execution_lineage(&store, "run_read_candidate_action_execution")
-        .expect("candidate action execution lineage should list");
+    let listed = list_candidate_action_execution_lineage(&store, "run_read_candidate_action_execution")
+      .expect("candidate action execution lineage should list");
     assert_eq!(listed, extracted);
 
-    let transitions = extract_action_transition_lineage(&store, &canonical)
-      .expect("action transition lineage should extract");
+    let transitions = extract_action_transition_lineage(&store, &canonical).expect("action transition lineage should extract");
     assert_eq!(transitions.len(), 5);
     assert_eq!(transitions[0].status, ActionTransitionLineageStatus::Ready);
-    assert_eq!(
-      transitions[0]
-        .effective_decision
-        .as_ref()
-        .map(|decision| decision.selected_method.as_str()),
-      Some("pointer-click")
-    );
+    assert_eq!(transitions[0].effective_decision.as_ref().map(|decision| decision.selected_method.as_str()), Some("pointer-click"));
     assert!(transitions[0].driver_result.is_some());
-    assert_eq!(
-      transitions[0].verification.verification_outcome,
-      "activation_only"
-    );
+    assert_eq!(transitions[0].verification.verification_outcome, "activation_only");
     assert_eq!(transitions[3].verification.verification_outcome, "passed");
-    assert_eq!(
-      transitions[4].status,
-      ActionTransitionLineageStatus::Malformed
-    );
+    assert_eq!(transitions[4].status, ActionTransitionLineageStatus::Malformed);
 
     let _ = fs::remove_dir_all(root);
   }
@@ -11402,12 +9837,7 @@ mod tests {
     let run = dummy_run("run_read_action_transition_mismatch");
     let span = dummy_span(&run.root_span_id);
 
-    let mut l8a = candidate_action_decision_artifact(
-      None,
-      "decision_ax_plan",
-      "promotion_ready",
-      "promoted-item_end_turn",
-    );
+    let mut l8a = candidate_action_decision_artifact(None, "decision_ax_plan", "promotion_ready", "promoted-item_end_turn");
     l8a.action_resolver_decision.selected_method = "ax-action".to_string();
     l8a.action_resolver_decision.primary_method = "ax-action".to_string();
     l8a.action_resolver_decision.policy = "candidate-ax-node".to_string();
@@ -11449,9 +9879,7 @@ mod tests {
       "execution_plan_delivery_mismatch",
     );
     execution.action_resolver_decision.selected_method = "pointer-click".to_string();
-    execution
-      .known_limits
-      .push("plan_delivery_mismatch: l8a_selected=ax-action effective=pointer-click".to_string());
+    execution.known_limits.push("plan_delivery_mismatch: l8a_selected=ax-action effective=pointer-click".to_string());
 
     let artifacts = vec![
       decision_artifact,
@@ -11477,39 +9905,16 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_action_transition_mismatch")
-      .expect("run should read back");
-    let transitions = extract_action_transition_lineage(&store, &canonical)
-      .expect("action transition lineage should extract");
+    let canonical = store.read_run("run_read_action_transition_mismatch").expect("run should read back");
+    let transitions = extract_action_transition_lineage(&store, &canonical).expect("action transition lineage should extract");
     assert_eq!(transitions.len(), 1);
-    assert_eq!(
-      transitions[0].status,
-      ActionTransitionLineageStatus::Partial
-    );
-    assert_eq!(
-      transitions[0]
-        .planned_decision
-        .as_ref()
-        .map(|decision| decision.selected_method.as_str()),
-      Some("ax-action")
-    );
-    assert_eq!(
-      transitions[0]
-        .effective_decision
-        .as_ref()
-        .map(|decision| decision.selected_method.as_str()),
-      Some("pointer-click")
-    );
-    assert!(
-      transitions[0]
-        .known_limits
-        .iter()
-        .any(|limit| limit.starts_with("plan_delivery_mismatch:"))
-    );
+    assert_eq!(transitions[0].status, ActionTransitionLineageStatus::Partial);
+    assert_eq!(transitions[0].planned_decision.as_ref().map(|decision| decision.selected_method.as_str()), Some("ax-action"));
+    assert_eq!(transitions[0].effective_decision.as_ref().map(|decision| decision.selected_method.as_str()), Some("pointer-click"));
+    assert!(transitions[0].known_limits.iter().any(|limit| limit.starts_with("plan_delivery_mismatch:")));
 
-    let listed = list_action_transition_lineage(&store, "run_read_action_transition_mismatch")
-      .expect("action transition lineage should list");
+    let listed =
+      list_action_transition_lineage(&store, "run_read_action_transition_mismatch").expect("action transition lineage should list");
     assert_eq!(listed, transitions);
 
     let _ = fs::remove_dir_all(root);
@@ -11587,24 +9992,12 @@ mod tests {
       })
       .expect("run snapshot should persist");
 
-    let canonical = store
-      .read_run("run_read_action_transition_legacy_missing_decision")
-      .expect("run should read back");
-    let transitions = extract_action_transition_lineage(&store, &canonical)
-      .expect("action transition lineage should extract");
+    let canonical = store.read_run("run_read_action_transition_legacy_missing_decision").expect("run should read back");
+    let transitions = extract_action_transition_lineage(&store, &canonical).expect("action transition lineage should extract");
     assert_eq!(transitions.len(), 1);
-    assert_eq!(
-      transitions[0].status,
-      ActionTransitionLineageStatus::Partial
-    );
-    assert_eq!(
-      transitions[0].issue.as_deref(),
-      Some("missing_action_resolver_decision")
-    );
-    assert_eq!(
-      transitions[0].verification.verification_outcome,
-      "activation_only"
-    );
+    assert_eq!(transitions[0].status, ActionTransitionLineageStatus::Partial);
+    assert_eq!(transitions[0].issue.as_deref(), Some("missing_action_resolver_decision"));
+    assert_eq!(transitions[0].verification.verification_outcome, "activation_only");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -11650,10 +10043,7 @@ mod tests {
     }
   }
 
-  fn verification(
-    method: VerificationMethod,
-    observed_label: Option<String>,
-  ) -> VerificationResult {
+  fn verification(method: VerificationMethod, observed_label: Option<String>) -> VerificationResult {
     VerificationResult {
       api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
       method,
@@ -11709,8 +10099,7 @@ mod tests {
     value: &T,
   ) -> ArtifactRecordV1Alpha1 {
     let source_path = root.join(format!("source-{index}-{preferred_name}"));
-    let rendered =
-      serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
+    let rendered = serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
     fs::write(&source_path, rendered).expect("artifact source should write");
     store
       .stage_artifact_file(
@@ -11786,9 +10175,7 @@ mod tests {
         "operation_result": "not_produced",
         "verification_result": "not_produced",
       }),
-      known_limits: vec![
-        "L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string(),
-      ],
+      known_limits: vec!["L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string()],
     }
   }
 
@@ -11837,9 +10224,7 @@ mod tests {
         "target_window_present",
         "target window present",
       )]),
-      input_action_result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      input_action_result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       operation_result: OperationResult {
         api_version: OPERATION_RESULT_API_VERSION.to_string(),
         run_id: RunId::new("run_read_candidate_action_execution"),
@@ -11847,10 +10232,7 @@ mod tests {
         operation_id: "candidate.action.execute_single".to_string(),
         evidence_artifacts: Vec::new(),
         output: OperationOutput::Acknowledged {
-          message: Some(
-            "single candidate action activated; semantic verification remains activation_only"
-              .to_string(),
-          ),
+          message: Some("single candidate action activated; semantic verification remains activation_only".to_string()),
         },
         verifications: vec![candidate_action_activation_verification(
           VerificationMethod::Custom {
@@ -11860,9 +10242,7 @@ mod tests {
           Some("End Turn"),
         )],
         freshness_basis: None,
-        known_limits: vec![
-          "activation_only verification records input delivery, not semantic success".to_string(),
-        ],
+        known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
       },
       verification_result: candidate_action_activation_verification(
         VerificationMethod::Custom {
@@ -11883,9 +10263,7 @@ mod tests {
         "readiness": "ready",
         "readiness_blocker": null,
       }),
-      known_limits: vec![
-        "activation_only verification records input delivery, not semantic success".to_string(),
-      ],
+      known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
     }
   }
 
@@ -11910,16 +10288,10 @@ mod tests {
     operation_result_artifact: Option<ArtifactRef>,
     execution_id: &str,
   ) -> CandidateActionExecutionArtifact {
-    let mut artifact = candidate_action_execution_artifact(
-      source_candidate_action_decision_artifact,
-      operation_result_artifact,
-      execution_id,
-    );
+    let mut artifact =
+      candidate_action_execution_artifact(source_candidate_action_decision_artifact, operation_result_artifact, execution_id);
     let semantic = candidate_action_semantic_verification();
-    artifact
-      .operation_result
-      .verifications
-      .push(semantic.clone());
+    artifact.operation_result.verifications.push(semantic.clone());
     artifact.verification_result = semantic;
     artifact.detail = json!({
       "input_delivery": "attempted",
@@ -12053,8 +10425,7 @@ mod tests {
       evidence,
       known_limits: vec![
         "projection basis is unavailable outside capture-integrated runtime".to_string(),
-        "detector RecognitionResult is recognition evidence only, not candidate-ready output"
-          .to_string(),
+        "detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string(),
       ],
     }
   }
@@ -12118,9 +10489,7 @@ mod tests {
         max_observed_drift_px: 2.0,
       },
       CandidatePromotion::Refused { reasons }
-        if reasons
-          .iter()
-          .any(|reason| matches!(reason, PromotionRefusal::StabilityUnproven { .. })) =>
+        if reasons.iter().any(|reason| matches!(reason, PromotionRefusal::StabilityUnproven { .. })) =>
       {
         StabilityAssessment::Unstable {
           reason: StabilityRejection::InsufficientFrames { have: 1, need: 3 },
@@ -12133,9 +10502,7 @@ mod tests {
     };
     let projection = match &decision {
       CandidatePromotion::Refused { reasons }
-        if reasons
-          .iter()
-          .any(|reason| matches!(reason, PromotionRefusal::ProjectionUnavailable { .. })) =>
+        if reasons.iter().any(|reason| matches!(reason, PromotionRefusal::ProjectionUnavailable { .. })) =>
       {
         PromotionProjection::Unavailable {
           reason: "projection missing".to_string(),
@@ -12145,9 +10512,7 @@ mod tests {
     };
     let stability_input = match &decision {
       CandidatePromotion::Refused { reasons }
-        if reasons
-          .iter()
-          .any(|reason| matches!(reason, PromotionRefusal::StabilityUnproven { .. })) =>
+        if reasons.iter().any(|reason| matches!(reason, PromotionRefusal::StabilityUnproven { .. })) =>
       {
         StabilityInput::Unproven {
           reason: "InsufficientFrames { have: 1, need: 3 }".to_string(),
@@ -12315,12 +10680,7 @@ mod tests {
     })
   }
 
-  fn mc19_operation_result(
-    run_id: &RunId,
-    query_artifact_id: &str,
-    status: OperationStatus,
-    message: &str,
-  ) -> OperationResult {
+  fn mc19_operation_result(run_id: &RunId, query_artifact_id: &str, status: OperationStatus, message: &str) -> OperationResult {
     let query_ref = ArtifactRef {
       artifact_id: ArtifactId::new(query_artifact_id),
       run_id: run_id.clone(),
@@ -12331,8 +10691,7 @@ mod tests {
       api_version: OPERATION_RESULT_API_VERSION.to_string(),
       run_id: run_id.clone(),
       status,
-      operation_id: crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID
-        .to_string(),
+      operation_id: crate::minecraft_query_live_action::QUERY_WIRED_LIVE_ACTION_OPERATION_ID.to_string(),
       evidence_artifacts: vec![query_ref.clone()],
       output: OperationOutput::Acknowledged {
         message: Some(message.to_string()),
@@ -12343,17 +10702,11 @@ mod tests {
         source_operation_id: Some("auv.minecraft.query_3dgs_training_result".to_string()),
         notes: vec!["MC-12 spatial query manifest staged in the same run".to_string()],
       }),
-      known_limits: vec![
-        "mc19_v1_d4_query_wired_live_action_non_stub_click_no_gameplay_verification".to_string(),
-      ],
+      known_limits: vec!["mc19_v1_d4_query_wired_live_action_non_stub_click_no_gameplay_verification".to_string()],
     }
   }
 
-  fn dummy_mc19_event(
-    span_id: &SpanId,
-    name: &str,
-    message: &str,
-  ) -> auv_tracing_driver::trace::EventRecordV1Alpha1 {
+  fn dummy_mc19_event(span_id: &SpanId, name: &str, message: &str) -> auv_tracing_driver::trace::EventRecordV1Alpha1 {
     auv_tracing_driver::trace::EventRecordV1Alpha1 {
       api_version: auv_tracing_driver::trace::EVENT_API_VERSION.to_string(),
       event_id: EventId::new(format!("event_{name}")),
@@ -12388,37 +10741,20 @@ mod tests {
 
   #[test]
   fn query_wired_live_action_verification_projection_maps_semantic_pass_and_absent() {
-    use crate::contract::{
-      OperationStatus, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
-    };
+    use crate::contract::{OperationStatus, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult};
 
     let run_id = RunId::new("run_verification_projection");
     let absent = super::resolve_query_wired_live_action_verification_projection(
       true,
       Some("artifact_op"),
-      Some(&mc19_operation_result(
-        &run_id,
-        "artifact_query",
-        OperationStatus::Completed,
-        "dispatched",
-      )),
+      Some(&mc19_operation_result(&run_id, "artifact_query", OperationStatus::Completed, "dispatched")),
       run_id.as_str(),
       None,
     );
     assert_eq!(absent.verification_outcome, "absent");
-    assert!(
-      absent
-        .verification_reason
-        .as_deref()
-        .is_some_and(|reason| reason.contains("mc19_v1_d4"))
-    );
+    assert!(absent.verification_reason.as_deref().is_some_and(|reason| reason.contains("mc19_v1_d4")));
 
-    let mut operation_result = mc19_operation_result(
-      &run_id,
-      "artifact_query",
-      OperationStatus::Completed,
-      "dispatched",
-    );
+    let mut operation_result = mc19_operation_result(&run_id, "artifact_query", OperationStatus::Completed, "dispatched");
     operation_result.verifications.push(VerificationResult {
       api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
       method: VerificationMethod::SemanticMatch,
@@ -12442,31 +10778,23 @@ mod tests {
       None,
     );
     assert_eq!(passed.verification_outcome, "passed");
-    let mut unreliable_operation_result = mc19_operation_result(
-      &run_id,
-      "artifact_query",
-      OperationStatus::Completed,
-      "dispatched",
-    );
-    unreliable_operation_result
-      .verifications
-      .push(VerificationResult {
-        api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-        method: VerificationMethod::SemanticMatch,
-        executed: true,
-        state_changed: false,
-        semantic_matched: None,
-        failure_layer: Some(crate::contract::FailureLayer::VerificationUnreliable),
-        evidence: Vec::new(),
-        consumed_candidate_ref: None,
-        consumed_node_ref: None,
-        consumed_recognition_artifact_ref: None,
-        consumed_recognition_id: None,
-        consumed_recognized_item_id: None,
-        observed_label: None,
-      });
-    unreliable_operation_result.known_limits =
-      vec![auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT.to_string()];
+    let mut unreliable_operation_result = mc19_operation_result(&run_id, "artifact_query", OperationStatus::Completed, "dispatched");
+    unreliable_operation_result.verifications.push(VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+      method: VerificationMethod::SemanticMatch,
+      executed: true,
+      state_changed: false,
+      semantic_matched: None,
+      failure_layer: Some(crate::contract::FailureLayer::VerificationUnreliable),
+      evidence: Vec::new(),
+      consumed_candidate_ref: None,
+      consumed_node_ref: None,
+      consumed_recognition_artifact_ref: None,
+      consumed_recognition_id: None,
+      consumed_recognized_item_id: None,
+      observed_label: None,
+    });
+    unreliable_operation_result.known_limits = vec![auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT.to_string()];
     let unreliable = super::resolve_query_wired_live_action_verification_projection(
       true,
       Some("artifact_op"),
@@ -12476,34 +10804,24 @@ mod tests {
     );
     assert_eq!(unreliable.verification_outcome, "unreliable");
 
-    assert_eq!(
-      passed.verification_reason.as_deref(),
-      Some("world diff matched")
-    );
+    assert_eq!(passed.verification_reason.as_deref(), Some("world diff matched"));
 
-    let mut inconclusive_operation_result = mc19_operation_result(
-      &run_id,
-      "artifact_query",
-      OperationStatus::Completed,
-      "dispatched",
-    );
-    inconclusive_operation_result
-      .verifications
-      .push(VerificationResult {
-        api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-        method: VerificationMethod::SemanticMatch,
-        executed: true,
-        state_changed: true,
-        semantic_matched: None,
-        failure_layer: None,
-        evidence: Vec::new(),
-        consumed_candidate_ref: None,
-        consumed_node_ref: None,
-        consumed_recognition_artifact_ref: None,
-        consumed_recognition_id: None,
-        consumed_recognized_item_id: None,
-        observed_label: Some("tick advanced".to_string()),
-      });
+    let mut inconclusive_operation_result = mc19_operation_result(&run_id, "artifact_query", OperationStatus::Completed, "dispatched");
+    inconclusive_operation_result.verifications.push(VerificationResult {
+      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
+      method: VerificationMethod::SemanticMatch,
+      executed: true,
+      state_changed: true,
+      semantic_matched: None,
+      failure_layer: None,
+      evidence: Vec::new(),
+      consumed_candidate_ref: None,
+      consumed_node_ref: None,
+      consumed_recognition_artifact_ref: None,
+      consumed_recognition_id: None,
+      consumed_recognized_item_id: None,
+      observed_label: Some("tick advanced".to_string()),
+    });
     let inconclusive = super::resolve_query_wired_live_action_verification_projection(
       true,
       Some("artifact_op"),
@@ -12512,23 +10830,12 @@ mod tests {
       None,
     );
     assert_eq!(inconclusive.verification_outcome, "inconclusive");
-    assert_eq!(
-      inconclusive.verification_reason.as_deref(),
-      Some("tick advanced")
-    );
+    assert_eq!(inconclusive.verification_reason.as_deref(), Some("tick advanced"));
 
-    let not_attempted = super::resolve_query_wired_live_action_verification_projection(
-      false,
-      None,
-      None,
-      run_id.as_str(),
-      Some("visibility=outside_window"),
-    );
+    let not_attempted =
+      super::resolve_query_wired_live_action_verification_projection(false, None, None, run_id.as_str(), Some("visibility=outside_window"));
     assert_eq!(not_attempted.verification_outcome, "not_attempted");
-    assert_eq!(
-      not_attempted.verification_reason.as_deref(),
-      Some("visibility=outside_window")
-    );
+    assert_eq!(not_attempted.verification_reason.as_deref(), Some("visibility=outside_window"));
   }
 
   #[test]
@@ -12564,12 +10871,7 @@ mod tests {
       1,
       "operation-result",
       "operation-result.json",
-      &mc19_operation_result(
-        &run.run_id,
-        query_artifact_id.as_str(),
-        OperationStatus::Completed,
-        "mock live click dispatched",
-      ),
+      &mc19_operation_result(&run.run_id, query_artifact_id.as_str(), OperationStatus::Completed, "mock live click dispatched"),
     );
     let events = vec![
       dummy_mc19_event(
@@ -12582,65 +10884,25 @@ mod tests {
         "minecraft.query_wired_live_action.outcome",
         "attempted=true action_eligibility=click_ready refusal_reason=none query_manifest_path=/tmp/query.json",
       ),
-      dummy_mc19_event(
-        &span_id,
-        "command.resolved",
-        "resolved input.clickWindowPoint",
-      ),
-      dummy_mc19_event(
-        &span_id,
-        "command.failed",
-        "main visible window was not found",
-      ),
+      dummy_mc19_event(&span_id, "command.resolved", "resolved input.clickWindowPoint"),
+      dummy_mc19_event(&span_id, "command.failed", "main visible window was not found"),
     ];
-    write_mc19_run_snapshot(
-      &store,
-      &root,
-      run_id,
-      events,
-      vec![query_artifact, operation_result],
-    );
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![query_artifact, operation_result]);
 
-    let summary = derive_minecraft_query_wired_live_action_summary(
-      &store,
-      &store.read_run(run_id).expect("run"),
-    )
-    .expect("summary should derive");
+    let summary =
+      derive_minecraft_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert!(summary.attempted);
     assert_eq!(summary.action_eligibility, "click_ready");
     assert_eq!(summary.readiness_class.as_deref(), Some("ready"));
-    assert_eq!(
-      summary.dispatch_command.as_deref(),
-      Some("input.clickWindowPoint")
-    );
-    assert!(
-      summary
-        .dispatch_outcome
-        .as_deref()
-        .is_some_and(|v| v.starts_with("failed:"))
-    );
-    assert_eq!(
-      summary.mc14_action_eligibility.as_deref(),
-      Some("click_ready")
-    );
+    assert_eq!(summary.dispatch_command.as_deref(), Some("input.clickWindowPoint"));
+    assert!(summary.dispatch_outcome.as_deref().is_some_and(|v| v.starts_with("failed:")));
+    assert_eq!(summary.mc14_action_eligibility.as_deref(), Some("click_ready"));
     assert!(summary.window_point.is_some());
     assert_eq!(
       summary.source_readiness_ref.as_deref(),
-      Some(
-        format!(
-          "kind=query_manifest artifact_id={} run_id={}",
-          query_artifact_id.as_str(),
-          run_id
-        )
-        .as_str()
-      )
+      Some(format!("kind=query_manifest artifact_id={} run_id={}", query_artifact_id.as_str(), run_id).as_str())
     );
-    assert_eq!(
-      list_minecraft_query_wired_live_action_summaries(&store, run_id)
-        .expect("list")
-        .len(),
-      1
-    );
+    assert_eq!(list_minecraft_query_wired_live_action_summaries(&store, run_id).expect("list").len(), 1);
 
     let _ = fs::remove_dir_all(root);
   }
@@ -12660,14 +10922,7 @@ mod tests {
       0,
       crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
       "minecraft-3dgs-training-result-query.json",
-      &mc19_query_manifest_json(
-        (511, 73, 728),
-        "answered",
-        Some("outside_window"),
-        None,
-        None,
-        Some("command_provider"),
-      ),
+      &mc19_query_manifest_json((511, 73, 728), "answered", Some("outside_window"), None, None, Some("command_provider")),
     );
     let query_artifact_id = query_artifact.artifact_id.as_str().to_string();
     let operation_result = stage_json_artifact(
@@ -12678,61 +10933,30 @@ mod tests {
       1,
       "operation-result",
       "operation-result.json",
-      &mc19_operation_result(
-        &run.run_id,
-        query_artifact_id.as_str(),
-        OperationStatus::Completed,
-        "visibility=outside_window",
-      ),
+      &mc19_operation_result(&run.run_id, query_artifact_id.as_str(), OperationStatus::Completed, "visibility=outside_window"),
     );
     let events = vec![
-      dummy_mc19_event(
-        &span_id,
-        "minecraft.query_wired_live_action.inputs",
-        "target_app=net.minecraft.client target_title=Minecraft",
-      ),
+      dummy_mc19_event(&span_id, "minecraft.query_wired_live_action.inputs", "target_app=net.minecraft.client target_title=Minecraft"),
       dummy_mc19_event(
         &span_id,
         "minecraft.query_wired_live_action.outcome",
         "attempted=false action_eligibility=answer_non_clickable refusal_reason=visibility=outside_window query_manifest_path=/tmp/query.json",
       ),
     ];
-    write_mc19_run_snapshot(
-      &store,
-      &root,
-      run_id,
-      events,
-      vec![query_artifact, operation_result],
-    );
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![query_artifact, operation_result]);
 
-    let summary = derive_minecraft_query_wired_live_action_summary(
-      &store,
-      &store.read_run(run_id).expect("run"),
-    )
-    .expect("summary should derive");
+    let summary =
+      derive_minecraft_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert!(!summary.attempted);
     assert_eq!(summary.action_eligibility, "answer_non_clickable");
     assert_eq!(summary.readiness_class.as_deref(), Some("non_actionable"));
-    assert_eq!(
-      summary.refusal_reason.as_deref(),
-      Some("visibility=outside_window")
-    );
+    assert_eq!(summary.refusal_reason.as_deref(), Some("visibility=outside_window"));
     assert!(summary.dispatch_command.is_none());
     assert!(summary.dispatch_outcome.is_none());
-    assert_eq!(
-      summary.mc14_action_eligibility.as_deref(),
-      Some("answer_non_clickable")
-    );
+    assert_eq!(summary.mc14_action_eligibility.as_deref(), Some("answer_non_clickable"));
     assert_eq!(
       summary.source_readiness_ref.as_deref(),
-      Some(
-        format!(
-          "kind=query_manifest artifact_id={} run_id={}",
-          query_artifact_id.as_str(),
-          run_id
-        )
-        .as_str()
-      )
+      Some(format!("kind=query_manifest artifact_id={} run_id={}", query_artifact_id.as_str(), run_id).as_str())
     );
 
     let _ = fs::remove_dir_all(root);
@@ -12753,14 +10977,7 @@ mod tests {
       0,
       crate::minecraft::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
       "minecraft-3dgs-training-result-query.json",
-      &mc19_query_manifest_json(
-        (9, 9, 9),
-        "failed",
-        None,
-        None,
-        Some("target_block_absent_from_scene_packet"),
-        None,
-      ),
+      &mc19_query_manifest_json((9, 9, 9), "failed", None, None, Some("target_block_absent_from_scene_packet"), None),
     );
     let query_artifact_id = query_artifact.artifact_id.as_str().to_string();
     let operation_result = stage_json_artifact(
@@ -12779,53 +10996,27 @@ mod tests {
       ),
     );
     let events = vec![
-      dummy_mc19_event(
-        &span_id,
-        "minecraft.query_wired_live_action.inputs",
-        "target_app=net.minecraft.client target_title=Minecraft",
-      ),
+      dummy_mc19_event(&span_id, "minecraft.query_wired_live_action.inputs", "target_app=net.minecraft.client target_title=Minecraft"),
       dummy_mc19_event(
         &span_id,
         "minecraft.query_wired_live_action.outcome",
         "attempted=false action_eligibility=not_consumable refusal_reason=status=failed reason=target_block_absent_from_scene_packet query_manifest_path=/tmp/query.json",
       ),
     ];
-    write_mc19_run_snapshot(
-      &store,
-      &root,
-      run_id,
-      events,
-      vec![query_artifact, operation_result],
-    );
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![query_artifact, operation_result]);
 
-    let summary = derive_minecraft_query_wired_live_action_summary(
-      &store,
-      &store.read_run(run_id).expect("run"),
-    )
-    .expect("summary should derive");
+    let summary =
+      derive_minecraft_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert!(!summary.attempted);
     assert_eq!(summary.action_eligibility, "not_consumable");
     assert_eq!(summary.readiness_class.as_deref(), Some("not_consumable"));
-    assert_eq!(
-      summary.refusal_reason.as_deref(),
-      Some("status=failed reason=target_block_absent_from_scene_packet")
-    );
+    assert_eq!(summary.refusal_reason.as_deref(), Some("status=failed reason=target_block_absent_from_scene_packet"));
     assert!(summary.dispatch_command.is_none());
     assert!(summary.dispatch_outcome.is_none());
-    assert_eq!(
-      summary.mc14_action_eligibility.as_deref(),
-      Some("not_consumable")
-    );
+    assert_eq!(summary.mc14_action_eligibility.as_deref(), Some("not_consumable"));
     assert_eq!(
       summary.source_readiness_ref.as_deref(),
-      Some(
-        format!(
-          "kind=query_manifest artifact_id={} run_id={}",
-          query_artifact_id.as_str(),
-          run_id
-        )
-        .as_str()
-      )
+      Some(format!("kind=query_manifest artifact_id={} run_id={}", query_artifact_id.as_str(), run_id).as_str())
     );
 
     let _ = fs::remove_dir_all(root);
@@ -12845,15 +11036,9 @@ mod tests {
     )];
     write_mc19_run_snapshot(&store, &root, run_id, events, vec![]);
 
-    let summary = derive_minecraft_query_wired_live_action_summary(
-      &store,
-      &store.read_run(run_id).expect("run"),
-    )
-    .expect("summary should derive");
-    assert_eq!(
-      summary.source_readiness_ref.as_deref(),
-      Some("kind=outcome_event event=minecraft.query_wired_live_action.outcome")
-    );
+    let summary =
+      derive_minecraft_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
+    assert_eq!(summary.source_readiness_ref.as_deref(), Some("kind=outcome_event event=minecraft.query_wired_live_action.outcome"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -12883,38 +11068,19 @@ mod tests {
       1,
       "operation-result",
       "operation-result.json",
-      &mc19_operation_result(
-        &run.run_id,
-        query_artifact.artifact_id.as_str(),
-        OperationStatus::Completed,
-        "manifest unreadable",
-      ),
+      &mc19_operation_result(&run.run_id, query_artifact.artifact_id.as_str(), OperationStatus::Completed, "manifest unreadable"),
     );
     let events = vec![dummy_mc19_event(
       &span_id,
       "minecraft.query_wired_live_action.outcome",
       "attempted=false action_eligibility=not_consumable refusal_reason=manifest unreadable",
     )];
-    write_mc19_run_snapshot(
-      &store,
-      &root,
-      run_id,
-      events,
-      vec![query_artifact, operation_result],
-    );
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![query_artifact, operation_result]);
 
-    let summary = derive_minecraft_query_wired_live_action_summary(
-      &store,
-      &store.read_run(run_id).expect("run"),
-    )
-    .expect("summary should derive");
+    let summary =
+      derive_minecraft_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert!(summary.source_readiness_ref.is_none());
-    assert!(
-      summary
-        .source_readiness_ref
-        .as_deref()
-        .is_none_or(|value| !value.contains("kind=derived_readiness"))
-    );
+    assert!(summary.source_readiness_ref.as_deref().is_none_or(|value| !value.contains("kind=derived_readiness")));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -12935,12 +11101,7 @@ mod tests {
       0,
       "operation-result",
       "operation-result.json",
-      &mc19_operation_result(
-        &run.run_id,
-        missing_query_id,
-        OperationStatus::Completed,
-        "query manifest absent from run",
-      ),
+      &mc19_operation_result(&run.run_id, missing_query_id, OperationStatus::Completed, "query manifest absent from run"),
     );
     let events = vec![dummy_mc19_event(
       &span_id,
@@ -12949,17 +11110,11 @@ mod tests {
     )];
     write_mc19_run_snapshot(&store, &root, run_id, events, vec![operation_result]);
 
-    let summary = derive_minecraft_query_wired_live_action_summary(
-      &store,
-      &store.read_run(run_id).expect("run"),
-    )
-    .expect("summary should derive");
+    let summary =
+      derive_minecraft_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert_eq!(
       summary.source_readiness_ref.as_deref(),
-      Some(
-        format!("kind=derived_readiness query_artifact_id={missing_query_id} run_id={run_id}")
-          .as_str()
-      )
+      Some(format!("kind=derived_readiness query_artifact_id={missing_query_id} run_id={run_id}").as_str())
     );
 
     let _ = fs::remove_dir_all(root);
@@ -12990,31 +11145,17 @@ mod tests {
       1,
       "operation-result",
       "operation-result.json",
-      &mc19_operation_result(
-        &run.run_id,
-        query_artifact.artifact_id.as_str(),
-        OperationStatus::Completed,
-        "partial manifest",
-      ),
+      &mc19_operation_result(&run.run_id, query_artifact.artifact_id.as_str(), OperationStatus::Completed, "partial manifest"),
     );
     let events = vec![dummy_mc19_event(
       &span_id,
       "minecraft.query_wired_live_action.outcome",
       "attempted=false action_eligibility=not_consumable refusal_reason=partial manifest",
     )];
-    write_mc19_run_snapshot(
-      &store,
-      &root,
-      run_id,
-      events,
-      vec![query_artifact, operation_result],
-    );
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![query_artifact, operation_result]);
 
-    let summary = derive_minecraft_query_wired_live_action_summary(
-      &store,
-      &store.read_run(run_id).expect("run"),
-    )
-    .expect("summary should derive");
+    let summary =
+      derive_minecraft_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert!(summary.source_readiness_ref.is_none());
 
     let _ = fs::remove_dir_all(root);
@@ -13045,31 +11186,17 @@ mod tests {
       1,
       "operation-result",
       "operation-result.json",
-      &mc19_operation_result(
-        &run.run_id,
-        query_artifact.artifact_id.as_str(),
-        OperationStatus::Completed,
-        "schema status only manifest",
-      ),
+      &mc19_operation_result(&run.run_id, query_artifact.artifact_id.as_str(), OperationStatus::Completed, "schema status only manifest"),
     );
     let events = vec![dummy_mc19_event(
       &span_id,
       "minecraft.query_wired_live_action.outcome",
       "attempted=false action_eligibility=not_consumable refusal_reason=schema status only manifest",
     )];
-    write_mc19_run_snapshot(
-      &store,
-      &root,
-      run_id,
-      events,
-      vec![query_artifact, operation_result],
-    );
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![query_artifact, operation_result]);
 
-    let summary = derive_minecraft_query_wired_live_action_summary(
-      &store,
-      &store.read_run(run_id).expect("run"),
-    )
-    .expect("summary should derive");
+    let summary =
+      derive_minecraft_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert!(summary.source_readiness_ref.is_none());
 
     let _ = fs::remove_dir_all(root);
@@ -13103,12 +11230,7 @@ mod tests {
     })
   }
 
-  fn osu_operation_result(
-    run_id: &RunId,
-    query_artifact_id: &str,
-    status: OperationStatus,
-    message: &str,
-  ) -> OperationResult {
+  fn osu_operation_result(run_id: &RunId, query_artifact_id: &str, status: OperationStatus, message: &str) -> OperationResult {
     let query_ref = ArtifactRef {
       artifact_id: ArtifactId::new(query_artifact_id),
       run_id: run_id.clone(),
@@ -13130,17 +11252,11 @@ mod tests {
         source_operation_id: Some("auv.osu.query_visual_truth_spatial".to_string()),
         notes: vec!["osu visual truth spatial query manifest staged in the same run".to_string()],
       }),
-      known_limits: vec![
-        "osu_query_wired_live_action_capture_space_readiness_live_window_dispatch_no_gameplay_verification".to_string(),
-      ],
+      known_limits: vec!["osu_query_wired_live_action_capture_space_readiness_live_window_dispatch_no_gameplay_verification".to_string()],
     }
   }
 
-  fn dummy_osu_event(
-    span_id: &SpanId,
-    name: &str,
-    message: &str,
-  ) -> auv_tracing_driver::trace::EventRecordV1Alpha1 {
+  fn dummy_osu_event(span_id: &SpanId, name: &str, message: &str) -> auv_tracing_driver::trace::EventRecordV1Alpha1 {
     dummy_mc19_event(span_id, name, message)
   }
 
@@ -13158,13 +11274,8 @@ mod tests {
     )];
     write_mc19_run_snapshot(&store, &root, run_id, events, vec![]);
 
-    let summary =
-      derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run"))
-        .expect("summary should derive");
-    assert_eq!(
-      summary.source_readiness_ref.as_deref(),
-      Some("kind=outcome_event event=osu.query_wired_live_action.outcome")
-    );
+    let summary = derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
+    assert_eq!(summary.source_readiness_ref.as_deref(), Some("kind=outcome_event event=osu.query_wired_live_action.outcome"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -13194,29 +11305,16 @@ mod tests {
       1,
       "operation-result",
       "operation-result.json",
-      &osu_operation_result(
-        &run.run_id,
-        query_artifact.artifact_id.as_str(),
-        OperationStatus::Completed,
-        "manifest unreadable",
-      ),
+      &osu_operation_result(&run.run_id, query_artifact.artifact_id.as_str(), OperationStatus::Completed, "manifest unreadable"),
     );
     let events = vec![dummy_osu_event(
       &span_id,
       "osu.query_wired_live_action.outcome",
       "attempted=false action_eligibility=not_consumable refusal_reason=manifest unreadable",
     )];
-    write_mc19_run_snapshot(
-      &store,
-      &root,
-      run_id,
-      events,
-      vec![query_artifact, operation_result],
-    );
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![query_artifact, operation_result]);
 
-    let summary =
-      derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run"))
-        .expect("summary should derive");
+    let summary = derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert!(summary.source_readiness_ref.is_none());
 
     let _ = fs::remove_dir_all(root);
@@ -13238,12 +11336,7 @@ mod tests {
       0,
       "operation-result",
       "operation-result.json",
-      &osu_operation_result(
-        &run.run_id,
-        missing_query_id,
-        OperationStatus::Completed,
-        "query manifest absent from run",
-      ),
+      &osu_operation_result(&run.run_id, missing_query_id, OperationStatus::Completed, "query manifest absent from run"),
     );
     let events = vec![dummy_osu_event(
       &span_id,
@@ -13252,15 +11345,10 @@ mod tests {
     )];
     write_mc19_run_snapshot(&store, &root, run_id, events, vec![operation_result]);
 
-    let summary =
-      derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run"))
-        .expect("summary should derive");
+    let summary = derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert_eq!(
       summary.source_readiness_ref.as_deref(),
-      Some(
-        format!("kind=derived_readiness query_artifact_id={missing_query_id} run_id={run_id}")
-          .as_str()
-      )
+      Some(format!("kind=derived_readiness query_artifact_id={missing_query_id} run_id={run_id}").as_str())
     );
 
     let _ = fs::remove_dir_all(root);
@@ -13292,39 +11380,19 @@ mod tests {
       1,
       "operation-result",
       "operation-result.json",
-      &osu_operation_result(
-        &run.run_id,
-        query_artifact_id.as_str(),
-        OperationStatus::Completed,
-        "mock dispatch",
-      ),
+      &osu_operation_result(&run.run_id, query_artifact_id.as_str(), OperationStatus::Completed, "mock dispatch"),
     );
     let events = vec![dummy_osu_event(
       &span_id,
       "osu.query_wired_live_action.outcome",
       "attempted=true action_eligibility=click_ready refusal_reason=none pixel_point=400,300",
     )];
-    write_mc19_run_snapshot(
-      &store,
-      &root,
-      run_id,
-      events,
-      vec![query_artifact, operation_result],
-    );
+    write_mc19_run_snapshot(&store, &root, run_id, events, vec![query_artifact, operation_result]);
 
-    let summary =
-      derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run"))
-        .expect("summary should derive");
+    let summary = derive_osu_query_wired_live_action_summary(&store, &store.read_run(run_id).expect("run")).expect("summary should derive");
     assert_eq!(
       summary.source_readiness_ref.as_deref(),
-      Some(
-        format!(
-          "kind=query_manifest artifact_id={} run_id={}",
-          query_artifact_id.as_str(),
-          run_id
-        )
-        .as_str()
-      )
+      Some(format!("kind=query_manifest artifact_id={} run_id={}", query_artifact_id.as_str(), run_id).as_str())
     );
 
     let _ = fs::remove_dir_all(root);
@@ -13392,10 +11460,7 @@ mod tests {
         screenshot_path: "/tmp/frame_000006.png".to_string(),
         frame_json_path: "/tmp/frame_000006.json".to_string(),
       }),
-      basis_checkpoint_path: Some(format!(
-        "/tmp/normalized/nerfstudio_models/{}",
-        profile.basis_checkpoint_suffix
-      )),
+      basis_checkpoint_path: Some(format!("/tmp/normalized/nerfstudio_models/{}", profile.basis_checkpoint_suffix)),
       holdout_screenshot_path: Some("/tmp/frame_000006.png".to_string()),
       reference_overlay_path: None,
       status: "ready".to_string(),
@@ -13426,31 +11491,19 @@ mod tests {
       known_limits: vec!["metrics evidence only".to_string()],
     };
 
-    let report = derive_minecraft_training_result_quality_baseline_report(
-      &profile,
-      Some(&spatial),
-      Some(&holdout),
-      Some(&render),
-      &[],
-    );
+    let report = derive_minecraft_training_result_quality_baseline_report(&profile, Some(&spatial), Some(&holdout), Some(&render), &[]);
     assert_eq!(report.evidence_coverage, "complete");
     assert!(report.issue.is_none());
     assert!(report.spatial_query.is_some());
     assert!(report.holdout_witness.is_some());
     assert!(report.render_quality.is_some());
-    assert!(
-      report
-        .trust_notes
-        .iter()
-        .any(|note| note.contains("projection_reference"))
-    );
+    assert!(report.trust_notes.iter().any(|note| note.contains("projection_reference")));
   }
 
   #[test]
   fn quality_baseline_derive_partial_when_stage_missing() {
     let profile = quality_baseline_profile_v1().expect("profile");
-    let report =
-      derive_minecraft_training_result_quality_baseline_report(&profile, None, None, None, &[]);
+    let report = derive_minecraft_training_result_quality_baseline_report(&profile, None, None, None, &[]);
     assert_eq!(report.evidence_coverage, "missing_stage");
   }
 
@@ -13486,13 +11539,7 @@ mod tests {
       comparison_verdict: None,
       known_limits: vec![],
     };
-    let report = derive_minecraft_training_result_quality_baseline_report(
-      &profile,
-      Some(&spatial),
-      None,
-      None,
-      &[],
-    );
+    let report = derive_minecraft_training_result_quality_baseline_report(&profile, Some(&spatial), None, None, &[]);
     assert_eq!(report.evidence_coverage, "partial");
     assert!(report.issue.is_some());
   }
@@ -13507,12 +11554,7 @@ mod tests {
       &["read holdout preview manifest at /missing/path: no such file".to_string()],
     );
     assert_eq!(report.evidence_coverage, "missing_stage");
-    assert!(
-      report
-        .issue
-        .as_ref()
-        .is_some_and(|issue| issue.contains("read holdout preview manifest"))
-    );
+    assert!(report.issue.as_ref().is_some_and(|issue| issue.contains("read holdout preview manifest")));
   }
 
   fn sample_complete_quality_baseline_report(
@@ -13573,10 +11615,7 @@ mod tests {
         screenshot_path: "/tmp/frame_000006.png".to_string(),
         frame_json_path: "/tmp/frame_000006.json".to_string(),
       }),
-      basis_checkpoint_path: Some(format!(
-        "/tmp/normalized/nerfstudio_models/{}",
-        profile.basis_checkpoint_suffix
-      )),
+      basis_checkpoint_path: Some(format!("/tmp/normalized/nerfstudio_models/{}", profile.basis_checkpoint_suffix)),
       holdout_screenshot_path: Some("/tmp/frame_000006.png".to_string()),
       reference_overlay_path: None,
       status: "ready".to_string(),
@@ -13606,19 +11645,12 @@ mod tests {
       verdict: render_verdict.to_string(),
       known_limits: vec![],
     };
-    derive_minecraft_training_result_quality_baseline_report(
-      &profile,
-      Some(&spatial),
-      Some(&holdout),
-      Some(&render),
-      &[],
-    )
+    derive_minecraft_training_result_quality_baseline_report(&profile, Some(&spatial), Some(&holdout), Some(&render), &[])
   }
 
   #[test]
   fn quality_baseline_verdict_probe_passes_on_complete_zero_metric_baseline() {
-    let baseline =
-      sample_complete_quality_baseline_report(0.0, 0.0, "measured_only", Some("visible"));
+    let baseline = sample_complete_quality_baseline_report(0.0, 0.0, "measured_only", Some("visible"));
     let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
     let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
     assert_eq!(verdict.quality_verdict, "pass");
@@ -13627,24 +11659,17 @@ mod tests {
 
   #[test]
   fn quality_baseline_verdict_fails_when_l1_exceeds_probe_max() {
-    let baseline =
-      sample_complete_quality_baseline_report(0.42, 0.0, "measured_only", Some("visible"));
+    let baseline = sample_complete_quality_baseline_report(0.42, 0.0, "measured_only", Some("visible"));
     let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
     let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
     assert_eq!(verdict.quality_verdict, "fail");
-    assert!(
-      verdict
-        .stage_checks
-        .iter()
-        .any(|check| check.stage == "render_quality" && check.outcome == "fail")
-    );
+    assert!(verdict.stage_checks.iter().any(|check| check.stage == "render_quality" && check.outcome == "fail"));
   }
 
   #[test]
   fn quality_baseline_verdict_blocks_on_partial_evidence_coverage() {
     let profile = quality_baseline_profile_v1().expect("profile");
-    let baseline =
-      derive_minecraft_training_result_quality_baseline_report(&profile, None, None, None, &[]);
+    let baseline = derive_minecraft_training_result_quality_baseline_report(&profile, None, None, None, &[]);
     let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
     let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
     assert_eq!(verdict.quality_verdict, "blocked");
@@ -13652,8 +11677,7 @@ mod tests {
 
   #[test]
   fn quality_baseline_verdict_partial_on_metric_partial_render() {
-    let baseline =
-      sample_complete_quality_baseline_report(0.0, 0.0, "metric_partial", Some("visible"));
+    let baseline = sample_complete_quality_baseline_report(0.0, 0.0, "metric_partial", Some("visible"));
     let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
     let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
     assert_eq!(verdict.quality_verdict, "partial");
@@ -13661,17 +11685,11 @@ mod tests {
 
   #[test]
   fn quality_baseline_verdict_partial_on_spatial_outside_window() {
-    let baseline =
-      sample_complete_quality_baseline_report(0.0, 0.0, "measured_only", Some("outside_window"));
+    let baseline = sample_complete_quality_baseline_report(0.0, 0.0, "measured_only", Some("outside_window"));
     let thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe thresholds");
     let verdict = derive_minecraft_training_result_quality_verdict(&baseline, &thresholds);
     assert_eq!(verdict.quality_verdict, "partial");
-    assert!(
-      verdict
-        .stage_checks
-        .iter()
-        .any(|check| check.stage == "spatial_query" && check.outcome == "fail")
-    );
+    assert!(verdict.stage_checks.iter().any(|check| check.stage == "spatial_query" && check.outcome == "fail"));
   }
 
   #[test]

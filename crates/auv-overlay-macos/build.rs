@@ -32,16 +32,8 @@ fn build_macos_overlay_native() {
   let swift_target_dir = manifest_dir.join(MACOS_OVERLAY_SWIFT_TARGET_DIR);
   let mut swift_sources = fs::read_dir(&swift_target_dir)
     .expect("read AuvMacosOverlayNative Swift sources")
-    .map(|entry| {
-      entry
-        .expect("read AuvMacosOverlayNative Swift source entry")
-        .path()
-    })
-    .filter(|path| {
-      path
-        .extension()
-        .is_some_and(|extension| extension == "swift")
-    })
+    .map(|entry| entry.expect("read AuvMacosOverlayNative Swift source entry").path())
+    .filter(|path| path.extension().is_some_and(|extension| extension == "swift"))
     .collect::<Vec<_>>();
   swift_sources.sort();
   for source in &swift_sources {
@@ -74,12 +66,7 @@ fn build_macos_overlay_native() {
   for source in &swift_sources {
     command.arg(source);
   }
-  let status = command
-    .arg(crate_bridge_dir.join("auv_overlay_macos.swift"))
-    .arg("-o")
-    .arg(&swift_lib)
-    .status()
-    .expect("spawn swiftc");
+  let status = command.arg(crate_bridge_dir.join("auv_overlay_macos.swift")).arg("-o").arg(&swift_lib).status().expect("spawn swiftc");
 
   if !status.success() {
     panic!("swiftc failed with status {status}");

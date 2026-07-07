@@ -16,10 +16,7 @@ use std::process::Command;
 use crate::error::MediaError;
 
 const FRAMEWORK_TAR: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mediaremote-adapter.tar"));
-const ADAPTER_PL: &str = include_str!(concat!(
-  env!("CARGO_MANIFEST_DIR"),
-  "/vendor/mediaremote-adapter/bin/mediaremote-adapter.pl"
-));
+const ADAPTER_PL: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/vendor/mediaremote-adapter/bin/mediaremote-adapter.pl"));
 
 const PERL: &str = "/usr/bin/perl";
 const SCRIPT_NAME: &str = "mediaremote-adapter.pl";
@@ -51,16 +48,10 @@ fn ensure_unpacked() -> Result<(PathBuf, PathBuf), MediaError> {
   // concurrent readers never see a half-written cache.
   let staging = cache_root().join(format!("{}.tmp.{}", asset_key(), std::process::id()));
   let _ = std::fs::remove_dir_all(&staging);
-  fs_err(
-    std::fs::create_dir_all(&staging),
-    "create adapter cache dir",
-  )?;
+  fs_err(std::fs::create_dir_all(&staging), "create adapter cache dir")?;
 
   let tar_path = staging.join("framework.tar");
-  fs_err(
-    std::fs::write(&tar_path, FRAMEWORK_TAR),
-    "write framework tar",
-  )?;
+  fs_err(std::fs::write(&tar_path, FRAMEWORK_TAR), "write framework tar")?;
   let status = Command::new("/usr/bin/tar")
     .arg("-xf")
     .arg(&tar_path)
@@ -69,29 +60,17 @@ fn ensure_unpacked() -> Result<(PathBuf, PathBuf), MediaError> {
     .status()
     .map_err(|error| MediaError::native(format!("spawn tar: {error}"), None))?;
   if !status.success() {
-    return Err(MediaError::native(
-      format!("tar extraction failed with {status}"),
-      None,
-    ));
+    return Err(MediaError::native(format!("tar extraction failed with {status}"), None));
   }
   let _ = std::fs::remove_file(&tar_path);
-  fs_err(
-    std::fs::write(staging.join(SCRIPT_NAME), ADAPTER_PL),
-    "write adapter script",
-  )?;
+  fs_err(std::fs::write(staging.join(SCRIPT_NAME), ADAPTER_PL), "write adapter script")?;
 
-  fs_err(
-    std::fs::create_dir_all(cache_root()),
-    "create adapter cache root",
-  )?;
+  fs_err(std::fs::create_dir_all(cache_root()), "create adapter cache root")?;
   if std::fs::rename(&staging, &dir).is_err() {
     // A concurrent process likely won the race; accept its result if valid.
     let _ = std::fs::remove_dir_all(&staging);
     if !(script.is_file() && framework.is_dir()) {
-      return Err(MediaError::native(
-        "failed to install adapter cache".to_string(),
-        None,
-      ));
+      return Err(MediaError::native("failed to install adapter cache".to_string(), None));
     }
   }
   Ok((script, framework))
@@ -101,24 +80,13 @@ fn ensure_unpacked() -> Result<(PathBuf, PathBuf), MediaError> {
 /// its trimmed stdout. Shared by `get`, `send`, and `seek`.
 fn run_adapter(args: &[&str]) -> Result<String, MediaError> {
   let (script, framework) = ensure_unpacked()?;
-  let output = Command::new(PERL)
-    .arg(&script)
-    .arg(&framework)
-    .args(args)
-    .output()
-    .map_err(|error| {
-      MediaError::native(
-        format!("spawn {PERL}: {error}"),
-        Some("ensure /usr/bin/perl exists (it ships with macOS)".to_string()),
-      )
-    })?;
+  let output = Command::new(PERL).arg(&script).arg(&framework).args(args).output().map_err(|error| {
+    MediaError::native(format!("spawn {PERL}: {error}"), Some("ensure /usr/bin/perl exists (it ships with macOS)".to_string()))
+  })?;
   if !output.status.success() {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     return Err(MediaError::native(
-      format!(
-        "mediaremote-adapter exited with {}: {stderr}",
-        output.status
-      ),
+      format!("mediaremote-adapter exited with {}: {stderr}", output.status),
       Some("the adapter may not be entitled to use MediaRemote on this macOS".to_string()),
     ));
   }

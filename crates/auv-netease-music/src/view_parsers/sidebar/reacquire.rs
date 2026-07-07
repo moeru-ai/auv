@@ -4,9 +4,7 @@
 
 use auv_driver::{InputPolicy, Scroll, ScrollOptions, Window};
 use auv_driver_macos::MacosDriverSession;
-use auv_view::memory::{
-  MemoryReadConfig, ReacquireDriverAdapter, ReacquireObservation, ViewMemory,
-};
+use auv_view::memory::{MemoryReadConfig, ReacquireDriverAdapter, ReacquireObservation, ViewMemory};
 use auv_view::{ParserDiagnostic, ViewBounds};
 
 use crate::view_memory::{PlaylistReacquireAttempt, try_reacquire_playlist_target};
@@ -42,15 +40,11 @@ impl<'a> LiveSidebarReacquireAdapter<'a> {
 
 impl ReacquireDriverAdapter for LiveSidebarReacquireAdapter<'_> {
   fn observe_viewport(&mut self) -> Result<ReacquireObservation, ParserDiagnostic> {
-    let capture = self
-      .session
-      .window()
-      .capture(self.window)
-      .map_err(|error| ParserDiagnostic {
-        code: "reacquire_capture_failed".into(),
-        message: error.to_string(),
-        node_id: None,
-      })?;
+    let capture = self.session.window().capture(self.window).map_err(|error| ParserDiagnostic {
+      code: "reacquire_capture_failed".into(),
+      message: error.to_string(),
+      node_id: None,
+    })?;
     let recognition = self
       .session
       .vision()
@@ -65,11 +59,7 @@ impl ReacquireDriverAdapter for LiveSidebarReacquireAdapter<'_> {
         node_id: None,
       })?;
     let recognition = crate::recognition_in_window_space(recognition, &capture);
-    let observation = crate::view_parsers::sidebar::parse_sidebar_viewport(
-      self.observation_index,
-      self.sidebar_bounds,
-      &recognition,
-    );
+    let observation = crate::view_parsers::sidebar::parse_sidebar_viewport(self.observation_index, self.sidebar_bounds, &recognition);
     self.observation_index += 1;
 
     let mut current_section: Option<SidebarSectionKind> = None;
@@ -159,13 +149,6 @@ pub fn try_reacquire_for_target(
   read_config: &MemoryReadConfig,
   current_baseline_width: Option<u32>,
 ) -> PlaylistReacquireAttempt {
-  let mut adapter =
-    LiveSidebarReacquireAdapter::new(session, window, sidebar_bounds, inputs, sidebar_anchor);
-  try_reacquire_playlist_target(
-    memory,
-    target,
-    &mut adapter,
-    read_config,
-    current_baseline_width,
-  )
+  let mut adapter = LiveSidebarReacquireAdapter::new(session, window, sidebar_bounds, inputs, sidebar_anchor);
+  try_reacquire_playlist_target(memory, target, &mut adapter, read_config, current_baseline_width)
 }

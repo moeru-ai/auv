@@ -54,23 +54,17 @@ mod platform {
   use super::*;
 
   pub fn open_or_resolve(options: &ResolveOptions) -> Result<(Window, OpenWindowReport), String> {
-    let session = LinuxDriver::new()
-      .open_local()
-      .map_err(|error| format!("failed to open Linux driver: {error}"))?;
+    let session = LinuxDriver::new().open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
     let mut report = report();
 
     match resolve_window(&session) {
       Ok(window) => {
-        report
-          .steps
-          .push(InteractionStep::new("resolve", StepOutcome::Found));
+        report.steps.push(InteractionStep::new("resolve", StepOutcome::Found));
         record_window(&mut report, &window);
         return Ok((window, report));
       }
       Err(DriverError::NotFound { .. }) => {
-        report
-          .steps
-          .push(InteractionStep::new("resolve", StepOutcome::NotFound));
+        report.steps.push(InteractionStep::new("resolve", StepOutcome::NotFound));
       }
       Err(error) => return Err(format!("failed to resolve {DISPLAY_NAME}: {error}")),
     }
@@ -81,17 +75,13 @@ mod platform {
       .stderr(Stdio::null())
       .spawn()
       .map_err(|error| format!("failed to launch {PROCESS_NAME}: {error}"))?;
-    report
-      .steps
-      .push(InteractionStep::new("launch", StepOutcome::Started));
+    report.steps.push(InteractionStep::new("launch", StepOutcome::Started));
 
     let deadline = Instant::now() + options.settle;
     loop {
       match resolve_window(&session) {
         Ok(window) => {
-          report
-            .steps
-            .push(InteractionStep::new("wait", StepOutcome::Found));
+          report.steps.push(InteractionStep::new("wait", StepOutcome::Found));
           record_window(&mut report, &window);
           return Ok((window, report));
         }
@@ -99,10 +89,9 @@ mod platform {
           std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
         }
         Err(DriverError::NotFound { .. }) => {
-          report.steps.push(
-            InteractionStep::new("wait", StepOutcome::NotFound)
-              .note(format!("no visible {DISPLAY_NAME} window before timeout")),
-          );
+          report
+            .steps
+            .push(InteractionStep::new("wait", StepOutcome::NotFound).note(format!("no visible {DISPLAY_NAME} window before timeout")));
           return Err(format!("no visible {DISPLAY_NAME} window appeared"));
         }
         Err(error) => return Err(format!("failed while waiting for {DISPLAY_NAME}: {error}")),
@@ -138,18 +127,9 @@ mod platform {
   }
 
   fn matches_settings_window(window: &Window) -> bool {
-    window
-      .app_bundle_id
-      .as_deref()
-      .is_some_and(|id| id.contains(APP_ID))
-      || window
-        .app_name
-        .as_deref()
-        .is_some_and(|name| name.contains(PROCESS_NAME) || name.contains("Settings"))
-      || window
-        .title
-        .as_deref()
-        .is_some_and(|title| SETTINGS_WINDOW.best_match(title).is_some())
+    window.app_bundle_id.as_deref().is_some_and(|id| id.contains(APP_ID))
+      || window.app_name.as_deref().is_some_and(|name| name.contains(PROCESS_NAME) || name.contains("Settings"))
+      || window.title.as_deref().is_some_and(|title| SETTINGS_WINDOW.best_match(title).is_some())
   }
 }
 

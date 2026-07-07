@@ -1,9 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::types::{
-  BlockPosition, MinecraftBlockTarget, MinecraftProjectedPoint, MinecraftSpatialFrame,
-  ProjectionVisibility,
-};
+use crate::types::{BlockPosition, MinecraftBlockTarget, MinecraftProjectedPoint, MinecraftSpatialFrame, ProjectionVisibility};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -180,51 +177,31 @@ pub struct QueryWiredPostActionWitness {
   pub expected_item_id: Option<String>,
 }
 
-pub fn verify_query_wired_live_action_semantic(
-  witness: &QueryWiredPostActionWitness,
-) -> WorldDiffVerdict {
-  let mut request = WorldDiffRequest::new(MinecraftBlockTarget::new(witness.target_block))
-    .allow_same_block_state_change();
+pub fn verify_query_wired_live_action_semantic(witness: &QueryWiredPostActionWitness) -> WorldDiffVerdict {
+  let mut request = WorldDiffRequest::new(MinecraftBlockTarget::new(witness.target_block)).allow_same_block_state_change();
   if let Some(item_id) = &witness.expected_item_id {
     request = request.with_expected_item_id(item_id.clone());
   }
   evaluate_world_diff(&witness.pre_frame, &witness.post_frame, &request)
 }
 
-pub fn evaluate_world_diff(
-  pre: &MinecraftSpatialFrame,
-  post: &MinecraftSpatialFrame,
-  request: &WorldDiffRequest,
-) -> WorldDiffVerdict {
-  let observed_item_delta = request
-    .expected_item_id
-    .as_deref()
-    .map(|item_id| inventory_delta(pre, post, item_id));
+pub fn evaluate_world_diff(pre: &MinecraftSpatialFrame, post: &MinecraftSpatialFrame, request: &WorldDiffRequest) -> WorldDiffVerdict {
+  let observed_item_delta = request.expected_item_id.as_deref().map(|item_id| inventory_delta(pre, post, item_id));
 
   if post.monotonic_timestamp_ms <= pre.monotonic_timestamp_ms {
-    return WorldDiffVerdict::unreliable(
-      target_block_id(post, request.target.block_pos),
-      observed_item_delta,
-    );
+    return WorldDiffVerdict::unreliable(target_block_id(post, request.target.block_pos), observed_item_delta);
   }
 
   let Some(pre_witness) = pre_target_witness(pre, request.target.block_pos) else {
-    return WorldDiffVerdict::unreliable(
-      target_block_id(post, request.target.block_pos),
-      observed_item_delta,
-    );
+    return WorldDiffVerdict::unreliable(target_block_id(post, request.target.block_pos), observed_item_delta);
   };
 
   let post_block_id = target_block_id(post, request.target.block_pos);
   let removed = is_removed(&pre_witness, post_block_id.as_deref());
-  let same_block_state_change = request.allow_same_block_state_change
-    && post.world_tick > pre.world_tick
-    && post_block_id.as_deref() == Some(pre_witness.as_str());
+  let same_block_state_change =
+    request.allow_same_block_state_change && post.world_tick > pre.world_tick && post_block_id.as_deref() == Some(pre_witness.as_str());
   let state_changed = removed || same_block_state_change;
-  let semantic_matched = request
-    .expected_item_id
-    .as_ref()
-    .map(|_| removed && observed_item_delta.unwrap_or_default() > 0);
+  let semantic_matched = request.expected_item_id.as_ref().map(|_| removed && observed_item_delta.unwrap_or_default() > 0);
 
   let failure = if removed {
     match semantic_matched {
@@ -267,35 +244,19 @@ fn target_block_id(frame: &MinecraftSpatialFrame, block_pos: BlockPosition) -> O
     return Some(hit.block_id.clone());
   }
 
-  frame
-    .nearby_blocks
-    .iter()
-    .find(|block| block.block_pos == block_pos)
-    .map(|block| block.block_id.clone())
+  frame.nearby_blocks.iter().find(|block| block.block_pos == block_pos).map(|block| block.block_id.clone())
 }
 
 fn is_menu_scene(scene: &str) -> bool {
-  matches!(
-    scene,
-    "menu" | "loading" | "pause_menu" | "loading_or_overlay"
-  )
+  matches!(scene, "menu" | "loading" | "pause_menu" | "loading_or_overlay")
 }
 
-fn inventory_delta(
-  pre: &MinecraftSpatialFrame,
-  post: &MinecraftSpatialFrame,
-  item_id: &str,
-) -> i64 {
+fn inventory_delta(pre: &MinecraftSpatialFrame, post: &MinecraftSpatialFrame, item_id: &str) -> i64 {
   inventory_count(post, item_id) - inventory_count(pre, item_id)
 }
 
 fn inventory_count(frame: &MinecraftSpatialFrame, item_id: &str) -> i64 {
-  frame
-    .inventory_summary
-    .iter()
-    .find(|entry| entry.item_id == item_id)
-    .map(|entry| i64::from(entry.count))
-    .unwrap_or_default()
+  frame.inventory_summary.iter().find(|entry| entry.item_id == item_id).map(|entry| i64::from(entry.count)).unwrap_or_default()
 }
 
 fn is_removed(pre_block_id: &str, post_block_id: Option<&str>) -> bool {
@@ -319,10 +280,7 @@ mod tests {
   use auv_driver::geometry::Point;
 
   use super::*;
-  use crate::types::{
-    BlockFace, BlockPosition, InventorySummaryEntry, NearbyBlock, NearbyEntity, PlayerPose,
-    RaycastHit, Vec3, Viewport,
-  };
+  use crate::types::{BlockFace, BlockPosition, InventorySummaryEntry, NearbyBlock, NearbyEntity, PlayerPose, RaycastHit, Vec3, Viewport};
 
   fn frame_at(
     world_tick: u64,
@@ -398,10 +356,7 @@ mod tests {
       Some(50),
     );
 
-    assert_eq!(
-      refusal.reason,
-      Some(MismatchRefusalReason::NotMinecraftWindow)
-    );
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::NotMinecraftWindow));
     assert!(refusal.refused);
   }
 
@@ -410,13 +365,9 @@ mod tests {
     let mut frame = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
     frame.screenshot_artifact_ref = None;
 
-    let refusal =
-      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+    let refusal = evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
 
-    assert_eq!(
-      refusal.reason,
-      Some(MismatchRefusalReason::ScreenshotUnavailable)
-    );
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::ScreenshotUnavailable));
     assert!(refusal.refused);
   }
 
@@ -425,13 +376,9 @@ mod tests {
     let mut frame = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
     frame.mc_capture_skew_ms = None;
 
-    let refusal =
-      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+    let refusal = evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
 
-    assert_eq!(
-      refusal.reason,
-      Some(MismatchRefusalReason::ScreenshotUnbound)
-    );
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::ScreenshotUnbound));
     assert!(refusal.refused);
   }
   #[test]
@@ -439,13 +386,9 @@ mod tests {
     let mut frame = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
     frame.mc_capture_skew_ms = Some(120);
 
-    let refusal =
-      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+    let refusal = evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
 
-    assert_eq!(
-      refusal.reason,
-      Some(MismatchRefusalReason::CaptureSkewUnreliable)
-    );
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::CaptureSkewUnreliable));
     assert!(refusal.refused);
   }
 
@@ -456,13 +399,9 @@ mod tests {
     let mut frame = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
     frame.screen_state = Some("menu".to_string());
 
-    let refusal =
-      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+    let refusal = evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
 
-    assert_eq!(
-      refusal.reason,
-      Some(MismatchRefusalReason::MenuLoadingScreen)
-    );
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::MenuLoadingScreen));
     assert!(refusal.refused);
   }
 
@@ -471,13 +410,9 @@ mod tests {
     let mut frame = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
     frame.screen_state = Some("loading_or_overlay".to_string());
 
-    let refusal =
-      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+    let refusal = evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
 
-    assert_eq!(
-      refusal.reason,
-      Some(MismatchRefusalReason::MenuLoadingScreen)
-    );
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::MenuLoadingScreen));
     assert!(refusal.refused);
   }
 
@@ -488,8 +423,7 @@ mod tests {
     let mut frame = frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]);
     frame.screen_state = Some("in_game".to_string());
 
-    let refusal =
-      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+    let refusal = evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
 
     assert_eq!(refusal.reason, None);
     assert!(!refusal.refused);
@@ -505,18 +439,10 @@ mod tests {
       confidence: 1.0,
     };
 
-    let refusal = evaluate_mismatch_refusal(
-      &frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]),
-      &projected,
-      &target(),
-      true,
-      Some(50),
-    );
+    let refusal =
+      evaluate_mismatch_refusal(&frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]), &projected, &target(), true, Some(50));
 
-    assert_eq!(
-      refusal.reason,
-      Some(MismatchRefusalReason::ProjectedOutsideWindow)
-    );
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::ProjectedOutsideWindow));
     assert!(refusal.refused);
   }
 
@@ -534,8 +460,7 @@ mod tests {
       vec![],
     );
 
-    let refusal =
-      evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
+    let refusal = evaluate_mismatch_refusal(&frame, &visible_projection(), &target(), true, Some(50));
 
     assert_eq!(refusal.reason, Some(MismatchRefusalReason::TargetOccluded));
     assert!(refusal.refused);
@@ -551,18 +476,10 @@ mod tests {
       confidence: 1.0,
     };
 
-    let refusal = evaluate_mismatch_refusal(
-      &frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]),
-      &projected,
-      &target(),
-      true,
-      Some(50),
-    );
+    let refusal =
+      evaluate_mismatch_refusal(&frame_at(10, 1_000, Some(witnessed_stone()), vec![], vec![]), &projected, &target(), true, Some(50));
 
-    assert_eq!(
-      refusal.reason,
-      Some(MismatchRefusalReason::TargetOutOfFrustum)
-    );
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::TargetOutOfFrustum));
     assert!(refusal.refused);
   }
 
@@ -591,18 +508,9 @@ mod tests {
 
   #[test]
   fn refuses_when_visible_projection_lacks_raycast_witness() {
-    let refusal = evaluate_mismatch_refusal(
-      &frame_at(10, 1_000, None, vec![], vec![]),
-      &visible_projection(),
-      &target(),
-      true,
-      Some(50),
-    );
+    let refusal = evaluate_mismatch_refusal(&frame_at(10, 1_000, None, vec![], vec![]), &visible_projection(), &target(), true, Some(50));
 
-    assert_eq!(
-      refusal.reason,
-      Some(MismatchRefusalReason::TelemetryUnreliable)
-    );
+    assert_eq!(refusal.reason, Some(MismatchRefusalReason::TelemetryUnreliable));
     assert!(refusal.refused);
   }
 
@@ -723,10 +631,7 @@ mod tests {
     assert!(!verdict.state_changed);
     assert_eq!(verdict.semantic_matched, Some(false));
     assert_eq!(verdict.failure, Some(WorldDiffFailure::SemanticMismatch));
-    assert_eq!(
-      verdict.observed_block_id.as_deref(),
-      Some("minecraft:stone")
-    );
+    assert_eq!(verdict.observed_block_id.as_deref(), Some("minecraft:stone"));
   }
 
   #[test]
@@ -761,10 +666,7 @@ mod tests {
     assert_eq!(verdict.executed, true);
     assert_eq!(verdict.state_changed, true);
     assert_eq!(verdict.failure, None);
-    assert_eq!(
-      verdict.observed_block_id.as_deref(),
-      Some("minecraft:stone")
-    );
+    assert_eq!(verdict.observed_block_id.as_deref(), Some("minecraft:stone"));
   }
 
   #[test]
@@ -784,10 +686,7 @@ mod tests {
 
     let verdict = evaluate_world_diff(&pre, &post, &request);
 
-    assert_eq!(
-      verdict.failure,
-      Some(WorldDiffFailure::VerificationUnreliable)
-    );
+    assert_eq!(verdict.failure, Some(WorldDiffFailure::VerificationUnreliable));
     assert!(!verdict.state_changed);
     assert_eq!(verdict.semantic_matched, None);
   }
@@ -855,10 +754,7 @@ mod tests {
       expected_item_id: None,
     });
 
-    assert_eq!(
-      verdict.failure,
-      Some(WorldDiffFailure::VerificationUnreliable)
-    );
+    assert_eq!(verdict.failure, Some(WorldDiffFailure::VerificationUnreliable));
     assert!(!verdict.state_changed);
   }
 
@@ -898,8 +794,7 @@ mod tests {
     assert_eq!(verdict.observed_block_id.as_deref(), Some("minecraft:air"));
   }
   #[test]
-  fn verify_query_wired_live_action_semantic_passes_with_expected_item_id_on_block_break_and_inventory_rise()
-   {
+  fn verify_query_wired_live_action_semantic_passes_with_expected_item_id_on_block_break_and_inventory_rise() {
     let target_block = target().block_pos;
     let pre = frame_at(
       10,
@@ -938,8 +833,7 @@ mod tests {
   }
 
   #[test]
-  fn verify_query_wired_live_action_semantic_fails_with_expected_item_id_when_inventory_stays_flat()
-  {
+  fn verify_query_wired_live_action_semantic_fails_with_expected_item_id_when_inventory_stays_flat() {
     let target_block = target().block_pos;
     let pre = frame_at(
       10,

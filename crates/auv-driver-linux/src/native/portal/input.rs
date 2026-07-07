@@ -11,9 +11,7 @@ use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 use crate::capture::list_displays;
 use crate::error::backend;
 
-use super::request::{
-  close_session, create_remote_desktop_session, portal_proxy, session_connection, session_request,
-};
+use super::request::{close_session, create_remote_desktop_session, portal_proxy, session_connection, session_request};
 use super::{ScreenCastStream, decode_streams, select_monitor_sources};
 
 const REMOTE_DESKTOP_INTERFACE: &str = "org.freedesktop.portal.RemoteDesktop";
@@ -59,29 +57,16 @@ impl InputSession {
     let session_handle = create_remote_desktop_session(&connection)?;
     let mut options = HashMap::new();
     options.insert("types", Value::from(DEVICE_KEYBOARD | DEVICE_POINTER));
-    session_request(
-      &connection,
-      REMOTE_DESKTOP_INTERFACE,
-      "SelectDevices",
-      &session_handle,
-      options,
-    )?;
+    session_request(&connection, REMOTE_DESKTOP_INTERFACE, "SelectDevices", &session_handle, options)?;
     select_monitor_sources(&connection, &session_handle)?;
     let results = start_remote_desktop(&connection, &session_handle)?;
     let streams = decode_streams(&results)?;
     if streams.is_empty() {
-      return Err(backend(
-        "remote desktop portal started without screencast streams",
-      ));
+      return Err(backend("remote desktop portal started without screencast streams"));
     }
-    let devices = results
-      .get("devices")
-      .and_then(|value| u32::try_from(value).ok())
-      .unwrap_or(0);
+    let devices = results.get("devices").and_then(|value| u32::try_from(value).ok()).unwrap_or(0);
     if devices & DEVICE_KEYBOARD == 0 && devices & DEVICE_POINTER == 0 {
-      return Err(backend(
-        "remote desktop portal started without keyboard or pointer access",
-      ));
+      return Err(backend("remote desktop portal started without keyboard or pointer access"));
     }
     let output_mappings = remote_desktop_output_mappings(&streams).unwrap_or_default();
     Ok(Self {
@@ -142,16 +127,8 @@ impl InputSession {
     let options: HashMap<&str, Value<'_>> = HashMap::new();
     self
       .remote_desktop()?
-      .call_method(
-        "NotifyPointerMotion",
-        &(&self.session_handle, options, delta.x, delta.y),
-      )
-      .map_err(|error| {
-        backend(format!(
-          "failed to notify relative pointer motion by ({}, {}): {error}",
-          delta.x, delta.y
-        ))
-      })?;
+      .call_method("NotifyPointerMotion", &(&self.session_handle, options, delta.x, delta.y))
+      .map_err(|error| backend(format!("failed to notify relative pointer motion by ({}, {}): {error}", delta.x, delta.y)))?;
     Ok(())
   }
 
@@ -165,24 +142,13 @@ impl InputSession {
     let options: HashMap<&str, Value<'_>> = HashMap::new();
     self
       .remote_desktop()?
-      .call_method(
-        "NotifyPointerAxis",
-        &(
-          &self.session_handle,
-          options,
-          scroll.delta_x,
-          scroll.delta_y,
-        ),
-      )
+      .call_method("NotifyPointerAxis", &(&self.session_handle, options, scroll.delta_x, scroll.delta_y))
       .map_err(|error| backend(format!("failed to notify pointer axis: {error}")))?;
     let mut finish_options = HashMap::new();
     finish_options.insert("finish", Value::from(true));
     self
       .remote_desktop()?
-      .call_method(
-        "NotifyPointerAxis",
-        &(&self.session_handle, finish_options, 0.0_f64, 0.0_f64),
-      )
+      .call_method("NotifyPointerAxis", &(&self.session_handle, finish_options, 0.0_f64, 0.0_f64))
       .map_err(|error| backend(format!("failed to finish pointer axis: {error}")))?;
     Ok(())
   }
@@ -191,15 +157,8 @@ impl InputSession {
     let options: HashMap<&str, Value<'_>> = HashMap::new();
     self
       .remote_desktop()?
-      .call_method(
-        "NotifyKeyboardKeysym",
-        &(&self.session_handle, options, keysym, state),
-      )
-      .map_err(|error| {
-        backend(format!(
-          "failed to notify keyboard keysym {keysym}: {error}"
-        ))
-      })?;
+      .call_method("NotifyKeyboardKeysym", &(&self.session_handle, options, keysym, state))
+      .map_err(|error| backend(format!("failed to notify keyboard keysym {keysym}: {error}")))?;
     Ok(())
   }
 
@@ -207,16 +166,8 @@ impl InputSession {
     let options: HashMap<&str, Value<'_>> = HashMap::new();
     self
       .remote_desktop()?
-      .call_method(
-        "NotifyPointerMotionAbsolute",
-        &(&self.session_handle, options, stream, point.x, point.y),
-      )
-      .map_err(|error| {
-        backend(format!(
-          "failed to notify absolute pointer motion to ({}, {}): {error}",
-          point.x, point.y
-        ))
-      })?;
+      .call_method("NotifyPointerMotionAbsolute", &(&self.session_handle, options, stream, point.x, point.y))
+      .map_err(|error| backend(format!("failed to notify absolute pointer motion to ({}, {}): {error}", point.x, point.y)))?;
     Ok(())
   }
 
@@ -229,10 +180,7 @@ impl InputSession {
     let options: HashMap<&str, Value<'_>> = HashMap::new();
     self
       .remote_desktop()?
-      .call_method(
-        "NotifyPointerButton",
-        &(&self.session_handle, options, button, state),
-      )
+      .call_method("NotifyPointerButton", &(&self.session_handle, options, button, state))
       .map_err(|error| backend(format!("failed to notify pointer button {button}: {error}")))?;
     Ok(())
   }
@@ -243,9 +191,7 @@ impl InputSession {
 
   fn require_keyboard(&self) -> DriverResult<()> {
     if self.devices & DEVICE_KEYBOARD == 0 {
-      Err(backend(
-        "remote desktop portal session has no keyboard access",
-      ))
+      Err(backend("remote desktop portal session has no keyboard access"))
     } else {
       Ok(())
     }
@@ -253,9 +199,7 @@ impl InputSession {
 
   fn require_pointer(&self) -> DriverResult<()> {
     if self.devices & DEVICE_POINTER == 0 {
-      Err(backend(
-        "remote desktop portal session has no pointer access",
-      ))
+      Err(backend("remote desktop portal session has no pointer access"))
     } else {
       Ok(())
     }
@@ -266,15 +210,9 @@ impl InputSession {
       return Ok(motion);
     }
     let Some(stream) = self.streams.iter().find(|stream| stream.contains(point)) else {
-      return Err(backend(format!(
-        "no screencast stream contains point {:?}; streams={:?}",
-        point, self.streams
-      )));
+      return Err(backend(format!("no screencast stream contains point {:?}; streams={:?}", point, self.streams)));
     };
-    Ok(MotionTarget::absolute(
-      stream.id,
-      stream.local_point(point)?,
-    ))
+    Ok(MotionTarget::absolute(stream.id, stream.local_point(point)?))
   }
 
   fn resolve_mapped_stream_point(&self, point: Point) -> Option<MotionTarget> {
@@ -292,10 +230,7 @@ impl Drop for InputSession {
   }
 }
 
-fn start_remote_desktop(
-  connection: &Connection,
-  session_handle: &OwnedObjectPath,
-) -> DriverResult<HashMap<String, OwnedValue>> {
+fn start_remote_desktop(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<HashMap<String, OwnedValue>> {
   let handle_token = super::request::portal_token("start");
   let request = super::request::portal_request_proxy(connection, &handle_token)?;
   let mut responses = super::request::response_signal(&request, REMOTE_DESKTOP_INTERFACE, "Start")?;
@@ -304,11 +239,7 @@ fn start_remote_desktop(
   options.insert("handle_token", Value::from(handle_token.as_str()));
   proxy
     .call_method("Start", &(session_handle, "", options))
-    .map_err(|error| {
-      backend(format!(
-        "failed to start remote desktop portal session: {error}"
-      ))
-    })?;
+    .map_err(|error| backend(format!("failed to start remote desktop portal session: {error}")))?;
   super::request::wait_response(&mut responses, REMOTE_DESKTOP_INTERFACE, "Start")
 }
 
@@ -339,42 +270,26 @@ struct OutputMapping {
 
 impl OutputMapping {
   fn to_motion_target(&self, point: Point) -> MotionTarget {
-    let local = Point::new(
-      point.x - self.logical_rect.origin.x,
-      point.y - self.logical_rect.origin.y,
-    );
+    let local = Point::new(point.x - self.logical_rect.origin.x, point.y - self.logical_rect.origin.y);
     let scaled = Point::new(local.x * self.scale_factor, local.y * self.scale_factor);
-    let absolute_point = Point::new(
-      clamp(scaled.x, 0.0, self.stream_rect.size.width - 1.0),
-      clamp(scaled.y, 0.0, self.stream_rect.size.height - 1.0),
-    );
-    let delivered_by_absolute = Point::new(
-      absolute_point.x / self.scale_factor,
-      absolute_point.y / self.scale_factor,
-    );
+    let absolute_point =
+      Point::new(clamp(scaled.x, 0.0, self.stream_rect.size.width - 1.0), clamp(scaled.y, 0.0, self.stream_rect.size.height - 1.0));
+    let delivered_by_absolute = Point::new(absolute_point.x / self.scale_factor, absolute_point.y / self.scale_factor);
     MotionTarget {
       stream_id: self.stream_id,
       absolute_point,
-      relative_delta: Point::new(
-        local.x - delivered_by_absolute.x,
-        local.y - delivered_by_absolute.y,
-      ),
+      relative_delta: Point::new(local.x - delivered_by_absolute.x, local.y - delivered_by_absolute.y),
     }
   }
 }
 
-fn remote_desktop_output_mappings(
-  streams: &[ScreenCastStream],
-) -> DriverResult<Vec<OutputMapping>> {
+fn remote_desktop_output_mappings(streams: &[ScreenCastStream]) -> DriverResult<Vec<OutputMapping>> {
   let displays = list_displays()?.displays;
   Ok(output_mappings(&displays, streams))
 }
 
 fn output_mappings(displays: &[Display], streams: &[ScreenCastStream]) -> Vec<OutputMapping> {
-  displays
-    .iter()
-    .filter_map(|display| output_mapping(display, streams))
-    .collect()
+  displays.iter().filter_map(|display| output_mapping(display, streams)).collect()
 }
 
 fn output_mapping(display: &Display, streams: &[ScreenCastStream]) -> Option<OutputMapping> {
@@ -456,10 +371,7 @@ mod tests {
 
     let mapping = output_mapping(&display, &[stream]).expect("display maps to stream");
 
-    assert_eq!(
-      mapping.to_motion_target(Point::new(1477.0, 804.0)),
-      MotionTarget::absolute(7, Point::new(1846.25, 1005.0))
-    );
+    assert_eq!(mapping.to_motion_target(Point::new(1477.0, 804.0)), MotionTarget::absolute(7, Point::new(1846.25, 1005.0)));
   }
 
   #[test]

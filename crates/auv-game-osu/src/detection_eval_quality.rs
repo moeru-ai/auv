@@ -9,9 +9,7 @@ use auv_file::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::detection_eval_witness::{
-  DetectionEvalWitnessManifest, DetectionEvalWitnessReason, DetectionEvalWitnessStatus,
-};
+use crate::detection_eval_witness::{DetectionEvalWitnessManifest, DetectionEvalWitnessReason, DetectionEvalWitnessStatus};
 
 pub type DetectionEvalQualityResult<T> = Result<T, String>;
 
@@ -137,15 +135,9 @@ impl DetectionEvalQualityVerdict {
   }
 }
 
-pub fn build_detection_eval_quality(
-  inputs: &DetectionEvalQualityInputs,
-) -> DetectionEvalQualityResult<DetectionEvalQualityOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create detection eval quality output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+pub fn build_detection_eval_quality(inputs: &DetectionEvalQualityInputs) -> DetectionEvalQualityResult<DetectionEvalQualityOutput> {
+  fs::create_dir_all(&inputs.output_dir)
+    .map_err(|error| format!("failed to create detection eval quality output dir {}: {error}", inputs.output_dir.display()))?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
   let known_limits = BTreeSet::from([OSU_WQ1_V1_QUALITY_KNOWN_LIMIT.to_string()]);
@@ -154,29 +146,21 @@ pub fn build_detection_eval_quality(
   let gate = evaluate_quality_gate(&inputs.witness_manifest_path, &mut warnings);
   let witness = gate.witness_manifest.as_ref();
 
-  let outcome = witness
-    .map(derive_quality_outcome)
-    .unwrap_or(QualityOutcome {
-      status: gate.quality_status,
-      reason: gate.quality_reason,
-      verdict: gate.verdict,
-      metrics: None,
-    });
+  let outcome = witness.map(derive_quality_outcome).unwrap_or(QualityOutcome {
+    status: gate.quality_status,
+    reason: gate.quality_reason,
+    verdict: gate.verdict,
+    metrics: None,
+  });
 
   let manifest = DetectionEvalQualityManifest {
     schema_version: DETECTION_EVAL_QUALITY_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
     detection_eval_witness_manifest_path: inputs.witness_manifest_path.display().to_string(),
-    source_visual_eval_report_path: witness
-      .map(|w| w.source_visual_eval_report_path.clone())
-      .unwrap_or_default(),
-    source_run_artifact_dir: witness
-      .map(|w| w.source_run_artifact_dir.clone())
-      .unwrap_or_default(),
+    source_visual_eval_report_path: witness.map(|w| w.source_visual_eval_report_path.clone()).unwrap_or_default(),
+    source_run_artifact_dir: witness.map(|w| w.source_run_artifact_dir.clone()).unwrap_or_default(),
     detector_model_id: witness.and_then(|w| w.detector_model_id.clone()),
-    witness_status: witness
-      .map(|w| w.status)
-      .unwrap_or(DetectionEvalWitnessStatus::Blocked),
+    witness_status: witness.map(|w| w.status).unwrap_or(DetectionEvalWitnessStatus::Blocked),
     status: outcome.status,
     reason: outcome.reason,
     verdict: outcome.verdict,
@@ -196,16 +180,8 @@ pub fn build_detection_eval_quality(
     witness_status: manifest.witness_status,
     status: manifest.status,
     verdict: manifest.verdict,
-    label_recall_available: manifest
-      .metrics
-      .as_ref()
-      .and_then(|m| m.label_recall)
-      .is_some(),
-    spatial_recall_available: manifest
-      .metrics
-      .as_ref()
-      .and_then(|m| m.spatial_recall)
-      .is_some(),
+    label_recall_available: manifest.metrics.as_ref().and_then(|m| m.label_recall).is_some(),
+    spatial_recall_available: manifest.metrics.as_ref().and_then(|m| m.spatial_recall).is_some(),
     metrics: manifest.metrics.clone(),
     warnings: warnings.into_iter().collect(),
     known_limits: manifest.known_limits.clone(),
@@ -233,9 +209,7 @@ pub fn build_detection_eval_quality_from_witness_dir(
   })
 }
 
-pub fn derive_detection_eval_quality_verdict(
-  witness: &DetectionEvalWitnessManifest,
-) -> DetectionEvalQualityVerdict {
+pub fn derive_detection_eval_quality_verdict(witness: &DetectionEvalWitnessManifest) -> DetectionEvalQualityVerdict {
   derive_quality_outcome(witness).verdict
 }
 
@@ -253,10 +227,7 @@ struct QualityOutcome {
   metrics: Option<DetectionEvalQualityMetrics>,
 }
 
-fn evaluate_quality_gate(
-  witness_manifest_path: &Path,
-  warnings: &mut BTreeSet<String>,
-) -> QualityGateEvaluation {
+fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<String>) -> QualityGateEvaluation {
   if !witness_manifest_path.is_file() {
     return QualityGateEvaluation {
       quality_status: DetectionEvalQualityStatus::Blocked,
@@ -266,10 +237,7 @@ fn evaluate_quality_gate(
     };
   }
 
-  let witness_manifest = match read_json_file::<DetectionEvalWitnessManifest>(
-    witness_manifest_path,
-    "osu detection eval witness manifest",
-  ) {
+  let witness_manifest = match read_json_file::<DetectionEvalWitnessManifest>(witness_manifest_path, "osu detection eval witness manifest") {
     Ok(manifest) => Some(manifest),
     Err(error) => {
       warnings.insert(error);
@@ -323,10 +291,7 @@ fn evaluate_quality_gate(
 
 fn derive_quality_outcome(witness: &DetectionEvalWitnessManifest) -> QualityOutcome {
   let metrics = metrics_from_witness(witness);
-  let verdict = if witness.projection_kind == "playfield_to_pixels"
-    && witness.spatial_unscored_frames == 0
-    && witness.total_frames > 0
-  {
+  let verdict = if witness.projection_kind == "playfield_to_pixels" && witness.spatial_unscored_frames == 0 && witness.total_frames > 0 {
     DetectionEvalQualityVerdict::MeasuredOnly
   } else if witness.total_frames > 0 {
     DetectionEvalQualityVerdict::MetricPartial
@@ -398,17 +363,14 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 mod tests {
   use super::*;
   use crate::detection_eval_witness::{
-    DetectionEvalWitnessInputs, DetectionEvalWitnessManifest, DetectionEvalWitnessStatus,
-    build_detection_eval_witness,
+    DetectionEvalWitnessInputs, DetectionEvalWitnessManifest, DetectionEvalWitnessStatus, build_detection_eval_witness,
   };
   use std::path::PathBuf;
 
   fn fixture_witness_manifest() -> (tempfile::TempDir, PathBuf) {
     let temp = tempfile::tempdir().expect("tempdir");
-    let manifest_dir =
-      PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_run_artifacts");
-    let detections_path =
-      PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_detection");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_run_artifacts");
+    let detections_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_detection");
     let eval_output = temp.path().join("eval");
     crate::evaluate_detection_fixture(&crate::DetectionEvalInputs {
       run_artifact_dir: manifest_dir,
@@ -434,14 +396,8 @@ mod tests {
     })
     .expect("quality");
 
-    assert_eq!(
-      quality_output.manifest.status,
-      DetectionEvalQualityStatus::Ready
-    );
-    assert_eq!(
-      quality_output.manifest.verdict,
-      DetectionEvalQualityVerdict::MeasuredOnly
-    );
+    assert_eq!(quality_output.manifest.status, DetectionEvalQualityStatus::Ready);
+    assert_eq!(quality_output.manifest.verdict, DetectionEvalQualityVerdict::MeasuredOnly);
     let metrics = quality_output.manifest.metrics.as_ref().expect("metrics");
     assert_eq!(metrics.total_frames, 3);
     assert_eq!(metrics.label_matched_frames, 1);
@@ -477,10 +433,7 @@ mod tests {
       reason: None,
       known_limits: vec![],
     };
-    assert_eq!(
-      derive_detection_eval_quality_verdict(&witness),
-      DetectionEvalQualityVerdict::MetricPartial
-    );
+    assert_eq!(derive_detection_eval_quality_verdict(&witness), DetectionEvalQualityVerdict::MetricPartial);
   }
 
   #[test]
@@ -493,10 +446,7 @@ mod tests {
     .expect("quality");
 
     assert_eq!(output.manifest.status, DetectionEvalQualityStatus::Blocked);
-    assert_eq!(
-      output.manifest.verdict,
-      DetectionEvalQualityVerdict::Blocked
-    );
+    assert_eq!(output.manifest.verdict, DetectionEvalQualityVerdict::Blocked);
     assert!(output.manifest.metrics.is_none());
   }
 }

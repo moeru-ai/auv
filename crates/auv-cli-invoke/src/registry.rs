@@ -18,10 +18,7 @@ impl InvokeRegistry {
   }
 
   pub fn resolve(&self, command_id: &str) -> Option<&InvokeCommand> {
-    self
-      .commands
-      .iter()
-      .find(|command| command.id == command_id)
+    self.commands.iter().find(|command| command.id == command_id)
   }
 
   pub fn all(&self) -> &[InvokeCommand] {
@@ -36,11 +33,7 @@ impl InvokeRegistry {
 fn assert_unique_command_ids(commands: &[InvokeCommand]) {
   let mut ids = HashSet::new();
   for command in commands {
-    assert!(
-      ids.insert(command.id),
-      "duplicate invoke command id registered: {}",
-      command.id
-    );
+    assert!(ids.insert(command.id), "duplicate invoke command id registered: {}", command.id);
   }
 }
 

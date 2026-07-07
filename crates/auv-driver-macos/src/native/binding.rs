@@ -368,13 +368,7 @@ pub(crate) mod ffi {
     fn find_ocr_text_rgba(request: NativeOcrRgbaRequest) -> NativeOcrTextResponse;
     fn capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse;
     fn find_visual_rows(request: NativeVisualRowsRequest) -> NativeVisualRowsResponse;
-    fn click_point(
-      x: f64,
-      y: f64,
-      button_code: i32,
-      click_count: i64,
-      click_interval_ms: u64,
-    ) -> NativeActionResponse;
+    fn click_point(x: f64, y: f64, button_code: i32, click_count: i64, click_interval_ms: u64) -> NativeActionResponse;
     fn move_point(x: f64, y: f64, button_code: i32) -> NativeActionResponse;
     fn click_window_point(
       pid: i64,
@@ -401,12 +395,7 @@ pub(crate) mod ffi {
       delta_x: f64,
       delta_y: f64,
     ) -> NativeActionResponse;
-    fn type_text_in_window(
-      pid: i64,
-      window_number: i64,
-      text: String,
-      inter_char_delay_ms: u64,
-    ) -> NativeActionResponse;
+    fn type_text_in_window(pid: i64, window_number: i64, text: String, inter_char_delay_ms: u64) -> NativeActionResponse;
     fn press_key_in_window(pid: i64, window_number: i64, key_code: i32) -> NativeActionResponse;
     fn hotkey_in_window(
       pid: i64,

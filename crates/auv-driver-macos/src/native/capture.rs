@@ -1,7 +1,5 @@
 #[cfg(target_os = "macos")]
-use super::binding::ffi::{
-  NativeWindowCaptureRequest, NativeWindowCaptureResponse, capture_window_image,
-};
+use super::binding::ffi::{NativeWindowCaptureRequest, NativeWindowCaptureResponse, capture_window_image};
 use super::types::AuvResult;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -13,9 +11,7 @@ pub struct NativeWindowCapture {
 
 #[cfg(target_os = "macos")]
 pub fn capture_window_rgba(window_id: i64) -> AuvResult<NativeWindowCapture> {
-  decode_window_capture_response(capture_window_image(NativeWindowCaptureRequest {
-    window_id,
-  }))
+  decode_window_capture_response(capture_window_image(NativeWindowCaptureRequest { window_id }))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -24,16 +20,9 @@ pub fn capture_window_rgba(_window_id: i64) -> AuvResult<NativeWindowCapture> {
 }
 
 #[cfg(target_os = "macos")]
-fn decode_window_capture_response(
-  response: NativeWindowCaptureResponse,
-) -> AuvResult<NativeWindowCapture> {
+fn decode_window_capture_response(response: NativeWindowCaptureResponse) -> AuvResult<NativeWindowCapture> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "capture_window_image",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("capture_window_image", None, response.error_message, response.recovery_hint);
   }
   let expected_len = response
     .image_width

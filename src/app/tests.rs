@@ -1,11 +1,7 @@
-use super::analysis::{
-  build_app_analysis, candidate_compatibility, recommended_strategy, summarize_failed_probe_steps,
-};
+use super::analysis::{build_app_analysis, candidate_compatibility, recommended_strategy, summarize_failed_probe_steps};
 use super::infra::{invoke_probe_step, resolve_probe_path};
 use super::*;
-use crate::contract::{
-  ArtifactRef, CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause,
-};
+use crate::contract::{ArtifactRef, CandidateQuery, SelectorScope, SurfaceSelector, SurfaceSelectorClause};
 use crate::model::RunStatus;
 use auv_tracing_driver::run_builder::RunSpec;
 use auv_tracing_driver::store::LocalStore;
@@ -31,10 +27,7 @@ fn recommended_strategy_uses_stable_taxonomy_id() {
     "test rationale",
   )
   .expect("taxonomy should be valid");
-  assert_eq!(
-    strategy.taxonomy_id,
-    "search-entry.ax-text-input.clipboard-submit.capture-evidence"
-  );
+  assert_eq!(strategy.taxonomy_id, "search-entry.ax-text-input.clipboard-submit.capture-evidence");
 }
 
 #[test]
@@ -55,35 +48,13 @@ fn recommended_native_text_strategy_uses_ax_backed_taxonomy_id() {
 fn invoke_probe_steps_share_parent_probe_run_id() {
   let root = temp_dir("probe-step-parent-run");
   let runtime = test_runtime(root.clone());
-  let mut run = runtime
-    .recording()
-    .handle()
-    .start_run(RunSpec::new(RunType::Probe, "auv.probe"))
-    .expect("probe run should start");
+  let mut run = runtime.recording().handle().start_run(RunSpec::new(RunType::Probe, "auv.probe")).expect("probe run should start");
   let root_span = run.root_span();
 
-  let first = invoke_probe_step(
-    &runtime,
-    &mut run,
-    &root_span,
-    "first",
-    "fixture.observe",
-    None,
-    BTreeMap::new(),
-    false,
-  )
-  .expect("first step should complete");
-  let second = invoke_probe_step(
-    &runtime,
-    &mut run,
-    &root_span,
-    "second",
-    "fixture.observe",
-    None,
-    BTreeMap::new(),
-    false,
-  )
-  .expect("second step should complete");
+  let first = invoke_probe_step(&runtime, &mut run, &root_span, "first", "fixture.observe", None, BTreeMap::new(), false)
+    .expect("first step should complete");
+  let second = invoke_probe_step(&runtime, &mut run, &root_span, "second", "fixture.observe", None, BTreeMap::new(), false)
+    .expect("second step should complete");
 
   assert_eq!(first.run_id, run.id().as_str());
   assert_eq!(second.run_id, run.id().as_str());
@@ -102,19 +73,10 @@ fn invoke_probe_steps_share_parent_probe_run_id() {
     )
     .expect("probe run should finish");
   let canonical = runtime.read_run(run_id.as_str()).expect("run should read");
-  let first_probe_span = canonical
-    .spans
-    .iter()
-    .find(|span| span.name == "auv.probe.step")
-    .expect("first probe step span should be recorded");
-  assert_eq!(
-    first_probe_span.attributes.get("auv.probe.step_id"),
-    Some(&serde_json::json!("first"))
-  );
-  assert_eq!(
-    first_probe_span.attributes.get("auv.step.kind"),
-    Some(&serde_json::json!("probe"))
-  );
+  let first_probe_span =
+    canonical.spans.iter().find(|span| span.name == "auv.probe.step").expect("first probe step span should be recorded");
+  assert_eq!(first_probe_span.attributes.get("auv.probe.step_id"), Some(&serde_json::json!("first")));
+  assert_eq!(first_probe_span.attributes.get("auv.step.kind"), Some(&serde_json::json!("probe")));
   assert!(!first_probe_span.attributes.contains_key("auv.step.index"));
 
   let _ = fs::remove_dir_all(root);
@@ -124,24 +86,11 @@ fn invoke_probe_steps_share_parent_probe_run_id() {
 fn invoke_probe_step_preserves_direct_command_artifact_boundary() {
   let root = temp_dir("probe-step-direct-command-artifact-boundary");
   let runtime = test_runtime(root.clone());
-  let mut run = runtime
-    .recording()
-    .handle()
-    .start_run(RunSpec::new(RunType::Probe, "auv.probe"))
-    .expect("probe run should start");
+  let mut run = runtime.recording().handle().start_run(RunSpec::new(RunType::Probe, "auv.probe")).expect("probe run should start");
   let root_span = run.root_span();
 
-  let step = invoke_probe_step(
-    &runtime,
-    &mut run,
-    &root_span,
-    "artifact-step",
-    "fixture.observe",
-    None,
-    BTreeMap::new(),
-    false,
-  )
-  .expect("direct invoke step should complete");
+  let step = invoke_probe_step(&runtime, &mut run, &root_span, "artifact-step", "fixture.observe", None, BTreeMap::new(), false)
+    .expect("direct invoke step should complete");
 
   assert_eq!(step.output_summary, "fixture observed");
   assert!(step.artifact_paths.is_empty());
@@ -167,11 +116,8 @@ fn resolve_probe_ocr_sample_query_prefers_frontmost_window_or_app_name() {
   let root = temp_dir("probe-ocr-query");
   let windows_path = root.join("observe-windows.txt");
   let ax_path = root.join("observe-window-tree.txt");
-  fs::write(
-    &windows_path,
-    "frontmostAppName=Netease Music\nfrontmostWindowTitle=\nobservedAt=2026-05-20T00:00:00Z\nwindowCount=0\n",
-  )
-  .expect("window report should write");
+  fs::write(&windows_path, "frontmostAppName=Netease Music\nfrontmostWindowTitle=\nobservedAt=2026-05-20T00:00:00Z\nwindowCount=0\n")
+    .expect("window report should write");
   fs::write(
     &ax_path,
     "observedAt=2026-05-20T00:00:00Z\nappName=Netease Music\nbundleId=com.netease.163music\nwindowTitle=\nrootRole=AXWindow\nnodeCount=0\n",
@@ -184,10 +130,7 @@ fn resolve_probe_ocr_sample_query_prefers_frontmost_window_or_app_name() {
   ];
   let app = app_identity_fixture("com.netease.163music", "NeteaseMusic");
 
-  assert_eq!(
-    resolve_probe_ocr_sample_query(&app, &steps),
-    "Netease Music"
-  );
+  assert_eq!(resolve_probe_ocr_sample_query(&app, &steps), "Netease Music");
   let _ = fs::remove_dir_all(root);
 }
 
@@ -224,11 +167,7 @@ fn build_app_analysis_tolerates_partial_probe_failures() {
     output_dir: root.clone(),
     app: app_identity_fixture("com.example.Partial", "Partial"),
     steps: vec![
-      failed_probe_step_fixture(
-        "probe-permissions",
-        "app.probePermissions",
-        "permission denied",
-      ),
+      failed_probe_step_fixture("probe-permissions", "app.probePermissions", "permission denied"),
       failed_probe_step_fixture("list-displays", "display.list", "display unavailable"),
       failed_probe_step_fixture("capture-ax-tree", "window.captureAxTree", "AX unavailable"),
     ],
@@ -236,18 +175,8 @@ fn build_app_analysis_tolerates_partial_probe_failures() {
 
   let analysis = build_app_analysis(&probe_path, &probe).expect("partial probe should analyze");
   assert_eq!(analysis.app_identity.bundle_id, "com.example.Partial");
-  assert!(
-    analysis
-      .known_boundaries
-      .iter()
-      .any(|note| note.contains("probe-permissions"))
-  );
-  assert!(
-    analysis
-      .known_boundaries
-      .iter()
-      .any(|note| note.contains("AX snapshot was unavailable or partial"))
-  );
+  assert!(analysis.known_boundaries.iter().any(|note| note.contains("probe-permissions")));
+  assert!(analysis.known_boundaries.iter().any(|note| note.contains("AX snapshot was unavailable or partial")));
   let _ = fs::remove_dir_all(root);
 }
 
@@ -392,10 +321,7 @@ fn report_analysis_fixture() -> AppAnalysis {
         notes: vec!["Sample candidate satisfies the v0 search-entry promotion seam.".to_string()],
       }),
       input_bindings: BTreeMap::from([("focus_query".to_string(), "Search".to_string())]),
-      compatibility: candidate_compatibility(
-        &["search-entry.ax-text-input.clipboard-submit.capture-evidence"],
-        &[],
-      ),
+      compatibility: candidate_compatibility(&["search-entry.ax-text-input.clipboard-submit.capture-evidence"], &[]),
       notes: vec!["sample note".to_string()],
     }],
     known_boundaries: vec!["one boundary".to_string()],
@@ -482,8 +408,5 @@ fn failed_probe_step_fixture(id: &str, command_id: &str, error: &str) -> AppProb
 }
 
 fn test_runtime(project_root: PathBuf) -> Runtime {
-  Runtime::new(
-    project_root.clone(),
-    LocalStore::new(project_root).expect("store should initialize"),
-  )
+  Runtime::new(project_root.clone(), LocalStore::new(project_root).expect("store should initialize"))
 }

@@ -25,11 +25,7 @@ fn sample_detection_set() -> DetectionSet {
 #[test]
 fn detection_set_json_stays_inference_only() {
   let value = serde_json::to_value(sample_detection_set()).expect("DetectionSet should serialize");
-  assert_eq!(
-    value["model_id"],
-    json!("games-balatro-2024-yolo-ui-detection"),
-    "DetectionSet JSON should preserve model identity"
-  );
+  assert_eq!(value["model_id"], json!("games-balatro-2024-yolo-ui-detection"), "DetectionSet JSON should preserve model identity");
   assert_eq!(
     value["image_size"],
     json!({
@@ -38,20 +34,10 @@ fn detection_set_json_stays_inference_only() {
     }),
     "DetectionSet JSON should preserve source image size"
   );
-  assert_eq!(
-    value["detections"][0]["class_id"],
-    json!(28),
-    "DetectionSet JSON should preserve class id"
-  );
-  assert_eq!(
-    value["detections"][0]["label"],
-    json!("ui_score_chips"),
-    "DetectionSet JSON should preserve class label"
-  );
+  assert_eq!(value["detections"][0]["class_id"], json!(28), "DetectionSet JSON should preserve class id");
+  assert_eq!(value["detections"][0]["label"], json!("ui_score_chips"), "DetectionSet JSON should preserve class label");
 
-  let object = value
-    .as_object()
-    .expect("DetectionSet JSON should serialize as an object");
+  let object = value.as_object().expect("DetectionSet JSON should serialize as an object");
   for forbidden in [
     "source_artifact",
     "capture_artifact",
@@ -67,18 +53,11 @@ fn detection_set_json_stays_inference_only() {
     "candidate_ref",
     "recognition_id",
   ] {
-    assert!(
-      !object.contains_key(forbidden),
-      "DetectionSet must not grow runtime bridge field `{forbidden}`"
-    );
+    assert!(!object.contains_key(forbidden), "DetectionSet must not grow runtime bridge field `{forbidden}`");
   }
 
-  let detection = value["detections"][0]
-    .as_object()
-    .expect("detection should serialize as an object");
-  let bbox = detection["bbox"]
-    .as_object()
-    .expect("bbox should serialize as an object");
+  let detection = value["detections"][0].as_object().expect("detection should serialize as an object");
+  let bbox = detection["bbox"].as_object().expect("bbox should serialize as an object");
   assert_eq!(bbox.len(), 4, "bbox should stay a raw inference rectangle");
   for forbidden in [
     "known_limits",
@@ -89,10 +68,7 @@ fn detection_set_json_stays_inference_only() {
     "projection",
     "candidate_ref",
   ] {
-    assert!(
-      !detection.contains_key(forbidden),
-      "Detection must not grow runtime bridge field `{forbidden}`"
-    );
+    assert!(!detection.contains_key(forbidden), "Detection must not grow runtime bridge field `{forbidden}`");
   }
 }
 
@@ -119,13 +95,9 @@ fn detection_set_roundtrip_does_not_require_runtime_bridge_fields() {
     ]
   });
 
-  let parsed: DetectionSet =
-    serde_json::from_value(value).expect("DetectionSet JSON should parse without bridge fields");
+  let parsed: DetectionSet = serde_json::from_value(value).expect("DetectionSet JSON should parse without bridge fields");
 
-  assert_eq!(
-    parsed.model_id.0,
-    "games-balatro-2024-yolo-entities-detection"
-  );
+  assert_eq!(parsed.model_id.0, "games-balatro-2024-yolo-entities-detection");
   assert_eq!(parsed.image_size.width, 1280);
   assert_eq!(parsed.image_size.height, 660);
   assert_eq!(parsed.detections.len(), 1);

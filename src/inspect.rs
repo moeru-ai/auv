@@ -5,79 +5,49 @@
 //! form (useful for CLI/debug output). It does not provide a live viewer or any
 //! runtime execution logic; see `inspect_server` for the HTTP/WebSocket UI.
 
-use crate::contract::{
-  FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult,
-};
+use crate::contract::{FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult};
 use crate::model::AuvResult;
 use crate::run_read::{
-  ActionTransitionLineage, ActionTransitionLineageStatus,
-  BalatroCardDetectionEvalWitnessInspectReportLineage,
+  ActionTransitionLineage, ActionTransitionLineageStatus, BalatroCardDetectionEvalWitnessInspectReportLineage,
   BalatroCardDetectionEvalWitnessManifestLineage, BalatroCardDetectionQualityInspectReportLineage,
-  BalatroCardDetectionQualityManifestLineage, BalatroCardDetectionSemanticInspectReportLineage,
-  BalatroCardDetectionSemanticManifestLineage,
-  BalatroCardDetectionSpatialQueryInspectReportLineage,
-  BalatroCardDetectionSpatialQueryManifestLineage, CandidateActionDecisionLineage,
-  CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState,
-  CandidateActionExecutionLineage, CandidateActionExecutionLineageStatus,
-  CandidatePromotionLineage, CandidatePromotionLineageStatus, DetectorRecognitionLineage,
-  MinecraftHoldoutRenderQualityInspectReportLineage, MinecraftHoldoutRenderQualityManifestLineage,
-  MinecraftQueryWiredLiveActionSummary, MinecraftSpatialBundleManifestLineage,
-  MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage,
-  MinecraftTrainingJobManifestLineage, MinecraftTrainingLaunchInspectReportLineage,
-  MinecraftTrainingLaunchManifestLineage, MinecraftTrainingPackageInspectReportLineage,
-  MinecraftTrainingPackageManifestLineage,
-  MinecraftTrainingResultArtifactFetchInspectReportLineage,
-  MinecraftTrainingResultArtifactFetchManifestLineage,
-  MinecraftTrainingResultHoldoutPreviewInspectReportLineage,
-  MinecraftTrainingResultHoldoutPreviewManifestLineage,
-  MinecraftTrainingResultInspectReportLineage, MinecraftTrainingResultManifestLineage,
-  MinecraftTrainingResultQualityBaselineReportSummary,
-  MinecraftTrainingResultQualityVerdictSummary,
-  MinecraftTrainingResultSemanticInspectReportLineage,
-  MinecraftTrainingResultSemanticManifestLineage,
-  MinecraftTrainingResultSpatialQueryInspectReportLineage,
-  MinecraftTrainingResultSpatialQueryManifestLineage, OsuDetectionEvalQualityInspectReportLineage,
-  OsuDetectionEvalQualityManifestLineage, OsuDetectionEvalWitnessInspectReportLineage,
-  OsuDetectionEvalWitnessManifestLineage, OsuQueryWiredLiveActionSummary,
-  OsuVisualTruthSemanticInspectReportLineage, OsuVisualTruthSemanticManifestLineage,
-  OsuVisualTruthSpatialQueryInspectReportLineage, OsuVisualTruthSpatialQueryManifestLineage,
-  collect_quality_baseline_evidence_for_run,
-  derive_minecraft_training_result_quality_baseline_report,
-  derive_minecraft_training_result_quality_verdict,
-  derive_minecraft_training_result_spatial_query_action_readiness,
-  derive_osu_detection_eval_quality_verdict_summary,
-  derive_osu_visual_truth_spatial_query_action_readiness,
-  list_balatro_card_detection_eval_witness_inspect_reports,
-  list_balatro_card_detection_eval_witness_manifests,
-  list_balatro_card_detection_quality_inspect_reports,
-  list_balatro_card_detection_quality_manifests,
-  list_balatro_card_detection_semantic_inspect_reports,
-  list_balatro_card_detection_semantic_manifests,
-  list_balatro_card_detection_spatial_query_inspect_reports,
-  list_balatro_card_detection_spatial_query_manifests,
-  list_minecraft_holdout_render_quality_inspect_reports,
-  list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts,
-  list_minecraft_query_wired_live_action_summaries, list_minecraft_spatial_bundle_manifests,
-  list_minecraft_telemetry_sample_artifacts, list_minecraft_training_job_inspect_reports,
-  list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports,
-  list_minecraft_training_launch_manifests, list_minecraft_training_package_inspect_reports,
-  list_minecraft_training_package_manifests,
-  list_minecraft_training_result_artifact_fetch_inspect_reports,
-  list_minecraft_training_result_artifact_fetch_manifests,
-  list_minecraft_training_result_holdout_preview_inspect_reports,
-  list_minecraft_training_result_holdout_preview_manifests,
+  BalatroCardDetectionQualityManifestLineage, BalatroCardDetectionSemanticInspectReportLineage, BalatroCardDetectionSemanticManifestLineage,
+  BalatroCardDetectionSpatialQueryInspectReportLineage, BalatroCardDetectionSpatialQueryManifestLineage, CandidateActionDecisionLineage,
+  CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
+  CandidateActionExecutionLineageStatus, CandidatePromotionLineage, CandidatePromotionLineageStatus, DetectorRecognitionLineage,
+  MinecraftHoldoutRenderQualityInspectReportLineage, MinecraftHoldoutRenderQualityManifestLineage, MinecraftQueryWiredLiveActionSummary,
+  MinecraftSpatialBundleManifestLineage, MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage,
+  MinecraftTrainingJobManifestLineage, MinecraftTrainingLaunchInspectReportLineage, MinecraftTrainingLaunchManifestLineage,
+  MinecraftTrainingPackageInspectReportLineage, MinecraftTrainingPackageManifestLineage,
+  MinecraftTrainingResultArtifactFetchInspectReportLineage, MinecraftTrainingResultArtifactFetchManifestLineage,
+  MinecraftTrainingResultHoldoutPreviewInspectReportLineage, MinecraftTrainingResultHoldoutPreviewManifestLineage,
+  MinecraftTrainingResultInspectReportLineage, MinecraftTrainingResultManifestLineage, MinecraftTrainingResultQualityBaselineReportSummary,
+  MinecraftTrainingResultQualityVerdictSummary, MinecraftTrainingResultSemanticInspectReportLineage,
+  MinecraftTrainingResultSemanticManifestLineage, MinecraftTrainingResultSpatialQueryInspectReportLineage,
+  MinecraftTrainingResultSpatialQueryManifestLineage, OsuDetectionEvalQualityInspectReportLineage, OsuDetectionEvalQualityManifestLineage,
+  OsuDetectionEvalWitnessInspectReportLineage, OsuDetectionEvalWitnessManifestLineage, OsuQueryWiredLiveActionSummary,
+  OsuVisualTruthSemanticInspectReportLineage, OsuVisualTruthSemanticManifestLineage, OsuVisualTruthSpatialQueryInspectReportLineage,
+  OsuVisualTruthSpatialQueryManifestLineage, collect_quality_baseline_evidence_for_run,
+  derive_minecraft_training_result_quality_baseline_report, derive_minecraft_training_result_quality_verdict,
+  derive_minecraft_training_result_spatial_query_action_readiness, derive_osu_detection_eval_quality_verdict_summary,
+  derive_osu_visual_truth_spatial_query_action_readiness, list_balatro_card_detection_eval_witness_inspect_reports,
+  list_balatro_card_detection_eval_witness_manifests, list_balatro_card_detection_quality_inspect_reports,
+  list_balatro_card_detection_quality_manifests, list_balatro_card_detection_semantic_inspect_reports,
+  list_balatro_card_detection_semantic_manifests, list_balatro_card_detection_spatial_query_inspect_reports,
+  list_balatro_card_detection_spatial_query_manifests, list_minecraft_holdout_render_quality_inspect_reports,
+  list_minecraft_holdout_render_quality_manifests, list_minecraft_projection_artifacts, list_minecraft_query_wired_live_action_summaries,
+  list_minecraft_spatial_bundle_manifests, list_minecraft_telemetry_sample_artifacts, list_minecraft_training_job_inspect_reports,
+  list_minecraft_training_job_manifests, list_minecraft_training_launch_inspect_reports, list_minecraft_training_launch_manifests,
+  list_minecraft_training_package_inspect_reports, list_minecraft_training_package_manifests,
+  list_minecraft_training_result_artifact_fetch_inspect_reports, list_minecraft_training_result_artifact_fetch_manifests,
+  list_minecraft_training_result_holdout_preview_inspect_reports, list_minecraft_training_result_holdout_preview_manifests,
   list_minecraft_training_result_inspect_reports, list_minecraft_training_result_manifests,
-  list_minecraft_training_result_semantic_inspect_reports,
-  list_minecraft_training_result_semantic_manifests,
-  list_minecraft_training_result_spatial_query_inspect_reports,
-  list_minecraft_training_result_spatial_query_manifests,
+  list_minecraft_training_result_semantic_inspect_reports, list_minecraft_training_result_semantic_manifests,
+  list_minecraft_training_result_spatial_query_inspect_reports, list_minecraft_training_result_spatial_query_manifests,
   list_osu_detection_eval_quality_inspect_reports, list_osu_detection_eval_quality_manifests,
-  list_osu_detection_eval_witness_inspect_reports, list_osu_detection_eval_witness_manifests,
-  list_osu_query_wired_live_action_summaries, list_osu_visual_truth_semantic_inspect_reports,
-  list_osu_visual_truth_semantic_manifests, list_osu_visual_truth_spatial_query_inspect_reports,
-  list_osu_visual_truth_spatial_query_manifests, quality_baseline_profile_v1,
-  quality_baseline_verdict_thresholds_probe_v1,
-  quality_baseline_verdict_thresholds_trained_render_v1,
+  list_osu_detection_eval_witness_inspect_reports, list_osu_detection_eval_witness_manifests, list_osu_query_wired_live_action_summaries,
+  list_osu_visual_truth_semantic_inspect_reports, list_osu_visual_truth_semantic_manifests,
+  list_osu_visual_truth_spatial_query_inspect_reports, list_osu_visual_truth_spatial_query_manifests, quality_baseline_profile_v1,
+  quality_baseline_verdict_thresholds_probe_v1, quality_baseline_verdict_thresholds_trained_render_v1,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 pub use auv_view::memory::format_view_resolution_summary_text;
@@ -89,8 +59,7 @@ fn holdout_preview_manifest_matches_report(
   report: &crate::run_read::MinecraftTrainingResultHoldoutPreviewInspectReportSummary,
 ) -> bool {
   report.training_result_semantic_manifest_path == manifest.training_result_semantic_manifest_path
-    && report.source_training_result_artifact_manifest_path
-      == manifest.source_training_result_artifact_manifest_path
+    && report.source_training_result_artifact_manifest_path == manifest.source_training_result_artifact_manifest_path
     && report.source_training_result_manifest_path == manifest.source_training_result_manifest_path
     && report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
     && report.source_training_launch_plan_path == manifest.source_training_launch_plan_path
@@ -104,8 +73,7 @@ fn holdout_render_quality_manifest_matches_report(
 ) -> bool {
   report.training_result_semantic_manifest_path == manifest.training_result_semantic_manifest_path
     && report.holdout_preview_manifest_path == manifest.holdout_preview_manifest_path
-    && report.source_training_result_artifact_manifest_path
-      == manifest.source_training_result_artifact_manifest_path
+    && report.source_training_result_artifact_manifest_path == manifest.source_training_result_artifact_manifest_path
     && report.source_training_result_manifest_path == manifest.source_training_result_manifest_path
     && report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
     && report.source_scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
@@ -117,8 +85,7 @@ fn spatial_query_manifest_matches_report(
   report: &crate::run_read::MinecraftTrainingResultSpatialQueryInspectReportSummary,
 ) -> bool {
   report.training_result_semantic_manifest_path == manifest.training_result_semantic_manifest_path
-    && report.source_training_result_artifact_manifest_path
-      == manifest.source_training_result_artifact_manifest_path
+    && report.source_training_result_artifact_manifest_path == manifest.source_training_result_artifact_manifest_path
     && report.source_training_result_manifest_path == manifest.source_training_result_manifest_path
     && report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
     && report.source_training_launch_plan_path == manifest.source_training_launch_plan_path
@@ -148,45 +115,27 @@ pub fn list_verifications(store: &LocalStore, run_id: &str) -> AuvResult<Vec<Ver
   crate::run_read::list_verifications(store, run_id)
 }
 
-pub fn list_observation_snapshots(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<ObservationSnapshot>> {
+pub fn list_observation_snapshots(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ObservationSnapshot>> {
   crate::run_read::list_observation_snapshots(store, run_id)
 }
 
-pub fn list_detector_recognition_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<DetectorRecognitionLineage>> {
+pub fn list_detector_recognition_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<DetectorRecognitionLineage>> {
   crate::run_read::list_detector_recognition_lineage(store, run_id)
 }
 
-pub fn list_candidate_promotion_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<CandidatePromotionLineage>> {
+pub fn list_candidate_promotion_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<CandidatePromotionLineage>> {
   crate::run_read::list_candidate_promotion_lineage(store, run_id)
 }
 
-pub fn list_candidate_action_decision_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<CandidateActionDecisionLineage>> {
+pub fn list_candidate_action_decision_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<CandidateActionDecisionLineage>> {
   crate::run_read::list_candidate_action_decision_lineage(store, run_id)
 }
 
-pub fn list_candidate_action_execution_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
+pub fn list_candidate_action_execution_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
   crate::run_read::list_candidate_action_execution_lineage(store, run_id)
 }
 
-pub fn list_action_transition_lineage(
-  store: &LocalStore,
-  run_id: &str,
-) -> AuvResult<Vec<ActionTransitionLineage>> {
+pub fn list_action_transition_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ActionTransitionLineage>> {
   crate::run_read::list_action_transition_lineage(store, run_id)
 }
 
@@ -208,104 +157,66 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let candidate_action_execution_lineage = list_candidate_action_execution_lineage(store, run_id)?;
   let action_transition_lineage = list_action_transition_lineage(store, run_id)?;
   let minecraft_projection_artifacts = list_minecraft_projection_artifacts(store, run_id)?;
-  let minecraft_telemetry_sample_artifacts =
-    list_minecraft_telemetry_sample_artifacts(store, run_id)?;
+  let minecraft_telemetry_sample_artifacts = list_minecraft_telemetry_sample_artifacts(store, run_id)?;
   let minecraft_spatial_bundle_manifests = list_minecraft_spatial_bundle_manifests(store, run_id)?;
-  let minecraft_training_package_manifests =
-    list_minecraft_training_package_manifests(store, run_id)?;
-  let minecraft_training_package_inspect_reports =
-    list_minecraft_training_package_inspect_reports(store, run_id)?;
-  let minecraft_training_launch_manifests =
-    list_minecraft_training_launch_manifests(store, run_id)?;
-  let minecraft_training_launch_inspect_reports =
-    list_minecraft_training_launch_inspect_reports(store, run_id)?;
+  let minecraft_training_package_manifests = list_minecraft_training_package_manifests(store, run_id)?;
+  let minecraft_training_package_inspect_reports = list_minecraft_training_package_inspect_reports(store, run_id)?;
+  let minecraft_training_launch_manifests = list_minecraft_training_launch_manifests(store, run_id)?;
+  let minecraft_training_launch_inspect_reports = list_minecraft_training_launch_inspect_reports(store, run_id)?;
   let minecraft_training_job_manifests = list_minecraft_training_job_manifests(store, run_id)?;
-  let minecraft_training_job_inspect_reports =
-    list_minecraft_training_job_inspect_reports(store, run_id)?;
-  let minecraft_training_result_manifests =
-    list_minecraft_training_result_manifests(store, run_id)?;
-  let minecraft_training_result_inspect_reports =
-    list_minecraft_training_result_inspect_reports(store, run_id)?;
-  let minecraft_training_result_artifact_fetch_manifests =
-    list_minecraft_training_result_artifact_fetch_manifests(store, run_id)?;
+  let minecraft_training_job_inspect_reports = list_minecraft_training_job_inspect_reports(store, run_id)?;
+  let minecraft_training_result_manifests = list_minecraft_training_result_manifests(store, run_id)?;
+  let minecraft_training_result_inspect_reports = list_minecraft_training_result_inspect_reports(store, run_id)?;
+  let minecraft_training_result_artifact_fetch_manifests = list_minecraft_training_result_artifact_fetch_manifests(store, run_id)?;
   let minecraft_training_result_artifact_fetch_inspect_reports =
     list_minecraft_training_result_artifact_fetch_inspect_reports(store, run_id)?;
-  let minecraft_training_result_semantic_manifests =
-    list_minecraft_training_result_semantic_manifests(store, run_id)?;
-  let minecraft_training_result_semantic_inspect_reports =
-    list_minecraft_training_result_semantic_inspect_reports(store, run_id)?;
-  let minecraft_training_result_spatial_query_manifests =
-    list_minecraft_training_result_spatial_query_manifests(store, run_id)?;
-  let minecraft_training_result_holdout_preview_manifests =
-    list_minecraft_training_result_holdout_preview_manifests(store, run_id)?;
+  let minecraft_training_result_semantic_manifests = list_minecraft_training_result_semantic_manifests(store, run_id)?;
+  let minecraft_training_result_semantic_inspect_reports = list_minecraft_training_result_semantic_inspect_reports(store, run_id)?;
+  let minecraft_training_result_spatial_query_manifests = list_minecraft_training_result_spatial_query_manifests(store, run_id)?;
+  let minecraft_training_result_holdout_preview_manifests = list_minecraft_training_result_holdout_preview_manifests(store, run_id)?;
   let minecraft_training_result_holdout_preview_inspect_reports =
     list_minecraft_training_result_holdout_preview_inspect_reports(store, run_id)?;
-  let minecraft_holdout_render_quality_manifests =
-    list_minecraft_holdout_render_quality_manifests(store, run_id)?;
-  let minecraft_holdout_render_quality_inspect_reports =
-    list_minecraft_holdout_render_quality_inspect_reports(store, run_id)?;
-  let minecraft_training_result_spatial_query_inspect_reports =
-    list_minecraft_training_result_spatial_query_inspect_reports(store, run_id)?;
-  let osu_visual_truth_semantic_manifests =
-    list_osu_visual_truth_semantic_manifests(store, run_id)?;
-  let osu_visual_truth_semantic_inspect_reports =
-    list_osu_visual_truth_semantic_inspect_reports(store, run_id)?;
-  let osu_visual_truth_spatial_query_manifests =
-    list_osu_visual_truth_spatial_query_manifests(store, run_id)?;
-  let osu_visual_truth_spatial_query_inspect_reports =
-    list_osu_visual_truth_spatial_query_inspect_reports(store, run_id)?;
-  let minecraft_query_wired_live_action_summaries =
-    list_minecraft_query_wired_live_action_summaries(store, run_id)?;
-  let osu_query_wired_live_action_summaries =
-    list_osu_query_wired_live_action_summaries(store, run_id)?;
-  let osu_detection_eval_witness_manifests =
-    list_osu_detection_eval_witness_manifests(store, run_id)?;
-  let osu_detection_eval_witness_inspect_reports =
-    list_osu_detection_eval_witness_inspect_reports(store, run_id)?;
-  let osu_detection_eval_quality_manifests =
-    list_osu_detection_eval_quality_manifests(store, run_id)?;
-  let balatro_card_detection_semantic_manifests =
-    list_balatro_card_detection_semantic_manifests(store, run_id)?;
-  let balatro_card_detection_semantic_inspect_reports =
-    list_balatro_card_detection_semantic_inspect_reports(store, run_id)?;
-  let balatro_card_detection_spatial_query_manifests =
-    list_balatro_card_detection_spatial_query_manifests(store, run_id)?;
-  let balatro_card_detection_spatial_query_inspect_reports =
-    list_balatro_card_detection_spatial_query_inspect_reports(store, run_id)?;
-  let balatro_card_detection_eval_witness_manifests =
-    list_balatro_card_detection_eval_witness_manifests(store, run_id)?;
-  let balatro_card_detection_eval_witness_inspect_reports =
-    list_balatro_card_detection_eval_witness_inspect_reports(store, run_id)?;
-  let balatro_card_detection_quality_manifests =
-    list_balatro_card_detection_quality_manifests(store, run_id)?;
-  let balatro_card_detection_quality_inspect_reports =
-    list_balatro_card_detection_quality_inspect_reports(store, run_id)?;
-  let osu_detection_eval_quality_inspect_reports =
-    list_osu_detection_eval_quality_inspect_reports(store, run_id)?;
+  let minecraft_holdout_render_quality_manifests = list_minecraft_holdout_render_quality_manifests(store, run_id)?;
+  let minecraft_holdout_render_quality_inspect_reports = list_minecraft_holdout_render_quality_inspect_reports(store, run_id)?;
+  let minecraft_training_result_spatial_query_inspect_reports = list_minecraft_training_result_spatial_query_inspect_reports(store, run_id)?;
+  let osu_visual_truth_semantic_manifests = list_osu_visual_truth_semantic_manifests(store, run_id)?;
+  let osu_visual_truth_semantic_inspect_reports = list_osu_visual_truth_semantic_inspect_reports(store, run_id)?;
+  let osu_visual_truth_spatial_query_manifests = list_osu_visual_truth_spatial_query_manifests(store, run_id)?;
+  let osu_visual_truth_spatial_query_inspect_reports = list_osu_visual_truth_spatial_query_inspect_reports(store, run_id)?;
+  let minecraft_query_wired_live_action_summaries = list_minecraft_query_wired_live_action_summaries(store, run_id)?;
+  let osu_query_wired_live_action_summaries = list_osu_query_wired_live_action_summaries(store, run_id)?;
+  let osu_detection_eval_witness_manifests = list_osu_detection_eval_witness_manifests(store, run_id)?;
+  let osu_detection_eval_witness_inspect_reports = list_osu_detection_eval_witness_inspect_reports(store, run_id)?;
+  let osu_detection_eval_quality_manifests = list_osu_detection_eval_quality_manifests(store, run_id)?;
+  let balatro_card_detection_semantic_manifests = list_balatro_card_detection_semantic_manifests(store, run_id)?;
+  let balatro_card_detection_semantic_inspect_reports = list_balatro_card_detection_semantic_inspect_reports(store, run_id)?;
+  let balatro_card_detection_spatial_query_manifests = list_balatro_card_detection_spatial_query_manifests(store, run_id)?;
+  let balatro_card_detection_spatial_query_inspect_reports = list_balatro_card_detection_spatial_query_inspect_reports(store, run_id)?;
+  let balatro_card_detection_eval_witness_manifests = list_balatro_card_detection_eval_witness_manifests(store, run_id)?;
+  let balatro_card_detection_eval_witness_inspect_reports = list_balatro_card_detection_eval_witness_inspect_reports(store, run_id)?;
+  let balatro_card_detection_quality_manifests = list_balatro_card_detection_quality_manifests(store, run_id)?;
+  let balatro_card_detection_quality_inspect_reports = list_balatro_card_detection_quality_inspect_reports(store, run_id)?;
+  let osu_detection_eval_quality_inspect_reports = list_osu_detection_eval_quality_inspect_reports(store, run_id)?;
   let quality_baseline_report = quality_baseline_profile_v1().ok().and_then(|profile| {
-    collect_quality_baseline_evidence_for_run(store, run_id, &profile)
-      .ok()
-      .map(|bundle| {
-        derive_minecraft_training_result_quality_baseline_report(
-          &profile,
-          bundle.spatial_query.as_ref(),
-          bundle.holdout_preview.as_ref(),
-          bundle.render_quality.as_ref(),
-          &bundle.collection_issues,
-        )
-      })
+    collect_quality_baseline_evidence_for_run(store, run_id, &profile).ok().map(|bundle| {
+      derive_minecraft_training_result_quality_baseline_report(
+        &profile,
+        bundle.spatial_query.as_ref(),
+        bundle.holdout_preview.as_ref(),
+        bundle.render_quality.as_ref(),
+        &bundle.collection_issues,
+      )
+    })
   });
-  let (quality_verdict_probe, quality_verdict_trained_render) = quality_baseline_report
-    .as_ref()
-    .map_or((None, None), |report| {
-      let probe = quality_baseline_verdict_thresholds_probe_v1()
-        .ok()
-        .map(|thresholds| derive_minecraft_training_result_quality_verdict(report, &thresholds));
-      let trained_render = quality_baseline_verdict_thresholds_trained_render_v1()
-        .ok()
-        .map(|thresholds| derive_minecraft_training_result_quality_verdict(report, &thresholds));
-      (probe, trained_render)
-    });
+  let (quality_verdict_probe, quality_verdict_trained_render) = quality_baseline_report.as_ref().map_or((None, None), |report| {
+    let probe = quality_baseline_verdict_thresholds_probe_v1()
+      .ok()
+      .map(|thresholds| derive_minecraft_training_result_quality_verdict(report, &thresholds));
+    let trained_render = quality_baseline_verdict_thresholds_trained_render_v1()
+      .ok()
+      .map(|thresholds| derive_minecraft_training_result_quality_verdict(report, &thresholds));
+    (probe, trained_render)
+  });
   let mut output = render_run_text(
     &canonical,
     &verifications,
@@ -358,27 +269,17 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     quality_verdict_probe.as_ref(),
     quality_verdict_trained_render.as_ref(),
   );
-  crate::inspect_view_parser::append_view_parser_proof_text_from_run(
-    store,
-    &canonical,
-    &mut output,
-  )?;
+  crate::inspect_view_parser::append_view_parser_proof_text_from_run(store, &canonical, &mut output)?;
   crate::inspect_scene_state::append_scene_state_text_from_run(store, &canonical, &mut output)?;
   Ok(output)
 }
 
-fn format_quality_verdict_stage_summary(
-  verdict: &MinecraftTrainingResultQualityVerdictSummary,
-) -> String {
+fn format_quality_verdict_stage_summary(verdict: &MinecraftTrainingResultQualityVerdictSummary) -> String {
   verdict
     .stage_checks
     .iter()
     .map(|check| {
-      let reason = check
-        .reasons
-        .first()
-        .map(|value| format!(" reason={value}"))
-        .unwrap_or_default();
+      let reason = check.reasons.first().map(|value| format!(" reason={value}")).unwrap_or_default();
       format!("{}={}{}", check.stage, check.outcome, reason)
     })
     .collect::<Vec<_>>()
@@ -478,11 +379,7 @@ pub fn render_run_text(
       "- {} name={} parent={} status={}\n",
       span.span_id,
       span.name,
-      span
-        .parent_span_id
-        .as_ref()
-        .map(|span_id| span_id.as_str())
-        .unwrap_or("n/a"),
+      span.parent_span_id.as_ref().map(|span_id| span_id.as_str()).unwrap_or("n/a"),
       span.status_code.as_str()
     ));
   }
@@ -493,10 +390,7 @@ pub fn render_run_text(
   output.push_str(&format!("\nEvents: {}\n", run.events.len()));
   for event in run.events.iter().take(20) {
     let message = event.message.as_deref().unwrap_or("");
-    output.push_str(&format!(
-      "- {} span={} name={} {}\n",
-      event.event_id, event.span_id, event.name, message
-    ));
+    output.push_str(&format!("- {} span={} name={} {}\n", event.event_id, event.span_id, event.name, message));
   }
   if run.events.len() > 20 {
     output.push_str(&format!("- … {} more\n", run.events.len() - 20));
@@ -504,42 +398,23 @@ pub fn render_run_text(
 
   output.push_str(&format!("\nArtifacts: {}\n", run.artifacts.len()));
   for artifact in run.artifacts.iter().take(20) {
-    output.push_str(&format!(
-      "- {} span={} role={} path={}\n",
-      artifact.artifact_id, artifact.span_id, artifact.role, artifact.path
-    ));
+    output.push_str(&format!("- {} span={} role={} path={}\n", artifact.artifact_id, artifact.span_id, artifact.role, artifact.path));
   }
   if run.artifacts.len() > 20 {
     output.push_str(&format!("- … {} more\n", run.artifacts.len() - 20));
   }
 
-  let command_boundary_claims = run
-    .events
-    .iter()
-    .filter(|event| event.name == "command.verification")
-    .collect::<Vec<_>>();
-  let command_known_limits = run
-    .events
-    .iter()
-    .filter(|event| event.name == "command.known_limit")
-    .collect::<Vec<_>>();
+  let command_boundary_claims = run.events.iter().filter(|event| event.name == "command.verification").collect::<Vec<_>>();
+  let command_known_limits = run.events.iter().filter(|event| event.name == "command.known_limit").collect::<Vec<_>>();
   output.push_str("\nCommand Boundary Claims:\n");
   if command_boundary_claims.is_empty() && command_known_limits.is_empty() {
     output.push_str("- none\n");
   } else {
     for event in command_boundary_claims {
-      output.push_str(&format!(
-        "- verification={} span={}\n",
-        event.message.as_deref().unwrap_or("n/a"),
-        event.span_id
-      ));
+      output.push_str(&format!("- verification={} span={}\n", event.message.as_deref().unwrap_or("n/a"), event.span_id));
     }
     for event in command_known_limits {
-      output.push_str(&format!(
-        "- known_limit={} span={}\n",
-        event.message.as_deref().unwrap_or("n/a"),
-        event.span_id
-      ));
+      output.push_str(&format!("- known_limit={} span={}\n", event.message.as_deref().unwrap_or("n/a"), event.span_id));
     }
   }
 
@@ -587,21 +462,14 @@ pub fn render_run_text(
         "- artifact={} status={} source={} model={} backend={} items={}/{} best={} projection={} capture={} limits={}\n",
         lineage.artifact.artifact_id,
         render_detector_status(&lineage.status),
-        lineage
-          .source
-          .map(render_recognition_source)
-          .unwrap_or("n/a"),
+        lineage.source.map(render_recognition_source).unwrap_or("n/a"),
         lineage.model_id.as_deref().unwrap_or("n/a"),
         lineage.backend.as_deref().unwrap_or("n/a"),
         lineage.filtered_count.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
         lineage.all_count.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
         lineage.best_item_id.as_deref().unwrap_or("n/a"),
         lineage.runtime_projection_kind.as_deref().unwrap_or("n/a"),
-        lineage
-          .capture_artifact
-          .as_ref()
-          .and_then(|artifact| artifact.path.as_deref())
-          .unwrap_or("n/a"),
+        lineage.capture_artifact.as_ref().and_then(|artifact| artifact.path.as_deref()).unwrap_or("n/a"),
         lineage.known_limits.len()
       ));
       output.push_str(&format!(
@@ -612,10 +480,7 @@ pub fn render_run_text(
         lineage.issue.as_deref().unwrap_or("n/a")
       ));
       if !lineage.known_limits.is_empty() {
-        output.push_str(&format!(
-          "  known_limits={}\n",
-          lineage.known_limits.join(" | ")
-        ));
+        output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
       }
     }
   }
@@ -688,10 +553,7 @@ pub fn render_run_text(
         output.push_str(&format!("  stability_reason={stability_reason}\n"));
       }
       if !lineage.known_limits.is_empty() {
-        output.push_str(&format!(
-          "  known_limits={}\n",
-          lineage.known_limits.join(" | ")
-        ));
+        output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
       }
     }
   }
@@ -722,14 +584,8 @@ pub fn render_run_text(
       output.push_str(&format!(
         "  primary={} fallback_allowed={} fallback_used={} fallback_reason={} policy={} cursor={} press={} issue={}\n",
         lineage.primary_method.as_deref().unwrap_or("n/a"),
-        lineage
-          .fallback_allowed
-          .map(|value| if value { "true" } else { "false" })
-          .unwrap_or("n/a"),
-        lineage
-          .fallback_used
-          .map(|value| if value { "true" } else { "false" })
-          .unwrap_or("n/a"),
+        lineage.fallback_allowed.map(|value| if value { "true" } else { "false" }).unwrap_or("n/a"),
+        lineage.fallback_used.map(|value| if value { "true" } else { "false" }).unwrap_or("n/a"),
         lineage.fallback_reason.as_deref().unwrap_or("none"),
         lineage.policy.as_deref().unwrap_or("n/a"),
         lineage.cursor_disturbance.as_deref().unwrap_or("n/a"),
@@ -737,10 +593,7 @@ pub fn render_run_text(
         lineage.issue.as_deref().unwrap_or("n/a"),
       ));
       if !lineage.known_limits.is_empty() {
-        output.push_str(&format!(
-          "  known_limits={}\n",
-          lineage.known_limits.join(" | ")
-        ));
+        output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
       }
     }
   }
@@ -753,14 +606,8 @@ pub fn render_run_text(
       output.push_str(&format!(
         "- artifact={} line_count={} bytes={} path={} issue={}\n",
         lineage.artifact.artifact_id,
-        lineage
-          .line_count
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| "n/a".to_string()),
-        lineage
-          .byte_size
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| "n/a".to_string()),
+        lineage.line_count.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
+        lineage.byte_size.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
         lineage.artifact.path.as_deref().unwrap_or("n/a"),
         lineage.issue.as_deref().unwrap_or("n/a"),
       ));
@@ -832,9 +679,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nMC-7 Training Packages:\n");
-  if minecraft_training_package_manifests.is_empty()
-    && minecraft_training_package_inspect_reports.is_empty()
-  {
+  if minecraft_training_package_manifests.is_empty() && minecraft_training_package_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     let mut rendered_report_artifacts = BTreeSet::new();
@@ -883,10 +728,7 @@ pub fn render_run_text(
           manifest_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
         if !manifest.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            manifest.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", manifest.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -938,10 +780,7 @@ pub fn render_run_text(
           output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
         }
         if !report.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  inspect_known_limits={}\n",
-            report.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  inspect_known_limits={}\n", report.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -956,9 +795,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nMC-7 Training Launches:\n");
-  if minecraft_training_launch_manifests.is_empty()
-    && minecraft_training_launch_inspect_reports.is_empty()
-  {
+  if minecraft_training_launch_manifests.is_empty() && minecraft_training_launch_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     let mut rendered_report_artifacts = BTreeSet::new();
@@ -966,10 +803,8 @@ pub fn render_run_text(
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
         unique_matching_report(minecraft_training_launch_inspect_reports, |lineage| {
           lineage.report.as_ref().is_some_and(|report| {
-            report.source_training_package_manifest_path
-              == manifest.source_training_package_manifest_path
-              && report.source_scene_packet_manifest_path
-                == manifest.source_scene_packet_manifest_path
+            report.source_training_package_manifest_path == manifest.source_training_package_manifest_path
+              && report.source_scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
               && report.source_run_ids == manifest.source_run_ids
               && report.source_bundle_manifest_paths == manifest.source_bundle_manifest_paths
           })
@@ -1000,10 +835,7 @@ pub fn render_run_text(
           manifest_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
         if !manifest.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            manifest.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", manifest.known_limits.join(" | ")));
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
@@ -1024,10 +856,7 @@ pub fn render_run_text(
             output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
           }
           if !report.known_limits.is_empty() {
-            output.push_str(&format!(
-              "  known_limits={}\n",
-              report.known_limits.join(" | ")
-            ));
+            output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
           }
         }
       } else {
@@ -1070,10 +899,7 @@ pub fn render_run_text(
           output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
         }
         if !report.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            report.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -1088,9 +914,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nMC-7 Training Jobs:\n");
-  if minecraft_training_job_manifests.is_empty()
-    && minecraft_training_job_inspect_reports.is_empty()
-  {
+  if minecraft_training_job_manifests.is_empty() && minecraft_training_job_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     let mut rendered_report_artifacts = BTreeSet::new();
@@ -1099,10 +923,8 @@ pub fn render_run_text(
         unique_matching_report(minecraft_training_job_inspect_reports, |lineage| {
           lineage.report.as_ref().is_some_and(|report| {
             report.source_training_launch_plan_path == manifest.source_training_launch_plan_path
-              && report.source_training_package_manifest_path
-                == manifest.source_training_package_manifest_path
-              && report.source_scene_packet_manifest_path
-                == manifest.source_scene_packet_manifest_path
+              && report.source_training_package_manifest_path == manifest.source_training_package_manifest_path
+              && report.source_scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
               && report.source_run_ids == manifest.source_run_ids
               && report.job_backend == manifest.job_backend
               && report.job_submission_endpoint == manifest.job_submission_endpoint
@@ -1142,10 +964,7 @@ pub fn render_run_text(
           manifest_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
         if !manifest.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            manifest.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", manifest.known_limits.join(" | ")));
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
@@ -1174,10 +993,7 @@ pub fn render_run_text(
             output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
           }
           if !report.known_limits.is_empty() {
-            output.push_str(&format!(
-              "  known_limits={}\n",
-              report.known_limits.join(" | ")
-            ));
+            output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
           }
         }
       } else {
@@ -1227,10 +1043,7 @@ pub fn render_run_text(
           output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
         }
         if !report.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            report.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -1245,9 +1058,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nMC-7 Training Results:\n");
-  if minecraft_training_result_manifests.is_empty()
-    && minecraft_training_result_inspect_reports.is_empty()
-  {
+  if minecraft_training_result_manifests.is_empty() && minecraft_training_result_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     let mut rendered_report_artifacts = BTreeSet::new();
@@ -1256,10 +1067,8 @@ pub fn render_run_text(
         unique_matching_report(minecraft_training_result_inspect_reports, |lineage| {
           lineage.report.as_ref().is_some_and(|report| {
             report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
-              && report.source_training_launch_plan_path
-                == manifest.source_training_launch_plan_path
-              && report.source_scene_packet_manifest_path
-                == manifest.source_scene_packet_manifest_path
+              && report.source_training_launch_plan_path == manifest.source_training_launch_plan_path
+              && report.source_scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
               && report.source_run_ids == manifest.source_run_ids
           })
         })
@@ -1292,10 +1101,7 @@ pub fn render_run_text(
           manifest_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
         if !manifest.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            manifest.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", manifest.known_limits.join(" | ")));
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
@@ -1320,10 +1126,7 @@ pub fn render_run_text(
             output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
           }
           if !report.known_limits.is_empty() {
-            output.push_str(&format!(
-              "  known_limits={}\n",
-              report.known_limits.join(" | ")
-            ));
+            output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
           }
         }
       } else {
@@ -1370,10 +1173,7 @@ pub fn render_run_text(
           output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
         }
         if !report.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            report.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -1388,26 +1188,19 @@ pub fn render_run_text(
   }
 
   output.push_str("\nMC-7 Training Result Artifacts:\n");
-  if minecraft_training_result_artifact_fetch_manifests.is_empty()
-    && minecraft_training_result_artifact_fetch_inspect_reports.is_empty()
-  {
+  if minecraft_training_result_artifact_fetch_manifests.is_empty() && minecraft_training_result_artifact_fetch_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     let mut rendered_report_artifacts = BTreeSet::new();
     for manifest_lineage in minecraft_training_result_artifact_fetch_manifests {
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
-        unique_matching_report(
-          minecraft_training_result_artifact_fetch_inspect_reports,
-          |lineage| {
-            lineage.report.as_ref().is_some_and(|report| {
-              report.source_training_result_manifest_path
-                == manifest.source_training_result_manifest_path
-                && report.source_training_job_manifest_path
-                  == manifest.source_training_job_manifest_path
-                && report.source_run_ids == manifest.source_run_ids
-            })
-          },
-        )
+        unique_matching_report(minecraft_training_result_artifact_fetch_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| {
+            report.source_training_result_manifest_path == manifest.source_training_result_manifest_path
+              && report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
+              && report.source_run_ids == manifest.source_run_ids
+          })
+        })
       });
       if let Some(report_lineage) = paired_report {
         rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
@@ -1445,19 +1238,13 @@ pub fn render_run_text(
               artifact.kind,
               artifact.relative_path,
               artifact.readable,
-              artifact
-                .byte_size
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "n/a".to_string()),
+              artifact.byte_size.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
               artifact.absolute_path,
             ));
           }
         }
         if !manifest.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            manifest.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", manifest.known_limits.join(" | ")));
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
@@ -1483,10 +1270,7 @@ pub fn render_run_text(
             output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
           }
           if !report.known_limits.is_empty() {
-            output.push_str(&format!(
-              "  known_limits={}\n",
-              report.known_limits.join(" | ")
-            ));
+            output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
           }
         }
       } else {
@@ -1532,10 +1316,7 @@ pub fn render_run_text(
           output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
         }
         if !report.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            report.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -1550,32 +1331,22 @@ pub fn render_run_text(
   }
 
   output.push_str("\nMC-10 Training Result Semantics:\n");
-  if minecraft_training_result_semantic_manifests.is_empty()
-    && minecraft_training_result_semantic_inspect_reports.is_empty()
-  {
+  if minecraft_training_result_semantic_manifests.is_empty() && minecraft_training_result_semantic_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     let mut rendered_report_artifacts = BTreeSet::new();
     for manifest_lineage in minecraft_training_result_semantic_manifests {
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
-        unique_matching_report(
-          minecraft_training_result_semantic_inspect_reports,
-          |lineage| {
-            lineage.report.as_ref().is_some_and(|report| {
-              report.source_training_result_artifact_manifest_path
-                == manifest.source_training_result_artifact_manifest_path
-                && report.source_training_result_manifest_path
-                  == manifest.source_training_result_manifest_path
-                && report.source_training_job_manifest_path
-                  == manifest.source_training_job_manifest_path
-                && report.source_training_launch_plan_path
-                  == manifest.source_training_launch_plan_path
-                && report.source_scene_packet_manifest_path
-                  == manifest.source_scene_packet_manifest_path
-                && report.source_run_ids == manifest.source_run_ids
-            })
-          },
-        )
+        unique_matching_report(minecraft_training_result_semantic_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| {
+            report.source_training_result_artifact_manifest_path == manifest.source_training_result_artifact_manifest_path
+              && report.source_training_result_manifest_path == manifest.source_training_result_manifest_path
+              && report.source_training_job_manifest_path == manifest.source_training_job_manifest_path
+              && report.source_training_launch_plan_path == manifest.source_training_launch_plan_path
+              && report.source_scene_packet_manifest_path == manifest.source_scene_packet_manifest_path
+              && report.source_run_ids == manifest.source_run_ids
+          })
+        })
       });
       if let Some(report_lineage) = paired_report {
         rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
@@ -1612,19 +1383,13 @@ pub fn render_run_text(
             manifest
               .checkpoint_files
               .iter()
-              .map(|checkpoint| format!(
-                "relative_path={} byte_size={}",
-                checkpoint.relative_path, checkpoint.byte_size
-              ))
+              .map(|checkpoint| format!("relative_path={} byte_size={}", checkpoint.relative_path, checkpoint.byte_size))
               .collect::<Vec<_>>()
               .join(" | ")
           ));
         }
         if !manifest.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            manifest.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", manifest.known_limits.join(" | ")));
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
@@ -1650,10 +1415,7 @@ pub fn render_run_text(
             output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
           }
           if !report.known_limits.is_empty() {
-            output.push_str(&format!(
-              "  known_limits={}\n",
-              report.known_limits.join(" | ")
-            ));
+            output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
           }
         }
       } else {
@@ -1697,10 +1459,7 @@ pub fn render_run_text(
           output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
         }
         if !report.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            report.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -1715,33 +1474,21 @@ pub fn render_run_text(
   }
 
   output.push_str("\nMC-16 Training Result Holdout Preview:\n");
-  if minecraft_training_result_holdout_preview_manifests.is_empty()
-    && minecraft_training_result_holdout_preview_inspect_reports.is_empty()
-  {
+  if minecraft_training_result_holdout_preview_manifests.is_empty() && minecraft_training_result_holdout_preview_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     let mut rendered_report_artifacts = BTreeSet::new();
     for manifest_lineage in minecraft_training_result_holdout_preview_manifests {
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
-        unique_matching_report(
-          minecraft_training_result_holdout_preview_inspect_reports,
-          |lineage| {
-            lineage
-              .report
-              .as_ref()
-              .is_some_and(|report| holdout_preview_manifest_matches_report(manifest, report))
-          },
-        )
+        unique_matching_report(minecraft_training_result_holdout_preview_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| holdout_preview_manifest_matches_report(manifest, report))
+        })
       });
       if let Some(report_lineage) = paired_report {
         rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
       }
       if let Some(manifest) = &manifest_lineage.manifest {
-        let spatial_frame_id = manifest
-          .holdout_frame
-          .as_ref()
-          .map(|witness| witness.spatial_frame_id.as_str())
-          .unwrap_or("n/a");
+        let spatial_frame_id = manifest.holdout_frame.as_ref().map(|witness| witness.spatial_frame_id.as_str()).unwrap_or("n/a");
         output.push_str(&format!(
           "- manifest_artifact={} role={} path={} schema={} training_result_semantic_manifest={} source_training_result_artifact_manifest={} source_runs={} holdout_frame_index={} spatial_frame_id={} status={} reason={} basis_checkpoint_path={} holdout_screenshot_path={} reference_overlay_path={} paired_report_artifact={} issue={}\n",
           manifest_lineage.artifact.artifact_id,
@@ -1764,10 +1511,7 @@ pub fn render_run_text(
           manifest_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
         if !manifest.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            manifest.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", manifest.known_limits.join(" | ")));
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
@@ -1777,18 +1521,13 @@ pub fn render_run_text(
             report.checkpoint_count,
             report.scene_packet_frame_count,
             report.warnings.len(),
-            paired_report
-              .and_then(|lineage| lineage.issue.as_deref())
-              .unwrap_or("n/a"),
+            paired_report.and_then(|lineage| lineage.issue.as_deref()).unwrap_or("n/a"),
           ));
           if !report.warnings.is_empty() {
             output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
           }
           if !report.known_limits.is_empty() {
-            output.push_str(&format!(
-              "  known_limits={}\n",
-              report.known_limits.join(" | ")
-            ));
+            output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
           }
         }
       } else {
@@ -1826,10 +1565,7 @@ pub fn render_run_text(
           output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
         }
         if !report.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            report.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -1844,22 +1580,15 @@ pub fn render_run_text(
   }
 
   output.push_str("\nMC-17 Holdout Render Quality:\n");
-  if minecraft_holdout_render_quality_manifests.is_empty()
-    && minecraft_holdout_render_quality_inspect_reports.is_empty()
-  {
+  if minecraft_holdout_render_quality_manifests.is_empty() && minecraft_holdout_render_quality_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     let mut rendered_report_artifacts = BTreeSet::new();
     for manifest_lineage in minecraft_holdout_render_quality_manifests {
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
-        unique_matching_report(
-          minecraft_holdout_render_quality_inspect_reports,
-          |lineage| {
-            lineage.report.as_ref().is_some_and(|report| {
-              holdout_render_quality_manifest_matches_report(manifest, report)
-            })
-          },
-        )
+        unique_matching_report(minecraft_holdout_render_quality_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| holdout_render_quality_manifest_matches_report(manifest, report))
+        })
       });
       if let Some(report_lineage) = paired_report {
         rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
@@ -1870,18 +1599,9 @@ pub fn render_run_text(
           .as_ref()
           .map(|metrics| {
             (
-              metrics
-                .l1_mean
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "n/a".to_string()),
-              metrics
-                .mse
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "n/a".to_string()),
-              metrics
-                .psnr
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "n/a".to_string()),
+              metrics.l1_mean.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
+              metrics.mse.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
+              metrics.psnr.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
             )
           })
           .unwrap_or_else(|| ("n/a".to_string(), "n/a".to_string(), "n/a".to_string()));
@@ -1911,10 +1631,7 @@ pub fn render_run_text(
           manifest_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
         if !manifest.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            manifest.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", manifest.known_limits.join(" | ")));
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
@@ -1923,18 +1640,13 @@ pub fn render_run_text(
             report.image_size_match,
             report.verdict,
             report.warnings.len(),
-            paired_report
-              .and_then(|lineage| lineage.issue.as_deref())
-              .unwrap_or("n/a"),
+            paired_report.and_then(|lineage| lineage.issue.as_deref()).unwrap_or("n/a"),
           ));
           if !report.warnings.is_empty() {
             output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
           }
           if !report.known_limits.is_empty() {
-            output.push_str(&format!(
-              "  known_limits={}\n",
-              report.known_limits.join(" | ")
-            ));
+            output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
           }
         }
       } else {
@@ -1957,18 +1669,9 @@ pub fn render_run_text(
           .as_ref()
           .map(|metrics| {
             (
-              metrics
-                .l1_mean
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "n/a".to_string()),
-              metrics
-                .mse
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "n/a".to_string()),
-              metrics
-                .psnr
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "n/a".to_string()),
+              metrics.l1_mean.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
+              metrics.mse.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
+              metrics.psnr.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
             )
           })
           .unwrap_or_else(|| ("n/a".to_string(), "n/a".to_string(), "n/a".to_string()));
@@ -1995,10 +1698,7 @@ pub fn render_run_text(
           output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
         }
         if !report.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            report.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -2013,9 +1713,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nBalatro Card Detection Semantic:\n");
-  if balatro_card_detection_semantic_manifests.is_empty()
-    && balatro_card_detection_semantic_inspect_reports.is_empty()
-  {
+  if balatro_card_detection_semantic_manifests.is_empty() && balatro_card_detection_semantic_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     for manifest_lineage in balatro_card_detection_semantic_manifests {
@@ -2048,9 +1746,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nBalatro Card Detection Spatial Query:\n");
-  if balatro_card_detection_spatial_query_manifests.is_empty()
-    && balatro_card_detection_spatial_query_inspect_reports.is_empty()
-  {
+  if balatro_card_detection_spatial_query_manifests.is_empty() && balatro_card_detection_spatial_query_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     for manifest_lineage in balatro_card_detection_spatial_query_manifests {
@@ -2086,9 +1782,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nBalatro Card Detection Eval Witness:\n");
-  if balatro_card_detection_eval_witness_manifests.is_empty()
-    && balatro_card_detection_eval_witness_inspect_reports.is_empty()
-  {
+  if balatro_card_detection_eval_witness_manifests.is_empty() && balatro_card_detection_eval_witness_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     for manifest_lineage in balatro_card_detection_eval_witness_manifests {
@@ -2127,9 +1821,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nBalatro Card Detection Quality:\n");
-  if balatro_card_detection_quality_manifests.is_empty()
-    && balatro_card_detection_quality_inspect_reports.is_empty()
-  {
+  if balatro_card_detection_quality_manifests.is_empty() && balatro_card_detection_quality_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     for manifest_lineage in balatro_card_detection_quality_manifests {
@@ -2177,64 +1869,26 @@ pub fn render_run_text(
 
   output.push_str("\nMC-17 Quality Baseline Report:\n");
   if let Some(report) = quality_baseline_report {
-    let spatial_query_status = report
-      .spatial_query
-      .as_ref()
-      .map(|evidence| evidence.status.as_str())
-      .unwrap_or("n/a");
-    let spatial_visibility = report
-      .spatial_query
-      .as_ref()
-      .and_then(|evidence| evidence.visibility.as_deref())
-      .unwrap_or("n/a");
-    let spatial_screen_point = report
-      .spatial_query
-      .as_ref()
-      .and_then(|evidence| evidence.screen_point.as_deref())
-      .unwrap_or("n/a");
-    let holdout_status = report
-      .holdout_witness
-      .as_ref()
-      .map(|evidence| evidence.status.as_str())
-      .unwrap_or("n/a");
-    let holdout_frame_index = report
-      .holdout_witness
-      .as_ref()
-      .map(|evidence| evidence.holdout_frame_index.to_string())
-      .unwrap_or_else(|| "n/a".to_string());
-    let basis_checkpoint_path = report
-      .holdout_witness
-      .as_ref()
-      .and_then(|evidence| evidence.basis_checkpoint_path.as_deref())
-      .unwrap_or("n/a");
-    let render_quality_status = report
-      .render_quality
-      .as_ref()
-      .map(|evidence| evidence.status.as_str())
-      .unwrap_or("n/a");
-    let render_verdict = report
-      .render_quality
-      .as_ref()
-      .map(|evidence| evidence.verdict.as_str())
-      .unwrap_or("n/a");
+    let spatial_query_status = report.spatial_query.as_ref().map(|evidence| evidence.status.as_str()).unwrap_or("n/a");
+    let spatial_visibility = report.spatial_query.as_ref().and_then(|evidence| evidence.visibility.as_deref()).unwrap_or("n/a");
+    let spatial_screen_point = report.spatial_query.as_ref().and_then(|evidence| evidence.screen_point.as_deref()).unwrap_or("n/a");
+    let holdout_status = report.holdout_witness.as_ref().map(|evidence| evidence.status.as_str()).unwrap_or("n/a");
+    let holdout_frame_index =
+      report.holdout_witness.as_ref().map(|evidence| evidence.holdout_frame_index.to_string()).unwrap_or_else(|| "n/a".to_string());
+    let basis_checkpoint_path =
+      report.holdout_witness.as_ref().and_then(|evidence| evidence.basis_checkpoint_path.as_deref()).unwrap_or("n/a");
+    let render_quality_status = report.render_quality.as_ref().map(|evidence| evidence.status.as_str()).unwrap_or("n/a");
+    let render_verdict = report.render_quality.as_ref().map(|evidence| evidence.verdict.as_str()).unwrap_or("n/a");
     let l1_mean = report
       .render_quality
       .as_ref()
       .and_then(|evidence| evidence.l1_mean)
       .map(|value| value.to_string())
       .unwrap_or_else(|| "n/a".to_string());
-    let mse = report
-      .render_quality
-      .as_ref()
-      .and_then(|evidence| evidence.mse)
-      .map(|value| value.to_string())
-      .unwrap_or_else(|| "n/a".to_string());
-    let psnr = report
-      .render_quality
-      .as_ref()
-      .and_then(|evidence| evidence.psnr)
-      .map(|value| value.to_string())
-      .unwrap_or_else(|| "n/a".to_string());
+    let mse =
+      report.render_quality.as_ref().and_then(|evidence| evidence.mse).map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string());
+    let psnr =
+      report.render_quality.as_ref().and_then(|evidence| evidence.psnr).map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string());
     output.push_str(&format!(
       "- profile_id={} evidence_coverage={} training_result_semantic_manifest={} spatial_query_status={} visibility={} screen_point={} holdout_status={} holdout_frame_index={} basis_checkpoint_path={} render_quality_status={} verdict={} image_size_match={} l1_mean={} mse={} psnr={} issue={}\n",
       report.profile_id,
@@ -2259,10 +1913,7 @@ pub fn render_run_text(
       report.issue.as_deref().unwrap_or("n/a"),
     ));
     if !report.trust_notes.is_empty() {
-      output.push_str(&format!(
-        "  trust_notes={}\n",
-        report.trust_notes.join(" | ")
-      ));
+      output.push_str(&format!("  trust_notes={}\n", report.trust_notes.join(" | ")));
     }
   } else {
     output.push_str("- profile_unavailable\n");
@@ -2281,23 +1932,15 @@ pub fn render_run_text(
   }
 
   output.push_str("\nMC-12 Training Result Spatial Query:\n");
-  if minecraft_training_result_spatial_query_manifests.is_empty()
-    && minecraft_training_result_spatial_query_inspect_reports.is_empty()
-  {
+  if minecraft_training_result_spatial_query_manifests.is_empty() && minecraft_training_result_spatial_query_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     let mut rendered_report_artifacts = BTreeSet::new();
     for manifest_lineage in minecraft_training_result_spatial_query_manifests {
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
-        unique_matching_report(
-          minecraft_training_result_spatial_query_inspect_reports,
-          |lineage| {
-            lineage
-              .report
-              .as_ref()
-              .is_some_and(|report| spatial_query_manifest_matches_report(manifest, report))
-          },
-        )
+        unique_matching_report(minecraft_training_result_spatial_query_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| spatial_query_manifest_matches_report(manifest, report))
+        })
       });
       if let Some(report_lineage) = paired_report {
         rendered_report_artifacts.insert(report_lineage.artifact.artifact_id.to_string());
@@ -2329,10 +1972,7 @@ pub fn render_run_text(
           manifest_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
         if !manifest.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            manifest.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", manifest.known_limits.join(" | ")));
         }
         if let Some(report) = paired_report.and_then(|lineage| lineage.report.as_ref()) {
           output.push_str(&format!(
@@ -2351,10 +1991,7 @@ pub fn render_run_text(
             output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
           }
           if !report.known_limits.is_empty() {
-            output.push_str(&format!(
-              "  known_limits={}\n",
-              report.known_limits.join(" | ")
-            ));
+            output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
           }
         }
       } else {
@@ -2390,10 +2027,7 @@ pub fn render_run_text(
           output.push_str(&format!("  warnings={}\n", report.warnings.join(" | ")));
         }
         if !report.known_limits.is_empty() {
-          output.push_str(&format!(
-            "  known_limits={}\n",
-            report.known_limits.join(" | ")
-          ));
+          output.push_str(&format!("  known_limits={}\n", report.known_limits.join(" | ")));
         }
       } else {
         output.push_str(&format!(
@@ -2413,18 +2047,11 @@ pub fn render_run_text(
   } else {
     for manifest_lineage in minecraft_training_result_spatial_query_manifests {
       let paired_report = manifest_lineage.manifest.as_ref().and_then(|manifest| {
-        unique_matching_report(
-          minecraft_training_result_spatial_query_inspect_reports,
-          |lineage| {
-            lineage
-              .report
-              .as_ref()
-              .is_some_and(|report| spatial_query_manifest_matches_report(manifest, report))
-          },
-        )
+        unique_matching_report(minecraft_training_result_spatial_query_inspect_reports, |lineage| {
+          lineage.report.as_ref().is_some_and(|report| spatial_query_manifest_matches_report(manifest, report))
+        })
       });
-      let readiness =
-        derive_minecraft_training_result_spatial_query_action_readiness(manifest_lineage);
+      let readiness = derive_minecraft_training_result_spatial_query_action_readiness(manifest_lineage);
       let manifest = manifest_lineage.manifest.as_ref();
       output.push_str(&format!(
         "- query_artifact={} target_block={} status={} visibility={} selected_backend={} action_eligibility={} readiness_class={} window_point={} refusal_reason={} paired_inspect_artifact={} issue={}\n",
@@ -2450,9 +2077,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nOsu Visual Truth Semantic:\n");
-  if osu_visual_truth_semantic_manifests.is_empty()
-    && osu_visual_truth_semantic_inspect_reports.is_empty()
-  {
+  if osu_visual_truth_semantic_manifests.is_empty() && osu_visual_truth_semantic_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     for manifest_lineage in osu_visual_truth_semantic_manifests {
@@ -2493,9 +2118,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nOsu Visual Truth Spatial Query:\n");
-  if osu_visual_truth_spatial_query_manifests.is_empty()
-    && osu_visual_truth_spatial_query_inspect_reports.is_empty()
-  {
+  if osu_visual_truth_spatial_query_manifests.is_empty() && osu_visual_truth_spatial_query_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     for manifest_lineage in osu_visual_truth_spatial_query_manifests {
@@ -2581,9 +2204,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nOsu Detection Eval Witness:\n");
-  if osu_detection_eval_witness_manifests.is_empty()
-    && osu_detection_eval_witness_inspect_reports.is_empty()
-  {
+  if osu_detection_eval_witness_manifests.is_empty() && osu_detection_eval_witness_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     for manifest_lineage in osu_detection_eval_witness_manifests {
@@ -2620,9 +2241,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\nOsu Detection Eval Quality:\n");
-  if osu_detection_eval_quality_manifests.is_empty()
-    && osu_detection_eval_quality_inspect_reports.is_empty()
-  {
+  if osu_detection_eval_quality_manifests.is_empty() && osu_detection_eval_quality_inspect_reports.is_empty() {
     output.push_str("- none\n");
   } else {
     for manifest_lineage in osu_detection_eval_quality_manifests {
@@ -2696,9 +2315,7 @@ pub fn render_run_text(
   }
 
   output.push_str("\n[action.transition.lineage] (seam surface)\n");
-  output.push_str(
-    "Seam read surface: ActionTransitionLineage is the canonical action seam projection for inspect.\n",
-  );
+  output.push_str("Seam read surface: ActionTransitionLineage is the canonical action seam projection for inspect.\n");
   if action_transition_lineage.is_empty() {
     output.push_str("- none\n");
   } else {
@@ -2708,21 +2325,14 @@ pub fn render_run_text(
         lineage.artifact.artifact_id,
         render_action_transition_lineage_status(&lineage.status),
         lineage.execution_id.as_deref().unwrap_or("n/a"),
-        lineage
-          .pre_state
-          .candidate_local_id
-          .as_deref()
-          .unwrap_or("n/a"),
+        lineage.pre_state.candidate_local_id.as_deref().unwrap_or("n/a"),
         lineage.verification.verification_outcome,
         lineage.issue.as_deref().unwrap_or("n/a"),
       ));
       if let Some(effective) = &lineage.effective_decision {
         output.push_str(&format!(
           "  effective_decision: operation={} selected_method={} primary_method={} policy={}\n",
-          effective.operation,
-          effective.selected_method,
-          effective.primary_method,
-          effective.policy,
+          effective.operation, effective.selected_method, effective.primary_method, effective.policy,
         ));
       }
       if let Some(planned) = &lineage.planned_decision {
@@ -2740,18 +2350,13 @@ pub fn render_run_text(
         ));
       }
       if !lineage.known_limits.is_empty() {
-        output.push_str(&format!(
-          "  known_limits={}\n",
-          lineage.known_limits.join(" | ")
-        ));
+        output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
       }
     }
   }
 
   output.push_str("\n[candidate.action.execution.lineage] (ledger)\n");
-  output.push_str(
-    "Execution ledger: flat consent/closure/detail fields; prefer action.transition.lineage for seam reads.\n",
-  );
+  output.push_str("Execution ledger: flat consent/closure/detail fields; prefer action.transition.lineage for seam reads.\n");
   if candidate_action_execution_lineage.is_empty() {
     output.push_str("- none\n");
   } else {
@@ -2791,20 +2396,11 @@ pub fn render_run_text(
       ));
       output.push_str(&format!(
         "  attempts={} succeeded={}\n",
-        lineage
-          .attempts
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| "n/a".to_string()),
-        lineage
-          .attempts_succeeded
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| "n/a".to_string()),
+        lineage.attempts.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
+        lineage.attempts_succeeded.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
       ));
       if !lineage.known_limits.is_empty() {
-        output.push_str(&format!(
-          "  known_limits={}\n",
-          lineage.known_limits.join(" | ")
-        ));
+        output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
       }
     }
   }
@@ -2820,18 +2416,12 @@ fn render_action_transition_lineage_status(status: &ActionTransitionLineageStatu
   }
 }
 
-fn render_detector_status(
-  status: &crate::run_read::DetectorRecognitionLineageStatus,
-) -> &'static str {
+fn render_detector_status(status: &crate::run_read::DetectorRecognitionLineageStatus) -> &'static str {
   match status {
     crate::run_read::DetectorRecognitionLineageStatus::Ready => "ready",
-    crate::run_read::DetectorRecognitionLineageStatus::MissingCaptureArtifact => {
-      "missing_capture_artifact"
-    }
+    crate::run_read::DetectorRecognitionLineageStatus::MissingCaptureArtifact => "missing_capture_artifact",
     crate::run_read::DetectorRecognitionLineageStatus::MissingEvidence => "missing_evidence",
-    crate::run_read::DetectorRecognitionLineageStatus::CaptureArtifactUnresolved => {
-      "capture_artifact_unresolved"
-    }
+    crate::run_read::DetectorRecognitionLineageStatus::CaptureArtifactUnresolved => "capture_artifact_unresolved",
     crate::run_read::DetectorRecognitionLineageStatus::Malformed => "malformed",
   }
 }
@@ -2839,12 +2429,8 @@ fn render_detector_status(
 fn render_candidate_promotion_status(status: &CandidatePromotionLineageStatus) -> &'static str {
   match status {
     CandidatePromotionLineageStatus::Ready => "ready",
-    CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact => {
-      "missing_source_recognition_artifact"
-    }
-    CandidatePromotionLineageStatus::SourceRecognitionArtifactUnresolved => {
-      "source_recognition_artifact_unresolved"
-    }
+    CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact => "missing_source_recognition_artifact",
+    CandidatePromotionLineageStatus::SourceRecognitionArtifactUnresolved => "source_recognition_artifact_unresolved",
     CandidatePromotionLineageStatus::MissingCaptureArtifact => "missing_capture_artifact",
     CandidatePromotionLineageStatus::CaptureArtifactUnresolved => "capture_artifact_unresolved",
     CandidatePromotionLineageStatus::MissingRecognitionEvidence => "missing_recognition_evidence",
@@ -2852,24 +2438,16 @@ fn render_candidate_promotion_status(status: &CandidatePromotionLineageStatus) -
   }
 }
 
-fn render_candidate_action_decision_status(
-  status: &CandidateActionDecisionLineageStatus,
-) -> &'static str {
+fn render_candidate_action_decision_status(status: &CandidateActionDecisionLineageStatus) -> &'static str {
   match status {
     CandidateActionDecisionLineageStatus::Ready => "ready",
-    CandidateActionDecisionLineageStatus::MissingSourceCandidatePromotionArtifact => {
-      "missing_source_candidate_promotion_artifact"
-    }
-    CandidateActionDecisionLineageStatus::SourceCandidatePromotionArtifactUnresolved => {
-      "source_candidate_promotion_artifact_unresolved"
-    }
+    CandidateActionDecisionLineageStatus::MissingSourceCandidatePromotionArtifact => "missing_source_candidate_promotion_artifact",
+    CandidateActionDecisionLineageStatus::SourceCandidatePromotionArtifactUnresolved => "source_candidate_promotion_artifact_unresolved",
     CandidateActionDecisionLineageStatus::Malformed => "malformed",
   }
 }
 
-fn render_candidate_action_execution_status(
-  status: &CandidateActionExecutionLineageStatus,
-) -> &'static str {
+fn render_candidate_action_execution_status(status: &CandidateActionExecutionLineageStatus) -> &'static str {
   match status {
     CandidateActionExecutionLineageStatus::Ready => "ready",
     CandidateActionExecutionLineageStatus::BlockedNotReady => "blocked_not_ready",
@@ -2879,19 +2457,13 @@ fn render_candidate_action_execution_status(
     CandidateActionExecutionLineageStatus::SourceCandidateActionDecisionArtifactUnresolved => {
       "source_candidate_action_decision_artifact_unresolved"
     }
-    CandidateActionExecutionLineageStatus::MissingOperationResultArtifact => {
-      "missing_operation_result_artifact"
-    }
-    CandidateActionExecutionLineageStatus::OperationResultArtifactUnresolved => {
-      "operation_result_artifact_unresolved"
-    }
+    CandidateActionExecutionLineageStatus::MissingOperationResultArtifact => "missing_operation_result_artifact",
+    CandidateActionExecutionLineageStatus::OperationResultArtifactUnresolved => "operation_result_artifact_unresolved",
     CandidateActionExecutionLineageStatus::Malformed => "malformed",
   }
 }
 
-fn render_candidate_action_execution_closure_state(
-  state: &CandidateActionExecutionClosureState,
-) -> &'static str {
+fn render_candidate_action_execution_closure_state(state: &CandidateActionExecutionClosureState) -> &'static str {
   match state {
     CandidateActionExecutionClosureState::EvidenceClosed => "evidence_closed",
     CandidateActionExecutionClosureState::SemanticOpen => "semantic_open",
@@ -2907,9 +2479,7 @@ fn render_optional_bool(value: Option<bool>) -> &'static str {
   }
 }
 
-fn render_projection_visibility(
-  visibility: &auv_game_minecraft::types::ProjectionVisibility,
-) -> &'static str {
+fn render_projection_visibility(visibility: &auv_game_minecraft::types::ProjectionVisibility) -> &'static str {
   match visibility {
     auv_game_minecraft::types::ProjectionVisibility::Visible => "visible",
     auv_game_minecraft::types::ProjectionVisibility::BehindCamera => "behind_camera",
@@ -2918,16 +2488,11 @@ fn render_projection_visibility(
   }
 }
 
-fn render_minecraft_projected_point(
-  projected_point: Option<&auv_game_minecraft::types::MinecraftProjectedPoint>,
-) -> String {
+fn render_minecraft_projected_point(projected_point: Option<&auv_game_minecraft::types::MinecraftProjectedPoint>) -> String {
   match projected_point {
     Some(projected_point) => {
-      let screen_point = projected_point
-        .screen_point
-        .as_ref()
-        .map(|point| format!("{},{}", point.x, point.y))
-        .unwrap_or_else(|| "n/a".to_string());
+      let screen_point =
+        projected_point.screen_point.as_ref().map(|point| format!("{},{}", point.x, point.y)).unwrap_or_else(|| "n/a".to_string());
       format!(
         "screen={} visibility={} radius_px={} confidence={} basis={}",
         screen_point,
@@ -2941,9 +2506,7 @@ fn render_minecraft_projected_point(
   }
 }
 
-fn render_training_compatibility_status(
-  status: &auv_game_minecraft::TrainingCompatibilityStatus,
-) -> &'static str {
+fn render_training_compatibility_status(status: &auv_game_minecraft::TrainingCompatibilityStatus) -> &'static str {
   match status {
     auv_game_minecraft::TrainingCompatibilityStatus::Ready => "ready",
     auv_game_minecraft::TrainingCompatibilityStatus::Partial => "partial",
@@ -3001,53 +2564,39 @@ mod tests {
 
   use super::{inspect_run, render_run_text};
   use crate::contract::{
-    OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope,
-    RecognitionSource, RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
-    VerificationResult,
+    OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionScope, RecognitionSource, RecognitionSurface,
+    VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::run_read::{
-    ActionResolverDecisionProjection, ActionTransitionLineage, ActionTransitionLineageStatus,
-    ActionTransitionPostState, ActionTransitionPreState, ActionTransitionVerificationProjection,
-    ArtifactRefLineage, CandidateActionDecisionLineage, CandidateActionDecisionLineageStatus,
-    CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
-    CandidateActionExecutionLineageStatus, CandidatePromotionLineage,
-    CandidatePromotionLineageStatus, DetectorRecognitionArtifactRefLineage,
-    DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
-    MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage,
-    MinecraftTrainingJobManifestLineage, MinecraftTrainingLaunchInspectReportLineage,
-    MinecraftTrainingLaunchManifestLineage, MinecraftTrainingPackageInspectReportLineage,
-    MinecraftTrainingPackageInspectReportSummary, MinecraftTrainingPackageManifestLineage,
-    MinecraftTrainingPackageManifestSummary,
-    MinecraftTrainingResultArtifactFetchInspectReportLineage,
-    MinecraftTrainingResultArtifactFetchManifestLineage,
-    MinecraftTrainingResultHoldoutPreviewInspectReportLineage,
-    MinecraftTrainingResultHoldoutPreviewManifestLineage,
+    ActionResolverDecisionProjection, ActionTransitionLineage, ActionTransitionLineageStatus, ActionTransitionPostState,
+    ActionTransitionPreState, ActionTransitionVerificationProjection, ArtifactRefLineage, CandidateActionDecisionLineage,
+    CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
+    CandidateActionExecutionLineageStatus, CandidatePromotionLineage, CandidatePromotionLineageStatus,
+    DetectorRecognitionArtifactRefLineage, DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
+    MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage, MinecraftTrainingJobManifestLineage,
+    MinecraftTrainingLaunchInspectReportLineage, MinecraftTrainingLaunchManifestLineage, MinecraftTrainingPackageInspectReportLineage,
+    MinecraftTrainingPackageInspectReportSummary, MinecraftTrainingPackageManifestLineage, MinecraftTrainingPackageManifestSummary,
+    MinecraftTrainingResultArtifactFetchInspectReportLineage, MinecraftTrainingResultArtifactFetchManifestLineage,
+    MinecraftTrainingResultHoldoutPreviewInspectReportLineage, MinecraftTrainingResultHoldoutPreviewManifestLineage,
     MinecraftTrainingResultInspectReportLineage, MinecraftTrainingResultManifestLineage,
-    MinecraftTrainingResultSemanticInspectReportLineage,
-    MinecraftTrainingResultSemanticManifestLineage,
-    MinecraftTrainingResultSpatialQueryInspectReportLineage,
-    MinecraftTrainingResultSpatialQueryManifestLineage, OsuVisualTruthSpatialQueryManifestLineage,
+    MinecraftTrainingResultSemanticInspectReportLineage, MinecraftTrainingResultSemanticManifestLineage,
+    MinecraftTrainingResultSpatialQueryInspectReportLineage, MinecraftTrainingResultSpatialQueryManifestLineage,
+    OsuVisualTruthSpatialQueryManifestLineage,
   };
   use auv_game_minecraft::{
-    HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewStatus, TrainingCompatibilityStatus,
-    TrainingCompatibilityViewReport, TrainingPackageCounts,
-    TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
+    HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewStatus, TrainingCompatibilityStatus, TrainingCompatibilityViewReport,
+    TrainingPackageCounts, TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
   };
   use auv_tracing_driver::store::CanonicalRun;
   use auv_tracing_driver::trace::{
-    ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
-    EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
-    SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RUN_API_VERSION, RunId,
+    RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
 
   #[test]
   fn inspect_run_reads_run_from_custom_store_root() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-inspect-custom-store-{}",
-      crate::model::now_millis()
-    ));
-    let store = auv_tracing_driver::store::LocalStore::new(root.clone())
-      .expect("custom store should initialize");
+    let root = std::env::temp_dir().join(format!("auv-inspect-custom-store-{}", crate::model::now_millis()));
+    let store = auv_tracing_driver::store::LocalStore::new(root.clone()).expect("custom store should initialize");
     let run_id = RunId::new("run_custom_store_root");
     let root_span_id = SpanId::new("span_root");
     store
@@ -3141,9 +2690,7 @@ mod tests {
           name: "command.verification".to_string(),
           timestamp_millis: 1,
           attributes: BTreeMap::new(),
-          message: Some(
-            "activation-only; semantic success requires a separate verification result".to_string(),
-          ),
+          message: Some("activation-only; semantic success requires a separate verification result".to_string()),
           artifact_ids: Vec::new(),
         },
         EventRecordV1Alpha1 {
@@ -3275,8 +2822,7 @@ mod tests {
       best_item_id: None,
       known_limits: vec![
         "projection basis is unavailable outside capture-integrated runtime".to_string(),
-        "detector RecognitionResult is recognition evidence only, not candidate-ready output"
-          .to_string(),
+        "detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string(),
       ],
       issue: None,
     }];
@@ -3390,9 +2936,7 @@ mod tests {
       input_delivery: Some("not_attempted".to_string()),
       operation_result: Some("not_produced".to_string()),
       verification_result: Some("not_produced".to_string()),
-      known_limits: vec![
-        "L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string(),
-      ],
+      known_limits: vec!["L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string()],
       issue: None,
     }];
     let candidate_action_execution_lineage = vec![CandidateActionExecutionLineage {
@@ -3449,9 +2993,7 @@ mod tests {
       consent_provenance: Some("human_gesture".to_string()),
       consent_grade: Some("human_approved".to_string()),
       side_effect: Some("single_input_delivered".to_string()),
-      known_limits: vec![
-        "activation_only verification records input delivery, not semantic success".to_string(),
-      ],
+      known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
       issue: None,
     }];
     let action_transition_lineage = vec![ActionTransitionLineage {
@@ -3498,9 +3040,7 @@ mod tests {
         cursor_disturbance: "warp-visible".to_string(),
         press_mechanism: "pointer-click".to_string(),
       }),
-      driver_result: Some(auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      )),
+      driver_result: Some(auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse)),
       post_state: ActionTransitionPostState {
         operation_result_artifact: Some(ArtifactRefLineage {
           run_id: run_id.clone(),
@@ -3519,41 +3059,36 @@ mod tests {
         verification_reason: None,
         semantic_matched: None,
       },
-      known_limits: vec![
-        "activation_only verification records input delivery, not semantic success".to_string(),
-      ],
+      known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
       issue: None,
     }];
 
-    let minecraft_projection_artifacts =
-      vec![auv_game_minecraft::artifact::MinecraftProjectionArtifact {
-        spatial_frame_id: "frame-1".to_string(),
-        world_tick: 42,
-        monotonic_timestamp_ms: 1_000,
-        viewport_bounds: auv_game_minecraft::artifact::ProjectionViewportBounds {
-          x: 0.0,
-          y: 0.0,
-          width: 800.0,
-          height: 600.0,
-        },
-        projected_point: Some(auv_game_minecraft::types::MinecraftProjectedPoint {
-          screen_point: Some(auv_driver::geometry::Point::new(320.0, 240.0)),
-          visibility: auv_game_minecraft::types::ProjectionVisibility::Visible,
-          match_radius_px: 12.0,
-          basis_frame_id: "frame-1".to_string(),
-          confidence: 1.0,
-        }),
-        screenshot_artifact_ref: Some("artifact://screenshot-1".to_string()),
-        mc_capture_skew_ms: Some(180),
+    let minecraft_projection_artifacts = vec![auv_game_minecraft::artifact::MinecraftProjectionArtifact {
+      spatial_frame_id: "frame-1".to_string(),
+      world_tick: 42,
+      monotonic_timestamp_ms: 1_000,
+      viewport_bounds: auv_game_minecraft::artifact::ProjectionViewportBounds {
+        x: 0.0,
+        y: 0.0,
+        width: 800.0,
+        height: 600.0,
+      },
+      projected_point: Some(auv_game_minecraft::types::MinecraftProjectedPoint {
+        screen_point: Some(auv_driver::geometry::Point::new(320.0, 240.0)),
         visibility: auv_game_minecraft::types::ProjectionVisibility::Visible,
-        raycast_block_id: Some("minecraft:stone".to_string()),
-        screen_state: Some("menu".to_string()),
-        resource_pack_ids: vec!["vanilla".to_string()],
-        mismatch_refusal_reason: Some(
-          auv_game_minecraft::verify::MismatchRefusalReason::MenuLoadingScreen,
-        ),
-        verification_reference: Some("verification-1".to_string()),
-      }];
+        match_radius_px: 12.0,
+        basis_frame_id: "frame-1".to_string(),
+        confidence: 1.0,
+      }),
+      screenshot_artifact_ref: Some("artifact://screenshot-1".to_string()),
+      mc_capture_skew_ms: Some(180),
+      visibility: auv_game_minecraft::types::ProjectionVisibility::Visible,
+      raycast_block_id: Some("minecraft:stone".to_string()),
+      screen_state: Some("menu".to_string()),
+      resource_pack_ids: vec!["vanilla".to_string()],
+      mismatch_refusal_reason: Some(auv_game_minecraft::verify::MismatchRefusalReason::MenuLoadingScreen),
+      verification_reference: Some("verification-1".to_string()),
+    }];
     let minecraft_telemetry_sample_artifacts = vec![MinecraftTelemetrySampleArtifactLineage {
       artifact: ArtifactRefLineage {
         run_id: run.run.run_id.clone(),
@@ -3612,52 +3147,51 @@ mod tests {
       }),
       issue: None,
     }];
-    let minecraft_training_package_inspect_reports =
-      vec![MinecraftTrainingPackageInspectReportLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc7_package_inspect"),
-          span_id: SpanId::new("span_mc7_package"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-package-inspect".to_string()),
-          path: Some("artifacts/minecraft-3dgs-training-package-inspect.json".to_string()),
-          summary: Some("training package inspect report".to_string()),
-          resolved: true,
+    let minecraft_training_package_inspect_reports = vec![MinecraftTrainingPackageInspectReportLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_package_inspect"),
+        span_id: SpanId::new("span_mc7_package"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-package-inspect".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-package-inspect.json".to_string()),
+        summary: Some("training package inspect report".to_string()),
+        resolved: true,
+      },
+      report: Some(MinecraftTrainingPackageInspectReportSummary {
+        schema_version: 1,
+        training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        counts: TrainingPackageCounts {
+          frames: 6,
+          images: 6,
+          compatibility_exported_frames: 4,
+          compatibility_skipped_frames: 2,
         },
-        report: Some(MinecraftTrainingPackageInspectReportSummary {
-          schema_version: 1,
-          training_package_manifest_path: "/tmp/package/run.json".to_string(),
-          scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-          source_bundle_manifest_paths: vec![
-            "/tmp/bundle-a/run.json".to_string(),
-            "/tmp/bundle-b/run.json".to_string(),
-          ],
-          source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-          counts: TrainingPackageCounts {
-            frames: 6,
-            images: 6,
-            compatibility_exported_frames: 4,
-            compatibility_skipped_frames: 2,
-          },
-          compatibility_views: vec![TrainingCompatibilityViewReport {
-            view_name: "nerfstudio".to_string(),
-            status: TrainingCompatibilityStatus::Partial,
-            exported_frame_count: 4,
-            skipped_frame_count: 2,
-            transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
-            export_report_path: "compat/nerfstudio/export_report.json".to_string(),
-            exported_frame_indices: vec![1, 2, 3, 4],
-            frame_decisions: Vec::new(),
-            skip_reason_counts: Vec::new(),
-            warnings: vec!["frame 5 skipped".to_string()],
-            used_legacy_view_translation_fallback_frame_indices: vec![2],
-            known_limits: vec!["legacy translation fallback used".to_string()],
-          }],
-          warnings: vec!["frame 6 missing screenshot".to_string()],
-          known_limits: vec!["synthetic validation only".to_string()],
-        }),
-        issue: None,
-      }];
+        compatibility_views: vec![TrainingCompatibilityViewReport {
+          view_name: "nerfstudio".to_string(),
+          status: TrainingCompatibilityStatus::Partial,
+          exported_frame_count: 4,
+          skipped_frame_count: 2,
+          transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
+          export_report_path: "compat/nerfstudio/export_report.json".to_string(),
+          exported_frame_indices: vec![1, 2, 3, 4],
+          frame_decisions: Vec::new(),
+          skip_reason_counts: Vec::new(),
+          warnings: vec!["frame 5 skipped".to_string()],
+          used_legacy_view_translation_fallback_frame_indices: vec![2],
+          known_limits: vec!["legacy translation fallback used".to_string()],
+        }],
+        warnings: vec!["frame 6 missing screenshot".to_string()],
+        known_limits: vec!["synthetic validation only".to_string()],
+      }),
+      issue: None,
+    }];
 
     let minecraft_training_launch_manifests = vec![MinecraftTrainingLaunchManifestLineage {
       artifact: ArtifactRefLineage {
@@ -3675,58 +3209,64 @@ mod tests {
         source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
         source_training_package_inspect_report_path: "/tmp/package/inspect_report.json".to_string(),
         source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-        source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string(), "/tmp/bundle-b/run.json".to_string()],
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
         source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-        counts: TrainingPackageCounts { frames: 6, images: 6, compatibility_exported_frames: 4, compatibility_skipped_frames: 2 },
+        counts: TrainingPackageCounts {
+          frames: 6,
+          images: 6,
+          compatibility_exported_frames: 4,
+          compatibility_skipped_frames: 2,
+        },
         compatibility_view_name: "nerfstudio".to_string(),
         trainer_backend: "nerfstudio.splatfacto".to_string(),
         training_data_dir: "/tmp/package/compat/nerfstudio".to_string(),
         transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
         export_report_path: "compat/nerfstudio/export_report.json".to_string(),
         suggested_output_dir: "/tmp/launch/trainer-output/nerfstudio-splatfacto".to_string(),
-        launch_command: "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/launch/trainer-output/nerfstudio-splatfacto".to_string(),
+        launch_command:
+          "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/launch/trainer-output/nerfstudio-splatfacto"
+            .to_string(),
         known_limits: vec!["launch prep only".to_string()],
       }),
       issue: None,
     }];
-    let minecraft_training_launch_inspect_reports =
-      vec![MinecraftTrainingLaunchInspectReportLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc7_launch_inspect"),
-          span_id: SpanId::new("span_mc7_launch"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-launch-inspect".to_string()),
-          path: Some("artifacts/minecraft-3dgs-training-launch-inspect.json".to_string()),
-          summary: Some("training launch inspect".to_string()),
-          resolved: true,
-        },
-        report: Some(
-          crate::run_read::MinecraftTrainingLaunchInspectReportSummary {
-            schema_version: 1,
-            training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-              .to_string(),
-            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec![
-              "/tmp/bundle-a/run.json".to_string(),
-              "/tmp/bundle-b/run.json".to_string(),
-            ],
-            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-            compatibility_status: "Partial".to_string(),
-            trainer_readiness: "Blocked".to_string(),
-            readiness_blocker: Some("TrainerCommandUnavailable".to_string()),
-            probe_command: "ns-train --help".to_string(),
-            probe_succeeded: false,
-            exported_frame_count: 4,
-            skipped_frame_count: 2,
-            transforms_present: true,
-            warnings: vec!["ns-train unavailable".to_string()],
-            known_limits: vec!["synthetic only".to_string()],
-          },
-        ),
-        issue: None,
-      }];
+    let minecraft_training_launch_inspect_reports = vec![MinecraftTrainingLaunchInspectReportLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_launch_inspect"),
+        span_id: SpanId::new("span_mc7_launch"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-launch-inspect".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-launch-inspect.json".to_string()),
+        summary: Some("training launch inspect".to_string()),
+        resolved: true,
+      },
+      report: Some(crate::run_read::MinecraftTrainingLaunchInspectReportSummary {
+        schema_version: 1,
+        training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        compatibility_status: "Partial".to_string(),
+        trainer_readiness: "Blocked".to_string(),
+        readiness_blocker: Some("TrainerCommandUnavailable".to_string()),
+        probe_command: "ns-train --help".to_string(),
+        probe_succeeded: false,
+        exported_frame_count: 4,
+        skipped_frame_count: 2,
+        transforms_present: true,
+        warnings: vec!["ns-train unavailable".to_string()],
+        known_limits: vec!["synthetic only".to_string()],
+      }),
+      issue: None,
+    }];
     let minecraft_training_job_manifests = vec![MinecraftTrainingJobManifestLineage {
       artifact: ArtifactRefLineage {
         run_id: run.run.run_id.clone(),
@@ -3744,9 +3284,17 @@ mod tests {
         source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
         source_training_package_inspect_report_path: "/tmp/package/inspect_report.json".to_string(),
         source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-        source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string(), "/tmp/bundle-b/run.json".to_string()],
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
         source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-        counts: TrainingPackageCounts { frames: 6, images: 6, compatibility_exported_frames: 4, compatibility_skipped_frames: 2 },
+        counts: TrainingPackageCounts {
+          frames: 6,
+          images: 6,
+          compatibility_exported_frames: 4,
+          compatibility_skipped_frames: 2,
+        },
         compatibility_view_name: "nerfstudio".to_string(),
         provider_backend: "remote-command-provider".to_string(),
         trainer_backend: "nerfstudio.splatfacto".to_string(),
@@ -3759,7 +3307,8 @@ mod tests {
         transforms_path: Some("compat/nerfstudio/transforms.json".to_string()),
         export_report_path: "compat/nerfstudio/export_report.json".to_string(),
         suggested_output_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
-        launch_command: "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+        launch_command:
+          "ns-train splatfacto --data /tmp/package/compat/nerfstudio --output-dir /tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
         status: "submitted".to_string(),
         job_id: Some("job-123".to_string()),
         job_url: Some("https://jobs.example/job-123".to_string()),
@@ -3782,8 +3331,7 @@ mod tests {
       report: Some(crate::run_read::MinecraftTrainingJobInspectReportSummary {
         schema_version: 1,
         training_launch_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-          .to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
         source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
         source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
         source_bundle_manifest_paths: vec![
@@ -3826,8 +3374,7 @@ mod tests {
       manifest: Some(crate::run_read::MinecraftTrainingResultManifestSummary {
         schema_version: 1,
         source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-          .to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
         source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
         source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
         source_bundle_manifest_paths: vec![
@@ -3856,279 +3403,231 @@ mod tests {
       }),
       issue: None,
     }];
-    let minecraft_training_result_inspect_reports =
-      vec![MinecraftTrainingResultInspectReportLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc7_result_inspect"),
-          span_id: SpanId::new("span_mc7_result"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-result-inspect".to_string()),
-          path: Some("artifacts/minecraft-3dgs-training-result-inspect.json".to_string()),
-          summary: Some("training result inspect".to_string()),
-          resolved: true,
-        },
-        report: Some(
-          crate::run_read::MinecraftTrainingResultInspectReportSummary {
-            schema_version: 1,
-            training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-              .to_string(),
-            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
-              .to_string(),
-            source_training_launch_plan_path:
-              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec![
-              "/tmp/bundle-a/run.json".to_string(),
-              "/tmp/bundle-b/run.json".to_string(),
-            ],
-            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-            trainer_backend: "nerfstudio.splatfacto".to_string(),
-            job_backend: "remote".to_string(),
-            job_submission_endpoint: "https://jobs.example/api".to_string(),
-            source_job_status: "submitted".to_string(),
-            status: "succeeded".to_string(),
-            status_message: Some("provider succeeded".to_string()),
-            status_reason: None,
-            job_id: "job-123".to_string(),
-            job_url: Some("https://jobs.example/job-123".to_string()),
-            result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
-            result_dir_exists: true,
-            key_result_artifacts_present: true,
-            result_artifact_count: 1,
-            warnings: vec!["manual quality review pending".to_string()],
-            known_limits: vec!["quality not graded".to_string()],
-          },
-        ),
-        issue: None,
-      }];
-    let minecraft_training_result_artifact_fetch_manifests = vec![
-      MinecraftTrainingResultArtifactFetchManifestLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc7_result_artifact_manifest"),
-          span_id: SpanId::new("span_mc7_result_artifact"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-result-artifact-manifest".to_string()),
-          path: Some(
-            "artifacts/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-          ),
-          summary: Some("training result artifact fetch manifest".to_string()),
-          resolved: true,
-        },
-        manifest: Some(crate::run_read::MinecraftTrainingResultArtifactFetchManifestSummary {
-          schema_version: 1,
-          source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-            .to_string(),
-          source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
-            .to_string(),
-          source_training_launch_plan_path:
-            "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
-          source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
-          source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-          source_bundle_manifest_paths: vec![
-            "/tmp/bundle-a/run.json".to_string(),
-            "/tmp/bundle-b/run.json".to_string(),
-          ],
-          source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-          trainer_backend: "nerfstudio.splatfacto".to_string(),
-          job_backend: "remote".to_string(),
-          source_job_status: "submitted".to_string(),
-          source_result_status: "succeeded".to_string(),
-          source_result_status_reason: None,
-          source_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
-          normalized_result_dir:
-            "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
-          normalized_artifacts: vec![
-            crate::run_read::MinecraftTrainingResultNormalizedArtifactSummary {
-              kind: "config".to_string(),
-              relative_path: "config.yml".to_string(),
-              absolute_path:
-                "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/config.yml"
-                  .to_string(),
-              readable: true,
-              byte_size: Some(128),
-            },
-            crate::run_read::MinecraftTrainingResultNormalizedArtifactSummary {
-              kind: "models_directory".to_string(),
-              relative_path: "nerfstudio_models".to_string(),
-              absolute_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models".to_string(),
-              readable: true,
-              byte_size: None,
-            },
-            crate::run_read::MinecraftTrainingResultNormalizedArtifactSummary {
-              kind: "status_snapshot".to_string(),
-              relative_path: "job_status.json".to_string(),
-              absolute_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/job_status.json".to_string(),
-              readable: true,
-              byte_size: Some(32),
-            },
-          ],
-          known_limits: vec!["normalized artifacts only".to_string()],
-        }),
-        issue: None,
+    let minecraft_training_result_inspect_reports = vec![MinecraftTrainingResultInspectReportLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_result_inspect"),
+        span_id: SpanId::new("span_mc7_result"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result-inspect".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result-inspect.json".to_string()),
+        summary: Some("training result inspect".to_string()),
+        resolved: true,
       },
-    ];
-    let minecraft_training_result_artifact_fetch_inspect_reports =
-      vec![MinecraftTrainingResultArtifactFetchInspectReportLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc7_result_artifact_inspect"),
-          span_id: SpanId::new("span_mc7_result_artifact"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-result-artifact-inspect".to_string()),
-          path: Some("artifacts/minecraft-3dgs-training-result-artifact-inspect.json".to_string()),
-          summary: Some("training result artifact fetch inspect".to_string()),
-          resolved: true,
-        },
-        report: Some(
-          crate::run_read::MinecraftTrainingResultArtifactFetchInspectReportSummary {
-            schema_version: 1,
-            training_result_artifact_fetch_manifest_path:
-              "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-            source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-              .to_string(),
-            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
-              .to_string(),
-            source_training_launch_plan_path:
-              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec![
-              "/tmp/bundle-a/run.json".to_string(),
-              "/tmp/bundle-b/run.json".to_string(),
-            ],
-            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-            trainer_backend: "nerfstudio.splatfacto".to_string(),
-            job_backend: "remote".to_string(),
-            source_job_status: "submitted".to_string(),
-            source_result_status: "succeeded".to_string(),
-            source_result_status_reason: None,
-            fetch_status: "succeeded".to_string(),
-            fetch_reason: None,
-            source_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
-            normalized_result_dir:
-              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
-            source_result_dir_exists: true,
-            required_artifacts_present: true,
-            normalized_artifact_count: 3,
-            warnings: vec!["manual downstream quality review pending".to_string()],
-            known_limits: vec!["normalized artifacts only".to_string()],
+      report: Some(crate::run_read::MinecraftTrainingResultInspectReportSummary {
+        schema_version: 1,
+        training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
+        source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        job_submission_endpoint: "https://jobs.example/api".to_string(),
+        source_job_status: "submitted".to_string(),
+        status: "succeeded".to_string(),
+        status_message: Some("provider succeeded".to_string()),
+        status_reason: None,
+        job_id: "job-123".to_string(),
+        job_url: Some("https://jobs.example/job-123".to_string()),
+        result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+        result_dir_exists: true,
+        key_result_artifacts_present: true,
+        result_artifact_count: 1,
+        warnings: vec!["manual quality review pending".to_string()],
+        known_limits: vec!["quality not graded".to_string()],
+      }),
+      issue: None,
+    }];
+    let minecraft_training_result_artifact_fetch_manifests = vec![MinecraftTrainingResultArtifactFetchManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_result_artifact_manifest"),
+        span_id: SpanId::new("span_mc7_result_artifact"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result-artifact-manifest".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result-artifact-manifest.json".to_string()),
+        summary: Some("training result artifact fetch manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(crate::run_read::MinecraftTrainingResultArtifactFetchManifestSummary {
+        schema_version: 1,
+        source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
+        source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        source_job_status: "submitted".to_string(),
+        source_result_status: "succeeded".to_string(),
+        source_result_status_reason: None,
+        source_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+        normalized_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+        normalized_artifacts: vec![
+          crate::run_read::MinecraftTrainingResultNormalizedArtifactSummary {
+            kind: "config".to_string(),
+            relative_path: "config.yml".to_string(),
+            absolute_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/config.yml".to_string(),
+            readable: true,
+            byte_size: Some(128),
           },
-        ),
-        issue: None,
-      }];
+          crate::run_read::MinecraftTrainingResultNormalizedArtifactSummary {
+            kind: "models_directory".to_string(),
+            relative_path: "nerfstudio_models".to_string(),
+            absolute_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models".to_string(),
+            readable: true,
+            byte_size: None,
+          },
+          crate::run_read::MinecraftTrainingResultNormalizedArtifactSummary {
+            kind: "status_snapshot".to_string(),
+            relative_path: "job_status.json".to_string(),
+            absolute_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/job_status.json".to_string(),
+            readable: true,
+            byte_size: Some(32),
+          },
+        ],
+        known_limits: vec!["normalized artifacts only".to_string()],
+      }),
+      issue: None,
+    }];
+    let minecraft_training_result_artifact_fetch_inspect_reports = vec![MinecraftTrainingResultArtifactFetchInspectReportLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc7_result_artifact_inspect"),
+        span_id: SpanId::new("span_mc7_result_artifact"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result-artifact-inspect".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result-artifact-inspect.json".to_string()),
+        summary: Some("training result artifact fetch inspect".to_string()),
+        resolved: true,
+      },
+      report: Some(crate::run_read::MinecraftTrainingResultArtifactFetchInspectReportSummary {
+        schema_version: 1,
+        training_result_artifact_fetch_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+        source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
+        source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        source_job_status: "submitted".to_string(),
+        source_result_status: "succeeded".to_string(),
+        source_result_status_reason: None,
+        fetch_status: "succeeded".to_string(),
+        fetch_reason: None,
+        source_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+        normalized_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+        source_result_dir_exists: true,
+        required_artifacts_present: true,
+        normalized_artifact_count: 3,
+        warnings: vec!["manual downstream quality review pending".to_string()],
+        known_limits: vec!["normalized artifacts only".to_string()],
+      }),
+      issue: None,
+    }];
 
-    let minecraft_training_result_semantic_manifests =
-      vec![MinecraftTrainingResultSemanticManifestLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc10_semantic_manifest"),
-          span_id: SpanId::new("span_mc10_semantic"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-result-semantic".to_string()),
-          path: Some("artifacts/minecraft-3dgs-training-result-semantic.json".to_string()),
-          summary: Some("training result semantic manifest".to_string()),
-          resolved: true,
-        },
-        manifest: Some(
-          crate::run_read::MinecraftTrainingResultSemanticManifestSummary {
-            schema_version: 1,
-            source_training_result_artifact_manifest_path:
-              "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-            source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-              .to_string(),
-            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
-              .to_string(),
-            source_training_launch_plan_path:
-              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
-            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec![
-              "/tmp/bundle-a/run.json".to_string(),
-              "/tmp/bundle-b/run.json".to_string(),
-            ],
-            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-            trainer_backend: "nerfstudio.splatfacto".to_string(),
-            job_backend: "remote".to_string(),
-            source_result_status: "succeeded".to_string(),
-            normalized_result_dir:
-              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
-            semantic_status: "ready".to_string(),
-            semantic_reason: None,
-            config_path:
-              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/config.yml"
-                .to_string(),
-            models_dir_path:
-              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models"
-                .to_string(),
-            status_snapshot_path: Some(
-              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/job_status.json"
-                .to_string(),
-            ),
-            config_trainer: Some("nerfstudio.splatfacto".to_string()),
-            checkpoint_files: vec![
-              crate::run_read::MinecraftTrainingResultSemanticCheckpointSummary {
-                relative_path: "step-000001.ckpt".to_string(),
-                byte_size: 32,
-              },
-            ],
-            checkpoint_count: 1,
-            known_limits: vec!["semantic gate only".to_string()],
+    let minecraft_training_result_semantic_manifests = vec![MinecraftTrainingResultSemanticManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc10_semantic_manifest"),
+        span_id: SpanId::new("span_mc10_semantic"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result-semantic".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result-semantic.json".to_string()),
+        summary: Some("training result semantic manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(crate::run_read::MinecraftTrainingResultSemanticManifestSummary {
+        schema_version: 1,
+        source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+        source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
+        source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        source_result_status: "succeeded".to_string(),
+        normalized_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+        semantic_status: "ready".to_string(),
+        semantic_reason: None,
+        config_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/config.yml".to_string(),
+        models_dir_path: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models".to_string(),
+        status_snapshot_path: Some("/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/job_status.json".to_string()),
+        config_trainer: Some("nerfstudio.splatfacto".to_string()),
+        checkpoint_files: vec![
+          crate::run_read::MinecraftTrainingResultSemanticCheckpointSummary {
+            relative_path: "step-000001.ckpt".to_string(),
+            byte_size: 32,
           },
-        ),
-        issue: None,
-      }];
-    let minecraft_training_result_semantic_inspect_reports =
-      vec![MinecraftTrainingResultSemanticInspectReportLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc10_semantic_inspect"),
-          span_id: SpanId::new("span_mc10_semantic"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-result-semantic-inspect".to_string()),
-          path: Some("artifacts/minecraft-3dgs-training-result-semantic-inspect.json".to_string()),
-          summary: Some("training result semantic inspect".to_string()),
-          resolved: true,
-        },
-        report: Some(
-          crate::run_read::MinecraftTrainingResultSemanticInspectReportSummary {
-            schema_version: 1,
-            training_result_semantic_manifest_path:
-              "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
-            source_training_result_artifact_manifest_path:
-              "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-            source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-              .to_string(),
-            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
-              .to_string(),
-            source_training_launch_plan_path:
-              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
-            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec![
-              "/tmp/bundle-a/run.json".to_string(),
-              "/tmp/bundle-b/run.json".to_string(),
-            ],
-            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-            trainer_backend: "nerfstudio.splatfacto".to_string(),
-            job_backend: "remote".to_string(),
-            source_result_status: "succeeded".to_string(),
-            normalized_result_dir:
-              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
-            semantic_status: "ready".to_string(),
-            semantic_reason: None,
-            config_yaml_parsed: true,
-            config_trainer: Some("nerfstudio.splatfacto".to_string()),
-            config_backend_matches: true,
-            models_dir_readable: true,
-            status_snapshot_present: true,
-            checkpoint_count: 1,
-            warnings: vec![],
-            known_limits: vec!["semantic inspect only".to_string()],
-          },
-        ),
-        issue: None,
-      }];
+        ],
+        checkpoint_count: 1,
+        known_limits: vec!["semantic gate only".to_string()],
+      }),
+      issue: None,
+    }];
+    let minecraft_training_result_semantic_inspect_reports = vec![MinecraftTrainingResultSemanticInspectReportLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc10_semantic_inspect"),
+        span_id: SpanId::new("span_mc10_semantic"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result-semantic-inspect".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result-semantic-inspect.json".to_string()),
+        summary: Some("training result semantic inspect".to_string()),
+        resolved: true,
+      },
+      report: Some(crate::run_read::MinecraftTrainingResultSemanticInspectReportSummary {
+        schema_version: 1,
+        training_result_semantic_manifest_path: "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+        source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+        source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
+        source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        source_result_status: "succeeded".to_string(),
+        normalized_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+        semantic_status: "ready".to_string(),
+        semantic_reason: None,
+        config_yaml_parsed: true,
+        config_trainer: Some("nerfstudio.splatfacto".to_string()),
+        config_backend_matches: true,
+        models_dir_readable: true,
+        status_snapshot_present: true,
+        checkpoint_count: 1,
+        warnings: vec![],
+        known_limits: vec!["semantic inspect only".to_string()],
+      }),
+      issue: None,
+    }];
 
     let holdout_witness = HoldoutFrameWitness {
       frame_index: 6,
@@ -4139,15 +3638,11 @@ mod tests {
     let holdout_manifest_value = TrainingResultHoldoutPreviewManifest {
       schema_version: 1,
       generated_at_millis: 1,
-      training_result_semantic_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
-      source_training_result_artifact_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-        .to_string(),
+      training_result_semantic_manifest_path: "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path:
-        "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec![
@@ -4157,18 +3652,14 @@ mod tests {
       source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
       trainer_backend: "nerfstudio.splatfacto".to_string(),
       job_backend: "remote".to_string(),
-      normalized_result_dir:
-        "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+      normalized_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
       holdout_frame_index: 6,
       holdout_frame: Some(holdout_witness.clone()),
       basis_checkpoint_path: Some(
-        "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models/step-000001.ckpt"
-          .to_string(),
+        "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models/step-000001.ckpt".to_string(),
       ),
       holdout_screenshot_path: Some(holdout_witness.screenshot_path.clone()),
-      reference_overlay_path: Some(
-        "/tmp/holdout/holdout_overlay_frame_000006.png".to_string(),
-      ),
+      reference_overlay_path: Some("/tmp/holdout/holdout_overlay_frame_000006.png".to_string()),
       status: HoldoutPreviewStatus::Ready,
       reason: None,
       known_limits: vec!["holdout preview only".to_string()],
@@ -4176,29 +3667,14 @@ mod tests {
     let holdout_inspect_value = TrainingResultHoldoutPreviewInspectReport {
       schema_version: 1,
       generated_at_millis: 1,
-      training_result_holdout_preview_manifest_path:
-        "/tmp/holdout/minecraft-3dgs-training-result-holdout-preview.json".to_string(),
-      training_result_semantic_manifest_path: holdout_manifest_value
-        .training_result_semantic_manifest_path
-        .clone(),
-      source_training_result_artifact_manifest_path: holdout_manifest_value
-        .source_training_result_artifact_manifest_path
-        .clone(),
-      source_training_result_manifest_path: holdout_manifest_value
-        .source_training_result_manifest_path
-        .clone(),
-      source_training_job_manifest_path: holdout_manifest_value
-        .source_training_job_manifest_path
-        .clone(),
-      source_training_launch_plan_path: holdout_manifest_value
-        .source_training_launch_plan_path
-        .clone(),
-      source_training_package_manifest_path: holdout_manifest_value
-        .source_training_package_manifest_path
-        .clone(),
-      source_scene_packet_manifest_path: holdout_manifest_value
-        .source_scene_packet_manifest_path
-        .clone(),
+      training_result_holdout_preview_manifest_path: "/tmp/holdout/minecraft-3dgs-training-result-holdout-preview.json".to_string(),
+      training_result_semantic_manifest_path: holdout_manifest_value.training_result_semantic_manifest_path.clone(),
+      source_training_result_artifact_manifest_path: holdout_manifest_value.source_training_result_artifact_manifest_path.clone(),
+      source_training_result_manifest_path: holdout_manifest_value.source_training_result_manifest_path.clone(),
+      source_training_job_manifest_path: holdout_manifest_value.source_training_job_manifest_path.clone(),
+      source_training_launch_plan_path: holdout_manifest_value.source_training_launch_plan_path.clone(),
+      source_training_package_manifest_path: holdout_manifest_value.source_training_package_manifest_path.clone(),
+      source_scene_packet_manifest_path: holdout_manifest_value.source_scene_packet_manifest_path.clone(),
       source_bundle_manifest_paths: holdout_manifest_value.source_bundle_manifest_paths.clone(),
       source_run_ids: holdout_manifest_value.source_run_ids.clone(),
       trainer_backend: holdout_manifest_value.trainer_backend.clone(),
@@ -4217,161 +3693,136 @@ mod tests {
       warnings: vec![],
       known_limits: vec!["holdout inspect only".to_string()],
     };
-    let minecraft_training_result_holdout_preview_manifests =
-      vec![MinecraftTrainingResultHoldoutPreviewManifestLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc16_holdout_manifest"),
-          span_id: SpanId::new("span_mc16_holdout"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-result-holdout-preview".to_string()),
-          path: Some("artifacts/minecraft-3dgs-training-result-holdout-preview.json".to_string()),
-          summary: Some("training result holdout preview manifest".to_string()),
-          resolved: true,
-        },
-        manifest: Some(holdout_manifest_value.into()),
-        issue: None,
-      }];
-    let minecraft_training_result_holdout_preview_inspect_reports =
-      vec![MinecraftTrainingResultHoldoutPreviewInspectReportLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc16_holdout_inspect"),
-          span_id: SpanId::new("span_mc16_holdout"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-result-holdout-preview-inspect".to_string()),
-          path: Some(
-            "artifacts/minecraft-3dgs-training-result-holdout-preview-inspect.json".to_string(),
-          ),
-          summary: Some("training result holdout preview inspect".to_string()),
-          resolved: true,
-        },
-        report: Some(holdout_inspect_value.into()),
-        issue: None,
-      }];
+    let minecraft_training_result_holdout_preview_manifests = vec![MinecraftTrainingResultHoldoutPreviewManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc16_holdout_manifest"),
+        span_id: SpanId::new("span_mc16_holdout"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result-holdout-preview".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result-holdout-preview.json".to_string()),
+        summary: Some("training result holdout preview manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(holdout_manifest_value.into()),
+      issue: None,
+    }];
+    let minecraft_training_result_holdout_preview_inspect_reports = vec![MinecraftTrainingResultHoldoutPreviewInspectReportLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc16_holdout_inspect"),
+        span_id: SpanId::new("span_mc16_holdout"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result-holdout-preview-inspect".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result-holdout-preview-inspect.json".to_string()),
+        summary: Some("training result holdout preview inspect".to_string()),
+        resolved: true,
+      },
+      report: Some(holdout_inspect_value.into()),
+      issue: None,
+    }];
 
-    let minecraft_training_result_spatial_query_manifests =
-      vec![MinecraftTrainingResultSpatialQueryManifestLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc12_query_manifest"),
-          span_id: SpanId::new("span_mc12_query"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-result-query".to_string()),
-          path: Some("artifacts/minecraft-3dgs-training-result-query.json".to_string()),
-          summary: Some("training result spatial query manifest".to_string()),
-          resolved: true,
-        },
-        manifest: Some(
-          crate::run_read::MinecraftTrainingResultSpatialQueryManifestSummary {
-            schema_version: 1,
-            training_result_semantic_manifest_path:
-              "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
-            source_training_result_artifact_manifest_path:
-              "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-            source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-              .to_string(),
-            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
-              .to_string(),
-            source_training_launch_plan_path:
-              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
-            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec![
-              "/tmp/bundle-a/run.json".to_string(),
-              "/tmp/bundle-b/run.json".to_string(),
-            ],
-            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-            trainer_backend: "nerfstudio.splatfacto".to_string(),
-            job_backend: "remote".to_string(),
-            normalized_result_dir:
-              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
-            query_kind: "block_projection".to_string(),
-            target_block: "511,73,728".to_string(),
-            target_face: Some("north".to_string()),
-            target_semantics: "hit_face_center".to_string(),
-            selected_backend: Some("projection_reference".to_string()),
-            status: "answered".to_string(),
-            reason: None,
-            visibility: Some("visible".to_string()),
-            screen_point: Some("854.0,480.0".to_string()),
-            match_radius_px: Some(8.0),
-            confidence: Some(0.9),
-            basis_frame_id: Some("frame-355416".to_string()),
-            comparison_verdict: Some("reference_only".to_string()),
-            known_limits: vec!["projection_reference only".to_string()],
-          },
-        ),
-        issue: None,
-      }];
-    let minecraft_training_result_spatial_query_inspect_reports =
-      vec![MinecraftTrainingResultSpatialQueryInspectReportLineage {
-        artifact: ArtifactRefLineage {
-          run_id: run.run.run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_mc12_query_inspect"),
-          span_id: SpanId::new("span_mc12_query"),
-          captured_event_id: None,
-          role: Some("minecraft-3dgs-training-result-query-inspect".to_string()),
-          path: Some("artifacts/minecraft-3dgs-training-result-query-inspect.json".to_string()),
-          summary: Some("training result spatial query inspect".to_string()),
-          resolved: true,
-        },
-        report: Some(
-          crate::run_read::MinecraftTrainingResultSpatialQueryInspectReportSummary {
-            schema_version: 1,
-            training_result_spatial_query_manifest_path:
-              "/tmp/query/minecraft-3dgs-training-result-query.json".to_string(),
-            training_result_semantic_manifest_path:
-              "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
-            source_training_result_artifact_manifest_path:
-              "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-            source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-              .to_string(),
-            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
-              .to_string(),
-            source_training_launch_plan_path:
-              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
-            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec![
-              "/tmp/bundle-a/run.json".to_string(),
-              "/tmp/bundle-b/run.json".to_string(),
-            ],
-            source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
-            trainer_backend: "nerfstudio.splatfacto".to_string(),
-            job_backend: "remote".to_string(),
-            normalized_result_dir:
-              "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
-            query_kind: "block_projection".to_string(),
-            target_block: "511,73,728".to_string(),
-            target_face: Some("north".to_string()),
-            target_semantics: "hit_face_center".to_string(),
-            selected_backend: Some("projection_reference".to_string()),
-            status: "answered".to_string(),
-            reason: None,
-            visibility: Some("visible".to_string()),
-            screen_point: Some("854.0,480.0".to_string()),
-            match_radius_px: Some(8.0),
-            confidence: Some(0.9),
-            basis_frame_id: Some("frame-355416".to_string()),
-            comparison_verdict: Some("reference_only".to_string()),
-            provider_status: "blocked".to_string(),
-            provider_reason: None,
-            provider_message: None,
-            reference_status: "answered".to_string(),
-            reference_reason: None,
-            reference_basis_frame_id: Some("frame-355416".to_string()),
-            reference_source_frame_json_path: Some(
-              "/tmp/scene-packet/frames/frame_000001.json".to_string(),
-            ),
-            reference_screenshot_path: None,
-            scene_packet_frame_count: 12,
-            warnings: vec![],
-            known_limits: vec!["query inspect only".to_string()],
-          },
-        ),
-        issue: None,
-      }];
+    let minecraft_training_result_spatial_query_manifests = vec![MinecraftTrainingResultSpatialQueryManifestLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc12_query_manifest"),
+        span_id: SpanId::new("span_mc12_query"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result-query".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result-query.json".to_string()),
+        summary: Some("training result spatial query manifest".to_string()),
+        resolved: true,
+      },
+      manifest: Some(crate::run_read::MinecraftTrainingResultSpatialQueryManifestSummary {
+        schema_version: 1,
+        training_result_semantic_manifest_path: "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+        source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+        source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
+        source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        normalized_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+        query_kind: "block_projection".to_string(),
+        target_block: "511,73,728".to_string(),
+        target_face: Some("north".to_string()),
+        target_semantics: "hit_face_center".to_string(),
+        selected_backend: Some("projection_reference".to_string()),
+        status: "answered".to_string(),
+        reason: None,
+        visibility: Some("visible".to_string()),
+        screen_point: Some("854.0,480.0".to_string()),
+        match_radius_px: Some(8.0),
+        confidence: Some(0.9),
+        basis_frame_id: Some("frame-355416".to_string()),
+        comparison_verdict: Some("reference_only".to_string()),
+        known_limits: vec!["projection_reference only".to_string()],
+      }),
+      issue: None,
+    }];
+    let minecraft_training_result_spatial_query_inspect_reports = vec![MinecraftTrainingResultSpatialQueryInspectReportLineage {
+      artifact: ArtifactRefLineage {
+        run_id: run.run.run_id.clone(),
+        artifact_id: ArtifactId::new("artifact_mc12_query_inspect"),
+        span_id: SpanId::new("span_mc12_query"),
+        captured_event_id: None,
+        role: Some("minecraft-3dgs-training-result-query-inspect".to_string()),
+        path: Some("artifacts/minecraft-3dgs-training-result-query-inspect.json".to_string()),
+        summary: Some("training result spatial query inspect".to_string()),
+        resolved: true,
+      },
+      report: Some(crate::run_read::MinecraftTrainingResultSpatialQueryInspectReportSummary {
+        schema_version: 1,
+        training_result_spatial_query_manifest_path: "/tmp/query/minecraft-3dgs-training-result-query.json".to_string(),
+        training_result_semantic_manifest_path: "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+        source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+        source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
+        source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+        source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+        source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+        source_bundle_manifest_paths: vec![
+          "/tmp/bundle-a/run.json".to_string(),
+          "/tmp/bundle-b/run.json".to_string(),
+        ],
+        source_run_ids: vec!["run_a".to_string(), "run_b".to_string()],
+        trainer_backend: "nerfstudio.splatfacto".to_string(),
+        job_backend: "remote".to_string(),
+        normalized_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+        query_kind: "block_projection".to_string(),
+        target_block: "511,73,728".to_string(),
+        target_face: Some("north".to_string()),
+        target_semantics: "hit_face_center".to_string(),
+        selected_backend: Some("projection_reference".to_string()),
+        status: "answered".to_string(),
+        reason: None,
+        visibility: Some("visible".to_string()),
+        screen_point: Some("854.0,480.0".to_string()),
+        match_radius_px: Some(8.0),
+        confidence: Some(0.9),
+        basis_frame_id: Some("frame-355416".to_string()),
+        comparison_verdict: Some("reference_only".to_string()),
+        provider_status: "blocked".to_string(),
+        provider_reason: None,
+        provider_message: None,
+        reference_status: "answered".to_string(),
+        reference_reason: None,
+        reference_basis_frame_id: Some("frame-355416".to_string()),
+        reference_source_frame_json_path: Some("/tmp/scene-packet/frames/frame_000001.json".to_string()),
+        reference_screenshot_path: None,
+        scene_packet_frame_count: 12,
+        warnings: vec![],
+        known_limits: vec!["query inspect only".to_string()],
+      }),
+      issue: None,
+    }];
 
     let output = render_run_text(
       &run,
@@ -4433,9 +3884,7 @@ mod tests {
     assert!(output.contains("inspect.event"));
     assert!(output.contains("artifact_test"));
     assert!(output.contains("Command Boundary Claims:"));
-    assert!(output.contains(
-      "verification=activation-only; semantic success requires a separate verification result"
-    ));
+    assert!(output.contains("verification=activation-only; semantic success requires a separate verification result"));
     assert!(output.contains("known_limit=input delivery does not verify target UI state"));
     assert!(output.contains("Verifications:"));
     assert!(output.contains("method=semantic_match"));
@@ -4474,9 +3923,7 @@ mod tests {
     assert!(output.contains("screenshot_artifact_ref=artifact://screenshot-1"));
     assert!(output.contains("capture_skew_ms=180"));
     assert!(output.contains("verification_reference=verification-1"));
-    assert!(output.contains(
-      "projected_point=screen=320,240 visibility=visible radius_px=12 confidence=1 basis=frame-1"
-    ));
+    assert!(output.contains("projected_point=screen=320,240 visibility=visible radius_px=12 confidence=1 basis=frame-1"));
     assert!(output.contains("MC-6 Spatial Bundles:"));
     assert!(output.contains("MC-7 Training Packages:"));
     assert!(output.contains("manifest_artifact=artifact_mc7_package"));
@@ -4518,13 +3965,8 @@ mod tests {
     assert!(output.contains("required_artifacts_present=true"));
     assert!(output.contains("normalized_artifact_count=3"));
     assert!(output.contains("kind=config relative_path=config.yml readable=true byte_size=128"));
-    assert!(output.contains(
-      "kind=models_directory relative_path=nerfstudio_models readable=true byte_size=n/a"
-    ));
-    assert!(
-      output
-        .contains("kind=status_snapshot relative_path=job_status.json readable=true byte_size=32")
-    );
+    assert!(output.contains("kind=models_directory relative_path=nerfstudio_models readable=true byte_size=n/a"));
+    assert!(output.contains("kind=status_snapshot relative_path=job_status.json readable=true byte_size=32"));
     assert!(output.contains("normalized artifacts only"));
     assert!(output.contains("MC-10 Training Result Semantics:"));
     assert!(output.contains("manifest_artifact=artifact_mc10_semantic_manifest"));
@@ -4540,15 +3982,9 @@ mod tests {
     assert!(output.contains("spatial_frame_id=frame-355416-47699343801916"));
     assert!(output.contains("status=ready"));
     assert!(output.contains("holdout_frame_selection=last_in_game"));
-    let mc10_section = output
-      .find("MC-10 Training Result Semantics:")
-      .expect("mc10 section");
-    let mc16_section = output
-      .find("MC-16 Training Result Holdout Preview:")
-      .expect("mc16 section");
-    let mc12_section = output
-      .find("MC-12 Training Result Spatial Query:")
-      .expect("mc12 section");
+    let mc10_section = output.find("MC-10 Training Result Semantics:").expect("mc10 section");
+    let mc16_section = output.find("MC-16 Training Result Holdout Preview:").expect("mc16 section");
+    let mc12_section = output.find("MC-12 Training Result Spatial Query:").expect("mc12 section");
     assert!(mc10_section < mc16_section);
     assert!(mc16_section < mc12_section);
     assert!(output.contains("MC-12 Training Result Spatial Query:"));
@@ -4569,16 +4005,9 @@ mod tests {
     assert!(output.contains("normalized_artifacts=3"));
     assert!(output.contains("[action.transition.lineage] (seam surface)"));
     assert!(output.contains("[candidate.action.execution.lineage] (ledger)"));
-    let atl_pos = output
-      .find("[action.transition.lineage]")
-      .expect("atl section should be present");
-    let cael_pos = output
-      .find("[candidate.action.execution.lineage]")
-      .expect("cael section should be present");
-    assert!(
-      atl_pos < cael_pos,
-      "seam surface section should precede ledger section"
-    );
+    let atl_pos = output.find("[action.transition.lineage]").expect("atl section should be present");
+    let cael_pos = output.find("[candidate.action.execution.lineage]").expect("cael section should be present");
+    assert!(atl_pos < cael_pos, "seam surface section should precede ledger section");
     assert!(output.contains("artifact=artifact_candidate_action_execution"));
     assert!(output.contains("execution_id=execution_end_turn"));
     assert!(output.contains("input_delivery=attempted"));
@@ -4659,9 +4088,7 @@ mod tests {
           span_id: SpanId::new("span_mc7_result_artifact_orphan"),
           captured_event_id: None,
           role: Some("minecraft-3dgs-training-result-artifact-manifest".to_string()),
-          path: Some(
-            "artifacts/minecraft-3dgs-training-result-artifact-manifest-orphan.json".to_string(),
-          ),
+          path: Some("artifacts/minecraft-3dgs-training-result-artifact-manifest-orphan.json".to_string()),
           summary: Some("training result artifact orphan manifest".to_string()),
           resolved: true,
         },
@@ -4675,9 +4102,7 @@ mod tests {
           span_id: SpanId::new("span_mc7_result_artifact_orphan"),
           captured_event_id: None,
           role: Some("minecraft-3dgs-training-result-artifact-inspect".to_string()),
-          path: Some(
-            "artifacts/minecraft-3dgs-training-result-artifact-inspect-orphan.json".to_string(),
-          ),
+          path: Some("artifacts/minecraft-3dgs-training-result-artifact-inspect-orphan.json".to_string()),
           summary: Some("training result artifact orphan inspect".to_string()),
           resolved: true,
         },
@@ -4692,9 +4117,7 @@ mod tests {
           span_id: SpanId::new("span_mc10_semantic_orphan"),
           captured_event_id: None,
           role: Some("minecraft-3dgs-training-result-semantic-inspect".to_string()),
-          path: Some(
-            "artifacts/minecraft-3dgs-training-result-semantic-inspect-orphan.json".to_string(),
-          ),
+          path: Some("artifacts/minecraft-3dgs-training-result-semantic-inspect-orphan.json".to_string()),
           summary: Some("training result semantic orphan inspect".to_string()),
           resolved: true,
         },
@@ -4709,10 +4132,7 @@ mod tests {
           span_id: SpanId::new("span_mc16_holdout_orphan"),
           captured_event_id: None,
           role: Some("minecraft-3dgs-training-result-holdout-preview-inspect".to_string()),
-          path: Some(
-            "artifacts/minecraft-3dgs-training-result-holdout-preview-inspect-orphan.json"
-              .to_string(),
-          ),
+          path: Some("artifacts/minecraft-3dgs-training-result-holdout-preview-inspect-orphan.json".to_string()),
           summary: Some("training result holdout preview orphan inspect".to_string()),
           resolved: true,
         },
@@ -4729,9 +4149,7 @@ mod tests {
           span_id: SpanId::new("span_mc12_query_orphan"),
           captured_event_id: None,
           role: Some("minecraft-3dgs-training-result-query-inspect".to_string()),
-          path: Some(
-            "artifacts/minecraft-3dgs-training-result-query-inspect-orphan.json".to_string(),
-          ),
+          path: Some("artifacts/minecraft-3dgs-training-result-query-inspect-orphan.json".to_string()),
           summary: Some("training result spatial query orphan inspect".to_string()),
           resolved: true,
         },
@@ -4767,25 +4185,17 @@ mod tests {
     assert!(output.contains("issue=json parse error: expected value"));
     assert!(output.contains("MC-7 Training Result Artifacts:"));
     assert!(output.contains("inspect_artifact=artifact_mc7_result_artifact_orphan"));
-    assert!(
-      output.contains("path=artifacts/minecraft-3dgs-training-result-artifact-inspect-orphan.json")
-    );
+    assert!(output.contains("path=artifacts/minecraft-3dgs-training-result-artifact-inspect-orphan.json"));
     assert!(output.contains("issue=json parse error: expected value"));
     assert!(output.contains("MC-10 Training Result Semantics:"));
     assert!(output.contains("inspect_artifact=artifact_mc10_semantic_orphan"));
-    assert!(
-      output.contains("path=artifacts/minecraft-3dgs-training-result-semantic-inspect-orphan.json")
-    );
+    assert!(output.contains("path=artifacts/minecraft-3dgs-training-result-semantic-inspect-orphan.json"));
     assert!(output.contains("MC-16 Training Result Holdout Preview:"));
     assert!(output.contains("inspect_artifact=artifact_mc16_holdout_orphan"));
-    assert!(output.contains(
-      "path=artifacts/minecraft-3dgs-training-result-holdout-preview-inspect-orphan.json"
-    ));
+    assert!(output.contains("path=artifacts/minecraft-3dgs-training-result-holdout-preview-inspect-orphan.json"));
     assert!(output.contains("MC-12 Training Result Spatial Query:"));
     assert!(output.contains("inspect_artifact=artifact_mc12_query_orphan"));
-    assert!(
-      output.contains("path=artifacts/minecraft-3dgs-training-result-query-inspect-orphan.json")
-    );
+    assert!(output.contains("path=artifacts/minecraft-3dgs-training-result-query-inspect-orphan.json"));
   }
 
   #[test]
@@ -4885,18 +4295,8 @@ mod tests {
     absent.comparison_verdict = Some("not_comparable".to_string());
 
     let manifests = vec![
-      query_manifest(
-        &run,
-        root_span_id.clone(),
-        "artifact_mc14_click_ready",
-        click_ready,
-      ),
-      query_manifest(
-        &run,
-        root_span_id.clone(),
-        "artifact_mc14_outside_window",
-        outside_window,
-      ),
+      query_manifest(&run, root_span_id.clone(), "artifact_mc14_click_ready", click_ready),
+      query_manifest(&run, root_span_id.clone(), "artifact_mc14_outside_window", outside_window),
       query_manifest(&run, root_span_id.clone(), "artifact_mc14_absent", absent),
     ];
 
@@ -4962,9 +4362,7 @@ mod tests {
     assert!(output.contains("query_artifact=artifact_mc14_absent"));
     assert!(output.contains("action_eligibility=not_consumable"));
     assert!(output.contains("readiness_class=not_consumable"));
-    assert!(
-      output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet")
-    );
+    assert!(output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet"));
   }
 
   #[test]
@@ -5048,18 +4446,8 @@ mod tests {
     absent.pixel_y = None;
 
     let manifests = vec![
-      query_manifest(
-        &run,
-        root_span_id.clone(),
-        "artifact_osu_click_ready",
-        click_ready,
-      ),
-      query_manifest(
-        &run,
-        root_span_id.clone(),
-        "artifact_osu_outside_capture",
-        outside_capture,
-      ),
+      query_manifest(&run, root_span_id.clone(), "artifact_osu_click_ready", click_ready),
+      query_manifest(&run, root_span_id.clone(), "artifact_osu_outside_capture", outside_capture),
       query_manifest(&run, root_span_id.clone(), "artifact_osu_absent", absent),
     ];
 
@@ -5206,13 +4594,9 @@ mod tests {
         attempted: false,
         action_eligibility: "not_consumable".to_string(),
         window_point: None,
-        refusal_reason: Some(
-          "status=failed reason=target_block_absent_from_scene_packet".to_string(),
-        ),
+        refusal_reason: Some("status=failed reason=target_block_absent_from_scene_packet".to_string()),
         operation_status: Some("completed".to_string()),
-        operation_message: Some(
-          "status=failed reason=target_block_absent_from_scene_packet".to_string(),
-        ),
+        operation_message: Some("status=failed reason=target_block_absent_from_scene_packet".to_string()),
         target_app: Some("net.minecraft.client".to_string()),
         target_title: Some("Minecraft".to_string()),
         dispatch_command: None,
@@ -5287,17 +4671,17 @@ mod tests {
     assert!(output.contains("attempted=true"));
     assert!(output.contains("action_eligibility=click_ready"));
     assert!(output.contains("readiness_class=ready"));
-    assert!(output.contains(
-      "source_readiness_ref=kind=query_manifest artifact_id=artifact_mc19_click_ready_query run_id=run_inspect_mc19_three_gates"
-    ));
+    assert!(
+      output.contains(
+        "source_readiness_ref=kind=query_manifest artifact_id=artifact_mc19_click_ready_query run_id=run_inspect_mc19_three_gates"
+      )
+    );
     assert!(output.contains("dispatch_command=input.clickWindowPoint"));
     assert!(output.contains("operation_result_artifact=artifact_mc19_outside_op"));
     assert!(output.contains("refusal_reason=visibility=outside_window"));
     assert!(output.contains("operation_result_artifact=artifact_mc19_absent_op"));
     assert!(output.contains("action_eligibility=not_consumable"));
-    assert!(
-      output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet")
-    );
+    assert!(output.contains("refusal_reason=status=failed reason=target_block_absent_from_scene_packet"));
   }
 
   #[test]
@@ -5538,27 +4922,24 @@ mod tests {
           summary: Some("training launch inspect a".to_string()),
           resolved: true,
         },
-        report: Some(
-          crate::run_read::MinecraftTrainingLaunchInspectReportSummary {
-            schema_version: 1,
-            training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-              .to_string(),
-            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
-            source_run_ids: vec!["run_a".to_string()],
-            compatibility_status: "Ready".to_string(),
-            trainer_readiness: "Ready".to_string(),
-            readiness_blocker: None,
-            probe_command: "ns-train --help".to_string(),
-            probe_succeeded: true,
-            exported_frame_count: 2,
-            skipped_frame_count: 0,
-            transforms_present: true,
-            warnings: vec![],
-            known_limits: vec![],
-          },
-        ),
+        report: Some(crate::run_read::MinecraftTrainingLaunchInspectReportSummary {
+          schema_version: 1,
+          training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+          source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+          source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+          source_run_ids: vec!["run_a".to_string()],
+          compatibility_status: "Ready".to_string(),
+          trainer_readiness: "Ready".to_string(),
+          readiness_blocker: None,
+          probe_command: "ns-train --help".to_string(),
+          probe_succeeded: true,
+          exported_frame_count: 2,
+          skipped_frame_count: 0,
+          transforms_present: true,
+          warnings: vec![],
+          known_limits: vec![],
+        }),
         issue: None,
       },
       MinecraftTrainingLaunchInspectReportLineage {
@@ -5572,27 +4953,24 @@ mod tests {
           summary: Some("training launch inspect b".to_string()),
           resolved: true,
         },
-        report: Some(
-          crate::run_read::MinecraftTrainingLaunchInspectReportSummary {
-            schema_version: 1,
-            training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-              .to_string(),
-            source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
-            source_run_ids: vec!["run_a".to_string()],
-            compatibility_status: "Blocked".to_string(),
-            trainer_readiness: "Blocked".to_string(),
-            readiness_blocker: Some("TrainerCommandUnavailable".to_string()),
-            probe_command: "ns-train --help".to_string(),
-            probe_succeeded: false,
-            exported_frame_count: 1,
-            skipped_frame_count: 1,
-            transforms_present: true,
-            warnings: vec!["duplicate report".to_string()],
-            known_limits: vec![],
-          },
-        ),
+        report: Some(crate::run_read::MinecraftTrainingLaunchInspectReportSummary {
+          schema_version: 1,
+          training_launch_manifest_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+          source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
+          source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+          source_run_ids: vec!["run_a".to_string()],
+          compatibility_status: "Blocked".to_string(),
+          trainer_readiness: "Blocked".to_string(),
+          readiness_blocker: Some("TrainerCommandUnavailable".to_string()),
+          probe_command: "ns-train --help".to_string(),
+          probe_succeeded: false,
+          exported_frame_count: 1,
+          skipped_frame_count: 1,
+          transforms_present: true,
+          warnings: vec!["duplicate report".to_string()],
+          known_limits: vec![],
+        }),
         issue: None,
       },
     ];
@@ -5693,8 +5071,7 @@ mod tests {
       },
       manifest: Some(crate::run_read::MinecraftTrainingJobManifestSummary {
         schema_version: 1,
-        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-          .to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
         source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
         source_training_package_inspect_report_path: "/tmp/package/inspect_report.json".to_string(),
         source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
@@ -5743,8 +5120,7 @@ mod tests {
         report: Some(crate::run_read::MinecraftTrainingJobInspectReportSummary {
           schema_version: 1,
           training_launch_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-          source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-            .to_string(),
+          source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
           source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
           source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
           source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -5784,8 +5160,7 @@ mod tests {
         report: Some(crate::run_read::MinecraftTrainingJobInspectReportSummary {
           schema_version: 1,
           training_launch_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-          source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-            .to_string(),
+          source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
           source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
           source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
           source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -6121,8 +5496,7 @@ mod tests {
       manifest: Some(crate::run_read::MinecraftTrainingResultManifestSummary {
         schema_version: 1,
         source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json"
-          .to_string(),
+        source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
         source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
         source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
         source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
@@ -6161,35 +5535,30 @@ mod tests {
           summary: Some("training result inspect a".to_string()),
           resolved: true,
         },
-        report: Some(
-          crate::run_read::MinecraftTrainingResultInspectReportSummary {
-            schema_version: 1,
-            training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-              .to_string(),
-            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
-              .to_string(),
-            source_training_launch_plan_path:
-              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
-            source_run_ids: vec!["run_a".to_string()],
-            trainer_backend: "nerfstudio.splatfacto".to_string(),
-            job_backend: "remote".to_string(),
-            job_submission_endpoint: "https://jobs.example/api".to_string(),
-            source_job_status: "submitted".to_string(),
-            status: "succeeded".to_string(),
-            status_message: Some("provider succeeded".to_string()),
-            status_reason: None,
-            job_id: "job-123".to_string(),
-            job_url: Some("https://jobs.example/job-123".to_string()),
-            result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
-            result_dir_exists: true,
-            key_result_artifacts_present: true,
-            result_artifact_count: 1,
-            warnings: vec![],
-            known_limits: vec![],
-          },
-        ),
+        report: Some(crate::run_read::MinecraftTrainingResultInspectReportSummary {
+          schema_version: 1,
+          training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
+          source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+          source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+          source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+          source_run_ids: vec!["run_a".to_string()],
+          trainer_backend: "nerfstudio.splatfacto".to_string(),
+          job_backend: "remote".to_string(),
+          job_submission_endpoint: "https://jobs.example/api".to_string(),
+          source_job_status: "submitted".to_string(),
+          status: "succeeded".to_string(),
+          status_message: Some("provider succeeded".to_string()),
+          status_reason: None,
+          job_id: "job-123".to_string(),
+          job_url: Some("https://jobs.example/job-123".to_string()),
+          result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+          result_dir_exists: true,
+          key_result_artifacts_present: true,
+          result_artifact_count: 1,
+          warnings: vec![],
+          known_limits: vec![],
+        }),
         issue: None,
       },
       MinecraftTrainingResultInspectReportLineage {
@@ -6203,35 +5572,30 @@ mod tests {
           summary: Some("training result inspect b".to_string()),
           resolved: true,
         },
-        report: Some(
-          crate::run_read::MinecraftTrainingResultInspectReportSummary {
-            schema_version: 1,
-            training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-              .to_string(),
-            source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json"
-              .to_string(),
-            source_training_launch_plan_path:
-              "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
-            source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-            source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
-            source_run_ids: vec!["run_a".to_string()],
-            trainer_backend: "nerfstudio.splatfacto".to_string(),
-            job_backend: "remote".to_string(),
-            job_submission_endpoint: "https://jobs.example/api".to_string(),
-            source_job_status: "submitted".to_string(),
-            status: "failed".to_string(),
-            status_message: Some("legacy adapter failure".to_string()),
-            status_reason: Some("result_artifacts_missing".to_string()),
-            job_id: "job-123".to_string(),
-            job_url: Some("https://jobs.example/job-123".to_string()),
-            result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
-            result_dir_exists: true,
-            key_result_artifacts_present: false,
-            result_artifact_count: 0,
-            warnings: vec!["duplicate report".to_string()],
-            known_limits: vec![],
-          },
-        ),
+        report: Some(crate::run_read::MinecraftTrainingResultInspectReportSummary {
+          schema_version: 1,
+          training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
+          source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
+          source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+          source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
+          source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+          source_run_ids: vec!["run_a".to_string()],
+          trainer_backend: "nerfstudio.splatfacto".to_string(),
+          job_backend: "remote".to_string(),
+          job_submission_endpoint: "https://jobs.example/api".to_string(),
+          source_job_status: "submitted".to_string(),
+          status: "failed".to_string(),
+          status_message: Some("legacy adapter failure".to_string()),
+          status_reason: Some("result_artifacts_missing".to_string()),
+          job_id: "job-123".to_string(),
+          job_url: Some("https://jobs.example/job-123".to_string()),
+          result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto".to_string(),
+          result_dir_exists: true,
+          key_result_artifacts_present: false,
+          result_artifact_count: 0,
+          warnings: vec!["duplicate report".to_string()],
+          known_limits: vec![],
+        }),
         issue: None,
       },
     ];
@@ -6327,28 +5691,22 @@ mod tests {
     let holdout_manifest_value = TrainingResultHoldoutPreviewManifest {
       schema_version: 1,
       generated_at_millis: 1,
-      training_result_semantic_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
-      source_training_result_artifact_manifest_path:
-        "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
-      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json"
-        .to_string(),
+      training_result_semantic_manifest_path: "/tmp/result/minecraft-3dgs-training-result-semantic.json".to_string(),
+      source_training_result_artifact_manifest_path: "/tmp/result/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
+      source_training_result_manifest_path: "/tmp/result/minecraft-3dgs-training-result.json".to_string(),
       source_training_job_manifest_path: "/tmp/job/minecraft-3dgs-training-job.json".to_string(),
-      source_training_launch_plan_path:
-        "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+      source_training_launch_plan_path: "/tmp/launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/package/run.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
       source_run_ids: vec!["run_a".to_string()],
       trainer_backend: "nerfstudio.splatfacto".to_string(),
       job_backend: "remote".to_string(),
-      normalized_result_dir:
-        "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
+      normalized_result_dir: "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result".to_string(),
       holdout_frame_index: 6,
       holdout_frame: Some(holdout_witness.clone()),
       basis_checkpoint_path: Some(
-        "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models/step-000001.ckpt"
-          .to_string(),
+        "/tmp/job/trainer-output/nerfstudio-splatfacto/normalized-result/nerfstudio_models/step-000001.ckpt".to_string(),
       ),
       holdout_screenshot_path: Some(holdout_witness.screenshot_path.clone()),
       reference_overlay_path: None,
@@ -6373,9 +5731,7 @@ mod tests {
           span_id: root_span_id,
           captured_event_id: None,
           role: Some("minecraft-3dgs-training-result-holdout-preview-inspect".to_string()),
-          path: Some(format!(
-            "artifacts/minecraft-3dgs-training-result-holdout-preview-inspect-{path_suffix}.json"
-          )),
+          path: Some(format!("artifacts/minecraft-3dgs-training-result-holdout-preview-inspect-{path_suffix}.json")),
           summary: Some(format!("holdout inspect {path_suffix}")),
           resolved: true,
         },
@@ -6383,22 +5739,13 @@ mod tests {
           TrainingResultHoldoutPreviewInspectReport {
             schema_version: 1,
             generated_at_millis: 1,
-            training_result_holdout_preview_manifest_path:
-              "/tmp/holdout/minecraft-3dgs-training-result-holdout-preview.json".to_string(),
-            training_result_semantic_manifest_path: manifest
-              .training_result_semantic_manifest_path
-              .clone(),
-            source_training_result_artifact_manifest_path: manifest
-              .source_training_result_artifact_manifest_path
-              .clone(),
-            source_training_result_manifest_path: manifest
-              .source_training_result_manifest_path
-              .clone(),
+            training_result_holdout_preview_manifest_path: "/tmp/holdout/minecraft-3dgs-training-result-holdout-preview.json".to_string(),
+            training_result_semantic_manifest_path: manifest.training_result_semantic_manifest_path.clone(),
+            source_training_result_artifact_manifest_path: manifest.source_training_result_artifact_manifest_path.clone(),
+            source_training_result_manifest_path: manifest.source_training_result_manifest_path.clone(),
             source_training_job_manifest_path: manifest.source_training_job_manifest_path.clone(),
             source_training_launch_plan_path: manifest.source_training_launch_plan_path.clone(),
-            source_training_package_manifest_path: manifest
-              .source_training_package_manifest_path
-              .clone(),
+            source_training_package_manifest_path: manifest.source_training_package_manifest_path.clone(),
             source_scene_packet_manifest_path: manifest.source_scene_packet_manifest_path.clone(),
             source_bundle_manifest_paths: manifest.source_bundle_manifest_paths.clone(),
             source_run_ids: manifest.source_run_ids.clone(),
@@ -6523,10 +5870,8 @@ mod tests {
   #[test]
   fn render_run_text_renders_mc17_d2_quality_baseline_report() {
     use crate::run_read::{
-      MinecraftTrainingResultQualityBaselineReportSummary, QualityBaselineHoldoutWitnessEvidence,
-      QualityBaselineRenderQualityEvidence, QualityBaselineSpatialQueryEvidence,
-      derive_minecraft_training_result_quality_verdict,
-      quality_baseline_verdict_thresholds_probe_v1,
+      MinecraftTrainingResultQualityBaselineReportSummary, QualityBaselineHoldoutWitnessEvidence, QualityBaselineRenderQualityEvidence,
+      QualityBaselineSpatialQueryEvidence, derive_minecraft_training_result_quality_verdict, quality_baseline_verdict_thresholds_probe_v1,
       quality_baseline_verdict_thresholds_trained_render_v1,
     };
     let run_id = RunId::new("run_inspect_mc17_d2_baseline");
@@ -6552,8 +5897,7 @@ mod tests {
     };
     let report = MinecraftTrainingResultQualityBaselineReportSummary {
       profile_id: "mc17-d2-primary-v1".to_string(),
-      training_result_semantic_manifest_path:
-        ".tmp/mc10-smoke-review/semantic/minecraft-3dgs-training-result-semantic.json".to_string(),
+      training_result_semantic_manifest_path: ".tmp/mc10-smoke-review/semantic/minecraft-3dgs-training-result-semantic.json".to_string(),
       evidence_coverage: "complete".to_string(),
       spatial_query: Some(QualityBaselineSpatialQueryEvidence {
         status: "answered".to_string(),
@@ -6569,9 +5913,7 @@ mod tests {
       holdout_witness: Some(QualityBaselineHoldoutWitnessEvidence {
         status: "ready".to_string(),
         holdout_frame_index: 6,
-        basis_checkpoint_path: Some(
-          "/tmp/normalized/nerfstudio_models/step-000001.ckpt".to_string(),
-        ),
+        basis_checkpoint_path: Some("/tmp/normalized/nerfstudio_models/step-000001.ckpt".to_string()),
         holdout_screenshot_path: Some("/tmp/frame_000006.png".to_string()),
         spatial_frame_id: Some("frame-355416-47699343801916".to_string()),
       }),
@@ -6590,12 +5932,9 @@ mod tests {
       issue: None,
     };
     let probe_thresholds = quality_baseline_verdict_thresholds_probe_v1().expect("probe");
-    let trained_thresholds =
-      quality_baseline_verdict_thresholds_trained_render_v1().expect("trained");
-    let probe_verdict =
-      derive_minecraft_training_result_quality_verdict(&report, &probe_thresholds);
-    let trained_verdict =
-      derive_minecraft_training_result_quality_verdict(&report, &trained_thresholds);
+    let trained_thresholds = quality_baseline_verdict_thresholds_trained_render_v1().expect("trained");
+    let probe_verdict = derive_minecraft_training_result_quality_verdict(&report, &probe_thresholds);
+    let trained_verdict = derive_minecraft_training_result_quality_verdict(&report, &trained_thresholds);
 
     let output = render_run_text(
       &run,
@@ -6676,19 +6015,13 @@ mod tests {
     use auv_tracing_driver::recording::RunRecordingBackend;
     use auv_tracing_driver::store::LocalStore;
 
-    use crate::osu::{
-      run_osu_visual_truth_semantic_validation, run_osu_visual_truth_spatial_query,
-    };
+    use crate::osu::{run_osu_visual_truth_semantic_validation, run_osu_visual_truth_spatial_query};
 
-    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-osu/tests/fixtures/osu_visual_truth_probe");
+    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-osu/tests/fixtures/osu_visual_truth_probe");
     use std::env;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let stamp = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .expect("clock")
-      .as_nanos();
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).expect("clock").as_nanos();
     let work = env::temp_dir().join(format!("auv-osu-probe-work-{stamp}"));
     fs::create_dir_all(&work).expect("work dir");
     for name in ["visual_truth_manifest.json", "projection.json"] {
@@ -6700,12 +6033,10 @@ mod tests {
     let store = LocalStore::new(store_root.clone()).expect("store");
     let recording = RunRecordingBackend::local_only(store.clone()).handle();
 
-    let semantic =
-      run_osu_visual_truth_semantic_validation(&recording, work.clone(), work.join("semantic-out"))
-        .expect("semantic validation should record");
+    let semantic = run_osu_visual_truth_semantic_validation(&recording, work.clone(), work.join("semantic-out"))
+      .expect("semantic validation should record");
 
-    let semantic_output = inspect_run(&store, semantic.run_id.as_str())
-      .unwrap_or_else(|error| panic!("semantic inspect: {error}"));
+    let semantic_output = inspect_run(&store, semantic.run_id.as_str()).unwrap_or_else(|error| panic!("semantic inspect: {error}"));
     assert!(semantic_output.contains("Osu Visual Truth Semantic:"));
     assert!(semantic_output.contains("semantic_status=ready"));
 
@@ -6719,8 +6050,7 @@ mod tests {
     )
     .expect("spatial query should record");
 
-    let query_output = inspect_run(&store, query.run_id.as_str())
-      .unwrap_or_else(|error| panic!("query inspect: {error}"));
+    let query_output = inspect_run(&store, query.run_id.as_str()).unwrap_or_else(|error| panic!("query inspect: {error}"));
     assert!(query_output.contains("Osu Visual Truth Spatial Query:"));
     assert!(query_output.contains("status=answered"));
     assert!(query_output.contains("Osu Visual Truth Spatial Query Action Readiness:"));
@@ -6738,18 +6068,8 @@ mod tests {
     }
     let store = auv_tracing_driver::store::LocalStore::new(store_root).expect("store");
     let cases = [
-      (
-        "run_1782590245467_18186_0",
-        "attempted=true",
-        "action_eligibility=click_ready",
-        "dispatch_command=input.clickWindowPoint",
-      ),
-      (
-        "run_1782590246310_18190_0",
-        "attempted=false",
-        "visibility=outside_window",
-        "dispatch_command=n/a",
-      ),
+      ("run_1782590245467_18186_0", "attempted=true", "action_eligibility=click_ready", "dispatch_command=input.clickWindowPoint"),
+      ("run_1782590246310_18190_0", "attempted=false", "visibility=outside_window", "dispatch_command=n/a"),
       (
         "run_1782590246843_18194_0",
         "attempted=false",
@@ -6759,21 +6079,13 @@ mod tests {
     ];
     for (run_id, attempted, eligibility_or_refusal, dispatch) in cases {
       let output = inspect_run(&store, run_id).unwrap_or_else(|error| panic!("{run_id}: {error}"));
-      assert!(
-        output.contains("MC-19 Query Wired Live Action:"),
-        "{run_id}"
-      );
+      assert!(output.contains("MC-19 Query Wired Live Action:"), "{run_id}");
       assert!(output.contains(attempted), "{run_id} missing {attempted}");
-      assert!(
-        output.contains(eligibility_or_refusal),
-        "{run_id} missing {eligibility_or_refusal}"
-      );
+      assert!(output.contains(eligibility_or_refusal), "{run_id} missing {eligibility_or_refusal}");
       assert!(output.contains(dispatch), "{run_id} missing {dispatch}");
       eprintln!("--- MC-19 inspect {run_id} ---");
       for line in output.lines() {
-        if line.contains("MC-19 Query Wired Live Action:")
-          || line.starts_with("- operation_result_artifact=")
-        {
+        if line.contains("MC-19 Query Wired Live Action:") || line.starts_with("- operation_result_artifact=") {
           eprintln!("{line}");
         }
       }
@@ -6789,31 +6101,15 @@ mod tests {
     let store = auv_tracing_driver::store::LocalStore::new(store_root).expect("store");
     let run_id = "run_1782594531314_61141_0";
     let output = inspect_run(&store, run_id).unwrap_or_else(|error| panic!("{run_id}: {error}"));
-    assert!(
-      output.contains("MC-17 Quality Baseline Report:"),
-      "{run_id}"
-    );
-    assert!(
-      output.contains("profile_id=mc17-d2-primary-v1 evidence_coverage=complete"),
-      "{run_id}"
-    );
+    assert!(output.contains("MC-17 Quality Baseline Report:"), "{run_id}");
+    assert!(output.contains("profile_id=mc17-d2-primary-v1 evidence_coverage=complete"), "{run_id}");
     assert!(output.contains("spatial_query_status=answered"), "{run_id}");
-    assert!(
-      output.contains("holdout_status=ready holdout_frame_index=6"),
-      "{run_id}"
-    );
-    assert!(
-      output.contains("render_quality_status=ready verdict=measured_only"),
-      "{run_id}"
-    );
+    assert!(output.contains("holdout_status=ready holdout_frame_index=6"), "{run_id}");
+    assert!(output.contains("render_quality_status=ready verdict=measured_only"), "{run_id}");
     assert!(output.contains("l1_mean=0 mse=0"), "{run_id}");
     assert!(output.contains("trust_notes="), "{run_id}");
     assert!(output.contains("MC-17 Quality Verdict:"), "{run_id}");
-    assert!(
-      output.contains("render_evidence_mode=screenshot_copy_probe")
-        && output.contains("quality_verdict=pass"),
-      "{run_id}"
-    );
+    assert!(output.contains("render_evidence_mode=screenshot_copy_probe") && output.contains("quality_verdict=pass"), "{run_id}");
   }
   #[test]
   fn render_run_text_renders_balatro_card_detection_probe() {
@@ -6825,21 +6121,14 @@ mod tests {
 
     use crate::balatro::run_balatro_consumption_probe_chain;
 
-    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe");
+    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-balatro/tests/fixtures/balatro_consumption_probe");
     let store_root = std::env::temp_dir().join(format!(
       "auv-balatro-probe-store-{}",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos()
+      std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock").as_nanos()
     ));
     let work_dir = std::env::temp_dir().join(format!(
       "auv-balatro-probe-work-{}",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos()
+      std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock").as_nanos()
     ));
     std::fs::create_dir_all(&store_root).expect("store dir");
     std::fs::create_dir_all(&work_dir).expect("work dir");
@@ -6856,8 +6145,7 @@ mod tests {
     )
     .expect("probe chain");
 
-    let output =
-      inspect_run(&store, chain.run_id.as_str()).unwrap_or_else(|error| panic!("inspect: {error}"));
+    let output = inspect_run(&store, chain.run_id.as_str()).unwrap_or_else(|error| panic!("inspect: {error}"));
 
     assert!(output.contains("Balatro Card Detection Semantic:"));
     assert!(output.contains("semantic_status=ready"));

@@ -146,70 +146,39 @@ impl WindowApi<'_> {
     Ok(window_point_for_screen_point(window, point))
   }
 
-  pub fn move_to(
-    &self,
-    window: &Window,
-    point: Point,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn move_to(&self, window: &Window, point: Point, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     let _ = self.session;
     mutate_window(window, WindowMutationKind::MoveTo { point }, options)
   }
 
-  pub fn resize(
-    &self,
-    window: &Window,
-    size: Size,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn resize(&self, window: &Window, size: Size, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     let _ = self.session;
     mutate_window(window, WindowMutationKind::Resize { size }, options)
   }
 
-  pub fn set_frame(
-    &self,
-    window: &Window,
-    frame: Rect,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn set_frame(&self, window: &Window, frame: Rect, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     let _ = self.session;
     mutate_window(window, WindowMutationKind::SetFrame { frame }, options)
   }
 
-  pub fn minimize(
-    &self,
-    window: &Window,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn minimize(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     let _ = self.session;
     mutate_window(window, WindowMutationKind::Minimize, options)
   }
 
-  pub fn restore(
-    &self,
-    window: &Window,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn restore(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     let _ = self.session;
     mutate_window(window, WindowMutationKind::Restore, options)
   }
 
-  pub fn zoom(
-    &self,
-    window: &Window,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn zoom(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     let _ = self.session;
     mutate_window(window, WindowMutationKind::Zoom, options)
   }
 }
 
 impl VisionApi<'_> {
-  pub fn recognize_text_in_capture(
-    &self,
-    capture: &Capture,
-    region: RatioRect,
-  ) -> DriverResult<TextRecognition> {
+  pub fn recognize_text_in_capture(&self, capture: &Capture, region: RatioRect) -> DriverResult<TextRecognition> {
     self.recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default())
   }
 
@@ -223,18 +192,8 @@ impl VisionApi<'_> {
     recognize_text_in_capture(capture, region, &options)
   }
 
-  pub fn find_text_in_capture(
-    &self,
-    capture: &Capture,
-    query: &str,
-    region: RatioRect,
-  ) -> DriverResult<OcrMatches> {
-    self.find_text_in_capture_with_options(
-      capture,
-      query,
-      region,
-      TextRecognitionOptions::default(),
-    )
+  pub fn find_text_in_capture(&self, capture: &Capture, query: &str, region: RatioRect) -> DriverResult<OcrMatches> {
+    self.find_text_in_capture_with_options(capture, query, region, TextRecognitionOptions::default())
   }
 
   pub fn find_text_in_capture_with_options(
@@ -257,12 +216,7 @@ impl InputApi<'_> {
   }
 
   /// Moves the pointer to `point` and emits a mouse-wheel scroll.
-  pub fn scroll_at(
-    &self,
-    point: Point,
-    scroll: Scroll,
-    settle: std::time::Duration,
-  ) -> DriverResult<InputActionResult> {
+  pub fn scroll_at(&self, point: Point, scroll: Scroll, settle: std::time::Duration) -> DriverResult<InputActionResult> {
     let _ = self.session;
     scroll_at(point, scroll, settle)
   }
@@ -353,14 +307,10 @@ impl DisplayApi<'_> {
   pub fn capture(&self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
     let _ = self.session;
     if options.window.is_some() || options.region.is_some() {
-      return Err(invalid_input(
-        "display.capture does not accept window or region capture options",
-      ));
+      return Err(invalid_input("display.capture does not accept window or region capture options"));
     }
     if let Activation::ActivateFirst { .. } = options.activation {
-      return Err(invalid_input(
-        "display.capture cannot activate an application without an application target",
-      ));
+      return Err(invalid_input("display.capture cannot activate an application without an application target"));
     }
     capture_display(options.display.as_deref())
   }
@@ -368,18 +318,12 @@ impl DisplayApi<'_> {
   pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
     let _ = self.session;
     if options.window.is_some() {
-      return Err(invalid_input(
-        "display.capture_region does not accept nested window capture options",
-      ));
+      return Err(invalid_input("display.capture_region does not accept nested window capture options"));
     }
     if let Activation::ActivateFirst { .. } = options.activation {
-      return Err(invalid_input(
-        "display.capture_region cannot activate an application without an application target",
-      ));
+      return Err(invalid_input("display.capture_region cannot activate an application without an application target"));
     }
-    let region = options
-      .region
-      .ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
+    let region = options.region.ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
     capture_region(options.display.as_deref(), region)
   }
 }
@@ -392,19 +336,13 @@ impl DisplayApi<'_> {
 /// fresh frame should re-resolve the window first.
 fn screen_point_for_window_point(window: &Window, point: WindowPoint) -> ScreenPoint {
   let point = point.point();
-  ScreenPoint::new(
-    window.frame.origin.x + point.x,
-    window.frame.origin.y + point.y,
-  )
+  ScreenPoint::new(window.frame.origin.x + point.x, window.frame.origin.y + point.y)
 }
 
 /// Translates a screen-space point into window-relative coordinates.
 fn window_point_for_screen_point(window: &Window, point: ScreenPoint) -> WindowPoint {
   let point = point.point();
-  WindowPoint::new(
-    point.x - window.frame.origin.x,
-    point.y - window.frame.origin.y,
-  )
+  WindowPoint::new(point.x - window.frame.origin.x, point.y - window.frame.origin.y)
 }
 
 #[cfg(test)]
@@ -479,11 +417,6 @@ mod tests {
 
   #[test]
   fn capture_region_requires_region() {
-    assert!(
-      session()
-        .display()
-        .capture_region(CaptureOptions::default())
-        .is_err()
-    );
+    assert!(session().display().capture_region(CaptureOptions::default()).is_err());
   }
 }

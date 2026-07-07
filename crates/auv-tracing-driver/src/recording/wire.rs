@@ -37,9 +37,7 @@ impl<'de> Deserialize<'de> for WireUpdate {
     let mut value = Value::deserialize(deserializer)?;
     rename_keys(&mut value, camel_to_snake);
     rename_discriminator(&mut value, camel_to_snake);
-    serde_json::from_value(value)
-      .map(WireUpdate)
-      .map_err(D::Error::custom)
+    serde_json::from_value(value).map(WireUpdate).map_err(D::Error::custom)
   }
 }
 
@@ -110,10 +108,7 @@ fn camel_to_snake(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-  use crate::trace::{
-    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SpanId, TraceId, TraceState,
-    TraceStatusCode,
-  };
+  use crate::trace::{RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SpanId, TraceId, TraceState, TraceStatusCode};
 
   use super::super::update::RunUpdate;
   use super::{WireUpdate, camel_to_snake, snake_to_camel};
@@ -129,12 +124,7 @@ mod tests {
       started_at_millis: 100,
       finished_at_millis: None,
       root_span_id: SpanId::new("0000000000000001"),
-      attributes: [(
-        "auv.step.id".to_string(),
-        serde_json::Value::String("captureScreenshot".to_string()),
-      )]
-      .into_iter()
-      .collect(),
+      attributes: [("auv.step.id".to_string(), serde_json::Value::String("captureScreenshot".to_string()))].into_iter().collect(),
       summary: None,
       failure: None,
     }
@@ -172,9 +162,7 @@ mod tests {
     };
 
     let value = serde_json::to_value(WireUpdate(update)).expect("update should serialize");
-    let attributes = value["run"]["attributes"]
-      .as_object()
-      .expect("attributes object");
+    let attributes = value["run"]["attributes"].as_object().expect("attributes object");
     assert_eq!(
       attributes.get("auv.step.id").and_then(|v| v.as_str()),
       Some("captureScreenshot"),

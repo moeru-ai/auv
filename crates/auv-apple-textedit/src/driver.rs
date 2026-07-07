@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use auv_driver::{
-  ActivationPolicy, App, Driver, InputActionResult, InputDeliveryPath, PasteTextOptions,
-  PrepareForInputOptions, TextSubmit, Window, WindowSelector,
+  ActivationPolicy, App, Driver, InputActionResult, InputDeliveryPath, PasteTextOptions, PrepareForInputOptions, TextSubmit, Window,
+  WindowSelector,
 };
 use auv_driver_macos::MacosDriverSession;
 use serde::{Deserialize, Serialize};
@@ -26,12 +26,7 @@ pub struct VerificationOutcome {
 pub trait TextEditDriver {
   fn activate_app(&mut self, app_id: &str, settle: Duration) -> OperationResult<StepOutcome>;
 
-  fn focus_text_input(
-    &mut self,
-    app_id: &str,
-    query: &str,
-    candidate: &str,
-  ) -> OperationResult<StepOutcome>;
+  fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> OperationResult<StepOutcome>;
 
   fn paste_text_preserve_clipboard(
     &mut self,
@@ -41,12 +36,7 @@ pub trait TextEditDriver {
     settle: Duration,
   ) -> OperationResult<StepOutcome>;
 
-  fn verify_ax_text(
-    &mut self,
-    app_id: &str,
-    target_text: &str,
-    target_role: &str,
-  ) -> OperationResult<VerificationOutcome>;
+  fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> OperationResult<VerificationOutcome>;
 }
 
 pub struct MacosTextEditDriver {
@@ -55,9 +45,7 @@ pub struct MacosTextEditDriver {
 
 impl MacosTextEditDriver {
   pub fn open_local() -> OperationResult<Self> {
-    let session = auv_driver_macos::MacosDriver::new()
-      .open_local()
-      .map_err(|error| error.to_string())?;
+    let session = auv_driver_macos::MacosDriver::new().open_local().map_err(|error| error.to_string())?;
     Ok(Self { session })
   }
 
@@ -66,11 +54,7 @@ impl MacosTextEditDriver {
   }
 
   fn main_window(&self, app_id: &str) -> OperationResult<Window> {
-    self
-      .session
-      .window()
-      .resolve(main_window_selector(app_id))
-      .map_err(|error| error.to_string())
+    self.session.window().resolve(main_window_selector(app_id)).map_err(|error| error.to_string())
   }
 }
 
@@ -97,12 +81,7 @@ impl TextEditDriver for MacosTextEditDriver {
     })
   }
 
-  fn focus_text_input(
-    &mut self,
-    _app_id: &str,
-    _query: &str,
-    _candidate: &str,
-  ) -> OperationResult<StepOutcome> {
+  fn focus_text_input(&mut self, _app_id: &str, _query: &str, _candidate: &str) -> OperationResult<StepOutcome> {
     // TODO(auv-driver-macos-ax-focus): `document focus` needs a typed
     // AX-query focus API in `auv-driver-macos`; implement this adapter method
     // once it is available without routing through root runtime.rs.
@@ -129,18 +108,11 @@ impl TextEditDriver for MacosTextEditDriver {
     Ok(StepOutcome {
       step_id: "document-write",
       summary: "pasted TextEdit document body through auv-driver-macos clipboard input".to_string(),
-      input_action_result: Some(InputActionResult::single_success(
-        InputDeliveryPath::ClipboardPaste,
-      )),
+      input_action_result: Some(InputActionResult::single_success(InputDeliveryPath::ClipboardPaste)),
     })
   }
 
-  fn verify_ax_text(
-    &mut self,
-    _app_id: &str,
-    _target_text: &str,
-    _target_role: &str,
-  ) -> OperationResult<VerificationOutcome> {
+  fn verify_ax_text(&mut self, _app_id: &str, _target_text: &str, _target_role: &str) -> OperationResult<VerificationOutcome> {
     // TODO(auv-driver-macos-ax-verify): `document compare` needs typed AX text
     // observation in `auv-driver-macos` before this app-local command can
     // replace legacy verify.axText end-to-end.

@@ -1,15 +1,12 @@
 // File: src/driver/macos/native/window.rs
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
-  NativeBundleIdsByPidRequest, NativeBundleIdsByPidResponse, NativeDisplayListResponse,
-  NativeWindowListRequest, NativeWindowListResponse, NativeWindowMutationKind,
-  NativeWindowMutationRequest, NativeWindowMutationResponse,
-  bundle_ids_by_pid as native_bundle_ids_by_pid, list_displays,
-  list_windows as native_list_windows, mutate_window as native_mutate_window,
+  NativeBundleIdsByPidRequest, NativeBundleIdsByPidResponse, NativeDisplayListResponse, NativeWindowListRequest, NativeWindowListResponse,
+  NativeWindowMutationKind, NativeWindowMutationRequest, NativeWindowMutationResponse, bundle_ids_by_pid as native_bundle_ids_by_pid,
+  list_displays, list_windows as native_list_windows, mutate_window as native_mutate_window,
 };
 use super::types::{
-  AuvResult, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow,
-  ObservedWindowSnapshot, compute_combined_bounds,
+  AuvResult, ObservedDisplay, ObservedDisplaySnapshot, ObservedRect, ObservedWindow, ObservedWindowSnapshot, compute_combined_bounds,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -69,9 +66,7 @@ pub fn list_windows(_options: ListWindowsOptions) -> AuvResult<ObservedWindowSna
 }
 
 #[cfg(target_os = "macos")]
-pub fn mutate_window(
-  request: DecodedWindowMutationRequest,
-) -> AuvResult<DecodedWindowMutationResponse> {
+pub fn mutate_window(request: DecodedWindowMutationRequest) -> AuvResult<DecodedWindowMutationResponse> {
   // TODO(window-management-api-task3): pointer or foreground fallback is deferred
   // because Task 2 owns only the native AX bridge; add it when WindowApi dispatch
   // chooses fallback policy.
@@ -89,9 +84,7 @@ pub fn mutate_window(
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn mutate_window(
-  _request: DecodedWindowMutationRequest,
-) -> AuvResult<DecodedWindowMutationResponse> {
+pub fn mutate_window(_request: DecodedWindowMutationRequest) -> AuvResult<DecodedWindowMutationResponse> {
   Err("macOS native window mutation is unsupported on this target".to_string())
 }
 
@@ -104,16 +97,9 @@ impl WindowListScope {
   }
 }
 
-pub fn decode_display_response(
-  response: DecodedDisplayListResponse,
-) -> AuvResult<ObservedDisplaySnapshot> {
+pub fn decode_display_response(response: DecodedDisplayListResponse) -> AuvResult<ObservedDisplaySnapshot> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "list_displays",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("list_displays", None, response.error_message, response.recovery_hint);
   }
 
   let count = response.ids.len();
@@ -138,12 +124,8 @@ pub fn decode_display_response(
 
   let displays = (0..count)
     .map(|index| {
-      let display_id = u32::try_from(response.ids[index]).map_err(|error| {
-        format!(
-          "native display response had invalid display id {}: {error}",
-          response.ids[index]
-        )
-      })?;
+      let display_id = u32::try_from(response.ids[index])
+        .map_err(|error| format!("native display response had invalid display id {}: {error}", response.ids[index]))?;
       Ok(ObservedDisplay {
         display_id,
         is_main: response.main_flags[index],
@@ -178,16 +160,9 @@ pub fn decode_display_response(
   })
 }
 
-pub fn decode_window_response(
-  response: DecodedWindowListResponse,
-) -> AuvResult<ObservedWindowSnapshot> {
+pub fn decode_window_response(response: DecodedWindowListResponse) -> AuvResult<ObservedWindowSnapshot> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "list_windows",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("list_windows", None, response.error_message, response.recovery_hint);
   }
 
   let count = response.app_names.len();
@@ -247,16 +222,9 @@ pub fn bundle_ids_by_pid(_pids: &HashSet<u32>) -> AuvResult<HashMap<u32, String>
   Err("macOS native bundle id lookup is unsupported on this target".to_string())
 }
 
-pub fn decode_bundle_ids_by_pid_response(
-  response: DecodedBundleIdsByPidResponse,
-) -> AuvResult<HashMap<u32, String>> {
+pub fn decode_bundle_ids_by_pid_response(response: DecodedBundleIdsByPidResponse) -> AuvResult<HashMap<u32, String>> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "bundle_ids_by_pid",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("bundle_ids_by_pid", None, response.error_message, response.recovery_hint);
   }
   if response.pids.len() != response.bundle_ids.len() {
     return Err("native bundle id response had mismatched vector lengths".to_string());
@@ -264,8 +232,7 @@ pub fn decode_bundle_ids_by_pid_response(
 
   let mut bundle_ids = HashMap::new();
   for (pid, bundle_id) in response.pids.into_iter().zip(response.bundle_ids) {
-    let pid = u32::try_from(pid)
-      .map_err(|error| format!("native bundle id response had invalid pid: {error}"))?;
+    let pid = u32::try_from(pid).map_err(|error| format!("native bundle id response had invalid pid: {error}"))?;
     if !bundle_id.trim().is_empty() {
       bundle_ids.insert(pid, bundle_id);
     }
@@ -273,16 +240,9 @@ pub fn decode_bundle_ids_by_pid_response(
   Ok(bundle_ids)
 }
 
-pub fn decode_window_mutation_response(
-  response: DecodedWindowMutationResponse,
-) -> AuvResult<DecodedWindowMutationResponse> {
+pub fn decode_window_mutation_response(response: DecodedWindowMutationResponse) -> AuvResult<DecodedWindowMutationResponse> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "mutate_window",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("mutate_window", None, response.error_message, response.recovery_hint);
   }
   Ok(response)
 }
@@ -502,10 +462,7 @@ mod tests {
   #[test]
   fn list_window_scope_maps_to_native_app_filter_explicitly() {
     assert_eq!(WindowListScope::AllVisible.app_filter(), "");
-    assert_eq!(
-      WindowListScope::App("com.example.App".to_string()).app_filter(),
-      "com.example.App"
-    );
+    assert_eq!(WindowListScope::App("com.example.App".to_string()).app_filter(), "com.example.App");
   }
 
   #[test]
@@ -598,9 +555,6 @@ mod tests {
 
     let error = decode_window_mutation_response(response).unwrap_err();
 
-    assert_eq!(
-      error,
-      "macos native mutate_window failed: target AX window was not found; recovery=refresh the window list and retry"
-    );
+    assert_eq!(error, "macos native mutate_window failed: target AX window was not found; recovery=refresh the window list and retry");
   }
 }

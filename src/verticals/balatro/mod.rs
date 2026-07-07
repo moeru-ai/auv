@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 
 use auv_game_balatro::{
-  CardDetectionEvalWitnessInputs, CardDetectionEvalWitnessOutput, CardDetectionQualityInputs,
-  CardDetectionQualityOutput, CardDetectionSemanticValidationInputs,
-  CardDetectionSemanticValidationOutput, CardDetectionSpatialQueryInputs,
-  CardDetectionSpatialQueryOutput, SlotId, build_card_detection_eval_witness,
-  build_card_detection_quality, query_card_detection_spatial, validate_card_detection_semantic,
+  CardDetectionEvalWitnessInputs, CardDetectionEvalWitnessOutput, CardDetectionQualityInputs, CardDetectionQualityOutput,
+  CardDetectionSemanticValidationInputs, CardDetectionSemanticValidationOutput, CardDetectionSpatialQueryInputs,
+  CardDetectionSpatialQueryOutput, SlotId, build_card_detection_eval_witness, build_card_detection_quality, query_card_detection_spatial,
+  validate_card_detection_semantic,
 };
 use auv_tracing_driver::RecordingHandle;
 use auv_tracing_driver::recorded_operation::RecordedOperationOutput;
@@ -15,17 +14,13 @@ use auv_tracing_driver::trace::RunType;
 use crate::model::AuvResult;
 
 pub const BALATRO_CARD_DETECTION_SEMANTIC_ROLE: &str = "balatro-card-detection-semantic";
-pub const BALATRO_CARD_DETECTION_SEMANTIC_INSPECT_ROLE: &str =
-  "balatro-card-detection-semantic-inspect";
+pub const BALATRO_CARD_DETECTION_SEMANTIC_INSPECT_ROLE: &str = "balatro-card-detection-semantic-inspect";
 pub const BALATRO_CARD_DETECTION_SPATIAL_QUERY_ROLE: &str = "balatro-card-detection-spatial-query";
-pub const BALATRO_CARD_DETECTION_SPATIAL_QUERY_INSPECT_ROLE: &str =
-  "balatro-card-detection-spatial-query-inspect";
+pub const BALATRO_CARD_DETECTION_SPATIAL_QUERY_INSPECT_ROLE: &str = "balatro-card-detection-spatial-query-inspect";
 pub const BALATRO_CARD_DETECTION_EVAL_WITNESS_ROLE: &str = "balatro-card-detection-eval-witness";
-pub const BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE: &str =
-  "balatro-card-detection-eval-witness-inspect";
+pub const BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE: &str = "balatro-card-detection-eval-witness-inspect";
 pub const BALATRO_CARD_DETECTION_QUALITY_ROLE: &str = "balatro-card-detection-quality";
-pub const BALATRO_CARD_DETECTION_QUALITY_INSPECT_ROLE: &str =
-  "balatro-card-detection-quality-inspect";
+pub const BALATRO_CARD_DETECTION_QUALITY_INSPECT_ROLE: &str = "balatro-card-detection-quality-inspect";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BalatroConsumptionProbeChainOutput {
@@ -41,52 +36,34 @@ pub fn run_balatro_card_detection_semantic_validation(
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<CardDetectionSemanticValidationOutput>> {
   recording.run_recorded_operation(
-    RunSpec::new(
-      RunType::Execute,
-      "auv.balatro.validate_card_detection_semantic",
-    ),
+    RunSpec::new(RunType::Execute, "auv.balatro.validate_card_detection_semantic"),
     "balatro validate card detection semantic gate",
     |context| {
       context.record_event(
         "balatro.validate_card_detection_semantic.inputs",
-        Some(format!(
-          "bundle_input={} output_dir={}",
-          bundle_input.display(),
-          output_dir.display()
-        )),
+        Some(format!("bundle_input={} output_dir={}", bundle_input.display(), output_dir.display())),
       );
       let result = validate_card_detection_semantic(CardDetectionSemanticValidationInputs {
         bundle_input: bundle_input.clone(),
         output_dir: output_dir.clone(),
       })?;
-      context.in_span(
-        "balatro.validate_card_detection_semantic.artifacts",
-        |context| {
-          for (artifact_name, role) in [
-            (
-              "balatro-card-detection-semantic.json",
-              BALATRO_CARD_DETECTION_SEMANTIC_ROLE,
-            ),
-            (
-              "balatro-card-detection-semantic-inspect.json",
-              BALATRO_CARD_DETECTION_SEMANTIC_INSPECT_ROLE,
-            ),
-          ] {
-            let artifact_path = result.output_dir.join(artifact_name);
-            if artifact_path.exists() {
-              context.stage_artifact_file(
-                role,
-                &artifact_path,
-                artifact_name,
-                Some(format!(
-                  "balatro card detection semantic artifact {artifact_name}"
-                )),
-              )?;
-            }
+      context.in_span("balatro.validate_card_detection_semantic.artifacts", |context| {
+        for (artifact_name, role) in [
+          ("balatro-card-detection-semantic.json", BALATRO_CARD_DETECTION_SEMANTIC_ROLE),
+          ("balatro-card-detection-semantic-inspect.json", BALATRO_CARD_DETECTION_SEMANTIC_INSPECT_ROLE),
+        ] {
+          let artifact_path = result.output_dir.join(artifact_name);
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              role,
+              &artifact_path,
+              artifact_name,
+              Some(format!("balatro card detection semantic artifact {artifact_name}")),
+            )?;
           }
-          Ok::<_, String>(())
-        },
-      )?;
+        }
+        Ok::<_, String>(())
+      })?;
       Ok::<_, String>(result)
     },
   )
@@ -115,34 +92,23 @@ pub fn run_balatro_card_detection_spatial_query(
         target_slot,
         output_dir: output_dir.clone(),
       })?;
-      context.in_span(
-        "balatro.query_card_detection_spatial.artifacts",
-        |context| {
-          for (artifact_name, role) in [
-            (
-              "balatro-card-detection-spatial-query.json",
-              BALATRO_CARD_DETECTION_SPATIAL_QUERY_ROLE,
-            ),
-            (
-              "balatro-card-detection-spatial-query-inspect.json",
-              BALATRO_CARD_DETECTION_SPATIAL_QUERY_INSPECT_ROLE,
-            ),
-          ] {
-            let artifact_path = result.output_dir.join(artifact_name);
-            if artifact_path.exists() {
-              context.stage_artifact_file(
-                role,
-                &artifact_path,
-                artifact_name,
-                Some(format!(
-                  "balatro card detection spatial query artifact {artifact_name}"
-                )),
-              )?;
-            }
+      context.in_span("balatro.query_card_detection_spatial.artifacts", |context| {
+        for (artifact_name, role) in [
+          ("balatro-card-detection-spatial-query.json", BALATRO_CARD_DETECTION_SPATIAL_QUERY_ROLE),
+          ("balatro-card-detection-spatial-query-inspect.json", BALATRO_CARD_DETECTION_SPATIAL_QUERY_INSPECT_ROLE),
+        ] {
+          let artifact_path = result.output_dir.join(artifact_name);
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              role,
+              &artifact_path,
+              artifact_name,
+              Some(format!("balatro card detection spatial query artifact {artifact_name}")),
+            )?;
           }
-          Ok::<_, String>(())
-        },
-      )?;
+        }
+        Ok::<_, String>(())
+      })?;
       Ok::<_, String>(result)
     },
   )
@@ -156,10 +122,7 @@ pub fn run_balatro_card_detection_eval_witness(
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<CardDetectionEvalWitnessOutput>> {
   recording.run_recorded_operation(
-    RunSpec::new(
-      RunType::Execute,
-      "auv.balatro.build_card_detection_eval_witness",
-    ),
+    RunSpec::new(RunType::Execute, "auv.balatro.build_card_detection_eval_witness"),
     "balatro card detection eval witness evidence",
     |context| {
       context.record_event(
@@ -174,39 +137,27 @@ pub fn run_balatro_card_detection_eval_witness(
       );
       let result = build_card_detection_eval_witness(&CardDetectionEvalWitnessInputs {
         card_detection_semantic_manifest_path: card_detection_semantic_manifest_path.clone(),
-        card_detection_spatial_query_manifest_path: card_detection_spatial_query_manifest_path
-          .clone(),
+        card_detection_spatial_query_manifest_path: card_detection_spatial_query_manifest_path.clone(),
         expected_slots_path: expected_slots_path.clone(),
         output_dir: output_dir.clone(),
       })?;
-      context.in_span(
-        "balatro.build_card_detection_eval_witness.artifacts",
-        |context| {
-          for (artifact_name, role) in [
-            (
-              "balatro-card-detection-eval-witness.json",
-              BALATRO_CARD_DETECTION_EVAL_WITNESS_ROLE,
-            ),
-            (
-              "balatro-card-detection-eval-witness-inspect.json",
-              BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE,
-            ),
-          ] {
-            let artifact_path = result.output_dir.join(artifact_name);
-            if artifact_path.exists() {
-              context.stage_artifact_file(
-                role,
-                &artifact_path,
-                artifact_name,
-                Some(format!(
-                  "balatro card detection eval witness artifact {artifact_name}"
-                )),
-              )?;
-            }
+      context.in_span("balatro.build_card_detection_eval_witness.artifacts", |context| {
+        for (artifact_name, role) in [
+          ("balatro-card-detection-eval-witness.json", BALATRO_CARD_DETECTION_EVAL_WITNESS_ROLE),
+          ("balatro-card-detection-eval-witness-inspect.json", BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE),
+        ] {
+          let artifact_path = result.output_dir.join(artifact_name);
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              role,
+              &artifact_path,
+              artifact_name,
+              Some(format!("balatro card detection eval witness artifact {artifact_name}")),
+            )?;
           }
-          Ok::<_, String>(())
-        },
-      )?;
+        }
+        Ok::<_, String>(())
+      })?;
       Ok::<_, String>(result)
     },
   )
@@ -223,44 +174,29 @@ pub fn run_balatro_card_detection_quality(
     |context| {
       context.record_event(
         "balatro.build_card_detection_quality.inputs",
-        Some(format!(
-          "witness_manifest={} output_dir={}",
-          witness_manifest_path.display(),
-          output_dir.display()
-        )),
+        Some(format!("witness_manifest={} output_dir={}", witness_manifest_path.display(), output_dir.display())),
       );
       let result = build_card_detection_quality(&CardDetectionQualityInputs {
         witness_manifest_path: witness_manifest_path.clone(),
         output_dir: output_dir.clone(),
       })?;
-      context.in_span(
-        "balatro.build_card_detection_quality.artifacts",
-        |context| {
-          for (artifact_name, role) in [
-            (
-              "balatro-card-detection-quality.json",
-              BALATRO_CARD_DETECTION_QUALITY_ROLE,
-            ),
-            (
-              "balatro-card-detection-quality-inspect.json",
-              BALATRO_CARD_DETECTION_QUALITY_INSPECT_ROLE,
-            ),
-          ] {
-            let artifact_path = result.output_dir.join(artifact_name);
-            if artifact_path.exists() {
-              context.stage_artifact_file(
-                role,
-                &artifact_path,
-                artifact_name,
-                Some(format!(
-                  "balatro card detection quality artifact {artifact_name}"
-                )),
-              )?;
-            }
+      context.in_span("balatro.build_card_detection_quality.artifacts", |context| {
+        for (artifact_name, role) in [
+          ("balatro-card-detection-quality.json", BALATRO_CARD_DETECTION_QUALITY_ROLE),
+          ("balatro-card-detection-quality-inspect.json", BALATRO_CARD_DETECTION_QUALITY_INSPECT_ROLE),
+        ] {
+          let artifact_path = result.output_dir.join(artifact_name);
+          if artifact_path.exists() {
+            context.stage_artifact_file(
+              role,
+              &artifact_path,
+              artifact_name,
+              Some(format!("balatro card detection quality artifact {artifact_name}")),
+            )?;
           }
-          Ok::<_, String>(())
-        },
-      )?;
+        }
+        Ok::<_, String>(())
+      })?;
       Ok::<_, String>(result)
     },
   )
@@ -327,54 +263,17 @@ fn stage_balatro_probe_artifacts(
   quality: &CardDetectionQualityOutput,
 ) -> Result<(), String> {
   for (path, role, name) in [
-    (
-      &semantic.manifest_path,
-      BALATRO_CARD_DETECTION_SEMANTIC_ROLE,
-      "balatro-card-detection-semantic.json",
-    ),
-    (
-      &semantic.inspect_report_path,
-      BALATRO_CARD_DETECTION_SEMANTIC_INSPECT_ROLE,
-      "balatro-card-detection-semantic-inspect.json",
-    ),
-    (
-      &query.manifest_path,
-      BALATRO_CARD_DETECTION_SPATIAL_QUERY_ROLE,
-      "balatro-card-detection-spatial-query.json",
-    ),
-    (
-      &query.inspect_report_path,
-      BALATRO_CARD_DETECTION_SPATIAL_QUERY_INSPECT_ROLE,
-      "balatro-card-detection-spatial-query-inspect.json",
-    ),
-    (
-      &witness.manifest_path,
-      BALATRO_CARD_DETECTION_EVAL_WITNESS_ROLE,
-      "balatro-card-detection-eval-witness.json",
-    ),
-    (
-      &witness.inspect_report_path,
-      BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE,
-      "balatro-card-detection-eval-witness-inspect.json",
-    ),
-    (
-      &quality.manifest_path,
-      BALATRO_CARD_DETECTION_QUALITY_ROLE,
-      "balatro-card-detection-quality.json",
-    ),
-    (
-      &quality.inspect_report_path,
-      BALATRO_CARD_DETECTION_QUALITY_INSPECT_ROLE,
-      "balatro-card-detection-quality-inspect.json",
-    ),
+    (&semantic.manifest_path, BALATRO_CARD_DETECTION_SEMANTIC_ROLE, "balatro-card-detection-semantic.json"),
+    (&semantic.inspect_report_path, BALATRO_CARD_DETECTION_SEMANTIC_INSPECT_ROLE, "balatro-card-detection-semantic-inspect.json"),
+    (&query.manifest_path, BALATRO_CARD_DETECTION_SPATIAL_QUERY_ROLE, "balatro-card-detection-spatial-query.json"),
+    (&query.inspect_report_path, BALATRO_CARD_DETECTION_SPATIAL_QUERY_INSPECT_ROLE, "balatro-card-detection-spatial-query-inspect.json"),
+    (&witness.manifest_path, BALATRO_CARD_DETECTION_EVAL_WITNESS_ROLE, "balatro-card-detection-eval-witness.json"),
+    (&witness.inspect_report_path, BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE, "balatro-card-detection-eval-witness-inspect.json"),
+    (&quality.manifest_path, BALATRO_CARD_DETECTION_QUALITY_ROLE, "balatro-card-detection-quality.json"),
+    (&quality.inspect_report_path, BALATRO_CARD_DETECTION_QUALITY_INSPECT_ROLE, "balatro-card-detection-quality-inspect.json"),
   ] {
     if path.exists() {
-      context.stage_artifact_file(
-        role,
-        path,
-        name,
-        Some(format!("balatro consumption probe artifact {name}")),
-      )?;
+      context.stage_artifact_file(role, path, name, Some(format!("balatro consumption probe artifact {name}")))?;
     }
   }
   Ok(())

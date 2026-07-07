@@ -67,26 +67,17 @@ pub fn classify_screen(recognition: &TextRecognition, window_size: auv_driver::S
   }
 
   if is_playing_song_detail(recognition, window_size) {
-    return ScreenView::new(
-      ScreenState::PlayingSongDetail,
-      Some(PLAYING_SONG_DETAIL_RESTORE_POINT),
-    );
+    return ScreenView::new(ScreenState::PlayingSongDetail, Some(PLAYING_SONG_DETAIL_RESTORE_POINT));
   }
 
   ScreenView::new(ScreenState::Unknown, None)
 }
 
-pub fn song_detail_source(
-  recognition: &TextRecognition,
-  window_size: auv_driver::Size,
-) -> Option<String> {
+pub fn song_detail_source(recognition: &TextRecognition, window_size: auv_driver::Size) -> Option<String> {
   let mut upper_right_regions = recognition
     .regions
     .iter()
-    .filter(|region| {
-      region.bounds.origin.x >= window_size.width * 0.55
-        && region.bounds.origin.y <= window_size.height * 0.30
-    })
+    .filter(|region| region.bounds.origin.x >= window_size.width * 0.55 && region.bounds.origin.y <= window_size.height * 0.30)
     .collect::<Vec<_>>();
   upper_right_regions.sort_by(|left, right| {
     left
@@ -95,14 +86,7 @@ pub fn song_detail_source(
       .y
       .partial_cmp(&right.bounds.origin.y)
       .unwrap_or(std::cmp::Ordering::Equal)
-      .then_with(|| {
-        left
-          .bounds
-          .origin
-          .x
-          .partial_cmp(&right.bounds.origin.x)
-          .unwrap_or(std::cmp::Ordering::Equal)
-      })
+      .then_with(|| left.bounds.origin.x.partial_cmp(&right.bounds.origin.x).unwrap_or(std::cmp::Ordering::Equal))
   });
 
   for region in &upper_right_regions {
@@ -111,10 +95,7 @@ pub fn song_detail_source(
     }
   }
 
-  for label in upper_right_regions
-    .iter()
-    .filter(|region| is_source_label(&region.text))
-  {
+  for label in upper_right_regions.iter().filter(|region| is_source_label(&region.text)) {
     let label_center_y = label.bounds.origin.y + label.bounds.size.height * 0.5;
     let value = upper_right_regions
       .iter()
@@ -122,17 +103,9 @@ pub fn song_detail_source(
       .filter(|region| !is_source_label(&region.text))
       .filter(|region| {
         let center_y = region.bounds.origin.y + region.bounds.size.height * 0.5;
-        (center_y - label_center_y).abs() <= 28.0
-          && region.bounds.origin.x >= label.bounds.origin.x + label.bounds.size.width
+        (center_y - label_center_y).abs() <= 28.0 && region.bounds.origin.x >= label.bounds.origin.x + label.bounds.size.width
       })
-      .min_by(|left, right| {
-        left
-          .bounds
-          .origin
-          .x
-          .partial_cmp(&right.bounds.origin.x)
-          .unwrap_or(std::cmp::Ordering::Equal)
-      })?;
+      .min_by(|left, right| left.bounds.origin.x.partial_cmp(&right.bounds.origin.x).unwrap_or(std::cmp::Ordering::Equal))?;
     let value = value.text.trim();
     if !value.is_empty() {
       return Some(value.to_string());
@@ -143,15 +116,12 @@ pub fn song_detail_source(
 }
 
 fn is_blocking_modal(recognition: &TextRecognition) -> bool {
-  contains_text(recognition, "取消")
-    && (contains_text(recognition, "打开") || contains_text(recognition, "存储"))
+  contains_text(recognition, "取消") && (contains_text(recognition, "打开") || contains_text(recognition, "存储"))
 }
 
 fn has_left_sidebar_marker(recognition: &TextRecognition, window_size: auv_driver::Size) -> bool {
   let left_boundary = window_size.width * 0.38;
-  recognition.regions.iter().any(|region| {
-    region.bounds.origin.x < left_boundary && crate::is_sidebar_marker(region.text.trim())
-  })
+  recognition.regions.iter().any(|region| region.bounds.origin.x < left_boundary && crate::is_sidebar_marker(region.text.trim()))
 }
 
 fn is_playing_song_detail(recognition: &TextRecognition, window_size: auv_driver::Size) -> bool {
@@ -164,9 +134,7 @@ fn is_playing_song_detail(recognition: &TextRecognition, window_size: auv_driver
   }
 
   song_detail_source(recognition, window_size).is_some()
-    && (contains_text(recognition, "歌词")
-      || contains_text(recognition, "百科")
-      || contains_text(recognition, "相似推荐"))
+    && (contains_text(recognition, "歌词") || contains_text(recognition, "百科") || contains_text(recognition, "相似推荐"))
 }
 
 fn has_aligned_detail_tabs(recognition: &TextRecognition, window_size: auv_driver::Size) -> bool {
@@ -186,14 +154,7 @@ fn has_aligned_detail_tabs(recognition: &TextRecognition, window_size: auv_drive
         )
     })
     .collect::<Vec<_>>();
-  tabs.sort_by(|left, right| {
-    left
-      .bounds
-      .origin
-      .x
-      .partial_cmp(&right.bounds.origin.x)
-      .unwrap_or(std::cmp::Ordering::Equal)
-  });
+  tabs.sort_by(|left, right| left.bounds.origin.x.partial_cmp(&right.bounds.origin.x).unwrap_or(std::cmp::Ordering::Equal));
 
   tabs.iter().enumerate().any(|(index, left)| {
     let left_center_y = left.bounds.origin.y + left.bounds.size.height * 0.5;
@@ -205,10 +166,7 @@ fn has_aligned_detail_tabs(recognition: &TextRecognition, window_size: auv_drive
 }
 
 fn contains_text(recognition: &TextRecognition, query: &str) -> bool {
-  recognition
-    .regions
-    .iter()
-    .any(|region| region.text.contains(query))
+  recognition.regions.iter().any(|region| region.text.contains(query))
 }
 
 fn inline_source_value(text: &str) -> Option<String> {
@@ -234,10 +192,7 @@ mod tests {
 
   #[test]
   fn classify_screen_detects_default_from_left_sidebar_marker() {
-    let view = classify_screen(
-      &fake_recognition(vec![("发现音乐", 42.0, 96.0, 92.0, 24.0)]),
-      auv_driver::Size::new(1200.0, 800.0),
-    );
+    let view = classify_screen(&fake_recognition(vec![("发现音乐", 42.0, 96.0, 92.0, 24.0)]), auv_driver::Size::new(1200.0, 800.0));
 
     assert_eq!(view.state(), ScreenState::Default);
     assert!(view.is_default());
@@ -256,10 +211,7 @@ mod tests {
 
     assert_eq!(view.state(), ScreenState::PlayingSongDetail);
     assert!(view.is_playing_song_detail());
-    assert_eq!(
-      view.restore_point(),
-      Some(auv_driver::Point::new(82.602, 16.336))
-    );
+    assert_eq!(view.restore_point(), Some(auv_driver::Point::new(82.602, 16.336)));
   }
 
   #[test]
@@ -317,10 +269,7 @@ mod tests {
 
   #[test]
   fn classify_screen_returns_unknown_without_screen_markers() {
-    let view = classify_screen(
-      &fake_recognition(vec![("私人雷达", 620.0, 122.0, 120.0, 28.0)]),
-      auv_driver::Size::new(1200.0, 800.0),
-    );
+    let view = classify_screen(&fake_recognition(vec![("私人雷达", 620.0, 122.0, 120.0, 28.0)]), auv_driver::Size::new(1200.0, 800.0));
 
     assert_eq!(view.state(), ScreenState::Unknown);
     assert_eq!(view.restore_point(), None);
@@ -328,10 +277,8 @@ mod tests {
 
   #[test]
   fn song_detail_source_reads_inline_upper_right_source_label() {
-    let source = song_detail_source(
-      &fake_recognition(vec![("来源：每日推荐", 850.0, 118.0, 160.0, 24.0)]),
-      auv_driver::Size::new(1200.0, 800.0),
-    );
+    let source =
+      song_detail_source(&fake_recognition(vec![("来源：每日推荐", 850.0, 118.0, 160.0, 24.0)]), auv_driver::Size::new(1200.0, 800.0));
 
     assert_eq!(source.as_deref(), Some("每日推荐"));
   }
@@ -351,20 +298,14 @@ mod tests {
 
   fn fake_recognition(regions: Vec<(&str, f64, f64, f64, f64)>) -> TextRecognition {
     TextRecognition {
-      text: regions
-        .iter()
-        .map(|(text, _, _, _, _)| *text)
-        .collect::<Vec<_>>()
-        .join("\n"),
+      text: regions.iter().map(|(text, _, _, _, _)| *text).collect::<Vec<_>>().join("\n"),
       regions: regions
         .into_iter()
-        .map(
-          |(text, x, y, width, height)| auv_driver::vision::RecognizedText {
-            text: text.to_string(),
-            bounds: auv_driver::Rect::new(x, y, width, height),
-            confidence: Some(0.9),
-          },
-        )
+        .map(|(text, x, y, width, height)| auv_driver::vision::RecognizedText {
+          text: text.to_string(),
+          bounds: auv_driver::Rect::new(x, y, width, height),
+          confidence: Some(0.9),
+        })
         .collect(),
     }
   }

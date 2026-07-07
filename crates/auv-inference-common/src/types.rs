@@ -247,8 +247,7 @@ mod tests {
 
   #[test]
   fn detection_evidence_manifest_serializes_source_image_pixel_space() {
-    let value =
-      serde_json::to_value(sample_manifest()).expect("manifest should serialize as JSON value");
+    let value = serde_json::to_value(sample_manifest()).expect("manifest should serialize as JSON value");
 
     assert_eq!(
       value["source_image"]["coordinate_space"],
@@ -265,20 +264,10 @@ mod tests {
       json!("games-balatro-2024-yolo-ui-detection"),
       "DetectionSet shape should remain nested inside the manifest"
     );
-    assert_eq!(
-      value["model_run"]["backend"],
-      json!("ultralytics-inference"),
-      "manifest must record backend identity"
-    );
-    assert_eq!(
-      value["model_run"]["execution_provider"],
-      json!("cpu"),
-      "manifest must record provider information when available"
-    );
+    assert_eq!(value["model_run"]["backend"], json!("ultralytics-inference"), "manifest must record backend identity");
+    assert_eq!(value["model_run"]["execution_provider"], json!("cpu"), "manifest must record provider information when available");
 
-    let object = value
-      .as_object()
-      .expect("manifest should serialize as a top-level object");
+    let object = value.as_object().expect("manifest should serialize as a top-level object");
     for forbidden in [
       "candidate_ref",
       "contract_candidate",
@@ -288,15 +277,9 @@ mod tests {
       "operation_result",
       "recognition_result",
     ] {
-      assert!(
-        !object.contains_key(forbidden),
-        "manifest must stay inference-scoped and omit `{forbidden}`"
-      );
+      assert!(!object.contains_key(forbidden), "manifest must stay inference-scoped and omit `{forbidden}`");
     }
-    assert!(
-      object.get("annotated_image").is_none(),
-      "annotated images remain debug aids and are not required manifest fields"
-    );
+    assert!(object.get("annotated_image").is_none(), "annotated images remain debug aids and are not required manifest fields");
   }
 
   #[test]
@@ -349,13 +332,10 @@ mod tests {
       ]
     });
 
-    let parsed: DetectionEvidenceManifest = serde_json::from_value(value)
-      .expect("manifest should deserialize without requiring real local assets");
+    let parsed: DetectionEvidenceManifest =
+      serde_json::from_value(value).expect("manifest should deserialize without requiring real local assets");
 
-    assert_eq!(
-      parsed.source_image.coordinate_space,
-      DetectionCoordinateSpace::SourceImagePixels
-    );
+    assert_eq!(parsed.source_image.coordinate_space, DetectionCoordinateSpace::SourceImagePixels);
     assert_eq!(parsed.detection_set.detections.len(), 1);
     assert_eq!(parsed.model_run.backend, "ultralytics-inference");
     assert_eq!(parsed.model_run.execution_provider.as_deref(), Some("cpu"));
@@ -364,13 +344,11 @@ mod tests {
   #[test]
   fn projected_coordinate_spaces_serialize_explicitly() {
     assert_eq!(
-      serde_json::to_value(DetectionCoordinateSpace::ProjectedScreenPixels)
-        .expect("serialize screen coordinate space"),
+      serde_json::to_value(DetectionCoordinateSpace::ProjectedScreenPixels).expect("serialize screen coordinate space"),
       json!("projected_screen_pixels")
     );
     assert_eq!(
-      serde_json::to_value(DetectionCoordinateSpace::ProjectedWindowPixels)
-        .expect("serialize window coordinate space"),
+      serde_json::to_value(DetectionCoordinateSpace::ProjectedWindowPixels).expect("serialize window coordinate space"),
       json!("projected_window_pixels")
     );
   }

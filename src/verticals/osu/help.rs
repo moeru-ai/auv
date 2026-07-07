@@ -35,10 +35,7 @@ mod tests {
     let help = render_osu_help();
     assert_eq!(OSU_USAGE_LINES.len(), 5);
     for line in OSU_USAGE_LINES {
-      assert!(
-        help.contains(line),
-        "osu help should include usage line: {line}"
-      );
+      assert!(help.contains(line), "osu help should include usage line: {line}");
     }
   }
 }

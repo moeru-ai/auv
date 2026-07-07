@@ -49,10 +49,7 @@ impl ReconstructionPolicy for NeteasePolicy {
   type ItemProjection = PlaylistSidebarItem;
   type Observation = SidebarViewportObservation;
 
-  fn candidates<'a>(
-    &self,
-    observation: &'a Self::Observation,
-  ) -> impl Iterator<Item = &'a Self::Candidate> + 'a
+  fn candidates<'a>(&self, observation: &'a Self::Observation) -> impl Iterator<Item = &'a Self::Candidate> + 'a
   where
     Self::Candidate: 'a,
   {
@@ -70,32 +67,17 @@ impl ReconstructionPolicy for NeteasePolicy {
           section_key: (kind, normalize_identity(label)),
         }
       }
-      SidebarCandidateKind::PlaylistItem | SidebarCandidateKind::NavigationItem => {
-        CandidateRole::Item {
-          dedupe_key: normalize_identity(label),
-        }
-      }
+      SidebarCandidateKind::PlaylistItem | SidebarCandidateKind::NavigationItem => CandidateRole::Item {
+        dedupe_key: normalize_identity(label),
+      },
       SidebarCandidateKind::Unknown => CandidateRole::Unknown,
     }
   }
 
-  fn build_section(
-    &self,
-    observation: &Self::Observation,
-    candidate: &Self::Candidate,
-  ) -> (ViewNodeRecord, Self::SectionProjection) {
-    let label = candidate
-      .label
-      .as_deref()
-      .map(str::trim)
-      .unwrap_or_default();
+  fn build_section(&self, observation: &Self::Observation, candidate: &Self::Candidate) -> (ViewNodeRecord, Self::SectionProjection) {
+    let label = candidate.label.as_deref().map(str::trim).unwrap_or_default();
     let kind = SidebarSectionKind::from_label(label);
-    let section_id = format!(
-      "section.obs{}.{}.{}",
-      observation.observation_index,
-      candidate.id,
-      slug(label)
-    );
+    let section_id = format!("section.obs{}.{}.{}", observation.observation_index, candidate.id, slug(label));
     let node = section_node(&section_id, kind, label, candidate, observation);
     let projection = SidebarSection {
       id: section_id,
@@ -137,17 +119,8 @@ impl ReconstructionPolicy for NeteasePolicy {
     candidate: &Self::Candidate,
     section: &Self::SectionProjection,
   ) -> (ViewNodeRecord, Self::ItemProjection) {
-    let label = candidate
-      .label
-      .as_deref()
-      .map(str::trim)
-      .unwrap_or_default();
-    let item_id = format!(
-      "item.obs{}.{}.{}",
-      observation.observation_index,
-      candidate.id,
-      slug(label)
-    );
+    let label = candidate.label.as_deref().map(str::trim).unwrap_or_default();
+    let item_id = format!("item.obs{}.{}.{}", observation.observation_index, candidate.id, slug(label));
     let anchor_id = format!("anchor.{item_id}");
     let node = item_node(&item_id, &anchor_id, label, candidate, observation);
     let projection = PlaylistSidebarItem {
@@ -161,11 +134,7 @@ impl ReconstructionPolicy for NeteasePolicy {
     (node, projection)
   }
 
-  fn append_item_to_section_projection(
-    &self,
-    section: &mut Self::SectionProjection,
-    item: Self::ItemProjection,
-  ) {
+  fn append_item_to_section_projection(&self, section: &mut Self::SectionProjection, item: Self::ItemProjection) {
     section.items.push(item);
   }
 
@@ -194,18 +163,11 @@ impl ReconstructionPolicy for NeteasePolicy {
     }
   }
 
-  fn emit_dedup_diagnostic(
-    &self,
-    candidate: &Self::Candidate,
-    section: &Self::SectionProjection,
-  ) -> ParserDiagnostic {
+  fn emit_dedup_diagnostic(&self, candidate: &Self::Candidate, section: &Self::SectionProjection) -> ParserDiagnostic {
     let label = candidate.label.as_deref().unwrap_or("");
     ParserDiagnostic {
       code: "deduplicated_item".to_string(),
-      message: format!(
-        "deduplicated repeated sidebar item {label:?} in section {:?}",
-        section.kind
-      ),
+      message: format!("deduplicated repeated sidebar item {label:?} in section {:?}", section.kind),
       node_id: Some(candidate.id.clone()),
     }
   }

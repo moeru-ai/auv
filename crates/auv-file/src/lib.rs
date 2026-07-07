@@ -32,11 +32,7 @@ pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<T, JsonFileRea
   serde_json::from_reader(BufReader::new(file)).map_err(JsonFileReadError::Parse)
 }
 
-pub fn write_json_file<T: Serialize>(
-  path: &Path,
-  value: &T,
-  options: JsonWriteOptions,
-) -> Result<(), JsonFileWriteError> {
+pub fn write_json_file<T: Serialize>(path: &Path, value: &T, options: JsonWriteOptions) -> Result<(), JsonFileWriteError> {
   if options.create_parent_dirs {
     if let Some(parent) = path.parent() {
       fs::create_dir_all(parent).map_err(JsonFileWriteError::CreateParent)?;

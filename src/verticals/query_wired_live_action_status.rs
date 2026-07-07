@@ -12,11 +12,10 @@ pub(crate) struct QueryWiredLiveActionStatusLabels {
   pub refused_before_dispatch_default: &'static str,
 }
 
-pub(crate) const MINECRAFT_LABELS: QueryWiredLiveActionStatusLabels =
-  QueryWiredLiveActionStatusLabels {
-    attempted_without_summary_or_refusal: "query wired live action attempted without click summary or refusal",
-    refused_before_dispatch_default: "query wired live action refused before dispatch",
-  };
+pub(crate) const MINECRAFT_LABELS: QueryWiredLiveActionStatusLabels = QueryWiredLiveActionStatusLabels {
+  attempted_without_summary_or_refusal: "query wired live action attempted without click summary or refusal",
+  refused_before_dispatch_default: "query wired live action refused before dispatch",
+};
 
 pub(crate) const OSU_LABELS: QueryWiredLiveActionStatusLabels = QueryWiredLiveActionStatusLabels {
   attempted_without_summary_or_refusal: "osu query wired live action attempted without click summary or refusal",
@@ -68,24 +67,17 @@ pub(crate) fn operation_status_and_message(
     if let Some(refusal) = wiring.refusal_reason() {
       return (OperationStatus::Failed, refusal.to_string());
     }
-    return (
-      OperationStatus::Failed,
-      labels.attempted_without_summary_or_refusal.to_string(),
-    );
+    return (OperationStatus::Failed, labels.attempted_without_summary_or_refusal.to_string());
   }
 
-  let message = wiring
-    .refusal_reason()
-    .map(str::to_string)
-    .unwrap_or_else(|| labels.refused_before_dispatch_default.to_string());
+  let message = wiring.refusal_reason().map(str::to_string).unwrap_or_else(|| labels.refused_before_dispatch_default.to_string());
   (OperationStatus::Completed, message)
 }
 
 #[cfg(test)]
 mod query_wired_live_action_status_tests {
   use super::{
-    MINECRAFT_LABELS, OSU_LABELS, QueryWiredLiveActionStatusLabels, QueryWiredLiveActionWiringView,
-    operation_status_and_message,
+    MINECRAFT_LABELS, OSU_LABELS, QueryWiredLiveActionStatusLabels, QueryWiredLiveActionWiringView, operation_status_and_message,
   };
   use crate::contract::OperationStatus;
 

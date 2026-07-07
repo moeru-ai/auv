@@ -161,12 +161,8 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
   }
 
   let frames_dir = inputs.output_dir.join("frames");
-  fs::create_dir_all(&frames_dir).map_err(|error| {
-    format!(
-      "failed to create MC-7 scene packet frames directory {}: {error}",
-      frames_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&frames_dir)
+    .map_err(|error| format!("failed to create MC-7 scene packet frames directory {}: {error}", frames_dir.display()))?;
 
   let mut frames = Vec::new();
   let mut source_run_ids = BTreeSet::new();
@@ -182,12 +178,8 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
 
   for manifest_path in &inputs.bundle_manifest_paths {
     let manifest = read_manifest(manifest_path)?;
-    let bundle_dir = manifest_path.parent().ok_or_else(|| {
-      format!(
-        "MC-7 source bundle manifest {} has no parent directory",
-        manifest_path.display()
-      )
-    })?;
+    let bundle_dir =
+      manifest_path.parent().ok_or_else(|| format!("MC-7 source bundle manifest {} has no parent directory", manifest_path.display()))?;
     source_run_ids.insert(manifest.source_run.source_run_id.clone());
     known_limits.extend(manifest.known_limits.iter().cloned());
 
@@ -199,9 +191,7 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
       .collect::<BTreeMap<_, _>>();
 
     for artifact in &manifest.artifacts {
-      if artifact.directory != SpatialBundleDirectory::SpatialFrames
-        || artifact.role != "minecraft-spatial-frame"
-      {
+      if artifact.directory != SpatialBundleDirectory::SpatialFrames || artifact.role != "minecraft-spatial-frame" {
         continue;
       }
 
@@ -209,21 +199,12 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
       let frame_source_path = bundle_dir.join(&artifact.bundle_path);
       let spatial_frame = read_frame(&frame_source_path)?;
       let frame_json_path = format!("frames/frame_{frame_index:06}.json");
-      let screenshot_artifact_id = spatial_frame
-        .screenshot_artifact_ref
-        .as_deref()
-        .and_then(|artifact_ref| artifact_ref.strip_prefix("artifact://"));
+      let screenshot_artifact_id =
+        spatial_frame.screenshot_artifact_ref.as_deref().and_then(|artifact_ref| artifact_ref.strip_prefix("artifact://"));
       let screenshot = screenshot_artifact_id.and_then(|artifact_id| screenshots.get(artifact_id));
       let (screenshot_artifact_id, screenshot_path) = if let Some(screenshot) = screenshot {
-        let path = format!(
-          "frames/frame_{frame_index:06}.{}",
-          extension_for(&screenshot.bundle_path)
-        );
-        copy_file(
-          &bundle_dir.join(&screenshot.bundle_path),
-          &inputs.output_dir.join(&path),
-          "MC-7 scene packet screenshot",
-        )?;
+        let path = format!("frames/frame_{frame_index:06}.{}", extension_for(&screenshot.bundle_path));
+        copy_file(&bundle_dir.join(&screenshot.bundle_path), &inputs.output_dir.join(&path), "MC-7 scene packet screenshot")?;
         screenshot_count += 1;
         (Some(screenshot.artifact_id.clone()), Some(path))
       } else {
@@ -242,54 +223,30 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
         ));
       }
 
-      let file_resource_packs = spatial_frame
-        .resource_pack_ids
-        .iter()
-        .filter(|resource_pack_id| resource_pack_id.starts_with("file/"))
-        .cloned()
-        .collect::<Vec<_>>();
+      let file_resource_packs =
+        spatial_frame.resource_pack_ids.iter().filter(|resource_pack_id| resource_pack_id.starts_with("file/")).cloned().collect::<Vec<_>>();
       match file_resource_packs.len() {
         0 => {
-          anomalies
-            .frames_without_file_resource_pack
-            .push(frame_index);
-          warnings.insert(format!(
-            "frame {frame_index} from source run {} had no file/* resource pack",
-            manifest.source_run.source_run_id
-          ));
+          anomalies.frames_without_file_resource_pack.push(frame_index);
+          warnings.insert(format!("frame {frame_index} from source run {} had no file/* resource pack", manifest.source_run.source_run_id));
         }
         1 => {
-          let coverage = resource_pack_coverage
-            .entry(file_resource_packs[0].clone())
-            .or_insert_with(ResourcePackCoverageAccumulator::default);
+          let coverage =
+            resource_pack_coverage.entry(file_resource_packs[0].clone()).or_insert_with(ResourcePackCoverageAccumulator::default);
           coverage.frame_count += 1;
-          coverage
-            .source_run_ids
-            .insert(manifest.source_run.source_run_id.clone());
-          coverage.screen_states.insert(
-            screen_state
-              .clone()
-              .unwrap_or_else(|| "missing".to_string()),
-          );
+          coverage.source_run_ids.insert(manifest.source_run.source_run_id.clone());
+          coverage.screen_states.insert(screen_state.clone().unwrap_or_else(|| "missing".to_string()));
           coverage.first_timestamp_ms = Some(
             coverage
               .first_timestamp_ms
-              .map_or(spatial_frame.monotonic_timestamp_ms, |value| {
-                value.min(spatial_frame.monotonic_timestamp_ms)
-              }),
+              .map_or(spatial_frame.monotonic_timestamp_ms, |value| value.min(spatial_frame.monotonic_timestamp_ms)),
           );
           coverage.last_timestamp_ms = Some(
-            coverage
-              .last_timestamp_ms
-              .map_or(spatial_frame.monotonic_timestamp_ms, |value| {
-                value.max(spatial_frame.monotonic_timestamp_ms)
-              }),
+            coverage.last_timestamp_ms.map_or(spatial_frame.monotonic_timestamp_ms, |value| value.max(spatial_frame.monotonic_timestamp_ms)),
           );
         }
         _ => {
-          anomalies
-            .frames_with_multiple_file_resource_packs
-            .push(frame_index);
+          anomalies.frames_with_multiple_file_resource_packs.push(frame_index);
           warnings.insert(format!(
             "frame {frame_index} from source run {} had multiple file/* resource packs: {}",
             manifest.source_run.source_run_id,
@@ -342,25 +299,14 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
   }
 
   if frames.is_empty() {
-    return Err(
-      "MC-7 scene packet export found no minecraft-spatial-frame artifacts in the supplied bundles"
-        .to_string(),
-    );
+    return Err("MC-7 scene packet export found no minecraft-spatial-frame artifacts in the supplied bundles".to_string());
   }
   if missing_screenshot_count > 0 {
-    known_limits.insert(format!(
-      "{missing_screenshot_count} scene packet frame(s) had no copied screenshot artifact"
-    ));
+    known_limits.insert(format!("{missing_screenshot_count} scene packet frame(s) had no copied screenshot artifact"));
   }
-  known_limits.insert(
-    "MC-7 scene packet is 3DGS input material only; no trained splat is present".to_string(),
-  );
+  known_limits.insert("MC-7 scene packet is 3DGS input material only; no trained splat is present".to_string());
 
-  let source_bundle_manifest_paths = inputs
-    .bundle_manifest_paths
-    .iter()
-    .map(|path| path.to_string_lossy().into_owned())
-    .collect::<Vec<_>>();
+  let source_bundle_manifest_paths = inputs.bundle_manifest_paths.iter().map(|path| path.to_string_lossy().into_owned()).collect::<Vec<_>>();
   let source_run_ids = source_run_ids.into_iter().collect::<Vec<_>>();
   let known_limits = known_limits.into_iter().collect::<Vec<_>>();
 
@@ -401,16 +347,14 @@ pub fn export_3dgs_scene_packet(inputs: ScenePacketInputs) -> ScenePacketResult<
     },
     resource_pack_coverage: resource_pack_coverage
       .into_iter()
-      .map(
-        |(resource_pack_id, coverage)| ScenePacketResourcePackCoverage {
-          resource_pack_id,
-          frame_count: coverage.frame_count,
-          source_run_ids: coverage.source_run_ids.into_iter().collect(),
-          screen_states: coverage.screen_states.into_iter().collect(),
-          first_timestamp_ms: coverage.first_timestamp_ms,
-          last_timestamp_ms: coverage.last_timestamp_ms,
-        },
-      )
+      .map(|(resource_pack_id, coverage)| ScenePacketResourcePackCoverage {
+        resource_pack_id,
+        frame_count: coverage.frame_count,
+        source_run_ids: coverage.source_run_ids.into_iter().collect(),
+        screen_states: coverage.screen_states.into_iter().collect(),
+        first_timestamp_ms: coverage.first_timestamp_ms,
+        last_timestamp_ms: coverage.last_timestamp_ms,
+      })
       .collect(),
     anomalies,
     warnings: warnings.into_iter().collect(),
@@ -457,31 +401,17 @@ fn extension_for(path: &str) -> String {
 
 fn copy_file(source: &Path, destination: &Path, label: &str) -> ScenePacketResult<()> {
   if let Some(parent) = destination.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create {label} directory {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent).map_err(|error| format!("failed to create {label} directory {}: {error}", parent.display()))?;
   }
-  fs::copy(source, destination).map_err(|error| {
-    format!(
-      "failed to copy {label} from {} to {}: {error}",
-      source.display(),
-      destination.display()
-    )
-  })?;
+  fs::copy(source, destination)
+    .map_err(|error| format!("failed to copy {label} from {} to {}: {error}", source.display(), destination.display()))?;
   Ok(())
 }
 
 fn write_json(path: &Path, value: &impl Serialize) -> ScenePacketResult<()> {
   if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create MC-7 scene packet JSON directory {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent)
+      .map_err(|error| format!("failed to create MC-7 scene packet JSON directory {}: {error}", parent.display()))?;
   }
   let json = serde_json::to_string_pretty(value)
     .map(|mut json| {
@@ -489,19 +419,12 @@ fn write_json(path: &Path, value: &impl Serialize) -> ScenePacketResult<()> {
       json
     })
     .map_err(|error| format!("failed to serialize MC-7 scene packet JSON: {error}"))?;
-  fs::write(path, json.as_bytes()).map_err(|error| {
-    format!(
-      "failed to write MC-7 scene packet JSON {}: {error}",
-      path.display()
-    )
-  })
+  fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write MC-7 scene packet JSON {}: {error}", path.display()))
 }
 
 fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> ScenePacketResult<T> {
-  let file = fs::File::open(path)
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
-  serde_json::from_reader(BufReader::new(file))
-    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+  let file = fs::File::open(path).map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
+  serde_json::from_reader(BufReader::new(file)).map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
 }
 
 struct JsonArrayWriter {
@@ -513,19 +436,11 @@ struct JsonArrayWriter {
 impl JsonArrayWriter {
   fn create(path: &Path, label: &str) -> ScenePacketResult<Self> {
     if let Some(parent) = path.parent() {
-      fs::create_dir_all(parent).map_err(|error| {
-        format!(
-          "failed to create {label} directory {}: {error}",
-          parent.display()
-        )
-      })?;
+      fs::create_dir_all(parent).map_err(|error| format!("failed to create {label} directory {}: {error}", parent.display()))?;
     }
-    let file = fs::File::create(path)
-      .map_err(|error| format!("failed to create {label} {}: {error}", path.display()))?;
+    let file = fs::File::create(path).map_err(|error| format!("failed to create {label} {}: {error}", path.display()))?;
     let mut writer = BufWriter::new(file);
-    writer
-      .write_all(b"[\n")
-      .map_err(|error| format!("failed to start {label} {}: {error}", path.display()))?;
+    writer.write_all(b"[\n").map_err(|error| format!("failed to start {label} {}: {error}", path.display()))?;
     Ok(Self {
       path: path.to_path_buf(),
       writer,
@@ -535,45 +450,23 @@ impl JsonArrayWriter {
 
   fn push(&mut self, value: &impl Serialize) -> ScenePacketResult<()> {
     if !self.first {
-      self.writer.write_all(b",\n").map_err(|error| {
-        format!(
-          "failed to append JSON array separator {}: {error}",
-          self.path.display()
-        )
-      })?;
+      self.writer.write_all(b",\n").map_err(|error| format!("failed to append JSON array separator {}: {error}", self.path.display()))?;
     }
     self.first = false;
-    serde_json::to_writer_pretty(&mut self.writer, value).map_err(|error| {
-      format!(
-        "failed to serialize MC-7 scene packet JSON array entry {}: {error}",
-        self.path.display()
-      )
-    })
+    serde_json::to_writer_pretty(&mut self.writer, value)
+      .map_err(|error| format!("failed to serialize MC-7 scene packet JSON array entry {}: {error}", self.path.display()))
   }
 
   fn finish(mut self) -> ScenePacketResult<()> {
-    self.writer.write_all(b"\n]\n").map_err(|error| {
-      format!(
-        "failed to finish JSON array {}: {error}",
-        self.path.display()
-      )
-    })?;
-    self.writer.flush().map_err(|error| {
-      format!(
-        "failed to flush JSON array {}: {error}",
-        self.path.display()
-      )
-    })
+    self.writer.write_all(b"\n]\n").map_err(|error| format!("failed to finish JSON array {}: {error}", self.path.display()))?;
+    self.writer.flush().map_err(|error| format!("failed to flush JSON array {}: {error}", self.path.display()))
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::dataset::{
-    SPATIAL_BUNDLE_SCHEMA_VERSION, SourceRunSummary, SpatialBundleArtifactRecord,
-    SpatialBundleCounts,
-  };
+  use crate::dataset::{SPATIAL_BUNDLE_SCHEMA_VERSION, SourceRunSummary, SpatialBundleArtifactRecord, SpatialBundleCounts};
   use crate::types::{BlockFace, BlockPosition, PlayerPose, RaycastHit, Vec3, Viewport};
 
   fn identity_matrix() -> [f64; 16] {
@@ -653,18 +546,13 @@ mod tests {
       let frame_bundle_path = format!("spatial_frames/{frame_file_name}");
 
       frame_spec.frame.screenshot_artifact_ref = match frame_spec.screenshot {
-        ScreenshotDisposition::Present
-        | ScreenshotDisposition::MissingArtifact
-        | ScreenshotDisposition::MissingFile => {
+        ScreenshotDisposition::Present | ScreenshotDisposition::MissingArtifact | ScreenshotDisposition::MissingFile => {
           Some(format!("artifact://{screenshot_artifact_id}"))
         }
         ScreenshotDisposition::MissingRef => None,
       };
 
-      if matches!(
-        frame_spec.screenshot,
-        ScreenshotDisposition::Present | ScreenshotDisposition::MissingFile
-      ) {
+      if matches!(frame_spec.screenshot, ScreenshotDisposition::Present | ScreenshotDisposition::MissingFile) {
         artifacts.push(SpatialBundleArtifactRecord {
           artifact_id: screenshot_artifact_id.clone(),
           role: "minecraft-screenshot".to_string(),
@@ -678,11 +566,7 @@ mod tests {
         fs::write(screenshots_dir.join(&screenshot_file_name), b"png").expect("screenshot");
       }
 
-      fs::write(
-        frames_dir.join(&frame_file_name),
-        serde_json::to_vec_pretty(&frame_spec.frame).expect("frame json"),
-      )
-      .expect("frame write");
+      fs::write(frames_dir.join(&frame_file_name), serde_json::to_vec_pretty(&frame_spec.frame).expect("frame json")).expect("frame write");
       artifacts.push(SpatialBundleArtifactRecord {
         artifact_id: frame_artifact_id,
         role: "minecraft-spatial-frame".to_string(),
@@ -705,25 +589,15 @@ mod tests {
         exporter_git_commit: None,
       },
       counts: SpatialBundleCounts {
-        screenshots: artifacts
-          .iter()
-          .filter(|artifact| artifact.directory == SpatialBundleDirectory::Screenshots)
-          .count(),
-        spatial_frames: artifacts
-          .iter()
-          .filter(|artifact| artifact.directory == SpatialBundleDirectory::SpatialFrames)
-          .count(),
+        screenshots: artifacts.iter().filter(|artifact| artifact.directory == SpatialBundleDirectory::Screenshots).count(),
+        spatial_frames: artifacts.iter().filter(|artifact| artifact.directory == SpatialBundleDirectory::SpatialFrames).count(),
         ..SpatialBundleCounts::default()
       },
       artifacts,
       known_limits,
     };
     let manifest_path = bundle_dir.join("run.json");
-    fs::write(
-      &manifest_path,
-      serde_json::to_vec_pretty(&manifest).expect("manifest json"),
-    )
-    .expect("manifest write");
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("manifest json")).expect("manifest write");
     manifest_path
   }
 
@@ -737,12 +611,7 @@ mod tests {
       vec!["bundle limit".to_string()],
       vec![BundleFrameSpec {
         label: "frame-rich".to_string(),
-        frame: frame(
-          "frame-rich",
-          1_000,
-          Some("in_game"),
-          &["fabric", "file/auv-mc6-rich"],
-        ),
+        frame: frame("frame-rich", 1_000, Some("in_game"), &["fabric", "file/auv-mc6-rich"]),
         screenshot: ScreenshotDisposition::Present,
       }],
     );
@@ -755,62 +624,30 @@ mod tests {
 
     assert_eq!(output.manifest.schema_version, SCENE_PACKET_SCHEMA_VERSION);
     assert_eq!(output.manifest.source_run_ids, vec!["run_1"]);
-    assert_eq!(
-      output.manifest.source_bundle_manifest_paths,
-      vec![manifest_path.to_string_lossy().into_owned()]
-    );
+    assert_eq!(output.manifest.source_bundle_manifest_paths, vec![manifest_path.to_string_lossy().into_owned()]);
     assert_eq!(output.manifest.counts.frames, 1);
     assert_eq!(output.manifest.counts.screenshots, 1);
     assert!(output.manifest_path.is_file());
     assert!(output.cameras_path.is_file());
     assert!(output.known_limits_path.is_file());
     assert!(output.inspect_report_path.is_file());
-    assert_eq!(
-      output.inspect_report.scene_packet_manifest_path,
-      output.manifest_path.to_string_lossy()
-    );
+    assert_eq!(output.inspect_report.scene_packet_manifest_path, output.manifest_path.to_string_lossy());
     assert_eq!(output.inspect_report.counts.camera_records, 1);
     assert_eq!(output.inspect_report.counts.resource_pack_profiles, 1);
-    assert_eq!(
-      output.inspect_report.resource_pack_coverage[0].resource_pack_id,
-      "file/auv-mc6-rich"
-    );
-    assert!(output.inspect_report.known_limits.contains(
-      &"MC-7 scene packet is 3DGS input material only; no trained splat is present".to_string()
-    ));
+    assert_eq!(output.inspect_report.resource_pack_coverage[0].resource_pack_id, "file/auv-mc6-rich");
     assert!(
-      !output
-        .inspect_report
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("MC-7 D1 scene packet"))
+      output.inspect_report.known_limits.contains(&"MC-7 scene packet is 3DGS input material only; no trained splat is present".to_string())
     );
+    assert!(!output.inspect_report.known_limits.iter().any(|limit| limit.contains("MC-7 D1 scene packet")));
     let cameras: Vec<ScenePacketCameraRecord> =
-      serde_json::from_slice(&fs::read(&output.cameras_path).expect("cameras json should read"))
-        .expect("cameras json should parse");
+      serde_json::from_slice(&fs::read(&output.cameras_path).expect("cameras json should read")).expect("cameras json should parse");
     assert_eq!(cameras.len(), 1);
-    let inspect_report: ScenePacketInspectReport = serde_json::from_slice(
-      &fs::read(&output.inspect_report_path).expect("inspect report should read"),
-    )
-    .expect("inspect report should parse");
+    let inspect_report: ScenePacketInspectReport =
+      serde_json::from_slice(&fs::read(&output.inspect_report_path).expect("inspect report should read"))
+        .expect("inspect report should parse");
     assert_eq!(inspect_report, output.inspect_report);
-    assert!(
-      output
-        .output_dir
-        .join(&output.manifest.frames[0].frame_json_path)
-        .is_file()
-    );
-    assert!(
-      output
-        .output_dir
-        .join(
-          output.manifest.frames[0]
-            .screenshot_path
-            .as_ref()
-            .expect("screenshot path")
-        )
-        .is_file()
-    );
+    assert!(output.output_dir.join(&output.manifest.frames[0].frame_json_path).is_file());
+    assert!(output.output_dir.join(output.manifest.frames[0].screenshot_path.as_ref().expect("screenshot path")).is_file());
   }
 
   #[test]
@@ -838,12 +675,7 @@ mod tests {
         vec!["bundle limit".to_string()],
         vec![BundleFrameSpec {
           label: "rich-a".to_string(),
-          frame: frame(
-            "frame-rich-a",
-            1_000,
-            Some("in_game"),
-            &["fabric", "file/auv-mc6-rich"],
-          ),
+          frame: frame("frame-rich-a", 1_000, Some("in_game"), &["fabric", "file/auv-mc6-rich"]),
           screenshot: ScreenshotDisposition::Present,
         }],
       ),
@@ -854,12 +686,7 @@ mod tests {
         vec!["bundle limit".to_string()],
         vec![BundleFrameSpec {
           label: "rich-b".to_string(),
-          frame: frame(
-            "frame-rich-b",
-            2_000,
-            Some("in_game"),
-            &["fabric", "file/auv-mc6-rich"],
-          ),
+          frame: frame("frame-rich-b", 2_000, Some("in_game"), &["fabric", "file/auv-mc6-rich"]),
           screenshot: ScreenshotDisposition::Present,
         }],
       ),
@@ -870,12 +697,7 @@ mod tests {
         vec!["bundle limit".to_string()],
         vec![BundleFrameSpec {
           label: "flat-a".to_string(),
-          frame: frame(
-            "frame-flat-a",
-            3_000,
-            Some("in_game"),
-            &["fabric", "file/auv-mc6-flat-color"],
-          ),
+          frame: frame("frame-flat-a", 3_000, Some("in_game"), &["fabric", "file/auv-mc6-flat-color"]),
           screenshot: ScreenshotDisposition::Present,
         }],
       ),
@@ -886,12 +708,7 @@ mod tests {
         vec!["bundle limit".to_string()],
         vec![BundleFrameSpec {
           label: "flat-b".to_string(),
-          frame: frame(
-            "frame-flat-b",
-            4_000,
-            Some("in_game"),
-            &["fabric", "file/auv-mc6-flat-color"],
-          ),
+          frame: frame("frame-flat-b", 4_000, Some("in_game"), &["fabric", "file/auv-mc6-flat-color"]),
           screenshot: ScreenshotDisposition::Present,
         }],
       ),
@@ -902,12 +719,7 @@ mod tests {
         vec!["bundle limit".to_string()],
         vec![BundleFrameSpec {
           label: "repetitive-a".to_string(),
-          frame: frame(
-            "frame-repetitive-a",
-            5_000,
-            Some("in_game"),
-            &["fabric", "file/auv-mc6-repetitive"],
-          ),
+          frame: frame("frame-repetitive-a", 5_000, Some("in_game"), &["fabric", "file/auv-mc6-repetitive"]),
           screenshot: ScreenshotDisposition::Present,
         }],
       ),
@@ -918,12 +730,7 @@ mod tests {
         vec!["bundle limit".to_string()],
         vec![BundleFrameSpec {
           label: "repetitive-b".to_string(),
-          frame: frame(
-            "frame-repetitive-b",
-            6_000,
-            Some("in_game"),
-            &["fabric", "file/auv-mc6-repetitive"],
-          ),
+          frame: frame("frame-repetitive-b", 6_000, Some("in_game"), &["fabric", "file/auv-mc6-repetitive"]),
           screenshot: ScreenshotDisposition::Present,
         }],
       ),
@@ -940,45 +747,14 @@ mod tests {
     assert_eq!(output.inspect_report.counts.camera_records, 6);
     assert_eq!(output.inspect_report.counts.source_runs, 6);
     assert_eq!(output.inspect_report.counts.resource_pack_profiles, 3);
-    assert!(
-      output
-        .inspect_report
-        .anomalies
-        .non_ingame_frame_indices
-        .is_empty()
-    );
-    assert!(
-      output
-        .inspect_report
-        .anomalies
-        .missing_screenshot_frame_indices
-        .is_empty()
-    );
-    assert!(
-      output
-        .inspect_report
-        .anomalies
-        .frames_without_file_resource_pack
-        .is_empty()
-    );
-    assert!(
-      output
-        .inspect_report
-        .anomalies
-        .frames_with_multiple_file_resource_packs
-        .is_empty()
-    );
+    assert!(output.inspect_report.anomalies.non_ingame_frame_indices.is_empty());
+    assert!(output.inspect_report.anomalies.missing_screenshot_frame_indices.is_empty());
+    assert!(output.inspect_report.anomalies.frames_without_file_resource_pack.is_empty());
+    assert!(output.inspect_report.anomalies.frames_with_multiple_file_resource_packs.is_empty());
     assert_eq!(output.inspect_report.resource_pack_coverage.len(), 3);
-    assert!(
-      output
-        .inspect_report
-        .resource_pack_coverage
-        .iter()
-        .all(|row| row.frame_count == 2)
-    );
+    assert!(output.inspect_report.resource_pack_coverage.iter().all(|row| row.frame_count == 2));
     let cameras: Vec<ScenePacketCameraRecord> =
-      serde_json::from_slice(&fs::read(&output.cameras_path).expect("cameras json should read"))
-        .expect("cameras json should parse");
+      serde_json::from_slice(&fs::read(&output.cameras_path).expect("cameras json should read")).expect("cameras json should parse");
     assert_eq!(cameras.len(), output.inspect_report.counts.camera_records);
     assert_eq!(output.manifest.frames[0].frame_index, 1);
     assert!(output.output_dir.join("frames/frame_000001.json").is_file());
@@ -1013,13 +789,7 @@ mod tests {
     .expect("scene packet export should succeed");
 
     assert_eq!(output.inspect_report.counts.missing_screenshots, 2);
-    assert_eq!(
-      output
-        .inspect_report
-        .anomalies
-        .missing_screenshot_frame_indices,
-      vec![1, 2]
-    );
+    assert_eq!(output.inspect_report.anomalies.missing_screenshot_frame_indices, vec![1, 2]);
     assert_eq!(output.manifest.frames[0].frame_index, 1);
     assert!(output.output_dir.join("frames/frame_000001.json").is_file());
     assert_eq!(output.manifest.frames[1].frame_index, 2);
@@ -1047,21 +817,9 @@ mod tests {
     })
     .expect("scene packet export should succeed");
 
-    assert_eq!(
-      output
-        .inspect_report
-        .anomalies
-        .frames_without_file_resource_pack,
-      vec![1]
-    );
+    assert_eq!(output.inspect_report.anomalies.frames_without_file_resource_pack, vec![1]);
     assert!(output.inspect_report.resource_pack_coverage.is_empty());
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("no file/* resource pack"))
-    );
+    assert!(output.inspect_report.warnings.iter().any(|warning| warning.contains("no file/* resource pack")));
   }
 
   #[test]
@@ -1074,12 +832,7 @@ mod tests {
       Vec::new(),
       vec![BundleFrameSpec {
         label: "multi-file-pack".to_string(),
-        frame: frame(
-          "frame-1",
-          1_000,
-          Some("in_game"),
-          &["file/auv-a", "fabric", "file/auv-b"],
-        ),
+        frame: frame("frame-1", 1_000, Some("in_game"), &["file/auv-a", "fabric", "file/auv-b"]),
         screenshot: ScreenshotDisposition::Present,
       }],
     );
@@ -1090,21 +843,9 @@ mod tests {
     })
     .expect("scene packet export should succeed");
 
-    assert_eq!(
-      output
-        .inspect_report
-        .anomalies
-        .frames_with_multiple_file_resource_packs,
-      vec![1]
-    );
+    assert_eq!(output.inspect_report.anomalies.frames_with_multiple_file_resource_packs, vec![1]);
     assert!(output.inspect_report.resource_pack_coverage.is_empty());
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("multiple file/* resource packs"))
-    );
+    assert!(output.inspect_report.warnings.iter().any(|warning| warning.contains("multiple file/* resource packs")));
   }
 
   #[test]
@@ -1128,22 +869,10 @@ mod tests {
     })
     .expect("scene packet export should succeed");
 
-    assert_eq!(
-      output.inspect_report.anomalies.non_ingame_frame_indices,
-      vec![1]
-    );
+    assert_eq!(output.inspect_report.anomalies.non_ingame_frame_indices, vec![1]);
     assert_eq!(output.inspect_report.resource_pack_coverage.len(), 1);
-    assert_eq!(
-      output.inspect_report.resource_pack_coverage[0].screen_states,
-      vec!["menu".to_string()]
-    );
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("non-ingame screen_state"))
-    );
+    assert_eq!(output.inspect_report.resource_pack_coverage[0].screen_states, vec!["menu".to_string()]);
+    assert!(output.inspect_report.warnings.iter().any(|warning| warning.contains("non-ingame screen_state")));
   }
 
   #[test]

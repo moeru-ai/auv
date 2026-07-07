@@ -8,9 +8,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::contract::{
-  Candidate, CandidateEvidence, CandidateLiveness, ControlRequirements, FreshnessBasis,
-  LivenessPreconditions, RecognitionResult, RecognitionScope, TargetGrounding, TargetSpec,
-  WindowRefPrecondition,
+  Candidate, CandidateEvidence, CandidateLiveness, ControlRequirements, FreshnessBasis, LivenessPreconditions, RecognitionResult,
+  RecognitionScope, TargetGrounding, TargetSpec, WindowRefPrecondition,
 };
 
 /// 必须由调用方显式提供的过墙前置。缺任何一项 => 拒绝。
@@ -127,10 +126,7 @@ pub enum PromotionRefusal {
 }
 
 /// 唯一公共入口。纯函数,无副作用,不落盘,不碰 driver。
-pub fn promote_recognition_to_candidates(
-  recognition: &RecognitionResult,
-  context: &PromotionContext,
-) -> CandidatePromotion {
+pub fn promote_recognition_to_candidates(recognition: &RecognitionResult, context: &PromotionContext) -> CandidatePromotion {
   let mut reasons: Vec<PromotionRefusal> = Vec::new();
 
   if recognition.all.is_empty() {
@@ -158,11 +154,7 @@ pub fn promote_recognition_to_candidates(
   if !freshness_is_capture_backed_for_recognition(context.freshness.as_ref(), recognition) {
     reasons.push(PromotionRefusal::FreshnessUnknown);
   }
-  if !permission_is_explicit_for_recognition(
-    context.allow_dev_self_minted_consent,
-    context.permission.as_ref(),
-    recognition,
-  ) {
+  if !permission_is_explicit_for_recognition(context.allow_dev_self_minted_consent, context.permission.as_ref(), recognition) {
     reasons.push(PromotionRefusal::PermissionMissing);
   }
 
@@ -170,20 +162,11 @@ pub fn promote_recognition_to_candidates(
     return CandidatePromotion::Refused { reasons };
   }
 
-  let best = recognition
-    .best
-    .as_ref()
-    .expect("best is Some when no refusal recorded");
+  let best = recognition.best.as_ref().expect("best is Some when no refusal recorded");
 
   let mut known_limits = recognition.known_limits.clone();
-  known_limits.push(
-    "promoted under v0 refusal-first gate: coordinate grounding is identity-passthrough only"
-      .to_string(),
-  );
-  known_limits.push(
-    "candidate is action-eligible only; execution still requires explicit human approval"
-      .to_string(),
-  );
+  known_limits.push("promoted under v0 refusal-first gate: coordinate grounding is identity-passthrough only".to_string());
+  known_limits.push("candidate is action-eligible only; execution still requires explicit human approval".to_string());
 
   let candidate = Candidate {
     candidate_local_id: format!("promoted-{}", best.item_id),
@@ -231,25 +214,15 @@ fn window_ref_from_scope(scope: &RecognitionScope) -> Option<WindowRefPreconditi
   })
 }
 
-fn freshness_is_capture_backed_for_recognition(
-  freshness: Option<&FreshnessBasis>,
-  recognition: &RecognitionResult,
-) -> bool {
+fn freshness_is_capture_backed_for_recognition(freshness: Option<&FreshnessBasis>, recognition: &RecognitionResult) -> bool {
   let Some(freshness) = freshness else {
     return false;
   };
   let Some(source_artifact) = freshness.source_artifact.as_ref() else {
     return false;
   };
-  recognition
-    .scope
-    .capture_artifact
-    .as_ref()
-    .is_some_and(|capture_artifact| capture_artifact == source_artifact)
-    && freshness
-      .source_operation_id
-      .as_deref()
-      .is_some_and(|operation_id| !operation_id.trim().is_empty())
+  recognition.scope.capture_artifact.as_ref().is_some_and(|capture_artifact| capture_artifact == source_artifact)
+    && freshness.source_operation_id.as_deref().is_some_and(|operation_id| !operation_id.trim().is_empty())
 }
 
 fn permission_is_explicit_for_recognition(
@@ -269,11 +242,7 @@ fn permission_is_explicit_for_recognition(
     && consent.recognition_id == recognition.recognition_id
     && consent.grade == consent.provenance.expected_grade()
     && (allow_dev_self_minted_consent || consent.grade != ConsentGrade::DevOnly)
-    && recognition
-      .scope
-      .capture_artifact
-      .as_ref()
-      .is_some_and(|artifact| artifact.run_id.as_str() == consent.run_id)
+    && recognition.scope.capture_artifact.as_ref().is_some_and(|artifact| artifact.run_id.as_str() == consent.run_id)
     && consent.scope == ConsentScope::CandidatePromotionOnly
     && consent.approved_action == ConsentAction::PromoteRecognitionToCandidate
 }
@@ -292,13 +261,12 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentGrade,
-    ConsentProvenance, ConsentScope, PromotionContext, PromotionProjection, PromotionRefusal,
-    StabilityInput, promote_recognition_to_candidates,
+    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentGrade, ConsentProvenance, ConsentScope,
+    PromotionContext, PromotionProjection, PromotionRefusal, StabilityInput, promote_recognition_to_candidates,
   };
   use crate::contract::{
-    ArtifactRef, Candidate, FreshnessBasis, RecognitionBox, RecognitionResult, RecognitionScope,
-    RecognitionSource, RecognitionSurface, RecognizedItem,
+    ArtifactRef, Candidate, FreshnessBasis, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface,
+    RecognizedItem,
   };
   use auv_tracing_driver::trace::{ArtifactId, EventId, RunId, SpanId};
 
@@ -412,41 +380,20 @@ mod tests {
     assert_eq!(candidate.candidate_local_id, "promoted-item_1");
     assert_eq!(candidate.kind, "button");
     assert_eq!(candidate.label.as_deref(), Some("End Turn"));
+    assert_eq!(serde_json::to_value(&candidate.target_spec.grounding).expect("grounding should serialize"), json!("coordinate"));
     assert_eq!(
-      serde_json::to_value(&candidate.target_spec.grounding).expect("grounding should serialize"),
-      json!("coordinate")
-    );
-    assert_eq!(
-      candidate
-        .liveness
-        .preconditions
-        .window_ref
-        .as_ref()
-        .map(|window| window.app_bundle_id.as_str()),
+      candidate.liveness.preconditions.window_ref.as_ref().map(|window| window.app_bundle_id.as_str()),
       Some("com.megacrit.cardcrawl")
     );
     assert_eq!(
-      candidate
-        .liveness
-        .preconditions
-        .window_ref
-        .as_ref()
-        .and_then(|window| window.window_title_substring.as_deref()),
+      candidate.liveness.preconditions.window_ref.as_ref().and_then(|window| window.window_title_substring.as_deref()),
       Some("Slay the Spire")
     );
-    assert_eq!(
-      candidate
-        .evidence
-        .observation
-        .get("item_id")
-        .and_then(|value| value.as_str()),
-      Some("item_1")
-    );
+    assert_eq!(candidate.evidence.observation.get("item_id").and_then(|value| value.as_str()), Some("item_1"));
     assert!(
-      candidate.known_limits.contains(
-        &"promoted under v0 refusal-first gate: coordinate grounding is identity-passthrough only"
-          .to_string()
-      )
+      candidate
+        .known_limits
+        .contains(&"promoted under v0 refusal-first gate: coordinate grounding is identity-passthrough only".to_string())
     );
   }
 
@@ -607,14 +554,8 @@ mod tests {
   #[test]
   fn permission_bound_to_other_recognition_refuses() {
     let recognition = sample_recognition();
-    let mut permission = sample_context()
-      .permission
-      .expect("sample context should carry permission");
-    permission
-      .consent
-      .as_mut()
-      .expect("sample permission should carry consent")
-      .recognition_id = "recognition_other".to_string();
+    let mut permission = sample_context().permission.expect("sample context should carry permission");
+    permission.consent.as_mut().expect("sample permission should carry consent").recognition_id = "recognition_other".to_string();
 
     let decision = promote_recognition_to_candidates(
       &recognition,
@@ -707,10 +648,7 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_promoted_candidate(&candidates[0]);
         assert!(
-          residual_known_limits.contains(
-            &"candidate is action-eligible only; execution still requires explicit human approval"
-              .to_string()
-          )
+          residual_known_limits.contains(&"candidate is action-eligible only; execution still requires explicit human approval".to_string())
         );
       }
       other => panic!("expected Promoted, got {other:?}"),

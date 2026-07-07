@@ -5,9 +5,7 @@ use auv_cli_invoke::{ArgSpec, InvokeCommandInput, InvokeCommandOutput, InvokeCom
 use auv_driver::vision::TextRecognitionOptions;
 
 use crate::recording::{NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE, persist_playlist_ls_artifacts};
-use crate::{
-  DEFAULT_APP_ID, Inputs, PlaylistCategory, PlaylistSidebarScan, decode_playlist_sidebar_scan_json,
-};
+use crate::{DEFAULT_APP_ID, Inputs, PlaylistCategory, PlaylistSidebarScan, decode_playlist_sidebar_scan_json};
 
 pub const SIDEBAR_SCAN_PROOF_COMMAND_ID: &str = "netease.playlist.sidebarScanProof";
 pub const SCAN_FIXTURE_FILE: &str = "playlist-sidebar-scan.json";
@@ -29,42 +27,22 @@ pub const SIDEBAR_SCAN_PROOF_ARGS: &[ArgSpec] = &[
 
 pub fn build_scan_from_fixture_dir(fixture_dir: &Path) -> Result<PlaylistSidebarScan, String> {
   if !fixture_dir.is_dir() {
-    return Err(format!(
-      "fixture directory does not exist: {}",
-      fixture_dir.display()
-    ));
+    return Err(format!("fixture directory does not exist: {}", fixture_dir.display()));
   }
 
   let fixture_path = fixture_dir.join(SCAN_FIXTURE_FILE);
   if !fixture_path.is_file() {
-    return Err(format!(
-      "fixture file missing at {}",
-      fixture_path.display()
-    ));
+    return Err(format!("fixture file missing at {}", fixture_path.display()));
   }
 
-  let bytes = fs::read(&fixture_path)
-    .map_err(|error| format!("failed to read {}: {error}", fixture_path.display()))?;
-  let json = std::str::from_utf8(&bytes).map_err(|error| {
-    format!(
-      "fixture {} is not valid UTF-8: {error}",
-      fixture_path.display()
-    )
-  })?;
+  let bytes = fs::read(&fixture_path).map_err(|error| format!("failed to read {}: {error}", fixture_path.display()))?;
+  let json = std::str::from_utf8(&bytes).map_err(|error| format!("fixture {} is not valid UTF-8: {error}", fixture_path.display()))?;
   decode_playlist_sidebar_scan_json(json)
 }
 
 /// Minimal [`Inputs`] for `persist_playlist_ls_artifacts(..., memory_enabled=false)` only.
-pub fn persist_inputs_for_sidebar_scan_proof(
-  store_root: &Path,
-  scan: &PlaylistSidebarScan,
-) -> Inputs {
-  let app_id = scan
-    .app()
-    .app_id
-    .clone()
-    .filter(|value| !value.is_empty())
-    .unwrap_or_else(|| DEFAULT_APP_ID.to_string());
+pub fn persist_inputs_for_sidebar_scan_proof(store_root: &Path, scan: &PlaylistSidebarScan) -> Inputs {
+  let app_id = scan.app().app_id.clone().filter(|value| !value.is_empty()).unwrap_or_else(|| DEFAULT_APP_ID.to_string());
 
   // NOTICE(acp-2): persist-only inputs; not product CLI runtime config.
   // When memory_enabled=false, persist_in_recorded_context only reads inputs.app_id.
@@ -96,37 +74,21 @@ pub fn sidebar_scan_proof_handler(input: InvokeCommandInput<'_>) -> InvokeComman
       fixture_dir
     ));
     output.verification = Some("dry-run; no store proof written".to_string());
-    output
-      .known_limits
-      .push("hermetic_fixture_only".to_string());
-    output
-      .signals
-      .insert("fixture_dir".to_string(), fixture_dir.to_string());
+    output.known_limits.push("hermetic_fixture_only".to_string());
+    output.signals.insert("fixture_dir".to_string(), fixture_dir.to_string());
     return Ok(output);
   }
 
   let inputs = persist_inputs_for_sidebar_scan_proof(store_path, &scan);
-  let persisted =
-    persist_playlist_ls_artifacts(store_path, &scan, &inputs, false).map_err(|error| error)?;
+  let persisted = persist_playlist_ls_artifacts(store_path, &scan, &inputs, false).map_err(|error| error)?;
   let run_id = persisted.lineage.run_id;
 
-  let mut output = InvokeCommandOutput::new(format!(
-    "persisted hermetic sidebar scan proof run {run_id} under {}",
-    store_root
-  ));
-  output.verification =
-    Some("hermetic fixture proof only; no live scan or view-memory write".to_string());
-  output
-    .known_limits
-    .push("hermetic_fixture_only".to_string());
+  let mut output = InvokeCommandOutput::new(format!("persisted hermetic sidebar scan proof run {run_id} under {}", store_root));
+  output.verification = Some("hermetic fixture proof only; no live scan or view-memory write".to_string());
+  output.known_limits.push("hermetic_fixture_only".to_string());
   output.signals.insert("run_id".to_string(), run_id.clone());
-  output
-    .signals
-    .insert("store_root".to_string(), store_root.to_string());
-  output.signals.insert(
-    "artifact_role".to_string(),
-    NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE.to_string(),
-  );
+  output.signals.insert("store_root".to_string(), store_root.to_string());
+  output.signals.insert("artifact_role".to_string(), NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE.to_string());
   Ok(output)
 }
 
@@ -160,58 +122,34 @@ mod tests {
     let fixture_dir = hermetic_sidebar_scan_proof_fixture_dir();
     let scan = build_scan_from_fixture_dir(&fixture_dir).expect("fixture should decode");
     assert_eq!(scan.app().app_id.as_deref(), Some(DEFAULT_APP_ID));
-    assert!(
-      scan
-        .known_limits()
-        .iter()
-        .any(|limit| limit.contains("hermetic"))
-    );
-    assert_eq!(
-      scan.projection().sections[0].items[0].label,
-      "Hermetic Fixture Playlist"
-    );
+    assert!(scan.known_limits().iter().any(|limit| limit.contains("hermetic")));
+    assert_eq!(scan.projection().sections[0].items[0].label, "Hermetic Fixture Playlist");
   }
 
   #[test]
   fn sidebar_scan_proof_registered_in_netease_registry() {
     let registry = netease_registry();
-    let command = registry
-      .resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID)
-      .expect("sidebarScanProof should resolve");
+    let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("sidebarScanProof should resolve");
     assert_eq!(command.id, SIDEBAR_SCAN_PROOF_COMMAND_ID);
   }
 
   #[test]
   fn sidebar_scan_proof_not_in_default_registry() {
-    assert!(
-      default_registry()
-        .resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID)
-        .is_none()
-    );
+    assert!(default_registry().resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).is_none());
   }
 
   #[test]
   fn sidebar_scan_proof_writes_scan_artifact() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-acp2-sidebar-scan-proof-{}",
-      std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-acp2-sidebar-scan-proof-{}", std::process::id()));
     let store_root = root.join("store");
     let _ = fs::remove_dir_all(&root);
 
     let mut inputs = BTreeMap::new();
-    inputs.insert(
-      "fixture-dir".to_string(),
-      hermetic_sidebar_scan_proof_fixture_dir()
-        .display()
-        .to_string(),
-    );
+    inputs.insert("fixture-dir".to_string(), hermetic_sidebar_scan_proof_fixture_dir().display().to_string());
     inputs.insert("store-root".to_string(), store_root.display().to_string());
 
     let registry = netease_registry();
-    let command = registry
-      .resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID)
-      .expect("command");
+    let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
     let output = command
       .invoke(InvokeCommandInput {
         command_id: command.id,
@@ -224,12 +162,7 @@ mod tests {
     let run_id = output.signals.get("run_id").expect("run_id signal");
     let store = LocalStore::new(store_root.clone()).expect("store");
     let run = store.read_run(run_id).expect("run");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE)
-    );
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == NETEASE_PLAYLIST_SIDEBAR_SCAN_ROLE));
 
     let _ = fs::remove_dir_all(&root);
   }
@@ -241,18 +174,11 @@ mod tests {
     let _ = fs::remove_dir_all(&root);
 
     let mut inputs = BTreeMap::new();
-    inputs.insert(
-      "fixture-dir".to_string(),
-      hermetic_sidebar_scan_proof_fixture_dir()
-        .display()
-        .to_string(),
-    );
+    inputs.insert("fixture-dir".to_string(), hermetic_sidebar_scan_proof_fixture_dir().display().to_string());
     inputs.insert("store-root".to_string(), store_root.display().to_string());
 
     let registry = netease_registry();
-    let command = registry
-      .resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID)
-      .expect("command");
+    let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
     command
       .invoke(InvokeCommandInput {
         command_id: command.id,
@@ -266,11 +192,7 @@ mod tests {
     let runs = store.list_runs().expect("runs");
     assert_eq!(runs.len(), 1);
     let run = store.read_run(runs[0].run_id.as_str()).expect("run");
-    let root_span = run
-      .spans
-      .iter()
-      .find(|span| span.parent_span_id.is_none())
-      .expect("root span");
+    let root_span = run.spans.iter().find(|span| span.parent_span_id.is_none()).expect("root span");
     assert_eq!(root_span.name, "auv.netease.playlist.ls");
 
     let _ = fs::remove_dir_all(&root);
@@ -283,18 +205,11 @@ mod tests {
     let _ = fs::remove_dir_all(&root);
 
     let mut inputs = BTreeMap::new();
-    inputs.insert(
-      "fixture-dir".to_string(),
-      hermetic_sidebar_scan_proof_fixture_dir()
-        .display()
-        .to_string(),
-    );
+    inputs.insert("fixture-dir".to_string(), hermetic_sidebar_scan_proof_fixture_dir().display().to_string());
     inputs.insert("store-root".to_string(), store_root.display().to_string());
 
     let registry = netease_registry();
-    let command = registry
-      .resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID)
-      .expect("command");
+    let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
     command
       .invoke(InvokeCommandInput {
         command_id: command.id,
@@ -307,12 +222,7 @@ mod tests {
     let store = LocalStore::new(store_root.clone()).expect("store");
     let runs = store.list_runs().expect("runs");
     let run = store.read_run(runs[0].run_id.as_str()).expect("run");
-    assert!(
-      !run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == VIEW_MEMORY_ARTIFACT_ROLE)
-    );
+    assert!(!run.artifacts.iter().any(|artifact| artifact.role == VIEW_MEMORY_ARTIFACT_ROLE));
 
     let _ = fs::remove_dir_all(&root);
   }
@@ -320,17 +230,10 @@ mod tests {
   #[test]
   fn sidebar_scan_proof_requires_store_root() {
     let mut inputs = BTreeMap::new();
-    inputs.insert(
-      "fixture-dir".to_string(),
-      hermetic_sidebar_scan_proof_fixture_dir()
-        .display()
-        .to_string(),
-    );
+    inputs.insert("fixture-dir".to_string(), hermetic_sidebar_scan_proof_fixture_dir().display().to_string());
 
     let registry = netease_registry();
-    let command = registry
-      .resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID)
-      .expect("command");
+    let command = registry.resolve(SIDEBAR_SCAN_PROOF_COMMAND_ID).expect("command");
     let error = command
       .invoke(InvokeCommandInput {
         command_id: command.id,

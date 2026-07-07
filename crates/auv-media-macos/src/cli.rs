@@ -151,9 +151,8 @@ fn run_seek(seconds: f64) -> ExitCode {
 /// past `Duration::MAX` (~5.85e11 years), and that overflow path was
 /// unguarded.
 fn seek_duration_from_seconds(seconds: f64) -> Result<Duration, &'static str> {
-  Duration::try_from_secs_f64(seconds).map_err(|_| {
-    "seek position must be a non-negative finite number of seconds within the representable range"
-  })
+  Duration::try_from_secs_f64(seconds)
+    .map_err(|_| "seek position must be a non-negative finite number of seconds within the representable range")
 }
 
 #[cfg(test)]
@@ -163,10 +162,7 @@ mod tests {
   #[test]
   fn seek_duration_accepts_zero_and_normal_values() {
     assert_eq!(seek_duration_from_seconds(0.0).unwrap(), Duration::ZERO);
-    assert_eq!(
-      seek_duration_from_seconds(1.5).unwrap(),
-      Duration::from_secs_f64(1.5)
-    );
+    assert_eq!(seek_duration_from_seconds(1.5).unwrap(), Duration::from_secs_f64(1.5));
   }
 
   #[test]

@@ -10,50 +10,28 @@ pub(crate) fn detect_sidebar_region(
   recognition: &TextRecognition,
 ) -> Result<ViewRegionRecord, ParserDiagnostic> {
   if let Some(region) = manual {
-    return Ok(sidebar_region_record(ratio_to_window_bounds(
-      region,
-      window_size,
-    )));
+    return Ok(sidebar_region_record(ratio_to_window_bounds(region, window_size)));
   }
 
   let left_limit = window_size.width * 0.38;
-  let left_regions = recognition
-    .regions
-    .iter()
-    .filter(|region| region.bounds.origin.x < left_limit)
-    .collect::<Vec<_>>();
+  let left_regions = recognition.regions.iter().filter(|region| region.bounds.origin.x < left_limit).collect::<Vec<_>>();
   let mut markers = left_regions
     .iter()
     .filter(|region| is_sidebar_marker(region.text.trim()))
-    .map(|region| {
-      (
-        region.bounds.origin.x + region.bounds.size.width,
-        region.bounds.origin.y,
-        region.text.trim(),
-      )
-    })
+    .map(|region| (region.bounds.origin.x + region.bounds.size.width, region.bounds.origin.y, region.text.trim()))
     .collect::<Vec<_>>();
 
   if markers.is_empty() {
     return Err(ParserDiagnostic {
       code: "sidebar_region_not_found".to_string(),
-      message: "sidebar markers could not be identified on the left side; refusing to infer sidebar bounds from unanchored list rows".to_string(),
+      message: "sidebar markers could not be identified on the left side; refusing to infer sidebar bounds from unanchored list rows"
+        .to_string(),
       node_id: None,
     });
   }
 
-  markers.sort_by(|left, right| {
-    left
-      .0
-      .partial_cmp(&right.0)
-      .unwrap_or(std::cmp::Ordering::Equal)
-  });
-  let max_x = markers
-    .last()
-    .map(|marker| marker.0)
-    .unwrap_or_default()
-    .max(window_size.width * 0.18)
-    .min(window_size.width * 0.42);
+  markers.sort_by(|left, right| left.0.partial_cmp(&right.0).unwrap_or(std::cmp::Ordering::Equal));
+  let max_x = markers.last().map(|marker| marker.0).unwrap_or_default().max(window_size.width * 0.18).min(window_size.width * 0.42);
   // Floor `window_size.height` at 0 before using it as the clamp upper
   // bound. `f64::clamp(0.0, h)` panics on `min > max` when `h < 0`, the
   // same shape fixed in `playlist_sidebar_bottom` for this module.
@@ -68,12 +46,7 @@ pub(crate) fn detect_sidebar_region(
   let bottom = playlist_sidebar_bottom(window_size);
   let y = expand_sidebar_playlist_body_top(y_marker, window_size);
 
-  Ok(sidebar_region_record(ViewBounds::new(
-    0.0,
-    y,
-    max_x + 48.0,
-    bottom - y,
-  )))
+  Ok(sidebar_region_record(ViewBounds::new(0.0, y, max_x + 48.0, bottom - y)))
 }
 
 fn min_playlist_sidebar_body_height(window_size: Size) -> f64 {
@@ -85,10 +58,7 @@ fn min_playlist_sidebar_body_height(window_size: Size) -> f64 {
   let usable_height = window_size.height.max(0.0);
   let ratio = 0.38 * usable_height;
   let floor = 240.0;
-  let fallback_y = fallback_playlist_sidebar_region(window_size)
-    .bounds
-    .map(|bounds| bounds.y)
-    .unwrap_or(0.0);
+  let fallback_y = fallback_playlist_sidebar_region(window_size).bounds.map(|bounds| bounds.y).unwrap_or(0.0);
   let bottom = playlist_sidebar_bottom(window_size);
   let cap = (bottom - fallback_y).max(0.0);
   ratio.max(floor).min(cap)
@@ -96,10 +66,7 @@ fn min_playlist_sidebar_body_height(window_size: Size) -> f64 {
 
 fn expand_sidebar_playlist_body_top(y_marker: f64, window_size: Size) -> f64 {
   let bottom = playlist_sidebar_bottom(window_size);
-  let fallback_y = fallback_playlist_sidebar_region(window_size)
-    .bounds
-    .map(|bounds| bounds.y)
-    .unwrap_or(0.0);
+  let fallback_y = fallback_playlist_sidebar_region(window_size).bounds.map(|bounds| bounds.y).unwrap_or(0.0);
   let min_body = min_playlist_sidebar_body_height(window_size);
 
   if bottom - y_marker < min_body {
@@ -121,10 +88,7 @@ pub(crate) struct DefaultScreenRestore {
   pub(crate) point: Point,
 }
 
-pub(crate) fn detect_default_screen_restore(
-  recognition: &TextRecognition,
-  window_size: Size,
-) -> Option<DefaultScreenRestore> {
+pub(crate) fn detect_default_screen_restore(recognition: &TextRecognition, window_size: Size) -> Option<DefaultScreenRestore> {
   let screen = screen::classify_screen(recognition, window_size);
   let point = match screen.state() {
     screen::ScreenState::PlayingSongDetail => screen.restore_point()?,
@@ -145,11 +109,7 @@ pub(crate) fn song_detail_restore_point(_window_size: Size) -> Point {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn click_default_screen_restore(
-  session: &MacosDriverSession,
-  window: &Window,
-  point: Point,
-) -> Result<(), String> {
+pub(crate) fn click_default_screen_restore(session: &MacosDriverSession, window: &Window, point: Point) -> Result<(), String> {
   let lease = session
     .window()
     .prepare_for_input(
@@ -197,10 +157,7 @@ pub(crate) fn broad_sidebar_probe_bounds(window_size: Size) -> ViewBounds {
 }
 
 pub(crate) fn sidebar_scroll_anchor(bounds: ViewBounds) -> WindowPoint {
-  WindowPoint::new(
-    bounds.x + bounds.width * 0.5,
-    bounds.y + bounds.height * 0.75,
-  )
+  WindowPoint::new(bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.75)
 }
 
 pub(crate) fn fallback_playlist_sidebar_region(window_size: Size) -> ViewRegionRecord {
@@ -216,12 +173,7 @@ pub(crate) fn fallback_playlist_sidebar_region(window_size: Size) -> ViewRegionR
   let usable_width = window_size.width.max(0.0);
   let y = (usable_height * 0.30).max(220.0).min(usable_height * 0.55);
   let width = (usable_width * 0.24).max(280.0).min(usable_width * 0.42);
-  sidebar_region_record(ViewBounds::new(
-    0.0,
-    y,
-    width,
-    playlist_sidebar_bottom(window_size) - y,
-  ))
+  sidebar_region_record(ViewBounds::new(0.0, y, width, playlist_sidebar_bottom(window_size) - y))
 }
 
 pub(crate) fn sidebar_region_record(bounds: ViewBounds) -> ViewRegionRecord {
@@ -243,8 +195,7 @@ pub(crate) fn ratio_to_window_bounds(region: RatioRect, window_size: Size) -> Vi
 }
 
 pub(crate) fn is_sidebar_marker(label: &str) -> bool {
-  SidebarSectionKind::from_label(label).is_known()
-    || matches!(label, "推荐" | "发现音乐" | "最近播放")
+  SidebarSectionKind::from_label(label).is_known() || matches!(label, "推荐" | "发现音乐" | "最近播放")
 }
 
 pub(crate) fn is_playlist_section_marker(label: &str) -> bool {
@@ -253,8 +204,7 @@ pub(crate) fn is_playlist_section_marker(label: &str) -> bool {
 
 pub(crate) fn detect_blocking_modal(recognition: &TextRecognition) -> Option<ParserDiagnostic> {
   let has_cancel = recognition.best_contains("取消").is_some();
-  let has_dialog_action =
-    recognition.best_contains("打开").is_some() || recognition.best_contains("存储").is_some();
+  let has_dialog_action = recognition.best_contains("打开").is_some() || recognition.best_contains("存储").is_some();
 
   (has_cancel && has_dialog_action).then(|| ParserDiagnostic {
     code: "blocking_modal_dialog".to_string(),

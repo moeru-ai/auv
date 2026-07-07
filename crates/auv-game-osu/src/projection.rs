@@ -1,7 +1,5 @@
 use auv_driver::CaptureBinding;
-use auv_driver::geometry::{
-  CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect,
-};
+use auv_driver::geometry::{CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect};
 use auv_driver::window::Window;
 use auv_tracing_driver::EvidenceCorrelationKey;
 use serde::{Deserialize, Serialize};
@@ -48,37 +46,17 @@ pub struct PlayfieldProjection {
 
 impl PlayfieldProjection {
   pub fn for_window(window: &Window, circle_size: f32) -> Result<Self, String> {
-    Self::for_capture(
-      window.frame.size.width,
-      window.frame.size.height,
-      circle_size,
-    )
+    Self::for_capture(window.frame.size.width, window.frame.size.height, circle_size)
   }
 
-  pub fn for_capture(
-    capture_width: f64,
-    capture_height: f64,
-    circle_size: f32,
-  ) -> Result<Self, String> {
-    if !(capture_width.is_finite() && capture_height.is_finite())
-      || capture_width <= 0.0
-      || capture_height <= 0.0
-    {
-      return Err(format!(
-        "capture size must have positive finite size, got {}x{}",
-        capture_width, capture_height
-      ));
+  pub fn for_capture(capture_width: f64, capture_height: f64, circle_size: f32) -> Result<Self, String> {
+    if !(capture_width.is_finite() && capture_height.is_finite()) || capture_width <= 0.0 || capture_height <= 0.0 {
+      return Err(format!("capture size must have positive finite size, got {}x{}", capture_width, capture_height));
     }
 
-    let scale = f64::min(
-      capture_width / PLAYFIELD_WIDTH,
-      capture_height / PLAYFIELD_HEIGHT,
-    );
+    let scale = f64::min(capture_width / PLAYFIELD_WIDTH, capture_height / PLAYFIELD_HEIGHT);
     if !scale.is_finite() || scale <= 0.0 {
-      return Err(format!(
-        "failed to derive finite playfield scale from capture {}x{}",
-        capture_width, capture_height
-      ));
+      return Err(format!("failed to derive finite playfield scale from capture {}x{}", capture_width, capture_height));
     }
 
     let playfield_width = PLAYFIELD_WIDTH * scale;
@@ -97,10 +75,7 @@ impl PlayfieldProjection {
   }
 
   pub fn to_window_point(&self, x: f32, y: f32) -> (f64, f64) {
-    (
-      f64::from(x) * self.scale_x + self.offset_x,
-      f64::from(y) * self.scale_y + self.offset_y,
-    )
+    (f64::from(x) * self.scale_x + self.offset_x, f64::from(y) * self.scale_y + self.offset_y)
   }
 
   pub fn to_eval_projection(&self) -> EvalProjection {
@@ -131,11 +106,7 @@ pub struct ProjectionArtifact {
 }
 
 impl ProjectionArtifact {
-  pub fn from_window_projection(
-    window: &Window,
-    projection: &PlayfieldProjection,
-    verification_reference: Option<String>,
-  ) -> Self {
+  pub fn from_window_projection(window: &Window, projection: &PlayfieldProjection, verification_reference: Option<String>) -> Self {
     Self {
       source_window_bounds: ProjectionBounds::from_rect(window.frame),
       capture_bounds: None,
@@ -158,16 +129,10 @@ impl ProjectionArtifact {
       return Err("projection artifact contains non-finite values".to_string());
     }
     if self.scale_x <= 0.0 || self.scale_y <= 0.0 {
-      return Err(format!(
-        "projection artifact must have positive scales, got scale_x={} scale_y={}",
-        self.scale_x, self.scale_y
-      ));
+      return Err(format!("projection artifact must have positive scales, got scale_x={} scale_y={}", self.scale_x, self.scale_y));
     }
     if self.match_radius_px <= 0.0 {
-      return Err(format!(
-        "projection artifact must have positive match_radius_px, got {}",
-        self.match_radius_px
-      ));
+      return Err(format!("projection artifact must have positive match_radius_px, got {}", self.match_radius_px));
     }
 
     Ok(EvalProjection::PlayfieldToPixels {
@@ -179,11 +144,7 @@ impl ProjectionArtifact {
     })
   }
 
-  pub fn to_core_projection_basis(
-    &self,
-    basis_id: impl Into<String>,
-    timestamp_millis: u64,
-  ) -> ProjectionBasis {
+  pub fn to_core_projection_basis(&self, basis_id: impl Into<String>, timestamp_millis: u64) -> ProjectionBasis {
     let mut basis = ProjectionBasis::new(
       basis_id,
       timestamp_millis,
@@ -193,9 +154,7 @@ impl ProjectionArtifact {
       CoordinateSpace::Window("osu_playfield_projection".to_string()),
       match self.derivation_method {
         ProjectionDerivationMethod::LayoutRule => ProjectionDerivationFamily::LayoutRule,
-        ProjectionDerivationMethod::EmpiricalCalibration => {
-          ProjectionDerivationFamily::EmpiricalCalibration
-        }
+        ProjectionDerivationMethod::EmpiricalCalibration => ProjectionDerivationFamily::EmpiricalCalibration,
       },
     )
     .with_match_radius_px(f64::from(self.match_radius_px));
@@ -205,10 +164,7 @@ impl ProjectionArtifact {
     basis
   }
 
-  pub fn to_core_evidence_correlation_key(
-    &self,
-    basis_id: impl Into<String>,
-  ) -> EvidenceCorrelationKey {
+  pub fn to_core_evidence_correlation_key(&self, basis_id: impl Into<String>) -> EvidenceCorrelationKey {
     EvidenceCorrelationKey::new(basis_id)
   }
 
@@ -219,9 +175,7 @@ impl ProjectionArtifact {
     capture_skew_ms: i64,
   ) -> CaptureBinding {
     let mut binding = CaptureBinding::new(source_observation_id, capture_ref, capture_skew_ms)
-      .with_known_limit(
-        "osu capture binding records dataset projection provenance, not input success",
-      );
+      .with_known_limit("osu capture binding records dataset projection provenance, not input success");
     if self.capture_bounds.is_none() {
       binding = binding.with_known_limit("osu projection artifact has no bound capture rectangle");
     }
@@ -325,14 +279,8 @@ mod tests {
         name: "osu_playfield".to_string()
       }
     );
-    assert_eq!(
-      basis.derivation_family,
-      ProjectionDerivationFamily::LayoutRule
-    );
-    assert_eq!(
-      basis.match_radius_px,
-      Some(f64::from(artifact.match_radius_px))
-    );
+    assert_eq!(basis.derivation_family, ProjectionDerivationFamily::LayoutRule);
+    assert_eq!(basis.match_radius_px, Some(f64::from(artifact.match_radius_px)));
   }
 
   #[test]
@@ -355,12 +303,7 @@ mod tests {
     assert_eq!(binding.source_observation_id, "osu-frame-1");
     assert_eq!(binding.capture_ref, "artifact://osu-capture-1");
     assert_eq!(binding.capture_skew_ms, -16);
-    assert!(
-      binding
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("dataset projection provenance"))
-    );
+    assert!(binding.known_limits.iter().any(|limit| limit.contains("dataset projection provenance")));
   }
 
   #[test]

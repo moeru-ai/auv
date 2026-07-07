@@ -13,9 +13,8 @@
 mod observation;
 
 use observation::{
-  build_page_observation_snapshot, conservative_merge_observations, normalize_observation_text,
-  observation_from_recognized_item, observation_from_row, should_merge_adjacent_observations,
-  surface_nodes_from_observations,
+  build_page_observation_snapshot, conservative_merge_observations, normalize_observation_text, observation_from_recognized_item,
+  observation_from_row, should_merge_adjacent_observations, surface_nodes_from_observations,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -317,10 +316,7 @@ pub struct ScanWindowRegionOptions {
 // recording.
 pub fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -> AuvResult<RunId> {
   let recording = runtime.recording().handle();
-  let mut run = recording.start_run(RunSpec::new(
-    auv_tracing_driver::trace::RunType::Execute,
-    "auv.scan.window_region",
-  ))?;
+  let mut run = recording.start_run(RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.scan.window_region"))?;
   let root = run.root_span();
 
   match scan_window_region_into_run(&recording, runtime, &mut run, &root, options) {
@@ -343,9 +339,7 @@ pub fn scan_window_region(runtime: &Runtime, options: ScanWindowRegionOptions) -
       );
       match finish_result {
         Ok(_) => Err(error),
-        Err(finish_error) => Err(format!(
-          "{error}; additionally failed to persist failed scan run: {finish_error}"
-        )),
+        Err(finish_error) => Err(format!("{error}; additionally failed to persist failed scan run: {finish_error}")),
       }
     }
   }
@@ -372,9 +366,7 @@ fn scan_window_region_into_run(
   let mut scan_error = None;
 
   for page_index in 0..max_pages_for_policy(&options.stop_policy) {
-    let page_result = scan_window_region_page(
-      recording, runtime, run, root, page_index, &options, &mut state,
-    );
+    let page_result = scan_window_region_page(recording, runtime, run, root, page_index, &options, &mut state);
     let page_outcome = match page_result {
       Ok(page_outcome) => page_outcome,
       Err(error) => {
@@ -405,16 +397,13 @@ fn scan_window_region_into_run(
     // image evidence tied to a node result; see:
     // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Context.cpp
     // /Users/neko/Git/github.com/MaaXYZ/MaaFramework/source/MaaFramework/Task/Component/ActionHelper.cpp
-    let screenshot_diff_stability =
-      match screenshot_diff_stability_for_pages(page_index, &state.pages) {
-        Ok(stability) => stability,
-        Err(error) => {
-          state.warnings.push(format!(
-            "failed to compare adjacent page screenshots for boundary evidence: {error}"
-          ));
-          None
-        }
-      };
+    let screenshot_diff_stability = match screenshot_diff_stability_for_pages(page_index, &state.pages) {
+      Ok(stability) => stability,
+      Err(error) => {
+        state.warnings.push(format!("failed to compare adjacent page screenshots for boundary evidence: {error}"));
+        None
+      }
+    };
     let scroll_boundary_candidate = scroll_boundary_candidate_for_progress(
       &options.direction,
       page_index,
@@ -432,15 +421,9 @@ fn scan_window_region_into_run(
       scroll_count,
       consecutive_no_progress,
       new_observation_count,
-      hook_stop_requested: state
-        .hook_decisions
-        .last()
-        .is_some_and(|decision| decision.action == HookAction::Stop),
+      hook_stop_requested: state.hook_decisions.last().is_some_and(|decision| decision.action == HookAction::Stop),
       match_found: match_found_on_current_page(&options.stop_policy, &page_outcome.observations),
-      next_section_candidate: state
-        .hook_decisions
-        .last()
-        .is_some_and(|decision| decision.action == HookAction::Stop)
+      next_section_candidate: state.hook_decisions.last().is_some_and(|decision| decision.action == HookAction::Stop)
         && matches!(options.stop_policy, StopPolicy::UntilNextSection { .. }),
       scroll_boundary_candidate,
     };
@@ -448,21 +431,12 @@ fn scan_window_region_into_run(
     // TODO(tracing-interaction-hooks): typed scan hooks are deferred until
     // `auv-tracing-interaction`; the removed JSON recipe hook path must not be
     // reintroduced.
-    if let Some(decision) =
-      evaluate_stop_policy(&options.stop_policy, &progress, &options.direction)
-    {
+    if let Some(decision) = evaluate_stop_policy(&options.stop_policy, &progress, &options.direction) {
       final_decision = Some(decision);
       break;
     }
 
-    match invoke_scan_command(
-      recording,
-      runtime,
-      run,
-      root,
-      scroll_request(&options),
-      "scroll window region",
-    ) {
+    match invoke_scan_command(recording, runtime, run, root, scroll_request(&options), "scroll window region") {
       Ok(_) => {
         scroll_count += 1;
       }
@@ -477,32 +451,18 @@ fn scan_window_region_into_run(
   let final_decision = final_decision.unwrap_or_else(|| {
     stop_decision(
       StopReason::MaxPages,
-      format!(
-        "reached max_pages={}",
-        max_pages_for_policy(&options.stop_policy)
-      ),
+      format!("reached max_pages={}", max_pages_for_policy(&options.stop_policy)),
       state.pages.last().map(|page| page.page_index).unwrap_or(0),
       CompletenessClaim::PartialMaxPages,
     )
   });
   if scan_error.is_some() {
-    state
-      .warnings
-      .push("scan ended with an error; artifact is partial".to_string());
+    state.warnings.push("scan ended with an error; artifact is partial".to_string());
   }
-  let artifact = state.into_artifact(
-    run.id(),
-    root.id(),
-    run.id().to_string(),
-    options.target,
-    options.stop_policy,
-    final_decision,
-  );
+  let artifact = state.into_artifact(run.id(), root.id(), run.id().to_string(), options.target, options.stop_policy, final_decision);
   if let Err(stage_error) = stage_scan_artifact(recording, run, root, &artifact) {
     if let Some(error) = scan_error {
-      return Err(format!(
-        "{error}; additionally failed to stage partial scroll-scan artifact: {stage_error}"
-      ));
+      return Err(format!("{error}; additionally failed to stage partial scroll-scan artifact: {stage_error}"));
     }
     return Err(stage_error);
   }
@@ -518,19 +478,10 @@ fn scan_window_region_into_run(
   ))
 }
 
-pub fn observations_from_observe_json(
-  page_index: usize,
-  raw: &str,
-  source_artifact: PathBuf,
-) -> AuvResult<Vec<CollectionObservation>> {
-  let value: Value =
-    serde_json::from_str(raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
+pub fn observations_from_observe_json(page_index: usize, raw: &str, source_artifact: PathBuf) -> AuvResult<Vec<CollectionObservation>> {
+  let value: Value = serde_json::from_str(raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
   if let Some(recognition) = recognition_result_from_value(&value)? {
-    return Ok(observations_from_recognition_result(
-      page_index,
-      &recognition,
-      &source_artifact,
-    ));
+    return Ok(observations_from_recognition_result(page_index, &recognition, &source_artifact));
   }
   let rows = value
     .get("item_candidates")
@@ -539,11 +490,7 @@ pub fn observations_from_observe_json(
     .or_else(|| value.get("rows").and_then(Value::as_array))
     .ok_or_else(|| "malformed observe JSON: missing rows array".to_string())?;
 
-  rows
-    .iter()
-    .enumerate()
-    .map(|(row_index, row)| observation_from_row(page_index, row_index, row, &source_artifact))
-    .collect()
+  rows.iter().enumerate().map(|(row_index, row)| observation_from_row(page_index, row_index, row, &source_artifact)).collect()
 }
 
 /// Cheap structural check: does this JSON value carry the markers of a `RecognitionResult`?
@@ -560,9 +507,7 @@ fn recognition_result_from_value(value: &Value) -> AuvResult<Option<RecognitionR
   if !has_recognition_result_shape(value) {
     return Ok(None);
   }
-  serde_json::from_value(value.clone())
-    .map(Some)
-    .map_err(|error| format!("recognition result JSON failed to deserialize: {error}"))
+  serde_json::from_value(value.clone()).map(Some).map_err(|error| format!("recognition result JSON failed to deserialize: {error}"))
 }
 
 fn observations_from_recognition_result(
@@ -578,9 +523,7 @@ fn observations_from_recognition_result(
   items
     .iter()
     .enumerate()
-    .map(|(item_index, item)| {
-      observation_from_recognized_item(page_index, item_index, item, recognition, source_artifact)
-    })
+    .map(|(item_index, item)| observation_from_recognized_item(page_index, item_index, item, recognition, source_artifact))
     .collect()
 }
 
@@ -642,18 +585,9 @@ fn max_pages_for_policy(policy: &StopPolicy) -> usize {
 
 fn observe_request(options: &ScanWindowRegionOptions, page_index: usize) -> InvokeRequest {
   let mut inputs = region_inputs(&options.target);
-  inputs.insert(
-    "label".to_string(),
-    format!("scan-page-{:04}", page_index + 1),
-  );
-  inputs.insert(
-    "min_confidence".to_string(),
-    format!("{:.3}", options.min_confidence),
-  );
-  inputs.insert(
-    "max_observations".to_string(),
-    options.max_observations.to_string(),
-  );
+  inputs.insert("label".to_string(), format!("scan-page-{:04}", page_index + 1));
+  inputs.insert("min_confidence".to_string(), format!("{:.3}", options.min_confidence));
+  inputs.insert("max_observations".to_string(), options.max_observations.to_string());
   InvokeRequest {
     command_id: "window.observeRegion".to_string(),
     target: ExecutionTarget {
@@ -668,10 +602,7 @@ fn observe_request(options: &ScanWindowRegionOptions, page_index: usize) -> Invo
 fn scroll_request(options: &ScanWindowRegionOptions) -> InvokeRequest {
   let mut inputs = region_inputs(&options.target);
   inputs.insert("direction".to_string(), options.direction.clone());
-  inputs.insert(
-    "amount".to_string(),
-    format!("{:.3}", options.scroll_amount),
-  );
+  inputs.insert("amount".to_string(), format!("{:.3}", options.scroll_amount));
   inputs.insert("settle_ms".to_string(), options.settle_ms.to_string());
   InvokeRequest {
     command_id: "window.scrollRegion".to_string(),
@@ -686,22 +617,10 @@ fn scroll_request(options: &ScanWindowRegionOptions) -> InvokeRequest {
 
 fn region_inputs(target: &ScanTarget) -> BTreeMap<String, String> {
   let mut inputs = BTreeMap::from([
-    (
-      "region_left_ratio".to_string(),
-      target.region.left_ratio.to_string(),
-    ),
-    (
-      "region_top_ratio".to_string(),
-      target.region.top_ratio.to_string(),
-    ),
-    (
-      "region_right_ratio".to_string(),
-      target.region.right_ratio.to_string(),
-    ),
-    (
-      "region_bottom_ratio".to_string(),
-      target.region.bottom_ratio.to_string(),
-    ),
+    ("region_left_ratio".to_string(), target.region.left_ratio.to_string()),
+    ("region_top_ratio".to_string(), target.region.top_ratio.to_string()),
+    ("region_right_ratio".to_string(), target.region.right_ratio.to_string()),
+    ("region_bottom_ratio".to_string(), target.region.bottom_ratio.to_string()),
   ]);
   if let Some(title) = &target.window_title {
     inputs.insert("title".to_string(), title.clone());
@@ -718,21 +637,12 @@ fn scan_window_region_page(
   options: &ScanWindowRegionOptions,
   state: &mut ScanWindowRegionState,
 ) -> AuvResult<PageScanOutcome> {
-  let observe_result = invoke_scan_command(
-    recording,
-    runtime,
-    run,
-    root,
-    observe_request(options, page_index),
-    "observe window region",
-  )?;
+  let observe_result = invoke_scan_command(recording, runtime, run, root, observe_request(options, page_index), "observe window region")?;
   let screenshot_artifact = first_artifact_with_extension(&observe_result, "png");
   let screenshot_artifact_record = first_artifact_record_with_extension(&observe_result, "png");
-  let source_artifact = screenshot_artifact
-    .clone()
-    .unwrap_or_else(|| first_artifact_with_extension(&observe_result, "json").unwrap_or_default());
-  let mut page_observations =
-    observations_from_first_json_artifact(page_index, &observe_result, source_artifact)?;
+  let source_artifact =
+    screenshot_artifact.clone().unwrap_or_else(|| first_artifact_with_extension(&observe_result, "json").unwrap_or_default());
+  let mut page_observations = observations_from_first_json_artifact(page_index, &observe_result, source_artifact)?;
   enrich_list_item_observations_with_crops(
     recording,
     runtime,
@@ -743,8 +653,7 @@ fn scan_window_region_page(
     &options,
     &mut page_observations,
   )?;
-  let new_observation_count =
-    count_new_observations(&page_observations, &mut state.known_observation_signatures);
+  let new_observation_count = count_new_observations(&page_observations, &mut state.known_observation_signatures);
   let observation_count = page_observations.len();
   state.observations.extend(page_observations.clone());
 
@@ -788,26 +697,12 @@ fn direction_aware_no_progress_claim(direction: &str) -> CompletenessClaim {
   }
 }
 
-pub fn evaluate_stop_policy(
-  policy: &StopPolicy,
-  progress: &ScanProgress,
-  direction: &str,
-) -> Option<StopDecision> {
+pub fn evaluate_stop_policy(policy: &StopPolicy, progress: &ScanProgress, direction: &str) -> Option<StopDecision> {
   if progress.hook_stop_requested {
-    return Some(stop_decision(
-      StopReason::HookRequestedStop,
-      "scan hook requested stop",
-      progress.page_index,
-      CompletenessClaim::Unknown,
-    ));
+    return Some(stop_decision(StopReason::HookRequestedStop, "scan hook requested stop", progress.page_index, CompletenessClaim::Unknown));
   }
   if progress.match_found {
-    return Some(stop_decision(
-      StopReason::MatchFound,
-      "target match found",
-      progress.page_index,
-      CompletenessClaim::Unknown,
-    ));
+    return Some(stop_decision(StopReason::MatchFound, "target match found", progress.page_index, CompletenessClaim::Unknown));
   }
   if progress.next_section_candidate && matches!(policy, StopPolicy::UntilNextSection { .. }) {
     return Some(stop_decision(
@@ -838,13 +733,7 @@ pub fn evaluate_stop_policy(
       max_pages,
       max_scrolls,
       no_progress_limit,
-    } => bounded_or_no_progress_stop(
-      *max_pages,
-      *max_scrolls,
-      *no_progress_limit,
-      direction,
-      progress,
-    ),
+    } => bounded_or_no_progress_stop(*max_pages, *max_scrolls, *no_progress_limit, direction, progress),
     StopPolicy::UntilNextSection {
       max_pages,
       max_scrolls,
@@ -891,11 +780,7 @@ fn bounded_or_no_progress_stop(
   bounded_stop(max_pages, max_scrolls, progress)
 }
 
-fn bounded_stop(
-  max_pages: usize,
-  max_scrolls: usize,
-  progress: &ScanProgress,
-) -> Option<StopDecision> {
+fn bounded_stop(max_pages: usize, max_scrolls: usize, progress: &ScanProgress) -> Option<StopDecision> {
   if progress.page_index + 1 >= max_pages {
     return Some(stop_decision(
       StopReason::MaxPages,
@@ -915,12 +800,7 @@ fn bounded_stop(
   None
 }
 
-fn stop_decision(
-  reason: StopReason,
-  message: impl Into<String>,
-  page_index: usize,
-  completeness_claim: CompletenessClaim,
-) -> StopDecision {
+fn stop_decision(reason: StopReason, message: impl Into<String>, page_index: usize, completeness_claim: CompletenessClaim) -> StopDecision {
   StopDecision {
     stop_evidence: StopEvidence {
       reason,
@@ -932,12 +812,7 @@ fn stop_decision(
 }
 
 fn error_stop_decision(page_index: usize) -> StopDecision {
-  stop_decision(
-    StopReason::Error,
-    "scan stopped because an orchestration step failed",
-    page_index,
-    CompletenessClaim::Unknown,
-  )
+  stop_decision(StopReason::Error, "scan stopped because an orchestration step failed", page_index, CompletenessClaim::Unknown)
 }
 
 fn scroll_boundary_candidate_for_progress(
@@ -957,10 +832,7 @@ fn scroll_boundary_candidate_for_progress(
   let repeated_overlap_count = repeated_row_band_overlap_count(page_index, observations);
   let screenshot_stable = screenshot_diff_stability.is_some_and(|stability| stability.is_stable());
   let (basis, confidence) = match (repeated_overlap_count >= 2, screenshot_stable) {
-    (true, true) => (
-      "repeated_row_band_overlap+screenshot_diff_stability",
-      "corroborated",
-    ),
+    (true, true) => ("repeated_row_band_overlap+screenshot_diff_stability", "corroborated"),
     (true, false) => ("repeated_row_band_overlap", "corroborated"),
     (false, true) => ("screenshot_diff_stability", "corroborated"),
     (false, false) => ("no_new_observations_after_scroll", "heuristic"),
@@ -976,45 +848,23 @@ fn scroll_boundary_candidate_for_progress(
   })
 }
 
-fn screenshot_diff_stability_for_pages(
-  page_index: usize,
-  pages: &[ScanPageRecord],
-) -> AuvResult<Option<ScreenshotDiffStability>> {
+fn screenshot_diff_stability_for_pages(page_index: usize, pages: &[ScanPageRecord]) -> AuvResult<Option<ScreenshotDiffStability>> {
   if page_index == 0 {
     return Ok(None);
   }
-  let previous_screenshot = pages
-    .iter()
-    .find(|page| page.page_index == page_index - 1)
-    .and_then(|page| page.screenshot_artifact.as_deref());
-  let current_screenshot = pages
-    .iter()
-    .find(|page| page.page_index == page_index)
-    .and_then(|page| page.screenshot_artifact.as_deref());
-  let (Some(previous_screenshot), Some(current_screenshot)) =
-    (previous_screenshot, current_screenshot)
-  else {
+  let previous_screenshot = pages.iter().find(|page| page.page_index == page_index - 1).and_then(|page| page.screenshot_artifact.as_deref());
+  let current_screenshot = pages.iter().find(|page| page.page_index == page_index).and_then(|page| page.screenshot_artifact.as_deref());
+  let (Some(previous_screenshot), Some(current_screenshot)) = (previous_screenshot, current_screenshot) else {
     return Ok(None);
   };
   screenshot_diff_stability(previous_screenshot, current_screenshot).map(Some)
 }
 
-fn screenshot_diff_stability(
-  previous_screenshot: &Path,
-  current_screenshot: &Path,
-) -> AuvResult<ScreenshotDiffStability> {
-  let previous = image::open(previous_screenshot).map_err(|error| {
-    format!(
-      "failed to open previous screenshot {}: {error}",
-      previous_screenshot.display()
-    )
-  })?;
-  let current = image::open(current_screenshot).map_err(|error| {
-    format!(
-      "failed to open current screenshot {}: {error}",
-      current_screenshot.display()
-    )
-  })?;
+fn screenshot_diff_stability(previous_screenshot: &Path, current_screenshot: &Path) -> AuvResult<ScreenshotDiffStability> {
+  let previous = image::open(previous_screenshot)
+    .map_err(|error| format!("failed to open previous screenshot {}: {error}", previous_screenshot.display()))?;
+  let current = image::open(current_screenshot)
+    .map_err(|error| format!("failed to open current screenshot {}: {error}", current_screenshot.display()))?;
 
   let previous = previous.to_rgba8();
   let current = current.to_rgba8();
@@ -1072,34 +922,21 @@ fn screenshot_diff_stability(
   })
 }
 
-fn repeated_row_band_overlap_count(
-  page_index: usize,
-  observations: &[CollectionObservation],
-) -> usize {
+fn repeated_row_band_overlap_count(page_index: usize, observations: &[CollectionObservation]) -> usize {
   if page_index == 0 {
     return 0;
   }
   let previous_page = page_index - 1;
-  let previous = observations
-    .iter()
-    .filter(|observation| observation.page_index == previous_page)
-    .collect::<Vec<_>>();
-  let current = observations
-    .iter()
-    .filter(|observation| observation.page_index == page_index)
-    .collect::<Vec<_>>();
+  let previous = observations.iter().filter(|observation| observation.page_index == previous_page).collect::<Vec<_>>();
+  let current = observations.iter().filter(|observation| observation.page_index == page_index).collect::<Vec<_>>();
   let mut matched_previous = BTreeSet::new();
   let mut overlap_count = 0;
 
   for observation in current {
-    if let Some((previous_index, _)) =
-      previous
-        .iter()
-        .enumerate()
-        .find(|(previous_index, candidate)| {
-          !matched_previous.contains(previous_index)
-            && repeated_row_band_overlap(candidate, observation)
-        })
+    if let Some((previous_index, _)) = previous
+      .iter()
+      .enumerate()
+      .find(|(previous_index, candidate)| !matched_previous.contains(previous_index) && repeated_row_band_overlap(candidate, observation))
     {
       matched_previous.insert(previous_index);
       overlap_count += 1;
@@ -1113,18 +950,8 @@ fn repeated_row_band_overlap(left: &CollectionObservation, right: &CollectionObs
   if !should_merge_adjacent_observations(left, right) {
     return false;
   }
-  rect_overlap_ratio(
-    left.bounds.x,
-    left.bounds.width,
-    right.bounds.x,
-    right.bounds.width,
-  ) >= 0.5
-    && rect_overlap_ratio(
-      left.bounds.y,
-      left.bounds.height,
-      right.bounds.y,
-      right.bounds.height,
-    ) >= 0.6
+  rect_overlap_ratio(left.bounds.x, left.bounds.width, right.bounds.x, right.bounds.width) >= 0.5
+    && rect_overlap_ratio(left.bounds.y, left.bounds.height, right.bounds.y, right.bounds.height) >= 0.6
 }
 
 fn rect_overlap_ratio(start_a: i64, size_a: i64, start_b: i64, size_b: i64) -> f64 {
@@ -1165,16 +992,11 @@ fn invoke_scan_command(
   label: &str,
 ) -> AuvResult<InvokeResult> {
   let registry = auv_cli_invoke::default_registry();
-  let result =
-    auv_cli_invoke::invoke_recorded_in_span(runtime.recording(), &registry, run, root, request)?;
+  let result = auv_cli_invoke::invoke_recorded_in_span(runtime.recording(), &registry, run, root, request)?;
   if result.status == RunStatus::Completed {
     Ok(result)
   } else {
-    Err(
-      result
-        .failure_message
-        .unwrap_or_else(|| format!("{label} command failed")),
-    )
+    Err(result.failure_message.unwrap_or_else(|| format!("{label} command failed")))
   }
 }
 
@@ -1186,12 +1008,7 @@ fn observations_from_first_json_artifact(
   let json_paths = result
     .artifact_paths
     .iter()
-    .filter(|path| {
-      path
-        .extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case("json"))
-    })
+    .filter(|path| path.extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case("json")))
     .cloned()
     .collect::<Vec<_>>();
   if json_paths.is_empty() {
@@ -1207,10 +1024,8 @@ fn observations_from_json_artifacts(
 ) -> AuvResult<Vec<CollectionObservation>> {
   let mut raw_json_artifacts = Vec::with_capacity(json_paths.len());
   for path in json_paths {
-    let raw = fs::read_to_string(path)
-      .map_err(|error| format!("failed to read observe JSON {}: {error}", path.display()))?;
-    let value: Value =
-      serde_json::from_str(&raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
+    let raw = fs::read_to_string(path).map_err(|error| format!("failed to read observe JSON {}: {error}", path.display()))?;
+    let value: Value = serde_json::from_str(&raw).map_err(|error| format!("malformed observe JSON: {error}"))?;
     if has_recognition_result_shape(&value) {
       return observations_from_observe_json(page_index, &raw, source_artifact.to_path_buf());
     }
@@ -1225,22 +1040,14 @@ fn observations_from_json_artifacts(
     }
   }
 
-  Err(last_error.unwrap_or_else(|| {
-    "observe window region did not produce a parseable recognition or rows JSON artifact"
-      .to_string()
-  }))
+  Err(last_error.unwrap_or_else(|| "observe window region did not produce a parseable recognition or rows JSON artifact".to_string()))
 }
 
 fn first_artifact_with_extension(result: &InvokeResult, extension: &str) -> Option<PathBuf> {
   result
     .artifact_paths
     .iter()
-    .find(|path| {
-      path
-        .extension()
-        .and_then(|value| value.to_str())
-        .is_some_and(|value| value.eq_ignore_ascii_case(extension))
-    })
+    .find(|path| path.extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case(extension)))
     .cloned()
 }
 
@@ -1249,21 +1056,12 @@ fn first_artifact_record_with_extension<'a>(
   extension: &str,
 ) -> Option<&'a auv_tracing_driver::trace::ArtifactRecordV1Alpha1> {
   result.artifacts.iter().find(|artifact| {
-    Path::new(&artifact.path)
-      .extension()
-      .and_then(|value| value.to_str())
-      .is_some_and(|value| value.eq_ignore_ascii_case(extension))
+    Path::new(&artifact.path).extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case(extension))
   })
 }
 
-fn count_new_observations(
-  observations: &[CollectionObservation],
-  known_observation_signatures: &mut BTreeSet<String>,
-) -> usize {
-  observations
-    .iter()
-    .filter(|observation| known_observation_signatures.insert(observation_signature(observation)))
-    .count()
+fn count_new_observations(observations: &[CollectionObservation], known_observation_signatures: &mut BTreeSet<String>) -> usize {
+  observations.iter().filter(|observation| known_observation_signatures.insert(observation_signature(observation))).count()
 }
 
 fn observation_signature(observation: &CollectionObservation) -> String {
@@ -1283,30 +1081,18 @@ fn observation_signature(observation: &CollectionObservation) -> String {
     // Use source + stable geometry (x, w, h) without y so a partial-scroll
     // shift does not generate a spurious "new" signature.
     // Known limit: two bands sharing source/x/w/h collide into one signature.
-    let source = observation
-      .attributes
-      .get("source")
-      .map(String::as_str)
-      .unwrap_or("unknown");
-    format!(
-      "visual:{}|x={}|w={}|h={}",
-      source, observation.bounds.x, observation.bounds.width, observation.bounds.height
-    )
+    let source = observation.attributes.get("source").map(String::as_str).unwrap_or("unknown");
+    format!("visual:{}|x={}|w={}|h={}", source, observation.bounds.x, observation.bounds.width, observation.bounds.height)
   }
 }
 
-fn match_found_on_current_page(
-  policy: &StopPolicy,
-  current_page_observations: &[CollectionObservation],
-) -> bool {
+fn match_found_on_current_page(policy: &StopPolicy, current_page_observations: &[CollectionObservation]) -> bool {
   let StopPolicy::UntilMatch { query, .. } = policy else {
     return false;
   };
   let normalized_query = normalize_observation_text(query);
   !normalized_query.is_empty()
-    && current_page_observations
-      .iter()
-      .any(|observation| observation.normalized_text_key.contains(&normalized_query))
+    && current_page_observations.iter().any(|observation| observation.normalized_text_key.contains(&normalized_query))
 }
 
 #[derive(Clone, Debug)]
@@ -1356,48 +1142,31 @@ fn enrich_list_item_observations_with_crops(
     let crop_temp_path = crop_list_item_image(
       screenshot_artifact,
       &observation.bounds,
-      &format!(
-        "scan-page-{:04}-list-item-{:04}",
-        page_index + 1,
-        item_index + 1
-      ),
+      &format!("scan-page-{:04}-list-item-{:04}", page_index + 1, item_index + 1),
     )?;
     crop_jobs.push((observation_index, item_index, crop_temp_path));
   }
 
-  let text_results =
-    ocr_list_item_crops_parallel(&crop_jobs, options.min_confidence, options.max_observations)?;
+  let text_results = ocr_list_item_crops_parallel(&crop_jobs, options.min_confidence, options.max_observations)?;
 
   for (observation_index, item_index, crop_temp_path) in crop_jobs {
     let observation = &mut observations[observation_index];
-    let text_fragments = text_results
-      .get(observation_index)
-      .cloned()
-      .unwrap_or_default();
+    let text_fragments = text_results.get(observation_index).cloned().unwrap_or_default();
     let crop_artifact = recording.stage_artifact_file(
       run,
       root,
       "list-item-crop",
       &crop_temp_path,
-      format!(
-        "scan-page-{:04}-list-item-{:04}.png",
-        page_index + 1,
-        item_index + 1
-      ),
+      format!("scan-page-{:04}-list-item-{:04}.png", page_index + 1, item_index + 1),
       Some("Cropped screenshot for one list item candidate.".to_string()),
     )?;
-    let context_temp_path =
-      write_list_item_context_artifact(observation, &crop_artifact, &text_fragments)?;
+    let context_temp_path = write_list_item_context_artifact(observation, &crop_artifact, &text_fragments)?;
     let context_artifact = recording.stage_artifact_file(
       run,
       root,
       "list-item-context",
       &context_temp_path,
-      format!(
-        "scan-page-{:04}-list-item-{:04}-context.json",
-        page_index + 1,
-        item_index + 1
-      ),
+      format!("scan-page-{:04}-list-item-{:04}-context.json", page_index + 1, item_index + 1),
       Some("Typed context for one list item candidate.".to_string()),
     )?;
     let _ = fs::remove_file(&crop_temp_path);
@@ -1426,16 +1195,13 @@ fn ocr_list_item_crops_parallel(
     let crop_path = crop_path.clone();
     let observation_index = *observation_index;
     handles.push(std::thread::spawn(move || {
-      ocr_text_fragments_in_crop_image(&crop_path, min_confidence, max_observations)
-        .map(|fragments| (observation_index, fragments))
+      ocr_text_fragments_in_crop_image(&crop_path, min_confidence, max_observations).map(|fragments| (observation_index, fragments))
     }));
   }
 
   let mut results = vec![Vec::new(); crop_jobs.len()];
   for handle in handles {
-    let (observation_index, fragments) = handle
-      .join()
-      .map_err(|_| "list item crop OCR worker panicked".to_string())??;
+    let (observation_index, fragments) = handle.join().map_err(|_| "list item crop OCR worker panicked".to_string())??;
     if let Some(slot) = results.get_mut(observation_index) {
       *slot = fragments;
     }
@@ -1443,34 +1209,10 @@ fn ocr_list_item_crops_parallel(
   Ok(results)
 }
 
-fn ocr_text_fragments_in_crop_image(
-  image_path: &Path,
-  min_confidence: f64,
-  max_observations: i64,
-) -> AuvResult<Vec<String>> {
-  let capture = auv_driver_macos::native::ocr::find_text(
-    image_path,
-    "",
-    false,
-    false,
-    max_observations.min(64),
-    &[],
-    None,
-    None,
-  )?;
-  let mut matches = capture
-    .snapshot
-    .matches
-    .into_iter()
-    .filter(|matched| matched.confidence >= min_confidence)
-    .collect::<Vec<_>>();
-  matches.sort_by(|left, right| {
-    left
-      .bounds
-      .y
-      .cmp(&right.bounds.y)
-      .then_with(|| left.bounds.x.cmp(&right.bounds.x))
-  });
+fn ocr_text_fragments_in_crop_image(image_path: &Path, min_confidence: f64, max_observations: i64) -> AuvResult<Vec<String>> {
+  let capture = auv_driver_macos::native::ocr::find_text(image_path, "", false, false, max_observations.min(64), &[], None, None)?;
+  let mut matches = capture.snapshot.matches.into_iter().filter(|matched| matched.confidence >= min_confidence).collect::<Vec<_>>();
+  matches.sort_by(|left, right| left.bounds.y.cmp(&right.bounds.y).then_with(|| left.bounds.x.cmp(&right.bounds.x)));
   let mut fragments = Vec::new();
   for matched in matches {
     if !fragments.iter().any(|fragment| fragment == &matched.text) {
@@ -1481,51 +1223,23 @@ fn ocr_text_fragments_in_crop_image(
 }
 
 fn observation_item_index(observation: &CollectionObservation) -> usize {
-  observation
-    .attributes
-    .get("item_index")
-    .and_then(|value| value.parse::<usize>().ok())
-    .unwrap_or(0)
+  observation.attributes.get("item_index").and_then(|value| value.parse::<usize>().ok()).unwrap_or(0)
 }
 
 fn crop_list_item_image(source: &Path, bounds: &ScanRect, label: &str) -> AuvResult<PathBuf> {
-  let image = image::open(source).map_err(|error| {
-    format!(
-      "failed to open list item source image {}: {error}",
-      source.display()
-    )
-  })?;
+  let image = image::open(source).map_err(|error| format!("failed to open list item source image {}: {error}", source.display()))?;
   let image_width = image.width() as i64;
   let image_height = image.height() as i64;
   let crop = clamped_crop_rect(bounds, image_width, image_height)?;
-  let cropped = image.crop_imm(
-    crop.x as u32,
-    crop.y as u32,
-    crop.width as u32,
-    crop.height as u32,
-  );
-  let path = env::temp_dir().join(format!(
-    "auv-{}-{}-{}.png",
-    sanitize_scan_artifact_component(label),
-    process::id(),
-    now_millis()
-  ));
-  cropped
-    .save(&path)
-    .map_err(|error| format!("failed to write list item crop {}: {error}", path.display()))?;
+  let cropped = image.crop_imm(crop.x as u32, crop.y as u32, crop.width as u32, crop.height as u32);
+  let path = env::temp_dir().join(format!("auv-{}-{}-{}.png", sanitize_scan_artifact_component(label), process::id(), now_millis()));
+  cropped.save(&path).map_err(|error| format!("failed to write list item crop {}: {error}", path.display()))?;
   Ok(path)
 }
 
-fn clamped_crop_rect(
-  bounds: &ScanRect,
-  image_width: i64,
-  image_height: i64,
-) -> AuvResult<ScanRect> {
+fn clamped_crop_rect(bounds: &ScanRect, image_width: i64, image_height: i64) -> AuvResult<ScanRect> {
   if image_width <= 0 || image_height <= 0 {
-    return Err(format!(
-      "invalid source image dimensions {}x{} for list item crop",
-      image_width, image_height
-    ));
+    return Err(format!("invalid source image dimensions {}x{} for list item crop", image_width, image_height));
   }
   let x = bounds.x.clamp(0, image_width.saturating_sub(1));
   let y = bounds.y.clamp(0, image_height.saturating_sub(1));
@@ -1551,14 +1265,8 @@ fn write_list_item_context_artifact(
     now_millis()
   ));
   let payload = build_list_item_context_payload(observation, crop_artifact, text_fragments);
-  let rendered = serde_json::to_string_pretty(&payload)
-    .map_err(|error| format!("failed to render list item context JSON: {error}"))?;
-  fs::write(&path, format!("{rendered}\n")).map_err(|error| {
-    format!(
-      "failed to write list item context {}: {error}",
-      path.display()
-    )
-  })?;
+  let rendered = serde_json::to_string_pretty(&payload).map_err(|error| format!("failed to render list item context JSON: {error}"))?;
+  fs::write(&path, format!("{rendered}\n")).map_err(|error| format!("failed to write list item context {}: {error}", path.display()))?;
   Ok(path)
 }
 
@@ -1572,10 +1280,7 @@ fn build_list_item_context_payload(
   if !raw_text.is_empty() {
     attributes.insert("text_fragments".to_string(), raw_text.clone());
   }
-  attributes.insert(
-    "ocr_strategy".to_string(),
-    ListItemCandidateContextArtifact::OCR_STRATEGY.to_string(),
-  );
+  attributes.insert("ocr_strategy".to_string(), ListItemCandidateContextArtifact::OCR_STRATEGY.to_string());
 
   ListItemCandidateContextArtifact {
     schema: ListItemCandidateContextArtifact::SCHEMA.to_string(),
@@ -1591,28 +1296,15 @@ fn build_list_item_context_payload(
   }
 }
 
-fn apply_list_item_crop_ocr_result(
-  observation: &mut CollectionObservation,
-  result: ListItemCropOcrResult,
-) {
-  observation.attributes.insert(
-    "crop_artifact".to_string(),
-    result.crop_artifact.display().to_string(),
-  );
-  observation.attributes.insert(
-    "context_artifact".to_string(),
-    result.context_artifact.display().to_string(),
-  );
-  observation
-    .attributes
-    .insert("ocr_strategy".to_string(), result.strategy);
+fn apply_list_item_crop_ocr_result(observation: &mut CollectionObservation, result: ListItemCropOcrResult) {
+  observation.attributes.insert("crop_artifact".to_string(), result.crop_artifact.display().to_string());
+  observation.attributes.insert("context_artifact".to_string(), result.context_artifact.display().to_string());
+  observation.attributes.insert("ocr_strategy".to_string(), result.strategy);
   if !result.text_fragments.is_empty() {
     let raw_text = joined_text_fragments(&result.text_fragments);
     observation.raw_text = raw_text.clone();
     observation.normalized_text_key = normalize_observation_text(&raw_text);
-    observation
-      .attributes
-      .insert("text_fragments".to_string(), raw_text);
+    observation.attributes.insert("text_fragments".to_string(), raw_text);
   }
 }
 
@@ -1664,16 +1356,9 @@ fn stage_scan_artifact(
 }
 
 fn write_scan_artifact(artifact: &ScrollScanArtifact) -> AuvResult<PathBuf> {
-  let path = env::temp_dir().join(format!(
-    "auv-scroll-scan-{}-{}-{}.json",
-    artifact.scan_id,
-    process::id(),
-    now_millis()
-  ));
-  let rendered = serde_json::to_string_pretty(artifact)
-    .map_err(|error| format!("failed to render scan artifact JSON: {error}"))?;
-  fs::write(&path, format!("{rendered}\n"))
-    .map_err(|error| format!("failed to write scan artifact {}: {error}", path.display()))?;
+  let path = env::temp_dir().join(format!("auv-scroll-scan-{}-{}-{}.json", artifact.scan_id, process::id(), now_millis()));
+  let rendered = serde_json::to_string_pretty(artifact).map_err(|error| format!("failed to render scan artifact JSON: {error}"))?;
+  fs::write(&path, format!("{rendered}\n")).map_err(|error| format!("failed to write scan artifact {}: {error}", path.display()))?;
   Ok(path)
 }
 
@@ -1794,40 +1479,21 @@ mod tests {
     let clusters = conservative_merge_observations(&observations);
 
     assert_eq!(clusters.len(), 1);
-    assert_eq!(
-      clusters[0].observation_ids,
-      vec!["obs_0001".to_string(), "obs_0002".to_string()]
-    );
+    assert_eq!(clusters[0].observation_ids, vec!["obs_0001".to_string(), "obs_0002".to_string()]);
     assert_eq!(clusters[0].merge_reason, "same_text_adjacent_page_near_y");
   }
 
   #[test]
   fn conservative_merge_does_not_join_adjacent_pages_with_different_recognized_items() {
     let mut left = observation("obs_0001", 0, "Repeat", 120);
-    left.attributes.insert(
-      "recognized_item_id".to_string(),
-      "recognized-row-1".to_string(),
-    );
-    left.attributes.insert(
-      "recognition_id".to_string(),
-      "window_region_demo".to_string(),
-    );
-    left
-      .attributes
-      .insert("row_candidate_index".to_string(), "2".to_string());
+    left.attributes.insert("recognized_item_id".to_string(), "recognized-row-1".to_string());
+    left.attributes.insert("recognition_id".to_string(), "window_region_demo".to_string());
+    left.attributes.insert("row_candidate_index".to_string(), "2".to_string());
 
     let mut right = observation("obs_0002", 1, "Repeat", 118);
-    right.attributes.insert(
-      "recognized_item_id".to_string(),
-      "recognized-row-2".to_string(),
-    );
-    right.attributes.insert(
-      "recognition_id".to_string(),
-      "window_region_demo".to_string(),
-    );
-    right
-      .attributes
-      .insert("row_candidate_index".to_string(), "3".to_string());
+    right.attributes.insert("recognized_item_id".to_string(), "recognized-row-2".to_string());
+    right.attributes.insert("recognition_id".to_string(), "window_region_demo".to_string());
+    right.attributes.insert("row_candidate_index".to_string(), "3".to_string());
 
     let clusters = conservative_merge_observations(&[left, right]);
 
@@ -1839,42 +1505,20 @@ mod tests {
   #[test]
   fn conservative_merge_prefers_recognized_item_identity_over_text_y_heuristic() {
     let mut left = observation("obs_0001", 0, "Repeat", 120);
-    left.attributes.insert(
-      "recognized_item_id".to_string(),
-      "recognized-row-1".to_string(),
-    );
-    left.attributes.insert(
-      "recognition_id".to_string(),
-      "window_region_demo".to_string(),
-    );
-    left
-      .attributes
-      .insert("row_candidate_index".to_string(), "2".to_string());
+    left.attributes.insert("recognized_item_id".to_string(), "recognized-row-1".to_string());
+    left.attributes.insert("recognition_id".to_string(), "window_region_demo".to_string());
+    left.attributes.insert("row_candidate_index".to_string(), "2".to_string());
 
     let mut right = observation("obs_0002", 1, "Repeat", 152);
-    right.attributes.insert(
-      "recognized_item_id".to_string(),
-      "recognized-row-1".to_string(),
-    );
-    right.attributes.insert(
-      "recognition_id".to_string(),
-      "window_region_demo".to_string(),
-    );
-    right
-      .attributes
-      .insert("row_candidate_index".to_string(), "2".to_string());
+    right.attributes.insert("recognized_item_id".to_string(), "recognized-row-1".to_string());
+    right.attributes.insert("recognition_id".to_string(), "window_region_demo".to_string());
+    right.attributes.insert("row_candidate_index".to_string(), "2".to_string());
 
     let clusters = conservative_merge_observations(&[left, right]);
 
     assert_eq!(clusters.len(), 1);
-    assert_eq!(
-      clusters[0].observation_ids,
-      vec!["obs_0001".to_string(), "obs_0002".to_string()]
-    );
-    assert_eq!(
-      clusters[0].merge_reason,
-      "same_recognized_item_adjacent_page"
-    );
+    assert_eq!(clusters[0].observation_ids, vec!["obs_0001".to_string(), "obs_0002".to_string()]);
+    assert_eq!(clusters[0].merge_reason, "same_recognized_item_adjacent_page");
   }
 
   #[test]
@@ -1897,10 +1541,7 @@ mod tests {
       "down",
     );
 
-    assert_eq!(
-      decision.expect("stop expected").completeness_claim,
-      CompletenessClaim::PartialMaxPages
-    );
+    assert_eq!(decision.expect("stop expected").completeness_claim, CompletenessClaim::PartialMaxPages);
   }
 
   #[test]
@@ -1926,17 +1567,9 @@ mod tests {
     .expect("stop expected");
 
     assert_eq!(decision.stop_evidence.reason, StopReason::NoProgressLimit);
-    assert_eq!(
-      decision.completeness_claim,
-      CompletenessClaim::CompleteByNoVisualProgressDown
-    );
+    assert_eq!(decision.completeness_claim, CompletenessClaim::CompleteByNoVisualProgressDown);
     assert!(decision.stop_evidence.message.contains("scrolling down"));
-    assert!(
-      decision
-        .stop_evidence
-        .message
-        .contains("no_progress_limit=2")
-    );
+    assert!(decision.stop_evidence.message.contains("no_progress_limit=2"));
   }
 
   #[test]
@@ -1962,17 +1595,13 @@ mod tests {
     .expect("stop expected");
 
     assert_eq!(decision.stop_evidence.reason, StopReason::NoProgressLimit);
-    assert_eq!(
-      decision.completeness_claim,
-      CompletenessClaim::CompleteByNoVisualProgressUp
-    );
+    assert_eq!(decision.completeness_claim, CompletenessClaim::CompleteByNoVisualProgressUp);
     assert!(decision.stop_evidence.message.contains("scrolling up"));
   }
 
   #[test]
   fn scroll_boundary_candidate_maps_direction_to_boundary() {
-    let candidate = scroll_boundary_candidate_for_progress("up", 2, 2, 1, 0, &[], None)
-      .expect("boundary candidate");
+    let candidate = scroll_boundary_candidate_for_progress("up", 2, 2, 1, 0, &[], None).expect("boundary candidate");
 
     assert_eq!(candidate.boundary, ScrollBoundary::Top);
     assert_eq!(candidate.direction, "up");
@@ -1991,8 +1620,7 @@ mod tests {
   fn scroll_boundary_candidate_uses_corroborated_basis_for_downward_repeated_row_overlap() {
     let observations = repeated_overlap_page_observations();
 
-    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, None)
-      .expect("boundary candidate");
+    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, None).expect("boundary candidate");
 
     assert_eq!(candidate.boundary, ScrollBoundary::Bottom);
     assert_eq!(candidate.basis, "repeated_row_band_overlap");
@@ -2003,8 +1631,7 @@ mod tests {
   fn scroll_boundary_candidate_uses_corroborated_basis_for_upward_repeated_row_overlap() {
     let observations = repeated_overlap_page_observations();
 
-    let candidate = scroll_boundary_candidate_for_progress("up", 1, 1, 1, 0, &observations, None)
-      .expect("boundary candidate");
+    let candidate = scroll_boundary_candidate_for_progress("up", 1, 1, 1, 0, &observations, None).expect("boundary candidate");
 
     assert_eq!(candidate.boundary, ScrollBoundary::Top);
     assert_eq!(candidate.basis, "repeated_row_band_overlap");
@@ -2018,8 +1645,7 @@ mod tests {
       observation("obs_0002", 1, "Repeat A", 118),
     ];
 
-    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, None)
-      .expect("boundary candidate");
+    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, None).expect("boundary candidate");
 
     assert_eq!(candidate.basis, "no_new_observations_after_scroll");
     assert_eq!(candidate.confidence, "heuristic");
@@ -2037,16 +1663,8 @@ mod tests {
       .expect("screenshot diff should compare")
       .expect("adjacent screenshot pair should exist");
 
-    let candidate = scroll_boundary_candidate_for_progress(
-      "down",
-      1,
-      1,
-      1,
-      0,
-      &[],
-      Some(&screenshot_diff_stability),
-    )
-    .expect("boundary candidate");
+    let candidate =
+      scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &[], Some(&screenshot_diff_stability)).expect("boundary candidate");
 
     assert!(screenshot_diff_stability.is_stable());
     assert_eq!(candidate.basis, "screenshot_diff_stability");
@@ -2069,21 +1687,10 @@ mod tests {
       .expect("screenshot diff should compare")
       .expect("adjacent screenshot pair should exist");
 
-    let candidate = scroll_boundary_candidate_for_progress(
-      "down",
-      1,
-      1,
-      1,
-      0,
-      &observations,
-      Some(&screenshot_diff_stability),
-    )
-    .expect("boundary candidate");
+    let candidate = scroll_boundary_candidate_for_progress("down", 1, 1, 1, 0, &observations, Some(&screenshot_diff_stability))
+      .expect("boundary candidate");
 
-    assert_eq!(
-      candidate.basis,
-      "repeated_row_band_overlap+screenshot_diff_stability"
-    );
+    assert_eq!(candidate.basis, "repeated_row_band_overlap+screenshot_diff_stability");
     assert_eq!(candidate.confidence, "corroborated");
 
     let _ = fs::remove_file(screenshot_a);
@@ -2106,32 +1713,16 @@ mod tests {
         hook_stop_requested: false,
         match_found: false,
         next_section_candidate: false,
-        scroll_boundary_candidate: scroll_boundary_candidate_for_progress(
-          "down",
-          2,
-          2,
-          1,
-          0,
-          &[],
-          None,
-        ),
+        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[], None),
       },
       "down",
     )
     .expect("boundary stop expected");
 
     assert_eq!(decision.stop_evidence.reason, StopReason::ReachedBoundary);
-    assert_eq!(
-      decision.completeness_claim,
-      CompletenessClaim::CompleteByReachedBoundary
-    );
+    assert_eq!(decision.completeness_claim, CompletenessClaim::CompleteByReachedBoundary);
     assert!(decision.stop_evidence.message.contains("bottom"));
-    assert!(
-      decision
-        .stop_evidence
-        .message
-        .contains("no_new_observations_after_scroll")
-    );
+    assert!(decision.stop_evidence.message.contains("no_new_observations_after_scroll"));
   }
 
   #[test]
@@ -2149,15 +1740,7 @@ mod tests {
         hook_stop_requested: false,
         match_found: false,
         next_section_candidate: false,
-        scroll_boundary_candidate: scroll_boundary_candidate_for_progress(
-          "down",
-          2,
-          2,
-          1,
-          0,
-          &[],
-          None,
-        ),
+        scroll_boundary_candidate: scroll_boundary_candidate_for_progress("down", 2, 2, 1, 0, &[], None),
       },
       "down",
     );
@@ -2189,15 +1772,8 @@ mod tests {
     let old_accumulated_observations = vec![observation("obs_0001", 0, "needle", 10)];
     let current_page_observations = vec![observation("obs_0002", 1, "other", 80)];
 
-    assert!(
-      old_accumulated_observations
-        .iter()
-        .any(|observation| observation.normalized_text_key.contains("needle"))
-    );
-    assert!(!match_found_on_current_page(
-      &policy,
-      &current_page_observations
-    ));
+    assert!(old_accumulated_observations.iter().any(|observation| observation.normalized_text_key.contains("needle")));
+    assert!(!match_found_on_current_page(&policy, &current_page_observations));
   }
 
   #[test]
@@ -2217,23 +1793,13 @@ mod tests {
     ]
   }"#;
 
-    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
-      .expect("parse observations");
+    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png")).expect("parse observations");
 
     assert_eq!(observations.len(), 1);
     assert_eq!(observations[0].raw_text, "Alpha");
     assert_eq!(observations[0].normalized_text_key, "alpha");
-    assert_eq!(
-      observations[0].attributes.get("source").map(String::as_str),
-      Some("visual-bands+ocr-text")
-    );
-    assert_eq!(
-      observations[0]
-        .attributes
-        .get("text_fragments")
-        .map(String::as_str),
-      Some("Alpha")
-    );
+    assert_eq!(observations[0].attributes.get("source").map(String::as_str), Some("visual-bands+ocr-text"));
+    assert_eq!(observations[0].attributes.get("text_fragments").map(String::as_str), Some("Alpha"));
   }
 
   #[test]
@@ -2270,22 +1836,12 @@ mod tests {
     ]
   }"#;
 
-    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
-      .expect("parse observations");
+    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png")).expect("parse observations");
 
     assert_eq!(observations.len(), 2);
     assert_eq!(observations[0].raw_text, "Whisper of time");
-    assert_eq!(
-      observations[0]
-        .attributes
-        .get("row_candidate_index")
-        .map(String::as_str),
-      Some("2")
-    );
-    assert_eq!(
-      observations[0].attributes.get("source").map(String::as_str),
-      Some("row_filter")
-    );
+    assert_eq!(observations[0].attributes.get("row_candidate_index").map(String::as_str), Some("2"));
+    assert_eq!(observations[0].attributes.get("source").map(String::as_str), Some("row_filter"));
   }
 
   #[test]
@@ -2350,71 +1906,19 @@ mod tests {
     "known_limits": []
   }"#;
 
-    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
-      .expect("parse recognition observations");
+    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png")).expect("parse recognition observations");
 
     assert_eq!(observations.len(), 2);
     assert_eq!(observations[0].raw_text, "Whisper of time");
-    assert_eq!(
-      observations[0]
-        .attributes
-        .get("recognition_id")
-        .map(String::as_str),
-      Some("window_region_demo")
-    );
-    assert_eq!(
-      observations[0]
-        .attributes
-        .get("recognized_item_id")
-        .map(String::as_str),
-      Some("row#1")
-    );
-    assert_eq!(
-      observations[0]
-        .attributes
-        .get("recognition_source")
-        .map(String::as_str),
-      Some("visual_row")
-    );
-    assert_eq!(
-      observations[0]
-        .attributes
-        .get("recognition_surface")
-        .map(String::as_str),
-      Some("region")
-    );
-    assert_eq!(
-      observations[0]
-        .attributes
-        .get("row_candidate_index")
-        .map(String::as_str),
-      Some("2")
-    );
-    assert_eq!(
-      observations[0].attributes.get("source").map(String::as_str),
-      Some("row_filter")
-    );
-    assert_eq!(
-      observations[0]
-        .attributes
-        .get("provider_score")
-        .map(String::as_str),
-      Some("0.84")
-    );
-    assert_eq!(
-      observations[1]
-        .attributes
-        .get("recognized_item_id")
-        .map(String::as_str),
-      Some("row#2")
-    );
-    assert_eq!(
-      observations[1]
-        .attributes
-        .get("provider_score")
-        .map(String::as_str),
-      Some("0.31")
-    );
+    assert_eq!(observations[0].attributes.get("recognition_id").map(String::as_str), Some("window_region_demo"));
+    assert_eq!(observations[0].attributes.get("recognized_item_id").map(String::as_str), Some("row#1"));
+    assert_eq!(observations[0].attributes.get("recognition_source").map(String::as_str), Some("visual_row"));
+    assert_eq!(observations[0].attributes.get("recognition_surface").map(String::as_str), Some("region"));
+    assert_eq!(observations[0].attributes.get("row_candidate_index").map(String::as_str), Some("2"));
+    assert_eq!(observations[0].attributes.get("source").map(String::as_str), Some("row_filter"));
+    assert_eq!(observations[0].attributes.get("provider_score").map(String::as_str), Some("0.84"));
+    assert_eq!(observations[1].attributes.get("recognized_item_id").map(String::as_str), Some("row#2"));
+    assert_eq!(observations[1].attributes.get("provider_score").map(String::as_str), Some("0.31"));
   }
 
   #[test]
@@ -2492,25 +1996,16 @@ mod tests {
     let legacy_path = write_temp_json_artifact("legacy", legacy_raw);
     let recognition_path = write_temp_json_artifact("recognition", recognition_raw);
 
-    let observations = observations_from_json_artifacts(
-      0,
-      &[legacy_path.clone(), recognition_path.clone()],
-      Path::new("artifacts/page.png"),
-    )
-    .expect("recognition should win over legacy rows");
+    let observations =
+      observations_from_json_artifacts(0, &[legacy_path.clone(), recognition_path.clone()], Path::new("artifacts/page.png"))
+        .expect("recognition should win over legacy rows");
 
     let _ = fs::remove_file(legacy_path);
     let _ = fs::remove_file(recognition_path);
 
     assert_eq!(observations.len(), 1);
     assert_eq!(observations[0].raw_text, "Preferred Row");
-    assert_eq!(
-      observations[0]
-        .attributes
-        .get("recognized_item_id")
-        .map(String::as_str),
-      Some("row#1")
-    );
+    assert_eq!(observations[0].attributes.get("recognized_item_id").map(String::as_str), Some("row#1"));
   }
 
   #[test]
@@ -2587,13 +2082,8 @@ mod tests {
     "known_limits": []
   }"#;
 
-    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
-      .expect("parse recognition observations");
-    let nodes = surface_nodes_from_observations(
-      &RunId::new("run_scan"),
-      &SpanId::new("span_scan"),
-      &observations,
-    );
+    let observations = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png")).expect("parse recognition observations");
+    let nodes = surface_nodes_from_observations(&RunId::new("run_scan"), &SpanId::new("span_scan"), &observations);
 
     let artifact = ScrollScanArtifact {
       scan_id: "scan_test".to_string(),
@@ -2674,22 +2164,15 @@ mod tests {
 
     let error = observations_from_observe_json(0, raw, PathBuf::from("artifacts/page.png"))
       .expect_err("malformed recognition result should surface a deserialize error");
-    assert!(
-      error.contains("recognition result"),
-      "error should identify the failing layer: {error}"
-    );
-    assert!(
-      !error.contains("missing rows array"),
-      "should not fall back to legacy path's misleading error: {error}"
-    );
+    assert!(error.contains("recognition result"), "error should identify the failing layer: {error}");
+    assert!(!error.contains("missing rows array"), "should not fall back to legacy path's misleading error: {error}");
   }
 
   #[test]
   fn has_recognition_result_shape_requires_both_discriminators() {
     let only_id: Value = serde_json::from_str(r#"{"recognition_id":"x"}"#).expect("parse");
     let only_source: Value = serde_json::from_str(r#"{"source":"ocr_row"}"#).expect("parse");
-    let both: Value =
-      serde_json::from_str(r#"{"recognition_id":"x","source":"ocr_row"}"#).expect("parse");
+    let both: Value = serde_json::from_str(r#"{"recognition_id":"x","source":"ocr_row"}"#).expect("parse");
     let neither: Value = serde_json::from_str(r#"{"rows":[]}"#).expect("parse");
 
     assert!(!has_recognition_result_shape(&only_id));
@@ -2702,12 +2185,8 @@ mod tests {
   fn count_new_observations_tracks_visual_only_rows_once() {
     let mut known = BTreeSet::new();
     let mut visual = observation("obs_0001_0001", 0, "", 120);
-    visual
-      .attributes
-      .insert("source".to_string(), "visual-bands".to_string());
-    visual
-      .attributes
-      .insert("row_index".to_string(), "0".to_string());
+    visual.attributes.insert("source".to_string(), "visual-bands".to_string());
+    visual.attributes.insert("row_index".to_string(), "0".to_string());
 
     assert_eq!(count_new_observations(&[visual.clone()], &mut known), 1);
     assert_eq!(count_new_observations(&[visual], &mut known), 0);
@@ -2720,8 +2199,7 @@ mod tests {
     let runtime = scroll_scan_test_runtime(project_root.clone(), store_root.clone());
     let options = bounded_scan_options();
 
-    let error = scan_window_region(&runtime, options)
-      .expect_err("scroll scan should wait for a typed observe-region invoke implementation");
+    let error = scan_window_region(&runtime, options).expect_err("scroll scan should wait for a typed observe-region invoke implementation");
 
     assert!(error.contains("window.observeRegion"));
     assert!(error.contains("typed window region observation API"));
@@ -2733,9 +2211,7 @@ mod tests {
   #[test]
   fn crop_ocr_enrichment_writes_text_and_artifact_context() {
     let mut observation = observation("obs_0001_0001", 0, "", 120);
-    observation
-      .attributes
-      .insert("item_index".to_string(), "2".to_string());
+    observation.attributes.insert("item_index".to_string(), "2".to_string());
 
     let enrichment = ListItemCropOcrResult {
       crop_artifact: PathBuf::from("artifacts/list-item-0003.png"),
@@ -2748,49 +2224,22 @@ mod tests {
 
     assert_eq!(observation.raw_text, "Song A | Artist B");
     assert_eq!(observation.normalized_text_key, "song a | artist b");
-    assert_eq!(
-      observation
-        .attributes
-        .get("crop_artifact")
-        .map(String::as_str),
-      Some("artifacts/list-item-0003.png")
-    );
-    assert_eq!(
-      observation
-        .attributes
-        .get("context_artifact")
-        .map(String::as_str),
-      Some("artifacts/list-item-0003-context.json")
-    );
-    assert_eq!(
-      observation
-        .attributes
-        .get("text_fragments")
-        .map(String::as_str),
-      Some("Song A | Artist B")
-    );
+    assert_eq!(observation.attributes.get("crop_artifact").map(String::as_str), Some("artifacts/list-item-0003.png"));
+    assert_eq!(observation.attributes.get("context_artifact").map(String::as_str), Some("artifacts/list-item-0003-context.json"));
+    assert_eq!(observation.attributes.get("text_fragments").map(String::as_str), Some("Song A | Artist B"));
   }
 
   #[test]
   fn list_item_context_payload_uses_crop_ocr_fragments_as_single_text_source() {
     let mut observation = observation("obs_0001_0001", 0, "old observe text", 120);
-    observation
-      .attributes
-      .insert("text_fragments".to_string(), "old observe text".to_string());
+    observation.attributes.insert("text_fragments".to_string(), "old observe text".to_string());
     let fragments = vec!["Song A".to_string(), "Artist B".to_string()];
 
-    let payload = build_list_item_context_payload(
-      &observation,
-      Path::new("artifacts/list-item-0001.png"),
-      &fragments,
-    );
+    let payload = build_list_item_context_payload(&observation, Path::new("artifacts/list-item-0001.png"), &fragments);
 
     assert_eq!(payload.raw_text, "Song A | Artist B");
     assert_eq!(payload.text_fragments, fragments);
-    assert_eq!(
-      payload.attributes.get("text_fragments").map(String::as_str),
-      Some("Song A | Artist B")
-    );
+    assert_eq!(payload.attributes.get("text_fragments").map(String::as_str), Some("Song A | Artist B"));
   }
 
   fn observation(id: &str, page_index: usize, text: &str, y: i64) -> CollectionObservation {
@@ -2822,20 +2271,14 @@ mod tests {
 
   fn write_temp_json_artifact(label: &str, raw: &str) -> PathBuf {
     let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = env::temp_dir().join(format!(
-      "auv-scroll-scan-{label}-{}-{counter}.json",
-      process::id()
-    ));
+    let path = env::temp_dir().join(format!("auv-scroll-scan-{label}-{}-{counter}.json", process::id()));
     fs::write(&path, raw).expect("write temp json artifact");
     path
   }
 
   fn write_temp_png_artifact(label: &str, rgba: [u8; 4]) -> PathBuf {
     let counter = TEST_ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let path = env::temp_dir().join(format!(
-      "auv-scroll-scan-{label}-{}-{counter}.png",
-      process::id()
-    ));
+    let path = env::temp_dir().join(format!("auv-scroll-scan-{label}-{}-{counter}.png", process::id()));
     let image = RgbaImage::from_pixel(24, 24, Rgba(rgba));
     image.save(&path).expect("write temp png artifact");
     path
@@ -2877,10 +2320,7 @@ mod tests {
   }
 
   fn scroll_scan_test_runtime(project_root: PathBuf, store_root: PathBuf) -> Runtime {
-    Runtime::new(
-      project_root,
-      LocalStore::new(store_root).expect("store should initialize"),
-    )
+    Runtime::new(project_root, LocalStore::new(store_root).expect("store should initialize"))
   }
 
   fn temp_dir(label: &str) -> PathBuf {

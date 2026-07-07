@@ -3,12 +3,10 @@ use std::path::Path;
 use auv_driver::geometry::WindowPoint;
 
 use crate::training_result_spatial_query::{
-  TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest,
-  TrainingResultSpatialQueryStatus,
+  TrainingResultSpatialQueryKind, TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryStatus,
 };
 use crate::training_result_spatial_query_action::{
-  TrainingResultSpatialQueryActionEligibility, TrainingResultSpatialQueryActionReadiness,
-  derive_action_readiness,
+  TrainingResultSpatialQueryActionEligibility, TrainingResultSpatialQueryActionReadiness, derive_action_readiness,
 };
 use crate::types::BlockPosition;
 
@@ -35,11 +33,7 @@ pub struct QueryActionWiringOutcome {
 }
 
 pub trait QueryLiveClickExecutor {
-  fn attempt_click(
-    &self,
-    window_point: WindowPoint,
-    lineage: &QueryActionWiringLineage,
-  ) -> Result<String, String>;
+  fn attempt_click(&self, window_point: WindowPoint, lineage: &QueryActionWiringLineage) -> Result<String, String>;
 }
 
 pub fn wire_query_manifest_to_action(
@@ -65,9 +59,7 @@ fn wire_readiness_to_action(
         return QueryActionWiringOutcome {
           attempted: false,
           action_eligibility: readiness.eligibility,
-          refusal_reason: Some(
-            "click_ready eligibility missing window_point; defensive refusal".to_string(),
-          ),
+          refusal_reason: Some("click_ready eligibility missing window_point; defensive refusal".to_string()),
           window_point: None,
           click_summary: None,
           known_limits,
@@ -93,15 +85,16 @@ fn wire_readiness_to_action(
         },
       }
     }
-    TrainingResultSpatialQueryActionEligibility::AnswerNonClickable
-    | TrainingResultSpatialQueryActionEligibility::NotConsumable => QueryActionWiringOutcome {
-      attempted: false,
-      action_eligibility: readiness.eligibility,
-      refusal_reason: readiness.refusal_reason.clone(),
-      window_point: readiness.window_point,
-      click_summary: None,
-      known_limits,
-    },
+    TrainingResultSpatialQueryActionEligibility::AnswerNonClickable | TrainingResultSpatialQueryActionEligibility::NotConsumable => {
+      QueryActionWiringOutcome {
+        attempted: false,
+        action_eligibility: readiness.eligibility,
+        refusal_reason: readiness.refusal_reason.clone(),
+        window_point: readiness.window_point,
+        click_summary: None,
+        known_limits,
+      }
+    }
   }
 }
 
@@ -145,21 +138,12 @@ mod tests {
   }
 
   impl QueryLiveClickExecutor for CountingExecutor {
-    fn attempt_click(
-      &self,
-      _window_point: WindowPoint,
-      _lineage: &QueryActionWiringLineage,
-    ) -> Result<String, String> {
+    fn attempt_click(&self, _window_point: WindowPoint, _lineage: &QueryActionWiringLineage) -> Result<String, String> {
       self.calls.set(self.calls.get() + 1);
       if let Some(error) = &self.error {
         return Err(error.clone());
       }
-      Ok(
-        self
-          .summary
-          .clone()
-          .unwrap_or_else(|| "clicked".to_string()),
-      )
+      Ok(self.summary.clone().unwrap_or_else(|| "clicked".to_string()))
     }
   }
 
@@ -210,22 +194,11 @@ mod tests {
 
     assert_eq!(executor.calls.get(), 1);
     assert!(outcome.attempted);
-    assert_eq!(
-      outcome.action_eligibility,
-      TrainingResultSpatialQueryActionEligibility::ClickReady
-    );
+    assert_eq!(outcome.action_eligibility, TrainingResultSpatialQueryActionEligibility::ClickReady);
     assert_eq!(outcome.window_point, Some(WindowPoint::new(854.0, 480.0)));
-    assert_eq!(
-      outcome.click_summary.as_deref(),
-      Some("live click dispatched")
-    );
+    assert_eq!(outcome.click_summary.as_deref(), Some("live click dispatched"));
     assert!(outcome.refusal_reason.is_none());
-    assert!(
-      outcome
-        .known_limits
-        .iter()
-        .any(|limit| limit == MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT)
-    );
+    assert!(outcome.known_limits.iter().any(|limit| limit == MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT));
   }
 
   #[test]
@@ -240,14 +213,8 @@ mod tests {
 
     assert_eq!(executor.calls.get(), 0);
     assert!(!outcome.attempted);
-    assert_eq!(
-      outcome.action_eligibility,
-      TrainingResultSpatialQueryActionEligibility::AnswerNonClickable
-    );
-    assert_eq!(
-      outcome.refusal_reason.as_deref(),
-      Some("visibility=outside_window")
-    );
+    assert_eq!(outcome.action_eligibility, TrainingResultSpatialQueryActionEligibility::AnswerNonClickable);
+    assert_eq!(outcome.refusal_reason.as_deref(), Some("visibility=outside_window"));
     assert!(outcome.click_summary.is_none());
   }
 
@@ -265,14 +232,8 @@ mod tests {
 
     assert_eq!(executor.calls.get(), 0);
     assert!(!outcome.attempted);
-    assert_eq!(
-      outcome.action_eligibility,
-      TrainingResultSpatialQueryActionEligibility::NotConsumable
-    );
-    assert_eq!(
-      outcome.refusal_reason.as_deref(),
-      Some("status=blocked reason=semantic_source_not_ready")
-    );
+    assert_eq!(outcome.action_eligibility, TrainingResultSpatialQueryActionEligibility::NotConsumable);
+    assert_eq!(outcome.refusal_reason.as_deref(), Some("status=blocked reason=semantic_source_not_ready"));
     assert!(outcome.click_summary.is_none());
   }
 
@@ -287,22 +248,12 @@ mod tests {
     let lineage = lineage_for(&manifest);
     let executor = CountingExecutor::success("should not run");
 
-    let outcome = wire_readiness_to_action(
-      &readiness,
-      &lineage,
-      vec![MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT.to_string()],
-      &executor,
-    );
+    let outcome =
+      wire_readiness_to_action(&readiness, &lineage, vec![MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT.to_string()], &executor);
 
     assert_eq!(executor.calls.get(), 0);
     assert!(!outcome.attempted);
-    assert_eq!(
-      outcome.action_eligibility,
-      TrainingResultSpatialQueryActionEligibility::ClickReady
-    );
-    assert_eq!(
-      outcome.refusal_reason.as_deref(),
-      Some("click_ready eligibility missing window_point; defensive refusal")
-    );
+    assert_eq!(outcome.action_eligibility, TrainingResultSpatialQueryActionEligibility::ClickReady);
+    assert_eq!(outcome.refusal_reason.as_deref(), Some("click_ready eligibility missing window_point; defensive refusal"));
   }
 }

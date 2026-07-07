@@ -16,37 +16,15 @@ impl Overlay {
     show_dual_cursor(x, y, label, user_label)
   }
 
-  pub fn set_cursor(
-    &self,
-    cursor_id: &str,
-    x: f64,
-    y: f64,
-    label: &str,
-    variant: &str,
-  ) -> AuvResult<()> {
+  pub fn set_cursor(&self, cursor_id: &str, x: f64, y: f64, label: &str, variant: &str) -> AuvResult<()> {
     set_cursor(cursor_id, x, y, label, variant)
   }
 
-  pub fn move_cursor(
-    &self,
-    cursor_id: &str,
-    x: f64,
-    y: f64,
-    label: &str,
-    variant: &str,
-    duration_ms: u64,
-  ) -> AuvResult<()> {
+  pub fn move_cursor(&self, cursor_id: &str, x: f64, y: f64, label: &str, variant: &str, duration_ms: u64) -> AuvResult<()> {
     move_cursor(cursor_id, x, y, label, variant, duration_ms)
   }
 
-  pub fn move_dual_cursor(
-    &self,
-    x: f64,
-    y: f64,
-    label: &str,
-    user_label: &str,
-    duration_ms: u64,
-  ) -> AuvResult<()> {
+  pub fn move_dual_cursor(&self, x: f64, y: f64, label: &str, user_label: &str, duration_ms: u64) -> AuvResult<()> {
     move_dual_cursor(x, y, label, user_label, duration_ms)
   }
 
@@ -54,14 +32,7 @@ impl Overlay {
     flash_cursor(x, y, label, duration_ms)
   }
 
-  pub fn flash_cursor_id(
-    &self,
-    cursor_id: &str,
-    x: f64,
-    y: f64,
-    label: &str,
-    duration_ms: u64,
-  ) -> AuvResult<()> {
+  pub fn flash_cursor_id(&self, cursor_id: &str, x: f64, y: f64, label: &str, duration_ms: u64) -> AuvResult<()> {
     flash_cursor_id(cursor_id, x, y, label, duration_ms)
   }
 
@@ -94,24 +65,11 @@ pub fn set_cursor(cursor_id: &str, x: f64, y: f64, label: &str, variant: &str) -
   crate::native::overlay::set_cursor(cursor_id, x, y, label, variant)
 }
 
-pub fn move_cursor(
-  cursor_id: &str,
-  x: f64,
-  y: f64,
-  label: &str,
-  variant: &str,
-  duration_ms: u64,
-) -> AuvResult<()> {
+pub fn move_cursor(cursor_id: &str, x: f64, y: f64, label: &str, variant: &str, duration_ms: u64) -> AuvResult<()> {
   crate::native::overlay::move_cursor(cursor_id, x, y, label, variant, duration_ms)
 }
 
-pub fn move_dual_cursor(
-  x: f64,
-  y: f64,
-  label: &str,
-  user_label: &str,
-  duration_ms: u64,
-) -> AuvResult<()> {
+pub fn move_dual_cursor(x: f64, y: f64, label: &str, user_label: &str, duration_ms: u64) -> AuvResult<()> {
   crate::native::overlay::move_dual_cursor(x, y, label, user_label, duration_ms)
 }
 
@@ -119,13 +77,7 @@ pub fn flash_cursor(x: f64, y: f64, label: &str, duration_ms: u64) -> AuvResult<
   crate::native::overlay::flash_cursor(x, y, label, duration_ms)
 }
 
-pub fn flash_cursor_id(
-  cursor_id: &str,
-  x: f64,
-  y: f64,
-  label: &str,
-  duration_ms: u64,
-) -> AuvResult<()> {
+pub fn flash_cursor_id(cursor_id: &str, x: f64, y: f64, label: &str, duration_ms: u64) -> AuvResult<()> {
   crate::native::overlay::flash_cursor_id(cursor_id, x, y, label, duration_ms)
 }
 

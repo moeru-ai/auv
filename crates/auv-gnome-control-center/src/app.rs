@@ -9,8 +9,7 @@ pub const SYSTEM_PAGE: LabelSet = LabelSet::new(&["系统", "System"]);
 pub const ABOUT_PAGE: LabelSet = LabelSet::new(&["关于", "About"]);
 pub const SYSTEM_DETAILS_PAGE: LabelSet = LabelSet::new(&["系统详情", "System Details"]);
 pub const COPY_BUTTON: LabelSet = LabelSet::new(&["复制", "Copy"]);
-pub const MOUSE_PAGE: LabelSet =
-  LabelSet::new(&["鼠标与触摸板", "鼠标", "Mouse & Touchpad", "Mouse"]);
+pub const MOUSE_PAGE: LabelSet = LabelSet::new(&["鼠标与触摸板", "鼠标", "Mouse & Touchpad", "Mouse"]);
 pub const POINTER_SPEED: LabelSet = LabelSet::new(&["指针速度", "Pointer Speed"]);
 pub const NATURAL_SCROLLING: LabelSet = LabelSet::new(&["自然", "Natural"]);
 pub const TRADITIONAL_SCROLLING: LabelSet = LabelSet::new(&["传统", "Traditional"]);
@@ -31,17 +30,12 @@ impl LabelSet {
 
   pub fn best_match<'a>(self, value: &'a str) -> Option<&'static str> {
     let normalized = normalize(value);
-    self
-      .labels
-      .iter()
-      .copied()
-      .find(|label| normalize(label) == normalized)
-      .or_else(|| {
-        self.labels.iter().copied().find(|label| {
-          let label = normalize(label);
-          !label.is_empty() && normalized.contains(label.as_ref())
-        })
+    self.labels.iter().copied().find(|label| normalize(label) == normalized).or_else(|| {
+      self.labels.iter().copied().find(|label| {
+        let label = normalize(label);
+        !label.is_empty() && normalized.contains(label.as_ref())
       })
+    })
   }
 
   pub fn display(self) -> String {
@@ -50,11 +44,8 @@ impl LabelSet {
 }
 
 pub fn normalize(value: &str) -> Cow<'_, str> {
-  let normalized = value
-    .chars()
-    .filter(|ch| !ch.is_whitespace() && !ch.is_ascii_punctuation())
-    .flat_map(char::to_lowercase)
-    .collect::<String>();
+  let normalized =
+    value.chars().filter(|ch| !ch.is_whitespace() && !ch.is_ascii_punctuation()).flat_map(char::to_lowercase).collect::<String>();
   Cow::Owned(normalized)
 }
 

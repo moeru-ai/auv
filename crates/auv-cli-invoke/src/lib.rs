@@ -21,24 +21,15 @@ pub mod summary;
 
 pub use arg::ArgSpec;
 pub use auv_cli_invoke_macros::invoke_command;
-pub use command::{
-  CommandGroup, CommandNode, InvokeCommand, InvokeCommandInput, InvokeCommandOutput,
-  InvokeCommandResult, InvokeNamespace,
-};
+pub use command::{CommandGroup, CommandNode, InvokeCommand, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace};
 pub use help::{render_command_help, render_help_index};
 pub use model::{
-  ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection,
-  InvokeRequest, InvokeResult, RunStatus,
+  ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeRequest, InvokeResult, RunStatus,
 };
-pub use recorded::{
-  invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_session,
-  invoke_resolved_recorded_in_span,
-};
+pub use recorded::{invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_session, invoke_resolved_recorded_in_span};
 pub use registry::{InvokeRegistry, default_registry};
 pub use render::{render_invoke_result, render_to_string, write_rendered};
-pub use summary::{
-  OperationSummary, OperationSummaryCache, OperationSummaryRecord, OperationSummarySource,
-};
+pub use summary::{OperationSummary, OperationSummaryCache, OperationSummaryRecord, OperationSummarySource};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InvokeCliParse {
@@ -69,13 +60,8 @@ pub fn parse_invoke_args(arguments: &[String]) -> Result<InvokeCliParse, String>
     return Ok(help);
   }
 
-  let matches = invoke_cli_command()
-    .try_get_matches_from(normalized.clap_arguments)
-    .map_err(|error| error.to_string())?;
-  let command_id = matches
-    .get_one::<String>("command_id")
-    .cloned()
-    .ok_or_else(|| "missing invoke command id".to_string())?;
+  let matches = invoke_cli_command().try_get_matches_from(normalized.clap_arguments).map_err(|error| error.to_string())?;
+  let command_id = matches.get_one::<String>("command_id").cloned().ok_or_else(|| "missing invoke command id".to_string())?;
   let mut inputs = normalized.inputs;
   if let Some(label) = matches.get_one::<String>("label") {
     inputs.insert("label".to_string(), label.clone());
@@ -117,31 +103,12 @@ fn invoke_cli_command() -> Command {
   Command::new("invoke")
     .disable_help_flag(true)
     .arg(Arg::new("command_id").index(1).value_name("command-id"))
-    .arg(
-      Arg::new("dry_run")
-        .long("dry-run")
-        .action(ArgAction::SetTrue),
-    )
-    .arg(
-      Arg::new("target")
-        .long("target")
-        .value_name("bundle-id")
-        .num_args(1),
-    )
-    .arg(
-      Arg::new("label")
-        .long("label")
-        .value_name("value")
-        .num_args(1),
-    )
+    .arg(Arg::new("dry_run").long("dry-run").action(ArgAction::SetTrue))
+    .arg(Arg::new("target").long("target").value_name("bundle-id").num_args(1))
+    .arg(Arg::new("label").long("label").value_name("value").num_args(1))
     .arg(Arg::new("detail").long("detail").action(ArgAction::SetTrue))
     .arg(Arg::new("json").long("json").action(ArgAction::SetTrue))
-    .arg(
-      Arg::new("format")
-        .long("format")
-        .action(ArgAction::SetTrue)
-        .hide(true),
-    )
+    .arg(Arg::new("format").long("format").action(ArgAction::SetTrue).hide(true))
 }
 
 fn normalize_for_clap(tokens: &[String]) -> Result<NormalizedInvokeArguments, String> {
@@ -203,8 +170,8 @@ fn normalize_for_clap(tokens: &[String]) -> Result<NormalizedInvokeArguments, St
 #[cfg(test)]
 mod tests {
   use super::{
-    CommandGroup, InvokeNamespace, InvokeOutputOptions, InvokeRegistry, default_registry,
-    invoke_cli_command, render_command_help, render_help_index,
+    CommandGroup, InvokeNamespace, InvokeOutputOptions, InvokeRegistry, default_registry, invoke_cli_command, render_command_help,
+    render_help_index,
   };
 
   #[test]
@@ -235,13 +202,9 @@ mod tests {
 
   #[test]
   fn registry_supports_nested_command_groups() {
-    let fixture = default_registry()
-      .resolve("fixture.observe")
-      .expect("fixture command should exist")
-      .clone();
-    let registry = InvokeRegistry::from_groups(vec![
-      CommandGroup::new("root", "ROOT").group(CommandGroup::new("child", "CHILD").command(fixture)),
-    ]);
+    let fixture = default_registry().resolve("fixture.observe").expect("fixture command should exist").clone();
+    let registry =
+      InvokeRegistry::from_groups(vec![CommandGroup::new("root", "ROOT").group(CommandGroup::new("child", "CHILD").command(fixture))]);
 
     assert!(registry.resolve("fixture.observe").is_some());
     let help = render_help_index(&registry);
@@ -253,10 +216,7 @@ mod tests {
   #[test]
   #[should_panic(expected = "duplicate invoke command id registered: fixture.observe")]
   fn registry_rejects_duplicate_command_ids() {
-    let fixture = default_registry()
-      .resolve("fixture.observe")
-      .expect("fixture command should exist")
-      .clone();
+    let fixture = default_registry().resolve("fixture.observe").expect("fixture command should exist").clone();
 
     let _registry = InvokeRegistry::from_groups(vec![
       CommandGroup::new("one", "ONE").command(fixture.clone()),
@@ -267,16 +227,11 @@ mod tests {
   #[test]
   fn command_metadata_preserves_invoke_surface() {
     let registry = default_registry();
-    let command = registry
-      .resolve("fixture.observe")
-      .expect("fixture.observe should be registered");
+    let command = registry.resolve("fixture.observe").expect("fixture.observe should be registered");
 
     assert_eq!(command.id, "fixture.observe");
     assert_eq!(command.namespace, InvokeNamespace::Fixture);
-    assert_eq!(
-      command.summary,
-      "Emit a deterministic observation result without touching the real UI."
-    );
+    assert_eq!(command.summary, "Emit a deterministic observation result without touching the real UI.");
     assert_eq!(command.args, crate::arg::NO_ARGS);
   }
 
@@ -426,10 +381,8 @@ mod tests {
 
   #[test]
   fn parse_invoke_help_forms_preserve_existing_behavior() {
-    let index_help = crate::parse_invoke_args(&["invoke".to_string(), "--help".to_string()])
-      .expect("invoke --help should parse");
-    let help_command = crate::parse_invoke_args(&["invoke".to_string(), "help".to_string()])
-      .expect("invoke help should parse");
+    let index_help = crate::parse_invoke_args(&["invoke".to_string(), "--help".to_string()]).expect("invoke --help should parse");
+    let help_command = crate::parse_invoke_args(&["invoke".to_string(), "help".to_string()]).expect("invoke help should parse");
     let command_help = crate::parse_invoke_args(&[
       "invoke".to_string(),
       "window.capture".to_string(),
@@ -438,10 +391,7 @@ mod tests {
     .expect("invoke command help should parse");
 
     assert_eq!(index_help, crate::InvokeCliParse::Help { command_id: None });
-    assert_eq!(
-      help_command,
-      crate::InvokeCliParse::Help { command_id: None }
-    );
+    assert_eq!(help_command, crate::InvokeCliParse::Help { command_id: None });
     assert_eq!(
       command_help,
       crate::InvokeCliParse::Help {
@@ -465,10 +415,7 @@ mod tests {
     match parsed {
       crate::InvokeCliParse::Invoke { inputs, .. } => {
         assert_eq!(inputs.get("text").map(String::as_str), Some("hello"));
-        assert_eq!(
-          inputs.get("replace_existing").map(String::as_str),
-          Some("true")
-        );
+        assert_eq!(inputs.get("replace_existing").map(String::as_str), Some("true"));
       }
       other => panic!("unexpected parse result: {other:?}"),
     }
@@ -477,9 +424,7 @@ mod tests {
   #[test]
   fn command_help_renders_metadata_only_sections() {
     let registry = default_registry();
-    let command = registry
-      .resolve("fixture.observe")
-      .expect("fixture.observe should be registered");
+    let command = registry.resolve("fixture.observe").expect("fixture.observe should be registered");
 
     let help = render_command_help(command);
 
@@ -496,10 +441,7 @@ mod tests {
 
   #[test]
   fn help_index_skips_empty_nested_groups() {
-    let fixture = default_registry()
-      .resolve("fixture.observe")
-      .expect("fixture command should exist")
-      .clone();
+    let fixture = default_registry().resolve("fixture.observe").expect("fixture command should exist").clone();
     let registry = InvokeRegistry::from_groups(vec![
       CommandGroup::new("root", "ROOT")
         .group(CommandGroup::new("empty", "EMPTY"))

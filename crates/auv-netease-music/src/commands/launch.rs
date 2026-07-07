@@ -105,11 +105,7 @@ mod platform {
       .arg(FORCE_RENDERER_ACCESSIBILITY_ARG)
       .spawn()
       .map_err(|error| format!("failed to launch {}: {error}", executable.display()))?;
-    result.push(
-      "launch",
-      "ok",
-      Some(format!("argument={FORCE_RENDERER_ACCESSIBILITY_ARG}")),
-    );
+    result.push("launch", "ok", Some(format!("argument={FORCE_RENDERER_ACCESSIBILITY_ARG}")));
 
     let deadline = Instant::now() + Duration::from_millis(inputs.settle_ms);
     loop {
@@ -139,13 +135,8 @@ mod platform {
   }
 
   fn activate(window: &auv_driver::window::Window) -> Result<(), String> {
-    let session = WindowsDriver::new()
-      .open_local()
-      .map_err(|error| format!("failed to open Windows driver: {error}"))?;
-    session
-      .window()
-      .activate(window)
-      .map_err(|error| format!("failed to activate NetEase window: {error}"))
+    let session = WindowsDriver::new().open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
+    session.window().activate(window).map_err(|error| format!("failed to activate NetEase window: {error}"))
   }
 
   fn resolve_executable(explicit: Option<&PathBuf>) -> PathBuf {
@@ -153,22 +144,14 @@ mod platform {
       return path.clone();
     }
 
-    candidate_executables()
-      .into_iter()
-      .find(|path| path.is_file())
-      .unwrap_or_else(|| PathBuf::from(DEFAULT_PROCESS_NAME))
+    candidate_executables().into_iter().find(|path| path.is_file()).unwrap_or_else(|| PathBuf::from(DEFAULT_PROCESS_NAME))
   }
 
   fn candidate_executables() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     for root in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
       if let Some(root) = std::env::var_os(root) {
-        candidates.push(
-          PathBuf::from(root)
-            .join("NetEase")
-            .join("CloudMusic")
-            .join(DEFAULT_PROCESS_NAME),
-        );
+        candidates.push(PathBuf::from(root).join("NetEase").join("CloudMusic").join(DEFAULT_PROCESS_NAME));
       }
     }
     candidates
@@ -181,11 +164,7 @@ mod platform {
 
   pub fn run(inputs: &OpenWindowInputs) -> Result<LaunchResult, String> {
     let mut result = LaunchResult::new(inputs);
-    result.push(
-      "launch",
-      "unsupported",
-      Some("NetEase open-window is currently supported only on Windows".to_string()),
-    );
+    result.push("launch", "unsupported", Some("NetEase open-window is currently supported only on Windows".to_string()));
     Ok(result)
   }
 }

@@ -33,10 +33,7 @@ impl TextRecognitionOptions {
     self
   }
 
-  pub fn with_recognition_languages(
-    mut self,
-    languages: impl IntoIterator<Item = impl Into<String>>,
-  ) -> Self {
+  pub fn with_recognition_languages(mut self, languages: impl IntoIterator<Item = impl Into<String>>) -> Self {
     self.recognition_languages = Some(languages.into_iter().map(Into::into).collect());
     self
   }
@@ -45,11 +42,7 @@ impl TextRecognitionOptions {
 impl TextRecognition {
   pub fn find_contains(&self, query: &str) -> Vec<&RecognizedText> {
     let normalized_query = normalize_text(query);
-    self
-      .regions
-      .iter()
-      .filter(|region| normalize_text(&region.text).contains(&normalized_query))
-      .collect()
+    self.regions.iter().filter(|region| normalize_text(&region.text).contains(&normalized_query)).collect()
   }
 
   pub fn best_contains(&self, query: &str) -> Option<&RecognizedText> {
@@ -83,9 +76,7 @@ mod tests {
       ],
     };
 
-    let matched = recognition
-      .best_contains("cure for")
-      .expect("text should match");
+    let matched = recognition.best_contains("cure for").expect("text should match");
 
     assert_eq!(matched.text, "Cure For Me");
     assert_eq!(matched.action_point(), Point::new(25.0, 40.0));
@@ -93,14 +84,9 @@ mod tests {
 
   #[test]
   fn text_recognition_options_preserve_provider_hints() {
-    let options = TextRecognitionOptions::default()
-      .with_custom_words(["绚香", "AURORA"])
-      .with_recognition_languages(["zh-Hans", "en-US"]);
+    let options = TextRecognitionOptions::default().with_custom_words(["绚香", "AURORA"]).with_recognition_languages(["zh-Hans", "en-US"]);
 
     assert_eq!(options.custom_words, vec!["绚香", "AURORA"]);
-    assert_eq!(
-      options.recognition_languages,
-      Some(vec!["zh-Hans".to_string(), "en-US".to_string()])
-    );
+    assert_eq!(options.recognition_languages, Some(vec!["zh-Hans".to_string(), "en-US".to_string()]));
   }
 }

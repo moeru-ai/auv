@@ -53,30 +53,17 @@ pub(crate) fn select_visible_labeled_node(
   for _ in 0..8 {
     let nodes = snapshot_nodes(session, window)?;
     last_visible_labels = visible_labels(&nodes);
-    let matched = find_labeled_node(&nodes, labels).ok_or_else(|| {
-      format!(
-        "could not find one of [{}]; visible labels: {}",
-        labels.display(),
-        last_visible_labels.join(" | ")
-      )
-    })?;
+    let matched = find_labeled_node(&nodes, labels)
+      .ok_or_else(|| format!("could not find one of [{}]; visible labels: {}", labels.display(), last_visible_labels.join(" | ")))?;
     if node_is_visible(window, &matched) {
       let delivery = select_node_or_click(session, window, &matched)?;
-      steps.push(
-        InteractionStep::new(step_name, StepOutcome::Selected)
-          .target(matched.label.clone())
-          .note(format!("{delivery:?}")),
-      );
+      steps.push(InteractionStep::new(step_name, StepOutcome::Selected).target(matched.label.clone()).note(format!("{delivery:?}")));
       return Ok(matched);
     }
     scroll_toward_node(session, window, &matched)?;
     std::thread::sleep(Duration::from_millis(250));
   }
-  Err(format!(
-    "could not bring one of [{}] into view; visible labels: {}",
-    labels.display(),
-    last_visible_labels.join(" | ")
-  ))
+  Err(format!("could not bring one of [{}] into view; visible labels: {}", labels.display(), last_visible_labels.join(" | ")))
 }
 
 #[cfg(target_os = "linux")]
@@ -87,8 +74,7 @@ pub(crate) fn click_visible_labeled_node(
   step_name: &str,
   steps: &mut Vec<InteractionStep>,
 ) -> Result<MatchedNode, String> {
-  let (matched, _) =
-    click_visible_labeled_node_with_delivery(session, window, labels, step_name, steps)?;
+  let (matched, _) = click_visible_labeled_node_with_delivery(session, window, labels, step_name, steps)?;
   Ok(matched)
 }
 
@@ -104,13 +90,8 @@ pub(crate) fn click_visible_labeled_node_with_delivery(
   for _ in 0..8 {
     let nodes = snapshot_nodes(session, window)?;
     last_visible_labels = visible_labels(&nodes);
-    let matched = find_labeled_node(&nodes, labels).ok_or_else(|| {
-      format!(
-        "could not find one of [{}]; visible labels: {}",
-        labels.display(),
-        last_visible_labels.join(" | ")
-      )
-    })?;
+    let matched = find_labeled_node(&nodes, labels)
+      .ok_or_else(|| format!("could not find one of [{}]; visible labels: {}", labels.display(), last_visible_labels.join(" | ")))?;
     if node_is_visible(window, &matched) {
       let delivery = session
         .window()
@@ -122,27 +103,14 @@ pub(crate) fn click_visible_labeled_node_with_delivery(
             ..auv_driver::ClickOptions::default()
           },
         )
-        .map_err(|error| {
-          format!(
-            "failed to click {} at {}: {error}",
-            matched.label, matched.path
-          )
-        })?;
-      steps.push(
-        InteractionStep::new(step_name, StepOutcome::Clicked)
-          .target(matched.label.clone())
-          .note(format!("{delivery:?}")),
-      );
+        .map_err(|error| format!("failed to click {} at {}: {error}", matched.label, matched.path))?;
+      steps.push(InteractionStep::new(step_name, StepOutcome::Clicked).target(matched.label.clone()).note(format!("{delivery:?}")));
       return Ok((matched, delivery));
     }
     scroll_toward_node(session, window, &matched)?;
     std::thread::sleep(Duration::from_millis(250));
   }
-  Err(format!(
-    "could not bring one of [{}] into view; visible labels: {}",
-    labels.display(),
-    last_visible_labels.join(" | ")
-  ))
+  Err(format!("could not bring one of [{}] into view; visible labels: {}", labels.display(), last_visible_labels.join(" | ")))
 }
 
 #[cfg(target_os = "linux")]
@@ -150,10 +118,7 @@ pub(crate) fn snapshot_nodes(
   session: &auv_driver_linux::LinuxDriverSession,
   window: &auv_driver::Window,
 ) -> Result<Vec<SettingsNode>, String> {
-  let snapshot = session
-    .accessibility()
-    .snapshot_window(window)
-    .map_err(|error| format!("failed to capture AT-SPI tree: {error}"))?;
+  let snapshot = session.accessibility().snapshot_window(window).map_err(|error| format!("failed to capture AT-SPI tree: {error}"))?;
   Ok(snapshot.nodes.iter().map(SettingsNode::from).collect())
 }
 
@@ -187,10 +152,7 @@ fn select_node_or_click(
 #[cfg(target_os = "linux")]
 fn node_is_visible(window: &auv_driver::Window, node: &MatchedNode) -> bool {
   let center = node.bounds.center();
-  center.y >= 0.0
-    && center.y <= window.frame.size.height
-    && center.x >= 0.0
-    && center.x <= window.frame.size.width
+  center.y >= 0.0 && center.y <= window.frame.size.height && center.x >= 0.0 && center.x <= window.frame.size.width
 }
 
 #[cfg(target_os = "linux")]
@@ -215,19 +177,11 @@ fn scroll_toward_node(
       auv_driver::ScrollOptions::default(),
     )
     .map(|_| ())
-    .map_err(|error| {
-      format!(
-        "failed to scroll Settings sidebar toward {}: {error}",
-        node.label
-      )
-    })
+    .map_err(|error| format!("failed to scroll Settings sidebar toward {}: {error}", node.label))
 }
 
 #[cfg(target_os = "linux")]
-fn window_point_for_node(
-  window: &auv_driver::Window,
-  node: &MatchedNode,
-) -> auv_driver::WindowPoint {
+fn window_point_for_node(window: &auv_driver::Window, node: &MatchedNode) -> auv_driver::WindowPoint {
   let center = node.bounds.center();
   let x = center.x.clamp(0.0, window.frame.size.width);
   let y = center.y.clamp(0.0, window.frame.size.height);

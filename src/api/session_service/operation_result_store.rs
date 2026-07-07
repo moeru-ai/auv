@@ -11,26 +11,19 @@ use auv_tracing_driver::store::LocalStore;
 use auv_tracing_driver::trace::RunId;
 
 use crate::api::session_service::SessionApiError;
-use crate::contract::{
-  ArtifactRef, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
-};
+use crate::contract::{ArtifactRef, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus};
 
 /// Honesty marker on persisted session-invoke synthetic `OperationResult` records.
-pub const INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT: &str =
-  "auv.api.session.invoke_synthetic_operation_result";
+pub const INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT: &str = "auv.api.session.invoke_synthetic_operation_result";
 
 /// Known limit when invoke succeeded but the operation-result artifact could not
 /// be persisted (API-R2). The command already executed; callers must not treat
 /// this as a failed invoke suitable for blind retry.
-pub const OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT: &str =
-  "auv.api.session.operation_result_persist_failed";
+pub const OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT: &str = "auv.api.session.operation_result_persist_failed";
 
 const OPERATION_RESULT_ARTIFACT_ROLE: &str = "operation-result";
 
-fn synthetic_operation_result_from_invoke(
-  command_id: &str,
-  result: &InvokeResult,
-) -> OperationResult {
+fn synthetic_operation_result_from_invoke(command_id: &str, result: &InvokeResult) -> OperationResult {
   let status = match result.status {
     RunStatus::Completed => OperationStatus::Completed,
     RunStatus::Failed => OperationStatus::Failed,
@@ -70,17 +63,11 @@ fn synthetic_operation_result_from_invoke(
 /// NOTICE(api-r2-duplicate-artifacts): invoke retries may append multiple
 /// `operation-result` artifacts; the read path takes the **first** match,
 /// mirroring [`crate::run_read::read_operation_result`].
-pub fn persist_operation_result(
-  store: &LocalStore,
-  result: &InvokeResult,
-  operation: &OperationResult,
-) -> Result<(), SessionApiError> {
+pub fn persist_operation_result(store: &LocalStore, result: &InvokeResult, operation: &OperationResult) -> Result<(), SessionApiError> {
   let run_id = result.run_id.as_str();
   let mut canonical = store.read_run(run_id).map_err(SessionApiError::Storage)?;
 
-  let rendered = serde_json::to_string_pretty(operation)
-    .map_err(|error| SessionApiError::Storage(error.to_string()))?
-    + "\n";
+  let rendered = serde_json::to_string_pretty(operation).map_err(|error| SessionApiError::Storage(error.to_string()))? + "\n";
 
   let artifact = store
     .stage_artifact_bytes(
@@ -98,9 +85,7 @@ pub fn persist_operation_result(
     .map_err(SessionApiError::Storage)?;
 
   canonical.artifacts.push(artifact);
-  store
-    .replace_run_snapshot(&canonical)
-    .map_err(SessionApiError::Storage)?;
+  store.replace_run_snapshot(&canonical).map_err(SessionApiError::Storage)?;
   Ok(())
 }
 
@@ -108,19 +93,12 @@ pub fn persist_operation_result(
 ///
 /// Returns durability `known_limits` when persistence fails. The invoke command
 /// has already executed; failures here must not be propagated as invoke errors.
-pub fn record_invoke_operation_result(
-  store: &LocalStore,
-  command_id: &str,
-  result: &InvokeResult,
-) -> Vec<String> {
+pub fn record_invoke_operation_result(store: &LocalStore, command_id: &str, result: &InvokeResult) -> Vec<String> {
   let operation = synthetic_operation_result_from_invoke(command_id, result);
   match persist_operation_result(store, result, &operation) {
     Ok(()) => Vec::new(),
     Err(error) => {
-      eprintln!(
-        "warning: failed to persist operation-result for run {}: {error}",
-        result.run_id
-      );
+      eprintln!("warning: failed to persist operation-result for run {}: {error}", result.run_id);
       vec![OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT.to_string()]
     }
   }
@@ -133,30 +111,24 @@ mod tests {
   use auv_cli_invoke::RunStatus;
 
   use super::{
-    INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT, OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT,
-    persist_operation_result, record_invoke_operation_result,
-    synthetic_operation_result_from_invoke,
+    INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT, OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT, persist_operation_result,
+    record_invoke_operation_result, synthetic_operation_result_from_invoke,
   };
-  use crate::api::session_service::test_fixtures::{
-    SessionRunFixture, fixture_observe_invoke_result, unique_temp_dir, write_minimal_run,
-  };
+  use crate::api::session_service::test_fixtures::{SessionRunFixture, fixture_observe_invoke_result, unique_temp_dir, write_minimal_run};
   use crate::contract::OperationStatus;
   use crate::run_read;
 
   #[test]
   fn persist_operation_result_appends_synthetic_artifact() {
     let root = unique_temp_dir("op-result-store-persist");
-    let store =
-      auv_tracing_driver::store::LocalStore::new(root.clone()).expect("store should initialize");
+    let store = auv_tracing_driver::store::LocalStore::new(root.clone()).expect("store should initialize");
     write_minimal_run(&store, "run-op-result-persist");
 
     let result = fixture_observe_invoke_result("run-op-result-persist");
     let operation = synthetic_operation_result_from_invoke("fixture.observe", &result);
     persist_operation_result(&store, &result, &operation).expect("persist should succeed");
 
-    let loaded = store
-      .read_run("run-op-result-persist")
-      .expect("run should load");
+    let loaded = store.read_run("run-op-result-persist").expect("run should load");
     assert_eq!(loaded.artifacts.len(), 1);
     assert_eq!(loaded.artifacts[0].role, "operation-result");
 
@@ -165,12 +137,7 @@ mod tests {
       .expect("operation-result artifact should exist");
     assert_eq!(read_back.run_id.as_str(), "run-op-result-persist");
     assert_eq!(read_back.operation_id, "fixture.observe");
-    assert!(
-      read_back
-        .known_limits
-        .iter()
-        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
-    );
+    assert!(read_back.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -184,11 +151,7 @@ mod tests {
 
     let operation = synthetic_operation_result_from_invoke("fixture.observe", &result);
     assert_eq!(operation.status, OperationStatus::Failed);
-    assert!(
-      operation
-        .known_limits
-        .contains(&INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT.to_string())
-    );
+    assert!(operation.known_limits.contains(&INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT.to_string()));
   }
 
   #[cfg(unix)]
@@ -198,27 +161,19 @@ mod tests {
 
     let SessionRunFixture { root, store } = {
       let root = unique_temp_dir("op-result-store-persist-fail");
-      let store =
-        auv_tracing_driver::store::LocalStore::new(root.clone()).expect("store should initialize");
+      let store = auv_tracing_driver::store::LocalStore::new(root.clone()).expect("store should initialize");
       write_minimal_run(&store, "run-op-result-persist-fail");
       SessionRunFixture { root, store }
     };
 
-    let run_dir = store
-      .run_dir("run-op-result-persist-fail")
-      .expect("run dir should resolve");
-    let mut permissions = fs::metadata(&run_dir)
-      .expect("run dir metadata")
-      .permissions();
+    let run_dir = store.run_dir("run-op-result-persist-fail").expect("run dir should resolve");
+    let mut permissions = fs::metadata(&run_dir).expect("run dir metadata").permissions();
     permissions.set_mode(0o500);
     fs::set_permissions(&run_dir, permissions).expect("run dir should be read-only");
 
     let result = fixture_observe_invoke_result("run-op-result-persist-fail");
     let limits = record_invoke_operation_result(&store, "fixture.observe", &result);
-    assert_eq!(
-      limits,
-      vec![OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT.to_string()]
-    );
+    assert_eq!(limits, vec![OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT.to_string()]);
 
     let _ = fs::remove_dir_all(root);
   }

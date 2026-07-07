@@ -60,10 +60,7 @@ pub enum StabilityRejection {
 }
 
 /// 主入口。约定 `observations` 按时间顺序、且都指同一个目标。
-pub fn assess_stability(
-  observations: &[RecognitionResult],
-  policy: &StabilityPolicy,
-) -> StabilityAssessment {
+pub fn assess_stability(observations: &[RecognitionResult], policy: &StabilityPolicy) -> StabilityAssessment {
   if observations.is_empty() {
     return StabilityAssessment::Unstable {
       reason: StabilityRejection::NoFrames,
@@ -149,10 +146,7 @@ impl StabilityAssessment {
 }
 
 fn centroid(b: &RecognitionBox) -> (f64, f64) {
-  (
-    b.x as f64 + b.width as f64 / 2.0,
-    b.y as f64 + b.height as f64 / 2.0,
-  )
+  (b.x as f64 + b.width as f64 / 2.0, b.y as f64 + b.height as f64 / 2.0)
 }
 
 fn euclidean(a: (f64, f64), b: (f64, f64)) -> f64 {
@@ -165,10 +159,7 @@ mod tests {
 
   use super::{StabilityAssessment, StabilityPolicy, StabilityRejection, assess_stability};
   use crate::candidate_promotion::StabilityInput;
-  use crate::contract::{
-    RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface,
-    RecognizedItem,
-  };
+  use crate::contract::{RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem};
 
   fn frame(kind: &str, text: Option<&str>, x: i64, y: i64) -> RecognitionResult {
     let best = RecognizedItem {
@@ -207,11 +198,7 @@ mod tests {
     }
   }
 
-  fn policy(
-    min_frames: u32,
-    max_centroid_drift_px: f64,
-    require_stable_text: bool,
-  ) -> StabilityPolicy {
+  fn policy(min_frames: u32, max_centroid_drift_px: f64, require_stable_text: bool) -> StabilityPolicy {
     StabilityPolicy {
       min_frames,
       max_centroid_drift_px,
@@ -232,10 +219,7 @@ mod tests {
 
   #[test]
   fn below_min_frames_is_unstable() {
-    let assessment = assess_stability(
-      &[frame("button", Some("OK"), 10, 20)],
-      &policy(3, 10.0, false),
-    );
+    let assessment = assess_stability(&[frame("button", Some("OK"), 10, 20)], &policy(3, 10.0, false));
     assert_eq!(
       assessment,
       StabilityAssessment::Unstable {

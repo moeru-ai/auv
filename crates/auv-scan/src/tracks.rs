@@ -14,9 +14,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::association::{
-  AssociationDiagnostic, AssociationResult, FrameObservation, associate_adjacent_frames,
-};
+use crate::association::{AssociationDiagnostic, AssociationResult, FrameObservation, associate_adjacent_frames};
 use crate::reader::ScanFrameBundle;
 use crate::timeline::DIAG_INSUFFICIENT_FRAMES;
 
@@ -128,25 +126,17 @@ fn insufficient_frames_diagnostic(found: usize) -> TracksDiagnosticWire {
   }
 }
 
-fn observations_frame_mismatch_diagnostic(
-  frame_count: usize,
-  observation_frame_count: usize,
-) -> TracksDiagnosticWire {
+fn observations_frame_mismatch_diagnostic(frame_count: usize, observation_frame_count: usize) -> TracksDiagnosticWire {
   TracksDiagnosticWire {
     code: DIAG_OBSERVATIONS_FRAME_MISMATCH.into(),
-    message: format!(
-      "observations_by_frame length {observation_frame_count} does not match frame count {frame_count}"
-    ),
+    message: format!("observations_by_frame length {observation_frame_count} does not match frame count {frame_count}"),
   }
 }
 
 /// Build an adjacent multi-segment tracks wire from a frame bundle and per-frame observations.
 ///
 /// Diagnostic precedence: insufficient frames first, then observations mismatch, else N-1 segments.
-pub fn build_scan_tracks_from_bundle(
-  bundle: &ScanFrameBundle,
-  observations_by_frame: &[Vec<FrameObservation>],
-) -> ScanTracksWire {
+pub fn build_scan_tracks_from_bundle(bundle: &ScanFrameBundle, observations_by_frame: &[Vec<FrameObservation>]) -> ScanTracksWire {
   let frame_count = bundle.frames.len();
   if frame_count < 2 {
     return ScanTracksWire {
@@ -174,13 +164,10 @@ pub fn build_scan_tracks_from_bundle(
     .map(|(index, window)| {
       let first = &window[0];
       let second = &window[1];
-      let associations = associate_adjacent_frames(
-        &observations_by_frame[index],
-        &observations_by_frame[index + 1],
-      )
-      .into_iter()
-      .map(association_result_to_wire)
-      .collect();
+      let associations = associate_adjacent_frames(&observations_by_frame[index], &observations_by_frame[index + 1])
+        .into_iter()
+        .map(association_result_to_wire)
+        .collect();
       TrackSegmentWire {
         from_frame_id: first.frame_id.clone(),
         to_frame_id: second.frame_id.clone(),
@@ -238,10 +225,7 @@ pub fn format_scan_tracks_text(tracks: &ScanTracksWire) -> String {
   for segment in &tracks.segments {
     lines.push(format!(
       "[tracks.segment] from={} to={} from_index={} to_index={}",
-      segment.from_frame_id,
-      segment.to_frame_id,
-      segment.from_sequence_index,
-      segment.to_sequence_index,
+      segment.from_frame_id, segment.to_frame_id, segment.from_sequence_index, segment.to_sequence_index,
     ));
     for association in &segment.associations {
       match association {
@@ -272,10 +256,7 @@ pub fn format_scan_tracks_text(tracks: &ScanTracksWire) -> String {
     }
   }
   for diagnostic in &tracks.diagnostics {
-    lines.push(format!(
-      "[tracks.diagnostic] code={} message={}",
-      diagnostic.code, diagnostic.message
-    ));
+    lines.push(format!("[tracks.diagnostic] code={} message={}", diagnostic.code, diagnostic.message));
   }
   lines.join("\n")
 }
@@ -296,23 +277,15 @@ mod tests {
 
   fn next_temp_dir(prefix: &str) -> PathBuf {
     let seq = TRACKS_TEST_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-      "auv-scan-{prefix}-{}-{}-{seq}",
-      std::process::id(),
-      prefix
-    ))
+    std::env::temp_dir().join(format!("auv-scan-{prefix}-{}-{}-{seq}", std::process::id(), prefix))
   }
 
   fn tracks_fixture_dir(scenario: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan/tracks")
-      .join(scenario)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/tracks").join(scenario)
   }
 
   fn temporal_fixture_dir(relative: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan")
-      .join(relative)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan").join(relative)
   }
 
   #[derive(Debug, Deserialize)]
@@ -402,10 +375,7 @@ mod tests {
     assert!(tracks.diagnostics.is_empty());
     assert_eq!(tracks.segments.len(), 1);
     assert_eq!(manifest.segments.len(), 1);
-    assert_eq!(
-      tracks.segments[0].associations,
-      manifest.segments[0].associations
-    );
+    assert_eq!(tracks.segments[0].associations, manifest.segments[0].associations);
   }
 
   #[test]
@@ -556,11 +526,7 @@ mod tests {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(SCAN_TRACKS_ARTIFACT_FILE_NAME);
-    fs::write(
-      &path,
-      r#"{"schema_version":"scan-tracks-v99","segments":[],"diagnostics":[]}"#,
-    )
-    .unwrap();
+    fs::write(&path, r#"{"schema_version":"scan-tracks-v99","segments":[],"diagnostics":[]}"#).unwrap();
     let err = read_tracks_artifact(&path).expect_err("schema");
     assert!(matches!(err, TracksError::SchemaMismatch { .. }));
     let _ = fs::remove_dir_all(&dir);

@@ -16,8 +16,8 @@ use std::time::Duration;
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::Point;
 use auv_driver::input::{
-  Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
-  KeyPressOptions, Scroll, TextSubmit, TypeTextOptions,
+  Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll, TextSubmit,
+  TypeTextOptions,
 };
 
 use crate::error::invalid_input;
@@ -59,52 +59,30 @@ pub fn click_at(point: Point, click: Click) -> DriverResult<InputActionResult> {
     Click::Double { interval } => interval,
   };
   native::click(point, count, interval)?;
-  Ok(foreground_result(
-    DisturbanceLevel::Temporary,
-    DisturbanceLevel::Unknown,
-    DisturbanceLevel::None,
-  ))
+  Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 
-pub fn scroll_at(
-  point: Point,
-  scroll: Scroll,
-  settle: Duration,
-) -> DriverResult<InputActionResult> {
+pub fn scroll_at(point: Point, scroll: Scroll, settle: Duration) -> DriverResult<InputActionResult> {
   native::scroll(point, scroll)?;
   sleep_if_nonzero(settle);
-  Ok(foreground_result(
-    DisturbanceLevel::Temporary,
-    DisturbanceLevel::Unknown,
-    DisturbanceLevel::None,
-  ))
+  Ok(foreground_result(DisturbanceLevel::Temporary, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 
 pub fn type_text(text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
   if matches!(options.policy, InputPolicy::BackgroundOnly) {
-    return Err(invalid_input(
-      "windows type_text cannot use background_only input policy",
-    ));
+    return Err(invalid_input("windows type_text cannot use background_only input policy"));
   }
   let submit_key = text_submit_virtual_key(options.submit)?;
   native::type_text(text, &options, submit_key)?;
   sleep_if_nonzero(options.settle);
-  Ok(foreground_result(
-    DisturbanceLevel::None,
-    DisturbanceLevel::Unknown,
-    DisturbanceLevel::None,
-  ))
+  Ok(foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 
 pub fn press_key(options: KeyPressOptions) -> DriverResult<InputActionResult> {
   let chord = parse_key_chord(&options.key)?;
   native::press_chord(&chord)?;
   sleep_if_nonzero(options.settle);
-  Ok(foreground_result(
-    DisturbanceLevel::None,
-    DisturbanceLevel::Unknown,
-    DisturbanceLevel::None,
-  ))
+  Ok(foreground_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
 }
 
 /// Issues the system copy shortcut (Ctrl+C) against the foreground target.
@@ -166,9 +144,9 @@ fn text_submit_virtual_key(submit: TextSubmit) -> DriverResult<Option<u16>> {
   match submit {
     TextSubmit::No => Ok(None),
     TextSubmit::Return => Ok(Some(vk::RETURN)),
-    TextSubmit::Search | TextSubmit::Done | TextSubmit::Go => Err(invalid_input(format!(
-      "text submit {submit:?} is not supported by the windows desktop driver yet"
-    ))),
+    TextSubmit::Search | TextSubmit::Done | TextSubmit::Go => {
+      Err(invalid_input(format!("text submit {submit:?} is not supported by the windows desktop driver yet")))
+    }
   }
 }
 
@@ -198,31 +176,18 @@ fn parse_key_chord(input: &str) -> DriverResult<KeyChord> {
 }
 
 fn parse_shortcut(shortcut: &str) -> DriverResult<KeyChord> {
-  let parts = shortcut
-    .split('+')
-    .map(str::trim)
-    .filter(|part| !part.is_empty())
-    .collect::<Vec<_>>();
+  let parts = shortcut.split('+').map(str::trim).filter(|part| !part.is_empty()).collect::<Vec<_>>();
   if parts.len() < 2 {
-    return Err(invalid_input(format!(
-      "invalid shortcut {shortcut}; expected a form like ctrl+f or ctrl+shift+p"
-    )));
+    return Err(invalid_input(format!("invalid shortcut {shortcut}; expected a form like ctrl+f or ctrl+shift+p")));
   }
   let (key_part, modifier_parts) = parts.split_last().expect("len checked >= 2");
   let key = single_char_virtual_key(key_part)
     .or_else(|| special_virtual_key(key_part))
-    .ok_or_else(|| {
-      invalid_input(format!(
-        "invalid shortcut {shortcut}; unsupported key {key_part}"
-      ))
-    })?;
+    .ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; unsupported key {key_part}")))?;
   let mut modifiers = Vec::new();
   for raw in modifier_parts {
-    let modifier = modifier_virtual_key(raw).ok_or_else(|| {
-      invalid_input(format!(
-        "invalid shortcut {shortcut}; unsupported modifier {raw}"
-      ))
-    })?;
+    let modifier =
+      modifier_virtual_key(raw).ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; unsupported modifier {raw}")))?;
     if !modifiers.contains(&modifier) {
       modifiers.push(modifier);
     }
@@ -282,14 +247,12 @@ mod native {
   use auv_driver::geometry::Point;
   use auv_driver::input::{Scroll, TypeTextOptions};
   use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
-    KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
-    MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK,
+    INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS,
+    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK,
     MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput, VIRTUAL_KEY,
   };
   use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    WHEEL_DELTA,
+    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WHEEL_DELTA,
   };
 
   use super::{KeyChord, normalize_absolute};
@@ -303,10 +266,7 @@ mod native {
     }
     let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
     if sent as usize != inputs.len() {
-      return Err(backend(format!(
-        "SendInput injected {sent} of {} events (input may be blocked)",
-        inputs.len()
-      )));
+      return Err(backend(format!("SendInput injected {sent} of {} events (input may be blocked)", inputs.len())));
     }
     Ok(())
   }
@@ -410,11 +370,7 @@ mod native {
     (delta * f64::from(WHEEL_DELTA)).round() as i32
   }
 
-  pub(super) fn type_text(
-    text: &str,
-    options: &TypeTextOptions,
-    submit_key: Option<u16>,
-  ) -> DriverResult<()> {
+  pub(super) fn type_text(text: &str, options: &TypeTextOptions, submit_key: Option<u16>) -> DriverResult<()> {
     if options.replace_existing {
       // Ctrl+A then Backspace clears the focused field before typing.
       press_chord(&KeyChord {
@@ -481,11 +437,7 @@ mod native {
     Err(DriverError::unsupported("input.scroll"))
   }
 
-  pub(super) fn type_text(
-    _text: &str,
-    _options: &TypeTextOptions,
-    _submit_key: Option<u16>,
-  ) -> DriverResult<()> {
+  pub(super) fn type_text(_text: &str, _options: &TypeTextOptions, _submit_key: Option<u16>) -> DriverResult<()> {
     Err(DriverError::unsupported("input.type_text"))
   }
 
@@ -569,10 +521,7 @@ mod tests {
   #[test]
   fn text_submit_virtual_key_supports_return_only() {
     assert_eq!(text_submit_virtual_key(TextSubmit::No).unwrap(), None);
-    assert_eq!(
-      text_submit_virtual_key(TextSubmit::Return).unwrap(),
-      Some(vk::RETURN)
-    );
+    assert_eq!(text_submit_virtual_key(TextSubmit::Return).unwrap(), Some(vk::RETURN));
     assert!(text_submit_virtual_key(TextSubmit::Search).is_err());
   }
 }

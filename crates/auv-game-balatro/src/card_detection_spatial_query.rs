@@ -133,12 +133,7 @@ impl CardDetectionSpatialQueryReason {
 pub fn query_card_detection_spatial(
   inputs: CardDetectionSpatialQueryInputs,
 ) -> CardDetectionSpatialQueryResult<CardDetectionSpatialQueryOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
   let semantic_manifest = read_json_file::<CardDetectionSemanticManifest>(
@@ -215,8 +210,7 @@ pub fn query_card_detection_spatial(
   };
 
   let (pixel_x, pixel_y) = bbox_center(detection);
-  if pixel_x < 0.0 || pixel_y < 0.0 || pixel_x > image_width as f32 || pixel_y > image_height as f32
-  {
+  if pixel_x < 0.0 || pixel_y < 0.0 || pixel_x > image_width as f32 || pixel_y > image_height as f32 {
     return write_query_output(
       inputs,
       generated_at_millis,
@@ -260,43 +254,22 @@ struct QueryAnswer {
   image_height: Option<u32>,
 }
 
-pub(crate) fn slot_detections(
-  bundle: &crate::card_detection_producer::LoadedDetectionBundle,
-  zone: ObjectZone,
-) -> Vec<Detection> {
+pub(crate) fn slot_detections(bundle: &crate::card_detection_producer::LoadedDetectionBundle, zone: ObjectZone) -> Vec<Detection> {
   let mut detections = match zone {
     ObjectZone::Hand => bundle
       .entities_detections
       .detections
       .iter()
-      .filter(|detection| {
-        detection.label == "poker_card_front" || detection.label == "poker_card_back"
-      })
+      .filter(|detection| detection.label == "poker_card_front" || detection.label == "poker_card_back")
       .cloned()
       .collect(),
-    ObjectZone::Joker => bundle
-      .entities_detections
-      .detections
-      .iter()
-      .filter(|detection| detection.label == "joker_card")
-      .cloned()
-      .collect(),
-    ObjectZone::Button => bundle
-      .ui_detections
-      .detections
-      .iter()
-      .filter(|detection| detection.label.starts_with("button_"))
-      .cloned()
-      .collect(),
+    ObjectZone::Joker => bundle.entities_detections.detections.iter().filter(|detection| detection.label == "joker_card").cloned().collect(),
+    ObjectZone::Button => {
+      bundle.ui_detections.detections.iter().filter(|detection| detection.label.starts_with("button_")).cloned().collect()
+    }
     _ => Vec::new(),
   };
-  detections.sort_by(|left, right| {
-    left
-      .bbox
-      .x1
-      .partial_cmp(&right.bbox.x1)
-      .unwrap_or(std::cmp::Ordering::Equal)
-  });
+  detections.sort_by(|left, right| left.bbox.x1.partial_cmp(&right.bbox.x1).unwrap_or(std::cmp::Ordering::Equal));
   detections
 }
 
@@ -319,10 +292,7 @@ fn write_query_output(
   let manifest = CardDetectionSpatialQueryManifest {
     schema_version: CARD_DETECTION_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
-    card_detection_semantic_manifest_path: inputs
-      .card_detection_semantic_manifest_path
-      .display()
-      .to_string(),
+    card_detection_semantic_manifest_path: inputs.card_detection_semantic_manifest_path.display().to_string(),
     source_detection_bundle_dir: semantic_manifest.source_detection_bundle_dir.clone(),
     target_zone: inputs.target_slot.zone.as_str().to_string(),
     target_index: inputs.target_slot.index,
@@ -391,9 +361,7 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::card_detection_semantic::{
-    CardDetectionSemanticValidationInputs, validate_card_detection_semantic,
-  };
+  use crate::card_detection_semantic::{CardDetectionSemanticValidationInputs, validate_card_detection_semantic};
   use std::path::PathBuf;
 
   fn fixture_root() -> PathBuf {
@@ -419,10 +387,7 @@ mod tests {
       output_dir: temp.path().join("query"),
     })
     .expect("query");
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionSpatialQueryStatus::Answered
-    );
+    assert_eq!(output.manifest.status, CardDetectionSpatialQueryStatus::Answered);
     assert!(output.manifest.pixel_x.is_some());
     assert!(output.manifest.pixel_y.is_some());
   }
@@ -430,22 +395,15 @@ mod tests {
   #[test]
   fn missing_target_slot_yields_blocked() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let semantic_path =
-      semantic_manifest_for(fixture_root().join("query/missing_target_slot"), &temp);
+    let semantic_path = semantic_manifest_for(fixture_root().join("query/missing_target_slot"), &temp);
     let output = query_card_detection_spatial(CardDetectionSpatialQueryInputs {
       card_detection_semantic_manifest_path: semantic_path,
       target_slot: SlotId::new(ObjectZone::Hand, 99),
       output_dir: temp.path().join("query"),
     })
     .expect("query");
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionSpatialQueryStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(CardDetectionSpatialQueryReason::TargetSlotNotFound)
-    );
+    assert_eq!(output.manifest.status, CardDetectionSpatialQueryStatus::Blocked);
+    assert_eq!(output.manifest.reason, Some(CardDetectionSpatialQueryReason::TargetSlotNotFound));
   }
 
   #[test]
@@ -458,13 +416,7 @@ mod tests {
       output_dir: temp.path().join("query"),
     })
     .expect("query");
-    assert_eq!(
-      output.manifest.status,
-      CardDetectionSpatialQueryStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(CardDetectionSpatialQueryReason::SlotOutOfBounds)
-    );
+    assert_eq!(output.manifest.status, CardDetectionSpatialQueryStatus::Blocked);
+    assert_eq!(output.manifest.reason, Some(CardDetectionSpatialQueryReason::SlotOutOfBounds));
   }
 }

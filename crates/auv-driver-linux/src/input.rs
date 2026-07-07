@@ -7,19 +7,13 @@ use crate::native::portal::{InputSession, PortalInput};
 use auv_driver::error::DriverResult;
 use auv_driver::geometry::Point;
 use auv_driver::input::{
-  Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
-  KeyPressOptions, PasteTextOptions, Scroll, TextSubmit, TypeTextOptions,
+  Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll,
+  TextSubmit, TypeTextOptions,
 };
 
-use crate::clipboard::{
-  restore as restore_clipboard, set_text as set_clipboard_text, snapshot as snapshot_clipboard,
-};
+use crate::clipboard::{restore as restore_clipboard, set_text as set_clipboard_text, snapshot as snapshot_clipboard};
 
-pub(crate) fn click_at(
-  state: &Arc<Mutex<LinuxDriverSessionState>>,
-  point: Point,
-  click: Click,
-) -> DriverResult<InputActionResult> {
+pub(crate) fn click_at(state: &Arc<Mutex<LinuxDriverSessionState>>, point: Point, click: Click) -> DriverResult<InputActionResult> {
   with_input_session(state, |session| session.click_at(point, click))?;
   Ok(pointer_result())
 }
@@ -41,9 +35,7 @@ pub(crate) fn type_text(
   options: TypeTextOptions,
 ) -> DriverResult<InputActionResult> {
   if matches!(options.policy, InputPolicy::BackgroundOnly) {
-    return Err(invalid_input(
-      "linux type_text cannot use background_only input policy",
-    ));
+    return Err(invalid_input("linux type_text cannot use background_only input policy"));
   }
   with_input_session(state, |session| {
     if options.replace_existing {
@@ -66,34 +58,22 @@ pub(crate) fn type_text(
   Ok(keyboard_result())
 }
 
-pub(crate) fn press_key(
-  state: &Arc<Mutex<LinuxDriverSessionState>>,
-  options: KeyPressOptions,
-) -> DriverResult<InputActionResult> {
+pub(crate) fn press_key(state: &Arc<Mutex<LinuxDriverSessionState>>, options: KeyPressOptions) -> DriverResult<InputActionResult> {
   let chord = parse_key_chord(&options.key)?;
-  with_input_session(state, |session| {
-    session.key_chord(&chord.modifiers, chord.key)
-  })?;
+  with_input_session(state, |session| session.key_chord(&chord.modifiers, chord.key))?;
   sleep_if_nonzero(options.settle);
   Ok(keyboard_result())
 }
 
 pub(crate) fn copy(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<()> {
-  with_input_session(state, |session| {
-    session.key_chord(&[keysym::CONTROL_L], keysym::for_char('c')?)
-  })
+  with_input_session(state, |session| session.key_chord(&[keysym::CONTROL_L], keysym::for_char('c')?))
 }
 
 pub(crate) fn paste(state: &Arc<Mutex<LinuxDriverSessionState>>) -> DriverResult<()> {
-  with_input_session(state, |session| {
-    session.key_chord(&[keysym::CONTROL_L], keysym::for_char('v')?)
-  })
+  with_input_session(state, |session| session.key_chord(&[keysym::CONTROL_L], keysym::for_char('v')?))
 }
 
-pub(crate) fn paste_text(
-  state: &Arc<Mutex<LinuxDriverSessionState>>,
-  options: PasteTextOptions,
-) -> DriverResult<()> {
+pub(crate) fn paste_text(state: &Arc<Mutex<LinuxDriverSessionState>>, options: PasteTextOptions) -> DriverResult<()> {
   let snapshot = snapshot_clipboard(state)?;
   let result = (|| {
     set_clipboard_text(state, &options.text)?;
@@ -117,12 +97,10 @@ pub(crate) fn paste_text(
   match (result, restore_result) {
     (Ok(()), Ok(())) => Ok(()),
     (Err(action_error), Ok(())) => Err(action_error),
-    (Ok(()), Err(restore_error)) => Err(crate::error::backend(format!(
-      "pasted text but failed to restore clipboard: {restore_error}"
-    ))),
-    (Err(action_error), Err(restore_error)) => Err(crate::error::backend(format!(
-      "{action_error}; additionally failed to restore clipboard: {restore_error}"
-    ))),
+    (Ok(()), Err(restore_error)) => Err(crate::error::backend(format!("pasted text but failed to restore clipboard: {restore_error}"))),
+    (Err(action_error), Err(restore_error)) => {
+      Err(crate::error::backend(format!("{action_error}; additionally failed to restore clipboard: {restore_error}")))
+    }
   }
 }
 
@@ -149,12 +127,7 @@ fn with_input_session<T>(
   if state.input_session.is_none() {
     state.input_session = Some(PortalInput::open()?);
   }
-  operation(
-    state
-      .input_session
-      .as_mut()
-      .expect("input session was just initialized"),
-  )
+  operation(state.input_session.as_mut().expect("input session was just initialized"))
 }
 
 fn keyboard_result() -> InputActionResult {
@@ -201,24 +174,15 @@ fn parse_key_chord(input: &str) -> DriverResult<KeyChord> {
     return Err(invalid_input("key must not be empty"));
   }
   if trimmed.contains('+') {
-    let parts = trimmed
-      .split('+')
-      .map(str::trim)
-      .filter(|part| !part.is_empty())
-      .collect::<Vec<_>>();
+    let parts = trimmed.split('+').map(str::trim).filter(|part| !part.is_empty()).collect::<Vec<_>>();
     if parts.len() < 2 {
-      return Err(invalid_input(format!(
-        "invalid shortcut {trimmed}; expected a form like ctrl+f"
-      )));
+      return Err(invalid_input(format!("invalid shortcut {trimmed}; expected a form like ctrl+f")));
     }
     let (key_part, modifier_parts) = parts.split_last().expect("len checked");
     let mut modifiers = Vec::new();
     for raw in modifier_parts {
-      let modifier = keysym::modifier(raw).ok_or_else(|| {
-        invalid_input(format!(
-          "invalid shortcut {trimmed}; unsupported modifier {raw}"
-        ))
-      })?;
+      let modifier =
+        keysym::modifier(raw).ok_or_else(|| invalid_input(format!("invalid shortcut {trimmed}; unsupported modifier {raw}")))?;
       if !modifiers.contains(&modifier) {
         modifiers.push(modifier);
       }
@@ -269,9 +233,7 @@ mod keysym {
       return Err(invalid_input("key must not be empty"));
     };
     if chars.next().is_some() {
-      return Err(invalid_input(format!(
-        "invalid key {raw}; use a special key, shortcut, or type_text for multi-character text"
-      )));
+      return Err(invalid_input(format!("invalid key {raw}; use a special key, shortcut, or type_text for multi-character text")));
     }
     for_char(ch)
   }
@@ -283,9 +245,7 @@ mod keysym {
     match ch {
       '\n' | '\r' => Ok(RETURN),
       '\t' => Ok(TAB),
-      _ => Err(invalid_input(format!(
-        "linux portal keyboard input only supports ASCII text in this slice; unsupported character {ch:?}"
-      ))),
+      _ => Err(invalid_input(format!("linux portal keyboard input only supports ASCII text in this slice; unsupported character {ch:?}"))),
     }
   }
 

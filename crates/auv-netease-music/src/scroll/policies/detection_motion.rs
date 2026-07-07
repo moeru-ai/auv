@@ -34,11 +34,7 @@ impl MotionDetectionPolicy {
     // useful movement values, but it did not resolve completion for large
     // playlists before max_scrolls; prefer section-count or scroll bar state
     // evidence for the next completion-policy slice.
-    if before.width() == 0
-      || before.height() == 0
-      || before.width() != after.width()
-      || before.height() != after.height()
-    {
+    if before.width() == 0 || before.height() == 0 || before.width() != after.width() || before.height() != after.height() {
       return MotionEvidence {
         estimated_shift_y: 0,
         normalized_diff: 1.0,
@@ -46,9 +42,7 @@ impl MotionDetectionPolicy {
       };
     }
 
-    let max_shift_y = self
-      .max_shift_y
-      .min(before.height().saturating_sub(1) as i32);
+    let max_shift_y = self.max_shift_y.min(before.height().saturating_sub(1) as i32);
     let mut best_shift_y = 0;
     let mut best_diff = f64::INFINITY;
     for shift_y in -max_shift_y..=max_shift_y {
@@ -139,11 +133,7 @@ mod tests {
     for y in 0..height {
       for x in 0..width {
         let value = ((y * 13 + x * 3) % 255) as u8;
-        image.put_pixel(
-          x,
-          y,
-          Rgba([value, value.saturating_add(17), 255 - value, 255]),
-        );
+        image.put_pixel(x, y, Rgba([value, value.saturating_add(17), 255 - value, 255]));
       }
     }
     image

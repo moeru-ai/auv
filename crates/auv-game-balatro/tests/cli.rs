@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
 use auv_game_balatro::cli::{
-  BlindsArgs, BlindsCommand, CardsArgs, CardsCommand, CliArgs, CliError, Command, ConsumablesArgs,
-  ConsumablesCommand, Format, GameArgs, GameCommand, JokersArgs, JokersCommand, ObjectiveArgs,
-  PackArgs, PackCommand, RoundsArgs, RoundsCommand, ScoresArgs, ScoresCommand, SetupArgs,
-  StoreArgs, StoreCommand, VerifyModeArg, run,
+  BlindsArgs, BlindsCommand, CardsArgs, CardsCommand, CliArgs, CliError, Command, ConsumablesArgs, ConsumablesCommand, Format, GameArgs,
+  GameCommand, JokersArgs, JokersCommand, ObjectiveArgs, PackArgs, PackCommand, RoundsArgs, RoundsCommand, ScoresArgs, ScoresCommand,
+  SetupArgs, StoreArgs, StoreCommand, VerifyModeArg, run,
 };
 use auv_game_balatro::output::OutputMode;
 use auv_inference_ultralytics::InferenceDevice;
@@ -15,12 +14,7 @@ fn rejects_dry_run_for_balatro_operations() {
   let error = CliArgs::try_parse_from(["auv-game-balatro", "store", "next-round", "--dry-run"])
     .expect_err("Balatro mutating commands should not expose dry-run");
 
-  assert!(
-    error
-      .to_string()
-      .contains("unexpected argument '--dry-run'"),
-    "{error}"
-  );
+  assert!(error.to_string().contains("unexpected argument '--dry-run'"), "{error}");
 }
 
 #[test]
@@ -337,18 +331,9 @@ fn parses_consumable_sell_and_target_operations() {
 #[test]
 fn deferred_mutating_object_commands_validate_slot_prefixes_first() {
   let cases = [
-    (
-      CliArgs::parse_from(["auv-game-balatro", "store", "buy", "--slot", "bad"]),
-      "store:N",
-    ),
-    (
-      CliArgs::parse_from(["auv-game-balatro", "consumables", "use", "--slot", "bad"]),
-      "consumable:N",
-    ),
-    (
-      CliArgs::parse_from(["auv-game-balatro", "jokers", "sell", "--slot", "bad"]),
-      "joker:N",
-    ),
+    (CliArgs::parse_from(["auv-game-balatro", "store", "buy", "--slot", "bad"]), "store:N"),
+    (CliArgs::parse_from(["auv-game-balatro", "consumables", "use", "--slot", "bad"]), "consumable:N"),
+    (CliArgs::parse_from(["auv-game-balatro", "jokers", "sell", "--slot", "bad"]), "joker:N"),
   ];
 
   for (args, expected) in cases {
@@ -513,10 +498,7 @@ fn parses_observation_model_overrides() {
   assert_eq!(status.entities_classes, Some(PathBuf::from("entities.txt")));
   assert_eq!(status.ui_model, Some(PathBuf::from("ui.onnx")));
   assert_eq!(status.ui_classes, Some(PathBuf::from("ui.txt")));
-  assert_eq!(
-    status.card_corner_model,
-    Some(PathBuf::from("card-corner.onnx"))
-  );
+  assert_eq!(status.card_corner_model, Some(PathBuf::from("card-corner.onnx")));
 }
 
 #[test]
@@ -537,10 +519,7 @@ fn maps_json_out_to_file_output_mode() {
     panic!("expected game state command");
   };
 
-  assert_eq!(
-    state.output_mode(),
-    OutputMode::JsonFile(PathBuf::from("state.json"))
-  );
+  assert_eq!(state.output_mode(), OutputMode::JsonFile(PathBuf::from("state.json")));
 }
 
 #[test]
@@ -693,8 +672,7 @@ fn parses_joker_consumable_store_and_blind_object_commands() {
   };
   assert_eq!(joker_sell_args.slot, "joker:2");
 
-  let consumables =
-    CliArgs::parse_from(["auv-game-balatro", "consumables", "ls", "--image", "c.png"]);
+  let consumables = CliArgs::parse_from(["auv-game-balatro", "consumables", "ls", "--image", "c.png"]);
   let Command::Consumables(ConsumablesArgs {
     command: ConsumablesCommand::Ls(consumable_args),
   }) = consumables.command
@@ -789,18 +767,9 @@ fn parses_joker_consumable_store_and_blind_object_commands() {
 
 #[test]
 fn rejects_missing_targets_for_targeted_commands() {
-  assert!(
-    CliArgs::try_parse_from(["auv-game-balatro", "cards", "read"]).is_err(),
-    "cards read should require --slot"
-  );
-  assert!(
-    CliArgs::try_parse_from(["auv-game-balatro", "store", "buy"]).is_err(),
-    "store buy should require --slot"
-  );
-  assert!(
-    CliArgs::try_parse_from(["auv-game-balatro", "cards", "play"]).is_err(),
-    "cards play should require --slots"
-  );
+  assert!(CliArgs::try_parse_from(["auv-game-balatro", "cards", "read"]).is_err(), "cards read should require --slot");
+  assert!(CliArgs::try_parse_from(["auv-game-balatro", "store", "buy"]).is_err(), "store buy should require --slot");
+  assert!(CliArgs::try_parse_from(["auv-game-balatro", "cards", "play"]).is_err(), "cards play should require --slots");
 }
 
 #[test]

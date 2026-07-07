@@ -161,10 +161,7 @@ impl Rect {
   }
 
   pub fn center(self) -> Point {
-    Point::new(
-      self.origin.x + self.size.width / 2.0,
-      self.origin.y + self.size.height / 2.0,
-    )
+    Point::new(self.origin.x + self.size.width / 2.0, self.origin.y + self.size.height / 2.0)
   }
 }
 
@@ -283,10 +280,7 @@ mod tests {
 
     assert_eq!(value["basis_id"], serde_json::json!("basis-frame-1"));
     assert_eq!(value["source_space"]["kind"], serde_json::json!("world"));
-    assert_eq!(
-      value["derivation_family"],
-      serde_json::json!("camera_matrix")
-    );
+    assert_eq!(value["derivation_family"], serde_json::json!("camera_matrix"));
     assert_eq!(value["match_radius_px"], serde_json::json!(12.0));
   }
 }

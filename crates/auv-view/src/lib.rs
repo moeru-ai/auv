@@ -287,34 +287,21 @@ impl ViewBounds {
 /// whitespace. Matches the "normalized label equality" rule from the
 /// merge-fixtures spec.
 pub fn normalize_identity(value: &str) -> String {
-  value
-    .trim()
-    .to_lowercase()
-    .chars()
-    .filter(|ch| !ch.is_whitespace())
-    .collect()
+  value.trim().to_lowercase().chars().filter(|ch| !ch.is_whitespace()).collect()
 }
 
 /// Slug form of a label: `normalize_identity` then map every non-
 /// alphanumeric ASCII char to `_`. Used to build deterministic candidate /
 /// node IDs from raw OCR text.
 pub fn slug(value: &str) -> String {
-  normalize_identity(value)
-    .chars()
-    .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-    .collect()
+  normalize_identity(value).chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' }).collect()
 }
 
 /// Viewport fingerprint = pipe-joined normalized labels of the evidence
 /// nodes that were visible in this observation. Used to detect repeated
 /// viewports (stuck scroll / loop boundary) per the diagnostic policy.
 pub fn viewport_fingerprint(nodes: &[ViewEvidenceNode]) -> String {
-  nodes
-    .iter()
-    .filter_map(|node| node.label.as_deref())
-    .map(normalize_identity)
-    .collect::<Vec<_>>()
-    .join("|")
+  nodes.iter().filter_map(|node| node.label.as_deref()).map(normalize_identity).collect::<Vec<_>>().join("|")
 }
 
 /// REVIEW(confidence-thresholds-v1): the 0.85 / 0.65 split was tuned for
@@ -337,10 +324,7 @@ pub fn confidence_from_ocr(confidence: Option<f32>) -> Confidence {
 pub fn viewport_contains_center(viewport: ViewBounds, bounds: ViewBounds) -> bool {
   let center_x = bounds.x + bounds.width * 0.5;
   let center_y = bounds.y + bounds.height * 0.5;
-  center_x >= viewport.x
-    && center_x <= viewport.x + viewport.width
-    && center_y >= viewport.y
-    && center_y <= viewport.y + viewport.height
+  center_x >= viewport.x && center_x <= viewport.x + viewport.width && center_y >= viewport.y && center_y <= viewport.y + viewport.height
 }
 
 /// Walk a `ViewNodeRecord` tree and accumulate every anchor attached to
@@ -488,9 +472,7 @@ where
     }
     previous_fingerprint = fingerprint.to_string();
   }
-  outcome
-    .known_limits
-    .push(format!("top seek stopped after max_scrolls={max_scrolls}"));
+  outcome.known_limits.push(format!("top seek stopped after max_scrolls={max_scrolls}"));
   outcome
 }
 
@@ -498,10 +480,7 @@ where
 /// fingerprint (boundary), check page/scroll caps, scroll down, repeat.
 /// The loop stops on the first of: repeated fingerprint, observer error,
 /// `max_pages` cap, `max_scrolls` cap.
-pub fn scan_with_observer<O>(
-  observer: &mut O,
-  options: ScanOptions,
-) -> ScanLoopOutcome<O::Observation>
+pub fn scan_with_observer<O>(observer: &mut O, options: ScanOptions) -> ScanLoopOutcome<O::Observation>
 where
   O: ViewObserver,
   O::Observation: ViewObservation,
@@ -527,9 +506,7 @@ where
       }
     };
     let fingerprint = observation.viewport_fingerprint().to_string();
-    let repeated_fingerprint = previous_fingerprint
-      .as_deref()
-      .is_some_and(|prev| prev == fingerprint.as_str());
+    let repeated_fingerprint = previous_fingerprint.as_deref().is_some_and(|prev| prev == fingerprint.as_str());
     previous_fingerprint = Some(fingerprint);
     observations.push(observation);
 
@@ -571,10 +548,7 @@ where
   O: ViewObservation,
 {
   let mut summary = ScrollBoundarySummary::default();
-  if observations
-    .windows(2)
-    .any(|pair| pair[0].viewport_fingerprint() == pair[1].viewport_fingerprint())
-  {
+  if observations.windows(2).any(|pair| pair[0].viewport_fingerprint() == pair[1].viewport_fingerprint()) {
     summary.bottom = BoundaryConfidence::Likely;
   }
   summary
@@ -639,10 +613,7 @@ pub trait ReconstructionPolicy {
   /// (or any other zero-allocation iterator) without boxing. The
   /// `Self::Candidate: 'a` bound is required for the `&'a Self::Candidate`
   /// items to be well-formed when the associated type is not `'static`.
-  fn candidates<'a>(
-    &self,
-    observation: &'a Self::Observation,
-  ) -> impl Iterator<Item = &'a Self::Candidate> + 'a
+  fn candidates<'a>(&self, observation: &'a Self::Observation) -> impl Iterator<Item = &'a Self::Candidate> + 'a
   where
     Self::Candidate: 'a;
 
@@ -655,11 +626,7 @@ pub trait ReconstructionPolicy {
   /// Build the section node + the section projection record for a
   /// newly-encountered header candidate. Called the first time a given
   /// section key is seen.
-  fn build_section(
-    &self,
-    observation: &Self::Observation,
-    candidate: &Self::Candidate,
-  ) -> (ViewNodeRecord, Self::SectionProjection);
+  fn build_section(&self, observation: &Self::Observation, candidate: &Self::Candidate) -> (ViewNodeRecord, Self::SectionProjection);
 
   /// Build the fallback section that absorbs items appearing before any
   /// header. Called at most once per `reconstruct`, lazily.
@@ -678,42 +645,26 @@ pub trait ReconstructionPolicy {
 
   /// Attach the item node to its parent section node. Default impl appends
   /// to `section_node.children`.
-  fn attach_item_to_section_node(
-    &self,
-    section_node: &mut ViewNodeRecord,
-    item_node: ViewNodeRecord,
-  ) {
+  fn attach_item_to_section_node(&self, section_node: &mut ViewNodeRecord, item_node: ViewNodeRecord) {
     section_node.children.push(item_node);
   }
 
   /// Append the item projection to the section projection. Apps with
   /// `items: Vec<_>` on their section type implement this with a push;
   /// apps with non-`Vec` containers replace the strategy.
-  fn append_item_to_section_projection(
-    &self,
-    section: &mut Self::SectionProjection,
-    item: Self::ItemProjection,
-  );
+  fn append_item_to_section_projection(&self, section: &mut Self::SectionProjection, item: Self::ItemProjection);
 
   /// Build the root container that holds every section node. Called once
   /// at the end of `reconstruct`. The app picks the root id, domain_kind,
   /// layout, scroll axis, and bounds.
-  fn build_root(
-    &self,
-    sidebar_bounds: ViewBounds,
-    boundary: ScrollBoundarySummary,
-    section_children: Vec<ViewNodeRecord>,
-  ) -> ViewNodeRecord;
+  fn build_root(&self, sidebar_bounds: ViewBounds, boundary: ScrollBoundarySummary, section_children: Vec<ViewNodeRecord>)
+  -> ViewNodeRecord;
 
   /// Emit the diagnostic when an item duplicate is detected. The policy
   /// owns the wording (NetEase uses `"deduplicated repeated sidebar item
   /// {label:?} in section {section_hint:?}"`); the framework owns the
   /// detection.
-  fn emit_dedup_diagnostic(
-    &self,
-    candidate: &Self::Candidate,
-    section: &Self::SectionProjection,
-  ) -> ParserDiagnostic;
+  fn emit_dedup_diagnostic(&self, candidate: &Self::Candidate, section: &Self::SectionProjection) -> ParserDiagnostic;
 }
 
 /// Run the framework reconstruction loop against the policy. The loop:
@@ -730,11 +681,7 @@ pub trait ReconstructionPolicy {
 ///    collect anchors and landmarks in pre-order.
 ///
 /// The boundary returned is `boundary_summary_from_observations(observations)`.
-pub fn reconstruct<P>(
-  policy: &P,
-  observations: &[P::Observation],
-  sidebar_bounds: ViewBounds,
-) -> ReconstructionOutput<P::SectionProjection>
+pub fn reconstruct<P>(policy: &P, observations: &[P::Observation], sidebar_bounds: ViewBounds) -> ReconstructionOutput<P::SectionProjection>
 where
   P: ReconstructionPolicy,
 {
@@ -743,10 +690,8 @@ where
   let boundary = boundary_summary_from_observations(observations);
   let mut section_nodes: Vec<ViewNodeRecord> = Vec::new();
   let mut section_projections: Vec<P::SectionProjection> = Vec::new();
-  let mut diagnostics: Vec<ParserDiagnostic> = observations
-    .iter()
-    .flat_map(|observation| observation.parser_notes().iter().cloned())
-    .collect();
+  let mut diagnostics: Vec<ParserDiagnostic> =
+    observations.iter().flat_map(|observation| observation.parser_notes().iter().cloned()).collect();
   let mut current_section_index: Option<usize> = None;
   let mut section_indices: HashMap<P::SectionKey, usize> = HashMap::new();
   let mut seen_items_by_section: Vec<HashSet<String>> = Vec::new();
@@ -776,31 +721,23 @@ where
             section_nodes.len() - 1
           });
           if !seen_items_by_section[section_index].insert(dedupe_key) {
-            diagnostics
-              .push(policy.emit_dedup_diagnostic(candidate, &section_projections[section_index]));
+            diagnostics.push(policy.emit_dedup_diagnostic(candidate, &section_projections[section_index]));
             continue;
           }
-          let (item_node, item_projection) =
-            policy.build_item(observation, candidate, &section_projections[section_index]);
+          let (item_node, item_projection) = policy.build_item(observation, candidate, &section_projections[section_index]);
           policy.attach_item_to_section_node(&mut section_nodes[section_index], item_node);
-          policy.append_item_to_section_projection(
-            &mut section_projections[section_index],
-            item_projection,
-          );
+          policy.append_item_to_section_projection(&mut section_projections[section_index], item_projection);
         }
         CandidateRole::Unknown => {}
       }
     }
   }
 
-  let any_evidence = observations
-    .iter()
-    .any(|observation| observation.has_evidence());
+  let any_evidence = observations.iter().any(|observation| observation.has_evidence());
   if any_evidence && section_projections.is_empty() {
     diagnostics.push(ParserDiagnostic {
       code: "parser_no_reliable_candidates".to_string(),
-      message: "OCR evidence was observed but no reliable sidebar candidates were accepted"
-        .to_string(),
+      message: "OCR evidence was observed but no reliable sidebar candidates were accepted".to_string(),
       node_id: None,
     });
   }
@@ -849,14 +786,7 @@ pub fn draw_rect(image: &mut RgbaImage, bounds: ViewBounds, color: Rgba<u8>, str
 
 /// Bresenham line from `(x0,y0)` to `(x1,y1)` on `image` with `color`.
 /// Out-of-bounds pixels are silently dropped by `put_pixel`.
-pub fn draw_line(
-  image: &mut RgbaImage,
-  mut x0: i64,
-  mut y0: i64,
-  x1: i64,
-  y1: i64,
-  color: Rgba<u8>,
-) {
+pub fn draw_line(image: &mut RgbaImage, mut x0: i64, mut y0: i64, x1: i64, y1: i64, color: Rgba<u8>) {
   let dx = (x1 - x0).abs();
   let sx = if x0 < x1 { 1 } else { -1 };
   let dy = -(y1 - y0).abs();
@@ -952,20 +882,11 @@ mod tests {
   fn viewport_contains_center_uses_geometric_center() {
     let viewport = ViewBounds::new(0.0, 0.0, 100.0, 100.0);
     // Center (50,50) is inside
-    assert!(viewport_contains_center(
-      viewport,
-      ViewBounds::new(40.0, 40.0, 20.0, 20.0)
-    ));
+    assert!(viewport_contains_center(viewport, ViewBounds::new(40.0, 40.0, 20.0, 20.0)));
     // Center (150, 50) is outside despite bounds overlapping
-    assert!(!viewport_contains_center(
-      viewport,
-      ViewBounds::new(100.0, 40.0, 100.0, 20.0)
-    ));
+    assert!(!viewport_contains_center(viewport, ViewBounds::new(100.0, 40.0, 100.0, 20.0)));
     // Exact boundary inclusive
-    assert!(viewport_contains_center(
-      viewport,
-      ViewBounds::new(90.0, 90.0, 20.0, 20.0)
-    ));
+    assert!(viewport_contains_center(viewport, ViewBounds::new(90.0, 90.0, 20.0, 20.0)));
   }
 
   #[test]
@@ -997,10 +918,7 @@ mod tests {
     };
     let mut out = Vec::new();
     collect_anchors(&root, &mut out);
-    assert_eq!(
-      out.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
-      vec!["root", "child-a", "child-b", "grandchild"]
-    );
+    assert_eq!(out.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), vec!["root", "child-a", "child-b", "grandchild"]);
   }
 
   #[test]
@@ -1022,10 +940,7 @@ mod tests {
     };
     let mut out = Vec::new();
     collect_landmarks(&root, &mut out);
-    assert_eq!(
-      out.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(),
-      vec!["root", "child"]
-    );
+    assert_eq!(out.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(), vec!["root", "child"]);
   }
 
   // ------------------------------------------------------------------------
@@ -1087,10 +1002,7 @@ mod tests {
   impl ViewObserver for FakeObserver {
     type Observation = FakeObservation;
 
-    fn observe(
-      &mut self,
-      _observation_index: usize,
-    ) -> Result<Self::Observation, ParserDiagnostic> {
+    fn observe(&mut self, _observation_index: usize) -> Result<Self::Observation, ParserDiagnostic> {
       if let Some(after) = self.fail_observe_after {
         if self.cursor >= after {
           return Err(Self::diagnostic("observe_failed"));
@@ -1141,19 +1053,9 @@ mod tests {
     );
 
     assert_eq!(outcome.observations.len(), 3);
-    assert_eq!(
-      outcome
-        .observations
-        .iter()
-        .map(|o| o.viewport_fingerprint())
-        .collect::<Vec<_>>(),
-      vec!["a", "b", "b"]
-    );
+    assert_eq!(outcome.observations.iter().map(|o| o.viewport_fingerprint()).collect::<Vec<_>>(), vec!["a", "b", "b"]);
     assert!(outcome.diagnostics.is_empty());
-    assert!(
-      outcome.known_limits.is_empty(),
-      "boundary hit, no cap fired"
-    );
+    assert!(outcome.known_limits.is_empty(), "boundary hit, no cap fired");
   }
 
   #[test]
@@ -1335,11 +1237,7 @@ mod tests {
     let color = Rgba([10, 20, 30, 255]);
     draw_line(&mut img, 1, 2, 5, 2, color);
     for x in 1..=5 {
-      assert_eq!(
-        img.get_pixel(x as u32, 2),
-        &color,
-        "x={x} should be painted"
-      );
+      assert_eq!(img.get_pixel(x as u32, 2), &color, "x={x} should be painted");
     }
     assert_eq!(img.get_pixel(0, 2), &Rgba([0, 0, 0, 0]));
     assert_eq!(img.get_pixel(6, 2), &Rgba([0, 0, 0, 0]));
@@ -1429,10 +1327,7 @@ mod tests {
     type ItemProjection = FakeItem;
     type Observation = FakeReconstructObservation;
 
-    fn candidates<'a>(
-      &self,
-      observation: &'a Self::Observation,
-    ) -> impl Iterator<Item = &'a Self::Candidate> + 'a
+    fn candidates<'a>(&self, observation: &'a Self::Observation) -> impl Iterator<Item = &'a Self::Candidate> + 'a
     where
       Self::Candidate: 'a,
     {
@@ -1451,11 +1346,7 @@ mod tests {
       }
     }
 
-    fn build_section(
-      &self,
-      _observation: &Self::Observation,
-      candidate: &Self::Candidate,
-    ) -> (ViewNodeRecord, Self::SectionProjection) {
+    fn build_section(&self, _observation: &Self::Observation, candidate: &Self::Candidate) -> (ViewNodeRecord, Self::SectionProjection) {
       let id = format!("section.{}", candidate.id);
       let node = ViewNodeRecord {
         id: id.clone(),
@@ -1527,20 +1418,11 @@ mod tests {
       (node, item)
     }
 
-    fn append_item_to_section_projection(
-      &self,
-      section: &mut Self::SectionProjection,
-      item: Self::ItemProjection,
-    ) {
+    fn append_item_to_section_projection(&self, section: &mut Self::SectionProjection, item: Self::ItemProjection) {
       section.items.push(item);
     }
 
-    fn build_root(
-      &self,
-      _bounds: ViewBounds,
-      _boundary: ScrollBoundarySummary,
-      section_children: Vec<ViewNodeRecord>,
-    ) -> ViewNodeRecord {
+    fn build_root(&self, _bounds: ViewBounds, _boundary: ScrollBoundarySummary, section_children: Vec<ViewNodeRecord>) -> ViewNodeRecord {
       ViewNodeRecord {
         id: "root".into(),
         kind: ViewNodeKind::Collection,
@@ -1549,11 +1431,7 @@ mod tests {
       }
     }
 
-    fn emit_dedup_diagnostic(
-      &self,
-      candidate: &Self::Candidate,
-      section: &Self::SectionProjection,
-    ) -> ParserDiagnostic {
+    fn emit_dedup_diagnostic(&self, candidate: &Self::Candidate, section: &Self::SectionProjection) -> ParserDiagnostic {
       ParserDiagnostic {
         code: "deduplicated_item".into(),
         message: format!("dup {} under {}", candidate.label, section.label),
@@ -1610,11 +1488,7 @@ mod tests {
       ),
     ];
     let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
-    assert_eq!(
-      out.sections.len(),
-      1,
-      "second header with same key must merge"
-    );
+    assert_eq!(out.sections.len(), 1, "second header with same key must merge");
     assert_eq!(out.sections[0].items.len(), 2);
     assert_eq!(out.sections[0].items[0].label, "Liked Songs");
     assert_eq!(out.sections[0].items[1].label, "Daily Mix 1");
@@ -1635,11 +1509,7 @@ mod tests {
     let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
     assert_eq!(out.sections.len(), 1);
     assert_eq!(out.sections[0].items.len(), 1);
-    let dedup = out
-      .diagnostics
-      .iter()
-      .find(|d| d.code == "deduplicated_item")
-      .expect("dedup diagnostic must fire");
+    let dedup = out.diagnostics.iter().find(|d| d.code == "deduplicated_item").expect("dedup diagnostic must fire");
     assert!(dedup.message.contains("Discover Weekly"));
     assert_eq!(dedup.node_id.as_deref(), Some("i1"));
   }
@@ -1671,10 +1541,7 @@ mod tests {
     let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
     assert_eq!(out.sections.len(), 0);
     assert!(
-      out
-        .diagnostics
-        .iter()
-        .any(|d| d.code == "parser_no_reliable_candidates"),
+      out.diagnostics.iter().any(|d| d.code == "parser_no_reliable_candidates"),
       "evidence + no sections must raise parser_no_reliable_candidates"
     );
   }
@@ -1685,12 +1552,7 @@ mod tests {
     let mut o = obs("fp", vec![]);
     o.evidence_present = false;
     let out = reconstruct(&FakePolicy, &[o], ViewBounds::default());
-    assert!(
-      out
-        .diagnostics
-        .iter()
-        .all(|d| d.code != "parser_no_reliable_candidates")
-    );
+    assert!(out.diagnostics.iter().all(|d| d.code != "parser_no_reliable_candidates"));
   }
 
   #[test]
@@ -1717,10 +1579,7 @@ mod tests {
     )];
     let out = reconstruct(&FakePolicy, &observations, ViewBounds::default());
     let anchor_ids: Vec<&str> = out.anchor_index.iter().map(|a| a.id.as_str()).collect();
-    assert_eq!(
-      anchor_ids,
-      vec!["anchor.section.h", "anchor.item.i0", "anchor.item.i1"]
-    );
+    assert_eq!(anchor_ids, vec!["anchor.section.h", "anchor.item.i0", "anchor.item.i1"]);
     let landmark_ids: Vec<&str> = out.landmark_index.iter().map(|l| l.id.as_str()).collect();
     assert_eq!(landmark_ids, vec!["landmark.item.i0", "landmark.item.i1"]);
   }

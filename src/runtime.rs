@@ -27,10 +27,7 @@ impl Runtime {
     }
   }
 
-  pub fn open_session(
-    &self,
-    options: crate::session::SessionOptions,
-  ) -> crate::session::SessionRuntime {
+  pub fn open_session(&self, options: crate::session::SessionOptions) -> crate::session::SessionRuntime {
     crate::session::SessionRuntime::new(options)
   }
   pub fn read_run(&self, run_id: &str) -> AuvResult<auv_tracing_driver::store::CanonicalRun> {
@@ -44,32 +41,20 @@ impl Runtime {
   ) -> AuvResult<auv_tracing_driver::recorded_operation::RecordedOperationOutput<T>>
   where
     E: std::fmt::Display,
-    F: FnOnce(
-      &mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>,
-    ) -> Result<T, E>,
+    F: FnOnce(&mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>) -> Result<T, E>,
   {
-    self
-      .recording
-      .handle()
-      .run_recorded_operation(spec, operation_label, operation)
+    self.recording.handle().run_recorded_operation(spec, operation_label, operation)
   }
   pub fn run_candidate_action_command(
     &self,
     request: crate::candidate_action_command::CandidateActionCommandRequest,
   ) -> AuvResult<
-    auv_tracing_driver::recorded_operation::RecordedOperationOutput<
-      crate::candidate_action_command::CandidateActionCommandOutput,
-    >,
+    auv_tracing_driver::recorded_operation::RecordedOperationOutput<crate::candidate_action_command::CandidateActionCommandOutput>,
   > {
     self.run_recorded_operation(
-      auv_tracing_driver::run_builder::RunSpec::new(
-        RunType::Execute,
-        "auv.candidate.action.command",
-      ),
+      auv_tracing_driver::run_builder::RunSpec::new(RunType::Execute, "auv.candidate.action.command"),
       "Consent-gated candidate action command",
-      |context| {
-        crate::candidate_action_command::execute_candidate_action_command(context, &request)
-      },
+      |context| crate::candidate_action_command::execute_candidate_action_command(context, &request),
     )
   }
   #[cfg(test)]
@@ -113,10 +98,7 @@ mod tests {
     let run = runtime
       .recording()
       .handle()
-      .start_run(auv_tracing_driver::run_builder::RunSpec::new(
-        auv_tracing_driver::trace::RunType::Command,
-        "auv.command",
-      ))
+      .start_run(auv_tracing_driver::run_builder::RunSpec::new(auv_tracing_driver::trace::RunType::Command, "auv.command"))
       .expect("default-spec run should start");
     assert_eq!(run.device_id().as_str(), "local");
     assert_eq!(run.session_id().as_str(), "default");
@@ -144,17 +126,10 @@ mod tests {
     let store_root = temp_dir("runtime-explicit-device-store");
     let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
 
-    let spec = auv_tracing_driver::run_builder::RunSpec::new(
-      auv_tracing_driver::trace::RunType::Command,
-      "auv.command",
-    )
-    .with_device(auv_tracing_driver::trace::DeviceId::new("remote-mac"))
-    .with_session(auv_tracing_driver::trace::SessionId::new("music"));
-    let run = runtime
-      .recording()
-      .handle()
-      .start_run(spec)
-      .expect("explicit-device run should start");
+    let spec = auv_tracing_driver::run_builder::RunSpec::new(auv_tracing_driver::trace::RunType::Command, "auv.command")
+      .with_device(auv_tracing_driver::trace::DeviceId::new("remote-mac"))
+      .with_session(auv_tracing_driver::trace::SessionId::new("music"));
+    let run = runtime.recording().handle().start_run(spec).expect("explicit-device run should start");
     assert_eq!(run.device_id().as_str(), "remote-mac");
     assert_eq!(run.session_id().as_str(), "music");
 
@@ -181,17 +156,10 @@ mod tests {
     let store_root = temp_dir("runtime-attr-roundtrip-store");
     let runtime = runtime_with_success_driver(project_root.clone(), store_root.clone());
 
-    let spec = auv_tracing_driver::run_builder::RunSpec::new(
-      auv_tracing_driver::trace::RunType::Command,
-      "auv.command",
-    )
-    .with_device(auv_tracing_driver::trace::DeviceId::new("local"))
-    .with_session(auv_tracing_driver::trace::SessionId::new("scan"));
-    let run = runtime
-      .recording()
-      .handle()
-      .start_run(spec)
-      .expect("run should start");
+    let spec = auv_tracing_driver::run_builder::RunSpec::new(auv_tracing_driver::trace::RunType::Command, "auv.command")
+      .with_device(auv_tracing_driver::trace::DeviceId::new("local"))
+      .with_session(auv_tracing_driver::trace::SessionId::new("scan"));
+    let run = runtime.recording().handle().start_run(spec).expect("run should start");
     let run_id = run.id().as_str().to_string();
     runtime
       .recording()
@@ -206,19 +174,10 @@ mod tests {
       )
       .expect("run should finish");
 
-    let canonical = runtime
-      .recording()
-      .read_run(&run_id)
-      .expect("run snapshot should read");
+    let canonical = runtime.recording().read_run(&run_id).expect("run snapshot should read");
     let attrs = &canonical.run.attributes;
-    assert_eq!(
-      attrs.get(auv_tracing_driver::trace::RUN_ATTR_DEVICE_ID),
-      Some(&json!("local"))
-    );
-    assert_eq!(
-      attrs.get(auv_tracing_driver::trace::RUN_ATTR_SESSION_ID),
-      Some(&json!("scan"))
-    );
+    assert_eq!(attrs.get(auv_tracing_driver::trace::RUN_ATTR_DEVICE_ID), Some(&json!("local")));
+    assert_eq!(attrs.get(auv_tracing_driver::trace::RUN_ATTR_SESSION_ID), Some(&json!("scan")));
 
     // Old on-disk layout invariant: `.auv/runs/{run_id}/` directory, no
     // per-device or per-session subdir inserted.
@@ -230,9 +189,6 @@ mod tests {
   }
 
   fn runtime_with_success_driver(project_root: PathBuf, store_root: PathBuf) -> Runtime {
-    Runtime::new(
-      project_root,
-      LocalStore::new(store_root).expect("store should initialize"),
-    )
+    Runtime::new(project_root, LocalStore::new(store_root).expect("store should initialize"))
   }
 }

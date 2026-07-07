@@ -23,32 +23,14 @@ fn reconstruct_sidebar_groups_items_under_carried_section() {
     ]),
   );
 
-  let scan = reconstruct_playlist_sidebar(
-    ScanAppContext::default(),
-    ScanWindowContext::default(),
-    ViewRegionRecord::default(),
-    vec![page0, page1],
-  );
+  let scan =
+    reconstruct_playlist_sidebar(ScanAppContext::default(), ScanWindowContext::default(), ViewRegionRecord::default(), vec![page0, page1]);
 
   assert_eq!(scan.projection.sections.len(), 2);
-  assert_eq!(
-    scan
-      .projection
-      .sections
-      .iter()
-      .map(|section| section.items.len())
-      .sum::<usize>(),
-    3
-  );
+  assert_eq!(scan.projection.sections.iter().map(|section| section.items.len()).sum::<usize>(), 3);
   assert_eq!(scan.projection.sections[0].items[0].label, "Coding BGM");
-  assert_eq!(
-    scan.projection.sections[0].items[1].section_hint,
-    Some(SidebarSectionKind::MyPlaylists)
-  );
-  assert_eq!(
-    scan.projection.sections[1].items[0].section_hint,
-    Some(SidebarSectionKind::FavoritePlaylists)
-  );
+  assert_eq!(scan.projection.sections[0].items[1].section_hint, Some(SidebarSectionKind::MyPlaylists));
+  assert_eq!(scan.projection.sections[1].items[0].section_hint, Some(SidebarSectionKind::FavoritePlaylists));
   assert_eq!(scan.reconstruction.root.kind, ViewNodeKind::Collection);
   assert_eq!(scan.reconstruction.root.children.len(), 2);
 }
@@ -94,16 +76,15 @@ fn created_category_scan_stops_at_favorite_landmark_before_scrolling_again() {
   assert_eq!(scan.observations.len(), 2);
   assert_eq!(observer.cursor, 1);
   assert_eq!(scan.projection.sections.len(), 1);
-  assert_eq!(
-    scan.projection.sections[0].kind,
-    SidebarSectionKind::MyPlaylists
-  );
+  assert_eq!(scan.projection.sections[0].kind, SidebarSectionKind::MyPlaylists);
   assert_eq!(scan.projection.sections[0].items.len(), 1);
   assert_eq!(scan.projection.sections[0].items[0].label, "Coding BGM");
-  assert!(scan.interaction_events.iter().any(|event| {
-    event.kind == InteractionEventKind::StopDecision
-      && event.note.as_deref() == Some("reached_stop_landmark")
-  }));
+  assert!(
+    scan
+      .interaction_events
+      .iter()
+      .any(|event| { event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("reached_stop_landmark") })
+  );
 }
 
 #[test]
@@ -140,10 +121,7 @@ fn favorite_category_starts_collecting_at_favorite_landmark() {
   );
 
   assert_eq!(scan.projection.sections.len(), 1);
-  assert_eq!(
-    scan.projection.sections[0].kind,
-    SidebarSectionKind::FavoritePlaylists
-  );
+  assert_eq!(scan.projection.sections[0].kind, SidebarSectionKind::FavoritePlaylists);
   assert_eq!(scan.projection.sections[0].items.len(), 1);
   assert_eq!(scan.projection.sections[0].items[0].label, "Road Trip");
 }
@@ -159,11 +137,8 @@ fn reconstruct_sidebar_records_observe_and_scroll_interaction_events() {
     ]),
   );
   first.source_artifacts = vec!["obs-0000-window.png".to_string()];
-  let mut second = parse_sidebar_viewport(
-    1,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)]),
-  );
+  let mut second =
+    parse_sidebar_viewport(1, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)]));
   second.source_artifacts = vec!["obs-0001-window.png".to_string()];
   second.incoming_scroll_delivery_path = Some("window_targeted_wheel".to_string());
   let mut observer = FakeSidebarObserver::new(vec![first, second]);
@@ -180,9 +155,7 @@ fn reconstruct_sidebar_records_observe_and_scroll_interaction_events() {
   );
 
   assert!(scan.interaction_events.iter().any(|event| {
-    event.kind == InteractionEventKind::Observe
-      && event.observation_index == Some(0)
-      && event.artifacts == vec!["obs-0000-window.png"]
+    event.kind == InteractionEventKind::Observe && event.observation_index == Some(0) && event.artifacts == vec!["obs-0000-window.png"]
   }));
   assert!(scan.interaction_events.iter().any(|event| {
     event.kind == InteractionEventKind::InputScroll
@@ -193,9 +166,10 @@ fn reconstruct_sidebar_records_observe_and_scroll_interaction_events() {
           "obs-0000-window.png".to_string(),
           "obs-0001-window.png".to_string(),
         ]
-      && event.scroll.as_ref().is_some_and(|scroll| {
-        scroll.settle_ms == 250 && scroll.delivery_path.as_deref() == Some("window_targeted_wheel")
-      })
+      && event
+        .scroll
+        .as_ref()
+        .is_some_and(|scroll| scroll.settle_ms == 250 && scroll.delivery_path.as_deref() == Some("window_targeted_wheel"))
   }));
 }
 
@@ -209,12 +183,7 @@ fn decode_playlist_sidebar_scan_json_accepts_current_schema() {
       ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
     ]),
   );
-  let scan = reconstruct_playlist_sidebar(
-    ScanAppContext::default(),
-    ScanWindowContext::default(),
-    ViewRegionRecord::default(),
-    vec![page0],
-  );
+  let scan = reconstruct_playlist_sidebar(ScanAppContext::default(), ScanWindowContext::default(), ViewRegionRecord::default(), vec![page0]);
 
   let json = serde_json::to_string(&scan).expect("scan should serialize");
   let decoded = decode_playlist_sidebar_scan_json(&json).expect("current schema should decode");
@@ -225,13 +194,11 @@ fn decode_playlist_sidebar_scan_json_accepts_current_schema() {
 #[test]
 fn decode_playlist_sidebar_scan_json_rejects_missing_or_unknown_schema() {
   let missing = r#"{"projection":{"sections":[]}}"#;
-  let missing_error = decode_playlist_sidebar_scan_json(missing)
-    .expect_err("missing schema version should be rejected");
+  let missing_error = decode_playlist_sidebar_scan_json(missing).expect_err("missing schema version should be rejected");
   assert!(missing_error.contains("missing schema_version"));
 
   let unknown = r#"{"schema_version":"view-ir-v999","projection":{"sections":[]}}"#;
-  let unknown_error = decode_playlist_sidebar_scan_json(unknown)
-    .expect_err("unknown schema version should be rejected");
+  let unknown_error = decode_playlist_sidebar_scan_json(unknown).expect_err("unknown schema version should be rejected");
   assert!(unknown_error.contains("unsupported playlist sidebar scan schema_version"));
 }
 
@@ -245,26 +212,14 @@ fn reconstruct_sidebar_deduplicates_repeated_item_labels_in_same_section() {
       ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
     ]),
   );
-  let page1 = parse_sidebar_viewport(
-    1,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("Coding BGM", 32.0, 42.0, 120.0, 20.0)]),
-  );
+  let page1 =
+    parse_sidebar_viewport(1, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("Coding BGM", 32.0, 42.0, 120.0, 20.0)]));
 
-  let scan = reconstruct_playlist_sidebar(
-    ScanAppContext::default(),
-    ScanWindowContext::default(),
-    ViewRegionRecord::default(),
-    vec![page0, page1],
-  );
+  let scan =
+    reconstruct_playlist_sidebar(ScanAppContext::default(), ScanWindowContext::default(), ViewRegionRecord::default(), vec![page0, page1]);
 
   assert_eq!(scan.projection.sections[0].items.len(), 1);
-  assert!(
-    scan
-      .diagnostics
-      .iter()
-      .any(|diagnostic| diagnostic.code == "deduplicated_item")
-  );
+  assert!(scan.diagnostics.iter().any(|diagnostic| diagnostic.code == "deduplicated_item"));
 }
 
 #[test]
@@ -276,26 +231,14 @@ fn reconstruct_sidebar_reports_ocr_evidence_without_reliable_candidates() {
   //
   // Before the fix, JSON consumers could not distinguish an empty sidebar
   // from a parser rejection. The fix keeps that boundary explicit.
-  let observation = parse_sidebar_viewport(
-    0,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("搜索框占位", 8.0, 42.0, 120.0, 20.0)]),
-  );
+  let observation =
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("搜索框占位", 8.0, 42.0, 120.0, 20.0)]));
 
-  let scan = reconstruct_playlist_sidebar(
-    ScanAppContext::default(),
-    ScanWindowContext::default(),
-    ViewRegionRecord::default(),
-    vec![observation],
-  );
+  let scan =
+    reconstruct_playlist_sidebar(ScanAppContext::default(), ScanWindowContext::default(), ViewRegionRecord::default(), vec![observation]);
 
   assert!(scan.projection.sections.is_empty());
-  assert!(
-    scan
-      .diagnostics
-      .iter()
-      .any(|diagnostic| diagnostic.code == "parser_no_reliable_candidates")
-  );
+  assert!(scan.diagnostics.iter().any(|diagnostic| diagnostic.code == "parser_no_reliable_candidates"));
 }
 
 #[test]
@@ -308,11 +251,8 @@ fn reconstruct_sidebar_deduplicates_items_per_actual_section() {
       ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
     ]),
   );
-  let page1 = parse_sidebar_viewport(
-    1,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("Coding BGM", 32.0, 42.0, 120.0, 20.0)]),
-  );
+  let page1 =
+    parse_sidebar_viewport(1, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("Coding BGM", 32.0, 42.0, 120.0, 20.0)]));
   let page2 = parse_sidebar_viewport(
     2,
     ViewBounds::new(0.0, 0.0, 240.0, 400.0),
@@ -330,26 +270,13 @@ fn reconstruct_sidebar_deduplicates_items_per_actual_section() {
   );
 
   assert_eq!(scan.projection.sections.len(), 2);
-  assert_eq!(
-    scan.projection.sections[0].kind,
-    SidebarSectionKind::MyPlaylists
-  );
+  assert_eq!(scan.projection.sections[0].kind, SidebarSectionKind::MyPlaylists);
   assert_eq!(scan.projection.sections[0].items.len(), 1);
   assert_eq!(scan.projection.sections[0].items[0].label, "Coding BGM");
-  assert_eq!(
-    scan.projection.sections[1].kind,
-    SidebarSectionKind::MyPlaylists
-  );
+  assert_eq!(scan.projection.sections[1].kind, SidebarSectionKind::MyPlaylists);
   assert_eq!(scan.projection.sections[1].items.len(), 1);
   assert_eq!(scan.projection.sections[1].items[0].label, "Coding BGM");
-  assert_eq!(
-    scan
-      .diagnostics
-      .iter()
-      .filter(|diagnostic| diagnostic.code == "deduplicated_item")
-      .count(),
-    1
-  );
+  assert_eq!(scan.diagnostics.iter().filter(|diagnostic| diagnostic.code == "deduplicated_item").count(), 1);
 }
 
 #[test]
@@ -363,16 +290,8 @@ fn scan_loop_stops_on_repeated_viewport_fingerprint() {
         ("Coding BGM", 32.0, 74.0, 120.0, 20.0),
       ]),
     ),
-    parse_sidebar_viewport(
-      1,
-      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-      &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)]),
-    ),
-    parse_sidebar_viewport(
-      2,
-      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-      &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)]),
-    ),
+    parse_sidebar_viewport(1, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)])),
+    parse_sidebar_viewport(2, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("Jazz", 32.0, 42.0, 80.0, 20.0)])),
   ];
   let mut observer = FakeSidebarObserver::new(observations);
 
@@ -394,46 +313,31 @@ fn scan_loop_stops_on_repeated_viewport_fingerprint() {
     scan
       .interaction_events
       .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision
-        && event.note.as_deref() == Some("repeated_viewport_fingerprint"))
+      .any(|event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("repeated_viewport_fingerprint"))
   );
 }
 
 #[test]
 fn scan_loop_stops_after_two_scrolls_with_no_motion_evidence() {
-  let mut first = parse_sidebar_viewport(
-    0,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
-  );
+  let mut first = parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]));
   first.viewport_fingerprint = "page-a".to_string();
-  let mut second = parse_sidebar_viewport(
-    1,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("B", 32.0, 42.0, 80.0, 20.0)]),
-  );
+  let mut second =
+    parse_sidebar_viewport(1, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("B", 32.0, 42.0, 80.0, 20.0)]));
   second.viewport_fingerprint = "page-b".to_string();
   second.scroll_motion = Some(MotionEvidence {
     estimated_shift_y: 9,
     normalized_diff: 0.24,
     no_motion: false,
   });
-  let mut third = parse_sidebar_viewport(
-    2,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("C", 32.0, 42.0, 80.0, 20.0)]),
-  );
+  let mut third = parse_sidebar_viewport(2, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("C", 32.0, 42.0, 80.0, 20.0)]));
   third.viewport_fingerprint = "page-c".to_string();
   third.scroll_motion = Some(MotionEvidence {
     estimated_shift_y: 0,
     normalized_diff: 0.0,
     no_motion: true,
   });
-  let mut fourth = parse_sidebar_viewport(
-    3,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("D", 32.0, 42.0, 80.0, 20.0)]),
-  );
+  let mut fourth =
+    parse_sidebar_viewport(3, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("D", 32.0, 42.0, 80.0, 20.0)]));
   fourth.viewport_fingerprint = "page-d".to_string();
   fourth.scroll_motion = Some(MotionEvidence {
     estimated_shift_y: 0,
@@ -459,15 +363,9 @@ fn scan_loop_stops_after_two_scrolls_with_no_motion_evidence() {
     scan
       .interaction_events
       .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision
-        && event.note.as_deref() == Some("scroll_no_motion_after_input"))
+      .any(|event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("scroll_no_motion_after_input"))
   );
-  assert!(
-    !scan
-      .known_limits
-      .iter()
-      .any(|limit| limit.contains("max_scrolls"))
-  );
+  assert!(!scan.known_limits.iter().any(|limit| limit.contains("max_scrolls")));
 }
 
 #[test]
@@ -513,28 +411,17 @@ fn sidebar_target_seek_exhausts_budget_without_match() {
 
 #[test]
 fn scan_loop_stops_after_one_no_motion_when_ax_scrollbar_is_bottom() {
-  let mut first = parse_sidebar_viewport(
-    0,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
-  );
+  let mut first = parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]));
   first.viewport_fingerprint = "page-a".to_string();
-  let mut second = parse_sidebar_viewport(
-    1,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("B", 32.0, 42.0, 80.0, 20.0)]),
-  );
+  let mut second =
+    parse_sidebar_viewport(1, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("B", 32.0, 42.0, 80.0, 20.0)]));
   second.viewport_fingerprint = "page-b".to_string();
   second.scroll_motion = Some(MotionEvidence {
     estimated_shift_y: 9,
     normalized_diff: 0.24,
     no_motion: false,
   });
-  let mut third = parse_sidebar_viewport(
-    2,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("C", 32.0, 42.0, 80.0, 20.0)]),
-  );
+  let mut third = parse_sidebar_viewport(2, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("C", 32.0, 42.0, 80.0, 20.0)]));
   third.viewport_fingerprint = "page-c".to_string();
   third.scroll_motion = Some(MotionEvidence {
     estimated_shift_y: 0,
@@ -542,11 +429,8 @@ fn scan_loop_stops_after_one_no_motion_when_ax_scrollbar_is_bottom() {
     no_motion: true,
   });
   third.ax_scrollbar_boundary = Some(SidebarScrollbarBoundary::Bottom);
-  let mut fourth = parse_sidebar_viewport(
-    3,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("D", 32.0, 42.0, 80.0, 20.0)]),
-  );
+  let mut fourth =
+    parse_sidebar_viewport(3, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("D", 32.0, 42.0, 80.0, 20.0)]));
   fourth.viewport_fingerprint = "page-d".to_string();
   let mut observer = FakeSidebarObserver::new(vec![first, second, third, fourth]);
 
@@ -563,24 +447,17 @@ fn scan_loop_stops_after_one_no_motion_when_ax_scrollbar_is_bottom() {
 
   assert_eq!(scan.observations.len(), 3);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
-  assert!(
-    scan
-      .interaction_events
-      .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision
-        && event.note.as_deref() == Some("scroll_no_motion_with_ax_scrollbar_bottom"))
-  );
+  assert!(scan.interaction_events.iter().any(
+    |event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("scroll_no_motion_with_ax_scrollbar_bottom")
+  ));
 }
 
 #[test]
 fn scan_loop_does_not_stop_scroll_on_no_motion_without_prior_motion() {
   let observations = (0..4)
     .map(|index| {
-      let mut observation = parse_sidebar_viewport(
-        index,
-        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-        &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
-      );
+      let mut observation =
+        parse_sidebar_viewport(index, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]));
       observation.viewport_fingerprint = format!("page-{index}");
       if index > 0 {
         observation.scroll_motion = Some(MotionEvidence {
@@ -611,26 +488,17 @@ fn scan_loop_does_not_stop_scroll_on_no_motion_without_prior_motion() {
     !scan
       .interaction_events
       .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision
-        && event.note.as_deref() == Some("scroll_no_motion_after_input"))
+      .any(|event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("scroll_no_motion_after_input"))
   );
-  assert!(
-    scan
-      .known_limits
-      .iter()
-      .any(|limit| limit.contains("max_scrolls=3"))
-  );
+  assert!(scan.known_limits.iter().any(|limit| limit.contains("max_scrolls=3")));
 }
 
 #[test]
 fn scan_loop_does_not_stop_scroll_on_no_motion_from_noop_delivery() {
   let observations = (0..4)
     .map(|index| {
-      let mut observation = parse_sidebar_viewport(
-        index,
-        ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-        &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
-      );
+      let mut observation =
+        parse_sidebar_viewport(index, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]));
       observation.viewport_fingerprint = format!("page-{index}");
       if index > 0 {
         observation.incoming_scroll_delivery_path = Some("noop".to_string());
@@ -662,8 +530,7 @@ fn scan_loop_does_not_stop_scroll_on_no_motion_from_noop_delivery() {
     !scan
       .interaction_events
       .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision
-        && event.note.as_deref() == Some("scroll_no_motion_after_input"))
+      .any(|event| event.kind == InteractionEventKind::StopDecision && event.note.as_deref() == Some("scroll_no_motion_after_input"))
   );
 }
 
@@ -721,19 +588,9 @@ fn scan_loop_stops_after_two_scrolls_with_no_new_semantic_candidates() {
 
   assert_eq!(scan.observations.len(), 3);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Likely);
-  assert!(
-    scan
-      .interaction_events
-      .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision
-        && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input"))
-  );
-  assert!(
-    !scan
-      .known_limits
-      .iter()
-      .any(|limit| limit.contains("max_scrolls"))
-  );
+  assert!(scan.interaction_events.iter().any(|event| event.kind == InteractionEventKind::StopDecision
+    && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input")));
+  assert!(!scan.known_limits.iter().any(|limit| limit.contains("max_scrolls")));
 }
 
 #[test]
@@ -793,13 +650,8 @@ fn query_scan_continues_past_no_new_candidates_until_query_is_visible() {
 
   assert_eq!(scan.observations.len(), 4);
   assert_eq!(scan.boundary.bottom, BoundaryConfidence::Unknown);
-  assert!(
-    !scan
-      .interaction_events
-      .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision
-        && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input"))
-  );
+  assert!(!scan.interaction_events.iter().any(|event| event.kind == InteractionEventKind::StopDecision
+    && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input")));
   assert_eq!(
     scan
       .projection
@@ -837,21 +689,10 @@ fn query_scan_skipped_top_rewind_when_query_unique_exact_in_viewport() {
     "3",
   );
 
-  assert!(
-    scan
-      .known_limits
-      .iter()
-      .any(|limit| limit == QUERY_SCAN_SKIPPED_TOP_REWIND_LIMIT)
-  );
+  assert!(scan.known_limits.iter().any(|limit| limit == QUERY_SCAN_SKIPPED_TOP_REWIND_LIMIT));
   assert_eq!(scan.boundary.top, BoundaryConfidence::Unknown);
   assert_eq!(
-    scan
-      .projection
-      .sections
-      .iter()
-      .flat_map(|section| section.items.iter())
-      .find(|item| item.label == "3")
-      .map(|item| item.label.as_str()),
+    scan.projection.sections.iter().flat_map(|section| section.items.iter()).find(|item| item.label == "3").map(|item| item.label.as_str()),
     Some("3")
   );
 }
@@ -891,21 +732,10 @@ fn query_scan_applies_top_rewind_when_query_not_in_initial_viewport() {
     "3",
   );
 
-  assert!(
-    scan
-      .known_limits
-      .iter()
-      .any(|limit| limit == QUERY_SCAN_TOP_REWIND_APPLIED_LIMIT)
-  );
+  assert!(scan.known_limits.iter().any(|limit| limit == QUERY_SCAN_TOP_REWIND_APPLIED_LIMIT));
   assert_eq!(scan.boundary.top, BoundaryConfidence::Likely);
   assert_eq!(
-    scan
-      .projection
-      .sections
-      .iter()
-      .flat_map(|section| section.items.iter())
-      .find(|item| item.label == "3")
-      .map(|item| item.label.as_str()),
+    scan.projection.sections.iter().flat_map(|section| section.items.iter()).find(|item| item.label == "3").map(|item| item.label.as_str()),
     Some("3")
   );
 }
@@ -964,28 +794,17 @@ fn scan_loop_ignores_scroll_no_new_semantic_candidates_from_noop_delivery() {
   );
 
   assert_eq!(scan.observations.len(), 4);
-  assert!(
-    !scan
-      .interaction_events
-      .iter()
-      .any(|event| event.kind == InteractionEventKind::StopDecision
-        && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input"))
-  );
+  assert!(!scan.interaction_events.iter().any(|event| event.kind == InteractionEventKind::StopDecision
+    && event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input")));
 }
 
 #[test]
 fn favorite_category_does_not_stop_on_no_new_candidates_before_start_landmark() {
-  let mut first = parse_sidebar_viewport(
-    0,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)]),
-  );
+  let mut first =
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)]));
   first.viewport_fingerprint = "page-a".to_string();
-  let mut second = parse_sidebar_viewport(
-    1,
-    ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-    &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)]),
-  );
+  let mut second =
+    parse_sidebar_viewport(1, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)]));
   second.viewport_fingerprint = "page-b".to_string();
   second.incoming_scroll_delivery_path = Some("window_targeted_wheel".to_string());
   let mut third = parse_sidebar_viewport(
@@ -1012,18 +831,10 @@ fn favorite_category_does_not_stop_on_no_new_candidates_before_start_landmark() 
   );
 
   assert_eq!(scan.projection.sections.len(), 1);
-  assert_eq!(
-    scan.projection.sections[0].kind,
-    SidebarSectionKind::FavoritePlaylists
-  );
+  assert_eq!(scan.projection.sections[0].kind, SidebarSectionKind::FavoritePlaylists);
   assert_eq!(scan.projection.sections[0].items.len(), 1);
   assert_eq!(scan.projection.sections[0].items[0].label, "Road Trip");
-  assert!(
-    !scan
-      .interaction_events
-      .iter()
-      .any(|event| event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input"))
-  );
+  assert!(!scan.interaction_events.iter().any(|event| event.note.as_deref() == Some("scroll_no_new_semantic_candidates_after_input")));
 }
 
 #[test]
@@ -1046,16 +857,8 @@ fn crop_image_projects_logical_sidebar_bounds_into_capture_pixels() {
 #[test]
 fn scan_loop_ignores_shared_page_budget_and_scans_until_boundary() {
   let observations = vec![
-    parse_sidebar_viewport(
-      0,
-      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-      &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)]),
-    ),
-    parse_sidebar_viewport(
-      1,
-      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-      &fake_recognition(vec![("B", 32.0, 42.0, 80.0, 20.0)]),
-    ),
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("A", 32.0, 42.0, 80.0, 20.0)])),
+    parse_sidebar_viewport(1, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("B", 32.0, 42.0, 80.0, 20.0)])),
   ];
   let mut observer = FakeSidebarObserver::new(observations);
 
@@ -1071,28 +874,14 @@ fn scan_loop_ignores_shared_page_budget_and_scans_until_boundary() {
   );
 
   assert_eq!(scan.observations.len(), 2);
-  assert!(
-    !scan
-      .known_limits
-      .iter()
-      .any(|limit| limit.contains("max_pages"))
-  );
-  assert!(
-    scan
-      .diagnostics
-      .iter()
-      .any(|diagnostic| diagnostic.code == "no_more_fake_observations")
-  );
+  assert!(!scan.known_limits.iter().any(|limit| limit.contains("max_pages")));
+  assert!(scan.diagnostics.iter().any(|diagnostic| diagnostic.code == "no_more_fake_observations"));
 }
 
 #[test]
 fn scan_loop_rewinds_to_top_before_collecting_pages() {
   let observations = vec![
-    parse_sidebar_viewport(
-      0,
-      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-      &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)]),
-    ),
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)])),
     parse_sidebar_viewport(
       1,
       ViewBounds::new(0.0, 0.0, 240.0, 400.0),
@@ -1113,25 +902,15 @@ fn scan_loop_rewinds_to_top_before_collecting_pages() {
   );
 
   assert_eq!(scan.observations.len(), 2);
-  assert_eq!(
-    scan.observations[0].candidates[0].label.as_deref(),
-    Some("创建的歌单")
-  );
-  assert_eq!(
-    scan.observations[1].candidates[0].label.as_deref(),
-    Some("Middle Playlist")
-  );
+  assert_eq!(scan.observations[0].candidates[0].label.as_deref(), Some("创建的歌单"));
+  assert_eq!(scan.observations[1].candidates[0].label.as_deref(), Some("Middle Playlist"));
   assert_eq!(scan.boundary.top, BoundaryConfidence::Likely);
 }
 
 #[test]
 fn scan_loop_clears_top_seek_scroll_metadata_before_collection() {
   let observations = vec![
-    parse_sidebar_viewport(
-      0,
-      ViewBounds::new(0.0, 0.0, 240.0, 400.0),
-      &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)]),
-    ),
+    parse_sidebar_viewport(0, ViewBounds::new(0.0, 0.0, 240.0, 400.0), &fake_recognition(vec![("创建的歌单", 8.0, 42.0, 110.0, 20.0)])),
     parse_sidebar_viewport(
       1,
       ViewBounds::new(0.0, 0.0, 240.0, 400.0),
@@ -1189,10 +968,7 @@ impl SidebarScanObserver for FakeSidebarObserver {
     self.last_scroll_seek_cursor = None;
   }
 
-  fn observe_scroll_seek(
-    &mut self,
-    observation_index: usize,
-  ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+  fn observe_scroll_seek(&mut self, observation_index: usize) -> Result<SidebarViewportObservation, ParserDiagnostic> {
     let cursor = self.cursor;
     let mut observation = self.observe(observation_index)?;
     if observation.scroll_motion.is_none() {
@@ -1215,20 +991,12 @@ impl SidebarScanObserver for FakeSidebarObserver {
 impl ViewObserver for FakeSidebarObserver {
   type Observation = SidebarViewportObservation;
 
-  fn observe(
-    &mut self,
-    observation_index: usize,
-  ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
-    let mut observation =
-      self
-        .observations
-        .get(self.cursor)
-        .cloned()
-        .ok_or_else(|| ParserDiagnostic {
-          code: "no_more_fake_observations".to_string(),
-          message: "fake sidebar observer has no more observations".to_string(),
-          node_id: None,
-        })?;
+  fn observe(&mut self, observation_index: usize) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+    let mut observation = self.observations.get(self.cursor).cloned().ok_or_else(|| ParserDiagnostic {
+      code: "no_more_fake_observations".to_string(),
+      message: "fake sidebar observer has no more observations".to_string(),
+      node_id: None,
+    })?;
     let pending_scroll_delivery_path = self.pending_scroll_delivery_path.take();
     if observation.incoming_scroll_delivery_path.is_none() {
       observation.incoming_scroll_delivery_path = pending_scroll_delivery_path;
@@ -1239,15 +1007,11 @@ impl ViewObserver for FakeSidebarObserver {
   }
 
   fn observe_probe(&mut self) -> Result<SidebarViewportObservation, ParserDiagnostic> {
-    self
-      .observations
-      .get(self.cursor)
-      .cloned()
-      .ok_or_else(|| ParserDiagnostic {
-        code: "no_more_fake_observations".to_string(),
-        message: "fake sidebar observer has no more observations".to_string(),
-        node_id: None,
-      })
+    self.observations.get(self.cursor).cloned().ok_or_else(|| ParserDiagnostic {
+      code: "no_more_fake_observations".to_string(),
+      message: "fake sidebar observer has no more observations".to_string(),
+      node_id: None,
+    })
   }
 
   fn scroll_up(&mut self) -> Result<(), ParserDiagnostic> {

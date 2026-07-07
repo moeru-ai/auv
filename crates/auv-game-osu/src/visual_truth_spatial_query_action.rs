@@ -1,6 +1,4 @@
-use crate::visual_truth_spatial_query::{
-  VisualTruthPixelVisibility, VisualTruthSpatialQueryManifest, VisualTruthSpatialQueryStatus,
-};
+use crate::visual_truth_spatial_query::{VisualTruthPixelVisibility, VisualTruthSpatialQueryManifest, VisualTruthSpatialQueryStatus};
 use auv_query_readiness::{DerivedActionReadiness, format_query_not_consumable_refusal};
 
 pub type VisualTruthSpatialQueryActionEligibility = auv_query_readiness::DerivedActionEligibility;
@@ -27,9 +25,7 @@ pub fn derive_visual_truth_spatial_query_action_readiness(
   }
 
   let Some(visibility) = manifest.pixel_visibility else {
-    let derived = DerivedActionReadiness::answer_non_clickable(
-      "answered query missing pixel visibility witness",
-    );
+    let derived = DerivedActionReadiness::answer_non_clickable("answered query missing pixel visibility witness");
     return VisualTruthSpatialQueryActionReadiness {
       eligibility: derived.eligibility,
       pixel_point: None,
@@ -51,8 +47,7 @@ pub fn derive_visual_truth_spatial_query_action_readiness(
         refusal_reason: derived.refusal_reason,
       };
     }
-    let derived =
-      DerivedActionReadiness::answer_non_clickable("visibility=inside_capture missing_pixel_point");
+    let derived = DerivedActionReadiness::answer_non_clickable("visibility=inside_capture missing_pixel_point");
     return VisualTruthSpatialQueryActionReadiness {
       eligibility: derived.eligibility,
       pixel_point: None,
@@ -60,10 +55,7 @@ pub fn derive_visual_truth_spatial_query_action_readiness(
     };
   }
 
-  let derived = DerivedActionReadiness::answer_non_clickable(format!(
-    "pixel_visibility={}",
-    visibility.as_str()
-  ));
+  let derived = DerivedActionReadiness::answer_non_clickable(format!("pixel_visibility={}", visibility.as_str()));
   VisualTruthSpatialQueryActionReadiness {
     eligibility: derived.eligibility,
     pixel_point,
@@ -75,9 +67,7 @@ pub fn derive_visual_truth_spatial_query_action_readiness(
 mod tests {
   use super::*;
   use crate::benchmark::CapturePhase;
-  use crate::visual_truth_spatial_query::{
-    VisualTruthSpatialQueryBackend, VisualTruthSpatialQueryReason,
-  };
+  use crate::visual_truth_spatial_query::{VisualTruthSpatialQueryBackend, VisualTruthSpatialQueryReason};
 
   fn base_manifest() -> VisualTruthSpatialQueryManifest {
     VisualTruthSpatialQueryManifest {
@@ -106,10 +96,7 @@ mod tests {
   #[test]
   fn click_ready_when_answered_inside_capture_with_pixel_point() {
     let readiness = derive_visual_truth_spatial_query_action_readiness(&base_manifest());
-    assert_eq!(
-      readiness.eligibility,
-      VisualTruthSpatialQueryActionEligibility::ClickReady
-    );
+    assert_eq!(readiness.eligibility, VisualTruthSpatialQueryActionEligibility::ClickReady);
     assert_eq!(readiness.pixel_point, Some((400.0, 300.0)));
   }
 
@@ -118,10 +105,7 @@ mod tests {
     let mut manifest = base_manifest();
     manifest.pixel_visibility = Some(VisualTruthPixelVisibility::OutsideCapture);
     let readiness = derive_visual_truth_spatial_query_action_readiness(&manifest);
-    assert_eq!(
-      readiness.eligibility,
-      VisualTruthSpatialQueryActionEligibility::AnswerNonClickable
-    );
+    assert_eq!(readiness.eligibility, VisualTruthSpatialQueryActionEligibility::AnswerNonClickable);
   }
 
   #[test]
@@ -133,9 +117,6 @@ mod tests {
     manifest.pixel_x = None;
     manifest.pixel_y = None;
     let readiness = derive_visual_truth_spatial_query_action_readiness(&manifest);
-    assert_eq!(
-      readiness.eligibility,
-      VisualTruthSpatialQueryActionEligibility::NotConsumable
-    );
+    assert_eq!(readiness.eligibility, VisualTruthSpatialQueryActionEligibility::NotConsumable);
   }
 }

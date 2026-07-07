@@ -11,14 +11,8 @@ use std::sync::Arc;
 use image::ImageReader;
 
 use auv_cli::app::{analyze_app_probe, probe_app};
-use auv_cli::contract::{
-  OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
-  VerificationResult,
-};
-use auv_cli::minecraft::{
-  QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness,
-  run_minecraft_query_wired_live_action,
-};
+use auv_cli::contract::{OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus, VerificationResult};
+use auv_cli::minecraft::{QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action};
 use auv_cli::minecraft_verification::query_wired_verification_readable;
 use auv_cli::model::InvokeRequest;
 use auv_cli::{build_default_runtime, build_runtime_with_store_root};
@@ -36,8 +30,7 @@ async fn main() {
 async fn run() -> Result<(), String> {
   let arguments = env::args().skip(1).collect::<Vec<_>>();
   let command = parse_cli(&arguments)?;
-  let project_root =
-    env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
+  let project_root = env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
   if let CliCommand::XtaskGenerateSwiftBridge = &command {
     let outputs = xtask::generate_swift_bridge_for_ide(&project_root)?;
     println!("generated Swift bridge files for IDE indexing");
@@ -105,10 +98,7 @@ async fn run() -> Result<(), String> {
       print!("{}", auv_cli::verticals::help::render_verticals_help());
     }
     CliCommand::MinecraftHelp => {
-      print!(
-        "{}",
-        auv_cli::verticals::minecraft::help::render_minecraft_help()
-      );
+      print!("{}", auv_cli::verticals::minecraft::help::render_minecraft_help());
     }
     CliCommand::OsuHelp => {
       print!("{}", auv_cli::verticals::osu::help::render_osu_help());
@@ -118,35 +108,33 @@ async fn run() -> Result<(), String> {
     }
     CliCommand::CandidateActionRun { request, inspect } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = runtime.run_candidate_action_command(
-        auv_cli::candidate_action_command::CandidateActionCommandRequest {
-          app_bundle_id: request.app_bundle_id,
-          query: request.query,
-          role: request.role,
-          action: request.action,
-          intent: request.intent,
-          proposer_model: request.proposer_model,
-          proposer_base_url: request.proposer_base_url,
-          reveal_shortcut: request.reveal_shortcut,
-          reveal_settle_ms: request.reveal_settle_ms,
-          stable_frames: request.stable_frames,
-          stable_frame_delay_ms: request.stable_frame_delay_ms,
-          max_centroid_drift_px: request.max_centroid_drift_px,
-          require_stable_text: request.require_stable_text,
-          dev_self_minted_consent: request.dev_self_minted_consent,
-          human_gesture_consent: request.human_gesture_consent,
-          human_gesture_timeout_ms: request.human_gesture_timeout_ms,
-          proposal_id: request.proposal_id,
-          promotion_id: request.promotion_id,
-          decision_id: request.decision_id,
-          execution_id: request.execution_id,
-          granted_by: request.granted_by,
-          promotion_scope_note: request.promotion_scope_note,
-          promotion_evidence_note: request.promotion_evidence_note,
-          execution_scope_note: request.execution_scope_note,
-          execution_evidence_note: request.execution_evidence_note,
-        },
-      )?;
+      let output = runtime.run_candidate_action_command(auv_cli::candidate_action_command::CandidateActionCommandRequest {
+        app_bundle_id: request.app_bundle_id,
+        query: request.query,
+        role: request.role,
+        action: request.action,
+        intent: request.intent,
+        proposer_model: request.proposer_model,
+        proposer_base_url: request.proposer_base_url,
+        reveal_shortcut: request.reveal_shortcut,
+        reveal_settle_ms: request.reveal_settle_ms,
+        stable_frames: request.stable_frames,
+        stable_frame_delay_ms: request.stable_frame_delay_ms,
+        max_centroid_drift_px: request.max_centroid_drift_px,
+        require_stable_text: request.require_stable_text,
+        dev_self_minted_consent: request.dev_self_minted_consent,
+        human_gesture_consent: request.human_gesture_consent,
+        human_gesture_timeout_ms: request.human_gesture_timeout_ms,
+        proposal_id: request.proposal_id,
+        promotion_id: request.promotion_id,
+        decision_id: request.decision_id,
+        execution_id: request.execution_id,
+        granted_by: request.granted_by,
+        promotion_scope_note: request.promotion_scope_note,
+        promotion_evidence_note: request.promotion_evidence_note,
+        execution_scope_note: request.execution_scope_note,
+        execution_evidence_note: request.execution_evidence_note,
+      })?;
       println!("runId: {}", output.run_id);
       println!("status: {}", output.value.status.as_str());
       if let Some(proposal_artifact_id) = output.value.proposal_artifact_id.as_deref() {
@@ -160,10 +148,7 @@ async fn run() -> Result<(), String> {
         println!("executionArtifact: {execution_artifact_id}");
       }
       if !output.value.promotion_refusals.is_empty() {
-        println!(
-          "promotionRefusals: {}",
-          output.value.promotion_refusals.join(",")
-        );
+        println!("promotionRefusals: {}", output.value.promotion_refusals.join(","));
       }
     }
     CliCommand::MinecraftProjectionBridge {
@@ -188,14 +173,8 @@ async fn run() -> Result<(), String> {
         screenshot_is_minecraft_window,
       )?;
       println!("runId: {}", output.run_id);
-      println!(
-        "projectionArtifact: {}",
-        output.value.projection_artifact_id
-      );
-      println!(
-        "screenshotArtifact: {}",
-        output.value.screenshot_artifact_id
-      );
+      println!("projectionArtifact: {}", output.value.projection_artifact_id);
+      println!("screenshotArtifact: {}", output.value.screenshot_artifact_id);
       if let Some(overlay_artifact_id) = output.value.overlay_artifact_id.as_deref() {
         println!("overlayArtifact: {overlay_artifact_id}");
       }
@@ -226,18 +205,9 @@ async fn run() -> Result<(), String> {
         screenshot_is_minecraft_window,
       )?;
       println!("runId: {}", output.run_id);
-      println!(
-        "projectionArtifact: {}",
-        output.value.projection_artifact_id
-      );
-      println!(
-        "screenshotArtifact: {}",
-        output.value.screenshot_artifact_id
-      );
-      println!(
-        "calibrationArtifact: {}",
-        output.value.calibration_artifact_id
-      );
+      println!("projectionArtifact: {}", output.value.projection_artifact_id);
+      println!("screenshotArtifact: {}", output.value.screenshot_artifact_id);
+      println!("calibrationArtifact: {}", output.value.calibration_artifact_id);
       if let Some(overlay_artifact_id) = output.value.overlay_artifact_id.as_deref() {
         println!("overlayArtifact: {overlay_artifact_id}");
       }
@@ -274,18 +244,9 @@ async fn run() -> Result<(), String> {
         screenshot_is_minecraft_window,
       )?;
       println!("runId: {}", output.run_id);
-      println!(
-        "projectionArtifact: {}",
-        output.value.projection_artifact_id
-      );
-      println!(
-        "screenshotArtifact: {}",
-        output.value.screenshot_artifact_id
-      );
-      println!(
-        "operationResultArtifact: {}",
-        output.value.operation_result_artifact_id
-      );
+      println!("projectionArtifact: {}", output.value.projection_artifact_id);
+      println!("screenshotArtifact: {}", output.value.screenshot_artifact_id);
+      println!("operationResultArtifact: {}", output.value.operation_result_artifact_id);
       println!("inputSummary: {}", output.value.input_summary);
       for artifact in &output.value.artifact_paths {
         println!("artifact: {}", artifact.display());
@@ -305,19 +266,10 @@ async fn run() -> Result<(), String> {
       )?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
-      println!(
-        "sourceRunId: {}",
-        output.value.manifest.source_run.source_run_id
-      );
-      println!(
-        "spatialFrames: {}",
-        output.value.manifest.counts.spatial_frames
-      );
+      println!("sourceRunId: {}", output.value.manifest.source_run.source_run_id);
+      println!("spatialFrames: {}", output.value.manifest.counts.spatial_frames);
       println!("screenshots: {}", output.value.manifest.counts.screenshots);
-      println!(
-        "verification: {}",
-        output.value.manifest.counts.verification
-      );
+      println!("verification: {}", output.value.manifest.counts.verification);
       println!("overlays: {}", output.value.manifest.counts.overlays);
       println!("output: {}", output.value.output_dir.display());
     }
@@ -329,28 +281,16 @@ async fn run() -> Result<(), String> {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let output = auv_cli::minecraft::run_minecraft_3dgs_scene_packet_export(
         &runtime.recording().handle(),
-        bundle_manifest_paths
-          .into_iter()
-          .map(PathBuf::from)
-          .collect(),
+        bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
         PathBuf::from(output_dir),
       )?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
-      println!(
-        "scenePacketSchema: {}",
-        output.value.manifest.schema_version
-      );
-      println!(
-        "sourceRuns: {}",
-        output.value.manifest.source_run_ids.join(",")
-      );
+      println!("scenePacketSchema: {}", output.value.manifest.schema_version);
+      println!("sourceRuns: {}", output.value.manifest.source_run_ids.join(","));
       println!("frames: {}", output.value.manifest.counts.frames);
       println!("screenshots: {}", output.value.manifest.counts.screenshots);
-      println!(
-        "missingScreenshots: {}",
-        output.value.manifest.counts.missing_screenshots
-      );
+      println!("missingScreenshots: {}", output.value.manifest.counts.missing_screenshots);
       println!("manifest: {}", output.value.manifest_path.display());
       println!("cameras: {}", output.value.cameras_path.display());
       println!("output: {}", output.value.output_dir.display());
@@ -368,14 +308,8 @@ async fn run() -> Result<(), String> {
       )?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
-      println!(
-        "trainingPackageSchema: {}",
-        output.value.manifest.schema_version
-      );
-      println!(
-        "sourceRuns: {}",
-        output.value.manifest.source_run_ids.join(",")
-      );
+      println!("trainingPackageSchema: {}", output.value.manifest.schema_version);
+      println!("sourceRuns: {}", output.value.manifest.source_run_ids.join(","));
       println!("frames: {}", output.value.manifest.counts.frames);
       println!("images: {}", output.value.manifest.counts.images);
       println!(
@@ -386,15 +320,9 @@ async fn run() -> Result<(), String> {
           auv_game_minecraft::TrainingCompatibilityStatus::Blocked => "blocked",
         }
       );
-      println!(
-        "compatibilityExportedFrames: {}",
-        output.value.manifest.counts.compatibility_exported_frames
-      );
+      println!("compatibilityExportedFrames: {}", output.value.manifest.counts.compatibility_exported_frames);
       println!("manifest: {}", output.value.manifest_path.display());
-      println!(
-        "inspectReport: {}",
-        output.value.inspect_report_path.display()
-      );
+      println!("inspectReport: {}", output.value.inspect_report_path.display());
       if let Some(transforms_path) = output.value.compatibility_transforms_path.as_ref() {
         println!("nerfstudioTransforms: {}", transforms_path.display());
       } else {
@@ -440,10 +368,7 @@ async fn run() -> Result<(), String> {
       );
       println!("launchCommand: {}", output.value.manifest.launch_command);
       println!("launchPlan: {}", output.value.manifest_path.display());
-      println!(
-        "inspectReport: {}",
-        output.value.inspect_report_path.display()
-      );
+      println!("inspectReport: {}", output.value.inspect_report_path.display());
       println!("runbook: {}", output.value.runbook_path.display());
       println!("output: {}", output.value.output_dir.display());
     }
@@ -465,15 +390,9 @@ async fn run() -> Result<(), String> {
         training_job_submit_command,
       )?;
       println!("runId: {}", output.run_id);
-      println!(
-        "remoteJobStatus: {}",
-        output.value.inspect_report.status.as_str()
-      );
+      println!("remoteJobStatus: {}", output.value.inspect_report.status.as_str());
       println!("trainerBackend: {}", output.value.manifest.trainer_backend);
-      println!(
-        "providerBackend: {}",
-        output.value.manifest.provider_backend
-      );
+      println!("providerBackend: {}", output.value.manifest.provider_backend);
       println!("jobBackend: {}", output.value.manifest.job_backend);
       println!(
         "submissionState: {}",
@@ -487,18 +406,10 @@ async fn run() -> Result<(), String> {
           }
         }
       );
-      println!(
-        "acceptedByProvider: {}",
-        output.value.inspect_report.accepted_by_provider
-      );
+      println!("acceptedByProvider: {}", output.value.inspect_report.accepted_by_provider);
       println!(
         "submissionRecordedAtMillis: {}",
-        output
-          .value
-          .inspect_report
-          .submission_recorded_at_millis
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| "none".to_string())
+        output.value.inspect_report.submission_recorded_at_millis.map(|value| value.to_string()).unwrap_or_else(|| "none".to_string())
       );
       println!(
         "readinessBlocker: {}",
@@ -522,19 +433,10 @@ async fn run() -> Result<(), String> {
         }
       );
       println!("launchCommand: {}", output.value.manifest.launch_command);
-      println!(
-        "configuredJobSubmissionCommand: {}",
-        output.value.manifest.job_submission_command
-      );
-      println!(
-        "launchPlan: {}",
-        output.value.manifest.source_training_launch_plan_path
-      );
+      println!("configuredJobSubmissionCommand: {}", output.value.manifest.job_submission_command);
+      println!("launchPlan: {}", output.value.manifest.source_training_launch_plan_path);
       println!("manifest: {}", output.value.manifest_path.display());
-      println!(
-        "inspectReport: {}",
-        output.value.inspect_report_path.display()
-      );
+      println!("inspectReport: {}", output.value.inspect_report_path.display());
       println!("runbook: {}", output.value.runbook_path.display());
       println!("output: {}", output.value.output_dir.display());
     }
@@ -547,30 +449,18 @@ async fn run() -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output =
-        auv_cli::minecraft::run_minecraft_3dgs_training_result_collection_with_environment(
-          &runtime.recording().handle(),
-          PathBuf::from(training_job_manifest_path),
-          PathBuf::from(output_dir),
-          training_job_endpoint,
-          training_job_token,
-          training_job_status_command,
-        )?;
+      let output = auv_cli::minecraft::run_minecraft_3dgs_training_result_collection_with_environment(
+        &runtime.recording().handle(),
+        PathBuf::from(training_job_manifest_path),
+        PathBuf::from(output_dir),
+        training_job_endpoint,
+        training_job_token,
+        training_job_status_command,
+      )?;
       println!("runId: {}", output.run_id);
       println!("status: {}", output.value.inspect_report.status.as_str());
-      println!(
-        "statusMessage: {}",
-        output
-          .value
-          .inspect_report
-          .status_message
-          .as_deref()
-          .unwrap_or("none")
-      );
-      println!(
-        "remoteResultStatus: {}",
-        output.value.inspect_report.status.as_str()
-      );
+      println!("statusMessage: {}", output.value.inspect_report.status_message.as_deref().unwrap_or("none"));
+      println!("remoteResultStatus: {}", output.value.inspect_report.status.as_str());
       println!("trainerBackend: {}", output.value.manifest.trainer_backend);
       println!("jobBackend: {}", output.value.manifest.job_backend);
       println!(
@@ -626,9 +516,7 @@ async fn run() -> Result<(), String> {
             auv_game_minecraft::TrainingResultStatus::Succeeded
             | auv_game_minecraft::TrainingResultStatus::Submitted
             | auv_game_minecraft::TrainingResultStatus::Queued => {
-              if !output.value.inspect_report.result_dir_exists
-                || !output.value.inspect_report.key_result_artifacts_present
-              {
+              if !output.value.inspect_report.result_dir_exists || !output.value.inspect_report.key_result_artifacts_present {
                 "provider_status_recorded_local_results_not_yet_observed"
               } else {
                 "provider_status_matches_local_result_observation"
@@ -639,24 +527,12 @@ async fn run() -> Result<(), String> {
         }
       );
       println!("jobId: {}", output.value.manifest.job_id);
-      println!(
-        "jobUrl: {}",
-        output.value.manifest.job_url.as_deref().unwrap_or("none")
-      );
+      println!("jobUrl: {}", output.value.manifest.job_url.as_deref().unwrap_or("none"));
       println!("resultDir: {}", output.value.manifest.result_dir);
-      println!(
-        "resultDirExists: {}",
-        output.value.inspect_report.result_dir_exists
-      );
-      println!(
-        "keyResultArtifactsPresent: {}",
-        output.value.inspect_report.key_result_artifacts_present
-      );
+      println!("resultDirExists: {}", output.value.inspect_report.result_dir_exists);
+      println!("keyResultArtifactsPresent: {}", output.value.inspect_report.key_result_artifacts_present);
       println!("manifest: {}", output.value.manifest_path.display());
-      println!(
-        "inspectReport: {}",
-        output.value.inspect_report_path.display()
-      );
+      println!("inspectReport: {}", output.value.inspect_report_path.display());
       println!("runbook: {}", output.value.runbook_path.display());
       println!("output: {}", output.value.output_dir.display());
     }
@@ -678,46 +554,17 @@ async fn run() -> Result<(), String> {
         artifact_fetch_command,
       )?;
       println!("runId: {}", output.run_id);
-      println!(
-        "fetchStatus: {}",
-        output.value.inspect_report.fetch_status.as_str()
-      );
+      println!("fetchStatus: {}", output.value.inspect_report.fetch_status.as_str());
       println!("trainerBackend: {}", output.value.manifest.trainer_backend);
       println!("jobBackend: {}", output.value.manifest.job_backend);
-      println!(
-        "sourceResultStatus: {}",
-        output.value.manifest.source_result_status.as_str()
-      );
-      println!(
-        "fetchReason: {}",
-        output
-          .value
-          .inspect_report
-          .fetch_reason
-          .map(|reason| reason.as_str())
-          .unwrap_or("none")
-      );
-      println!(
-        "sourceResultDir: {}",
-        output.value.manifest.source_result_dir
-      );
-      println!(
-        "normalizedResultDir: {}",
-        output.value.manifest.normalized_result_dir
-      );
-      println!(
-        "normalizedArtifactCount: {}",
-        output.value.inspect_report.normalized_artifact_count
-      );
-      println!(
-        "requiredArtifactsPresent: {}",
-        output.value.inspect_report.required_artifacts_present
-      );
+      println!("sourceResultStatus: {}", output.value.manifest.source_result_status.as_str());
+      println!("fetchReason: {}", output.value.inspect_report.fetch_reason.map(|reason| reason.as_str()).unwrap_or("none"));
+      println!("sourceResultDir: {}", output.value.manifest.source_result_dir);
+      println!("normalizedResultDir: {}", output.value.manifest.normalized_result_dir);
+      println!("normalizedArtifactCount: {}", output.value.inspect_report.normalized_artifact_count);
+      println!("requiredArtifactsPresent: {}", output.value.inspect_report.required_artifacts_present);
       println!("manifest: {}", output.value.manifest_path.display());
-      println!(
-        "inspectReport: {}",
-        output.value.inspect_report_path.display()
-      );
+      println!("inspectReport: {}", output.value.inspect_report_path.display());
       println!("output: {}", output.value.output_dir.display());
     }
 
@@ -738,55 +585,16 @@ async fn run() -> Result<(), String> {
       )?;
       println!("runId: {}", output.run_id);
       println!("status: {}", output.value.manifest.status.as_str());
-      println!(
-        "reason: {}",
-        output
-          .value
-          .manifest
-          .reason
-          .map(|reason| reason.as_str())
-          .unwrap_or("none")
-      );
-      println!(
-        "holdoutFrameIndex: {}",
-        output.value.manifest.holdout_frame_index
-      );
+      println!("reason: {}", output.value.manifest.reason.map(|reason| reason.as_str()).unwrap_or("none"));
+      println!("holdoutFrameIndex: {}", output.value.manifest.holdout_frame_index);
       println!(
         "spatialFrameId: {}",
-        output
-          .value
-          .manifest
-          .holdout_frame
-          .as_ref()
-          .map(|witness| witness.spatial_frame_id.as_str())
-          .unwrap_or("none")
+        output.value.manifest.holdout_frame.as_ref().map(|witness| witness.spatial_frame_id.as_str()).unwrap_or("none")
       );
-      println!(
-        "basisCheckpointPath: {}",
-        output
-          .value
-          .manifest
-          .basis_checkpoint_path
-          .as_deref()
-          .unwrap_or("none")
-      );
-      println!(
-        "holdoutScreenshotPath: {}",
-        output
-          .value
-          .manifest
-          .holdout_screenshot_path
-          .as_deref()
-          .unwrap_or("none")
-      );
-      println!(
-        "holdoutPreviewManifest: {}",
-        output.value.manifest_path.display()
-      );
-      println!(
-        "inspectReport: {}",
-        output.value.inspect_report_path.display()
-      );
+      println!("basisCheckpointPath: {}", output.value.manifest.basis_checkpoint_path.as_deref().unwrap_or("none"));
+      println!("holdoutScreenshotPath: {}", output.value.manifest.holdout_screenshot_path.as_deref().unwrap_or("none"));
+      println!("holdoutPreviewManifest: {}", output.value.manifest_path.display());
+      println!("inspectReport: {}", output.value.inspect_report_path.display());
     }
 
     CliCommand::MinecraftMeasure3dgsHoldoutRenderQuality {
@@ -811,30 +619,12 @@ async fn run() -> Result<(), String> {
       let metrics = output.value.manifest.metrics.as_ref();
       println!(
         "l1Mean: {}",
-        metrics
-          .and_then(|metrics| metrics.l1_mean)
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| "none".to_string())
+        metrics.and_then(|metrics| metrics.l1_mean).map(|value| value.to_string()).unwrap_or_else(|| "none".to_string())
       );
-      println!(
-        "mse: {}",
-        metrics
-          .and_then(|metrics| metrics.mse)
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| "none".to_string())
-      );
-      println!(
-        "psnr: {}",
-        metrics
-          .and_then(|metrics| metrics.psnr)
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| "none".to_string())
-      );
+      println!("mse: {}", metrics.and_then(|metrics| metrics.mse).map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()));
+      println!("psnr: {}", metrics.and_then(|metrics| metrics.psnr).map(|value| value.to_string()).unwrap_or_else(|| "none".to_string()));
       println!("manifest: {}", output.value.manifest_path.display());
-      println!(
-        "inspectReport: {}",
-        output.value.inspect_report_path.display()
-      );
+      println!("inspectReport: {}", output.value.inspect_report_path.display());
       println!("output: {}", output.value.output_dir.display());
     }
     CliCommand::MinecraftQuery3dgsTrainingResult {
@@ -869,65 +659,24 @@ async fn run() -> Result<(), String> {
       println!("status: {}", output.value.manifest.status.as_str());
       if matches!(
         output.value.manifest.status,
-        auv_game_minecraft::TrainingResultSpatialQueryStatus::Blocked
-          | auv_game_minecraft::TrainingResultSpatialQueryStatus::Failed
+        auv_game_minecraft::TrainingResultSpatialQueryStatus::Blocked | auv_game_minecraft::TrainingResultSpatialQueryStatus::Failed
       ) {
-        println!(
-          "reason: {}",
-          output
-            .value
-            .manifest
-            .reason
-            .map(|reason| reason.as_str())
-            .unwrap_or("none")
-        );
+        println!("reason: {}", output.value.manifest.reason.map(|reason| reason.as_str()).unwrap_or("none"));
       }
-      println!(
-        "selectedBackend: {}",
-        output
-          .value
-          .manifest
-          .selected_backend
-          .map(|backend| backend.as_str())
-          .unwrap_or("none")
-      );
+      println!("selectedBackend: {}", output.value.manifest.selected_backend.map(|backend| backend.as_str()).unwrap_or("none"));
       println!(
         "visibility: {}",
-        output
-          .value
-          .manifest
-          .visibility
-          .map(|visibility| format!("{visibility:?}"))
-          .unwrap_or_else(|| "none".to_string())
+        output.value.manifest.visibility.map(|visibility| format!("{visibility:?}")).unwrap_or_else(|| "none".to_string())
       );
       if let Some(screen_point) = output.value.manifest.screen_point {
         println!("screenPoint: {},{}", screen_point.x, screen_point.y);
       } else {
         println!("screenPoint: none");
       }
-      println!(
-        "basisFrameId: {}",
-        output
-          .value
-          .manifest
-          .basis_frame_id
-          .as_deref()
-          .unwrap_or("none")
-      );
-      println!(
-        "comparisonVerdict: {}",
-        output
-          .value
-          .manifest
-          .comparison_verdict
-          .map(|verdict| verdict.as_str())
-          .unwrap_or("none")
-      );
+      println!("basisFrameId: {}", output.value.manifest.basis_frame_id.as_deref().unwrap_or("none"));
+      println!("comparisonVerdict: {}", output.value.manifest.comparison_verdict.map(|verdict| verdict.as_str()).unwrap_or("none"));
       println!("queryManifest: {}", output.value.manifest_path.display());
-      println!(
-        "inspectReport: {}",
-        output.value.inspect_report_path.display()
-      );
+      println!("inspectReport: {}", output.value.inspect_report_path.display());
     }
     CliCommand::MinecraftQueryWiredLiveClick {
       training_result_semantic_manifest_path,
@@ -950,15 +699,12 @@ async fn run() -> Result<(), String> {
       let target_block = parse_block_position(&target_block)?;
       let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
       let target_semantics = parse_target_semantics(&target_semantics)?;
-      let telemetry_witness =
-        telemetry_sample.map(|pre_sample| QueryWiredLiveActionTelemetryWitness {
-          pre_telemetry_sample: PathBuf::from(pre_sample),
-          post_telemetry_sample: post_telemetry_sample.map(PathBuf::from),
-        });
+      let telemetry_witness = telemetry_sample.map(|pre_sample| QueryWiredLiveActionTelemetryWitness {
+        pre_telemetry_sample: PathBuf::from(pre_sample),
+        post_telemetry_sample: post_telemetry_sample.map(PathBuf::from),
+      });
       let inputs = QueryWiredLiveActionInputs {
-        training_result_semantic_manifest_path: PathBuf::from(
-          training_result_semantic_manifest_path,
-        ),
+        training_result_semantic_manifest_path: PathBuf::from(training_result_semantic_manifest_path),
         target_block,
         target_face,
         target_semantics,
@@ -974,24 +720,12 @@ async fn run() -> Result<(), String> {
       };
       let output = run_minecraft_query_wired_live_action(&runtime.recording().handle(), inputs)?;
       println!("runId: {}", output.run_id);
-      println!(
-        "queryStatus: {}",
-        output.value.query.manifest.status.as_str()
-      );
+      println!("queryStatus: {}", output.value.query.manifest.status.as_str());
       println!("wiringAttempted: {}", output.value.wiring.attempted);
-      println!(
-        "actionEligibility: {}",
-        output.value.wiring.action_eligibility.as_str()
-      );
-      println!(
-        "operationResultArtifact: {}",
-        output.value.operation_result_artifact_id
-      );
+      println!("actionEligibility: {}", output.value.wiring.action_eligibility.as_str());
+      println!("operationResultArtifact: {}", output.value.operation_result_artifact_id);
       if query_wired_verification_readable(&output.value.wiring) && should_write_local(&inspect) {
-        println!(
-          "{}",
-          format_query_wired_inspect_hint(&output.run_id, &inspect)
-        );
+        println!("{}", format_query_wired_inspect_hint(&output.run_id, &inspect));
       }
     }
     CliCommand::MinecraftValidate3dgsTrainingResult {
@@ -1006,38 +740,13 @@ async fn run() -> Result<(), String> {
         PathBuf::from(output_dir),
       )?;
       println!("runId: {}", output.run_id);
-      println!(
-        "status: {}",
-        output.value.inspect_report.semantic_status.as_str()
-      );
-      println!(
-        "reason: {}",
-        output
-          .value
-          .inspect_report
-          .semantic_reason
-          .map(|reason| reason.as_str())
-          .unwrap_or("none")
-      );
+      println!("status: {}", output.value.inspect_report.semantic_status.as_str());
+      println!("reason: {}", output.value.inspect_report.semantic_reason.map(|reason| reason.as_str()).unwrap_or("none"));
       println!("trainerBackend: {}", output.value.manifest.trainer_backend);
-      println!(
-        "checkpointCount: {}",
-        output.value.inspect_report.checkpoint_count
-      );
-      println!(
-        "configTrainer: {}",
-        output
-          .value
-          .inspect_report
-          .config_trainer
-          .as_deref()
-          .unwrap_or("none")
-      );
+      println!("checkpointCount: {}", output.value.inspect_report.checkpoint_count);
+      println!("configTrainer: {}", output.value.inspect_report.config_trainer.as_deref().unwrap_or("none"));
       println!("semanticManifest: {}", output.value.manifest_path.display());
-      println!(
-        "inspectReport: {}",
-        output.value.inspect_report_path.display()
-      );
+      println!("inspectReport: {}", output.value.inspect_report_path.display());
     }
     CliCommand::MinecraftPrepareTextureSweep {
       sidecar_run_dir,
@@ -1057,10 +766,7 @@ async fn run() -> Result<(), String> {
       for profile in &output.value.manifest.profiles {
         println!(
           "profile: {} pack={} expectedTelemetryId={} optionsResourcePacks={}",
-          profile.texture_profile,
-          profile.pack_dir,
-          profile.expected_telemetry_resource_pack_id,
-          profile.options_resource_packs_value
+          profile.texture_profile, profile.pack_dir, profile.expected_telemetry_resource_pack_id, profile.options_resource_packs_value
         );
       }
       println!("manifest: {}", output.value.manifest_path.display());
@@ -1074,10 +780,7 @@ async fn run() -> Result<(), String> {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
       let output = auv_cli::minecraft::run_minecraft_texture_sweep_sample_build(
         &runtime.recording().handle(),
-        bundle_manifest_paths
-          .into_iter()
-          .map(PathBuf::from)
-          .collect(),
+        bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
         PathBuf::from(output_path),
       )?;
       println!("runId: {}", output.run_id);
@@ -1086,10 +789,7 @@ async fn run() -> Result<(), String> {
       if let Some(source) = &output.value.sample_set.source {
         println!("sampleSourceGenerator: {}", source.generator);
         println!("sampleSourceRuns: {}", source.source_run_ids.join(","));
-        println!(
-          "bundleManifests: {}",
-          source.bundle_manifest_paths.join(",")
-        );
+        println!("bundleManifests: {}", source.bundle_manifest_paths.join(","));
       }
       println!("output: {}", output.value.output_path.display());
     }
@@ -1111,10 +811,7 @@ async fn run() -> Result<(), String> {
       println!("requireRealSource: {require_real_source}");
       println!("passed: {}", output.value.passed);
       println!("resourcePacks: {}", output.value.actual_resource_pack_count);
-      println!(
-        "noiseRefusalExercised: {}",
-        output.value.noise_refusal_exercised
-      );
+      println!("noiseRefusalExercised: {}", output.value.noise_refusal_exercised);
       if let Some(source) = &output.value.source {
         println!("sampleSourceGenerator: {}", source.generator);
         if !source.source_run_ids.is_empty() {
@@ -1127,14 +824,8 @@ async fn run() -> Result<(), String> {
           row.resource_pack,
           row.texture_profile,
           row.sample_count,
-          row
-            .pose_error_p95_px
-            .map(|value| format!("{value:.3}"))
-            .unwrap_or_else(|| "n/a".to_string()),
-          row
-            .min_occlusion_iou
-            .map(|value| format!("{value:.3}"))
-            .unwrap_or_else(|| "n/a".to_string()),
+          row.pose_error_p95_px.map(|value| format!("{value:.3}")).unwrap_or_else(|| "n/a".to_string()),
+          row.min_occlusion_iou.map(|value| format!("{value:.3}")).unwrap_or_else(|| "n/a".to_string()),
           row.passed
         );
       }
@@ -1146,11 +837,9 @@ async fn run() -> Result<(), String> {
     CliCommand::InvokeHelp { command_id } => {
       let registry = auv_cli_invoke::default_registry();
       if let Some(command_id) = command_id {
-        let command = registry.resolve(&command_id).ok_or_else(|| {
-          format!(
-            "unknown command {command_id}; use `auv invoke --help` to inspect available entries"
-          )
-        })?;
+        let command = registry
+          .resolve(&command_id)
+          .ok_or_else(|| format!("unknown command {command_id}; use `auv invoke --help` to inspect available entries"))?;
         print!("{}", auv_cli_invoke::render_command_help(command));
       } else {
         print!("{}", auv_cli_invoke::render_help_index(&registry));
@@ -1161,12 +850,7 @@ async fn run() -> Result<(), String> {
       output_dir,
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
-      let probe = probe_app(
-        &project_root,
-        &runtime,
-        &bundle_id,
-        output_dir.map(PathBuf::from),
-      )?;
+      let probe = probe_app(&project_root, &runtime, &bundle_id, output_dir.map(PathBuf::from))?;
       println!("app: {}", probe.app.bundle_id);
       println!("status: captured");
       println!("probe: {}", probe.output_dir.join("probe.json").display());
@@ -1179,31 +863,20 @@ async fn run() -> Result<(), String> {
       println!("status: analyzed");
       println!("analysis: {}", output.analysis_path.display());
       println!("report: {}", output.report_path.display());
-      println!(
-        "annotations: {}",
-        output.analysis.annotation_candidates.len()
-      );
+      println!("annotations: {}", output.analysis.annotation_candidates.len());
     }
     CliCommand::GodotCapabilityQuery { json } => {
-      let capabilities =
-        auv_godot::query_current_capabilities().map_err(|error| error.to_string())?;
+      let capabilities = auv_godot::query_current_capabilities().map_err(|error| error.to_string())?;
       if json {
         println!(
           "{}",
-          serde_json::to_string_pretty(&capabilities)
-            .map_err(|error| format!("failed to serialize Godot capabilities: {error}"))?
+          serde_json::to_string_pretty(&capabilities).map_err(|error| format!("failed to serialize Godot capabilities: {error}"))?
         );
       } else {
         println!("transport: {}", capabilities.transport);
         println!("pid: {}", capabilities.process.pid);
-        println!(
-          "projectPath: {}",
-          capabilities.process.project_path.display()
-        );
-        println!(
-          "airiBridgeConnected: {}",
-          capabilities.process.airi_bridge_connected
-        );
+        println!("projectPath: {}", capabilities.process.project_path.display());
+        println!("airiBridgeConnected: {}", capabilities.process.airi_bridge_connected);
         println!("features: {}", capabilities.features.join(", "));
         println!("renderStages: {}", capabilities.render_stages.join(", "));
         println!("cameraPresets: {}", capabilities.camera_presets.join(", "));
@@ -1214,13 +887,11 @@ async fn run() -> Result<(), String> {
       stages,
       json,
     } => {
-      let artifact = auv_godot::export_current_render_observation(output_dir, stages)
-        .map_err(|error| error.to_string())?;
+      let artifact = auv_godot::export_current_render_observation(output_dir, stages).map_err(|error| error.to_string())?;
       if json {
         println!(
           "{}",
-          serde_json::to_string_pretty(&artifact)
-            .map_err(|error| format!("failed to serialize Godot render observation: {error}"))?
+          serde_json::to_string_pretty(&artifact).map_err(|error| format!("failed to serialize Godot render observation: {error}"))?
         );
       } else {
         println!("status: exported");
@@ -1247,9 +918,7 @@ async fn run() -> Result<(), String> {
       let runtime = build_default_runtime(project_root.clone())?;
       let recording = runtime.recording().handle();
       let beatmap_path = PathBuf::from(beatmap_path);
-      let output_dir = output_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| temp_runtime_store_root().join("osu-benchmark-output"));
+      let output_dir = output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-benchmark-output"));
       let output = auv_cli::osu::run_osu_benchmark(&recording, beatmap_path, output_dir)?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
@@ -1269,11 +938,8 @@ async fn run() -> Result<(), String> {
       let runtime = build_default_runtime(project_root.clone())?;
       let recording = runtime.recording().handle();
       let beatmap_path = PathBuf::from(beatmap_path);
-      let output_dir = output_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(|| temp_runtime_store_root().join("osu-dispatch-output"));
-      let mut inputs =
-        auv_game_osu::BenchmarkInputs::typed_dispatch(beatmap_path, output_dir, target_app);
+      let output_dir = output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-dispatch-output"));
+      let mut inputs = auv_game_osu::BenchmarkInputs::typed_dispatch(beatmap_path, output_dir, target_app);
       if let Some(dispatch_limit) = dispatch_limit {
         inputs.dispatch_limit = Some(dispatch_limit);
       }
@@ -1294,10 +960,7 @@ async fn run() -> Result<(), String> {
       println!("latencyP95Ms: {}", output.value.latency_report.p95_error_ms);
       println!("jitterMs: {}", output.value.latency_report.jitter_ms);
       if let Some(summary) = &output.value.verification_summary {
-        println!(
-          "verificationCapturedActions: {}",
-          summary.captured_action_count
-        );
+        println!("verificationCapturedActions: {}", summary.captured_action_count);
         println!("verificationMissingFrames: {}", summary.missing_frame_count);
       }
       println!("output: {}", output.value.output_dir.display());
@@ -1308,21 +971,11 @@ async fn run() -> Result<(), String> {
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
       let recording = runtime.recording().handle();
-      let output = auv_cli::osu::run_osu_dataset_export(
-        &recording,
-        PathBuf::from(run_artifact_dir),
-        PathBuf::from(output_dir),
-      )?;
+      let output = auv_cli::osu::run_osu_dataset_export(&recording, PathBuf::from(run_artifact_dir), PathBuf::from(output_dir))?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
-      println!(
-        "exportedFrames: {}",
-        output.value.dataset_manifest.exported_frames.len()
-      );
-      println!(
-        "skippedFrames: {}",
-        output.value.dataset_manifest.skipped_frames.len()
-      );
+      println!("exportedFrames: {}", output.value.dataset_manifest.exported_frames.len());
+      println!("skippedFrames: {}", output.value.dataset_manifest.skipped_frames.len());
       println!("output: {}", output.value.output_dir.display());
     }
     CliCommand::OsuEvalDetections {
@@ -1336,24 +989,13 @@ async fn run() -> Result<(), String> {
         &recording,
         PathBuf::from(run_artifact_dir),
         PathBuf::from(detections_path),
-        output_dir
-          .map(PathBuf::from)
-          .unwrap_or_else(|| temp_runtime_store_root().join("osu-eval-detections-output")),
+        output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-eval-detections-output")),
       )?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
-      println!(
-        "totalFrames: {}",
-        output.value.visual_eval_report.total_frames
-      );
-      println!(
-        "labelMatchedFrames: {}",
-        output.value.visual_eval_report.label_matched_frames
-      );
-      println!(
-        "spatialMatchedFrames: {}",
-        output.value.visual_eval_report.spatial_matched_frames
-      );
+      println!("totalFrames: {}", output.value.visual_eval_report.total_frames);
+      println!("labelMatchedFrames: {}", output.value.visual_eval_report.label_matched_frames);
+      println!("spatialMatchedFrames: {}", output.value.visual_eval_report.spatial_matched_frames);
       println!("output: {}", output.value.output_dir.display());
     }
     CliCommand::OsuVisionDemo {
@@ -1369,9 +1011,7 @@ async fn run() -> Result<(), String> {
         &recording,
         PathBuf::from(beatmap_path),
         target_app,
-        output_dir
-          .map(PathBuf::from)
-          .unwrap_or_else(|| temp_runtime_store_root().join("osu-vision-demo-output")),
+        output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-vision-demo-output")),
         dispatch_limit,
         capture_verify,
       )?;
@@ -1391,27 +1031,11 @@ async fn run() -> Result<(), String> {
           output.value.evidence_summary.evidence_notes.join(" | ")
         }
       );
-      println!(
-        "hasEvidenceArtifact: {}",
-        output
-          .value
-          .output_dir
-          .join("evidence_summary.json")
-          .exists()
-      );
-      println!(
-        "hasProjectionArtifact: {}",
-        output.value.projection.as_ref().is_some()
-      );
-      println!(
-        "hasVisualTruthManifest: {}",
-        output.value.visual_truth_manifest.as_ref().is_some()
-      );
+      println!("hasEvidenceArtifact: {}", output.value.output_dir.join("evidence_summary.json").exists());
+      println!("hasProjectionArtifact: {}", output.value.projection.as_ref().is_some());
+      println!("hasVisualTruthManifest: {}", output.value.visual_truth_manifest.as_ref().is_some());
       if let Some(summary) = &output.value.verification_summary {
-        println!(
-          "verificationCapturedActions: {}",
-          summary.captured_action_count
-        );
+        println!("verificationCapturedActions: {}", summary.captured_action_count);
         println!("verificationMissingFrames: {}", summary.missing_frame_count);
       }
       println!("output: {}", output.value.output_dir.display());
@@ -1468,8 +1092,7 @@ struct MinecraftCalibrationOutput {
   artifact_paths: Vec<PathBuf>,
 }
 
-const MINECRAFT_LIVE_CLICK_POST_FRAME_WAIT: auv_game_minecraft::TailFrameWaitConfig =
-  auv_game_minecraft::TailFrameWaitConfig::new(750, 25);
+const MINECRAFT_LIVE_CLICK_POST_FRAME_WAIT: auv_game_minecraft::TailFrameWaitConfig = auv_game_minecraft::TailFrameWaitConfig::new(750, 25);
 
 type MinecraftLiveClickDispatch = for<'a> fn(
   &auv_cli::runtime::Runtime,
@@ -1500,10 +1123,7 @@ struct MinecraftProjectionCalibrationArtifact {
   known_limits: Vec<String>,
 }
 
-fn build_minecraft_operation_result(
-  run_id: &auv_tracing_driver::trace::RunId,
-  verification: VerificationResult,
-) -> OperationResult {
+fn build_minecraft_operation_result(run_id: &auv_tracing_driver::trace::RunId, verification: VerificationResult) -> OperationResult {
   let evidence_artifacts = verification.evidence.clone();
   OperationResult {
     api_version: OPERATION_RESULT_API_VERSION.to_string(),
@@ -1530,11 +1150,8 @@ fn stage_operation_result_artifact(
       json
     })
     .map_err(|error| format!("failed to serialize minecraft operation result: {error}"))?;
-  let artifact_path = env::temp_dir().join(format!(
-    "auv-minecraft-operation-result-{}-{}.json",
-    context.run_id(),
-    auv_cli::model::now_millis()
-  ));
+  let artifact_path =
+    env::temp_dir().join(format!("auv-minecraft-operation-result-{}-{}.json", context.run_id(), auv_cli::model::now_millis()));
   fs::write(&artifact_path, artifact_json.as_bytes())
     .map_err(|error| format!("failed to write minecraft operation result artifact: {error}"))?;
   let staged = context.stage_artifact_file_with_ref(
@@ -1557,10 +1174,7 @@ fn run_minecraft_live_click(
   target_title: &str,
   capture_skew_ms: Option<i64>,
   screenshot_is_minecraft_window: bool,
-) -> Result<
-  auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>,
-  String,
-> {
+) -> Result<auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>, String> {
   run_minecraft_live_click_with_dispatch(
     runtime,
     telemetry_sample,
@@ -1582,13 +1196,7 @@ fn dispatch_minecraft_live_click(
   target_title: &str,
   window_point: auv_driver::geometry::WindowPoint,
 ) -> Result<String, String> {
-  auv_cli::minecraft_query_live_action::invoke_click_at_window_point(
-    runtime.recording(),
-    context,
-    target_app,
-    target_title,
-    window_point,
-  )
+  auv_cli::minecraft_query_live_action::invoke_click_at_window_point(runtime.recording(), context, target_app, target_title, window_point)
 }
 
 fn run_minecraft_live_click_with_dispatch(
@@ -1602,59 +1210,37 @@ fn run_minecraft_live_click_with_dispatch(
   capture_skew_ms: Option<i64>,
   screenshot_is_minecraft_window: bool,
   dispatch_click: MinecraftLiveClickDispatch,
-) -> Result<
-  auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>,
-  String,
-> {
+) -> Result<auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftLiveClickOutput>, String> {
   let target_block = parse_block_position(target_block)?;
   let pre_frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&telemetry_sample)?
-    .ok_or_else(|| {
-      format!(
-        "no valid minecraft frame found in {}",
-        telemetry_sample.display()
-      )
-    })?;
+    .ok_or_else(|| format!("no valid minecraft frame found in {}", telemetry_sample.display()))?;
   let post_sample_path = post_telemetry_sample.unwrap_or_else(|| telemetry_sample.clone());
   let screenshot_dimensions = read_screenshot_dimensions(&screenshot)?;
 
   runtime.run_recorded_operation(
-    RunSpec::new(
-      auv_tracing_driver::trace::RunType::Execute,
-      "auv.minecraft.live_click",
-    ),
+    RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.minecraft.live_click"),
     "Minecraft live click",
     |context| {
       let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
         "minecraft-screenshot",
         &screenshot,
-        screenshot
-          .file_name()
-          .and_then(|name| name.to_str())
-          .unwrap_or("minecraft-screenshot.png"),
+        screenshot.file_name().and_then(|name| name.to_str()).unwrap_or("minecraft-screenshot.png"),
         Some("minecraft screenshot bound to live telemetry frame".to_string()),
       )?;
       let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
-      let (staged_frame_path, _frame_ref) =
-        auv_cli::minecraft_verification::stage_minecraft_spatial_frame_artifact(
-          context, &pre_frame,
-        )?;
+      let (staged_frame_path, _frame_ref) = auv_cli::minecraft_verification::stage_minecraft_spatial_frame_artifact(context, &pre_frame)?;
       let capture_timestamp_ms = if let Some(skew) = capture_skew_ms {
         if skew >= 0 {
           pre_frame.monotonic_timestamp_ms.saturating_sub(skew as u64)
         } else {
-          pre_frame
-            .monotonic_timestamp_ms
-            .saturating_add((-skew) as u64)
+          pre_frame.monotonic_timestamp_ms.saturating_add((-skew) as u64)
         }
       } else {
         pre_frame.monotonic_timestamp_ms
       };
 
-      let bound = auv_game_minecraft::bind_capture_to_frame(
-        pre_frame.clone(),
-        format!("artifact://{screenshot_artifact_id}"),
-        capture_timestamp_ms,
-      );
+      let bound =
+        auv_game_minecraft::bind_capture_to_frame(pre_frame.clone(), format!("artifact://{screenshot_artifact_id}"), capture_timestamp_ms);
       let assessment = auv_game_minecraft::evidence::assess_bound_projection(
         bound.frame,
         screenshot_dimensions,
@@ -1664,64 +1250,41 @@ fn run_minecraft_live_click_with_dispatch(
       )?;
 
       let projection_artifact = match &assessment {
-        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => {
-          artifact.clone()
-        }
-        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => {
-          artifact.clone()
-        }
+        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => artifact.clone(),
+        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => artifact.clone(),
       };
-      let (staged_projection_path, projection_ref) =
-        stage_minecraft_projection_artifact(context, &projection_artifact)?;
+      let (staged_projection_path, projection_ref) = stage_minecraft_projection_artifact(context, &projection_artifact)?;
       let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
 
       let projected_point = match &assessment {
         auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => {
-          artifact.projected_point.clone().ok_or_else(|| {
-            "minecraft projection evidence is bound but missing projected point".to_string()
-          })?
+          artifact.projected_point.clone().ok_or_else(|| "minecraft projection evidence is bound but missing projected point".to_string())?
         }
         auv_game_minecraft::evidence::ProjectionAssessment::Refused { refusal, .. } => {
-          return Err(format!(
-            "minecraft live click refused before input dispatch: {:?}",
-            refusal.reason
-          ));
+          return Err(format!("minecraft live click refused before input dispatch: {:?}", refusal.reason));
         }
       };
 
       let window_point = auv_game_minecraft::input_target::projected_window_point(&projected_point)
         .ok_or_else(|| "projected minecraft point is not window-clickable".to_string())?;
 
-      let invoke_result_output_summary =
-        dispatch_click(runtime, context, target_app, target_title, window_point)?;
+      let invoke_result_output_summary = dispatch_click(runtime, context, target_app, target_title, window_point)?;
       let post_frame = auv_game_minecraft::read_latest_spatial_frame_newer_than(
         &post_sample_path,
         pre_frame.monotonic_timestamp_ms,
         MINECRAFT_LIVE_CLICK_POST_FRAME_WAIT,
       )?
-      .ok_or_else(|| {
-        format!(
-          "no valid minecraft post frame found in {}",
-          post_sample_path.display()
-        )
-      })?;
+      .ok_or_else(|| format!("no valid minecraft post frame found in {}", post_sample_path.display()))?;
 
-      let world_diff_request = auv_game_minecraft::verify::WorldDiffRequest::new(
-        auv_game_minecraft::MinecraftBlockTarget::new(target_block),
-      )
-      .allow_same_block_state_change();
-      let verification =
-        auv_cli::minecraft_verification::map_world_diff_verdict_to_verification_result(
-          &auv_game_minecraft::verify::evaluate_world_diff(
-            &pre_frame,
-            &post_frame,
-            &world_diff_request,
-          ),
-          vec![screenshot_ref.clone(), projection_ref.clone()],
-        );
+      let world_diff_request =
+        auv_game_minecraft::verify::WorldDiffRequest::new(auv_game_minecraft::MinecraftBlockTarget::new(target_block))
+          .allow_same_block_state_change();
+      let verification = auv_cli::minecraft_verification::map_world_diff_verdict_to_verification_result(
+        &auv_game_minecraft::verify::evaluate_world_diff(&pre_frame, &post_frame, &world_diff_request),
+        vec![screenshot_ref.clone(), projection_ref.clone()],
+      );
       let operation_result = build_minecraft_operation_result(context.run_id(), verification);
-      let (staged_operation_result_path, operation_result_ref) =
-        stage_operation_result_artifact(context, &operation_result)?;
+      let (staged_operation_result_path, operation_result_ref) = stage_operation_result_artifact(context, &operation_result)?;
 
       Ok::<MinecraftLiveClickOutput, String>(MinecraftLiveClickOutput {
         screenshot_artifact_id,
@@ -1748,33 +1311,16 @@ fn run_minecraft_projection_bridge(
   target_block: &str,
   capture_skew_ms: Option<i64>,
   screenshot_is_minecraft_window: bool,
-) -> Result<
-  auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftBridgeOutput>,
-  String,
-> {
+) -> Result<auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftBridgeOutput>, String> {
   let target_block = parse_block_position(target_block)?;
   let frame = auv_game_minecraft::read_latest_spatial_frame_from_tail(&telemetry_sample)?
-    .ok_or_else(|| {
-      format!(
-        "no valid minecraft frame found in {}",
-        telemetry_sample.display()
-      )
-    })?;
+    .ok_or_else(|| format!("no valid minecraft frame found in {}", telemetry_sample.display()))?;
 
   runtime.run_recorded_operation(
-    RunSpec::new(
-      auv_tracing_driver::trace::RunType::Execute,
-      "auv.minecraft.bridge",
-    ),
+    RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.minecraft.bridge"),
     "Minecraft projection bridge",
     |context| {
-      let captured = capture_or_stage_bridge_screenshot(
-        runtime,
-        context,
-        screenshot.as_deref(),
-        capture_target_app,
-        capture_target_title,
-      )?;
+      let captured = capture_or_stage_bridge_screenshot(runtime, context, screenshot.as_deref(), capture_target_app, capture_target_title)?;
       let screenshot_dimensions = read_screenshot_dimensions(&captured.staged_path)?;
       let screenshot_path = captured.staged_path.clone();
       let screenshot_ref = captured.artifact_ref.clone();
@@ -1790,16 +1336,8 @@ fn run_minecraft_projection_bridge(
         frame.monotonic_timestamp_ms
       };
 
-      let bound = auv_game_minecraft::bind_capture_to_frame(
-        frame,
-        format!("artifact://{screenshot_artifact_id}"),
-        capture_timestamp_ms,
-      );
-      let (staged_frame_path, _frame_ref) =
-        auv_cli::minecraft_verification::stage_minecraft_spatial_frame_artifact(
-          context,
-          &bound.frame,
-        )?;
+      let bound = auv_game_minecraft::bind_capture_to_frame(frame, format!("artifact://{screenshot_artifact_id}"), capture_timestamp_ms);
+      let (staged_frame_path, _frame_ref) = auv_cli::minecraft_verification::stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
 
       let assessment = auv_game_minecraft::evidence::assess_bound_projection(
         bound.frame.clone(),
@@ -1814,15 +1352,10 @@ fn run_minecraft_projection_bridge(
       )?;
 
       let projection_artifact = match &assessment {
-        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => {
-          artifact.clone()
-        }
-        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => {
-          artifact.clone()
-        }
+        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => artifact.clone(),
+        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => artifact.clone(),
       };
-      let (staged_projection_path, projection_ref) =
-        stage_minecraft_projection_artifact(context, &projection_artifact)?;
+      let (staged_projection_path, projection_ref) = stage_minecraft_projection_artifact(context, &projection_artifact)?;
       let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
       let mut artifact_paths = vec![
         staged_frame_path,
@@ -1838,22 +1371,11 @@ fn run_minecraft_projection_bridge(
       } = assessment
       {
         let screenshot_image = decode_screenshot_rgb(&screenshot_path)?;
-        let projected = artifact.projected_point.clone().ok_or_else(|| {
-          "minecraft bridge bound projection is missing projected point".to_string()
-        })?;
-        let overlay = auv_game_minecraft::render_projection_overlay(
-          screenshot_image,
-          &projected,
-          raycast_hit.as_ref(),
-        );
-        let overlay_path = env::temp_dir().join(format!(
-          "auv-minecraft-overlay-{}-{}.png",
-          context.run_id(),
-          auv_cli::model::now_millis()
-        ));
-        overlay
-          .save(&overlay_path)
-          .map_err(|error| format!("failed to save overlay image: {error}"))?;
+        let projected =
+          artifact.projected_point.clone().ok_or_else(|| "minecraft bridge bound projection is missing projected point".to_string())?;
+        let overlay = auv_game_minecraft::render_projection_overlay(screenshot_image, &projected, raycast_hit.as_ref());
+        let overlay_path = env::temp_dir().join(format!("auv-minecraft-overlay-{}-{}.png", context.run_id(), auv_cli::model::now_millis()));
+        overlay.save(&overlay_path).map_err(|error| format!("failed to save overlay image: {error}"))?;
         let (staged_overlay_path, overlay_ref) = context.stage_artifact_file_with_ref(
           "minecraft-overlay",
           &overlay_path,
@@ -1863,10 +1385,7 @@ fn run_minecraft_projection_bridge(
         let _ = fs::remove_file(&overlay_path);
         overlay_artifact_id = Some(overlay_ref.artifact_id.as_str().to_string());
         artifact_paths.push(staged_overlay_path);
-      } else if let auv_game_minecraft::evidence::ProjectionAssessment::Refused {
-        refusal, ..
-      } = assessment
-      {
+      } else if let auv_game_minecraft::evidence::ProjectionAssessment::Refused { refusal, .. } = assessment {
         refusal_reason = refusal.reason.map(|reason| format!("{:?}", reason));
       }
 
@@ -1885,23 +1404,14 @@ fn read_screenshot_dimensions(path: &Path) -> Result<(u32, u32), String> {
   ImageReader::open(path)
     .map_err(|error| format!("failed to open screenshot {}: {error}", path.display()))?
     .into_dimensions()
-    .map_err(|error| {
-      format!(
-        "failed to read screenshot dimensions {}: {error}",
-        path.display()
-      )
-    })
+    .map_err(|error| format!("failed to read screenshot dimensions {}: {error}", path.display()))
 }
 
-fn parse_target_semantics(
-  raw: &str,
-) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
+fn parse_target_semantics(raw: &str) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
   match raw {
     "hit_face_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter),
     "block_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::BlockCenter),
-    other => Err(format!(
-      "invalid target semantics {other:?}; expected hit_face_center or block_center"
-    )),
+    other => Err(format!("invalid target semantics {other:?}; expected hit_face_center or block_center")),
   }
 }
 
@@ -1922,10 +1432,7 @@ fn capture_or_stage_bridge_screenshot(
     let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
       "minecraft-screenshot",
       screenshot,
-      screenshot
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("minecraft-screenshot.png"),
+      screenshot.file_name().and_then(|name| name.to_str()).unwrap_or("minecraft-screenshot.png"),
       Some("minecraft screenshot bound to live telemetry frame".to_string()),
     )?;
     return Ok(BridgeCapturedScreenshot {
@@ -1934,16 +1441,13 @@ fn capture_or_stage_bridge_screenshot(
     });
   }
 
-  let target_app =
-    capture_target_app.ok_or_else(|| "bridge capture requires target app".to_string())?;
+  let target_app = capture_target_app.ok_or_else(|| "bridge capture requires target app".to_string())?;
   let mut inputs = std::collections::BTreeMap::new();
   if let Some(title) = capture_target_title {
     inputs.insert("title".to_string(), title.to_string());
   }
   let registry = auv_cli_invoke::default_registry();
-  let command = registry
-    .resolve("window.capture")
-    .ok_or_else(|| "window.capture command is not registered".to_string())?;
+  let command = registry.resolve("window.capture").ok_or_else(|| "window.capture command is not registered".to_string())?;
   let parent = context.current_span().clone();
   let invoke_result = auv_cli_invoke::invoke_resolved_recorded_in_span(
     runtime.recording(),
@@ -1967,10 +1471,7 @@ fn capture_or_stage_bridge_screenshot(
     .ok_or_else(|| "window.capture produced no window-capture artifact".to_string())?;
   let run_dir = runtime.recording().run_dir(&invoke_result.run_id)?;
   let capture_path = run_dir.join(&artifact.path);
-  let preferred_name = Path::new(&artifact.path)
-    .file_name()
-    .and_then(|name| name.to_str())
-    .unwrap_or("minecraft-screenshot.png");
+  let preferred_name = Path::new(&artifact.path).file_name().and_then(|name| name.to_str()).unwrap_or("minecraft-screenshot.png");
   let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
     "minecraft-screenshot",
     &capture_path,
@@ -1998,13 +1499,8 @@ fn stage_minecraft_projection_artifact(
   projection_artifact.validate()?;
   let artifact_json = serde_json::to_string_pretty(projection_artifact)
     .map_err(|error| format!("failed to serialize minecraft projection artifact: {error}"))?;
-  let artifact_path = env::temp_dir().join(format!(
-    "auv-minecraft-projection-{}-{}.json",
-    context.run_id(),
-    auv_cli::model::now_millis()
-  ));
-  fs::write(&artifact_path, artifact_json.as_bytes())
-    .map_err(|error| format!("failed to write minecraft projection artifact: {error}"))?;
+  let artifact_path = env::temp_dir().join(format!("auv-minecraft-projection-{}-{}.json", context.run_id(), auv_cli::model::now_millis()));
+  fs::write(&artifact_path, artifact_json.as_bytes()).map_err(|error| format!("failed to write minecraft projection artifact: {error}"))?;
   let staged = context.stage_artifact_file_with_ref(
     auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
     &artifact_path,
@@ -2021,13 +1517,9 @@ fn stage_minecraft_projection_calibration_artifact(
 ) -> Result<(PathBuf, auv_cli::contract::ArtifactRef), String> {
   let artifact_json = serde_json::to_string_pretty(calibration_artifact)
     .map_err(|error| format!("failed to serialize minecraft calibration artifact: {error}"))?;
-  let artifact_path = env::temp_dir().join(format!(
-    "auv-minecraft-projection-calibration-{}-{}.json",
-    context.run_id(),
-    auv_cli::model::now_millis()
-  ));
-  fs::write(&artifact_path, artifact_json.as_bytes())
-    .map_err(|error| format!("failed to write minecraft calibration artifact: {error}"))?;
+  let artifact_path =
+    env::temp_dir().join(format!("auv-minecraft-projection-calibration-{}-{}.json", context.run_id(), auv_cli::model::now_millis()));
+  fs::write(&artifact_path, artifact_json.as_bytes()).map_err(|error| format!("failed to write minecraft calibration artifact: {error}"))?;
   let staged = context.stage_artifact_file_with_ref(
     auv_cli::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE,
     &artifact_path,
@@ -2038,21 +1530,9 @@ fn stage_minecraft_projection_calibration_artifact(
   staged.map_err(|error| error.to_string())
 }
 
-fn read_minecraft_spatial_frame_file(
-  path: &Path,
-) -> Result<auv_game_minecraft::MinecraftSpatialFrame, String> {
-  let bytes = fs::read(path).map_err(|error| {
-    format!(
-      "failed to read minecraft spatial frame {}: {error}",
-      path.display()
-    )
-  })?;
-  serde_json::from_slice(&bytes).map_err(|error| {
-    format!(
-      "failed to parse minecraft spatial frame {}: {error}",
-      path.display()
-    )
-  })
+fn read_minecraft_spatial_frame_file(path: &Path) -> Result<auv_game_minecraft::MinecraftSpatialFrame, String> {
+  let bytes = fs::read(path).map_err(|error| format!("failed to read minecraft spatial frame {}: {error}", path.display()))?;
+  serde_json::from_slice(&bytes).map_err(|error| format!("failed to parse minecraft spatial frame {}: {error}", path.display()))
 }
 
 fn run_minecraft_calibrate_projection(
@@ -2062,29 +1542,20 @@ fn run_minecraft_calibrate_projection(
   target_block: &str,
   target_semantics: &str,
   screenshot_is_minecraft_window: bool,
-) -> Result<
-  auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftCalibrationOutput>,
-  String,
-> {
+) -> Result<auv_tracing_driver::recorded_operation::RecordedOperationOutput<MinecraftCalibrationOutput>, String> {
   let frame = read_minecraft_spatial_frame_file(&frame_path)?;
   let target_block = parse_block_position(target_block)?;
   let semantics = parse_target_semantics(target_semantics)?;
   let screenshot_dimensions = read_screenshot_dimensions(&screenshot)?;
 
   runtime.run_recorded_operation(
-    RunSpec::new(
-      auv_tracing_driver::trace::RunType::Execute,
-      "auv.minecraft.calibrate_projection",
-    ),
+    RunSpec::new(auv_tracing_driver::trace::RunType::Execute, "auv.minecraft.calibrate_projection"),
     "Minecraft projection calibration",
     |context| {
       let (staged_screenshot_path, screenshot_ref) = context.stage_artifact_file_with_ref(
         "minecraft-screenshot",
         &screenshot,
-        screenshot
-          .file_name()
-          .and_then(|name| name.to_str())
-          .unwrap_or("minecraft-screenshot.png"),
+        screenshot.file_name().and_then(|name| name.to_str()).unwrap_or("minecraft-screenshot.png"),
         Some("minecraft screenshot used for calibration".to_string()),
       )?;
       let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
@@ -2093,13 +1564,8 @@ fn run_minecraft_calibrate_projection(
         format!("artifact://{screenshot_artifact_id}"),
         frame.monotonic_timestamp_ms,
       );
-      let (staged_frame_path, _frame_ref) =
-        auv_cli::minecraft_verification::stage_minecraft_spatial_frame_artifact(
-          context,
-          &bound.frame,
-        )?;
-      let target =
-        auv_game_minecraft::mc6_projection_target_for_frame(target_block, &bound.frame, semantics);
+      let (staged_frame_path, _frame_ref) = auv_cli::minecraft_verification::stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
+      let target = auv_game_minecraft::mc6_projection_target_for_frame(target_block, &bound.frame, semantics);
       let assessment = auv_game_minecraft::evidence::assess_bound_projection(
         bound.frame.clone(),
         screenshot_dimensions,
@@ -2108,15 +1574,10 @@ fn run_minecraft_calibrate_projection(
         Some(250),
       )?;
       let projection_artifact = match &assessment {
-        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => {
-          artifact.clone()
-        }
-        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => {
-          artifact.clone()
-        }
+        auv_game_minecraft::evidence::ProjectionAssessment::Bound { artifact, .. } => artifact.clone(),
+        auv_game_minecraft::evidence::ProjectionAssessment::Refused { artifact, .. } => artifact.clone(),
       };
-      let (staged_projection_path, projection_ref) =
-        stage_minecraft_projection_artifact(context, &projection_artifact)?;
+      let (staged_projection_path, projection_ref) = stage_minecraft_projection_artifact(context, &projection_artifact)?;
       let projection_artifact_id = projection_ref.artifact_id.as_str().to_string();
       let mut artifact_paths = vec![
         staged_frame_path,
@@ -2130,22 +1591,14 @@ fn run_minecraft_calibrate_projection(
           raycast_hit,
         } => {
           let screenshot_image = decode_screenshot_rgb(&screenshot)?;
-          let projected = artifact.projected_point.clone().ok_or_else(|| {
-            "minecraft calibration bound projection is missing projected point".to_string()
-          })?;
-          let overlay = auv_game_minecraft::render_projection_overlay(
-            screenshot_image,
-            &projected,
-            raycast_hit.as_ref(),
-          );
-          let overlay_path = env::temp_dir().join(format!(
-            "auv-minecraft-overlay-{}-{}.png",
-            context.run_id(),
-            auv_cli::model::now_millis()
-          ));
-          overlay
-            .save(&overlay_path)
-            .map_err(|error| format!("failed to save overlay image: {error}"))?;
+          let projected = artifact
+            .projected_point
+            .clone()
+            .ok_or_else(|| "minecraft calibration bound projection is missing projected point".to_string())?;
+          let overlay = auv_game_minecraft::render_projection_overlay(screenshot_image, &projected, raycast_hit.as_ref());
+          let overlay_path =
+            env::temp_dir().join(format!("auv-minecraft-overlay-{}-{}.png", context.run_id(), auv_cli::model::now_millis()));
+          overlay.save(&overlay_path).map_err(|error| format!("failed to save overlay image: {error}"))?;
           let (staged_overlay_path, overlay_ref) = context.stage_artifact_file_with_ref(
             "minecraft-overlay",
             &overlay_path,
@@ -2157,38 +1610,26 @@ fn run_minecraft_calibrate_projection(
           artifact_paths.push(staged_overlay_path);
           None
         }
-        auv_game_minecraft::evidence::ProjectionAssessment::Refused { refusal, .. } => {
-          refusal.reason.map(|reason| format!("{reason:?}"))
-        }
+        auv_game_minecraft::evidence::ProjectionAssessment::Refused { refusal, .. } => refusal.reason.map(|reason| format!("{reason:?}")),
       };
       let calibration = MinecraftProjectionCalibrationArtifact {
         frame_id: bound.frame.spatial_frame_id.clone(),
         target_block: format!("{},{},{}", target_block.x, target_block.y, target_block.z),
         target_semantics: target_semantics.to_string(),
-        raycast_hit_block_pos: bound.frame.raycast_hit.as_ref().map(|hit| {
-          format!(
-            "{},{},{}",
-            hit.block_pos.x, hit.block_pos.y, hit.block_pos.z
-          )
-        }),
-        raycast_hit_face: bound
+        raycast_hit_block_pos: bound
           .frame
           .raycast_hit
           .as_ref()
-          .map(|hit| format!("{:?}", hit.face)),
+          .map(|hit| format!("{},{},{}", hit.block_pos.x, hit.block_pos.y, hit.block_pos.z)),
+        raycast_hit_face: bound.frame.raycast_hit.as_ref().map(|hit| format!("{:?}", hit.face)),
         refusal_reason: refusal_reason.clone(),
-        overlay_ref: overlay_artifact_id
-          .as_ref()
-          .map(|artifact_id| format!("artifact://{artifact_id}")),
+        overlay_ref: overlay_artifact_id.as_ref().map(|artifact_id| format!("artifact://{artifact_id}")),
         known_limits: vec![
-          "geometry gate is visual-review driven; this artifact does not assert numeric pass/fail"
-            .to_string(),
-          "MC-6 hit-face-center applies only when raycast_hit.block_pos matches target_block"
-            .to_string(),
+          "geometry gate is visual-review driven; this artifact does not assert numeric pass/fail".to_string(),
+          "MC-6 hit-face-center applies only when raycast_hit.block_pos matches target_block".to_string(),
         ],
       };
-      let (staged_calibration_path, calibration_ref) =
-        stage_minecraft_projection_calibration_artifact(context, &calibration)?;
+      let (staged_calibration_path, calibration_ref) = stage_minecraft_projection_calibration_artifact(context, &calibration)?;
       artifact_paths.push(staged_calibration_path);
 
       Ok::<MinecraftCalibrationOutput, String>(MinecraftCalibrationOutput {
@@ -2211,9 +1652,7 @@ fn parse_block_face(raw: &str) -> Result<auv_game_minecraft::BlockFace, String> 
     "south" => Ok(auv_game_minecraft::BlockFace::South),
     "east" => Ok(auv_game_minecraft::BlockFace::East),
     "west" => Ok(auv_game_minecraft::BlockFace::West),
-    other => Err(format!(
-      "invalid --target-face {other:?}; expected up, down, north, south, east, or west"
-    )),
+    other => Err(format!("invalid --target-face {other:?}; expected up, down, north, south, east, or west")),
   }
 }
 
@@ -2222,15 +1661,9 @@ fn parse_block_position(raw: &str) -> Result<auv_game_minecraft::BlockPosition, 
   if parts.len() != 3 {
     return Err(format!("invalid --target-block {raw:?}; expected x,y,z"));
   }
-  let x = parts[0]
-    .parse::<i32>()
-    .map_err(|error| format!("invalid target block x: {error}"))?;
-  let y = parts[1]
-    .parse::<i32>()
-    .map_err(|error| format!("invalid target block y: {error}"))?;
-  let z = parts[2]
-    .parse::<i32>()
-    .map_err(|error| format!("invalid target block z: {error}"))?;
+  let x = parts[0].parse::<i32>().map_err(|error| format!("invalid target block x: {error}"))?;
+  let y = parts[1].parse::<i32>().map_err(|error| format!("invalid target block y: {error}"))?;
+  let z = parts[2].parse::<i32>().map_err(|error| format!("invalid target block z: {error}"))?;
   Ok(auv_game_minecraft::BlockPosition::new(x, y, z))
 }
 
@@ -2251,11 +1684,7 @@ fn run_permission_check(json: bool) -> Result<(), String> {
   let report = collect_permission_check()?;
 
   if json {
-    println!(
-      "{}",
-      serde_json::to_string_pretty(&report)
-        .map_err(|error| format!("failed to encode permission report: {error}"))?
-    );
+    println!("{}", serde_json::to_string_pretty(&report).map_err(|error| format!("failed to encode permission report: {error}"))?);
   } else {
     print_permission_check_report(&report);
   }
@@ -2279,9 +1708,7 @@ fn collect_permission_check() -> Result<PermissionCheckReport, String> {
   Ok(PermissionCheckReport {
     platform: "macos",
     process_id: process::id(),
-    executable: env::current_exe()
-      .ok()
-      .map(|path| path.display().to_string()),
+    executable: env::current_exe().ok().map(|path| path.display().to_string()),
     accessibility: native.accessibility,
     screen_recording_preflight: native.screen_recording,
     screen_capture_kit: native.screen_capture_kit,
@@ -2298,21 +1725,12 @@ fn collect_permission_check() -> Result<PermissionCheckReport, String> {
 
 fn permission_recommendation(accessibility: &str, screen_capture_kit: &str) -> String {
   match (accessibility, screen_capture_kit) {
-    ("granted", "granted") => {
-      "AUV has the macOS permissions needed for capture and AX-backed automation.".to_string()
-    }
+    ("granted", "granted") => "AUV has the macOS permissions needed for capture and AX-backed automation.".to_string(),
     ("missing", "missing") => {
-      "Grant Accessibility and Screen Recording to the terminal or app that launches auv, then rerun this check."
-        .to_string()
+      "Grant Accessibility and Screen Recording to the terminal or app that launches auv, then rerun this check.".to_string()
     }
-    ("missing", _) => {
-      "Grant Accessibility to the terminal or app that launches auv, then rerun this check."
-        .to_string()
-    }
-    (_, "missing") => {
-      "Grant Screen Recording to the terminal or app that launches auv, then rerun this check."
-        .to_string()
-    }
+    ("missing", _) => "Grant Accessibility to the terminal or app that launches auv, then rerun this check.".to_string(),
+    (_, "missing") => "Grant Screen Recording to the terminal or app that launches auv, then rerun this check.".to_string(),
     _ => "Review the permission statuses above before running desktop automation.".to_string(),
   }
 }
@@ -2324,18 +1742,9 @@ fn print_permission_check_report(report: &PermissionCheckReport) {
   if let Some(executable) = &report.executable {
     println!("executable: {executable}");
   }
-  println!(
-    "accessibility: {}",
-    permission_status_line(report.accessibility)
-  );
-  println!(
-    "screen recording preflight: {}",
-    permission_status_line(report.screen_recording_preflight)
-  );
-  println!(
-    "screen capture kit probe: {}",
-    permission_status_line(report.screen_capture_kit)
-  );
+  println!("accessibility: {}", permission_status_line(report.accessibility));
+  println!("screen recording preflight: {}", permission_status_line(report.screen_recording_preflight));
+  println!("screen capture kit probe: {}", permission_status_line(report.screen_capture_kit));
   for warning in &report.warnings {
     println!("warning: {warning}");
   }
@@ -2352,39 +1761,27 @@ fn permission_status_line(status: &str) -> String {
 }
 
 fn shell_quote_hint_path(path: &str) -> String {
-  if path
-    .chars()
-    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-'))
-  {
+  if path.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-')) {
     path.to_string()
   } else {
     format!("'{}'", path.replace('\'', "'\"'\"'"))
   }
 }
 
-fn format_query_wired_inspect_hint(
-  run_id: impl std::fmt::Display,
-  inspect: &InspectClientOptions,
-) -> String {
+fn format_query_wired_inspect_hint(run_id: impl std::fmt::Display, inspect: &InspectClientOptions) -> String {
   if let Some(store_root) = inspect.store_root.as_deref() {
     let store_root = shell_quote_hint_path(store_root);
-    format!(
-      "inspectHint: run `auv inspect {run_id} --store-root {store_root}` to view verification_outcome"
-    )
+    format!("inspectHint: run `auv inspect {run_id} --store-root {store_root}` to view verification_outcome")
   } else {
     format!("inspectHint: run `auv inspect {run_id}` to view verification_outcome")
   }
 }
 
 fn resolve_store_root(project_root: &Path, explicit: Option<&String>) -> PathBuf {
-  explicit
-    .map(PathBuf::from)
-    .unwrap_or_else(|| auv_cli::default_project_store_root(project_root.to_path_buf()))
+  explicit.map(PathBuf::from).unwrap_or_else(|| auv_cli::default_project_store_root(project_root.to_path_buf()))
 }
 
-fn resolve_inspect_serve_write_token(
-  write: &cli::InspectServeWriteOptions,
-) -> Result<Option<String>, String> {
+fn resolve_inspect_serve_write_token(write: &cli::InspectServeWriteOptions) -> Result<Option<String>, String> {
   if write.token.is_some() && write.token_file.is_some() {
     return Err("--write-token cannot be combined with --write-token-file".to_string());
   }
@@ -2394,10 +1791,7 @@ fn resolve_inspect_serve_write_token(
   }
 
   if let Some(path) = &write.token_file {
-    let token = fs::read_to_string(path)
-      .map_err(|error| format!("failed to read write token file {path}: {error}"))?
-      .trim()
-      .to_string();
+    let token = fs::read_to_string(path).map_err(|error| format!("failed to read write token file {path}: {error}"))?.trim().to_string();
     return normalize_write_token("--write-token-file", token).map(Some);
   }
 
@@ -2425,9 +1819,7 @@ fn build_recording_for_inspect(
     if let Some((url, token)) = resolve_inspect_server_target(inspect)? {
       Some((url, token))
     } else if inspect.require_server_write {
-      return Err(
-        "inspect server write is required but no inspect server is configured".to_string(),
-      );
+      return Err("inspect server write is required but no inspect server is configured".to_string());
     } else if matches!(inspect.server_write, cli::InspectWriteSetting::Enabled) {
       eprintln!("warning: inspect server write requested but no inspect server is configured");
       None
@@ -2448,8 +1840,7 @@ fn build_recording_for_inspect(
   let mut recorders: Vec<Arc<dyn auv_tracing_driver::RunRecorder>> = Vec::new();
 
   if let Some((url, token)) = server_target {
-    let warn_optional_failures = inspect.server_url.is_some()
-      || matches!(inspect.server_write, cli::InspectWriteSetting::Enabled);
+    let warn_optional_failures = inspect.server_url.is_some() || matches!(inspect.server_write, cli::InspectWriteSetting::Enabled);
     recorders.push(Arc::new(
       auv_tracing_driver::InspectServerRunRecorder::new(url, token, inspect.require_server_write)
         .with_optional_failure_warnings(warn_optional_failures),
@@ -2468,16 +1859,10 @@ fn build_recording_for_inspect(
   )
 }
 
-fn build_runtime_for_inspect(
-  project_root: &Path,
-  inspect: &InspectClientOptions,
-) -> Result<auv_cli::runtime::Runtime, String> {
+fn build_runtime_for_inspect(project_root: &Path, inspect: &InspectClientOptions) -> Result<auv_cli::runtime::Runtime, String> {
   let recording = build_recording_for_inspect(project_root, inspect)?;
   let store_root = recording.store().root().to_path_buf();
-  Ok(
-    build_runtime_with_store_root(project_root.to_path_buf(), store_root)?
-      .with_recording(recording),
-  )
+  Ok(build_runtime_with_store_root(project_root.to_path_buf(), store_root)?.with_recording(recording))
 }
 
 fn should_write_local(inspect: &InspectClientOptions) -> bool {
@@ -2485,13 +1870,10 @@ fn should_write_local(inspect: &InspectClientOptions) -> bool {
 }
 
 fn should_try_server_write(inspect: &InspectClientOptions) -> bool {
-  inspect.require_server_write
-    || !matches!(inspect.server_write, cli::InspectWriteSetting::Disabled)
+  inspect.require_server_write || !matches!(inspect.server_write, cli::InspectWriteSetting::Disabled)
 }
 
-fn resolve_inspect_server_target(
-  inspect: &InspectClientOptions,
-) -> Result<Option<(String, Option<String>)>, String> {
+fn resolve_inspect_server_target(inspect: &InspectClientOptions) -> Result<Option<(String, Option<String>)>, String> {
   let explicit_token = resolve_client_token(inspect)?;
   if let Some(url) = &inspect.server_url {
     return Ok(Some((url.clone(), explicit_token)));
@@ -2504,23 +1886,15 @@ fn resolve_inspect_server_target(
   }
   if !is_local_inspect_url(&session.url) {
     if inspect.require_server_write {
-      return Err(format!(
-        "inspect server write is required but discovered inspect server URL is not local: {}",
-        session.url
-      ));
+      return Err(format!("inspect server write is required but discovered inspect server URL is not local: {}", session.url));
     }
-    eprintln!(
-      "warning: ignoring discovered inspect server with non-local URL: {}",
-      session.url
-    );
+    eprintln!("warning: ignoring discovered inspect server with non-local URL: {}", session.url);
     return Ok(None);
   }
   Ok(Some((session.url, explicit_token.or(session.write_token))))
 }
 
-fn read_discovered_inspect_session(
-  inspect: &InspectClientOptions,
-) -> Result<Option<auv_cli::inspect_server::InspectServerSession>, String> {
+fn read_discovered_inspect_session(inspect: &InspectClientOptions) -> Result<Option<auv_cli::inspect_server::InspectServerSession>, String> {
   match auv_cli::inspect_server::read_inspect_session() {
     Ok(session) => Ok(session),
     Err(error) if inspect.require_server_write => Err(error),
@@ -2537,9 +1911,7 @@ fn is_local_inspect_url(raw: &str) -> bool {
   };
   match url.host_str() {
     Some(host) if host.eq_ignore_ascii_case("localhost") => true,
-    Some(host) => host
-      .parse::<std::net::IpAddr>()
-      .is_ok_and(|address| address.is_loopback()),
+    Some(host) => host.parse::<std::net::IpAddr>().is_ok_and(|address| address.is_loopback()),
     None => false,
   }
 }
@@ -2549,21 +1921,15 @@ fn resolve_client_token(inspect: &InspectClientOptions) -> Result<Option<String>
     return normalize_write_token("--inspect-server-token", token.clone()).map(Some);
   }
   if let Some(path) = &inspect.server_token_file {
-    let token = fs::read_to_string(path)
-      .map_err(|error| format!("failed to read inspect server token file {path}: {error}"))?
-      .trim()
-      .to_string();
+    let token =
+      fs::read_to_string(path).map_err(|error| format!("failed to read inspect server token file {path}: {error}"))?.trim().to_string();
     return normalize_write_token("--inspect-server-token-file", token).map(Some);
   }
   Ok(None)
 }
 
 fn temp_runtime_store_root() -> PathBuf {
-  env::temp_dir().join(format!(
-    "auv-runtime-store-{}-{}",
-    process::id(),
-    auv_cli::model::now_millis()
-  ))
+  env::temp_dir().join(format!("auv-runtime-store-{}-{}", process::id(), auv_cli::model::now_millis()))
 }
 
 #[cfg(test)]
@@ -2583,10 +1949,7 @@ mod tests {
       ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(
-      hint,
-      "inspectHint: run `auv inspect run_test_1` to view verification_outcome"
-    );
+    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1` to view verification_outcome");
   }
 
   #[test]
@@ -2596,10 +1959,7 @@ mod tests {
       ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(
-      hint,
-      "inspectHint: run `auv inspect run_test_1 --store-root /tmp/mc20-store` to view verification_outcome"
-    );
+    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1 --store-root /tmp/mc20-store` to view verification_outcome");
   }
 
   #[test]
@@ -2609,10 +1969,7 @@ mod tests {
       ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(
-      hint,
-      "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/mc20 store'` to view verification_outcome"
-    );
+    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/mc20 store'` to view verification_outcome");
   }
 
   #[test]
@@ -2622,10 +1979,7 @@ mod tests {
       ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(
-      hint,
-      "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/mc20'\"'\"'store'` to view verification_outcome"
-    );
+    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/mc20'\"'\"'store'` to view verification_outcome");
   }
 
   #[test]
@@ -2635,10 +1989,7 @@ mod tests {
       ..InspectClientOptions::default()
     };
     let hint = format_query_wired_inspect_hint("run_test_1", &inspect);
-    assert_eq!(
-      hint,
-      "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/(mc20)[store]'` to view verification_outcome"
-    );
+    assert_eq!(hint, "inspectHint: run `auv inspect run_test_1 --store-root '/tmp/(mc20)[store]'` to view verification_outcome");
   }
 
   #[test]
@@ -2650,8 +2001,7 @@ mod tests {
       no_token: false,
     };
 
-    let error =
-      resolve_inspect_serve_write_token(&write).expect_err("conflicting token sources reject");
+    let error = resolve_inspect_serve_write_token(&write).expect_err("conflicting token sources reject");
 
     assert!(error.contains("--write-token"));
     assert!(error.contains("--write-token-file"));
@@ -2659,10 +2009,7 @@ mod tests {
 
   #[test]
   fn inspect_serve_write_token_rejects_empty_token_file() {
-    let path = env::temp_dir().join(format!(
-      "auv-empty-write-token-{}.txt",
-      auv_cli::model::now_millis()
-    ));
+    let path = env::temp_dir().join(format!("auv-empty-write-token-{}.txt", auv_cli::model::now_millis()));
     fs::write(&path, " \n\t").expect("token file should write");
     let write = cli::InspectServeWriteOptions {
       enabled: true,
@@ -2671,8 +2018,7 @@ mod tests {
       no_token: false,
     };
 
-    let error =
-      resolve_inspect_serve_write_token(&write).expect_err("empty token file should reject");
+    let error = resolve_inspect_serve_write_token(&write).expect_err("empty token file should reject");
 
     assert!(error.contains("empty"));
     let _ = fs::remove_file(path);
@@ -2687,8 +2033,7 @@ mod tests {
       no_token: false,
     };
 
-    let error =
-      resolve_inspect_serve_write_token(&write).expect_err("empty explicit token should reject");
+    let error = resolve_inspect_serve_write_token(&write).expect_err("empty explicit token should reject");
 
     assert!(error.contains("empty"));
   }
@@ -2712,10 +2057,7 @@ mod tests {
 
   #[test]
   fn inspect_server_target_prefers_explicit_url_and_token_file() {
-    let path = env::temp_dir().join(format!(
-      "auv-client-write-token-{}.txt",
-      auv_cli::model::now_millis()
-    ));
+    let path = env::temp_dir().join(format!("auv-client-write-token-{}.txt", auv_cli::model::now_millis()));
     fs::write(&path, "secret\n").expect("token file should write");
     let inspect = InspectClientOptions {
       server_url: Some("http://127.0.0.1:9876/".to_string()),
@@ -2726,22 +2068,13 @@ mod tests {
     let target = resolve_inspect_server_target(&inspect).expect("explicit target should resolve");
 
     let _ = fs::remove_file(path);
-    assert_eq!(
-      target,
-      Some((
-        "http://127.0.0.1:9876/".to_string(),
-        Some("secret".to_string())
-      ))
-    );
+    assert_eq!(target, Some(("http://127.0.0.1:9876/".to_string(), Some("secret".to_string()))));
   }
 
   #[test]
   fn required_inspect_server_write_rejects_missing_target() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!(
-      "auv-missing-inspect-session-{}",
-      auv_cli::model::now_millis()
-    ));
+    let root = env::temp_dir().join(format!("auv-missing-inspect-session-{}", auv_cli::model::now_millis()));
     fs::create_dir_all(&root).expect("session dir should write");
     let session_path = root.join("session.json");
     unsafe {
@@ -2768,10 +2101,7 @@ mod tests {
   #[test]
   fn required_missing_server_with_local_write_disabled_does_not_leave_temp_store() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!(
-      "auv-missing-required-server-no-local-{}",
-      auv_cli::model::now_millis()
-    ));
+    let root = env::temp_dir().join(format!("auv-missing-required-server-no-local-{}", auv_cli::model::now_millis()));
     fs::create_dir_all(&root).expect("session dir should write");
     let session_path = root.join("session.json");
     unsafe {
@@ -2802,17 +2132,13 @@ mod tests {
 
   #[test]
   fn recording_for_inspect_uses_cleanup_temp_store_when_local_write_disabled() {
-    let root = env::temp_dir().join(format!(
-      "auv-recording-no-local-{}",
-      auv_cli::model::now_millis()
-    ));
+    let root = env::temp_dir().join(format!("auv-recording-no-local-{}", auv_cli::model::now_millis()));
     let inspect = InspectClientOptions {
       local_write: cli::InspectWriteSetting::Disabled,
       ..InspectClientOptions::default()
     };
 
-    let recording =
-      build_recording_for_inspect(&root, &inspect).expect("recording backend should build");
+    let recording = build_recording_for_inspect(&root, &inspect).expect("recording backend should build");
     let store_root = recording.store().root().to_path_buf();
 
     assert!(!store_root.starts_with(&root));
@@ -2826,18 +2152,14 @@ mod tests {
   #[test]
   fn optional_inspect_server_write_ignores_malformed_discovered_session() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!(
-      "auv-malformed-inspect-session-{}",
-      auv_cli::model::now_millis()
-    ));
+    let root = env::temp_dir().join(format!("auv-malformed-inspect-session-{}", auv_cli::model::now_millis()));
     fs::create_dir_all(&root).expect("session dir should write");
     let session_path = root.join("session.json");
     fs::write(&session_path, "not json").expect("malformed session should write");
     #[cfg(unix)]
     {
       use std::os::unix::fs::PermissionsExt;
-      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600))
-        .expect("session file permissions should change");
+      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600)).expect("session file permissions should change");
     }
     unsafe {
       env::set_var("AUV_INSPECT_SESSION", &session_path);
@@ -2860,18 +2182,14 @@ mod tests {
   #[test]
   fn required_inspect_server_write_rejects_malformed_discovered_session() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!(
-      "auv-required-malformed-inspect-session-{}",
-      auv_cli::model::now_millis()
-    ));
+    let root = env::temp_dir().join(format!("auv-required-malformed-inspect-session-{}", auv_cli::model::now_millis()));
     fs::create_dir_all(&root).expect("session dir should write");
     let session_path = root.join("session.json");
     fs::write(&session_path, "not json").expect("malformed session should write");
     #[cfg(unix)]
     {
       use std::os::unix::fs::PermissionsExt;
-      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600))
-        .expect("session file permissions should change");
+      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600)).expect("session file permissions should change");
     }
     unsafe {
       env::set_var("AUV_INSPECT_SESSION", &session_path);
@@ -2897,10 +2215,7 @@ mod tests {
   #[test]
   fn default_discovery_ignores_non_local_session_url() {
     let _guard = ENV_LOCK.lock().expect("env lock");
-    let root = env::temp_dir().join(format!(
-      "auv-remote-inspect-session-{}",
-      auv_cli::model::now_millis()
-    ));
+    let root = env::temp_dir().join(format!("auv-remote-inspect-session-{}", auv_cli::model::now_millis()));
     fs::create_dir_all(&root).expect("session dir should write");
     let session_path = root.join("session.json");
     fs::write(
@@ -2919,8 +2234,7 @@ mod tests {
     #[cfg(unix)]
     {
       use std::os::unix::fs::PermissionsExt;
-      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600))
-        .expect("session file permissions should change");
+      fs::set_permissions(&session_path, fs::Permissions::from_mode(0o600)).expect("session file permissions should change");
     }
     unsafe {
       env::set_var("AUV_INSPECT_SESSION", &session_path);
@@ -2931,8 +2245,7 @@ mod tests {
       ..InspectClientOptions::default()
     };
 
-    let target =
-      resolve_inspect_server_target(&inspect).expect("optional discovery should ignore remote URL");
+    let target = resolve_inspect_server_target(&inspect).expect("optional discovery should ignore remote URL");
 
     unsafe {
       env::remove_var("AUV_INSPECT_SESSION");
@@ -2986,22 +2299,12 @@ mod tests {
   fn append_mc2_test_telemetry(path: &Path, frame: &auv_game_minecraft::MinecraftSpatialFrame) {
     use std::io::Write as _;
 
-    let mut file = fs::OpenOptions::new()
-      .append(true)
-      .open(path)
-      .expect("telemetry sample should open for append");
-    writeln!(
-      file,
-      "{}",
-      serde_json::to_string(frame).expect("frame should serialize")
-    )
-    .expect("telemetry sample should append");
+    let mut file = fs::OpenOptions::new().append(true).open(path).expect("telemetry sample should open for append");
+    writeln!(file, "{}", serde_json::to_string(frame).expect("frame should serialize")).expect("telemetry sample should append");
   }
 
   fn write_mc2_test_screenshot(path: &Path) {
-    RgbImage::from_pixel(64, 64, Rgb([0, 0, 0]))
-      .save(path)
-      .expect("screenshot should write");
+    RgbImage::from_pixel(64, 64, Rgb([0, 0, 0])).save(path).expect("screenshot should write");
   }
 
   #[test]
@@ -3015,24 +2318,14 @@ mod tests {
       observed_item_delta: Some(1),
     };
 
-    let verification =
-      auv_cli::minecraft_verification::map_world_diff_verdict_to_verification_result(
-        &verdict,
-        Vec::new(),
-      );
+    let verification = auv_cli::minecraft_verification::map_world_diff_verdict_to_verification_result(&verdict, Vec::new());
 
-    assert_eq!(
-      verification.method,
-      auv_cli::contract::VerificationMethod::SemanticMatch
-    );
+    assert_eq!(verification.method, auv_cli::contract::VerificationMethod::SemanticMatch);
     assert_eq!(verification.executed, true);
     assert_eq!(verification.state_changed, true);
     assert_eq!(verification.semantic_matched, Some(true));
     assert_eq!(verification.failure_layer, None);
-    assert_eq!(
-      verification.observed_label.as_deref(),
-      Some("minecraft:air")
-    );
+    assert_eq!(verification.observed_label.as_deref(), Some("minecraft:air"));
   }
 
   #[test]
@@ -3048,36 +2341,22 @@ mod tests {
         Some(auv_cli::contract::FailureLayer::StateChangedNoMatch),
         Some(false),
       ),
-      (
-        auv_game_minecraft::verify::WorldDiffFailure::SemanticMismatch,
-        Some(auv_cli::contract::FailureLayer::SemanticMismatch),
-        Some(false),
-      ),
+      (auv_game_minecraft::verify::WorldDiffFailure::SemanticMismatch, Some(auv_cli::contract::FailureLayer::SemanticMismatch), Some(false)),
     ];
 
     for (failure, expected_layer, semantic_matched) in cases {
       let verdict = auv_game_minecraft::verify::WorldDiffVerdict {
         executed: true,
-        state_changed: matches!(
-          failure,
-          auv_game_minecraft::verify::WorldDiffFailure::StateChangedNoMatch
-        ),
+        state_changed: matches!(failure, auv_game_minecraft::verify::WorldDiffFailure::StateChangedNoMatch),
         semantic_matched,
         failure: Some(failure),
         observed_block_id: Some("minecraft:stone".to_string()),
         observed_item_delta: Some(0),
       };
 
-      let verification =
-        auv_cli::minecraft_verification::map_world_diff_verdict_to_verification_result(
-          &verdict,
-          Vec::new(),
-        );
+      let verification = auv_cli::minecraft_verification::map_world_diff_verdict_to_verification_result(&verdict, Vec::new());
       assert_eq!(verification.failure_layer, expected_layer);
-      assert_eq!(
-        verification.observed_label.as_deref(),
-        Some("minecraft:stone")
-      );
+      assert_eq!(verification.observed_label.as_deref(), Some("minecraft:stone"));
     }
   }
 
@@ -3130,8 +2409,7 @@ mod tests {
       append_mc2_test_telemetry(&writer_path, &writer_frame);
     });
 
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let output = run_minecraft_live_click_with_dispatch(
       &runtime,
       telemetry_path,
@@ -3148,8 +2426,7 @@ mod tests {
 
     writer.join().expect("writer thread should join");
     let verifications =
-      auv_cli::inspect::list_verifications(runtime.recording().store(), output.run_id.as_str())
-        .expect("verifications should list");
+      auv_cli::inspect::list_verifications(runtime.recording().store(), output.run_id.as_str()).expect("verifications should list");
     assert_eq!(verifications.len(), 1);
     assert_eq!(verifications[0].failure_layer, None);
 
@@ -3168,8 +2445,7 @@ mod tests {
     write_mc2_test_telemetry(&post_telemetry_path);
     write_mc2_test_screenshot(&screenshot_path);
 
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let output = run_minecraft_live_click_with_dispatch(
       &runtime,
       telemetry_path,
@@ -3184,30 +2460,17 @@ mod tests {
     )
     .expect("live click should record");
 
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
     assert_eq!(run.artifacts.len(), 4);
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(
-      run.artifacts[1].role,
-      auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
-    );
-    assert_eq!(
-      run.artifacts[2].role,
-      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
-    );
+    assert_eq!(run.artifacts[1].role, auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[2].role, auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[3].role, "operation-result");
 
     let verifications =
-      auv_cli::inspect::list_verifications(runtime.recording().store(), output.run_id.as_str())
-        .expect("verifications should list");
+      auv_cli::inspect::list_verifications(runtime.recording().store(), output.run_id.as_str()).expect("verifications should list");
     assert_eq!(verifications.len(), 1);
-    assert_eq!(
-      verifications[0].method,
-      auv_cli::contract::VerificationMethod::SemanticMatch
-    );
+    assert_eq!(verifications[0].method, auv_cli::contract::VerificationMethod::SemanticMatch);
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
@@ -3222,11 +2485,7 @@ mod tests {
   ) -> Result<String, String> {
     assert_eq!(target_app, "FixtureApp");
     assert_eq!(target_title, "Fixture Window");
-    Ok(format!(
-      "fixture clicked at ({:.3},{:.3})",
-      window_point.point().x,
-      window_point.point().y
-    ))
+    Ok(format!("fixture clicked at ({:.3},{:.3})", window_point.point().x, window_point.point().y))
   }
 
   #[test]
@@ -3238,39 +2497,19 @@ mod tests {
     write_mc2_test_telemetry(&telemetry_path);
     write_mc2_test_screenshot(&screenshot_path);
 
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
-    let output = run_minecraft_projection_bridge(
-      &runtime,
-      telemetry_path,
-      Some(screenshot_path),
-      None,
-      None,
-      "0,0,0",
-      Some(0),
-      true,
-    )
-    .expect("bridge should succeed");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
+    let output = run_minecraft_projection_bridge(&runtime, telemetry_path, Some(screenshot_path), None, None, "0,0,0", Some(0), true)
+      .expect("bridge should succeed");
 
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
     assert_eq!(run.artifacts.len(), 4);
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(
-      run.artifacts[1].role,
-      auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
-    );
-    assert_eq!(
-      run.artifacts[2].role,
-      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
-    );
+    assert_eq!(run.artifacts[1].role, auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[2].role, auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[3].role, "minecraft-overlay");
 
     let inspect_text =
-      auv_cli::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
-        .expect("inspect should render run");
+      auv_cli::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str()).expect("inspect should render run");
     assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
     assert!(inspect_text.contains("capture_skew_ms=0"));
     assert_eq!(output.value.overlay_artifact_id.is_some(), true);
@@ -3289,44 +2528,21 @@ mod tests {
     write_mc2_test_telemetry(&telemetry_path);
     write_mc2_test_screenshot(&screenshot_path);
 
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
-    let output = run_minecraft_projection_bridge(
-      &runtime,
-      telemetry_path,
-      Some(screenshot_path),
-      None,
-      None,
-      "0,0,0",
-      Some(999),
-      true,
-    )
-    .expect("bridge refusal should still record");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
+    let output = run_minecraft_projection_bridge(&runtime, telemetry_path, Some(screenshot_path), None, None, "0,0,0", Some(999), true)
+      .expect("bridge refusal should still record");
 
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
     assert_eq!(run.artifacts.len(), 3);
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(
-      run.artifacts[1].role,
-      auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
-    );
-    assert_eq!(
-      run.artifacts[2].role,
-      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
-    );
+    assert_eq!(run.artifacts[1].role, auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[2].role, auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
 
     let inspect_text =
-      auv_cli::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
-        .expect("inspect should render run");
+      auv_cli::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str()).expect("inspect should render run");
     assert!(inspect_text.contains("MC-2 Projection Artifacts:"));
     assert!(inspect_text.contains("capture_skew_ms=999"));
-    assert_eq!(
-      output.value.refusal_reason.as_deref(),
-      Some("CaptureSkewUnreliable")
-    );
+    assert_eq!(output.value.refusal_reason.as_deref(), Some("CaptureSkewUnreliable"));
     assert_eq!(output.value.overlay_artifact_id, None);
 
     let _ = fs::remove_dir_all(project_root);
@@ -3342,67 +2558,36 @@ mod tests {
     write_mc2_test_telemetry(&frame_path);
     write_mc2_test_screenshot(&screenshot_path);
 
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
-    let output = run_minecraft_calibrate_projection(
-      &runtime,
-      frame_path,
-      screenshot_path,
-      "0,0,0",
-      "hit_face_center",
-      true,
-    )
-    .expect("calibration should succeed");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
+    let output = run_minecraft_calibrate_projection(&runtime, frame_path, screenshot_path, "0,0,0", "hit_face_center", true)
+      .expect("calibration should succeed");
 
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
     assert_eq!(run.artifacts.len(), 5);
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(
-      run.artifacts[1].role,
-      auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE
-    );
-    assert_eq!(
-      run.artifacts[2].role,
-      auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE
-    );
+    assert_eq!(run.artifacts[1].role, auv_cli::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[2].role, auv_cli::contract::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[3].role, "minecraft-overlay");
-    assert_eq!(
-      run.artifacts[4].role,
-      auv_cli::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE
-    );
+    assert_eq!(run.artifacts[4].role, auv_cli::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE);
     assert_eq!(output.value.overlay_artifact_id.is_some(), true);
     assert_eq!(output.value.refusal_reason, None);
 
     let calibration_artifact = run
       .artifacts
       .iter()
-      .find(|artifact| {
-        artifact.role == auv_cli::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE
-      })
+      .find(|artifact| artifact.role == auv_cli::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE)
       .expect("calibration artifact should exist");
-    let calibration_path = runtime
-      .recording()
-      .run_dir(output.run_id.as_str())
-      .expect("run dir should exist")
-      .join(&calibration_artifact.path);
+    let calibration_path =
+      runtime.recording().run_dir(output.run_id.as_str()).expect("run dir should exist").join(&calibration_artifact.path);
     let calibration: MinecraftProjectionCalibrationArtifact =
-      serde_json::from_slice(&fs::read(&calibration_path).expect("calibration bytes"))
-        .expect("calibration json");
+      serde_json::from_slice(&fs::read(&calibration_path).expect("calibration bytes")).expect("calibration json");
     assert_eq!(calibration.frame_id, "frame-mc2");
     assert_eq!(calibration.target_block, "0,0,0");
     assert_eq!(calibration.target_semantics, "hit_face_center");
     assert_eq!(calibration.raycast_hit_block_pos.as_deref(), Some("0,0,0"));
     assert_eq!(calibration.raycast_hit_face.as_deref(), Some("North"));
     assert_eq!(calibration.refusal_reason, None);
-    assert!(
-      calibration
-        .overlay_ref
-        .as_deref()
-        .is_some_and(|value| value.starts_with("artifact://"))
-    );
+    assert!(calibration.overlay_ref.as_deref().is_some_and(|value| value.starts_with("artifact://")));
     assert_eq!(calibration.known_limits.len(), 2);
 
     let _ = fs::remove_dir_all(project_root);

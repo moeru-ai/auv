@@ -8,36 +8,25 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use auv_game_minecraft::training_result_holdout_render_quality::{
-  HoldoutRenderQualityAnswer, HoldoutRenderQualityRequest,
-};
+use auv_game_minecraft::training_result_holdout_render_quality::{HoldoutRenderQualityAnswer, HoldoutRenderQualityRequest};
 use auv_game_minecraft::types::{PlayerPose, Vec3, Viewport};
 use auv_game_minecraft::{
-  BlockPosition, HoldoutPreviewStatus, HoldoutRenderQualityStatus, HoldoutRenderQualityVerdict,
-  MinecraftTargetSemantics, SCENE_PACKET_SCHEMA_VERSION, ScenePacketInputs, TrainingPackageInputs,
-  TrainingResultHoldoutPreviewInputs, TrainingResultHoldoutRenderQualityInputs,
-  TrainingResultSemanticManifest, TrainingResultSpatialQueryInputs, export_3dgs_scene_packet,
-  export_3dgs_training_package, inspect_3dgs_training_result_holdout,
-  measure_3dgs_holdout_render_quality, query_3dgs_training_result,
+  BlockPosition, HoldoutPreviewStatus, HoldoutRenderQualityStatus, HoldoutRenderQualityVerdict, MinecraftTargetSemantics,
+  SCENE_PACKET_SCHEMA_VERSION, ScenePacketInputs, TrainingPackageInputs, TrainingResultHoldoutPreviewInputs,
+  TrainingResultHoldoutRenderQualityInputs, TrainingResultSemanticManifest, TrainingResultSpatialQueryInputs, export_3dgs_scene_packet,
+  export_3dgs_training_package, inspect_3dgs_training_result_holdout, measure_3dgs_holdout_render_quality, query_3dgs_training_result,
 };
 use serde_json::json;
 use tempfile::TempDir;
 
-const SCENE_PACKET_MANIFEST_PATH: &str = concat!(
-  env!("CARGO_MANIFEST_DIR"),
-  "/../auv-gan-minecraft-fixtures/scene-packet/run.json"
-);
-const RESULT_SEMANTIC_MANIFEST_PATH: &str = concat!(
-  env!("CARGO_MANIFEST_DIR"),
-  "/../auv-gan-minecraft-fixtures/result/minecraft-3dgs-training-result-semantic.json"
-);
-const FRAME_ALPHA_PATH: &str = concat!(
-  env!("CARGO_MANIFEST_DIR"),
-  "/../auv-gan-minecraft-fixtures/frames/frame_alpha.png"
-);
+const SCENE_PACKET_MANIFEST_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../auv-gan-minecraft-fixtures/scene-packet/run.json");
+const RESULT_SEMANTIC_MANIFEST_PATH: &str =
+  concat!(env!("CARGO_MANIFEST_DIR"), "/../auv-gan-minecraft-fixtures/result/minecraft-3dgs-training-result-semantic.json");
+const FRAME_ALPHA_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../auv-gan-minecraft-fixtures/frames/frame_alpha.png");
 
 /// Standalone probe proving an external holdout render command can stay blocked (no splat diff).
-const HOLDOUT_RENDER_PROBE_COMMAND: &str = r#"python3 -c "import json,sys; print(json.dumps({'status':'blocked','message':'splat diff must not run in MC-16'}))""#;
+const HOLDOUT_RENDER_PROBE_COMMAND: &str =
+  r#"python3 -c "import json,sys; print(json.dumps({'status':'blocked','message':'splat diff must not run in MC-16'}))""#;
 
 /// Copy holdout screenshot to requested render path for MC-17 dimension-matched metrics.
 const HOLDOUT_RENDER_QUALITY_COMMAND: &str = r#"python3 -c 'import json,shutil,sys; d=json.loads(sys.stdin.read()); shutil.copy(d["holdout_screenshot_path"], d["requested_rendered_image_path"]); print(json.dumps({"status":"ready","rendered_image_path":d["requested_rendered_image_path"]}))'"#;
@@ -50,15 +39,11 @@ struct FixtureChain {
 }
 
 fn fixture_workspace_root() -> PathBuf {
-  Path::new(env!("CARGO_MANIFEST_DIR"))
-    .join("../..")
-    .join("target/auv-gan-minecraft-workspaces")
+  Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join("target/auv-gan-minecraft-workspaces")
 }
 
 fn fixture_training_bundle_dir() -> PathBuf {
-  fixture_workspace_root()
-    .join("mc7-training-package-bundle")
-    .join("mc6-scene-packet-frames")
+  fixture_workspace_root().join("mc7-training-package-bundle").join("mc6-scene-packet-frames")
 }
 
 fn read_json_value(path: &Path) -> serde_json::Value {
@@ -97,11 +82,7 @@ fn try_export_fixture_chain(root: &TempDir) -> Option<(PathBuf, PathBuf, PathBuf
     let run_dir = bundle_dir.join(&run_id);
     let artifact_path = run_dir.join("minecraft-spatial-frame.json");
     fs::create_dir_all(&run_dir).ok()?;
-    fs::copy(
-      bundle_frame_dir.join(format!("{name}.json")),
-      &artifact_path,
-    )
-    .ok()?;
+    fs::copy(bundle_frame_dir.join(format!("{name}.json")), &artifact_path).ok()?;
 
     if Path::new(FRAME_ALPHA_PATH).is_file() {
       let screenshot_path = run_dir.join("frame.png");
@@ -162,11 +143,7 @@ fn try_export_fixture_chain(root: &TempDir) -> Option<(PathBuf, PathBuf, PathBuf
   .ok()?;
 
   if Path::new(RESULT_SEMANTIC_MANIFEST_PATH).is_file() {
-    return Some((
-      PathBuf::from(RESULT_SEMANTIC_MANIFEST_PATH),
-      scene_manifest_path,
-      package_dir.join("run.json"),
-    ));
+    return Some((PathBuf::from(RESULT_SEMANTIC_MANIFEST_PATH), scene_manifest_path, package_dir.join("run.json")));
   }
 
   None
@@ -180,16 +157,13 @@ fn prepare_fixture_chain() -> Option<FixtureChain> {
         _root: TempDir::new().ok()?,
         semantic_manifest: PathBuf::from(RESULT_SEMANTIC_MANIFEST_PATH),
         scene_packet_manifest: PathBuf::from(&semantic_manifest.source_scene_packet_manifest_path),
-        training_package_manifest: PathBuf::from(
-          &semantic_manifest.source_training_package_manifest_path,
-        ),
+        training_package_manifest: PathBuf::from(&semantic_manifest.source_training_package_manifest_path),
       });
     }
   }
 
   let root = TempDir::new().ok()?;
-  let (semantic_manifest, scene_packet_manifest, training_package_manifest) =
-    try_export_fixture_chain(&root)?;
+  let (semantic_manifest, scene_packet_manifest, training_package_manifest) = try_export_fixture_chain(&root)?;
 
   Some(FixtureChain {
     _root: root,
@@ -217,38 +191,20 @@ fn run_holdout_render_probe(command: &str, output_dir: &Path) -> HoldoutRenderQu
       yaw: 0.0,
       pitch: 0.0,
     },
-    requested_rendered_image_path: output_dir
-      .join("rendered.png")
-      .to_string_lossy()
-      .into_owned(),
+    requested_rendered_image_path: output_dir.join("rendered.png").to_string_lossy().into_owned(),
   };
-  fs::write(
-    output_dir.join("frame.json"),
-    serde_json::to_vec(&request).expect("request json"),
-  )
-  .expect("frame json");
+  fs::write(output_dir.join("frame.json"), serde_json::to_vec(&request).expect("request json")).expect("frame json");
   fs::write(output_dir.join("config.yml"), "method: splatfacto\n").expect("config");
   fs::write(output_dir.join("step.ckpt"), b"ckpt").expect("checkpoint");
 
-  let mut child = Command::new("sh")
-    .arg("-lc")
-    .arg(command)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .spawn()
-    .expect("spawn probe");
+  let mut child = Command::new("sh").arg("-lc").arg(command).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().expect("spawn probe");
   let mut stdin = child.stdin.take().expect("stdin");
   let payload = format!("{}\n", serde_json::to_string(&request).expect("request"));
   stdin.write_all(payload.as_bytes()).expect("write stdin");
   drop(stdin);
   let output = child.wait_with_output().expect("probe output");
   assert!(output.status.success(), "probe command failed");
-  let line = std::str::from_utf8(&output.stdout)
-    .expect("utf8 stdout")
-    .lines()
-    .next()
-    .unwrap_or("")
-    .trim();
+  let line = std::str::from_utf8(&output.stdout).expect("utf8 stdout").lines().next().unwrap_or("").trim();
   serde_json::from_str::<HoldoutRenderQualityAnswer>(line).expect("answer json")
 }
 
@@ -264,35 +220,18 @@ fn real_source_mc16_mc17_chain_exports_and_probes_holdout_without_splat_diff() {
   if Path::new(SCENE_PACKET_MANIFEST_PATH).is_file() {
     assert_path_exists(&chain.scene_packet_manifest, "scene packet manifest");
     let scene_packet = read_json_value(&chain.scene_packet_manifest);
-    assert_eq!(
-      scene_packet
-        .get("schema_version")
-        .and_then(|value| value.as_u64()),
-      Some(SCENE_PACKET_SCHEMA_VERSION as u64)
-    );
+    assert_eq!(scene_packet.get("schema_version").and_then(|value| value.as_u64()), Some(SCENE_PACKET_SCHEMA_VERSION as u64));
     assert!(
-      scene_packet
-        .get("frames")
-        .and_then(|value| value.as_array())
-        .is_some_and(|frames| !frames.is_empty()),
+      scene_packet.get("frames").and_then(|value| value.as_array()).is_some_and(|frames| !frames.is_empty()),
       "scene packet should export at least one frame"
     );
   }
 
-  assert_path_exists(
-    &chain.training_package_manifest,
-    "training package manifest",
-  );
+  assert_path_exists(&chain.training_package_manifest, "training package manifest");
   let package = read_json_value(&chain.training_package_manifest);
   assert!(
-    package
-      .get("frames")
-      .and_then(|value| value.as_array())
-      .is_some_and(|frames| !frames.is_empty())
-      || package
-        .get("compatibility_views")
-        .and_then(|value| value.as_array())
-        .is_some_and(|views| !views.is_empty()),
+    package.get("frames").and_then(|value| value.as_array()).is_some_and(|frames| !frames.is_empty())
+      || package.get("compatibility_views").and_then(|value| value.as_array()).is_some_and(|views| !views.is_empty()),
     "training package manifest should expose frame or compatibility evidence"
   );
 
@@ -309,11 +248,7 @@ fn real_source_mc16_mc17_chain_exports_and_probes_holdout_without_splat_diff() {
 
   assert_eq!(holdout.manifest.status, HoldoutPreviewStatus::Ready);
   assert!(
-    holdout
-      .manifest
-      .holdout_screenshot_path
-      .as_deref()
-      .is_some_and(|path| Path::new(path).is_file()),
+    holdout.manifest.holdout_screenshot_path.as_deref().is_some_and(|path| Path::new(path).is_file()),
     "holdout screenshot path should resolve to a real file"
   );
 
@@ -330,17 +265,10 @@ fn real_source_mc16_mc17_chain_exports_and_probes_holdout_without_splat_diff() {
   .expect("mc17 holdout render quality");
 
   assert_eq!(quality.manifest.status, HoldoutRenderQualityStatus::Ready);
-  assert_eq!(
-    quality.manifest.verdict,
-    HoldoutRenderQualityVerdict::MeasuredOnly
-  );
+  assert_eq!(quality.manifest.verdict, HoldoutRenderQualityVerdict::MeasuredOnly);
   assert!(quality.manifest.image_size_match);
   assert!(
-    quality
-      .manifest
-      .metrics
-      .as_ref()
-      .is_some_and(|metrics| metrics.l1_mean == Some(0.0) && metrics.mse == Some(0.0)),
+    quality.manifest.metrics.as_ref().is_some_and(|metrics| metrics.l1_mean == Some(0.0) && metrics.mse == Some(0.0)),
     "copied holdout render should match screenshot exactly"
   );
 }

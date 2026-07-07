@@ -5,15 +5,11 @@
 use std::collections::{BTreeMap, HashMap};
 
 use auv_api_proto::v1::session as proto;
-use auv_cli_invoke::{
-  ExecutionTarget, InvokeRequest as HostInvokeRequest, InvokeResult, RunStatus,
-};
+use auv_cli_invoke::{ExecutionTarget, InvokeRequest as HostInvokeRequest, InvokeResult, RunStatus};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 
 use crate::api::session_service::SessionApiError;
-use crate::api::session_service::summary::{
-  ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT, JoinedOperationSummary,
-};
+use crate::api::session_service::summary::{ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT, JoinedOperationSummary};
 use crate::contract::{ArtifactRef as ContractArtifactRef, OperationStatus};
 
 /// Status string shared by `InvokeResponse` and `GetOperationResponse`
@@ -55,15 +51,11 @@ struct InvokeTargetEnvelope {
 
 /// Decode a proto `json_payload` into a host `InvokeRequest` (provisional, see
 /// the od5 NOTICE above). An empty payload yields host defaults.
-pub fn decode_invoke_payload(
-  command_id: String,
-  json_payload: &[u8],
-) -> Result<HostInvokeRequest, SessionApiError> {
+pub fn decode_invoke_payload(command_id: String, json_payload: &[u8]) -> Result<HostInvokeRequest, SessionApiError> {
   let envelope = if json_payload.is_empty() {
     InvokePayloadEnvelope::default()
   } else {
-    serde_json::from_slice(json_payload)
-      .map_err(|error| SessionApiError::PayloadDecode(error.to_string()))?
+    serde_json::from_slice(json_payload).map_err(|error| SessionApiError::PayloadDecode(error.to_string()))?
   };
   Ok(HostInvokeRequest {
     command_id,
@@ -94,10 +86,7 @@ fn artifact_ref_from_contract(
   known_limits: &mut Vec<String>,
 ) -> proto::ArtifactRef {
   let artifact_id = artifact.artifact_id.as_str().to_string();
-  let role = artifact_roles
-    .get(&artifact_id)
-    .cloned()
-    .unwrap_or_default();
+  let role = artifact_roles.get(&artifact_id).cloned().unwrap_or_default();
   if role.is_empty() {
     known_limits.push(ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT.to_string());
   }
@@ -111,17 +100,9 @@ fn artifact_ref_from_contract(
 /// Map an `InvokeResult` (plus the request `command_id`) to a proto
 /// `InvokeResponse`. `extra_known_limits` surfaces invoke-path durability gaps
 /// without changing execution status (see API-P11 partial-success policy).
-pub fn invoke_result_to_response(
-  command_id: &str,
-  result: &InvokeResult,
-  extra_known_limits: &[&str],
-) -> proto::InvokeResponse {
+pub fn invoke_result_to_response(command_id: &str, result: &InvokeResult, extra_known_limits: &[&str]) -> proto::InvokeResponse {
   // API-P12: wire operation_id is invoke command_id on both Invoke and GetOperation.
-  let artifacts = result
-    .artifacts
-    .iter()
-    .map(|record| artifact_ref_from_record(&result.run_id, record))
-    .collect();
+  let artifacts = result.artifacts.iter().map(|record| artifact_ref_from_record(&result.run_id, record)).collect();
   proto::InvokeResponse {
     operation: Some(proto::OperationRef {
       run_id: result.run_id.clone(),
@@ -133,35 +114,27 @@ pub fn invoke_result_to_response(
     // the InvokeResult return value; empty on the invoke path until the summary
     // source is joined with the persisted record. API-P11 may append durability
     // limits when summary persistence fails after a successful command.
-    known_limits: extra_known_limits
-      .iter()
-      .map(|limit| (*limit).to_string())
-      .collect(),
+    known_limits: extra_known_limits.iter().map(|limit| (*limit).to_string()).collect(),
     failure_message: result.failure_message.clone().unwrap_or_default(),
   }
 }
 
 /// Map a joined two-source summary (API-P7) to a proto `GetOperationResponse`.
-pub fn joined_to_get_operation_response(
-  joined: &JoinedOperationSummary,
-) -> proto::GetOperationResponse {
+pub fn joined_to_get_operation_response(joined: &JoinedOperationSummary) -> proto::GetOperationResponse {
   let mut known_limits = joined.known_limits.clone();
-  let (output_summary, signals, failure_message): (String, HashMap<String, String>, String) =
-    match &joined.runtime {
-      Some(runtime) => (
-        runtime.output_summary.clone(),
-        runtime.signals.clone().into_iter().collect(),
-        runtime.failure_message.clone().unwrap_or_default(),
-      ),
-      None => {
-        // NOTICE(api-p4-two-source): the runtime summary is absent. API-P4 says we
-        // must not fabricate empty strings as authoritative data, so we surface
-        // the gap as an explicit known_limit rather than silently returning empty
-        // output_summary/signals.
-        known_limits.push("auv.api.session.runtime_summary_unavailable".to_string());
-        (String::new(), HashMap::new(), String::new())
-      }
-    };
+  let (output_summary, signals, failure_message): (String, HashMap<String, String>, String) = match &joined.runtime {
+    Some(runtime) => {
+      (runtime.output_summary.clone(), runtime.signals.clone().into_iter().collect(), runtime.failure_message.clone().unwrap_or_default())
+    }
+    None => {
+      // NOTICE(api-p4-two-source): the runtime summary is absent. API-P4 says we
+      // must not fabricate empty strings as authoritative data, so we surface
+      // the gap as an explicit known_limit rather than silently returning empty
+      // output_summary/signals.
+      known_limits.push("auv.api.session.runtime_summary_unavailable".to_string());
+      (String::new(), HashMap::new(), String::new())
+    }
+  };
   proto::GetOperationResponse {
     operation: Some(proto::OperationRef {
       run_id: joined.run_id.clone(),
@@ -173,9 +146,7 @@ pub fn joined_to_get_operation_response(
     artifacts: joined
       .artifacts
       .iter()
-      .map(|artifact| {
-        artifact_ref_from_contract(artifact, &joined.artifact_roles, &mut known_limits)
-      })
+      .map(|artifact| artifact_ref_from_contract(artifact, &joined.artifact_roles, &mut known_limits))
       .collect(),
     failure_message,
     known_limits,
@@ -190,9 +161,7 @@ mod tests {
 
   use super::{decode_invoke_payload, invoke_result_to_response, joined_to_get_operation_response};
   use crate::api::session_service::SessionApiError;
-  use crate::api::session_service::summary::{
-    ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT, JoinedOperationSummary, RuntimeOperationSummary,
-  };
+  use crate::api::session_service::summary::{ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT, JoinedOperationSummary, RuntimeOperationSummary};
   use crate::contract::{ArtifactRef as ContractArtifactRef, OperationStatus};
   use auv_tracing_driver::trace::{ArtifactId, RunId, SpanId};
 
@@ -209,14 +178,8 @@ mod tests {
   fn decode_payload_maps_target_inputs_and_dry_run() {
     let payload = br#"{"target":{"application_id":"com.example.app"},"inputs":{"key":"Return"},"dry_run":true}"#;
     let request = decode_invoke_payload("input.key".to_string(), payload).expect("decode");
-    assert_eq!(
-      request.target.application_id.as_deref(),
-      Some("com.example.app")
-    );
-    assert_eq!(
-      request.inputs.get("key").map(String::as_str),
-      Some("Return")
-    );
+    assert_eq!(request.target.application_id.as_deref(), Some("com.example.app"));
+    assert_eq!(request.inputs.get("key").map(String::as_str), Some("Return"));
     assert!(request.dry_run);
   }
 
@@ -273,16 +236,9 @@ mod tests {
       artifact_paths: Vec::new(),
       failure_message: None,
     };
-    let response = invoke_result_to_response(
-      "fixture.observe",
-      &result,
-      &["auv.api.session.operation_summary_persist_failed"],
-    );
+    let response = invoke_result_to_response("fixture.observe", &result, &["auv.api.session.operation_summary_persist_failed"]);
     assert_eq!(response.status, "completed");
-    assert_eq!(
-      response.known_limits,
-      vec!["auv.api.session.operation_summary_persist_failed".to_string()]
-    );
+    assert_eq!(response.known_limits, vec!["auv.api.session.operation_summary_persist_failed".to_string()]);
   }
 
   #[test]
@@ -323,12 +279,7 @@ mod tests {
     };
     let response = joined_to_get_operation_response(&joined);
     assert!(response.output_summary.is_empty());
-    assert!(
-      response
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("runtime_summary_unavailable"))
-    );
+    assert!(response.known_limits.iter().any(|limit| limit.contains("runtime_summary_unavailable")));
   }
 
   #[test]
@@ -352,12 +303,7 @@ mod tests {
     };
     let response = joined_to_get_operation_response(&joined);
     assert_eq!(response.status, "completed");
-    assert!(
-      response
-        .known_limits
-        .iter()
-        .any(|limit| limit == "auv.api.session.runtime_status_mismatch")
-    );
+    assert!(response.known_limits.iter().any(|limit| limit == "auv.api.session.runtime_status_mismatch"));
     assert_eq!(response.failure_message, "boom");
   }
 
@@ -376,21 +322,13 @@ mod tests {
         span_id: SpanId::new("0000000000000001"),
         captured_event_id: None,
       }],
-      artifact_roles: BTreeMap::from([(
-        artifact_id.as_str().to_string(),
-        "evidence-pack".to_string(),
-      )]),
+      artifact_roles: BTreeMap::from([(artifact_id.as_str().to_string(), "evidence-pack".to_string())]),
       runtime: None,
     };
     let response = joined_to_get_operation_response(&joined);
     assert_eq!(response.artifacts.len(), 1);
     assert_eq!(response.artifacts[0].role, "evidence-pack");
-    assert!(
-      !response
-        .known_limits
-        .iter()
-        .any(|limit| limit == ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT)
-    );
+    assert!(!response.known_limits.iter().any(|limit| limit == ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT));
   }
 
   #[test]
@@ -412,11 +350,6 @@ mod tests {
     };
     let response = joined_to_get_operation_response(&joined);
     assert!(response.artifacts[0].role.is_empty());
-    assert!(
-      response
-        .known_limits
-        .iter()
-        .any(|limit| limit == ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT)
-    );
+    assert!(response.known_limits.iter().any(|limit| limit == ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT));
   }
 }

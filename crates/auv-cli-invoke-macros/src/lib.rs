@@ -16,9 +16,7 @@ pub fn invoke_command(attr: TokenStream, item: TokenStream) -> TokenStream {
   };
   for key in ALLOWED_ATTR_KEYS {
     if !values.contains_key(*key) {
-      return compile_error(&format!(
-        "invoke_command missing required `{key}` attribute"
-      ));
+      return compile_error(&format!("invoke_command missing required `{key}` attribute"));
     }
   }
 
@@ -47,10 +45,7 @@ pub fn invoke_command(attr: TokenStream, item: TokenStream) -> TokenStream {
   let mut output = item.to_string();
   output.push('\n');
   output.push_str(&generated);
-  output.parse().map_or_else(
-    |_| compile_error("invoke_command generated invalid Rust"),
-    |tokens| tokens,
-  )
+  output.parse().map_or_else(|_| compile_error("invoke_command generated invalid Rust"), |tokens| tokens)
 }
 
 fn find_function_name(item: TokenStream) -> Option<String> {
@@ -119,9 +114,7 @@ fn validate_attr_key(key: &str) -> Result<(), String> {
   if ALLOWED_ATTR_KEYS.contains(&key) {
     Ok(())
   } else {
-    Err(format!(
-      "invoke_command unknown attribute `{key}`; expected only: id, group, summary, args"
-    ))
+    Err(format!("invoke_command unknown attribute `{key}`; expected only: id, group, summary, args"))
   }
 }
 
@@ -147,9 +140,7 @@ fn namespace_for_group_literal(group: &str) -> Result<&'static str, String> {
 }
 
 fn compile_error(message: &str) -> TokenStream {
-  format!("compile_error!({message:?});")
-    .parse()
-    .expect("compile_error expansion should parse")
+  format!("compile_error!({message:?});").parse().expect("compile_error expansion should parse")
 }
 
 #[cfg(test)]
@@ -159,17 +150,13 @@ mod tests {
   #[test]
   fn namespace_for_group_literal_accepts_supported_groups() {
     assert_eq!(namespace_for_group_literal("\"screen\""), Ok("Screen"));
-    assert_eq!(
-      namespace_for_group_literal("\"mediaControl\""),
-      Ok("MediaControl")
-    );
+    assert_eq!(namespace_for_group_literal("\"mediaControl\""), Ok("MediaControl"));
     assert_eq!(namespace_for_group_literal("\"scan\""), Ok("Scan"));
   }
 
   #[test]
   fn namespace_for_group_literal_rejects_unknown_groups() {
-    let error = namespace_for_group_literal("\"media_control\"")
-      .expect_err("unknown groups should fail during macro expansion");
+    let error = namespace_for_group_literal("\"media_control\"").expect_err("unknown groups should fail during macro expansion");
 
     assert!(error.contains("invoke_command unknown group"));
     assert!(error.contains("mediaControl"));

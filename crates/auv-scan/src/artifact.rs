@@ -120,10 +120,7 @@ mod tests {
     let path = dir.join("missing-schema.json");
     fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
     let err = read_frame_artifact(&path).expect_err("missing schema_version");
-    assert!(matches!(
-      err,
-      ScanArtifactError::MissingField("schema_version")
-    ));
+    assert!(matches!(err, ScanArtifactError::MissingField("schema_version")));
     let _ = fs::remove_dir_all(&dir);
   }
 

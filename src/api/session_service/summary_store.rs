@@ -15,8 +15,7 @@ use crate::contract::{OPERATION_SUMMARY_API_VERSION, OPERATION_SUMMARY_ARTIFACT_
 /// Known limit surfaced when invoke succeeded but the operation-summary artifact
 /// could not be persisted (API-P11). The command already executed; callers must
 /// not treat this as a failed invoke suitable for blind retry.
-pub const OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT: &str =
-  "auv.api.session.operation_summary_persist_failed";
+pub const OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT: &str = "auv.api.session.operation_summary_persist_failed";
 
 /// Stage and append an `operation-summary` artifact onto an existing run.
 ///
@@ -28,18 +27,12 @@ pub const OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT: &str =
 /// NOTICE(api-p11-duplicate-artifacts): invoke retries may append multiple
 /// `operation-summary` artifacts; the read path takes the **first** match,
 /// mirroring [`crate::run_read::read_operation_result`].
-pub fn persist_operation_summary(
-  store: &LocalStore,
-  result: &InvokeResult,
-  summary: &OperationSummary,
-) -> Result<(), SessionApiError> {
+pub fn persist_operation_summary(store: &LocalStore, result: &InvokeResult, summary: &OperationSummary) -> Result<(), SessionApiError> {
   let run_id = result.run_id.as_str();
   let mut canonical = store.read_run(run_id).map_err(SessionApiError::Storage)?;
 
   let record = summary.to_record(OPERATION_SUMMARY_API_VERSION);
-  let rendered = serde_json::to_string_pretty(&record)
-    .map_err(|error| SessionApiError::Storage(error.to_string()))?
-    + "\n";
+  let rendered = serde_json::to_string_pretty(&record).map_err(|error| SessionApiError::Storage(error.to_string()))? + "\n";
 
   let artifact = store
     .stage_artifact_bytes(
@@ -57,9 +50,7 @@ pub fn persist_operation_summary(
     .map_err(SessionApiError::Storage)?;
 
   canonical.artifacts.push(artifact);
-  store
-    .replace_run_snapshot(&canonical)
-    .map_err(SessionApiError::Storage)?;
+  store.replace_run_snapshot(&canonical).map_err(SessionApiError::Storage)?;
   Ok(())
 }
 
@@ -67,18 +58,11 @@ pub fn persist_operation_summary(
 ///
 /// Returns durability `known_limits` when persistence fails. The invoke command
 /// has already executed; failures here must not be propagated as invoke errors.
-pub fn record_invoke_summary(
-  store: &LocalStore,
-  result: &InvokeResult,
-  summary: &OperationSummary,
-) -> Vec<String> {
+pub fn record_invoke_summary(store: &LocalStore, result: &InvokeResult, summary: &OperationSummary) -> Vec<String> {
   match persist_operation_summary(store, result, summary) {
     Ok(()) => Vec::new(),
     Err(error) => {
-      eprintln!(
-        "warning: failed to persist operation-summary for run {}: {error}",
-        result.run_id
-      );
+      eprintln!("warning: failed to persist operation-summary for run {}: {error}", result.run_id);
       vec![OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT.to_string()]
     }
   }
@@ -88,46 +72,32 @@ pub fn record_invoke_summary(
 mod tests {
   use std::fs;
 
-  use auv_cli_invoke::{
-    OperationSummary, OperationSummaryRecord, OperationSummarySource, RunStatus,
-  };
+  use auv_cli_invoke::{OperationSummary, OperationSummaryRecord, OperationSummarySource, RunStatus};
 
   use super::{persist_operation_summary, record_invoke_summary};
-  use crate::api::session_service::test_fixtures::{
-    SessionRunFixture, fixture_observe_invoke_result, unique_temp_dir, write_minimal_run,
-  };
+  use crate::api::session_service::test_fixtures::{SessionRunFixture, fixture_observe_invoke_result, unique_temp_dir, write_minimal_run};
   use crate::contract::{OPERATION_SUMMARY_API_VERSION, OPERATION_SUMMARY_ARTIFACT_ROLE};
   use crate::run_read;
 
   #[test]
   fn persist_operation_summary_stages_operation_summary_artifact() {
     let root = unique_temp_dir("summary-store-persist");
-    let store =
-      auv_tracing_driver::store::LocalStore::new(root.clone()).expect("store should initialize");
+    let store = auv_tracing_driver::store::LocalStore::new(root.clone()).expect("store should initialize");
     write_minimal_run(&store, "run-summary-persist");
 
     let result = fixture_observe_invoke_result("run-summary-persist");
     let summary = OperationSummary::capture(&result);
     persist_operation_summary(&store, &result, &summary).expect("persist should succeed");
 
-    let loaded = store
-      .read_run("run-summary-persist")
-      .expect("run should load");
+    let loaded = store.read_run("run-summary-persist").expect("run should load");
     assert_eq!(loaded.artifacts.len(), 1);
     assert_eq!(loaded.artifacts[0].role, OPERATION_SUMMARY_ARTIFACT_ROLE);
 
-    let read_back = run_read::read_operation_summary(&store, "run-summary-persist")
-      .expect("read should succeed")
-      .expect("summary artifact should exist");
+    let read_back =
+      run_read::read_operation_summary(&store, "run-summary-persist").expect("read should succeed").expect("summary artifact should exist");
     assert_eq!(read_back.run_id(), "run-summary-persist");
     assert_eq!(read_back.output_summary(), "fixture observed");
-    assert_eq!(
-      read_back
-        .signals()
-        .get("fixture.observe")
-        .map(String::as_str),
-      Some("records deterministic fixture output only.")
-    );
+    assert_eq!(read_back.signals().get("fixture.observe").map(String::as_str), Some("records deterministic fixture output only."));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -160,28 +130,20 @@ mod tests {
 
     let SessionRunFixture { root, store } = {
       let root = unique_temp_dir("summary-store-persist-fail");
-      let store =
-        auv_tracing_driver::store::LocalStore::new(root.clone()).expect("store should initialize");
+      let store = auv_tracing_driver::store::LocalStore::new(root.clone()).expect("store should initialize");
       write_minimal_run(&store, "run-summary-persist-fail");
       SessionRunFixture { root, store }
     };
 
-    let run_dir = store
-      .run_dir("run-summary-persist-fail")
-      .expect("run dir should resolve");
-    let mut permissions = fs::metadata(&run_dir)
-      .expect("run dir metadata")
-      .permissions();
+    let run_dir = store.run_dir("run-summary-persist-fail").expect("run dir should resolve");
+    let mut permissions = fs::metadata(&run_dir).expect("run dir metadata").permissions();
     permissions.set_mode(0o500);
     fs::set_permissions(&run_dir, permissions).expect("run dir should be read-only");
 
     let result = fixture_observe_invoke_result("run-summary-persist-fail");
     let summary = OperationSummary::capture(&result);
     let limits = record_invoke_summary(&store, &result, &summary);
-    assert_eq!(
-      limits,
-      vec![super::OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT.to_string()]
-    );
+    assert_eq!(limits, vec![super::OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT.to_string()]);
 
     let _ = fs::remove_dir_all(root);
   }

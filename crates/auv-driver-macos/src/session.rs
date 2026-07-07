@@ -7,22 +7,18 @@ use std::time::Duration;
 use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
 use auv_driver::display::{Display, ObservedDisplays};
 use auv_driver::error::{DriverError, DriverResult};
-use auv_driver::geometry::{
-  CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint,
-};
+use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
 use auv_driver::input::{
-  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
-  InputDeliveryPath, InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions,
-  PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions, TextSubmit,
-  TypeTextOptions, WaitOptions, WindowClickStrategy,
+  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
+  InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions,
+  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 use auv_driver::permission::{PermissionProbe, PermissionStatus};
 use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
 use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
 use auv_driver::window::{
-  Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind,
-  WindowMutationOptions, WindowMutationPath, WindowMutationPolicy, WindowMutationResult,
-  WindowMutationVerification, WindowRef, WindowState,
+  Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
+  WindowMutationPolicy, WindowMutationResult, WindowMutationVerification, WindowRef, WindowState,
 };
 #[cfg(target_os = "macos")]
 use image::RgbaImage;
@@ -135,41 +131,28 @@ impl DisplayApi<'_> {
   pub fn list(&self) -> DriverResult<ObservedDisplays> {
     let _ = self.session;
     Ok(ObservedDisplays {
-      displays: list_display_targets()?
-        .into_iter()
-        .map(|target| target.display)
-        .collect(),
+      displays: list_display_targets()?.into_iter().map(|target| target.display).collect(),
     })
   }
 
   pub fn capture(&self, options: CaptureOptions) -> DriverResult<DisplayCapture> {
     if options.window.is_some() || options.region.is_some() {
-      return Err(invalid_input(
-        "display.capture does not accept window or region capture options",
-      ));
+      return Err(invalid_input("display.capture does not accept window or region capture options"));
     }
     if let Activation::ActivateFirst { .. } = options.activation {
-      return Err(invalid_input(
-        "display.capture cannot activate an application without an application target",
-      ));
+      return Err(invalid_input("display.capture cannot activate an application without an application target"));
     }
     capture_display_xcap(options.display.as_deref())
   }
 
   pub fn capture_region(&self, options: CaptureOptions) -> DriverResult<RegionCapture> {
     if options.window.is_some() {
-      return Err(invalid_input(
-        "display.capture_region does not accept nested window capture options",
-      ));
+      return Err(invalid_input("display.capture_region does not accept nested window capture options"));
     }
     if let Activation::ActivateFirst { .. } = options.activation {
-      return Err(invalid_input(
-        "display.capture_region cannot activate an application without an application target",
-      ));
+      return Err(invalid_input("display.capture_region cannot activate an application without an application target"));
     }
-    let region = options
-      .region
-      .ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
+    let region = options.region.ok_or_else(|| invalid_input("display.capture_region requires CaptureOptions.region"))?;
     capture_region_xcap(options.display.as_deref(), region)
   }
 }
@@ -177,20 +160,12 @@ impl DisplayApi<'_> {
 impl WindowApi<'_> {
   pub fn list(&self) -> DriverResult<Vec<Window>> {
     let _ = self.session;
-    let snapshot =
-      crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
-    Ok(
-      snapshot
-        .windows
-        .iter()
-        .map(|window| window_from_observed(window, None))
-        .collect(),
-    )
+    let snapshot = crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
+    Ok(snapshot.windows.iter().map(|window| window_from_observed(window, None)).collect())
   }
 
   pub fn resolve(&self, selector: WindowSelector) -> DriverResult<Window> {
-    let mut snapshot =
-      crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
+    let mut snapshot = crate::native::window::list_windows(ListWindowsOptions::all_visible(256)).map_err(backend)?;
     if selector.app.as_ref().is_some_and(|app| app.frontmost) {
       let Some(window) = resolve_frontmost_window(&snapshot, &selector) else {
         return Err(not_found("frontmost window"));
@@ -202,9 +177,8 @@ impl WindowApi<'_> {
       if app.process_id.is_some() {
         return resolve_from_observed_windows(&snapshot, &selector);
       }
-      let app_selector = app_selector_string(app).ok_or_else(|| {
-        invalid_input("window selector app must use bundle, name, pid, or frontmost")
-      })?;
+      let app_selector =
+        app_selector_string(app).ok_or_else(|| invalid_input("window selector app must use bundle, name, pid, or frontmost"))?;
       let parsed_app_selector = parse_app_selector(&app_selector).map_err(invalid_input)?;
       let resolved_app = match resolve_app_ref(&snapshot, &parsed_app_selector) {
         Ok(resolved_app) => resolved_app,
@@ -212,36 +186,24 @@ impl WindowApi<'_> {
           // NOTICE: The unfiltered WindowServer snapshot can omit windows that
           // an app-filtered query returns. Retry with the explicit app selector
           // before reporting target_window_not_found.
-          let filtered_snapshot =
-            crate::native::window::list_windows(ListWindowsOptions::app(256, &app_selector))
-              .map_err(backend)?;
-          let resolved_app =
-            resolve_app_ref(&filtered_snapshot, &parsed_app_selector).map_err(backend)?;
+          let filtered_snapshot = crate::native::window::list_windows(ListWindowsOptions::app(256, &app_selector)).map_err(backend)?;
+          let resolved_app = resolve_app_ref(&filtered_snapshot, &parsed_app_selector).map_err(backend)?;
           snapshot = filtered_snapshot;
           resolved_app
         }
       };
       let displays = Vec::new();
       let candidate = if selector.main_visible && selector.title.is_none() {
-        let candidates = build_window_candidates(&snapshot, &resolved_app, &displays)
-          .map_err(backend)?
-          .into_iter()
-          .collect::<Vec<_>>();
-        candidates
-          .into_iter()
-          .find(|candidate| candidate.is_main_candidate)
+        let candidates = build_window_candidates(&snapshot, &resolved_app, &displays).map_err(backend)?.into_iter().collect::<Vec<_>>();
+        candidates.into_iter().find(|candidate| candidate.is_main_candidate)
       } else {
         let selection = window_selection_from_selector(&selector);
-        crate::support::resolve_window_candidate(&snapshot, &resolved_app, &displays, &selection)
-          .ok()
+        crate::support::resolve_window_candidate(&snapshot, &resolved_app, &displays, &selection).ok()
       };
       let Some(candidate) = candidate else {
         return resolve_from_observed_windows(&snapshot, &selector);
       };
-      return Ok(window_from_native_ref(
-        &candidate.window_ref,
-        Some(candidate.is_main_candidate),
-      ));
+      return Ok(window_from_native_ref(&candidate.window_ref, Some(candidate.is_main_candidate)));
     }
 
     resolve_from_observed_windows(&snapshot, &selector)
@@ -253,9 +215,7 @@ impl WindowApi<'_> {
 
   pub fn capture_with(&self, window: &Window, options: CaptureOptions) -> DriverResult<Capture> {
     if options.display.is_some() || options.region.is_some() || options.window.is_some() {
-      return Err(invalid_input(
-        "window.capture_with does not accept display, region, or nested window capture options",
-      ));
+      return Err(invalid_input("window.capture_with does not accept display, region, or nested window capture options"));
     }
     if let Activation::ActivateFirst { settle } = options.activation {
       activate_app_for_window(window)?;
@@ -264,20 +224,11 @@ impl WindowApi<'_> {
     capture_window(window)
   }
 
-  pub fn find_text(
-    &self,
-    window: &Window,
-    query: &str,
-    region: RatioRect,
-    wait: WaitOptions,
-  ) -> DriverResult<OcrMatches> {
+  pub fn find_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     let started = std::time::Instant::now();
     loop {
       let capture = self.capture(window)?;
-      let matches = self
-        .session
-        .vision()
-        .find_text_in_capture(&capture, query, region)?;
+      let matches = self.session.vision().find_text_in_capture(&capture, query, region)?;
       if !matches.matches.is_empty() || started.elapsed() >= wait.timeout {
         return Ok(matches);
       }
@@ -285,13 +236,7 @@ impl WindowApi<'_> {
     }
   }
 
-  pub fn wait_text(
-    &self,
-    window: &Window,
-    query: &str,
-    region: RatioRect,
-    wait: WaitOptions,
-  ) -> DriverResult<OcrMatches> {
+  pub fn wait_text(&self, window: &Window, query: &str, region: RatioRect, wait: WaitOptions) -> DriverResult<OcrMatches> {
     let matches = self.find_text(window, query, region, wait)?;
     if matches.matches.is_empty() {
       Err(not_found(format!("text {query:?} before timeout")))
@@ -310,63 +255,31 @@ impl WindowApi<'_> {
     Ok(window_point_for_screen_point(window, point))
   }
 
-  pub fn move_to(
-    &self,
-    window: &Window,
-    point: Point,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn move_to(&self, window: &Window, point: Point, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     self.mutate(window, WindowMutationKind::MoveTo { point }, options)
   }
 
-  pub fn resize(
-    &self,
-    window: &Window,
-    size: Size,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn resize(&self, window: &Window, size: Size, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     self.mutate(window, WindowMutationKind::Resize { size }, options)
   }
 
-  pub fn set_frame(
-    &self,
-    window: &Window,
-    frame: Rect,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn set_frame(&self, window: &Window, frame: Rect, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     self.mutate(window, WindowMutationKind::SetFrame { frame }, options)
   }
 
-  pub fn minimize(
-    &self,
-    window: &Window,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn minimize(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     self.mutate(window, WindowMutationKind::Minimize, options)
   }
 
-  pub fn restore(
-    &self,
-    window: &Window,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn restore(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     self.mutate(window, WindowMutationKind::Restore, options)
   }
 
-  pub fn zoom(
-    &self,
-    window: &Window,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  pub fn zoom(&self, window: &Window, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     self.mutate(window, WindowMutationKind::Zoom, options)
   }
 
-  pub fn click(
-    &self,
-    window: &Window,
-    point: WindowPoint,
-    options: ClickOptions,
-  ) -> DriverResult<InputActionResult> {
+  pub fn click(&self, window: &Window, point: WindowPoint, options: ClickOptions) -> DriverResult<InputActionResult> {
     let pid = window_pid(window)?;
     let number = window_number(window)?;
     let screen_point = self.to_screen_point(window, point)?;
@@ -392,28 +305,20 @@ impl WindowApi<'_> {
     .map_err(backend);
 
     match background_result {
-      Ok(()) => Ok(InputActionResult::single_success(
-        InputDeliveryPath::WindowTargetedMouse,
-      )),
+      Ok(()) => Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse)),
       Err(background_error) => match options.policy {
         InputPolicy::BackgroundOnly | InputPolicy::BackgroundPreferred => Err(background_error),
         InputPolicy::ForegroundPreferred => {
           let fallback_reason = background_error.to_string();
           let lease = self.prepare_for_input(window, foreground_prepare_options(Duration::ZERO))?;
-          let action_result = self
-            .session
-            .input()
-            .click_at(screen_point.point(), options.click.clone());
+          let action_result = self.session.input().click_at(screen_point.point(), options.click.clone());
           let restore_result = self.restore_input(lease);
           action_result?;
           restore_result?;
           Ok(InputActionResult {
             selected_path: InputDeliveryPath::ForegroundSystemEvents,
             attempts: vec![
-              InputAttempt::failure(
-                InputDeliveryPath::WindowTargetedMouse,
-                fallback_reason.clone(),
-              ),
+              InputAttempt::failure(InputDeliveryPath::WindowTargetedMouse, fallback_reason.clone()),
               InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
             ],
             fallback_reason: Some(fallback_reason),
@@ -426,20 +331,13 @@ impl WindowApi<'_> {
     }
   }
 
-  pub fn type_text(
-    &self,
-    window: &Window,
-    text: &str,
-    options: TypeTextOptions,
-  ) -> DriverResult<InputActionResult> {
+  pub fn type_text(&self, window: &Window, text: &str, options: TypeTextOptions) -> DriverResult<InputActionResult> {
     let pid = window_pid(window)?;
     let number = window_number(window)?;
     let background_result = type_text_in_window(pid, number, text, options);
 
     match background_result {
-      Ok(()) => Ok(InputActionResult::single_success(
-        InputDeliveryPath::WindowTargetedKeyboard,
-      )),
+      Ok(()) => Ok(InputActionResult::single_success(InputDeliveryPath::WindowTargetedKeyboard)),
       Err(background_error @ DriverError::InvalidInput { .. }) => Err(background_error),
       Err(background_error) => match options.policy {
         // Task 4 intentionally keeps BackgroundPreferred background-only during no-steal rollout.
@@ -459,10 +357,7 @@ impl WindowApi<'_> {
           Ok(InputActionResult {
             selected_path: InputDeliveryPath::ClipboardPaste,
             attempts: vec![
-              InputAttempt::failure(
-                InputDeliveryPath::WindowTargetedKeyboard,
-                fallback_reason.clone(),
-              ),
+              InputAttempt::failure(InputDeliveryPath::WindowTargetedKeyboard, fallback_reason.clone()),
               InputAttempt::success(InputDeliveryPath::ClipboardPaste),
             ],
             fallback_reason: Some(fallback_reason),
@@ -476,13 +371,7 @@ impl WindowApi<'_> {
     }
   }
 
-  pub fn scroll(
-    &self,
-    window: &Window,
-    point: WindowPoint,
-    scroll: Scroll,
-    options: ScrollOptions,
-  ) -> DriverResult<InputActionResult> {
+  pub fn scroll(&self, window: &Window, point: WindowPoint, scroll: Scroll, options: ScrollOptions) -> DriverResult<InputActionResult> {
     let mut attempts = Vec::new();
     let mut fallback_reason = None;
     for candidate in scroll_attempt_candidates(&options) {
@@ -496,40 +385,30 @@ impl WindowApi<'_> {
           attempts.push(InputAttempt::failure(InputDeliveryPath::AxScroll, message));
           fallback_reason.get_or_insert_with(|| message.to_string());
         }
-        ScrollDeliveryCandidate::WindowTargetedWheel => {
-          match self.scroll_window_targeted_wheel(window, point, scroll, options.settle) {
-            Ok(()) => {
-              attempts.push(InputAttempt::success(
-                InputDeliveryPath::WindowTargetedWheel,
-              ));
-              return Ok(InputActionResult {
-                selected_path: InputDeliveryPath::WindowTargetedWheel,
-                attempts,
-                fallback_reason,
-                mouse_disturbance: DisturbanceLevel::None,
-                focus_disturbance: DisturbanceLevel::None,
-                clipboard_disturbance: DisturbanceLevel::None,
-              });
-            }
-            Err(error) => {
-              let message = error.to_string();
-              attempts.push(InputAttempt::failure(
-                InputDeliveryPath::WindowTargetedWheel,
-                message.clone(),
-              ));
-              fallback_reason.get_or_insert(message);
-            }
+        ScrollDeliveryCandidate::WindowTargetedWheel => match self.scroll_window_targeted_wheel(window, point, scroll, options.settle) {
+          Ok(()) => {
+            attempts.push(InputAttempt::success(InputDeliveryPath::WindowTargetedWheel));
+            return Ok(InputActionResult {
+              selected_path: InputDeliveryPath::WindowTargetedWheel,
+              attempts,
+              fallback_reason,
+              mouse_disturbance: DisturbanceLevel::None,
+              focus_disturbance: DisturbanceLevel::None,
+              clipboard_disturbance: DisturbanceLevel::None,
+            });
           }
-        }
+          Err(error) => {
+            let message = error.to_string();
+            attempts.push(InputAttempt::failure(InputDeliveryPath::WindowTargetedWheel, message.clone()));
+            fallback_reason.get_or_insert(message);
+          }
+        },
         ScrollDeliveryCandidate::WindowTargetedKeyboardScroll => {
           // TODO(background-scroll-keyboard): Keyboard scroll needs target state
           // and reliability rules before it can be enabled; add only after
           // owner-approved verification for focus/element anchoring.
           let message = "window-targeted keyboard scroll is reserved but disabled";
-          attempts.push(InputAttempt::failure(
-            InputDeliveryPath::WindowTargetedKeyboardScroll,
-            message,
-          ));
+          attempts.push(InputAttempt::failure(InputDeliveryPath::WindowTargetedKeyboardScroll, message));
           fallback_reason.get_or_insert_with(|| message.to_string());
         }
         ScrollDeliveryCandidate::ForegroundHid => {
@@ -537,11 +416,7 @@ impl WindowApi<'_> {
             continue;
           }
           let screen_point = self.to_screen_point(window, point)?;
-          let result =
-            self
-              .session
-              .input()
-              .scroll_global_hid(screen_point.point(), scroll, options.settle)?;
+          let result = self.session.input().scroll_global_hid(screen_point.point(), scroll, options.settle)?;
           attempts.extend(result.attempts);
           return Ok(InputActionResult {
             selected_path: result.selected_path,
@@ -558,12 +433,7 @@ impl WindowApi<'_> {
     Err(DriverError::unsupported("background_scroll"))
   }
 
-  fn mutate(
-    &self,
-    window: &Window,
-    kind: WindowMutationKind,
-    options: WindowMutationOptions,
-  ) -> DriverResult<WindowMutationResult> {
+  fn mutate(&self, window: &Window, kind: WindowMutationKind, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
     let _ = self.session;
     validate_window_mutation_kind(kind)?;
     let pid = window_pid(window)?;
@@ -585,11 +455,7 @@ impl WindowApi<'_> {
       }
 
       if !candidate_supports_window_mutation(candidate, kind) {
-        let message = format!(
-          "{} does not support {}",
-          window_mutation_candidate_name(candidate),
-          window_mutation_kind_name(kind)
-        );
+        let message = format!("{} does not support {}", window_mutation_candidate_name(candidate), window_mutation_kind_name(kind));
         attempts.push(WindowMutationAttempt::failure(path, message.clone()));
         fallback_reason.get_or_insert(message);
         continue;
@@ -598,10 +464,7 @@ impl WindowApi<'_> {
       let request = decoded_window_mutation_request(pid, number, title.clone(), kind)?;
       match crate::native::window::mutate_window(request).map_err(backend) {
         Ok(response) => {
-          attempts.push(WindowMutationAttempt::success(
-            path,
-            format!("{} via {}", response.performed_action, response.path),
-          ));
+          attempts.push(WindowMutationAttempt::success(path, format!("{} via {}", response.performed_action, response.path)));
           if !options.settle.is_zero() {
             thread::sleep(options.settle);
           }
@@ -623,11 +486,7 @@ impl WindowApi<'_> {
     Err(window_mutation_failure(attempts, fallback_reason))
   }
 
-  pub fn prepare_for_input(
-    &self,
-    window: &Window,
-    options: PrepareForInputOptions,
-  ) -> DriverResult<InputPreparationLease> {
+  pub fn prepare_for_input(&self, window: &Window, options: PrepareForInputOptions) -> DriverResult<InputPreparationLease> {
     let _ = self.session;
     if options.install_focus_guard {
       return Err(DriverError::unsupported("focus_guard"));
@@ -662,13 +521,7 @@ impl WindowApi<'_> {
     Ok(())
   }
 
-  fn scroll_window_targeted_wheel(
-    &self,
-    window: &Window,
-    point: WindowPoint,
-    scroll: Scroll,
-    settle: Duration,
-  ) -> DriverResult<()> {
+  fn scroll_window_targeted_wheel(&self, window: &Window, point: WindowPoint, scroll: Scroll, settle: Duration) -> DriverResult<()> {
     let pid = window_pid(window)?;
     let number = window_number(window)?;
     let screen_point = self.to_screen_point(window, point)?;
@@ -702,15 +555,9 @@ impl InputApi<'_> {
     crate::native::pointer::click_point(point.x, point.y, 0, count, interval).map_err(backend)
   }
 
-  pub fn scroll_global_hid(
-    &self,
-    point: Point,
-    scroll: Scroll,
-    settle: Duration,
-  ) -> DriverResult<InputActionResult> {
+  pub fn scroll_global_hid(&self, point: Point, scroll: Scroll, settle: Duration) -> DriverResult<InputActionResult> {
     let _ = self.session;
-    crate::native::pointer::scroll_point(point.x, point.y, scroll.delta_x, scroll.delta_y)
-      .map_err(backend)?;
+    crate::native::pointer::scroll_point(point.x, point.y, scroll.delta_x, scroll.delta_y).map_err(backend)?;
     if !settle.is_zero() {
       thread::sleep(settle);
     }
@@ -743,11 +590,7 @@ impl InputApi<'_> {
     // window preparation/restoration leases; this API intentionally types into
     // the current foreground control.
     type_text_foreground(text, options)?;
-    Ok(foreground_system_events_result(
-      DisturbanceLevel::None,
-      DisturbanceLevel::Unknown,
-      DisturbanceLevel::None,
-    ))
+    Ok(foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
   }
 
   pub fn press_key(&self, options: KeyPressOptions) -> DriverResult<InputActionResult> {
@@ -755,11 +598,7 @@ impl InputApi<'_> {
     // TODO(foreground-input-target-lease): see `type_text`; key presses share
     // the same active-control foreground boundary in this slice.
     press_key_foreground(&options)?;
-    Ok(foreground_system_events_result(
-      DisturbanceLevel::None,
-      DisturbanceLevel::Unknown,
-      DisturbanceLevel::None,
-    ))
+    Ok(foreground_system_events_result(DisturbanceLevel::None, DisturbanceLevel::Unknown, DisturbanceLevel::None))
   }
 
   pub fn paste_text(&self, options: PasteTextOptions) -> DriverResult<()> {
@@ -790,17 +629,14 @@ impl InputApi<'_> {
       }
       Ok(())
     })();
-    let restore_result =
-      crate::native::clipboard::restore_clipboard_snapshot(&snapshot).map_err(backend);
+    let restore_result = crate::native::clipboard::restore_clipboard_snapshot(&snapshot).map_err(backend);
     match (result, restore_result) {
       (Ok(()), Ok(())) => Ok(()),
       (Err(action_error), Ok(())) => Err(action_error),
-      (Ok(()), Err(restore_error)) => Err(backend(format!(
-        "pasted text but failed to restore clipboard: {restore_error}"
-      ))),
-      (Err(action_error), Err(restore_error)) => Err(backend(format!(
-        "{action_error}; additionally failed to restore clipboard: {restore_error}"
-      ))),
+      (Ok(()), Err(restore_error)) => Err(backend(format!("pasted text but failed to restore clipboard: {restore_error}"))),
+      (Err(action_error), Err(restore_error)) => {
+        Err(backend(format!("{action_error}; additionally failed to restore clipboard: {restore_error}")))
+      }
     }
   }
 }
@@ -823,11 +659,7 @@ impl ClipboardApi<'_> {
 }
 
 impl VisionApi<'_> {
-  pub fn recognize_text_in_capture(
-    &self,
-    capture: &Capture,
-    region: RatioRect,
-  ) -> DriverResult<TextRecognition> {
+  pub fn recognize_text_in_capture(&self, capture: &Capture, region: RatioRect) -> DriverResult<TextRecognition> {
     self.recognize_text_in_capture_with_options(capture, region, TextRecognitionOptions::default())
   }
 
@@ -855,18 +687,8 @@ impl VisionApi<'_> {
     Ok(text_recognition_from_native(&native, capture))
   }
 
-  pub fn find_text_in_capture(
-    &self,
-    capture: &Capture,
-    query: &str,
-    region: RatioRect,
-  ) -> DriverResult<OcrMatches> {
-    self.find_text_in_capture_with_options(
-      capture,
-      query,
-      region,
-      TextRecognitionOptions::default(),
-    )
+  pub fn find_text_in_capture(&self, capture: &Capture, query: &str, region: RatioRect) -> DriverResult<OcrMatches> {
+    self.find_text_in_capture_with_options(capture, query, region, TextRecognitionOptions::default())
   }
 
   pub fn find_text_in_capture_with_options(
@@ -881,10 +703,7 @@ impl VisionApi<'_> {
   }
 }
 
-fn resolve_from_observed_windows(
-  snapshot: &ObservedWindowSnapshot,
-  selector: &WindowSelector,
-) -> DriverResult<Window> {
+fn resolve_from_observed_windows(snapshot: &ObservedWindowSnapshot, selector: &WindowSelector) -> DriverResult<Window> {
   let mut candidates = snapshot
     .windows
     .iter()
@@ -895,10 +714,7 @@ fn resolve_from_observed_windows(
     candidates.sort_by_key(|window| {
       std::cmp::Reverse((
         window.is_main,
-        window
-          .title
-          .as_ref()
-          .is_some_and(|title| !title.trim().is_empty()),
+        window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
         (window.frame.size.width * window.frame.size.height).round() as i64,
       ))
     });
@@ -910,10 +726,7 @@ fn resolve_from_observed_windows(
   match candidates.as_slice() {
     [window] => Ok(window.clone()),
     [] => Err(not_found("window selector")),
-    _ => Err(invalid_input(format!(
-      "window selector was ambiguous: {} windows matched",
-      candidates.len()
-    ))),
+    _ => Err(invalid_input(format!("window selector was ambiguous: {} windows matched", candidates.len()))),
   }
 }
 
@@ -1012,22 +825,14 @@ fn window_from_native_ref(window: &NativeWindowRef, is_main: Option<bool>) -> Wi
   }
 }
 
-fn resolve_frontmost_window(
-  snapshot: &ObservedWindowSnapshot,
-  selector: &WindowSelector,
-) -> Option<Window> {
+fn resolve_frontmost_window(snapshot: &ObservedWindowSnapshot, selector: &WindowSelector) -> Option<Window> {
   snapshot
     .windows
     .iter()
     .filter(|window| {
-      snapshot.frontmost_app_bundle_id.is_empty()
-        || window
-          .owner_bundle_id
-          .eq_ignore_ascii_case(&snapshot.frontmost_app_bundle_id)
+      snapshot.frontmost_app_bundle_id.is_empty() || window.owner_bundle_id.eq_ignore_ascii_case(&snapshot.frontmost_app_bundle_id)
     })
-    .filter(|window| {
-      snapshot.frontmost_window_title.is_empty() || window.title == snapshot.frontmost_window_title
-    })
+    .filter(|window| snapshot.frontmost_window_title.is_empty() || window.title == snapshot.frontmost_window_title)
     .map(|window| window_from_observed(window, Some(true)))
     .find(|window| matches_window_selector(window, selector))
 }
@@ -1053,56 +858,37 @@ fn window_selection_from_selector(selector: &WindowSelector) -> WindowSelection 
   WindowSelection {
     window_ref: None,
     native_window_id: None,
-    title: selector
-      .title
-      .as_ref()
-      .and_then(matcher_value)
-      .map(str::to_string),
+    title: selector.title.as_ref().and_then(matcher_value).map(str::to_string),
   }
 }
 
 fn rect_from_observed(rect: &ObservedRect) -> Rect {
-  Rect::new(
-    rect.x as f64,
-    rect.y as f64,
-    rect.width as f64,
-    rect.height as f64,
-  )
+  Rect::new(rect.x as f64, rect.y as f64, rect.width as f64, rect.height as f64)
 }
 
 fn screen_point_for_window_point(window: &Window, point: WindowPoint) -> ScreenPoint {
   let point = point.point();
-  ScreenPoint::new(
-    window.frame.origin.x + point.x,
-    window.frame.origin.y + point.y,
-  )
+  ScreenPoint::new(window.frame.origin.x + point.x, window.frame.origin.y + point.y)
 }
 
 fn window_point_for_screen_point(window: &Window, point: ScreenPoint) -> WindowPoint {
   let point = point.point();
-  WindowPoint::new(
-    point.x - window.frame.origin.x,
-    point.y - window.frame.origin.y,
-  )
+  WindowPoint::new(point.x - window.frame.origin.x, point.y - window.frame.origin.y)
 }
 
 fn window_number(window: &Window) -> DriverResult<i64> {
   if window.reference.id.trim().is_empty() {
     return Err(invalid_input("window is missing a native macOS window id"));
   }
-  window.reference.id.parse::<i64>().map_err(|error| {
-    invalid_input(format!(
-      "window ref {} was not a native macOS window id: {error}",
-      window.reference.id
-    ))
-  })
+  window
+    .reference
+    .id
+    .parse::<i64>()
+    .map_err(|error| invalid_input(format!("window ref {} was not a native macOS window id: {error}", window.reference.id)))
 }
 
 fn window_pid(window: &Window) -> DriverResult<i64> {
-  window
-    .process_id
-    .map(i64::from)
-    .ok_or_else(|| invalid_input("window is missing an owner process id"))
+  window.process_id.map(i64::from).ok_or_else(|| invalid_input("window is missing an owner process id"))
 }
 
 fn click_parts(click: &Click) -> DriverResult<(i64, u64)> {
@@ -1112,21 +898,14 @@ fn click_parts(click: &Click) -> DriverResult<(i64, u64)> {
   }
 }
 
-fn type_text_in_window(
-  pid: i64,
-  number: i64,
-  text: &str,
-  options: TypeTextOptions,
-) -> DriverResult<()> {
+fn type_text_in_window(pid: i64, number: i64, text: &str, options: TypeTextOptions) -> DriverResult<()> {
   let (submit_key_code, inter_char_delay_ms) = type_text_parts(options)?;
   if options.replace_existing {
-    crate::native::input::hotkey_in_window(pid, number, 0, true, false, false, false)
-      .map_err(backend)?;
+    crate::native::input::hotkey_in_window(pid, number, 0, true, false, false, false).map_err(backend)?;
     crate::native::input::press_key_in_window(pid, number, 51).map_err(backend)?;
     thread::sleep(Duration::from_millis(100));
   }
-  crate::native::input::type_text_in_window(pid, number, text.to_string(), inter_char_delay_ms)
-    .map_err(backend)?;
+  crate::native::input::type_text_in_window(pid, number, text.to_string(), inter_char_delay_ms).map_err(backend)?;
   if let Some(key_code) = submit_key_code {
     crate::native::input::press_key_in_window(pid, number, key_code).map_err(backend)?;
   }
@@ -1138,9 +917,7 @@ fn type_text_in_window(
 
 fn type_text_foreground(text: &str, options: TypeTextOptions) -> DriverResult<()> {
   if matches!(options.policy, InputPolicy::BackgroundOnly) {
-    return Err(invalid_input(
-      "foreground type_text cannot use background_only input policy",
-    ));
+    return Err(invalid_input("foreground type_text cannot use background_only input policy"));
   }
 
   let submit_key_code = text_submit_key_code(options.submit)?;
@@ -1181,10 +958,7 @@ fn text_keystroke_line(character: char) -> String {
     // Keep the workaround until foreground typing moves to a native Unicode
     // event path instead of System Events.
     '_' => "key code 27 using {shift down}".to_string(),
-    _ => format!(
-      "keystroke {}",
-      osascript_string_literal(&character.to_string())
-    ),
+    _ => format!("keystroke {}", osascript_string_literal(&character.to_string())),
   }
 }
 
@@ -1222,10 +996,7 @@ fn press_key_foreground(options: &KeyPressOptions) -> DriverResult<()> {
 fn press_shortcut_foreground(shortcut: &str) -> DriverResult<()> {
   let parsed = parse_shortcut(shortcut)?;
   let line = if parsed.modifiers.is_empty() {
-    format!(
-      "tell application \"System Events\" to keystroke {}",
-      osascript_string_literal(&parsed.key)
-    )
+    format!("tell application \"System Events\" to keystroke {}", osascript_string_literal(&parsed.key))
   } else {
     format!(
       "tell application \"System Events\" to keystroke {} using {{{}}}",
@@ -1243,15 +1014,9 @@ struct ParsedShortcut {
 }
 
 fn parse_shortcut(shortcut: &str) -> DriverResult<ParsedShortcut> {
-  let raw_parts = shortcut
-    .split('+')
-    .map(str::trim)
-    .filter(|part| !part.is_empty())
-    .collect::<Vec<_>>();
+  let raw_parts = shortcut.split('+').map(str::trim).filter(|part| !part.is_empty()).collect::<Vec<_>>();
   if raw_parts.len() < 2 {
-    return Err(invalid_input(format!(
-      "invalid shortcut {shortcut}; expected a form like cmd+f or cmd+shift+p"
-    )));
+    return Err(invalid_input(format!("invalid shortcut {shortcut}; expected a form like cmd+f or cmd+shift+p")));
   }
 
   let key = raw_parts
@@ -1259,9 +1024,7 @@ fn parse_shortcut(shortcut: &str) -> DriverResult<ParsedShortcut> {
     .map(|value| value.to_ascii_lowercase())
     .ok_or_else(|| invalid_input(format!("invalid shortcut {shortcut}; missing key")))?;
   if key.chars().count() != 1 {
-    return Err(invalid_input(format!(
-      "invalid shortcut {shortcut}; only single-character keys are currently supported"
-    )));
+    return Err(invalid_input(format!("invalid shortcut {shortcut}; only single-character keys are currently supported")));
   }
 
   let mut modifiers = Vec::new();
@@ -1272,9 +1035,7 @@ fn parse_shortcut(shortcut: &str) -> DriverResult<ParsedShortcut> {
       "alt" | "option" => "option down",
       "ctrl" | "control" => "control down",
       other => {
-        return Err(invalid_input(format!(
-          "invalid shortcut {shortcut}; unsupported modifier {other}"
-        )));
+        return Err(invalid_input(format!("invalid shortcut {shortcut}; unsupported modifier {other}")));
       }
     };
     if !modifiers.contains(&modifier) {
@@ -1325,13 +1086,9 @@ fn type_text_parts(options: TypeTextOptions) -> DriverResult<(Option<i32>, u64)>
 fn scroll_attempt_candidates(options: &ScrollOptions) -> Vec<ScrollDeliveryCandidate> {
   match options.policy {
     InputPolicy::ForegroundPreferred => vec![ScrollDeliveryCandidate::ForegroundHid],
-    InputPolicy::BackgroundOnly => options
-      .delivery_strategy
-      .candidates
-      .iter()
-      .copied()
-      .filter(|candidate| *candidate != ScrollDeliveryCandidate::ForegroundHid)
-      .collect(),
+    InputPolicy::BackgroundOnly => {
+      options.delivery_strategy.candidates.iter().copied().filter(|candidate| *candidate != ScrollDeliveryCandidate::ForegroundHid).collect()
+    }
     InputPolicy::BackgroundPreferred => options.delivery_strategy.candidates.clone(),
   }
 }
@@ -1341,23 +1098,16 @@ fn window_mutation_candidates(options: &WindowMutationOptions) -> Vec<WindowMuta
     WindowMutationPolicy::ForegroundPreferred => {
       vec![WindowMutationCandidate::ForegroundSystemEvents]
     }
-    WindowMutationPolicy::NativeOnly | WindowMutationPolicy::NativePreferred => {
-      options.strategy.candidates.iter().copied().collect()
-    }
+    WindowMutationPolicy::NativeOnly | WindowMutationPolicy::NativePreferred => options.strategy.candidates.iter().copied().collect(),
   }
 }
 
-fn candidate_supports_window_mutation(
-  candidate: WindowMutationCandidate,
-  kind: WindowMutationKind,
-) -> bool {
+fn candidate_supports_window_mutation(candidate: WindowMutationCandidate, kind: WindowMutationKind) -> bool {
   matches!(
     (candidate, kind),
     (
       WindowMutationCandidate::AxWindowAttribute | WindowMutationCandidate::PlatformNative,
-      WindowMutationKind::MoveTo { .. }
-        | WindowMutationKind::Resize { .. }
-        | WindowMutationKind::SetFrame { .. }
+      WindowMutationKind::MoveTo { .. } | WindowMutationKind::Resize { .. } | WindowMutationKind::SetFrame { .. }
     ) | (
       WindowMutationCandidate::AxWindowAction | WindowMutationCandidate::PlatformNative,
       WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom
@@ -1401,13 +1151,9 @@ fn decoded_window_mutation_request(
   kind: WindowMutationKind,
 ) -> DriverResult<crate::native::window::DecodedWindowMutationRequest> {
   let (native_kind, x, y, width, height) = match kind {
-    WindowMutationKind::MoveTo { point } => (
-      crate::native::window::DecodedWindowMutationKind::MoveTo,
-      rounded_i64(point.x, "point.x")?,
-      rounded_i64(point.y, "point.y")?,
-      0,
-      0,
-    ),
+    WindowMutationKind::MoveTo { point } => {
+      (crate::native::window::DecodedWindowMutationKind::MoveTo, rounded_i64(point.x, "point.x")?, rounded_i64(point.y, "point.y")?, 0, 0)
+    }
     WindowMutationKind::Resize { size } => (
       crate::native::window::DecodedWindowMutationKind::Resize,
       0,
@@ -1422,27 +1168,9 @@ fn decoded_window_mutation_request(
       rounded_positive_i64(frame.size.width, "frame.size.width")?,
       rounded_positive_i64(frame.size.height, "frame.size.height")?,
     ),
-    WindowMutationKind::Minimize => (
-      crate::native::window::DecodedWindowMutationKind::Minimize,
-      0,
-      0,
-      0,
-      0,
-    ),
-    WindowMutationKind::Restore => (
-      crate::native::window::DecodedWindowMutationKind::Restore,
-      0,
-      0,
-      0,
-      0,
-    ),
-    WindowMutationKind::Zoom => (
-      crate::native::window::DecodedWindowMutationKind::Zoom,
-      0,
-      0,
-      0,
-      0,
-    ),
+    WindowMutationKind::Minimize => (crate::native::window::DecodedWindowMutationKind::Minimize, 0, 0, 0, 0),
+    WindowMutationKind::Restore => (crate::native::window::DecodedWindowMutationKind::Restore, 0, 0, 0, 0),
+    WindowMutationKind::Zoom => (crate::native::window::DecodedWindowMutationKind::Zoom, 0, 0, 0, 0),
   };
 
   Ok(crate::native::window::DecodedWindowMutationRequest {
@@ -1480,9 +1208,7 @@ fn validate_window_mutation_kind(kind: WindowMutationKind) -> DriverResult<()> {
 
 fn rounded_i64(value: f64, field: &str) -> DriverResult<i64> {
   if !value.is_finite() || value < i64::MIN as f64 || value > i64::MAX as f64 {
-    return Err(invalid_input(format!(
-      "{field} must be a finite i64-sized value"
-    )));
+    return Err(invalid_input(format!("{field} must be a finite i64-sized value")));
   }
   Ok(value.round() as i64)
 }
@@ -1544,15 +1270,9 @@ fn verify_window_mutation(
   }
 }
 
-fn verify_window_frame(
-  kind: WindowMutationKind,
-  result: &WindowMutationResult,
-  tolerance: f64,
-) -> DriverResult<()> {
+fn verify_window_frame(kind: WindowMutationKind, result: &WindowMutationResult, tolerance: f64) -> DriverResult<()> {
   if !tolerance.is_finite() || tolerance < 0.0 {
-    return Err(invalid_input(
-      "window mutation frame tolerance must be a finite non-negative value",
-    ));
+    return Err(invalid_input("window mutation frame tolerance must be a finite non-negative value"));
   }
   let Some(after_frame) = result.after_frame else {
     return Err(backend("window mutation did not report an after frame"));
@@ -1563,54 +1283,21 @@ fn verify_window_frame(
       verify_close(after_frame.origin.y, point.y, tolerance, "frame.origin.y")?;
     }
     WindowMutationKind::Resize { size } => {
-      verify_close(
-        after_frame.size.width,
-        size.width,
-        tolerance,
-        "frame.size.width",
-      )?;
-      verify_close(
-        after_frame.size.height,
-        size.height,
-        tolerance,
-        "frame.size.height",
-      )?;
+      verify_close(after_frame.size.width, size.width, tolerance, "frame.size.width")?;
+      verify_close(after_frame.size.height, size.height, tolerance, "frame.size.height")?;
     }
     WindowMutationKind::SetFrame { frame } => {
-      verify_close(
-        after_frame.origin.x,
-        frame.origin.x,
-        tolerance,
-        "frame.origin.x",
-      )?;
-      verify_close(
-        after_frame.origin.y,
-        frame.origin.y,
-        tolerance,
-        "frame.origin.y",
-      )?;
-      verify_close(
-        after_frame.size.width,
-        frame.size.width,
-        tolerance,
-        "frame.size.width",
-      )?;
-      verify_close(
-        after_frame.size.height,
-        frame.size.height,
-        tolerance,
-        "frame.size.height",
-      )?;
+      verify_close(after_frame.origin.x, frame.origin.x, tolerance, "frame.origin.x")?;
+      verify_close(after_frame.origin.y, frame.origin.y, tolerance, "frame.origin.y")?;
+      verify_close(after_frame.size.width, frame.size.width, tolerance, "frame.size.width")?;
+      verify_close(after_frame.size.height, frame.size.height, tolerance, "frame.size.height")?;
     }
     WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => {}
   }
   Ok(())
 }
 
-fn verify_window_state(
-  kind: WindowMutationKind,
-  result: &WindowMutationResult,
-) -> DriverResult<()> {
+fn verify_window_state(kind: WindowMutationKind, result: &WindowMutationResult) -> DriverResult<()> {
   match kind {
     WindowMutationKind::Minimize => {
       let minimized = result
@@ -1649,23 +1336,12 @@ fn verify_close(actual: f64, expected: f64, tolerance: f64, field: &str) -> Driv
   if (actual - expected).abs() <= tolerance {
     return Ok(());
   }
-  Err(backend(format!(
-    "window mutation verification failed: {field} expected {expected:.3} got {actual:.3} tolerance {tolerance:.3}"
-  )))
+  Err(backend(format!("window mutation verification failed: {field} expected {expected:.3} got {actual:.3} tolerance {tolerance:.3}")))
 }
 
-fn window_mutation_failure(
-  attempts: Vec<WindowMutationAttempt>,
-  fallback_reason: Option<String>,
-) -> DriverError {
-  let mut parts = attempts
-    .into_iter()
-    .filter_map(|attempt| {
-      attempt
-        .message
-        .map(|message| format!("{:?}: {message}", attempt.path))
-    })
-    .collect::<Vec<_>>();
+fn window_mutation_failure(attempts: Vec<WindowMutationAttempt>, fallback_reason: Option<String>) -> DriverError {
+  let mut parts =
+    attempts.into_iter().filter_map(|attempt| attempt.message.map(|message| format!("{:?}: {message}", attempt.path))).collect::<Vec<_>>();
   if parts.is_empty() {
     if let Some(reason) = fallback_reason {
       parts.push(reason);
@@ -1674,11 +1350,7 @@ fn window_mutation_failure(
   if parts.is_empty() {
     return DriverError::unsupported("window_mutation");
   }
-  backend(format!(
-    "window mutation failed after {} attempt(s): {}",
-    parts.len(),
-    parts.join("; ")
-  ))
+  backend(format!("window mutation failed after {} attempt(s): {}", parts.len(), parts.join("; ")))
 }
 
 fn foreground_prepare_options(settle: Duration) -> PrepareForInputOptions {
@@ -1712,38 +1384,22 @@ struct MacosDisplayTarget {
   display: Display,
 }
 
-fn resolve_display_target(
-  targets: &[MacosDisplayTarget],
-  selector: Option<&str>,
-) -> DriverResult<MacosDisplayTarget> {
+fn resolve_display_target(targets: &[MacosDisplayTarget], selector: Option<&str>) -> DriverResult<MacosDisplayTarget> {
   if let Some(selector) = selector {
     let selector = selector.trim();
     return targets
       .iter()
-      .find(|target| {
-        target.display.id == selector
-          || target
-            .display
-            .name
-            .as_deref()
-            .is_some_and(|display_ref| display_ref == selector)
-      })
+      .find(|target| target.display.id == selector || target.display.name.as_deref().is_some_and(|display_ref| display_ref == selector))
       .cloned()
       .ok_or_else(|| not_found(format!("display {selector:?}")));
   }
 
-  targets
-    .iter()
-    .find(|target| target.display.is_primary)
-    .or_else(|| targets.first())
-    .cloned()
-    .ok_or_else(|| not_found("primary display"))
+  targets.iter().find(|target| target.display.is_primary).or_else(|| targets.first()).cloned().ok_or_else(|| not_found("primary display"))
 }
 
 #[cfg(target_os = "macos")]
 fn list_display_targets() -> DriverResult<Vec<MacosDisplayTarget>> {
-  let monitors = xcap::Monitor::all()
-    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   display_targets_from_monitors(&monitors)
 }
 
@@ -1754,16 +1410,11 @@ fn list_display_targets() -> DriverResult<Vec<MacosDisplayTarget>> {
 
 #[cfg(target_os = "macos")]
 fn capture_display_xcap(selector: Option<&str>) -> DriverResult<DisplayCapture> {
-  let monitors = xcap::Monitor::all()
-    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   let targets = display_targets_from_monitors(&monitors)?;
   let target = resolve_display_target(&targets, selector)?;
-  let monitor = monitors
-    .get(target.index)
-    .ok_or_else(|| not_found(format!("display index {}", target.index)))?;
-  let image = monitor
-    .capture_image()
-    .map_err(|error| backend(format!("failed to capture display: {error}")))?;
+  let monitor = monitors.get(target.index).ok_or_else(|| not_found(format!("display index {}", target.index)))?;
+  let image = monitor.capture_image().map_err(|error| backend(format!("failed to capture display: {error}")))?;
   let image = RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
   let capture = Capture {
@@ -1786,13 +1437,10 @@ fn capture_display_xcap(_selector: Option<&str>) -> DriverResult<DisplayCapture>
 
 #[cfg(target_os = "macos")]
 fn capture_region_xcap(selector: Option<&str>, region: Rect) -> DriverResult<RegionCapture> {
-  let monitors = xcap::Monitor::all()
-    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   let targets = display_targets_from_monitors(&monitors)?;
   let target = resolve_display_for_global_region(&targets, selector, region)?;
-  let monitor = monitors
-    .get(target.index)
-    .ok_or_else(|| not_found(format!("display index {}", target.index)))?;
+  let monitor = monitors.get(target.index).ok_or_else(|| not_found(format!("display index {}", target.index)))?;
   let local_x = integral_capture_dimension("x", region.origin.x - target.display.frame.origin.x)?;
   let local_y = integral_capture_dimension("y", region.origin.y - target.display.frame.origin.y)?;
   let width = integral_positive_capture_dimension("width", region.size.width)?;
@@ -1821,9 +1469,7 @@ fn capture_region_xcap(_selector: Option<&str>, _region: Rect) -> DriverResult<R
 }
 
 #[cfg(target_os = "macos")]
-fn display_targets_from_monitors(
-  monitors: &[xcap::Monitor],
-) -> DriverResult<Vec<MacosDisplayTarget>> {
+fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec<MacosDisplayTarget>> {
   if monitors.is_empty() {
     return Err(DriverError::PermissionDenied {
       permission: "screen_recording",
@@ -1837,33 +1483,13 @@ fn display_targets_from_monitors(
     .iter()
     .enumerate()
     .map(|(index, monitor)| {
-      let x = monitor
-        .x()
-        .map_err(|error| backend(format!("failed to read display x: {error}")))?
-        as f64;
-      let y = monitor
-        .y()
-        .map_err(|error| backend(format!("failed to read display y: {error}")))?
-        as f64;
-      let width = monitor
-        .width()
-        .map_err(|error| backend(format!("failed to read display width: {error}")))?
-        as f64;
-      let height = monitor
-        .height()
-        .map_err(|error| backend(format!("failed to read display height: {error}")))?
-        as f64;
-      let scale_factor = monitor
-        .scale_factor()
-        .map_err(|error| backend(format!("failed to read display scale: {error}")))?
-        as f64;
-      let is_builtin = monitor
-        .is_builtin()
-        .map_err(|error| backend(format!("failed to read display built-in flag: {error}")))?;
-      let native_id = monitor
-        .id()
-        .map_err(|error| backend(format!("failed to read display id: {error}")))?
-        .to_string();
+      let x = monitor.x().map_err(|error| backend(format!("failed to read display x: {error}")))? as f64;
+      let y = monitor.y().map_err(|error| backend(format!("failed to read display y: {error}")))? as f64;
+      let width = monitor.width().map_err(|error| backend(format!("failed to read display width: {error}")))? as f64;
+      let height = monitor.height().map_err(|error| backend(format!("failed to read display height: {error}")))? as f64;
+      let scale_factor = monitor.scale_factor().map_err(|error| backend(format!("failed to read display scale: {error}")))? as f64;
+      let is_builtin = monitor.is_builtin().map_err(|error| backend(format!("failed to read display built-in flag: {error}")))?;
+      let native_id = monitor.id().map_err(|error| backend(format!("failed to read display id: {error}")))?.to_string();
       Ok(MacosDisplayTarget {
         index,
         display: Display {
@@ -1872,9 +1498,7 @@ fn display_targets_from_monitors(
           frame: Rect::new(x, y, width, height),
           coordinate_space: CoordinateSpace::Screen,
           scale_factor,
-          is_primary: monitor
-            .is_primary()
-            .map_err(|error| backend(format!("failed to read display primary flag: {error}")))?,
+          is_primary: monitor.is_primary().map_err(|error| backend(format!("failed to read display primary flag: {error}")))?,
           is_builtin: Some(is_builtin),
         },
       })
@@ -1892,10 +1516,7 @@ fn resolve_display_for_global_region(
   } else {
     targets.to_vec()
   };
-  selected
-    .into_iter()
-    .find(|target| rect_contains_rect(target.display.frame, region))
-    .ok_or_else(|| not_found("display containing region"))
+  selected.into_iter().find(|target| rect_contains_rect(target.display.frame, region)).ok_or_else(|| not_found("display containing region"))
 }
 
 fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
@@ -1907,14 +1528,10 @@ fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
 
 fn integral_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
   if value.fract() != 0.0 {
-    return Err(invalid_input(format!(
-      "region {name} must be an integer in backend capture units"
-    )));
+    return Err(invalid_input(format!("region {name} must be an integer in backend capture units")));
   }
   if value < 0.0 || value > u32::MAX as f64 {
-    return Err(invalid_input(format!(
-      "region {name} is outside the capture backend range"
-    )));
+    return Err(invalid_input(format!("region {name} is outside the capture backend range")));
   }
   Ok(value as u32)
 }
@@ -1961,19 +1578,16 @@ fn capture_window(window: &Window) -> DriverResult<Capture> {
 
 #[cfg(target_os = "macos")]
 fn capture_window_swift(window: &Window) -> DriverResult<Capture> {
-  let native_window_id = window.reference.id.parse::<i64>().map_err(|error| {
-    invalid_input(format!(
-      "window ref {} was not a native macOS window id: {error}",
-      window.reference.id
-    ))
-  })?;
+  let native_window_id = window
+    .reference
+    .id
+    .parse::<i64>()
+    .map_err(|error| invalid_input(format!("window ref {} was not a native macOS window id: {error}", window.reference.id)))?;
   let capture = crate::native::capture::capture_window_rgba(native_window_id).map_err(backend)?;
-  let width = u32::try_from(capture.image_width)
-    .map_err(|error| backend(format!("native capture returned invalid width: {error}")))?;
-  let height = u32::try_from(capture.image_height)
-    .map_err(|error| backend(format!("native capture returned invalid height: {error}")))?;
-  let image = RgbaImage::from_raw(width, height, capture.rgba_bytes)
-    .ok_or_else(|| backend("failed to decode native captured window RGBA image"))?;
+  let width = u32::try_from(capture.image_width).map_err(|error| backend(format!("native capture returned invalid width: {error}")))?;
+  let height = u32::try_from(capture.image_height).map_err(|error| backend(format!("native capture returned invalid height: {error}")))?;
+  let image =
+    RgbaImage::from_raw(width, height, capture.rgba_bytes).ok_or_else(|| backend("failed to decode native captured window RGBA image"))?;
   let scale_factor = if window.frame.size.width > 0.0 {
     f64::from(width) / window.frame.size.width
   } else {
@@ -1990,24 +1604,17 @@ fn capture_window_swift(window: &Window) -> DriverResult<Capture> {
 
 #[cfg(target_os = "macos")]
 fn capture_window_xcap(window: &Window, fallback_reason: Option<String>) -> DriverResult<Capture> {
-  let native_window_id = window.reference.id.parse::<u32>().map_err(|error| {
-    invalid_input(format!(
-      "window ref {} was not a native macOS window id: {error}",
-      window.reference.id
-    ))
-  })?;
-  let windows = xcap::Window::all()
-    .map_err(|error| backend(format!("failed to enumerate windows: {error}")))?;
+  let native_window_id = window
+    .reference
+    .id
+    .parse::<u32>()
+    .map_err(|error| invalid_input(format!("window ref {} was not a native macOS window id: {error}", window.reference.id)))?;
+  let windows = xcap::Window::all().map_err(|error| backend(format!("failed to enumerate windows: {error}")))?;
   let xcap_window = windows
     .iter()
     .find(|candidate| candidate.id().is_ok_and(|id| id == native_window_id))
     .ok_or_else(|| not_found(format!("native window {}", window.reference.id)))?;
-  let image = xcap_window.capture_image().map_err(|error| {
-    backend(format!(
-      "failed to capture window {}: {error}",
-      window.reference.id
-    ))
-  })?;
+  let image = xcap_window.capture_image().map_err(|error| backend(format!("failed to capture window {}: {error}", window.reference.id)))?;
   let width = image.width();
   let height = image.height();
   let scale_factor = if window.frame.size.width > 0.0 {
@@ -2015,8 +1622,7 @@ fn capture_window_xcap(window: &Window, fallback_reason: Option<String>) -> Driv
   } else {
     1.0
   };
-  let image = RgbaImage::from_raw(width, height, image.into_raw())
-    .ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
+  let image = RgbaImage::from_raw(width, height, image.into_raw()).ok_or_else(|| backend("failed to decode captured window RGBA image"))?;
   Ok(Capture {
     image,
     bounds: window.frame,
@@ -2055,10 +1661,7 @@ fn ocr_matches_from_recognition(recognition: &TextRecognition, query: &str) -> O
   OcrMatches { matches }
 }
 
-fn text_recognition_from_native(
-  native: &NativeOcrTextCapture,
-  capture: &Capture,
-) -> TextRecognition {
+fn text_recognition_from_native(native: &NativeOcrTextCapture, capture: &Capture) -> TextRecognition {
   let x_scale = if capture.bounds.size.width > 0.0 {
     f64::from(capture.image.width()) / capture.bounds.size.width
   } else {
@@ -2084,11 +1687,7 @@ fn text_recognition_from_native(
       ),
     })
     .collect::<Vec<_>>();
-  let text = matches
-    .iter()
-    .map(|recognized| recognized.text.as_str())
-    .collect::<Vec<_>>()
-    .join("\n");
+  let text = matches.iter().map(|recognized| recognized.text.as_str()).collect::<Vec<_>>().join("\n");
   TextRecognition {
     text,
     regions: matches,
@@ -2096,8 +1695,7 @@ fn text_recognition_from_native(
 }
 
 fn duration_millis(duration: Duration) -> DriverResult<u64> {
-  u64::try_from(duration.as_millis())
-    .map_err(|error| invalid_input(format!("duration too large: {error}")))
+  u64::try_from(duration.as_millis()).map_err(|error| invalid_input(format!("duration too large: {error}")))
 }
 
 fn run_osascript(scripts: &[&str]) -> DriverResult<()> {
@@ -2105,9 +1703,7 @@ fn run_osascript(scripts: &[&str]) -> DriverResult<()> {
   for script in scripts {
     command.arg("-e").arg(script);
   }
-  let output = command
-    .output()
-    .map_err(|error| backend(format!("failed to run osascript: {error}")))?;
+  let output = command.output().map_err(|error| backend(format!("failed to run osascript: {error}")))?;
   if output.status.success() {
     Ok(())
   } else {
@@ -2120,9 +1716,7 @@ fn run_osascript_lines(lines: &[String]) -> DriverResult<()> {
   for line in lines {
     command.arg("-e").arg(line);
   }
-  let output = command
-    .output()
-    .map_err(|error| backend(format!("failed to run osascript: {error}")))?;
+  let output = command.output().map_err(|error| backend(format!("failed to run osascript: {error}")))?;
   if output.status.success() {
     Ok(())
   } else {
@@ -2153,9 +1747,9 @@ fn text_submit_key_code(submit: TextSubmit) -> DriverResult<Option<i32>> {
   match submit {
     TextSubmit::No => Ok(None),
     TextSubmit::Return => Ok(Some(36)),
-    TextSubmit::Search | TextSubmit::Done | TextSubmit::Go => Err(invalid_input(format!(
-      "text submit {submit:?} is not supported by the macOS desktop driver yet"
-    ))),
+    TextSubmit::Search | TextSubmit::Done | TextSubmit::Go => {
+      Err(invalid_input(format!("text submit {submit:?} is not supported by the macOS desktop driver yet")))
+    }
   }
 }
 
@@ -2173,11 +1767,7 @@ fn acquire_clipboard_lock(timeout: Duration) -> DriverResult<ClipboardLock> {
   let path = std::env::temp_dir().join("auv-macos-clipboard.lock");
   let started = std::time::Instant::now();
   loop {
-    match std::fs::OpenOptions::new()
-      .write(true)
-      .create_new(true)
-      .open(&path)
-    {
+    match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
       Ok(mut file) => {
         let _ = writeln!(file, "pid={}", std::process::id());
         return Ok(ClipboardLock { path });
@@ -2185,18 +1775,12 @@ fn acquire_clipboard_lock(timeout: Duration) -> DriverResult<ClipboardLock> {
       Err(error) if error.kind() == ErrorKind::AlreadyExists => {
         clear_stale_clipboard_lock(&path)?;
         if started.elapsed() >= timeout {
-          return Err(backend(format!(
-            "timed out waiting for macOS clipboard lock at {}",
-            path.display()
-          )));
+          return Err(backend(format!("timed out waiting for macOS clipboard lock at {}", path.display())));
         }
         thread::sleep(Duration::from_millis(50));
       }
       Err(error) => {
-        return Err(backend(format!(
-          "failed to acquire macOS clipboard lock {}: {error}",
-          path.display()
-        )));
+        return Err(backend(format!("failed to acquire macOS clipboard lock {}: {error}", path.display())));
       }
     }
   }
@@ -2206,32 +1790,20 @@ fn clear_stale_clipboard_lock(path: &PathBuf) -> DriverResult<()> {
   let Ok(content) = std::fs::read_to_string(path) else {
     return Ok(());
   };
-  let Some(pid) = content
-    .lines()
-    .find_map(|line| line.strip_prefix("pid="))
-    .and_then(|raw| raw.trim().parse::<u32>().ok())
-  else {
+  let Some(pid) = content.lines().find_map(|line| line.strip_prefix("pid=")).and_then(|raw| raw.trim().parse::<u32>().ok()) else {
     return Ok(());
   };
   if process_is_alive(pid) {
     return Ok(());
   }
-  std::fs::remove_file(path).map_err(|error| {
-    backend(format!(
-      "failed to remove stale clipboard lock {}: {error}",
-      path.display()
-    ))
-  })
+  std::fs::remove_file(path).map_err(|error| backend(format!("failed to remove stale clipboard lock {}: {error}", path.display())))
 }
 
 fn process_is_alive(pid: u32) -> bool {
   if pid == 0 {
     return false;
   }
-  Command::new("/bin/kill")
-    .args(["-0", &pid.to_string()])
-    .status()
-    .is_ok_and(|status| status.success())
+  Command::new("/bin/kill").args(["-0", &pid.to_string()]).status().is_ok_and(|status| status.success())
 }
 
 fn escape_applescript(value: &str) -> String {
@@ -2321,14 +1893,8 @@ mod no_steal_tests {
     let mut invalid = sample_window();
     invalid.reference.id = "not-a-window-number".to_string();
 
-    assert!(matches!(
-      window_number(&missing),
-      Err(DriverError::InvalidInput { .. })
-    ));
-    assert!(matches!(
-      window_number(&invalid),
-      Err(DriverError::InvalidInput { .. })
-    ));
+    assert!(matches!(window_number(&missing), Err(DriverError::InvalidInput { .. })));
+    assert!(matches!(window_number(&invalid), Err(DriverError::InvalidInput { .. })));
   }
 
   #[test]
@@ -2336,10 +1902,7 @@ mod no_steal_tests {
     let mut window = sample_window();
     window.process_id = None;
 
-    assert!(matches!(
-      window_pid(&window),
-      Err(DriverError::InvalidInput { .. })
-    ));
+    assert!(matches!(window_pid(&window), Err(DriverError::InvalidInput { .. })));
   }
 
   #[test]
@@ -2407,25 +1970,15 @@ mod no_steal_tests {
 
   #[test]
   fn permission_status_from_label_handles_native_labels() {
-    assert_eq!(
-      permission_status_from_label("granted"),
-      PermissionStatus::Granted
-    );
-    assert_eq!(
-      permission_status_from_label("missing"),
-      PermissionStatus::Missing
-    );
-    assert_eq!(
-      permission_status_from_label("new-native-status"),
-      PermissionStatus::Unknown
-    );
+    assert_eq!(permission_status_from_label("granted"), PermissionStatus::Granted);
+    assert_eq!(permission_status_from_label("missing"), PermissionStatus::Missing);
+    assert_eq!(permission_status_from_label("new-native-status"), PermissionStatus::Unknown);
   }
 
   #[cfg(target_os = "macos")]
   #[test]
   fn empty_display_monitor_list_reports_permission_context() {
-    let error = display_targets_from_monitors(&[])
-      .expect_err("empty xcap monitor list should explain the likely permission boundary");
+    let error = display_targets_from_monitors(&[]).expect_err("empty xcap monitor list should explain the likely permission boundary");
 
     match error {
       DriverError::PermissionDenied {
@@ -2433,11 +1986,7 @@ mod no_steal_tests {
         recovery,
       } => {
         assert_eq!(permission, "screen_recording");
-        assert!(
-          recovery
-            .as_deref()
-            .is_some_and(|message| message.contains("auv doctor --json"))
-        );
+        assert!(recovery.as_deref().is_some_and(|message| message.contains("auv doctor --json")));
       }
       other => panic!("unexpected error: {other}"),
     }
@@ -2482,21 +2031,14 @@ mod no_steal_tests {
 
   #[test]
   fn parse_shortcut_rejects_multi_character_key() {
-    assert!(matches!(
-      parse_shortcut("cmd+return"),
-      Err(DriverError::InvalidInput { .. })
-    ));
+    assert!(matches!(parse_shortcut("cmd+return"), Err(DriverError::InvalidInput { .. })));
   }
 
   #[test]
   fn input_api_exposes_explicit_global_hid_scroll_method() {
     // NOTICE(compile-only-api-check): nested fn is type-checked but never called (no HID side effects).
     fn assert_api_compiles(session: MacosDriverSession) {
-      let _ = session.input().scroll_global_hid(
-        Point::new(20.0, 30.0),
-        Scroll::new(0.0, -120.0),
-        Duration::ZERO,
-      );
+      let _ = session.input().scroll_global_hid(Point::new(20.0, 30.0), Scroll::new(0.0, -120.0), Duration::ZERO);
     }
     let _ = assert_api_compiles;
   }
@@ -2633,10 +2175,7 @@ mod no_steal_tests {
       }
     ));
 
-    assert!(candidate_supports_window_mutation(
-      candidates[1],
-      WindowMutationKind::Minimize,
-    ));
+    assert!(candidate_supports_window_mutation(candidates[1], WindowMutationKind::Minimize,));
   }
 
   #[test]
@@ -2646,10 +2185,7 @@ mod no_steal_tests {
       ..WindowMutationOptions::default()
     });
 
-    assert_eq!(
-      candidates,
-      vec![WindowMutationCandidate::ForegroundSystemEvents]
-    );
+    assert_eq!(candidates, vec![WindowMutationCandidate::ForegroundSystemEvents]);
   }
 
   #[test]
@@ -2662,10 +2198,7 @@ mod no_steal_tests {
       ..WindowMutationOptions::default()
     });
 
-    assert_eq!(
-      candidates,
-      vec![WindowMutationCandidate::ForegroundSystemEvents]
-    );
+    assert_eq!(candidates, vec![WindowMutationCandidate::ForegroundSystemEvents]);
   }
 
   #[test]
@@ -2683,14 +2216,8 @@ mod no_steal_tests {
     assert_eq!(request.pid, 123);
     assert_eq!(request.window_number, 42);
     assert_eq!(request.title, "Library");
-    assert_eq!(
-      request.kind,
-      crate::native::window::DecodedWindowMutationKind::SetFrame
-    );
-    assert_eq!(
-      (request.x, request.y, request.width, request.height),
-      (10, 21, 800, 601)
-    );
+    assert_eq!(request.kind, crate::native::window::DecodedWindowMutationKind::SetFrame);
+    assert_eq!((request.x, request.y, request.width, request.height), (10, 21, 800, 601));
   }
 
   #[test]
@@ -2735,14 +2262,8 @@ mod no_steal_tests {
     );
 
     assert_eq!(result.selected_path, WindowMutationPath::AxWindowAttribute);
-    assert_eq!(
-      result.before_frame,
-      Some(Rect::new(10.0, 20.0, 800.0, 600.0))
-    );
-    assert_eq!(
-      result.after_frame,
-      Some(Rect::new(30.0, 40.0, 800.0, 600.0))
-    );
+    assert_eq!(result.before_frame, Some(Rect::new(10.0, 20.0, 800.0, 600.0)));
+    assert_eq!(result.after_frame, Some(Rect::new(30.0, 40.0, 800.0, 600.0)));
     assert_eq!(result.focus_disturbance, DisturbanceLevel::None);
     assert_eq!(result.mouse_disturbance, DisturbanceLevel::None);
   }
@@ -2807,12 +2328,8 @@ mod no_steal_tests {
       },
     );
 
-    let error = verify_window_mutation(
-      WindowMutationKind::Minimize,
-      &WindowMutationVerification::BestEffortState,
-      &result,
-    )
-    .expect_err("failed minimize should fail verification");
+    let error = verify_window_mutation(WindowMutationKind::Minimize, &WindowMutationVerification::BestEffortState, &result)
+      .expect_err("failed minimize should fail verification");
 
     assert!(error.to_string().contains("not minimized"));
   }
@@ -2822,10 +2339,7 @@ mod no_steal_tests {
     let error = window_mutation_failure(
       vec![
         WindowMutationAttempt::failure(WindowMutationPath::AxWindowAttribute, "stale window"),
-        WindowMutationAttempt::failure(
-          WindowMutationPath::ForegroundSystemEvents,
-          "foreground fallback deferred",
-        ),
+        WindowMutationAttempt::failure(WindowMutationPath::ForegroundSystemEvents, "foreground fallback deferred"),
       ],
       Some("stale window".to_string()),
     );
@@ -2913,10 +2427,8 @@ mod tests {
   fn display_region_resolution_requires_contained_global_region() {
     let targets = vec![display_target(0, "100", "display_0", true)];
 
-    let resolved =
-      resolve_display_for_global_region(&targets, None, Rect::new(10.0, 20.0, 40.0, 50.0)).unwrap();
-    let outside =
-      resolve_display_for_global_region(&targets, None, Rect::new(10.0, 20.0, 2000.0, 50.0));
+    let resolved = resolve_display_for_global_region(&targets, None, Rect::new(10.0, 20.0, 40.0, 50.0)).unwrap();
+    let outside = resolve_display_for_global_region(&targets, None, Rect::new(10.0, 20.0, 2000.0, 50.0));
 
     assert_eq!(resolved.display.id, "100");
     assert!(matches!(outside, Err(DriverError::NotFound { .. })));
@@ -2957,12 +2469,7 @@ mod tests {
     }
   }
 
-  fn display_target(
-    index: usize,
-    native_id: &str,
-    display_ref: &str,
-    is_primary: bool,
-  ) -> MacosDisplayTarget {
+  fn display_target(index: usize, native_id: &str, display_ref: &str, is_primary: bool) -> MacosDisplayTarget {
     MacosDisplayTarget {
       index,
       display: Display {

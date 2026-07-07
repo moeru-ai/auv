@@ -8,8 +8,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::training_package::{
-  TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingPackageCounts,
-  TrainingPackageInspectReport, TrainingPackageManifest,
+  TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingPackageCounts, TrainingPackageInspectReport, TrainingPackageManifest,
 };
 
 pub type TrainingLaunchPreparationResult<T> = Result<T, String>;
@@ -111,104 +110,55 @@ fn prepare_3dgs_training_launch_with_probe<F>(
 where
   F: Fn(&str, &[&str]) -> bool,
 {
-  let training_package_manifest = read_json_file::<TrainingPackageManifest>(
-    &inputs.training_package_manifest_path,
-    "MC-7 D3 training package manifest",
-  )?;
-  let training_package_dir = inputs
-    .training_package_manifest_path
-    .parent()
-    .ok_or_else(|| {
-      format!(
-        "MC-7 D3 training package manifest {} has no parent directory",
-        inputs.training_package_manifest_path.display()
-      )
-    })?;
+  let training_package_manifest =
+    read_json_file::<TrainingPackageManifest>(&inputs.training_package_manifest_path, "MC-7 D3 training package manifest")?;
+  let training_package_dir = inputs.training_package_manifest_path.parent().ok_or_else(|| {
+    format!("MC-7 D3 training package manifest {} has no parent directory", inputs.training_package_manifest_path.display())
+  })?;
 
   let training_package_inspect_report_path = training_package_dir.join("inspect_report.json");
-  let training_package_inspect_report = read_json_file::<TrainingPackageInspectReport>(
-    &training_package_inspect_report_path,
-    "MC-7 D3 training package inspect report",
-  )?;
+  let training_package_inspect_report =
+    read_json_file::<TrainingPackageInspectReport>(&training_package_inspect_report_path, "MC-7 D3 training package inspect report")?;
 
-  let manifest_view = find_compatibility_view(
-    &training_package_manifest.compatibility_views,
-    "MC-7 D3 training package manifest",
-  )?;
-  let inspect_view = find_compatibility_view(
-    &training_package_inspect_report.compatibility_views,
-    "MC-7 D3 training package inspect report",
-  )?;
+  let manifest_view = find_compatibility_view(&training_package_manifest.compatibility_views, "MC-7 D3 training package manifest")?;
+  let inspect_view =
+    find_compatibility_view(&training_package_inspect_report.compatibility_views, "MC-7 D3 training package inspect report")?;
 
-  let compatibility_export_report_path =
-    training_package_dir.join(&inspect_view.export_report_path);
-  ensure_file_readable(
-    &compatibility_export_report_path,
-    "MC-7 D3 Nerfstudio compatibility export report JSON",
-  )?;
+  let compatibility_export_report_path = training_package_dir.join(&inspect_view.export_report_path);
+  ensure_file_readable(&compatibility_export_report_path, "MC-7 D3 Nerfstudio compatibility export report JSON")?;
 
-  let transforms_path = inspect_view
-    .transforms_path
-    .as_ref()
-    .map(|path| training_package_dir.join(path));
+  let transforms_path = inspect_view.transforms_path.as_ref().map(|path| training_package_dir.join(path));
   if inspect_view.transforms_path.is_some() {
-    let declared_path = transforms_path
-      .as_ref()
-      .expect("transforms path should exist when declared");
+    let declared_path = transforms_path.as_ref().expect("transforms path should exist when declared");
     ensure_file_readable(declared_path, "MC-7 D3 Nerfstudio transforms JSON")?;
   }
 
   let training_data_dir = training_package_dir.join("compat/nerfstudio");
   let compatibility_images_dir = training_data_dir.join("images");
   if inspect_view.exported_frame_count > 0 {
-    ensure_directory_exists(
-      &training_data_dir,
-      "MC-7 D3 Nerfstudio compatibility data directory",
-    )?;
-    ensure_directory_exists(
-      &compatibility_images_dir,
-      "MC-7 D3 Nerfstudio compatibility images directory",
-    )?;
+    ensure_directory_exists(&training_data_dir, "MC-7 D3 Nerfstudio compatibility data directory")?;
+    ensure_directory_exists(&compatibility_images_dir, "MC-7 D3 Nerfstudio compatibility images directory")?;
   }
 
-  let suggested_output_dir = inputs
-    .output_dir
-    .join("trainer-output/nerfstudio-splatfacto");
-  let launch_command = format!(
-    "ns-train {TRAINER_LAUNCH_SUBCOMMAND} --data {} --output-dir {}",
-    sh_quote(&training_data_dir),
-    sh_quote(&suggested_output_dir)
-  );
+  let suggested_output_dir = inputs.output_dir.join("trainer-output/nerfstudio-splatfacto");
+  let launch_command =
+    format!("ns-train {TRAINER_LAUNCH_SUBCOMMAND} --data {} --output-dir {}", sh_quote(&training_data_dir), sh_quote(&suggested_output_dir));
   let probe_succeeded = probe("ns-train", &["--help"]);
 
   let transforms_present = transforms_path.is_some();
-  let (trainer_readiness, readiness_blocker) =
-    if inspect_view.status == TrainingCompatibilityStatus::Blocked {
-      (
-        TrainingLaunchReadiness::Blocked,
-        Some(TrainingLaunchReadinessBlocker::CompatibilityViewBlocked),
-      )
-    } else if inspect_view.exported_frame_count > 0 && !transforms_present {
-      (
-        TrainingLaunchReadiness::Blocked,
-        Some(TrainingLaunchReadinessBlocker::TransformsMissing),
-      )
-    } else if !probe_succeeded {
-      (
-        TrainingLaunchReadiness::Blocked,
-        Some(TrainingLaunchReadinessBlocker::TrainerCommandUnavailable),
-      )
-    } else {
-      (TrainingLaunchReadiness::Ready, None)
-    };
+  let (trainer_readiness, readiness_blocker) = if inspect_view.status == TrainingCompatibilityStatus::Blocked {
+    (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::CompatibilityViewBlocked))
+  } else if inspect_view.exported_frame_count > 0 && !transforms_present {
+    (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::TransformsMissing))
+  } else if !probe_succeeded {
+    (TrainingLaunchReadiness::Blocked, Some(TrainingLaunchReadinessBlocker::TrainerCommandUnavailable))
+  } else {
+    (TrainingLaunchReadiness::Ready, None)
+  };
 
   let generated_at_millis = auv_tracing_driver::now_millis();
-  let manifest_path = inputs
-    .output_dir
-    .join("minecraft-3dgs-training-launch-plan.json");
-  let inspect_report_path = inputs
-    .output_dir
-    .join("minecraft-3dgs-training-launch-inspect.json");
+  let manifest_path = inputs.output_dir.join("minecraft-3dgs-training-launch-plan.json");
+  let inspect_report_path = inputs.output_dir.join("minecraft-3dgs-training-launch-inspect.json");
   let runbook_path = inputs.output_dir.join("mc7-training-launch-runbook.md");
 
   let mut warnings = BTreeSet::new();
@@ -218,27 +168,15 @@ where
   let mut known_limits = BTreeSet::new();
   known_limits.extend(training_package_manifest.known_limits.iter().cloned());
   known_limits.extend(training_package_inspect_report.known_limits.iter().cloned());
-  known_limits.insert(
-    "MC-7 D5 training launch prep only; no trainer process is started and no trained splat is produced"
-      .to_string(),
-  );
+  known_limits.insert("MC-7 D5 training launch prep only; no trainer process is started and no trained splat is produced".to_string());
 
   let manifest = TrainingLaunchPlanManifest {
     schema_version: TRAINING_LAUNCH_PLAN_SCHEMA_VERSION,
     generated_at_millis,
-    source_training_package_manifest_path: inputs
-      .training_package_manifest_path
-      .to_string_lossy()
-      .into_owned(),
-    source_training_package_inspect_report_path: training_package_inspect_report_path
-      .to_string_lossy()
-      .into_owned(),
-    source_scene_packet_manifest_path: training_package_manifest
-      .source_scene_packet_manifest_path
-      .clone(),
-    source_bundle_manifest_paths: training_package_manifest
-      .source_bundle_manifest_paths
-      .clone(),
+    source_training_package_manifest_path: inputs.training_package_manifest_path.to_string_lossy().into_owned(),
+    source_training_package_inspect_report_path: training_package_inspect_report_path.to_string_lossy().into_owned(),
+    source_scene_packet_manifest_path: training_package_manifest.source_scene_packet_manifest_path.clone(),
+    source_bundle_manifest_paths: training_package_manifest.source_bundle_manifest_paths.clone(),
     source_run_ids: training_package_manifest.source_run_ids.clone(),
     counts: training_package_manifest.counts.clone(),
     compatibility_view_name: manifest_view.view_name.clone(),
@@ -250,26 +188,15 @@ where
     launch_command,
     known_limits: known_limits.iter().cloned().collect(),
   };
-  write_json(
-    &manifest_path,
-    &manifest,
-    "MC-7 D5 training launch plan JSON",
-  )?;
+  write_json(&manifest_path, &manifest, "MC-7 D5 training launch plan JSON")?;
 
   let inspect_report = TrainingLaunchInspectReport {
     schema_version: TRAINING_LAUNCH_INSPECT_REPORT_SCHEMA_VERSION,
     generated_at_millis,
     training_launch_manifest_path: manifest_path.to_string_lossy().into_owned(),
-    source_training_package_manifest_path: inputs
-      .training_package_manifest_path
-      .to_string_lossy()
-      .into_owned(),
-    source_scene_packet_manifest_path: training_package_manifest
-      .source_scene_packet_manifest_path
-      .clone(),
-    source_bundle_manifest_paths: training_package_manifest
-      .source_bundle_manifest_paths
-      .clone(),
+    source_training_package_manifest_path: inputs.training_package_manifest_path.to_string_lossy().into_owned(),
+    source_scene_packet_manifest_path: training_package_manifest.source_scene_packet_manifest_path.clone(),
+    source_bundle_manifest_paths: training_package_manifest.source_bundle_manifest_paths.clone(),
     source_run_ids: training_package_manifest.source_run_ids.clone(),
     compatibility_status: inspect_view.status,
     trainer_readiness,
@@ -282,28 +209,12 @@ where
     warnings: warnings.iter().cloned().collect(),
     known_limits: known_limits.iter().cloned().collect(),
   };
-  write_json(
-    &inspect_report_path,
-    &inspect_report,
-    "MC-7 D5 training launch inspect JSON",
-  )?;
+  write_json(&inspect_report_path, &inspect_report, "MC-7 D5 training launch inspect JSON")?;
 
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create MC-7 D5 training launch output directory {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
-  fs::write(
-    &runbook_path,
-    render_runbook(&manifest, &inspect_report).as_bytes(),
-  )
-  .map_err(|error| {
-    format!(
-      "failed to write MC-7 D5 training launch runbook {}: {error}",
-      runbook_path.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir)
+    .map_err(|error| format!("failed to create MC-7 D5 training launch output directory {}: {error}", inputs.output_dir.display()))?;
+  fs::write(&runbook_path, render_runbook(&manifest, &inspect_report).as_bytes())
+    .map_err(|error| format!("failed to write MC-7 D5 training launch runbook {}: {error}", runbook_path.display()))?;
 
   Ok(TrainingLaunchPreparationOutput {
     output_dir: inputs.output_dir,
@@ -316,22 +227,13 @@ where
 }
 
 fn default_trainer_probe(command: &str, arguments: &[&str]) -> bool {
-  Command::new(command)
-    .args(arguments)
-    .status()
-    .map(|status| status.success())
-    .unwrap_or(false)
+  Command::new(command).args(arguments).status().map(|status| status.success()).unwrap_or(false)
 }
 
-fn render_runbook(
-  manifest: &TrainingLaunchPlanManifest,
-  inspect_report: &TrainingLaunchInspectReport,
-) -> String {
+fn render_runbook(manifest: &TrainingLaunchPlanManifest, inspect_report: &TrainingLaunchInspectReport) -> String {
   let mut output = String::new();
   output.push_str("# MC-7 training launch runbook\n\n");
-  output.push_str(
-    "This is a preparation artifact. It does not start a trainer process and does not prove MC-7 training quality.\n\n",
-  );
+  output.push_str("This is a preparation artifact. It does not start a trainer process and does not prove MC-7 training quality.\n\n");
   output.push_str(&format!(
     "- trainer backend: `{}`\n- compatibility view: `{}`\n- readiness: `{}`\n",
     manifest.trainer_backend,
@@ -355,20 +257,14 @@ fn render_runbook(
   }
   output.push_str(&format!(
     "- exported frames: `{}`\n- skipped frames: `{}`\n- probe command: `{}`\n\n",
-    inspect_report.exported_frame_count,
-    inspect_report.skipped_frame_count,
-    inspect_report.probe_command
+    inspect_report.exported_frame_count, inspect_report.skipped_frame_count, inspect_report.probe_command
   ));
   output.push_str("Suggested launch command:\n\n```bash\n");
   output.push_str(&manifest.launch_command);
   output.push_str("\n```\n\n");
   output.push_str("Notes:\n");
-  output.push_str(
-    "- D5 keeps the D3 package authoritative; it does not copy training inputs into a second dataset tree.\n",
-  );
-  output.push_str(
-    "- If readiness is `trainer_command_unavailable`, install a local Nerfstudio CLI and rerun `prepare-3dgs-training`.\n",
-  );
+  output.push_str("- D5 keeps the D3 package authoritative; it does not copy training inputs into a second dataset tree.\n");
+  output.push_str("- If readiness is `trainer_command_unavailable`, install a local Nerfstudio CLI and rerun `prepare-3dgs-training`.\n");
   output.push_str(
     "- If readiness is `compatibility_view_blocked`, regenerate D3 from a package that exports at least one Nerfstudio-compatible frame.\n",
   );
@@ -389,14 +285,11 @@ fn find_compatibility_view<'a>(
 }
 
 fn ensure_file_readable(path: &Path, label: &str) -> TrainingLaunchPreparationResult<()> {
-  fs::File::open(path)
-    .map(|_| ())
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))
+  fs::File::open(path).map(|_| ()).map_err(|error| format!("failed to open {label} {}: {error}", path.display()))
 }
 
 fn ensure_directory_exists(path: &Path, label: &str) -> TrainingLaunchPreparationResult<()> {
-  let metadata = fs::metadata(path)
-    .map_err(|error| format!("failed to stat {label} {}: {error}", path.display()))?;
+  let metadata = fs::metadata(path).map_err(|error| format!("failed to stat {label} {}: {error}", path.display()))?;
   if !metadata.is_dir() {
     return Err(format!("{label} {} is not a directory", path.display()));
   }
@@ -404,27 +297,12 @@ fn ensure_directory_exists(path: &Path, label: &str) -> TrainingLaunchPreparatio
 }
 
 fn sh_quote(path: &Path) -> String {
-  format!(
-    "\"{}\"",
-    path
-      .to_string_lossy()
-      .replace('\\', "\\\\")
-      .replace('"', "\\\"")
-  )
+  format!("\"{}\"", path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-fn write_json(
-  path: &Path,
-  value: &impl Serialize,
-  label: &str,
-) -> TrainingLaunchPreparationResult<()> {
+fn write_json(path: &Path, value: &impl Serialize, label: &str) -> TrainingLaunchPreparationResult<()> {
   if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create {label} directory {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent).map_err(|error| format!("failed to create {label} directory {}: {error}", parent.display()))?;
   }
   let json = serde_json::to_string_pretty(value)
     .map(|mut json| {
@@ -432,18 +310,12 @@ fn write_json(
       json
     })
     .map_err(|error| format!("failed to serialize {label}: {error}"))?;
-  fs::write(path, json.as_bytes())
-    .map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
+  fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
 }
 
-fn read_json_file<T: DeserializeOwned>(
-  path: &Path,
-  label: &str,
-) -> TrainingLaunchPreparationResult<T> {
-  let file = fs::File::open(path)
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
-  serde_json::from_reader(BufReader::new(file))
-    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> TrainingLaunchPreparationResult<T> {
+  let file = fs::File::open(path).map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
+  serde_json::from_reader(BufReader::new(file)).map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -454,8 +326,7 @@ mod tests {
   use tempfile::TempDir;
 
   use crate::training_package::{
-    TrainingCompatibilityFrameDecision, TrainingCompatibilitySkipReason,
-    TrainingCompatibilitySkipReasonCount, TrainingPackageFrameRecord,
+    TrainingCompatibilityFrameDecision, TrainingCompatibilitySkipReason, TrainingCompatibilitySkipReasonCount, TrainingPackageFrameRecord,
   };
 
   #[test]
@@ -484,10 +355,7 @@ mod tests {
     )
     .expect("launch prep should succeed");
 
-    assert_eq!(
-      output.inspect_report.trainer_readiness,
-      TrainingLaunchReadiness::Ready
-    );
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Ready);
     assert_eq!(output.inspect_report.readiness_blocker, None);
     assert!(output.manifest.launch_command.contains("compat/nerfstudio"));
     assert!(output.manifest_path.is_file());
@@ -521,14 +389,8 @@ mod tests {
     )
     .expect("launch prep should still write blocked outputs");
 
-    assert_eq!(
-      output.inspect_report.trainer_readiness,
-      TrainingLaunchReadiness::Blocked
-    );
-    assert_eq!(
-      output.inspect_report.readiness_blocker,
-      Some(TrainingLaunchReadinessBlocker::TrainerCommandUnavailable)
-    );
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchReadinessBlocker::TrainerCommandUnavailable));
     assert!(output.manifest_path.is_file());
     assert!(output.inspect_report_path.is_file());
     assert!(output.runbook_path.is_file());
@@ -560,17 +422,8 @@ mod tests {
     )
     .expect("partial compatibility with transforms should still prepare");
 
-    assert_eq!(
-      output.inspect_report.trainer_readiness,
-      TrainingLaunchReadiness::Ready
-    );
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|value| value == "one frame skipped")
-    );
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Ready);
+    assert!(output.inspect_report.warnings.iter().any(|value| value == "one frame skipped"));
   }
 
   #[test]
@@ -599,14 +452,8 @@ mod tests {
     )
     .expect("blocked compatibility should still produce D5 outputs");
 
-    assert_eq!(
-      output.inspect_report.trainer_readiness,
-      TrainingLaunchReadiness::Blocked
-    );
-    assert_eq!(
-      output.inspect_report.readiness_blocker,
-      Some(TrainingLaunchReadinessBlocker::CompatibilityViewBlocked)
-    );
+    assert_eq!(output.inspect_report.trainer_readiness, TrainingLaunchReadiness::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchReadinessBlocker::CompatibilityViewBlocked));
     assert!(output.manifest_path.is_file());
     assert!(output.inspect_report_path.is_file());
     assert!(output.runbook_path.is_file());
@@ -723,9 +570,7 @@ mod tests {
       }
     }
 
-    let transforms_path = spec
-      .declare_transforms_path
-      .then_some("compat/nerfstudio/transforms.json".to_string());
+    let transforms_path = spec.declare_transforms_path.then_some("compat/nerfstudio/transforms.json".to_string());
     if spec.create_export_report {
       write_json(
         &compat_dir.join("export_report.json"),
@@ -763,9 +608,7 @@ mod tests {
       resource_pack_ids: vec!["fabric".to_string(), "file/auv-mc6-rich".to_string()],
       primary_file_resource_pack_id: Some("file/auv-mc6-rich".to_string()),
       compatibility_status: spec.compatibility_status,
-      compatibility_skip_reasons: if spec.compatibility_status
-        == TrainingCompatibilityStatus::Partial
-      {
+      compatibility_skip_reasons: if spec.compatibility_status == TrainingCompatibilityStatus::Partial {
         vec![TrainingCompatibilitySkipReason::MissingScreenshot]
       } else {
         Vec::new()
@@ -825,21 +668,13 @@ mod tests {
       compatibility_views: vec![compatibility_view.clone()],
       known_limits: vec!["canonical package only; no trainer output".to_string()],
     };
-    write_json(
-      &training_dir.join("run.json"),
-      &manifest,
-      "MC-7 D5 fixture training package manifest JSON",
-    )
-    .expect("manifest write");
+    write_json(&training_dir.join("run.json"), &manifest, "MC-7 D5 fixture training package manifest JSON").expect("manifest write");
 
     if spec.create_inspect_report {
       let inspect_report = TrainingPackageInspectReport {
         schema_version: 1,
         generated_at_millis: 1,
-        training_package_manifest_path: training_dir
-          .join("run.json")
-          .to_string_lossy()
-          .into_owned(),
+        training_package_manifest_path: training_dir.join("run.json").to_string_lossy().into_owned(),
         scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
         source_bundle_manifest_paths: vec!["/tmp/run-1/run.json".to_string()],
         source_run_ids: vec!["run-1".to_string()],
@@ -848,12 +683,8 @@ mod tests {
         warnings: spec.warnings,
         known_limits: vec!["canonical package only; no trainer output".to_string()],
       };
-      write_json(
-        &training_dir.join("inspect_report.json"),
-        &inspect_report,
-        "MC-7 D5 fixture training package inspect report JSON",
-      )
-      .expect("inspect write");
+      write_json(&training_dir.join("inspect_report.json"), &inspect_report, "MC-7 D5 fixture training package inspect report JSON")
+        .expect("inspect write");
     }
 
     training_dir.join("run.json")

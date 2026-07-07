@@ -16,9 +16,8 @@ use crate::recording::{RunRecorder, RunUpdate};
 use crate::store::CanonicalRun;
 use crate::time::now_millis;
 use crate::trace::{
-  ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RunId,
-  RunRecordV1Alpha1, RunType, SpanId, SpanRecordV1Alpha1, TraceFailure, TraceState,
-  TraceStatusCode, new_event_id, new_span_id,
+  ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, RunType, SpanId,
+  SpanRecordV1Alpha1, TraceFailure, TraceState, TraceStatusCode, new_event_id, new_span_id,
 };
 
 pub type Attributes = BTreeMap<String, serde_json::Value>;
@@ -52,8 +51,8 @@ mod tests {
   use std::sync::Arc;
 
   use crate::trace::{
-    EVENT_API_VERSION, EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType,
-    SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    EVENT_API_VERSION, EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId,
+    SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
 
   use crate::recording::{BroadcastRunRecorder, MemoryRunRecorder, RunUpdate};
@@ -65,9 +64,7 @@ mod tests {
     let mut run = recording_run("run_invalid_parent");
     let foreign_parent = SpanRef::new(SpanId::new("0000000000009999"));
 
-    let error = run
-      .start_span(&foreign_parent, span_record("auv.invalid.child"))
-      .expect_err("foreign parent span should be rejected");
+    let error = run.start_span(&foreign_parent, span_record("auv.invalid.child")).expect_err("foreign parent span should be rejected");
 
     assert!(error.contains("does not belong to run"));
   }
@@ -122,9 +119,7 @@ mod tests {
     assert!(matches!(first, RunUpdate::RunStarted { .. }));
     let second = receiver.try_recv().expect("root span should broadcast");
     assert!(matches!(second, RunUpdate::SpanStarted { .. }));
-    let third = receiver
-      .try_recv()
-      .expect("recorded event should broadcast");
+    let third = receiver.try_recv().expect("recorded event should broadcast");
     assert!(matches!(
       third,
       RunUpdate::EventAppended { event, .. } if event.name == "broadcast.event"
@@ -270,11 +265,7 @@ pub struct RecordedRun {
 }
 
 impl RecordingRun {
-  pub fn new(
-    run: RunRecordV1Alpha1,
-    root_span: SpanRecordV1Alpha1,
-    recorder: Arc<dyn RunRecorder>,
-  ) -> Self {
+  pub fn new(run: RunRecordV1Alpha1, root_span: SpanRecordV1Alpha1, recorder: Arc<dyn RunRecorder>) -> Self {
     let mut recording = Self {
       run,
       spans: vec![root_span],
@@ -332,23 +323,12 @@ impl RecordingRun {
       .unwrap_or_else(crate::trace::SessionId::default_session)
   }
 
-  pub fn start_span(
-    &mut self,
-    parent: &SpanRef,
-    mut span: SpanRecordV1Alpha1,
-  ) -> AuvResult<SpanRef> {
+  pub fn start_span(&mut self, parent: &SpanRef, mut span: SpanRecordV1Alpha1) -> AuvResult<SpanRef> {
     if !self.has_span(parent.id()) {
-      return Err(format!(
-        "parent span {} does not belong to run {}",
-        parent.id(),
-        self.run.run_id
-      ));
+      return Err(format!("parent span {} does not belong to run {}", parent.id(), self.run.run_id));
     }
     if self.has_span(&span.span_id) {
-      return Err(format!(
-        "span {} already belongs to run {}",
-        span.span_id, self.run.run_id
-      ));
+      return Err(format!("span {} already belongs to run {}", span.span_id, self.run.run_id));
     }
     span.parent_span_id = Some(parent.id().clone());
     let span_ref = SpanRef::new(span.span_id.clone());
@@ -361,11 +341,7 @@ impl RecordingRun {
   }
 
   pub fn finish_span(&mut self, span: &SpanRef, finish: SpanFinish) -> AuvResult<()> {
-    let update = if let Some(record) = self
-      .spans
-      .iter_mut()
-      .find(|record| record.span_id == *span.id())
-    {
+    let update = if let Some(record) = self.spans.iter_mut().find(|record| record.span_id == *span.id()) {
       if record.state == TraceState::Ended {
         return Ok(());
       }
@@ -385,11 +361,7 @@ impl RecordingRun {
       self.record_update(update);
       Ok(())
     } else {
-      Err(format!(
-        "span {} does not belong to run {}",
-        span.id(),
-        self.run.run_id
-      ))
+      Err(format!("span {} does not belong to run {}", span.id(), self.run.run_id))
     }
   }
 
@@ -445,12 +417,7 @@ impl RecordingRun {
     }
   }
 
-  pub fn finish(
-    mut self,
-    status_code: TraceStatusCode,
-    summary: Option<String>,
-    failure: Option<TraceFailure>,
-  ) -> RecordedRun {
+  pub fn finish(mut self, status_code: TraceStatusCode, summary: Option<String>, failure: Option<TraceFailure>) -> RecordedRun {
     let finished_at_millis = now_millis();
     self.run.state = TraceState::Ended;
     self.run.status_code = status_code;

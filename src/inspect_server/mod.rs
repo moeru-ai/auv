@@ -10,9 +10,7 @@
 
 pub mod session;
 
-pub use session::{
-  InspectServerSession, default_session_path, read_inspect_session, write_inspect_session,
-};
+pub use session::{InspectServerSession, default_session_path, read_inspect_session, write_inspect_session};
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -67,14 +65,8 @@ struct RunWriteLocks {
 impl RunWriteLocks {
   async fn lock(&self, run_id: &str) -> OwnedMutexGuard<()> {
     let lock = {
-      let mut locks = self
-        .locks
-        .lock()
-        .expect("run write locks should not poison");
-      locks
-        .entry(run_id.to_string())
-        .or_insert_with(|| Arc::new(Mutex::new(())))
-        .clone()
+      let mut locks = self.locks.lock().expect("run write locks should not poison");
+      locks.entry(run_id.to_string()).or_insert_with(|| Arc::new(Mutex::new(()))).clone()
     };
     lock.lock_owned().await
   }
@@ -138,61 +130,21 @@ const VIEWER_HTML: &str = include_str!("../inspect_server_viewer.html");
 /// add a `(filename, bytes, mime)` row here. SVG is the default; binary
 /// or raster assets can land alongside with their actual mime type.
 const DESIGN_ASSETS: &[(&str, &[u8], &str)] = &[
-  (
-    "logo-mark.svg",
-    include_bytes!("../../docs/design/assets/logo-mark.svg"),
-    "image/svg+xml",
-  ),
-  (
-    "sparkle.svg",
-    include_bytes!("../../docs/design/assets/sparkle.svg"),
-    "image/svg+xml",
-  ),
-  (
-    "icon-png.svg",
-    include_bytes!("../../docs/design/assets/icon-png.svg"),
-    "image/svg+xml",
-  ),
-  (
-    "icon-json.svg",
-    include_bytes!("../../docs/design/assets/icon-json.svg"),
-    "image/svg+xml",
-  ),
-  (
-    "icon-bin.svg",
-    include_bytes!("../../docs/design/assets/icon-bin.svg"),
-    "image/svg+xml",
-  ),
-  (
-    "sprite-inspector.svg",
-    include_bytes!("../../docs/design/assets/sprite-inspector.svg"),
-    "image/svg+xml",
-  ),
-  (
-    "cursor-auv.svg",
-    include_bytes!("../../docs/design/assets/cursor-auv.svg"),
-    "image/svg+xml",
-  ),
-  (
-    "cursor-auv-click.svg",
-    include_bytes!("../../docs/design/assets/cursor-auv-click.svg"),
-    "image/svg+xml",
-  ),
-  (
-    "cursor-you.svg",
-    include_bytes!("../../docs/design/assets/cursor-you.svg"),
-    "image/svg+xml",
-  ),
+  ("logo-mark.svg", include_bytes!("../../docs/design/assets/logo-mark.svg"), "image/svg+xml"),
+  ("sparkle.svg", include_bytes!("../../docs/design/assets/sparkle.svg"), "image/svg+xml"),
+  ("icon-png.svg", include_bytes!("../../docs/design/assets/icon-png.svg"), "image/svg+xml"),
+  ("icon-json.svg", include_bytes!("../../docs/design/assets/icon-json.svg"), "image/svg+xml"),
+  ("icon-bin.svg", include_bytes!("../../docs/design/assets/icon-bin.svg"), "image/svg+xml"),
+  ("sprite-inspector.svg", include_bytes!("../../docs/design/assets/sprite-inspector.svg"), "image/svg+xml"),
+  ("cursor-auv.svg", include_bytes!("../../docs/design/assets/cursor-auv.svg"), "image/svg+xml"),
+  ("cursor-auv-click.svg", include_bytes!("../../docs/design/assets/cursor-auv-click.svg"), "image/svg+xml"),
+  ("cursor-you.svg", include_bytes!("../../docs/design/assets/cursor-you.svg"), "image/svg+xml"),
 ];
 pub fn router(store: LocalStore, recorder: Arc<BroadcastRunRecorder>) -> Router {
   router_with_config(store, recorder, InspectWriteConfig::default())
 }
 
-fn router_with_config(
-  store: LocalStore,
-  recorder: Arc<BroadcastRunRecorder>,
-  write: InspectWriteConfig,
-) -> Router {
+fn router_with_config(store: LocalStore, recorder: Arc<BroadcastRunRecorder>, write: InspectWriteConfig) -> Router {
   let state = InspectServerState {
     store: Arc::new(store),
     recorder,
@@ -208,25 +160,16 @@ fn router_with_config(
     .route("/runs/{run_id}/events", get(get_events))
     .route("/runs/{run_id}/artifacts", get(get_artifacts))
     .route("/runs/{run_id}/artifacts/{artifact_id}", get(get_artifact))
-    .route(
-      "/runs/{run_id}/minecraft-quality-baseline-report",
-      get(get_minecraft_quality_baseline_report),
-    )
+    .route("/runs/{run_id}/minecraft-quality-baseline-report", get(get_minecraft_quality_baseline_report))
     .route("/runs/{run_id}/stream", get(stream_run))
     .route("/write/runs/{run_id}/updates", post(write_updates))
-    .route(
-      "/write/runs/{run_id}/artifacts/{artifact_id}",
-      post(write_artifact),
-    )
+    .route("/write/runs/{run_id}/artifacts/{artifact_id}", post(write_artifact))
     .with_state(state)
 }
 
 async fn serve_viewer() -> Response {
   let mut response = Body::from(VIEWER_HTML).into_response();
-  response.headers_mut().insert(
-    CONTENT_TYPE,
-    HeaderValue::from_static("text/html; charset=utf-8"),
-  );
+  response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
   response
 }
 
@@ -235,57 +178,36 @@ fn design_asset(name: &str) -> Option<(&'static [u8], &'static str)> {
   // path segment. Axum already URL-decodes the matched param, so a
   // literal `..` or slash in the name means a malformed request, not a
   // legitimate asset lookup.
-  if name.is_empty()
-    || name.contains('/')
-    || name.contains('\\')
-    || name.contains("..")
-    || name.starts_with('.')
-  {
+  if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") || name.starts_with('.') {
     return None;
   }
-  DESIGN_ASSETS
-    .iter()
-    .find(|(asset_name, _, _)| *asset_name == name)
-    .map(|(_, bytes, mime)| (*bytes, *mime))
+  DESIGN_ASSETS.iter().find(|(asset_name, _, _)| *asset_name == name).map(|(_, bytes, mime)| (*bytes, *mime))
 }
 
 async fn serve_design_asset(Path(asset_name): Path<String>) -> Response {
   match design_asset(&asset_name) {
     Some((bytes, mime)) => {
       let mut response = Body::from(bytes).into_response();
-      let content_type = HeaderValue::from_str(mime)
-        .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
+      let content_type = HeaderValue::from_str(mime).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
       response.headers_mut().insert(CONTENT_TYPE, content_type);
       // Assets are bundled at compile time and never change at runtime,
       // so a one-year immutable cache is safe; clients can rely on the
       // filename being stable across server restarts of the same build.
       if let Ok(cache_control) = HeaderValue::from_str("public, max-age=31536000, immutable") {
-        response
-          .headers_mut()
-          .insert("cache-control", cache_control);
+        response.headers_mut().insert("cache-control", cache_control);
       }
       response
     }
-    None => {
-      InspectHttpError::not_found(format!("design asset {asset_name:?} not found")).into_response()
-    }
+    None => InspectHttpError::not_found(format!("design asset {asset_name:?} not found")).into_response(),
   }
 }
 
-pub async fn serve(
-  store: LocalStore,
-  recorder: Arc<BroadcastRunRecorder>,
-  config: InspectServeConfig,
-) -> AuvResult<SocketAddr> {
+pub async fn serve(store: LocalStore, recorder: Arc<BroadcastRunRecorder>, config: InspectServeConfig) -> AuvResult<SocketAddr> {
   config.validate_write_security()?;
   let address = (config.host.as_str(), config.port);
   let display_address = format!("{}:{}", config.host, config.port);
-  let listener = TcpListener::bind(address)
-    .await
-    .map_err(|error| format!("failed to bind inspect server {display_address}: {error}"))?;
-  let local_address = listener
-    .local_addr()
-    .map_err(|error| format!("failed to read inspect server address: {error}"))?;
+  let listener = TcpListener::bind(address).await.map_err(|error| format!("failed to bind inspect server {display_address}: {error}"))?;
+  let local_address = listener.local_addr().map_err(|error| format!("failed to read inspect server address: {error}"))?;
   println!("inspect server: http://{local_address}");
   if config.write.enabled {
     let session = InspectServerSession {
@@ -312,31 +234,23 @@ struct RunListEntry {
 }
 
 async fn list_runs(State(state): State<InspectServerState>) -> Result<Response, InspectHttpError> {
-  let runs = state
-    .store
-    .list_runs()
-    .map_err(InspectHttpError::from_store)?;
+  let runs = state.store.list_runs().map_err(InspectHttpError::from_store)?;
   let mut entries = Vec::with_capacity(runs.len());
   for run in runs {
     let run_id = run.run_id.as_str();
     let view_parser_summary = match state.store.read_run(run_id) {
-      Ok(canonical) => {
-        match crate::inspect_view_parser::build_view_parser_inspect_for_run(
-          state.store.as_ref(),
-          &canonical,
-        ) {
-          Ok(view_parser) => summarize_view_parser_inspect(&view_parser),
-          Err(error) => {
-            tracing::warn!(
-              run_id = %run_id,
-              stage = "build_view_parser_inspect",
-              error = %error,
-              "list row view_parser_summary degraded"
-            );
-            ViewParserListSummary::default()
-          }
+      Ok(canonical) => match crate::inspect_view_parser::build_view_parser_inspect_for_run(state.store.as_ref(), &canonical) {
+        Ok(view_parser) => summarize_view_parser_inspect(&view_parser),
+        Err(error) => {
+          tracing::warn!(
+            run_id = %run_id,
+            stage = "build_view_parser_inspect",
+            error = %error,
+            "list row view_parser_summary degraded"
+          );
+          ViewParserListSummary::default()
         }
-      }
+      },
       Err(error) => {
         tracing::warn!(
           run_id = %run_id,
@@ -355,37 +269,23 @@ async fn list_runs(State(state): State<InspectServerState>) -> Result<Response, 
   Ok(Json(entries).into_response())
 }
 
-async fn get_run(
-  State(state): State<InspectServerState>,
-  Path(run_id): Path<String>,
-) -> Result<Response, InspectHttpError> {
-  let run = state
-    .store
-    .read_run(&run_id)
-    .map_err(InspectHttpError::from_store)?;
-  let verifications = crate::run_read::extract_verifications(state.store.as_ref(), &run)
-    .map_err(InspectHttpError::from_store)?;
+async fn get_run(State(state): State<InspectServerState>, Path(run_id): Path<String>) -> Result<Response, InspectHttpError> {
+  let run = state.store.read_run(&run_id).map_err(InspectHttpError::from_store)?;
+  let verifications = crate::run_read::extract_verifications(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let observation_snapshots =
-    crate::run_read::extract_observation_snapshots(state.store.as_ref(), &run)
-      .map_err(InspectHttpError::from_store)?;
+    crate::run_read::extract_observation_snapshots(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let detector_recognition_lineage =
-    crate::run_read::extract_detector_recognition_lineage(state.store.as_ref(), &run)
-      .map_err(InspectHttpError::from_store)?;
+    crate::run_read::extract_detector_recognition_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let candidate_promotion_lineage =
-    crate::run_read::extract_candidate_promotion_lineage(state.store.as_ref(), &run)
-      .map_err(InspectHttpError::from_store)?;
+    crate::run_read::extract_candidate_promotion_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let candidate_action_decision_lineage =
-    crate::run_read::extract_candidate_action_decision_lineage(state.store.as_ref(), &run)
-      .map_err(InspectHttpError::from_store)?;
+    crate::run_read::extract_candidate_action_decision_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let candidate_action_execution_lineage =
-    crate::run_read::extract_candidate_action_execution_lineage(state.store.as_ref(), &run)
-      .map_err(InspectHttpError::from_store)?;
+    crate::run_read::extract_candidate_action_execution_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let action_transition_lineage =
-    crate::run_read::extract_action_transition_lineage(state.store.as_ref(), &run)
-      .map_err(InspectHttpError::from_store)?;
+    crate::run_read::extract_action_transition_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let view_parser =
-    crate::inspect_view_parser::build_view_parser_inspect_for_run(state.store.as_ref(), &run)
-      .map_err(InspectHttpError::from_store)?;
+    crate::inspect_view_parser::build_view_parser_inspect_for_run(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let view_parser_summary = summarize_view_parser_inspect(&view_parser);
   let command_boundary_claims = extract_command_boundary_claims(&run);
   Ok(
@@ -426,25 +326,13 @@ fn extract_command_boundary_claims(run: &CanonicalRun) -> Vec<CommandBoundaryCla
     .collect()
 }
 
-async fn get_spans(
-  State(state): State<InspectServerState>,
-  Path(run_id): Path<String>,
-) -> Result<Response, InspectHttpError> {
-  let run = state
-    .store
-    .read_run(&run_id)
-    .map_err(InspectHttpError::from_store)?;
+async fn get_spans(State(state): State<InspectServerState>, Path(run_id): Path<String>) -> Result<Response, InspectHttpError> {
+  let run = state.store.read_run(&run_id).map_err(InspectHttpError::from_store)?;
   Ok(Json(run.spans).into_response())
 }
 
-async fn get_events(
-  State(state): State<InspectServerState>,
-  Path(run_id): Path<String>,
-) -> Result<Response, InspectHttpError> {
-  let run = state
-    .store
-    .read_run(&run_id)
-    .map_err(InspectHttpError::from_store)?;
+async fn get_events(State(state): State<InspectServerState>, Path(run_id): Path<String>) -> Result<Response, InspectHttpError> {
+  let run = state.store.read_run(&run_id).map_err(InspectHttpError::from_store)?;
   Ok(Json(run.events).into_response())
 }
 
@@ -453,19 +341,12 @@ async fn get_minecraft_quality_baseline_report(
   Path(run_id): Path<String>,
 ) -> Result<Response, InspectHttpError> {
   let payload =
-    crate::run_read::quality_baseline_report_with_verdicts_for_run(state.store.as_ref(), &run_id)
-      .map_err(InspectHttpError::from_store)?;
+    crate::run_read::quality_baseline_report_with_verdicts_for_run(state.store.as_ref(), &run_id).map_err(InspectHttpError::from_store)?;
   Ok(Json(payload).into_response())
 }
 
-async fn get_artifacts(
-  State(state): State<InspectServerState>,
-  Path(run_id): Path<String>,
-) -> Result<Response, InspectHttpError> {
-  let run = state
-    .store
-    .read_run(&run_id)
-    .map_err(InspectHttpError::from_store)?;
+async fn get_artifacts(State(state): State<InspectServerState>, Path(run_id): Path<String>) -> Result<Response, InspectHttpError> {
+  let run = state.store.read_run(&run_id).map_err(InspectHttpError::from_store)?;
   Ok(Json(run.artifacts).into_response())
 }
 
@@ -474,16 +355,11 @@ async fn get_artifact(
   Path((run_id, artifact_id)): Path<(String, String)>,
   Query(query): Query<ArtifactLookupQuery>,
 ) -> Result<Response, InspectHttpError> {
-  let (artifact, path) = state
-    .store
-    .artifact_file_scoped(&run_id, &artifact_id, query.span_id.as_deref())
-    .map_err(InspectHttpError::from_store)?;
-  let bytes = tokio::fs::read(&path)
-    .await
-    .map_err(|error| InspectHttpError::not_found(format!("failed to read artifact: {error}")))?;
+  let (artifact, path) =
+    state.store.artifact_file_scoped(&run_id, &artifact_id, query.span_id.as_deref()).map_err(InspectHttpError::from_store)?;
+  let bytes = tokio::fs::read(&path).await.map_err(|error| InspectHttpError::not_found(format!("failed to read artifact: {error}")))?;
   let mut response = Body::from(bytes).into_response();
-  let content_type = HeaderValue::from_str(&artifact.mime_type)
-    .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
+  let content_type = HeaderValue::from_str(&artifact.mime_type).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
   response.headers_mut().insert(CONTENT_TYPE, content_type);
   Ok(response)
 }
@@ -494,11 +370,7 @@ async fn stream_run(
   websocket: WebSocketUpgrade,
 ) -> Result<Response, InspectHttpError> {
   ensure_stream_run_exists(&state.store, &run_id)?;
-  Ok(
-    websocket
-      .on_upgrade(move |socket| stream_run_events(socket, state.recorder, run_id))
-      .into_response(),
-  )
+  Ok(websocket.on_upgrade(move |socket| stream_run_events(socket, state.recorder, run_id)).into_response())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -539,11 +411,7 @@ async fn write_updates(
   authorize_write(&headers, &state.write)?;
   let _write_guard = state.write_locks.lock(&run_id).await;
   let mut snapshot = state.store.read_run(&run_id).ok();
-  let updates = request
-    .updates
-    .into_iter()
-    .map(|wire| wire.0)
-    .collect::<Vec<_>>();
+  let updates = request.updates.into_iter().map(|wire| wire.0).collect::<Vec<_>>();
 
   for update in &updates {
     validate_update_run_ids(&run_id, update)?;
@@ -551,21 +419,13 @@ async fn write_updates(
   }
 
   let Some(snapshot) = snapshot else {
-    return Err(InspectHttpError::bad_request(
-      "first update for a run must be runStarted".to_string(),
-    ));
+    return Err(InspectHttpError::bad_request("first update for a run must be runStarted".to_string()));
   };
-  state
-    .store
-    .replace_run_snapshot(&snapshot)
-    .map_err(InspectHttpError::from_store)?;
+  state.store.replace_run_snapshot(&snapshot).map_err(InspectHttpError::from_store)?;
 
   let accepted = updates.len();
   for update in updates {
-    state
-      .recorder
-      .record(update)
-      .map_err(InspectHttpError::from_store)?;
+    state.recorder.record(update).map_err(InspectHttpError::from_store)?;
   }
   Ok(Json(WriteUpdatesResponse { accepted }).into_response())
 }
@@ -580,9 +440,7 @@ async fn write_artifact(
   authorize_write(&headers, &state.write)?;
   let bytes = to_bytes(body, MAX_ARTIFACT_UPLOAD_BYTES)
     .await
-    .map_err(|error| {
-      InspectHttpError::payload_too_large(format!("artifact upload rejected: {error}"))
-    })?;
+    .map_err(|error| InspectHttpError::payload_too_large(format!("artifact upload rejected: {error}")))?;
   let artifact = state
     .store
     .write_artifact_bytes_scoped(&run_id, &artifact_id, query.span_id.as_deref(), &bytes)
@@ -628,61 +486,38 @@ struct CommandBoundaryClaim {
 }
 
 #[allow(clippy::result_large_err)]
-fn authorize_write(
-  headers: &HeaderMap,
-  write: &InspectWriteConfig,
-) -> Result<(), InspectHttpError> {
+fn authorize_write(headers: &HeaderMap, write: &InspectWriteConfig) -> Result<(), InspectHttpError> {
   if !write.enabled {
-    return Err(InspectHttpError::forbidden(
-      "inspect server write is disabled".to_string(),
-    ));
+    return Err(InspectHttpError::forbidden("inspect server write is disabled".to_string()));
   }
   if write.no_token {
     return Ok(());
   }
   let Some(expected) = &write.token else {
-    return Err(InspectHttpError::forbidden(
-      "inspect server write token is required".to_string(),
-    ));
+    return Err(InspectHttpError::forbidden("inspect server write token is required".to_string()));
   };
-  let actual = headers
-    .get(AUTHORIZATION)
-    .and_then(|value| value.to_str().ok())
-    .and_then(|value| value.strip_prefix("Bearer "));
+  let actual = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).and_then(|value| value.strip_prefix("Bearer "));
   if actual == Some(expected.as_str()) {
     Ok(())
   } else {
-    Err(InspectHttpError::forbidden(
-      "invalid inspect server write token".to_string(),
-    ))
+    Err(InspectHttpError::forbidden("invalid inspect server write token".to_string()))
   }
 }
 
 #[allow(clippy::result_large_err)]
 fn validate_update_run_ids(run_id: &str, update: &RunUpdate) -> Result<(), InspectHttpError> {
   if update.run_id().as_str() != run_id {
-    return Err(InspectHttpError::bad_request(format!(
-      "update runId {} does not match request runId {run_id}",
-      update.run_id()
-    )));
+    return Err(InspectHttpError::bad_request(format!("update runId {} does not match request runId {run_id}", update.run_id())));
   }
   match update {
-    RunUpdate::RunStarted { run, .. } | RunUpdate::RunFinished { run, .. }
-      if run.run_id.as_str() != run_id =>
-    {
-      Err(InspectHttpError::bad_request(format!(
-        "nested runId {} does not match request runId {run_id}",
-        run.run_id
-      )))
+    RunUpdate::RunStarted { run, .. } | RunUpdate::RunFinished { run, .. } if run.run_id.as_str() != run_id => {
+      Err(InspectHttpError::bad_request(format!("nested runId {} does not match request runId {run_id}", run.run_id)))
     }
     _ => Ok(()),
   }
 }
 
-fn apply_update(
-  snapshot: &mut Option<CanonicalRun>,
-  update: &RunUpdate,
-) -> Result<(), RunConflict> {
+fn apply_update(snapshot: &mut Option<CanonicalRun>, update: &RunUpdate) -> Result<(), RunConflict> {
   match update {
     RunUpdate::RunStarted { run, .. } => {
       if let Some(existing) = snapshot {
@@ -700,26 +535,17 @@ fn apply_update(
       Ok(())
     }
     RunUpdate::SpanStarted { run_id, span } => {
-      let snapshot = snapshot
-        .as_mut()
-        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      let snapshot = snapshot.as_mut().ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
       if snapshot.run.state == TraceState::Ended {
         return Err(RunConflict::new(run_id, "runAlreadyFinished"));
       }
       if let Some(parent) = &span.parent_span_id
-        && !snapshot
-          .spans
-          .iter()
-          .any(|existing| existing.span_id == *parent)
+        && !snapshot.spans.iter().any(|existing| existing.span_id == *parent)
         && snapshot.run.root_span_id != *parent
       {
         return Err(RunConflict::new(run_id, "missingParentSpan"));
       }
-      if let Some(existing) = snapshot
-        .spans
-        .iter()
-        .find(|existing| existing.span_id == span.span_id)
-      {
+      if let Some(existing) = snapshot.spans.iter().find(|existing| existing.span_id == span.span_id) {
         if existing != span {
           return Err(RunConflict::new(run_id, "duplicateSpanMismatch"));
         }
@@ -729,17 +555,11 @@ fn apply_update(
       Ok(())
     }
     RunUpdate::SpanFinished { run_id, span } => {
-      let snapshot = snapshot
-        .as_mut()
-        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      let snapshot = snapshot.as_mut().ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
       if snapshot.run.state == TraceState::Ended {
         return Err(RunConflict::new(run_id, "runAlreadyFinished"));
       }
-      let Some(existing) = snapshot
-        .spans
-        .iter_mut()
-        .find(|existing| existing.span_id == span.span_id)
-      else {
+      let Some(existing) = snapshot.spans.iter_mut().find(|existing| existing.span_id == span.span_id) else {
         return Err(RunConflict::new(run_id, "missingParentSpan"));
       };
       if span_immutable_metadata_differs(existing, span) {
@@ -752,17 +572,11 @@ fn apply_update(
       Ok(())
     }
     RunUpdate::EventAppended { run_id, event } => {
-      let snapshot = snapshot
-        .as_mut()
-        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      let snapshot = snapshot.as_mut().ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
       if snapshot.run.state == TraceState::Ended {
         return Err(RunConflict::new(run_id, "runAlreadyFinished"));
       }
-      if let Some(existing) = snapshot
-        .events
-        .iter()
-        .find(|existing| existing.event_id == event.event_id)
-      {
+      if let Some(existing) = snapshot.events.iter().find(|existing| existing.event_id == event.event_id) {
         if existing != event {
           return Err(RunConflict::new(run_id, "duplicateEventMismatch"));
         }
@@ -772,17 +586,11 @@ fn apply_update(
       Ok(())
     }
     RunUpdate::ArtifactCreated { run_id, artifact } => {
-      let snapshot = snapshot
-        .as_mut()
-        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      let snapshot = snapshot.as_mut().ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
       if snapshot.run.state == TraceState::Ended {
         return Err(RunConflict::new(run_id, "runAlreadyFinished"));
       }
-      if let Some(existing) = snapshot
-        .artifacts
-        .iter()
-        .find(|existing| existing.artifact_id == artifact.artifact_id)
-      {
+      if let Some(existing) = snapshot.artifacts.iter().find(|existing| existing.artifact_id == artifact.artifact_id) {
         if existing != artifact {
           return Err(RunConflict::new(run_id, "duplicateArtifactMismatch"));
         }
@@ -792,9 +600,7 @@ fn apply_update(
       Ok(())
     }
     RunUpdate::RunFinished { run_id, run } => {
-      let snapshot = snapshot
-        .as_mut()
-        .ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
+      let snapshot = snapshot.as_mut().ok_or_else(|| RunConflict::new(run_id, "missingRunStarted"))?;
       if run_immutable_metadata_differs(&snapshot.run, run) {
         return Err(RunConflict::new(run_id, "runMetadataMismatch"));
       }
@@ -846,17 +652,10 @@ impl RunConflict {
 
 #[allow(clippy::result_large_err)]
 fn ensure_stream_run_exists(store: &LocalStore, run_id: &str) -> Result<(), InspectHttpError> {
-  store
-    .read_run(run_id)
-    .map(|_| ())
-    .map_err(InspectHttpError::from_store)
+  store.read_run(run_id).map(|_| ()).map_err(InspectHttpError::from_store)
 }
 
-async fn stream_run_events(
-  mut socket: WebSocket,
-  recorder: Arc<BroadcastRunRecorder>,
-  run_id: String,
-) {
+async fn stream_run_events(mut socket: WebSocket, recorder: Arc<BroadcastRunRecorder>, run_id: String) {
   let mut receiver = recorder.subscribe();
   while let Some(payload) = next_stream_payload(&mut receiver, &run_id).await {
     if socket.send(Message::Text(payload.into())).await.is_err() {
@@ -865,10 +664,7 @@ async fn stream_run_events(
   }
 }
 
-async fn next_stream_payload(
-  receiver: &mut broadcast::Receiver<RunUpdate>,
-  run_id: &str,
-) -> Option<String> {
+async fn next_stream_payload(receiver: &mut broadcast::Receiver<RunUpdate>, run_id: &str) -> Option<String> {
   loop {
     match receiver.recv().await {
       Ok(update) if update.run_id().as_str() == run_id => match serde_json::to_string(&update) {
@@ -940,10 +736,7 @@ impl InspectHttpError {
   }
 
   fn conflict(conflict: RunConflict) -> Self {
-    let message = format!(
-      "run {} rejected update conflict {}",
-      conflict.run_id, conflict.kind
-    );
+    let message = format!("run {} rejected update conflict {}", conflict.run_id, conflict.kind);
     Self {
       status: StatusCode::CONFLICT,
       message: message.clone(),
@@ -994,35 +787,30 @@ mod tests {
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::candidate_action_decision::{
-    CandidateActionDecisionArtifact, CandidateActionExecutionArtifact,
-    CandidateActionExecutionConsent, CandidateActionExecutionConsentAction,
-    CandidateActionExecutionSideEffect, CandidateActionSideEffect,
+    CandidateActionDecisionArtifact, CandidateActionExecutionArtifact, CandidateActionExecutionConsent,
+    CandidateActionExecutionConsentAction, CandidateActionExecutionSideEffect, CandidateActionSideEffect,
   };
   use crate::candidate_promotion::{
-    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope,
-    PromotionContext, PromotionProjection, StabilityInput,
+    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope, PromotionContext, PromotionProjection,
+    StabilityInput,
   };
   use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
-    ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION,
-    ObservationSnapshot, ObservationSource, OperationOutput, OperationResult, OperationStatus,
-    RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
-    TargetGrounding, TargetSpec, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
-    VerificationResult,
+    ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot, ObservationSource, OperationOutput,
+    OperationResult, OperationStatus, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
+    TargetGrounding, TargetSpec, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::model::now_millis;
   use crate::scroll_scan::{
-    CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster,
-    ScanPageRecord, ScanRegion, ScanTarget, ScrollBoundaryCandidate, ScrollScanArtifact,
-    SectionCandidate, StopEvidence, StopPolicy, StopReason,
+    CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster, ScanPageRecord, ScanRegion, ScanTarget,
+    ScrollBoundaryCandidate, ScrollScanArtifact, SectionCandidate, StopEvidence, StopPolicy, StopReason,
   };
   use crate::stability::{StabilityAssessment, StabilityPolicy};
   use auv_tracing_driver::ArtifactFileSource;
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
-    ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId,
-    EventRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
-    SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RUN_API_VERSION, RunId,
+    RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
   use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate};
 
@@ -1121,11 +909,7 @@ mod tests {
   async fn write_updates_rejects_when_write_disabled() {
     let root = temp_dir("inspect-write-disabled");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router_with_config(
-      store,
-      Arc::new(BroadcastRunRecorder::new(16)),
-      super::InspectWriteConfig::default(),
-    );
+    let app = router_with_config(store, Arc::new(BroadcastRunRecorder::new(16)), super::InspectWriteConfig::default());
 
     let response = app
       .oneshot(
@@ -1147,11 +931,7 @@ mod tests {
   async fn write_artifact_rejects_when_write_disabled() {
     let root = temp_dir("inspect-write-artifact-disabled");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router_with_config(
-      store,
-      Arc::new(BroadcastRunRecorder::new(16)),
-      super::InspectWriteConfig::default(),
-    );
+    let app = router_with_config(store, Arc::new(BroadcastRunRecorder::new(16)), super::InspectWriteConfig::default());
 
     let response = app
       .oneshot(
@@ -1178,8 +958,7 @@ mod tests {
       }]
     });
 
-    let request: super::WriteUpdatesRequest =
-      serde_json::from_value(body).expect("write payload should deserialize");
+    let request: super::WriteUpdatesRequest = serde_json::from_value(body).expect("write payload should deserialize");
 
     assert_eq!(request.updates.len(), 1);
   }
@@ -1303,18 +1082,11 @@ mod tests {
       .expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let value: serde_json::Value = serde_json::from_slice(&body).expect("artifact json");
     assert_eq!(value["artifact_id"], "artifact_server_test");
-    let (_, artifact_path) = store
-      .artifact_file("run_write_artifact", "artifact_server_test")
-      .expect("artifact file should resolve");
-    assert_eq!(
-      fs::read_to_string(artifact_path).expect("artifact should read"),
-      "artifact body"
-    );
+    let (_, artifact_path) = store.artifact_file("run_write_artifact", "artifact_server_test").expect("artifact file should resolve");
+    assert_eq!(fs::read_to_string(artifact_path).expect("artifact should read"), "artifact body");
     let _ = fs::remove_dir_all(root);
   }
 
@@ -1329,10 +1101,7 @@ mod tests {
     let response = app
       .clone()
       .oneshot(
-        Request::builder()
-          .uri("/runs/run_ambiguous_artifact/artifacts/artifact_dup")
-          .body(Body::empty())
-          .expect("request should build"),
+        Request::builder().uri("/runs/run_ambiguous_artifact/artifacts/artifact_dup").body(Body::empty()).expect("request should build"),
       )
       .await
       .expect("route should respond");
@@ -1348,9 +1117,7 @@ mod tests {
       .await
       .expect("route should respond");
     assert_eq!(scoped.status(), StatusCode::OK);
-    let body = to_bytes(scoped.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(scoped.into_body(), usize::MAX).await.expect("body should read");
     assert_eq!(body.as_ref(), b"second artifact");
 
     let _ = fs::remove_dir_all(root);
@@ -1386,27 +1153,13 @@ mod tests {
 
     assert_eq!(response.status(), StatusCode::OK);
     let (_, first_path) = store
-      .artifact_file_scoped(
-        "run_write_ambiguous_artifact",
-        "artifact_dup",
-        Some("0000000000000001"),
-      )
+      .artifact_file_scoped("run_write_ambiguous_artifact", "artifact_dup", Some("0000000000000001"))
       .expect("first artifact should resolve");
     let (_, second_path) = store
-      .artifact_file_scoped(
-        "run_write_ambiguous_artifact",
-        "artifact_dup",
-        Some("0000000000000002"),
-      )
+      .artifact_file_scoped("run_write_ambiguous_artifact", "artifact_dup", Some("0000000000000002"))
       .expect("second artifact should resolve");
-    assert_eq!(
-      fs::read_to_string(first_path).expect("first artifact should read"),
-      "first artifact"
-    );
-    assert_eq!(
-      fs::read_to_string(second_path).expect("second artifact should read"),
-      "updated second"
-    );
+    assert_eq!(fs::read_to_string(first_path).expect("first artifact should read"), "first artifact");
+    assert_eq!(fs::read_to_string(second_path).expect("second artifact should read"), "updated second");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -1454,11 +1207,7 @@ mod tests {
   async fn write_updates_accepts_incremental_updates_for_existing_run() {
     let root = temp_dir("inspect-write-incremental");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router_with_config(
-      store.clone(),
-      Arc::new(BroadcastRunRecorder::new(16)),
-      write_without_token(),
-    );
+    let app = router_with_config(store.clone(), Arc::new(BroadcastRunRecorder::new(16)), write_without_token());
 
     let response = post_write_updates(
       app.clone(),
@@ -1488,9 +1237,7 @@ mod tests {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
 
-    let snapshot = store
-      .read_run("run_write_incremental")
-      .expect("incremental run should persist");
+    let snapshot = store.read_run("run_write_incremental").expect("incremental run should persist");
     assert_eq!(snapshot.spans.len(), 1);
     assert_eq!(snapshot.spans[0].span_id.as_str(), "0000000000000002");
     let _ = fs::remove_dir_all(root);
@@ -1514,11 +1261,7 @@ mod tests {
         artifacts: Vec::new(),
       })
       .expect("finished snapshot should pre-exist");
-    let app = router_with_config(
-      store.clone(),
-      Arc::new(BroadcastRunRecorder::new(16)),
-      write_without_token(),
-    );
+    let app = router_with_config(store.clone(), Arc::new(BroadcastRunRecorder::new(16)), write_without_token());
 
     let response = post_write_updates(
       app,
@@ -1533,14 +1276,7 @@ mod tests {
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-      store
-        .read_run("run_finished_replace")
-        .expect("run should remain readable")
-        .run
-        .state,
-      TraceState::Ended
-    );
+    assert_eq!(store.read_run("run_finished_replace").expect("run should remain readable").run.state, TraceState::Ended);
     let _ = fs::remove_dir_all(root);
   }
 
@@ -1617,9 +1353,7 @@ mod tests {
       .expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::CONFLICT);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let value: serde_json::Value = serde_json::from_slice(&body).expect("json error");
     assert_eq!(value["error"]["code"], "runConflict");
     assert_eq!(value["error"]["conflictKind"], "runMetadataMismatch");
@@ -1688,11 +1422,7 @@ mod tests {
     let root = temp_dir("inspect-write-nested-finish-mismatch");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     write_running_test_run(&store, RunId::new("run_outer"));
-    let app = router_with_config(
-      store.clone(),
-      Arc::new(BroadcastRunRecorder::new(16)),
-      write_without_token(),
-    );
+    let app = router_with_config(store.clone(), Arc::new(BroadcastRunRecorder::new(16)), write_without_token());
     let mut run = test_run_json("run_inner");
     run["state"] = serde_json::json!("ended");
     run["statusCode"] = serde_json::json!("ok");
@@ -1709,9 +1439,7 @@ mod tests {
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert!(store.read_run("run_inner").is_err());
-    let outer = store
-      .read_run("run_outer")
-      .expect("outer run should remain");
+    let outer = store.read_run("run_outer").expect("outer run should remain");
     assert_eq!(outer.run.state, TraceState::Running);
     let _ = fs::remove_dir_all(root);
   }
@@ -1735,15 +1463,8 @@ mod tests {
     let response = post_write_updates(app, "run_after_finished_event", body).await;
 
     assert_conflict_kind(response, "runAlreadyFinished").await;
-    let snapshot = store
-      .read_run("run_after_finished_event")
-      .expect("run should remain");
-    assert!(
-      snapshot
-        .events
-        .iter()
-        .all(|event| event.event_id.as_str() != "event_after_finished")
-    );
+    let snapshot = store.read_run("run_after_finished_event").expect("run should remain");
+    assert!(snapshot.events.iter().all(|event| event.event_id.as_str() != "event_after_finished"));
     assert!(receiver.try_recv().is_err());
     let _ = fs::remove_dir_all(root);
   }
@@ -1753,11 +1474,7 @@ mod tests {
     let root = temp_dir("inspect-write-artifact-after-finished");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     write_test_run(&store, RunId::new("run_after_finished_artifact"), None);
-    let app = router_with_config(
-      store.clone(),
-      Arc::new(BroadcastRunRecorder::new(16)),
-      write_without_token(),
-    );
+    let app = router_with_config(store.clone(), Arc::new(BroadcastRunRecorder::new(16)), write_without_token());
     let body = serde_json::json!({
       "updates": [{
         "type": "artifactCreated",
@@ -1769,15 +1486,8 @@ mod tests {
     let response = post_write_updates(app, "run_after_finished_artifact", body).await;
 
     assert_conflict_kind(response, "runAlreadyFinished").await;
-    let snapshot = store
-      .read_run("run_after_finished_artifact")
-      .expect("run should remain");
-    assert!(
-      snapshot
-        .artifacts
-        .iter()
-        .all(|artifact| artifact.artifact_id.as_str() != "artifact_after_finished")
-    );
+    let snapshot = store.read_run("run_after_finished_artifact").expect("run should remain");
+    assert!(snapshot.artifacts.iter().all(|artifact| artifact.artifact_id.as_str() != "artifact_after_finished"));
     let _ = fs::remove_dir_all(root);
   }
 
@@ -1786,11 +1496,7 @@ mod tests {
     let root = temp_dir("inspect-write-span-after-finished");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     write_test_run(&store, RunId::new("run_after_finished_span"), None);
-    let app = router_with_config(
-      store,
-      Arc::new(BroadcastRunRecorder::new(16)),
-      write_without_token(),
-    );
+    let app = router_with_config(store, Arc::new(BroadcastRunRecorder::new(16)), write_without_token());
     let body = serde_json::json!({
       "updates": [{
         "type": "spanFinished",
@@ -1810,11 +1516,7 @@ mod tests {
     let root = temp_dir("inspect-write-run-finish-metadata");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     write_running_test_run(&store, RunId::new("run_finish_metadata"));
-    let app = router_with_config(
-      store.clone(),
-      Arc::new(BroadcastRunRecorder::new(16)),
-      write_without_token(),
-    );
+    let app = router_with_config(store.clone(), Arc::new(BroadcastRunRecorder::new(16)), write_without_token());
     let mut run = test_run_json("run_finish_metadata");
     run["traceId"] = serde_json::json!("00000000000000000000000000000002");
     run["state"] = serde_json::json!("ended");
@@ -1831,13 +1533,8 @@ mod tests {
     let response = post_write_updates(app, "run_finish_metadata", body).await;
 
     assert_conflict_kind(response, "runMetadataMismatch").await;
-    let snapshot = store
-      .read_run("run_finish_metadata")
-      .expect("run should remain");
-    assert_eq!(
-      snapshot.run.trace_id.as_str(),
-      "00000000000000000000000000000001"
-    );
+    let snapshot = store.read_run("run_finish_metadata").expect("run should remain");
+    assert_eq!(snapshot.run.trace_id.as_str(), "00000000000000000000000000000001");
     assert_eq!(snapshot.run.state, TraceState::Running);
     let _ = fs::remove_dir_all(root);
   }
@@ -1847,11 +1544,7 @@ mod tests {
     let root = temp_dir("inspect-write-span-finish-metadata");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     write_running_test_run(&store, RunId::new("run_span_finish_metadata"));
-    let app = router_with_config(
-      store.clone(),
-      Arc::new(BroadcastRunRecorder::new(16)),
-      write_without_token(),
-    );
+    let app = router_with_config(store.clone(), Arc::new(BroadcastRunRecorder::new(16)), write_without_token());
     let body = serde_json::json!({
       "updates": [{
         "type": "spanFinished",
@@ -1863,9 +1556,7 @@ mod tests {
     let response = post_write_updates(app, "run_span_finish_metadata", body).await;
 
     assert_conflict_kind(response, "duplicateSpanMismatch").await;
-    let snapshot = store
-      .read_run("run_span_finish_metadata")
-      .expect("run should remain");
+    let snapshot = store.read_run("run_span_finish_metadata").expect("run should remain");
     assert_eq!(snapshot.spans[0].name, "auv.inspect.server");
     assert_eq!(snapshot.spans[0].state, TraceState::Running);
     let _ = fs::remove_dir_all(root);
@@ -1877,60 +1568,32 @@ mod tests {
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run_id = RunId::new("run_inspect_server_test");
     write_test_run(&store, run_id.clone(), Some("artifact_server_test.txt"));
-    let artifact_path = root
-      .join("runs")
-      .join(run_id.as_str())
-      .join("artifacts")
-      .join("artifact_server_test.txt");
+    let artifact_path = root.join("runs").join(run_id.as_str()).join("artifacts").join("artifact_server_test.txt");
     fs::write(&artifact_path, "artifact body").expect("artifact should write");
 
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
     let run_response = app
       .clone()
-      .oneshot(
-        Request::builder()
-          .uri("/runs/run_inspect_server_test")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
+      .oneshot(Request::builder().uri("/runs/run_inspect_server_test").body(Body::empty()).expect("request should build"))
       .await
       .expect("route should respond");
     assert_eq!(run_response.status(), StatusCode::OK);
-    let run_body = to_bytes(run_response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let run_body = to_bytes(run_response.into_body(), usize::MAX).await.expect("body should read");
     let run: serde_json::Value = serde_json::from_slice(&run_body).expect("run should be json");
     assert_eq!(run["run_id"], "run_inspect_server_test");
-    assert!(
-      run.get("view_parser").is_some(),
-      "GET /runs/{{id}} must always include view_parser"
-    );
-    assert!(
-      run.get("view_parser_summary").is_some(),
-      "GET /runs/{{id}} must always include view_parser_summary"
-    );
+    assert!(run.get("view_parser").is_some(), "GET /runs/{{id}} must always include view_parser");
+    assert!(run.get("view_parser_summary").is_some(), "GET /runs/{{id}} must always include view_parser_summary");
     assert!(run["view_parser"]["resolution_summaries"].is_array());
-    assert!(
-      run.get("spans").is_none(),
-      "/runs/{run_id} should return run metadata only"
-    );
+    assert!(run.get("spans").is_none(), "/runs/{run_id} should return run metadata only");
 
     let spans_response = app
       .clone()
-      .oneshot(
-        Request::builder()
-          .uri("/runs/run_inspect_server_test/spans")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
+      .oneshot(Request::builder().uri("/runs/run_inspect_server_test/spans").body(Body::empty()).expect("request should build"))
       .await
       .expect("route should respond");
     assert_eq!(spans_response.status(), StatusCode::OK);
-    let spans_body = to_bytes(spans_response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
-    let spans: serde_json::Value =
-      serde_json::from_slice(&spans_body).expect("spans should be json");
+    let spans_body = to_bytes(spans_response.into_body(), usize::MAX).await.expect("body should read");
+    let spans: serde_json::Value = serde_json::from_slice(&spans_body).expect("spans should be json");
     assert_eq!(spans[0]["name"], "auv.inspect.server");
 
     let artifact_response = app
@@ -1943,16 +1606,8 @@ mod tests {
       .await
       .expect("route should respond");
     assert_eq!(artifact_response.status(), StatusCode::OK);
-    assert_eq!(
-      artifact_response
-        .headers()
-        .get("content-type")
-        .and_then(|value| value.to_str().ok()),
-      Some("text/plain")
-    );
-    let artifact_body = to_bytes(artifact_response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    assert_eq!(artifact_response.headers().get("content-type").and_then(|value| value.to_str().ok()), Some("text/plain"));
+    let artifact_body = to_bytes(artifact_response.into_body(), usize::MAX).await.expect("body should read");
     assert_eq!(&artifact_body[..], b"artifact body");
 
     let _ = fs::remove_dir_all(root);
@@ -1967,193 +1622,66 @@ mod tests {
 
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
     let run_response = app
-      .oneshot(
-        Request::builder()
-          .uri("/runs/run_inspect_server_contracts")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
+      .oneshot(Request::builder().uri("/runs/run_inspect_server_contracts").body(Body::empty()).expect("request should build"))
       .await
       .expect("route should respond");
     assert_eq!(run_response.status(), StatusCode::OK);
-    let run_body = to_bytes(run_response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let run_body = to_bytes(run_response.into_body(), usize::MAX).await.expect("body should read");
     let run: serde_json::Value = serde_json::from_slice(&run_body).expect("run should be json");
     assert_eq!(run["run_id"], "run_inspect_server_contracts");
     assert_eq!(run["command_boundary_claims"][0]["kind"], "verification");
-    assert_eq!(
-      run["command_boundary_claims"][0]["message"],
-      "activation-only; semantic success requires a separate verification result"
-    );
+    assert_eq!(run["command_boundary_claims"][0]["message"], "activation-only; semantic success requires a separate verification result");
     assert_eq!(run["command_boundary_claims"][1]["kind"], "known_limit");
     assert_eq!(run["verifications"][0]["method"]["kind"], "semantic_match");
-    assert_eq!(
-      run["observation_snapshots"][0]["snapshot_id"],
-      "snapshot_server_test"
-    );
+    assert_eq!(run["observation_snapshots"][0]["snapshot_id"], "snapshot_server_test");
     assert_eq!(run["detector_recognition_lineage"][0]["status"], "ready");
     assert_eq!(run["detector_recognition_lineage"][0]["source"], "custom");
-    assert_eq!(
-      run["detector_recognition_lineage"][0]["backend"],
-      "ultralytics-inference"
-    );
-    assert_eq!(
-      run["detector_recognition_lineage"][0]["model_id"],
-      "games-balatro-ui"
-    );
-    assert_eq!(
-      run["detector_recognition_lineage"][0]["capture_artifact"]["role"],
-      "capture-image"
-    );
+    assert_eq!(run["detector_recognition_lineage"][0]["backend"], "ultralytics-inference");
+    assert_eq!(run["detector_recognition_lineage"][0]["model_id"], "games-balatro-ui");
+    assert_eq!(run["detector_recognition_lineage"][0]["capture_artifact"]["role"], "capture-image");
     assert_eq!(run["detector_recognition_lineage"][0]["filtered_count"], 1);
     assert_eq!(run["detector_recognition_lineage"][0]["all_count"], 2);
     assert_eq!(run["candidate_promotion_lineage"][0]["status"], "ready");
-    assert_eq!(
-      run["candidate_promotion_lineage"][0]["promotion_id"],
-      "promotion_end_turn"
-    );
-    assert_eq!(
-      run["candidate_promotion_lineage"][0]["decision_kind"],
-      "promoted"
-    );
-    assert_eq!(
-      run["candidate_promotion_lineage"][0]["projection_kind"],
-      "identity_window_addressable"
-    );
-    assert_eq!(
-      run["candidate_promotion_lineage"][0]["promoted_candidate_local_ids"][0],
-      "promoted-item_end_turn"
-    );
-    assert_eq!(
-      run["candidate_promotion_lineage"][0]["freshness_source_artifact"]["role"],
-      "capture-image"
-    );
-    assert_eq!(
-      run["candidate_promotion_lineage"][0]["freshness_source_operation_id"],
-      "observe.window.capture"
-    );
-    assert_eq!(
-      run["candidate_promotion_lineage"][0]["consent_scope"],
-      "candidate_promotion_only"
-    );
-    assert_eq!(
-      run["candidate_promotion_lineage"][0]["consent_approved_action"],
-      "promote_recognition_to_candidate"
-    );
-    assert_eq!(
-      run["candidate_promotion_lineage"][0]["permission_granted_by"],
-      "human-review"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["status"],
-      "ready"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["decision_id"],
-      "decision_end_turn"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["source_candidate_promotion_artifact"]["role"],
-      "candidate-promotion"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["candidate_local_id"],
-      "promoted-item_end_turn"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["resolver_operation"],
-      "candidate.action.decide_only"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["selected_method"],
-      "pointer-click"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["side_effect"],
-      "none_decide_only"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["input_delivery"],
-      "not_attempted"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["operation_result"],
-      "not_produced"
-    );
-    assert_eq!(
-      run["candidate_action_decision_lineage"][0]["verification_result"],
-      "not_produced"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["status"],
-      "ready"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["execution_id"],
-      "execution_end_turn"
-    );
+    assert_eq!(run["candidate_promotion_lineage"][0]["promotion_id"], "promotion_end_turn");
+    assert_eq!(run["candidate_promotion_lineage"][0]["decision_kind"], "promoted");
+    assert_eq!(run["candidate_promotion_lineage"][0]["projection_kind"], "identity_window_addressable");
+    assert_eq!(run["candidate_promotion_lineage"][0]["promoted_candidate_local_ids"][0], "promoted-item_end_turn");
+    assert_eq!(run["candidate_promotion_lineage"][0]["freshness_source_artifact"]["role"], "capture-image");
+    assert_eq!(run["candidate_promotion_lineage"][0]["freshness_source_operation_id"], "observe.window.capture");
+    assert_eq!(run["candidate_promotion_lineage"][0]["consent_scope"], "candidate_promotion_only");
+    assert_eq!(run["candidate_promotion_lineage"][0]["consent_approved_action"], "promote_recognition_to_candidate");
+    assert_eq!(run["candidate_promotion_lineage"][0]["permission_granted_by"], "human-review");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["status"], "ready");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["decision_id"], "decision_end_turn");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["source_candidate_promotion_artifact"]["role"], "candidate-promotion");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["candidate_local_id"], "promoted-item_end_turn");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["resolver_operation"], "candidate.action.decide_only");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["selected_method"], "pointer-click");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["side_effect"], "none_decide_only");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["input_delivery"], "not_attempted");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["operation_result"], "not_produced");
+    assert_eq!(run["candidate_action_decision_lineage"][0]["verification_result"], "not_produced");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["status"], "ready");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["execution_id"], "execution_end_turn");
     assert_eq!(
       run["candidate_action_execution_lineage"][0]["source_candidate_action_decision_artifact"]["role"],
       "candidate-action-decision"
     );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["operation_result_artifact"]["role"],
-      "operation-result"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["candidate_local_id"],
-      "promoted-item_end_turn"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["input_delivery"],
-      "attempted"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["selected_path"],
-      "window_targeted_mouse"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["operation_status"],
-      "completed"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["verification"],
-      "activation_only"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["semantic_matched"],
-      serde_json::Value::Null
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["readiness"],
-      "ready"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["readiness_blocker"],
-      serde_json::Value::Null
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["side_effect"],
-      "single_input_delivered"
-    );
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["consent_id"],
-      "consent_execute_end_turn"
-    );
+    assert_eq!(run["candidate_action_execution_lineage"][0]["operation_result_artifact"]["role"], "operation-result");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["candidate_local_id"], "promoted-item_end_turn");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["input_delivery"], "attempted");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["selected_path"], "window_targeted_mouse");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["operation_status"], "completed");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["verification"], "activation_only");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["semantic_matched"], serde_json::Value::Null);
+    assert_eq!(run["candidate_action_execution_lineage"][0]["readiness"], "ready");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["readiness_blocker"], serde_json::Value::Null);
+    assert_eq!(run["candidate_action_execution_lineage"][0]["side_effect"], "single_input_delivered");
+    assert_eq!(run["candidate_action_execution_lineage"][0]["consent_id"], "consent_execute_end_turn");
     assert_eq!(run["action_transition_lineage"][0]["status"], "ready");
-    assert_eq!(
-      run["action_transition_lineage"][0]["effective_decision"]["selected_method"],
-      "pointer-click"
-    );
-    assert_eq!(
-      run["action_transition_lineage"][0]["verification"]["verification_outcome"],
-      "activation_only"
-    );
-    assert!(
-      run.get("spans").is_none(),
-      "/runs/{run_id} should not inline spans even when enriched"
-    );
+    assert_eq!(run["action_transition_lineage"][0]["effective_decision"]["selected_method"], "pointer-click");
+    assert_eq!(run["action_transition_lineage"][0]["verification"]["verification_outcome"], "activation_only");
+    assert!(run.get("spans").is_none(), "/runs/{run_id} should not inline spans even when enriched");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -2164,51 +1692,20 @@ mod tests {
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
-    let response = app
-      .oneshot(
-        Request::builder()
-          .uri("/")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
-      .await
-      .expect("route should respond");
+    let response =
+      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-      response
-        .headers()
-        .get("content-type")
-        .and_then(|value| value.to_str().ok()),
-      Some("text/html; charset=utf-8"),
-    );
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    assert_eq!(response.headers().get("content-type").and_then(|value| value.to_str().ok()), Some("text/html; charset=utf-8"),);
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
     // Sanity: payload starts with a doctype, references /runs, and includes
     // the brand cyan token so it stays in sync with docs/design/.
-    assert!(
-      html.starts_with("<!doctype html>"),
-      "expected HTML5 doctype, got prefix {:?}",
-      &html[..32.min(html.len())]
-    );
-    assert!(
-      html.contains("/runs"),
-      "viewer payload should reference the /runs JSON endpoint"
-    );
-    assert!(
-      html.contains("--brand: #00c4d2"),
-      "viewer payload should inline the canonical brand token"
-    );
-    assert!(
-      html.contains("action-transition-lineage"),
-      "viewer payload should include action transition lineage panel (L9)"
-    );
-    assert!(
-      html.contains("selfTestActionTransitionLineage"),
-      "viewer payload should self-test action transition lineage rendering"
-    );
+    assert!(html.starts_with("<!doctype html>"), "expected HTML5 doctype, got prefix {:?}", &html[..32.min(html.len())]);
+    assert!(html.contains("/runs"), "viewer payload should reference the /runs JSON endpoint");
+    assert!(html.contains("--brand: #00c4d2"), "viewer payload should inline the canonical brand token");
+    assert!(html.contains("action-transition-lineage"), "viewer payload should include action transition lineage panel (L9)");
+    assert!(html.contains("selfTestActionTransitionLineage"), "viewer payload should self-test action transition lineage rendering");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -2485,17 +1982,10 @@ eval(scriptBody);
       .spawn()
       .expect("node should be available to execute viewer self-test");
     {
-      let stdin = child
-        .stdin
-        .as_mut()
-        .expect("node child stdin should be available");
-      stdin
-        .write_all(script.as_bytes())
-        .expect("viewer self-test script should write to node stdin");
+      let stdin = child.stdin.as_mut().expect("node child stdin should be available");
+      stdin.write_all(script.as_bytes()).expect("viewer self-test script should write to node stdin");
     }
-    let output = child
-      .wait_with_output()
-      .expect("node child should return viewer self-test output");
+    let output = child.wait_with_output().expect("node child should return viewer self-test output");
 
     assert!(
       output.status.success(),
@@ -2511,34 +2001,16 @@ eval(scriptBody);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
-    let response = app
-      .oneshot(
-        Request::builder()
-          .uri("/")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
-      .await
-      .expect("route should respond");
+    let response =
+      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
 
-    assert!(
-      html.contains("span · name / step_id"),
-      "viewer payload should include the C.2 span-tree header"
-    );
-    assert!(
-      html.contains("loadRunDetail(runId)"),
-      "viewer payload should fetch /runs/:id and /runs/:id/spans on selection"
-    );
-    assert!(
-      html.contains("@keyframes auv-pulse"),
-      "viewer payload should include running-span pulse animation"
-    );
+    assert!(html.contains("span · name / step_id"), "viewer payload should include the C.2 span-tree header");
+    assert!(html.contains("loadRunDetail(runId)"), "viewer payload should fetch /runs/:id and /runs/:id/spans on selection");
+    assert!(html.contains("@keyframes auv-pulse"), "viewer payload should include running-span pulse animation");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -2549,48 +2021,21 @@ eval(scriptBody);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
-    let response = app
-      .oneshot(
-        Request::builder()
-          .uri("/")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
-      .await
-      .expect("route should respond");
+    let response =
+      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
 
     // Layout shell for the events rail.
-    assert!(
-      html.contains("Events · events.jsonl"),
-      "viewer payload should include the C.3a events rail header"
-    );
-    assert!(
-      html.contains("id=\"events-rail\""),
-      "viewer payload should mount the events rail container"
-    );
-    assert!(
-      html.contains("id=\"span-detail\""),
-      "viewer payload should mount the span detail panel above the rail"
-    );
-    assert!(
-      html.contains("Select a span to inspect its attributes."),
-      "viewer payload should include the empty-state span detail copy"
-    );
+    assert!(html.contains("Events · events.jsonl"), "viewer payload should include the C.3a events rail header");
+    assert!(html.contains("id=\"events-rail\""), "viewer payload should mount the events rail container");
+    assert!(html.contains("id=\"span-detail\""), "viewer payload should mount the span detail panel above the rail");
+    assert!(html.contains("Select a span to inspect its attributes."), "viewer payload should include the empty-state span detail copy");
     // Fetch wiring: events come in alongside spans on run selection.
-    assert!(
-      html.contains("/runs/:id/events"),
-      "viewer payload should document the events endpoint"
-    );
-    assert!(
-      html.contains("/events\")"),
-      "viewer payload should fetch /runs/:id/events on selection"
-    );
+    assert!(html.contains("/runs/:id/events"), "viewer payload should document the events endpoint");
+    assert!(html.contains("/events\")"), "viewer payload should fetch /runs/:id/events on selection");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -2601,29 +2046,17 @@ eval(scriptBody);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
-    let response = app
-      .oneshot(
-        Request::builder()
-          .uri("/")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
-      .await
-      .expect("route should respond");
+    let response =
+      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
 
     // The viewer should open the documented /stream endpoint when a
     // running run is selected, and react to all five RunStreamEvent
     // tag values.
-    assert!(
-      html.contains("/runs/\" + encodeURIComponent(runId) + \"/stream"),
-      "viewer payload should open ws on /runs/:id/stream"
-    );
+    assert!(html.contains("/runs/\" + encodeURIComponent(runId) + \"/stream"), "viewer payload should open ws on /runs/:id/stream");
     for tag in [
       "span_started",
       "span_finished",
@@ -2631,17 +2064,11 @@ eval(scriptBody);
       "artifact_created",
       "run_finished",
     ] {
-      assert!(
-        html.contains(tag),
-        "viewer payload should handle RunStreamEvent variant {tag}"
-      );
+      assert!(html.contains(tag), "viewer payload should handle RunStreamEvent variant {tag}");
     }
     // The "live" tint reserved in C.3a is now produced by streamed
     // events.
-    assert!(
-      html.contains("event-row.live") && html.contains("_live = true"),
-      "viewer payload should tag streamed events as live"
-    );
+    assert!(html.contains("event-row.live") && html.contains("_live = true"), "viewer payload should tag streamed events as live");
 
     let _ = fs::remove_dir_all(root);
   }
@@ -2652,54 +2079,25 @@ eval(scriptBody);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
-    let response = app
-      .oneshot(
-        Request::builder()
-          .uri("/")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
-      .await
-      .expect("route should respond");
+    let response =
+      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
 
-    assert!(
-      html.contains("Artifacts · /artifacts"),
-      "viewer payload should include the C.3b artifact panel header"
-    );
-    assert!(
-      html.contains("id=\"artifact-panel\""),
-      "viewer payload should mount the artifact panel container"
-    );
-    assert!(
-      html.contains("id=\"artifact-list\""),
-      "viewer payload should mount the artifact list"
-    );
-    assert!(
-      html.contains("id=\"artifact-preview\""),
-      "viewer payload should mount the artifact preview surface"
-    );
-    assert!(
-      html.contains("/artifacts\")"),
-      "viewer payload should fetch /runs/:id/artifacts on selection"
-    );
+    assert!(html.contains("Artifacts · /artifacts"), "viewer payload should include the C.3b artifact panel header");
+    assert!(html.contains("id=\"artifact-panel\""), "viewer payload should mount the artifact panel container");
+    assert!(html.contains("id=\"artifact-list\""), "viewer payload should mount the artifact list");
+    assert!(html.contains("id=\"artifact-preview\""), "viewer payload should mount the artifact preview surface");
+    assert!(html.contains("/artifacts\")"), "viewer payload should fetch /runs/:id/artifacts on selection");
     assert!(
       html.contains("encodeURIComponent(artifact.artifact_id)") && html.contains("spanId"),
       "viewer payload should reference the per-artifact bytes endpoint with span scoping"
     );
+    assert!(html.contains("sprite-inspector.svg"), "viewer payload should use the inspector sprite for the empty preview state");
     assert!(
-      html.contains("sprite-inspector.svg"),
-      "viewer payload should use the inspector sprite for the empty preview state"
-    );
-    assert!(
-      html.contains("click.overlay")
-        && html.contains("click.overlay.annotation")
-        && html.contains("evidence-summary"),
+      html.contains("click.overlay") && html.contains("click.overlay.annotation") && html.contains("evidence-summary"),
       "viewer payload should include click overlay evidence-aware preview helpers"
     );
     assert!(
@@ -2722,30 +2120,16 @@ eval(scriptBody);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
 
-    let response = app
-      .oneshot(
-        Request::builder()
-          .uri("/")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
-      .await
-      .expect("route should respond");
+    let response =
+      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
 
+    assert!(html.contains("surface-nodes"), "viewer payload should include the lightweight surface-node preview shell");
     assert!(
-      html.contains("surface-nodes"),
-      "viewer payload should include the lightweight surface-node preview shell"
-    );
-    assert!(
-      html.contains("renderSurfaceNodesPanel")
-        && html.contains("surface-node-meta")
-        && html.contains("node_ref"),
+      html.contains("renderSurfaceNodesPanel") && html.contains("surface-node-meta") && html.contains("node_ref"),
       "viewer payload should include the surface-node preview helper and shape accessors"
     );
 
@@ -2760,36 +2144,20 @@ eval(scriptBody);
     write_list_degraded_run(&store, &root, "run_list_summary_bad");
 
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
-    let response = app
-      .oneshot(
-        Request::builder()
-          .uri("/runs")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
-      .await
-      .expect("route should respond");
+    let response =
+      app.oneshot(Request::builder().uri("/runs").body(Body::empty()).expect("request should build")).await.expect("route should respond");
     assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
-    let runs: Vec<serde_json::Value> =
-      serde_json::from_slice(&body).expect("runs should be json array");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
+    let runs: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("runs should be json array");
     assert_eq!(runs.len(), 2);
     for run in &runs {
-      assert!(
-        run.get("view_parser_summary").is_some(),
-        "every list row must include view_parser_summary"
-      );
+      assert!(run.get("view_parser_summary").is_some(), "every list row must include view_parser_summary");
       let summary = &run["view_parser_summary"];
       assert!(summary.get("has_proof").is_some());
       assert!(summary.get("resolution_count").is_some());
       assert!(summary.get("has_known_limits").is_some());
     }
-    let bad = runs
-      .iter()
-      .find(|run| run["run_id"] == "run_list_summary_bad")
-      .expect("degraded run should remain in list");
+    let bad = runs.iter().find(|run| run["run_id"] == "run_list_summary_bad").expect("degraded run should remain in list");
     assert_eq!(bad["view_parser_summary"]["has_proof"], false);
     assert_eq!(bad["view_parser_summary"]["resolution_count"], 0);
 
@@ -2804,23 +2172,13 @@ eval(scriptBody);
 
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
     let response = app
-      .oneshot(
-        Request::builder()
-          .uri("/runs/run_detail_summary")
-          .body(Body::empty())
-          .expect("request should build"),
-      )
+      .oneshot(Request::builder().uri("/runs/run_detail_summary").body(Body::empty()).expect("request should build"))
       .await
       .expect("route should respond");
     assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let run: serde_json::Value = serde_json::from_slice(&body).expect("run should be json");
-    assert!(
-      run.get("view_parser_summary").is_some(),
-      "GET /runs/{{id}} must always include view_parser_summary"
-    );
+    assert!(run.get("view_parser_summary").is_some(), "GET /runs/{{id}} must always include view_parser_summary");
     assert_eq!(run["view_parser_summary"]["has_proof"], false);
 
     let _ = fs::remove_dir_all(root);
@@ -2836,46 +2194,19 @@ eval(scriptBody);
 
   #[test]
   fn viewer_renders_netease_select_proof_hint_hooks() {
-    assert!(
-      super::VIEWER_HTML.contains("netease-select-proof-hint"),
-      "viewer payload should mount the netease select proof hint panel"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("renderNeteaseSelectProofHint"),
-      "viewer payload should render netease select proof hint"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("auv.netease.playlist.select"),
-      "viewer payload should match netease select proof run root span"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("NetEase playlist select proof"),
-      "viewer payload should use generic netease select proof label"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("packaging lane only"),
-      "viewer payload should disambiguate packaging hint from seam surface"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("selfTestNeteaseSelectProofHint"),
-      "viewer payload should self-test netease select proof hint"
-    );
-    assert!(
-      !super::VIEWER_HTML.contains("ACP-1 (selectProof)"),
-      "viewer payload must not use selectProof-specific hint wording"
-    );
+    assert!(super::VIEWER_HTML.contains("netease-select-proof-hint"), "viewer payload should mount the netease select proof hint panel");
+    assert!(super::VIEWER_HTML.contains("renderNeteaseSelectProofHint"), "viewer payload should render netease select proof hint");
+    assert!(super::VIEWER_HTML.contains("auv.netease.playlist.select"), "viewer payload should match netease select proof run root span");
+    assert!(super::VIEWER_HTML.contains("NetEase playlist select proof"), "viewer payload should use generic netease select proof label");
+    assert!(super::VIEWER_HTML.contains("packaging lane only"), "viewer payload should disambiguate packaging hint from seam surface");
+    assert!(super::VIEWER_HTML.contains("selfTestNeteaseSelectProofHint"), "viewer payload should self-test netease select proof hint");
+    assert!(!super::VIEWER_HTML.contains("ACP-1 (selectProof)"), "viewer payload must not use selectProof-specific hint wording");
   }
 
   #[test]
   fn viewer_renders_action_transition_lineage_hooks() {
-    assert!(
-      super::VIEWER_HTML.contains("action-transition-lineage"),
-      "viewer payload should mount the action transition lineage panel"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("renderActionTransitionLineage"),
-      "viewer payload should render action_transition_lineage entries"
-    );
+    assert!(super::VIEWER_HTML.contains("action-transition-lineage"), "viewer payload should mount the action transition lineage panel");
+    assert!(super::VIEWER_HTML.contains("renderActionTransitionLineage"), "viewer payload should render action_transition_lineage entries");
     assert!(
       super::VIEWER_HTML.contains("action_transition_lineage"),
       "viewer payload should read action_transition_lineage from run detail"
@@ -2906,39 +2237,20 @@ eval(scriptBody);
 
   #[test]
   fn viewer_renders_view_parser_list_badges_hooks() {
+    assert!(super::VIEWER_HTML.contains("view_parser_summary"), "viewer payload should read view_parser_summary on list rows");
+    assert!(super::VIEWER_HTML.contains("renderViewParserListBadges"), "viewer payload should render list proof badges");
+    assert!(super::VIEWER_HTML.contains("outcomePillClass"), "viewer payload should reuse outcome pill styling for list badges");
     assert!(
-      super::VIEWER_HTML.contains("view_parser_summary"),
-      "viewer payload should read view_parser_summary on list rows"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("renderViewParserListBadges"),
-      "viewer payload should render list proof badges"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("outcomePillClass"),
-      "viewer payload should reuse outcome pill styling for list badges"
-    );
-    assert!(
-      super::VIEWER_HTML
-        .contains("!merged.view_parser_summary && previous && previous.view_parser_summary"),
+      super::VIEWER_HTML.contains("!merged.view_parser_summary && previous && previous.view_parser_summary"),
       "viewer payload should preserve view_parser_summary across mergeRunDetail"
     );
   }
 
   #[test]
   fn viewer_renders_view_parser_proof_hooks() {
-    assert!(
-      super::VIEWER_HTML.contains("view-parser-proof"),
-      "viewer payload should mount the view-parser proof panel"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("renderViewParserProof"),
-      "viewer payload should render view_parser resolution summaries"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("resolution_summaries"),
-      "viewer payload should read resolution_summaries from view_parser"
-    );
+    assert!(super::VIEWER_HTML.contains("view-parser-proof"), "viewer payload should mount the view-parser proof panel");
+    assert!(super::VIEWER_HTML.contains("renderViewParserProof"), "viewer payload should render view_parser resolution summaries");
+    assert!(super::VIEWER_HTML.contains("resolution_summaries"), "viewer payload should read resolution_summaries from view_parser");
     assert!(
       super::VIEWER_HTML.contains("refreshViewParserProofFromRunDetail"),
       "viewer payload should narrow-refetch proof on run_finished without full loadRunDetail"
@@ -2947,17 +2259,13 @@ eval(scriptBody);
       super::VIEWER_HTML.contains("pairViewParserProofCards"),
       "viewer payload should index-pair resolution_summaries with select_results"
     );
-    assert!(
-      super::VIEWER_HTML.contains("select_results"),
-      "viewer payload should read select_results for known_limits pairing"
-    );
+    assert!(super::VIEWER_HTML.contains("select_results"), "viewer payload should read select_results for known_limits pairing");
     assert!(
       super::VIEWER_HTML.contains("jumpToViewParserArtifactRole"),
       "viewer payload should jump artifact list by view-parser proof roles"
     );
     assert!(
-      super::VIEWER_HTML.contains("view-memory")
-        && super::VIEWER_HTML.contains("netease-playlist-select-result"),
+      super::VIEWER_HTML.contains("view-memory") && super::VIEWER_HTML.contains("netease-playlist-select-result"),
       "viewer payload should reference view-memory and playlist-select artifact roles"
     );
     assert!(
@@ -2972,24 +2280,17 @@ eval(scriptBody);
       super::VIEWER_HTML.contains("renderViewParserDiagnosticLinks"),
       "viewer payload should render view-parser diagnostic link chips"
     );
-    assert!(
-      super::VIEWER_HTML.contains("scrollToProofCardSection"),
-      "viewer payload should scroll and highlight proof card sections"
-    );
+    assert!(super::VIEWER_HTML.contains("scrollToProofCardSection"), "viewer payload should scroll and highlight proof card sections");
     assert!(
       super::VIEWER_HTML.contains("sectionEl.dataset.proofSection = proofSection")
         && super::VIEWER_HTML.contains("scrollToProofCardSection(cardEl, \"known_limits\")"),
       "viewer payload should tag known limits section for in-card navigation"
     );
     assert!(
-      super::VIEWER_HTML
-        .contains("renderResolutionSummaryCard(pair.summary, pair.selectResult, pairIndex, run)"),
+      super::VIEWER_HTML.contains("renderResolutionSummaryCard(pair.summary, pair.selectResult, pairIndex, run)"),
       "viewer payload should pass pairIndex and run into proof cards"
     );
-    assert!(
-      super::VIEWER_HTML.contains("resolveUniqueReacquireSpanId"),
-      "viewer payload should resolve reacquire spans by composite key"
-    );
+    assert!(super::VIEWER_HTML.contains("resolveUniqueReacquireSpanId"), "viewer payload should resolve reacquire spans by composite key");
     assert!(
       super::VIEWER_HTML.contains("jumpToSelectResultArtifactForPair"),
       "viewer payload should jump to pair-indexed select-result artifacts"
@@ -2998,22 +2299,13 @@ eval(scriptBody);
       super::VIEWER_HTML.contains("resolveUniqueViewMemoryArtifact"),
       "viewer payload should resolve view-memory artifacts without pair index"
     );
-    assert!(
-      !super::VIEWER_HTML.contains("jumpToViewParserSpanByName"),
-      "viewer should not rely on first-match span-by-name navigation"
-    );
+    assert!(!super::VIEWER_HTML.contains("jumpToViewParserSpanByName"), "viewer should not rely on first-match span-by-name navigation");
   }
 
   #[test]
   fn viewer_renders_view_parser_list_filter_hooks() {
-    assert!(
-      super::VIEWER_HTML.contains("runListFilters"),
-      "viewer should track active run list filters"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("runMatchesListFilters"),
-      "viewer should filter runs by view_parser_summary predicates"
-    );
+    assert!(super::VIEWER_HTML.contains("runListFilters"), "viewer should track active run list filters");
+    assert!(super::VIEWER_HTML.contains("runMatchesListFilters"), "viewer should filter runs by view_parser_summary predicates");
     assert!(
       super::VIEWER_HTML.contains("function visibleRunsForList(runs, filters)"),
       "viewer should expose pure visibleRunsForList(runs, filters)"
@@ -3022,48 +2314,22 @@ eval(scriptBody);
       super::VIEWER_HTML.contains("function activeRunHiddenByFilters(activeRunId, runs, filters)"),
       "viewer should expose pure activeRunHiddenByFilters(activeRunId, runs, filters)"
     );
+    assert!(super::VIEWER_HTML.contains("renderRunListFilterChips"), "viewer should render run list filter chips");
+    assert!(super::VIEWER_HTML.contains("run-list-filters"), "viewer should mount run list filter chips container");
+    assert!(super::VIEWER_HTML.contains("resetRunListFilterUiOnLoadFailure"), "viewer should reset filter UI when loadRuns fails");
+    assert!(super::VIEWER_HTML.contains("renderRunListFilterBanner"), "viewer should render active-run-hidden filter banner");
+    assert!(super::VIEWER_HTML.contains("run-list-filter-banner"), "viewer should mount run list filter banner");
+    assert!(super::VIEWER_HTML.contains("toggleRunListFilter"), "viewer should toggle individual run list filters");
+    assert!(super::VIEWER_HTML.contains("clearRunListFilters"), "viewer should clear all run list filters");
     assert!(
-      super::VIEWER_HTML.contains("renderRunListFilterChips"),
-      "viewer should render run list filter chips"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("run-list-filters"),
-      "viewer should mount run list filter chips container"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("resetRunListFilterUiOnLoadFailure"),
-      "viewer should reset filter UI when loadRuns fails"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("renderRunListFilterBanner"),
-      "viewer should render active-run-hidden filter banner"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("run-list-filter-banner"),
-      "viewer should mount run list filter banner"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("toggleRunListFilter"),
-      "viewer should toggle individual run list filters"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("clearRunListFilters"),
-      "viewer should clear all run list filters"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("latest_verification_status")
-        && super::VIEWER_HTML.contains("status_code"),
+      super::VIEWER_HTML.contains("latest_verification_status") && super::VIEWER_HTML.contains("status_code"),
       "failed filter should use verification status and run status_code"
     );
     assert!(
-      super::VIEWER_HTML.contains("has_known_limits")
-        && super::VIEWER_HTML.contains("latest_outcome"),
+      super::VIEWER_HTML.contains("has_known_limits") && super::VIEWER_HTML.contains("latest_outcome"),
       "limits and stale filters should use view_parser_summary fields"
     );
-    assert!(
-      super::VIEWER_HTML.contains("selfTestRunListFilters"),
-      "viewer should self-test run list filter predicates"
-    );
+    assert!(super::VIEWER_HTML.contains("selfTestRunListFilters"), "viewer should self-test run list filter predicates");
   }
 
   #[tokio::test]
@@ -3085,31 +2351,17 @@ eval(scriptBody);
     ] {
       let response = app
         .clone()
-        .oneshot(
-          Request::builder()
-            .uri(format!("/assets/{name}"))
-            .body(Body::empty())
-            .expect("request should build"),
-        )
+        .oneshot(Request::builder().uri(format!("/assets/{name}")).body(Body::empty()).expect("request should build"))
         .await
         .expect("route should respond");
       assert_eq!(response.status(), StatusCode::OK, "asset {name} should 200");
       assert_eq!(
-        response
-          .headers()
-          .get("content-type")
-          .and_then(|value| value.to_str().ok()),
+        response.headers().get("content-type").and_then(|value| value.to_str().ok()),
         Some("image/svg+xml"),
         "asset {name} should serve as image/svg+xml",
       );
-      let body = to_bytes(response.into_body(), usize::MAX)
-        .await
-        .expect("body should read");
-      assert!(
-        body.starts_with(b"<svg"),
-        "asset {name} should be an SVG; got prefix {:?}",
-        &body[..16.min(body.len())]
-      );
+      let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
+      assert!(body.starts_with(b"<svg"), "asset {name} should be an SVG; got prefix {:?}", &body[..16.min(body.len())]);
     }
 
     let _ = fs::remove_dir_all(root);
@@ -3128,19 +2380,10 @@ eval(scriptBody);
     ] {
       let response = app
         .clone()
-        .oneshot(
-          Request::builder()
-            .uri(bad)
-            .body(Body::empty())
-            .expect("request should build"),
-        )
+        .oneshot(Request::builder().uri(bad).body(Body::empty()).expect("request should build"))
         .await
         .expect("route should respond");
-      assert_eq!(
-        response.status(),
-        StatusCode::NOT_FOUND,
-        "{bad} should 404 (not traverse, not collide)"
-      );
+      assert_eq!(response.status(), StatusCode::NOT_FOUND, "{bad} should 404 (not traverse, not collide)");
     }
 
     let _ = fs::remove_dir_all(root);
@@ -3165,13 +2408,10 @@ eval(scriptBody);
       })
       .expect("record should publish");
 
-    let payload = tokio::time::timeout(
-      std::time::Duration::from_secs(2),
-      next_stream_payload(&mut receiver, run_a.as_str()),
-    )
-    .await
-    .expect("matching run event should arrive")
-    .expect("matching run event should serialize");
+    let payload = tokio::time::timeout(std::time::Duration::from_secs(2), next_stream_payload(&mut receiver, run_a.as_str()))
+      .await
+      .expect("matching run event should arrive")
+      .expect("matching run event should serialize");
     let value: serde_json::Value = serde_json::from_str(&payload).expect("stream payload is json");
     assert_eq!(value["type"], "event_appended");
     assert!(payload.contains("run_stream_a"));
@@ -3183,8 +2423,7 @@ eval(scriptBody);
   async fn stream_rejects_missing_run_before_upgrade() {
     let root = temp_dir("inspect-server-missing-stream");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let error =
-      ensure_stream_run_exists(&store, "run_missing").expect_err("missing run should reject");
+    let error = ensure_stream_run_exists(&store, "run_missing").expect_err("missing run should reject");
     assert_eq!(error.status, StatusCode::NOT_FOUND);
     let _ = fs::remove_dir_all(root);
   }
@@ -3198,21 +2437,14 @@ eval(scriptBody);
     write_test_run(&store, run_id.clone(), Some("escape.txt"));
     let outside = root.join("outside.txt");
     fs::write(&outside, "secret").expect("outside file should write");
-    let link = root
-      .join("runs")
-      .join(run_id.as_str())
-      .join("artifacts")
-      .join("escape.txt");
+    let link = root.join("runs").join(run_id.as_str()).join("artifacts").join("escape.txt");
     let _ = fs::remove_file(&link);
     std::os::unix::fs::symlink(&outside, &link).expect("symlink should write");
 
     let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
     let response = app
       .oneshot(
-        Request::builder()
-          .uri("/runs/run_symlink_escape/artifacts/artifact_server_test")
-          .body(Body::empty())
-          .expect("request should build"),
+        Request::builder().uri("/runs/run_symlink_escape/artifacts/artifact_server_test").body(Body::empty()).expect("request should build"),
       )
       .await
       .expect("route should respond");
@@ -3230,18 +2462,10 @@ eval(scriptBody);
     write_test_run(&store, run_id.clone(), Some("escape.txt"));
     let outside = root.join("outside.txt");
     fs::write(&outside, "secret").expect("outside file should write");
-    let link = root
-      .join("runs")
-      .join(run_id.as_str())
-      .join("artifacts")
-      .join("escape.txt");
+    let link = root.join("runs").join(run_id.as_str()).join("artifacts").join("escape.txt");
     let _ = fs::remove_file(&link);
     std::os::unix::fs::symlink(&outside, &link).expect("symlink should write");
-    let app = router_with_config(
-      store,
-      Arc::new(BroadcastRunRecorder::new(16)),
-      write_without_token(),
-    );
+    let app = router_with_config(store, Arc::new(BroadcastRunRecorder::new(16)), write_without_token());
 
     let response = app
       .oneshot(
@@ -3255,10 +2479,7 @@ eval(scriptBody);
       .expect("route should respond");
 
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    assert_eq!(
-      fs::read_to_string(outside).expect("outside file should remain untouched"),
-      "secret"
-    );
+    assert_eq!(fs::read_to_string(outside).expect("outside file should remain untouched"), "secret");
     let _ = fs::remove_dir_all(root);
   }
 
@@ -3286,12 +2507,7 @@ eval(scriptBody);
     })
   }
 
-  fn test_span_json(
-    span_id: &str,
-    parent_span_id: Option<&str>,
-    name: &str,
-    state: &str,
-  ) -> serde_json::Value {
+  fn test_span_json(span_id: &str, parent_span_id: Option<&str>, name: &str, state: &str) -> serde_json::Value {
     serde_json::json!({
       "apiVersion": SPAN_API_VERSION,
       "spanId": span_id,
@@ -3347,11 +2563,7 @@ eval(scriptBody);
     }
   }
 
-  async fn post_write_updates(
-    app: Router,
-    run_id: &str,
-    body: serde_json::Value,
-  ) -> axum::response::Response {
+  async fn post_write_updates(app: Router, run_id: &str, body: serde_json::Value) -> axum::response::Response {
     app
       .oneshot(
         Request::builder()
@@ -3367,9 +2579,7 @@ eval(scriptBody);
 
   async fn assert_conflict_kind(response: axum::response::Response, kind: &str) {
     assert_eq!(response.status(), StatusCode::CONFLICT);
-    let body = to_bytes(response.into_body(), usize::MAX)
-      .await
-      .expect("body should read");
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let value: serde_json::Value = serde_json::from_slice(&body).expect("json error");
     assert_eq!(value["error"]["code"], "runConflict");
     assert_eq!(value["error"]["conflictKind"], kind);
@@ -3468,10 +2678,7 @@ eval(scriptBody);
           timestamp_millis: 100,
           attributes: BTreeMap::new(),
           message: None,
-          artifact_ids: artifacts
-            .iter()
-            .map(|artifact| artifact.artifact_id.clone())
-            .collect(),
+          artifact_ids: artifacts.iter().map(|artifact| artifact.artifact_id.clone()).collect(),
         }],
         artifacts,
       })
@@ -3603,36 +2810,9 @@ eval(scriptBody);
       warnings: Vec::new(),
     };
     let artifacts = vec![
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        0,
-        "operation-result",
-        "music-result-play.json",
-        &operation_result,
-      ),
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        1,
-        "scroll-scan",
-        "scroll-scan.json",
-        &scroll_scan_artifact,
-      ),
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        3,
-        "capture-image",
-        "capture.json",
-        &serde_json::json!({"capture": "artifact"}),
-      ),
+      stage_json_artifact(store, root, &run_id, &span_id, 0, "operation-result", "music-result-play.json", &operation_result),
+      stage_json_artifact(store, root, &run_id, &span_id, 1, "scroll-scan", "scroll-scan.json", &scroll_scan_artifact),
+      stage_json_artifact(store, root, &run_id, &span_id, 3, "capture-image", "capture.json", &serde_json::json!({"capture": "artifact"})),
       stage_json_artifact(
         store,
         root,
@@ -3717,8 +2897,7 @@ eval(scriptBody);
           }],
           known_limits: vec![
             "projection basis is unavailable outside capture-integrated runtime".to_string(),
-            "detector RecognitionResult is recognition evidence only, not candidate-ready output"
-              .to_string(),
+            "detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string(),
           ],
         },
       ),
@@ -3756,9 +2935,7 @@ eval(scriptBody);
           },
           promotion_context: PromotionContext {
             projection: PromotionProjection::IdentityWindowAddressable,
-            stability: StabilityInput::Proven {
-              observed_frames: 2,
-            },
+            stability: StabilityInput::Proven { observed_frames: 2 },
             freshness: Some(crate::contract::FreshnessBasis {
               source_artifact: Some(ArtifactRef {
                 run_id: run_id.clone(),
@@ -3968,10 +3145,7 @@ eval(scriptBody);
             captured_event_id: None,
           }],
           output: OperationOutput::Acknowledged {
-            message: Some(
-              "single candidate action activated; semantic verification remains activation_only"
-                .to_string(),
-            ),
+            message: Some("single candidate action activated; semantic verification remains activation_only".to_string()),
           },
           verifications: vec![VerificationResult {
             api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
@@ -3996,9 +3170,7 @@ eval(scriptBody);
             observed_label: Some("End Turn".to_string()),
           }],
           freshness_basis: None,
-          known_limits: vec![
-            "activation_only verification records input delivery, not semantic success".to_string(),
-          ],
+          known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
         },
       ),
       stage_json_artifact(
@@ -4064,9 +3236,7 @@ eval(scriptBody);
             "target_window_present",
             "target window present",
           )]),
-          input_action_result: auv_driver::InputActionResult::single_success(
-            auv_driver::InputDeliveryPath::WindowTargetedMouse,
-          ),
+          input_action_result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
           operation_result: OperationResult {
             api_version: OPERATION_RESULT_API_VERSION.to_string(),
             run_id: run_id.clone(),
@@ -4079,16 +3249,11 @@ eval(scriptBody);
               captured_event_id: None,
             }],
             output: OperationOutput::Acknowledged {
-              message: Some(
-                "single candidate action activated; semantic verification remains activation_only"
-                  .to_string(),
-              ),
+              message: Some("single candidate action activated; semantic verification remains activation_only".to_string()),
             },
             verifications: Vec::new(),
             freshness_basis: None,
-            known_limits: vec![
-              "activation_only verification records input delivery, not semantic success".to_string(),
-            ],
+            known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
           },
           verification_result: VerificationResult {
             api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
@@ -4124,9 +3289,7 @@ eval(scriptBody);
             "readiness": "ready",
             "readiness_blocker": null,
           }),
-          known_limits: vec![
-            "activation_only verification records input delivery, not semantic success".to_string(),
-          ],
+          known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
         },
       ),
     ];
@@ -4143,10 +3306,7 @@ eval(scriptBody);
             name: "command.verification".to_string(),
             timestamp_millis: 100,
             attributes: BTreeMap::new(),
-            message: Some(
-              "activation-only; semantic success requires a separate verification result"
-                .to_string(),
-            ),
+            message: Some("activation-only; semantic success requires a separate verification result".to_string()),
             artifact_ids: Vec::new(),
           },
           EventRecordV1Alpha1 {
@@ -4176,8 +3336,7 @@ eval(scriptBody);
     value: &T,
   ) -> ArtifactRecordV1Alpha1 {
     let source_path = root.join(format!("source-{index}-{preferred_name}"));
-    let rendered =
-      serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
+    let rendered = serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
     fs::write(&source_path, rendered).expect("artifact source should write");
     store
       .stage_artifact_file(
@@ -4291,21 +3450,11 @@ eval(scriptBody);
         artifacts: vec![artifact_a, artifact_b],
       })
       .expect("run should persist");
-    let run_dir = store
-      .run_dir(run_id.as_str())
-      .expect("run dir should resolve");
+    let run_dir = store.run_dir(run_id.as_str()).expect("run dir should resolve");
     let artifacts_dir = run_dir.join("artifacts");
     fs::create_dir_all(&artifacts_dir).expect("artifact dir should create");
-    fs::write(
-      artifacts_dir.join("artifact_dup_first.txt"),
-      "first artifact",
-    )
-    .expect("first artifact should write");
-    fs::write(
-      artifacts_dir.join("artifact_dup_second.txt"),
-      "second artifact",
-    )
-    .expect("second artifact should write");
+    fs::write(artifacts_dir.join("artifact_dup_first.txt"), "first artifact").expect("first artifact should write");
+    fs::write(artifacts_dir.join("artifact_dup_second.txt"), "second artifact").expect("second artifact should write");
   }
 
   fn test_event(event_id: &str) -> EventRecordV1Alpha1 {

@@ -7,7 +7,7 @@ pub mod output;
 
 pub use app::{Steam, query_local_library_apps};
 pub use library::{
-  Grounding, LibraryDiagnostic, LibraryDiagnosticSeverity, LibraryQuery, LibraryQueryResult,
-  LibrarySource, LibraryStatus, ResolvedLibraryScope, SteamInstalledApp,
+  Grounding, LibraryDiagnostic, LibraryDiagnosticSeverity, LibraryQuery, LibraryQueryResult, LibrarySource, LibraryStatus,
+  ResolvedLibraryScope, SteamInstalledApp,
 };
 pub use output::build_library_ls_json_output;

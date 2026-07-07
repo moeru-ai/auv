@@ -103,12 +103,7 @@ impl VisualTruthSemanticReason {
 pub fn validate_visual_truth_semantic(
   inputs: VisualTruthSemanticValidationInputs,
 ) -> VisualTruthSemanticValidationResult<VisualTruthSemanticValidationOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
   let source_visual_truth_manifest_path = inputs.run_artifact_dir.join(VISUAL_TRUTH_MANIFEST_FILE);
@@ -120,23 +115,10 @@ pub fn validate_visual_truth_semantic(
   ]);
   let mut warnings = BTreeSet::new();
 
-  let gate = evaluate_semantic_gate(
-    &inputs.run_artifact_dir,
-    &source_visual_truth_manifest_path,
-    &source_projection_path,
-    &mut warnings,
-  );
+  let gate = evaluate_semantic_gate(&inputs.run_artifact_dir, &source_visual_truth_manifest_path, &source_projection_path, &mut warnings);
 
-  let beatmap_path = gate
-    .visual_truth_manifest
-    .as_ref()
-    .map(|manifest| manifest.beatmap_path.clone())
-    .unwrap_or_default();
-  let frame_count = gate
-    .visual_truth_manifest
-    .as_ref()
-    .map(|manifest| manifest.frames.len())
-    .unwrap_or(0);
+  let beatmap_path = gate.visual_truth_manifest.as_ref().map(|manifest| manifest.beatmap_path.clone()).unwrap_or_default();
+  let frame_count = gate.visual_truth_manifest.as_ref().map(|manifest| manifest.frames.len()).unwrap_or(0);
 
   let manifest = VisualTruthSemanticManifest {
     schema_version: VISUAL_TRUTH_SEMANTIC_MANIFEST_SCHEMA_VERSION,
@@ -198,10 +180,7 @@ fn evaluate_semantic_gate(
   projection_path: &Path,
   warnings: &mut BTreeSet<String>,
 ) -> SemanticGateEvaluation {
-  if path_is_symlink(run_artifact_dir)
-    || path_is_symlink(visual_truth_manifest_path)
-    || path_is_symlink(projection_path)
-  {
+  if path_is_symlink(run_artifact_dir) || path_is_symlink(visual_truth_manifest_path) || path_is_symlink(projection_path) {
     return SemanticGateEvaluation {
       semantic_status: VisualTruthSemanticStatus::Blocked,
       semantic_reason: Some(VisualTruthSemanticReason::NormalizedPathsInvalid),
@@ -231,10 +210,7 @@ fn evaluate_semantic_gate(
     };
   }
 
-  let visual_truth_manifest = match read_json_file::<VisualTruthManifest>(
-    visual_truth_manifest_path,
-    "osu visual truth manifest",
-  ) {
+  let visual_truth_manifest = match read_json_file::<VisualTruthManifest>(visual_truth_manifest_path, "osu visual truth manifest") {
     Ok(manifest) => Some(manifest),
     Err(error) => {
       warnings.insert(error);
@@ -248,25 +224,21 @@ fn evaluate_semantic_gate(
     }
   };
 
-  let projection_artifact =
-    match read_json_file::<ProjectionArtifact>(projection_path, "osu projection artifact") {
-      Ok(projection) => Some(projection),
-      Err(error) => {
-        warnings.insert(error);
-        return SemanticGateEvaluation {
-          semantic_status: VisualTruthSemanticStatus::Failed,
-          semantic_reason: Some(VisualTruthSemanticReason::ProjectionParseFailed),
-          visual_truth_manifest,
-          projection_artifact: None,
-          projection_eval_ready: false,
-        };
-      }
-    };
+  let projection_artifact = match read_json_file::<ProjectionArtifact>(projection_path, "osu projection artifact") {
+    Ok(projection) => Some(projection),
+    Err(error) => {
+      warnings.insert(error);
+      return SemanticGateEvaluation {
+        semantic_status: VisualTruthSemanticStatus::Failed,
+        semantic_reason: Some(VisualTruthSemanticReason::ProjectionParseFailed),
+        visual_truth_manifest,
+        projection_artifact: None,
+        projection_eval_ready: false,
+      };
+    }
+  };
 
-  let projection_eval_ready = projection_artifact
-    .as_ref()
-    .and_then(|projection| projection.to_eval_projection().ok())
-    .is_some();
+  let projection_eval_ready = projection_artifact.as_ref().and_then(|projection| projection.to_eval_projection().ok()).is_some();
 
   if !projection_eval_ready {
     return SemanticGateEvaluation {
@@ -308,9 +280,7 @@ fn evaluate_semantic_gate(
 }
 
 fn path_is_symlink(path: &Path) -> bool {
-  fs::symlink_metadata(path)
-    .ok()
-    .is_some_and(|metadata| metadata.file_type().is_symlink())
+  fs::symlink_metadata(path).ok().is_some_and(|metadata| metadata.file_type().is_symlink())
 }
 
 fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, String> {
@@ -443,10 +413,7 @@ mod tests {
     })
     .expect("semantic validation should succeed");
 
-    assert_eq!(
-      output.manifest.semantic_status,
-      VisualTruthSemanticStatus::Ready
-    );
+    assert_eq!(output.manifest.semantic_status, VisualTruthSemanticStatus::Ready);
     assert_eq!(output.manifest.frame_count, 1);
     assert!(output.manifest_path.exists());
     assert!(output.inspect_report_path.exists());
@@ -464,14 +431,8 @@ mod tests {
     })
     .expect("semantic validation should still write artifacts");
 
-    assert_eq!(
-      output.manifest.semantic_status,
-      VisualTruthSemanticStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.semantic_reason,
-      Some(VisualTruthSemanticReason::MissingProjection)
-    );
+    assert_eq!(output.manifest.semantic_status, VisualTruthSemanticStatus::Blocked);
+    assert_eq!(output.manifest.semantic_reason, Some(VisualTruthSemanticReason::MissingProjection));
   }
 
   #[test]

@@ -64,23 +64,14 @@ pub fn frame_to_session_observation(frame: &MinecraftSpatialFrame) -> MinecraftS
   if let Some(hit) = &frame.raycast_hit {
     nodes.push(raycast_node(frame, hit));
   }
-  nodes.extend(
-    frame
-      .nearby_blocks
-      .iter()
-      .enumerate()
-      .map(|(index, block)| nearby_block_node(frame, index, block)),
-  );
+  nodes.extend(frame.nearby_blocks.iter().enumerate().map(|(index, block)| nearby_block_node(frame, index, block)));
 
   let mut known_limits = vec![
-    "minecraft session observation is telemetry truth, not a generic visual reconstruction"
-      .to_string(),
+    "minecraft session observation is telemetry truth, not a generic visual reconstruction".to_string(),
     "minecraft block nodes use viewport placeholder bounds until a projected point or overlay artifact is attached".to_string(),
   ];
   if frame.screenshot_artifact_ref.is_none() {
-    known_limits.push(
-      "minecraft spatial frame has no screenshot artifact binding for this observation".to_string(),
-    );
+    known_limits.push("minecraft spatial frame has no screenshot artifact binding for this observation".to_string());
   }
 
   MinecraftSessionObservation {
@@ -107,10 +98,7 @@ pub fn frame_to_session_observation(frame: &MinecraftSpatialFrame) -> MinecraftS
 
 fn raycast_node(frame: &MinecraftSpatialFrame, hit: &RaycastHit) -> MinecraftSessionNode {
   MinecraftSessionNode {
-    node_id: format!(
-      "minecraft_raycast_{}_{}_{}",
-      hit.block_pos.x, hit.block_pos.y, hit.block_pos.z
-    ),
+    node_id: format!("minecraft_raycast_{}_{}_{}", hit.block_pos.x, hit.block_pos.y, hit.block_pos.z),
     kind: "minecraft_raycast_block".to_string(),
     label: Some(hit.block_id.clone()),
     bounds: frame.viewport.bounds(),
@@ -124,16 +112,9 @@ fn raycast_node(frame: &MinecraftSpatialFrame, hit: &RaycastHit) -> MinecraftSes
   }
 }
 
-fn nearby_block_node(
-  frame: &MinecraftSpatialFrame,
-  index: usize,
-  block: &NearbyBlock,
-) -> MinecraftSessionNode {
+fn nearby_block_node(frame: &MinecraftSpatialFrame, index: usize, block: &NearbyBlock) -> MinecraftSessionNode {
   MinecraftSessionNode {
-    node_id: format!(
-      "minecraft_nearby_block_{}_{}_{}_{}",
-      block.block_pos.x, block.block_pos.y, block.block_pos.z, index
-    ),
+    node_id: format!("minecraft_nearby_block_{}_{}_{}_{}", block.block_pos.x, block.block_pos.y, block.block_pos.z, index),
     kind: "minecraft_nearby_block".to_string(),
     label: Some(block.block_id.clone()),
     bounds: frame.viewport.bounds(),
@@ -148,9 +129,7 @@ fn nearby_block_node(
 
 #[cfg(test)]
 mod tests {
-  use crate::types::{
-    BlockFace, BlockPosition, NearbyBlock, PlayerPose, RaycastHit, Vec3, Viewport,
-  };
+  use crate::types::{BlockFace, BlockPosition, NearbyBlock, PlayerPose, RaycastHit, Vec3, Viewport};
 
   use super::*;
 
@@ -195,26 +174,12 @@ mod tests {
 
     assert_eq!(observation.frame_id, "frame-session-1");
     assert_eq!(observation.nodes.len(), 2);
-    assert_eq!(
-      observation.nodes[0].label.as_deref(),
-      Some("minecraft:oak_button")
-    );
+    assert_eq!(observation.nodes[0].label.as_deref(), Some("minecraft:oak_button"));
     assert_eq!(observation.nodes[0].provider_score, Some(1.0));
-    assert_eq!(
-      observation.nodes[1].label.as_deref(),
-      Some("minecraft:stone")
-    );
-    assert!(
-      observation
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("telemetry truth"))
-    );
+    assert_eq!(observation.nodes[1].label.as_deref(), Some("minecraft:stone"));
+    assert!(observation.known_limits.iter().any(|limit| limit.contains("telemetry truth")));
     assert_eq!(observation.detail["resource_pack_ids"][0], "vanilla");
-    assert_eq!(
-      observation.detail["telemetry_session_id"].as_str(),
-      Some("session-42")
-    );
+    assert_eq!(observation.detail["telemetry_session_id"].as_str(), Some("session-42"));
   }
 
   #[test]

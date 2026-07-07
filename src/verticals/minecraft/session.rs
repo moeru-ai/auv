@@ -1,14 +1,11 @@
-use auv_game_minecraft::{
-  MinecraftSessionNode, MinecraftSessionObservation, MinecraftSpatialFrame,
-  frame_to_session_observation,
-};
+use auv_game_minecraft::{MinecraftSessionNode, MinecraftSessionObservation, MinecraftSpatialFrame, frame_to_session_observation};
 use auv_tracing_driver::now_millis;
 use auv_tracing_driver::trace::{new_run_id, new_span_id};
 
 use crate::{
   contract::{
-    NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource,
-    RecognitionBox, RecognitionScope, RecognitionSource, RecognitionSurface, SurfaceNode,
+    NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RecognitionBox, RecognitionScope, RecognitionSource,
+    RecognitionSurface, SurfaceNode,
   },
   session::{BufferedObservationProvider, SessionObservationProvider},
 };
@@ -32,10 +29,7 @@ pub fn minecraft_spatial_frame_session_provider(
   BufferedObservationProvider::new(provider_id, snapshots)
 }
 
-fn minecraft_session_observation_snapshot(
-  index: usize,
-  observation: MinecraftSessionObservation,
-) -> ObservationSnapshot {
+fn minecraft_session_observation_snapshot(index: usize, observation: MinecraftSessionObservation) -> ObservationSnapshot {
   let run_id = new_run_id();
   let span_id = new_span_id();
   let source_artifacts = observation
@@ -44,11 +38,8 @@ fn minecraft_session_observation_snapshot(
     .and_then(|value| value.as_str())
     .map(|artifact| vec![artifact.to_string()])
     .unwrap_or_default();
-  let nodes = observation
-    .nodes
-    .into_iter()
-    .map(|node| minecraft_session_node_surface_node(&run_id, &span_id, &source_artifacts, node))
-    .collect();
+  let nodes =
+    observation.nodes.into_iter().map(|node| minecraft_session_node_surface_node(&run_id, &span_id, &source_artifacts, node)).collect();
 
   ObservationSnapshot {
     api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
@@ -117,9 +108,7 @@ fn minecraft_session_node_surface_node(
 
 #[cfg(test)]
 mod tests {
-  use auv_game_minecraft::{
-    BlockFace, BlockPosition, NearbyBlock, PlayerPose, RaycastHit, Vec3, Viewport,
-  };
+  use auv_game_minecraft::{BlockFace, BlockPosition, NearbyBlock, PlayerPose, RaycastHit, Vec3, Viewport};
 
   use crate::session::{ObserveRequest, SessionOptions, SessionRuntime};
 
@@ -159,39 +148,20 @@ mod tests {
 
   #[test]
   fn minecraft_spatial_frame_session_provider_feeds_session_runtime() {
-    let provider =
-      minecraft_spatial_frame_session_provider("minecraft.fixture.spatial", vec![frame()]);
+    let provider = minecraft_spatial_frame_session_provider("minecraft.fixture.spatial", vec![frame()]);
 
     let mut session = SessionRuntime::new(SessionOptions::default());
     let provider_id = session.register_provider(provider);
-    let observation = session
-      .observe(&provider_id, ObserveRequest::default())
-      .expect("minecraft spatial frame observation should succeed");
+    let observation = session.observe(&provider_id, ObserveRequest::default()).expect("minecraft spatial frame observation should succeed");
 
     assert_eq!(observation.snapshot.nodes.len(), 2);
-    assert_eq!(
-      observation.snapshot.scope.app_bundle_id.as_deref(),
-      Some("com.mojang.minecraft")
-    );
-    assert_eq!(
-      observation.provider_id.as_str(),
-      "minecraft.fixture.spatial"
-    );
-    assert_eq!(
-      observation.snapshot.detail["provider_id"],
-      serde_json::json!("minecraft.fixture.spatial")
-    );
-    assert!(
-      observation
-        .snapshot
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("telemetry truth"))
-    );
+    assert_eq!(observation.snapshot.scope.app_bundle_id.as_deref(), Some("com.mojang.minecraft"));
+    assert_eq!(observation.provider_id.as_str(), "minecraft.fixture.spatial");
+    assert_eq!(observation.snapshot.detail["provider_id"], serde_json::json!("minecraft.fixture.spatial"));
+    assert!(observation.snapshot.known_limits.iter().any(|limit| limit.contains("telemetry truth")));
 
-    let raycast = session
-      .find_node_by_label("minecraft:oak_button")
-      .expect("minecraft raycast block should be addressable by session lookup");
+    let raycast =
+      session.find_node_by_label("minecraft:oak_button").expect("minecraft raycast block should be addressable by session lookup");
     assert_eq!(raycast.node.kind, "minecraft_raycast_block");
     assert_eq!(raycast.node.box_.width, 800);
     assert_eq!(raycast.node.box_.height, 600);

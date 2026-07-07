@@ -8,11 +8,7 @@ use crate::model::CacheHint;
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ReadingCache;
 
-pub fn cache_hint_for_detection(
-  detection: &Detection,
-  image: &RgbImage,
-  _no_cache: bool,
-) -> CacheHint {
+pub fn cache_hint_for_detection(detection: &Detection, image: &RgbImage, _no_cache: bool) -> CacheHint {
   // `no_cache` bypasses persisted/semantic reading reuse, not frame evidence.
   // Live action verification still needs the current-frame fingerprint to
   // prove that hand contents changed when Balatro refills to the same count.

@@ -160,21 +160,12 @@ impl VisualTruthPixelVisibility {
   }
 }
 
-pub fn query_visual_truth_spatial(
-  inputs: VisualTruthSpatialQueryInputs,
-) -> VisualTruthSpatialQueryResult<VisualTruthSpatialQueryOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+pub fn query_visual_truth_spatial(inputs: VisualTruthSpatialQueryInputs) -> VisualTruthSpatialQueryResult<VisualTruthSpatialQueryOutput> {
+  fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
-  let semantic_manifest = read_json_file::<VisualTruthSemanticManifest>(
-    &inputs.visual_truth_semantic_manifest_path,
-    "osu visual truth semantic manifest",
-  )?;
+  let semantic_manifest =
+    read_json_file::<VisualTruthSemanticManifest>(&inputs.visual_truth_semantic_manifest_path, "osu visual truth semantic manifest")?;
 
   let mut known_limits = BTreeSet::from([
     "osu visual truth spatial query v1 uses playfield projection reference only; dual-backend compare is deferred".to_string(),
@@ -202,14 +193,10 @@ pub fn query_visual_truth_spatial(
     );
   }
 
-  let visual_truth_manifest = read_json_file::<VisualTruthManifest>(
-    Path::new(&semantic_manifest.source_visual_truth_manifest_path),
-    "osu visual truth manifest",
-  )?;
-  let projection_artifact = read_json_file::<ProjectionArtifact>(
-    Path::new(&semantic_manifest.source_projection_path),
-    "osu projection artifact",
-  )?;
+  let visual_truth_manifest =
+    read_json_file::<VisualTruthManifest>(Path::new(&semantic_manifest.source_visual_truth_manifest_path), "osu visual truth manifest")?;
+  let projection_artifact =
+    read_json_file::<ProjectionArtifact>(Path::new(&semantic_manifest.source_projection_path), "osu projection artifact")?;
   let projection = match projection_artifact.to_eval_projection() {
     Ok(projection) => projection,
     Err(message) => {
@@ -234,12 +221,8 @@ pub fn query_visual_truth_spatial(
     }
   };
 
-  let Some(frame) = find_target_frame(
-    &visual_truth_manifest,
-    inputs.object_index,
-    &inputs.capture_phase,
-    inputs.object_kind.as_ref(),
-  ) else {
+  let Some(frame) = find_target_frame(&visual_truth_manifest, inputs.object_index, &inputs.capture_phase, inputs.object_kind.as_ref())
+  else {
     return write_query_output(
       inputs,
       generated_at_millis,
@@ -260,14 +243,7 @@ pub fn query_visual_truth_spatial(
   };
 
   let answer = answer_for_frame(frame, &projection);
-  write_query_output(
-    inputs,
-    generated_at_millis,
-    &semantic_manifest,
-    answer,
-    &mut warnings,
-    &mut known_limits,
-  )
+  write_query_output(inputs, generated_at_millis, &semantic_manifest, answer, &mut warnings, &mut known_limits)
 }
 
 struct QueryAnswer {
@@ -284,11 +260,9 @@ struct QueryAnswer {
 fn answer_for_frame(frame: &VisualTruthFrame, projection: &EvalProjection) -> QueryAnswer {
   let capture_width = frame.capture.width;
   let capture_height = frame.capture.height;
-  let Some(point) = project_playfield_point(
-    frame.expected_object.expected_playfield_x,
-    frame.expected_object.expected_playfield_y,
-    projection,
-  ) else {
+  let Some(point) =
+    project_playfield_point(frame.expected_object.expected_playfield_x, frame.expected_object.expected_playfield_y, projection)
+  else {
     return QueryAnswer {
       status: VisualTruthSpatialQueryStatus::Failed,
       reason: Some(VisualTruthSpatialQueryReason::ProjectionUnavailable),
@@ -345,10 +319,7 @@ fn write_query_output(
   let manifest = VisualTruthSpatialQueryManifest {
     schema_version: VISUAL_TRUTH_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
-    visual_truth_semantic_manifest_path: inputs
-      .visual_truth_semantic_manifest_path
-      .display()
-      .to_string(),
+    visual_truth_semantic_manifest_path: inputs.visual_truth_semantic_manifest_path.display().to_string(),
     source_run_artifact_dir: semantic_manifest.source_run_artifact_dir.clone(),
     source_visual_truth_manifest_path: semantic_manifest.source_visual_truth_manifest_path.clone(),
     source_projection_path: semantic_manifest.source_projection_path.clone(),
@@ -428,9 +399,7 @@ mod tests {
   use crate::benchmark::MapSummary;
   use crate::projection::{PlayfieldProjection, ProjectionArtifact, ProjectionDerivationMethod};
   use crate::visual_truth::{CaptureFrame, ExpectedObjectTruth, VisualTruthFrame};
-  use crate::visual_truth_semantic::{
-    VisualTruthSemanticValidationInputs, validate_visual_truth_semantic,
-  };
+  use crate::visual_truth_semantic::{VisualTruthSemanticValidationInputs, validate_visual_truth_semantic};
 
   fn write_probe_fixture(root: &Path) {
     let manifest = VisualTruthManifest {
@@ -526,14 +495,8 @@ mod tests {
     })
     .expect("query should succeed");
 
-    assert_eq!(
-      output.manifest.status,
-      VisualTruthSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.pixel_visibility,
-      Some(VisualTruthPixelVisibility::InsideCapture)
-    );
+    assert_eq!(output.manifest.status, VisualTruthSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.pixel_visibility, Some(VisualTruthPixelVisibility::InsideCapture));
     assert!(output.manifest.pixel_x.is_some());
   }
 
@@ -555,14 +518,8 @@ mod tests {
     })
     .expect("query should write blocked manifest");
 
-    assert_eq!(
-      output.manifest.status,
-      VisualTruthSpatialQueryStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(VisualTruthSpatialQueryReason::SemanticSourceNotReady)
-    );
+    assert_eq!(output.manifest.status, VisualTruthSpatialQueryStatus::Blocked);
+    assert_eq!(output.manifest.reason, Some(VisualTruthSpatialQueryReason::SemanticSourceNotReady));
   }
 
   #[test]
@@ -584,13 +541,7 @@ mod tests {
     })
     .expect("query should write failed manifest");
 
-    assert_eq!(
-      output.manifest.status,
-      VisualTruthSpatialQueryStatus::Failed
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(VisualTruthSpatialQueryReason::TargetAbsentFromVisualTruth)
-    );
+    assert_eq!(output.manifest.status, VisualTruthSpatialQueryStatus::Failed);
+    assert_eq!(output.manifest.reason, Some(VisualTruthSpatialQueryReason::TargetAbsentFromVisualTruth));
   }
 }

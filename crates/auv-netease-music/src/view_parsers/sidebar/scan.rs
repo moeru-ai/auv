@@ -25,9 +25,8 @@ pub(crate) fn scan_sidebar_with_observer_until_query(
   query: &str,
 ) -> PlaylistSidebarScan {
   let normalized_query = normalize_identity(query);
-  let query_already_visible = observer.observe_probe().ok().is_some_and(|observation| {
-    observation_satisfies_query(&observation, normalized_query.as_str())
-  });
+  let query_already_visible =
+    observer.observe_probe().ok().is_some_and(|observation| observation_satisfies_query(&observation, normalized_query.as_str()));
 
   let top_seek = if query_already_visible {
     // NOTICE(a6c-10b): query-target already in viewport; top rewind would scroll
@@ -37,8 +36,7 @@ pub(crate) fn scan_sidebar_with_observer_until_query(
     scroll_to_top_by_motion(observer, top_seek_scroll_budget(options.max_scrolls))
   };
   observer.reset_collection_phase();
-  let mut loop_outcome =
-    scan_with_collection_policy_impl(observer, options, category, Some(normalized_query.as_str()));
+  let mut loop_outcome = scan_with_collection_policy_impl(observer, options, category, Some(normalized_query.as_str()));
   loop_outcome.known_limits.push(if query_already_visible {
     QUERY_SCAN_SKIPPED_TOP_REWIND_LIMIT.to_string()
   } else {
@@ -53,12 +51,8 @@ fn finish_sidebar_scan(
   scroll_amount: f64,
   scroll_settle_ms: u64,
 ) -> PlaylistSidebarScan {
-  let interaction_events = build_standalone_interaction_events(
-    &loop_outcome.observations,
-    scroll_amount,
-    scroll_settle_ms,
-    loop_outcome.stop_reason.as_deref(),
-  );
+  let interaction_events =
+    build_standalone_interaction_events(&loop_outcome.observations, scroll_amount, scroll_settle_ms, loop_outcome.stop_reason.as_deref());
 
   let mut scan = reconstruct_playlist_sidebar(
     ScanAppContext {
@@ -102,9 +96,7 @@ pub(crate) fn heuristic_stop_reason_with_ax_corroboration(
     ("scroll_no_new_semantic_candidates_after_input", Some(SidebarScrollbarBoundary::Bottom)) => {
       Some("scroll_no_new_semantic_candidates_with_ax_scrollbar_bottom")
     }
-    ("scroll_no_motion_after_input", Some(SidebarScrollbarBoundary::Bottom)) => {
-      Some("scroll_no_motion_with_ax_scrollbar_bottom")
-    }
+    ("scroll_no_motion_after_input", Some(SidebarScrollbarBoundary::Bottom)) => Some("scroll_no_motion_with_ax_scrollbar_bottom"),
     (
       "scroll_no_new_semantic_candidates_after_input" | "scroll_no_motion_after_input",
       Some(SidebarScrollbarBoundary::Top | SidebarScrollbarBoundary::Interior),
@@ -113,9 +105,7 @@ pub(crate) fn heuristic_stop_reason_with_ax_corroboration(
   }
 }
 
-pub(crate) fn repeated_fingerprint_stop_reason(
-  ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>,
-) -> &'static str {
+pub(crate) fn repeated_fingerprint_stop_reason(ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>) -> &'static str {
   if ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom) {
     "repeated_viewport_fingerprint_with_ax_scrollbar_bottom"
   } else {
@@ -123,9 +113,7 @@ pub(crate) fn repeated_fingerprint_stop_reason(
   }
 }
 
-pub(crate) fn motion_stop_threshold(
-  ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>,
-) -> usize {
+pub(crate) fn motion_stop_threshold(ax_scrollbar_boundary: Option<SidebarScrollbarBoundary>) -> usize {
   if ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom) {
     1
   } else {
@@ -137,10 +125,7 @@ pub(crate) fn top_seek_scroll_budget(collection_max_scrolls: usize) -> usize {
   collection_max_scrolls.min(LIVE_TOP_SEEK_MAX_SCROLL_INPUTS)
 }
 
-pub(crate) fn sidebar_rescan_target_seek_budget(
-  max_scrolls: usize,
-  target_observation_index: usize,
-) -> usize {
+pub(crate) fn sidebar_rescan_target_seek_budget(max_scrolls: usize, target_observation_index: usize) -> usize {
   max_scrolls.max(target_observation_index).saturating_add(4)
 }
 
@@ -150,11 +135,7 @@ pub(crate) enum SidebarTargetSeekStep {
   ScrollNext(usize),
 }
 
-pub(crate) fn next_sidebar_target_seek_step(
-  attempt: usize,
-  max_attempts: usize,
-  found: bool,
-) -> Option<SidebarTargetSeekStep> {
+pub(crate) fn next_sidebar_target_seek_step(attempt: usize, max_attempts: usize, found: bool) -> Option<SidebarTargetSeekStep> {
   if found {
     return Some(SidebarTargetSeekStep::Found(attempt));
   }
@@ -164,9 +145,7 @@ pub(crate) fn next_sidebar_target_seek_step(
   Some(SidebarTargetSeekStep::ScrollNext(attempt))
 }
 
-pub(crate) trait SidebarScanObserver:
-  ViewObserver<Observation = SidebarViewportObservation>
-{
+pub(crate) trait SidebarScanObserver: ViewObserver<Observation = SidebarViewportObservation> {
   fn reset_collection_phase(&mut self) {}
 
   fn scroll_seek_batch_size(&self) -> usize {
@@ -177,10 +156,7 @@ pub(crate) trait SidebarScanObserver:
     self.scroll_up()
   }
 
-  fn observe_scroll_seek(
-    &mut self,
-    observation_index: usize,
-  ) -> Result<SidebarViewportObservation, ParserDiagnostic> {
+  fn observe_scroll_seek(&mut self, observation_index: usize) -> Result<SidebarViewportObservation, ParserDiagnostic> {
     self.observe(observation_index)
   }
 
@@ -189,10 +165,7 @@ pub(crate) trait SidebarScanObserver:
   }
 }
 
-pub(crate) fn scroll_to_top_by_motion(
-  observer: &mut impl SidebarScanObserver,
-  max_scrolls: usize,
-) -> TopSeekOutcome {
+pub(crate) fn scroll_to_top_by_motion(observer: &mut impl SidebarScanObserver, max_scrolls: usize) -> TopSeekOutcome {
   let mut outcome = TopSeekOutcome::default();
   observer.reset_collection_phase();
 
@@ -204,10 +177,7 @@ pub(crate) fn scroll_to_top_by_motion(
   let mut scrolls = 0usize;
   let mut sample_index = 1usize;
   while scrolls < max_scrolls {
-    let batch = observer
-      .scroll_seek_batch_size()
-      .max(1)
-      .min(max_scrolls - scrolls);
+    let batch = observer.scroll_seek_batch_size().max(1).min(max_scrolls - scrolls);
     for _ in 0..batch {
       if let Err(diagnostic) = observer.scroll_seek_up() {
         outcome.diagnostics.push(diagnostic);
@@ -226,26 +196,18 @@ pub(crate) fn scroll_to_top_by_motion(
     sample_index += 1;
 
     if successful_scroll_delivery_path(observation.incoming_scroll_delivery_path.as_deref())
-      && observation
-        .scroll_motion
-        .as_ref()
-        .is_some_and(|motion| motion.no_motion)
+      && observation.scroll_motion.as_ref().is_some_and(|motion| motion.no_motion)
     {
       outcome.boundary = BoundaryConfidence::Likely;
       return outcome;
     }
   }
 
-  outcome.known_limits.push(format!(
-    "top seek stopped after max_scrolls={max_scrolls} without repeated sidebar pixels"
-  ));
+  outcome.known_limits.push(format!("top seek stopped after max_scrolls={max_scrolls} without repeated sidebar pixels"));
   outcome
 }
 
-pub(crate) fn empty_scroll_seek_observation(
-  observation_index: usize,
-  viewport_bounds: ViewBounds,
-) -> SidebarViewportObservation {
+pub(crate) fn empty_scroll_seek_observation(observation_index: usize, viewport_bounds: ViewBounds) -> SidebarViewportObservation {
   SidebarViewportObservation {
     observation_index,
     viewport: ViewViewportRecord {
@@ -301,9 +263,7 @@ fn scan_with_collection_policy_impl(
       }
     };
     let fingerprint = observation.viewport_fingerprint().to_string();
-    let repeated_fingerprint = previous_fingerprint
-      .as_deref()
-      .is_some_and(|prev| prev == fingerprint.as_str());
+    let repeated_fingerprint = previous_fingerprint.as_deref().is_some_and(|prev| prev == fingerprint.as_str());
     previous_fingerprint = Some(fingerprint);
     let ax_scrollbar_boundary = observation.ax_scrollbar_boundary;
     let observation = policy.apply(observation);
@@ -312,12 +272,10 @@ fn scan_with_collection_policy_impl(
         query_seen = observation_satisfies_query(&observation, query);
       }
     }
-    let introduced_new_semantic_candidates =
-      record_page_semantic_candidates(&observation, &mut seen_semantic_candidates);
+    let introduced_new_semantic_candidates = record_page_semantic_candidates(&observation, &mut seen_semantic_candidates);
     let reached_stop_landmark = policy.reached_stop_landmark();
     let started = policy.start_seen();
-    let successful_scroll_input =
-      successful_scroll_delivery_path(observation.incoming_scroll_delivery_path.as_deref());
+    let successful_scroll_input = successful_scroll_delivery_path(observation.incoming_scroll_delivery_path.as_deref());
     if started && !seen_semantic_candidates.is_empty() && successful_scroll_input {
       if introduced_new_semantic_candidates {
         consecutive_no_new_semantic_candidates_after_scroll = 0;
@@ -354,9 +312,7 @@ fn scan_with_collection_policy_impl(
     // backward-compatible loop-boundary signal, but they are no longer the only
     // scroll stop detector. Motion evidence covers the real NetEase case where
     // OCR text drifts enough that exact fingerprints do not repeat at bottom.
-    if repeated_fingerprint
-      && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom))
-    {
+    if repeated_fingerprint && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom)) {
       stop_reason = Some(repeated_fingerprint_stop_reason(ax_scrollbar_boundary).to_string());
       break;
     }
@@ -369,10 +325,9 @@ fn scan_with_collection_policy_impl(
     if consecutive_no_new_semantic_candidates_after_scroll >= 2
       && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom))
     {
-      if let Some(reason) = heuristic_stop_reason_with_ax_corroboration(
-        "scroll_no_new_semantic_candidates_after_input",
-        ax_scrollbar_boundary,
-      ) {
+      if let Some(reason) =
+        heuristic_stop_reason_with_ax_corroboration("scroll_no_new_semantic_candidates_after_input", ax_scrollbar_boundary)
+      {
         stop_reason = Some(reason.to_string());
         break;
       }
@@ -386,10 +341,7 @@ fn scan_with_collection_policy_impl(
     if consecutive_no_motion_after_scroll >= motion_stop_threshold(ax_scrollbar_boundary)
       && (query_seen || ax_scrollbar_boundary == Some(SidebarScrollbarBoundary::Bottom))
     {
-      if let Some(reason) = heuristic_stop_reason_with_ax_corroboration(
-        "scroll_no_motion_after_input",
-        ax_scrollbar_boundary,
-      ) {
+      if let Some(reason) = heuristic_stop_reason_with_ax_corroboration("scroll_no_motion_after_input", ax_scrollbar_boundary) {
         stop_reason = Some(reason.to_string());
         break;
       }
@@ -400,9 +352,8 @@ fn scan_with_collection_policy_impl(
       break;
     }
 
-    let use_query_recovery_scroll = !query_seen
-      && (consecutive_no_motion_after_scroll > 0
-        || consecutive_no_new_semantic_candidates_after_scroll >= 2);
+    let use_query_recovery_scroll =
+      !query_seen && (consecutive_no_motion_after_scroll > 0 || consecutive_no_new_semantic_candidates_after_scroll >= 2);
     let scroll_result = if use_query_recovery_scroll {
       observer.scroll_down_for_query_recovery()
     } else {
@@ -436,9 +387,9 @@ fn observation_satisfies_query(observation: &SidebarViewportObservation, query: 
     .filter(|candidate| candidate.kind == SidebarCandidateKind::PlaylistItem)
     .filter_map(|candidate| candidate.label.as_deref())
     .collect();
-  crate::views::query_match::playlist_query_resolution_is_unique_exact(
-    crate::views::query_match::resolve_playlist_query_from_labels(&labels, query),
-  )
+  crate::views::query_match::playlist_query_resolution_is_unique_exact(crate::views::query_match::resolve_playlist_query_from_labels(
+    &labels, query,
+  ))
 }
 
 pub(crate) fn successful_scroll_delivery_path(path: Option<&str>) -> bool {
@@ -452,10 +403,7 @@ pub(crate) struct SemanticCandidateKey {
   section_hint: Option<SidebarSectionKind>,
 }
 
-pub(crate) fn record_page_semantic_candidates(
-  observation: &SidebarViewportObservation,
-  seen: &mut HashSet<SemanticCandidateKey>,
-) -> bool {
+pub(crate) fn record_page_semantic_candidates(observation: &SidebarViewportObservation, seen: &mut HashSet<SemanticCandidateKey>) -> bool {
   let mut introduced_new = false;
   let mut current_section = None;
 
@@ -517,11 +465,7 @@ impl CollectionPolicy {
         break;
       }
 
-      let section_kind = candidate
-        .label
-        .as_deref()
-        .map(SidebarSectionKind::from_label)
-        .unwrap_or(SidebarSectionKind::Unknown);
+      let section_kind = candidate.label.as_deref().map(SidebarSectionKind::from_label).unwrap_or(SidebarSectionKind::Unknown);
 
       if candidate.kind == SidebarCandidateKind::SectionHeader {
         match self.category {
@@ -529,9 +473,7 @@ impl CollectionPolicy {
             self.started = true;
             accepted.push(candidate);
           }
-          PlaylistCategory::Created
-            if self.started && section_kind == SidebarSectionKind::FavoritePlaylists =>
-          {
+          PlaylistCategory::Created if self.started && section_kind == SidebarSectionKind::FavoritePlaylists => {
             self.stopped = true;
             break;
           }
@@ -563,12 +505,8 @@ impl CollectionPolicy {
   fn missing_start_limit(&self) -> Option<String> {
     match self.category {
       PlaylistCategory::All => None,
-      PlaylistCategory::Created => {
-        Some("category created scan ended without seeing created playlist landmark".to_string())
-      }
-      PlaylistCategory::Favorite => {
-        Some("category favorite scan ended without seeing favorite playlist landmark".to_string())
-      }
+      PlaylistCategory::Created => Some("category created scan ended without seeing created playlist landmark".to_string()),
+      PlaylistCategory::Favorite => Some("category favorite scan ended without seeing favorite playlist landmark".to_string()),
     }
   }
 }
@@ -615,9 +553,7 @@ pub(crate) fn build_standalone_interaction_events(
           direction: ScrollDirection::Down,
           requested_delta: -scroll_amount,
           policy: "background_preferred".to_string(),
-          delivery_path: observations[index + 1]
-            .incoming_scroll_delivery_path
-            .clone(),
+          delivery_path: observations[index + 1].incoming_scroll_delivery_path.clone(),
           motion: observations[index + 1].scroll_motion.clone(),
           settle_ms: scroll_settle_ms,
           anchor: None,
@@ -625,9 +561,7 @@ pub(crate) fn build_standalone_interaction_events(
         }),
         motion: observations[index + 1].scroll_motion.clone(),
         artifacts,
-        note: Some(
-          "standalone event; durable trace should use view.parse.scroll.<index> spans".to_string(),
-        ),
+        note: Some("standalone event; durable trace should use view.parse.scroll.<index> spans".to_string()),
       });
     }
   }
@@ -636,22 +570,13 @@ pub(crate) fn build_standalone_interaction_events(
       event_index: events.len(),
       phase: InteractionPhase::Collect,
       kind: InteractionEventKind::StopDecision,
-      observation_index: observations
-        .last()
-        .map(|observation| observation.observation_index),
+      observation_index: observations.last().map(|observation| observation.observation_index),
       from_observation: None,
       to_observation: None,
-      viewport_fingerprint: observations
-        .last()
-        .map(|observation| observation.viewport_fingerprint.clone()),
+      viewport_fingerprint: observations.last().map(|observation| observation.viewport_fingerprint.clone()),
       scroll: None,
-      motion: observations
-        .last()
-        .and_then(|observation| observation.scroll_motion.clone()),
-      artifacts: observations
-        .last()
-        .map(|observation| observation.source_artifacts.clone())
-        .unwrap_or_default(),
+      motion: observations.last().and_then(|observation| observation.scroll_motion.clone()),
+      artifacts: observations.last().map(|observation| observation.source_artifacts.clone()).unwrap_or_default(),
       note: Some(stop_reason.to_string()),
     });
   }
@@ -675,9 +600,7 @@ pub(crate) fn apply_bottom_boundary(scan: &mut PlaylistSidebarScan, bottom: Boun
 #[cfg(test)]
 mod query_seen_tests {
   use super::*;
-  use crate::{
-    Confidence, SidebarCandidateKind, SidebarViewportCandidate, SidebarViewportObservation,
-  };
+  use crate::{Confidence, SidebarCandidateKind, SidebarViewportCandidate, SidebarViewportObservation};
 
   fn playlist_observation(labels: &[&str]) -> SidebarViewportObservation {
     SidebarViewportObservation {

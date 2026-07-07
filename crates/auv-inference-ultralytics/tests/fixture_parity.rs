@@ -1,14 +1,13 @@
 use auv_cli::build_runtime_with_store_root;
 use auv_cli::contract::{RecognitionResult, RecognitionScope, RecognitionSurface};
 use auv_cli::inference_recognition::{
-  BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy,
-  RuntimeProjection, RuntimeProjectionKind, record_detector_manifest_recognition_artifact,
+  BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy, RuntimeProjection, RuntimeProjectionKind,
+  record_detector_manifest_recognition_artifact,
 };
 use auv_cli::inspect_server;
 use auv_inference_common::{
-  BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest,
-  DetectionOptions, DetectionSet, ModelId, ModelRunMetadata, ProjectionBasis, SourceImageEvidence,
-  SourceImageRef, render_annotated_image,
+  BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest, DetectionOptions, DetectionSet, ModelId,
+  ModelRunMetadata, ProjectionBasis, SourceImageEvidence, SourceImageRef, render_annotated_image,
 };
 use auv_inference_ultralytics::{InferenceDevice, UltralyticsDetector, UltralyticsModelConfig};
 use auv_tracing_driver::run_builder::RunSpec;
@@ -96,10 +95,7 @@ struct SmokeEvidencePaths {
 #[test]
 fn balatro_golden_fixtures_are_well_formed() -> Result<(), Box<dyn Error>> {
   let fixture_dir = balatro_fixture_dir();
-  assert!(
-    fixture_dir.join("balatro.jpg").exists(),
-    "Balatro fixture image does not exist"
-  );
+  assert!(fixture_dir.join("balatro.jpg").exists(), "Balatro fixture image does not exist");
 
   for fixture_name in ["entities", "ui"] {
     let fixture = load_fixture(fixture_name)?;
@@ -143,42 +139,22 @@ fn local_smoke_config() -> Result<Option<LocalSmokeConfig>, Box<dyn Error>> {
   }))
 }
 
-fn assert_fixture_matches_detector(
-  fixture_name: &str,
-  config: &LocalSmokeConfig,
-) -> Result<(), Box<dyn Error>> {
+fn assert_fixture_matches_detector(fixture_name: &str, config: &LocalSmokeConfig) -> Result<(), Box<dyn Error>> {
   let fixture = load_fixture(fixture_name)?;
   assert_fixture_metadata(fixture_name, &fixture);
 
   let model_path = config.balatro_root.join(&fixture.model.balatro_asset);
-  assert!(
-    model_path.exists(),
-    "{fixture_name}: model path does not exist: {}",
-    model_path.display()
-  );
+  assert!(model_path.exists(), "{fixture_name}: model path does not exist: {}", model_path.display());
 
   let class_path = config.balatro_root.join(&fixture.classes.balatro_asset);
   let class_names = load_class_names(&class_path, fixture_name)?;
-  assert_eq!(
-    class_names.len(),
-    fixture.classes.count,
-    "{fixture_name}: Balatro class file count does not match fixture count"
-  );
-  assert_eq!(
-    class_names, fixture.classes.labels,
-    "{fixture_name}: fixture class labels do not match Balatro classes.txt"
-  );
+  assert_eq!(class_names.len(), fixture.classes.count, "{fixture_name}: Balatro class file count does not match fixture count");
+  assert_eq!(class_names, fixture.classes.labels, "{fixture_name}: fixture class labels do not match Balatro classes.txt");
 
-  let image = fixture
-    .image
-    .as_ref()
-    .ok_or_else(|| format!("{fixture_name}: fixture image metadata is missing"))?;
+  let image = fixture.image.as_ref().ok_or_else(|| format!("{fixture_name}: fixture image metadata is missing"))?;
   let source_image_path = config.balatro_root.join(&image.source_balatro_asset);
   if !source_image_path.exists() {
-    eprintln!(
-      "skipping Balatro smoke for {fixture_name}; source image is missing: {}",
-      source_image_path.display()
-    );
+    eprintln!("skipping Balatro smoke for {fixture_name}; source image is missing: {}", source_image_path.display());
     return Ok(());
   }
 
@@ -196,42 +172,15 @@ fn assert_fixture_matches_detector(
   })?;
 
   let result = detector.detect_path(&source_image_path)?;
-  let evidence_paths = write_smoke_evidence(
-    fixture_name,
-    &source_image_path,
-    &result,
-    &class_path,
-    &fixture.thresholds,
-    &config.output_dir,
-  )?;
-  assert_smoke_evidence_outputs(
-    fixture_name,
-    &evidence_paths,
-    &result,
-    &source_image_path,
-    &class_path,
-    &fixture.thresholds,
-  )?;
+  let evidence_paths =
+    write_smoke_evidence(fixture_name, &source_image_path, &result, &class_path, &fixture.thresholds, &config.output_dir)?;
+  assert_smoke_evidence_outputs(fixture_name, &evidence_paths, &result, &source_image_path, &class_path, &fixture.thresholds)?;
 
   let decoded_image = ImageReader::open(&source_image_path)?.decode()?.to_rgb8();
-  assert_eq!(
-    result.image_size.width,
-    decoded_image.width(),
-    "{fixture_name}: result image width does not match decoded input image"
-  );
-  assert_eq!(
-    result.image_size.height,
-    decoded_image.height(),
-    "{fixture_name}: result image height does not match decoded input image"
-  );
-  assert_eq!(
-    result.image_size.width, image.width,
-    "{fixture_name}: result image width does not match fixture metadata"
-  );
-  assert_eq!(
-    result.image_size.height, image.height,
-    "{fixture_name}: result image height does not match fixture metadata"
-  );
+  assert_eq!(result.image_size.width, decoded_image.width(), "{fixture_name}: result image width does not match decoded input image");
+  assert_eq!(result.image_size.height, decoded_image.height(), "{fixture_name}: result image height does not match decoded input image");
+  assert_eq!(result.image_size.width, image.width, "{fixture_name}: result image width does not match fixture metadata");
+  assert_eq!(result.image_size.height, image.height, "{fixture_name}: result image height does not match fixture metadata");
 
   assert_detection_set_invariants(fixture_name, &result, &class_names);
 
@@ -264,11 +213,7 @@ fn assert_fixture_matches_detector(
   Ok(())
 }
 
-fn assert_detection_set_invariants(
-  fixture_name: &str,
-  result: &DetectionSet,
-  class_names: &[String],
-) {
+fn assert_detection_set_invariants(fixture_name: &str, result: &DetectionSet, class_names: &[String]) {
   for detection in &result.detections {
     assert!(
       (0.0..=1.0).contains(&detection.confidence),
@@ -288,11 +233,7 @@ fn assert_detection_set_invariants(
       detection.class_id
     );
     assert!(
-      bbox_is_within_source_image(
-        detection.bbox,
-        result.image_size.width,
-        result.image_size.height
-      ),
+      bbox_is_within_source_image(detection.bbox, result.image_size.width, result.image_size.height),
       "{fixture_name}: bbox must stay in source-image pixel space, got {:?} within {}x{}",
       detection.bbox,
       result.image_size.width,
@@ -382,9 +323,7 @@ fn write_smoke_evidence(
     RunSpec::new(RunType::Execute, "auv.inference.detector_smoke"),
     format!("Balatro detector recognition smoke {fixture_name}"),
     |context| {
-      let mut request = DetectorRecognitionArtifactRequest::new(format!(
-        "recognition_balatro_smoke_{fixture_name}"
-      ));
+      let mut request = DetectorRecognitionArtifactRequest::new(format!("recognition_balatro_smoke_{fixture_name}"));
       request.scope = RecognitionScope {
         surface: RecognitionSurface::Region,
         display_ref: None,
@@ -409,8 +348,7 @@ fn write_smoke_evidence(
         best_selection: BestSelectionStrategy::None,
       };
       request.artifact_label = format!("{fixture_name}-recognition");
-      request.artifact_note =
-        "Detector-backed RecognitionResult runtime artifact from gated Balatro smoke.".to_string();
+      request.artifact_note = "Detector-backed RecognitionResult runtime artifact from gated Balatro smoke.".to_string();
       record_detector_manifest_recognition_artifact(
         context,
         &manifest,
@@ -464,35 +402,21 @@ fn assert_smoke_evidence_outputs(
   let annotated_name = format!("{fixture_name}-annotated.png");
 
   assert_eq!(
-    evidence_paths
-      .detection_json
-      .file_name()
-      .and_then(|name| name.to_str()),
+    evidence_paths.detection_json.file_name().and_then(|name| name.to_str()),
     Some(detections_name.as_str()),
     "{fixture_name}: detections evidence path should use the expected file name"
   );
   assert_eq!(
-    evidence_paths
-      .manifest_json
-      .file_name()
-      .and_then(|name| name.to_str()),
+    evidence_paths.manifest_json.file_name().and_then(|name| name.to_str()),
     Some(manifest_name.as_str()),
     "{fixture_name}: manifest evidence path should use the expected file name"
   );
   assert!(
-    evidence_paths
-      .recognition_json
-      .file_name()
-      .and_then(|name| name.to_str())
-      .map(|name| name.contains(fixture_name))
-      .unwrap_or(false),
+    evidence_paths.recognition_json.file_name().and_then(|name| name.to_str()).map(|name| name.contains(fixture_name)).unwrap_or(false),
     "{fixture_name}: detector-recognition runtime artifact file name should retain fixture identity"
   );
   assert_eq!(
-    evidence_paths
-      .annotated_image
-      .file_name()
-      .and_then(|name| name.to_str()),
+    evidence_paths.annotated_image.file_name().and_then(|name| name.to_str()),
     Some(annotated_name.as_str()),
     "{fixture_name}: annotated evidence path should use the expected file name"
   );
@@ -518,19 +442,11 @@ fn assert_smoke_evidence_outputs(
     evidence_paths.annotated_image.display()
   );
 
-  let written_detections: DetectionSet =
-    serde_json::from_str(&fs::read_to_string(&evidence_paths.detection_json)?)?;
-  assert_eq!(
-    written_detections, *result,
-    "{fixture_name}: detections evidence JSON should round-trip back to the detector result"
-  );
+  let written_detections: DetectionSet = serde_json::from_str(&fs::read_to_string(&evidence_paths.detection_json)?)?;
+  assert_eq!(written_detections, *result, "{fixture_name}: detections evidence JSON should round-trip back to the detector result");
 
-  let manifest: DetectionEvidenceManifest =
-    serde_json::from_str(&fs::read_to_string(&evidence_paths.manifest_json)?)?;
-  assert_eq!(
-    manifest.detection_set, *result,
-    "{fixture_name}: manifest must embed the same DetectionSet written to detections JSON"
-  );
+  let manifest: DetectionEvidenceManifest = serde_json::from_str(&fs::read_to_string(&evidence_paths.manifest_json)?)?;
+  assert_eq!(manifest.detection_set, *result, "{fixture_name}: manifest must embed the same DetectionSet written to detections JSON");
   assert_eq!(
     manifest.source_image.source_image_ref,
     SourceImageRef::LocalPath {
@@ -550,22 +466,13 @@ fn assert_smoke_evidence_outputs(
     },
     "{fixture_name}: manifest projection basis must stay unavailable for local smoke"
   );
-  assert_eq!(
-    manifest.model_run.backend, "ultralytics-inference",
-    "{fixture_name}: manifest backend must identify the ultralytics adapter"
-  );
-  assert_eq!(
-    manifest.model_run.model_id, result.model_id,
-    "{fixture_name}: manifest model_id must match the DetectionSet model_id"
-  );
+  assert_eq!(manifest.model_run.backend, "ultralytics-inference", "{fixture_name}: manifest backend must identify the ultralytics adapter");
+  assert_eq!(manifest.model_run.model_id, result.model_id, "{fixture_name}: manifest model_id must match the DetectionSet model_id");
   assert_eq!(
     manifest.model_run.confidence_threshold, thresholds.confidence,
     "{fixture_name}: manifest confidence threshold must match the fixture thresholds"
   );
-  assert_eq!(
-    manifest.model_run.iou_threshold, thresholds.iou,
-    "{fixture_name}: manifest IoU threshold must match the fixture thresholds"
-  );
+  assert_eq!(manifest.model_run.iou_threshold, thresholds.iou, "{fixture_name}: manifest IoU threshold must match the fixture thresholds");
   assert_eq!(
     manifest.model_run.class_label_source,
     ClassLabelSource::OverrideFile {
@@ -588,35 +495,21 @@ fn assert_smoke_evidence_outputs(
     "{fixture_name}: manifest known limits should stay explicit and inference-scoped"
   );
 
-  let recognition: RecognitionResult =
-    serde_json::from_str(&fs::read_to_string(&evidence_paths.recognition_json)?)?;
+  let recognition: RecognitionResult = serde_json::from_str(&fs::read_to_string(&evidence_paths.recognition_json)?)?;
   assert_eq!(
     recognition.source,
     auv_cli::contract::RecognitionSource::Custom,
     "{fixture_name}: recognition source must stay custom until a detector-specific source variant lands"
   );
-  assert!(
-    !recognition.evidence.is_empty(),
-    "{fixture_name}: recognition evidence must not be empty"
-  );
-  assert!(
-    recognition.scope.capture_artifact.is_some(),
-    "{fixture_name}: recognition scope must carry capture_artifact"
-  );
-  assert_eq!(
-    recognition.all.len(),
-    result.detections.len(),
-    "{fixture_name}: recognition all[] should contain every accepted detection"
-  );
+  assert!(!recognition.evidence.is_empty(), "{fixture_name}: recognition evidence must not be empty");
+  assert!(recognition.scope.capture_artifact.is_some(), "{fixture_name}: recognition scope must carry capture_artifact");
+  assert_eq!(recognition.all.len(), result.detections.len(), "{fixture_name}: recognition all[] should contain every accepted detection");
   assert_eq!(
     recognition.filtered.len(),
     result.detections.len(),
     "{fixture_name}: pass-through bridge policy should keep filtered[] aligned with accepted detections"
   );
-  assert!(
-    recognition.best.is_none(),
-    "{fixture_name}: smoke recognition should keep best unset by default"
-  );
+  assert!(recognition.best.is_none(), "{fixture_name}: smoke recognition should keep best unset by default");
   assert_eq!(
     recognition.detail["backend"],
     Value::String("ultralytics-inference".to_string()),
@@ -647,48 +540,23 @@ fn assert_smoke_evidence_outputs(
     "{fixture_name}: recognition known_limits must preserve manifest known_limits as a prefix"
   );
   assert!(
-    recognition.known_limits.contains(
-      &"detector RecognitionResult is recognition evidence only, not candidate-ready output"
-        .to_string()
-    ),
+    recognition.known_limits.contains(&"detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string()),
     "{fixture_name}: recognition known_limits must append the bridge evidence-only limit"
   );
-  assert_no_forbidden_keys(
-    fixture_name,
-    &serde_json::to_value(&recognition)?,
-    &["candidate", "candidate_ref", "action", "click"],
-  );
+  assert_no_forbidden_keys(fixture_name, &serde_json::to_value(&recognition)?, &["candidate", "candidate_ref", "action", "click"]);
   let runtime = build_runtime_with_store_root(
-    evidence_paths
-      .runtime_store_root
-      .parent()
-      .unwrap()
-      .join(format!("{fixture_name}-runtime-project")),
+    evidence_paths.runtime_store_root.parent().unwrap().join(format!("{fixture_name}-runtime-project")),
     evidence_paths.runtime_store_root.clone(),
   )?;
-  let inspect_text =
-    auv_cli::inspect::inspect_run(runtime.recording().store(), &evidence_paths.runtime_run_id)?;
+  let inspect_text = auv_cli::inspect::inspect_run(runtime.recording().store(), &evidence_paths.runtime_run_id)?;
   assert!(
     inspect_text.contains("Detector Recognition Lineage:"),
     "{fixture_name}: inspect text must expose detector recognition lineage section"
   );
-  assert!(
-    inspect_text.contains("backend=ultralytics-inference"),
-    "{fixture_name}: inspect text must expose detector backend provenance"
-  );
-  assert!(
-    inspect_text.contains("capture-image"),
-    "{fixture_name}: inspect text must mention capture-image lineage"
-  );
-  let lineage = auv_cli::inspect::list_detector_recognition_lineage(
-    runtime.recording().store(),
-    &evidence_paths.runtime_run_id,
-  )?;
-  assert_eq!(
-    lineage.len(),
-    1,
-    "{fixture_name}: runtime read-side should expose exactly one detector recognition lineage record"
-  );
+  assert!(inspect_text.contains("backend=ultralytics-inference"), "{fixture_name}: inspect text must expose detector backend provenance");
+  assert!(inspect_text.contains("capture-image"), "{fixture_name}: inspect text must mention capture-image lineage");
+  let lineage = auv_cli::inspect::list_detector_recognition_lineage(runtime.recording().store(), &evidence_paths.runtime_run_id)?;
+  assert_eq!(lineage.len(), 1, "{fixture_name}: runtime read-side should expose exactly one detector recognition lineage record");
   let lineage = &lineage[0];
   assert_eq!(
     serde_json::to_value(&lineage.status)?,
@@ -700,56 +568,27 @@ fn assert_smoke_evidence_outputs(
     Some(auv_cli::contract::RecognitionSource::Custom),
     "{fixture_name}: lineage must preserve custom recognition source"
   );
-  assert_eq!(
-    lineage.backend.as_deref(),
-    Some("ultralytics-inference"),
-    "{fixture_name}: lineage must preserve backend provenance"
-  );
-  assert_eq!(
-    lineage.model_id.as_deref(),
-    Some(result.model_id.0.as_str()),
-    "{fixture_name}: lineage must preserve model_id provenance"
-  );
+  assert_eq!(lineage.backend.as_deref(), Some("ultralytics-inference"), "{fixture_name}: lineage must preserve backend provenance");
+  assert_eq!(lineage.model_id.as_deref(), Some(result.model_id.0.as_str()), "{fixture_name}: lineage must preserve model_id provenance");
   assert_eq!(
     lineage.runtime_projection_kind.as_deref(),
     Some("identity_source_image_pixels"),
     "{fixture_name}: lineage must preserve runtime projection policy"
   );
-  assert_eq!(
-    lineage.filtered_count,
-    Some(result.detections.len()),
-    "{fixture_name}: lineage filtered_count must match accepted detections"
-  );
-  assert_eq!(
-    lineage.all_count,
-    Some(result.detections.len()),
-    "{fixture_name}: lineage all_count must match accepted detections"
-  );
+  assert_eq!(lineage.filtered_count, Some(result.detections.len()), "{fixture_name}: lineage filtered_count must match accepted detections");
+  assert_eq!(lineage.all_count, Some(result.detections.len()), "{fixture_name}: lineage all_count must match accepted detections");
   assert!(
-    lineage
-      .capture_artifact
-      .as_ref()
-      .map(|artifact| artifact.resolved)
-      .unwrap_or(false),
+    lineage.capture_artifact.as_ref().map(|artifact| artifact.resolved).unwrap_or(false),
     "{fixture_name}: lineage capture_artifact must resolve to a real runtime artifact"
   );
   assert_eq!(
-    lineage
-      .capture_artifact
-      .as_ref()
-      .and_then(|artifact| artifact.role.as_deref()),
+    lineage.capture_artifact.as_ref().and_then(|artifact| artifact.role.as_deref()),
     Some("capture-image"),
     "{fixture_name}: lineage capture_artifact role must be capture-image"
   );
+  assert!(!lineage.evidence_artifacts.is_empty(), "{fixture_name}: lineage evidence artifacts must not be empty");
   assert!(
-    !lineage.evidence_artifacts.is_empty(),
-    "{fixture_name}: lineage evidence artifacts must not be empty"
-  );
-  assert!(
-    lineage.known_limits.contains(
-      &"detector RecognitionResult is recognition evidence only, not candidate-ready output"
-        .to_string()
-    ),
+    lineage.known_limits.contains(&"detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string()),
     "{fixture_name}: lineage must preserve detector evidence-only known limit"
   );
   let store = LocalStore::new(evidence_paths.runtime_store_root.clone())?;
@@ -759,22 +598,14 @@ fn assert_smoke_evidence_outputs(
     .block_on(async {
       app
         .oneshot(
-          Request::builder()
-            .uri(format!("/runs/{}", evidence_paths.runtime_run_id))
-            .body(Body::empty())
-            .expect("request should build"),
+          Request::builder().uri(format!("/runs/{}", evidence_paths.runtime_run_id)).body(Body::empty()).expect("request should build"),
         )
         .await
     })
     .expect("inspect_server /runs route should respond");
-  assert_eq!(
-    response.status(),
-    StatusCode::OK,
-    "{fixture_name}: inspect_server /runs route should return 200 for recorded smoke run"
-  );
-  let body = async_runtime
-    .block_on(async { to_bytes(response.into_body(), usize::MAX).await })
-    .expect("inspect_server /runs body should read");
+  assert_eq!(response.status(), StatusCode::OK, "{fixture_name}: inspect_server /runs route should return 200 for recorded smoke run");
+  let body =
+    async_runtime.block_on(async { to_bytes(response.into_body(), usize::MAX).await }).expect("inspect_server /runs body should read");
   let run: Value = serde_json::from_slice(&body)?;
   assert_eq!(
     run["run_id"],
@@ -817,25 +648,13 @@ fn assert_smoke_evidence_outputs(
     "{fixture_name}: inspect_server /runs JSON should expose all_count"
   );
   assert!(
-    run["detector_recognition_lineage"][0]
-      .get("best_item_id")
-      .is_some(),
+    run["detector_recognition_lineage"][0].get("best_item_id").is_some(),
     "{fixture_name}: inspect_server /runs JSON should expose best_item_id field even when null"
   );
 
-  let annotated = ImageReader::open(&evidence_paths.annotated_image)?
-    .decode()?
-    .to_rgb8();
-  assert_eq!(
-    annotated.width(),
-    result.image_size.width,
-    "{fixture_name}: annotated image width must match the source image width"
-  );
-  assert_eq!(
-    annotated.height(),
-    result.image_size.height,
-    "{fixture_name}: annotated image height must match the source image height"
-  );
+  let annotated = ImageReader::open(&evidence_paths.annotated_image)?.decode()?.to_rgb8();
+  assert_eq!(annotated.width(), result.image_size.width, "{fixture_name}: annotated image width must match the source image width");
+  assert_eq!(annotated.height(), result.image_size.height, "{fixture_name}: annotated image height must match the source image height");
 
   Ok(())
 }
@@ -844,10 +663,7 @@ fn assert_no_forbidden_keys(fixture_name: &str, value: &Value, forbidden_keys: &
   match value {
     Value::Object(map) => {
       for (key, nested) in map {
-        assert!(
-          !forbidden_keys.contains(&key.as_str()),
-          "{fixture_name}: smoke recognition JSON must not contain forbidden key {key:?}"
-        );
+        assert!(!forbidden_keys.contains(&key.as_str()), "{fixture_name}: smoke recognition JSON must not contain forbidden key {key:?}");
         assert_no_forbidden_keys(fixture_name, nested, forbidden_keys);
       }
     }
@@ -862,18 +678,12 @@ fn assert_no_forbidden_keys(fixture_name: &str, value: &Value, forbidden_keys: &
 
 fn smoke_output_dir() -> PathBuf {
   let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-  let repo_root = manifest_dir
-    .parent()
-    .and_then(|path| path.parent())
-    .expect("crate manifest should be nested under repo root");
+  let repo_root = manifest_dir.parent().and_then(|path| path.parent()).expect("crate manifest should be nested under repo root");
   repo_root.join("target/auv-inference-smoke/balatro")
 }
 
 fn balatro_fixture_dir() -> PathBuf {
-  Path::new(env!("CARGO_MANIFEST_DIR"))
-    .join("tests")
-    .join("fixtures")
-    .join("balatro")
+  Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures").join("balatro")
 }
 
 fn load_fixture(fixture_name: &str) -> Result<Fixture, Box<dyn Error>> {
@@ -883,50 +693,23 @@ fn load_fixture(fixture_name: &str) -> Result<Fixture, Box<dyn Error>> {
 }
 
 fn assert_fixture_metadata(fixture_name: &str, fixture: &Fixture) {
-  assert_eq!(
-    fixture.detection_count,
-    fixture.detections.len(),
-    "{fixture_name}: fixture detection_count does not match detections length"
-  );
-  assert_eq!(
-    fixture.classes.count,
-    fixture.classes.labels.len(),
-    "{fixture_name}: fixture class count does not match labels length"
-  );
+  assert_eq!(fixture.detection_count, fixture.detections.len(), "{fixture_name}: fixture detection_count does not match detections length");
+  assert_eq!(fixture.classes.count, fixture.classes.labels.len(), "{fixture_name}: fixture class count does not match labels length");
 }
 
 fn load_class_names(path: &Path, fixture_name: &str) -> Result<Vec<String>, Box<dyn Error>> {
-  let contents = fs::read_to_string(path).map_err(|err| {
-    format!(
-      "{fixture_name}: failed to read Balatro class file {}: {err}",
-      path.display()
-    )
-  })?;
-  let class_names = contents
-    .lines()
-    .map(str::trim)
-    .filter(|line| !line.is_empty())
-    .map(ToOwned::to_owned)
-    .collect::<Vec<_>>();
-  assert!(
-    !class_names.is_empty(),
-    "{fixture_name}: Balatro class file is empty: {}",
-    path.display()
-  );
+  let contents =
+    fs::read_to_string(path).map_err(|err| format!("{fixture_name}: failed to read Balatro class file {}: {err}", path.display()))?;
+  let class_names = contents.lines().map(str::trim).filter(|line| !line.is_empty()).map(ToOwned::to_owned).collect::<Vec<_>>();
+  assert!(!class_names.is_empty(), "{fixture_name}: Balatro class file is empty: {}", path.display());
   Ok(class_names)
 }
 
-fn assert_unordered_detections_match(
-  fixture_name: &str,
-  expected: &[FixtureDetection],
-  actual: &[Detection],
-) {
+fn assert_unordered_detections_match(fixture_name: &str, expected: &[FixtureDetection], actual: &[Detection]) {
   let mut unmatched = actual.to_vec();
 
   for expected_detection in expected {
-    let match_index = unmatched
-      .iter()
-      .position(|actual_detection| detections_match(expected_detection, actual_detection));
+    let match_index = unmatched.iter().position(|actual_detection| detections_match(expected_detection, actual_detection));
     let Some(match_index) = match_index else {
       panic!(
         "{fixture_name}: missing matching detection for {}\nunmatched actual detections:\n{}",
@@ -937,11 +720,7 @@ fn assert_unordered_detections_match(
     unmatched.remove(match_index);
   }
 
-  assert!(
-    unmatched.is_empty(),
-    "{fixture_name}: unexpected extra detections:\n{}",
-    summarize_actual_detections(&unmatched)
-  );
+  assert!(unmatched.is_empty(), "{fixture_name}: unexpected extra detections:\n{}", summarize_actual_detections(&unmatched));
 }
 
 fn detections_match(expected: &FixtureDetection, actual: &Detection) -> bool {
@@ -963,23 +742,13 @@ fn bbox_within_tolerance(expected: [f32; 4], actual: BoundingBox) -> bool {
 }
 
 fn summarize_fixture_detections(detections: &[FixtureDetection]) -> String {
-  detections
-    .iter()
-    .map(summarize_fixture_detection)
-    .collect::<Vec<_>>()
-    .join("\n")
+  detections.iter().map(summarize_fixture_detection).collect::<Vec<_>>().join("\n")
 }
 
 fn summarize_fixture_detection(detection: &FixtureDetection) -> String {
   format!(
     "{}:{} conf={:.3} bbox=[{:.1},{:.1},{:.1},{:.1}]",
-    detection.class_id,
-    detection.label,
-    detection.confidence,
-    detection.bbox[0],
-    detection.bbox[1],
-    detection.bbox[2],
-    detection.bbox[3]
+    detection.class_id, detection.label, detection.confidence, detection.bbox[0], detection.bbox[1], detection.bbox[2], detection.bbox[3]
   )
 }
 
@@ -1005,10 +774,7 @@ fn summarize_actual_detections(detections: &[Detection]) -> String {
 #[test]
 fn local_smoke_skips_when_env_is_missing_or_path_is_missing() -> Result<(), Box<dyn Error>> {
   assert!(balatro_root_from_env_value(None).is_none());
-  assert!(
-    balatro_root_from_env_value(Some(OsString::from("/definitely-missing-auv-balatro-root")))
-      .is_none()
-  );
+  assert!(balatro_root_from_env_value(Some(OsString::from("/definitely-missing-auv-balatro-root"))).is_none());
   let temp_dir = std::env::temp_dir().join("auv-inference-ultralytics-existing-dir-check");
   fs::create_dir_all(&temp_dir)?;
   assert!(balatro_root_from_env_value(Some(temp_dir.into_os_string())).is_some());
