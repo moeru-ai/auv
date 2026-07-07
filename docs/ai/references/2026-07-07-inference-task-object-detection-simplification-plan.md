@@ -48,6 +48,16 @@ Delete:
 - `crates/auv-inference-common/src/render.rs`
 - `src/inference_recognition.rs`
 
+## Execution Batching Note
+
+Tasks 2-4 are one dependency-direction migration batch. Task 2 intentionally
+removes object detection task types from `auv-inference-common`, so downstream
+crates that still import the old common types can fail until Tasks 3 and 4 move
+the backend/session and task adapter boundaries into place. During this batch,
+use each task's focused test command as the acceptance check. Require broader
+`auv-inference-ultralytics` / `auv-task-object-detection --features
+ultralytics` checks after Task 4.
+
 ---
 
 ### Task 1: Create `auv-task-object-detection`
