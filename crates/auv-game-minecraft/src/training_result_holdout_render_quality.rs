@@ -13,9 +13,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::scene_packet::ScenePacketFramePayload;
-use crate::training_result_holdout_preview::{
-  HoldoutFrameWitness, HoldoutPreviewStatus, TrainingResultHoldoutPreviewManifest,
-};
+use crate::training_result_holdout_preview::{HoldoutFrameWitness, HoldoutPreviewStatus, TrainingResultHoldoutPreviewManifest};
 use crate::training_result_semantic::TrainingResultSemanticManifest;
 use crate::types::{MinecraftSpatialFrame, PlayerPose, Viewport};
 
@@ -24,17 +22,15 @@ pub type TrainingResultHoldoutRenderQualityResult<T> = Result<T, String>;
 pub const TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_MANIFEST_SCHEMA_VERSION: u32 = 1;
 pub const TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_INSPECT_REPORT_SCHEMA_VERSION: u32 = 1;
 
-pub const MC17_V1_HOLDOUT_RENDER_QUALITY_KNOWN_LIMIT: &str = "MC-17 v1 records photometric metrics as evidence only; pass/fail thresholds and trained splat usefulness verdicts are deferred";
+pub const MC17_V1_HOLDOUT_RENDER_QUALITY_KNOWN_LIMIT: &str =
+  "MC-17 v1 records photometric metrics as evidence only; pass/fail thresholds and trained splat usefulness verdicts are deferred";
 
 const HOLDOUT_RENDER_QUALITY_MANIFEST_FILE: &str = "minecraft-3dgs-holdout-render-quality.json";
-const HOLDOUT_RENDER_QUALITY_INSPECT_FILE: &str =
-  "minecraft-3dgs-holdout-render-quality-inspect.json";
+const HOLDOUT_RENDER_QUALITY_INSPECT_FILE: &str = "minecraft-3dgs-holdout-render-quality-inspect.json";
 
-const METRIC_PARTIAL_KNOWN_LIMIT: &str =
-  "MC-17 does not resize, crop, or auto-align mismatched holdout images in D1";
+const METRIC_PARTIAL_KNOWN_LIMIT: &str = "MC-17 does not resize, crop, or auto-align mismatched holdout images in D1";
 const SSIM_DEFERRED_KNOWN_LIMIT: &str = "MC-17 D1 defers SSIM computation";
-const PERFECT_MATCH_PSNR_KNOWN_LIMIT: &str =
-  "MC-17 omits PSNR when MSE is zero (identical RGB8 pixels)";
+const PERFECT_MATCH_PSNR_KNOWN_LIMIT: &str = "MC-17 omits PSNR when MSE is zero (identical RGB8 pixels)";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrainingResultHoldoutRenderQualityInputs {
@@ -285,12 +281,7 @@ struct LineageSnapshot {
 pub fn measure_3dgs_holdout_render_quality(
   inputs: TrainingResultHoldoutRenderQualityInputs,
 ) -> TrainingResultHoldoutRenderQualityResult<TrainingResultHoldoutRenderQualityOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
   let mut known_limits = BTreeSet::new();
@@ -298,26 +289,18 @@ pub fn measure_3dgs_holdout_render_quality(
   known_limits.insert(METRIC_PARTIAL_KNOWN_LIMIT.to_string());
   known_limits.insert(SSIM_DEFERRED_KNOWN_LIMIT.to_string());
 
-  let holdout_preview_manifest = read_json_file::<TrainingResultHoldoutPreviewManifest>(
-    &inputs.holdout_preview_manifest_path,
-    "MC-16 holdout preview manifest",
-  )
-  .ok();
+  let holdout_preview_manifest =
+    read_json_file::<TrainingResultHoldoutPreviewManifest>(&inputs.holdout_preview_manifest_path, "MC-16 holdout preview manifest").ok();
 
   let outcome = if holdout_preview_manifest.is_none() {
     blocked_outcome(
       HoldoutRenderQualityReason::HoldoutPreviewUnreadable,
       0,
       None,
-      BTreeSet::from([
-        "MC-16 holdout preview manifest is unreadable; MC-17 records blocked quality evidence only"
-          .to_string(),
-      ]),
+      BTreeSet::from(["MC-16 holdout preview manifest is unreadable; MC-17 records blocked quality evidence only".to_string()]),
     )
   } else {
-    let holdout_preview = holdout_preview_manifest
-      .as_ref()
-      .expect("holdout preview present");
+    let holdout_preview = holdout_preview_manifest.as_ref().expect("holdout preview present");
     known_limits.extend(holdout_preview.known_limits.iter().cloned());
 
     if holdout_preview.status != HoldoutPreviewStatus::Ready
@@ -328,9 +311,7 @@ pub fn measure_3dgs_holdout_render_quality(
         HoldoutRenderQualityReason::HoldoutPreviewNotReady,
         holdout_preview.holdout_frame_index,
         holdout_preview.holdout_frame.clone(),
-        BTreeSet::from([
-          "MC-16 holdout preview is not ready; MC-17 does not re-select holdout frames".to_string(),
-        ]),
+        BTreeSet::from(["MC-16 holdout preview is not ready; MC-17 does not re-select holdout frames".to_string()]),
       )
     } else {
       match read_json_file::<TrainingResultSemanticManifest>(
@@ -343,20 +324,12 @@ pub fn measure_3dgs_holdout_render_quality(
           holdout_preview.holdout_frame.clone(),
           BTreeSet::new(),
         ),
-        Ok(semantic_manifest) => {
-          evaluate_semantic_ready_gates(&inputs, holdout_preview, &semantic_manifest)?
-        }
+        Ok(semantic_manifest) => evaluate_semantic_ready_gates(&inputs, holdout_preview, &semantic_manifest)?,
       }
     }
   };
 
-  finish_output(
-    inputs,
-    generated_at_millis,
-    outcome,
-    holdout_preview_manifest.as_ref(),
-    known_limits,
-  )
+  finish_output(inputs, generated_at_millis, outcome, holdout_preview_manifest.as_ref(), known_limits)
 }
 
 fn evaluate_semantic_ready_gates(
@@ -364,19 +337,12 @@ fn evaluate_semantic_ready_gates(
   holdout_preview: &TrainingResultHoldoutPreviewManifest,
   semantic_manifest: &TrainingResultSemanticManifest,
 ) -> TrainingResultHoldoutRenderQualityResult<HoldoutRenderQualityOutcome> {
-  if !lineage_matches_semantic(
-    &inputs.training_result_semantic_manifest_path,
-    semantic_manifest,
-    holdout_preview,
-  ) {
+  if !lineage_matches_semantic(&inputs.training_result_semantic_manifest_path, semantic_manifest, holdout_preview) {
     return Ok(blocked_outcome(
       HoldoutRenderQualityReason::LineageMismatch,
       holdout_preview.holdout_frame_index,
       holdout_preview.holdout_frame.clone(),
-      BTreeSet::from([
-        "MC-10 semantic manifest business keys do not match MC-16 holdout preview lineage"
-          .to_string(),
-      ]),
+      BTreeSet::from(["MC-10 semantic manifest business keys do not match MC-16 holdout preview lineage".to_string()]),
     ));
   }
 
@@ -389,10 +355,7 @@ fn evaluate_semantic_ready_gates(
     ));
   }
 
-  let basis_checkpoint_path = holdout_preview
-    .basis_checkpoint_path
-    .clone()
-    .expect("basis checkpoint present");
+  let basis_checkpoint_path = holdout_preview.basis_checkpoint_path.clone().expect("basis checkpoint present");
   if !Path::new(&basis_checkpoint_path).is_file() {
     return Ok(blocked_outcome(
       HoldoutRenderQualityReason::CheckpointMissing,
@@ -405,12 +368,7 @@ fn evaluate_semantic_ready_gates(
   let holdout_screenshot_path = holdout_preview
     .holdout_screenshot_path
     .clone()
-    .or_else(|| {
-      holdout_preview
-        .holdout_frame
-        .as_ref()
-        .map(|witness| witness.screenshot_path.clone())
-    })
+    .or_else(|| holdout_preview.holdout_frame.as_ref().map(|witness| witness.screenshot_path.clone()))
     .filter(|path| !path.is_empty());
 
   let Some(holdout_screenshot_path) = holdout_screenshot_path else {
@@ -431,10 +389,7 @@ fn evaluate_semantic_ready_gates(
     ));
   }
 
-  let holdout_frame = holdout_preview
-    .holdout_frame
-    .clone()
-    .expect("holdout frame present");
+  let holdout_frame = holdout_preview.holdout_frame.clone().expect("holdout frame present");
   let spatial_frame = match load_holdout_spatial_frame(&holdout_frame.frame_json_path) {
     Ok(frame) => frame,
     Err(error) => {
@@ -469,18 +424,11 @@ fn finish_output(
   if outcome.verdict == HoldoutRenderQualityVerdict::MetricPartial {
     known_limits.insert(METRIC_PARTIAL_KNOWN_LIMIT.to_string());
   }
-  if outcome
-    .metrics
-    .as_ref()
-    .is_some_and(|metrics| metrics.psnr.is_none() && metrics.mse == Some(0.0))
-  {
+  if outcome.metrics.as_ref().is_some_and(|metrics| metrics.psnr.is_none() && metrics.mse == Some(0.0)) {
     known_limits.insert(PERFECT_MATCH_PSNR_KNOWN_LIMIT.to_string());
   }
 
-  let lineage = outcome
-    .lineage
-    .clone()
-    .or_else(|| holdout_preview_manifest.map(lineage_from_holdout_preview));
+  let lineage = outcome.lineage.clone().or_else(|| holdout_preview_manifest.map(lineage_from_holdout_preview));
 
   let (
     source_training_result_artifact_manifest_path,
@@ -512,9 +460,7 @@ fn finish_output(
     },
     |lineage| {
       (
-        lineage
-          .source_training_result_artifact_manifest_path
-          .clone(),
+        lineage.source_training_result_artifact_manifest_path.clone(),
         lineage.source_training_result_manifest_path.clone(),
         lineage.source_training_job_manifest_path.clone(),
         lineage.source_training_launch_plan_path.clone(),
@@ -539,14 +485,8 @@ fn finish_output(
   let manifest = TrainingResultHoldoutRenderQualityManifest {
     schema_version: TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
-    training_result_semantic_manifest_path: inputs
-      .training_result_semantic_manifest_path
-      .to_string_lossy()
-      .into_owned(),
-    holdout_preview_manifest_path: inputs
-      .holdout_preview_manifest_path
-      .to_string_lossy()
-      .into_owned(),
+    training_result_semantic_manifest_path: inputs.training_result_semantic_manifest_path.to_string_lossy().into_owned(),
+    holdout_preview_manifest_path: inputs.holdout_preview_manifest_path.to_string_lossy().into_owned(),
     source_training_result_artifact_manifest_path,
     source_training_result_manifest_path,
     source_training_job_manifest_path,
@@ -577,14 +517,10 @@ fn finish_output(
   let inspect_report = TrainingResultHoldoutRenderQualityInspectReport {
     schema_version: TRAINING_RESULT_HOLDOUT_RENDER_QUALITY_INSPECT_REPORT_SCHEMA_VERSION,
     generated_at_millis,
-    training_result_holdout_render_quality_manifest_path: manifest_path
-      .to_string_lossy()
-      .into_owned(),
+    training_result_holdout_render_quality_manifest_path: manifest_path.to_string_lossy().into_owned(),
     training_result_semantic_manifest_path: manifest.training_result_semantic_manifest_path.clone(),
     holdout_preview_manifest_path: manifest.holdout_preview_manifest_path.clone(),
-    source_training_result_artifact_manifest_path: manifest
-      .source_training_result_artifact_manifest_path
-      .clone(),
+    source_training_result_artifact_manifest_path: manifest.source_training_result_artifact_manifest_path.clone(),
     source_training_result_manifest_path: manifest.source_training_result_manifest_path.clone(),
     source_training_job_manifest_path: manifest.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: manifest.source_training_launch_plan_path.clone(),
@@ -614,16 +550,8 @@ fn finish_output(
     known_limits,
   };
 
-  write_json_file(
-    &manifest_path,
-    &manifest,
-    "MC-17 holdout render quality manifest",
-  )?;
-  write_json_file(
-    &inspect_report_path,
-    &inspect_report,
-    "MC-17 holdout render quality inspect report",
-  )?;
+  write_json_file(&manifest_path, &manifest, "MC-17 holdout render quality manifest")?;
+  write_json_file(&inspect_report_path, &inspect_report, "MC-17 holdout render quality inspect report")?;
 
   Ok(TrainingResultHoldoutRenderQualityOutput {
     output_dir: inputs.output_dir,
@@ -683,21 +611,13 @@ fn failed_outcome(
   }
 }
 
-fn lineage_from_holdout_preview(
-  holdout_preview: &TrainingResultHoldoutPreviewManifest,
-) -> LineageSnapshot {
+fn lineage_from_holdout_preview(holdout_preview: &TrainingResultHoldoutPreviewManifest) -> LineageSnapshot {
   LineageSnapshot {
-    source_training_result_artifact_manifest_path: holdout_preview
-      .source_training_result_artifact_manifest_path
-      .clone(),
-    source_training_result_manifest_path: holdout_preview
-      .source_training_result_manifest_path
-      .clone(),
+    source_training_result_artifact_manifest_path: holdout_preview.source_training_result_artifact_manifest_path.clone(),
+    source_training_result_manifest_path: holdout_preview.source_training_result_manifest_path.clone(),
     source_training_job_manifest_path: holdout_preview.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: holdout_preview.source_training_launch_plan_path.clone(),
-    source_training_package_manifest_path: holdout_preview
-      .source_training_package_manifest_path
-      .clone(),
+    source_training_package_manifest_path: holdout_preview.source_training_package_manifest_path.clone(),
     source_scene_packet_manifest_path: holdout_preview.source_scene_packet_manifest_path.clone(),
     source_bundle_manifest_paths: holdout_preview.source_bundle_manifest_paths.clone(),
     source_run_ids: holdout_preview.source_run_ids.clone(),
@@ -712,22 +632,14 @@ fn lineage_matches_semantic(
   semantic_manifest: &TrainingResultSemanticManifest,
   holdout_preview: &TrainingResultHoldoutPreviewManifest,
 ) -> bool {
-  semantic_manifest_path.to_string_lossy().into_owned()
-    == holdout_preview.training_result_semantic_manifest_path
-    && semantic_manifest.source_training_result_artifact_manifest_path
-      == holdout_preview.source_training_result_artifact_manifest_path
-    && semantic_manifest.source_training_result_manifest_path
-      == holdout_preview.source_training_result_manifest_path
-    && semantic_manifest.source_training_job_manifest_path
-      == holdout_preview.source_training_job_manifest_path
-    && semantic_manifest.source_training_launch_plan_path
-      == holdout_preview.source_training_launch_plan_path
-    && semantic_manifest.source_training_package_manifest_path
-      == holdout_preview.source_training_package_manifest_path
-    && semantic_manifest.source_scene_packet_manifest_path
-      == holdout_preview.source_scene_packet_manifest_path
-    && semantic_manifest.source_bundle_manifest_paths
-      == holdout_preview.source_bundle_manifest_paths
+  semantic_manifest_path.to_string_lossy().into_owned() == holdout_preview.training_result_semantic_manifest_path
+    && semantic_manifest.source_training_result_artifact_manifest_path == holdout_preview.source_training_result_artifact_manifest_path
+    && semantic_manifest.source_training_result_manifest_path == holdout_preview.source_training_result_manifest_path
+    && semantic_manifest.source_training_job_manifest_path == holdout_preview.source_training_job_manifest_path
+    && semantic_manifest.source_training_launch_plan_path == holdout_preview.source_training_launch_plan_path
+    && semantic_manifest.source_training_package_manifest_path == holdout_preview.source_training_package_manifest_path
+    && semantic_manifest.source_scene_packet_manifest_path == holdout_preview.source_scene_packet_manifest_path
+    && semantic_manifest.source_bundle_manifest_paths == holdout_preview.source_bundle_manifest_paths
     && semantic_manifest.source_run_ids == holdout_preview.source_run_ids
     && semantic_manifest.normalized_result_dir == holdout_preview.normalized_result_dir
     && semantic_manifest.trainer_backend == holdout_preview.trainer_backend
@@ -743,12 +655,8 @@ fn run_holdout_render_and_metrics(
   basis_checkpoint_path: &str,
   spatial_frame: &MinecraftSpatialFrame,
 ) -> TrainingResultHoldoutRenderQualityResult<HoldoutRenderQualityOutcome> {
-  let requested_rendered_image_path = inputs.output_dir.join(format!(
-    "rendered_holdout_frame_{:06}.png",
-    holdout_frame.frame_index
-  ));
-  let requested_rendered_image_path_string =
-    requested_rendered_image_path.to_string_lossy().into_owned();
+  let requested_rendered_image_path = inputs.output_dir.join(format!("rendered_holdout_frame_{:06}.png", holdout_frame.frame_index));
+  let requested_rendered_image_path_string = requested_rendered_image_path.to_string_lossy().into_owned();
 
   let request = HoldoutRenderQualityRequest {
     normalized_result_dir: semantic_manifest.normalized_result_dir.clone(),
@@ -787,9 +695,7 @@ fn run_holdout_render_and_metrics(
     ));
   }
 
-  let rendered_image_path = answer
-    .rendered_image_path
-    .unwrap_or(requested_rendered_image_path_string);
+  let rendered_image_path = answer.rendered_image_path.unwrap_or(requested_rendered_image_path_string);
 
   if !Path::new(&rendered_image_path).is_file() {
     return Ok(failed_outcome(
@@ -801,18 +707,10 @@ fn run_holdout_render_and_metrics(
     ));
   }
 
-  let source_image = image::open(holdout_screenshot_path).map_err(|error| {
-    format!(
-      "failed to decode holdout screenshot {}: {error}",
-      holdout_screenshot_path
-    )
-  })?;
-  let rendered_image = image::open(&rendered_image_path).map_err(|error| {
-    format!(
-      "failed to decode rendered holdout image {}: {error}",
-      rendered_image_path
-    )
-  })?;
+  let source_image = image::open(holdout_screenshot_path)
+    .map_err(|error| format!("failed to decode holdout screenshot {}: {error}", holdout_screenshot_path))?;
+  let rendered_image = image::open(&rendered_image_path)
+    .map_err(|error| format!("failed to decode rendered holdout image {}: {error}", rendered_image_path))?;
 
   let source_rgb = source_image.into_rgb8();
   let rendered_rgb = rendered_image.into_rgb8();
@@ -843,10 +741,7 @@ fn run_holdout_render_and_metrics(
       warnings,
     })
   } else {
-    warnings.insert(
-            "holdout screenshot and rendered image dimensions differ; MC-17 records metric_partial without resize"
-                .to_string(),
-        );
+    warnings.insert("holdout screenshot and rendered image dimensions differ; MC-17 records metric_partial without resize".to_string());
     Ok(HoldoutRenderQualityOutcome {
       status: HoldoutRenderQualityStatus::Ready,
       reason: None,
@@ -871,32 +766,17 @@ fn run_external_holdout_render_quality(
   request: &HoldoutRenderQualityRequest,
 ) -> TrainingResultHoldoutRenderQualityResult<HoldoutRenderQualityAnswer> {
   let mut command = Command::new("sh");
-  command
-    .arg("-lc")
-    .arg(command_text)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
+  command.arg("-lc").arg(command_text).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
-  let mut child = command
-    .spawn()
-    .map_err(|error| format!("failed to run MC-17 holdout render command: {error}"))?;
+  let mut child = command.spawn().map_err(|error| format!("failed to run MC-17 holdout render command: {error}"))?;
   {
-    let stdin = child
-      .stdin
-      .as_mut()
-      .ok_or_else(|| "failed to open stdin for MC-17 holdout render quality command".to_string())?;
-    serde_json::to_writer(&mut *stdin, request).map_err(|error| {
-      format!("failed to write MC-17 holdout render quality request JSON: {error}")
-    })?;
-    stdin.write_all(b"\n").map_err(|error| {
-      format!("failed to finish MC-17 holdout render quality request JSON: {error}")
-    })?;
+    let stdin = child.stdin.as_mut().ok_or_else(|| "failed to open stdin for MC-17 holdout render quality command".to_string())?;
+    serde_json::to_writer(&mut *stdin, request)
+      .map_err(|error| format!("failed to write MC-17 holdout render quality request JSON: {error}"))?;
+    stdin.write_all(b"\n").map_err(|error| format!("failed to finish MC-17 holdout render quality request JSON: {error}"))?;
   }
 
-  let output = child
-    .wait_with_output()
-    .map_err(|error| format!("failed to wait for MC-17 holdout render command: {error}"))?;
+  let output = child.wait_with_output().map_err(|error| format!("failed to wait for MC-17 holdout render command: {error}"))?;
 
   if !output.status.success() {
     return Err(format!(
@@ -911,13 +791,9 @@ fn run_external_holdout_render_quality(
     .map_err(|error| format!("failed to parse MC-17 holdout render command output: {error}"))
 }
 
-fn load_holdout_spatial_frame(
-  frame_json_path: &str,
-) -> TrainingResultHoldoutRenderQualityResult<MinecraftSpatialFrame> {
+fn load_holdout_spatial_frame(frame_json_path: &str) -> TrainingResultHoldoutRenderQualityResult<MinecraftSpatialFrame> {
   let frame_path = PathBuf::from(frame_json_path);
-  if let Ok(payload) =
-    read_json_file::<ScenePacketFramePayload>(&frame_path, "MC-7 scene packet frame")
-  {
+  if let Ok(payload) = read_json_file::<ScenePacketFramePayload>(&frame_path, "MC-7 scene packet frame") {
     return Ok(payload.spatial_frame);
   }
   read_json_file::<MinecraftSpatialFrame>(&frame_path, "MC-7 scene packet frame")
@@ -960,10 +836,7 @@ fn compute_rgb8_metrics(source: &RgbImage, rendered: &RgbImage) -> HoldoutRender
   }
 }
 
-fn read_json_file<T: DeserializeOwned>(
-  path: &Path,
-  label: &str,
-) -> TrainingResultHoldoutRenderQualityResult<T> {
+fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> TrainingResultHoldoutRenderQualityResult<T> {
   read_json_file_helper(path).map_err(|error| match error {
     JsonFileReadError::Open(error) => {
       format!("failed to open {label} {}: {error}", path.display())
@@ -974,11 +847,7 @@ fn read_json_file<T: DeserializeOwned>(
   })
 }
 
-fn write_json_file<T: Serialize>(
-  path: &Path,
-  value: &T,
-  label: &str,
-) -> TrainingResultHoldoutRenderQualityResult<()> {
+fn write_json_file<T: Serialize>(path: &Path, value: &T, label: &str) -> TrainingResultHoldoutRenderQualityResult<()> {
   write_json_file_helper(path, value, JsonWriteOptions::default()).map_err(|error| match error {
     JsonFileWriteError::CreateParent(error) | JsonFileWriteError::Write(error) => {
       format!("failed to write {label} {}: {error}", path.display())
@@ -993,12 +862,9 @@ mod tests {
   use crate::scene_packet::{ScenePacketCounts, ScenePacketFrameRecord, ScenePacketManifest};
   use crate::training_result::TrainingResultStatus;
   use crate::training_result_holdout_preview::{
-    HoldoutPreviewStatus, TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION,
-    TrainingResultHoldoutPreviewManifest,
+    HoldoutPreviewStatus, TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION, TrainingResultHoldoutPreviewManifest,
   };
-  use crate::training_result_semantic::{
-    TrainingResultSemanticManifest, TrainingResultSemanticStatus,
-  };
+  use crate::training_result_semantic::{TrainingResultSemanticManifest, TrainingResultSemanticStatus};
   use crate::types::{BlockFace, PlayerPose, RaycastHit, Vec3};
   use image::{ImageBuffer, Rgb};
   use tempfile::TempDir;
@@ -1039,18 +905,11 @@ mod tests {
   }
 
   fn write_png(path: &Path, width: u32, height: u32, fill: u8) {
-    let image: RgbImage = ImageBuffer::from_fn(width, height, |_x, _y| {
-      Rgb([fill, fill.saturating_add(1), 128])
-    });
+    let image: RgbImage = ImageBuffer::from_fn(width, height, |_x, _y| Rgb([fill, fill.saturating_add(1), 128]));
     image.save(path).expect("save png");
   }
 
-  fn write_semantic_manifest(
-    temp: &TempDir,
-    scene_packet_manifest_path: &Path,
-    normalized_dir: &Path,
-    config_exists: bool,
-  ) -> PathBuf {
+  fn write_semantic_manifest(temp: &TempDir, scene_packet_manifest_path: &Path, normalized_dir: &Path, config_exists: bool) -> PathBuf {
     let models_dir = normalized_dir.join("nerfstudio_models");
     fs::create_dir_all(&models_dir).expect("models dir");
     let config_path = normalized_dir.join("config.yml");
@@ -1145,19 +1004,9 @@ mod tests {
       known_limits: Vec::new(),
     };
     let scene_packet_manifest_path = scene_packet_dir.join("scene-packet.json");
-    write_json_file(
-      &scene_packet_manifest_path,
-      &scene_packet_manifest,
-      "scene packet fixture",
-    )
-    .expect("scene packet");
+    write_json_file(&scene_packet_manifest_path, &scene_packet_manifest, "scene packet fixture").expect("scene packet");
 
-    let semantic_manifest_path = write_semantic_manifest(
-      temp,
-      &scene_packet_manifest_path,
-      &normalized_dir,
-      include_config,
-    );
+    let semantic_manifest_path = write_semantic_manifest(temp, &scene_packet_manifest_path, &normalized_dir, include_config);
 
     let checkpoint_path = normalized_dir.join("nerfstudio_models/step-000001.ckpt");
     if include_checkpoint {
@@ -1203,9 +1052,7 @@ mod tests {
       } else {
         None
       },
-      holdout_screenshot_path: if holdout_status == HoldoutPreviewStatus::Ready
-        && include_screenshot
-      {
+      holdout_screenshot_path: if holdout_status == HoldoutPreviewStatus::Ready && include_screenshot {
         Some(holdout_screenshot_path.to_string_lossy().into_owned())
       } else {
         None
@@ -1217,12 +1064,7 @@ mod tests {
     };
 
     let holdout_preview_manifest_path = temp.path().join("holdout-preview.json");
-    write_json_file(
-      &holdout_preview_manifest_path,
-      &holdout_preview_manifest,
-      "holdout preview fixture",
-    )
-    .expect("holdout preview");
+    write_json_file(&holdout_preview_manifest_path, &holdout_preview_manifest, "holdout preview fixture").expect("holdout preview");
 
     HoldoutFixture {
       semantic_manifest_path,
@@ -1266,14 +1108,8 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     .expect("blocked invalid mc16");
 
     assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Blocked);
-    assert_eq!(
-      output.manifest.reason,
-      Some(HoldoutRenderQualityReason::HoldoutPreviewUnreadable)
-    );
-    assert_eq!(
-      output.manifest.verdict,
-      HoldoutRenderQualityVerdict::Blocked
-    );
+    assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::HoldoutPreviewUnreadable));
+    assert_eq!(output.manifest.verdict, HoldoutRenderQualityVerdict::Blocked);
     assert!(output.manifest_path.is_file());
     assert!(output.inspect_report_path.is_file());
   }
@@ -1281,14 +1117,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   #[test]
   fn blocked_lineage_mismatch_records_quality_evidence() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(
-      &temp,
-      HoldoutPreviewStatus::Ready,
-      true,
-      true,
-      true,
-      Some("-mismatch"),
-    );
+    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, Some("-mismatch"));
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1299,17 +1128,13 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     .expect("blocked lineage mismatch");
 
     assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Blocked);
-    assert_eq!(
-      output.manifest.reason,
-      Some(HoldoutRenderQualityReason::LineageMismatch)
-    );
+    assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::LineageMismatch));
   }
 
   #[test]
   fn blocked_missing_checkpoint_records_quality_evidence() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture =
-      write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, false, true, true, None);
+    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, false, true, true, None);
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1320,10 +1145,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     .expect("blocked missing checkpoint");
 
     assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Blocked);
-    assert_eq!(
-      output.manifest.reason,
-      Some(HoldoutRenderQualityReason::CheckpointMissing)
-    );
+    assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::CheckpointMissing));
   }
 
   #[test]
@@ -1340,10 +1162,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     .expect("failed render command");
 
     assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Failed);
-    assert_eq!(
-      output.manifest.reason,
-      Some(HoldoutRenderQualityReason::HoldoutRenderCommandFailed)
-    );
+    assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::HoldoutRenderCommandFailed));
     assert_eq!(output.manifest.verdict, HoldoutRenderQualityVerdict::Failed);
   }
 
@@ -1361,10 +1180,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     .expect("failed bad stdout");
 
     assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Failed);
-    assert_eq!(
-      output.manifest.reason,
-      Some(HoldoutRenderQualityReason::HoldoutRenderCommandFailed)
-    );
+    assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::HoldoutRenderCommandFailed));
   }
 
   #[test]
@@ -1383,19 +1199,10 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     .expect("metric partial");
 
     assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Ready);
-    assert_eq!(
-      output.manifest.verdict,
-      HoldoutRenderQualityVerdict::MetricPartial
-    );
+    assert_eq!(output.manifest.verdict, HoldoutRenderQualityVerdict::MetricPartial);
     assert!(!output.manifest.image_size_match);
     assert!(output.manifest.metrics.is_none());
-    assert!(
-      output
-        .manifest
-        .rendered_image_path
-        .as_deref()
-        .is_some_and(|path| Path::new(path).is_file())
-    );
+    assert!(output.manifest.rendered_image_path.as_deref().is_some_and(|path| Path::new(path).is_file()));
   }
 
   #[test]
@@ -1412,10 +1219,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     .expect("measured only");
 
     assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Ready);
-    assert_eq!(
-      output.manifest.verdict,
-      HoldoutRenderQualityVerdict::MeasuredOnly
-    );
+    assert_eq!(output.manifest.verdict, HoldoutRenderQualityVerdict::MeasuredOnly);
     assert!(output.manifest.image_size_match);
     let metrics = output.manifest.metrics.expect("metrics");
     assert_eq!(metrics.l1_mean, Some(0.0));
@@ -1429,8 +1233,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   #[test]
   fn blocked_mc16_not_ready_skips_render_command() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture =
-      write_holdout_fixture(&temp, HoldoutPreviewStatus::Blocked, true, true, true, None);
+    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Blocked, true, true, true, None);
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1441,10 +1244,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     .expect("blocked mc16");
 
     assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Blocked);
-    assert_eq!(
-      output.manifest.reason,
-      Some(HoldoutRenderQualityReason::HoldoutPreviewNotReady)
-    );
+    assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::HoldoutPreviewNotReady));
     assert!(output.manifest.rendered_image_path.is_none());
   }
 
@@ -1452,20 +1252,11 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   fn lineage_matches_semantic_compares_manifest_path_and_business_keys() {
     let temp = TempDir::new().expect("tempdir");
     let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, None);
-    let semantic =
-      read_json_file::<TrainingResultSemanticManifest>(&fixture.semantic_manifest_path, "semantic")
-        .expect("semantic");
-    let holdout = read_json_file::<TrainingResultHoldoutPreviewManifest>(
-      &fixture.holdout_preview_manifest_path,
-      "holdout",
-    )
-    .expect("holdout");
+    let semantic = read_json_file::<TrainingResultSemanticManifest>(&fixture.semantic_manifest_path, "semantic").expect("semantic");
+    let holdout =
+      read_json_file::<TrainingResultHoldoutPreviewManifest>(&fixture.holdout_preview_manifest_path, "holdout").expect("holdout");
 
-    assert!(lineage_matches_semantic(
-      &fixture.semantic_manifest_path,
-      &semantic,
-      &holdout
-    ));
+    assert!(lineage_matches_semantic(&fixture.semantic_manifest_path, &semantic, &holdout));
   }
 
   #[test]
@@ -1487,10 +1278,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     let inspect_text = fs::read_to_string(&output.inspect_report_path).expect("inspect bytes");
     assert!(!manifest_text.contains(secret));
     assert!(!inspect_text.contains(secret));
-    assert_eq!(
-      output.manifest.render_backend,
-      HoldoutRenderQualityBackend::ExternalCommand
-    );
+    assert_eq!(output.manifest.render_backend, HoldoutRenderQualityBackend::ExternalCommand);
     assert!(manifest_text.contains("\"render_backend\": \"external_command\""));
   }
 }

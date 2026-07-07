@@ -6,9 +6,7 @@
 //!
 //! For the camelCase HTTP write API, see [`super::wire::WireUpdate`].
 
-use crate::trace::{
-  ArtifactRecordV1Alpha1, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, SpanRecordV1Alpha1,
-};
+use crate::trace::{ArtifactRecordV1Alpha1, EventRecordV1Alpha1, RunId, RunRecordV1Alpha1, SpanRecordV1Alpha1};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -54,10 +52,7 @@ impl RunUpdate {
 
 #[cfg(test)]
 mod tests {
-  use crate::trace::{
-    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SpanId, TraceId, TraceState,
-    TraceStatusCode,
-  };
+  use crate::trace::{RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SpanId, TraceId, TraceState, TraceStatusCode};
 
   use super::RunUpdate;
 

@@ -1,9 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use auv_cli_invoke::{
-  ArgSpec, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, arg::FIXTURE_DIR,
-};
+use auv_cli_invoke::{ArgSpec, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, arg::FIXTURE_DIR};
 
 use crate::commands::playlist::PlaylistSelectResult;
 use crate::recording::{NETEASE_PLAYLIST_SELECT_RESULT_ROLE, persist_playlist_select_proof};
@@ -21,32 +19,19 @@ pub const SELECT_PROOF_ARGS: &[ArgSpec] = &[
   },
 ];
 
-pub fn build_select_result_from_fixture_dir(
-  fixture_dir: &Path,
-) -> Result<PlaylistSelectResult, String> {
+pub fn build_select_result_from_fixture_dir(fixture_dir: &Path) -> Result<PlaylistSelectResult, String> {
   if !fixture_dir.is_dir() {
-    return Err(format!(
-      "fixture directory does not exist: {}",
-      fixture_dir.display()
-    ));
+    return Err(format!("fixture directory does not exist: {}", fixture_dir.display()));
   }
 
   let fixture_path = fixture_dir.join(SELECT_RESULT_FILE);
   if !fixture_path.is_file() {
-    return Err(format!(
-      "fixture file missing at {}",
-      fixture_path.display()
-    ));
+    return Err(format!("fixture file missing at {}", fixture_path.display()));
   }
 
-  let bytes = fs::read(&fixture_path)
-    .map_err(|error| format!("failed to read {}: {error}", fixture_path.display()))?;
-  let mut result: PlaylistSelectResult = serde_json::from_slice(&bytes).map_err(|error| {
-    format!(
-      "failed to parse {} as PlaylistSelectResult: {error}",
-      fixture_path.display()
-    )
-  })?;
+  let bytes = fs::read(&fixture_path).map_err(|error| format!("failed to read {}: {error}", fixture_path.display()))?;
+  let mut result: PlaylistSelectResult = serde_json::from_slice(&bytes)
+    .map_err(|error| format!("failed to parse {} as PlaylistSelectResult: {error}", fixture_path.display()))?;
 
   if let Some(query) = read_optional_query_fixture(fixture_dir)? {
     result.query = query;
@@ -60,10 +45,8 @@ fn read_optional_query_fixture(fixture_dir: &Path) -> Result<Option<String>, Str
   if !query_path.is_file() {
     return Ok(None);
   }
-  let query = fs::read_to_string(&query_path)
-    .map_err(|error| format!("failed to read {}: {error}", query_path.display()))?
-    .trim()
-    .to_string();
+  let query =
+    fs::read_to_string(&query_path).map_err(|error| format!("failed to read {}: {error}", query_path.display()))?.trim().to_string();
   if query.is_empty() {
     return Err(format!("{} must not be empty", query_path.display()));
   }
@@ -78,48 +61,26 @@ pub fn select_proof_handler(input: InvokeCommandInput<'_>) -> InvokeCommandResul
   let preview = build_select_result_from_fixture_dir(fixture_path)?;
 
   if input.dry_run {
-    let mut output = InvokeCommandOutput::new(format!(
-      "validated hermetic select proof fixture at {}",
-      fixture_dir
-    ));
+    let mut output = InvokeCommandOutput::new(format!("validated hermetic select proof fixture at {}", fixture_dir));
     output.verification = Some("dry-run; no store proof written".to_string());
-    output
-      .known_limits
-      .push("hermetic_fixture_only".to_string());
-    output
-      .signals
-      .insert("fixture_dir".to_string(), fixture_dir.to_string());
-    output
-      .signals
-      .insert("query".to_string(), preview.query.clone());
+    output.known_limits.push("hermetic_fixture_only".to_string());
+    output.signals.insert("fixture_dir".to_string(), fixture_dir.to_string());
+    output.signals.insert("query".to_string(), preview.query.clone());
     return Ok(output);
   }
 
-  let run_id =
-    persist_playlist_select_proof(Path::new(store_root), None, None, |persisted_run_id| {
-      let mut result = preview.clone();
-      result.run_id = Some(persisted_run_id.to_string());
-      serde_json::to_vec_pretty(&result)
-        .map_err(|error| format!("failed to serialize playlist select result: {error}"))
-    })?;
+  let run_id = persist_playlist_select_proof(Path::new(store_root), None, None, |persisted_run_id| {
+    let mut result = preview.clone();
+    result.run_id = Some(persisted_run_id.to_string());
+    serde_json::to_vec_pretty(&result).map_err(|error| format!("failed to serialize playlist select result: {error}"))
+  })?;
 
-  let mut output = InvokeCommandOutput::new(format!(
-    "persisted hermetic select proof run {run_id} under {}",
-    store_root
-  ));
-  output.verification =
-    Some("hermetic fixture proof only; no live scan or semantic success claim".to_string());
-  output
-    .known_limits
-    .push("hermetic_fixture_only".to_string());
+  let mut output = InvokeCommandOutput::new(format!("persisted hermetic select proof run {run_id} under {}", store_root));
+  output.verification = Some("hermetic fixture proof only; no live scan or semantic success claim".to_string());
+  output.known_limits.push("hermetic_fixture_only".to_string());
   output.signals.insert("run_id".to_string(), run_id.clone());
-  output
-    .signals
-    .insert("store_root".to_string(), store_root.to_string());
-  output.signals.insert(
-    "artifact_role".to_string(),
-    NETEASE_PLAYLIST_SELECT_RESULT_ROLE.to_string(),
-  );
+  output.signals.insert("store_root".to_string(), store_root.to_string());
+  output.signals.insert("artifact_role".to_string(), NETEASE_PLAYLIST_SELECT_RESULT_ROLE.to_string());
   Ok(output)
 }
 
@@ -153,30 +114,19 @@ mod tests {
     let result = build_select_result_from_fixture_dir(&fixture_dir).expect("fixture should parse");
     assert_eq!(result.command, "playlist.select");
     assert_eq!(result.query, "hermetic-fixture");
-    assert!(
-      result
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("hermetic"))
-    );
+    assert!(result.known_limits.iter().any(|limit| limit.contains("hermetic")));
   }
 
   #[test]
   fn netease_playlist_select_proof_is_registered_in_netease_registry() {
     let registry = netease_registry();
-    let command = registry
-      .resolve(SELECT_PROOF_COMMAND_ID)
-      .expect("selectProof should resolve");
+    let command = registry.resolve(SELECT_PROOF_COMMAND_ID).expect("selectProof should resolve");
     assert_eq!(command.id, SELECT_PROOF_COMMAND_ID);
   }
 
   #[test]
   fn netease_playlist_select_proof_not_in_default_registry() {
-    assert!(
-      default_registry()
-        .resolve(SELECT_PROOF_COMMAND_ID)
-        .is_none()
-    );
+    assert!(default_registry().resolve(SELECT_PROOF_COMMAND_ID).is_none());
   }
 
   #[test]
@@ -186,10 +136,7 @@ mod tests {
     let _ = fs::remove_dir_all(&root);
 
     let mut inputs = BTreeMap::new();
-    inputs.insert(
-      "fixture-dir".to_string(),
-      hermetic_select_proof_fixture_dir().display().to_string(),
-    );
+    inputs.insert("fixture-dir".to_string(), hermetic_select_proof_fixture_dir().display().to_string());
     inputs.insert("store-root".to_string(), store_root.display().to_string());
 
     let registry = netease_registry();
@@ -206,12 +153,7 @@ mod tests {
     let run_id = output.signals.get("run_id").expect("run_id signal");
     let store = LocalStore::new(store_root.clone()).expect("store");
     let run = store.read_run(run_id).expect("run");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE)
-    );
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE));
 
     let _ = fs::remove_dir_all(&root);
   }
@@ -223,10 +165,7 @@ mod tests {
     let _ = fs::remove_dir_all(&root);
 
     let mut inputs = BTreeMap::new();
-    inputs.insert(
-      "fixture-dir".to_string(),
-      hermetic_select_proof_fixture_dir().display().to_string(),
-    );
+    inputs.insert("fixture-dir".to_string(), hermetic_select_proof_fixture_dir().display().to_string());
     inputs.insert("store-root".to_string(), store_root.display().to_string());
 
     let registry = netease_registry();
@@ -244,11 +183,7 @@ mod tests {
     let runs = store.list_runs().expect("runs");
     assert_eq!(runs.len(), 1);
     let run = store.read_run(runs[0].run_id.as_str()).expect("run");
-    let root_span = run
-      .spans
-      .iter()
-      .find(|span| span.parent_span_id.is_none())
-      .expect("root span");
+    let root_span = run.spans.iter().find(|span| span.parent_span_id.is_none()).expect("root span");
     assert_eq!(root_span.name, "auv.netease.playlist.select");
 
     let _ = fs::remove_dir_all(&root);
@@ -257,10 +192,7 @@ mod tests {
   #[test]
   fn select_proof_requires_store_root() {
     let mut inputs = BTreeMap::new();
-    inputs.insert(
-      "fixture-dir".to_string(),
-      hermetic_select_proof_fixture_dir().display().to_string(),
-    );
+    inputs.insert("fixture-dir".to_string(), hermetic_select_proof_fixture_dir().display().to_string());
 
     let registry = netease_registry();
     let command = registry.resolve(SELECT_PROOF_COMMAND_ID).expect("command");

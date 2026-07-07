@@ -20,10 +20,7 @@ pub struct MemoryWriteInput<'a> {
   pub clean: bool,
 }
 
-pub fn try_build_memory(
-  input: MemoryWriteInput<'_>,
-  reconstruction: &crate::ViewReconstructionRecord,
-) -> Option<super::ViewMemory> {
+pub fn try_build_memory(input: MemoryWriteInput<'_>, reconstruction: &crate::ViewReconstructionRecord) -> Option<super::ViewMemory> {
   if !input.clean {
     return None;
   }

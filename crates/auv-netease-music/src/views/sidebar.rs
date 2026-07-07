@@ -2,8 +2,7 @@ use auv_view::{Confidence, normalize_identity};
 use serde::{Deserialize, Serialize};
 
 use crate::views::query_match::{
-  PlaylistLabelMatchTier, PlaylistQueryMatchMode, PlaylistQueryResolution,
-  playlist_label_match_tier, resolve_playlist_query_from_labels,
+  PlaylistLabelMatchTier, PlaylistQueryMatchMode, PlaylistQueryResolution, playlist_label_match_tier, resolve_playlist_query_from_labels,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,12 +116,11 @@ impl SidebarView {
   /// Build a sidebar view from reconstructed sidebar data.
   pub fn from_projection(projection: PlaylistSidebarProjection) -> Self {
     let playlist_lookup = playlist_lookup(&projection);
-    let state =
-      if projection.sections.iter().any(is_known_sidebar_section) || !playlist_lookup.is_empty() {
-        SidebarState::Present
-      } else {
-        SidebarState::Unknown
-      };
+    let state = if projection.sections.iter().any(is_known_sidebar_section) || !playlist_lookup.is_empty() {
+      SidebarState::Present
+    } else {
+      SidebarState::Unknown
+    };
 
     Self {
       state,
@@ -170,13 +168,7 @@ impl SidebarView {
 
     all_refs
       .into_iter()
-      .filter(|playlist| {
-        playlist_label_matches_resolution(
-          &normalize_identity(&playlist.item.label),
-          &normalized_query,
-          resolution,
-        )
-      })
+      .filter(|playlist| playlist_label_matches_resolution(&normalize_identity(&playlist.item.label), &normalized_query, resolution))
       .collect()
   }
 
@@ -193,20 +185,11 @@ impl SidebarView {
   }
 
   fn resolve_query(refs: &[PlaylistRef<'_>], keyword: &str) -> (PlaylistQueryResolution, String) {
-    let labels: Vec<&str> = refs
-      .iter()
-      .map(|playlist| playlist.item.label.as_str())
-      .collect();
-    (
-      resolve_playlist_query_from_labels(&labels, keyword),
-      normalize_identity(keyword),
-    )
+    let labels: Vec<&str> = refs.iter().map(|playlist| playlist.item.label.as_str()).collect();
+    (resolve_playlist_query_from_labels(&labels, keyword), normalize_identity(keyword))
   }
 
-  fn collect_playlist_refs<'a>(
-    &self,
-    projection: &'a PlaylistSidebarProjection,
-  ) -> Vec<PlaylistRef<'a>> {
+  fn collect_playlist_refs<'a>(&self, projection: &'a PlaylistSidebarProjection) -> Vec<PlaylistRef<'a>> {
     self
       .playlist_lookup
       .iter()
@@ -219,11 +202,7 @@ impl SidebarView {
   }
 }
 
-fn playlist_label_matches_resolution(
-  normalized_label: &str,
-  normalized_query: &str,
-  resolution: PlaylistQueryResolution,
-) -> bool {
+fn playlist_label_matches_resolution(normalized_label: &str, normalized_query: &str, resolution: PlaylistQueryResolution) -> bool {
   let tier = playlist_label_match_tier(normalized_label, normalized_query);
   match resolution {
     PlaylistQueryResolution::Unique {
@@ -232,9 +211,7 @@ fn playlist_label_matches_resolution(
     PlaylistQueryResolution::Unique {
       mode: PlaylistQueryMatchMode::Contains,
     } => tier == PlaylistLabelMatchTier::Contains,
-    PlaylistQueryResolution::Ambiguous => {
-      tier == PlaylistLabelMatchTier::Exact || tier == PlaylistLabelMatchTier::Contains
-    }
+    PlaylistQueryResolution::Ambiguous => tier == PlaylistLabelMatchTier::Exact || tier == PlaylistLabelMatchTier::Contains,
     PlaylistQueryResolution::NotFound => false,
   }
 }
@@ -253,29 +230,19 @@ pub struct PlaylistRef<'a> {
 }
 
 fn playlist_lookup(projection: &PlaylistSidebarProjection) -> Vec<PlaylistLookupEntry> {
-  let has_playlist_collection = projection
-    .sections
-    .iter()
-    .any(|section| is_playlist_collection(section.kind));
+  let has_playlist_collection = projection.sections.iter().any(|section| is_playlist_collection(section.kind));
 
   projection
     .sections
     .iter()
     .enumerate()
-    .filter(|(_, section)| {
-      is_playlist_collection(section.kind)
-        || (!has_playlist_collection && section.kind == SidebarSectionKind::Unknown)
-    })
+    .filter(|(_, section)| is_playlist_collection(section.kind) || (!has_playlist_collection && section.kind == SidebarSectionKind::Unknown))
     .flat_map(|(section_index, section)| {
-      section
-        .items
-        .iter()
-        .enumerate()
-        .map(move |(item_index, item)| PlaylistLookupEntry {
-          section_index,
-          item_index,
-          normalized_label: normalize_identity(&item.label),
-        })
+      section.items.iter().enumerate().map(move |(item_index, item)| PlaylistLookupEntry {
+        section_index,
+        item_index,
+        normalized_label: normalize_identity(&item.label),
+      })
     })
     .collect()
 }
@@ -285,10 +252,7 @@ fn is_known_sidebar_section(section: &SidebarSection) -> bool {
 }
 
 fn is_playlist_collection(kind: SidebarSectionKind) -> bool {
-  matches!(
-    kind,
-    SidebarSectionKind::MyPlaylists | SidebarSectionKind::FavoritePlaylists
-  )
+  matches!(kind, SidebarSectionKind::MyPlaylists | SidebarSectionKind::FavoritePlaylists)
 }
 
 fn normalize_section_label(label: &str) -> String {
@@ -318,10 +282,7 @@ mod tests {
 
   #[test]
   fn exists_when_projection_has_known_sidebar_playlist_section() {
-    let view = SidebarView::from_projection(projection(vec![playlist_section(
-      SidebarSectionKind::MyPlaylists,
-      vec![],
-    )]));
+    let view = SidebarView::from_projection(projection(vec![playlist_section(SidebarSectionKind::MyPlaylists, vec![])]));
 
     assert_eq!(view.state(), SidebarState::Present);
     assert!(view.exists());
@@ -374,9 +335,7 @@ mod tests {
       )],
     }]));
 
-    let item = view
-      .find_playlist("future garage")
-      .expect("unassigned playlist row should match");
+    let item = view.find_playlist("future garage").expect("unassigned playlist row should match");
 
     assert_eq!(view.state(), SidebarState::Present);
     assert!(view.exists());

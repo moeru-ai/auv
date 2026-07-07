@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use auv_file::{JsonFileWriteError, JsonWriteOptions, write_json_file as write_json_file_helper};
 use serde::{Deserialize, Serialize};
 
-use crate::card_detection_producer::{
-  LoadedDetectionBundle, load_detection_bundle, resolve_bundle_manifest_path, total_detection_count,
-};
+use crate::card_detection_producer::{LoadedDetectionBundle, load_detection_bundle, resolve_bundle_manifest_path, total_detection_count};
 
 pub type CardDetectionSemanticValidationResult<T> = Result<T, String>;
 
@@ -92,12 +90,7 @@ impl CardDetectionSemanticReason {
 pub fn validate_card_detection_semantic(
   inputs: CardDetectionSemanticValidationInputs,
 ) -> CardDetectionSemanticValidationResult<CardDetectionSemanticValidationOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
   let manifest_path = resolve_bundle_manifest_path(&inputs.bundle_input);
@@ -174,10 +167,7 @@ struct SemanticGateEvaluation {
   detection_sets_non_empty: bool,
 }
 
-fn evaluate_semantic_gate(
-  bundle_input: &Path,
-  warnings: &mut BTreeSet<String>,
-) -> SemanticGateEvaluation {
+fn evaluate_semantic_gate(bundle_input: &Path, warnings: &mut BTreeSet<String>) -> SemanticGateEvaluation {
   let manifest_path = resolve_bundle_manifest_path(bundle_input);
   if !manifest_path.is_file() {
     return SemanticGateEvaluation {
@@ -263,10 +253,7 @@ mod tests {
       output_dir: temp.path().join("semantic"),
     })
     .expect("semantic");
-    assert_eq!(
-      output.manifest.semantic_status,
-      CardDetectionSemanticStatus::Ready
-    );
+    assert_eq!(output.manifest.semantic_status, CardDetectionSemanticStatus::Ready);
     assert!(output.manifest_path.exists());
   }
 
@@ -278,14 +265,8 @@ mod tests {
       output_dir: temp.path().join("semantic"),
     })
     .expect("semantic");
-    assert_eq!(
-      output.manifest.semantic_status,
-      CardDetectionSemanticStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.semantic_reason,
-      Some(CardDetectionSemanticReason::MissingDetectionBundle)
-    );
+    assert_eq!(output.manifest.semantic_status, CardDetectionSemanticStatus::Blocked);
+    assert_eq!(output.manifest.semantic_reason, Some(CardDetectionSemanticReason::MissingDetectionBundle));
   }
 
   #[test]
@@ -297,14 +278,8 @@ mod tests {
       output_dir: temp.path().join("semantic"),
     })
     .expect("semantic");
-    assert_eq!(
-      output.manifest.semantic_status,
-      CardDetectionSemanticStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.semantic_reason,
-      Some(CardDetectionSemanticReason::EmptyDetections)
-    );
+    assert_eq!(output.manifest.semantic_status, CardDetectionSemanticStatus::Blocked);
+    assert_eq!(output.manifest.semantic_reason, Some(CardDetectionSemanticReason::EmptyDetections));
   }
 
   #[test]
@@ -316,13 +291,7 @@ mod tests {
       output_dir: temp.path().join("semantic"),
     })
     .expect("semantic");
-    assert_eq!(
-      output.manifest.semantic_status,
-      CardDetectionSemanticStatus::Failed
-    );
-    assert_eq!(
-      output.manifest.semantic_reason,
-      Some(CardDetectionSemanticReason::BundleParseFailed)
-    );
+    assert_eq!(output.manifest.semantic_status, CardDetectionSemanticStatus::Failed);
+    assert_eq!(output.manifest.semantic_reason, Some(CardDetectionSemanticReason::BundleParseFailed));
   }
 }

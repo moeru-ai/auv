@@ -4,9 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::{
   app::query_local_library_apps,
-  library::{
-    LibraryDiagnostic, LibraryQuery, LibrarySource, LibraryStatus, SteamError, resolve_scope,
-  },
+  library::{LibraryDiagnostic, LibraryQuery, LibrarySource, LibraryStatus, SteamError, resolve_scope},
   output::{build_library_ls_json_output, render_library_summary},
 };
 
@@ -244,10 +242,8 @@ mod tests {
       source: LibrarySource::Auto,
     };
 
-    let shared_result =
-      query_local_library_apps(query.clone()).expect_err("owned status should fail");
-    let scoped_result =
-      resolve_scope(&query).expect_err("owned status should fail before discovery");
+    let shared_result = query_local_library_apps(query.clone()).expect_err("owned status should fail");
+    let scoped_result = resolve_scope(&query).expect_err("owned status should fail before discovery");
 
     assert_eq!(shared_result.code, scoped_result.code);
     assert_eq!(shared_result.message, scoped_result.message);

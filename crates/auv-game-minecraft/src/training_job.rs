@@ -38,11 +38,7 @@ impl TrainingJobEnvironment {
     }
   }
 
-  pub fn with_values(
-    submit_endpoint: Option<String>,
-    submit_token: Option<String>,
-    submit_command: Option<String>,
-  ) -> Self {
+  pub fn with_values(submit_endpoint: Option<String>, submit_token: Option<String>, submit_command: Option<String>) -> Self {
     Self {
       submit_endpoint,
       submit_token,
@@ -226,24 +222,15 @@ impl TrainingLaunchJobBlocker {
   }
 }
 
-pub fn launch_3dgs_training_job(
-  inputs: TrainingLaunchJobInputs,
-) -> TrainingJobResult<TrainingLaunchJobOutput> {
+pub fn launch_3dgs_training_job(inputs: TrainingLaunchJobInputs) -> TrainingJobResult<TrainingLaunchJobOutput> {
   launch_3dgs_training_job_with_submit(inputs, default_submit_job)
 }
 
-fn launch_3dgs_training_job_with_submit<F>(
-  inputs: TrainingLaunchJobInputs,
-  submit: F,
-) -> TrainingJobResult<TrainingLaunchJobOutput>
+fn launch_3dgs_training_job_with_submit<F>(inputs: TrainingLaunchJobInputs, submit: F) -> TrainingJobResult<TrainingLaunchJobOutput>
 where
   F: FnOnce(&TrainingLaunchJobRequest) -> TrainingLaunchJobSubmission,
 {
-  launch_3dgs_training_job_with_submit_and_env(
-    inputs,
-    submit,
-    TrainingJobEnvironment::from_process(),
-  )
+  launch_3dgs_training_job_with_submit_and_env(inputs, submit, TrainingJobEnvironment::from_process())
 }
 
 pub fn launch_3dgs_training_job_with_environment(
@@ -261,43 +248,25 @@ fn launch_3dgs_training_job_with_submit_and_env<F>(
 where
   F: FnOnce(&TrainingLaunchJobRequest) -> TrainingLaunchJobSubmission,
 {
-  let launch_plan = read_json_file::<TrainingLaunchPlanManifest>(
-    &inputs.training_launch_plan_path,
-    "MC-7 D5 training launch plan",
-  )?;
-  let training_package_manifest_path =
-    PathBuf::from(&launch_plan.source_training_package_manifest_path);
-  let training_package_dir = training_package_manifest_path.parent().ok_or_else(|| {
-    format!(
-      "MC-7 D5 training package manifest {} has no parent directory",
-      training_package_manifest_path.display()
-    )
-  })?;
-  let training_package_inspect_report_path =
-    PathBuf::from(&launch_plan.source_training_package_inspect_report_path);
-  let training_package_inspect_report = read_json_file::<TrainingPackageInspectReport>(
-    &training_package_inspect_report_path,
-    "MC-7 D5 training package inspect report",
-  )?;
+  let launch_plan = read_json_file::<TrainingLaunchPlanManifest>(&inputs.training_launch_plan_path, "MC-7 D5 training launch plan")?;
+  let training_package_manifest_path = PathBuf::from(&launch_plan.source_training_package_manifest_path);
+  let training_package_dir = training_package_manifest_path
+    .parent()
+    .ok_or_else(|| format!("MC-7 D5 training package manifest {} has no parent directory", training_package_manifest_path.display()))?;
+  let training_package_inspect_report_path = PathBuf::from(&launch_plan.source_training_package_inspect_report_path);
+  let training_package_inspect_report =
+    read_json_file::<TrainingPackageInspectReport>(&training_package_inspect_report_path, "MC-7 D5 training package inspect report")?;
 
   let submit_endpoint = env.submit_endpoint;
   let submit_token = env.submit_token;
-  let submit_command = env.submit_command.unwrap_or_else(|| {
-    format!(
-      "remote-submit --endpoint <configured> --plan {}",
-      sh_quote(&inputs.training_launch_plan_path)
-    )
-  });
+  let submit_command = env
+    .submit_command
+    .unwrap_or_else(|| format!("remote-submit --endpoint <configured> --plan {}", sh_quote(&inputs.training_launch_plan_path)));
 
   let training_data_dir = training_package_dir.join("compat/nerfstudio");
-  let transforms_path = launch_plan
-    .transforms_path
-    .as_ref()
-    .map(|path| training_package_dir.join(path));
+  let transforms_path = launch_plan.transforms_path.as_ref().map(|path| training_package_dir.join(path));
   let export_report_path = training_data_dir.join("export_report.json");
-  let job_submission_endpoint = submit_endpoint
-    .clone()
-    .unwrap_or_else(|| "unconfigured".to_string());
+  let job_submission_endpoint = submit_endpoint.clone().unwrap_or_else(|| "unconfigured".to_string());
 
   let mut warnings = BTreeSet::new();
   warnings.extend(launch_plan.known_limits.iter().cloned());
@@ -306,13 +275,10 @@ where
   let mut known_limits = BTreeSet::new();
   known_limits.extend(launch_plan.known_limits.iter().cloned());
   known_limits.extend(training_package_inspect_report.known_limits.iter().cloned());
+  known_limits
+    .insert("MC-7 D6 is a remote job envelope only; it does not execute training locally or consume trained splat outputs".to_string());
   known_limits.insert(
-    "MC-7 D6 is a remote job envelope only; it does not execute training locally or consume trained splat outputs"
-      .to_string(),
-  );
-  known_limits.insert(
-    "MC-9 D1 binds this training job lane to one provider contract; multi-provider expansion is deferred by owner approval"
-      .to_string(),
+    "MC-9 D1 binds this training job lane to one provider contract; multi-provider expansion is deferred by owner approval".to_string(),
   );
 
   let blocker = if launch_plan.compatibility_view_name != "nerfstudio" {
@@ -326,9 +292,7 @@ where
     Some(TrainingLaunchJobBlocker::MissingConfiguration)
   } else if submit_token.is_none() {
     Some(TrainingLaunchJobBlocker::MissingAuthentication)
-  } else if !export_report_path.is_file()
-    || transforms_path.as_ref().is_some_and(|path| !path.is_file())
-  {
+  } else if !export_report_path.is_file() || transforms_path.as_ref().is_some_and(|path| !path.is_file()) {
     Some(TrainingLaunchJobBlocker::IncompleteLaunchPlan)
   } else {
     None
@@ -356,28 +320,18 @@ where
     .unwrap_or_else(|| submit(&request));
 
   let generated_at_millis = auv_tracing_driver::now_millis();
-  let accepted_by_provider =
-    submission.status != TrainingLaunchJobStatus::Blocked && submission.job_id.is_some();
+  let accepted_by_provider = submission.status != TrainingLaunchJobStatus::Blocked && submission.job_id.is_some();
   let submission_recorded_at_millis = accepted_by_provider.then_some(generated_at_millis);
   let manifest_path = inputs.output_dir.join("minecraft-3dgs-training-job.json");
-  let inspect_report_path = inputs
-    .output_dir
-    .join("minecraft-3dgs-training-job-inspect.json");
+  let inspect_report_path = inputs.output_dir.join("minecraft-3dgs-training-job-inspect.json");
   let runbook_path = inputs.output_dir.join("mc7-training-job-runbook.md");
 
   let manifest = TrainingLaunchJobManifest {
     schema_version: TRAINING_JOB_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
-    source_training_launch_plan_path: inputs
-      .training_launch_plan_path
-      .to_string_lossy()
-      .into_owned(),
-    source_training_package_manifest_path: launch_plan
-      .source_training_package_manifest_path
-      .clone(),
-    source_training_package_inspect_report_path: launch_plan
-      .source_training_package_inspect_report_path
-      .clone(),
+    source_training_launch_plan_path: inputs.training_launch_plan_path.to_string_lossy().into_owned(),
+    source_training_package_manifest_path: launch_plan.source_training_package_manifest_path.clone(),
+    source_training_package_inspect_report_path: launch_plan.source_training_package_inspect_report_path.clone(),
     source_scene_packet_manifest_path: launch_plan.source_scene_packet_manifest_path.clone(),
     source_bundle_manifest_paths: launch_plan.source_bundle_manifest_paths.clone(),
     source_run_ids: launch_plan.source_run_ids.clone(),
@@ -412,13 +366,8 @@ where
     schema_version: TRAINING_JOB_INSPECT_REPORT_SCHEMA_VERSION,
     generated_at_millis,
     training_launch_manifest_path: manifest_path.to_string_lossy().into_owned(),
-    source_training_launch_plan_path: inputs
-      .training_launch_plan_path
-      .to_string_lossy()
-      .into_owned(),
-    source_training_package_manifest_path: launch_plan
-      .source_training_package_manifest_path
-      .clone(),
+    source_training_launch_plan_path: inputs.training_launch_plan_path.to_string_lossy().into_owned(),
+    source_training_package_manifest_path: launch_plan.source_training_package_manifest_path.clone(),
     source_scene_packet_manifest_path: launch_plan.source_scene_packet_manifest_path.clone(),
     source_bundle_manifest_paths: launch_plan.source_bundle_manifest_paths.clone(),
     source_run_ids: launch_plan.source_run_ids.clone(),
@@ -434,39 +383,19 @@ where
     job_url: submission.job_url,
     readiness_blocker: submission.blocker,
     probe_command: "ns-train --help".to_string(),
-    probe_succeeded: Command::new("ns-train")
-      .arg("--help")
-      .status()
-      .map(|status| status.success())
-      .unwrap_or(false),
+    probe_succeeded: Command::new("ns-train").arg("--help").status().map(|status| status.success()).unwrap_or(false),
     exported_frame_count: launch_plan.counts.compatibility_exported_frames,
     skipped_frame_count: launch_plan.counts.compatibility_skipped_frames,
     transforms_present: transforms_path.is_some(),
     warnings: warnings.iter().cloned().collect(),
     known_limits: known_limits.iter().cloned().collect(),
   };
-  write_json(
-    &inspect_report_path,
-    &inspect_report,
-    "MC-7 D6 training job inspect JSON",
-  )?;
+  write_json(&inspect_report_path, &inspect_report, "MC-7 D6 training job inspect JSON")?;
 
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create MC-7 D6 training job output directory {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
-  fs::write(
-    &runbook_path,
-    render_runbook(&manifest, &inspect_report).as_bytes(),
-  )
-  .map_err(|error| {
-    format!(
-      "failed to write MC-7 D6 training job runbook {}: {error}",
-      runbook_path.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir)
+    .map_err(|error| format!("failed to create MC-7 D6 training job output directory {}: {error}", inputs.output_dir.display()))?;
+  fs::write(&runbook_path, render_runbook(&manifest, &inspect_report).as_bytes())
+    .map_err(|error| format!("failed to write MC-7 D6 training job runbook {}: {error}", runbook_path.display()))?;
 
   Ok(TrainingLaunchJobOutput {
     output_dir: inputs.output_dir,
@@ -487,23 +416,13 @@ fn default_submit_job(request: &TrainingLaunchJobRequest) -> TrainingLaunchJobSu
   })
 }
 
-fn run_submit_command(
-  request: &TrainingLaunchJobRequest,
-) -> Result<TrainingLaunchJobSubmission, TrainingLaunchJobBlocker> {
+fn run_submit_command(request: &TrainingLaunchJobRequest) -> Result<TrainingLaunchJobSubmission, TrainingLaunchJobBlocker> {
   let mut command = Command::new("sh");
-  command
-    .arg("-lc")
-    .arg(&request.submit_command)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
+  command.arg("-lc").arg(&request.submit_command).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
-  let mut child = command
-    .spawn()
-    .map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
+  let mut child = command.spawn().map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
 
-  let stdin_payload =
-    serde_json::to_vec(request).map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
+  let stdin_payload = serde_json::to_vec(request).map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
   child
     .stdin
     .take()
@@ -511,15 +430,13 @@ fn run_submit_command(
     .write_all(&stdin_payload)
     .map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
 
-  let output = child
-    .wait_with_output()
-    .map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
+  let output = child.wait_with_output().map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
   if !output.status.success() {
     return Err(TrainingLaunchJobBlocker::SubmissionFailed);
   }
 
-  let mut submission: TrainingLaunchJobSubmission = serde_json::from_slice(&output.stdout)
-    .map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
+  let mut submission: TrainingLaunchJobSubmission =
+    serde_json::from_slice(&output.stdout).map_err(|_| TrainingLaunchJobBlocker::SubmissionFailed)?;
   if submission.status != TrainingLaunchJobStatus::Blocked && submission.job_id.is_none() {
     return Err(TrainingLaunchJobBlocker::SubmissionFailed);
   }
@@ -529,10 +446,7 @@ fn run_submit_command(
   Ok(submission)
 }
 
-fn render_runbook(
-  manifest: &TrainingLaunchJobManifest,
-  inspect_report: &TrainingLaunchJobInspectReport,
-) -> String {
+fn render_runbook(manifest: &TrainingLaunchJobManifest, inspect_report: &TrainingLaunchJobInspectReport) -> String {
   let mut output = String::new();
   output.push_str("# MC-7 training job runbook\n\n");
   output.push_str("This is a remote job envelope only. It does not run training locally and it does not claim model quality.\n\n");
@@ -550,16 +464,13 @@ fn render_runbook(
   }
   output.push_str(&format!(
     "- exported frames: `{}`\n- skipped frames: `{}`\n- probe command: `{}`\n\n",
-    inspect_report.exported_frame_count,
-    inspect_report.skipped_frame_count,
-    inspect_report.probe_command
+    inspect_report.exported_frame_count, inspect_report.skipped_frame_count, inspect_report.probe_command
   ));
   output.push_str("Launch request:\n\n```bash\n");
   output.push_str(&manifest.job_submission_command);
   output.push_str("\n```\n\n");
   output.push_str("Notes:\n");
-  output
-    .push_str("- D6 only envelopes the launch request; it does not execute training locally.\n");
+  output.push_str("- D6 only envelopes the launch request; it does not execute training locally.\n");
   output.push_str(
     "- NOTICE: MC-9 D1 binds this path to a single provider contract; do not widen to multiple providers without a new owner-approved slice.\n",
   );
@@ -593,12 +504,7 @@ fn blocker_text(blocker: TrainingLaunchJobBlocker) -> &'static str {
 
 fn write_json(path: &Path, value: &impl Serialize, label: &str) -> TrainingJobResult<()> {
   if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create {label} directory {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent).map_err(|error| format!("failed to create {label} directory {}: {error}", parent.display()))?;
   }
   let json = serde_json::to_string_pretty(value)
     .map(|mut json| {
@@ -606,25 +512,16 @@ fn write_json(path: &Path, value: &impl Serialize, label: &str) -> TrainingJobRe
       json
     })
     .map_err(|error| format!("failed to serialize {label}: {error}"))?;
-  fs::write(path, json.as_bytes())
-    .map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
+  fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
 }
 
 fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> TrainingJobResult<T> {
-  let file = fs::File::open(path)
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
-  serde_json::from_reader(BufReader::new(file))
-    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+  let file = fs::File::open(path).map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
+  serde_json::from_reader(BufReader::new(file)).map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
 }
 
 fn sh_quote(path: &Path) -> String {
-  format!(
-    "\"{}\"",
-    path
-      .to_string_lossy()
-      .replace('\\', "\\\\")
-      .replace('"', "\\\"")
-  )
+  format!("\"{}\"", path.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(test)]
@@ -665,9 +562,7 @@ mod tests {
       schema_version: 1,
       generated_at_millis: 1,
       source_training_package_manifest_path: training_package_manifest_path.display().to_string(),
-      source_training_package_inspect_report_path: training_package_inspect_report_path
-        .display()
-        .to_string(),
+      source_training_package_inspect_report_path: training_package_inspect_report_path.display().to_string(),
       source_scene_packet_manifest_path: package_dir.join("scene/run.json").display().to_string(),
       source_bundle_manifest_paths: vec![package_dir.join("bundle/run.json").display().to_string()],
       source_run_ids: vec!["run-1".to_string()],
@@ -680,18 +575,13 @@ mod tests {
       compatibility_view_name: compatibility_view_name.to_string(),
       trainer_backend: "nerfstudio.splatfacto".to_string(),
       training_data_dir: compat_dir.display().to_string(),
-      transforms_path: include_transforms
-        .then_some("compat/nerfstudio/transforms.json".to_string()),
+      transforms_path: include_transforms.then_some("compat/nerfstudio/transforms.json".to_string()),
       export_report_path: "compat/nerfstudio/export_report.json".to_string(),
       suggested_output_dir: temp.path().join("job-output").display().to_string(),
       launch_command: "ns-train splatfacto --data compat/nerfstudio --output-dir out".to_string(),
       known_limits: vec!["limit-a".to_string()],
     };
-    fs::write(
-      &launch_plan_path,
-      serde_json::to_vec_pretty(&launch_plan).expect("serialize plan"),
-    )
-    .expect("write plan");
+    fs::write(&launch_plan_path, serde_json::to_vec_pretty(&launch_plan).expect("serialize plan")).expect("write plan");
     let inspect_report = TrainingPackageInspectReport {
       schema_version: 1,
       generated_at_millis: 1,
@@ -704,11 +594,8 @@ mod tests {
       warnings: vec!["warn-a".to_string()],
       known_limits: vec!["limit-b".to_string()],
     };
-    fs::write(
-      &training_package_inspect_report_path,
-      serde_json::to_vec_pretty(&inspect_report).expect("serialize inspect"),
-    )
-    .expect("write inspect");
+    fs::write(&training_package_inspect_report_path, serde_json::to_vec_pretty(&inspect_report).expect("serialize inspect"))
+      .expect("write inspect");
     fs::write(
       training_package_manifest_path,
       b"{}
@@ -742,22 +629,13 @@ mod tests {
     )
     .expect("job should launch");
 
-    assert_eq!(
-      output.inspect_report.status,
-      TrainingLaunchJobStatus::Submitted
-    );
+    assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Submitted);
     assert!(output.manifest_path.is_file());
     assert!(output.inspect_report_path.is_file());
     assert!(output.runbook_path.is_file());
-    assert_eq!(
-      output.inspect_report.job_id.as_deref(),
-      Some("job-for-nerfstudio.splatfacto")
-    );
+    assert_eq!(output.inspect_report.job_id.as_deref(), Some("job-for-nerfstudio.splatfacto"));
     assert!(output.manifest.accepted_by_provider);
-    assert_eq!(
-      output.manifest.submission_recorded_at_millis,
-      Some(output.manifest.generated_at_millis)
-    );
+    assert_eq!(output.manifest.submission_recorded_at_millis, Some(output.manifest.generated_at_millis));
   }
 
   #[test]
@@ -778,14 +656,8 @@ mod tests {
     )
     .expect("blocked job should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.status,
-      TrainingLaunchJobStatus::Blocked
-    );
-    assert_eq!(
-      output.inspect_report.readiness_blocker,
-      Some(TrainingLaunchJobBlocker::MissingConfiguration)
-    );
+    assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchJobBlocker::MissingConfiguration));
     assert!(!output.manifest.accepted_by_provider);
     assert_eq!(output.manifest.submission_recorded_at_millis, None);
   }
@@ -808,14 +680,8 @@ mod tests {
     )
     .expect("blocked job should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.status,
-      TrainingLaunchJobStatus::Blocked
-    );
-    assert_eq!(
-      output.inspect_report.readiness_blocker,
-      Some(TrainingLaunchJobBlocker::UnsupportedBackend)
-    );
+    assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Blocked);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchJobBlocker::UnsupportedBackend));
   }
 
   #[test]
@@ -846,17 +712,11 @@ mod tests {
     )
     .expect("job should launch");
 
-    assert_eq!(
-      output.inspect_report.job_id.as_deref(),
-      Some("job-with-token")
-    );
+    assert_eq!(output.inspect_report.job_id.as_deref(), Some("job-with-token"));
     assert_eq!(output.manifest.provider_backend, PROVIDER_BACKEND);
     assert_eq!(output.inspect_report.provider_backend, PROVIDER_BACKEND);
     assert!(output.inspect_report.accepted_by_provider);
-    assert_eq!(
-      output.inspect_report.submission_recorded_at_millis,
-      output.manifest.submission_recorded_at_millis
-    );
+    assert_eq!(output.inspect_report.submission_recorded_at_millis, output.manifest.submission_recorded_at_millis);
   }
 
   #[test]
@@ -879,26 +739,12 @@ mod tests {
     )
       .expect("job should launch through submit command");
 
-    assert_eq!(
-      output.inspect_report.status,
-      TrainingLaunchJobStatus::Submitted
-    );
-    assert_eq!(
-      output.inspect_report.job_id.as_deref(),
-      Some("job-from-command")
-    );
-    assert_eq!(
-      output.inspect_report.job_url.as_deref(),
-      Some("https://jobs.example.test/v1/jobs/job-from-command")
-    );
+    assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Submitted);
+    assert_eq!(output.inspect_report.job_id.as_deref(), Some("job-from-command"));
+    assert_eq!(output.inspect_report.job_url.as_deref(), Some("https://jobs.example.test/v1/jobs/job-from-command"));
     assert_eq!(output.manifest.provider_backend, PROVIDER_BACKEND);
     assert!(output.manifest.accepted_by_provider);
-    assert!(
-      output
-        .inspect_report
-        .submission_recorded_at_millis
-        .is_some()
-    );
+    assert!(output.inspect_report.submission_recorded_at_millis.is_some());
   }
 
   #[test]
@@ -921,14 +767,8 @@ mod tests {
     )
       .expect("failed submission should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.status,
-      TrainingLaunchJobStatus::Failed
-    );
-    assert_eq!(
-      output.inspect_report.readiness_blocker,
-      Some(TrainingLaunchJobBlocker::SubmissionFailed)
-    );
+    assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Failed);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchJobBlocker::SubmissionFailed));
   }
 
   #[test]
@@ -945,19 +785,14 @@ mod tests {
         submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
         submit_token: Some("secret-token".to_string()),
         submit_command: Some(
-          "python3 -c \"import json,sys; json.dump({'status':'queued','job_id':None,'job_url':None,'blocker':None}, sys.stdout)\"".to_string(),
+          "python3 -c \"import json,sys; json.dump({'status':'queued','job_id':None,'job_url':None,'blocker':None}, sys.stdout)\""
+            .to_string(),
         ),
       },
     )
     .expect("failed submission should still write outputs");
-    assert_eq!(
-      output.inspect_report.status,
-      TrainingLaunchJobStatus::Failed
-    );
-    assert_eq!(
-      output.inspect_report.readiness_blocker,
-      Some(TrainingLaunchJobBlocker::SubmissionFailed)
-    );
+    assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Failed);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchJobBlocker::SubmissionFailed));
   }
 
   #[test]
@@ -974,19 +809,14 @@ mod tests {
         submit_endpoint: Some("https://jobs.example.test/v1".to_string()),
         submit_token: Some("secret-token".to_string()),
         submit_command: Some(
-          "python3 -c \"import json,sys; json.dump({'status':'failed','job_id':None,'job_url':None,'blocker':None}, sys.stdout)\"".to_string(),
+          "python3 -c \"import json,sys; json.dump({'status':'failed','job_id':None,'job_url':None,'blocker':None}, sys.stdout)\""
+            .to_string(),
         ),
       },
     )
     .expect("failed submission should still write outputs");
-    assert_eq!(
-      output.inspect_report.status,
-      TrainingLaunchJobStatus::Failed
-    );
-    assert_eq!(
-      output.inspect_report.readiness_blocker,
-      Some(TrainingLaunchJobBlocker::SubmissionFailed)
-    );
+    assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Failed);
+    assert_eq!(output.inspect_report.readiness_blocker, Some(TrainingLaunchJobBlocker::SubmissionFailed));
     assert!(!output.inspect_report.accepted_by_provider);
     assert_eq!(output.inspect_report.submission_recorded_at_millis, None);
   }
@@ -1014,21 +844,12 @@ mod tests {
     )
     .expect("failed status with job id should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.status,
-      TrainingLaunchJobStatus::Failed
-    );
+    assert_eq!(output.inspect_report.status, TrainingLaunchJobStatus::Failed);
     assert_eq!(output.inspect_report.job_id.as_deref(), Some("job-failed"));
     assert!(output.manifest.accepted_by_provider);
     assert!(output.inspect_report.accepted_by_provider);
-    assert_eq!(
-      output.manifest.submission_recorded_at_millis,
-      Some(output.manifest.generated_at_millis)
-    );
-    assert_eq!(
-      output.inspect_report.submission_recorded_at_millis,
-      Some(output.inspect_report.generated_at_millis)
-    );
+    assert_eq!(output.manifest.submission_recorded_at_millis, Some(output.manifest.generated_at_millis));
+    assert_eq!(output.inspect_report.submission_recorded_at_millis, Some(output.inspect_report.generated_at_millis));
   }
 
   #[test]
@@ -1055,20 +876,11 @@ mod tests {
     .expect("real submit should write outputs");
 
     assert!(output.manifest.accepted_by_provider);
-    assert_eq!(
-      output.manifest.submission_recorded_at_millis,
-      Some(output.manifest.generated_at_millis)
-    );
+    assert_eq!(output.manifest.submission_recorded_at_millis, Some(output.manifest.generated_at_millis));
     assert!(output.inspect_report.accepted_by_provider);
-    assert_eq!(
-      output.inspect_report.submission_recorded_at_millis,
-      Some(output.inspect_report.generated_at_millis)
-    );
+    assert_eq!(output.inspect_report.submission_recorded_at_millis, Some(output.inspect_report.generated_at_millis));
     assert_eq!(output.manifest.job_id.as_deref(), Some("provider-job-42"));
-    assert_eq!(
-      output.inspect_report.job_url.as_deref(),
-      Some("https://provider.example/jobs/provider-job-42")
-    );
+    assert_eq!(output.inspect_report.job_url.as_deref(), Some("https://provider.example/jobs/provider-job-42"));
   }
   #[test]
   fn training_job_manifest_backfills_provider_backend_from_legacy_json() {
@@ -1105,8 +917,7 @@ mod tests {
   "known_limits": ["legacy artifact"]
 }
 "#;
-    let manifest: TrainingLaunchJobManifest =
-      serde_json::from_str(legacy_json).expect("legacy manifest should parse");
+    let manifest: TrainingLaunchJobManifest = serde_json::from_str(legacy_json).expect("legacy manifest should parse");
     assert_eq!(manifest.provider_backend, PROVIDER_BACKEND);
     assert!(!manifest.accepted_by_provider);
     assert_eq!(manifest.submission_recorded_at_millis, None);
@@ -1141,8 +952,7 @@ mod tests {
   "known_limits": ["legacy artifact"]
 }
 "#;
-    let report: TrainingLaunchJobInspectReport =
-      serde_json::from_str(legacy_json).expect("legacy inspect should parse");
+    let report: TrainingLaunchJobInspectReport = serde_json::from_str(legacy_json).expect("legacy inspect should parse");
     assert_eq!(report.provider_backend, PROVIDER_BACKEND);
     assert!(!report.accepted_by_provider);
     assert_eq!(report.submission_recorded_at_millis, None);

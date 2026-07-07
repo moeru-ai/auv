@@ -23,9 +23,7 @@ pub struct ScreenshotCapture {
 
 impl ScreenshotCapture {
   fn dimensions(&self) -> (u32, u32) {
-    self
-      .screenshot_dimensions
-      .unwrap_or((self.image.width(), self.image.height()))
+    self.screenshot_dimensions.unwrap_or((self.image.width(), self.image.height()))
   }
 }
 
@@ -48,11 +46,7 @@ struct ProjectionScale {
 }
 
 impl ProjectionScale {
-  fn for_dimensions(
-    screenshot_width: u32,
-    screenshot_height: u32,
-    frame: &MinecraftSpatialFrame,
-  ) -> Option<Self> {
+  fn for_dimensions(screenshot_width: u32, screenshot_height: u32, frame: &MinecraftSpatialFrame) -> Option<Self> {
     if screenshot_width == frame.viewport.width && screenshot_height == frame.viewport.height {
       return None;
     }
@@ -127,33 +121,19 @@ pub fn build_projection_evidence(
   max_capture_skew_ms: Option<i64>,
 ) -> Result<ProjectionEvidence, String> {
   let screenshot_dimensions = capture.dimensions();
-  let bound = bind_capture_to_frame(
-    frame,
-    capture.artifact_ref,
-    capture.capture_monotonic_timestamp_ms,
-  );
+  let bound = bind_capture_to_frame(frame, capture.artifact_ref, capture.capture_monotonic_timestamp_ms);
 
-  match assess_bound_projection(
-    bound.frame,
-    screenshot_dimensions,
-    capture.is_minecraft_window,
-    target,
-    max_capture_skew_ms,
-  )? {
+  match assess_bound_projection(bound.frame, screenshot_dimensions, capture.is_minecraft_window, target, max_capture_skew_ms)? {
     ProjectionAssessment::Bound {
       artifact,
       raycast_hit,
     } => {
-      let projected = artifact
-        .projected_point
-        .clone()
-        .ok_or_else(|| "projection evidence is bound but missing projected point".to_string())?;
+      let projected =
+        artifact.projected_point.clone().ok_or_else(|| "projection evidence is bound but missing projected point".to_string())?;
       let overlay = render_projection_overlay(capture.image, &projected, raycast_hit.as_ref());
       Ok(ProjectionEvidence::Bound { artifact, overlay })
     }
-    ProjectionAssessment::Refused { artifact, refusal } => {
-      Ok(ProjectionEvidence::Refused { artifact, refusal })
-    }
+    ProjectionAssessment::Refused { artifact, refusal } => Ok(ProjectionEvidence::Refused { artifact, refusal }),
   }
 }
 
@@ -164,8 +144,7 @@ pub fn assess_bound_projection(
   target: &MinecraftBlockTarget,
   max_capture_skew_ms: Option<i64>,
 ) -> Result<ProjectionAssessment, String> {
-  let projection_scale =
-    ProjectionScale::for_dimensions(screenshot_dimensions.0, screenshot_dimensions.1, &frame);
+  let projection_scale = ProjectionScale::for_dimensions(screenshot_dimensions.0, screenshot_dimensions.1, &frame);
   let projector = MinecraftProjector::new(frame.clone())?;
   let mut projected = projector.project_block_target(target)?;
 
@@ -176,13 +155,7 @@ pub fn assess_bound_projection(
     scale.apply_to_radius(&mut projected.match_radius_px);
   }
 
-  let refusal = evaluate_mismatch_refusal(
-    &frame,
-    &projected,
-    target,
-    is_minecraft_window,
-    max_capture_skew_ms,
-  );
+  let refusal = evaluate_mismatch_refusal(&frame, &projected, target, is_minecraft_window, max_capture_skew_ms);
   let artifact = projector.build_projection_artifact(Some(projected.clone()), None);
   if refusal.refused {
     return Ok(ProjectionAssessment::Refused {
@@ -250,12 +223,7 @@ mod tests {
     }
   }
 
-  fn capture_with_size(
-    ts: u64,
-    is_minecraft_window: bool,
-    width: u32,
-    height: u32,
-  ) -> ScreenshotCapture {
+  fn capture_with_size(ts: u64, is_minecraft_window: bool, width: u32, height: u32) -> ScreenshotCapture {
     ScreenshotCapture {
       image: RgbImage::from_pixel(width, height, Rgb([0, 0, 0])),
       artifact_ref: "shot.png".to_string(),
@@ -275,20 +243,12 @@ mod tests {
   #[test]
   fn refuses_when_capture_skew_exceeds_tolerance() {
     // skew = 2600 - 2000 = 600ms, tolerance 250ms.
-    let evidence = build_projection_evidence(
-      frame_at(2_600),
-      capture_at(2_000, true),
-      &visible_target(),
-      Some(250),
-    )
-    .expect("evidence builds");
+    let evidence =
+      build_projection_evidence(frame_at(2_600), capture_at(2_000, true), &visible_target(), Some(250)).expect("evidence builds");
 
     assert!(evidence.is_refused());
     if let ProjectionEvidence::Refused { refusal, artifact } = evidence {
-      assert_eq!(
-        refusal.reason,
-        Some(MismatchRefusalReason::CaptureSkewUnreliable)
-      );
+      assert_eq!(refusal.reason, Some(MismatchRefusalReason::CaptureSkewUnreliable));
       // The artifact still records what was projected, even on refusal.
       assert_eq!(artifact.spatial_frame_id, "frame-1");
     } else {
@@ -298,20 +258,12 @@ mod tests {
 
   #[test]
   fn refuses_when_window_is_not_minecraft() {
-    let evidence = build_projection_evidence(
-      frame_at(1_000),
-      capture_at(1_000, false),
-      &visible_target(),
-      Some(250),
-    )
-    .expect("evidence builds");
+    let evidence =
+      build_projection_evidence(frame_at(1_000), capture_at(1_000, false), &visible_target(), Some(250)).expect("evidence builds");
 
     assert!(evidence.is_refused());
     if let ProjectionEvidence::Refused { refusal, .. } = evidence {
-      assert_eq!(
-        refusal.reason,
-        Some(MismatchRefusalReason::NotMinecraftWindow)
-      );
+      assert_eq!(refusal.reason, Some(MismatchRefusalReason::NotMinecraftWindow));
     } else {
       panic!("expected refusal");
     }
@@ -320,13 +272,8 @@ mod tests {
   #[test]
   fn binds_and_overlays_when_in_tolerance_and_visible() {
     // Zero skew, minecraft window, target projects inside the viewport.
-    let evidence = build_projection_evidence(
-      frame_at(1_000),
-      capture_at(1_000, true),
-      &visible_target(),
-      Some(250),
-    )
-    .expect("evidence builds");
+    let evidence =
+      build_projection_evidence(frame_at(1_000), capture_at(1_000, true), &visible_target(), Some(250)).expect("evidence builds");
 
     match evidence {
       ProjectionEvidence::Bound { artifact, overlay } => {
@@ -338,30 +285,17 @@ mod tests {
         assert!(artifact.projected_point.is_some());
       }
       ProjectionEvidence::Refused { refusal, .. } => {
-        panic!(
-          "expected a bound overlay, got refusal: {:?}",
-          refusal.reason
-        );
+        panic!("expected a bound overlay, got refusal: {:?}", refusal.reason);
       }
     }
   }
 
   #[test]
   fn scales_projection_to_hidpi_capture_dimensions() {
-    let base = build_projection_evidence(
-      frame_at(1_000),
-      capture_at(1_000, true),
-      &visible_target(),
-      Some(250),
-    )
-    .expect("base evidence builds");
-    let hidpi = build_projection_evidence(
-      frame_at(1_000),
-      capture_with_size(1_000, true, 128, 128),
-      &visible_target(),
-      Some(250),
-    )
-    .expect("hidpi evidence builds");
+    let base =
+      build_projection_evidence(frame_at(1_000), capture_at(1_000, true), &visible_target(), Some(250)).expect("base evidence builds");
+    let hidpi = build_projection_evidence(frame_at(1_000), capture_with_size(1_000, true, 128, 128), &visible_target(), Some(250))
+      .expect("hidpi evidence builds");
 
     let (base_artifact, _base_overlay) = match base {
       ProjectionEvidence::Bound { artifact, overlay } => (artifact, overlay),
@@ -376,56 +310,30 @@ mod tests {
       }
     };
 
-    let base_point = base_artifact
-      .projected_point
-      .as_ref()
-      .and_then(|point| point.screen_point)
-      .expect("base projected point");
-    let hidpi_point = hidpi_artifact
-      .projected_point
-      .as_ref()
-      .and_then(|point| point.screen_point)
-      .expect("hidpi projected point");
+    let base_point = base_artifact.projected_point.as_ref().and_then(|point| point.screen_point).expect("base projected point");
+    let hidpi_point = hidpi_artifact.projected_point.as_ref().and_then(|point| point.screen_point).expect("hidpi projected point");
 
     assert_eq!(hidpi_overlay.width(), 128);
     assert_eq!(hidpi_overlay.height(), 128);
     assert_eq!(hidpi_overlay.get_pixel(6, 6), &Rgb([0, 255, 255]));
     assert!((hidpi_point.x - (base_point.x * 2.0)).abs() < 1e-6);
     assert!((hidpi_point.y - (base_point.y * 2.0)).abs() < 1e-6);
-    let base_radius = base_artifact
-      .projected_point
-      .as_ref()
-      .expect("base projected point")
-      .match_radius_px;
-    let hidpi_radius = hidpi_artifact
-      .projected_point
-      .as_ref()
-      .expect("hidpi projected point")
-      .match_radius_px;
+    let base_radius = base_artifact.projected_point.as_ref().expect("base projected point").match_radius_px;
+    let hidpi_radius = hidpi_artifact.projected_point.as_ref().expect("hidpi projected point").match_radius_px;
     assert!((hidpi_radius - (base_radius * 2.0)).abs() < 1e-6);
   }
 
   #[test]
   fn uses_explicit_screenshot_dimensions_over_image_dimensions() {
-    let base = build_projection_evidence(
-      frame_at(1_000),
-      capture_at(1_000, true),
-      &visible_target(),
-      Some(250),
-    )
-    .expect("base evidence builds");
+    let base =
+      build_projection_evidence(frame_at(1_000), capture_at(1_000, true), &visible_target(), Some(250)).expect("base evidence builds");
 
     let mut explicit_capture = capture_at(1_000, true);
     // `screenshot_dimensions` is the projection scaling basis; the overlay
     // canvas remains the owned screenshot image.
     explicit_capture.screenshot_dimensions = Some((128, 128));
-    let explicit = build_projection_evidence(
-      frame_at(1_000),
-      explicit_capture,
-      &visible_target(),
-      Some(250),
-    )
-    .expect("explicit evidence builds");
+    let explicit =
+      build_projection_evidence(frame_at(1_000), explicit_capture, &visible_target(), Some(250)).expect("explicit evidence builds");
 
     let (base_artifact, _base_overlay) = match base {
       ProjectionEvidence::Bound { artifact, overlay } => (artifact, overlay),
@@ -440,31 +348,15 @@ mod tests {
       }
     };
 
-    let base_point = base_artifact
-      .projected_point
-      .as_ref()
-      .and_then(|point| point.screen_point)
-      .expect("base projected point");
-    let explicit_point = explicit_artifact
-      .projected_point
-      .as_ref()
-      .and_then(|point| point.screen_point)
-      .expect("explicit projected point");
+    let base_point = base_artifact.projected_point.as_ref().and_then(|point| point.screen_point).expect("base projected point");
+    let explicit_point = explicit_artifact.projected_point.as_ref().and_then(|point| point.screen_point).expect("explicit projected point");
 
     assert_eq!(explicit_overlay.width(), 64);
     assert_eq!(explicit_overlay.height(), 64);
     assert!((explicit_point.x - (base_point.x * 2.0)).abs() < 1e-6);
     assert!((explicit_point.y - (base_point.y * 2.0)).abs() < 1e-6);
-    let base_radius = base_artifact
-      .projected_point
-      .as_ref()
-      .expect("base projected point")
-      .match_radius_px;
-    let explicit_radius = explicit_artifact
-      .projected_point
-      .as_ref()
-      .expect("explicit projected point")
-      .match_radius_px;
+    let base_radius = base_artifact.projected_point.as_ref().expect("base projected point").match_radius_px;
+    let explicit_radius = explicit_artifact.projected_point.as_ref().expect("explicit projected point").match_radius_px;
     assert!((explicit_radius - (base_radius * 2.0)).abs() < 1e-6);
   }
 }

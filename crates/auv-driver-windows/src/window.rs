@@ -34,9 +34,7 @@ pub fn activate_window(window: &Window) -> DriverResult<()> {
 
 #[cfg(not(target_os = "windows"))]
 pub fn activate_window(_window: &Window) -> DriverResult<()> {
-  Err(auv_driver::error::DriverError::unsupported(
-    "window.activate",
-  ))
+  Err(auv_driver::error::DriverError::unsupported("window.activate"))
 }
 
 /// Parses the native `HWND` value previously encoded in a [`Window`] reference.
@@ -46,15 +44,12 @@ pub fn activate_window(_window: &Window) -> DriverResult<()> {
 /// handle, so the parse lives here next to the encoding it mirrors.
 #[cfg(target_os = "windows")]
 pub(crate) fn window_handle(window: &Window) -> DriverResult<windows::Win32::Foundation::HWND> {
-  let raw: isize = window.reference.id.parse().map_err(|_| {
-    invalid_input(format!(
-      "window reference {:?} is not a valid window handle",
-      window.reference.id
-    ))
-  })?;
-  Ok(windows::Win32::Foundation::HWND(
-    raw as *mut std::ffi::c_void,
-  ))
+  let raw: isize = window
+    .reference
+    .id
+    .parse()
+    .map_err(|_| invalid_input(format!("window reference {:?} is not a valid window handle", window.reference.id)))?;
+  Ok(windows::Win32::Foundation::HWND(raw as *mut std::ffi::c_void))
 }
 
 /// Resolves a single window from an already-observed list.
@@ -64,35 +59,23 @@ pub(crate) fn window_handle(window: &Window) -> DriverResult<windows::Win32::Fou
 /// the foreground window, then a titled window, then the largest frame, which
 /// mirrors the macOS resolver's ordering.
 fn resolve_from_windows(windows: &[Window], selector: &WindowSelector) -> DriverResult<Window> {
-  let mut matches: Vec<&Window> = windows
-    .iter()
-    .filter(|window| matches_window_selector_except_main_visible(window, selector))
-    .collect();
+  let mut matches: Vec<&Window> = windows.iter().filter(|window| matches_window_selector_except_main_visible(window, selector)).collect();
 
   if selector.main_visible {
     matches.sort_by_key(|window| {
       std::cmp::Reverse((
         window.is_main,
-        window
-          .title
-          .as_ref()
-          .is_some_and(|title| !title.trim().is_empty()),
+        window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
         (window.frame.size.width * window.frame.size.height).round() as i64,
       ))
     });
-    return matches
-      .first()
-      .map(|window| (*window).clone())
-      .ok_or_else(|| not_found("main visible window"));
+    return matches.first().map(|window| (*window).clone()).ok_or_else(|| not_found("main visible window"));
   }
 
   match matches.as_slice() {
     [window] => Ok((*window).clone()),
     [] => Err(not_found("window selector")),
-    _ => Err(invalid_input(format!(
-      "window selector was ambiguous: {} windows matched",
-      matches.len()
-    ))),
+    _ => Err(invalid_input(format!("window selector was ambiguous: {} windows matched", matches.len()))),
   }
 }
 
@@ -161,17 +144,13 @@ mod native {
   use auv_driver::geometry::{CoordinateSpace, Rect};
   use auv_driver::window::{Window, WindowRef};
   use windows::Win32::Foundation::{BOOL, CloseHandle, FALSE, HWND, LPARAM, RECT, TRUE};
-  use windows::Win32::Graphics::Dwm::{
-    DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
-  };
+  use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
   use windows::Win32::System::Threading::{
-    AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
   };
   use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, SW_RESTORE, SetForegroundWindow,
-    ShowWindow,
+    BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+    IsWindowVisible, SW_RESTORE, SetForegroundWindow, ShowWindow,
   };
   use windows::core::PWSTR;
 
@@ -181,12 +160,7 @@ mod native {
     let mut handles: Vec<HWND> = Vec::new();
     // SAFETY: `enum_proc` only pushes into the Vec referenced by `lparam`, which
     // outlives the synchronous EnumWindows call.
-    let enumeration = unsafe {
-      EnumWindows(
-        Some(enum_proc),
-        LPARAM(&mut handles as *mut Vec<HWND> as isize),
-      )
-    };
+    let enumeration = unsafe { EnumWindows(Some(enum_proc), LPARAM(&mut handles as *mut Vec<HWND> as isize)) };
     if let Err(error) = enumeration
       && error.code().is_err()
     {
@@ -230,8 +204,7 @@ mod native {
       let _ = ShowWindow(hwnd, SW_RESTORE);
       let _ = BringWindowToTop(hwnd);
     }
-    let activated =
-      unsafe { SetForegroundWindow(hwnd) }.as_bool() || unsafe { GetForegroundWindow() } == hwnd;
+    let activated = unsafe { SetForegroundWindow(hwnd) }.as_bool() || unsafe { GetForegroundWindow() } == hwnd;
     if attached_target {
       let _ = unsafe { AttachThreadInput(current_thread, target_thread, false) };
     }
@@ -241,9 +214,7 @@ mod native {
     if activated {
       Ok(())
     } else {
-      Err(backend(
-        "SetForegroundWindow was refused; interact with NetEase Music once and retry",
-      ))
+      Err(backend("SetForegroundWindow was refused; interact with NetEase Music once and retry"))
     }
   }
 
@@ -307,40 +278,21 @@ mod native {
   /// bounds and falling back to `GetWindowRect` when DWM is unavailable.
   fn window_frame(hwnd: HWND) -> DriverResult<Rect> {
     let mut rect = RECT::default();
-    let dwm = unsafe {
-      DwmGetWindowAttribute(
-        hwnd,
-        DWMWA_EXTENDED_FRAME_BOUNDS,
-        &mut rect as *mut RECT as *mut c_void,
-        size_of::<RECT>() as u32,
-      )
-    };
+    let dwm =
+      unsafe { DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut RECT as *mut c_void, size_of::<RECT>() as u32) };
     if dwm.is_err() {
       unsafe {
-        GetWindowRect(hwnd, &mut rect)
-          .map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
+        GetWindowRect(hwnd, &mut rect).map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
       }
     }
-    Ok(Rect::new(
-      f64::from(rect.left),
-      f64::from(rect.top),
-      f64::from(rect.right - rect.left),
-      f64::from(rect.bottom - rect.top),
-    ))
+    Ok(Rect::new(f64::from(rect.left), f64::from(rect.top), f64::from(rect.right - rect.left), f64::from(rect.bottom - rect.top)))
   }
 
   /// Reports whether DWM has cloaked the window (for example a UWP app on a
   /// virtual desktop), which `IsWindowVisible` still reports as visible.
   fn is_cloaked(hwnd: HWND) -> bool {
     let mut cloaked: u32 = 0;
-    let result = unsafe {
-      DwmGetWindowAttribute(
-        hwnd,
-        DWMWA_CLOAKED,
-        &mut cloaked as *mut u32 as *mut c_void,
-        size_of::<u32>() as u32,
-      )
-    };
+    let result = unsafe { DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &mut cloaked as *mut u32 as *mut c_void, size_of::<u32>() as u32) };
     result.is_ok() && cloaked != 0
   }
 
@@ -353,18 +305,11 @@ mod native {
       let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid).ok()?;
       let mut buffer = [0u16; 260];
       let mut len = buffer.len() as u32;
-      let query = QueryFullProcessImageNameW(
-        handle,
-        PROCESS_NAME_WIN32,
-        PWSTR(buffer.as_mut_ptr()),
-        &mut len,
-      );
+      let query = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buffer.as_mut_ptr()), &mut len);
       let _ = CloseHandle(handle);
       query.ok()?;
       let path = String::from_utf16_lossy(&buffer[..len as usize]);
-      Path::new(&path)
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
+      Path::new(&path).file_name().map(|name| name.to_string_lossy().into_owned())
     }
   }
 }
@@ -394,20 +339,8 @@ mod tests {
   #[test]
   fn resolve_returns_single_title_match() {
     let windows = vec![
-      window(
-        "1",
-        Some("Editor"),
-        Some("app.exe"),
-        10,
-        Rect::new(0.0, 0.0, 100.0, 100.0),
-      ),
-      window(
-        "2",
-        Some("Browser"),
-        Some("web.exe"),
-        20,
-        Rect::new(0.0, 0.0, 100.0, 100.0),
-      ),
+      window("1", Some("Editor"), Some("app.exe"), 10, Rect::new(0.0, 0.0, 100.0, 100.0)),
+      window("2", Some("Browser"), Some("web.exe"), 20, Rect::new(0.0, 0.0, 100.0, 100.0)),
     ];
 
     let selector = WindowQuery::title_contains("Brow");
@@ -419,20 +352,8 @@ mod tests {
   #[test]
   fn resolve_reports_ambiguous_match() {
     let windows = vec![
-      window(
-        "1",
-        Some("Doc"),
-        Some("app.exe"),
-        10,
-        Rect::new(0.0, 0.0, 100.0, 100.0),
-      ),
-      window(
-        "2",
-        Some("Doc"),
-        Some("app.exe"),
-        11,
-        Rect::new(0.0, 0.0, 100.0, 100.0),
-      ),
+      window("1", Some("Doc"), Some("app.exe"), 10, Rect::new(0.0, 0.0, 100.0, 100.0)),
+      window("2", Some("Doc"), Some("app.exe"), 11, Rect::new(0.0, 0.0, 100.0, 100.0)),
     ];
 
     let selector = WindowQuery::title_exact("Doc");
@@ -457,25 +378,12 @@ mod tests {
 
   #[test]
   fn main_visible_prefers_foreground_then_largest() {
-    let mut foreground = window(
-      "fg",
-      Some("Front"),
-      Some("app.exe"),
-      10,
-      Rect::new(0.0, 0.0, 50.0, 50.0),
-    );
+    let mut foreground = window("fg", Some("Front"), Some("app.exe"), 10, Rect::new(0.0, 0.0, 50.0, 50.0));
     foreground.is_main = true;
-    let big = window(
-      "big",
-      Some("Big"),
-      Some("app.exe"),
-      11,
-      Rect::new(0.0, 0.0, 800.0, 600.0),
-    );
+    let big = window("big", Some("Big"), Some("app.exe"), 11, Rect::new(0.0, 0.0, 800.0, 600.0));
     let windows = vec![big, foreground];
 
-    let resolved = resolve_from_windows(&windows, &WindowQuery::main_visible())
-      .expect("a main visible window resolves");
+    let resolved = resolve_from_windows(&windows, &WindowQuery::main_visible()).expect("a main visible window resolves");
 
     assert_eq!(resolved.reference.id, "fg");
   }
@@ -483,24 +391,11 @@ mod tests {
   #[test]
   fn main_visible_falls_back_to_largest_without_foreground() {
     let windows = vec![
-      window(
-        "small",
-        Some("Small"),
-        Some("app.exe"),
-        10,
-        Rect::new(0.0, 0.0, 50.0, 50.0),
-      ),
-      window(
-        "big",
-        Some("Big"),
-        Some("app.exe"),
-        11,
-        Rect::new(0.0, 0.0, 800.0, 600.0),
-      ),
+      window("small", Some("Small"), Some("app.exe"), 10, Rect::new(0.0, 0.0, 50.0, 50.0)),
+      window("big", Some("Big"), Some("app.exe"), 11, Rect::new(0.0, 0.0, 800.0, 600.0)),
     ];
 
-    let resolved = resolve_from_windows(&windows, &WindowQuery::main_visible())
-      .expect("largest window resolves");
+    let resolved = resolve_from_windows(&windows, &WindowQuery::main_visible()).expect("largest window resolves");
 
     assert_eq!(resolved.reference.id, "big");
   }
@@ -508,50 +403,20 @@ mod tests {
   #[test]
   fn app_selector_matches_by_name_and_pid() {
     let windows = vec![
-      window(
-        "1",
-        Some("A"),
-        Some("editor.exe"),
-        10,
-        Rect::new(0.0, 0.0, 100.0, 100.0),
-      ),
-      window(
-        "2",
-        Some("B"),
-        Some("browser.exe"),
-        20,
-        Rect::new(0.0, 0.0, 100.0, 100.0),
-      ),
+      window("1", Some("A"), Some("editor.exe"), 10, Rect::new(0.0, 0.0, 100.0, 100.0)),
+      window("2", Some("B"), Some("browser.exe"), 20, Rect::new(0.0, 0.0, 100.0, 100.0)),
     ];
 
     let by_name = WindowSelector::default().owned_by(App::name("browser.exe"));
-    assert_eq!(
-      resolve_from_windows(&windows, &by_name)
-        .unwrap()
-        .reference
-        .id,
-      "2"
-    );
+    assert_eq!(resolve_from_windows(&windows, &by_name).unwrap().reference.id, "2");
 
     let by_pid = WindowSelector::default().owned_by(App::pid(10));
-    assert_eq!(
-      resolve_from_windows(&windows, &by_pid)
-        .unwrap()
-        .reference
-        .id,
-      "1"
-    );
+    assert_eq!(resolve_from_windows(&windows, &by_pid).unwrap().reference.id, "1");
   }
 
   #[test]
   fn invisible_windows_are_never_matched() {
-    let mut hidden = window(
-      "1",
-      Some("Doc"),
-      Some("app.exe"),
-      10,
-      Rect::new(0.0, 0.0, 100.0, 100.0),
-    );
+    let mut hidden = window("1", Some("Doc"), Some("app.exe"), 10, Rect::new(0.0, 0.0, 100.0, 100.0));
     hidden.is_visible = false;
 
     let selector = WindowQuery::title_exact("Doc");

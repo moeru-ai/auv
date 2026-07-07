@@ -2,16 +2,11 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::commands::mouse::{
-  NaturalScrollingToggleInputs, PointerSpeedRoundtripInputs, PointerSpeedSetInputs,
-};
+use crate::commands::mouse::{NaturalScrollingToggleInputs, PointerSpeedRoundtripInputs, PointerSpeedSetInputs};
 use crate::commands::system_details::CopySystemDetailsInputs;
 use crate::commands::{OpenInputs, run_open};
 use crate::output::print_json;
-use crate::{
-  run_copy_system_details, run_natural_scrolling_toggle, run_pointer_speed_roundtrip,
-  run_pointer_speed_set,
-};
+use crate::{run_copy_system_details, run_natural_scrolling_toggle, run_pointer_speed_roundtrip, run_pointer_speed_set};
 
 #[derive(Debug, Parser)]
 #[command(name = "auv-gnome-control-center")]
@@ -93,10 +88,7 @@ fn run_inner(cli: Cli) -> Result<(), String> {
       if args.json {
         print_json(&result)
       } else {
-        println!(
-          "opened: found={} title={:?}",
-          result.window.window_found, result.window.window_title
-        );
+        println!("opened: found={} title={:?}", result.window.window_found, result.window.window_title);
         Ok(())
       }
     }
@@ -120,10 +112,7 @@ fn run_inner(cli: Cli) -> Result<(), String> {
         if args.json {
           print_json(&result)
         } else {
-          println!(
-            "pointer speed clicked at {:.2}: {:?}",
-            result.requested_position, result.clicked_point
-          );
+          println!("pointer speed clicked at {:.2}: {:?}", result.requested_position, result.clicked_point);
           Ok(())
         }
       }
@@ -136,10 +125,7 @@ fn run_inner(cli: Cli) -> Result<(), String> {
         if args.json {
           print_json(&result)
         } else {
-          println!(
-            "pointer speed roundtrip: {:.2} -> {:.2}",
-            result.first.requested_position, result.restore.requested_position
-          );
+          println!("pointer speed roundtrip: {:.2} -> {:.2}", result.first.requested_position, result.restore.requested_position);
           Ok(())
         }
       }
@@ -150,10 +136,7 @@ fn run_inner(cli: Cli) -> Result<(), String> {
         if args.json {
           print_json(&result)
         } else {
-          println!(
-            "natural scrolling toggled: {:?} -> {:?}",
-            result.observed_value_before, result.observed_value_after
-          );
+          println!("natural scrolling toggled: {:?} -> {:?}", result.observed_value_before, result.observed_value_after);
           Ok(())
         }
       }

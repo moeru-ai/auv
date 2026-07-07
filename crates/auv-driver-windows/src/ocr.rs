@@ -72,12 +72,7 @@ fn union_rect(rects: &[RectF]) -> Option<RectF> {
 /// the OCR language when the first tag is installed; otherwise the user
 /// profile languages are used.
 #[cfg(target_os = "windows")]
-pub fn recognize_text_in_rgba(
-  rgba: &[u8],
-  width: u32,
-  height: u32,
-  options: &TextRecognitionOptions,
-) -> Result<TextRecognition, OcrError> {
+pub fn recognize_text_in_rgba(rgba: &[u8], width: u32, height: u32, options: &TextRecognitionOptions) -> Result<TextRecognition, OcrError> {
   use windows::Graphics::Imaging::{BitmapPixelFormat, SoftwareBitmap};
   use windows::Security::Cryptography::CryptographicBuffer;
 
@@ -98,14 +93,9 @@ pub fn recognize_text_in_rgba(
   let bgra = rgba_to_bgra(rgba);
   let buffer = CryptographicBuffer::CreateFromByteArray(&bgra).map_err(OcrError::from_winrt)?;
   let bitmap =
-    SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, width_i32, height_i32)
-      .map_err(OcrError::from_winrt)?;
+    SoftwareBitmap::CreateCopyFromBuffer(&buffer, BitmapPixelFormat::Bgra8, width_i32, height_i32).map_err(OcrError::from_winrt)?;
 
-  let result = engine
-    .RecognizeAsync(&bitmap)
-    .map_err(OcrError::from_winrt)?
-    .get()
-    .map_err(OcrError::from_winrt)?;
+  let result = engine.RecognizeAsync(&bitmap).map_err(OcrError::from_winrt)?.get().map_err(OcrError::from_winrt)?;
 
   text_recognition_from_result(&result)
 }
@@ -139,9 +129,7 @@ fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(target_os = "windows")]
-fn create_engine(
-  options: &TextRecognitionOptions,
-) -> Result<windows::Media::Ocr::OcrEngine, OcrError> {
+fn create_engine(options: &TextRecognitionOptions) -> Result<windows::Media::Ocr::OcrEngine, OcrError> {
   use windows::Globalization::Language;
   use windows::Media::Ocr::OcrEngine;
   use windows::core::HSTRING;
@@ -149,13 +137,8 @@ fn create_engine(
   // NOTICE: Windows.Media.Ocr cannot be biased toward custom vocabulary, so
   // `TextRecognitionOptions::custom_words` is intentionally ignored here.
   // TODO(windows-ocr): expose custom-word weighting if a future engine adds it.
-  if let Some(tag) = options
-    .recognition_languages
-    .as_ref()
-    .and_then(|languages| languages.first())
-  {
-    let language =
-      Language::CreateLanguage(&HSTRING::from(tag.as_str())).map_err(OcrError::from_winrt)?;
+  if let Some(tag) = options.recognition_languages.as_ref().and_then(|languages| languages.first()) {
+    let language = Language::CreateLanguage(&HSTRING::from(tag.as_str())).map_err(OcrError::from_winrt)?;
     if OcrEngine::IsLanguageSupported(&language).map_err(OcrError::from_winrt)? {
       return OcrEngine::TryCreateFromLanguage(&language).map_err(OcrError::from_winrt);
     }
@@ -166,9 +149,7 @@ fn create_engine(
 }
 
 #[cfg(target_os = "windows")]
-fn text_recognition_from_result(
-  result: &windows::Media::Ocr::OcrResult,
-) -> Result<TextRecognition, OcrError> {
+fn text_recognition_from_result(result: &windows::Media::Ocr::OcrResult) -> Result<TextRecognition, OcrError> {
   let mut regions = Vec::new();
   let mut line_texts = Vec::new();
   for line in result.Lines().map_err(OcrError::from_winrt)? {
@@ -268,9 +249,8 @@ mod tests {
     let height = 16u32;
     let rgba = vec![255u8; (width * height * 4) as usize];
 
-    let recognition =
-      recognize_text_in_rgba(&rgba, width, height, &TextRecognitionOptions::default())
-        .expect("windows OCR engine should process a solid-color buffer");
+    let recognition = recognize_text_in_rgba(&rgba, width, height, &TextRecognitionOptions::default())
+      .expect("windows OCR engine should process a solid-color buffer");
 
     // A blank image yields no readable lines; the pipeline must still succeed.
     assert_eq!(recognition.regions.len(), recognition.text.lines().count());

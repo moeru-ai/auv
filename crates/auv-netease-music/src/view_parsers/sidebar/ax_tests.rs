@@ -78,8 +78,5 @@ fn vertical_scrollbar_boundary_prefers_page_button_height_over_plain_scrollbar_g
     },
   ];
 
-  assert_eq!(
-    sidebar_ax_scrollbar_boundary(&nodes, &window, sidebar_bounds),
-    Some(SidebarScrollbarBoundary::Bottom)
-  );
+  assert_eq!(sidebar_ax_scrollbar_boundary(&nodes, &window, sidebar_bounds), Some(SidebarScrollbarBoundary::Bottom));
 }

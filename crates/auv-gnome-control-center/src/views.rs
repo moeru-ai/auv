@@ -17,20 +17,13 @@ impl SettingsNode {
     if !self.name.trim().is_empty() {
       Some(self.name.as_str())
     } else {
-      self
-        .value
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
+      self.value.as_deref().filter(|value| !value.trim().is_empty())
     }
   }
 
   pub fn is_actionable(&self) -> bool {
     let role = self.role.to_ascii_lowercase();
-    role.contains("button")
-      || role.contains("menu")
-      || role.contains("list")
-      || role.contains("page")
-      || role.contains("radio")
+    role.contains("button") || role.contains("menu") || role.contains("list") || role.contains("page") || role.contains("radio")
   }
 
   pub fn is_slider(&self) -> bool {
@@ -101,13 +94,7 @@ pub fn find_switch_near_label(nodes: &[SettingsNode], labels: LabelSet) -> Optio
 }
 
 pub fn visible_labels(nodes: &[SettingsNode]) -> Vec<String> {
-  nodes
-    .iter()
-    .filter_map(SettingsNode::label)
-    .map(str::trim)
-    .filter(|label| !label.is_empty())
-    .map(ToOwned::to_owned)
-    .collect()
+  nodes.iter().filter_map(SettingsNode::label).map(str::trim).filter(|label| !label.is_empty()).map(ToOwned::to_owned).collect()
 }
 
 fn matched_node(node: &SettingsNode, label: &str, matched_label: &str) -> MatchedNode {

@@ -1,6 +1,4 @@
-use auv_inference_common::{
-  BoundingBox, Detection, DetectionSet, ImageSize, InferenceError, InferenceResult, ModelId,
-};
+use auv_inference_common::{BoundingBox, Detection, DetectionSet, ImageSize, InferenceError, InferenceResult, ModelId};
 use ultralytics_inference::Results;
 
 // NOTICE: Upstream `ultralytics-inference` owns model load, preprocessing,
@@ -43,23 +41,12 @@ pub fn detection_set_from_result(
   })
 }
 
-fn resolve_label(
-  class_id: usize,
-  result: &Results,
-  class_names_override: Option<&[String]>,
-) -> InferenceResult<String> {
+fn resolve_label(class_id: usize, result: &Results, class_names_override: Option<&[String]>) -> InferenceResult<String> {
   if let Some(class_names) = class_names_override {
-    return class_names
-      .get(class_id)
-      .cloned()
-      .ok_or(InferenceError::MissingClassLabel { class_id });
+    return class_names.get(class_id).cloned().ok_or(InferenceError::MissingClassLabel { class_id });
   }
 
-  result
-    .names
-    .get(&class_id)
-    .cloned()
-    .ok_or(InferenceError::MissingClassLabel { class_id })
+  result.names.get(&class_id).cloned().ok_or(InferenceError::MissingClassLabel { class_id })
 }
 
 #[cfg(test)]
@@ -84,17 +71,10 @@ mod tests {
     result.names = Arc::new(HashMap::from([(1, "backend-one".to_string())]));
     let override_names = vec!["override-zero".to_string()];
 
-    let error = detection_set_from_result(
-      &ModelId("test-model".to_string()),
-      &result,
-      Some(&override_names),
-    )
-    .expect_err("missing override label should fail");
+    let error = detection_set_from_result(&ModelId("test-model".to_string()), &result, Some(&override_names))
+      .expect_err("missing override label should fail");
 
-    assert!(matches!(
-      error,
-      InferenceError::MissingClassLabel { class_id: 1 }
-    ));
+    assert!(matches!(error, InferenceError::MissingClassLabel { class_id: 1 }));
   }
 
   #[test]
@@ -103,12 +83,8 @@ mod tests {
     result.names = Arc::new(HashMap::from([(1, "backend-one".to_string())]));
     let override_names = vec!["override-zero".to_string(), "override-one".to_string()];
 
-    let detections = detection_set_from_result(
-      &ModelId("test-model".to_string()),
-      &result,
-      Some(&override_names),
-    )
-    .expect("override label should be accepted");
+    let detections = detection_set_from_result(&ModelId("test-model".to_string()), &result, Some(&override_names))
+      .expect("override label should be accepted");
 
     assert_eq!(
       detections.detections[0],
@@ -131,8 +107,7 @@ mod tests {
     let mut result = result_with_box_for_class(1);
     result.names = Arc::new(HashMap::from([(1, "backend-one".to_string())]));
 
-    let detections =
-      detection_set_from_result(&ModelId("test-model".to_string()), &result, None).unwrap();
+    let detections = detection_set_from_result(&ModelId("test-model".to_string()), &result, None).unwrap();
 
     assert_eq!(
       detections,
@@ -158,16 +133,9 @@ mod tests {
   }
 
   fn result_with_box_for_class(class_id: usize) -> Results {
-    let mut result = Results::new(
-      Array3::zeros((8, 8, 3)),
-      "test.png".to_string(),
-      Arc::new(HashMap::new()),
-      Speed::default(),
-      (8, 8),
-    );
+    let mut result = Results::new(Array3::zeros((8, 8, 3)), "test.png".to_string(), Arc::new(HashMap::new()), Speed::default(), (8, 8));
     result.boxes = Some(Boxes::new(
-      Array2::from_shape_vec((1, 6), vec![1.0, 2.0, 3.0, 4.0, 0.9, class_id as f32])
-        .expect("test box shape should be valid"),
+      Array2::from_shape_vec((1, 6), vec![1.0, 2.0, 3.0, 4.0, 0.9, class_id as f32]).expect("test box shape should be valid"),
       result.orig_shape,
     ));
     result

@@ -5,9 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use auv_compare::{
-  DualBackendAnswer, DualBackendCompareVerdict, DualBackendSelectedSide, DualBackendStageStatus,
-  compare_dual_backend_verdict, pick_blocked_or_failed_preferred,
-  screen_points_match_with_tolerance, select_dual_backend_outcome,
+  DualBackendAnswer, DualBackendCompareVerdict, DualBackendSelectedSide, DualBackendStageStatus, compare_dual_backend_verdict,
+  pick_blocked_or_failed_preferred, screen_points_match_with_tolerance, select_dual_backend_outcome,
 };
 use auv_driver::geometry::Point;
 use auv_file::{
@@ -19,17 +18,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::projection::MinecraftProjector;
 use crate::scene_packet::{ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketManifest};
-use crate::training_result_semantic::{
-  TrainingResultSemanticManifest, TrainingResultSemanticStatus,
-};
+use crate::training_result_semantic::{TrainingResultSemanticManifest, TrainingResultSemanticStatus};
 use crate::training_result_spatial_query_provider::{
-  MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT,
-  MC18_V1_CLOSED_SCENE_TOY_NO_REFERENCE_LIMIT, run_checkpoint_native_provider_backend,
-  run_closed_scene_toy_provider_backend,
+  MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_NO_REFERENCE_LIMIT,
+  run_checkpoint_native_provider_backend, run_closed_scene_toy_provider_backend,
 };
 use crate::types::{
-  BlockFace, BlockPosition, MinecraftSpatialFrame, MinecraftTargetSemantics, ProjectionVisibility,
-  mc6_projection_target_for_frame,
+  BlockFace, BlockPosition, MinecraftSpatialFrame, MinecraftTargetSemantics, ProjectionVisibility, mc6_projection_target_for_frame,
 };
 
 pub type TrainingResultSpatialQueryResult<T> = Result<T, String>;
@@ -303,8 +298,7 @@ pub fn query_3dgs_training_result(
     "MC-10 training result semantic manifest",
   )?;
 
-  let scene_packet_manifest_path =
-    PathBuf::from(&semantic_manifest.source_scene_packet_manifest_path);
+  let scene_packet_manifest_path = PathBuf::from(&semantic_manifest.source_scene_packet_manifest_path);
   if !scene_packet_manifest_path.is_file() {
     return Err(format!(
       "MC-12 requires readable source_scene_packet_manifest_path {}, but the file is missing",
@@ -312,20 +306,11 @@ pub fn query_3dgs_training_result(
     ));
   }
 
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let scene_packet_manifest = read_json_file::<ScenePacketManifest>(
-    &scene_packet_manifest_path,
-    "MC-7 scene packet manifest",
-  )?;
-  let scene_packet_dir = scene_packet_manifest_path
-    .parent()
-    .ok_or_else(|| "MC-7 scene packet manifest path has no parent directory".to_string())?;
+  let scene_packet_manifest = read_json_file::<ScenePacketManifest>(&scene_packet_manifest_path, "MC-7 scene packet manifest")?;
+  let scene_packet_dir =
+    scene_packet_manifest_path.parent().ok_or_else(|| "MC-7 scene packet manifest path has no parent directory".to_string())?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
   let mut known_limits = BTreeSet::new();
@@ -334,14 +319,10 @@ pub fn query_3dgs_training_result(
     "MC-12 closes block-only spatial query evidence over MC-10 semantic manifests; it does not grade model quality or claim Gaussian-native inference"
       .to_string(),
   );
-  known_limits.insert(
-    "projection_reference is a scene-packet fallback reference backend, not a checkpoint-native Gaussian query core"
-      .to_string(),
-  );
-  known_limits.insert(
-    "MC-12 does not add entity query, anchor/label query, render preview, or dedicated read-side viewer consumption"
-      .to_string(),
-  );
+  known_limits
+    .insert("projection_reference is a scene-packet fallback reference backend, not a checkpoint-native Gaussian query core".to_string());
+  known_limits
+    .insert("MC-12 does not add entity query, anchor/label query, render preview, or dedicated read-side viewer consumption".to_string());
   if inputs.use_checkpoint_native_provider {
     known_limits.insert(MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT.to_string());
   }
@@ -355,32 +336,16 @@ pub fn query_3dgs_training_result(
 
   let (provider_outcome, configured_provider_backend) = if inputs.use_checkpoint_native_provider {
     (
-      Some(run_checkpoint_native_provider_backend(
-        &semantic_manifest,
-        &scene_packet_manifest,
-        scene_packet_dir,
-        &inputs,
-      )?),
+      Some(run_checkpoint_native_provider_backend(&semantic_manifest, &scene_packet_manifest, scene_packet_dir, &inputs)?),
       Some(TrainingResultSpatialQueryBackend::CheckpointNative),
     )
   } else if inputs.use_closed_scene_toy_provider {
     (
-      Some(run_closed_scene_toy_provider_backend(
-        &semantic_manifest,
-        &inputs,
-        inputs.closed_scene_fixture_path.as_deref(),
-      )?),
+      Some(run_closed_scene_toy_provider_backend(&semantic_manifest, &inputs, inputs.closed_scene_fixture_path.as_deref())?),
       Some(TrainingResultSpatialQueryBackend::ClosedSceneToy),
     )
   } else if let Some(command) = inputs.query_command.as_deref() {
-    (
-      Some(run_command_provider_backend(
-        command,
-        &semantic_manifest,
-        &inputs,
-      )?),
-      Some(TrainingResultSpatialQueryBackend::CommandProvider),
-    )
+    (Some(run_command_provider_backend(command, &semantic_manifest, &inputs)?), Some(TrainingResultSpatialQueryBackend::CommandProvider))
   } else {
     (None, None)
   };
@@ -392,9 +357,7 @@ pub fn query_3dgs_training_result(
       answer: TrainingResultSpatialQueryAnswer {
         status: TrainingResultSpatialQueryStatus::Blocked,
         reason: Some(TrainingResultSpatialQueryReason::SemanticSourceNotReady),
-        message: Some(
-          "MC-12 projection_reference requires MC-10 semantic_status=ready".to_string(),
-        ),
+        message: Some("MC-12 projection_reference requires MC-10 semantic_status=ready".to_string()),
         basis_frame_id: None,
         visibility: None,
         screen_point: None,
@@ -407,22 +370,14 @@ pub fn query_3dgs_training_result(
   };
 
   if !semantic_ready {
-    warnings.insert(
-      "MC-10 semantic_status is not ready; MC-12 records blocked spatial query evidence only"
-        .to_string(),
-    );
+    warnings.insert("MC-10 semantic_status is not ready; MC-12 records blocked spatial query evidence only".to_string());
   }
 
-  let provider_answer = provider_outcome
-    .as_ref()
-    .map(|outcome| outcome.answer.clone());
+  let provider_answer = provider_outcome.as_ref().map(|outcome| outcome.answer.clone());
   let reference_answer = reference_outcome.answer.clone();
 
-  let (selected_backend, selected_answer, comparison_verdict) = select_query_outcome(
-    provider_answer.as_ref(),
-    Some(&reference_answer),
-    configured_provider_backend,
-  );
+  let (selected_backend, selected_answer, comparison_verdict) =
+    select_query_outcome(provider_answer.as_ref(), Some(&reference_answer), configured_provider_backend);
 
   let manifest_path = inputs.output_dir.join(QUERY_MANIFEST_FILE);
   let inspect_report_path = inputs.output_dir.join(QUERY_INSPECT_FILE);
@@ -430,21 +385,12 @@ pub fn query_3dgs_training_result(
   let manifest = TrainingResultSpatialQueryManifest {
     schema_version: TRAINING_RESULT_SPATIAL_QUERY_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
-    training_result_semantic_manifest_path: inputs
-      .training_result_semantic_manifest_path
-      .to_string_lossy()
-      .into_owned(),
-    source_training_result_artifact_manifest_path: semantic_manifest
-      .source_training_result_artifact_manifest_path
-      .clone(),
-    source_training_result_manifest_path: semantic_manifest
-      .source_training_result_manifest_path
-      .clone(),
+    training_result_semantic_manifest_path: inputs.training_result_semantic_manifest_path.to_string_lossy().into_owned(),
+    source_training_result_artifact_manifest_path: semantic_manifest.source_training_result_artifact_manifest_path.clone(),
+    source_training_result_manifest_path: semantic_manifest.source_training_result_manifest_path.clone(),
     source_training_job_manifest_path: semantic_manifest.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: semantic_manifest.source_training_launch_plan_path.clone(),
-    source_training_package_manifest_path: semantic_manifest
-      .source_training_package_manifest_path
-      .clone(),
+    source_training_package_manifest_path: semantic_manifest.source_training_package_manifest_path.clone(),
     source_scene_packet_manifest_path: semantic_manifest.source_scene_packet_manifest_path.clone(),
     source_bundle_manifest_paths: semantic_manifest.source_bundle_manifest_paths.clone(),
     source_run_ids: semantic_manifest.source_run_ids.clone(),
@@ -472,9 +418,7 @@ pub fn query_3dgs_training_result(
     generated_at_millis,
     training_result_spatial_query_manifest_path: manifest_path.to_string_lossy().into_owned(),
     training_result_semantic_manifest_path: manifest.training_result_semantic_manifest_path.clone(),
-    source_training_result_artifact_manifest_path: manifest
-      .source_training_result_artifact_manifest_path
-      .clone(),
+    source_training_result_artifact_manifest_path: manifest.source_training_result_artifact_manifest_path.clone(),
     source_training_result_manifest_path: manifest.source_training_result_manifest_path.clone(),
     source_training_job_manifest_path: manifest.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: manifest.source_training_launch_plan_path.clone(),
@@ -498,14 +442,9 @@ pub fn query_3dgs_training_result(
     confidence: manifest.confidence,
     basis_frame_id: manifest.basis_frame_id.clone(),
     comparison_verdict: manifest.comparison_verdict,
-    provider_status: provider_answer
-      .as_ref()
-      .map(|answer| answer.status)
-      .unwrap_or(TrainingResultSpatialQueryStatus::Blocked),
+    provider_status: provider_answer.as_ref().map(|answer| answer.status).unwrap_or(TrainingResultSpatialQueryStatus::Blocked),
     provider_reason: provider_answer.as_ref().and_then(|answer| answer.reason),
-    provider_message: provider_answer
-      .as_ref()
-      .and_then(|answer| answer.message.clone()),
+    provider_message: provider_answer.as_ref().and_then(|answer| answer.message.clone()),
     reference_status: reference_answer.status,
     reference_reason: reference_answer.reason,
     reference_basis_frame_id: reference_answer.basis_frame_id.clone(),
@@ -516,16 +455,8 @@ pub fn query_3dgs_training_result(
     known_limits: manifest.known_limits.clone(),
   };
 
-  write_json_file(
-    &manifest_path,
-    &manifest,
-    "MC-12 training result spatial query manifest",
-  )?;
-  write_json_file(
-    &inspect_report_path,
-    &inspect_report,
-    "MC-12 training result spatial query inspect report",
-  )?;
+  write_json_file(&manifest_path, &manifest, "MC-12 training result spatial query manifest")?;
+  write_json_file(&inspect_report_path, &inspect_report, "MC-12 training result spatial query inspect report")?;
 
   Ok(TrainingResultSpatialQueryOutput {
     output_dir: inputs.output_dir,
@@ -563,21 +494,13 @@ impl DualBackendAnswer for TrainingResultSpatialQueryAnswer {
   }
 }
 
-fn map_comparison_verdict(
-  verdict: DualBackendCompareVerdict,
-) -> TrainingResultSpatialQueryComparisonVerdict {
+fn map_comparison_verdict(verdict: DualBackendCompareVerdict) -> TrainingResultSpatialQueryComparisonVerdict {
   match verdict {
     DualBackendCompareVerdict::Match => TrainingResultSpatialQueryComparisonVerdict::Match,
     DualBackendCompareVerdict::Divergent => TrainingResultSpatialQueryComparisonVerdict::Divergent,
-    DualBackendCompareVerdict::ProviderOnly => {
-      TrainingResultSpatialQueryComparisonVerdict::ProviderOnly
-    }
-    DualBackendCompareVerdict::ReferenceOnly => {
-      TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly
-    }
-    DualBackendCompareVerdict::NotComparable => {
-      TrainingResultSpatialQueryComparisonVerdict::NotComparable
-    }
+    DualBackendCompareVerdict::ProviderOnly => TrainingResultSpatialQueryComparisonVerdict::ProviderOnly,
+    DualBackendCompareVerdict::ReferenceOnly => TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly,
+    DualBackendCompareVerdict::NotComparable => TrainingResultSpatialQueryComparisonVerdict::NotComparable,
   }
 }
 
@@ -585,50 +508,33 @@ fn select_query_outcome(
   provider_answer: Option<&TrainingResultSpatialQueryAnswer>,
   reference_answer: Option<&TrainingResultSpatialQueryAnswer>,
   configured_provider_backend: Option<TrainingResultSpatialQueryBackend>,
-) -> (
-  Option<TrainingResultSpatialQueryBackend>,
-  TrainingResultSpatialQueryAnswer,
-  Option<TrainingResultSpatialQueryComparisonVerdict>,
-) {
-  let (selected_side, answer, comparison_verdict) = select_dual_backend_outcome(
-    provider_answer,
-    reference_answer,
-    pick_blocked_or_failed_answer,
-  );
+) -> (Option<TrainingResultSpatialQueryBackend>, TrainingResultSpatialQueryAnswer, Option<TrainingResultSpatialQueryComparisonVerdict>) {
+  let (selected_side, answer, comparison_verdict) =
+    select_dual_backend_outcome(provider_answer, reference_answer, pick_blocked_or_failed_answer);
   let selected_backend = match selected_side {
-    DualBackendSelectedSide::Provider => {
-      configured_provider_backend.or(Some(TrainingResultSpatialQueryBackend::CommandProvider))
-    }
-    DualBackendSelectedSide::Reference => {
-      Some(TrainingResultSpatialQueryBackend::ProjectionReference)
-    }
+    DualBackendSelectedSide::Provider => configured_provider_backend.or(Some(TrainingResultSpatialQueryBackend::CommandProvider)),
+    DualBackendSelectedSide::Reference => Some(TrainingResultSpatialQueryBackend::ProjectionReference),
     DualBackendSelectedSide::Neither => None,
   };
-  (
-    selected_backend,
-    answer,
-    comparison_verdict.map(map_comparison_verdict),
-  )
+  (selected_backend, answer, comparison_verdict.map(map_comparison_verdict))
 }
 
 fn pick_blocked_or_failed_answer(
   provider_answer: Option<&TrainingResultSpatialQueryAnswer>,
   reference_answer: Option<&TrainingResultSpatialQueryAnswer>,
 ) -> TrainingResultSpatialQueryAnswer {
-  pick_blocked_or_failed_preferred([provider_answer, reference_answer], |answer| {
-    answer.status == TrainingResultSpatialQueryStatus::Blocked
-  })
-  .cloned()
-  .unwrap_or(TrainingResultSpatialQueryAnswer {
-    status: TrainingResultSpatialQueryStatus::Failed,
-    reason: Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket),
-    message: Some("MC-12 spatial query produced no backend answer".to_string()),
-    basis_frame_id: None,
-    visibility: None,
-    screen_point: None,
-    match_radius_px: None,
-    confidence: None,
-  })
+  pick_blocked_or_failed_preferred([provider_answer, reference_answer], |answer| answer.status == TrainingResultSpatialQueryStatus::Blocked)
+    .cloned()
+    .unwrap_or(TrainingResultSpatialQueryAnswer {
+      status: TrainingResultSpatialQueryStatus::Failed,
+      reason: Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket),
+      message: Some("MC-12 spatial query produced no backend answer".to_string()),
+      basis_frame_id: None,
+      visibility: None,
+      screen_point: None,
+      match_radius_px: None,
+      confidence: None,
+    })
 }
 
 // Core-B2 adapter surface; selection path compares via select_dual_backend_outcome.
@@ -641,10 +547,7 @@ fn compare_answers(
 }
 
 #[allow(dead_code)]
-fn answers_match(
-  provider: &TrainingResultSpatialQueryAnswer,
-  reference: &TrainingResultSpatialQueryAnswer,
-) -> bool {
+fn answers_match(provider: &TrainingResultSpatialQueryAnswer, reference: &TrainingResultSpatialQueryAnswer) -> bool {
   if provider.visibility != reference.visibility {
     return false;
   }
@@ -672,17 +575,11 @@ fn run_command_provider_backend(
   inputs: &TrainingResultSpatialQueryInputs,
 ) -> TrainingResultSpatialQueryResult<BackendOutcome> {
   let request = TrainingResultSpatialQueryRequest {
-    source_training_result_artifact_manifest_path: semantic_manifest
-      .source_training_result_artifact_manifest_path
-      .clone(),
-    source_training_result_manifest_path: semantic_manifest
-      .source_training_result_manifest_path
-      .clone(),
+    source_training_result_artifact_manifest_path: semantic_manifest.source_training_result_artifact_manifest_path.clone(),
+    source_training_result_manifest_path: semantic_manifest.source_training_result_manifest_path.clone(),
     source_training_job_manifest_path: semantic_manifest.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: semantic_manifest.source_training_launch_plan_path.clone(),
-    source_training_package_manifest_path: semantic_manifest
-      .source_training_package_manifest_path
-      .clone(),
+    source_training_package_manifest_path: semantic_manifest.source_training_package_manifest_path.clone(),
     source_scene_packet_manifest_path: semantic_manifest.source_scene_packet_manifest_path.clone(),
     source_bundle_manifest_paths: semantic_manifest.source_bundle_manifest_paths.clone(),
     source_run_ids: semantic_manifest.source_run_ids.clone(),
@@ -696,31 +593,17 @@ fn run_command_provider_backend(
   };
 
   let mut command = Command::new("sh");
-  command
-    .arg("-lc")
-    .arg(command_text)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
+  command.arg("-lc").arg(command_text).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
-  let mut child = command.spawn().map_err(|error| {
-    format!("failed to run MC-12 spatial query command `{command_text}`: {error}")
-  })?;
+  let mut child = command.spawn().map_err(|error| format!("failed to run MC-12 spatial query command `{command_text}`: {error}"))?;
   {
-    let stdin = child
-      .stdin
-      .as_mut()
-      .ok_or_else(|| "failed to open stdin for MC-12 spatial query command".to_string())?;
-    serde_json::to_writer(&mut *stdin, &request)
-      .map_err(|error| format!("failed to write MC-12 spatial query request JSON: {error}"))?;
-    stdin
-      .write_all(b"\n")
-      .map_err(|error| format!("failed to finish MC-12 spatial query request JSON: {error}"))?;
+    let stdin = child.stdin.as_mut().ok_or_else(|| "failed to open stdin for MC-12 spatial query command".to_string())?;
+    serde_json::to_writer(&mut *stdin, &request).map_err(|error| format!("failed to write MC-12 spatial query request JSON: {error}"))?;
+    stdin.write_all(b"\n").map_err(|error| format!("failed to finish MC-12 spatial query request JSON: {error}"))?;
   }
 
-  let output = child.wait_with_output().map_err(|error| {
-    format!("failed to wait for MC-12 spatial query command `{command_text}`: {error}")
-  })?;
+  let output =
+    child.wait_with_output().map_err(|error| format!("failed to wait for MC-12 spatial query command `{command_text}`: {error}"))?;
   if !output.status.success() {
     return Ok(BackendOutcome {
       answer: TrainingResultSpatialQueryAnswer {
@@ -743,21 +626,16 @@ fn run_command_provider_backend(
   }
 
   let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-  let answer =
-    serde_json::from_str::<TrainingResultSpatialQueryAnswer>(&stdout).unwrap_or_else(|error| {
-      TrainingResultSpatialQueryAnswer {
-        status: TrainingResultSpatialQueryStatus::Failed,
-        reason: Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid),
-        message: Some(format!(
-          "failed to parse MC-12 spatial query command output: {error}"
-        )),
-        basis_frame_id: None,
-        visibility: None,
-        screen_point: None,
-        match_radius_px: None,
-        confidence: None,
-      }
-    });
+  let answer = serde_json::from_str::<TrainingResultSpatialQueryAnswer>(&stdout).unwrap_or_else(|error| TrainingResultSpatialQueryAnswer {
+    status: TrainingResultSpatialQueryStatus::Failed,
+    reason: Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid),
+    message: Some(format!("failed to parse MC-12 spatial query command output: {error}")),
+    basis_frame_id: None,
+    visibility: None,
+    screen_point: None,
+    match_radius_px: None,
+    confidence: None,
+  });
 
   Ok(BackendOutcome {
     answer,
@@ -771,9 +649,7 @@ pub(crate) fn run_projection_reference_backend(
   scene_packet_dir: &Path,
   inputs: &TrainingResultSpatialQueryInputs,
 ) -> TrainingResultSpatialQueryResult<BackendOutcome> {
-  let Some((frame_record, frame)) =
-    select_reference_frame(scene_packet_manifest, scene_packet_dir, inputs.target_block)
-  else {
+  let Some((frame_record, frame)) = select_reference_frame(scene_packet_manifest, scene_packet_dir, inputs.target_block) else {
     return Ok(BackendOutcome {
       answer: TrainingResultSpatialQueryAnswer {
         status: TrainingResultSpatialQueryStatus::Failed,
@@ -795,14 +671,10 @@ pub(crate) fn run_projection_reference_backend(
 
   let frame_json_path = scene_packet_dir.join(&frame_record.frame_json_path);
   if !frame_json_path.is_file() {
-    return Err(format!(
-      "MC-12 selected scene packet frame JSON is missing at {}",
-      frame_json_path.display()
-    ));
+    return Err(format!("MC-12 selected scene packet frame JSON is missing at {}", frame_json_path.display()));
   }
 
-  let mut target =
-    mc6_projection_target_for_frame(inputs.target_block, &frame, inputs.target_semantics);
+  let mut target = mc6_projection_target_for_frame(inputs.target_block, &frame, inputs.target_semantics);
   if let Some(face) = inputs.target_face {
     target.face = Some(face);
     if inputs.target_semantics == MinecraftTargetSemantics::BlockCenter {
@@ -810,9 +682,7 @@ pub(crate) fn run_projection_reference_backend(
     }
   }
 
-  let projected = match MinecraftProjector::new(frame.clone())
-    .and_then(|projector| projector.project_block_target(&target))
-  {
+  let projected = match MinecraftProjector::new(frame.clone()).and_then(|projector| projector.project_block_target(&target)) {
     Ok(projected) => projected,
     Err(error) => {
       return Ok(BackendOutcome {
@@ -847,10 +717,7 @@ pub(crate) fn run_projection_reference_backend(
       confidence: Some(projected.confidence),
     },
     reference_source_frame_json_path: Some(frame_json_path.to_string_lossy().into_owned()),
-    reference_screenshot_path: frame_record
-      .screenshot_path
-      .as_ref()
-      .map(|path| scene_packet_dir.join(path).to_string_lossy().into_owned()),
+    reference_screenshot_path: frame_record.screenshot_path.as_ref().map(|path| scene_packet_dir.join(path).to_string_lossy().into_owned()),
   })
 }
 
@@ -868,11 +735,7 @@ fn select_reference_frame(
       continue;
     }
     let frame = load_scene_packet_frame(scene_packet_dir, frame_record).ok()?;
-    if frame
-      .raycast_hit
-      .as_ref()
-      .is_some_and(|hit| hit.block_pos == target_block)
-    {
+    if frame.raycast_hit.as_ref().is_some_and(|hit| hit.block_pos == target_block) {
       return Some((frame_record.clone(), frame));
     }
   }
@@ -882,11 +745,7 @@ fn select_reference_frame(
       continue;
     }
     let frame = load_scene_packet_frame(scene_packet_dir, frame_record).ok()?;
-    if frame
-      .nearby_blocks
-      .iter()
-      .any(|block| block.block_pos == target_block)
-    {
+    if frame.nearby_blocks.iter().any(|block| block.block_pos == target_block) {
       return Some((frame_record.clone(), frame));
     }
   }
@@ -903,18 +762,13 @@ fn load_scene_packet_frame(
   frame_record: &ScenePacketFrameRecord,
 ) -> TrainingResultSpatialQueryResult<MinecraftSpatialFrame> {
   let frame_path = scene_packet_dir.join(&frame_record.frame_json_path);
-  if let Ok(payload) =
-    read_json_file::<ScenePacketFramePayload>(&frame_path, "MC-7 scene packet frame")
-  {
+  if let Ok(payload) = read_json_file::<ScenePacketFramePayload>(&frame_path, "MC-7 scene packet frame") {
     return Ok(payload.spatial_frame);
   }
   read_json_file::<MinecraftSpatialFrame>(&frame_path, "MC-7 scene packet frame")
 }
 
-fn read_json_file<T: DeserializeOwned>(
-  path: &Path,
-  label: &str,
-) -> TrainingResultSpatialQueryResult<T> {
+fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> TrainingResultSpatialQueryResult<T> {
   read_json_file_helper(path).map_err(|error| match error {
     JsonFileReadError::Open(error) => {
       format!("failed to open {label} {}: {error}", path.display())
@@ -925,11 +779,7 @@ fn read_json_file<T: DeserializeOwned>(
   })
 }
 
-fn write_json_file<T: Serialize>(
-  path: &Path,
-  value: &T,
-  label: &str,
-) -> TrainingResultSpatialQueryResult<()> {
+fn write_json_file<T: Serialize>(path: &Path, value: &T, label: &str) -> TrainingResultSpatialQueryResult<()> {
   write_json_file_helper(path, value, JsonWriteOptions::default()).map_err(|error| match error {
     JsonFileWriteError::CreateParent(error) | JsonFileWriteError::Write(error) => {
       format!("failed to write {label} {}: {error}", path.display())
@@ -953,11 +803,7 @@ mod tests {
     ]
   }
 
-  fn write_semantic_manifest(
-    temp: &TempDir,
-    semantic_status: TrainingResultSemanticStatus,
-    scene_packet_manifest_path: &Path,
-  ) -> PathBuf {
+  fn write_semantic_manifest(temp: &TempDir, semantic_status: TrainingResultSemanticStatus, scene_packet_manifest_path: &Path) -> PathBuf {
     let manifest = TrainingResultSemanticManifest {
       schema_version: 1,
       generated_at_millis: 1,
@@ -972,23 +818,11 @@ mod tests {
       trainer_backend: "nerfstudio.splatfacto".to_string(),
       job_backend: "remote".to_string(),
       source_result_status: TrainingResultStatus::Succeeded,
-      normalized_result_dir: temp
-        .path()
-        .join("normalized")
-        .to_string_lossy()
-        .into_owned(),
+      normalized_result_dir: temp.path().join("normalized").to_string_lossy().into_owned(),
       semantic_status,
       semantic_reason: None,
-      config_path: temp
-        .path()
-        .join("normalized/config.yml")
-        .to_string_lossy()
-        .into_owned(),
-      models_dir_path: temp
-        .path()
-        .join("normalized/nerfstudio_models")
-        .to_string_lossy()
-        .into_owned(),
+      config_path: temp.path().join("normalized/config.yml").to_string_lossy().into_owned(),
+      models_dir_path: temp.path().join("normalized/nerfstudio_models").to_string_lossy().into_owned(),
       status_snapshot_path: None,
       config_trainer: Some("nerfstudio.splatfacto".to_string()),
       checkpoint_files: Vec::new(),
@@ -1000,11 +834,7 @@ mod tests {
     path
   }
 
-  fn write_scene_packet_fixture(
-    temp: &TempDir,
-    target_block: BlockPosition,
-    frame: MinecraftSpatialFrame,
-  ) -> PathBuf {
+  fn write_scene_packet_fixture(temp: &TempDir, target_block: BlockPosition, frame: MinecraftSpatialFrame) -> PathBuf {
     let output_dir = temp.path().join("scene-packet");
     fs::create_dir_all(output_dir.join("frames")).expect("frames dir");
     let frame_json_path = output_dir.join("frames/frame_000001.json");
@@ -1043,11 +873,7 @@ mod tests {
     manifest_path
   }
 
-  fn test_frame(
-    target_block: BlockPosition,
-    view_matrix: [f64; 16],
-    projection_matrix: [f64; 16],
-  ) -> MinecraftSpatialFrame {
+  fn test_frame(target_block: BlockPosition, view_matrix: [f64; 16], projection_matrix: [f64; 16]) -> MinecraftSpatialFrame {
     MinecraftSpatialFrame {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 1,
@@ -1082,11 +908,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1101,22 +923,10 @@ mod tests {
     })
     .expect("reference-only happy path");
 
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.selected_backend,
-      Some(TrainingResultSpatialQueryBackend::ProjectionReference)
-    );
-    assert_eq!(
-      output.manifest.comparison_verdict,
-      Some(TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly)
-    );
-    assert_eq!(
-      output.inspect_report.reference_status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.selected_backend, Some(TrainingResultSpatialQueryBackend::ProjectionReference));
+    assert_eq!(output.manifest.comparison_verdict, Some(TrainingResultSpatialQueryComparisonVerdict::ReferenceOnly));
+    assert_eq!(output.inspect_report.reference_status, TrainingResultSpatialQueryStatus::Answered);
     assert!(output.manifest.screen_point.is_some());
   }
 
@@ -1126,11 +936,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Blocked,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Blocked, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1145,14 +951,8 @@ mod tests {
     })
     .expect("blocked semantic should still write artifacts");
 
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Blocked
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(TrainingResultSpatialQueryReason::SemanticSourceNotReady)
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Blocked);
+    assert_eq!(output.manifest.reason, Some(TrainingResultSpatialQueryReason::SemanticSourceNotReady));
     assert!(output.manifest_path.is_file());
     assert!(output.inspect_report_path.is_file());
   }
@@ -1161,17 +961,9 @@ mod tests {
   fn failed_when_target_block_absent_from_scene_packet() {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(9, 9, 9);
-    let frame = test_frame(
-      BlockPosition::new(0, 0, 0),
-      identity_matrix(),
-      identity_matrix(),
-    );
+    let frame = test_frame(BlockPosition::new(0, 0, 0), identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1186,14 +978,8 @@ mod tests {
     })
     .expect("missing target should still write artifacts");
 
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Failed
-    );
-    assert_eq!(
-      output.manifest.reason,
-      Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket)
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Failed);
+    assert_eq!(output.manifest.reason, Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket));
   }
 
   #[test]
@@ -1202,11 +988,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
 
     let provider_command = "printf '%s' '{\"status\":\"answered\",\"basis_frame_id\":\"provider-frame\",\"visibility\":\"visible\",\"screen_point\":{\"x\":600.0,\"y\":150.0},\"match_radius_px\":8.0,\"confidence\":0.9}'";
 
@@ -1223,20 +1005,11 @@ mod tests {
     })
     .expect("provider + reference");
 
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.selected_backend,
-      Some(TrainingResultSpatialQueryBackend::CommandProvider)
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.selected_backend, Some(TrainingResultSpatialQueryBackend::CommandProvider));
     assert!(matches!(
       output.manifest.comparison_verdict,
-      Some(
-        TrainingResultSpatialQueryComparisonVerdict::Match
-          | TrainingResultSpatialQueryComparisonVerdict::Divergent
-      )
+      Some(TrainingResultSpatialQueryComparisonVerdict::Match | TrainingResultSpatialQueryComparisonVerdict::Divergent)
     ));
   }
 
@@ -1246,11 +1019,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
     let provider_command = "printf not-json".to_string();
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
@@ -1266,31 +1035,17 @@ mod tests {
     })
     .expect("invalid provider JSON should still write artifacts via reference fallback");
 
-    assert_eq!(
-      output.inspect_report.provider_status,
-      TrainingResultSpatialQueryStatus::Failed
-    );
-    assert_eq!(
-      output.inspect_report.provider_reason,
-      Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid)
-    );
+    assert_eq!(output.inspect_report.provider_status, TrainingResultSpatialQueryStatus::Failed);
+    assert_eq!(output.inspect_report.provider_reason, Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid));
     assert!(
       output
         .inspect_report
         .provider_message
         .as_deref()
-        .is_some_and(
-          |message| message.contains("failed to parse MC-12 spatial query command output")
-        )
+        .is_some_and(|message| message.contains("failed to parse MC-12 spatial query command output"))
     );
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.selected_backend,
-      Some(TrainingResultSpatialQueryBackend::ProjectionReference)
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.selected_backend, Some(TrainingResultSpatialQueryBackend::ProjectionReference));
   }
 
   #[test]
@@ -1299,11 +1054,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1318,18 +1069,9 @@ mod tests {
     })
     .expect("provider failure should still write artifacts via reference fallback");
 
-    assert_eq!(
-      output.inspect_report.provider_status,
-      TrainingResultSpatialQueryStatus::Failed
-    );
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.selected_backend,
-      Some(TrainingResultSpatialQueryBackend::ProjectionReference)
-    );
+    assert_eq!(output.inspect_report.provider_status, TrainingResultSpatialQueryStatus::Failed);
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.selected_backend, Some(TrainingResultSpatialQueryBackend::ProjectionReference));
   }
 
   #[test]
@@ -1344,11 +1086,7 @@ mod tests {
       ],
     );
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1363,14 +1101,8 @@ mod tests {
     })
     .expect("behind camera visibility");
 
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.visibility,
-      Some(ProjectionVisibility::BehindCamera)
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.visibility, Some(ProjectionVisibility::BehindCamera));
   }
 
   #[test]
@@ -1380,11 +1112,7 @@ mod tests {
     let mut frame = test_frame(target_block, identity_matrix(), identity_matrix());
     frame.player_pose.eye_position = Vec3::new(5.0, 0.0, 0.0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1399,14 +1127,8 @@ mod tests {
     })
     .expect("out of frustum visibility");
 
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.visibility,
-      Some(ProjectionVisibility::OutOfFrustum)
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.visibility, Some(ProjectionVisibility::OutOfFrustum));
   }
 
   fn write_multi_frame_scene_packet_fixture(
@@ -1463,11 +1185,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
     let provider_command = "printf '%s' '{\"status\":\"answered\",\"basis_frame_id\":\"provider-frame\",\"visibility\":\"outside_window\",\"match_radius_px\":8.0,\"confidence\":0.9}'";
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
@@ -1483,14 +1201,8 @@ mod tests {
     })
     .expect("outside window visibility");
 
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.visibility,
-      Some(ProjectionVisibility::OutsideWindow)
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.visibility, Some(ProjectionVisibility::OutsideWindow));
     assert!(output.manifest.screen_point.is_none());
   }
 
@@ -1510,11 +1222,7 @@ mod tests {
         (200, "frame-newest", newer_frame),
       ],
     );
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1529,14 +1237,8 @@ mod tests {
     })
     .expect("newest matching frame");
 
-    assert_eq!(
-      output.manifest.basis_frame_id.as_deref(),
-      Some("frame-newest")
-    );
-    assert_eq!(
-      output.inspect_report.reference_basis_frame_id.as_deref(),
-      Some("frame-newest")
-    );
+    assert_eq!(output.manifest.basis_frame_id.as_deref(), Some("frame-newest"));
+    assert_eq!(output.inspect_report.reference_basis_frame_id.as_deref(), Some("frame-newest"));
   }
 
   #[test]
@@ -1550,11 +1252,7 @@ mod tests {
       block_id: "minecraft:stone".to_string(),
     });
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
 
     let hit_face_center = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path.clone(),
@@ -1595,41 +1293,20 @@ mod tests {
     })
     .expect("explicit target face");
 
-    assert_eq!(
-      hit_face_center.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      block_center.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      explicit_face.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      hit_face_center.manifest.target_semantics,
-      MinecraftTargetSemantics::HitFaceCenter
-    );
-    assert_eq!(
-      block_center.manifest.target_semantics,
-      MinecraftTargetSemantics::BlockCenter
-    );
+    assert_eq!(hit_face_center.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(block_center.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(explicit_face.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(hit_face_center.manifest.target_semantics, MinecraftTargetSemantics::HitFaceCenter);
+    assert_eq!(block_center.manifest.target_semantics, MinecraftTargetSemantics::BlockCenter);
     assert_eq!(explicit_face.manifest.target_face, Some(BlockFace::East));
-    assert_ne!(
-      hit_face_center.manifest.screen_point,
-      explicit_face.manifest.screen_point
-    );
+    assert_ne!(hit_face_center.manifest.screen_point, explicit_face.manifest.screen_point);
   }
 
   #[test]
   fn hard_fails_when_scene_packet_manifest_missing() {
     let temp = TempDir::new().expect("tempdir");
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      Path::new("/tmp/missing-scene-packet.json"),
-    );
+    let semantic_manifest_path =
+      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, Path::new("/tmp/missing-scene-packet.json"));
 
     let error = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1669,11 +1346,7 @@ mod tests {
     let normalized_dir = temp.path().join("normalized");
     let models_dir = normalized_dir.join("nerfstudio_models");
     fs::create_dir_all(&models_dir).expect("models dir");
-    fs::write(
-      normalized_dir.join("config.yml"),
-      "trainer: nerfstudio.splatfacto\n",
-    )
-    .expect("config");
+    fs::write(normalized_dir.join("config.yml"), "trainer: nerfstudio.splatfacto\n").expect("config");
     if with_checkpoint {
       fs::write(models_dir.join("step-000001.ckpt"), b"fake-checkpoint").expect("checkpoint");
     }
@@ -1686,11 +1359,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1705,35 +1374,14 @@ mod tests {
     })
     .expect("checkpoint native query");
 
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.selected_backend,
-      Some(TrainingResultSpatialQueryBackend::CheckpointNative)
-    );
-    assert!(
-      output
-        .manifest
-        .basis_frame_id
-        .as_deref()
-        .is_some_and(|basis| basis.starts_with("checkpoint:"))
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.selected_backend, Some(TrainingResultSpatialQueryBackend::CheckpointNative));
+    assert!(output.manifest.basis_frame_id.as_deref().is_some_and(|basis| basis.starts_with("checkpoint:")));
     assert!(matches!(
       output.manifest.comparison_verdict,
-      Some(
-        TrainingResultSpatialQueryComparisonVerdict::Match
-          | TrainingResultSpatialQueryComparisonVerdict::Divergent
-      )
+      Some(TrainingResultSpatialQueryComparisonVerdict::Match | TrainingResultSpatialQueryComparisonVerdict::Divergent)
     ));
-    assert!(
-      output
-        .manifest
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("Gaussian render inference is deferred"))
-    );
+    assert!(output.manifest.known_limits.iter().any(|limit| limit.contains("Gaussian render inference is deferred")));
   }
   #[test]
   fn closed_scene_toy_provider_selects_closed_scene_toy_backend() {
@@ -1742,13 +1390,8 @@ mod tests {
     let target_block = BlockPosition::new(511, 73, 728);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(
-      &temp,
-      TrainingResultSemanticStatus::Ready,
-      &scene_packet_manifest_path,
-    );
-    let fixture_path =
-      PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mc18/visible.json");
+    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mc18/visible.json");
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1763,27 +1406,9 @@ mod tests {
     })
     .expect("closed scene toy query");
 
-    assert_eq!(
-      output.manifest.status,
-      TrainingResultSpatialQueryStatus::Answered
-    );
-    assert_eq!(
-      output.manifest.selected_backend,
-      Some(TrainingResultSpatialQueryBackend::ClosedSceneToy)
-    );
-    assert!(
-      output
-        .manifest
-        .basis_frame_id
-        .as_deref()
-        .is_some_and(|basis| basis.starts_with("closed_scene_toy:"))
-    );
-    assert!(
-      output
-        .manifest
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("not Gaussian inference"))
-    );
+    assert_eq!(output.manifest.status, TrainingResultSpatialQueryStatus::Answered);
+    assert_eq!(output.manifest.selected_backend, Some(TrainingResultSpatialQueryBackend::ClosedSceneToy));
+    assert!(output.manifest.basis_frame_id.as_deref().is_some_and(|basis| basis.starts_with("closed_scene_toy:")));
+    assert!(output.manifest.known_limits.iter().any(|limit| limit.contains("not Gaussian inference")));
   }
 }

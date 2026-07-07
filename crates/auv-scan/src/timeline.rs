@@ -123,10 +123,7 @@ pub fn build_scan_timeline_from_bundle(bundle: &ScanFrameBundle) -> ScanTimeline
   }
 }
 
-pub fn write_timeline_artifact(
-  dir: &Path,
-  timeline: &ScanTimelineWire,
-) -> Result<PathBuf, TimelineError> {
+pub fn write_timeline_artifact(dir: &Path, timeline: &ScanTimelineWire) -> Result<PathBuf, TimelineError> {
   if timeline.schema_version != SCAN_TIMELINE_SCHEMA_VERSION {
     return Err(TimelineError::SchemaMismatch {
       found: timeline.schema_version.clone(),
@@ -166,29 +163,19 @@ pub fn format_scan_timeline_text(timeline: &ScanTimelineWire) -> String {
   for segment in &timeline.segments {
     lines.push(format!(
       "[timeline.segment] from={} to={} from_index={} to_index={}",
-      segment.from_frame_id,
-      segment.to_frame_id,
-      segment.from_sequence_index,
-      segment.to_sequence_index,
+      segment.from_frame_id, segment.to_frame_id, segment.from_sequence_index, segment.to_sequence_index,
     ));
     match &segment.motion {
       TimelineMotionWire::Estimated {
         delta_x,
         delta_y,
         confidence,
-      } => lines.push(format!(
-        "[timeline.motion] status=estimated delta_x={delta_x} delta_y={delta_y} confidence={confidence}"
-      )),
-      TimelineMotionWire::Unknown { code, message } => lines.push(format!(
-        "[timeline.motion] status=unknown code={code} message={message}"
-      )),
+      } => lines.push(format!("[timeline.motion] status=estimated delta_x={delta_x} delta_y={delta_y} confidence={confidence}")),
+      TimelineMotionWire::Unknown { code, message } => lines.push(format!("[timeline.motion] status=unknown code={code} message={message}")),
     }
   }
   for diagnostic in &timeline.diagnostics {
-    lines.push(format!(
-      "[timeline.diagnostic] code={} message={}",
-      diagnostic.code, diagnostic.message
-    ));
+    lines.push(format!("[timeline.diagnostic] code={} message={}", diagnostic.code, diagnostic.message));
   }
   lines.join("\n")
 }
@@ -209,11 +196,7 @@ mod tests {
 
   fn next_temp_dir(prefix: &str) -> PathBuf {
     let seq = TIMELINE_TEST_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-      "auv-scan-{prefix}-{}-{}-{seq}",
-      std::process::id(),
-      prefix
-    ))
+    std::env::temp_dir().join(format!("auv-scan-{prefix}-{}-{}-{seq}", std::process::id(), prefix))
   }
 
   fn two_frame_fixture_dir() -> PathBuf {
@@ -321,8 +304,7 @@ mod tests {
 
     let manifest_path = fixture_dir.join("manifest.json");
     let manifest_text = fs::read_to_string(&manifest_path).expect("read manifest");
-    let manifest: ThreeFrameManifest =
-      serde_json::from_str(&manifest_text).expect("parse manifest");
+    let manifest: ThreeFrameManifest = serde_json::from_str(&manifest_text).expect("parse manifest");
     assert_eq!(manifest.segments.len(), 2);
 
     for (segment, expected) in timeline.segments.iter().zip(manifest.segments.iter()) {
@@ -375,11 +357,7 @@ mod tests {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join(SCAN_TIMELINE_ARTIFACT_FILE_NAME);
-    fs::write(
-      &path,
-      r#"{"schema_version":"scan-timeline-v99","segments":[],"diagnostics":[]}"#,
-    )
-    .unwrap();
+    fs::write(&path, r#"{"schema_version":"scan-timeline-v99","segments":[],"diagnostics":[]}"#).unwrap();
     let err = read_timeline_artifact(&path).expect_err("schema");
     assert!(matches!(err, TimelineError::SchemaMismatch { .. }));
     let _ = fs::remove_dir_all(&dir);
@@ -436,10 +414,7 @@ mod tests {
     fs::write(dir.join("scan-frame-0001.json"), json_a).unwrap();
     fs::write(dir.join("scan-frame-0002.json"), json_b).unwrap();
     let err = load_scan_frames_from_dir(&dir).expect_err("duplicate sequence_index");
-    assert!(matches!(
-      err,
-      ScanInspectError::DuplicateSequenceIndex { .. }
-    ));
+    assert!(matches!(err, ScanInspectError::DuplicateSequenceIndex { .. }));
     let _ = fs::remove_dir_all(&dir);
   }
 

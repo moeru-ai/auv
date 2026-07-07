@@ -34,17 +34,10 @@ impl LatestFrameScan {
 /// well-formed line. This streams line by line and retains only the latest
 /// parsed frame, so a multi-hundred-megabyte sample costs one line of peak
 /// memory rather than the whole file.
-#[deprecated(
-  note = "live MC-2 bridge must use read_latest_spatial_frame_from_tail; the full-scan variant exists only for tests/imports"
-)]
+#[deprecated(note = "live MC-2 bridge must use read_latest_spatial_frame_from_tail; the full-scan variant exists only for tests/imports")]
 #[allow(deprecated)]
 pub fn read_latest_spatial_frame(path: &Path) -> Result<LatestFrameScan, String> {
-  let file = std::fs::File::open(path).map_err(|error| {
-    format!(
-      "failed to open telemetry sample {}: {error}",
-      path.display()
-    )
-  })?;
+  let file = std::fs::File::open(path).map_err(|error| format!("failed to open telemetry sample {}: {error}", path.display()))?;
   scan_latest_spatial_frame(file)
 }
 
@@ -57,15 +50,8 @@ pub fn read_latest_spatial_frame(path: &Path) -> Result<LatestFrameScan, String>
 /// full scan turns one bridge invocation into an O(file size) CPU walk. This
 /// tail reader instead walks backward from EOF until it finds the newest
 /// well-formed non-empty line.
-pub fn read_latest_spatial_frame_from_tail(
-  path: &Path,
-) -> Result<Option<MinecraftSpatialFrame>, String> {
-  let mut file = std::fs::File::open(path).map_err(|error| {
-    format!(
-      "failed to open telemetry sample {}: {error}",
-      path.display()
-    )
-  })?;
+pub fn read_latest_spatial_frame_from_tail(path: &Path) -> Result<Option<MinecraftSpatialFrame>, String> {
+  let mut file = std::fs::File::open(path).map_err(|error| format!("failed to open telemetry sample {}: {error}", path.display()))?;
   scan_latest_spatial_frame_from_tail(&mut file)
 }
 
@@ -89,16 +75,11 @@ pub fn read_latest_spatial_frame_newer_than(
   min_monotonic_timestamp_ms: u64,
   wait: TailFrameWaitConfig,
 ) -> Result<Option<MinecraftSpatialFrame>, String> {
-  let deadline = Instant::now()
-    .checked_add(Duration::from_millis(wait.wait_budget_ms))
-    .unwrap_or_else(Instant::now);
+  let deadline = Instant::now().checked_add(Duration::from_millis(wait.wait_budget_ms)).unwrap_or_else(Instant::now);
 
   loop {
     let frame = read_latest_spatial_frame_from_tail(path)?;
-    if frame
-      .as_ref()
-      .is_some_and(|frame| frame.monotonic_timestamp_ms > min_monotonic_timestamp_ms)
-    {
+    if frame.as_ref().is_some_and(|frame| frame.monotonic_timestamp_ms > min_monotonic_timestamp_ms) {
       return Ok(frame);
     }
 
@@ -115,9 +96,7 @@ pub fn read_latest_spatial_frame_newer_than(
 
 /// Core scan over any byte reader. Separated from file opening so the binding
 /// logic is unit-testable without touching the filesystem.
-#[deprecated(
-  note = "live MC-2 bridge must use read_latest_spatial_frame_from_tail; the full-scan variant exists only for tests/imports"
-)]
+#[deprecated(note = "live MC-2 bridge must use read_latest_spatial_frame_from_tail; the full-scan variant exists only for tests/imports")]
 pub fn scan_latest_spatial_frame<R: Read>(reader: R) -> Result<LatestFrameScan, String> {
   let mut buffered = BufReader::new(reader);
   let mut scan = LatestFrameScan::empty();
@@ -125,9 +104,7 @@ pub fn scan_latest_spatial_frame<R: Read>(reader: R) -> Result<LatestFrameScan, 
 
   loop {
     line.clear();
-    let read = buffered
-      .read_line(&mut line)
-      .map_err(|error| format!("failed to read telemetry sample line: {error}"))?;
+    let read = buffered.read_line(&mut line).map_err(|error| format!("failed to read telemetry sample line: {error}"))?;
     if read == 0 {
       break;
     }
@@ -145,14 +122,10 @@ pub fn scan_latest_spatial_frame<R: Read>(reader: R) -> Result<LatestFrameScan, 
   Ok(scan)
 }
 
-fn scan_latest_spatial_frame_from_tail<R: Read + Seek>(
-  reader: &mut R,
-) -> Result<Option<MinecraftSpatialFrame>, String> {
+fn scan_latest_spatial_frame_from_tail<R: Read + Seek>(reader: &mut R) -> Result<Option<MinecraftSpatialFrame>, String> {
   const TAIL_CHUNK_BYTES: usize = 64 * 1024;
 
-  let file_len = reader
-    .seek(SeekFrom::End(0))
-    .map_err(|error| format!("failed to seek telemetry sample tail: {error}"))?;
+  let file_len = reader.seek(SeekFrom::End(0)).map_err(|error| format!("failed to seek telemetry sample tail: {error}"))?;
   if file_len == 0 {
     return Ok(None);
   }
@@ -162,15 +135,11 @@ fn scan_latest_spatial_frame_from_tail<R: Read + Seek>(
   let mut chunk = vec![0_u8; TAIL_CHUNK_BYTES];
 
   while position > 0 {
-    let read_len = usize::try_from(position.min(TAIL_CHUNK_BYTES as u64))
-      .map_err(|error| format!("telemetry chunk length overflow: {error}"))?;
+    let read_len =
+      usize::try_from(position.min(TAIL_CHUNK_BYTES as u64)).map_err(|error| format!("telemetry chunk length overflow: {error}"))?;
     position -= read_len as u64;
-    reader
-      .seek(SeekFrom::Start(position))
-      .map_err(|error| format!("failed to seek telemetry sample chunk: {error}"))?;
-    reader
-      .read_exact(&mut chunk[..read_len])
-      .map_err(|error| format!("failed to read telemetry sample tail chunk: {error}"))?;
+    reader.seek(SeekFrom::Start(position)).map_err(|error| format!("failed to seek telemetry sample chunk: {error}"))?;
+    reader.read_exact(&mut chunk[..read_len]).map_err(|error| format!("failed to read telemetry sample tail chunk: {error}"))?;
 
     let mut combined = Vec::with_capacity(read_len + carry.len());
     combined.extend_from_slice(&chunk[..read_len]);
@@ -198,9 +167,7 @@ fn scan_latest_spatial_frame_from_tail<R: Read + Seek>(
 }
 
 fn parse_frame_line(bytes: &[u8]) -> Result<Option<MinecraftSpatialFrame>, String> {
-  let trimmed = std::str::from_utf8(bytes)
-    .map_err(|error| format!("telemetry sample tail is not valid UTF-8: {error}"))?
-    .trim();
+  let trimmed = std::str::from_utf8(bytes).map_err(|error| format!("telemetry sample tail is not valid UTF-8: {error}"))?.trim();
   if trimmed.is_empty() {
     return Ok(None);
   }
@@ -278,12 +245,7 @@ mod tests {
 
   #[test]
   fn returns_last_frame_from_multiple_lines() {
-    let body = format!(
-      "{}\n{}\n{}\n",
-      frame_line("frame-1", 1, 1000),
-      frame_line("frame-2", 2, 2000),
-      frame_line("frame-3", 3, 3000),
-    );
+    let body = format!("{}\n{}\n{}\n", frame_line("frame-1", 1, 1000), frame_line("frame-2", 2, 2000), frame_line("frame-3", 3, 3000),);
     let scan = scan_latest_spatial_frame(body.as_bytes()).expect("scan succeeds");
     assert_eq!(scan.line_count, 3);
     assert_eq!(scan.malformed_line_count, 0);
@@ -295,11 +257,7 @@ mod tests {
 
   #[test]
   fn skips_blank_lines_without_counting_them() {
-    let body = format!(
-      "\n{}\n   \n{}\n\n",
-      frame_line("a", 1, 10),
-      frame_line("b", 2, 20)
-    );
+    let body = format!("\n{}\n   \n{}\n\n", frame_line("a", 1, 10), frame_line("b", 2, 20));
     let scan = scan_latest_spatial_frame(body.as_bytes()).expect("scan succeeds");
     assert_eq!(scan.line_count, 2);
     assert_eq!(scan.malformed_line_count, 0);
@@ -308,11 +266,7 @@ mod tests {
 
   #[test]
   fn counts_malformed_lines_and_keeps_last_valid_frame() {
-    let body = format!(
-      "{}\nnot json\n{}\n{{\"partial\":true}}\n",
-      frame_line("valid-1", 1, 10),
-      frame_line("valid-2", 2, 20),
-    );
+    let body = format!("{}\nnot json\n{}\n{{\"partial\":true}}\n", frame_line("valid-1", 1, 10), frame_line("valid-2", 2, 20),);
     let scan = scan_latest_spatial_frame(body.as_bytes()).expect("scan succeeds");
     assert_eq!(scan.line_count, 4);
     assert_eq!(scan.malformed_line_count, 2);
@@ -337,17 +291,10 @@ mod tests {
 
   #[test]
   fn tail_scan_returns_last_valid_frame() {
-    let body = format!(
-      "{}\n{}\n{}\n",
-      frame_line("frame-1", 1, 1000),
-      frame_line("frame-2", 2, 2000),
-      frame_line("frame-3", 3, 3000),
-    );
+    let body = format!("{}\n{}\n{}\n", frame_line("frame-1", 1, 1000), frame_line("frame-2", 2, 2000), frame_line("frame-3", 3, 3000),);
     let mut cursor = Cursor::new(body.into_bytes());
 
-    let frame = scan_latest_spatial_frame_from_tail(&mut cursor)
-      .expect("tail scan succeeds")
-      .expect("frame is present");
+    let frame = scan_latest_spatial_frame_from_tail(&mut cursor).expect("tail scan succeeds").expect("frame is present");
 
     assert_eq!(frame.spatial_frame_id, "frame-3");
     assert_eq!(frame.world_tick, 3);
@@ -356,16 +303,10 @@ mod tests {
 
   #[test]
   fn tail_scan_skips_trailing_blank_and_malformed_lines() {
-    let body = format!(
-      "{}\n{}\nnot json\n   \n",
-      frame_line("valid-1", 1, 1000),
-      frame_line("valid-2", 2, 2000),
-    );
+    let body = format!("{}\n{}\nnot json\n   \n", frame_line("valid-1", 1, 1000), frame_line("valid-2", 2, 2000),);
     let mut cursor = Cursor::new(body.into_bytes());
 
-    let frame = scan_latest_spatial_frame_from_tail(&mut cursor)
-      .expect("tail scan succeeds")
-      .expect("frame is present");
+    let frame = scan_latest_spatial_frame_from_tail(&mut cursor).expect("tail scan succeeds").expect("frame is present");
 
     assert_eq!(frame.spatial_frame_id, "valid-2");
     assert_eq!(frame.world_tick, 2);
@@ -378,9 +319,7 @@ mod tests {
     let body = format!("{}\n{}\n", frame_line("frame-1", 1, 1000), big);
     let mut cursor = Cursor::new(body.into_bytes());
 
-    let frame = scan_latest_spatial_frame_from_tail(&mut cursor)
-      .expect("tail scan succeeds")
-      .expect("frame is present");
+    let frame = scan_latest_spatial_frame_from_tail(&mut cursor).expect("tail scan succeeds").expect("frame is present");
 
     assert_eq!(frame.spatial_frame_id, "frame-big");
     assert_eq!(frame.world_tick, 9);
@@ -435,34 +374,22 @@ mod tests {
   fn waits_until_newer_tail_frame_appears() {
     let temp = std::env::temp_dir().join(format!(
       "auv-minecraft-ingest-wait-{}",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("unix epoch")
-        .as_nanos()
+      std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("unix epoch").as_nanos()
     ));
     fs::create_dir_all(&temp).expect("temp dir should create");
     let path = temp.join("telemetry.jsonl");
-    fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000)))
-      .expect("telemetry should write");
+    fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000))).expect("telemetry should write");
 
     let writer_path = path.clone();
     let handle = thread::spawn(move || {
       thread::sleep(Duration::from_millis(25));
-      fs::write(
-        &writer_path,
-        format!(
-          "{}\n{}\n",
-          frame_line("frame-1", 1, 1000),
-          frame_line("frame-2", 2, 1100)
-        ),
-      )
-      .expect("telemetry append should write");
+      fs::write(&writer_path, format!("{}\n{}\n", frame_line("frame-1", 1, 1000), frame_line("frame-2", 2, 1100)))
+        .expect("telemetry append should write");
     });
 
-    let frame =
-      read_latest_spatial_frame_newer_than(&path, 1000, TailFrameWaitConfig::new(200, 10))
-        .expect("wait should succeed")
-        .expect("newer frame should appear");
+    let frame = read_latest_spatial_frame_newer_than(&path, 1000, TailFrameWaitConfig::new(200, 10))
+      .expect("wait should succeed")
+      .expect("newer frame should appear");
 
     handle.join().expect("writer thread should join");
     assert_eq!(frame.spatial_frame_id, "frame-2");
@@ -474,15 +401,11 @@ mod tests {
   fn returns_stale_tail_frame_when_wait_budget_expires() {
     let temp = std::env::temp_dir().join(format!(
       "auv-minecraft-ingest-stale-{}",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("unix epoch")
-        .as_nanos()
+      std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("unix epoch").as_nanos()
     ));
     fs::create_dir_all(&temp).expect("temp dir should create");
     let path = temp.join("telemetry.jsonl");
-    fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000)))
-      .expect("telemetry should write");
+    fs::write(&path, format!("{}\n", frame_line("frame-1", 1, 1000))).expect("telemetry should write");
 
     let frame = read_latest_spatial_frame_newer_than(&path, 1000, TailFrameWaitConfig::new(20, 5))
       .expect("wait should succeed")

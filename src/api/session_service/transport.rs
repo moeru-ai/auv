@@ -52,12 +52,8 @@ pub fn assert_loopback_host(host: &str) -> Result<(), String> {
   }
   match host.parse::<IpAddr>() {
     Ok(ip) if ip.is_loopback() => Ok(()),
-    Ok(_) => Err(format!(
-      "session API server refuses non-loopback host: {host}"
-    )),
-    Err(_) => Err(format!(
-      "session API server refuses unrecognized host: {host}"
-    )),
+    Ok(_) => Err(format!("session API server refuses non-loopback host: {host}")),
+    Err(_) => Err(format!("session API server refuses unrecognized host: {host}")),
   }
 }
 
@@ -66,44 +62,31 @@ pub fn assert_socket_addr_is_loopback(addr: SocketAddr) -> Result<(), String> {
   if addr.ip().is_loopback() {
     return Ok(());
   }
-  Err(format!(
-    "session API server refused non-loopback bind address: {addr}"
-  ))
+  Err(format!("session API server refused non-loopback bind address: {addr}"))
 }
 
 /// Resolves a loopback-only bind address for the configured host and port.
 pub async fn resolve_loopback_bind_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
   assert_loopback_host(host)?;
   if host.eq_ignore_ascii_case("localhost") {
-    let mut addresses = tokio::net::lookup_host((host, port))
-      .await
-      .map_err(|error| format!("failed to resolve localhost for session API server: {error}"))?;
+    let mut addresses =
+      tokio::net::lookup_host((host, port)).await.map_err(|error| format!("failed to resolve localhost for session API server: {error}"))?;
     return addresses
       .find(|address| address.ip().is_loopback())
       .ok_or_else(|| "localhost did not resolve to a loopback address".to_string());
   }
-  let ip = host
-    .parse::<IpAddr>()
-    .map_err(|error| format!("failed to parse session API host {host}: {error}"))?;
+  let ip = host.parse::<IpAddr>().map_err(|error| format!("failed to parse session API host {host}: {error}"))?;
   Ok(SocketAddr::new(ip, port))
 }
 
 /// Maps handler errors to gRPC status codes for the session API transport.
 pub fn map_session_error(error: SessionApiError) -> Status {
   match error {
-    SessionApiError::MissingField(_) | SessionApiError::PayloadDecode(_) => {
-      Status::invalid_argument(error.to_string())
-    }
-    SessionApiError::UnknownSession(_) | SessionApiError::RunNotFound(_) => {
-      Status::not_found(error.to_string())
-    }
-    SessionApiError::PersistedOperationRequired(_) => {
-      Status::failed_precondition(error.to_string())
-    }
+    SessionApiError::MissingField(_) | SessionApiError::PayloadDecode(_) => Status::invalid_argument(error.to_string()),
+    SessionApiError::UnknownSession(_) | SessionApiError::RunNotFound(_) => Status::not_found(error.to_string()),
+    SessionApiError::PersistedOperationRequired(_) => Status::failed_precondition(error.to_string()),
     SessionApiError::OperationIdMismatch { .. } => Status::invalid_argument(error.to_string()),
-    SessionApiError::Storage(_) | SessionApiError::InvokeExecution(_) => {
-      Status::internal(error.to_string())
-    }
+    SessionApiError::Storage(_) | SessionApiError::InvokeExecution(_) => Status::internal(error.to_string()),
     SessionApiError::NotWired { .. } => Status::unimplemented(error.to_string()),
   }
 }
@@ -162,70 +145,47 @@ impl SessionServiceGrpc {
 
 #[tonic::async_trait]
 impl SessionService for SessionServiceGrpc {
-  async fn create_session(
-    &self,
-    request: Request<proto::CreateSessionRequest>,
-  ) -> Result<Response<proto::CreateSessionResponse>, Status> {
+  async fn create_session(&self, request: Request<proto::CreateSessionRequest>) -> Result<Response<proto::CreateSessionResponse>, Status> {
     let cancel = CancellationToken::new();
     let _guard = RpcCancelGuard(cancel.clone());
     let handler = Arc::clone(&self.handler);
     let inner = request.into_inner();
-    run_blocking_rpc(cancel, move || handler.create_session(inner))
-      .await
-      .map(Response::new)
+    run_blocking_rpc(cancel, move || handler.create_session(inner)).await.map(Response::new)
   }
 
-  async fn invoke(
-    &self,
-    request: Request<proto::InvokeRequest>,
-  ) -> Result<Response<proto::InvokeResponse>, Status> {
+  async fn invoke(&self, request: Request<proto::InvokeRequest>) -> Result<Response<proto::InvokeResponse>, Status> {
     let cancel = CancellationToken::new();
     let _guard = RpcCancelGuard(cancel.clone());
     let handler = Arc::clone(&self.handler);
     let inner = request.into_inner();
-    run_blocking_rpc(cancel, move || handler.invoke(inner))
-      .await
-      .map(Response::new)
+    run_blocking_rpc(cancel, move || handler.invoke(inner)).await.map(Response::new)
   }
 
-  async fn get_operation(
-    &self,
-    request: Request<proto::GetOperationRequest>,
-  ) -> Result<Response<proto::GetOperationResponse>, Status> {
+  async fn get_operation(&self, request: Request<proto::GetOperationRequest>) -> Result<Response<proto::GetOperationResponse>, Status> {
     let cancel = CancellationToken::new();
     let _guard = RpcCancelGuard(cancel.clone());
     let handler = Arc::clone(&self.handler);
     let inner = request.into_inner();
-    run_blocking_rpc(cancel, move || handler.get_operation(inner))
-      .await
-      .map(Response::new)
+    run_blocking_rpc(cancel, move || handler.get_operation(inner)).await.map(Response::new)
   }
 
-  type StreamSessionEventsStream =
-    std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<proto::SessionEvent, Status>> + Send>>;
+  type StreamSessionEventsStream = std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<proto::SessionEvent, Status>> + Send>>;
 
   async fn stream_session_events(
     &self,
     _request: Request<proto::StreamSessionEventsRequest>,
   ) -> Result<Response<Self::StreamSessionEventsStream>, Status> {
-    Err(Status::unimplemented(
-      "session API seam not wired: stream_session_events",
-    ))
+    Err(Status::unimplemented("session API seam not wired: stream_session_events"))
   }
 }
 
 /// Binds a loopback listener and returns the resolved local address.
-pub async fn bind_session_api(
-  config: &SessionApiServeConfig,
-) -> Result<(TcpListener, SocketAddr), String> {
+pub async fn bind_session_api(config: &SessionApiServeConfig) -> Result<(TcpListener, SocketAddr), String> {
   let bind_addr = resolve_loopback_bind_addr(&config.host, config.port).await?;
   let display_address = format!("{bind_addr}");
-  let listener = TcpListener::bind(bind_addr)
-    .await
-    .map_err(|error| format!("failed to bind session API server {display_address}: {error}"))?;
-  let local_address = listener
-    .local_addr()
-    .map_err(|error| format!("failed to read session API server address: {error}"))?;
+  let listener =
+    TcpListener::bind(bind_addr).await.map_err(|error| format!("failed to bind session API server {display_address}: {error}"))?;
+  let local_address = listener.local_addr().map_err(|error| format!("failed to read session API server address: {error}"))?;
   assert_socket_addr_is_loopback(local_address)?;
   Ok((listener, local_address))
 }
@@ -238,9 +198,7 @@ pub(crate) async fn serve_on_listener(
   println!("session API: grpc://{local_address}");
   // NOTICE(api-s1-readiness): flush so subprocess integration tests reading piped
   // stdout see the bind address without block-buffer delay.
-  std::io::stdout()
-    .flush()
-    .map_err(|error| format!("failed to flush session API readiness line: {error}"))?;
+  std::io::stdout().flush().map_err(|error| format!("failed to flush session API readiness line: {error}"))?;
   let handler = Arc::new(SessionApiHandler::new(store_root));
   let service = SessionServiceGrpc::new(handler);
   tonic::transport::Server::builder()
@@ -285,44 +243,23 @@ mod tests {
 
   #[test]
   fn assert_socket_addr_is_loopback_rejects_non_loopback() {
-    let error = assert_socket_addr_is_loopback("192.168.1.1:9847".parse().expect("socket addr"))
-      .expect_err("non-loopback address");
+    let error = assert_socket_addr_is_loopback("192.168.1.1:9847".parse().expect("socket addr")).expect_err("non-loopback address");
     assert!(error.contains("192.168.1.1"));
   }
 
   #[tokio::test]
   async fn resolve_loopback_bind_addr_resolves_localhost() {
-    let address = resolve_loopback_bind_addr("localhost", 0)
-      .await
-      .expect("resolve localhost");
+    let address = resolve_loopback_bind_addr("localhost", 0).await.expect("resolve localhost");
     assert!(address.ip().is_loopback());
   }
 
   #[test]
   fn map_session_error_maps_representative_variants() {
-    assert_eq!(
-      map_session_error(SessionApiError::MissingField("session")).code(),
-      Code::InvalidArgument
-    );
-    assert_eq!(
-      map_session_error(SessionApiError::UnknownSession("ghost".to_string())).code(),
-      Code::NotFound
-    );
-    assert_eq!(
-      map_session_error(SessionApiError::PersistedOperationRequired(
-        "run-1".to_string()
-      ))
-      .code(),
-      Code::FailedPrecondition
-    );
-    assert_eq!(
-      map_session_error(SessionApiError::Storage("disk".to_string())).code(),
-      Code::Internal
-    );
-    assert_eq!(
-      map_session_error(SessionApiError::NotWired { gate: "events" }).code(),
-      Code::Unimplemented
-    );
+    assert_eq!(map_session_error(SessionApiError::MissingField("session")).code(), Code::InvalidArgument);
+    assert_eq!(map_session_error(SessionApiError::UnknownSession("ghost".to_string())).code(), Code::NotFound);
+    assert_eq!(map_session_error(SessionApiError::PersistedOperationRequired("run-1".to_string())).code(), Code::FailedPrecondition);
+    assert_eq!(map_session_error(SessionApiError::Storage("disk".to_string())).code(), Code::Internal);
+    assert_eq!(map_session_error(SessionApiError::NotWired { gate: "events" }).code(), Code::Unimplemented);
   }
 
   #[tokio::test]
@@ -338,9 +275,7 @@ mod tests {
     let server = tokio::spawn(serve_on_listener(listener, local_address, store_root));
 
     let endpoint = format!("http://{local_address}");
-    let mut client = SessionServiceClient::connect(endpoint)
-      .await
-      .expect("connect client");
+    let mut client = SessionServiceClient::connect(endpoint).await.expect("connect client");
 
     let response = client
       .create_session(proto::CreateSessionRequest {
@@ -368,9 +303,7 @@ mod tests {
     let server = tokio::spawn(serve_on_listener(listener, local_address, store_root));
 
     let endpoint = format!("http://{local_address}");
-    let mut client = SessionServiceClient::connect(endpoint)
-      .await
-      .expect("connect client");
+    let mut client = SessionServiceClient::connect(endpoint).await.expect("connect client");
 
     let session = client
       .create_session(proto::CreateSessionRequest {
@@ -404,12 +337,7 @@ mod tests {
 
     assert_eq!(get_response.status, "completed");
     assert_eq!(get_response.output_summary, "fixture observed");
-    assert!(
-      get_response
-        .known_limits
-        .iter()
-        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
-    );
+    assert!(get_response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
 
     server.abort();
     let _ = server.await;
@@ -419,9 +347,7 @@ mod tests {
   async fn run_blocking_rpc_returns_cancelled_when_token_fires() {
     let cancel = CancellationToken::new();
     cancel.cancel();
-    let status = run_blocking_rpc(cancel, || Ok(42_u32))
-      .await
-      .expect_err("cancelled before work starts");
+    let status = run_blocking_rpc(cancel, || Ok(42_u32)).await.expect_err("cancelled before work starts");
     assert_eq!(status.code(), Code::Cancelled);
   }
 }

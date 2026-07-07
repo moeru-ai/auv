@@ -63,24 +63,14 @@ pub fn find_ax_text_node<'a>(
   scope_path_prefix: Option<&str>,
 ) -> AuvResult<&'a ObservedAxNode> {
   let expected_text_lc = expected_text.trim().to_lowercase();
-  let expected_role_lc = expected_role
-    .map(|value| value.trim().to_lowercase())
-    .filter(|value| !value.is_empty());
-  let expected_subrole_lc = expected_subrole
-    .map(|value| value.trim().to_lowercase())
-    .filter(|value| !value.is_empty());
-  let scope_path_prefix = scope_path_prefix
-    .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty());
+  let expected_role_lc = expected_role.map(|value| value.trim().to_lowercase()).filter(|value| !value.is_empty());
+  let expected_subrole_lc = expected_subrole.map(|value| value.trim().to_lowercase()).filter(|value| !value.is_empty());
+  let scope_path_prefix = scope_path_prefix.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
 
   nodes
     .iter()
     .filter(|node| node.bounds.width > 0 && node.bounds.height > 0)
-    .filter(|node| {
-      scope_path_prefix
-        .as_ref()
-        .is_none_or(|prefix| node.path.starts_with(prefix))
-    })
+    .filter(|node| scope_path_prefix.as_ref().is_none_or(|prefix| node.path.starts_with(prefix)))
     .filter(|node| {
       if let Some(role) = expected_role_lc.as_deref() {
         node.role.to_lowercase() == role
@@ -151,19 +141,10 @@ pub fn verify_ax_text_signals(matched_text: &str, matched_role: &str) -> BTreeMa
   signals
 }
 
-pub fn ocr_detection_signals(
-  filtered_match_count: usize,
-  best_match_text: Option<&str>,
-) -> BTreeMap<String, String> {
+pub fn ocr_detection_signals(filtered_match_count: usize, best_match_text: Option<&str>) -> BTreeMap<String, String> {
   let mut signals = BTreeMap::from([
-    (
-      "ocr.match_found".to_string(),
-      (!filtered_match_count.eq(&0)).to_string(),
-    ),
-    (
-      "ocr.filtered_match_count".to_string(),
-      filtered_match_count.to_string(),
-    ),
+    ("ocr.match_found".to_string(), (!filtered_match_count.eq(&0)).to_string()),
+    ("ocr.filtered_match_count".to_string(), filtered_match_count.to_string()),
   ]);
   if let Some(best_match_text) = best_match_text {
     insert_optional_signal(&mut signals, "ocr.best_match_text", best_match_text);
@@ -171,11 +152,7 @@ pub fn ocr_detection_signals(
   signals
 }
 
-pub fn wait_ocr_detection_signals(
-  filtered_match_count: usize,
-  best_match_text: Option<&str>,
-  timed_out: bool,
-) -> BTreeMap<String, String> {
+pub fn wait_ocr_detection_signals(filtered_match_count: usize, best_match_text: Option<&str>, timed_out: bool) -> BTreeMap<String, String> {
   let mut signals = ocr_detection_signals(filtered_match_count, best_match_text);
   signals.insert("ocr.timed_out".to_string(), timed_out.to_string());
   signals
@@ -188,16 +165,9 @@ pub fn row_detection_signals(row_count: usize) -> BTreeMap<String, String> {
   ])
 }
 
-pub fn wait_row_detection_signals(
-  row_count: usize,
-  required_row_count: usize,
-  timed_out: bool,
-) -> BTreeMap<String, String> {
+pub fn wait_row_detection_signals(row_count: usize, required_row_count: usize, timed_out: bool) -> BTreeMap<String, String> {
   let mut signals = row_detection_signals(row_count);
-  signals.insert(
-    "rows.requirement_met".to_string(),
-    (row_count >= required_row_count).to_string(),
-  );
+  signals.insert("rows.requirement_met".to_string(), (row_count >= required_row_count).to_string());
   signals.insert("rows.timed_out".to_string(), timed_out.to_string());
   signals
 }

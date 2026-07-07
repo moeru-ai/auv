@@ -1,4 +1,4 @@
-﻿//! Transport control commands: play/pause, next track, previous track.
+//! Transport control commands: play/pause, next track, previous track.
 //!
 //! ## Delivery mechanism
 //!
@@ -124,23 +124,17 @@ mod platform {
     // Optional guard: confirm Apple Music has a visible window before sending
     // the media key, so we don't accidentally control Spotify or another player.
     if inputs.require_window {
-      resolve_window(&inputs.resolve)?
-        .ok_or_else(|| "Apple Music window not found -- is the app running?".to_string())?;
+      resolve_window(&inputs.resolve)?.ok_or_else(|| "Apple Music window not found -- is the app running?".to_string())?;
     }
 
-    let session = WindowsDriver::new()
-      .open_local()
-      .map_err(|e| format!("driver open failed: {e}"))?;
+    let session = WindowsDriver::new().open_local().map_err(|e| format!("driver open failed: {e}"))?;
 
     let opts = KeyPressOptions {
       key: key.to_string(),
       settle: Duration::from_millis(inputs.settle_ms),
     };
 
-    session
-      .input()
-      .press_key(opts)
-      .map_err(|e| format!("media key '{key}' failed: {e}"))?;
+    session.input().press_key(opts).map_err(|e| format!("media key '{key}' failed: {e}"))?;
 
     diagnostics.push(format!("sent media key: {key}"));
 

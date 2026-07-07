@@ -30,10 +30,7 @@ pub fn write_json_file(path: &Path, value: &impl Serialize) -> Result<(), Output
   bytes.push(b'\n');
 
   let temp_path = temporary_path(path);
-  let mut file = OpenOptions::new()
-    .create_new(true)
-    .write(true)
-    .open(&temp_path)?;
+  let mut file = OpenOptions::new().create_new(true).write(true).open(&temp_path)?;
   file.write_all(&bytes)?;
   file.sync_all()?;
   drop(file);
@@ -43,14 +40,8 @@ pub fn write_json_file(path: &Path, value: &impl Serialize) -> Result<(), Output
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
-  let nonce = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .map(|duration| duration.as_nanos())
-    .unwrap_or_default();
-  let file_name = path
-    .file_name()
-    .and_then(|name| name.to_str())
-    .unwrap_or("auv-game-balatro-output");
+  let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or_default();
+  let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("auv-game-balatro-output");
   path.with_file_name(format!(".{file_name}.{}.{}.tmp", process::id(), nonce))
 }
 

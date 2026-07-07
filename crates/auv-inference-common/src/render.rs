@@ -12,9 +12,7 @@ pub fn render_annotated_image(image: &RgbImage, detections: &[Detection]) -> Rgb
   }
 
   for detection in detections {
-    let Some((x1, y1, x2, y2)) =
-      clamped_bbox(detection.bbox, annotated.width(), annotated.height())
-    else {
+    let Some((x1, y1, x2, y2)) = clamped_bbox(detection.bbox, annotated.width(), annotated.height()) else {
       continue;
     };
     let color = class_color(detection.class_id);
@@ -31,11 +29,7 @@ pub fn render_annotated_image(image: &RgbImage, detections: &[Detection]) -> Rgb
   annotated
 }
 
-fn clamped_bbox(
-  bbox: BoundingBox,
-  image_width: u32,
-  image_height: u32,
-) -> Option<(u32, u32, u32, u32)> {
+fn clamped_bbox(bbox: BoundingBox, image_width: u32, image_height: u32) -> Option<(u32, u32, u32, u32)> {
   if !bbox.x1.is_finite() || !bbox.y1.is_finite() || !bbox.x2.is_finite() || !bbox.y2.is_finite() {
     return None;
   }
@@ -46,8 +40,7 @@ fn clamped_bbox(
   let raw_max_y = bbox.y1.max(bbox.y2);
   let image_bound_x = image_width as f32;
   let image_bound_y = image_height as f32;
-  if raw_max_x < 0.0 || raw_max_y < 0.0 || raw_min_x >= image_bound_x || raw_min_y >= image_bound_y
-  {
+  if raw_max_x < 0.0 || raw_max_y < 0.0 || raw_min_x >= image_bound_x || raw_min_y >= image_bound_y {
     return None;
   }
 

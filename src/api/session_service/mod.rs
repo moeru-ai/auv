@@ -77,10 +77,7 @@ impl fmt::Display for SessionApiError {
         run_id,
         requested,
         resolved,
-      } => write!(
-        f,
-        "operation_id mismatch for run {run_id}: requested {requested}, resolved {resolved}"
-      ),
+      } => write!(f, "operation_id mismatch for run {run_id}: requested {requested}, resolved {resolved}"),
       Self::NotWired { gate } => write!(f, "session API seam not wired: {gate}"),
     }
   }

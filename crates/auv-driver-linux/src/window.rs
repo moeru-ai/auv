@@ -33,10 +33,7 @@ pub fn resolve_window(selector: &WindowSelector) -> DriverResult<Window> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn capture_window(
-  state: &Arc<Mutex<LinuxDriverSessionState>>,
-  window: &Window,
-) -> DriverResult<Capture> {
+pub fn capture_window(state: &Arc<Mutex<LinuxDriverSessionState>>, window: &Window) -> DriverResult<Capture> {
   atspi::ObjectRef::decode(&window.reference.id)?;
   match capture_window_from_source(window) {
     Ok(capture) => return Ok(capture),
@@ -49,10 +46,7 @@ pub fn capture_window(
         bounds: window.frame,
         scale_factor: display.capture.scale_factor,
         backend: format!("atspi.extents+{}.crop", display.capture.backend),
-        fallback_reason: Some(window_capture_fallback_reason(
-          &error.to_string(),
-          display.capture.fallback_reason,
-        )),
+        fallback_reason: Some(window_capture_fallback_reason(&error.to_string(), display.capture.fallback_reason)),
       });
     }
   }
@@ -63,41 +57,27 @@ pub fn capture_window(
   _state: &std::sync::Arc<std::sync::Mutex<crate::driver::LinuxDriverSessionState>>,
   _window: &Window,
 ) -> DriverResult<Capture> {
-  Err(auv_driver::error::DriverError::unsupported(
-    "window.capture",
-  ))
+  Err(auv_driver::error::DriverError::unsupported("window.capture"))
 }
 
 fn resolve_from_windows(windows: &[Window], selector: &WindowSelector) -> DriverResult<Window> {
-  let mut matches: Vec<&Window> = windows
-    .iter()
-    .filter(|window| matches_window_selector_except_main_visible(window, selector))
-    .collect();
+  let mut matches: Vec<&Window> = windows.iter().filter(|window| matches_window_selector_except_main_visible(window, selector)).collect();
 
   if selector.main_visible {
     matches.sort_by_key(|window| {
       std::cmp::Reverse((
         window.is_main,
-        window
-          .title
-          .as_ref()
-          .is_some_and(|title| !title.trim().is_empty()),
+        window.title.as_ref().is_some_and(|title| !title.trim().is_empty()),
         (window.frame.size.width * window.frame.size.height).round() as i64,
       ))
     });
-    return matches
-      .first()
-      .map(|window| (*window).clone())
-      .ok_or_else(|| not_found("main visible window"));
+    return matches.first().map(|window| (*window).clone()).ok_or_else(|| not_found("main visible window"));
   }
 
   match matches.as_slice() {
     [window] => Ok((*window).clone()),
     [] => Err(not_found("window selector")),
-    _ => Err(invalid_input(format!(
-      "window selector was ambiguous: {} windows matched",
-      matches.len()
-    ))),
+    _ => Err(invalid_input(format!("window selector was ambiguous: {} windows matched", matches.len()))),
   }
 }
 
@@ -163,10 +143,7 @@ fn crop_capture_to_window(capture: &Capture, frame: Rect) -> DriverResult<image:
   let width = scaled_positive_capture_dimension("width", frame.size.width, scale_x)?;
   let height = scaled_positive_capture_dimension("height", frame.size.height, scale_y)?;
   if local_x + width > capture.image.width() || local_y + height > capture.image.height() {
-    return Err(invalid_input(format!(
-      "AT-SPI window frame {:?} exceeds display capture bounds {:?}",
-      frame, capture.bounds
-    )));
+    return Err(invalid_input(format!("AT-SPI window frame {:?} exceeds display capture bounds {:?}", frame, capture.bounds)));
   }
   Ok(image::imageops::crop_imm(&capture.image, local_x, local_y, width, height).to_image())
 }
@@ -187,10 +164,7 @@ fn capture_window_from_source(window: &Window) -> DriverResult<Capture> {
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn normalize_window_source_image(
-  image: image::RgbaImage,
-  bounds: Rect,
-) -> DriverResult<(image::RgbaImage, f64)> {
+fn normalize_window_source_image(image: image::RgbaImage, bounds: Rect) -> DriverResult<(image::RgbaImage, f64)> {
   match window_source_scale_factor(&image, bounds) {
     Ok(scale_factor) => Ok((image, scale_factor)),
     Err(original_error) => {
@@ -244,9 +218,7 @@ fn trim_portal_window_padding(image: &image::RgbaImage) -> Option<image::RgbaIma
   if min_x == 0 && min_y == 0 && max_x + 1 == image.width() && max_y + 1 == image.height() {
     return None;
   }
-  Some(
-    image::imageops::crop_imm(image, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1).to_image(),
-  )
+  Some(image::imageops::crop_imm(image, min_x, min_y, max_x - min_x + 1, max_y - min_y + 1).to_image())
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -255,10 +227,7 @@ fn is_window_source_content(pixel: image::Rgba<u8>) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn window_capture_fallback_reason(
-  window_source_error: &str,
-  display_fallback_reason: Option<String>,
-) -> String {
+fn window_capture_fallback_reason(window_source_error: &str, display_fallback_reason: Option<String>) -> String {
   // TODO(linux-window-source-target-binding): XDG portal WINDOW capture is
   // picker-driven, and this slice does not have a compositor-independent way to
   // bind the returned stream to the AT-SPI window ref. Revisit when a portal or
@@ -298,9 +267,7 @@ fn same_point(left: f64, right: f64) -> bool {
 fn scaled_capture_dimension(name: &str, value: f64, scale: f64) -> DriverResult<u32> {
   let value = (value * scale).round();
   if !(0.0..=f64::from(u32::MAX)).contains(&value) {
-    return Err(invalid_input(format!(
-      "window {name} must be within u32 capture bounds"
-    )));
+    return Err(invalid_input(format!("window {name} must be within u32 capture bounds")));
   }
   Ok(value as u32)
 }
@@ -337,11 +304,7 @@ mod tests {
       is_visible: true,
     };
 
-    let resolved = resolve_from_windows(
-      &[window.clone()],
-      &SelectWindow::title_contains("Text Editor"),
-    )
-    .expect("window resolves");
+    let resolved = resolve_from_windows(&[window.clone()], &SelectWindow::title_contains("Text Editor")).expect("window resolves");
 
     assert_eq!(resolved, window);
   }
@@ -362,9 +325,7 @@ mod tests {
       is_visible: true,
     };
 
-    let resolved =
-      resolve_from_windows(&[window.clone()], &SelectWindow::title_contains("settings"))
-        .expect("window resolves");
+    let resolved = resolve_from_windows(&[window.clone()], &SelectWindow::title_contains("settings")).expect("window resolves");
 
     assert_eq!(resolved, window);
   }
@@ -420,14 +381,9 @@ mod tests {
   fn window_source_scale_rejects_unmatched_stream_bounds() {
     let image = image::RgbaImage::new(5504, 2304);
 
-    let error = window_source_scale_factor(&image, Rect::new(0.0, 0.0, 1505.0, 1077.0))
-      .expect_err("non-uniform scale should be rejected");
+    let error = window_source_scale_factor(&image, Rect::new(0.0, 0.0, 1505.0, 1077.0)).expect_err("non-uniform scale should be rejected");
 
-    assert!(
-      error
-        .to_string()
-        .contains("not consistent with AT-SPI window bounds")
-    );
+    assert!(error.to_string().contains("not consistent with AT-SPI window bounds"));
   }
 
   #[test]
@@ -439,8 +395,8 @@ mod tests {
       }
     }
 
-    let (normalized, scale) = normalize_window_source_image(image, Rect::new(0.0, 0.0, 2.0, 1.5))
-      .expect("black padding trims to target aspect");
+    let (normalized, scale) =
+      normalize_window_source_image(image, Rect::new(0.0, 0.0, 2.0, 1.5)).expect("black padding trims to target aspect");
 
     assert_eq!(normalized.width(), 4);
     assert_eq!(normalized.height(), 3);

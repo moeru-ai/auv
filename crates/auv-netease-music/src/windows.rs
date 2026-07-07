@@ -32,18 +32,14 @@ pub fn resolve_window(options: &ResolveOptions) -> Result<Option<Window>, String
   use auv_driver::selector::{App, Window as WindowSelector};
   use auv_driver_windows::WindowsDriver;
 
-  let session = WindowsDriver::new()
-    .open_local()
-    .map_err(|error| format!("failed to open Windows driver: {error}"))?;
+  let session = WindowsDriver::new().open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
 
   let by_process = WindowSelector::main_visible().owned_by(App::name(options.process_name.clone()));
   match session.window().resolve(by_process) {
     Ok(window) => return Ok(Some(window)),
     Err(DriverError::NotFound { .. }) => {}
     Err(error) => {
-      return Err(format!(
-        "failed to resolve NetEase window by process name: {error}"
-      ));
+      return Err(format!("failed to resolve NetEase window by process name: {error}"));
     }
   }
 
@@ -55,16 +51,11 @@ pub fn resolve_window(options: &ResolveOptions) -> Result<Option<Window>, String
   ];
   titles.dedup();
   for title in titles {
-    match session
-      .window()
-      .resolve(WindowSelector::title_contains(title))
-    {
+    match session.window().resolve(WindowSelector::title_contains(title)) {
       Ok(window) => return Ok(Some(window)),
       Err(DriverError::NotFound { .. }) => {}
       Err(error) => {
-        return Err(format!(
-          "failed to resolve NetEase window by title {title:?}: {error}"
-        ));
+        return Err(format!("failed to resolve NetEase window by title {title:?}: {error}"));
       }
     }
   }

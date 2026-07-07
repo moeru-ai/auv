@@ -4,8 +4,8 @@ use clap::{Args, Parser, Subcommand, error::ErrorKind};
 
 use crate::driver::MacosQqMusicDriver;
 use crate::search::{
-  DEFAULT_ANCHOR_TIMEOUT_MS, DEFAULT_APP_ID, DEFAULT_SETTLE_MS, SearchCommand, SearchResultsAction,
-  SearchResultsClick, SearchResultsSelect, SearchSubmit, run_search_command,
+  DEFAULT_ANCHOR_TIMEOUT_MS, DEFAULT_APP_ID, DEFAULT_SETTLE_MS, SearchCommand, SearchResultsAction, SearchResultsClick, SearchResultsSelect,
+  SearchSubmit, run_search_command,
 };
 
 #[derive(Clone, Debug, Parser)]
@@ -94,24 +94,17 @@ where
   let args = CliArgs::try_parse_from(args)?;
   Ok(match args.command {
     CliCommand::Search(search) => match search.results {
-      None => SearchCommand::Search(SearchSubmit::defaults_with_query(search.query.ok_or_else(
-        || {
-          clap::Error::raw(
-            ErrorKind::MissingRequiredArgument,
-            "auv-qqmusic search requires <query>",
-          )
-        },
-      )?)),
+      None => SearchCommand::Search(SearchSubmit::defaults_with_query(
+        search.query.ok_or_else(|| clap::Error::raw(ErrorKind::MissingRequiredArgument, "auv-qqmusic search requires <query>"))?,
+      )),
       Some(SearchSubcommand::Results(results)) => match results.command {
-        SearchResultsSubcommand::Select(args) => {
-          SearchCommand::Results(SearchResultsAction::Select(SearchResultsSelect {
-            app_id: args.app_id,
-            query: args.query,
-            anchor: args.anchor,
-            settle_ms: args.settle_ms,
-            anchor_timeout_ms: args.anchor_timeout_ms,
-          }))
-        }
+        SearchResultsSubcommand::Select(args) => SearchCommand::Results(SearchResultsAction::Select(SearchResultsSelect {
+          app_id: args.app_id,
+          query: args.query,
+          anchor: args.anchor,
+          settle_ms: args.settle_ms,
+          anchor_timeout_ms: args.anchor_timeout_ms,
+        })),
         SearchResultsSubcommand::Click(args) => {
           validate_click_args(&args)?;
           SearchCommand::Results(SearchResultsAction::Click(SearchResultsClick {
@@ -130,29 +123,18 @@ where
 }
 
 fn validate_click_args(args: &SearchResultsClickArgs) -> Result<(), clap::Error> {
-  let selector_count = args.anchor.is_some() as usize
-    + args.row.is_some() as usize
-    + args.candidate_ref.is_some() as usize;
+  let selector_count = args.anchor.is_some() as usize + args.row.is_some() as usize + args.candidate_ref.is_some() as usize;
   if selector_count == 0 {
-    return Err(clap::Error::raw(
-      ErrorKind::MissingRequiredArgument,
-      "search results click requires --anchor, --row, or --candidate-ref",
-    ));
+    return Err(clap::Error::raw(ErrorKind::MissingRequiredArgument, "search results click requires --anchor, --row, or --candidate-ref"));
   }
   if args.candidate_ref.is_some() {
     if args.query.is_some() {
-      return Err(clap::Error::raw(
-        ErrorKind::ArgumentConflict,
-        "search results click --candidate-ref does not take <query>",
-      ));
+      return Err(clap::Error::raw(ErrorKind::ArgumentConflict, "search results click --candidate-ref does not take <query>"));
     }
     return Ok(());
   }
   if args.query.is_none() {
-    return Err(clap::Error::raw(
-      ErrorKind::MissingRequiredArgument,
-      "search results click --anchor and --row require <query>",
-    ));
+    return Err(clap::Error::raw(ErrorKind::MissingRequiredArgument, "search results click --anchor and --row require <query>"));
   }
   Ok(())
 }
@@ -197,10 +179,7 @@ mod tests {
   fn parse_search_maps_query() {
     let command = parse_from(["auv-qqmusic", "search", "周杰伦"]).expect("command should parse");
 
-    assert_eq!(
-      command,
-      SearchCommand::Search(SearchSubmit::defaults_with_query("周杰伦"))
-    );
+    assert_eq!(command, SearchCommand::Search(SearchSubmit::defaults_with_query("周杰伦")));
   }
 
   #[test]
@@ -275,13 +254,7 @@ mod tests {
     ])
     .expect("command should parse");
 
-    assert!(matches!(
-      command,
-      SearchCommand::Results(SearchResultsAction::Click(SearchResultsClick {
-        row: Some(2),
-        ..
-      }))
-    ));
+    assert!(matches!(command, SearchCommand::Results(SearchResultsAction::Click(SearchResultsClick { row: Some(2), .. }))));
   }
 
   #[test]
@@ -308,16 +281,14 @@ mod tests {
 
   #[test]
   fn parse_search_results_click_row_requires_query() {
-    let error = parse_from(["auv-qqmusic", "search", "results", "click", "--row", "2"])
-      .expect_err("row selector should require query");
+    let error = parse_from(["auv-qqmusic", "search", "results", "click", "--row", "2"]).expect_err("row selector should require query");
 
     assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
   }
 
   #[test]
   fn parse_search_results_click_requires_selector() {
-    let error = parse_from(["auv-qqmusic", "search", "results", "click", "周杰伦"])
-      .expect_err("click should require a result selector");
+    let error = parse_from(["auv-qqmusic", "search", "results", "click", "周杰伦"]).expect_err("click should require a result selector");
 
     assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
   }

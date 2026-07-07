@@ -5,15 +5,10 @@ use std::env;
 use std::path::PathBuf;
 
 use auv_cli::build_runtime_with_store_root;
-use auv_cli::minecraft::{
-  QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness,
-  run_minecraft_query_wired_live_action,
-};
+use auv_cli::minecraft::{QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action};
 
 fn main() -> Result<(), String> {
-  eprintln!(
-    "notice: canonical entry is `auv minecraft query-wired-live-click`; this example is a thin library wrapper"
-  );
+  eprintln!("notice: canonical entry is `auv minecraft query-wired-live-click`; this example is a thin library wrapper");
   let mut args = env::args().skip(1);
   let mut semantic_manifest = None;
   let mut target_block = None;
@@ -50,9 +45,7 @@ fn main() -> Result<(), String> {
           "checkpoint-native" => use_checkpoint_native_provider = true,
           "closed-scene-toy" => use_closed_scene_toy_provider = true,
           other => {
-            return Err(format!(
-              "invalid --query-provider {other:?}; expected checkpoint-native or closed-scene-toy"
-            ));
+            return Err(format!("invalid --query-provider {other:?}; expected checkpoint-native or closed-scene-toy"));
           }
         }
       }
@@ -71,15 +64,10 @@ fn main() -> Result<(), String> {
   }
 
   if use_checkpoint_native_provider && use_closed_scene_toy_provider {
-    return Err(
-      "--query-provider checkpoint-native and --query-provider closed-scene-toy are mutually exclusive"
-        .to_string(),
-    );
+    return Err("--query-provider checkpoint-native and --query-provider closed-scene-toy are mutually exclusive".to_string());
   }
   if use_closed_scene_toy_provider && closed_scene_fixture.is_none() {
-    return Err(
-      "--closed-scene-fixture is required when --query-provider closed-scene-toy".to_string(),
-    );
+    return Err("--closed-scene-fixture is required when --query-provider closed-scene-toy".to_string());
   }
   if closed_scene_fixture.is_some() && !use_closed_scene_toy_provider {
     return Err("--closed-scene-fixture requires --query-provider closed-scene-toy".to_string());
@@ -102,9 +90,7 @@ fn main() -> Result<(), String> {
   let output = run_minecraft_query_wired_live_action(
     &runtime.recording().handle(),
     QueryWiredLiveActionInputs {
-      training_result_semantic_manifest_path: PathBuf::from(
-        semantic_manifest.ok_or("--semantic-manifest is required")?,
-      ),
+      training_result_semantic_manifest_path: PathBuf::from(semantic_manifest.ok_or("--semantic-manifest is required")?),
       target_block,
       target_face,
       target_semantics,
@@ -120,19 +106,10 @@ fn main() -> Result<(), String> {
     },
   )?;
   println!("runId: {}", output.run_id);
-  println!(
-    "queryStatus: {}",
-    output.value.query.manifest.status.as_str()
-  );
+  println!("queryStatus: {}", output.value.query.manifest.status.as_str());
   println!("wiringAttempted: {}", output.value.wiring.attempted);
-  println!(
-    "actionEligibility: {}",
-    output.value.wiring.action_eligibility.as_str()
-  );
-  println!(
-    "operationResultArtifact: {}",
-    output.value.operation_result_artifact_id
-  );
+  println!("actionEligibility: {}", output.value.wiring.action_eligibility.as_str());
+  println!("operationResultArtifact: {}", output.value.operation_result_artifact_id);
   Ok(())
 }
 
@@ -168,9 +145,7 @@ fn parse_block_face(raw: &str) -> Result<auv_game_minecraft::BlockFace, String> 
   }
 }
 
-fn parse_target_semantics(
-  raw: &str,
-) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
+fn parse_target_semantics(raw: &str) -> Result<auv_game_minecraft::MinecraftTargetSemantics, String> {
   match raw {
     "hit_face_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::HitFaceCenter),
     "block_center" => Ok(auv_game_minecraft::MinecraftTargetSemantics::BlockCenter),

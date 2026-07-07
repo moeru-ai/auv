@@ -45,26 +45,19 @@ pub fn screen_points_match_with_tolerance(
   provider_radius_px: Option<f64>,
   reference_radius_px: Option<f64>,
 ) -> bool {
-  let tolerance = provider_radius_px
-    .unwrap_or(1.0)
-    .max(reference_radius_px.unwrap_or(1.0));
+  let tolerance = provider_radius_px.unwrap_or(1.0).max(reference_radius_px.unwrap_or(1.0));
   let dx = provider_point.x - reference_point.x;
   let dy = provider_point.y - reference_point.y;
   (dx * dx + dy * dy).sqrt() <= tolerance
 }
 
-pub fn compare_dual_backend_verdict<P, R>(
-  provider_answer: Option<&P>,
-  reference_answer: Option<&R>,
-) -> Option<DualBackendCompareVerdict>
+pub fn compare_dual_backend_verdict<P, R>(provider_answer: Option<&P>, reference_answer: Option<&R>) -> Option<DualBackendCompareVerdict>
 where
   P: DualBackendAnswer,
   R: DualBackendAnswer<VisibilityKey = P::VisibilityKey>,
 {
-  let provider_answered =
-    provider_answer.is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
-  let reference_answered = reference_answer
-    .is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
+  let provider_answered = provider_answer.is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
+  let reference_answered = reference_answer.is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
 
   match (provider_answered, reference_answered) {
     (true, true) => {
@@ -86,42 +79,24 @@ pub fn select_dual_backend_outcome<A, F>(
   provider_answer: Option<&A>,
   reference_answer: Option<&A>,
   pick_fallback: F,
-) -> (
-  DualBackendSelectedSide,
-  A,
-  Option<DualBackendCompareVerdict>,
-)
+) -> (DualBackendSelectedSide, A, Option<DualBackendCompareVerdict>)
 where
   A: DualBackendAnswer + Clone,
   F: FnOnce(Option<&A>, Option<&A>) -> A,
 {
-  let provider_answered =
-    provider_answer.is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
-  let reference_answered = reference_answer
-    .is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
+  let provider_answered = provider_answer.is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
+  let reference_answered = reference_answer.is_some_and(|answer| answer.stage_status() == DualBackendStageStatus::Answered);
 
   if provider_answered {
-    let answer = provider_answer
-      .expect("provider answered implies provider answer present")
-      .clone();
+    let answer = provider_answer.expect("provider answered implies provider answer present").clone();
     let comparison_verdict = compare_dual_backend_verdict(provider_answer, reference_answer);
-    return (
-      DualBackendSelectedSide::Provider,
-      answer,
-      comparison_verdict,
-    );
+    return (DualBackendSelectedSide::Provider, answer, comparison_verdict);
   }
 
   if reference_answered {
-    let answer = reference_answer
-      .expect("reference answered implies reference answer present")
-      .clone();
+    let answer = reference_answer.expect("reference answered implies reference answer present").clone();
     let comparison_verdict = compare_dual_backend_verdict(provider_answer, reference_answer);
-    return (
-      DualBackendSelectedSide::Reference,
-      answer,
-      comparison_verdict,
-    );
+    return (DualBackendSelectedSide::Reference, answer, comparison_verdict);
   }
 
   let answer = pick_fallback(provider_answer, reference_answer);
@@ -134,11 +109,7 @@ pub fn pick_blocked_or_failed_preferred<'a, T>(
   is_blocked: impl Fn(&T) -> bool,
 ) -> Option<&'a T> {
   let candidates: Vec<&'a T> = candidates.into_iter().flatten().collect();
-  candidates
-    .iter()
-    .find(|candidate| is_blocked(candidate))
-    .copied()
-    .or_else(|| candidates.first().copied())
+  candidates.iter().find(|candidate| is_blocked(candidate)).copied().or_else(|| candidates.first().copied())
 }
 
 fn dual_backend_answers_match<P, R>(provider: &P, reference: &R) -> bool
@@ -150,12 +121,9 @@ where
     return false;
   }
   match (provider.screen_point(), reference.screen_point()) {
-    (Some(provider_point), Some(reference_point)) => screen_points_match_with_tolerance(
-      provider_point,
-      reference_point,
-      provider.match_radius_px(),
-      reference.match_radius_px(),
-    ),
+    (Some(provider_point), Some(reference_point)) => {
+      screen_points_match_with_tolerance(provider_point, reference_point, provider.match_radius_px(), reference.match_radius_px())
+    }
     (None, None) => true,
     _ => false,
   }
@@ -199,11 +167,7 @@ mod tests {
     }
   }
 
-  fn answered(
-    visibility: Option<TestVisibility>,
-    screen_point: Option<ScreenPoint>,
-    match_radius_px: Option<f64>,
-  ) -> TestAnswer {
+  fn answered(visibility: Option<TestVisibility>, screen_point: Option<ScreenPoint>, match_radius_px: Option<f64>) -> TestAnswer {
     TestAnswer {
       status: DualBackendStageStatus::Answered,
       visibility,
@@ -232,39 +196,16 @@ mod tests {
 
   #[test]
   fn compare_dual_backend_verdict_covers_five_label_matrix() {
-    let provider = answered(
-      Some(TestVisibility::Visible),
-      Some(ScreenPoint { x: 1.0, y: 2.0 }),
-      None,
-    );
-    let reference = answered(
-      Some(TestVisibility::Visible),
-      Some(ScreenPoint { x: 1.0, y: 2.0 }),
-      None,
-    );
+    let provider = answered(Some(TestVisibility::Visible), Some(ScreenPoint { x: 1.0, y: 2.0 }), None);
+    let reference = answered(Some(TestVisibility::Visible), Some(ScreenPoint { x: 1.0, y: 2.0 }), None);
     let provider_only = answered(Some(TestVisibility::Visible), None, None);
     let reference_only = answered(Some(TestVisibility::Occluded), None, None);
 
-    assert_eq!(
-      compare_dual_backend_verdict(Some(&provider), Some(&reference)),
-      Some(DualBackendCompareVerdict::Match)
-    );
-    assert_eq!(
-      compare_dual_backend_verdict(Some(&provider), Some(&reference_only)),
-      Some(DualBackendCompareVerdict::Divergent)
-    );
-    assert_eq!(
-      compare_dual_backend_verdict(Some(&provider_only), None::<&TestAnswer>),
-      Some(DualBackendCompareVerdict::ProviderOnly)
-    );
-    assert_eq!(
-      compare_dual_backend_verdict(None::<&TestAnswer>, Some(&reference_only)),
-      Some(DualBackendCompareVerdict::ReferenceOnly)
-    );
-    assert_eq!(
-      compare_dual_backend_verdict(Some(&blocked()), Some(&failed())),
-      Some(DualBackendCompareVerdict::NotComparable)
-    );
+    assert_eq!(compare_dual_backend_verdict(Some(&provider), Some(&reference)), Some(DualBackendCompareVerdict::Match));
+    assert_eq!(compare_dual_backend_verdict(Some(&provider), Some(&reference_only)), Some(DualBackendCompareVerdict::Divergent));
+    assert_eq!(compare_dual_backend_verdict(Some(&provider_only), None::<&TestAnswer>), Some(DualBackendCompareVerdict::ProviderOnly));
+    assert_eq!(compare_dual_backend_verdict(None::<&TestAnswer>, Some(&reference_only)), Some(DualBackendCompareVerdict::ReferenceOnly));
+    assert_eq!(compare_dual_backend_verdict(Some(&blocked()), Some(&failed())), Some(DualBackendCompareVerdict::NotComparable));
   }
 
   #[test]
@@ -272,8 +213,7 @@ mod tests {
     let provider = answered(Some(TestVisibility::Visible), None, None);
     let reference = answered(Some(TestVisibility::Visible), None, None);
 
-    let (side, _, verdict) =
-      select_dual_backend_outcome(Some(&provider), Some(&reference), |_, _| failed());
+    let (side, _, verdict) = select_dual_backend_outcome(Some(&provider), Some(&reference), |_, _| failed());
     assert_eq!(side, DualBackendSelectedSide::Provider);
     assert_eq!(verdict, Some(DualBackendCompareVerdict::Match));
 
@@ -281,14 +221,11 @@ mod tests {
     assert_eq!(side, DualBackendSelectedSide::Reference);
     assert_eq!(verdict, Some(DualBackendCompareVerdict::ReferenceOnly));
 
-    let (side, selected, verdict) =
-      select_dual_backend_outcome(Some(&blocked()), Some(&failed()), |provider, reference| {
-        pick_blocked_or_failed_preferred([provider, reference], |answer| {
-          answer.stage_status() == DualBackendStageStatus::Blocked
-        })
+    let (side, selected, verdict) = select_dual_backend_outcome(Some(&blocked()), Some(&failed()), |provider, reference| {
+      pick_blocked_or_failed_preferred([provider, reference], |answer| answer.stage_status() == DualBackendStageStatus::Blocked)
         .cloned()
         .unwrap_or_else(failed)
-      });
+    });
     assert_eq!(side, DualBackendSelectedSide::Neither);
     assert_eq!(selected.status, DualBackendStageStatus::Blocked);
     assert_eq!(verdict, Some(DualBackendCompareVerdict::NotComparable));
@@ -302,18 +239,8 @@ mod tests {
 
     assert!(screen_points_match_with_tolerance(left, near, None, None));
     assert!(!screen_points_match_with_tolerance(left, far, None, None));
-    assert!(screen_points_match_with_tolerance(
-      left,
-      far,
-      Some(3.0),
-      None
-    ));
-    assert!(screen_points_match_with_tolerance(
-      left,
-      near,
-      Some(0.5),
-      Some(2.0)
-    ));
+    assert!(screen_points_match_with_tolerance(left, far, Some(3.0), None));
+    assert!(screen_points_match_with_tolerance(left, near, Some(0.5), Some(2.0)));
   }
 
   #[test]

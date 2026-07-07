@@ -9,12 +9,10 @@ use auv_cli_invoke::{CommandGroup, InvokeCommandInput, InvokeNamespace, InvokeRe
 
 pub use help::{render_command_help, render_help_index};
 pub use select_proof::{
-  SELECT_PROOF_COMMAND_ID, build_select_result_from_fixture_dir, hermetic_select_proof_fixture_dir,
-  select_proof_handler,
+  SELECT_PROOF_COMMAND_ID, build_select_result_from_fixture_dir, hermetic_select_proof_fixture_dir, select_proof_handler,
 };
 pub use sidebar_scan_proof::{
-  SIDEBAR_SCAN_PROOF_COMMAND_ID, build_scan_from_fixture_dir,
-  hermetic_sidebar_scan_proof_fixture_dir, sidebar_scan_proof_handler,
+  SIDEBAR_SCAN_PROOF_COMMAND_ID, build_scan_from_fixture_dir, hermetic_sidebar_scan_proof_fixture_dir, sidebar_scan_proof_handler,
 };
 
 pub fn netease_registry() -> InvokeRegistry {
@@ -70,10 +68,7 @@ pub fn run(tokens: &[String]) -> ExitCode {
     return ExitCode::from(2);
   };
 
-  if tokens
-    .get(index + 1)
-    .is_some_and(|token| token == "--help" || token == "-h")
-  {
+  if tokens.get(index + 1).is_some_and(|token| token == "--help" || token == "-h") {
     let Some(command) = registry.resolve(command_id) else {
       eprintln!("error: unknown command {command_id}");
       print!("{}", render_help_index(&registry));

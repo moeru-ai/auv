@@ -2,10 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use auv_inference_common::{
-  BoundingBox, Detection, DetectionCoordinateSpace, DetectionSet, ImageSize, ModelId,
-  render_annotated_image,
-};
+use auv_inference_common::{BoundingBox, Detection, DetectionCoordinateSpace, DetectionSet, ImageSize, ModelId, render_annotated_image};
 use image::ImageReader;
 use serde::{Deserialize, Serialize};
 
@@ -17,8 +14,7 @@ pub type DatasetResult<T> = Result<T, String>;
 
 const DATASET_SCHEMA_VERSION: u32 = 1;
 const DEFAULT_MODEL_ID: &str = "osu-auto-label-truth-v1";
-const VISIBILITY_RULE: &str =
-  "label frames captured before dispatch or within 128ms after dispatch; skip later frames";
+const VISIBILITY_RULE: &str = "label frames captured before dispatch or within 128ms after dispatch; skip later frames";
 const AFTER_DISPATCH_LABEL_WINDOW_MS: i64 = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,13 +91,7 @@ pub fn export_dataset(inputs: &DatasetExportInputs) -> DatasetResult<DatasetExpo
   let label_map = LabelMap::default();
   let label_entries = build_label_entries(&label_map)?;
   let capture_paths = index_capture_paths(&inputs.run_artifact_dir, &manifest)?;
-  let (plans, skipped_frames, checked_frames) = plan_dataset_export(
-    &manifest,
-    &projection,
-    &label_entries,
-    &capture_paths,
-    &label_map,
-  )?;
+  let (plans, skipped_frames, checked_frames) = plan_dataset_export(&manifest, &projection, &label_entries, &capture_paths, &label_map)?;
 
   if plans.is_empty() {
     return Err(format!(
@@ -143,9 +133,7 @@ fn plan_dataset_export(
 
   let auv_projection = match projection {
     crate::visual_eval::EvalProjection::Unavailable { reason } => {
-      return Err(format!(
-        "projection unavailable for dataset export: {reason}"
-      ));
+      return Err(format!("projection unavailable for dataset export: {reason}"));
     }
     crate::visual_eval::EvalProjection::PlayfieldToPixels {
       scale_x,
@@ -157,20 +145,11 @@ fn plan_dataset_export(
   };
 
   for frame in &manifest.frames {
-    let frame_key = FrameKey::from_parts(
-      frame.object_index,
-      frame.capture.phase.clone(),
-      frame.capture.file_name.clone(),
-    );
-    checked_frames.push(format!(
-      "{}:{}:{}",
-      frame_key.object_index, frame_key.phase, frame_key.capture_file_name
-    ));
+    let frame_key = FrameKey::from_parts(frame.object_index, frame.capture.phase.clone(), frame.capture.file_name.clone());
+    checked_frames.push(format!("{}:{}:{}", frame_key.object_index, frame_key.phase, frame_key.capture_file_name));
 
-    let capture_path = capture_paths
-      .get(&frame.capture.file_name)
-      .ok_or_else(|| format!("missing capture image {}", frame.capture.file_name))?
-      .clone();
+    let capture_path =
+      capture_paths.get(&frame.capture.file_name).ok_or_else(|| format!("missing capture image {}", frame.capture.file_name))?.clone();
 
     if !frame_is_visible(&frame.capture.phase, frame.capture.relative_to_dispatch_ms) {
       skipped.push(DatasetSkippedFrame {
@@ -187,12 +166,7 @@ fn plan_dataset_export(
 
     let label = label_map
       .expected_label(&frame.expected_object.object_kind)
-      .ok_or_else(|| {
-        format!(
-          "no dataset label mapping for object kind {:?}",
-          frame.expected_object.object_kind
-        )
-      })?
+      .ok_or_else(|| format!("no dataset label mapping for object kind {:?}", frame.expected_object.object_kind))?
       .to_string();
     let class_id = label_entries
       .iter()
@@ -229,65 +203,27 @@ fn plan_dataset_export(
   Ok((plans, skipped, checked_frames))
 }
 
-fn write_dataset_export(
-  output_dir: &Path,
-  plans: &[ExportFramePlan],
-  mut manifest: DatasetManifest,
-) -> DatasetResult<DatasetExportOutput> {
+fn write_dataset_export(output_dir: &Path, plans: &[ExportFramePlan], mut manifest: DatasetManifest) -> DatasetResult<DatasetExportOutput> {
   let images_dir = output_dir.join("images");
   let labels_dir = output_dir.join("labels");
   let overlays_dir = output_dir.join("overlays");
-  fs::create_dir_all(&images_dir).map_err(|error| {
-    format!(
-      "failed to create images dir {}: {error}",
-      images_dir.display()
-    )
-  })?;
-  fs::create_dir_all(&labels_dir).map_err(|error| {
-    format!(
-      "failed to create labels dir {}: {error}",
-      labels_dir.display()
-    )
-  })?;
-  fs::create_dir_all(&overlays_dir).map_err(|error| {
-    format!(
-      "failed to create overlays dir {}: {error}",
-      overlays_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&images_dir).map_err(|error| format!("failed to create images dir {}: {error}", images_dir.display()))?;
+  fs::create_dir_all(&labels_dir).map_err(|error| format!("failed to create labels dir {}: {error}", labels_dir.display()))?;
+  fs::create_dir_all(&overlays_dir).map_err(|error| format!("failed to create overlays dir {}: {error}", overlays_dir.display()))?;
 
   for plan in plans {
     let image_target = images_dir.join(&plan.image_file);
-    fs::copy(&plan.source_capture_path, &image_target).map_err(|error| {
-      format!(
-        "failed to copy capture {} to {}: {error}",
-        plan.source_capture_path.display(),
-        image_target.display()
-      )
-    })?;
+    fs::copy(&plan.source_capture_path, &image_target)
+      .map_err(|error| format!("failed to copy capture {} to {}: {error}", plan.source_capture_path.display(), image_target.display()))?;
 
     let label_target = labels_dir.join(&plan.label_file);
-    fs::write(&label_target, format_yolo_label(plan)).map_err(|error| {
-      format!(
-        "failed to write label file {}: {error}",
-        label_target.display()
-      )
-    })?;
+    fs::write(&label_target, format_yolo_label(plan))
+      .map_err(|error| format!("failed to write label file {}: {error}", label_target.display()))?;
 
     let source_image = ImageReader::open(&plan.source_capture_path)
-      .map_err(|error| {
-        format!(
-          "failed to open capture image {}: {error}",
-          plan.source_capture_path.display()
-        )
-      })?
+      .map_err(|error| format!("failed to open capture image {}: {error}", plan.source_capture_path.display()))?
       .decode()
-      .map_err(|error| {
-        format!(
-          "failed to decode capture image {}: {error}",
-          plan.source_capture_path.display()
-        )
-      })?
+      .map_err(|error| format!("failed to decode capture image {}: {error}", plan.source_capture_path.display()))?
       .to_rgb8();
     let detections = vec![Detection {
       class_id: plan.class_id,
@@ -302,12 +238,7 @@ fn write_dataset_export(
     };
     let overlay = render_annotated_image(&source_image, &detection_set.detections);
     let overlay_target = overlays_dir.join(&plan.overlay_file);
-    overlay.save(&overlay_target).map_err(|error| {
-      format!(
-        "failed to write overlay image {}: {error}",
-        overlay_target.display()
-      )
-    })?;
+    overlay.save(&overlay_target).map_err(|error| format!("failed to write overlay image {}: {error}", overlay_target.display()))?;
 
     manifest.exported_frames.push(DatasetFrameRecord {
       frame: plan.frame.clone(),
@@ -352,9 +283,7 @@ fn derive_bbox(
     return Err("dataset bbox derivation produced non-finite values".to_string());
   }
   if match_radius_px <= 0.0 {
-    return Err(format!(
-      "dataset bbox derivation requires positive radius, got {match_radius_px}"
-    ));
+    return Err(format!("dataset bbox derivation requires positive radius, got {match_radius_px}"));
   }
 
   let bbox = BoundingBox {
@@ -367,21 +296,13 @@ fn derive_bbox(
   Ok(bbox)
 }
 
-fn validate_bbox_in_bounds(
-  bbox: BoundingBox,
-  image_width: u32,
-  image_height: u32,
-) -> DatasetResult<()> {
+fn validate_bbox_in_bounds(bbox: BoundingBox, image_width: u32, image_height: u32) -> DatasetResult<()> {
   let values = [bbox.x1, bbox.y1, bbox.x2, bbox.y2];
   if values.iter().any(|value| !value.is_finite()) {
     return Err("dataset bbox contains non-finite coordinates".to_string());
   }
-  if bbox.x1 < 0.0 || bbox.y1 < 0.0 || bbox.x2 > image_width as f32 || bbox.y2 > image_height as f32
-  {
-    return Err(format!(
-      "dataset bbox {:?} exceeds image bounds {}x{}",
-      bbox, image_width, image_height
-    ));
+  if bbox.x1 < 0.0 || bbox.y1 < 0.0 || bbox.x2 > image_width as f32 || bbox.y2 > image_height as f32 {
+    return Err(format!("dataset bbox {:?} exceeds image bounds {}x{}", bbox, image_width, image_height));
   }
   if bbox.x1 >= bbox.x2 || bbox.y1 >= bbox.y2 {
     return Err(format!("dataset bbox {:?} is degenerate", bbox));
@@ -389,27 +310,19 @@ fn validate_bbox_in_bounds(
   Ok(())
 }
 
-fn index_capture_paths(
-  run_artifact_dir: &Path,
-  manifest: &VisualTruthManifest,
-) -> DatasetResult<BTreeMap<String, PathBuf>> {
+fn index_capture_paths(run_artifact_dir: &Path, manifest: &VisualTruthManifest) -> DatasetResult<BTreeMap<String, PathBuf>> {
   let mut capture_paths = BTreeMap::new();
   if manifest.frames.is_empty() {
     return Err(format!(
       "visual truth manifest {} contains no frames; capture verification evidence is required",
-      run_artifact_dir
-        .join("visual_truth_manifest.json")
-        .display()
+      run_artifact_dir.join("visual_truth_manifest.json").display()
     ));
   }
 
   for frame in &manifest.frames {
     let capture_path = run_artifact_dir.join(&frame.capture.file_name);
     if !capture_path.exists() {
-      return Err(format!(
-        "missing capture image {} referenced by visual truth manifest",
-        capture_path.display()
-      ));
+      return Err(format!("missing capture image {} referenced by visual truth manifest", capture_path.display()));
     }
     capture_paths.insert(frame.capture.file_name.clone(), capture_path);
   }
@@ -428,9 +341,7 @@ fn build_label_entries(label_map: &LabelMap) -> DatasetResult<Vec<DatasetLabelEn
     .iter()
     .enumerate()
     .map(|(class_id, kind)| {
-      let label = label_map
-        .expected_label(kind)
-        .ok_or_else(|| format!("missing default label mapping for object kind {:?}", kind))?;
+      let label = label_map.expected_label(kind).ok_or_else(|| format!("missing default label mapping for object kind {:?}", kind))?;
       Ok(DatasetLabelEntry {
         class_id,
         label: label.to_string(),
@@ -446,10 +357,7 @@ fn format_yolo_label(plan: &ExportFramePlan) -> String {
   let center_y = ((plan.bbox.y1 + plan.bbox.y2) / 2.0) / height;
   let bbox_width = (plan.bbox.x2 - plan.bbox.x1) / width;
   let bbox_height = (plan.bbox.y2 - plan.bbox.y1) / height;
-  format!(
-    "{} {:.6} {:.6} {:.6} {:.6}\n",
-    plan.class_id, center_x, center_y, bbox_width, bbox_height
-  )
+  format!("{} {:.6} {:.6} {:.6} {:.6}\n", plan.class_id, center_x, center_y, bbox_width, bbox_height)
 }
 
 fn capture_phase_name(phase: &CapturePhase) -> &'static str {
@@ -468,15 +376,12 @@ fn capture_stem(file_name: &str) -> DatasetResult<String> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> DatasetResult<T> {
-  let bytes =
-    fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-  serde_json::from_slice(&bytes)
-    .map_err(|error| format!("failed to parse {}: {error}", path.display()))
+  let bytes = fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+  serde_json::from_slice(&bytes).map_err(|error| format!("failed to parse {}: {error}", path.display()))
 }
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> DatasetResult<()> {
-  let payload = serde_json::to_vec_pretty(value)
-    .map_err(|error| format!("failed to encode {}: {error}", path.display()))?;
+  let payload = serde_json::to_vec_pretty(value).map_err(|error| format!("failed to encode {}: {error}", path.display()))?;
   fs::write(path, payload).map_err(|error| format!("failed to write {}: {error}", path.display()))
 }
 
@@ -556,14 +461,7 @@ mod tests {
 
   #[test]
   fn derive_bbox_projects_point_and_radius() {
-    let bbox = derive_bbox(
-      98.0,
-      69.0,
-      1512,
-      949,
-      (2.4713542, 2.4713542, 123.333336, 0.0, 79.083336),
-    )
-    .expect("bbox");
+    let bbox = derive_bbox(98.0, 69.0, 1512, 949, (2.4713542, 2.4713542, 123.333336, 0.0, 79.083336)).expect("bbox");
 
     assert!((bbox.x1 - 286.4377).abs() < 0.1);
     assert!((bbox.y1 - 91.4311).abs() < 0.1);
@@ -573,8 +471,7 @@ mod tests {
 
   #[test]
   fn derive_bbox_rejects_out_of_bounds_boxes() {
-    let error =
-      derive_bbox(0.0, 0.0, 100, 100, (1.0, 1.0, 0.0, 0.0, 60.0)).expect_err("bbox should fail");
+    let error = derive_bbox(0.0, 0.0, 100, 100, (1.0, 1.0, 0.0, 0.0, 60.0)).expect_err("bbox should fail");
     assert!(error.contains("exceeds image bounds"));
   }
 
@@ -633,16 +530,11 @@ mod tests {
       },
     };
 
-    assert_eq!(
-      format_yolo_label(&plan),
-      "0 0.200000 0.200000 0.200000 0.200000\n"
-    );
+    assert_eq!(format_yolo_label(&plan), "0 0.200000 0.200000 0.200000 0.200000\n");
   }
 
   #[test]
   fn sample_projection_is_valid_for_dataset_export() {
-    sample_projection()
-      .to_eval_projection()
-      .expect("projection should adapt to eval projection");
+    sample_projection().to_eval_projection().expect("projection should adapt to eval projection");
   }
 }

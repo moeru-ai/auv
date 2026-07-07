@@ -1,6 +1,4 @@
-use crate::capture::types::{
-  CaptureContract, CoordinateSpace, DisplayDescriptor, Rect, Scale2D, Size, capture_error,
-};
+use crate::capture::types::{CaptureContract, CoordinateSpace, DisplayDescriptor, Rect, Scale2D, Size, capture_error};
 use crate::types::AuvResult;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -10,19 +8,9 @@ pub struct ResolvedRegion {
   pub source_global_logical_bounds: Rect,
 }
 
-pub fn scale_from_logical_and_physical(
-  logical: &Rect,
-  physical: &Size,
-) -> AuvResult<(Scale2D, Scale2D)> {
-  if logical.width <= 0.0
-    || logical.height <= 0.0
-    || physical.width <= 0.0
-    || physical.height <= 0.0
-  {
-    return Err(format!(
-      "{}: logical and physical display sizes must be positive",
-      capture_error::BACKEND_FAILED
-    ));
+pub fn scale_from_logical_and_physical(logical: &Rect, physical: &Size) -> AuvResult<(Scale2D, Scale2D)> {
+  if logical.width <= 0.0 || logical.height <= 0.0 || physical.width <= 0.0 || physical.height <= 0.0 {
+    return Err(format!("{}: logical and physical display sizes must be positive", capture_error::BACKEND_FAILED));
   }
 
   let logical_to_pixel = Scale2D {
@@ -47,26 +35,13 @@ pub fn resolve_display_index(
     return displays
       .iter()
       .position(|display| display.display_ref == display_ref)
-      .ok_or_else(|| {
-        format!(
-          "{}: display_ref {} was not reported by the capture backend",
-          capture_error::DISPLAY_NOT_FOUND,
-          display_ref
-        )
-      });
+      .ok_or_else(|| format!("{}: display_ref {} was not reported by the capture backend", capture_error::DISPLAY_NOT_FOUND, display_ref));
   }
 
   if let Some(display_id) = display_id {
-    return displays
-      .iter()
-      .position(|display| display.native_display_id == display_id)
-      .ok_or_else(|| {
-        format!(
-          "{}: native display id {} was not reported by the capture backend",
-          capture_error::DISPLAY_NOT_FOUND,
-          display_id
-        )
-      });
+    return displays.iter().position(|display| display.native_display_id == display_id).ok_or_else(|| {
+      format!("{}: native display id {} was not reported by the capture backend", capture_error::DISPLAY_NOT_FOUND, display_id)
+    });
   }
 
   if main && let Some(index) = displays.iter().position(|display| display.is_main) {
@@ -74,30 +49,18 @@ pub fn resolve_display_index(
   }
 
   if displays.is_empty() {
-    return Err(format!(
-      "{}: no displays were reported by the capture backend",
-      capture_error::DISPLAY_NOT_FOUND
-    ));
+    return Err(format!("{}: no displays were reported by the capture backend", capture_error::DISPLAY_NOT_FOUND));
   }
 
   Ok(0)
 }
 
-pub fn display_index_for_window(
-  displays: &[DisplayDescriptor],
-  window_bounds: &Rect,
-) -> AuvResult<usize> {
-  let containing_displays = displays
-    .iter()
-    .enumerate()
-    .filter(|(_, display)| rect_contains_rect(&display.global_logical_bounds, window_bounds))
-    .collect::<Vec<_>>();
+pub fn display_index_for_window(displays: &[DisplayDescriptor], window_bounds: &Rect) -> AuvResult<usize> {
+  let containing_displays =
+    displays.iter().enumerate().filter(|(_, display)| rect_contains_rect(&display.global_logical_bounds, window_bounds)).collect::<Vec<_>>();
 
   if containing_displays.len() != 1 {
-    return Err(format!(
-      "{}: window bounds are not fully contained by exactly one display",
-      capture_error::STALE_WINDOW_REF
-    ));
+    return Err(format!("{}: window bounds are not fully contained by exactly one display", capture_error::STALE_WINDOW_REF));
   }
 
   Ok(containing_displays[0].0)
@@ -111,10 +74,7 @@ pub fn resolve_region(
   display_id: Option<&str>,
 ) -> AuvResult<ResolvedRegion> {
   if input.width <= 0.0 || input.height <= 0.0 {
-    return Err(format!(
-      "{}: capture region size must be positive",
-      capture_error::REGION_OUT_OF_BOUNDS
-    ));
+    return Err(format!("{}: capture region size must be positive", capture_error::REGION_OUT_OF_BOUNDS));
   }
 
   match coordinate_space {
@@ -128,11 +88,7 @@ pub fn resolve_region(
       require_display_selector(display_ref, display_id, "display_physical")?;
       let display_index = resolve_display_index(displays, display_ref, display_id, false)?;
       let display = displays.get(display_index).ok_or_else(|| {
-        format!(
-          "{}: resolved display index {} is missing from the display descriptor list",
-          capture_error::STALE_DISPLAY_REF,
-          display_index
-        )
+        format!("{}: resolved display index {} is missing from the display descriptor list", capture_error::STALE_DISPLAY_REF, display_index)
       })?;
       resolve_display_logical_region(
         displays,
@@ -148,16 +104,9 @@ pub fn resolve_region(
   }
 }
 
-pub fn project_capture_pixel_to_global_logical(
-  contract: &CaptureContract,
-  screenshot_x: f64,
-  screenshot_y: f64,
-) -> AuvResult<(f64, f64)> {
+pub fn project_capture_pixel_to_global_logical(contract: &CaptureContract, screenshot_x: f64, screenshot_y: f64) -> AuvResult<(f64, f64)> {
   if !screenshot_x.is_finite() || !screenshot_y.is_finite() {
-    return Err(format!(
-      "{}: screenshot point must be finite",
-      capture_error::COORDINATE_CONTRACT_STALE
-    ));
+    return Err(format!("{}: screenshot point must be finite", capture_error::COORDINATE_CONTRACT_STALE));
   }
   if screenshot_x < 0.0
     || screenshot_y < 0.0
@@ -180,31 +129,16 @@ pub fn project_capture_pixel_to_global_logical(
   ))
 }
 
-fn resolve_global_logical_region(
-  displays: &[DisplayDescriptor],
-  input: Rect,
-) -> AuvResult<ResolvedRegion> {
-  let containing_displays = displays
-    .iter()
-    .enumerate()
-    .filter(|(_, display)| rect_contains_rect(&display.global_logical_bounds, &input))
-    .collect::<Vec<_>>();
+fn resolve_global_logical_region(displays: &[DisplayDescriptor], input: Rect) -> AuvResult<ResolvedRegion> {
+  let containing_displays =
+    displays.iter().enumerate().filter(|(_, display)| rect_contains_rect(&display.global_logical_bounds, &input)).collect::<Vec<_>>();
 
   if containing_displays.len() != 1 {
-    let intersecting_count = displays
-      .iter()
-      .filter(|display| rect_intersects_rect(&display.global_logical_bounds, &input))
-      .count();
+    let intersecting_count = displays.iter().filter(|display| rect_intersects_rect(&display.global_logical_bounds, &input)).count();
     if intersecting_count > 1 {
-      return Err(format!(
-        "{}: global logical region crosses display boundaries",
-        capture_error::REGION_CROSSES_DISPLAYS
-      ));
+      return Err(format!("{}: global logical region crosses display boundaries", capture_error::REGION_CROSSES_DISPLAYS));
     }
-    return Err(format!(
-      "{}: global logical region is not fully contained by one display",
-      capture_error::REGION_OUT_OF_BOUNDS
-    ));
+    return Err(format!("{}: global logical region is not fully contained by one display", capture_error::REGION_OUT_OF_BOUNDS));
   }
 
   let (display_index, display) = containing_displays[0];
@@ -220,17 +154,9 @@ fn resolve_global_logical_region(
   })
 }
 
-fn resolve_display_logical_region(
-  displays: &[DisplayDescriptor],
-  display_index: usize,
-  input: Rect,
-) -> AuvResult<ResolvedRegion> {
+fn resolve_display_logical_region(displays: &[DisplayDescriptor], display_index: usize, input: Rect) -> AuvResult<ResolvedRegion> {
   let display = displays.get(display_index).ok_or_else(|| {
-    format!(
-      "{}: resolved display index {} is missing from the display descriptor list",
-      capture_error::STALE_DISPLAY_REF,
-      display_index
-    )
+    format!("{}: resolved display index {} is missing from the display descriptor list", capture_error::STALE_DISPLAY_REF, display_index)
   })?;
   let display_local_bounds = Rect {
     x: 0.0,
@@ -239,11 +165,7 @@ fn resolve_display_logical_region(
     height: display.global_logical_bounds.height,
   };
   if !rect_contains_rect(&display_local_bounds, &input) {
-    return Err(format!(
-      "{}: display-local region is outside {}",
-      capture_error::REGION_OUT_OF_BOUNDS,
-      display.display_ref
-    ));
+    return Err(format!("{}: display-local region is outside {}", capture_error::REGION_OUT_OF_BOUNDS, display.display_ref));
   }
 
   Ok(ResolvedRegion {
@@ -269,17 +191,9 @@ fn rect_intersects_rect(a: &Rect, b: &Rect) -> bool {
   a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
 }
 
-fn require_display_selector(
-  display_ref: Option<&str>,
-  display_id: Option<&str>,
-  coordinate_space: &str,
-) -> AuvResult<()> {
+fn require_display_selector(display_ref: Option<&str>, display_id: Option<&str>, coordinate_space: &str) -> AuvResult<()> {
   if display_ref.is_some() || display_id.is_some() {
     return Ok(());
   }
-  Err(format!(
-    "{}: {} coordinates require display_ref or display_id",
-    capture_error::DISPLAY_NOT_FOUND,
-    coordinate_space
-  ))
+  Err(format!("{}: {} coordinates require display_ref or display_id", capture_error::DISPLAY_NOT_FOUND, coordinate_space))
 }

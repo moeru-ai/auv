@@ -190,18 +190,11 @@ fn control_state_cell(value: Option<PlaybackControlState>) -> &'static str {
 }
 
 fn click_point_cell(value: Option<auv_driver::Point>) -> String {
-  value
-    .map(|point| format!("{:.1},{:.1}", point.x, point.y))
-    .unwrap_or_else(|| "-".to_string())
+  value.map(|point| format!("{:.1},{:.1}", point.x, point.y)).unwrap_or_else(|| "-".to_string())
 }
 
 fn render_table(table: Table) -> String {
-  table
-    .to_string()
-    .lines()
-    .map(str::trim)
-    .collect::<Vec<_>>()
-    .join("\n")
+  table.to_string().lines().map(str::trim).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -216,67 +209,40 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   use crate::views::screen;
   use auv_driver::selector::{App, Window};
   use auv_driver::{
-    ActivationPolicy, Click, ClickOptions, Driver, InputPolicy, PrepareForInputOptions, RatioRect,
-    Size, WindowClickStrategy, WindowPoint,
+    ActivationPolicy, Click, ClickOptions, Driver, InputPolicy, PrepareForInputOptions, RatioRect, Size, WindowClickStrategy, WindowPoint,
   };
   use auv_driver_macos::MacosDriver;
   use auv_view::ViewBounds;
 
-  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| {
-    format!(
-      "failed to create {}: {error}",
-      inputs.artifact_dir.display()
-    )
-  })?;
+  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
 
   let mut artifacts = Vec::new();
   let mut diagnostics = Vec::new();
   let mut known_limits = Vec::new();
 
   let driver = MacosDriver::new();
-  let session = driver
-    .open_local()
-    .map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let window = session
     .window()
     .resolve(Window::main_visible().owned_by(App::bundle(inputs.app_id.clone())))
     .map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
   let app = ScanAppContext {
-    app_id: window
-      .app_bundle_id
-      .clone()
-      .or_else(|| Some(inputs.app_id.clone())),
+    app_id: window.app_bundle_id.clone().or_else(|| Some(inputs.app_id.clone())),
     name: window.app_name.clone(),
     version: None,
   };
   let window_context = ScanWindowContext {
     id: Some(window.reference.id.clone()),
     title: window.title.clone(),
-    bounds: Some(ViewBounds::new(
-      0.0,
-      0.0,
-      window.frame.size.width,
-      window.frame.size.height,
-    )),
+    bounds: Some(ViewBounds::new(0.0, 0.0, window.frame.size.width, window.frame.size.height)),
   };
   let window_size = Size::new(window.frame.size.width, window.frame.size.height);
 
-  let before_capture = session
-    .window()
-    .capture(&window)
-    .map_err(|error| format!("initial playback capture failed: {error}"))?;
-  artifacts.push(write_capture_artifact(
-    &inputs.artifact_dir,
-    "playback-status-before",
-    &before_capture,
-  )?);
+  let before_capture = session.window().capture(&window).map_err(|error| format!("initial playback capture failed: {error}"))?;
+  artifacts.push(write_capture_artifact(&inputs.artifact_dir, "playback-status-before", &before_capture)?);
   let before_recognition = session
     .vision()
-    .recognize_text_in_capture_with_options(
-      &before_capture,
-      RatioRect::new(0.0, 0.0, 1.0, 1.0),
-      inputs.ocr_options.clone(),
-    )
+    .recognize_text_in_capture_with_options(&before_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
     .map_err(|error| format!("initial playback OCR failed: {error}"))?;
   let before_recognition = recognition_in_window_space(before_recognition, &before_capture);
   let before_screen = screen::classify_screen(&before_recognition, window_size);
@@ -289,10 +255,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   if before_screen.is_playing_song_detail() {
     let source = screen::song_detail_source(&before_recognition, window_size);
     if source.is_none() {
-      known_limits.push(
-        "song detail screen was already open, but OCR did not identify the upper-right source label"
-          .to_string(),
-      );
+      known_limits.push("song detail screen was already open, but OCR did not identify the upper-right source label".to_string());
     }
     return Ok(PlaybackStatus {
       command: "playback.status".to_string(),
@@ -311,8 +274,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   }
 
   let Some(click_point) = player.song_detail_click_point(window_size) else {
-    known_limits
-      .push("bottom playback bar was not detected; status probe did not click".to_string());
+    known_limits.push("bottom playback bar was not detected; status probe did not click".to_string());
     return Ok(PlaybackStatus {
       command: "playback.status".to_string(),
       app,
@@ -348,31 +310,17 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
     std::thread::sleep(std::time::Duration::from_millis(inputs.settle_ms));
   }
 
-  let mut after_capture = session
-    .window()
-    .capture(&window)
-    .map_err(|error| format!("post-click detail capture failed: {error}"))?;
-  artifacts.push(write_capture_artifact(
-    &inputs.artifact_dir,
-    "playback-status-after-click",
-    &after_capture,
-  )?);
+  let mut after_capture = session.window().capture(&window).map_err(|error| format!("post-click detail capture failed: {error}"))?;
+  artifacts.push(write_capture_artifact(&inputs.artifact_dir, "playback-status-after-click", &after_capture)?);
   let mut recognition = session
     .vision()
-    .recognize_text_in_capture_with_options(
-      &after_capture,
-      RatioRect::new(0.0, 0.0, 1.0, 1.0),
-      inputs.ocr_options.clone(),
-    )
+    .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
     .map_err(|error| format!("post-click detail OCR failed: {error}"))?;
   recognition = recognition_in_window_space(recognition, &after_capture);
   let mut screen = screen::classify_screen(&recognition, window_size);
   let mut detail_screen_detected = screen.is_playing_song_detail();
   if !detail_screen_detected {
-    known_limits.push(
-      "background playback bar click did not reveal song detail; retried with foreground click"
-        .to_string(),
-    );
+    known_limits.push("background playback bar click did not reveal song detail; retried with foreground click".to_string());
     let lease = session
       .window()
       .prepare_for_input(
@@ -387,13 +335,8 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
         },
       )
       .map_err(|error| format!("playback bar foreground preparation failed: {error}"))?;
-    let click_result = auv_driver_macos::native::pointer::click_point(
-      window.frame.origin.x + click_point.x,
-      window.frame.origin.y + click_point.y,
-      0,
-      1,
-      80,
-    );
+    let click_result =
+      auv_driver_macos::native::pointer::click_point(window.frame.origin.x + click_point.x, window.frame.origin.y + click_point.y, 0, 1, 80);
     let restore_result = session.window().restore_input(lease);
     click_result.map_err(|error| format!("playback bar foreground click failed: {error}"))?;
     restore_result.map_err(|error| format!("playback bar foreground restore failed: {error}"))?;
@@ -401,22 +344,11 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
       std::thread::sleep(std::time::Duration::from_millis(inputs.settle_ms));
     }
 
-    after_capture = session
-      .window()
-      .capture(&window)
-      .map_err(|error| format!("post-foreground-click detail capture failed: {error}"))?;
-    artifacts.push(write_capture_artifact(
-      &inputs.artifact_dir,
-      "playback-status-after-foreground-click",
-      &after_capture,
-    )?);
+    after_capture = session.window().capture(&window).map_err(|error| format!("post-foreground-click detail capture failed: {error}"))?;
+    artifacts.push(write_capture_artifact(&inputs.artifact_dir, "playback-status-after-foreground-click", &after_capture)?);
     recognition = session
       .vision()
-      .recognize_text_in_capture_with_options(
-        &after_capture,
-        RatioRect::new(0.0, 0.0, 1.0, 1.0),
-        inputs.ocr_options.clone(),
-      )
+      .recognize_text_in_capture_with_options(&after_capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), inputs.ocr_options.clone())
       .map_err(|error| format!("post-foreground-click detail OCR failed: {error}"))?;
     recognition = recognition_in_window_space(recognition, &after_capture);
     screen = screen::classify_screen(&recognition, window_size);
@@ -431,10 +363,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   }
   let source = screen::song_detail_source(&recognition, window_size);
   if detail_screen_detected && source.is_none() {
-    known_limits.push(
-      "song detail screen was detected, but OCR did not identify the upper-right source label"
-        .to_string(),
-    );
+    known_limits.push("song detail screen was detected, but OCR did not identify the upper-right source label".to_string());
   }
 
   Ok(PlaybackStatus {
@@ -454,16 +383,9 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
 }
 
 #[cfg(target_os = "macos")]
-fn write_capture_artifact(
-  artifact_dir: &std::path::Path,
-  name: &str,
-  capture: &auv_driver::capture::Capture,
-) -> Result<String, String> {
+fn write_capture_artifact(artifact_dir: &std::path::Path, name: &str, capture: &auv_driver::capture::Capture) -> Result<String, String> {
   let path = artifact_dir.join(format!("{name}.png"));
-  capture
-    .image
-    .save(&path)
-    .map_err(|error| format!("failed to save {}: {error}", path.display()))?;
+  capture.image.save(&path).map_err(|error| format!("failed to save {}: {error}", path.display()))?;
   Ok(path.display().to_string())
 }
 
@@ -480,17 +402,11 @@ fn recognition_in_window_space(
 }
 
 #[cfg(target_os = "macos")]
-fn bottom_bar_text(
-  recognition: &auv_driver::vision::TextRecognition,
-  window_size: auv_driver::Size,
-) -> Option<String> {
+fn bottom_bar_text(recognition: &auv_driver::vision::TextRecognition, window_size: auv_driver::Size) -> Option<String> {
   let mut regions = recognition
     .regions
     .iter()
-    .filter(|region| {
-      region.bounds.origin.x <= window_size.width * 0.34
-        && region.bounds.origin.y >= window_size.height * 0.88
-    })
+    .filter(|region| region.bounds.origin.x <= window_size.width * 0.34 && region.bounds.origin.y >= window_size.height * 0.88)
     .collect::<Vec<_>>();
   regions.sort_by(|left, right| {
     left
@@ -499,21 +415,9 @@ fn bottom_bar_text(
       .y
       .partial_cmp(&right.bounds.origin.y)
       .unwrap_or(std::cmp::Ordering::Equal)
-      .then_with(|| {
-        left
-          .bounds
-          .origin
-          .x
-          .partial_cmp(&right.bounds.origin.x)
-          .unwrap_or(std::cmp::Ordering::Equal)
-      })
+      .then_with(|| left.bounds.origin.x.partial_cmp(&right.bounds.origin.x).unwrap_or(std::cmp::Ordering::Equal))
   });
-  let text = regions
-    .into_iter()
-    .map(|region| region.text.trim())
-    .filter(|text| !text.is_empty())
-    .collect::<Vec<_>>()
-    .join("\n");
+  let text = regions.into_iter().map(|region| region.text.trim()).filter(|text| !text.is_empty()).collect::<Vec<_>>().join("\n");
 
   (!text.trim().is_empty()).then_some(text)
 }
@@ -539,10 +443,7 @@ mod tests {
       known_limits: Vec::new(),
     };
 
-    assert_eq!(
-      result.to_human_readable(false).to_string(),
-      "PLAYBACK  SCREEN   SOURCE\nDetected  Details  每日歌曲推荐"
-    );
+    assert_eq!(result.to_human_readable(false).to_string(), "PLAYBACK  SCREEN   SOURCE\nDetected  Details  每日歌曲推荐");
   }
 
   #[test]
@@ -593,10 +494,7 @@ mod tests {
     assert_eq!(value["control_state"], "pause_visible");
     assert_eq!(value["detail_screen_detected"], true);
     assert_eq!(value["source"], "每日歌曲推荐");
-    assert_eq!(
-      value["artifacts"],
-      serde_json::json!(["before.png", "after.png"])
-    );
+    assert_eq!(value["artifacts"], serde_json::json!(["before.png", "after.png"]));
   }
 
   #[test]
@@ -617,10 +515,7 @@ mod tests {
         message: "playback bar click did not reveal NetEase song detail markers".to_string(),
         node_id: None,
       }],
-      known_limits: vec![
-        "background playback bar click did not reveal song detail; retried with foreground click"
-          .to_string(),
-      ],
+      known_limits: vec!["background playback bar click did not reveal song detail; retried with foreground click".to_string()],
     };
 
     assert_eq!(

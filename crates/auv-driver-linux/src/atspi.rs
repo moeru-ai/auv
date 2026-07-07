@@ -63,22 +63,16 @@ impl ObjectRef {
   }
 
   pub fn decode(raw: &str) -> DriverResult<Self> {
-    let rest = raw.strip_prefix(WINDOW_REF_PREFIX).ok_or_else(|| {
-      invalid_input(format!(
-        "window reference {raw:?} is not an AT-SPI window reference"
-      ))
-    })?;
+    let rest = raw
+      .strip_prefix(WINDOW_REF_PREFIX)
+      .ok_or_else(|| invalid_input(format!("window reference {raw:?} is not an AT-SPI window reference")))?;
     let Some(path_start) = rest.find('/') else {
-      return Err(invalid_input(format!(
-        "AT-SPI window reference {raw:?} is missing an object path"
-      )));
+      return Err(invalid_input(format!("AT-SPI window reference {raw:?} is missing an object path")));
     };
     let dest = &rest[..path_start];
     let path = &rest[path_start..];
     if dest.is_empty() || path.is_empty() {
-      return Err(invalid_input(format!(
-        "AT-SPI window reference {raw:?} is incomplete"
-      )));
+      return Err(invalid_input(format!("AT-SPI window reference {raw:?} is incomplete")));
     }
     Ok(Self {
       dest: dest.to_string(),
@@ -117,14 +111,8 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
   for app in &applications {
     for child in children(&connection, &app.reference)? {
       let accessible = accessible(&connection, child)?;
-      if matches!(accessible.role.as_str(), "window" | "frame" | "dialog")
-        && rect_has_area(accessible.bounds)
-      {
-        windows.push(window_from_accessible(
-          &app,
-          &accessible,
-          windows.is_empty(),
-        ));
+      if matches!(accessible.role.as_str(), "window" | "frame" | "dialog") && rect_has_area(accessible.bounds) {
+        windows.push(window_from_accessible(&app, &accessible, windows.is_empty()));
       }
     }
   }
@@ -158,15 +146,10 @@ pub fn focus_node(window: &Window, node_path: &str) -> DriverResult<FocusResult>
       let Some(child_index) = indices.last().copied() else {
         return Err(focus_error);
       };
-      let parent = references
-        .get(references.len().saturating_sub(2))
-        .ok_or_else(|| backend(focus_error.to_string()))?;
+      let parent = references.get(references.len().saturating_sub(2)).ok_or_else(|| backend(focus_error.to_string()))?;
       match select_child(&connection, parent, child_index, &focus_error.to_string()) {
         Ok(result) => Ok(FocusResult {
-          fallback_reason: Some(format!(
-            "AT-SPI node {node_path} did not accept GrabFocus; used parent {} instead",
-            result.action_name
-          )),
+          fallback_reason: Some(format!("AT-SPI node {node_path} did not accept GrabFocus; used parent {} instead", result.action_name)),
         }),
         Err(_) => Err(focus_error),
       }
@@ -179,9 +162,7 @@ pub fn select_node(window: &Window, node_path: &str) -> DriverResult<ActionResul
   let indices = child_indices(node_path)?;
   let connection = connect()?;
   let references = resolve_path_chain(&connection, &root, &indices)?;
-  let reference = references
-    .last()
-    .expect("resolve_path_chain always includes root");
+  let reference = references.last().expect("resolve_path_chain always includes root");
   // TODO(linux-atspi-selection-only): `Selection.SelectChild` can change list
   // selection without activating a row, as seen in GNOME Settings/libadwaita.
   // Keep activation strict until the driver grows a separate selection-only API.
@@ -198,31 +179,20 @@ fn focus_accessible(connection: &Connection, reference: &ObjectRef) -> DriverRes
   Ok(())
 }
 
-fn resolve_path_chain(
-  connection: &Connection,
-  root: &ObjectRef,
-  indices: &[usize],
-) -> DriverResult<Vec<ObjectRef>> {
+fn resolve_path_chain(connection: &Connection, root: &ObjectRef, indices: &[usize]) -> DriverResult<Vec<ObjectRef>> {
   let mut current = root.clone();
   let mut references = vec![current.clone()];
   for index in indices {
     let children = children(connection, &current)?;
     current = children.get(*index).cloned().ok_or_else(|| {
-      invalid_input(format!(
-        "AT-SPI node path references child index {index}, but current node has {} children",
-        children.len()
-      ))
+      invalid_input(format!("AT-SPI node path references child index {index}, but current node has {} children", children.len()))
     })?;
     references.push(current.clone());
   }
   Ok(references)
 }
 
-fn focus_nearest_accessible(
-  requested_path: &str,
-  connection: &Connection,
-  references: &[ObjectRef],
-) -> DriverResult<FocusResult> {
+fn focus_nearest_accessible(requested_path: &str, connection: &Connection, references: &[ObjectRef]) -> DriverResult<FocusResult> {
   let mut failures = Vec::new();
   for (depth, reference) in references.iter().enumerate().rev() {
     match focus_accessible(connection, reference) {
@@ -233,51 +203,32 @@ fn focus_nearest_accessible(
       }
       Ok(()) => {
         return Ok(FocusResult {
-          fallback_reason: Some(format!(
-            "AT-SPI node {requested_path} did not accept GrabFocus; focused ancestor depth {depth} instead"
-          )),
+          fallback_reason: Some(format!("AT-SPI node {requested_path} did not accept GrabFocus; focused ancestor depth {depth} instead")),
         });
       }
       Err(error) => failures.push(error.to_string()),
     }
   }
-  Err(backend(format!(
-    "no node in AT-SPI path {requested_path:?} accepted GrabFocus; failures={failures:?}"
-  )))
+  Err(backend(format!("no node in AT-SPI path {requested_path:?} accepted GrabFocus; failures={failures:?}")))
 }
 
 fn child_indices(path: &str) -> DriverResult<Vec<usize>> {
   let mut parts = path.split('/');
   if parts.next() != Some("0") {
-    return Err(invalid_input(format!(
-      "AT-SPI node path {path:?} must start at root 0"
-    )));
+    return Err(invalid_input(format!("AT-SPI node path {path:?} must start at root 0")));
   }
   parts
-    .map(|part| {
-      part.parse::<usize>().map_err(|_| {
-        invalid_input(format!(
-          "AT-SPI node path {path:?} contains invalid child index {part:?}"
-        ))
-      })
-    })
+    .map(|part| part.parse::<usize>().map_err(|_| invalid_input(format!("AT-SPI node path {path:?} contains invalid child index {part:?}"))))
     .collect()
 }
 
 fn connect() -> DriverResult<Connection> {
-  let session = Connection::session()
-    .map_err(|error| backend(format!("failed to connect to session bus: {error}")))?;
+  let session = Connection::session().map_err(|error| backend(format!("failed to connect to session bus: {error}")))?;
   let bus = Proxy::new(&session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus")
     .map_err(|error| backend(format!("failed to create AT-SPI bus proxy: {error}")))?;
-  let address: String = bus
-    .call("GetAddress", &())
-    .map_err(|error| backend(format!("failed to get AT-SPI bus address: {error}")))?;
+  let address: String = bus.call("GetAddress", &()).map_err(|error| backend(format!("failed to get AT-SPI bus address: {error}")))?;
   zbus::blocking::connection::Builder::address(address.as_str())
-    .map_err(|error| {
-      backend(format!(
-        "failed to configure AT-SPI bus connection: {error}"
-      ))
-    })?
+    .map_err(|error| backend(format!("failed to configure AT-SPI bus connection: {error}")))?
     .build()
     .map_err(|error| backend(format!("failed to connect to AT-SPI bus: {error}")))
 }
@@ -308,9 +259,7 @@ fn application(connection: &Connection, reference: ObjectRef) -> DriverResult<Op
 
 fn accessible(connection: &Connection, reference: ObjectRef) -> DriverResult<Accessible> {
   let proxy = accessible_proxy(connection, &reference)?;
-  let role: String = proxy
-    .call("GetRoleName", &())
-    .map_err(|error| backend(format!("failed to read AT-SPI role: {error}")))?;
+  let role: String = proxy.call("GetRoleName", &()).map_err(|error| backend(format!("failed to read AT-SPI role: {error}")))?;
   let child_count = proxy.get_property::<i32>("ChildCount").unwrap_or_default();
   let name = property_string(&proxy, "Name").unwrap_or_default();
   let description = property_string(&proxy, "Description").unwrap_or_default();
@@ -332,9 +281,8 @@ fn accessible(connection: &Connection, reference: ObjectRef) -> DriverResult<Acc
 
 fn children(connection: &Connection, reference: &ObjectRef) -> DriverResult<Vec<ObjectRef>> {
   let proxy = accessible_proxy(connection, reference)?;
-  let children: Vec<(String, OwnedObjectPath)> = proxy
-    .call("GetChildren", &())
-    .map_err(|error| backend(format!("failed to read AT-SPI children: {error}")))?;
+  let children: Vec<(String, OwnedObjectPath)> =
+    proxy.call("GetChildren", &()).map_err(|error| backend(format!("failed to read AT-SPI children: {error}")))?;
   Ok(
     children
       .into_iter()
@@ -354,31 +302,18 @@ fn accessible_in_tree(connection: &Connection, reference: ObjectRef) -> DriverRe
   // preserve the relative UI layout for observation. Do not treat these node
   // bounds as RemoteDesktop portal screen coordinates without an explicit
   // compositor/window-position mapping.
-  accessible.bounds =
-    extents(connection, &reference, COORD_TYPE_WINDOW).unwrap_or(accessible.bounds);
+  accessible.bounds = extents(connection, &reference, COORD_TYPE_WINDOW).unwrap_or(accessible.bounds);
   Ok(accessible)
 }
 
 fn extents(connection: &Connection, reference: &ObjectRef, coord_type: u32) -> DriverResult<Rect> {
   let proxy = component_proxy(connection, reference)?;
-  let (x, y, width, height): (i32, i32, i32, i32) = proxy
-    .call("GetExtents", &(coord_type,))
-    .map_err(|error| backend(format!("failed to read AT-SPI extents: {error}")))?;
-  Ok(Rect::new(
-    f64::from(x),
-    f64::from(y),
-    f64::from(width),
-    f64::from(height),
-  ))
+  let (x, y, width, height): (i32, i32, i32, i32) =
+    proxy.call("GetExtents", &(coord_type,)).map_err(|error| backend(format!("failed to read AT-SPI extents: {error}")))?;
+  Ok(Rect::new(f64::from(x), f64::from(y), f64::from(width), f64::from(height)))
 }
 
-fn walk(
-  connection: &Connection,
-  reference: &ObjectRef,
-  depth: usize,
-  path: String,
-  nodes: &mut Vec<Node>,
-) -> DriverResult<()> {
+fn walk(connection: &Connection, reference: &ObjectRef, depth: usize, path: String, nodes: &mut Vec<Node>) -> DriverResult<()> {
   if nodes.len() >= MAX_NODES {
     return Ok(());
   }
@@ -391,9 +326,7 @@ fn walk(
     name: node.name,
     description: node.description,
     accessible_id: node.accessible_id,
-    value: value(connection, reference)
-      .ok()
-      .filter(|value| !value.is_empty()),
+    value: value(connection, reference).ok().filter(|value| !value.is_empty()),
     focused: node.focused,
     bounds: node.bounds,
   });
@@ -405,81 +338,37 @@ fn walk(
     if nodes.len() >= MAX_NODES {
       break;
     }
-    walk(
-      connection,
-      &child,
-      depth + 1,
-      format!("{path}/{index}"),
-      nodes,
-    )?;
+    walk(connection, &child, depth + 1, format!("{path}/{index}"), nodes)?;
   }
   Ok(())
 }
 
 fn value(connection: &Connection, reference: &ObjectRef) -> DriverResult<String> {
-  let proxy = Proxy::new(
-    connection,
-    reference.dest.as_str(),
-    reference.path.as_str(),
-    ACCESSIBLE_IFACE,
-  )
-  .map_err(|error| backend(format!("failed to create AT-SPI Accessible proxy: {error}")))?;
-  let attributes: HashMap<String, String> = proxy
-    .call("GetAttributes", &())
-    .map_err(|error| backend(format!("failed to read AT-SPI attributes: {error}")))?;
+  let proxy = Proxy::new(connection, reference.dest.as_str(), reference.path.as_str(), ACCESSIBLE_IFACE)
+    .map_err(|error| backend(format!("failed to create AT-SPI Accessible proxy: {error}")))?;
+  let attributes: HashMap<String, String> =
+    proxy.call("GetAttributes", &()).map_err(|error| backend(format!("failed to read AT-SPI attributes: {error}")))?;
   Ok(attributes.get("value").cloned().unwrap_or_default())
 }
 
-fn accessible_proxy<'a>(
-  connection: &'a Connection,
-  reference: &'a ObjectRef,
-) -> DriverResult<Proxy<'a>> {
-  Proxy::new(
-    connection,
-    reference.dest.as_str(),
-    object_path(reference.path.as_str())?,
-    ACCESSIBLE_IFACE,
-  )
-  .map_err(|error| backend(format!("failed to create AT-SPI Accessible proxy: {error}")))
+fn accessible_proxy<'a>(connection: &'a Connection, reference: &'a ObjectRef) -> DriverResult<Proxy<'a>> {
+  Proxy::new(connection, reference.dest.as_str(), object_path(reference.path.as_str())?, ACCESSIBLE_IFACE)
+    .map_err(|error| backend(format!("failed to create AT-SPI Accessible proxy: {error}")))
 }
 
-fn component_proxy<'a>(
-  connection: &'a Connection,
-  reference: &'a ObjectRef,
-) -> DriverResult<Proxy<'a>> {
-  Proxy::new(
-    connection,
-    reference.dest.as_str(),
-    object_path(reference.path.as_str())?,
-    COMPONENT_IFACE,
-  )
-  .map_err(|error| backend(format!("failed to create AT-SPI Component proxy: {error}")))
+fn component_proxy<'a>(connection: &'a Connection, reference: &'a ObjectRef) -> DriverResult<Proxy<'a>> {
+  Proxy::new(connection, reference.dest.as_str(), object_path(reference.path.as_str())?, COMPONENT_IFACE)
+    .map_err(|error| backend(format!("failed to create AT-SPI Component proxy: {error}")))
 }
 
-fn action_proxy<'a>(
-  connection: &'a Connection,
-  reference: &'a ObjectRef,
-) -> DriverResult<Proxy<'a>> {
-  Proxy::new(
-    connection,
-    reference.dest.as_str(),
-    object_path(reference.path.as_str())?,
-    ACTION_IFACE,
-  )
-  .map_err(|error| backend(format!("failed to create AT-SPI Action proxy: {error}")))
+fn action_proxy<'a>(connection: &'a Connection, reference: &'a ObjectRef) -> DriverResult<Proxy<'a>> {
+  Proxy::new(connection, reference.dest.as_str(), object_path(reference.path.as_str())?, ACTION_IFACE)
+    .map_err(|error| backend(format!("failed to create AT-SPI Action proxy: {error}")))
 }
 
-fn selection_proxy<'a>(
-  connection: &'a Connection,
-  reference: &'a ObjectRef,
-) -> DriverResult<Proxy<'a>> {
-  Proxy::new(
-    connection,
-    reference.dest.as_str(),
-    object_path(reference.path.as_str())?,
-    SELECTION_IFACE,
-  )
-  .map_err(|error| backend(format!("failed to create AT-SPI Selection proxy: {error}")))
+fn selection_proxy<'a>(connection: &'a Connection, reference: &'a ObjectRef) -> DriverResult<Proxy<'a>> {
+  Proxy::new(connection, reference.dest.as_str(), object_path(reference.path.as_str())?, SELECTION_IFACE)
+    .map_err(|error| backend(format!("failed to create AT-SPI Selection proxy: {error}")))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -490,31 +379,21 @@ struct Action {
 
 fn select_action(connection: &Connection, reference: &ObjectRef) -> DriverResult<Action> {
   let actions = actions(connection, reference)?;
-  let action = preferred_action(&actions).ok_or_else(|| {
-    backend(format!(
-      "AT-SPI node exposes no supported selectable action; actions={actions:?}"
-    ))
-  })?;
+  let action =
+    preferred_action(&actions).ok_or_else(|| backend(format!("AT-SPI node exposes no supported selectable action; actions={actions:?}")))?;
   let proxy = action_proxy(connection, reference)?;
-  let succeeded: bool = proxy.call("DoAction", &(action.index)).map_err(|error| {
-    backend(format!(
-      "failed to perform AT-SPI action {:?}: {error}",
-      action.name
-    ))
-  })?;
+  let succeeded: bool = proxy
+    .call("DoAction", &(action.index))
+    .map_err(|error| backend(format!("failed to perform AT-SPI action {:?}: {error}", action.name)))?;
   if !succeeded {
-    return Err(backend(format!(
-      "AT-SPI action {:?} returned false",
-      action.name
-    )));
+    return Err(backend(format!("AT-SPI action {:?} returned false", action.name)));
   }
   Ok(action.clone())
 }
 
 fn actions(connection: &Connection, reference: &ObjectRef) -> DriverResult<Vec<Action>> {
   let proxy = action_proxy(connection, reference)?;
-  let all_actions: zbus::Result<Vec<(String, String, String, String)>> =
-    proxy.call("GetActions", &());
+  let all_actions: zbus::Result<Vec<(String, String, String, String)>> = proxy.call("GetActions", &());
   if let Ok(actions) = all_actions {
     return Ok(
       actions
@@ -530,18 +409,11 @@ fn actions(connection: &Connection, reference: &ObjectRef) -> DriverResult<Vec<A
   let count = proxy
     .call("GetNActions", &())
     .or_else(|_| proxy.get_property::<i32>("NActions"))
-    .map_err(|error| {
-      backend(format!(
-        "failed to read AT-SPI action count for selectable node: {error}"
-      ))
-    })?;
+    .map_err(|error| backend(format!("failed to read AT-SPI action count for selectable node: {error}")))?;
   let mut actions = Vec::new();
   for index in 0..count {
-    let name: String = proxy.call("GetName", &(index)).map_err(|error| {
-      backend(format!(
-        "failed to read AT-SPI action name {index}: {error}"
-      ))
-    })?;
+    let name: String =
+      proxy.call("GetName", &(index)).map_err(|error| backend(format!("failed to read AT-SPI action name {index}: {error}")))?;
     actions.push(Action { index, name });
   }
   Ok(actions)
@@ -550,34 +422,21 @@ fn actions(connection: &Connection, reference: &ObjectRef) -> DriverResult<Vec<A
 fn preferred_action(actions: &[Action]) -> Option<&Action> {
   const PREFERRED: &[&str] = &["click", "press", "activate", "select"];
   for preferred in PREFERRED {
-    if let Some(action) = actions
-      .iter()
-      .find(|action| action.name.eq_ignore_ascii_case(preferred))
-    {
+    if let Some(action) = actions.iter().find(|action| action.name.eq_ignore_ascii_case(preferred)) {
       return Some(action);
     }
   }
   actions.first()
 }
 
-fn select_child(
-  connection: &Connection,
-  parent: &ObjectRef,
-  child_index: usize,
-  action_error: &str,
-) -> DriverResult<ActionResult> {
-  let child_index = i32::try_from(child_index)
-    .map_err(|error| invalid_input(format!("AT-SPI child index is too large: {error}")))?;
+fn select_child(connection: &Connection, parent: &ObjectRef, child_index: usize, action_error: &str) -> DriverResult<ActionResult> {
+  let child_index = i32::try_from(child_index).map_err(|error| invalid_input(format!("AT-SPI child index is too large: {error}")))?;
   let proxy = selection_proxy(connection, parent)?;
-  let succeeded: bool = proxy.call("SelectChild", &(child_index)).map_err(|error| {
-    backend(format!(
-      "AT-SPI node exposed no action ({action_error}); parent Selection.SelectChild failed: {error}"
-    ))
-  })?;
+  let succeeded: bool = proxy
+    .call("SelectChild", &(child_index))
+    .map_err(|error| backend(format!("AT-SPI node exposed no action ({action_error}); parent Selection.SelectChild failed: {error}")))?;
   if !succeeded {
-    return Err(backend(format!(
-      "AT-SPI node exposed no action ({action_error}); parent Selection.SelectChild returned false"
-    )));
+    return Err(backend(format!("AT-SPI node exposed no action ({action_error}); parent Selection.SelectChild returned false")));
   }
   Ok(ActionResult {
     action_name: "Selection.SelectChild".to_string(),
@@ -585,20 +444,15 @@ fn select_child(
 }
 
 fn object_path(path: &str) -> DriverResult<ObjectPath<'_>> {
-  ObjectPath::try_from(path)
-    .map_err(|error| invalid_input(format!("invalid AT-SPI object path {path:?}: {error}")))
+  ObjectPath::try_from(path).map_err(|error| invalid_input(format!("invalid AT-SPI object path {path:?}: {error}")))
 }
 
 fn property_string(proxy: &Proxy<'_>, name: &str) -> DriverResult<String> {
-  proxy
-    .get_property::<String>(name)
-    .map_err(|error| backend(format!("failed to read AT-SPI property {name}: {error}")))
+  proxy.get_property::<String>(name).map_err(|error| backend(format!("failed to read AT-SPI property {name}: {error}")))
 }
 
 fn state_contains(proxy: &Proxy<'_>, state: u32) -> DriverResult<bool> {
-  let states: Vec<u32> = proxy
-    .call("GetState", &())
-    .map_err(|error| backend(format!("failed to read AT-SPI state: {error}")))?;
+  let states: Vec<u32> = proxy.call("GetState", &()).map_err(|error| backend(format!("failed to read AT-SPI state: {error}")))?;
   Ok(states.contains(&state))
 }
 
@@ -621,11 +475,7 @@ fn window_from_accessible(app: &Application, accessible: &Accessible, is_main: b
   }
 }
 
-fn apply_shell_stage_window_origins(
-  connection: &Connection,
-  applications: &[Application],
-  windows: &mut [Window],
-) {
+fn apply_shell_stage_window_origins(connection: &Connection, applications: &[Application], windows: &mut [Window]) {
   let Ok(stage_rects) = shell_stage_rects(connection, applications) else {
     return;
   };
@@ -643,34 +493,17 @@ fn apply_shell_stage_window_origins(
   }
 }
 
-fn shell_stage_rects(
-  connection: &Connection,
-  applications: &[Application],
-) -> DriverResult<Vec<Rect>> {
+fn shell_stage_rects(connection: &Connection, applications: &[Application]) -> DriverResult<Vec<Rect>> {
   let mut rects = Vec::new();
-  for app in applications
-    .iter()
-    .filter(|app| app.name == "gnome-shell" || app.accessible_id == "org.gnome.Shell")
-  {
+  for app in applications.iter().filter(|app| app.name == "gnome-shell" || app.accessible_id == "org.gnome.Shell") {
     for child in children(connection, &app.reference)? {
       let accessible = accessible(connection, child)?;
       if accessible.name != "Main stage" {
         continue;
       }
       let mut nodes = Vec::new();
-      walk(
-        connection,
-        &accessible.reference,
-        0,
-        "0".to_string(),
-        &mut nodes,
-      )?;
-      rects.extend(
-        nodes
-          .into_iter()
-          .map(|node| node.bounds)
-          .filter(|rect| rect_is_stage_candidate(*rect)),
-      );
+      walk(connection, &accessible.reference, 0, "0".to_string(), &mut nodes)?;
+      rects.extend(nodes.into_iter().map(|node| node.bounds).filter(|rect| rect_is_stage_candidate(*rect)));
     }
   }
   Ok(rects)
@@ -683,9 +516,7 @@ fn needs_shell_stage_origin(window: &Window) -> bool {
   // Shell's stage tree exposes global window content rects in the same session,
   // so use it only as a conservative origin repair for otherwise unusable
   // top-level frames.
-  window.app_name.as_deref() != Some("gnome-shell")
-    && point_is_origin(window.frame.origin)
-    && rect_has_area(window.frame)
+  window.app_name.as_deref() != Some("gnome-shell") && point_is_origin(window.frame.origin) && rect_has_area(window.frame)
 }
 
 fn matching_stage_origin(frame: Rect, stage_rects: &[Rect]) -> Option<Point> {
@@ -694,10 +525,7 @@ fn matching_stage_origin(frame: Rect, stage_rects: &[Rect]) -> Option<Point> {
     if !same_size(frame, *rect) || point_is_origin(rect.origin) {
       continue;
     }
-    if !origins
-      .iter()
-      .any(|origin| same_point(*origin, rect.origin))
-    {
+    if !origins.iter().any(|origin| same_point(*origin, rect.origin)) {
       origins.push(rect.origin);
     }
   }

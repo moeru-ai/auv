@@ -34,24 +34,15 @@ pub struct NativeHumanApproval {
 }
 
 #[cfg(target_os = "macos")]
-pub fn request_human_approval(
-  reason: impl Into<String>,
-  timeout_ms: u64,
-) -> AuvResult<NativeHumanApproval> {
+pub fn request_human_approval(reason: impl Into<String>, timeout_ms: u64) -> AuvResult<NativeHumanApproval> {
   if timeout_ms == 0 {
     return Err("human approval timeout must be greater than 0".to_string());
   }
-  Ok(NativeHumanApproval::from(native_request_human_approval(
-    reason.into(),
-    timeout_ms,
-  )))
+  Ok(NativeHumanApproval::from(native_request_human_approval(reason.into(), timeout_ms)))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn request_human_approval(
-  _reason: impl Into<String>,
-  _timeout_ms: u64,
-) -> AuvResult<NativeHumanApproval> {
+pub fn request_human_approval(_reason: impl Into<String>, _timeout_ms: u64) -> AuvResult<NativeHumanApproval> {
   Err("macOS native human approval is unsupported on this target".to_string())
 }
 
@@ -65,9 +56,7 @@ impl From<NativeHumanApprovalResponse> for NativeHumanApproval {
         NativeHumanApprovalStatusFfi::TimedOut => NativeHumanApprovalStatus::TimedOut,
         NativeHumanApprovalStatusFfi::Unavailable => NativeHumanApprovalStatus::Unavailable,
       },
-      approved_at_unix_ms: u64::try_from(value.approved_at_unix_ms)
-        .ok()
-        .filter(|value| *value > 0),
+      approved_at_unix_ms: u64::try_from(value.approved_at_unix_ms).ok().filter(|value| *value > 0),
       mechanism: if value.mechanism.trim().is_empty() {
         "unknown".to_string()
       } else {
@@ -88,9 +77,6 @@ mod tests {
     assert_eq!(NativeHumanApprovalStatus::Approved.as_str(), "approved");
     assert_eq!(NativeHumanApprovalStatus::Declined.as_str(), "declined");
     assert_eq!(NativeHumanApprovalStatus::TimedOut.as_str(), "timed_out");
-    assert_eq!(
-      NativeHumanApprovalStatus::Unavailable.as_str(),
-      "unavailable"
-    );
+    assert_eq!(NativeHumanApprovalStatus::Unavailable.as_str(), "unavailable");
   }
 }

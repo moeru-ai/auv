@@ -11,43 +11,34 @@ pub mod traits;
 pub mod vision;
 pub mod window;
 
-pub use capture::{
-  Activation, Capture, CaptureBinding, CaptureOptions, DisplayCapture, ImageView, RegionCapture,
-};
+pub use capture::{Activation, Capture, CaptureBinding, CaptureOptions, DisplayCapture, ImageView, RegionCapture};
 pub use display::{Display, ObservedDisplays};
 pub use error::{DriverError, DriverResult};
 pub use geometry::{
-  CameraPoint, CoordinateSpace, Point, Point3, ProjectionBasis, ProjectionDerivationFamily,
-  ProjectionSourceSpace, RatioRect, Rect, ScreenPoint, Size, WindowPoint, WorldPoint,
+  CameraPoint, CoordinateSpace, Point, Point3, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, RatioRect, Rect,
+  ScreenPoint, Size, WindowPoint, WorldPoint,
 };
 pub use input::{
-  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt,
-  InputDeliveryPath, InputPolicy, InputPreparationLease, KeyPressOptions, PasteTextOptions,
-  PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy, ScrollOptions,
-  TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
+  ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
+  InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollDeliveryStrategy,
+  ScrollOptions, TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
 pub use operation::{OperationDisturbance, OperationNamespace, OperationSpec};
 pub use permission::{PermissionProbe, PermissionStatus};
-pub use readiness::{
-  ReadinessCheck, ReadinessCheckStatus, ReadinessProbeInput, ReadinessReport, ReadinessStatus,
-};
+pub use readiness::{ReadinessCheck, ReadinessCheckStatus, ReadinessProbeInput, ReadinessReport, ReadinessStatus};
 pub use selector::{App, AppSelector, TextMatcher, WindowSelector};
 pub use traits::{Driver, DriverDescriptor, DriverSession, PlatformKind};
-pub use vision::{
-  ImageMatch, ImageMatchResult, RecognizedText, TextRecognition, TextRecognitionOptions,
-};
+pub use vision::{ImageMatch, ImageMatchResult, RecognizedText, TextRecognition, TextRecognitionOptions};
 pub use window::{
-  ObservedWindows, Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind,
-  WindowMutationOptions, WindowMutationPath, WindowMutationPolicy, WindowMutationResult,
-  WindowMutationStrategy, WindowMutationVerification, WindowRef, WindowState,
+  ObservedWindows, Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
+  WindowMutationPolicy, WindowMutationResult, WindowMutationStrategy, WindowMutationVerification, WindowRef, WindowState,
 };
 
 #[cfg(test)]
 mod tests {
   use crate::{
-    Driver, DriverDescriptor, DriverResult, DriverSession, PlatformKind, WindowMutationAttempt,
-    WindowMutationCandidate, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
-    WindowMutationPolicy, WindowMutationResult, WindowState,
+    Driver, DriverDescriptor, DriverResult, DriverSession, PlatformKind, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind,
+    WindowMutationOptions, WindowMutationPath, WindowMutationPolicy, WindowMutationResult, WindowState,
   };
 
   #[derive(Clone, Copy)]
@@ -105,8 +96,7 @@ mod tests {
   #[test]
   fn public_api_exports_agreed_driver_names() {
     let _window_mutation_options = WindowMutationOptions::default();
-    let _window_mutation_attempt =
-      WindowMutationAttempt::success(WindowMutationPath::AxWindowAttribute, "ok");
+    let _window_mutation_attempt = WindowMutationAttempt::success(WindowMutationPath::AxWindowAttribute, "ok");
     let _ = std::any::type_name::<WindowMutationCandidate>();
     let _ = std::any::type_name::<WindowMutationKind>();
     let _ = std::any::type_name::<WindowMutationPolicy>();

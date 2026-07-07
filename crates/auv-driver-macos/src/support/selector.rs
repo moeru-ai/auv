@@ -6,8 +6,7 @@ use std::time::Duration;
 use super::{app_contains_window, looks_like_bundle_identifier, window_area};
 use crate::capture::types::DisplayDescriptor;
 use crate::types::{
-  AppSelector, AuvResult, ObservedRect, ObservedWindow, ObservedWindowSnapshot, ResolvedAppRef,
-  WindowCandidate, WindowSelection,
+  AppSelector, AuvResult, ObservedRect, ObservedWindow, ObservedWindowSnapshot, ResolvedAppRef, WindowCandidate, WindowSelection,
 };
 
 pub fn parse_app_selector(raw: &str) -> AuvResult<AppSelector> {
@@ -31,67 +30,35 @@ pub fn parse_app_selector(raw: &str) -> AuvResult<AppSelector> {
   })
 }
 
-pub fn resolve_app_ref(
-  snapshot: &ObservedWindowSnapshot,
-  selector: &AppSelector,
-) -> AuvResult<ResolvedAppRef> {
+pub fn resolve_app_ref(snapshot: &ObservedWindowSnapshot, selector: &AppSelector) -> AuvResult<ResolvedAppRef> {
   if let Some(bundle_id) = selector.bundle_id.as_deref() {
-    let exact_bundle_matches = snapshot
-      .windows
-      .iter()
-      .filter(|window| window.owner_bundle_id.eq_ignore_ascii_case(bundle_id))
-      .collect::<Vec<_>>();
+    let exact_bundle_matches =
+      snapshot.windows.iter().filter(|window| window.owner_bundle_id.eq_ignore_ascii_case(bundle_id)).collect::<Vec<_>>();
     if !exact_bundle_matches.is_empty() {
-      return Ok(build_resolved_app_ref(
-        selector,
-        Some(bundle_id.to_string()),
-        &exact_bundle_matches,
-        "bundle-id-exact",
-      ));
+      return Ok(build_resolved_app_ref(selector, Some(bundle_id.to_string()), &exact_bundle_matches, "bundle-id-exact"));
     }
 
     if !snapshot.frontmost_app_bundle_id.is_empty()
-      && snapshot
-        .frontmost_app_bundle_id
-        .eq_ignore_ascii_case(bundle_id)
+      && snapshot.frontmost_app_bundle_id.eq_ignore_ascii_case(bundle_id)
       && !snapshot.frontmost_app_name.trim().is_empty()
     {
-      let frontmost_name_matches = snapshot
-        .windows
-        .iter()
-        .filter(|window| window.app_name == snapshot.frontmost_app_name)
-        .collect::<Vec<_>>();
+      let frontmost_name_matches =
+        snapshot.windows.iter().filter(|window| window.app_name == snapshot.frontmost_app_name).collect::<Vec<_>>();
       if !frontmost_name_matches.is_empty() {
-        return Ok(build_resolved_app_ref(
-          selector,
-          Some(bundle_id.to_string()),
-          &frontmost_name_matches,
-          "frontmost-bundle-fallback",
-        ));
+        return Ok(build_resolved_app_ref(selector, Some(bundle_id.to_string()), &frontmost_name_matches, "frontmost-bundle-fallback"));
       }
     }
   }
 
   if let Some(app_name_hint) = selector.app_name_hint.as_deref() {
-    let exact_name_matches = snapshot
-      .windows
-      .iter()
-      .filter(|window| window.app_name.eq_ignore_ascii_case(app_name_hint))
-      .collect::<Vec<_>>();
+    let exact_name_matches =
+      snapshot.windows.iter().filter(|window| window.app_name.eq_ignore_ascii_case(app_name_hint)).collect::<Vec<_>>();
     if !exact_name_matches.is_empty() {
-      return Ok(build_resolved_app_ref(
-        selector,
-        first_non_empty_bundle_id(&exact_name_matches),
-        &exact_name_matches,
-        "app-name-exact",
-      ));
+      return Ok(build_resolved_app_ref(selector, first_non_empty_bundle_id(&exact_name_matches), &exact_name_matches, "app-name-exact"));
     }
 
-    let heuristic_name_matches = snapshot
-      .windows
-      .iter()
-      .filter(|window| app_contains_window(app_name_hint, &window.app_name))
-      .collect::<Vec<_>>();
+    let heuristic_name_matches =
+      snapshot.windows.iter().filter(|window| app_contains_window(app_name_hint, &window.app_name)).collect::<Vec<_>>();
     if !heuristic_name_matches.is_empty() {
       return Ok(build_resolved_app_ref(
         selector,
@@ -102,10 +69,7 @@ pub fn resolve_app_ref(
     }
   }
 
-  Err(format!(
-    "could not resolve a visible app reference for selector {:?}",
-    selector.raw
-  ))
+  Err(format!("could not resolve a visible app reference for selector {:?}", selector.raw))
 }
 
 pub fn build_window_candidates(
@@ -194,9 +158,7 @@ pub fn resolve_window_candidate(
   candidates
     .into_iter()
     .find(|candidate| candidate.is_fully_contained_in_display)
-    .ok_or_else(|| {
-      "could not resolve a fully contained visible window; inspect `window.list`".to_string()
-    })
+    .ok_or_else(|| "could not resolve a fully contained visible window; inspect `window.list`".to_string())
 }
 
 pub fn resolve_window_candidate_for_input(
@@ -231,9 +193,7 @@ pub fn resolve_window_candidate_for_input(
     );
   }
 
-  candidates.into_iter().next().ok_or_else(|| {
-    "could not resolve a visible window for input; inspect `window.list`".to_string()
-  })
+  candidates.into_iter().next().ok_or_else(|| "could not resolve a visible window for input; inspect `window.list`".to_string())
 }
 
 pub fn retry_window_capture_operation<T, F>(mut operation: F) -> AuvResult<T>
@@ -263,10 +223,7 @@ pub fn is_retryable_window_capture_error(error: &str) -> bool {
     || error.contains("disappeared before capture")
 }
 
-pub fn window_capture_readiness_diagnostic(
-  candidate: &WindowCandidate,
-  displays: &[DisplayDescriptor],
-) -> String {
+pub fn window_capture_readiness_diagnostic(candidate: &WindowCandidate, displays: &[DisplayDescriptor]) -> String {
   let display_bounds = displays
     .iter()
     .map(|display| {
@@ -311,12 +268,7 @@ fn build_resolved_app_ref(
     .or_else(|| selector.app_name_hint.clone())
     .unwrap_or_else(|| selector.raw.clone());
 
-  let owner_pids = windows
-    .iter()
-    .map(|window| window.owner_pid)
-    .collect::<BTreeSet<_>>()
-    .into_iter()
-    .collect::<Vec<_>>();
+  let owner_pids = windows.iter().map(|window| window.owner_pid).collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>();
 
   ResolvedAppRef {
     selector: selector.clone(),
@@ -328,19 +280,11 @@ fn build_resolved_app_ref(
 }
 
 fn first_non_empty_bundle_id(windows: &[&ObservedWindow]) -> Option<String> {
-  windows.iter().find_map(|window| {
-    (!window.owner_bundle_id.trim().is_empty()).then(|| window.owner_bundle_id.clone())
-  })
+  windows.iter().find_map(|window| (!window.owner_bundle_id.trim().is_empty()).then(|| window.owner_bundle_id.clone()))
 }
 
-pub fn filter_windows_for_app<'a>(
-  windows: &'a [ObservedWindow],
-  resolved_app: &ResolvedAppRef,
-) -> Vec<&'a ObservedWindow> {
-  windows
-    .iter()
-    .filter(|window| window_matches_resolved_app(window, resolved_app))
-    .collect()
+pub fn filter_windows_for_app<'a>(windows: &'a [ObservedWindow], resolved_app: &ResolvedAppRef) -> Vec<&'a ObservedWindow> {
+  windows.iter().filter(|window| window_matches_resolved_app(window, resolved_app)).collect()
 }
 
 fn window_matches_resolved_app(window: &ObservedWindow, resolved_app: &ResolvedAppRef) -> bool {
@@ -354,46 +298,27 @@ fn window_matches_resolved_app(window: &ObservedWindow, resolved_app: &ResolvedA
     return true;
   }
 
-  window
-    .app_name
-    .eq_ignore_ascii_case(&resolved_app.resolved_app_name)
+  window.app_name.eq_ignore_ascii_case(&resolved_app.resolved_app_name)
 }
 
 fn is_substantial_window(window: &ObservedWindow) -> bool {
   window.bounds.width >= 160 && window.bounds.height >= 120
 }
 
-fn filter_window_candidates<'a>(
-  candidates: &'a [WindowCandidate],
-  selection: &WindowSelection,
-) -> Vec<&'a WindowCandidate> {
+fn filter_window_candidates<'a>(candidates: &'a [WindowCandidate], selection: &WindowSelection) -> Vec<&'a WindowCandidate> {
   candidates
     .iter()
     .filter(|candidate| {
       selection.window_ref.as_ref().is_none_or(|expected| {
-        expected == &candidate.window_ref.window_number.to_string()
-          || expected == &format!("window_{}", candidate.window_ref.window_number)
+        expected == &candidate.window_ref.window_number.to_string() || expected == &format!("window_{}", candidate.window_ref.window_number)
       })
     })
-    .filter(|candidate| {
-      selection
-        .native_window_id
-        .as_ref()
-        .is_none_or(|expected| candidate.native_window_id.as_ref() == Some(expected))
-    })
-    .filter(|candidate| {
-      selection
-        .title
-        .as_ref()
-        .is_none_or(|expected| candidate.window_ref.title == expected.as_str())
-    })
+    .filter(|candidate| selection.native_window_id.as_ref().is_none_or(|expected| candidate.native_window_id.as_ref() == Some(expected)))
+    .filter(|candidate| selection.title.as_ref().is_none_or(|expected| candidate.window_ref.title == expected.as_str()))
     .collect()
 }
 
-fn containing_display<'a>(
-  bounds: &ObservedRect,
-  displays: &'a [DisplayDescriptor],
-) -> Option<&'a DisplayDescriptor> {
+fn containing_display<'a>(bounds: &ObservedRect, displays: &'a [DisplayDescriptor]) -> Option<&'a DisplayDescriptor> {
   displays.iter().find(|display| {
     let display_bounds = &display.global_logical_bounds;
     bounds.x as f64 >= display_bounds.x
@@ -410,10 +335,7 @@ fn render_observed_rect_compact(rect: &ObservedRect) -> String {
 #[cfg(test)]
 mod tests {
   use crate::capture::types::{CaptureBackend, DisplayDescriptor, Rect, Scale2D, Size};
-  use crate::types::{
-    AppSelector, ObservedRect, ObservedWindow, ObservedWindowSnapshot, ResolvedAppRef,
-    WindowSelection,
-  };
+  use crate::types::{AppSelector, ObservedRect, ObservedWindow, ObservedWindowSnapshot, ResolvedAppRef, WindowSelection};
 
   use super::{resolve_window_candidate, resolve_window_candidate_for_input};
 
@@ -423,13 +345,8 @@ mod tests {
     let snapshot = sample_snapshot_with_partial_main_window();
     let resolved = sample_resolved_app();
 
-    let candidate = resolve_window_candidate_for_input(
-      &snapshot,
-      &resolved,
-      &displays,
-      &WindowSelection::default(),
-    )
-    .expect("scroll/input candidate should resolve");
+    let candidate = resolve_window_candidate_for_input(&snapshot, &resolved, &displays, &WindowSelection::default())
+      .expect("scroll/input candidate should resolve");
 
     assert_eq!(candidate.window_ref.window_number, 42);
     assert!(!candidate.is_fully_contained_in_display);
@@ -442,9 +359,8 @@ mod tests {
     let snapshot = sample_snapshot_with_partial_main_window();
     let resolved = sample_resolved_app();
 
-    let error =
-      resolve_window_candidate(&snapshot, &resolved, &displays, &WindowSelection::default())
-        .expect_err("capture candidate should reject partial windows");
+    let error = resolve_window_candidate(&snapshot, &resolved, &displays, &WindowSelection::default())
+      .expect_err("capture candidate should reject partial windows");
 
     assert!(error.contains("fully contained visible window"));
   }

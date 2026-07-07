@@ -10,9 +10,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::benchmark::DetectionEvalManifest;
-use crate::visual_eval::{
-  EvalProjection, FrameEvaluation, FrameLabelOutcome, FrameSpatialOutcome, VisualEvalReport,
-};
+use crate::visual_eval::{EvalProjection, FrameEvaluation, FrameLabelOutcome, FrameSpatialOutcome, VisualEvalReport};
 
 pub type DetectionEvalWitnessResult<T> = Result<T, String>;
 
@@ -135,32 +133,18 @@ impl DetectionEvalWitnessReason {
   }
 }
 
-pub fn build_detection_eval_witness(
-  inputs: &DetectionEvalWitnessInputs,
-) -> DetectionEvalWitnessResult<DetectionEvalWitnessOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create detection eval witness output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+pub fn build_detection_eval_witness(inputs: &DetectionEvalWitnessInputs) -> DetectionEvalWitnessResult<DetectionEvalWitnessOutput> {
+  fs::create_dir_all(&inputs.output_dir)
+    .map_err(|error| format!("failed to create detection eval witness output dir {}: {error}", inputs.output_dir.display()))?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
-  let source_visual_eval_report_path = inputs
-    .detection_eval_output_dir
-    .join(VISUAL_EVAL_REPORT_FILE);
-  let source_detection_eval_manifest_path = inputs
-    .detection_eval_output_dir
-    .join(DETECTION_EVAL_MANIFEST_FILE);
+  let source_visual_eval_report_path = inputs.detection_eval_output_dir.join(VISUAL_EVAL_REPORT_FILE);
+  let source_detection_eval_manifest_path = inputs.detection_eval_output_dir.join(DETECTION_EVAL_MANIFEST_FILE);
 
   let known_limits = BTreeSet::from([OSU_WQ1_V1_WITNESS_KNOWN_LIMIT.to_string()]);
   let mut warnings = BTreeSet::new();
 
-  let gate = evaluate_witness_gate(
-    &source_visual_eval_report_path,
-    &source_detection_eval_manifest_path,
-    &mut warnings,
-  );
+  let gate = evaluate_witness_gate(&source_visual_eval_report_path, &source_detection_eval_manifest_path, &mut warnings);
 
   let (source_run_artifact_dir, source_visual_truth_manifest_path, source_projection_path) = gate
     .detection_eval_manifest
@@ -168,24 +152,16 @@ pub fn build_detection_eval_witness(
     .map(|manifest| {
       (
         manifest.source_run_artifact_dir.clone(),
-        format!(
-          "{}/visual_truth_manifest.json",
-          manifest.source_run_artifact_dir
-        ),
+        format!("{}/visual_truth_manifest.json", manifest.source_run_artifact_dir),
         format!("{}/projection.json", manifest.source_run_artifact_dir),
       )
     })
     .unwrap_or_default();
 
-  let detector_model_id = gate
-    .detection_eval_manifest
-    .as_ref()
-    .map(|manifest| manifest.detector_model_id.clone());
+  let detector_model_id = gate.detection_eval_manifest.as_ref().map(|manifest| manifest.detector_model_id.clone());
 
   let report = gate.visual_eval_report.as_ref();
-  let projection_kind = report
-    .map(|report| projection_kind_label(&report.projection))
-    .unwrap_or_else(|| "unknown".to_string());
+  let projection_kind = report.map(|report| projection_kind_label(&report.projection)).unwrap_or_else(|| "unknown".to_string());
 
   let frame_witnesses = report.map(frame_witnesses_from_report).unwrap_or_default();
 
@@ -285,24 +261,20 @@ fn evaluate_witness_gate(
     };
   }
 
-  let visual_eval_report =
-    match read_json_file::<VisualEvalReport>(visual_eval_report_path, "osu visual eval report") {
-      Ok(report) => Some(report),
-      Err(error) => {
-        warnings.insert(error);
-        return WitnessGateEvaluation {
-          status: DetectionEvalWitnessStatus::Failed,
-          reason: Some(DetectionEvalWitnessReason::VisualEvalReportParseFailed),
-          visual_eval_report: None,
-          detection_eval_manifest: None,
-        };
-      }
-    };
+  let visual_eval_report = match read_json_file::<VisualEvalReport>(visual_eval_report_path, "osu visual eval report") {
+    Ok(report) => Some(report),
+    Err(error) => {
+      warnings.insert(error);
+      return WitnessGateEvaluation {
+        status: DetectionEvalWitnessStatus::Failed,
+        reason: Some(DetectionEvalWitnessReason::VisualEvalReportParseFailed),
+        visual_eval_report: None,
+        detection_eval_manifest: None,
+      };
+    }
+  };
 
-  let detection_eval_manifest = match read_json_file::<DetectionEvalManifest>(
-    detection_eval_manifest_path,
-    "osu detection eval manifest",
-  ) {
+  let detection_eval_manifest = match read_json_file::<DetectionEvalManifest>(detection_eval_manifest_path, "osu detection eval manifest") {
     Ok(manifest) => Some(manifest),
     Err(error) => {
       warnings.insert(error);
@@ -342,11 +314,7 @@ fn evaluate_witness_gate(
 }
 
 fn frame_witnesses_from_report(report: &VisualEvalReport) -> Vec<DetectionEvalFrameWitness> {
-  report
-    .frames
-    .iter()
-    .map(frame_witness_from_evaluation)
-    .collect()
+  report.frames.iter().map(frame_witness_from_evaluation).collect()
 }
 
 fn frame_witness_from_evaluation(frame: &FrameEvaluation) -> DetectionEvalFrameWitness {
@@ -416,10 +384,8 @@ mod tests {
 
   fn fixture_eval_dir() -> (tempfile::TempDir, PathBuf) {
     let temp = tempfile::tempdir().expect("tempdir");
-    let manifest_dir =
-      PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_run_artifacts");
-    let detections_path =
-      PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_detection");
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_run_artifacts");
+    let detections_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/osu_eval_detection");
     let eval_output = temp.path().join("eval");
     crate::evaluate_detection_fixture(&crate::DetectionEvalInputs {
       run_artifact_dir: manifest_dir,
@@ -445,16 +411,8 @@ mod tests {
     assert_eq!(output.manifest.label_matched_frames, 1);
     assert_eq!(output.manifest.spatial_matched_frames, 1);
     assert_eq!(output.manifest.frame_witnesses.len(), 3);
-    assert!(
-      output
-        .manifest
-        .source_visual_eval_report_path
-        .contains("visual_eval_report.json")
-    );
-    assert_eq!(
-      output.manifest.detector_model_id.as_deref(),
-      Some("test-osu-fixture-detector")
-    );
+    assert!(output.manifest.source_visual_eval_report_path.contains("visual_eval_report.json"));
+    assert_eq!(output.manifest.detector_model_id.as_deref(), Some("test-osu-fixture-detector"));
     assert!(output.manifest_path.exists());
     assert!(output.inspect_report_path.exists());
   }
@@ -469,10 +427,7 @@ mod tests {
     .expect("witness");
 
     assert_eq!(output.manifest.status, DetectionEvalWitnessStatus::Blocked);
-    assert_eq!(
-      output.manifest.reason,
-      Some(DetectionEvalWitnessReason::MissingVisualEvalReport)
-    );
+    assert_eq!(output.manifest.reason, Some(DetectionEvalWitnessReason::MissingVisualEvalReport));
     assert_eq!(output.manifest.frame_witnesses.len(), 0);
   }
 

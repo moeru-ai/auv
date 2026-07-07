@@ -16,9 +16,7 @@ impl InspectWriteSetting {
       "default" => Ok(Self::Default),
       "true" => Ok(Self::Enabled),
       "false" => Ok(Self::Disabled),
-      other => Err(format!(
-        "invalid inspect write setting {other:?}; expected true, false, or default"
-      )),
+      other => Err(format!("invalid inspect write setting {other:?}; expected true, false, or default")),
     }
   }
 }
@@ -326,12 +324,8 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "invoke" => parse_invoke(arguments),
     "verticals" => parse_verticals(arguments),
     "minecraft" => parse_minecraft(arguments),
-    "skill" => {
-      Err("skill commands have been removed; use app-local Rust commands instead".to_string())
-    }
-    other => Err(format!(
-      "unknown subcommand {other}; use `help` to see supported commands"
-    )),
+    "skill" => Err("skill commands have been removed; use app-local Rust commands instead".to_string()),
+    other => Err(format!("unknown subcommand {other}; use `help` to see supported commands")),
   }
 }
 
@@ -342,9 +336,7 @@ fn parse_xtask(arguments: &[String]) -> AuvResult<CliCommand> {
 
   match arguments[1].as_str() {
     "generate-swift-bridge" => Ok(CliCommand::XtaskGenerateSwiftBridge),
-    other => Err(format!(
-      "unknown xtask {other}; supported xtasks: generate-swift-bridge"
-    )),
+    other => Err(format!("unknown xtask {other}; supported xtasks: generate-swift-bridge")),
   }
 }
 
@@ -400,9 +392,7 @@ fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
     match argument.as_str() {
       "--json" => json = true,
       other => {
-        return Err(format!(
-          "unknown doctor option {other}; usage: auv doctor [--json]"
-        ));
+        return Err(format!("unknown doctor option {other}; usage: auv doctor [--json]"));
       }
     }
   }
@@ -446,11 +436,7 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut index = 2;
 
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -469,11 +455,7 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
         index += 2;
       }
       "--proposer-base-url" => {
-        request.proposer_base_url = Some(required_flag_value(
-          arguments,
-          index,
-          "--proposer-base-url",
-        )?);
+        request.proposer_base_url = Some(required_flag_value(arguments, index, "--proposer-base-url")?);
         index += 2;
       }
       "--query" => {
@@ -492,9 +474,7 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
             text: String::new(),
           },
           other => {
-            return Err(format!(
-              "invalid --action {other:?}; expected click or type-text"
-            ));
+            return Err(format!("invalid --action {other:?}; expected click or type-text"));
           }
         });
         index += 2;
@@ -522,10 +502,9 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
         index += 1;
       }
       "--human-gesture-timeout-ms" => {
-        request.human_gesture_timeout_ms =
-          required_flag_value(arguments, index, "--human-gesture-timeout-ms")?
-            .parse::<u64>()
-            .map_err(|error| format!("invalid --human-gesture-timeout-ms: {error}"))?;
+        request.human_gesture_timeout_ms = required_flag_value(arguments, index, "--human-gesture-timeout-ms")?
+          .parse::<u64>()
+          .map_err(|error| format!("invalid --human-gesture-timeout-ms: {error}"))?;
         index += 2;
       }
       "--reveal-shortcut" => {
@@ -545,24 +524,21 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
         index += 2;
       }
       "--stable-frame-delay-ms" => {
-        request.stable_frame_delay_ms =
-          required_flag_value(arguments, index, "--stable-frame-delay-ms")?
-            .parse::<u64>()
-            .map_err(|error| format!("invalid --stable-frame-delay-ms: {error}"))?;
+        request.stable_frame_delay_ms = required_flag_value(arguments, index, "--stable-frame-delay-ms")?
+          .parse::<u64>()
+          .map_err(|error| format!("invalid --stable-frame-delay-ms: {error}"))?;
         index += 2;
       }
       "--max-centroid-drift-px" => {
-        request.max_centroid_drift_px =
-          required_flag_value(arguments, index, "--max-centroid-drift-px")?
-            .parse::<f64>()
-            .map_err(|error| format!("invalid --max-centroid-drift-px: {error}"))?;
+        request.max_centroid_drift_px = required_flag_value(arguments, index, "--max-centroid-drift-px")?
+          .parse::<f64>()
+          .map_err(|error| format!("invalid --max-centroid-drift-px: {error}"))?;
         index += 2;
       }
       "--require-stable-text" => {
-        request.require_stable_text =
-          required_flag_value(arguments, index, "--require-stable-text")?
-            .parse::<bool>()
-            .map_err(|error| format!("invalid --require-stable-text: {error}"))?;
+        request.require_stable_text = required_flag_value(arguments, index, "--require-stable-text")?
+          .parse::<bool>()
+          .map_err(|error| format!("invalid --require-stable-text: {error}"))?;
         index += 2;
       }
       "--promotion-id" => {
@@ -582,23 +558,19 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
         index += 2;
       }
       "--promotion-scope-note" => {
-        request.promotion_scope_note =
-          required_flag_value(arguments, index, "--promotion-scope-note")?;
+        request.promotion_scope_note = required_flag_value(arguments, index, "--promotion-scope-note")?;
         index += 2;
       }
       "--promotion-evidence-note" => {
-        request.promotion_evidence_note =
-          required_flag_value(arguments, index, "--promotion-evidence-note")?;
+        request.promotion_evidence_note = required_flag_value(arguments, index, "--promotion-evidence-note")?;
         index += 2;
       }
       "--execution-scope-note" => {
-        request.execution_scope_note =
-          required_flag_value(arguments, index, "--execution-scope-note")?;
+        request.execution_scope_note = required_flag_value(arguments, index, "--execution-scope-note")?;
         index += 2;
       }
       "--execution-evidence-note" => {
-        request.execution_evidence_note =
-          required_flag_value(arguments, index, "--execution-evidence-note")?;
+        request.execution_evidence_note = required_flag_value(arguments, index, "--execution-evidence-note")?;
         index += 2;
       }
       other => return Err(format!("unexpected candidate-action argument {other}")),
@@ -624,9 +596,7 @@ fn parse_candidate_action(arguments: &[String]) -> AuvResult<CliCommand> {
     }
   }
   if request.dev_self_minted_consent && request.human_gesture_consent {
-    return Err(
-      "--dev-self-minted-consent cannot be combined with --human-gesture-consent".to_string(),
-    );
+    return Err("--dev-self-minted-consent cannot be combined with --human-gesture-consent".to_string());
   }
   if request.dev_self_minted_consent && request.granted_by.trim().is_empty() {
     return Err("--granted-by is required when --dev-self-minted-consent is set".to_string());
@@ -654,9 +624,7 @@ fn parse_permissions(arguments: &[String]) -> AuvResult<CliCommand> {
       normalized.extend(arguments.iter().skip(2).cloned());
       parse_permission_check(&normalized)
     }
-    other => Err(format!(
-      "unknown permissions subcommand {other}; usage: auv permissions check [--json]"
-    )),
+    other => Err(format!("unknown permissions subcommand {other}; usage: auv permissions check [--json]")),
   }
 }
 
@@ -675,20 +643,15 @@ fn parse_app(arguments: &[String]) -> AuvResult<CliCommand> {
         query: arguments[2].clone(),
       })
     }
-    "distill" | "validate" => Err(
-      "app recipe distillation has been removed; use app-local Rust commands instead".to_string(),
-    ),
-    other => Err(format!(
-      "unknown app subcommand {other}; use `auv app probe` or `auv app analyze`"
-    )),
+    "distill" | "validate" => Err("app recipe distillation has been removed; use app-local Rust commands instead".to_string()),
+    other => Err(format!("unknown app subcommand {other}; use `auv app probe` or `auv app analyze`")),
   }
 }
 
 fn parse_godot(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 || arguments[1] == "--help" || arguments[1] == "-h" {
     return Err(
-      "usage: auv godot capability-query [--json] | auv godot render-observe --output-dir <dir> [--stage <stage>]... [--json]"
-        .to_string(),
+      "usage: auv godot capability-query [--json] | auv godot render-observe --output-dir <dir> [--stage <stage>]... [--json]".to_string(),
     );
   }
 
@@ -699,9 +662,7 @@ fn parse_godot(arguments: &[String]) -> AuvResult<CliCommand> {
         match argument.as_str() {
           "--json" => json = true,
           other => {
-            return Err(format!(
-              "unknown godot capability-query option {other}; expected --json"
-            ));
+            return Err(format!("unknown godot capability-query option {other}; expected --json"));
           }
         }
       }
@@ -709,9 +670,7 @@ fn parse_godot(arguments: &[String]) -> AuvResult<CliCommand> {
       Ok(CliCommand::GodotCapabilityQuery { json })
     }
     "render-observe" => parse_godot_render_observe(arguments),
-    other => Err(format!(
-      "unknown godot subcommand {other}; supported subcommands: capability-query, render-observe"
-    )),
+    other => Err(format!("unknown godot subcommand {other}; supported subcommands: capability-query, render-observe")),
   }
 }
 
@@ -738,18 +697,14 @@ fn parse_godot_render_observe(arguments: &[String]) -> AuvResult<CliCommand> {
       }
       "--json" => json = true,
       other => {
-        return Err(format!(
-          "unknown godot render-observe option {other}; expected --output-dir, --stage, or --json"
-        ));
+        return Err(format!("unknown godot render-observe option {other}; expected --output-dir, --stage, or --json"));
       }
     }
     index += 1;
   }
 
   Ok(CliCommand::GodotRenderObserve {
-    output_dir: output_dir.ok_or_else(|| {
-      "usage: auv godot render-observe --output-dir <dir> [--stage <stage>]... [--json]".to_string()
-    })?,
+    output_dir: output_dir.ok_or_else(|| "usage: auv godot render-observe --output-dir <dir> [--stage <stage>]... [--json]".to_string())?,
     stages,
     json,
   })
@@ -792,9 +747,7 @@ fn parse_help_only_invocation(arguments: &[String], command: &str) -> AuvResult<
         Ok(true)
       } else {
         let extra = arguments[2..].join(" ");
-        Err(format!(
-          "unexpected {command} help argument(s) {extra:?}; use `auv {command} --help`"
-        ))
+        Err(format!("unexpected {command} help argument(s) {extra:?}; use `auv {command} --help`"))
       }
     }
     _ => Ok(false),
@@ -806,9 +759,7 @@ fn parse_verticals(arguments: &[String]) -> AuvResult<CliCommand> {
     return Ok(CliCommand::VerticalsHelp);
   }
   let other = arguments.get(1).map(String::as_str).unwrap_or("<missing>");
-  Err(format!(
-    "unknown verticals argument {other}; verticals is a help-only index — use `auv verticals --help`"
-  ))
+  Err(format!("unknown verticals argument {other}; verticals is a help-only index — use `auv verticals --help`"))
 }
 
 fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -822,9 +773,7 @@ fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
     Some("export-dataset") => parse_osu_export_dataset(arguments),
     Some("eval-detections") => parse_osu_eval_detections(arguments),
     Some("vision-demo") => parse_osu_vision_demo(arguments),
-    Some(other) => Err(format!(
-      "unknown osu subcommand {other}; use `auv osu --help` for full usage"
-    )),
+    Some(other) => Err(format!("unknown osu subcommand {other}; use `auv osu --help` for full usage")),
     None => unreachable!("help-only osu invocations return before subcommand match"),
   }
 }
@@ -891,11 +840,7 @@ fn parse_osu_dispatch(arguments: &[String]) -> AuvResult<CliCommand> {
         if index + 1 >= arguments.len() {
           return Err("--dispatch-limit requires a value".to_string());
         }
-        dispatch_limit = Some(
-          arguments[index + 1]
-            .parse::<usize>()
-            .map_err(|error| format!("invalid --dispatch-limit: {error}"))?,
-        );
+        dispatch_limit = Some(arguments[index + 1].parse::<usize>().map_err(|error| format!("invalid --dispatch-limit: {error}"))?);
         index += 2;
       }
       "--capture-verify" => {
@@ -946,9 +891,7 @@ fn parse_osu_export_dataset(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_osu_eval_detections(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 5 {
-    return Err(
-      "usage: auv osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]".to_string(),
-    );
+    return Err("usage: auv osu eval-detections <run-artifact-dir> --detections <dir-or-json> [--output-dir <dir>]".to_string());
   }
 
   let run_artifact_dir = arguments[2].clone();
@@ -985,7 +928,8 @@ fn parse_osu_eval_detections(arguments: &[String]) -> AuvResult<CliCommand> {
 fn parse_osu_vision_demo(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 5 {
     return Err(
-      "usage: auv osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]".to_string(),
+      "usage: auv osu vision-demo <beatmap.osu> --target-app <name> [--output-dir <dir>] [--dispatch-limit <n>] [--capture-verify]"
+        .to_string(),
     );
   }
 
@@ -1015,11 +959,7 @@ fn parse_osu_vision_demo(arguments: &[String]) -> AuvResult<CliCommand> {
         if index + 1 >= arguments.len() {
           return Err("--dispatch-limit requires a value".to_string());
         }
-        dispatch_limit = Some(
-          arguments[index + 1]
-            .parse::<usize>()
-            .map_err(|error| format!("invalid --dispatch-limit: {error}"))?,
-        );
+        dispatch_limit = Some(arguments[index + 1].parse::<usize>().map_err(|error| format!("invalid --dispatch-limit: {error}"))?);
         index += 2;
       }
       "--capture-verify" => {
@@ -1041,10 +981,7 @@ fn parse_osu_vision_demo(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err(
-      "usage: auv inspect <run-id> [--store-root <path>]|serve [--host <host>] [--port <port>]"
-        .to_string(),
-    );
+    return Err("usage: auv inspect <run-id> [--store-root <path>]|serve [--host <host>] [--port <port>]".to_string());
   }
 
   if arguments[1] == "serve" {
@@ -1088,9 +1025,7 @@ fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
         if index + 1 >= arguments.len() {
           return Err("--port requires a value".to_string());
         }
-        port = arguments[index + 1]
-          .parse::<u16>()
-          .map_err(|error| format!("invalid --port value: {error}"))?;
+        port = arguments[index + 1].parse::<u16>().map_err(|error| format!("invalid --port value: {error}"))?;
         index += 2;
       }
       "--store-root" => {
@@ -1138,11 +1073,7 @@ fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
   })
 }
 
-fn parse_inspect_client_option(
-  argument: &str,
-  value: Option<&String>,
-  inspect: &mut InspectClientOptions,
-) -> AuvResult<Option<usize>> {
+fn parse_inspect_client_option(argument: &str, value: Option<&String>, inspect: &mut InspectClientOptions) -> AuvResult<Option<usize>> {
   match argument {
     "--store-root" => {
       let value = value.ok_or_else(|| "--store-root requires a value".to_string())?;
@@ -1174,8 +1105,7 @@ fn parse_inspect_client_option(
       Ok(Some(2))
     }
     "--inspect-server-token-file" => {
-      let value =
-        value.ok_or_else(|| "--inspect-server-token-file requires a value".to_string())?;
+      let value = value.ok_or_else(|| "--inspect-server-token-file requires a value".to_string())?;
       inspect.server_token_file = Some(value.clone());
       Ok(Some(2))
     }
@@ -1200,9 +1130,7 @@ fn parse_invoke(arguments: &[String]) -> AuvResult<CliCommand> {
 
   while index < arguments.len() {
     let argument = arguments[index].as_str();
-    if let Some(consumed) =
-      parse_inspect_client_option(argument, arguments.get(index + 1), &mut inspect)?
-    {
+    if let Some(consumed) = parse_inspect_client_option(argument, arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -1261,37 +1189,23 @@ fn parse_minecraft(arguments: &[String]) -> AuvResult<CliCommand> {
     Some("export-3dgs-training-package") => parse_minecraft_export_3dgs_training_package(arguments),
     Some("prepare-3dgs-training") => parse_minecraft_prepare_3dgs_training(arguments),
     Some("launch-3dgs-training-job") => parse_minecraft_launch_3dgs_training_job(arguments),
-    Some("collect-3dgs-training-job-result") => {
-      parse_minecraft_collect_3dgs_training_job_result(arguments)
-    }
-    Some("fetch-3dgs-training-result-artifacts") => {
-      parse_minecraft_fetch_3dgs_training_result_artifacts(arguments)
-    }
-    Some("validate-3dgs-training-result") => {
-      parse_minecraft_validate_3dgs_training_result(arguments)
-    }
+    Some("collect-3dgs-training-job-result") => parse_minecraft_collect_3dgs_training_job_result(arguments),
+    Some("fetch-3dgs-training-result-artifacts") => parse_minecraft_fetch_3dgs_training_result_artifacts(arguments),
+    Some("validate-3dgs-training-result") => parse_minecraft_validate_3dgs_training_result(arguments),
     Some("query-3dgs-training-result") => parse_minecraft_query_3dgs_training_result(arguments),
-    Some("inspect-3dgs-training-result-holdout") => {
-      parse_minecraft_inspect_3dgs_training_result_holdout(arguments)
-    }
-    Some("measure-3dgs-holdout-render-quality") => {
-      parse_minecraft_measure_3dgs_holdout_render_quality(arguments)
-    }
+    Some("inspect-3dgs-training-result-holdout") => parse_minecraft_inspect_3dgs_training_result_holdout(arguments),
+    Some("measure-3dgs-holdout-render-quality") => parse_minecraft_measure_3dgs_holdout_render_quality(arguments),
     Some("prepare-texture-sweep") => parse_minecraft_prepare_texture_sweep(arguments),
     Some("build-texture-sweep-samples") => parse_minecraft_build_texture_sweep_samples(arguments),
     Some("eval-texture-sweep") => parse_minecraft_eval_texture_sweep(arguments),
-    Some(other) => Err(format!(
-      "unknown minecraft subcommand {other}; use `auv minecraft --help` for full usage"
-    )),
+    Some(other) => Err(format!("unknown minecraft subcommand {other}; use `auv minecraft --help` for full usage")),
     None => unreachable!("help-only minecraft invocations return before subcommand match"),
   }
 }
 
 fn parse_minecraft_export_spatial_bundle(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 5 {
-    return Err(
-      "usage: auv minecraft export-spatial-bundle <run-id> --output-dir <dir>".to_string(),
-    );
+    return Err("usage: auv minecraft export-spatial-bundle <run-id> --output-dir <dir>".to_string());
   }
 
   let run_id = arguments[2].clone();
@@ -1299,11 +1213,7 @@ fn parse_minecraft_export_spatial_bundle(arguments: &[String]) -> AuvResult<CliC
   let mut inspect = InspectClientOptions::default();
   let mut index = 3;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -1314,9 +1224,7 @@ fn parse_minecraft_export_spatial_bundle(arguments: &[String]) -> AuvResult<CliC
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft export-spatial-bundle argument {other}"
-        ));
+        return Err(format!("unexpected minecraft export-spatial-bundle argument {other}"));
       }
     }
   }
@@ -1334,11 +1242,7 @@ fn parse_minecraft_export_3dgs_scene_packet(arguments: &[String]) -> AuvResult<C
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -1353,9 +1257,7 @@ fn parse_minecraft_export_3dgs_scene_packet(arguments: &[String]) -> AuvResult<C
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft export-3dgs-scene-packet argument {other}"
-        ));
+        return Err(format!("unexpected minecraft export-3dgs-scene-packet argument {other}"));
       }
     }
   }
@@ -1376,22 +1278,14 @@ fn parse_minecraft_export_3dgs_training_package(arguments: &[String]) -> AuvResu
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--scene-packet-manifest" => {
-        scene_packet_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--scene-packet-manifest",
-        )?);
+        scene_packet_manifest_path = Some(required_flag_value(arguments, index, "--scene-packet-manifest")?);
         index += 2;
       }
       "--output-dir" => {
@@ -1399,16 +1293,13 @@ fn parse_minecraft_export_3dgs_training_package(arguments: &[String]) -> AuvResu
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft export-3dgs-training-package argument {other}"
-        ));
+        return Err(format!("unexpected minecraft export-3dgs-training-package argument {other}"));
       }
     }
   }
 
   Ok(CliCommand::MinecraftExport3dgsTrainingPackage {
-    scene_packet_manifest_path: scene_packet_manifest_path
-      .ok_or_else(|| "--scene-packet-manifest is required".to_string())?,
+    scene_packet_manifest_path: scene_packet_manifest_path.ok_or_else(|| "--scene-packet-manifest is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     inspect,
   })
@@ -1420,22 +1311,14 @@ fn parse_minecraft_validate_3dgs_training_result(arguments: &[String]) -> AuvRes
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--training-result-artifact-manifest" => {
-        training_result_artifact_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-result-artifact-manifest",
-        )?);
+        training_result_artifact_manifest_path = Some(required_flag_value(arguments, index, "--training-result-artifact-manifest")?);
         index += 2;
       }
       "--output-dir" => {
@@ -1443,9 +1326,7 @@ fn parse_minecraft_validate_3dgs_training_result(arguments: &[String]) -> AuvRes
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft validate-3dgs-training-result argument {other}"
-        ));
+        return Err(format!("unexpected minecraft validate-3dgs-training-result argument {other}"));
       }
     }
   }
@@ -1464,9 +1345,7 @@ fn validate_target_block_coordinates(raw: &str) -> AuvResult<()> {
     return Err(format!("invalid --target-block {raw:?}; expected x,y,z"));
   }
   for (index, label) in [(0, "x"), (1, "y"), (2, "z")] {
-    parts[index]
-      .parse::<i32>()
-      .map_err(|error| format!("invalid target block {label}: {error}"))?;
+    parts[index].parse::<i32>().map_err(|error| format!("invalid target block {label}: {error}"))?;
   }
   Ok(())
 }
@@ -1484,22 +1363,14 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--training-result-semantic-manifest" => {
-        training_result_semantic_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-result-semantic-manifest",
-        )?);
+        training_result_semantic_manifest_path = Some(required_flag_value(arguments, index, "--training-result-semantic-manifest")?);
         index += 2;
       }
       "--target-block" => {
@@ -1511,9 +1382,7 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
         match value.as_str() {
           "up" | "down" | "north" | "south" | "east" | "west" => target_face = Some(value),
           other => {
-            return Err(format!(
-              "invalid --target-face {other:?}; expected up, down, north, south, east, or west"
-            ));
+            return Err(format!("invalid --target-face {other:?}; expected up, down, north, south, east, or west"));
           }
         }
         index += 2;
@@ -1523,9 +1392,7 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
         match value.as_str() {
           "hit_face_center" | "block_center" => target_semantics = value,
           other => {
-            return Err(format!(
-              "invalid --target-semantics {other:?}; expected hit_face_center or block_center"
-            ));
+            return Err(format!("invalid --target-semantics {other:?}; expected hit_face_center or block_center"));
           }
         }
         index += 2;
@@ -1536,19 +1403,13 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
           "checkpoint-native" => use_checkpoint_native_provider = true,
           "closed-scene-toy" => use_closed_scene_toy_provider = true,
           other => {
-            return Err(format!(
-              "invalid --query-provider {other:?}; expected checkpoint-native or closed-scene-toy"
-            ));
+            return Err(format!("invalid --query-provider {other:?}; expected checkpoint-native or closed-scene-toy"));
           }
         }
         index += 2;
       }
       "--closed-scene-fixture" => {
-        closed_scene_fixture_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--closed-scene-fixture",
-        )?);
+        closed_scene_fixture_path = Some(required_flag_value(arguments, index, "--closed-scene-fixture")?);
         index += 2;
       }
       "--query-command" => {
@@ -1560,9 +1421,7 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft query-3dgs-training-result argument {other}"
-        ));
+        return Err(format!("unexpected minecraft query-3dgs-training-result argument {other}"));
       }
     }
   }
@@ -1571,28 +1430,19 @@ fn parse_minecraft_query_3dgs_training_result(arguments: &[String]) -> AuvResult
   validate_target_block_coordinates(&target_block)?;
 
   if use_checkpoint_native_provider && use_closed_scene_toy_provider {
-    return Err(
-      "--query-provider checkpoint-native and --query-provider closed-scene-toy are mutually exclusive"
-        .to_string(),
-    );
+    return Err("--query-provider checkpoint-native and --query-provider closed-scene-toy are mutually exclusive".to_string());
   }
 
   if use_checkpoint_native_provider && query_command.is_some() {
-    return Err(
-      "--query-provider checkpoint-native and --query-command are mutually exclusive".to_string(),
-    );
+    return Err("--query-provider checkpoint-native and --query-command are mutually exclusive".to_string());
   }
 
   if use_closed_scene_toy_provider && query_command.is_some() {
-    return Err(
-      "--query-provider closed-scene-toy and --query-command are mutually exclusive".to_string(),
-    );
+    return Err("--query-provider closed-scene-toy and --query-command are mutually exclusive".to_string());
   }
 
   if use_closed_scene_toy_provider && closed_scene_fixture_path.is_none() {
-    return Err(
-      "--closed-scene-fixture is required when --query-provider closed-scene-toy".to_string(),
-    );
+    return Err("--closed-scene-fixture is required when --query-provider closed-scene-toy".to_string());
   }
 
   Ok(CliCommand::MinecraftQuery3dgsTrainingResult {
@@ -1628,22 +1478,14 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--training-result-semantic-manifest" => {
-        training_result_semantic_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-result-semantic-manifest",
-        )?);
+        training_result_semantic_manifest_path = Some(required_flag_value(arguments, index, "--training-result-semantic-manifest")?);
         index += 2;
       }
       "--target-block" => {
@@ -1655,9 +1497,7 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
         match value.as_str() {
           "up" | "down" | "north" | "south" | "east" | "west" => target_face = Some(value),
           other => {
-            return Err(format!(
-              "invalid --target-face {other:?}; expected up, down, north, south, east, or west"
-            ));
+            return Err(format!("invalid --target-face {other:?}; expected up, down, north, south, east, or west"));
           }
         }
         index += 2;
@@ -1667,9 +1507,7 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
         match value.as_str() {
           "hit_face_center" | "block_center" => target_semantics = value,
           other => {
-            return Err(format!(
-              "invalid --target-semantics {other:?}; expected hit_face_center or block_center"
-            ));
+            return Err(format!("invalid --target-semantics {other:?}; expected hit_face_center or block_center"));
           }
         }
         index += 2;
@@ -1680,19 +1518,13 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
           "checkpoint-native" => use_checkpoint_native_provider = true,
           "closed-scene-toy" => use_closed_scene_toy_provider = true,
           other => {
-            return Err(format!(
-              "invalid --query-provider {other:?}; expected checkpoint-native or closed-scene-toy"
-            ));
+            return Err(format!("invalid --query-provider {other:?}; expected checkpoint-native or closed-scene-toy"));
           }
         }
         index += 2;
       }
       "--closed-scene-fixture" => {
-        closed_scene_fixture_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--closed-scene-fixture",
-        )?);
+        closed_scene_fixture_path = Some(required_flag_value(arguments, index, "--closed-scene-fixture")?);
         index += 2;
       }
       "--query-command" => {
@@ -1720,17 +1552,11 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
         index += 2;
       }
       "--verification-expected-item-id" => {
-        verification_expected_item_id = Some(required_flag_value(
-          arguments,
-          index,
-          "--verification-expected-item-id",
-        )?);
+        verification_expected_item_id = Some(required_flag_value(arguments, index, "--verification-expected-item-id")?);
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft query-wired-live-click argument {other}"
-        ));
+        return Err(format!("unexpected minecraft query-wired-live-click argument {other}"));
       }
     }
   }
@@ -1739,28 +1565,19 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
   validate_target_block_coordinates(&target_block)?;
 
   if use_checkpoint_native_provider && use_closed_scene_toy_provider {
-    return Err(
-      "--query-provider checkpoint-native and --query-provider closed-scene-toy are mutually exclusive"
-        .to_string(),
-    );
+    return Err("--query-provider checkpoint-native and --query-provider closed-scene-toy are mutually exclusive".to_string());
   }
 
   if use_checkpoint_native_provider && query_command.is_some() {
-    return Err(
-      "--query-provider checkpoint-native and --query-command are mutually exclusive".to_string(),
-    );
+    return Err("--query-provider checkpoint-native and --query-command are mutually exclusive".to_string());
   }
 
   if use_closed_scene_toy_provider && query_command.is_some() {
-    return Err(
-      "--query-provider closed-scene-toy and --query-command are mutually exclusive".to_string(),
-    );
+    return Err("--query-provider closed-scene-toy and --query-command are mutually exclusive".to_string());
   }
 
   if use_closed_scene_toy_provider && closed_scene_fixture_path.is_none() {
-    return Err(
-      "--closed-scene-fixture is required when --query-provider closed-scene-toy".to_string(),
-    );
+    return Err("--closed-scene-fixture is required when --query-provider closed-scene-toy".to_string());
   }
 
   if closed_scene_fixture_path.is_some() && !use_closed_scene_toy_provider {
@@ -1794,9 +1611,7 @@ fn parse_minecraft_query_wired_live_click(arguments: &[String]) -> AuvResult<Cli
     inspect,
   })
 }
-fn parse_minecraft_inspect_3dgs_training_result_holdout(
-  arguments: &[String],
-) -> AuvResult<CliCommand> {
+fn parse_minecraft_inspect_3dgs_training_result_holdout(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut training_result_semantic_manifest_path = None;
   let mut holdout_frame_index = None;
   let mut holdout_render_command = None;
@@ -1804,39 +1619,23 @@ fn parse_minecraft_inspect_3dgs_training_result_holdout(
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--training-result-semantic-manifest" => {
-        training_result_semantic_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-result-semantic-manifest",
-        )?);
+        training_result_semantic_manifest_path = Some(required_flag_value(arguments, index, "--training-result-semantic-manifest")?);
         index += 2;
       }
       "--holdout-frame-index" => {
         let value = required_flag_value(arguments, index, "--holdout-frame-index")?;
-        holdout_frame_index = Some(
-          value
-            .parse::<usize>()
-            .map_err(|error| format!("invalid --holdout-frame-index: {error}"))?,
-        );
+        holdout_frame_index = Some(value.parse::<usize>().map_err(|error| format!("invalid --holdout-frame-index: {error}"))?);
         index += 2;
       }
       "--holdout-render-command" => {
-        holdout_render_command = Some(required_flag_value(
-          arguments,
-          index,
-          "--holdout-render-command",
-        )?);
+        holdout_render_command = Some(required_flag_value(arguments, index, "--holdout-render-command")?);
         index += 2;
       }
       "--output-dir" => {
@@ -1844,9 +1643,7 @@ fn parse_minecraft_inspect_3dgs_training_result_holdout(
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft inspect-3dgs-training-result-holdout argument {other}"
-        ));
+        return Err(format!("unexpected minecraft inspect-3dgs-training-result-holdout argument {other}"));
       }
     }
   }
@@ -1861,9 +1658,7 @@ fn parse_minecraft_inspect_3dgs_training_result_holdout(
   })
 }
 
-fn parse_minecraft_measure_3dgs_holdout_render_quality(
-  arguments: &[String],
-) -> AuvResult<CliCommand> {
+fn parse_minecraft_measure_3dgs_holdout_render_quality(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut training_result_semantic_manifest_path = None;
   let mut holdout_preview_manifest_path = None;
   let mut render_command = None;
@@ -1871,30 +1666,18 @@ fn parse_minecraft_measure_3dgs_holdout_render_quality(
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--training-result-semantic-manifest" => {
-        training_result_semantic_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-result-semantic-manifest",
-        )?);
+        training_result_semantic_manifest_path = Some(required_flag_value(arguments, index, "--training-result-semantic-manifest")?);
         index += 2;
       }
       "--holdout-preview-manifest" => {
-        holdout_preview_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--holdout-preview-manifest",
-        )?);
+        holdout_preview_manifest_path = Some(required_flag_value(arguments, index, "--holdout-preview-manifest")?);
         index += 2;
       }
       "--render-command" => {
@@ -1906,9 +1689,7 @@ fn parse_minecraft_measure_3dgs_holdout_render_quality(
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft measure-3dgs-holdout-render-quality argument {other}"
-        ));
+        return Err(format!("unexpected minecraft measure-3dgs-holdout-render-quality argument {other}"));
       }
     }
   }
@@ -1916,8 +1697,7 @@ fn parse_minecraft_measure_3dgs_holdout_render_quality(
   Ok(CliCommand::MinecraftMeasure3dgsHoldoutRenderQuality {
     training_result_semantic_manifest_path: training_result_semantic_manifest_path
       .ok_or_else(|| "--training-result-semantic-manifest is required".to_string())?,
-    holdout_preview_manifest_path: holdout_preview_manifest_path
-      .ok_or_else(|| "--holdout-preview-manifest is required".to_string())?,
+    holdout_preview_manifest_path: holdout_preview_manifest_path.ok_or_else(|| "--holdout-preview-manifest is required".to_string())?,
     render_command: render_command.ok_or_else(|| "--render-command is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     inspect,
@@ -1930,11 +1710,7 @@ fn parse_minecraft_prepare_texture_sweep(arguments: &[String]) -> AuvResult<CliC
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -1949,9 +1725,7 @@ fn parse_minecraft_prepare_texture_sweep(arguments: &[String]) -> AuvResult<CliC
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft prepare-texture-sweep argument {other}"
-        ));
+        return Err(format!("unexpected minecraft prepare-texture-sweep argument {other}"));
       }
     }
   }
@@ -1969,22 +1743,14 @@ fn parse_minecraft_prepare_3dgs_training(arguments: &[String]) -> AuvResult<CliC
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--training-package-manifest" => {
-        training_package_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-package-manifest",
-        )?);
+        training_package_manifest_path = Some(required_flag_value(arguments, index, "--training-package-manifest")?);
         index += 2;
       }
       "--output-dir" => {
@@ -1992,16 +1758,13 @@ fn parse_minecraft_prepare_3dgs_training(arguments: &[String]) -> AuvResult<CliC
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft prepare-3dgs-training argument {other}"
-        ));
+        return Err(format!("unexpected minecraft prepare-3dgs-training argument {other}"));
       }
     }
   }
 
   Ok(CliCommand::MinecraftPrepare3dgsTraining {
-    training_package_manifest_path: training_package_manifest_path
-      .ok_or_else(|| "--training-package-manifest is required".to_string())?,
+    training_package_manifest_path: training_package_manifest_path.ok_or_else(|| "--training-package-manifest is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     inspect,
   })
@@ -2016,22 +1779,14 @@ fn parse_minecraft_launch_3dgs_training_job(arguments: &[String]) -> AuvResult<C
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--training-launch-plan" => {
-        training_launch_plan_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-launch-plan",
-        )?);
+        training_launch_plan_path = Some(required_flag_value(arguments, index, "--training-launch-plan")?);
         index += 2;
       }
       "--output-dir" => {
@@ -2039,40 +1794,25 @@ fn parse_minecraft_launch_3dgs_training_job(arguments: &[String]) -> AuvResult<C
         index += 2;
       }
       "--training-job-endpoint" => {
-        training_job_endpoint = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-job-endpoint",
-        )?);
+        training_job_endpoint = Some(required_flag_value(arguments, index, "--training-job-endpoint")?);
         index += 2;
       }
       "--training-job-token" => {
-        training_job_token = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-job-token",
-        )?);
+        training_job_token = Some(required_flag_value(arguments, index, "--training-job-token")?);
         index += 2;
       }
       "--training-job-submit-command" => {
-        training_job_submit_command = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-job-submit-command",
-        )?);
+        training_job_submit_command = Some(required_flag_value(arguments, index, "--training-job-submit-command")?);
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft launch-3dgs-training-job argument {other}"
-        ));
+        return Err(format!("unexpected minecraft launch-3dgs-training-job argument {other}"));
       }
     }
   }
 
   Ok(CliCommand::MinecraftLaunch3dgsTrainingJob {
-    training_launch_plan_path: training_launch_plan_path
-      .ok_or_else(|| "--training-launch-plan is required".to_string())?,
+    training_launch_plan_path: training_launch_plan_path.ok_or_else(|| "--training-launch-plan is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     training_job_endpoint,
     training_job_token,
@@ -2090,22 +1830,14 @@ fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> Auv
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--training-job-manifest" => {
-        training_job_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-job-manifest",
-        )?);
+        training_job_manifest_path = Some(required_flag_value(arguments, index, "--training-job-manifest")?);
         index += 2;
       }
       "--output-dir" => {
@@ -2113,40 +1845,25 @@ fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> Auv
         index += 2;
       }
       "--training-job-endpoint" => {
-        training_job_endpoint = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-job-endpoint",
-        )?);
+        training_job_endpoint = Some(required_flag_value(arguments, index, "--training-job-endpoint")?);
         index += 2;
       }
       "--training-job-token" => {
-        training_job_token = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-job-token",
-        )?);
+        training_job_token = Some(required_flag_value(arguments, index, "--training-job-token")?);
         index += 2;
       }
       "--training-job-status-command" => {
-        training_job_status_command = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-job-status-command",
-        )?);
+        training_job_status_command = Some(required_flag_value(arguments, index, "--training-job-status-command")?);
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft collect-3dgs-training-job-result argument {other}"
-        ));
+        return Err(format!("unexpected minecraft collect-3dgs-training-job-result argument {other}"));
       }
     }
   }
 
   Ok(CliCommand::MinecraftCollect3dgsTrainingJobResult {
-    training_job_manifest_path: training_job_manifest_path
-      .ok_or_else(|| "--training-job-manifest is required".to_string())?,
+    training_job_manifest_path: training_job_manifest_path.ok_or_else(|| "--training-job-manifest is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     training_job_endpoint,
     training_job_token,
@@ -2155,9 +1872,7 @@ fn parse_minecraft_collect_3dgs_training_job_result(arguments: &[String]) -> Auv
   })
 }
 
-fn parse_minecraft_fetch_3dgs_training_result_artifacts(
-  arguments: &[String],
-) -> AuvResult<CliCommand> {
+fn parse_minecraft_fetch_3dgs_training_result_artifacts(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut training_result_manifest_path = None;
   let mut output_dir = None;
   let mut training_job_endpoint = None;
@@ -2166,22 +1881,14 @@ fn parse_minecraft_fetch_3dgs_training_result_artifacts(
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
 
     match arguments[index].as_str() {
       "--training-result-manifest" => {
-        training_result_manifest_path = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-result-manifest",
-        )?);
+        training_result_manifest_path = Some(required_flag_value(arguments, index, "--training-result-manifest")?);
         index += 2;
       }
       "--output-dir" => {
@@ -2189,40 +1896,25 @@ fn parse_minecraft_fetch_3dgs_training_result_artifacts(
         index += 2;
       }
       "--training-job-endpoint" => {
-        training_job_endpoint = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-job-endpoint",
-        )?);
+        training_job_endpoint = Some(required_flag_value(arguments, index, "--training-job-endpoint")?);
         index += 2;
       }
       "--training-job-token" => {
-        training_job_token = Some(required_flag_value(
-          arguments,
-          index,
-          "--training-job-token",
-        )?);
+        training_job_token = Some(required_flag_value(arguments, index, "--training-job-token")?);
         index += 2;
       }
       "--artifact-fetch-command" => {
-        artifact_fetch_command = Some(required_flag_value(
-          arguments,
-          index,
-          "--artifact-fetch-command",
-        )?);
+        artifact_fetch_command = Some(required_flag_value(arguments, index, "--artifact-fetch-command")?);
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft fetch-3dgs-training-result-artifacts argument {other}"
-        ));
+        return Err(format!("unexpected minecraft fetch-3dgs-training-result-artifacts argument {other}"));
       }
     }
   }
 
   Ok(CliCommand::MinecraftFetch3dgsTrainingResultArtifacts {
-    training_result_manifest_path: training_result_manifest_path
-      .ok_or_else(|| "--training-result-manifest is required".to_string())?,
+    training_result_manifest_path: training_result_manifest_path.ok_or_else(|| "--training-result-manifest is required".to_string())?,
     output_dir: output_dir.ok_or_else(|| "--output-dir is required".to_string())?,
     training_job_endpoint,
     training_job_token,
@@ -2237,11 +1929,7 @@ fn parse_minecraft_build_texture_sweep_samples(arguments: &[String]) -> AuvResul
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -2256,9 +1944,7 @@ fn parse_minecraft_build_texture_sweep_samples(arguments: &[String]) -> AuvResul
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft build-texture-sweep-samples argument {other}"
-        ));
+        return Err(format!("unexpected minecraft build-texture-sweep-samples argument {other}"));
       }
     }
   }
@@ -2280,11 +1966,7 @@ fn parse_minecraft_eval_texture_sweep(arguments: &[String]) -> AuvResult<CliComm
   let mut inspect = InspectClientOptions::default();
   let mut index = 2;
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -2303,9 +1985,7 @@ fn parse_minecraft_eval_texture_sweep(arguments: &[String]) -> AuvResult<CliComm
         index += 1;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft eval-texture-sweep argument {other}"
-        ));
+        return Err(format!("unexpected minecraft eval-texture-sweep argument {other}"));
       }
     }
   }
@@ -2330,11 +2010,7 @@ fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut index = 2;
 
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -2349,19 +2025,11 @@ fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
         index += 2;
       }
       "--capture-target-app" => {
-        capture_target_app = Some(required_flag_value(
-          arguments,
-          index,
-          "--capture-target-app",
-        )?);
+        capture_target_app = Some(required_flag_value(arguments, index, "--capture-target-app")?);
         index += 2;
       }
       "--capture-target-title" => {
-        capture_target_title = Some(required_flag_value(
-          arguments,
-          index,
-          "--capture-target-title",
-        )?);
+        capture_target_title = Some(required_flag_value(arguments, index, "--capture-target-title")?);
         index += 2;
       }
       "--target-block" => {
@@ -2377,10 +2045,9 @@ fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
         index += 2;
       }
       "--screenshot-is-minecraft-window" => {
-        screenshot_is_minecraft_window =
-          required_flag_value(arguments, index, "--screenshot-is-minecraft-window")?
-            .parse::<bool>()
-            .map_err(|error| format!("invalid --screenshot-is-minecraft-window: {error}"))?;
+        screenshot_is_minecraft_window = required_flag_value(arguments, index, "--screenshot-is-minecraft-window")?
+          .parse::<bool>()
+          .map_err(|error| format!("invalid --screenshot-is-minecraft-window: {error}"))?;
         index += 2;
       }
       other => return Err(format!("unexpected minecraft bridge argument {other}")),
@@ -2388,15 +2055,10 @@ fn parse_minecraft_bridge(arguments: &[String]) -> AuvResult<CliCommand> {
   }
 
   if screenshot.is_some() && capture_target_app.is_some() {
-    return Err(
-      "--screenshot cannot be combined with --capture-target-app/--capture-target-title"
-        .to_string(),
-    );
+    return Err("--screenshot cannot be combined with --capture-target-app/--capture-target-title".to_string());
   }
   if screenshot.is_none() && capture_target_app.is_none() {
-    return Err(
-      "minecraft bridge requires either --screenshot or --capture-target-app".to_string(),
-    );
+    return Err("minecraft bridge requires either --screenshot or --capture-target-app".to_string());
   }
   if capture_target_title.is_some() && capture_target_app.is_none() {
     return Err("--capture-target-title requires --capture-target-app".to_string());
@@ -2424,11 +2086,7 @@ fn parse_minecraft_calibrate_projection(arguments: &[String]) -> AuvResult<CliCo
   let mut index = 2;
 
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -2451,24 +2109,19 @@ fn parse_minecraft_calibrate_projection(arguments: &[String]) -> AuvResult<CliCo
         match value.as_str() {
           "hit_face_center" | "block_center" => target_semantics = value,
           other => {
-            return Err(format!(
-              "invalid --target-semantics {other:?}; expected hit_face_center or block_center"
-            ));
+            return Err(format!("invalid --target-semantics {other:?}; expected hit_face_center or block_center"));
           }
         }
         index += 2;
       }
       "--screenshot-is-minecraft-window" => {
-        screenshot_is_minecraft_window =
-          required_flag_value(arguments, index, "--screenshot-is-minecraft-window")?
-            .parse::<bool>()
-            .map_err(|error| format!("invalid --screenshot-is-minecraft-window: {error}"))?;
+        screenshot_is_minecraft_window = required_flag_value(arguments, index, "--screenshot-is-minecraft-window")?
+          .parse::<bool>()
+          .map_err(|error| format!("invalid --screenshot-is-minecraft-window: {error}"))?;
         index += 2;
       }
       other => {
-        return Err(format!(
-          "unexpected minecraft calibrate-projection argument {other}"
-        ));
+        return Err(format!("unexpected minecraft calibrate-projection argument {other}"));
       }
     }
   }
@@ -2496,11 +2149,7 @@ fn parse_minecraft_live_click(arguments: &[String]) -> AuvResult<CliCommand> {
   let mut index = 2;
 
   while index < arguments.len() {
-    if let Some(consumed) = parse_inspect_client_option(
-      arguments[index].as_str(),
-      arguments.get(index + 1),
-      &mut inspect,
-    )? {
+    if let Some(consumed) = parse_inspect_client_option(arguments[index].as_str(), arguments.get(index + 1), &mut inspect)? {
       index += consumed;
       continue;
     }
@@ -2539,10 +2188,9 @@ fn parse_minecraft_live_click(arguments: &[String]) -> AuvResult<CliCommand> {
         index += 2;
       }
       "--screenshot-is-minecraft-window" => {
-        screenshot_is_minecraft_window =
-          required_flag_value(arguments, index, "--screenshot-is-minecraft-window")?
-            .parse::<bool>()
-            .map_err(|error| format!("invalid --screenshot-is-minecraft-window: {error}"))?;
+        screenshot_is_minecraft_window = required_flag_value(arguments, index, "--screenshot-is-minecraft-window")?
+          .parse::<bool>()
+          .map_err(|error| format!("invalid --screenshot-is-minecraft-window: {error}"))?;
         index += 2;
       }
       other => return Err(format!("unexpected minecraft live-click argument {other}")),
@@ -2571,14 +2219,10 @@ fn parse_mcp(arguments: &[String]) -> AuvResult<CliCommand> {
 
 fn parse_session(arguments: &[String]) -> AuvResult<CliCommand> {
   if arguments.len() < 2 {
-    return Err(
-      "usage: auv session serve [--host <host>] [--port <port>] [--store-root <path>]".to_string(),
-    );
+    return Err("usage: auv session serve [--host <host>] [--port <port>] [--store-root <path>]".to_string());
   }
   if arguments[1].as_str() != "serve" {
-    return Err(
-      "usage: auv session serve [--host <host>] [--port <port>] [--store-root <path>]".to_string(),
-    );
+    return Err("usage: auv session serve [--host <host>] [--port <port>] [--store-root <path>]".to_string());
   }
   parse_session_serve(arguments)
 }
@@ -2601,9 +2245,7 @@ fn parse_session_serve(arguments: &[String]) -> AuvResult<CliCommand> {
         if index + 1 >= arguments.len() {
           return Err("--port requires a value".to_string());
         }
-        port = arguments[index + 1]
-          .parse::<u16>()
-          .map_err(|error| format!("invalid --port value: {error}"))?;
+        port = arguments[index + 1].parse::<u16>().map_err(|error| format!("invalid --port value: {error}"))?;
         index += 2;
       }
       "--store-root" => {
@@ -2627,10 +2269,7 @@ fn parse_session_serve(arguments: &[String]) -> AuvResult<CliCommand> {
 }
 
 fn required_flag_value(arguments: &[String], index: usize, flag: &str) -> AuvResult<String> {
-  arguments
-    .get(index + 1)
-    .cloned()
-    .ok_or_else(|| format!("{flag} requires a value"))
+  arguments.get(index + 1).cloned().ok_or_else(|| format!("{flag} requires a value"))
 }
 
 #[cfg(test)]
@@ -2658,10 +2297,7 @@ mod tests {
     ] {
       let args = args.into_iter().map(String::from).collect::<Vec<_>>();
       let error = parse_cli(&args).expect_err("skill command should be removed");
-      assert!(
-        error.contains("skill commands have been removed"),
-        "unexpected error for {args:?}: {error}"
-      );
+      assert!(error.contains("skill commands have been removed"), "unexpected error for {args:?}: {error}");
     }
   }
 
@@ -2677,10 +2313,7 @@ mod tests {
     ] {
       let args = args.into_iter().map(String::from).collect::<Vec<_>>();
       let error = parse_cli(&args).expect_err("recipe-producing app command should be removed");
-      assert!(
-        error.contains("app recipe distillation has been removed"),
-        "unexpected error for {args:?}: {error}"
-      );
+      assert!(error.contains("app recipe distillation has been removed"), "unexpected error for {args:?}: {error}");
     }
   }
 
@@ -2693,10 +2326,7 @@ mod tests {
     ])
     .expect("godot capability query should parse");
 
-    assert!(matches!(
-      command,
-      CliCommand::GodotCapabilityQuery { json: true }
-    ));
+    assert!(matches!(command, CliCommand::GodotCapabilityQuery { json: true }));
   }
 
   #[test]
@@ -2753,10 +2383,7 @@ mod tests {
       "auv session serve [--host <host>] [--port <port>] [--store-root <path>]",
       "auv mcp serve",
     ] {
-      assert!(
-        help.contains(expected),
-        "top-level help should keep core path visible: {expected}"
-      );
+      assert!(help.contains(expected), "top-level help should keep core path visible: {expected}");
     }
   }
 
@@ -2771,10 +2398,7 @@ mod tests {
       "verticals",
       "reference verticals",
     ] {
-      assert!(
-        !help.contains(omitted),
-        "top-level help should not mention vertical surface: {omitted}"
-      );
+      assert!(!help.contains(omitted), "top-level help should not mention vertical surface: {omitted}");
     }
 
     for omitted in [
@@ -2783,31 +2407,25 @@ mod tests {
       "auv osu benchmark",
       "auv osu dispatch",
     ] {
-      assert!(
-        !help.contains(omitted),
-        "top-level help should not expand vertical command: {omitted}"
-      );
+      assert!(!help.contains(omitted), "top-level help should not expand vertical command: {omitted}");
     }
   }
 
   #[test]
   fn parse_verticals_help_command() {
-    let command = parse_cli(&["verticals".to_string(), "--help".to_string()])
-      .expect("verticals --help should parse");
+    let command = parse_cli(&["verticals".to_string(), "--help".to_string()]).expect("verticals --help should parse");
     assert!(matches!(command, CliCommand::VerticalsHelp));
   }
 
   #[test]
   fn parse_verticals_bare_command_as_help() {
-    let command =
-      parse_cli(&["verticals".to_string()]).expect("bare verticals should parse as help");
+    let command = parse_cli(&["verticals".to_string()]).expect("bare verticals should parse as help");
     assert!(matches!(command, CliCommand::VerticalsHelp));
   }
 
   #[test]
   fn parse_verticals_rejects_execution_namespace() {
-    let error = parse_cli(&["verticals".to_string(), "minecraft".to_string()])
-      .expect_err("verticals minecraft should fail");
+    let error = parse_cli(&["verticals".to_string(), "minecraft".to_string()]).expect_err("verticals minecraft should fail");
     assert!(error.contains("help-only index"));
   }
 
@@ -2824,15 +2442,13 @@ mod tests {
 
   #[test]
   fn parse_minecraft_help_command() {
-    let command = parse_cli(&["minecraft".to_string(), "--help".to_string()])
-      .expect("minecraft --help should parse");
+    let command = parse_cli(&["minecraft".to_string(), "--help".to_string()]).expect("minecraft --help should parse");
     assert!(matches!(command, CliCommand::MinecraftHelp));
   }
 
   #[test]
   fn parse_minecraft_bare_command_as_help() {
-    let command =
-      parse_cli(&["minecraft".to_string()]).expect("bare minecraft should parse as help");
+    let command = parse_cli(&["minecraft".to_string()]).expect("bare minecraft should parse as help");
     assert!(matches!(command, CliCommand::MinecraftHelp));
   }
 
@@ -2849,8 +2465,7 @@ mod tests {
 
   #[test]
   fn parse_osu_help_command() {
-    let command =
-      parse_cli(&["osu".to_string(), "--help".to_string()]).expect("osu --help should parse");
+    let command = parse_cli(&["osu".to_string(), "--help".to_string()]).expect("osu --help should parse");
     assert!(matches!(command, CliCommand::OsuHelp));
   }
 
@@ -2862,8 +2477,7 @@ mod tests {
 
   #[test]
   fn parse_osu_help_rejects_trailing_arguments() {
-    let error = parse_cli(&["osu".to_string(), "help".to_string(), "extra".to_string()])
-      .expect_err("osu help extra should fail");
+    let error = parse_cli(&["osu".to_string(), "help".to_string(), "extra".to_string()]).expect_err("osu help extra should fail");
     assert!(error.contains("unexpected osu help argument"));
   }
 
@@ -2873,17 +2487,13 @@ mod tests {
     let usage_end = help.find("NOTES").expect("notes section should exist");
     let usage = &help[..usage_end];
 
-    assert!(
-      !usage.contains("candidate-action run"),
-      "candidate-action should not appear in top-level usage"
-    );
+    assert!(!usage.contains("candidate-action run"), "candidate-action should not appear in top-level usage");
     assert!(help.contains("`candidate-action run` is a frozen archived macOS AX copilot vertical"));
   }
 
   #[test]
   fn list_drivers_command_is_removed() {
-    let error =
-      parse_cli(&["list-drivers".to_string()]).expect_err("list-drivers should be removed");
+    let error = parse_cli(&["list-drivers".to_string()]).expect_err("list-drivers should be removed");
     assert!(error.contains("unknown subcommand list-drivers"));
 
     let help = help_text();
@@ -3154,10 +2764,7 @@ mod tests {
     ])
     .expect_err("minecraft bridge should require screenshot/capture target and target");
 
-    assert!(
-      error.contains("requires either --screenshot or --capture-target-app")
-        || error.contains("--target-block is required")
-    );
+    assert!(error.contains("requires either --screenshot or --capture-target-app") || error.contains("--target-block is required"));
   }
 
   #[test]
@@ -3310,10 +2917,7 @@ mod tests {
         output_dir,
         ..
       } => {
-        assert_eq!(
-          bundle_manifest_paths,
-          vec!["/tmp/rich/run.json", "/tmp/flat/run.json"]
-        );
+        assert_eq!(bundle_manifest_paths, vec!["/tmp/rich/run.json", "/tmp/flat/run.json"]);
         assert_eq!(output_dir, "/tmp/scene");
       }
       other => panic!("unexpected command: {other:?}"),
@@ -3391,10 +2995,7 @@ mod tests {
         training_job_submit_command,
         ..
       } => {
-        assert_eq!(
-          training_launch_plan_path,
-          "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json"
-        );
+        assert_eq!(training_launch_plan_path, "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json");
         assert_eq!(output_dir, "/tmp/job");
         assert_eq!(training_job_endpoint, None);
         assert_eq!(training_job_token, None);
@@ -3424,10 +3025,7 @@ mod tests {
         training_job_token,
         ..
       } => {
-        assert_eq!(
-          training_job_manifest_path,
-          "/tmp/training-job/minecraft-3dgs-training-job.json"
-        );
+        assert_eq!(training_job_manifest_path, "/tmp/training-job/minecraft-3dgs-training-job.json");
         assert_eq!(output_dir, "/tmp/result");
         assert_eq!(training_job_endpoint, None);
         assert_eq!(training_job_token, None);
@@ -3474,15 +3072,9 @@ mod tests {
         training_job_submit_command,
         ..
       } => {
-        assert_eq!(
-          training_job_endpoint.as_deref(),
-          Some("https://jobs.example.test/v1")
-        );
+        assert_eq!(training_job_endpoint.as_deref(), Some("https://jobs.example.test/v1"));
         assert_eq!(training_job_token.as_deref(), Some("secret-token"));
-        assert_eq!(
-          training_job_submit_command.as_deref(),
-          Some("remote-submit --json")
-        );
+        assert_eq!(training_job_submit_command.as_deref(), Some("remote-submit --json"));
       }
       other => panic!("unexpected command: {other:?}"),
     }
@@ -3524,10 +3116,7 @@ mod tests {
         training_job_status_command,
         ..
       } => {
-        assert_eq!(
-          training_job_endpoint.as_deref(),
-          Some("https://jobs.example.test/v1")
-        );
+        assert_eq!(training_job_endpoint.as_deref(), Some("https://jobs.example.test/v1"));
         assert_eq!(training_job_token.as_deref(), Some("secret-token"));
         assert_eq!(training_job_status_command, None);
       }
@@ -3554,10 +3143,7 @@ mod tests {
         training_job_status_command,
         ..
       } => {
-        assert_eq!(
-          training_job_status_command.as_deref(),
-          Some("python3 -c \"print(1)\"")
-        );
+        assert_eq!(training_job_status_command.as_deref(), Some("python3 -c \"print(1)\""));
       }
       other => panic!("unexpected command: {other:?}"),
     }
@@ -3615,10 +3201,7 @@ mod tests {
         assert_eq!(target_face.as_deref(), Some("north"));
         assert_eq!(target_semantics, "block_center");
         assert!(use_closed_scene_toy_provider);
-        assert_eq!(
-          closed_scene_fixture_path.as_deref(),
-          Some("/tmp/fixture.json")
-        );
+        assert_eq!(closed_scene_fixture_path.as_deref(), Some("/tmp/fixture.json"));
         assert_eq!(output_dir, "/tmp/query");
         assert_eq!(target_app, "com.mojang.minecraft");
         assert_eq!(target_title, "Minecraft");
@@ -3679,10 +3262,7 @@ mod tests {
         ..
       } => {
         assert_eq!(telemetry_sample.as_deref(), Some("/tmp/pre.jsonl"));
-        assert_eq!(
-          verification_expected_item_id.as_deref(),
-          Some("minecraft:stone")
-        );
+        assert_eq!(verification_expected_item_id.as_deref(), Some("minecraft:stone"));
       }
       other => panic!("unexpected command: {other:?}"),
     }
@@ -4085,10 +3665,7 @@ mod tests {
         ..
       } => {
         assert!(use_closed_scene_toy_provider);
-        assert_eq!(
-          closed_scene_fixture_path.as_deref(),
-          Some("/tmp/mc18-fixture.json")
-        );
+        assert_eq!(closed_scene_fixture_path.as_deref(), Some("/tmp/mc18-fixture.json"));
         assert!(query_command.is_none());
       }
       other => panic!("unexpected command: {other:?}"),
@@ -4136,8 +3713,7 @@ mod tests {
       "minecraft".to_string(),
       "validate-3dgs-training-result".to_string(),
       "--training-result-artifact-manifest".to_string(),
-      "/tmp/training-result-artifacts/minecraft-3dgs-training-result-artifact-manifest.json"
-        .to_string(),
+      "/tmp/training-result-artifacts/minecraft-3dgs-training-result-artifact-manifest.json".to_string(),
       "--output-dir".to_string(),
       "/tmp/semantic".to_string(),
     ])
@@ -4149,10 +3725,7 @@ mod tests {
         output_dir,
         ..
       } => {
-        assert!(
-          training_result_artifact_manifest_path
-            .ends_with("minecraft-3dgs-training-result-artifact-manifest.json")
-        );
+        assert!(training_result_artifact_manifest_path.ends_with("minecraft-3dgs-training-result-artifact-manifest.json"));
         assert_eq!(output_dir, "/tmp/semantic");
       }
       other => panic!("unexpected command: {other:?}"),
@@ -4182,10 +3755,7 @@ mod tests {
         artifact_fetch_command,
         ..
       } => {
-        assert_eq!(
-          training_result_manifest_path,
-          "/tmp/training-result/minecraft-3dgs-training-result.json"
-        );
+        assert_eq!(training_result_manifest_path, "/tmp/training-result/minecraft-3dgs-training-result.json");
         assert_eq!(output_dir, "/tmp/result-artifacts");
         assert_eq!(training_job_endpoint, None);
         assert_eq!(training_job_token, None);
@@ -4222,15 +3792,9 @@ mod tests {
         artifact_fetch_command,
         ..
       } => {
-        assert_eq!(
-          training_result_manifest_path,
-          "/tmp/training-result/minecraft-3dgs-training-result.json"
-        );
+        assert_eq!(training_result_manifest_path, "/tmp/training-result/minecraft-3dgs-training-result.json");
         assert_eq!(output_dir, "/tmp/result-artifacts");
-        assert_eq!(
-          training_job_endpoint.as_deref(),
-          Some("https://jobs.example.test/v1")
-        );
+        assert_eq!(training_job_endpoint.as_deref(), Some("https://jobs.example.test/v1"));
         assert_eq!(training_job_token.as_deref(), Some("secret-token"));
         assert_eq!(artifact_fetch_command.as_deref(), Some("python3 fetch.py"));
       }
@@ -4296,10 +3860,7 @@ mod tests {
         output_path,
         ..
       } => {
-        assert_eq!(
-          bundle_manifest_paths,
-          vec!["/tmp/rich/run.json", "/tmp/flat/run.json"]
-        );
+        assert_eq!(bundle_manifest_paths, vec!["/tmp/rich/run.json", "/tmp/flat/run.json"]);
         assert_eq!(output_path, "/tmp/samples.json");
       }
       other => panic!("unexpected command: {other:?}"),
@@ -4397,14 +3958,8 @@ mod tests {
         port,
         store_root,
       } => {
-        assert_eq!(
-          host,
-          auv_cli::api::session_service::transport::DEFAULT_SESSION_API_HOST
-        );
-        assert_eq!(
-          port,
-          auv_cli::api::session_service::transport::DEFAULT_SESSION_API_PORT
-        );
+        assert_eq!(host, auv_cli::api::session_service::transport::DEFAULT_SESSION_API_HOST);
+        assert_eq!(port, auv_cli::api::session_service::transport::DEFAULT_SESSION_API_PORT);
         assert_eq!(store_root.as_deref(), Some("/tmp/auv-session-store"));
       }
       other => panic!("unexpected command: {other:?}"),
@@ -4425,8 +3980,7 @@ mod tests {
 
   #[test]
   fn parse_mcp_command() {
-    let command =
-      parse_cli(&["mcp".to_string(), "serve".to_string()]).expect("mcp serve command should parse");
+    let command = parse_cli(&["mcp".to_string(), "serve".to_string()]).expect("mcp serve command should parse");
 
     match command {
       CliCommand::McpServe => {}
@@ -4549,8 +4103,7 @@ mod tests {
 
   #[test]
   fn parse_list_commands_tombstone() {
-    let command = parse_cli(&["list-commands".to_string()])
-      .expect("list-commands should parse to tombstone command");
+    let command = parse_cli(&["list-commands".to_string()]).expect("list-commands should parse to tombstone command");
     match command {
       CliCommand::ListCommandsTombstone => {}
       other => panic!("unexpected command: {other:?}"),
@@ -4559,8 +4112,7 @@ mod tests {
 
   #[test]
   fn parse_invoke_help_without_command_id() {
-    let command =
-      parse_cli(&["invoke".to_string(), "--help".to_string()]).expect("invoke --help should parse");
+    let command = parse_cli(&["invoke".to_string(), "--help".to_string()]).expect("invoke --help should parse");
     match command {
       CliCommand::InvokeHelp { command_id } => assert!(command_id.is_none()),
       other => panic!("unexpected command: {other:?}"),
@@ -4631,14 +4183,8 @@ mod tests {
         request, inspect, ..
       } => {
         assert_eq!(request.command_id, "input.typeText");
-        assert_eq!(
-          request.inputs.get("text").map(String::as_str),
-          Some("--store-root")
-        );
-        assert_eq!(
-          request.inputs.get("label").map(String::as_str),
-          Some("literal-label")
-        );
+        assert_eq!(request.inputs.get("text").map(String::as_str), Some("--store-root"));
+        assert_eq!(request.inputs.get("label").map(String::as_str), Some("literal-label"));
         assert_eq!(inspect.store_root, None);
       }
       other => panic!("unexpected command: {other:?}"),
@@ -4660,10 +4206,7 @@ mod tests {
       CliCommand::Invoke { request, .. } => {
         assert_eq!(request.command_id, "qqmusic.playVisibleAnchor.v0");
         assert!(request.dry_run);
-        assert_eq!(
-          request.target.application_id.as_deref(),
-          Some("com.tencent.QQMusicMac")
-        );
+        assert_eq!(request.target.application_id.as_deref(), Some("com.tencent.QQMusicMac"));
       }
       other => panic!("unexpected command: {other:?}"),
     }
@@ -4734,8 +4277,7 @@ mod tests {
 
   #[test]
   fn parse_xtask_generate_swift_bridge_command() {
-    let command = parse_cli(&["--xtask".to_string(), "generate-swift-bridge".to_string()])
-      .expect("xtask command should parse");
+    let command = parse_cli(&["--xtask".to_string(), "generate-swift-bridge".to_string()]).expect("xtask command should parse");
 
     match command {
       CliCommand::XtaskGenerateSwiftBridge => {}
@@ -4745,8 +4287,7 @@ mod tests {
 
   #[test]
   fn parse_doctor_permission_check_command() {
-    let command =
-      parse_cli(&["doctor".to_string(), "--json".to_string()]).expect("doctor should parse");
+    let command = parse_cli(&["doctor".to_string(), "--json".to_string()]).expect("doctor should parse");
 
     match command {
       CliCommand::PermissionCheck { json } => assert!(json),
@@ -4845,8 +4386,7 @@ mod tests {
   }
 
   #[test]
-  fn parse_candidate_action_run_command_without_dev_self_minted_consent_does_not_require_granted_by()
-   {
+  fn parse_candidate_action_run_command_without_dev_self_minted_consent_does_not_require_granted_by() {
     let command = parse_cli(&[
       "candidate-action".to_string(),
       "run".to_string(),
@@ -4872,8 +4412,7 @@ mod tests {
   }
 
   #[test]
-  fn parse_candidate_action_run_command_requires_granted_by_when_dev_self_minted_consent_is_enabled()
-   {
+  fn parse_candidate_action_run_command_requires_granted_by_when_dev_self_minted_consent_is_enabled() {
     let error = parse_cli(&[
       "candidate-action".to_string(),
       "run".to_string(),
@@ -4887,10 +4426,7 @@ mod tests {
     ])
     .expect_err("dev self-minted consent without granted-by should be rejected");
 
-    assert_eq!(
-      error,
-      "--granted-by is required when --dev-self-minted-consent is set"
-    );
+    assert_eq!(error, "--granted-by is required when --dev-self-minted-consent is set");
   }
 
   #[test]
@@ -4967,10 +4503,7 @@ mod tests {
 
     match command {
       CliCommand::CandidateActionRun { request, .. } => {
-        assert_eq!(
-          request.intent.as_deref(),
-          Some("type hello into the main text area")
-        );
+        assert_eq!(request.intent.as_deref(), Some("type hello into the main text area"));
         assert_eq!(request.proposer_model.as_deref(), Some("gpt-5.5"));
         assert_eq!(request.query, None);
         assert_eq!(request.role, None);
@@ -5016,10 +4549,7 @@ mod tests {
     ])
     .expect_err("combined consent flags should be rejected");
 
-    assert_eq!(
-      error,
-      "--dev-self-minted-consent cannot be combined with --human-gesture-consent"
-    );
+    assert_eq!(error, "--dev-self-minted-consent cannot be combined with --human-gesture-consent");
   }
 
   #[test]

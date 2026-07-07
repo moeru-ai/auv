@@ -128,16 +128,11 @@ pub(crate) fn coverage_wire_to_view(wire: &ScanCoverageWire) -> CoverageView {
 
 /// Read `scan-coverage.json` from a scan frame directory.
 #[cfg(test)]
-pub(crate) fn read_coverage_artifact_from_scan_dir(
-  dir: &Path,
-) -> Result<ScanCoverageWire, CoverageArtifactError> {
+pub(crate) fn read_coverage_artifact_from_scan_dir(dir: &Path) -> Result<ScanCoverageWire, CoverageArtifactError> {
   read_coverage_artifact(&dir.join(SCAN_COVERAGE_ARTIFACT_FILE_NAME))
 }
 
-pub fn write_coverage_artifact(
-  dir: &Path,
-  coverage: &ScanCoverageWire,
-) -> Result<PathBuf, CoverageArtifactError> {
+pub fn write_coverage_artifact(dir: &Path, coverage: &ScanCoverageWire) -> Result<PathBuf, CoverageArtifactError> {
   if coverage.schema_version != SCAN_COVERAGE_SCHEMA_VERSION {
     return Err(CoverageArtifactError::SchemaMismatch {
       found: coverage.schema_version.clone(),
@@ -189,8 +184,7 @@ mod tests {
   static BUNDLE_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
   fn two_frame_bundle() -> crate::reader::ScanFrameBundle {
-    let fixture_dir =
-      PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/two_frame_v0");
+    let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/two_frame_v0");
     let seq = BUNDLE_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
     let out_dir = env::temp_dir().join(format!("auv-scan-coverage-wire-{}-{}", process::id(), seq));
     let _ = fs::remove_dir_all(&out_dir);
@@ -266,11 +260,7 @@ mod tests {
   fn read_coverage_artifact_from_scan_dir_roundtrip() {
     let wire = coverage_view_to_wire(&stable_coverage_view());
     let seq = ARTIFACT_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
-    let out_dir = env::temp_dir().join(format!(
-      "auv-scan-coverage-scan-dir-{}-{}",
-      process::id(),
-      seq
-    ));
+    let out_dir = env::temp_dir().join(format!("auv-scan-coverage-scan-dir-{}-{}", process::id(), seq));
     let _ = fs::remove_dir_all(&out_dir);
     write_coverage_artifact(&out_dir, &wire).expect("write");
     let read_back = read_coverage_artifact_from_scan_dir(&out_dir).expect("read dir");
@@ -282,11 +272,7 @@ mod tests {
   fn write_read_coverage_artifact_roundtrip() {
     let wire = coverage_view_to_wire(&stable_coverage_view());
     let seq = ARTIFACT_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
-    let out_dir = env::temp_dir().join(format!(
-      "auv-scan-coverage-roundtrip-{}-{}",
-      process::id(),
-      seq
-    ));
+    let out_dir = env::temp_dir().join(format!("auv-scan-coverage-roundtrip-{}-{}", process::id(), seq));
     let _ = fs::remove_dir_all(&out_dir);
     let written = write_coverage_artifact(&out_dir, &wire).expect("write");
     let read_back = read_coverage_artifact(&written).expect("read");
@@ -309,20 +295,11 @@ mod tests {
 
   #[test]
   fn read_coverage_artifact_rejects_missing_schema_version() {
-    let path = env::temp_dir().join(format!(
-      "auv-scan-coverage-missing-schema-{}",
-      process::id()
-    ));
-    fs::write(
-      &path,
-      r#"{"entries":[],"open_uncertainty_codes":[],"negative_evidence":[],"completeness":{"status":"complete"}}"#,
-    )
-    .expect("write");
+    let path = env::temp_dir().join(format!("auv-scan-coverage-missing-schema-{}", process::id()));
+    fs::write(&path, r#"{"entries":[],"open_uncertainty_codes":[],"negative_evidence":[],"completeness":{"status":"complete"}}"#)
+      .expect("write");
     let err = read_coverage_artifact(&path).expect_err("missing");
-    assert!(matches!(
-      err,
-      CoverageArtifactError::MissingField("schema_version")
-    ));
+    assert!(matches!(err, CoverageArtifactError::MissingField("schema_version")));
     let _ = fs::remove_file(&path);
   }
 
@@ -336,8 +313,7 @@ mod tests {
   #[test]
   fn coverage_view_to_wire_matches_golden_no_observation() {
     let wire = coverage_view_to_wire(&no_observation_coverage_view());
-    let golden =
-      read_coverage_artifact(&golden_path("coverage_no_observation_v0")).expect("golden");
+    let golden = read_coverage_artifact(&golden_path("coverage_no_observation_v0")).expect("golden");
     assert_eq!(wire, golden);
   }
 
@@ -359,10 +335,7 @@ mod tests {
     ];
     for (scenario, view) in scenarios {
       let wire = coverage_view_to_wire(&view);
-      let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/scan/coverage")
-        .join(scenario)
-        .join("golden");
+      let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/coverage").join(scenario).join("golden");
       fs::create_dir_all(&dir).expect("mkdir");
       write_coverage_artifact(&dir, &wire).expect("write golden");
     }

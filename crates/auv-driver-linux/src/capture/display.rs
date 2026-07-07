@@ -41,57 +41,33 @@ pub fn list_targets() -> DriverResult<Vec<DisplayTarget>> {
   Err(auv_driver::error::DriverError::unsupported("display.list"))
 }
 
-pub fn resolve_target(
-  targets: &[DisplayTarget],
-  selector: Option<&str>,
-) -> DriverResult<DisplayTarget> {
+pub fn resolve_target(targets: &[DisplayTarget], selector: Option<&str>) -> DriverResult<DisplayTarget> {
   if let Some(selector) = selector {
     let selector = selector.trim();
     return targets
       .iter()
-      .find(|target| {
-        target.display.id == selector
-          || target
-            .display
-            .name
-            .as_deref()
-            .is_some_and(|display_ref| display_ref == selector)
-      })
+      .find(|target| target.display.id == selector || target.display.name.as_deref().is_some_and(|display_ref| display_ref == selector))
       .cloned()
       .ok_or_else(|| not_found(format!("display {selector:?}")));
   }
 
-  targets
-    .iter()
-    .find(|target| target.display.is_primary)
-    .or_else(|| targets.first())
-    .cloned()
-    .ok_or_else(|| not_found("primary display"))
+  targets.iter().find(|target| target.display.is_primary).or_else(|| targets.first()).cloned().ok_or_else(|| not_found("primary display"))
 }
 
-pub fn resolve_for_region(
-  targets: &[DisplayTarget],
-  selector: Option<&str>,
-  region: Rect,
-) -> DriverResult<DisplayTarget> {
+pub fn resolve_for_region(targets: &[DisplayTarget], selector: Option<&str>, region: Rect) -> DriverResult<DisplayTarget> {
   let selected = if selector.is_some() {
     vec![resolve_target(targets, selector)?]
   } else {
     targets.to_vec()
   };
-  selected
-    .into_iter()
-    .find(|target| rect_contains_rect(target.display.frame, region))
-    .ok_or_else(|| not_found("display containing region"))
+  selected.into_iter().find(|target| rect_contains_rect(target.display.frame, region)).ok_or_else(|| not_found("display containing region"))
 }
 
 pub fn selected_target_or_none(selector: Option<&str>) -> DriverResult<Option<DisplayTarget>> {
   let targets = match list_targets() {
     Ok(targets) => targets,
     Err(error) if selector.is_some() => {
-      return Err(backend(format!(
-        "failed to resolve selected display via {WAYLAND_DISPLAY_BACKEND}: {error}"
-      )));
+      return Err(backend(format!("failed to resolve selected display via {WAYLAND_DISPLAY_BACKEND}: {error}")));
     }
     Err(_) => return Ok(None),
   };
@@ -159,19 +135,8 @@ impl Dispatch<WlRegistry, GlobalListContents> for WaylandDisplayState {
 
 #[cfg(target_os = "linux")]
 impl Dispatch<WlOutput, ()> for WaylandDisplayState {
-  fn event(
-    state: &mut Self,
-    wl_output: &WlOutput,
-    event: wl_output::Event,
-    _: &(),
-    _: &Connection,
-    _: &QueueHandle<Self>,
-  ) {
-    let Some(output) = state
-      .outputs
-      .iter_mut()
-      .find(|output| output.wl_output == *wl_output)
-    else {
+  fn event(state: &mut Self, wl_output: &WlOutput, event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    let Some(output) = state.outputs.iter_mut().find(|output| output.wl_output == *wl_output) else {
       return;
     };
 
@@ -192,14 +157,7 @@ delegate_noop!(WaylandDisplayState: ignore ZxdgOutputManagerV1);
 
 #[cfg(target_os = "linux")]
 impl Dispatch<ZxdgOutputV1, usize> for WaylandDisplayState {
-  fn event(
-    state: &mut Self,
-    _: &ZxdgOutputV1,
-    event: zxdg_output_v1::Event,
-    output_index: &usize,
-    _: &Connection,
-    _: &QueueHandle<Self>,
-  ) {
+  fn event(state: &mut Self, _: &ZxdgOutputV1, event: zxdg_output_v1::Event, output_index: &usize, _: &Connection, _: &QueueHandle<Self>) {
     let Some(output) = state.outputs.get_mut(*output_index) else {
       return;
     };
@@ -226,8 +184,7 @@ impl Dispatch<ZxdgOutputV1, usize> for WaylandDisplayState {
 fn wayland_display_targets() -> DriverResult<Vec<DisplayTarget>> {
   use wayland_client::globals::registry_queue_init;
 
-  let connection = Connection::connect_to_env()
-    .map_err(|error| backend(format!("failed to connect to Wayland compositor: {error}")))?;
+  let connection = Connection::connect_to_env().map_err(|error| backend(format!("failed to connect to Wayland compositor: {error}")))?;
   let (globals, mut event_queue) = registry_queue_init::<WaylandDisplayState>(&connection)
     .map_err(|error| backend(format!("failed to initialize Wayland registry: {error}")))?;
   let qh = event_queue.handle();
@@ -236,19 +193,9 @@ fn wayland_display_targets() -> DriverResult<Vec<DisplayTarget>> {
     .map_err(|error| backend(format!("failed to bind xdg-output manager: {error}")))?;
 
   let mut state = WaylandDisplayState::default();
-  for global in globals
-    .contents()
-    .clone_list()
-    .into_iter()
-    .filter(|global| global.interface == "wl_output")
-  {
+  for global in globals.contents().clone_list().into_iter().filter(|global| global.interface == "wl_output") {
     state.outputs.push(WaylandOutputState {
-      wl_output: globals.registry().bind::<WlOutput, _, _>(
-        global.name,
-        global.version.min(4),
-        &qh,
-        (),
-      ),
+      wl_output: globals.registry().bind::<WlOutput, _, _>(global.name, global.version.min(4), &qh, ()),
       name: None,
       description: None,
       physical_size: None,
@@ -258,21 +205,11 @@ fn wayland_display_targets() -> DriverResult<Vec<DisplayTarget>> {
     });
   }
 
-  event_queue
-    .roundtrip(&mut state)
-    .map_err(|error| backend(format!("failed to read Wayland output metadata: {error}")))?;
+  event_queue.roundtrip(&mut state).map_err(|error| backend(format!("failed to read Wayland output metadata: {error}")))?;
 
-  let xdg_outputs = state
-    .outputs
-    .iter()
-    .enumerate()
-    .map(|(index, output)| output_manager.get_xdg_output(&output.wl_output, &qh, index))
-    .collect::<Vec<_>>();
-  event_queue.roundtrip(&mut state).map_err(|error| {
-    backend(format!(
-      "failed to read xdg-output logical geometry: {error}"
-    ))
-  })?;
+  let xdg_outputs =
+    state.outputs.iter().enumerate().map(|(index, output)| output_manager.get_xdg_output(&output.wl_output, &qh, index)).collect::<Vec<_>>();
+  event_queue.roundtrip(&mut state).map_err(|error| backend(format!("failed to read xdg-output logical geometry: {error}")))?;
   for output in xdg_outputs {
     output.destroy();
   }
@@ -281,31 +218,18 @@ fn wayland_display_targets() -> DriverResult<Vec<DisplayTarget>> {
     return Err(not_found("display"));
   }
 
-  state
-    .outputs
-    .into_iter()
-    .enumerate()
-    .map(output_target)
-    .collect()
+  state.outputs.into_iter().enumerate().map(output_target).collect()
 }
 
 #[cfg(target_os = "linux")]
 fn output_target((index, output): (usize, WaylandOutputState)) -> DriverResult<DisplayTarget> {
-  let (x, y) = output
-    .logical_position
-    .ok_or_else(|| backend("Wayland output is missing xdg-output logical_position"))?;
-  let (width, height) = output
-    .logical_size
-    .ok_or_else(|| backend("Wayland output is missing xdg-output logical_size"))?;
+  let (x, y) = output.logical_position.ok_or_else(|| backend("Wayland output is missing xdg-output logical_position"))?;
+  let (width, height) = output.logical_size.ok_or_else(|| backend("Wayland output is missing xdg-output logical_size"))?;
   if width <= 0 || height <= 0 {
-    return Err(backend(format!(
-      "Wayland output has invalid logical size {width}x{height}"
-    )));
+    return Err(backend(format!("Wayland output has invalid logical size {width}x{height}")));
   }
 
-  let id = output
-    .name
-    .unwrap_or_else(|| format!("wayland-output-{index}"));
+  let id = output.name.unwrap_or_else(|| format!("wayland-output-{index}"));
   // NOTICE(wayland-primary-output): Wayland/xdg-output does not expose a
   // compositor-generic primary-output flag. AUV marks the first advertised
   // output primary only to preserve existing default display resolution.
@@ -320,12 +244,7 @@ fn output_target((index, output): (usize, WaylandOutputState)) -> DriverResult<D
     display: Display {
       id,
       name: output.description,
-      frame: Rect::new(
-        f64::from(x),
-        f64::from(y),
-        f64::from(width),
-        f64::from(height),
-      ),
+      frame: Rect::new(f64::from(x), f64::from(y), f64::from(width), f64::from(height)),
       coordinate_space: CoordinateSpace::Screen,
       scale_factor,
       is_primary,

@@ -5,8 +5,7 @@ use auv_driver::geometry::Point;
 use serde::{Deserialize, Serialize};
 
 use crate::training_result_spatial_query::{
-  TrainingResultSpatialQueryAnswer, TrainingResultSpatialQueryReason,
-  TrainingResultSpatialQueryRequest, TrainingResultSpatialQueryStatus,
+  TrainingResultSpatialQueryAnswer, TrainingResultSpatialQueryReason, TrainingResultSpatialQueryRequest, TrainingResultSpatialQueryStatus,
 };
 use crate::types::{BlockFace, BlockPosition, MinecraftTargetSemantics, ProjectionVisibility};
 
@@ -60,9 +59,9 @@ impl ClosedSceneToyFixtureLoadError {
     match self {
       Self::Io(error) => format!("failed to read closed-scene fixture: {error}"),
       Self::Parse(error) => format!("failed to parse closed-scene fixture JSON: {error}"),
-      Self::UnsupportedSchemaVersion { found } => format!(
-        "unsupported closed-scene fixture schema_version {found}; expected {CLOSED_SCENE_TOY_FIXTURE_SCHEMA_VERSION}"
-      ),
+      Self::UnsupportedSchemaVersion { found } => {
+        format!("unsupported closed-scene fixture schema_version {found}; expected {CLOSED_SCENE_TOY_FIXTURE_SCHEMA_VERSION}")
+      }
       Self::EmptyFixture => "closed-scene fixture has no frames".to_string(),
       Self::DuplicateLabelAnswer { label_id } => format!(
         "closed-scene fixture has multiple answer rows for label `{label_id}`; MC-18 v1 allows at most one authoritative row per label across all frames"
@@ -71,13 +70,10 @@ impl ClosedSceneToyFixtureLoadError {
   }
 }
 
-pub fn load_closed_scene_fixture(
-  path: &Path,
-) -> Result<ClosedSceneToyFixture, ClosedSceneToyFixtureLoadError> {
-  let bytes =
-    fs::read(path).map_err(|error| ClosedSceneToyFixtureLoadError::Io(error.to_string()))?;
-  let fixture: ClosedSceneToyFixture = serde_json::from_slice(&bytes)
-    .map_err(|error| ClosedSceneToyFixtureLoadError::Parse(error.to_string()))?;
+pub fn load_closed_scene_fixture(path: &Path) -> Result<ClosedSceneToyFixture, ClosedSceneToyFixtureLoadError> {
+  let bytes = fs::read(path).map_err(|error| ClosedSceneToyFixtureLoadError::Io(error.to_string()))?;
+  let fixture: ClosedSceneToyFixture =
+    serde_json::from_slice(&bytes).map_err(|error| ClosedSceneToyFixtureLoadError::Parse(error.to_string()))?;
   if fixture.schema_version != CLOSED_SCENE_TOY_FIXTURE_SCHEMA_VERSION {
     return Err(ClosedSceneToyFixtureLoadError::UnsupportedSchemaVersion {
       found: fixture.schema_version,
@@ -93,9 +89,7 @@ pub fn load_closed_scene_fixture(
 /// MC-18 v1 fixture contract: each closed label may appear in at most one frame answer
 /// row. `basis_frame_id` is the witness for that row; duplicate rows would make frame
 /// choice depend on array order instead of an explicit rule.
-fn validate_one_answer_row_per_label(
-  fixture: &ClosedSceneToyFixture,
-) -> Result<(), ClosedSceneToyFixtureLoadError> {
+fn validate_one_answer_row_per_label(fixture: &ClosedSceneToyFixture) -> Result<(), ClosedSceneToyFixtureLoadError> {
   let mut seen = std::collections::HashSet::new();
   for frame in &fixture.frames {
     for answer in &frame.answers {
@@ -117,10 +111,7 @@ pub fn resolve_closed_label_answer(
     return TrainingResultSpatialQueryAnswer {
       status: TrainingResultSpatialQueryStatus::Blocked,
       reason: Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket),
-      message: Some(
-        "MC-18 closed_scene_toy provider blocked: target not in closed label set (fixture lookup only)"
-          .to_string(),
-      ),
+      message: Some("MC-18 closed_scene_toy provider blocked: target not in closed label set (fixture lookup only)".to_string()),
       basis_frame_id: None,
       visibility: None,
       screen_point: None,
@@ -133,10 +124,7 @@ pub fn resolve_closed_label_answer(
     return TrainingResultSpatialQueryAnswer {
       status: TrainingResultSpatialQueryStatus::Blocked,
       reason: Some(TrainingResultSpatialQueryReason::ProviderOutputInvalid),
-      message: Some(format!(
-        "MC-18 closed_scene_toy provider blocked: no fixture answer row for label `{}`",
-        label.id
-      )),
+      message: Some(format!("MC-18 closed_scene_toy provider blocked: no fixture answer row for label `{}`", label.id)),
       basis_frame_id: None,
       visibility: None,
       screen_point: None,
@@ -149,10 +137,7 @@ pub fn resolve_closed_label_answer(
     status: TrainingResultSpatialQueryStatus::Answered,
     reason: None,
     message: Some(MC18_V1_TOY_ANSWER_MESSAGE.to_string()),
-    basis_frame_id: Some(format!(
-      "closed_scene_toy:{}:{}",
-      fixture.fixture_id, _frame.basis_frame_id
-    )),
+    basis_frame_id: Some(format!("closed_scene_toy:{}:{}", fixture.fixture_id, _frame.basis_frame_id)),
     visibility: Some(answer.visibility),
     screen_point: answer.screen_point,
     match_radius_px: None,
@@ -167,9 +152,7 @@ fn find_matching_label<'a>(
   fixture.labels.iter().find(|label| {
     label.block == request.target_block
       && label.semantics == request.target_semantics
-      && label
-        .face
-        .is_none_or(|label_face| request.target_face == Some(label_face))
+      && label.face.is_none_or(|label_face| request.target_face == Some(label_face))
   })
 }
 
@@ -178,11 +161,7 @@ fn find_label_answer<'a>(
   label_id: &str,
 ) -> Option<(&'a ClosedSceneToyFrame, &'a ClosedSceneToyFrameAnswer)> {
   for frame in &fixture.frames {
-    if let Some(answer) = frame
-      .answers
-      .iter()
-      .find(|answer| answer.label_id == label_id)
-    {
+    if let Some(answer) = frame.answers.iter().find(|answer| answer.label_id == label_id) {
       return Some((frame, answer));
     }
   }
@@ -217,10 +196,7 @@ mod tests {
     }
   }
 
-  fn request_for(
-    block: BlockPosition,
-    face: Option<BlockFace>,
-  ) -> TrainingResultSpatialQueryRequest {
+  fn request_for(block: BlockPosition, face: Option<BlockFace>) -> TrainingResultSpatialQueryRequest {
     TrainingResultSpatialQueryRequest {
       source_training_result_artifact_manifest_path: "/tmp/d11.json".to_string(),
       source_training_result_manifest_path: "/tmp/result.json".to_string(),
@@ -233,8 +209,7 @@ mod tests {
       trainer_backend: "nerfstudio.splatfacto".to_string(),
       job_backend: "remote".to_string(),
       normalized_result_dir: "/tmp/normalized".to_string(),
-      query_kind:
-        crate::training_result_spatial_query::TrainingResultSpatialQueryKind::BlockProjection,
+      query_kind: crate::training_result_spatial_query::TrainingResultSpatialQueryKind::BlockProjection,
       target_block: block,
       target_face: face,
       target_semantics: MinecraftTargetSemantics::HitFaceCenter,
@@ -247,32 +222,19 @@ mod tests {
     let path = temp.path().join("fixture.json");
     let mut fixture = sample_fixture();
     fixture.schema_version = 99;
-    fs::write(
-      &path,
-      serde_json::to_vec_pretty(&fixture).expect("serialize"),
-    )
-    .expect("write");
+    fs::write(&path, serde_json::to_vec_pretty(&fixture).expect("serialize")).expect("write");
 
     let error = load_closed_scene_fixture(&path).expect_err("unsupported schema");
-    assert!(matches!(
-      error,
-      ClosedSceneToyFixtureLoadError::UnsupportedSchemaVersion { found: 99 }
-    ));
+    assert!(matches!(error, ClosedSceneToyFixtureLoadError::UnsupportedSchemaVersion { found: 99 }));
   }
 
   #[test]
   fn resolve_visible_label_answers_with_toy_basis_frame_id() {
     let fixture = sample_fixture();
-    let answer = resolve_closed_label_answer(
-      &fixture,
-      &request_for(BlockPosition::new(511, 73, 728), Some(BlockFace::North)),
-    );
+    let answer = resolve_closed_label_answer(&fixture, &request_for(BlockPosition::new(511, 73, 728), Some(BlockFace::North)));
 
     assert_eq!(answer.status, TrainingResultSpatialQueryStatus::Answered);
-    assert_eq!(
-      answer.basis_frame_id.as_deref(),
-      Some("closed_scene_toy:mc18-test-v1:frame-0003")
-    );
+    assert_eq!(answer.basis_frame_id.as_deref(), Some("closed_scene_toy:mc18-test-v1:frame-0003"));
     assert_eq!(answer.visibility, Some(ProjectionVisibility::Visible));
     assert!(answer.screen_point.is_some());
   }
@@ -280,14 +242,10 @@ mod tests {
   #[test]
   fn resolve_absent_label_blocks_honestly() {
     let fixture = sample_fixture();
-    let answer =
-      resolve_closed_label_answer(&fixture, &request_for(BlockPosition::new(9, 9, 9), None));
+    let answer = resolve_closed_label_answer(&fixture, &request_for(BlockPosition::new(9, 9, 9), None));
 
     assert_eq!(answer.status, TrainingResultSpatialQueryStatus::Blocked);
-    assert_eq!(
-      answer.reason,
-      Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket)
-    );
+    assert_eq!(answer.reason, Some(TrainingResultSpatialQueryReason::TargetBlockAbsentFromScenePacket));
   }
 
   #[test]
@@ -303,17 +261,10 @@ mod tests {
         screen_point: Some(Point::new(1200.0, 360.0)),
       }],
     });
-    fs::write(
-      &path,
-      serde_json::to_vec_pretty(&fixture).expect("serialize"),
-    )
-    .expect("write");
+    fs::write(&path, serde_json::to_vec_pretty(&fixture).expect("serialize")).expect("write");
 
     let error = load_closed_scene_fixture(&path).expect_err("duplicate label row");
-    assert!(matches!(
-      error,
-      ClosedSceneToyFixtureLoadError::DuplicateLabelAnswer { .. }
-    ));
+    assert!(matches!(error, ClosedSceneToyFixtureLoadError::DuplicateLabelAnswer { .. }));
   }
 
   #[test]
@@ -357,22 +308,10 @@ mod tests {
     };
     validate_one_answer_row_per_label(&fixture).expect("valid multi-frame fixture");
 
-    let door = resolve_closed_label_answer(
-      &fixture,
-      &request_for(BlockPosition::new(511, 73, 728), Some(BlockFace::North)),
-    );
-    assert_eq!(
-      door.basis_frame_id.as_deref(),
-      Some("closed_scene_toy:mc18-multi-frame-v1:frame-0003")
-    );
+    let door = resolve_closed_label_answer(&fixture, &request_for(BlockPosition::new(511, 73, 728), Some(BlockFace::North)));
+    assert_eq!(door.basis_frame_id.as_deref(), Some("closed_scene_toy:mc18-multi-frame-v1:frame-0003"));
 
-    let button = resolve_closed_label_answer(
-      &fixture,
-      &request_for(BlockPosition::new(512, 73, 728), Some(BlockFace::East)),
-    );
-    assert_eq!(
-      button.basis_frame_id.as_deref(),
-      Some("closed_scene_toy:mc18-multi-frame-v1:frame-0004")
-    );
+    let button = resolve_closed_label_answer(&fixture, &request_for(BlockPosition::new(512, 73, 728), Some(BlockFace::East)));
+    assert_eq!(button.basis_frame_id.as_deref(), Some("closed_scene_toy:mc18-multi-frame-v1:frame-0004"));
   }
 }

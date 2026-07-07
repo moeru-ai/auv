@@ -16,10 +16,7 @@ pub struct ScanBounds {
 }
 
 impl ScanBounds {
-  pub fn validate_positive(
-    &self,
-    field: &'static str,
-  ) -> Result<(), crate::artifact::ScanArtifactError> {
+  pub fn validate_positive(&self, field: &'static str) -> Result<(), crate::artifact::ScanArtifactError> {
     if self.width <= 0 {
       return Err(crate::artifact::ScanArtifactError::InvalidBounds { field });
     }

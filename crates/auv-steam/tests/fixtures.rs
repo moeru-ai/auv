@@ -1,6 +1,6 @@
 use auv_steam::library::{
-  Grounding, InstalledAppRead, InstalledAppSource, LibraryDiagnostic, LibraryDiagnosticSeverity,
-  LibraryQuery, LibrarySource, LibraryStatus, SteamError, SteamInstalledApp, SteamLibraryStore,
+  Grounding, InstalledAppRead, InstalledAppSource, LibraryDiagnostic, LibraryDiagnosticSeverity, LibraryQuery, LibrarySource, LibraryStatus,
+  SteamError, SteamInstalledApp, SteamLibraryStore,
 };
 
 #[derive(Clone, Debug)]
@@ -48,9 +48,7 @@ fn fixture_source_query_filters_installed_apps_by_normalized_contains_name() {
   };
   let store = SteamLibraryStore::new(source);
 
-  let result = store
-    .query(installed_name_query("LAT"))
-    .expect("fixture-backed query should succeed");
+  let result = store.query(installed_name_query("LAT")).expect("fixture-backed query should succeed");
 
   assert_eq!(result.apps.len(), 1);
   assert_eq!(result.apps[0].appid, 2379780);
@@ -73,9 +71,7 @@ fn fixture_source_query_preserves_warning_diagnostics() {
   };
   let store = SteamLibraryStore::new(source);
 
-  let result = store
-    .query(installed_name_query("lat"))
-    .expect("fixture-backed query should succeed");
+  let result = store.query(installed_name_query("lat")).expect("fixture-backed query should succeed");
 
   assert_eq!(result.apps.len(), 1);
   assert_eq!(result.diagnostics, vec![warning]);

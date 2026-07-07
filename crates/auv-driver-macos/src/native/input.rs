@@ -1,8 +1,7 @@
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
-  NativeActionResponse, click_window_point as native_click_window_point,
-  hotkey_in_window as native_hotkey_in_window, press_key_in_window as native_press_key_in_window,
-  scroll_window_point as native_scroll_window_point,
+  NativeActionResponse, click_window_point as native_click_window_point, hotkey_in_window as native_hotkey_in_window,
+  press_key_in_window as native_press_key_in_window, scroll_window_point as native_scroll_window_point,
   type_text_in_window as native_type_text_in_window,
 };
 use super::types::AuvResult;
@@ -54,25 +53,12 @@ pub fn click_window_point(
 }
 
 #[cfg(target_os = "macos")]
-pub fn type_text_in_window(
-  pid: i64,
-  window_number: i64,
-  text: String,
-  inter_char_delay_ms: u64,
-) -> AuvResult<()> {
-  action_result(
-    "type_text_in_window",
-    native_type_text_in_window(pid, window_number, text, inter_char_delay_ms),
-  )
+pub fn type_text_in_window(pid: i64, window_number: i64, text: String, inter_char_delay_ms: u64) -> AuvResult<()> {
+  action_result("type_text_in_window", native_type_text_in_window(pid, window_number, text, inter_char_delay_ms))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn type_text_in_window(
-  _pid: i64,
-  _window_number: i64,
-  _text: String,
-  _inter_char_delay_ms: u64,
-) -> AuvResult<()> {
+pub fn type_text_in_window(_pid: i64, _window_number: i64, _text: String, _inter_char_delay_ms: u64) -> AuvResult<()> {
   Err("macOS native window-targeted text input is unsupported on this target".to_string())
 }
 
@@ -89,16 +75,7 @@ pub fn scroll_window_point(
 ) -> AuvResult<()> {
   action_result(
     "scroll_window_point",
-    native_scroll_window_point(
-      pid,
-      window_number,
-      screen_x,
-      screen_y,
-      window_x,
-      window_y,
-      delta_x,
-      delta_y,
-    ),
+    native_scroll_window_point(pid, window_number, screen_x, screen_y, window_x, window_y, delta_x, delta_y),
   )
 }
 
@@ -118,10 +95,7 @@ pub fn scroll_window_point(
 
 #[cfg(target_os = "macos")]
 pub fn press_key_in_window(pid: i64, window_number: i64, key_code: i32) -> AuvResult<()> {
-  action_result(
-    "press_key_in_window",
-    native_press_key_in_window(pid, window_number, key_code),
-  )
+  action_result("press_key_in_window", native_press_key_in_window(pid, window_number, key_code))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -139,18 +113,7 @@ pub fn hotkey_in_window(
   option: bool,
   control: bool,
 ) -> AuvResult<()> {
-  action_result(
-    "hotkey_in_window",
-    native_hotkey_in_window(
-      pid,
-      window_number,
-      key_code,
-      command,
-      shift,
-      option,
-      control,
-    ),
-  )
+  action_result("hotkey_in_window", native_hotkey_in_window(pid, window_number, key_code, command, shift, option, control))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -168,12 +131,7 @@ pub fn hotkey_in_window(
 
 #[cfg(target_os = "macos")]
 fn action_result(operation: &str, response: NativeActionResponse) -> AuvResult<()> {
-  super::error::native_result(
-    operation,
-    response.ok.then_some(()),
-    response.error_message,
-    response.recovery_hint,
-  )
+  super::error::native_result(operation, response.ok.then_some(()), response.error_message, response.recovery_hint)
 }
 
 #[cfg(test)]

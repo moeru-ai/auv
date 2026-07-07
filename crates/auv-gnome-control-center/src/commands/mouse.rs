@@ -84,21 +84,15 @@ pub struct NaturalScrollingToggleResult {
   pub delivery: InputActionResult,
 }
 
-pub fn run_pointer_speed_set(
-  inputs: &PointerSpeedSetInputs,
-) -> Result<PointerSpeedSetResult, String> {
+pub fn run_pointer_speed_set(inputs: &PointerSpeedSetInputs) -> Result<PointerSpeedSetResult, String> {
   platform::run_set(inputs)
 }
 
-pub fn run_pointer_speed_roundtrip(
-  inputs: &PointerSpeedRoundtripInputs,
-) -> Result<PointerSpeedRoundtripResult, String> {
+pub fn run_pointer_speed_roundtrip(inputs: &PointerSpeedRoundtripInputs) -> Result<PointerSpeedRoundtripResult, String> {
   platform::run_roundtrip(inputs)
 }
 
-pub fn run_natural_scrolling_toggle(
-  inputs: &NaturalScrollingToggleInputs,
-) -> Result<NaturalScrollingToggleResult, String> {
+pub fn run_natural_scrolling_toggle(inputs: &NaturalScrollingToggleInputs) -> Result<NaturalScrollingToggleResult, String> {
   platform::run_toggle_natural_scrolling(inputs)
 }
 
@@ -120,15 +114,11 @@ mod platform {
     let (window, open_report) = open_or_resolve(&ResolveOptions {
       settle: Duration::from_millis(inputs.settle_ms),
     })?;
-    let session = LinuxDriver::new()
-      .open_local()
-      .map_err(|error| format!("failed to open Linux driver: {error}"))?;
+    let session = LinuxDriver::new().open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
     set_pointer_speed(&session, &window, open_report, inputs.position)
   }
 
-  pub fn run_roundtrip(
-    inputs: &PointerSpeedRoundtripInputs,
-  ) -> Result<PointerSpeedRoundtripResult, String> {
+  pub fn run_roundtrip(inputs: &PointerSpeedRoundtripInputs) -> Result<PointerSpeedRoundtripResult, String> {
     validate_position(inputs.first_position)?;
     validate_position(inputs.restore_position)?;
     let first = run_set(&PointerSpeedSetInputs {
@@ -147,15 +137,11 @@ mod platform {
     })
   }
 
-  pub fn run_toggle_natural_scrolling(
-    inputs: &NaturalScrollingToggleInputs,
-  ) -> Result<NaturalScrollingToggleResult, String> {
+  pub fn run_toggle_natural_scrolling(inputs: &NaturalScrollingToggleInputs) -> Result<NaturalScrollingToggleResult, String> {
     let (window, open_report) = open_or_resolve(&ResolveOptions {
       settle: Duration::from_millis(inputs.settle_ms),
     })?;
-    let session = LinuxDriver::new()
-      .open_local()
-      .map_err(|error| format!("failed to open Linux driver: {error}"))?;
+    let session = LinuxDriver::new().open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
     toggle_natural_scrolling(&session, &window, open_report)
   }
 
@@ -187,17 +173,9 @@ mod platform {
           ..ClickOptions::default()
         },
       )
-      .map_err(|error| {
-        format!(
-          "failed to click pointer speed slider at position {:.2}: {error}",
-          position
-        )
-      })?;
-    steps.push(
-      InteractionStep::new("set-pointer-speed", StepOutcome::Clicked)
-        .target(format!("{position:.2}"))
-        .note(format!("{delivery:?}")),
-    );
+      .map_err(|error| format!("failed to click pointer speed slider at position {:.2}: {error}", position))?;
+    steps
+      .push(InteractionStep::new("set-pointer-speed", StepOutcome::Clicked).target(format!("{position:.2}")).note(format!("{delivery:?}")));
     Ok(PointerSpeedSetResult {
       command: "mouse.set-pointer-speed",
       window: open_report,
@@ -225,20 +203,11 @@ mod platform {
     } else {
       NATURAL_SCROLLING
     };
-    let (switch_node, delivery) = click_visible_labeled_node_with_delivery(
-      session,
-      window,
-      target,
-      "toggle-natural-scrolling",
-      &mut steps,
-    )?;
+    let (switch_node, delivery) = click_visible_labeled_node_with_delivery(session, window, target, "toggle-natural-scrolling", &mut steps)?;
     std::thread::sleep(Duration::from_millis(250));
     let natural_scroll_after = read_natural_scroll_setting()?;
     if natural_scroll_after == natural_scroll_before {
-      return Err(format!(
-        "clicked {}, but natural-scroll remained {}",
-        switch_node.label, natural_scroll_after
-      ));
+      return Err(format!("clicked {}, but natural-scroll remained {}", switch_node.label, natural_scroll_after));
     }
     Ok(NaturalScrollingToggleResult {
       command: "mouse.toggle-natural-scrolling",
@@ -260,14 +229,8 @@ mod platform {
     select_visible_labeled_node(session, window, MOUSE_PAGE, "select-mouse", steps)
   }
 
-  fn snapshot_nodes(
-    session: &LinuxDriverSession,
-    window: &auv_driver::Window,
-  ) -> Result<Vec<SettingsNode>, String> {
-    let snapshot = session
-      .accessibility()
-      .snapshot_window(window)
-      .map_err(|error| format!("failed to capture AT-SPI tree: {error}"))?;
+  fn snapshot_nodes(session: &LinuxDriverSession, window: &auv_driver::Window) -> Result<Vec<SettingsNode>, String> {
+    let snapshot = session.accessibility().snapshot_window(window).map_err(|error| format!("failed to capture AT-SPI tree: {error}"))?;
     Ok(snapshot.nodes.iter().map(SettingsNode::from).collect())
   }
 
@@ -281,31 +244,19 @@ mod platform {
       .output()
       .map_err(|error| format!("failed to run gsettings: {error}"))?;
     if !output.status.success() {
-      return Err(format!(
-        "gsettings natural-scroll read failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-      ));
+      return Err(format!("gsettings natural-scroll read failed: {}", String::from_utf8_lossy(&output.stderr).trim()));
     }
     match String::from_utf8_lossy(&output.stdout).trim() {
       "true" => Ok(true),
       "false" => Ok(false),
-      value => Err(format!(
-        "unexpected gsettings natural-scroll value: {value}"
-      )),
+      value => Err(format!("unexpected gsettings natural-scroll value: {value}")),
     }
   }
 
-  fn slider_click_point(
-    window: &auv_driver::Window,
-    slider: &MatchedNode,
-    position: f64,
-  ) -> WindowPoint {
+  fn slider_click_point(window: &auv_driver::Window, slider: &MatchedNode, position: f64) -> WindowPoint {
     let position = position.clamp(0.0, 1.0);
     let screen = slider.bounds.center();
-    WindowPoint::new(
-      slider.bounds.origin.x + slider.bounds.size.width * position - window.frame.origin.x,
-      screen.y - window.frame.origin.y,
-    )
+    WindowPoint::new(slider.bounds.origin.x + slider.bounds.size.width * position - window.frame.origin.x, screen.y - window.frame.origin.y)
   }
 
   fn validate_position(position: f64) -> Result<(), String> {
@@ -324,15 +275,11 @@ mod platform {
     Err("GNOME Control Center workflows are only supported on Linux".to_string())
   }
 
-  pub fn run_roundtrip(
-    _inputs: &PointerSpeedRoundtripInputs,
-  ) -> Result<PointerSpeedRoundtripResult, String> {
+  pub fn run_roundtrip(_inputs: &PointerSpeedRoundtripInputs) -> Result<PointerSpeedRoundtripResult, String> {
     Err("GNOME Control Center workflows are only supported on Linux".to_string())
   }
 
-  pub fn run_toggle_natural_scrolling(
-    _inputs: &NaturalScrollingToggleInputs,
-  ) -> Result<NaturalScrollingToggleResult, String> {
+  pub fn run_toggle_natural_scrolling(_inputs: &NaturalScrollingToggleInputs) -> Result<NaturalScrollingToggleResult, String> {
     Err("GNOME Control Center workflows are only supported on Linux".to_string())
   }
 }

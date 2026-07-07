@@ -36,8 +36,7 @@ mod native {
   use auv_driver::error::DriverResult;
   use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
   use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
-    SetClipboardData,
+    CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
   };
   use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
 
@@ -61,8 +60,7 @@ mod native {
   }
 
   fn open_clipboard() -> DriverResult<ClipboardGuard> {
-    unsafe { OpenClipboard(HWND::default()) }
-      .map_err(|error| backend(format!("failed to open clipboard: {error}")))?;
+    unsafe { OpenClipboard(HWND::default()) }.map_err(|error| backend(format!("failed to open clipboard: {error}")))?;
     Ok(ClipboardGuard)
   }
 
@@ -71,8 +69,7 @@ mod native {
     if unsafe { IsClipboardFormatAvailable(CF_UNICODETEXT) }.is_err() {
       return Ok(String::new());
     }
-    let handle = unsafe { GetClipboardData(CF_UNICODETEXT) }
-      .map_err(|error| backend(format!("failed to read clipboard text: {error}")))?;
+    let handle = unsafe { GetClipboardData(CF_UNICODETEXT) }.map_err(|error| backend(format!("failed to read clipboard text: {error}")))?;
     if handle.0.is_null() {
       return Ok(String::new());
     }
@@ -94,11 +91,10 @@ mod native {
     let byte_len = std::mem::size_of_val(units.as_slice());
 
     let _guard = open_clipboard()?;
-    unsafe { EmptyClipboard() }
-      .map_err(|error| backend(format!("failed to clear clipboard: {error}")))?;
+    unsafe { EmptyClipboard() }.map_err(|error| backend(format!("failed to clear clipboard: {error}")))?;
 
-    let global = unsafe { GlobalAlloc(GMEM_MOVEABLE, byte_len) }
-      .map_err(|error| backend(format!("failed to allocate clipboard memory: {error}")))?;
+    let global =
+      unsafe { GlobalAlloc(GMEM_MOVEABLE, byte_len) }.map_err(|error| backend(format!("failed to allocate clipboard memory: {error}")))?;
     let destination = unsafe { GlobalLock(global) } as *mut u16;
     if destination.is_null() {
       let _ = unsafe { GlobalFree(global) };

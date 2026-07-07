@@ -2,23 +2,12 @@ use super::{parse_i64, render_rect_compact, report_value};
 use crate::types::{AuvResult, ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
 pub fn parse_observed_ax_tree(report: &str) -> AuvResult<ObservedAxTreeSnapshot> {
-  let observed_at = report_value(report, "observedAt=")
-    .unwrap_or("")
-    .to_string();
+  let observed_at = report_value(report, "observedAt=").unwrap_or("").to_string();
   let app_name = report_value(report, "appName=").unwrap_or("").to_string();
   let bundle_id = report_value(report, "bundleId=").unwrap_or("").to_string();
-  let pid = report_value(report, "pid=")
-    .unwrap_or("0")
-    .parse::<i32>()
-    .unwrap_or(0);
-  let window_title = report_value(report, "windowTitle=")
-    .unwrap_or("")
-    .to_string();
-  let nodes = report
-    .lines()
-    .filter(|line| line.starts_with("node\t"))
-    .map(parse_observed_ax_node_line)
-    .collect::<AuvResult<Vec<_>>>()?;
+  let pid = report_value(report, "pid=").unwrap_or("0").parse::<i32>().unwrap_or(0);
+  let window_title = report_value(report, "windowTitle=").unwrap_or("").to_string();
+  let nodes = report.lines().filter(|line| line.starts_with("node\t")).map(parse_observed_ax_node_line).collect::<AuvResult<Vec<_>>>()?;
 
   if nodes.is_empty() {
     return Err("AX tree report contained no nodes".to_string());
@@ -37,18 +26,12 @@ pub fn parse_observed_ax_tree(report: &str) -> AuvResult<ObservedAxTreeSnapshot>
 pub fn parse_observed_ax_node_line(line: &str) -> AuvResult<ObservedAxNode> {
   let columns = line.split('\t').collect::<Vec<_>>();
   if !matches!(columns.len(), 15 | 16) {
-    return Err(format!(
-      "invalid AX node report line; expected 15 or 16 columns but got {}: {}",
-      columns.len(),
-      line
-    ));
+    return Err(format!("invalid AX node report line; expected 15 or 16 columns but got {}: {}", columns.len(), line));
   }
   let focused_offset = usize::from(columns.len() == 16);
 
   Ok(ObservedAxNode {
-    depth: columns[1]
-      .parse::<usize>()
-      .map_err(|error| format!("invalid AX node depth {}: {}", columns[1], error))?,
+    depth: columns[1].parse::<usize>().map_err(|error| format!("invalid AX node depth {}: {}", columns[1], error))?,
     path: columns[2].to_string(),
     role: columns[3].to_string(),
     subrole: columns[4].to_string(),
@@ -68,10 +51,7 @@ pub fn parse_observed_ax_node_line(line: &str) -> AuvResult<ObservedAxNode> {
   })
 }
 
-pub fn find_best_ax_node<'a>(
-  snapshot: &'a ObservedAxTreeSnapshot,
-  query: &str,
-) -> Option<&'a ObservedAxNode> {
+pub fn find_best_ax_node<'a>(snapshot: &'a ObservedAxTreeSnapshot, query: &str) -> Option<&'a ObservedAxNode> {
   let query = query.trim().to_lowercase();
   snapshot
     .nodes
@@ -92,26 +72,15 @@ pub fn find_now_playing_ax_node<'a>(
   if expected_title.is_empty() {
     return None;
   }
-  let expected_artist = expected_artist
-    .map(|value| value.trim().to_lowercase())
-    .filter(|value| !value.is_empty());
-  let scope_path_prefix = scope_path_prefix
-    .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty());
+  let expected_artist = expected_artist.map(|value| value.trim().to_lowercase()).filter(|value| !value.is_empty());
+  let scope_path_prefix = scope_path_prefix.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
 
   snapshot
     .nodes
     .iter()
     .filter(|node| node.bounds.width > 0 && node.bounds.height > 0)
-    .filter(|node| {
-      scope_path_prefix
-        .as_ref()
-        .is_none_or(|prefix| node.path.starts_with(prefix))
-    })
-    .filter_map(|node| {
-      score_now_playing_ax_node_match(node, &expected_title, expected_artist.as_deref())
-        .map(|score| (score, node))
-    })
+    .filter(|node| scope_path_prefix.as_ref().is_none_or(|prefix| node.path.starts_with(prefix)))
+    .filter_map(|node| score_now_playing_ax_node_match(node, &expected_title, expected_artist.as_deref()).map(|score| (score, node)))
     .max_by(|left, right| left.0.cmp(&right.0))
     .map(|(_, node)| node)
 }
@@ -140,18 +109,10 @@ pub fn ax_node_search_text(node: &ObservedAxNode) -> String {
 }
 
 fn normalize_ax_text(value: &str) -> String {
-  value
-    .chars()
-    .filter(|character| !character.is_whitespace())
-    .collect::<String>()
-    .to_lowercase()
+  value.chars().filter(|character| !character.is_whitespace()).collect::<String>().to_lowercase()
 }
 
-fn score_now_playing_ax_node_match(
-  node: &ObservedAxNode,
-  expected_title: &str,
-  expected_artist: Option<&str>,
-) -> Option<i64> {
+fn score_now_playing_ax_node_match(node: &ObservedAxNode, expected_title: &str, expected_artist: Option<&str>) -> Option<i64> {
   let searchable = ax_node_search_text(node);
   if !searchable.contains(expected_title) {
     return None;
@@ -181,11 +142,7 @@ fn score_now_playing_ax_node_match(
   Some(score)
 }
 
-pub fn no_matching_ax_node_error(
-  snapshot: &ObservedAxTreeSnapshot,
-  query: &str,
-  expected_kind: &str,
-) -> String {
+pub fn no_matching_ax_node_error(snapshot: &ObservedAxTreeSnapshot, query: &str, expected_kind: &str) -> String {
   if snapshot.nodes.len() <= 1 {
     return format!(
       "no matching {expected_kind} node found for query {query}; observed only {} AX node(s), so the target UI may need to be revealed before retrying",
@@ -247,10 +204,7 @@ pub fn score_ax_node_match(node: &ObservedAxNode, query: &str) -> Option<i64> {
 }
 
 pub fn ax_node_center(node: &ObservedAxNode) -> (f64, f64) {
-  (
-    node.bounds.x as f64 + (node.bounds.width as f64 / 2.0),
-    node.bounds.y as f64 + (node.bounds.height as f64 / 2.0),
-  )
+  (node.bounds.x as f64 + (node.bounds.width as f64 / 2.0), node.bounds.y as f64 + (node.bounds.height as f64 / 2.0))
 }
 
 /// Find the AX node best matching a screen point — used by OCR→AX pipelines
@@ -261,11 +215,7 @@ pub fn ax_node_center(node: &ObservedAxNode) -> (f64, f64) {
 /// plus a role bias toward pressable roles (AXButton, AXCheckBox, AXLink,
 /// AXMenuItem). The role bias breaks ties when a button is wrapped by a
 /// same-sized group element with no role of its own.
-pub fn find_ax_node_at_point(
-  snapshot: &ObservedAxTreeSnapshot,
-  x: f64,
-  y: f64,
-) -> Option<&ObservedAxNode> {
+pub fn find_ax_node_at_point(snapshot: &ObservedAxTreeSnapshot, x: f64, y: f64) -> Option<&ObservedAxNode> {
   snapshot
     .nodes
     .iter()
@@ -294,12 +244,7 @@ fn score_ax_node_at_point(node: &ObservedAxNode) -> i64 {
   score
 }
 
-pub fn render_ax_interaction_report(
-  kind: &str,
-  snapshot: &ObservedAxTreeSnapshot,
-  node: &ObservedAxNode,
-  query: &str,
-) -> String {
+pub fn render_ax_interaction_report(kind: &str, snapshot: &ObservedAxTreeSnapshot, node: &ObservedAxNode, query: &str) -> String {
   [
     format!("kind={kind}"),
     format!("observedAt={}", snapshot.observed_at),

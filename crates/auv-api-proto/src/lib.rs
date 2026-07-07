@@ -4,8 +4,7 @@ pub mod v1 {
 
     /// Encoded protobuf schema metadata for gRPC reflection and tools such as
     /// `grpcurl`; normal clients use the generated request/response types.
-    pub const FILE_DESCRIPTOR_SET: &[u8] =
-      tonic::include_file_descriptor_set!("auv.api.session.v1");
+    pub const FILE_DESCRIPTOR_SET: &[u8] = tonic::include_file_descriptor_set!("auv.api.session.v1");
   }
 }
 
@@ -14,9 +13,7 @@ mod tests {
   use std::collections::HashMap;
 
   use crate::v1::session::session_service_client::SessionServiceClient;
-  use crate::v1::session::{
-    ArtifactRef, FILE_DESCRIPTOR_SET, GetOperationResponse, InvokeRequest, OperationRef, SessionRef,
-  };
+  use crate::v1::session::{ArtifactRef, FILE_DESCRIPTOR_SET, GetOperationResponse, InvokeRequest, OperationRef, SessionRef};
   use prost::Message;
   use prost_types::FileDescriptorSet;
 
@@ -59,8 +56,7 @@ mod tests {
     };
 
     let encoded = response.encode_to_vec();
-    let decoded =
-      GetOperationResponse::decode(encoded.as_slice()).expect("decode GetOperationResponse");
+    let decoded = GetOperationResponse::decode(encoded.as_slice()).expect("decode GetOperationResponse");
 
     assert_eq!(decoded.status, "failed");
     assert_eq!(decoded.failure_message, "invalid payload");
@@ -74,8 +70,7 @@ mod tests {
 
   #[test]
   fn file_descriptor_set_lists_session_service_rpcs() {
-    let descriptor_set =
-      FileDescriptorSet::decode(FILE_DESCRIPTOR_SET).expect("decode FILE_DESCRIPTOR_SET");
+    let descriptor_set = FileDescriptorSet::decode(FILE_DESCRIPTOR_SET).expect("decode FILE_DESCRIPTOR_SET");
 
     let session_file = descriptor_set
       .file
@@ -83,17 +78,10 @@ mod tests {
       .find(|file| file.package.as_deref() == Some("auv.api.session.v1"))
       .expect("auv.api.session.v1 file descriptor");
 
-    let session_service = session_file
-      .service
-      .iter()
-      .find(|service| service.name.as_deref() == Some("SessionService"))
-      .expect("SessionService descriptor");
+    let session_service =
+      session_file.service.iter().find(|service| service.name.as_deref() == Some("SessionService")).expect("SessionService descriptor");
 
-    let rpc_names: Vec<&str> = session_service
-      .method
-      .iter()
-      .filter_map(|method| method.name.as_deref())
-      .collect();
+    let rpc_names: Vec<&str> = session_service.method.iter().filter_map(|method| method.name.as_deref()).collect();
 
     assert_eq!(
       rpc_names,

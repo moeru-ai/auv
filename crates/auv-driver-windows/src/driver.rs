@@ -64,9 +64,6 @@ mod tests {
     let session = driver.open_local().expect("session should open");
 
     assert_eq!(session.windows_descriptor(), driver.windows_descriptor());
-    assert_eq!(
-      DriverSession::descriptor(&session),
-      driver.windows_descriptor().as_driver_descriptor()
-    );
+    assert_eq!(DriverSession::descriptor(&session), driver.windows_descriptor().as_driver_descriptor());
   }
 }

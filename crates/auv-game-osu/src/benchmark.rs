@@ -13,8 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::projection::PlayfieldProjection;
 use crate::projection::ProjectionArtifact;
 use crate::visual_eval::{
-  DetectorEvalProvenance, FrameDetections, FrameKey, LabelMap, VisualEvalReport,
-  evaluate_visual_truth_with_provenance,
+  DetectorEvalProvenance, FrameDetections, FrameKey, LabelMap, VisualEvalReport, evaluate_visual_truth_with_provenance,
 };
 use crate::visual_truth::{VisualTruthManifest, build_visual_truth_manifest};
 use auv_driver::InputActionResult;
@@ -23,9 +22,7 @@ use auv_inference_common::{ClassLabelSource, DetectionEvidenceManifest, Detectio
 #[cfg(target_os = "macos")]
 use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
-use auv_driver::{
-  App, Click, ClickOptions, Driver, InputPolicy, WindowClickStrategy, WindowPoint, WindowSelector,
-};
+use auv_driver::{App, Click, ClickOptions, Driver, InputPolicy, WindowClickStrategy, WindowPoint, WindowSelector};
 #[cfg(target_os = "macos")]
 use auv_driver_macos::MacosDriver;
 
@@ -66,11 +63,7 @@ impl BenchmarkInputs {
     }
   }
 
-  pub fn typed_dispatch(
-    beatmap_path: PathBuf,
-    output_dir: PathBuf,
-    target_app: impl Into<String>,
-  ) -> Self {
+  pub fn typed_dispatch(beatmap_path: PathBuf, output_dir: PathBuf, target_app: impl Into<String>) -> Self {
     Self {
       beatmap_path,
       output_dir,
@@ -246,46 +239,25 @@ struct DetectionFileRecord {
 }
 
 pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create osu benchmark output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir)
+    .map_err(|error| format!("failed to create osu benchmark output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let beatmap = Beatmap::from_path(&inputs.beatmap_path).map_err(|error| {
-    format!(
-      "failed to parse beatmap {}: {error}",
-      inputs.beatmap_path.display()
-    )
-  })?;
+  let beatmap = Beatmap::from_path(&inputs.beatmap_path)
+    .map_err(|error| format!("failed to parse beatmap {}: {error}", inputs.beatmap_path.display()))?;
 
   let schedule = build_schedule(&beatmap);
   if schedule.is_empty() {
-    return Err(format!(
-      "beatmap {} contains no hit objects",
-      inputs.beatmap_path.display()
-    ));
+    return Err(format!("beatmap {} contains no hit objects", inputs.beatmap_path.display()));
   }
 
   let map_summary = build_map_summary(&inputs.beatmap_path, &beatmap, &schedule);
   let (dispatch_trace, capture_trace, verification_summary, projection) = match inputs.run_mode {
-    RunMode::DryRun => (
-      run_dry_schedule(&schedule, inputs.lead_in_ms),
-      Vec::new(),
-      None,
-      None,
-    ),
+    RunMode::DryRun => (run_dry_schedule(&schedule, inputs.lead_in_ms), Vec::new(), None, None),
     RunMode::TypedDispatch => run_typed_dispatch(schedule.as_slice(), &map_summary, inputs)?,
   };
   let latency_report = build_latency_report(inputs.run_mode.clone(), &dispatch_trace);
   let visual_truth_manifest = if inputs.capture_verify {
-    Some(build_visual_truth_manifest(
-      &map_summary,
-      &schedule,
-      &dispatch_trace,
-      &capture_trace,
-    )?)
+    Some(build_visual_truth_manifest(&map_summary, &schedule, &dispatch_trace, &capture_trace)?)
   } else {
     None
   };
@@ -302,30 +274,15 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
     visual_eval_report.as_ref(),
   );
 
-  write_json(
-    inputs.output_dir.join("parsed_map_summary.json"),
-    &map_summary,
-  )?;
+  write_json(inputs.output_dir.join("parsed_map_summary.json"), &map_summary)?;
   write_json(inputs.output_dir.join("action_schedule.json"), &schedule)?;
-  write_json(
-    inputs.output_dir.join("dispatch_trace.json"),
-    &dispatch_trace,
-  )?;
-  write_json(
-    inputs.output_dir.join("latency_report.json"),
-    &latency_report,
-  )?;
+  write_json(inputs.output_dir.join("dispatch_trace.json"), &dispatch_trace)?;
+  write_json(inputs.output_dir.join("latency_report.json"), &latency_report)?;
   if inputs.capture_verify {
     write_json(inputs.output_dir.join("capture_trace.json"), &capture_trace)?;
-    write_json(
-      inputs.output_dir.join("verification_summary.json"),
-      &verification_summary,
-    )?;
+    write_json(inputs.output_dir.join("verification_summary.json"), &verification_summary)?;
     if let Some(manifest) = &visual_truth_manifest {
-      write_json(
-        inputs.output_dir.join("visual_truth_manifest.json"),
-        manifest,
-      )?;
+      write_json(inputs.output_dir.join("visual_truth_manifest.json"), manifest)?;
     }
   }
   if let Some(projection) = &projection {
@@ -334,10 +291,7 @@ pub fn run_benchmark(inputs: &BenchmarkInputs) -> OsuResult<BenchmarkOutput> {
   if let Some(report) = &visual_eval_report {
     write_json(inputs.output_dir.join("visual_eval_report.json"), report)?;
   }
-  write_json(
-    inputs.output_dir.join("evidence_summary.json"),
-    &evidence_summary,
-  )?;
+  write_json(inputs.output_dir.join("evidence_summary.json"), &evidence_summary)?;
 
   Ok(BenchmarkOutput {
     map_summary,
@@ -360,34 +314,21 @@ fn build_visual_eval_report(
   projection_artifact: &ProjectionArtifact,
   detections_by_frame: &[FrameDetections],
 ) -> OsuResult<VisualEvalReport> {
-  let projection = projection_artifact
-    .to_eval_projection()
-    .map_err(|error| format!("failed to adapt projection artifact for visual eval: {error}"))?;
-  Ok(crate::visual_eval::evaluate_visual_truth(
-    manifest,
-    detections_by_frame,
-    &projection,
-    &LabelMap::default(),
-  ))
+  let projection =
+    projection_artifact.to_eval_projection().map_err(|error| format!("failed to adapt projection artifact for visual eval: {error}"))?;
+  Ok(crate::visual_eval::evaluate_visual_truth(manifest, detections_by_frame, &projection, &LabelMap::default()))
 }
 
 pub fn evaluate_detection_fixture(inputs: &DetectionEvalInputs) -> OsuResult<DetectionEvalOutput> {
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create detection eval output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir)
+    .map_err(|error| format!("failed to create detection eval output dir {}: {error}", inputs.output_dir.display()))?;
 
-  let manifest =
-    read_json::<VisualTruthManifest>(&inputs.run_artifact_dir.join("visual_truth_manifest.json"))?;
-  let projection_artifact =
-    read_json::<ProjectionArtifact>(&inputs.run_artifact_dir.join("projection.json"))?;
+  let manifest = read_json::<VisualTruthManifest>(&inputs.run_artifact_dir.join("visual_truth_manifest.json"))?;
+  let projection_artifact = read_json::<ProjectionArtifact>(&inputs.run_artifact_dir.join("projection.json"))?;
   let loaded = load_detection_inputs(&inputs.detections_path)?;
   let label_map = LabelMap::default();
-  let projection = projection_artifact
-    .to_eval_projection()
-    .map_err(|error| format!("failed to adapt projection artifact for visual eval: {error}"))?;
+  let projection =
+    projection_artifact.to_eval_projection().map_err(|error| format!("failed to adapt projection artifact for visual eval: {error}"))?;
   let report = evaluate_visual_truth_with_provenance(
     &manifest,
     &expand_frame_detections(&manifest, &loaded.detections_by_capture)?,
@@ -407,10 +348,7 @@ pub fn evaluate_detection_fixture(inputs: &DetectionEvalInputs) -> OsuResult<Det
   };
 
   write_json(inputs.output_dir.join("visual_eval_report.json"), &report)?;
-  write_json(
-    inputs.output_dir.join("detection_eval_manifest.json"),
-    &detection_eval_manifest,
-  )?;
+  write_json(inputs.output_dir.join("detection_eval_manifest.json"), &detection_eval_manifest)?;
 
   Ok(DetectionEvalOutput {
     output_dir: inputs.output_dir.clone(),
@@ -448,11 +386,7 @@ fn load_detection_inputs(path: &Path) -> OsuResult<LoadedDetectionInputs> {
     return load_detection_dir(path);
   }
 
-  if path
-    .extension()
-    .and_then(|extension| extension.to_str())
-    .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
-  {
+  if path.extension().and_then(|extension| extension.to_str()).is_some_and(|extension| extension.eq_ignore_ascii_case("json")) {
     if let Ok(manifest) = read_json::<DetectionEvidenceManifest>(path) {
       let capture_file_name = detection_capture_file_name_from_manifest(&manifest)?;
       let mut detections_by_capture = BTreeMap::new();
@@ -480,9 +414,7 @@ fn load_detection_dir(path: &Path) -> OsuResult<LoadedDetectionInputs> {
   let mut detections_by_capture = BTreeMap::new();
   let mut model_id = None;
   let mut label_map_source = None;
-  for entry in fs::read_dir(path)
-    .map_err(|error| format!("failed to read detections dir {}: {error}", path.display()))?
-  {
+  for entry in fs::read_dir(path).map_err(|error| format!("failed to read detections dir {}: {error}", path.display()))? {
     let entry = entry.map_err(|error| format!("failed to read detections dir entry: {error}"))?;
     let entry_path = entry.path();
     if !entry_path.is_file() {
@@ -496,10 +428,7 @@ fn load_detection_dir(path: &Path) -> OsuResult<LoadedDetectionInputs> {
     let record_model_id = record.detection_set.model_id.0.clone();
     if let Some(existing) = &model_id {
       if existing != &record_model_id {
-        return Err(format!(
-          "detection fixture directory mixes model ids {} and {}",
-          existing, record_model_id
-        ));
+        return Err(format!("detection fixture directory mixes model ids {} and {}", existing, record_model_id));
       }
     } else {
       model_id = Some(record_model_id);
@@ -509,15 +438,11 @@ fn load_detection_dir(path: &Path) -> OsuResult<LoadedDetectionInputs> {
   }
 
   if detections_by_capture.is_empty() {
-    return Err(format!(
-      "detections path {} contains no JSON detection fixtures",
-      path.display()
-    ));
+    return Err(format!("detections path {} contains no JSON detection fixtures", path.display()));
   }
 
   Ok(LoadedDetectionInputs {
-    model_id: model_id
-      .ok_or_else(|| format!("detections path {} contains no model id", path.display()))?,
+    model_id: model_id.ok_or_else(|| format!("detections path {} contains no model id", path.display()))?,
     label_map_source: label_map_source.unwrap_or_else(|| "inline_fixture_dir".to_string()),
     detections_by_capture,
   })
@@ -533,39 +458,23 @@ fn expand_frame_detections(
     .map(|frame| {
       let detection_set = detections_by_capture
         .get(&frame.capture.file_name)
-        .ok_or_else(|| {
-          format!(
-            "missing detection fixture for capture file {}",
-            frame.capture.file_name
-          )
-        })?
+        .ok_or_else(|| format!("missing detection fixture for capture file {}", frame.capture.file_name))?
         .clone();
       Ok(FrameDetections::new(
-        FrameKey::from_parts(
-          frame.object_index,
-          frame.capture.phase.clone(),
-          frame.capture.file_name.clone(),
-        ),
+        FrameKey::from_parts(frame.object_index, frame.capture.phase.clone(), frame.capture.file_name.clone()),
         detection_set,
       ))
     })
     .collect()
 }
 
-fn detection_capture_file_name_from_manifest(
-  manifest: &DetectionEvidenceManifest,
-) -> OsuResult<String> {
+fn detection_capture_file_name_from_manifest(manifest: &DetectionEvidenceManifest) -> OsuResult<String> {
   match &manifest.source_image.source_image_ref {
     auv_inference_common::SourceImageRef::LocalPath { path } => path
       .file_name()
       .and_then(|name| name.to_str())
       .map(str::to_string)
-      .ok_or_else(|| {
-        format!(
-          "detection evidence manifest source image path {} has invalid file name",
-          path.display()
-        )
-      }),
+      .ok_or_else(|| format!("detection evidence manifest source image path {} has invalid file name", path.display())),
     auv_inference_common::SourceImageRef::OpaqueId { id } => Ok(id.clone()),
   }
 }
@@ -580,11 +489,7 @@ fn class_label_source_name(source: &ClassLabelSource) -> String {
   .to_string()
 }
 
-fn build_map_summary(
-  beatmap_path: &Path,
-  beatmap: &Beatmap,
-  schedule: &[ScheduledAction],
-) -> MapSummary {
+fn build_map_summary(beatmap_path: &Path, beatmap: &Beatmap, schedule: &[ScheduledAction]) -> MapSummary {
   let mut circle_count = 0usize;
   let mut slider_count = 0usize;
   let mut spinner_count = 0usize;
@@ -645,34 +550,20 @@ fn run_typed_dispatch(
   schedule: &[ScheduledAction],
   map_summary: &MapSummary,
   inputs: &BenchmarkInputs,
-) -> OsuResult<(
-  Vec<DispatchSample>,
-  Vec<CaptureTraceSample>,
-  Option<VerificationSummary>,
-  Option<ProjectionArtifact>,
-)> {
-  let target_app = inputs
-    .target_app
-    .as_deref()
-    .ok_or_else(|| "typed dispatch requires target_app".to_string())?;
+) -> OsuResult<(Vec<DispatchSample>, Vec<CaptureTraceSample>, Option<VerificationSummary>, Option<ProjectionArtifact>)> {
+  let target_app = inputs.target_app.as_deref().ok_or_else(|| "typed dispatch requires target_app".to_string())?;
   let dispatch_limit = inputs.dispatch_limit.unwrap_or(8).min(schedule.len());
   let driver = MacosDriver::new();
   let session = driver.open_local().map_err(|error| error.to_string())?;
   let window = session
     .window()
-    .resolve(
-      WindowSelector::default()
-        .owned_by(App::name(target_app.to_string()))
-        .title_contains("osu"),
-    )
+    .resolve(WindowSelector::default().owned_by(App::name(target_app.to_string())).title_contains("osu"))
     .map_err(|error| error.to_string())?;
   let window_projection = PlayfieldProjection::for_window(&window, map_summary.circle_size)?;
   let mut projection_artifact = Some(ProjectionArtifact::from_window_projection(
     &window,
     &window_projection,
-    inputs
-      .capture_verify
-      .then_some("before_dispatch capture smoke".to_string()),
+    inputs.capture_verify.then_some("before_dispatch capture smoke".to_string()),
   ));
   let mut trace = Vec::with_capacity(dispatch_limit);
   let mut capture_trace = if inputs.capture_verify {
@@ -682,12 +573,7 @@ fn run_typed_dispatch(
   };
 
   if !inputs.capture_verify {
-    warm_up_typed_dispatch_path(
-      &session,
-      &window,
-      schedule.first().expect("non-empty schedule"),
-      &window_projection,
-    )?;
+    warm_up_typed_dispatch_path(&session, &window, schedule.first().expect("non-empty schedule"), &window_projection)?;
   }
 
   // NOTICE(p5-dispatch-latency): The measured dispatch clock starts only after
@@ -698,9 +584,7 @@ fn run_typed_dispatch(
   for action in schedule.iter().take(dispatch_limit) {
     let mut captures = Vec::new();
     if inputs.capture_verify {
-      let before_capture_time_ms = action
-        .scheduled_time_ms
-        .saturating_sub(inputs.pre_capture_offset_ms);
+      let before_capture_time_ms = action.scheduled_time_ms.saturating_sub(inputs.pre_capture_offset_ms);
       wait_until_due(start, before_capture_time_ms);
       captures.push(capture_sample(
         &session,
@@ -713,16 +597,10 @@ fn run_typed_dispatch(
         None,
         inputs.pre_capture_offset_ms,
       )?);
-      if projection_artifact
-        .as_ref()
-        .is_some_and(|artifact| artifact.capture_bounds.is_none())
-      {
+      if projection_artifact.as_ref().is_some_and(|artifact| artifact.capture_bounds.is_none()) {
         if let Some(capture) = captures.last() {
-          let capture_projection = PlayfieldProjection::for_capture(
-            f64::from(capture.width),
-            f64::from(capture.height),
-            map_summary.circle_size,
-          )?;
+          let capture_projection =
+            PlayfieldProjection::for_capture(f64::from(capture.width), f64::from(capture.height), map_summary.circle_size)?;
           projection_artifact = projection_artifact.take().map(|artifact| {
             artifact.with_capture(
               window.frame,
@@ -749,25 +627,14 @@ fn run_typed_dispatch(
           window_strategy: WindowClickStrategy::PidTargeted,
         },
       )
-      .map_err(|error| {
-        format!(
-          "typed dispatch failed at object {}: {error}",
-          action.object_index
-        )
-      })?;
+      .map_err(|error| format!("typed dispatch failed at object {}: {error}", action.object_index))?;
     let actual_dispatch_time_ms = start.elapsed().as_millis() as u64;
     let dispatch_error_ms = actual_dispatch_time_ms as i64 - action.scheduled_time_ms as i64;
-    trace.push(dispatch_sample_from_result(
-      action,
-      actual_dispatch_time_ms,
-      dispatch_error_ms,
-      result,
-    ));
+    trace.push(dispatch_sample_from_result(action, actual_dispatch_time_ms, dispatch_error_ms, result));
 
     if inputs.capture_verify {
       for offset_ms in &inputs.post_capture_offsets_ms {
-        let post_capture_due =
-          start + Duration::from_millis(actual_dispatch_time_ms.saturating_add(*offset_ms));
+        let post_capture_due = start + Duration::from_millis(actual_dispatch_time_ms.saturating_add(*offset_ms));
         wait_until_instant(post_capture_due);
         captures.push(capture_sample(
           &session,
@@ -792,16 +659,9 @@ fn run_typed_dispatch(
     }
   }
 
-  let verification_summary = inputs
-    .capture_verify
-    .then(|| build_verification_summary(dispatch_limit, &capture_trace));
+  let verification_summary = inputs.capture_verify.then(|| build_verification_summary(dispatch_limit, &capture_trace));
 
-  Ok((
-    trace,
-    capture_trace,
-    verification_summary,
-    projection_artifact,
-  ))
+  Ok((trace, capture_trace, verification_summary, projection_artifact))
 }
 
 #[cfg(target_os = "macos")]
@@ -825,12 +685,7 @@ fn warm_up_typed_dispatch_path(
       },
     )
     .map(|_| ())
-    .map_err(|error| {
-      format!(
-        "typed dispatch warm-up failed at object {}: {error}",
-        action.object_index
-      )
-    })
+    .map_err(|error| format!("typed dispatch warm-up failed at object {}: {error}", action.object_index))
 }
 
 #[cfg(target_os = "macos")]
@@ -845,22 +700,9 @@ fn capture_sample(
   actual_dispatch_time_ms: Option<u64>,
   phase_offset_ms: u64,
 ) -> OsuResult<CaptureSample> {
-  let capture = session.window().capture(window).map_err(|error| {
-    format!(
-      "window capture failed at object {}: {error}",
-      action.object_index
-    )
-  })?;
-  capture_to_sample(
-    output_dir,
-    action,
-    phase,
-    start,
-    scheduled_time_ms,
-    actual_dispatch_time_ms,
-    phase_offset_ms,
-    capture,
-  )
+  let capture =
+    session.window().capture(window).map_err(|error| format!("window capture failed at object {}: {error}", action.object_index))?;
+  capture_to_sample(output_dir, action, phase, start, scheduled_time_ms, actual_dispatch_time_ms, phase_offset_ms, capture)
 }
 
 #[cfg(target_os = "macos")]
@@ -885,10 +727,7 @@ fn capture_to_sample(
     phase_offset_ms
   );
   let file_path = output_dir.join(&file_name);
-  capture
-    .image
-    .save(&file_path)
-    .map_err(|error| format!("failed to save {}: {error}", file_path.display()))?;
+  capture.image.save(&file_path).map_err(|error| format!("failed to save {}: {error}", file_path.display()))?;
   Ok(CaptureSample {
     phase,
     capture_time_ms,
@@ -909,12 +748,7 @@ fn run_typed_dispatch(
   _schedule: &[ScheduledAction],
   _map_summary: &MapSummary,
   _inputs: &BenchmarkInputs,
-) -> OsuResult<(
-  Vec<DispatchSample>,
-  Vec<CaptureTraceSample>,
-  Option<VerificationSummary>,
-  Option<ProjectionArtifact>,
-)> {
+) -> OsuResult<(Vec<DispatchSample>, Vec<CaptureTraceSample>, Option<VerificationSummary>, Option<ProjectionArtifact>)> {
   Err("typed dispatch is currently implemented only for macOS".to_string())
 }
 
@@ -959,10 +793,7 @@ fn wait_until_instant(due: Instant) {
 
 fn build_latency_report(run_mode: RunMode, dispatch_trace: &[DispatchSample]) -> LatencyReport {
   let total_actions = dispatch_trace.len();
-  let mut errors = dispatch_trace
-    .iter()
-    .map(|sample| sample.dispatch_error_ms)
-    .collect::<Vec<_>>();
+  let mut errors = dispatch_trace.iter().map(|sample| sample.dispatch_error_ms).collect::<Vec<_>>();
   errors.sort_unstable();
 
   let mean_error_ms = if total_actions == 0 {
@@ -976,10 +807,7 @@ fn build_latency_report(run_mode: RunMode, dispatch_trace: &[DispatchSample]) ->
   let p99_error_ms = percentile(&errors, 0.99);
   let max_error_ms = errors.iter().copied().max().unwrap_or(0);
   let jitter_ms = max_error_ms - errors.iter().copied().min().unwrap_or(0);
-  let missed_schedule_count = dispatch_trace
-    .iter()
-    .filter(|sample| sample.dispatch_error_ms > 0)
-    .count();
+  let missed_schedule_count = dispatch_trace.iter().filter(|sample| sample.dispatch_error_ms > 0).count();
 
   LatencyReport {
     run_mode,
@@ -994,14 +822,8 @@ fn build_latency_report(run_mode: RunMode, dispatch_trace: &[DispatchSample]) ->
   }
 }
 
-fn build_verification_summary(
-  expected_actions: usize,
-  capture_trace: &[CaptureTraceSample],
-) -> VerificationSummary {
-  let captured_action_count = capture_trace
-    .iter()
-    .filter(|sample| !sample.captures.is_empty())
-    .count();
+fn build_verification_summary(expected_actions: usize, capture_trace: &[CaptureTraceSample]) -> VerificationSummary {
+  let captured_action_count = capture_trace.iter().filter(|sample| !sample.captures.is_empty()).count();
   let missing_frame_count = expected_actions.saturating_sub(captured_action_count);
   let max_capture_delay_ms = capture_trace
     .iter()
@@ -1017,9 +839,7 @@ fn build_verification_summary(
   let suspicious_time_inversion_count = capture_trace
     .iter()
     .flat_map(|sample| sample.captures.iter())
-    .filter(|capture| {
-      matches!(capture.phase, CapturePhase::AfterDispatch) && capture.relative_to_dispatch_ms < 0
-    })
+    .filter(|capture| matches!(capture.phase, CapturePhase::AfterDispatch) && capture.relative_to_dispatch_ms < 0)
     .count();
 
   VerificationSummary {
@@ -1055,41 +875,25 @@ fn build_evidence_summary(
     evidence_notes.push("visual truth manifest is missing".to_string());
   }
   if latency_report.missed_schedule_count > 0 {
-    evidence_notes.push(format!(
-      "{} scheduled actions missed their target time",
-      latency_report.missed_schedule_count
-    ));
+    evidence_notes.push(format!("{} scheduled actions missed their target time", latency_report.missed_schedule_count));
   }
 
-  let (
-    verification_captured_action_count,
-    verification_missing_frame_count,
-    verification_suspicious_time_inversion_count,
-  ) = if let Some(summary) = verification_summary {
-    if summary.captured_action_count == 0 {
-      evidence_notes.push("verification captured zero actions".to_string());
-    }
-    if summary.missing_frame_count > 0 {
-      evidence_notes.push(format!(
-        "{} verification frames are missing",
-        summary.missing_frame_count
-      ));
-    }
-    if summary.suspicious_time_inversion_count > 0 {
-      evidence_notes.push(format!(
-        "{} verification captures inverted dispatch timing",
-        summary.suspicious_time_inversion_count
-      ));
-    }
-    (
-      summary.captured_action_count,
-      summary.missing_frame_count,
-      summary.suspicious_time_inversion_count,
-    )
-  } else {
-    evidence_notes.push("verification summary is missing".to_string());
-    (0, 0, 0)
-  };
+  let (verification_captured_action_count, verification_missing_frame_count, verification_suspicious_time_inversion_count) =
+    if let Some(summary) = verification_summary {
+      if summary.captured_action_count == 0 {
+        evidence_notes.push("verification captured zero actions".to_string());
+      }
+      if summary.missing_frame_count > 0 {
+        evidence_notes.push(format!("{} verification frames are missing", summary.missing_frame_count));
+      }
+      if summary.suspicious_time_inversion_count > 0 {
+        evidence_notes.push(format!("{} verification captures inverted dispatch timing", summary.suspicious_time_inversion_count));
+      }
+      (summary.captured_action_count, summary.missing_frame_count, summary.suspicious_time_inversion_count)
+    } else {
+      evidence_notes.push("verification summary is missing".to_string());
+      (0, 0, 0)
+    };
 
   if let Some(report) = visual_eval_report {
     if report.total_frames == 0 {
@@ -1150,10 +954,8 @@ fn write_json(path: PathBuf, value: &impl Serialize) -> OsuResult<()> {
 }
 
 fn read_json<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> OsuResult<T> {
-  let bytes =
-    fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-  serde_json::from_slice(&bytes)
-    .map_err(|error| format!("failed to parse {}: {error}", path.display()))
+  let bytes = fs::read(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+  serde_json::from_slice(&bytes).map_err(|error| format!("failed to parse {}: {error}", path.display()))
 }
 
 fn default_pre_capture_offset_ms() -> u64 {
@@ -1265,12 +1067,8 @@ mod tests {
 
   #[test]
   fn build_visual_eval_report_uses_projection_artifact() {
-    let report = build_visual_eval_report(
-      &sample_visual_truth_manifest(),
-      &sample_projection_artifact(),
-      &sample_frame_detections(),
-    )
-    .expect("visual eval report");
+    let report = build_visual_eval_report(&sample_visual_truth_manifest(), &sample_projection_artifact(), &sample_frame_detections())
+      .expect("visual eval report");
 
     assert_eq!(report.total_frames, 1);
     assert_eq!(report.label_matched_frames, 1);
@@ -1283,19 +1081,12 @@ mod tests {
   fn benchmark_writes_visual_eval_report_when_capture_verify_and_projection_exist() {
     let temp_dir = std::env::temp_dir().join(format!(
       "auv-osu-visual-eval-{}",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("unix epoch")
-        .as_nanos()
+      std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("unix epoch").as_nanos()
     ));
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
 
-    let report = build_visual_eval_report(
-      &sample_visual_truth_manifest(),
-      &sample_projection_artifact(),
-      &sample_frame_detections(),
-    )
-    .expect("visual eval report");
+    let report = build_visual_eval_report(&sample_visual_truth_manifest(), &sample_projection_artifact(), &sample_frame_detections())
+      .expect("visual eval report");
 
     let report_path = temp_dir.join("visual_eval_report.json");
     write_json(report_path.clone(), &report).expect("write visual eval report");
@@ -1309,19 +1100,13 @@ mod tests {
   fn benchmark_does_not_write_visual_eval_report_without_detector_input() {
     let temp_dir = std::env::temp_dir().join(format!(
       "auv-osu-no-detector-visual-eval-{}",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("unix epoch")
-        .as_nanos()
+      std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("unix epoch").as_nanos()
     ));
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
 
     let beatmap_path = std::env::temp_dir().join(format!(
       "sample-beatmap-{}.osu",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("unix epoch")
-        .as_nanos()
+      std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("unix epoch").as_nanos()
     ));
     std::fs::write(
       &beatmap_path,
@@ -1347,11 +1132,7 @@ ApproachRate:7
     .expect("write beatmap");
 
     let output_dir = temp_dir.join("output");
-    let result = run_benchmark(&BenchmarkInputs::new(
-      beatmap_path.clone(),
-      output_dir.clone(),
-    ))
-    .expect("benchmark should succeed");
+    let result = run_benchmark(&BenchmarkInputs::new(beatmap_path.clone(), output_dir.clone())).expect("benchmark should succeed");
 
     assert!(result.visual_eval_report.is_none());
     assert!(!output_dir.join("visual_eval_report.json").exists());
@@ -1364,10 +1145,7 @@ ApproachRate:7
   fn benchmark_writes_smoke_evidence_summary_without_capture_verify() {
     let temp_dir = std::env::temp_dir().join(format!(
       "auv-osu-evidence-summary-{}",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("unix epoch")
-        .as_nanos()
+      std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("unix epoch").as_nanos()
     ));
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
 
@@ -1375,11 +1153,7 @@ ApproachRate:7
     std::fs::write(&beatmap_path, TEST_BEATMAP).expect("write beatmap fixture");
 
     let output_dir = temp_dir.join("output");
-    let result = run_benchmark(&BenchmarkInputs::new(
-      beatmap_path.clone(),
-      output_dir.clone(),
-    ))
-    .expect("benchmark should succeed");
+    let result = run_benchmark(&BenchmarkInputs::new(beatmap_path.clone(), output_dir.clone())).expect("benchmark should succeed");
 
     assert!(result.verification_summary.is_none());
     assert!(result.projection.is_none());
@@ -1484,8 +1258,7 @@ ApproachRate:7
 
   #[test]
   fn warm_up_path_preserves_single_click_defaults() {
-    let inputs =
-      BenchmarkInputs::typed_dispatch(PathBuf::from("map.osu"), PathBuf::from("out"), "osu!");
+    let inputs = BenchmarkInputs::typed_dispatch(PathBuf::from("map.osu"), PathBuf::from("out"), "osu!");
 
     assert_eq!(inputs.run_mode, RunMode::TypedDispatch);
     assert_eq!(inputs.dispatch_limit, Some(8));
@@ -1518,8 +1291,7 @@ ApproachRate:7
 
   #[test]
   fn typed_dispatch_inputs_set_defaults() {
-    let inputs =
-      BenchmarkInputs::typed_dispatch(PathBuf::from("map.osu"), PathBuf::from("out"), "osu!");
+    let inputs = BenchmarkInputs::typed_dispatch(PathBuf::from("map.osu"), PathBuf::from("out"), "osu!");
     assert_eq!(inputs.run_mode, RunMode::TypedDispatch);
     assert_eq!(inputs.target_app.as_deref(), Some("osu!"));
     assert_eq!(inputs.dispatch_limit, Some(8));
@@ -1649,10 +1421,7 @@ ApproachRate:7
   fn benchmark_writes_visual_truth_manifest_when_capture_verify_is_enabled() {
     let temp_dir = std::env::temp_dir().join(format!(
       "auv-osu-visual-truth-{}",
-      std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("unix epoch")
-        .as_nanos()
+      std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("unix epoch").as_nanos()
     ));
     let beatmap_path = temp_dir.join("fixture.osu");
     std::fs::create_dir_all(&temp_dir).expect("create temp dir");
@@ -1664,9 +1433,7 @@ ApproachRate:7
     let output = run_benchmark(&inputs).expect("benchmark should succeed");
 
     assert!(temp_dir.join("visual_truth_manifest.json").exists());
-    let manifest = output
-      .visual_truth_manifest
-      .expect("visual truth manifest should exist");
+    let manifest = output.visual_truth_manifest.expect("visual truth manifest should exist");
     assert_eq!(manifest.schema_version, 1);
     assert_eq!(manifest.frames.len(), 0);
 

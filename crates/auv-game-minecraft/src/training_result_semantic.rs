@@ -142,12 +142,7 @@ pub fn validate_3dgs_training_result(
     "MC-9 D11 training result artifact manifest",
   )?;
 
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create output dir {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&inputs.output_dir).map_err(|error| format!("failed to create output dir {}: {error}", inputs.output_dir.display()))?;
 
   let generated_at_millis = auv_tracing_driver::now_millis();
   let normalized_result_dir = PathBuf::from(&artifact_manifest.normalized_result_dir);
@@ -161,37 +156,18 @@ pub fn validate_3dgs_training_result(
         "MC-10 closes normalized training-result semantic inspect evidence only; it does not grade model quality or claim downstream splat usability"
             .to_string(),
     );
-  known_limits.insert(
-    "MC-10 does not inspect checkpoint internal semantics or run render preview".to_string(),
-  );
-  known_limits.insert(
-    "MC-10 does not add dedicated read-side summary consumption; that belongs to MC-11".to_string(),
-  );
+  known_limits.insert("MC-10 does not inspect checkpoint internal semantics or run render preview".to_string());
+  known_limits.insert("MC-10 does not add dedicated read-side summary consumption; that belongs to MC-11".to_string());
 
   let mut warnings = BTreeSet::new();
   let status_snapshot_present = is_real_file(&status_snapshot_path);
   if !status_snapshot_present {
-    warnings.insert(
-            "job_status.json is absent or unreadable; MC-10 records the snapshot observation only and does not gate on it"
-                .to_string(),
-        );
+    warnings
+      .insert("job_status.json is absent or unreadable; MC-10 records the snapshot observation only and does not gate on it".to_string());
   }
 
-  let (
-    semantic_status,
-    semantic_reason,
-    config_yaml_parsed,
-    config_trainer,
-    config_backend_matches,
-    models_dir_readable,
-    checkpoint_files,
-  ) = evaluate_semantic_gate(
-    &normalized_result_dir,
-    &config_path,
-    &models_dir_path,
-    &artifact_manifest.trainer_backend,
-    &mut warnings,
-  );
+  let (semantic_status, semantic_reason, config_yaml_parsed, config_trainer, config_backend_matches, models_dir_readable, checkpoint_files) =
+    evaluate_semantic_gate(&normalized_result_dir, &config_path, &models_dir_path, &artifact_manifest.trainer_backend, &mut warnings);
 
   let checkpoint_count = checkpoint_files.len();
   let manifest_path = inputs.output_dir.join(SEMANTIC_MANIFEST_FILE);
@@ -200,18 +176,11 @@ pub fn validate_3dgs_training_result(
   let manifest = TrainingResultSemanticManifest {
     schema_version: TRAINING_RESULT_SEMANTIC_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
-    source_training_result_artifact_manifest_path: inputs
-      .training_result_artifact_manifest_path
-      .to_string_lossy()
-      .into_owned(),
-    source_training_result_manifest_path: artifact_manifest
-      .source_training_result_manifest_path
-      .clone(),
+    source_training_result_artifact_manifest_path: inputs.training_result_artifact_manifest_path.to_string_lossy().into_owned(),
+    source_training_result_manifest_path: artifact_manifest.source_training_result_manifest_path.clone(),
     source_training_job_manifest_path: artifact_manifest.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: artifact_manifest.source_training_launch_plan_path.clone(),
-    source_training_package_manifest_path: artifact_manifest
-      .source_training_package_manifest_path
-      .clone(),
+    source_training_package_manifest_path: artifact_manifest.source_training_package_manifest_path.clone(),
     source_scene_packet_manifest_path: artifact_manifest.source_scene_packet_manifest_path.clone(),
     source_bundle_manifest_paths: artifact_manifest.source_bundle_manifest_paths.clone(),
     source_run_ids: artifact_manifest.source_run_ids.clone(),
@@ -223,8 +192,7 @@ pub fn validate_3dgs_training_result(
     semantic_reason,
     config_path: config_path.to_string_lossy().into_owned(),
     models_dir_path: models_dir_path.to_string_lossy().into_owned(),
-    status_snapshot_path: status_snapshot_present
-      .then(|| status_snapshot_path.to_string_lossy().into_owned()),
+    status_snapshot_path: status_snapshot_present.then(|| status_snapshot_path.to_string_lossy().into_owned()),
     config_trainer: config_trainer.clone(),
     checkpoint_files: checkpoint_files.clone(),
     checkpoint_count,
@@ -235,9 +203,7 @@ pub fn validate_3dgs_training_result(
     schema_version: TRAINING_RESULT_SEMANTIC_INSPECT_REPORT_SCHEMA_VERSION,
     generated_at_millis,
     training_result_semantic_manifest_path: manifest_path.to_string_lossy().into_owned(),
-    source_training_result_artifact_manifest_path: manifest
-      .source_training_result_artifact_manifest_path
-      .clone(),
+    source_training_result_artifact_manifest_path: manifest.source_training_result_artifact_manifest_path.clone(),
     source_training_result_manifest_path: manifest.source_training_result_manifest_path.clone(),
     source_training_job_manifest_path: manifest.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: manifest.source_training_launch_plan_path.clone(),
@@ -261,16 +227,8 @@ pub fn validate_3dgs_training_result(
     known_limits: manifest.known_limits.clone(),
   };
 
-  write_json_file(
-    &manifest_path,
-    &manifest,
-    "MC-10 training result semantic manifest",
-  )?;
-  write_json_file(
-    &inspect_report_path,
-    &inspect_report,
-    "MC-10 training result semantic inspect report",
-  )?;
+  write_json_file(&manifest_path, &manifest, "MC-10 training result semantic manifest")?;
+  write_json_file(&inspect_report_path, &inspect_report, "MC-10 training result semantic inspect report")?;
 
   Ok(TrainingResultSemanticValidationOutput {
     output_dir: inputs.output_dir,
@@ -296,40 +254,16 @@ fn evaluate_semantic_gate(
   bool,
   Vec<TrainingResultSemanticCheckpointRecord>,
 ) {
-  if path_is_symlink(normalized_result_dir)
-    || path_is_symlink(config_path)
-    || path_is_symlink(models_dir_path)
-  {
-    return blocked_gate(
-      TrainingResultSemanticReason::NormalizedPathsInvalid,
-      false,
-      None,
-      false,
-      false,
-      Vec::new(),
-    );
+  if path_is_symlink(normalized_result_dir) || path_is_symlink(config_path) || path_is_symlink(models_dir_path) {
+    return blocked_gate(TrainingResultSemanticReason::NormalizedPathsInvalid, false, None, false, false, Vec::new());
   }
 
   if !is_real_file(config_path) {
-    return blocked_gate(
-      TrainingResultSemanticReason::NormalizedConfigMissing,
-      false,
-      None,
-      false,
-      false,
-      Vec::new(),
-    );
+    return blocked_gate(TrainingResultSemanticReason::NormalizedConfigMissing, false, None, false, false, Vec::new());
   }
 
   if !is_real_dir(models_dir_path) {
-    return blocked_gate(
-      TrainingResultSemanticReason::NormalizedModelsDirectoryMissing,
-      false,
-      None,
-      false,
-      false,
-      Vec::new(),
-    );
+    return blocked_gate(TrainingResultSemanticReason::NormalizedModelsDirectoryMissing, false, None, false, false, Vec::new());
   }
 
   let models_dir_readable = true;
@@ -337,18 +271,8 @@ fn evaluate_semantic_gate(
   let config_contents = match fs::read_to_string(config_path) {
     Ok(contents) => contents,
     Err(error) => {
-      warnings.insert(format!(
-        "failed to read config.yml at {}: {error}",
-        config_path.display()
-      ));
-      return failed_gate(
-        TrainingResultSemanticReason::ConfigYamlParseFailed,
-        false,
-        None,
-        false,
-        models_dir_readable,
-        Vec::new(),
-      );
+      warnings.insert(format!("failed to read config.yml at {}: {error}", config_path.display()));
+      return failed_gate(TrainingResultSemanticReason::ConfigYamlParseFailed, false, None, false, models_dir_readable, Vec::new());
     }
   };
 
@@ -356,52 +280,24 @@ fn evaluate_semantic_gate(
     Ok(value) => value,
     Err(error) => {
       warnings.insert(format!("config.yml YAML parse failed: {error}"));
-      return failed_gate(
-        TrainingResultSemanticReason::ConfigYamlParseFailed,
-        false,
-        None,
-        false,
-        models_dir_readable,
-        Vec::new(),
-      );
+      return failed_gate(TrainingResultSemanticReason::ConfigYamlParseFailed, false, None, false, models_dir_readable, Vec::new());
     }
   };
 
   let config_trainer = match extract_top_level_trainer(&parsed_value) {
     Ok(Some(trainer)) => Some(trainer),
     Ok(None) => {
-      return failed_gate(
-        TrainingResultSemanticReason::ConfigTrainerMissing,
-        true,
-        None,
-        false,
-        models_dir_readable,
-        Vec::new(),
-      );
+      return failed_gate(TrainingResultSemanticReason::ConfigTrainerMissing, true, None, false, models_dir_readable, Vec::new());
     }
     Err(error) => {
       warnings.insert(error);
-      return failed_gate(
-        TrainingResultSemanticReason::ConfigYamlParseFailed,
-        true,
-        None,
-        false,
-        models_dir_readable,
-        Vec::new(),
-      );
+      return failed_gate(TrainingResultSemanticReason::ConfigYamlParseFailed, true, None, false, models_dir_readable, Vec::new());
     }
   };
 
   let config_backend_matches = config_trainer.as_deref() == Some(trainer_backend);
   if !config_backend_matches {
-    return failed_gate(
-      TrainingResultSemanticReason::TrainerBackendMismatch,
-      true,
-      config_trainer,
-      false,
-      models_dir_readable,
-      Vec::new(),
-    );
+    return failed_gate(TrainingResultSemanticReason::TrainerBackendMismatch, true, config_trainer, false, models_dir_readable, Vec::new());
   }
 
   let checkpoint_files = match collect_checkpoint_files(models_dir_path) {
@@ -413,37 +309,15 @@ fn evaluate_semantic_gate(
         error.partial_files.len(),
         error.cause
       ));
-      return failed_gate(
-        TrainingResultSemanticReason::CheckpointMissing,
-        true,
-        config_trainer.clone(),
-        true,
-        false,
-        error.partial_files,
-      );
+      return failed_gate(TrainingResultSemanticReason::CheckpointMissing, true, config_trainer.clone(), true, false, error.partial_files);
     }
   };
 
   if checkpoint_files.is_empty() {
-    return failed_gate(
-      TrainingResultSemanticReason::CheckpointMissing,
-      true,
-      config_trainer,
-      true,
-      models_dir_readable,
-      Vec::new(),
-    );
+    return failed_gate(TrainingResultSemanticReason::CheckpointMissing, true, config_trainer, true, models_dir_readable, Vec::new());
   }
 
-  (
-    TrainingResultSemanticStatus::Ready,
-    None,
-    true,
-    config_trainer,
-    true,
-    true,
-    checkpoint_files,
-  )
+  (TrainingResultSemanticStatus::Ready, None, true, config_trainer, true, true, checkpoint_files)
 }
 
 fn blocked_gate(
@@ -501,9 +375,7 @@ fn failed_gate(
 }
 
 fn extract_top_level_trainer(value: &Value) -> Result<Option<String>, String> {
-  let mapping = value
-    .as_mapping()
-    .ok_or_else(|| "config.yml root must be a YAML mapping".to_string())?;
+  let mapping = value.as_mapping().ok_or_else(|| "config.yml root must be a YAML mapping".to_string())?;
   let trainer_value = match mapping.get(&Value::from("trainer")) {
     Some(value) => value,
     None => return Ok(None),
@@ -514,9 +386,7 @@ fn extract_top_level_trainer(value: &Value) -> Result<Option<String>, String> {
     .ok_or_else(|| "config.yml top-level trainer must be a scalar string".to_string())
 }
 
-pub(crate) fn collect_checkpoint_files(
-  models_dir_path: &Path,
-) -> Result<Vec<TrainingResultSemanticCheckpointRecord>, CheckpointScanError> {
+pub(crate) fn collect_checkpoint_files(models_dir_path: &Path) -> Result<Vec<TrainingResultSemanticCheckpointRecord>, CheckpointScanError> {
   let mut checkpoints = Vec::new();
   if let Err(cause) = visit_checkpoint_files(models_dir_path, models_dir_path, &mut checkpoints) {
     checkpoints.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
@@ -552,11 +422,7 @@ fn visit_checkpoint_files(
       visit_checkpoint_files(root, &path, checkpoints)?;
       continue;
     }
-    if file_type.is_file()
-      && path
-        .extension()
-        .is_some_and(|extension| extension == "ckpt")
-    {
+    if file_type.is_file() && path.extension().is_some_and(|extension| extension == "ckpt") {
       let relative_path = path
         .strip_prefix(root)
         .map(|relative| relative.to_string_lossy().into_owned())
@@ -572,30 +438,18 @@ fn visit_checkpoint_files(
 }
 
 fn path_is_symlink(path: &Path) -> bool {
-  path
-    .symlink_metadata()
-    .map(|metadata| metadata.file_type().is_symlink())
-    .unwrap_or(false)
+  path.symlink_metadata().map(|metadata| metadata.file_type().is_symlink()).unwrap_or(false)
 }
 
 fn is_real_file(path: &Path) -> bool {
-  path
-    .symlink_metadata()
-    .map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
-    .unwrap_or(false)
+  path.symlink_metadata().map(|metadata| metadata.is_file() && !metadata.file_type().is_symlink()).unwrap_or(false)
 }
 
 fn is_real_dir(path: &Path) -> bool {
-  path
-    .symlink_metadata()
-    .map(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
-    .unwrap_or(false)
+  path.symlink_metadata().map(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink()).unwrap_or(false)
 }
 
-fn read_json_file<T: DeserializeOwned>(
-  path: &Path,
-  label: &str,
-) -> TrainingResultSemanticValidationResult<T> {
+fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> TrainingResultSemanticValidationResult<T> {
   read_json_file_helper(path).map_err(|error| match error {
     JsonFileReadError::Open(error) => {
       format!("failed to open {label} {}: {error}", path.display())
@@ -606,11 +460,7 @@ fn read_json_file<T: DeserializeOwned>(
   })
 }
 
-fn write_json_file<T: Serialize>(
-  path: &Path,
-  value: &T,
-  label: &str,
-) -> TrainingResultSemanticValidationResult<()> {
+fn write_json_file<T: Serialize>(path: &Path, value: &T, label: &str) -> TrainingResultSemanticValidationResult<()> {
   write_json_file_helper(path, value, JsonWriteOptions::default()).map_err(|error| match error {
     JsonFileWriteError::CreateParent(error) | JsonFileWriteError::Write(error) => {
       format!("failed to write {label} {}: {error}", path.display())
@@ -636,16 +486,11 @@ mod tests {
   }
 
   use crate::training_result_artifact::{
-    TrainingResultArtifactFetchManifest, TrainingResultNormalizedArtifactKind,
-    TrainingResultNormalizedArtifactRecord,
+    TrainingResultArtifactFetchManifest, TrainingResultNormalizedArtifactKind, TrainingResultNormalizedArtifactRecord,
   };
   use tempfile::TempDir;
 
-  fn write_d11_manifest_fixture(
-    temp: &TempDir,
-    normalized_result_dir: &Path,
-    trainer_backend: &str,
-  ) -> PathBuf {
+  fn write_d11_manifest_fixture(temp: &TempDir, normalized_result_dir: &Path, trainer_backend: &str) -> PathBuf {
     let manifest = TrainingResultArtifactFetchManifest {
       schema_version: 1,
       generated_at_millis: 1,
@@ -667,52 +512,30 @@ mod tests {
         TrainingResultNormalizedArtifactRecord {
           kind: TrainingResultNormalizedArtifactKind::Config,
           relative_path: RESULT_CONFIG_FILE.to_string(),
-          absolute_path: normalized_result_dir
-            .join(RESULT_CONFIG_FILE)
-            .display()
-            .to_string(),
+          absolute_path: normalized_result_dir.join(RESULT_CONFIG_FILE).display().to_string(),
           readable: true,
           byte_size: Some(32),
         },
         TrainingResultNormalizedArtifactRecord {
           kind: TrainingResultNormalizedArtifactKind::ModelsDirectory,
           relative_path: RESULT_MODELS_DIR.to_string(),
-          absolute_path: normalized_result_dir
-            .join(RESULT_MODELS_DIR)
-            .display()
-            .to_string(),
+          absolute_path: normalized_result_dir.join(RESULT_MODELS_DIR).display().to_string(),
           readable: true,
           byte_size: None,
         },
       ],
       known_limits: vec!["d11-limit".to_string()],
     };
-    let manifest_path = temp
-      .path()
-      .join("minecraft-3dgs-training-result-artifact-manifest.json");
+    let manifest_path = temp.path().join("minecraft-3dgs-training-result-artifact-manifest.json");
     write_json_file(&manifest_path, &manifest, "fixture d11 manifest").expect("write d11 manifest");
     manifest_path
   }
 
-  fn write_ready_normalized_result(
-    normalized_result_dir: &Path,
-    trainer: &str,
-    with_checkpoint: bool,
-  ) {
+  fn write_ready_normalized_result(normalized_result_dir: &Path, trainer: &str, with_checkpoint: bool) {
     fs::create_dir_all(normalized_result_dir.join(RESULT_MODELS_DIR)).expect("models dir");
-    fs::write(
-      normalized_result_dir.join(RESULT_CONFIG_FILE),
-      format!("trainer: {trainer}\n"),
-    )
-    .expect("config");
+    fs::write(normalized_result_dir.join(RESULT_CONFIG_FILE), format!("trainer: {trainer}\n")).expect("config");
     if with_checkpoint {
-      fs::write(
-        normalized_result_dir
-          .join(RESULT_MODELS_DIR)
-          .join("step-000001.ckpt"),
-        b"checkpoint",
-      )
-      .expect("checkpoint");
+      fs::write(normalized_result_dir.join(RESULT_MODELS_DIR).join("step-000001.ckpt"), b"checkpoint").expect("checkpoint");
     }
   }
 
@@ -721,8 +544,7 @@ mod tests {
     let temp = TempDir::new().expect("temp dir");
     let normalized_result_dir = temp.path().join("normalized-result");
     write_ready_normalized_result(&normalized_result_dir, "nerfstudio.splatfacto", true);
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -730,16 +552,10 @@ mod tests {
     })
     .expect("semantic validation should succeed");
 
-    assert_eq!(
-      output.inspect_report.semantic_status,
-      TrainingResultSemanticStatus::Ready
-    );
+    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Ready);
     assert_eq!(output.inspect_report.semantic_reason, None);
     assert_eq!(output.inspect_report.checkpoint_count, 1);
-    assert_eq!(
-      output.inspect_report.config_trainer.as_deref(),
-      Some("nerfstudio.splatfacto")
-    );
+    assert_eq!(output.inspect_report.config_trainer.as_deref(), Some("nerfstudio.splatfacto"));
     assert!(output.manifest_path.is_file());
     assert!(output.inspect_report_path.is_file());
   }
@@ -749,8 +565,7 @@ mod tests {
     let temp = TempDir::new().expect("temp dir");
     let normalized_result_dir = temp.path().join("normalized-result");
     fs::create_dir_all(normalized_result_dir.join(RESULT_MODELS_DIR)).expect("models dir");
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -758,14 +573,8 @@ mod tests {
     })
     .expect("semantic validation should write blocked inspect");
 
-    assert_eq!(
-      output.inspect_report.semantic_status,
-      TrainingResultSemanticStatus::Blocked
-    );
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::NormalizedConfigMissing)
-    );
+    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Blocked);
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::NormalizedConfigMissing));
   }
 
   #[test]
@@ -773,13 +582,8 @@ mod tests {
     let temp = TempDir::new().expect("temp dir");
     let normalized_result_dir = temp.path().join("normalized-result");
     fs::create_dir_all(&normalized_result_dir).expect("normalized dir");
-    fs::write(
-      normalized_result_dir.join(RESULT_CONFIG_FILE),
-      "trainer: nerfstudio.splatfacto\n",
-    )
-    .expect("config");
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    fs::write(normalized_result_dir.join(RESULT_CONFIG_FILE), "trainer: nerfstudio.splatfacto\n").expect("config");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -787,10 +591,7 @@ mod tests {
     })
     .expect("semantic validation should write blocked inspect");
 
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::NormalizedModelsDirectoryMissing)
-    );
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::NormalizedModelsDirectoryMissing));
   }
 
   #[test]
@@ -802,11 +603,9 @@ mod tests {
     fs::write(&real_config, "trainer: nerfstudio.splatfacto\n").expect("real config");
     #[cfg(unix)]
     {
-      std::os::unix::fs::symlink(&real_config, normalized_result_dir.join(RESULT_CONFIG_FILE))
-        .expect("symlink config");
+      std::os::unix::fs::symlink(&real_config, normalized_result_dir.join(RESULT_CONFIG_FILE)).expect("symlink config");
       fs::create_dir_all(normalized_result_dir.join(RESULT_MODELS_DIR)).expect("models dir");
-      let d11_manifest_path =
-        write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+      let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
       let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
         training_result_artifact_manifest_path: d11_manifest_path,
@@ -814,10 +613,7 @@ mod tests {
       })
       .expect("semantic validation should write blocked inspect");
 
-      assert_eq!(
-        output.inspect_report.semantic_reason,
-        Some(TrainingResultSemanticReason::NormalizedPathsInvalid)
-      );
+      assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::NormalizedPathsInvalid));
     }
   }
 
@@ -826,13 +622,8 @@ mod tests {
     let temp = TempDir::new().expect("temp dir");
     let normalized_result_dir = temp.path().join("normalized-result");
     fs::create_dir_all(normalized_result_dir.join(RESULT_MODELS_DIR)).expect("models dir");
-    fs::write(
-      normalized_result_dir.join(RESULT_CONFIG_FILE),
-      "trainer: [broken\n",
-    )
-    .expect("broken config");
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    fs::write(normalized_result_dir.join(RESULT_CONFIG_FILE), "trainer: [broken\n").expect("broken config");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -840,10 +631,7 @@ mod tests {
     })
     .expect("semantic validation should write failed inspect");
 
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::ConfigYamlParseFailed)
-    );
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::ConfigYamlParseFailed));
   }
 
   #[test]
@@ -851,13 +639,8 @@ mod tests {
     let temp = TempDir::new().expect("temp dir");
     let normalized_result_dir = temp.path().join("normalized-result");
     write_ready_normalized_result(&normalized_result_dir, "nerfstudio.splatfacto", true);
-    fs::write(
-      normalized_result_dir.join(RESULT_CONFIG_FILE),
-      "method: splatfacto\n",
-    )
-    .expect("config without trainer");
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    fs::write(normalized_result_dir.join(RESULT_CONFIG_FILE), "method: splatfacto\n").expect("config without trainer");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -865,10 +648,7 @@ mod tests {
     })
     .expect("semantic validation should write failed inspect");
 
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::ConfigTrainerMissing)
-    );
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::ConfigTrainerMissing));
   }
 
   #[test]
@@ -876,8 +656,7 @@ mod tests {
     let temp = TempDir::new().expect("temp dir");
     let normalized_result_dir = temp.path().join("normalized-result");
     write_ready_normalized_result(&normalized_result_dir, "other.backend", true);
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -885,10 +664,7 @@ mod tests {
     })
     .expect("semantic validation should write failed inspect");
 
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::TrainerBackendMismatch)
-    );
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::TrainerBackendMismatch));
     assert!(!output.inspect_report.config_backend_matches);
     assert!(output.inspect_report.models_dir_readable);
   }
@@ -898,13 +674,8 @@ mod tests {
     let temp = TempDir::new().expect("temp dir");
     let normalized_result_dir = temp.path().join("normalized-result");
     fs::create_dir_all(normalized_result_dir.join("nerfstudio_models")).expect("models dir");
-    fs::write(
-      normalized_result_dir.join("config.yml"),
-      "trainer: [broken\n",
-    )
-    .expect("broken config");
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    fs::write(normalized_result_dir.join("config.yml"), "trainer: [broken\n").expect("broken config");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -912,10 +683,7 @@ mod tests {
     })
     .expect("semantic validation should write failed inspect");
 
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::ConfigYamlParseFailed)
-    );
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::ConfigYamlParseFailed));
     assert!(!output.inspect_report.config_backend_matches);
     assert!(output.inspect_report.models_dir_readable);
   }
@@ -925,8 +693,7 @@ mod tests {
     let temp = TempDir::new().expect("temp dir");
     let normalized_result_dir = temp.path().join("normalized-result");
     write_ready_normalized_result(&normalized_result_dir, "nerfstudio.splatfacto", false);
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -934,10 +701,7 @@ mod tests {
     })
     .expect("semantic validation should write failed inspect");
 
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::CheckpointMissing)
-    );
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::CheckpointMissing));
   }
 
   #[test]
@@ -945,8 +709,7 @@ mod tests {
     let temp = TempDir::new().expect("temp dir");
     let normalized_result_dir = temp.path().join("normalized-result");
     write_ready_normalized_result(&normalized_result_dir, "nerfstudio.splatfacto", true);
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -954,18 +717,9 @@ mod tests {
     })
     .expect("semantic validation should succeed without job_status.json");
 
-    assert_eq!(
-      output.inspect_report.semantic_status,
-      TrainingResultSemanticStatus::Ready
-    );
+    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Ready);
     assert!(!output.inspect_report.status_snapshot_present);
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("job_status.json"))
-    );
+    assert!(output.inspect_report.warnings.iter().any(|warning| warning.contains("job_status.json")));
   }
 
   #[cfg(unix)]
@@ -977,12 +731,9 @@ mod tests {
     let normalized_result_dir = temp.path().join("normalized-result");
     write_ready_normalized_result(&normalized_result_dir, "nerfstudio.splatfacto", true);
     let models_dir = normalized_result_dir.join(RESULT_MODELS_DIR);
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
-    let original_permissions = fs::metadata(&models_dir)
-      .expect("models metadata")
-      .permissions();
+    let original_permissions = fs::metadata(&models_dir).expect("models metadata").permissions();
     let mut unreadable_permissions = original_permissions.clone();
     unreadable_permissions.set_mode(0o000);
     fs::set_permissions(&models_dir, unreadable_permissions).expect("set unreadable permissions");
@@ -995,10 +746,7 @@ mod tests {
 
     fs::set_permissions(&models_dir, original_permissions).expect("restore permissions");
 
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::CheckpointMissing)
-    );
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::CheckpointMissing));
     assert!(!output.inspect_report.models_dir_readable);
   }
 
@@ -1009,13 +757,8 @@ mod tests {
     let real_normalized_result_dir = temp.path().join("real-normalized-result");
     write_ready_normalized_result(&real_normalized_result_dir, "nerfstudio.splatfacto", true);
     let symlink_normalized_result_dir = temp.path().join("normalized-result");
-    std::os::unix::fs::symlink(&real_normalized_result_dir, &symlink_normalized_result_dir)
-      .expect("symlink normalized result dir");
-    let d11_manifest_path = write_d11_manifest_fixture(
-      &temp,
-      &symlink_normalized_result_dir,
-      "nerfstudio.splatfacto",
-    );
+    std::os::unix::fs::symlink(&real_normalized_result_dir, &symlink_normalized_result_dir).expect("symlink normalized result dir");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &symlink_normalized_result_dir, "nerfstudio.splatfacto");
 
     let output = validate_3dgs_training_result(TrainingResultSemanticValidationInputs {
       training_result_artifact_manifest_path: d11_manifest_path,
@@ -1023,14 +766,8 @@ mod tests {
     })
     .expect("semantic validation should write blocked inspect");
 
-    assert_eq!(
-      output.inspect_report.semantic_status,
-      TrainingResultSemanticStatus::Blocked
-    );
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::NormalizedPathsInvalid)
-    );
+    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Blocked);
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::NormalizedPathsInvalid));
   }
 
   #[cfg(unix)]
@@ -1046,12 +783,9 @@ mod tests {
     let blocked_dir = models_dir.join("z-blocked-subdir");
     fs::create_dir_all(&blocked_dir).expect("blocked dir");
     fs::write(blocked_dir.join("step-000002.ckpt"), b"checkpoint").expect("nested checkpoint");
-    let d11_manifest_path =
-      write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
+    let d11_manifest_path = write_d11_manifest_fixture(&temp, &normalized_result_dir, "nerfstudio.splatfacto");
 
-    let original_permissions = fs::metadata(&blocked_dir)
-      .expect("blocked dir metadata")
-      .permissions();
+    let original_permissions = fs::metadata(&blocked_dir).expect("blocked dir metadata").permissions();
     let mut unreadable_permissions = original_permissions.clone();
     unreadable_permissions.set_mode(0o000);
     fs::set_permissions(&blocked_dir, unreadable_permissions).expect("set unreadable permissions");
@@ -1064,27 +798,12 @@ mod tests {
 
     fs::set_permissions(&blocked_dir, original_permissions).expect("restore permissions");
 
-    assert_eq!(
-      output.inspect_report.semantic_status,
-      TrainingResultSemanticStatus::Failed
-    );
-    assert_eq!(
-      output.inspect_report.semantic_reason,
-      Some(TrainingResultSemanticReason::CheckpointMissing)
-    );
+    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Failed);
+    assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::CheckpointMissing));
     assert_eq!(output.inspect_report.checkpoint_count, 1);
     assert_eq!(output.manifest.checkpoint_count, 1);
     assert_eq!(output.manifest.checkpoint_files.len(), 1);
-    assert_eq!(
-      output.manifest.checkpoint_files[0].relative_path,
-      "a-step-000001.ckpt"
-    );
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("after discovering 1 checkpoint file(s)"))
-    );
+    assert_eq!(output.manifest.checkpoint_files[0].relative_path, "a-step-000001.ckpt");
+    assert!(output.inspect_report.warnings.iter().any(|warning| warning.contains("after discovering 1 checkpoint file(s)")));
   }
 }

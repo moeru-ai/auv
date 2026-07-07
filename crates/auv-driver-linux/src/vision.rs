@@ -36,19 +36,14 @@ impl OcrMatches {
   }
 }
 
-pub fn recognize_text_in_capture(
-  capture: &Capture,
-  region: RatioRect,
-  options: &TextRecognitionOptions,
-) -> DriverResult<TextRecognition> {
+pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: &TextRecognitionOptions) -> DriverResult<TextRecognition> {
   let crop = crop_pixels(capture, region);
   if crop.width == 0 || crop.height == 0 {
     return Ok(TextRecognition::default());
   }
-  let cropped =
-    image::imageops::crop_imm(&capture.image, crop.x, crop.y, crop.width, crop.height).to_image();
-  let recognition = recognize_text_in_rgba(cropped.as_raw(), crop.width, crop.height, options)
-    .map_err(|error| backend(error.to_string()))?;
+  let cropped = image::imageops::crop_imm(&capture.image, crop.x, crop.y, crop.width, crop.height).to_image();
+  let recognition =
+    recognize_text_in_rgba(cropped.as_raw(), crop.width, crop.height, options).map_err(|error| backend(error.to_string()))?;
   Ok(map_recognition_to_capture(&recognition, capture, crop))
 }
 
@@ -89,16 +84,10 @@ fn ratio_to_pixel(ratio: f64, extent: u32) -> u32 {
   if !ratio.is_finite() || ratio <= 0.0 {
     return 0;
   }
-  (f64::from(extent) * ratio)
-    .round()
-    .clamp(0.0, f64::from(extent)) as u32
+  (f64::from(extent) * ratio).round().clamp(0.0, f64::from(extent)) as u32
 }
 
-fn map_recognition_to_capture(
-  recognition: &TextRecognition,
-  capture: &Capture,
-  crop: CropPixels,
-) -> TextRecognition {
+fn map_recognition_to_capture(recognition: &TextRecognition, capture: &Capture, crop: CropPixels) -> TextRecognition {
   let x_scale = if capture.bounds.size.width > 0.0 {
     f64::from(capture.image.width()) / capture.bounds.size.width
   } else {
@@ -128,11 +117,7 @@ fn map_recognition_to_capture(
     })
     .collect::<Vec<_>>();
   TextRecognition {
-    text: regions
-      .iter()
-      .map(|region| region.text.as_str())
-      .collect::<Vec<_>>()
-      .join("\n"),
+    text: regions.iter().map(|region| region.text.as_str()).collect::<Vec<_>>().join("\n"),
     regions,
   }
 }
@@ -242,12 +227,8 @@ mod tests {
   fn empty_region_recognizes_nothing_without_calling_ocr() {
     let capture = capture(100, 100, Rect::new(0.0, 0.0, 100.0, 100.0));
 
-    let recognition = recognize_text_in_capture(
-      &capture,
-      RatioRect::new(0.0, 0.0, 0.0, 1.0),
-      &Default::default(),
-    )
-    .expect("empty region yields empty recognition");
+    let recognition = recognize_text_in_capture(&capture, RatioRect::new(0.0, 0.0, 0.0, 1.0), &Default::default())
+      .expect("empty region yields empty recognition");
 
     assert!(recognition.regions.is_empty());
     assert!(recognition.text.is_empty());

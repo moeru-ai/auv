@@ -55,17 +55,12 @@ pub(crate) struct SceneFixture {
 }
 
 pub(crate) fn load_scene_fixture(scenario_dir: &str) -> SceneFixture {
-  let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-    .join("tests/fixtures/scan/scene")
-    .join(scenario_dir)
-    .join("manifest.json");
+  let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/scene").join(scenario_dir).join("manifest.json");
   let text = std::fs::read_to_string(&path).expect("read fixture");
   serde_json::from_str(&text).expect("parse fixture")
 }
 
-pub(crate) fn observations_from_fixture(
-  raw: &[Vec<ObservationFixture>],
-) -> Vec<Vec<FrameObservation>> {
+pub(crate) fn observations_from_fixture(raw: &[Vec<ObservationFixture>]) -> Vec<Vec<FrameObservation>> {
   raw
     .iter()
     .map(|frame| {
@@ -122,21 +117,12 @@ pub(crate) fn parse_lifecycle_event(raw: &LifecycleEventFixture) -> LifecycleEve
   }
 }
 
-pub(crate) fn bundle_from_frame_fixture(
-  scenario_dir: &str,
-  frame_fixture: &str,
-) -> ScanFrameBundle {
-  let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    .join("tests/fixtures/scan")
-    .join(frame_fixture);
+pub(crate) fn bundle_from_frame_fixture(scenario_dir: &str, frame_fixture: &str) -> ScanFrameBundle {
+  let fixture_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan").join(frame_fixture);
   let seq = SCENE_FIXTURE_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-  let out_dir = std::env::temp_dir().join(format!(
-    "auv-scan-scene-{}-{}-{}-{}",
-    scenario_dir,
-    frame_fixture.replace('/', "-"),
-    std::process::id(),
-    seq,
-  ));
+  let out_dir =
+    std::env::temp_dir()
+      .join(format!("auv-scan-scene-{}-{}-{}-{}", scenario_dir, frame_fixture.replace('/', "-"), std::process::id(), seq,));
   let _ = std::fs::remove_dir_all(&out_dir);
   produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
   let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
@@ -153,23 +139,15 @@ pub(crate) fn coverage_golden_scenario_for_scene(scene_scenario: &str) -> Option
   }
 }
 
-pub(crate) fn coverage_wire_from_scene_fixture(
-  scenario_dir: &str,
-) -> Option<crate::coverage_artifact::ScanCoverageWire> {
+pub(crate) fn coverage_wire_from_scene_fixture(scenario_dir: &str) -> Option<crate::coverage_artifact::ScanCoverageWire> {
   let golden = coverage_golden_scenario_for_scene(scenario_dir)?;
-  let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    .join("tests/fixtures/scan/coverage")
-    .join(golden)
-    .join("golden");
+  let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/coverage").join(golden).join("golden");
   Some(read_coverage_artifact_from_scan_dir(&dir).expect("read coverage golden"))
 }
 
 pub(crate) fn scene_input_from_fixture(scenario_dir: &str) -> SceneStateInput {
   let fixture = load_scene_fixture(scenario_dir);
-  let lifecycle_events = fixture
-    .lifecycle_events
-    .as_ref()
-    .map(|events| events.iter().map(parse_lifecycle_event).collect::<Vec<_>>());
+  let lifecycle_events = fixture.lifecycle_events.as_ref().map(|events| events.iter().map(parse_lifecycle_event).collect::<Vec<_>>());
   SceneStateInput {
     bundle: bundle_from_frame_fixture(scenario_dir, &fixture.frame_fixture),
     observations_by_frame: observations_from_fixture(&fixture.observations_by_frame),

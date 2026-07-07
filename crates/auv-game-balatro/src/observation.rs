@@ -8,9 +8,9 @@ use crate::cache::cache_hint_for_detection;
 use crate::config::BalatroModelConfig;
 use crate::detector::{BalatroDetectionSets, BalatroDetectors};
 use crate::model::{
-  BALATRO_STATE_SCHEMA_VERSION, BalatroDiagnostic, BalatroPhase, BalatroState, ButtonTarget,
-  CacheHint, CardSlot, ConsumableKind, ConsumableSlot, FrameRef, JokerSlot, ObjectEvidence,
-  ObjectZone, Reading, RoundState, ScoreState, SlotId, StoreItem, StoreItemKind, StoreState,
+  BALATRO_STATE_SCHEMA_VERSION, BalatroDiagnostic, BalatroPhase, BalatroState, ButtonTarget, CacheHint, CardSlot, ConsumableKind,
+  ConsumableSlot, FrameRef, JokerSlot, ObjectEvidence, ObjectZone, Reading, RoundState, ScoreState, SlotId, StoreItem, StoreItemKind,
+  StoreState,
 };
 
 #[derive(Debug, Error)]
@@ -23,11 +23,7 @@ pub enum ObservationError {
   Image(#[from] image::ImageError),
 }
 
-pub fn observe_image(
-  image_path: impl AsRef<Path>,
-  config: &BalatroModelConfig,
-  no_cache: bool,
-) -> Result<BalatroState, ObservationError> {
+pub fn observe_image(image_path: impl AsRef<Path>, config: &BalatroModelConfig, no_cache: bool) -> Result<BalatroState, ObservationError> {
   let image_path = image_path.as_ref();
   let image = image::open(image_path)?.to_rgb8();
   let image_size = ImageSize {
@@ -37,13 +33,7 @@ pub fn observe_image(
   let detectors = BalatroDetectors::load(config.clone())?;
   let detections = detectors.detect_path(image_path)?;
 
-  Ok(build_state_from_detections(
-    image_path.display().to_string(),
-    image_size,
-    &image,
-    detections,
-    no_cache,
-  ))
+  Ok(build_state_from_detections(image_path.display().to_string(), image_size, &image, detections, no_cache))
 }
 
 pub fn build_state_from_detections(
@@ -62,9 +52,7 @@ pub fn build_state_from_detections(
   ui_detections.sort_by(compare_left_to_right);
 
   let hand = card_slots(
-    entity_detections
-      .iter()
-      .filter(|detection| matches_label(detection, &["poker_card_front", "poker_card_back"])),
+    entity_detections.iter().filter(|detection| matches_label(detection, &["poker_card_front", "poker_card_back"])),
     ObjectZone::Hand,
     image,
     no_cache,
@@ -99,11 +87,7 @@ pub fn build_state_from_detections(
     .filter(|detection| detection.label.starts_with("button_"))
     .map(|detection| ButtonTarget {
       id: detection.label.clone(),
-      label: detection
-        .label
-        .strip_prefix("button_")
-        .unwrap_or(&detection.label)
-        .to_owned(),
+      label: detection.label.strip_prefix("button_").unwrap_or(&detection.label).to_owned(),
       bbox: detection.bbox,
       confidence: detection.confidence,
     })
@@ -154,12 +138,7 @@ fn evidence_from_set(set: &DetectionSet) -> Vec<ObjectEvidence> {
     .collect()
 }
 
-fn card_slots<'a>(
-  detections: impl Iterator<Item = &'a Detection>,
-  zone: ObjectZone,
-  image: &RgbImage,
-  no_cache: bool,
-) -> Vec<CardSlot> {
+fn card_slots<'a>(detections: impl Iterator<Item = &'a Detection>, zone: ObjectZone, image: &RgbImage, no_cache: bool) -> Vec<CardSlot> {
   detections
     .enumerate()
     .map(|(index, detection)| CardSlot {
@@ -173,18 +152,9 @@ fn card_slots<'a>(
     .collect()
 }
 
-fn store_state(
-  entities: &[Detection],
-  ui: &[Detection],
-  image: &RgbImage,
-  no_cache: bool,
-) -> StoreState {
-  let can_reroll = ui
-    .iter()
-    .any(|detection| detection.label == "button_store_reroll");
-  let can_next_round = ui
-    .iter()
-    .any(|detection| detection.label == "button_store_next_round");
+fn store_state(entities: &[Detection], ui: &[Detection], image: &RgbImage, no_cache: bool) -> StoreState {
+  let can_reroll = ui.iter().any(|detection| detection.label == "button_store_reroll");
+  let can_next_round = ui.iter().any(|detection| detection.label == "button_store_next_round");
   let is_store = can_reroll || can_next_round || ui.iter().any(is_store_control);
   let items = if is_store {
     store_items_for_store_context(entities, image, no_cache)
@@ -202,17 +172,11 @@ fn store_state(
   }
 }
 
-fn store_items_for_store_context(
-  entities: &[Detection],
-  image: &RgbImage,
-  no_cache: bool,
-) -> Vec<StoreItem> {
+fn store_items_for_store_context(entities: &[Detection], image: &RgbImage, no_cache: bool) -> Vec<StoreItem> {
   let mut items = entities
     .iter()
     .filter_map(|detection| store_item_kind(&detection.label).map(|kind| (detection, kind)))
-    .filter(|(detection, kind)| {
-      is_store_item_candidate(detection, kind, image.width(), image.height())
-    })
+    .filter(|(detection, kind)| is_store_item_candidate(detection, kind, image.width(), image.height()))
     .enumerate()
     .map(|(index, (detection, kind))| StoreItem {
       slot: SlotId::new(ObjectZone::Store, index as u32),
@@ -228,12 +192,7 @@ fn store_items_for_store_context(
   items
 }
 
-fn is_store_item_candidate(
-  detection: &Detection,
-  kind: &StoreItemKind,
-  image_width: u32,
-  image_height: u32,
-) -> bool {
+fn is_store_item_candidate(detection: &Detection, kind: &StoreItemKind, image_width: u32, image_height: u32) -> bool {
   let width = image_width.max(1) as f32;
   let height = image_height.max(1) as f32;
   let center_x = center_x(detection) / width;
@@ -255,9 +214,7 @@ fn is_store_item_candidate(
 fn infer_phase(entities: &[Detection], ui: &[Detection]) -> BalatroPhase {
   if ui.iter().any(is_store_control) {
     BalatroPhase::Store
-  } else if ui
-    .iter()
-    .any(|detection| matches_label(detection, &["button_play", "button_discard"]))
+  } else if ui.iter().any(|detection| matches_label(detection, &["button_play", "button_discard"]))
     || (entities.iter().any(is_hand_card) && ui.iter().any(is_hand_sort_control))
   {
     BalatroPhase::Playing
@@ -272,12 +229,8 @@ fn infer_phase(entities: &[Detection], ui: &[Detection]) -> BalatroPhase {
     )
   }) {
     BalatroPhase::BlindSelect
-  } else if ui
-    .iter()
-    .any(|detection| detection.label == "button_new_run")
-    && ui
-      .iter()
-      .any(|detection| detection.label == "button_main_menu")
+  } else if ui.iter().any(|detection| detection.label == "button_new_run")
+    && ui.iter().any(|detection| detection.label == "button_main_menu")
   {
     BalatroPhase::GameOver
   } else if ui.iter().any(|detection| {
@@ -301,10 +254,7 @@ fn is_hand_card(detection: &Detection) -> bool {
 }
 
 fn is_hand_sort_control(detection: &Detection) -> bool {
-  matches_label(
-    detection,
-    &["button_sort_hand_rank", "button_sort_hand_suits"],
-  )
+  matches_label(detection, &["button_sort_hand_rank", "button_sort_hand_suits"])
 }
 
 fn is_store_control(detection: &Detection) -> bool {
@@ -342,25 +292,15 @@ fn store_item_kind(label: &str) -> Option<StoreItemKind> {
   }
 }
 
-fn append_voucher_layout_candidate(
-  items: &mut Vec<StoreItem>,
-  image_width: u32,
-  image_height: u32,
-) {
+fn append_voucher_layout_candidate(items: &mut Vec<StoreItem>, image_width: u32, image_height: u32) {
   if image_width < 600 || image_height < 400 {
     return;
   }
-  if !items
-    .iter()
-    .any(|item| item.kind != StoreItemKind::CardPack)
-  {
+  if !items.iter().any(|item| item.kind != StoreItemKind::CardPack) {
     return;
   }
   let bbox = voucher_layout_bbox(image_width, image_height);
-  if items
-    .iter()
-    .any(|item| bbox_overlap_ratio(item.bbox, bbox) > 0.25)
-  {
+  if items.iter().any(|item| bbox_overlap_ratio(item.bbox, bbox) > 0.25) {
     return;
   }
   let slot = SlotId::new(ObjectZone::Store, items.len() as u32);
@@ -389,10 +329,7 @@ fn voucher_layout_bbox(image_width: u32, image_height: u32) -> auv_inference_com
   }
 }
 
-fn bbox_overlap_ratio(
-  left: auv_inference_common::BoundingBox,
-  right: auv_inference_common::BoundingBox,
-) -> f32 {
+fn bbox_overlap_ratio(left: auv_inference_common::BoundingBox, right: auv_inference_common::BoundingBox) -> f32 {
   let x1 = left.x1.max(right.x1);
   let y1 = left.y1.max(right.y1);
   let x2 = left.x2.min(right.x2);
@@ -409,9 +346,7 @@ fn matches_label(detection: &Detection, labels: &[&str]) -> bool {
 }
 
 fn compare_left_to_right(left: &Detection, right: &Detection) -> std::cmp::Ordering {
-  center_x(left)
-    .partial_cmp(&center_x(right))
-    .unwrap_or(std::cmp::Ordering::Equal)
+  center_x(left).partial_cmp(&center_x(right)).unwrap_or(std::cmp::Ordering::Equal)
 }
 
 fn center_x(detection: &Detection) -> f32 {
@@ -426,9 +361,7 @@ mod tests {
   use super::*;
   use crate::cache::cache_hint_for_detection;
   use crate::detector::BalatroDetectionSets;
-  use crate::model::{
-    BALATRO_STATE_SCHEMA_VERSION, BalatroPhase, ConsumableKind, ObjectZone, SlotId, StoreItemKind,
-  };
+  use crate::model::{BALATRO_STATE_SCHEMA_VERSION, BalatroPhase, ConsumableKind, ObjectZone, SlotId, StoreItemKind};
 
   #[test]
   fn synthetic_hand_cards_sort_left_to_right_with_slot_ids() {
@@ -441,13 +374,7 @@ mod tests {
       vec![],
     );
 
-    let state = build_state_from_detections(
-      "synthetic.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.hand.len(), 2);
     assert_eq!(state.hand[0].slot, SlotId::new(ObjectZone::Hand, 0));
@@ -464,13 +391,7 @@ mod tests {
       vec![detection("button_store_reroll", 10.0, 120.0, 50.0, 145.0)],
     );
 
-    let state = build_state_from_detections(
-      "synthetic.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.phase, BalatroPhase::Store);
     assert!(state.store.is_store);
@@ -483,18 +404,9 @@ mod tests {
   #[test]
   fn new_run_play_button_detects_main_menu_phase() {
     let image = test_image();
-    let detections = detection_sets(
-      vec![],
-      vec![detection("button_new_run_play", 40.0, 120.0, 80.0, 145.0)],
-    );
+    let detections = detection_sets(vec![], vec![detection("button_new_run_play", 40.0, 120.0, 80.0, 145.0)]);
 
-    let state = build_state_from_detections(
-      "synthetic.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.phase, BalatroPhase::MainMenu);
   }
@@ -510,13 +422,7 @@ mod tests {
       ],
     );
 
-    let state = build_state_from_detections(
-      "synthetic-game-over.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic-game-over.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.phase, BalatroPhase::GameOver);
   }
@@ -526,13 +432,7 @@ mod tests {
     let image = test_image();
     let detections = detection_sets(vec![], vec![]);
 
-    let state = build_state_from_detections(
-      "synthetic-empty.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic-empty.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.phase, BalatroPhase::Unknown);
     assert_eq!(state.diagnostics.len(), 1);
@@ -555,13 +455,7 @@ mod tests {
       ],
     );
 
-    let state = build_state_from_detections(
-      "synthetic.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.schema_version, BALATRO_STATE_SCHEMA_VERSION);
     assert_eq!(state.frame.source, "synthetic.png");
@@ -576,10 +470,7 @@ mod tests {
     assert!(state.diagnostics.is_empty());
 
     assert_eq!(state.consumables.len(), 3);
-    assert_eq!(
-      state.consumables[0].slot,
-      SlotId::new(ObjectZone::Consumable, 0)
-    );
+    assert_eq!(state.consumables[0].slot, SlotId::new(ObjectZone::Consumable, 0));
     assert_eq!(state.consumables[0].kind, ConsumableKind::Tarot);
     assert_eq!(state.consumables[1].kind, ConsumableKind::Planet);
     assert_eq!(state.consumables[2].kind, ConsumableKind::Spectral);
@@ -609,13 +500,7 @@ mod tests {
       ],
     );
 
-    let state = build_state_from_detections(
-      "synthetic.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.phase, BalatroPhase::Playing);
     assert_eq!(state.consumables.len(), 2);
@@ -646,13 +531,7 @@ mod tests {
       )],
     );
 
-    let state = build_state_from_detections(
-      "synthetic-store.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic-store.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.phase, BalatroPhase::Store);
     assert!(state.store.is_store);
@@ -682,13 +561,7 @@ mod tests {
       )],
     );
 
-    let state = build_state_from_detections(
-      "synthetic-store-pack.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic-store-pack.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.store.item_count, 1);
     assert_eq!(state.store.items[0].slot, SlotId::new(ObjectZone::Store, 0));
@@ -712,13 +585,7 @@ mod tests {
       )],
     );
 
-    let state = build_state_from_detections(
-      "synthetic-store-voucher.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic-store-voucher.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.phase, BalatroPhase::Store);
     assert_eq!(state.store.item_count, 2);
@@ -743,13 +610,7 @@ mod tests {
       )],
     );
 
-    let state = build_state_from_detections(
-      "synthetic-small-store-pack.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic-small-store-pack.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.store.item_count, 1);
     assert_eq!(state.store.items[0].slot, SlotId::new(ObjectZone::Store, 0));
@@ -767,13 +628,7 @@ mod tests {
       ],
     );
 
-    let state = build_state_from_detections(
-      "synthetic.png",
-      image_size(&image),
-      &image,
-      detections,
-      false,
-    );
+    let state = build_state_from_detections("synthetic.png", image_size(&image), &image, detections, false);
 
     assert_eq!(state.phase, BalatroPhase::Playing);
   }
@@ -826,11 +681,7 @@ mod tests {
     detection_sets_for_image(&image, entities, ui)
   }
 
-  fn detection_sets_for_image(
-    image: &RgbImage,
-    entities: Vec<Detection>,
-    ui: Vec<Detection>,
-  ) -> BalatroDetectionSets {
+  fn detection_sets_for_image(image: &RgbImage, entities: Vec<Detection>, ui: Vec<Detection>) -> BalatroDetectionSets {
     BalatroDetectionSets {
       entities: DetectionSet {
         model_id: ModelId("entities-test".to_owned()),
@@ -859,9 +710,7 @@ mod tests {
   }
 
   fn test_image_with_size(width: u32, height: u32) -> RgbImage {
-    RgbImage::from_fn(width, height, |x, y| {
-      Rgb([(x % 251) as u8, (y % 251) as u8, ((x + y) % 251) as u8])
-    })
+    RgbImage::from_fn(width, height, |x, y| Rgb([(x % 251) as u8, (y % 251) as u8, ((x + y) % 251) as u8]))
   }
 
   fn image_size(image: &RgbImage) -> ImageSize {

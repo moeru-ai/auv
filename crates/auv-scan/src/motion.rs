@@ -31,10 +31,7 @@ pub enum MotionError {
 }
 
 /// Estimate viewport motion between two adjacent frames (2D `window_bounds` delta).
-pub(crate) fn estimate_viewport_motion_between(
-  first: &ScanFrame,
-  second: &ScanFrame,
-) -> MotionResult {
+pub(crate) fn estimate_viewport_motion_between(first: &ScanFrame, second: &ScanFrame) -> MotionResult {
   if second.sequence_index <= first.sequence_index {
     return MotionResult::Unknown(MotionUnknown {
       code: "motion_unknown".into(),
@@ -55,10 +52,7 @@ pub fn estimate_viewport_motion(bundle: &ScanFrameBundle) -> Result<MotionResult
       found: bundle.frames.len(),
     });
   }
-  Ok(estimate_viewport_motion_between(
-    &bundle.frames[0],
-    &bundle.frames[1],
-  ))
+  Ok(estimate_viewport_motion_between(&bundle.frames[0], &bundle.frames[1]))
 }
 
 #[cfg(test)]
@@ -77,8 +71,7 @@ mod tests {
   #[test]
   fn estimate_viewport_motion_matches_two_frame_fixture() {
     let fixture_dir = two_frame_fixture_dir();
-    let out_dir =
-      std::env::temp_dir().join(format!("auv-scan-motion-estimate-{}", std::process::id()));
+    let out_dir = std::env::temp_dir().join(format!("auv-scan-motion-estimate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out_dir);
     produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");

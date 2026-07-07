@@ -139,12 +139,8 @@ pub fn export_spatial_bundle(inputs: SpatialBundleInputs) -> DatasetResult<Spati
 pub fn directory_for_role(role: &str) -> Option<SpatialBundleDirectory> {
   match role {
     "minecraft-screenshot" => Some(SpatialBundleDirectory::Screenshots),
-    "minecraft-spatial-frame" | "minecraft-projection" => {
-      Some(SpatialBundleDirectory::SpatialFrames)
-    }
-    "candidate-action-decision" | "candidate-action-execution" | "candidate-promotion" => {
-      Some(SpatialBundleDirectory::Actions)
-    }
+    "minecraft-spatial-frame" | "minecraft-projection" => Some(SpatialBundleDirectory::SpatialFrames),
+    "candidate-action-decision" | "candidate-action-execution" | "candidate-promotion" => Some(SpatialBundleDirectory::Actions),
     "operation-result" => Some(SpatialBundleDirectory::Verification),
     "minecraft-overlay" => Some(SpatialBundleDirectory::Overlays),
     _ => None,
@@ -159,12 +155,8 @@ fn prepare_bundle_dirs(output_dir: &Path) -> DatasetResult<()> {
     "verification",
     "overlays",
   ] {
-    fs::create_dir_all(output_dir.join(segment)).map_err(|error| {
-      format!(
-        "failed to create minecraft spatial bundle directory {segment} under {}: {error}",
-        output_dir.display()
-      )
-    })?;
+    fs::create_dir_all(output_dir.join(segment))
+      .map_err(|error| format!("failed to create minecraft spatial bundle directory {segment} under {}: {error}", output_dir.display()))?;
   }
   Ok(())
 }
@@ -184,17 +176,8 @@ fn bundle_file_name(source: &SpatialBundleSourceArtifact) -> DatasetResult<Strin
     .source_path
     .file_name()
     .and_then(|name| name.to_str())
-    .ok_or_else(|| {
-      format!(
-        "minecraft spatial bundle source path {} has no valid file name",
-        source.source_path.display()
-      )
-    })?;
-  Ok(format!(
-    "{}-{}",
-    sanitize_component(&source.artifact_id),
-    source_name
-  ))
+    .ok_or_else(|| format!("minecraft spatial bundle source path {} has no valid file name", source.source_path.display()))?;
+  Ok(format!("{}-{}", sanitize_component(&source.artifact_id), source_name))
 }
 
 fn sanitize_component(raw: &str) -> String {
@@ -216,19 +199,11 @@ fn sanitize_component(raw: &str) -> String {
 
 fn copy_file(source: &Path, destination: &Path) -> DatasetResult<()> {
   if let Some(parent) = destination.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create minecraft spatial bundle artifact directory {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent)
+      .map_err(|error| format!("failed to create minecraft spatial bundle artifact directory {}: {error}", parent.display()))?;
   }
   fs::copy(source, destination).map_err(|error| {
-    format!(
-      "failed to copy minecraft spatial bundle artifact from {} to {}: {error}",
-      source.display(),
-      destination.display()
-    )
+    format!("failed to copy minecraft spatial bundle artifact from {} to {}: {error}", source.display(), destination.display())
   })?;
   Ok(())
 }
@@ -240,12 +215,7 @@ fn write_manifest(path: &Path, manifest: &SpatialBundleManifest) -> DatasetResul
       json
     })
     .map_err(|error| format!("failed to serialize minecraft spatial bundle manifest: {error}"))?;
-  fs::write(path, json.as_bytes()).map_err(|error| {
-    format!(
-      "failed to write minecraft spatial bundle manifest {}: {error}",
-      path.display()
-    )
-  })
+  fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write minecraft spatial bundle manifest {}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -266,26 +236,11 @@ mod tests {
 
   #[test]
   fn maps_known_roles_to_bundle_directories() {
-    assert_eq!(
-      directory_for_role("minecraft-screenshot"),
-      Some(SpatialBundleDirectory::Screenshots)
-    );
-    assert_eq!(
-      directory_for_role("minecraft-spatial-frame"),
-      Some(SpatialBundleDirectory::SpatialFrames)
-    );
-    assert_eq!(
-      directory_for_role("minecraft-projection"),
-      Some(SpatialBundleDirectory::SpatialFrames)
-    );
-    assert_eq!(
-      directory_for_role("operation-result"),
-      Some(SpatialBundleDirectory::Verification)
-    );
-    assert_eq!(
-      directory_for_role("minecraft-overlay"),
-      Some(SpatialBundleDirectory::Overlays)
-    );
+    assert_eq!(directory_for_role("minecraft-screenshot"), Some(SpatialBundleDirectory::Screenshots));
+    assert_eq!(directory_for_role("minecraft-spatial-frame"), Some(SpatialBundleDirectory::SpatialFrames));
+    assert_eq!(directory_for_role("minecraft-projection"), Some(SpatialBundleDirectory::SpatialFrames));
+    assert_eq!(directory_for_role("operation-result"), Some(SpatialBundleDirectory::Verification));
+    assert_eq!(directory_for_role("minecraft-overlay"), Some(SpatialBundleDirectory::Overlays));
     assert_eq!(directory_for_role("telemetry-sample"), None);
   }
 
@@ -344,23 +299,8 @@ mod tests {
     assert_eq!(output.manifest.counts.verification, 1);
     assert_eq!(output.manifest.counts.skipped, 1);
     assert!(output_dir.join("run.json").is_file());
-    assert_eq!(
-      fs::read_dir(output_dir.join("screenshots"))
-        .expect("screenshots")
-        .count(),
-      1
-    );
-    assert_eq!(
-      fs::read_dir(output_dir.join("spatial_frames"))
-        .expect("frames")
-        .count(),
-      1
-    );
-    assert_eq!(
-      fs::read_dir(output_dir.join("verification"))
-        .expect("verification")
-        .count(),
-      1
-    );
+    assert_eq!(fs::read_dir(output_dir.join("screenshots")).expect("screenshots").count(), 1);
+    assert_eq!(fs::read_dir(output_dir.join("spatial_frames")).expect("frames").count(), 1);
+    assert_eq!(fs::read_dir(output_dir.join("verification")).expect("verification").count(), 1);
   }
 }

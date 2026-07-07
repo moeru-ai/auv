@@ -24,10 +24,9 @@ impl fmt::Display for OcrError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       Self::Unsupported => write!(f, "linux OCR is unsupported on this target"),
-      Self::InvalidImage { expected, actual } => write!(
-        f,
-        "image buffer length {actual} did not match expected {expected} (width*height*4)"
-      ),
+      Self::InvalidImage { expected, actual } => {
+        write!(f, "image buffer length {actual} did not match expected {expected} (width*height*4)")
+      }
       Self::ImageTooLarge => write!(f, "image dimensions exceed the supported range"),
       Self::Runtime(message) => write!(f, "linux OCR runtime error: {message}"),
     }
@@ -57,12 +56,7 @@ struct Line {
 /// with bounds in image-pixel coordinates. `recognition_languages` are mapped
 /// to Tesseract language ids and joined with `+`; the default is `eng`.
 #[cfg(target_os = "linux")]
-pub fn recognize_text_in_rgba(
-  rgba: &[u8],
-  width: u32,
-  height: u32,
-  options: &TextRecognitionOptions,
-) -> Result<TextRecognition, OcrError> {
+pub fn recognize_text_in_rgba(rgba: &[u8], width: u32, height: u32, options: &TextRecognitionOptions) -> Result<TextRecognition, OcrError> {
   let expected = (width as usize) * (height as usize) * 4;
   if rgba.len() != expected {
     return Err(OcrError::InvalidImage {
@@ -80,19 +74,15 @@ pub fn recognize_text_in_rgba(
     .map_err(|error| OcrError::Runtime(format!("failed to encode RGBA image as PNG: {error}")))?;
 
   let language = tesseract_language(options);
-  let mut tess = leptess::LepTess::new(None, &language)
-    .map_err(|error| OcrError::Runtime(format!("failed to initialize Tesseract: {error}")))?;
+  let mut tess =
+    leptess::LepTess::new(None, &language).map_err(|error| OcrError::Runtime(format!("failed to initialize Tesseract: {error}")))?;
 
   // NOTICE(linux-tesseract-custom-words): leptess exposes Tesseract variables
   // but not a stable cross-version user-word injection surface. Custom word
   // weighting is deferred until an owner-approved OCR-quality slice needs it.
-  tess
-    .set_image_from_mem(&png)
-    .map_err(|error| OcrError::Runtime(format!("failed to load image into Tesseract: {error}")))?;
+  tess.set_image_from_mem(&png).map_err(|error| OcrError::Runtime(format!("failed to load image into Tesseract: {error}")))?;
   tess.set_source_resolution(144);
-  let tsv = tess
-    .get_tsv_text(0)
-    .map_err(|error| OcrError::Runtime(format!("failed to read Tesseract TSV: {error}")))?;
+  let tsv = tess.get_tsv_text(0).map_err(|error| OcrError::Runtime(format!("failed to read Tesseract TSV: {error}")))?;
 
   Ok(text_recognition_from_tsv(&tsv))
 }
@@ -112,13 +102,7 @@ fn tesseract_language(options: &TextRecognitionOptions) -> String {
   options
     .recognition_languages
     .as_ref()
-    .map(|languages| {
-      languages
-        .iter()
-        .map(|language| tesseract_language_tag(language))
-        .collect::<Vec<_>>()
-        .join("+")
-    })
+    .map(|languages| languages.iter().map(|language| tesseract_language_tag(language)).collect::<Vec<_>>().join("+"))
     .filter(|language| !language.is_empty())
     .unwrap_or_else(|| "eng".to_string())
 }
@@ -147,11 +131,7 @@ fn text_recognition_from_tsv(tsv: &str) -> TextRecognition {
     })
     .collect::<Vec<_>>();
   TextRecognition {
-    text: regions
-      .iter()
-      .map(|region| region.text.as_str())
-      .collect::<Vec<_>>()
-      .join("\n"),
+    text: regions.iter().map(|region| region.text.as_str()).collect::<Vec<_>>().join("\n"),
     regions,
   }
 }
@@ -170,11 +150,7 @@ fn parse_tsv_lines(tsv: &str) -> Vec<Line> {
     let Some(word) = parse_word(&columns) else {
       continue;
     };
-    let key = (
-      columns[2].to_string(),
-      columns[3].to_string(),
-      columns[4].to_string(),
-    );
+    let key = (columns[2].to_string(), columns[3].to_string(), columns[4].to_string());
     if let Some((_, line)) = lines.iter_mut().find(|(existing, _)| *existing == key) {
       if !line.text.is_empty() {
         line.text.push(' ');
@@ -272,10 +248,7 @@ level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theigh
     assert_eq!(recognition.text, "Hello World\nIgnoredConfidence");
     assert_eq!(recognition.regions.len(), 2);
     assert_eq!(recognition.regions[0].text, "Hello World");
-    assert_eq!(
-      recognition.regions[0].bounds,
-      Rect::new(10.0, 18.0, 60.0, 14.0)
-    );
+    assert_eq!(recognition.regions[0].bounds, Rect::new(10.0, 18.0, 60.0, 14.0));
     assert_eq!(recognition.regions[0].confidence, Some(0.88));
     assert_eq!(recognition.regions[1].confidence, None);
   }
@@ -283,8 +256,7 @@ level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theigh
   #[cfg(target_os = "linux")]
   #[test]
   fn maps_common_language_tags_to_tesseract_ids() {
-    let options =
-      TextRecognitionOptions::default().with_recognition_languages(["en-US", "zh-Hans"]);
+    let options = TextRecognitionOptions::default().with_recognition_languages(["en-US", "zh-Hans"]);
 
     assert_eq!(tesseract_language(&options), "eng+chi_sim");
   }

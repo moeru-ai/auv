@@ -411,25 +411,16 @@ mod tests {
         },
       })
     );
-    let decoded: ScrollOptions =
-      serde_json::from_value(encoded).expect("deserialize scroll options");
+    let decoded: ScrollOptions = serde_json::from_value(encoded).expect("deserialize scroll options");
     assert_eq!(decoded, options);
   }
 
   #[test]
   fn scroll_delivery_path_variants_serde_as_snake_case() {
+    assert_eq!(serde_json::to_string(&InputDeliveryPath::AxScroll).expect("serialize ax scroll"), "\"ax_scroll\"");
+    assert_eq!(serde_json::to_string(&InputDeliveryPath::WindowTargetedWheel).expect("serialize window wheel"), "\"window_targeted_wheel\"");
     assert_eq!(
-      serde_json::to_string(&InputDeliveryPath::AxScroll).expect("serialize ax scroll"),
-      "\"ax_scroll\""
-    );
-    assert_eq!(
-      serde_json::to_string(&InputDeliveryPath::WindowTargetedWheel)
-        .expect("serialize window wheel"),
-      "\"window_targeted_wheel\""
-    );
-    assert_eq!(
-      serde_json::to_string(&InputDeliveryPath::WindowTargetedKeyboardScroll)
-        .expect("serialize keyboard scroll"),
+      serde_json::to_string(&InputDeliveryPath::WindowTargetedKeyboardScroll).expect("serialize keyboard scroll"),
       "\"window_targeted_keyboard_scroll\""
     );
   }
@@ -468,14 +459,8 @@ mod tests {
   #[test]
   fn scroll_specific_delivery_paths_are_distinct_from_mouse_and_keyboard() {
     assert_ne!(InputDeliveryPath::AxScroll, InputDeliveryPath::AxSetValue);
-    assert_ne!(
-      InputDeliveryPath::WindowTargetedWheel,
-      InputDeliveryPath::WindowTargetedMouse
-    );
-    assert_ne!(
-      InputDeliveryPath::WindowTargetedKeyboardScroll,
-      InputDeliveryPath::WindowTargetedKeyboard
-    );
+    assert_ne!(InputDeliveryPath::WindowTargetedWheel, InputDeliveryPath::WindowTargetedMouse);
+    assert_ne!(InputDeliveryPath::WindowTargetedKeyboardScroll, InputDeliveryPath::WindowTargetedKeyboard);
   }
 
   #[test]

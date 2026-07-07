@@ -8,9 +8,8 @@ use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDeci
 use crate::candidate_promotion::{CandidatePromotion, ConsentGrade, ConsentProvenance};
 use crate::candidate_promotion_recording::CandidatePromotionArtifact;
 use crate::contract::{
-  ArtifactRef, Candidate, CandidateRef, FailureLayer, OperationOutput, OperationResult,
-  OperationStatus, TargetGrounding, VERIFICATION_RESULT_API_VERSION, VerificationMethod,
-  VerificationResult,
+  ArtifactRef, Candidate, CandidateRef, FailureLayer, OperationOutput, OperationResult, OperationStatus, TargetGrounding,
+  VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
 };
 use crate::model::{AuvResult, now_millis};
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
@@ -295,20 +294,15 @@ pub struct CandidateActionDeliveryPlan {
 }
 
 pub trait CandidateActionExecutor {
-  fn readiness(
-    &mut self,
-    plan: &CandidateActionDeliveryPlan,
-  ) -> AuvResult<auv_driver::ReadinessReport> {
+  fn readiness(&mut self, plan: &CandidateActionDeliveryPlan) -> AuvResult<auv_driver::ReadinessReport> {
     let _ = plan;
-    Ok(auv_driver::ReadinessReport::ready(vec![
-      auv_driver::ReadinessCheck::pass("fixture_readiness", "fixture executor is ready"),
-    ]))
+    Ok(auv_driver::ReadinessReport::ready(vec![auv_driver::ReadinessCheck::pass(
+      "fixture_readiness",
+      "fixture executor is ready",
+    )]))
   }
 
-  fn execute(
-    &mut self,
-    plan: &CandidateActionDeliveryPlan,
-  ) -> AuvResult<auv_driver::InputActionResult>;
+  fn execute(&mut self, plan: &CandidateActionDeliveryPlan) -> AuvResult<auv_driver::InputActionResult>;
 
   fn readiness_debug(&self) -> Option<serde_json::Value> {
     None
@@ -326,14 +320,7 @@ pub trait CandidateActionExecutor {
     input_action_result: &auv_driver::InputActionResult,
     evidence_artifacts: &[ArtifactRef],
   ) -> AuvResult<Vec<VerificationResult>> {
-    let _ = (
-      plan,
-      probe,
-      candidate,
-      candidate_ref,
-      input_action_result,
-      evidence_artifacts,
-    );
+    let _ = (plan, probe, candidate, candidate_ref, input_action_result, evidence_artifacts);
     Ok(Vec::new())
   }
 }
@@ -356,59 +343,34 @@ pub enum CandidateActionDecisionError {
 impl std::fmt::Display for CandidateActionDecisionError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Self::PromotionDidNotPromote => write!(
-        f,
-        "candidate action decide-only requires a promoted CandidatePromotion"
-      ),
-      Self::NoPromotedCandidates => write!(
-        f,
-        "candidate action decide-only requires at least one promoted Candidate"
-      ),
+      Self::PromotionDidNotPromote => write!(f, "candidate action decide-only requires a promoted CandidatePromotion"),
+      Self::NoPromotedCandidates => write!(f, "candidate action decide-only requires at least one promoted Candidate"),
       Self::CandidateNotFound { candidate_local_id } => {
-        write!(
-          f,
-          "candidate {candidate_local_id} was not promoted by the source artifact"
-        )
+        write!(f, "candidate {candidate_local_id} was not promoted by the source artifact")
       }
       Self::UnsupportedTargetGrounding { grounding } => {
-        write!(
-          f,
-          "candidate target grounding {grounding:?} is not supported by L8a decide-only"
-        )
+        write!(f, "candidate target grounding {grounding:?} is not supported by L8a decide-only")
       }
       Self::MissingWindowReference => {
         write!(f, "candidate action execution requires a window reference")
       }
       Self::MissingCandidateBox => {
-        write!(
-          f,
-          "candidate action execution requires a candidate evidence box"
-        )
+        write!(f, "candidate action execution requires a candidate evidence box")
       }
-      Self::MissingSourceCandidateActionDecisionArtifact => write!(
-        f,
-        "candidate action execution requires a recorded L8a candidate-action-decision artifact"
-      ),
+      Self::MissingSourceCandidateActionDecisionArtifact => {
+        write!(f, "candidate action execution requires a recorded L8a candidate-action-decision artifact")
+      }
       Self::MissingExecutionConsent => {
-        write!(
-          f,
-          "candidate action execution requires explicit L8b consent"
-        )
+        write!(f, "candidate action execution requires explicit L8b consent")
       }
       Self::ExecutionConsentMismatch { reason } => {
         write!(f, "candidate action execution consent mismatch: {reason}")
       }
       Self::NotReady { reason } => {
-        write!(
-          f,
-          "candidate action execution blocked by readiness: {reason}"
-        )
+        write!(f, "candidate action execution blocked by readiness: {reason}")
       }
       Self::ExecutionFailed { reason } => {
-        write!(
-          f,
-          "candidate action execution failed before artifact recording: {reason}"
-        )
+        write!(f, "candidate action execution failed before artifact recording: {reason}")
       }
     }
   }
@@ -467,16 +429,10 @@ pub fn record_candidate_action_decision_artifact(
       rendered.push('\n');
       rendered
     })
-    .map_err(|error| {
-      format!("failed to encode candidate action decision artifact JSON: {error}")
-    })?;
+    .map_err(|error| format!("failed to encode candidate action decision artifact JSON: {error}"))?;
   let artifact_source_path = temp_json_path(&request.artifact_label);
-  fs::write(&artifact_source_path, rendered).map_err(|error| {
-    format!(
-      "failed to write candidate action decision temp artifact {}: {error}",
-      artifact_source_path.display()
-    )
-  })?;
+  fs::write(&artifact_source_path, rendered)
+    .map_err(|error| format!("failed to write candidate action decision temp artifact {}: {error}", artifact_source_path.display()))?;
 
   let (_, artifact_ref) = context.stage_artifact_file_with_ref(
     &request.artifact_role,
@@ -488,10 +444,7 @@ pub fn record_candidate_action_decision_artifact(
 
   context.record_event(
     "candidate.action.decision.artifact_recorded",
-    Some(format!(
-      "recorded decide-only action decision {} for candidate {}",
-      artifact_ref.artifact_id, artifact.candidate_local_id
-    )),
+    Some(format!("recorded decide-only action decision {} for candidate {}", artifact_ref.artifact_id, artifact.candidate_local_id)),
   );
 
   Ok((artifact_ref, artifact))
@@ -504,9 +457,7 @@ pub fn build_candidate_action_execution_artifact(
   execution_run_id: RunId,
   input_action_result: auv_driver::InputActionResult,
 ) -> Result<CandidateActionExecutionArtifact, CandidateActionDecisionError> {
-  let readiness = request.readiness.clone().unwrap_or_else(|| {
-    auv_driver::ReadinessReport::blocked("execution readiness was not supplied")
-  });
+  let readiness = request.readiness.clone().unwrap_or_else(|| auv_driver::ReadinessReport::blocked("execution readiness was not supplied"));
   let source_candidate_action_decision_artifact = request
     .source_candidate_action_decision_artifact
     .clone()
@@ -517,16 +468,12 @@ pub fn build_candidate_action_execution_artifact(
       return Err(CandidateActionDecisionError::PromotionDidNotPromote);
     }
   };
-  let candidate = candidates
-    .iter()
-    .find(|candidate| candidate.candidate_local_id == decision.candidate_local_id)
-    .ok_or_else(|| CandidateActionDecisionError::CandidateNotFound {
+  let candidate = candidates.iter().find(|candidate| candidate.candidate_local_id == decision.candidate_local_id).ok_or_else(|| {
+    CandidateActionDecisionError::CandidateNotFound {
       candidate_local_id: decision.candidate_local_id.clone(),
-    })?;
-  let consent = request
-    .consent
-    .clone()
-    .ok_or(CandidateActionDecisionError::MissingExecutionConsent)?;
+    }
+  })?;
+  let consent = request.consent.clone().ok_or(CandidateActionDecisionError::MissingExecutionConsent)?;
   validate_execution_consent(
     &consent,
     &request.execution_id,
@@ -540,44 +487,22 @@ pub fn build_candidate_action_execution_artifact(
   let input_action_result = if readiness_ready {
     input_action_result
   } else {
-    blocked_input_action_result(
-      readiness
-        .selected_blocker
-        .as_deref()
-        .unwrap_or("candidate action execution readiness failed"),
-    )
+    blocked_input_action_result(readiness.selected_blocker.as_deref().unwrap_or("candidate action execution readiness failed"))
   };
-  let succeeded = input_action_result
-    .attempts
-    .iter()
-    .any(|attempt| attempt.succeeded);
-  let candidate_ref = candidate_ref_from_source(
-    decision.source_candidate_promotion_artifact.as_ref(),
-    &promotion.promotion_id,
-    &candidate.candidate_local_id,
-  );
-  let evidence_artifacts =
-    execution_evidence_artifacts(&source_candidate_action_decision_artifact, decision);
-  let verification_result = activation_only_verification(
-    succeeded,
-    candidate,
-    candidate_ref.clone(),
-    &evidence_artifacts,
-  );
-  let primary_verification =
-    primary_execution_verification(&verification_result, &request.post_action_verifications);
+  let succeeded = input_action_result.attempts.iter().any(|attempt| attempt.succeeded);
+  let candidate_ref =
+    candidate_ref_from_source(decision.source_candidate_promotion_artifact.as_ref(), &promotion.promotion_id, &candidate.candidate_local_id);
+  let evidence_artifacts = execution_evidence_artifacts(&source_candidate_action_decision_artifact, decision);
+  let verification_result = activation_only_verification(succeeded, candidate, candidate_ref.clone(), &evidence_artifacts);
+  let primary_verification = primary_execution_verification(&verification_result, &request.post_action_verifications);
   let mut operation_verifications = vec![verification_result.clone()];
   operation_verifications.extend(request.post_action_verifications.clone());
   let semantic_matched = primary_verification.semantic_matched;
-  let verification_summary =
-    execution_verification_summary(&verification_result, &request.post_action_verifications);
+  let verification_summary = execution_verification_summary(&verification_result, &request.post_action_verifications);
   let operation_completed = readiness_ready && succeeded && semantic_matched != Some(false);
   let plan = delivery_plan(candidate, decision)?;
-  let (action_resolver_decision, reconcile_known_limits) = reconcile_effective_decision(
-    &decision.action_resolver_decision,
-    &plan,
-    &input_action_result,
-  );
+  let (action_resolver_decision, reconcile_known_limits) =
+    reconcile_effective_decision(&decision.action_resolver_decision, &plan, &input_action_result);
   let operation_result = OperationResult {
     api_version: crate::contract::OPERATION_RESULT_API_VERSION.to_string(),
     run_id: execution_run_id,
@@ -589,24 +514,14 @@ pub fn build_candidate_action_execution_artifact(
     operation_id: "candidate.action.execute_single".to_string(),
     evidence_artifacts: evidence_artifacts.clone(),
     output: OperationOutput::Acknowledged {
-      message: Some(execution_message(
-        readiness_ready,
-        succeeded,
-        semantic_matched,
-        !request.post_action_verifications.is_empty(),
-      )),
+      message: Some(execution_message(readiness_ready, succeeded, semantic_matched, !request.post_action_verifications.is_empty())),
     },
     verifications: operation_verifications,
     freshness_basis: promotion.promotion_context.freshness.clone(),
     known_limits: execution_known_limits(promotion, candidate),
   };
-  let selected_path =
-    serde_json::to_value(input_action_result.selected_path).unwrap_or(serde_json::Value::Null);
-  let attempts_succeeded = input_action_result
-    .attempts
-    .iter()
-    .filter(|attempt| attempt.succeeded)
-    .count();
+  let selected_path = serde_json::to_value(input_action_result.selected_path).unwrap_or(serde_json::Value::Null);
+  let attempts_succeeded = input_action_result.attempts.iter().filter(|attempt| attempt.succeeded).count();
   let detail = json!({
     "artifact_version": CANDIDATE_ACTION_EXECUTION_ARTIFACT_VERSION,
     "producer": "candidate_action_execution",
@@ -668,14 +583,8 @@ pub fn record_candidate_action_execution_artifact(
   request: &CandidateActionExecutionRequest,
   input_action_result: auv_driver::InputActionResult,
 ) -> AuvResult<(ArtifactRef, CandidateActionExecutionArtifact)> {
-  let mut artifact = build_candidate_action_execution_artifact(
-    promotion,
-    decision,
-    request,
-    context.run_id().clone(),
-    input_action_result,
-  )
-  .map_err(|error| format!("failed to build candidate action execution artifact: {error}"))?;
+  let mut artifact = build_candidate_action_execution_artifact(promotion, decision, request, context.run_id().clone(), input_action_result)
+    .map_err(|error| format!("failed to build candidate action execution artifact: {error}"))?;
 
   let operation_result_ref = stage_json_artifact(
     context,
@@ -709,26 +618,14 @@ pub fn record_candidate_action_execution_artifact(
 
   context.record_event(
     "candidate.action.execution.binding_fact_recorded",
-    Some(format!(
-      "recorded G3 binding fact {} for candidate {}",
-      binding_fact_ref.artifact_id, artifact.candidate_local_id
-    )),
+    Some(format!("recorded G3 binding fact {} for candidate {}", binding_fact_ref.artifact_id, artifact.candidate_local_id)),
   );
 
-  let artifact_ref = stage_json_artifact(
-    context,
-    &request.artifact_role,
-    &request.artifact_label,
-    &request.artifact_note,
-    &artifact,
-  )?;
+  let artifact_ref = stage_json_artifact(context, &request.artifact_role, &request.artifact_label, &request.artifact_note, &artifact)?;
 
   context.record_event(
     "candidate.action.execution.artifact_recorded",
-    Some(format!(
-      "recorded single-action execution {} for candidate {}",
-      artifact_ref.artifact_id, artifact.candidate_local_id
-    )),
+    Some(format!("recorded single-action execution {} for candidate {}", artifact_ref.artifact_id, artifact.candidate_local_id)),
   );
 
   Ok((artifact_ref, artifact))
@@ -741,34 +638,16 @@ pub fn execute_and_record_single_candidate_action<E: CandidateActionExecutor>(
   decision: &CandidateActionDecisionArtifact,
   request: &CandidateActionExecutionRequest,
 ) -> AuvResult<(ArtifactRef, CandidateActionExecutionArtifact)> {
-  let artifact = execute_single_candidate_action(
-    executor,
-    promotion,
-    decision,
-    request,
-    context.run_id().clone(),
-  )
-  .map_err(|error| format!("failed to execute single candidate action: {error}"))?;
+  let artifact = execute_single_candidate_action(executor, promotion, decision, request, context.run_id().clone())
+    .map_err(|error| format!("failed to execute single candidate action: {error}"))?;
   let mut request = request.clone().with_readiness(artifact.readiness.clone());
   if let Some(debug) = artifact.detail.get("readiness_debug").cloned()
     && !debug.is_null()
   {
     request = request.with_readiness_debug(debug);
   }
-  request.post_action_verifications = artifact
-    .operation_result
-    .verifications
-    .iter()
-    .skip(1)
-    .cloned()
-    .collect();
-  record_candidate_action_execution_artifact(
-    context,
-    promotion,
-    decision,
-    &request,
-    artifact.input_action_result,
-  )
+  request.post_action_verifications = artifact.operation_result.verifications.iter().skip(1).cloned().collect();
+  record_candidate_action_execution_artifact(context, promotion, decision, &request, artifact.input_action_result)
 }
 
 pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
@@ -784,20 +663,16 @@ pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
       return Err(CandidateActionDecisionError::PromotionDidNotPromote);
     }
   };
-  let candidate = candidates
-    .iter()
-    .find(|candidate| candidate.candidate_local_id == decision.candidate_local_id)
-    .ok_or_else(|| CandidateActionDecisionError::CandidateNotFound {
+  let candidate = candidates.iter().find(|candidate| candidate.candidate_local_id == decision.candidate_local_id).ok_or_else(|| {
+    CandidateActionDecisionError::CandidateNotFound {
       candidate_local_id: decision.candidate_local_id.clone(),
-    })?;
+    }
+  })?;
   let source_candidate_action_decision_artifact = request
     .source_candidate_action_decision_artifact
     .as_ref()
     .ok_or(CandidateActionDecisionError::MissingSourceCandidateActionDecisionArtifact)?;
-  let consent = request
-    .consent
-    .as_ref()
-    .ok_or(CandidateActionDecisionError::MissingExecutionConsent)?;
+  let consent = request.consent.as_ref().ok_or(CandidateActionDecisionError::MissingExecutionConsent)?;
   validate_execution_consent(
     consent,
     &request.execution_id,
@@ -807,12 +682,9 @@ pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
     source_candidate_action_decision_artifact,
   )?;
   let plan = delivery_plan(candidate, decision)?;
-  let readiness =
-    executor
-      .readiness(&plan)
-      .map_err(|error| CandidateActionDecisionError::NotReady {
-        reason: error.to_string(),
-      })?;
+  let readiness = executor.readiness(&plan).map_err(|error| CandidateActionDecisionError::NotReady {
+    reason: error.to_string(),
+  })?;
   let readiness = enforce_action_specific_readiness(&plan, readiness);
   let mut request = request.clone().with_readiness(readiness.clone());
   if let Some(debug) = executor.readiness_debug() {
@@ -824,61 +696,43 @@ pub fn execute_single_candidate_action<E: CandidateActionExecutor>(
       decision,
       &request,
       execution_run_id,
-      blocked_input_action_result(
-        readiness
-          .selected_blocker
-          .as_deref()
-          .unwrap_or("candidate action execution readiness failed"),
-      ),
+      blocked_input_action_result(readiness.selected_blocker.as_deref().unwrap_or("candidate action execution readiness failed")),
     );
   }
-  let input_action_result =
-    executor
-      .execute(&plan)
-      .map_err(|error| CandidateActionDecisionError::ExecutionFailed {
-        reason: error.to_string(),
-      })?;
-  let request =
-    if input_action_succeeded(&input_action_result) && request.post_action_probe.is_some() {
-      let candidate_ref = candidate_ref_from_source(
-        decision.source_candidate_promotion_artifact.as_ref(),
-        &promotion.promotion_id,
-        &candidate.candidate_local_id,
-      );
-      let evidence_artifacts =
-        execution_evidence_artifacts(source_candidate_action_decision_artifact, decision);
-      let post_action_verifications = executor
-        .verify_after_execution(
-          &plan,
-          request.post_action_probe.as_ref(),
+  let input_action_result = executor.execute(&plan).map_err(|error| CandidateActionDecisionError::ExecutionFailed {
+    reason: error.to_string(),
+  })?;
+  let request = if input_action_succeeded(&input_action_result) && request.post_action_probe.is_some() {
+    let candidate_ref = candidate_ref_from_source(
+      decision.source_candidate_promotion_artifact.as_ref(),
+      &promotion.promotion_id,
+      &candidate.candidate_local_id,
+    );
+    let evidence_artifacts = execution_evidence_artifacts(source_candidate_action_decision_artifact, decision);
+    let post_action_verifications = executor
+      .verify_after_execution(
+        &plan,
+        request.post_action_probe.as_ref(),
+        candidate,
+        candidate_ref.as_ref(),
+        &input_action_result,
+        &evidence_artifacts,
+      )
+      .unwrap_or_else(|error| {
+        vec![post_action_observation_error_verification(
           candidate,
           candidate_ref.as_ref(),
-          &input_action_result,
           &evidence_artifacts,
-        )
-        .unwrap_or_else(|error| {
-          vec![post_action_observation_error_verification(
-            candidate,
-            candidate_ref.as_ref(),
-            &evidence_artifacts,
-            format!("post-action verification failed after input delivery: {error}"),
-          )]
-        });
-      let mut request = request;
-      request
-        .post_action_verifications
-        .extend(post_action_verifications);
-      request
-    } else {
-      request
-    };
-  build_candidate_action_execution_artifact(
-    promotion,
-    decision,
-    &request,
-    execution_run_id,
-    input_action_result,
-  )
+          format!("post-action verification failed after input delivery: {error}"),
+        )]
+      });
+    let mut request = request;
+    request.post_action_verifications.extend(post_action_verifications);
+    request
+  } else {
+    request
+  };
+  build_candidate_action_execution_artifact(promotion, decision, &request, execution_run_id, input_action_result)
 }
 
 pub fn delivery_plan(
@@ -890,12 +744,7 @@ pub fn delivery_plan(
       candidate_local_id: decision.candidate_local_id.clone(),
     });
   }
-  let window_ref = candidate
-    .liveness
-    .preconditions
-    .window_ref
-    .as_ref()
-    .ok_or(CandidateActionDecisionError::MissingWindowReference)?;
+  let window_ref = candidate.liveness.preconditions.window_ref.as_ref().ok_or(CandidateActionDecisionError::MissingWindowReference)?;
   let (window_x, window_y) = candidate_box_center(candidate)?;
   let expected_window_frame = candidate_expected_window_frame(candidate);
   let action = decision_action(decision);
@@ -923,9 +772,7 @@ fn effective_selected_method_from_input(
   match input_action_result.selected_path {
     auv_driver::InputDeliveryPath::WindowTargetedMouse => ("pointer-click".to_string(), None),
     auv_driver::InputDeliveryPath::AxPress => ("ax-action".to_string(), None),
-    auv_driver::InputDeliveryPath::WindowTargetedKeyboard => {
-      ("window-targeted-type-text".to_string(), None)
-    }
+    auv_driver::InputDeliveryPath::WindowTargetedKeyboard => ("window-targeted-type-text".to_string(), None),
     unknown_path => (
       delivery_plan.selected_method.clone(),
       Some(format!(
@@ -959,21 +806,15 @@ pub(crate) fn reconcile_effective_decision(
   delivery_plan: &CandidateActionDeliveryPlan,
   input_action_result: &auv_driver::InputActionResult,
 ) -> (ActionResolverDecision, Vec<String>) {
-  let (effective_method, unmapped_path_limit) =
-    effective_selected_method_from_input(delivery_plan, input_action_result);
+  let (effective_method, unmapped_path_limit) = effective_selected_method_from_input(delivery_plan, input_action_result);
   let plan_delivery_mismatch = l8a_plan.selected_method != effective_method;
 
   let mut reconciled = l8a_plan.clone();
   reconciled.selected_method = effective_method.clone();
-  reconciled.fallback_used = input_action_result.fallback_reason.is_some()
-    || plan_delivery_mismatch
-    || l8a_plan.fallback_used;
+  reconciled.fallback_used = input_action_result.fallback_reason.is_some() || plan_delivery_mismatch || l8a_plan.fallback_used;
   reconciled.fallback_reason = input_action_result.fallback_reason.clone().or_else(|| {
     if plan_delivery_mismatch {
-      Some(format!(
-        "l8a plan selected {} but delivery used {}",
-        l8a_plan.selected_method, effective_method
-      ))
+      Some(format!("l8a plan selected {} but delivery used {}", l8a_plan.selected_method, effective_method))
     } else {
       None
     }
@@ -985,22 +826,14 @@ pub(crate) fn reconcile_effective_decision(
     extra_known_limits.push(limit);
   }
   if plan_delivery_mismatch {
-    extra_known_limits.push(format!(
-      "plan_delivery_mismatch: l8a_selected={} effective={}",
-      l8a_plan.selected_method, effective_method
-    ));
+    extra_known_limits.push(format!("plan_delivery_mismatch: l8a_selected={} effective={}", l8a_plan.selected_method, effective_method));
   }
 
   (reconciled, extra_known_limits)
 }
 
 fn candidate_box_center(candidate: &Candidate) -> Result<(f64, f64), CandidateActionDecisionError> {
-  let Some(best_box) = candidate
-    .evidence
-    .observation
-    .get("box")
-    .or_else(|| candidate.evidence.observation.get("box_"))
-  else {
+  let Some(best_box) = candidate.evidence.observation.get("box").or_else(|| candidate.evidence.observation.get("box_")) else {
     return Err(CandidateActionDecisionError::MissingCandidateBox);
   };
   let Some(x) = best_box.get("x").and_then(|value| value.as_i64()) else {
@@ -1015,52 +848,18 @@ fn candidate_box_center(candidate: &Candidate) -> Result<(f64, f64), CandidateAc
   let Some(height) = best_box.get("height").and_then(|value| value.as_i64()) else {
     return Err(CandidateActionDecisionError::MissingCandidateBox);
   };
-  Ok((
-    x as f64 + width as f64 / 2.0,
-    y as f64 + height as f64 / 2.0,
-  ))
+  Ok((x as f64 + width as f64 / 2.0, y as f64 + height as f64 / 2.0))
 }
 
 fn candidate_is_focused_target(candidate: &Candidate) -> bool {
-  candidate
-    .evidence
-    .observation
-    .pointer("/detail/focused")
-    .and_then(|value| value.as_bool())
-    .unwrap_or(false)
+  candidate.evidence.observation.pointer("/detail/focused").and_then(|value| value.as_bool()).unwrap_or(false)
 }
 
 fn candidate_expected_window_frame(candidate: &Candidate) -> Option<auv_driver::Rect> {
-  rect_from_value(
-    candidate
-      .evidence
-      .observation
-      .pointer("/detail/window_frame"),
-  )
-  .or_else(|| {
-    rect_from_value(
-      candidate
-        .evidence
-        .observation
-        .pointer("/detail/windowFrame"),
-    )
-  })
-  .or_else(|| {
-    rect_from_value(
-      candidate
-        .evidence
-        .observation
-        .pointer("/detail/source_global_logical_bounds"),
-    )
-  })
-  .or_else(|| {
-    rect_from_value(
-      candidate
-        .evidence
-        .observation
-        .pointer("/detail/capture_contract/source_global_logical_bounds"),
-    )
-  })
+  rect_from_value(candidate.evidence.observation.pointer("/detail/window_frame"))
+    .or_else(|| rect_from_value(candidate.evidence.observation.pointer("/detail/windowFrame")))
+    .or_else(|| rect_from_value(candidate.evidence.observation.pointer("/detail/source_global_logical_bounds")))
+    .or_else(|| rect_from_value(candidate.evidence.observation.pointer("/detail/capture_contract/source_global_logical_bounds")))
 }
 
 fn rect_from_value(value: Option<&serde_json::Value>) -> Option<auv_driver::Rect> {
@@ -1074,11 +873,7 @@ fn rect_from_value(value: Option<&serde_json::Value>) -> Option<auv_driver::Rect
 }
 
 fn number_field(value: &serde_json::Value, key: &str) -> Option<f64> {
-  value.get(key).and_then(|value| {
-    value
-      .as_f64()
-      .or_else(|| value.as_i64().map(|value| value as f64))
-  })
+  value.get(key).and_then(|value| value.as_f64().or_else(|| value.as_i64().map(|value| value as f64)))
 }
 
 fn decision_action(decision: &CandidateActionDecisionArtifact) -> CandidateActionKind {
@@ -1098,24 +893,13 @@ pub struct MacosCandidateActionExecutor {
 
 #[cfg(target_os = "macos")]
 impl CandidateActionExecutor for MacosCandidateActionExecutor {
-  fn readiness(
-    &mut self,
-    plan: &CandidateActionDeliveryPlan,
-  ) -> AuvResult<auv_driver::ReadinessReport> {
+  fn readiness(&mut self, plan: &CandidateActionDeliveryPlan) -> AuvResult<auv_driver::ReadinessReport> {
     use auv_driver::Driver;
 
     let driver = auv_driver_macos::MacosDriver::new();
-    let session = driver
-      .open_local()
-      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
-    let permissions = session
-      .permission()
-      .probe()
-      .map_err(|error| format!("failed to probe macOS readiness permissions: {error}"))?;
-    let windows = session
-      .window()
-      .list()
-      .map_err(|error| format!("failed to list macOS windows for readiness: {error}"))?;
+    let session = driver.open_local().map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    let permissions = session.permission().probe().map_err(|error| format!("failed to probe macOS readiness permissions: {error}"))?;
+    let windows = session.window().list().map_err(|error| format!("failed to list macOS windows for readiness: {error}"))?;
     let frontmost = session
       .window()
       .resolve(auv_driver::WindowSelector {
@@ -1132,9 +916,7 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
       plan.window_y,
     )
     .with_expected_window_frame(plan.expected_window_frame);
-    let target = windows
-      .iter()
-      .find(|window| window_matches_plan(window, plan));
+    let target = windows.iter().find(|window| window_matches_plan(window, plan));
     self.readiness_debug = Some(json!({
       "plan": render_delivery_plan_debug(plan),
       "frontmost_window": frontmost.as_ref().map(|window| render_window_debug(window)),
@@ -1142,42 +924,25 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
       "windows": windows.iter().map(render_window_debug).collect::<Vec<_>>(),
       "readiness_probe_input": input,
     }));
-    let report =
-      auv_driver_macos::assess_readiness(&permissions, &windows, frontmost.as_ref(), &input);
+    let report = auv_driver_macos::assess_readiness(&permissions, &windows, frontmost.as_ref(), &input);
     Ok(report)
   }
 
-  fn execute(
-    &mut self,
-    plan: &CandidateActionDeliveryPlan,
-  ) -> AuvResult<auv_driver::InputActionResult> {
+  fn execute(&mut self, plan: &CandidateActionDeliveryPlan) -> AuvResult<auv_driver::InputActionResult> {
     use auv_driver::Driver;
 
     let Some(window_number) = plan.window_number else {
       return Err("L8b macOS executor requires window_number".to_string());
     };
     let driver = auv_driver_macos::MacosDriver::new();
-    let session = driver
-      .open_local()
-      .map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
-    let windows = session
-      .window()
-      .list()
-      .map_err(|error| format!("failed to list macOS windows for L8b execution: {error}"))?;
+    let session = driver.open_local().map_err(|error| format!("failed to open typed macOS driver session: {error}"))?;
+    let windows = session.window().list().map_err(|error| format!("failed to list macOS windows for L8b execution: {error}"))?;
     let window = windows
       .iter()
       .find(|window| {
         window.reference.id == window_number.to_string()
-          && plan
-            .app_bundle_id
-            .as_ref()
-            .is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
-          && plan.window_title.as_ref().is_none_or(|expected| {
-            window
-              .title
-              .as_deref()
-              .is_some_and(|title| title.contains(expected))
-          })
+          && plan.app_bundle_id.as_ref().is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
+          && plan.window_title.as_ref().is_none_or(|expected| window.title.as_deref().is_some_and(|title| title.contains(expected)))
       })
       .ok_or_else(|| {
         format!(
@@ -1189,12 +954,8 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
       .clone();
     match &plan.action {
       CandidateActionKind::Click => {
-        if plan.target_grounding != TargetGrounding::Coordinate
-          || plan.selected_method.as_str() != "pointer-click"
-        {
-          return Err(
-            "L8b macOS executor currently supports coordinate pointer-click plans only".to_string(),
-          );
+        if plan.target_grounding != TargetGrounding::Coordinate || plan.selected_method.as_str() != "pointer-click" {
+          return Err("L8b macOS executor currently supports coordinate pointer-click plans only".to_string());
         }
         session
           .window()
@@ -1278,49 +1039,29 @@ impl CandidateActionExecutor for MacosCandidateActionExecutor {
         main_visible: true,
       })
       .ok();
-    let target = windows
-      .iter()
-      .find(|window| window_matches_plan(window, plan));
-    let window_alive = post_action_window_alive(
-      plan,
-      target,
-      frontmost.as_ref(),
-      probe.require_frontmost,
-      probe.bounds_tolerance_px,
-    );
+    let target = windows.iter().find(|window| window_matches_plan(window, plan));
+    let window_alive = post_action_window_alive(plan, target, frontmost.as_ref(), probe.require_frontmost, probe.bounds_tolerance_px);
     match probe.kind {
-      CandidateActionPostActionProbeKind::FocusedAxNodeReobserved => {
-        Ok(vec![post_action_focused_ax_node_verification(
-          plan,
-          candidate,
-          candidate_ref,
-          evidence_artifacts,
-          &window_alive,
-          probe.bounds_tolerance_px,
-        )])
-      }
+      CandidateActionPostActionProbeKind::FocusedAxNodeReobserved => Ok(vec![post_action_focused_ax_node_verification(
+        plan,
+        candidate,
+        candidate_ref,
+        evidence_artifacts,
+        &window_alive,
+        probe.bounds_tolerance_px,
+      )]),
     }
   }
 }
 
 #[cfg(target_os = "macos")]
-fn summarize_available_windows(
-  windows: &[auv_driver::Window],
-  app_bundle_id: Option<&str>,
-) -> String {
+fn summarize_available_windows(windows: &[auv_driver::Window], app_bundle_id: Option<&str>) -> String {
   let rendered = windows
     .iter()
-    .filter(|window| {
-      app_bundle_id.is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected))
-    })
+    .filter(|window| app_bundle_id.is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected)))
     .take(8)
     .map(|window| {
-      format!(
-        "{}:{}:{}",
-        window.reference.id,
-        window.app_bundle_id.as_deref().unwrap_or(""),
-        window.title.as_deref().unwrap_or("")
-      )
+      format!("{}:{}:{}", window.reference.id, window.app_bundle_id.as_deref().unwrap_or(""), window.title.as_deref().unwrap_or(""))
     })
     .collect::<Vec<_>>();
   if rendered.is_empty() {
@@ -1338,12 +1079,11 @@ fn select_candidate<'a>(
     return Err(CandidateActionDecisionError::NoPromotedCandidates);
   }
   if let Some(candidate_local_id) = request.candidate_local_id.as_deref() {
-    return candidates
-      .iter()
-      .find(|candidate| candidate.candidate_local_id == candidate_local_id)
-      .ok_or_else(|| CandidateActionDecisionError::CandidateNotFound {
+    return candidates.iter().find(|candidate| candidate.candidate_local_id == candidate_local_id).ok_or_else(|| {
+      CandidateActionDecisionError::CandidateNotFound {
         candidate_local_id: candidate_local_id.to_string(),
-      });
+      }
+    });
   }
   Ok(&candidates[0])
 }
@@ -1378,36 +1118,27 @@ fn decide_candidate_action(
         cursor_disturbance: "warp-visible",
         press_mechanism: "pointer-click",
       })),
-      TargetGrounding::OcrAnchor | TargetGrounding::VisualRow => {
-        Err(CandidateActionDecisionError::UnsupportedTargetGrounding {
-          grounding: candidate.target_spec.grounding,
-        })
-      }
+      TargetGrounding::OcrAnchor | TargetGrounding::VisualRow => Err(CandidateActionDecisionError::UnsupportedTargetGrounding {
+        grounding: candidate.target_spec.grounding,
+      }),
     },
-    CandidateActionKind::TypeText { .. } => {
-      Ok(ActionResolverDecision::new(ActionResolverDecisionInput {
-        operation: "candidate.action.decide_only",
-        target_query: &target_query(candidate),
-        primary_method: "window-targeted-type-text",
-        selected_method: "window-targeted-type-text",
-        fallback_allowed: false,
-        fallback_used: false,
-        fallback_reason: None,
-        policy: "candidate-window-targeted-type-text",
-        cursor_disturbance: "none",
-        press_mechanism: "window-targeted-type-text",
-      }))
-    }
+    CandidateActionKind::TypeText { .. } => Ok(ActionResolverDecision::new(ActionResolverDecisionInput {
+      operation: "candidate.action.decide_only",
+      target_query: &target_query(candidate),
+      primary_method: "window-targeted-type-text",
+      selected_method: "window-targeted-type-text",
+      fallback_allowed: false,
+      fallback_used: false,
+      fallback_reason: None,
+      policy: "candidate-window-targeted-type-text",
+      cursor_disturbance: "none",
+      press_mechanism: "window-targeted-type-text",
+    })),
   }
 }
 
 fn target_query(candidate: &Candidate) -> String {
-  candidate
-    .target_spec
-    .anchor_text
-    .clone()
-    .or_else(|| candidate.label.clone())
-    .unwrap_or_else(|| candidate.candidate_local_id.clone())
+  candidate.target_spec.anchor_text.clone().or_else(|| candidate.label.clone()).unwrap_or_else(|| candidate.candidate_local_id.clone())
 }
 
 fn validate_execution_consent(
@@ -1422,9 +1153,7 @@ fn validate_execution_consent(
     return Err(consent_mismatch("consent_id is empty"));
   }
   if consent.execution_id != execution_id {
-    return Err(consent_mismatch(
-      "execution_id does not match execution request",
-    ));
+    return Err(consent_mismatch("execution_id does not match execution request"));
   }
   if consent.granted_by.trim().is_empty() {
     return Err(consent_mismatch("granted_by is empty"));
@@ -1433,40 +1162,25 @@ fn validate_execution_consent(
     return Err(consent_mismatch("scope_note is empty"));
   }
   if consent.source_promotion_id != promotion.promotion_id {
-    return Err(consent_mismatch(
-      "source_promotion_id does not match promotion",
-    ));
+    return Err(consent_mismatch("source_promotion_id does not match promotion"));
   }
   if consent.source_decision_id != decision.decision_id {
-    return Err(consent_mismatch(
-      "source_decision_id does not match decision",
-    ));
+    return Err(consent_mismatch("source_decision_id does not match decision"));
   }
   if consent.candidate_local_id != decision.candidate_local_id {
-    return Err(consent_mismatch(
-      "candidate_local_id does not match decision",
-    ));
+    return Err(consent_mismatch("candidate_local_id does not match decision"));
   }
   if consent.run_id != source_decision_artifact.run_id.as_str() {
-    return Err(consent_mismatch(
-      "run_id does not match source candidate-action-decision artifact",
-    ));
+    return Err(consent_mismatch("run_id does not match source candidate-action-decision artifact"));
   }
-  if !consent
-    .approved_action
-    .matches_action(&decision_action(decision))
-  {
-    return Err(consent_mismatch(
-      "approved_action does not match decision action",
-    ));
+  if !consent.approved_action.matches_action(&decision_action(decision)) {
+    return Err(consent_mismatch("approved_action does not match decision action"));
   }
   if consent.grade != consent.provenance.expected_grade() {
     return Err(consent_mismatch("consent grade does not match provenance"));
   }
   if !allow_dev_self_minted_consent && consent.grade == ConsentGrade::DevOnly {
-    return Err(consent_mismatch(
-      "dev self-minted execution consent is not allowed on this path",
-    ));
+    return Err(consent_mismatch("dev self-minted execution consent is not allowed on this path"));
   }
   Ok(())
 }
@@ -1511,12 +1225,7 @@ fn activation_only_verification(
     consumed_node_ref: None,
     consumed_recognition_artifact_ref: Some(candidate.evidence.artifact_ref.clone()),
     consumed_recognition_id: None,
-    consumed_recognized_item_id: candidate
-      .evidence
-      .observation
-      .get("item_id")
-      .and_then(|value| value.as_str())
-      .map(str::to_string),
+    consumed_recognized_item_id: candidate.evidence.observation.get("item_id").and_then(|value| value.as_str()).map(str::to_string),
     observed_label: candidate.label.clone(),
   }
 }
@@ -1543,10 +1252,7 @@ fn blocked_input_action_result(reason: &str) -> auv_driver::InputActionResult {
 }
 
 fn input_action_succeeded(input_action_result: &auv_driver::InputActionResult) -> bool {
-  input_action_result
-    .attempts
-    .iter()
-    .any(|attempt| attempt.succeeded)
+  input_action_result.attempts.iter().any(|attempt| attempt.succeeded)
 }
 
 fn execution_evidence_artifacts(
@@ -1572,25 +1278,16 @@ fn primary_execution_verification(
     .unwrap_or_else(|| activation_only.clone())
 }
 
-fn execution_verification_summary(
-  activation_only: &VerificationResult,
-  post_action_verifications: &[VerificationResult],
-) -> String {
+fn execution_verification_summary(activation_only: &VerificationResult, post_action_verifications: &[VerificationResult]) -> String {
   let primary = primary_execution_verification(activation_only, post_action_verifications);
   if post_action_verifications.is_empty() {
     "activation_only".to_string()
   } else {
-    format!(
-      "{}+post_action:{}",
-      verification_method_label(&activation_only.method),
-      verification_method_label(&primary.method),
-    )
+    format!("{}+post_action:{}", verification_method_label(&activation_only.method), verification_method_label(&primary.method),)
   }
 }
 
-fn post_action_verification_summaries(
-  verifications: &[VerificationResult],
-) -> Vec<serde_json::Value> {
+fn post_action_verification_summaries(verifications: &[VerificationResult]) -> Vec<serde_json::Value> {
   verifications
     .iter()
     .map(|verification| {
@@ -1614,25 +1311,16 @@ fn execution_message(
   has_post_action_verification: bool,
 ) -> String {
   if !readiness_ready {
-    return "single candidate action blocked by readiness; input delivery not attempted"
-      .to_string();
+    return "single candidate action blocked by readiness; input delivery not attempted".to_string();
   }
   if !delivery_succeeded {
     return "single candidate action delivery failed".to_string();
   }
   match (semantic_matched, has_post_action_verification) {
-    (Some(true), _) => {
-      "single candidate action delivered and semantic verification matched".to_string()
-    }
-    (Some(false), _) => {
-      "single candidate action delivered, but semantic verification did not match".to_string()
-    }
-    (None, true) => {
-      "single candidate action delivered with post-action verification evidence".to_string()
-    }
-    (None, false) => {
-      "single candidate action activated; semantic verification remains activation_only".to_string()
-    }
+    (Some(true), _) => "single candidate action delivered and semantic verification matched".to_string(),
+    (Some(false), _) => "single candidate action delivered, but semantic verification did not match".to_string(),
+    (None, true) => "single candidate action delivered with post-action verification evidence".to_string(),
+    (None, false) => "single candidate action activated; semantic verification remains activation_only".to_string(),
   }
 }
 
@@ -1745,12 +1433,7 @@ fn post_action_verification(
     consumed_node_ref: None,
     consumed_recognition_artifact_ref: Some(candidate.evidence.artifact_ref.clone()),
     consumed_recognition_id: None,
-    consumed_recognized_item_id: candidate
-      .evidence
-      .observation
-      .get("item_id")
-      .and_then(|value| value.as_str())
-      .map(str::to_string),
+    consumed_recognized_item_id: candidate.evidence.observation.get("item_id").and_then(|value| value.as_str()).map(str::to_string),
     observed_label: Some(observed_label),
   }
 }
@@ -1789,23 +1472,15 @@ fn post_action_window_alive(
 ) -> PostActionWindowAlive {
   let target_present = target.is_some();
   let target_frontmost = if require_frontmost {
-    target
-      .zip(frontmost)
-      .is_some_and(|(target, frontmost)| target.reference.id == frontmost.reference.id)
+    target.zip(frontmost).is_some_and(|(target, frontmost)| target.reference.id == frontmost.reference.id)
   } else {
     true
   };
   let bounds_stable = target
-    .and_then(|window| {
-      plan
-        .expected_window_frame
-        .map(|expected| (window.frame, expected))
-    })
+    .and_then(|window| plan.expected_window_frame.map(|expected| (window.frame, expected)))
     .map(|(observed, expected)| rect_drift_px(observed, expected) <= bounds_tolerance_px)
     .unwrap_or(true);
-  let point_inside = target
-    .map(|window| window_contains_point(window, plan.window_x, plan.window_y))
-    .unwrap_or(false);
+  let point_inside = target.map(|window| window_contains_point(window, plan.window_x, plan.window_y)).unwrap_or(false);
   PostActionWindowAlive {
     target_present,
     target_frontmost,
@@ -1824,11 +1499,7 @@ fn post_action_focused_ax_node_verification(
   window_alive: &PostActionWindowAlive,
   bounds_tolerance_px: f64,
 ) -> VerificationResult {
-  let Some(app_bundle_id) = window_alive
-    .target_app_bundle_id
-    .as_deref()
-    .or(plan.app_bundle_id.as_deref())
-  else {
+  let Some(app_bundle_id) = window_alive.target_app_bundle_id.as_deref().or(plan.app_bundle_id.as_deref()) else {
     return post_action_verification(
       candidate,
       candidate_ref,
@@ -1836,30 +1507,14 @@ fn post_action_focused_ax_node_verification(
       VerificationMethod::SemanticMatch,
       false,
       Some(FailureLayer::VerificationUnreliable),
-      format!(
-        "post-action focused AX reobserve failed: missing target app bundle id; {}",
-        window_alive.summary()
-      ),
+      format!("post-action focused AX reobserve failed: missing target app bundle id; {}", window_alive.summary()),
     );
   };
   let expected = expected_ax_focus_target(candidate, &plan.action);
-  let observation = match observe_focused_ax_until_settled(
-    &plan.action,
-    expected.as_ref(),
-    bounds_tolerance_px,
-    || {
-      auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80).map(
-        |capture| {
-          capture
-            .snapshot
-            .nodes
-            .iter()
-            .find(|node| node.focused)
-            .cloned()
-        },
-      )
-    },
-  ) {
+  let observation = match observe_focused_ax_until_settled(&plan.action, expected.as_ref(), bounds_tolerance_px, || {
+    auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80)
+      .map(|capture| capture.snapshot.nodes.iter().find(|node| node.focused).cloned())
+  }) {
     Ok(observation) => observation,
     Err(error) => {
       return post_action_verification(
@@ -1869,29 +1524,19 @@ fn post_action_focused_ax_node_verification(
         VerificationMethod::SemanticMatch,
         false,
         Some(FailureLayer::VerificationUnreliable),
-        format!(
-          "post-action focused AX reobserve failed: {error}; {}",
-          window_alive.summary()
-        ),
+        format!("post-action focused AX reobserve failed: {error}; {}", window_alive.summary()),
       );
     }
   };
-  let semantic_matched =
-    window_alive.is_alive_for_action(&plan.action) && observation.focused_matches;
+  let semantic_matched = window_alive.is_alive_for_action(&plan.action) && observation.focused_matches;
   let observed_label = format!(
     "post-action focused_ax_node_reobserved={} attempts={} focused_path={} focused_role={} expected_role={} expected_text={} observed_preferred_text={} observed_searchable_text={} {}",
     observation.focused_matches,
     observation.attempts,
     observation.focused_path,
     observation.focused_role,
-    expected
-      .as_ref()
-      .and_then(|expected| expected.role.as_deref())
-      .unwrap_or("none"),
-    expected
-      .as_ref()
-      .and_then(|expected| expected.text.as_deref())
-      .unwrap_or("none"),
+    expected.as_ref().and_then(|expected| expected.role.as_deref()).unwrap_or("none"),
+    expected.as_ref().and_then(|expected| expected.text.as_deref()).unwrap_or("none"),
     observation.observed_preferred_text,
     observation.observed_searchable_text,
     window_alive.summary()
@@ -1923,33 +1568,17 @@ fn post_action_focused_ax_node_verification(
     VerificationMethod::SemanticMatch,
     false,
     Some(FailureLayer::VerificationUnreliable),
-    format!(
-      "post-action focused AX reobserve is unavailable on this target; {}",
-      window_alive.summary()
-    ),
+    format!("post-action focused AX reobserve is unavailable on this target; {}", window_alive.summary()),
   )
 }
 
 fn window_matches_plan(window: &auv_driver::Window, plan: &CandidateActionDeliveryPlan) -> bool {
   if let Some(number) = plan.window_number {
     window.reference.id == number.to_string()
-      && plan.window_title.as_ref().is_none_or(|expected| {
-        window
-          .title
-          .as_deref()
-          .is_some_and(|title| title.contains(expected))
-      })
+      && plan.window_title.as_ref().is_none_or(|expected| window.title.as_deref().is_some_and(|title| title.contains(expected)))
   } else {
-    plan
-      .app_bundle_id
-      .as_ref()
-      .is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
-      && plan.window_title.as_ref().is_none_or(|expected| {
-        window
-          .title
-          .as_deref()
-          .is_some_and(|title| title.contains(expected))
-      })
+    plan.app_bundle_id.as_ref().is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
+      && plan.window_title.as_ref().is_none_or(|expected| window.title.as_deref().is_some_and(|title| title.contains(expected)))
   }
 }
 
@@ -1968,11 +1597,7 @@ fn enforce_action_specific_readiness(
     return report;
   }
 
-  let mut checks = report
-    .checks
-    .into_iter()
-    .filter(|check| check.name != "input_injection_target")
-    .collect::<Vec<_>>();
+  let mut checks = report.checks.into_iter().filter(|check| check.name != "input_injection_target").collect::<Vec<_>>();
   if !plan_requires_focused_target(plan) {
     checks.push(auv_driver::ReadinessCheck::fail(
       "focused_target_required",
@@ -1985,19 +1610,11 @@ fn enforce_action_specific_readiness(
       Some("window-targeted type-text requires focused target".to_string()),
     );
   }
-  auv_driver::ReadinessReport::from_checks(
-    checks,
-    report.target_window_ref,
-    report.target_window_frame,
-    None,
-  )
+  auv_driver::ReadinessReport::from_checks(checks, report.target_window_ref, report.target_window_frame, None)
 }
 
 fn window_contains_point(window: &auv_driver::Window, window_x: f64, window_y: f64) -> bool {
-  window_x >= 0.0
-    && window_y >= 0.0
-    && window_x <= window.frame.size.width
-    && window_y <= window.frame.size.height
+  window_x >= 0.0 && window_y >= 0.0 && window_x <= window.frame.size.width && window_y <= window.frame.size.height
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2018,46 +1635,24 @@ struct FocusedAxObservationSummary {
   observed_searchable_text: String,
 }
 
-fn expected_ax_focus_target(
-  candidate: &Candidate,
-  action: &CandidateActionKind,
-) -> Option<ExpectedAxFocusTarget> {
+fn expected_ax_focus_target(candidate: &Candidate, action: &CandidateActionKind) -> Option<ExpectedAxFocusTarget> {
   let observation = &candidate.evidence.observation;
-  let role = observation
-    .pointer("/detail/role")
-    .and_then(|value| value.as_str())
-    .map(str::to_string);
+  let role = observation.pointer("/detail/role").and_then(|value| value.as_str()).map(str::to_string);
   let text = match action {
     CandidateActionKind::Click => observation
       .get("text")
       .and_then(|value| value.as_str())
-      .or_else(|| {
-        observation
-          .pointer("/detail/title")
-          .and_then(|value| value.as_str())
-      })
-      .or_else(|| {
-        observation
-          .pointer("/detail/value")
-          .and_then(|value| value.as_str())
-      })
-      .or_else(|| {
-        observation
-          .pointer("/detail/description")
-          .and_then(|value| value.as_str())
-      })
+      .or_else(|| observation.pointer("/detail/title").and_then(|value| value.as_str()))
+      .or_else(|| observation.pointer("/detail/value").and_then(|value| value.as_str()))
+      .or_else(|| observation.pointer("/detail/description").and_then(|value| value.as_str()))
       .or(candidate.label.as_deref())
       .map(str::to_string)
       .filter(|value| !value.trim().is_empty()),
-    CandidateActionKind::TypeText { text } => {
-      Some(text.clone()).filter(|value| !value.trim().is_empty())
-    }
+    CandidateActionKind::TypeText { text } => Some(text.clone()).filter(|value| !value.trim().is_empty()),
   };
   let bounds = rect_from_value(observation.pointer("/detail/source_global_logical_bounds"))
     .or_else(|| rect_from_value(observation.pointer("/detail/bounds")))
-    .or_else(|| {
-      rect_from_recognition_box(observation.get("box").or_else(|| observation.get("box_")))
-    });
+    .or_else(|| rect_from_recognition_box(observation.get("box").or_else(|| observation.get("box_"))));
   if role.is_none() && text.is_none() && bounds.is_none() {
     None
   } else {
@@ -2091,16 +1686,13 @@ where
 
   for attempt_index in 0..max_attempts {
     let focused = next_focused_node()?;
-    let mut summary =
-      summarize_focused_ax_observation(focused.as_ref(), expected, bounds_tolerance_px, action);
+    let mut summary = summarize_focused_ax_observation(focused.as_ref(), expected, bounds_tolerance_px, action);
     summary.attempts = attempt_index + 1;
     if summary.focused_matches || attempt_index + 1 == max_attempts {
       return Ok(summary);
     }
     last = summary;
-    std::thread::sleep(std::time::Duration::from_millis(
-      TYPE_TEXT_POST_ACTION_RETRY_DELAY_MS,
-    ));
+    std::thread::sleep(std::time::Duration::from_millis(TYPE_TEXT_POST_ACTION_RETRY_DELAY_MS));
   }
 
   Ok(last)
@@ -2113,18 +1705,13 @@ fn summarize_focused_ax_observation(
   bounds_tolerance_px: f64,
   action: &CandidateActionKind,
 ) -> FocusedAxObservationSummary {
-  let focused_matches = focused.zip(expected).is_some_and(|(focused, expected)| {
-    ax_node_matches_expected(focused, expected, bounds_tolerance_px, action)
-  });
+  let focused_matches =
+    focused.zip(expected).is_some_and(|(focused, expected)| ax_node_matches_expected(focused, expected, bounds_tolerance_px, action));
   FocusedAxObservationSummary {
     attempts: 0,
     focused_matches,
-    focused_path: focused
-      .map(|node| node.path.clone())
-      .unwrap_or_else(|| "none".to_string()),
-    focused_role: focused
-      .map(|node| node.role.clone())
-      .unwrap_or_else(|| "none".to_string()),
+    focused_path: focused.map(|node| node.path.clone()).unwrap_or_else(|| "none".to_string()),
+    focused_role: focused.map(|node| node.role.clone()).unwrap_or_else(|| "none".to_string()),
     observed_preferred_text: focused.map(ax_node_preferred_text).unwrap_or_default(),
     observed_searchable_text: focused.map(ax_node_searchable_text).unwrap_or_default(),
   }
@@ -2140,18 +1727,13 @@ fn ax_node_matches_expected(
   let role_matches = expected.role.as_ref().is_none_or(|role| node.role == *role);
   let actual_text = ax_node_searchable_text(node);
   let text_matches = match action {
-    CandidateActionKind::Click => expected
-      .text
-      .as_ref()
-      .is_none_or(|text| actual_text.contains(&normalize_ax_text(text))),
+    CandidateActionKind::Click => expected.text.as_ref().is_none_or(|text| actual_text.contains(&normalize_ax_text(text))),
     CandidateActionKind::TypeText { text } => {
       let actual_text = ax_node_preferred_text(node);
       !actual_text.is_empty() && actual_text == normalize_ax_text(text)
     }
   };
-  let bounds_matches = expected.bounds.is_none_or(|bounds| {
-    rect_drift_px(observed_ax_rect(&node.bounds), bounds) <= bounds_tolerance_px
-  });
+  let bounds_matches = expected.bounds.is_none_or(|bounds| rect_drift_px(observed_ax_rect(&node.bounds), bounds) <= bounds_tolerance_px);
   role_matches && text_matches && bounds_matches
 }
 
@@ -2187,21 +1769,12 @@ fn ax_node_preferred_text(node: &auv_driver_macos::types::ObservedAxNode) -> Str
 }
 
 fn normalize_ax_text(raw: &str) -> String {
-  raw
-    .split_whitespace()
-    .collect::<Vec<_>>()
-    .join(" ")
-    .to_lowercase()
+  raw.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
 #[cfg(target_os = "macos")]
 fn observed_ax_rect(rect: &auv_driver_macos::types::ObservedRect) -> auv_driver::Rect {
-  auv_driver::Rect::new(
-    rect.x as f64,
-    rect.y as f64,
-    rect.width as f64,
-    rect.height as f64,
-  )
+  auv_driver::Rect::new(rect.x as f64, rect.y as f64, rect.width as f64, rect.height as f64)
 }
 
 fn rect_from_recognition_box(value: Option<&serde_json::Value>) -> Option<auv_driver::Rect> {
@@ -2222,33 +1795,18 @@ fn rect_drift_px(left: auv_driver::Rect, right: auv_driver::Rect) -> f64 {
     .max((left.size.height - right.size.height).abs())
 }
 
-fn execution_known_limits(
-  promotion: &CandidatePromotionArtifact,
-  candidate: &Candidate,
-) -> Vec<String> {
+fn execution_known_limits(promotion: &CandidatePromotionArtifact, candidate: &Candidate) -> Vec<String> {
   let mut known_limits = promotion.known_limits.clone();
   for limit in &candidate.known_limits {
     push_known_limit(&mut known_limits, limit);
   }
-  push_known_limit(
-    &mut known_limits,
-    "L8b executes one candidate action only after explicit execution consent",
-  );
-  push_known_limit(
-    &mut known_limits,
-    "activation_only verification records input delivery, not semantic success",
-  );
-  push_known_limit(
-    &mut known_limits,
-    "L8b execution is blocked before input delivery when readiness is not ready",
-  );
+  push_known_limit(&mut known_limits, "L8b executes one candidate action only after explicit execution consent");
+  push_known_limit(&mut known_limits, "activation_only verification records input delivery, not semantic success");
+  push_known_limit(&mut known_limits, "L8b execution is blocked before input delivery when readiness is not ready");
   known_limits
 }
 
-fn artifact_known_limits(
-  promotion: &CandidatePromotionArtifact,
-  candidate: &Candidate,
-) -> Vec<String> {
+fn artifact_known_limits(promotion: &CandidatePromotionArtifact, candidate: &Candidate) -> Vec<String> {
   let mut known_limits = promotion.known_limits.clone();
   for limit in &candidate.known_limits {
     push_known_limit(&mut known_limits, limit);
@@ -2257,10 +1815,7 @@ fn artifact_known_limits(
     &mut known_limits,
     "L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult",
   );
-  push_known_limit(
-    &mut known_limits,
-    "L8a does not prove semantic success; verification remains deferred to L8b",
-  );
+  push_known_limit(&mut known_limits, "L8a does not prove semantic success; verification remains deferred to L8b");
   known_limits
 }
 
@@ -2305,12 +1860,8 @@ fn stage_json_artifact<T: Serialize>(
     })
     .map_err(|error| format!("failed to encode {role} artifact JSON: {error}"))?;
   let artifact_source_path = temp_json_path(label);
-  fs::write(&artifact_source_path, rendered).map_err(|error| {
-    format!(
-      "failed to write {role} temp artifact {}: {error}",
-      artifact_source_path.display()
-    )
-  })?;
+  fs::write(&artifact_source_path, rendered)
+    .map_err(|error| format!("failed to write {role} temp artifact {}: {error}", artifact_source_path.display()))?;
 
   let (_, artifact_ref) = context.stage_artifact_file_with_ref(
     role,
@@ -2347,35 +1898,26 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    CandidateActionDecisionArtifact, CandidateActionDecisionError, CandidateActionDecisionRequest,
-    CandidateActionDeliveryPlan, CandidateActionExecutionConsent,
-    CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
-    CandidateActionExecutionSideEffect, CandidateActionExecutor, CandidateActionKind,
-    CandidateActionPostActionProbe, PostActionWindowAlive,
-    build_candidate_action_decision_artifact, build_candidate_action_execution_artifact,
-    enforce_action_specific_readiness, execute_and_record_single_candidate_action,
-    execute_single_candidate_action, expected_ax_focus_target, reconcile_effective_decision,
-    record_candidate_action_decision_artifact, record_candidate_action_execution_artifact,
-    window_matches_plan,
+    CandidateActionDecisionArtifact, CandidateActionDecisionError, CandidateActionDecisionRequest, CandidateActionDeliveryPlan,
+    CandidateActionExecutionConsent, CandidateActionExecutionConsentAction, CandidateActionExecutionRequest,
+    CandidateActionExecutionSideEffect, CandidateActionExecutor, CandidateActionKind, CandidateActionPostActionProbe, PostActionWindowAlive,
+    build_candidate_action_decision_artifact, build_candidate_action_execution_artifact, enforce_action_specific_readiness,
+    execute_and_record_single_candidate_action, execute_single_candidate_action, expected_ax_focus_target, reconcile_effective_decision,
+    record_candidate_action_decision_artifact, record_candidate_action_execution_artifact, window_matches_plan,
   };
   #[cfg(target_os = "macos")]
-  use super::{
-    ExpectedAxFocusTarget, MacosCandidateActionExecutor, ax_node_matches_expected,
-    observe_focused_ax_until_settled,
-  };
+  use super::{ExpectedAxFocusTarget, MacosCandidateActionExecutor, ax_node_matches_expected, observe_focused_ax_until_settled};
   use crate::AuvResult;
   use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
   use crate::build_runtime_with_store_root;
   use crate::candidate_promotion::{CandidatePromotion, ConsentGrade, ConsentProvenance};
   use crate::candidate_promotion_recording::{
-    CandidatePromotionArtifactRequest, CandidatePromotionConsentInput,
-    build_candidate_promotion_artifact, explicit_consent_for_candidate_promotion,
-    freshness_from_capture_backed_recognition,
+    CandidatePromotionArtifactRequest, CandidatePromotionConsentInput, build_candidate_promotion_artifact,
+    explicit_consent_for_candidate_promotion, freshness_from_capture_backed_recognition,
   };
   use crate::contract::{
-    ArtifactRef, FailureLayer, OperationOutput, OperationStatus, RecognitionBox, RecognitionResult,
-    RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem, TargetGrounding,
-    VerificationMethod,
+    ArtifactRef, FailureLayer, OperationOutput, OperationStatus, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
+    RecognitionSurface, RecognizedItem, TargetGrounding, VerificationMethod,
   };
   use crate::stability::StabilityPolicy;
   use auv_tracing_driver::run_builder::RunSpec;
@@ -2487,8 +2029,7 @@ mod tests {
       sample_frame("recognition_frame_2", 11, 20),
     ];
     let latest = observations.last().expect("latest frame exists");
-    let mut request =
-      CandidatePromotionArtifactRequest::new("promotion_text_area", "promotion-text-area");
+    let mut request = CandidatePromotionArtifactRequest::new("promotion_text_area", "promotion-text-area");
     request.source_recognition_artifact = Some(ArtifactRef {
       run_id: RunId::new("run_candidate_action_decision_source"),
       artifact_id: ArtifactId::new("artifact_recognition"),
@@ -2503,10 +2044,8 @@ mod tests {
     request.projection = crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
     // Historical fixture operation id: this checks capture-backed recognition
     // freshness, not generic invoke command resolution.
-    request.freshness = Some(
-      freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
-        .expect("latest recognition is capture-backed"),
-    );
+    request.freshness =
+      Some(freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh").expect("latest recognition is capture-backed"));
     request.permission = Some(
       explicit_consent_for_candidate_promotion(
         &request.promotion_id,
@@ -2521,13 +2060,10 @@ mod tests {
       )
       .expect("latest recognition is capture-backed"),
     );
-    build_candidate_promotion_artifact(&observations, &request)
-      .expect("promotion artifact should build")
+    build_candidate_promotion_artifact(&observations, &request).expect("promotion artifact should build")
   }
 
-  fn promoted_artifact_with_focused_target(
-    focused: bool,
-  ) -> crate::candidate_promotion_recording::CandidatePromotionArtifact {
+  fn promoted_artifact_with_focused_target(focused: bool) -> crate::candidate_promotion_recording::CandidatePromotionArtifact {
     let observations = vec![
       sample_frame_with_box_and_window_frame(
         "recognition_frame_1",
@@ -2563,8 +2099,7 @@ mod tests {
       ),
     ];
     let latest = observations.last().expect("latest frame exists");
-    let mut request =
-      CandidatePromotionArtifactRequest::new("promotion_text_area", "promotion-text-area");
+    let mut request = CandidatePromotionArtifactRequest::new("promotion_text_area", "promotion-text-area");
     request.source_recognition_artifact = Some(ArtifactRef {
       run_id: RunId::new("run_candidate_action_decision_source"),
       artifact_id: ArtifactId::new("artifact_recognition"),
@@ -2579,10 +2114,8 @@ mod tests {
     request.projection = crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
     // Historical fixture operation id: this checks capture-backed recognition
     // freshness, not generic invoke command resolution.
-    request.freshness = Some(
-      freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
-        .expect("latest recognition is capture-backed"),
-    );
+    request.freshness =
+      Some(freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh").expect("latest recognition is capture-backed"));
     request.permission = Some(
       explicit_consent_for_candidate_promotion(
         &request.promotion_id,
@@ -2597,8 +2130,7 @@ mod tests {
       )
       .expect("latest recognition is capture-backed"),
     );
-    build_candidate_promotion_artifact(&observations, &request)
-      .expect("promotion artifact should build")
+    build_candidate_promotion_artifact(&observations, &request).expect("promotion artifact should build")
   }
 
   fn source_decision_ref() -> ArtifactRef {
@@ -2654,18 +2186,12 @@ mod tests {
   }
 
   impl CandidateActionExecutor for FakeExecutor {
-    fn readiness(
-      &mut self,
-      plan: &CandidateActionDeliveryPlan,
-    ) -> AuvResult<auv_driver::ReadinessReport> {
+    fn readiness(&mut self, plan: &CandidateActionDeliveryPlan) -> AuvResult<auv_driver::ReadinessReport> {
       self.observed_plan = Some(plan.clone());
       Ok(self.readiness.clone())
     }
 
-    fn execute(
-      &mut self,
-      plan: &CandidateActionDeliveryPlan,
-    ) -> AuvResult<auv_driver::InputActionResult> {
+    fn execute(&mut self, plan: &CandidateActionDeliveryPlan) -> AuvResult<auv_driver::InputActionResult> {
       self.observed_plan = Some(plan.clone());
       self.executed = true;
       Ok(self.result.clone())
@@ -2683,18 +2209,12 @@ mod tests {
   }
 
   impl CandidateActionExecutor for FakeVerifyingExecutor {
-    fn readiness(
-      &mut self,
-      plan: &CandidateActionDeliveryPlan,
-    ) -> AuvResult<auv_driver::ReadinessReport> {
+    fn readiness(&mut self, plan: &CandidateActionDeliveryPlan) -> AuvResult<auv_driver::ReadinessReport> {
       self.observed_plan = Some(plan.clone());
       Ok(self.readiness.clone())
     }
 
-    fn execute(
-      &mut self,
-      plan: &CandidateActionDeliveryPlan,
-    ) -> AuvResult<auv_driver::InputActionResult> {
+    fn execute(&mut self, plan: &CandidateActionDeliveryPlan) -> AuvResult<auv_driver::InputActionResult> {
       self.observed_plan = Some(plan.clone());
       self.executed = true;
       Ok(self.result.clone())
@@ -2714,23 +2234,12 @@ mod tests {
       evidence_artifacts: &[ArtifactRef],
     ) -> AuvResult<Vec<crate::contract::VerificationResult>> {
       self.verification_calls += 1;
-      assert!(
-        self.executed,
-        "post-action verification must run after input delivery"
-      );
-      assert_eq!(
-        probe,
-        Some(&CandidateActionPostActionProbe::focused_ax_node_reobserved())
-      );
+      assert!(self.executed, "post-action verification must run after input delivery");
+      assert_eq!(probe, Some(&CandidateActionPostActionProbe::focused_ax_node_reobserved()));
       assert_eq!(plan.window_number, Some(11));
       assert_eq!(candidate.candidate_local_id, "promoted-item_text_area");
       assert!(candidate_ref.is_some());
-      assert!(
-        input_action_result
-          .attempts
-          .iter()
-          .any(|attempt| attempt.succeeded)
-      );
+      assert!(input_action_result.attempts.iter().any(|attempt| attempt.succeeded));
       assert_eq!(evidence_artifacts.len(), 2);
       if let Some(error) = self.verification_error.clone() {
         return Err(error);
@@ -2759,33 +2268,29 @@ mod tests {
 
   fn decision_artifact() -> CandidateActionDecisionArtifact {
     let promotion = promoted_artifact();
-    let request =
-      CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision")
-        .with_source_candidate_promotion_artifact(ArtifactRef {
-          run_id: RunId::new("run_candidate_action_decision_source"),
-          artifact_id: ArtifactId::new("artifact_promotion"),
-          span_id: SpanId::new("span_candidate_action_decision_source"),
-          captured_event_id: Some(EventId::new("event_promotion")),
-        });
-    build_candidate_action_decision_artifact(&promotion, &request)
-      .expect("decision artifact should build")
+    let request = CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision")
+      .with_source_candidate_promotion_artifact(ArtifactRef {
+        run_id: RunId::new("run_candidate_action_decision_source"),
+        artifact_id: ArtifactId::new("artifact_promotion"),
+        span_id: SpanId::new("span_candidate_action_decision_source"),
+        captured_event_id: Some(EventId::new("event_promotion")),
+      });
+    build_candidate_action_decision_artifact(&promotion, &request).expect("decision artifact should build")
   }
 
   fn type_text_decision_artifact(text: &str, focused: bool) -> CandidateActionDecisionArtifact {
     let promotion = promoted_artifact_with_focused_target(focused);
-    let request =
-      CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision")
-        .with_action(CandidateActionKind::TypeText {
-          text: text.to_string(),
-        })
-        .with_source_candidate_promotion_artifact(ArtifactRef {
-          run_id: RunId::new("run_candidate_action_decision_source"),
-          artifact_id: ArtifactId::new("artifact_promotion"),
-          span_id: SpanId::new("span_candidate_action_decision_source"),
-          captured_event_id: Some(EventId::new("event_promotion")),
-        });
-    build_candidate_action_decision_artifact(&promotion, &request)
-      .expect("type-text decision artifact should build")
+    let request = CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision")
+      .with_action(CandidateActionKind::TypeText {
+        text: text.to_string(),
+      })
+      .with_source_candidate_promotion_artifact(ArtifactRef {
+        run_id: RunId::new("run_candidate_action_decision_source"),
+        artifact_id: ArtifactId::new("artifact_promotion"),
+        span_id: SpanId::new("span_candidate_action_decision_source"),
+        captured_event_id: Some(EventId::new("event_promotion")),
+      });
+    build_candidate_action_decision_artifact(&promotion, &request).expect("type-text decision artifact should build")
   }
 
   #[test]
@@ -2816,18 +2321,14 @@ mod tests {
       window_y: 60.0,
       click_count: 1,
     };
-    let input_action_result = auv_driver::InputActionResult::single_success(
-      auv_driver::InputDeliveryPath::WindowTargetedMouse,
-    );
+    let input_action_result = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse);
 
-    let (reconciled, limits) =
-      reconcile_effective_decision(&l8a_plan, &delivery_plan, &input_action_result);
+    let (reconciled, limits) = reconcile_effective_decision(&l8a_plan, &delivery_plan, &input_action_result);
 
     assert_eq!(reconciled.selected_method, "pointer-click");
     assert_ne!(l8a_plan.selected_method, reconciled.selected_method);
     assert!(
-      limits.iter().any(|limit| limit
-        .starts_with("plan_delivery_mismatch: l8a_selected=ax-action effective=pointer-click")),
+      limits.iter().any(|limit| limit.starts_with("plan_delivery_mismatch: l8a_selected=ax-action effective=pointer-click")),
       "limits={limits:?}"
     );
   }
@@ -2860,12 +2361,9 @@ mod tests {
       window_y: 60.0,
       click_count: 1,
     };
-    let input_action_result = auv_driver::InputActionResult::single_success(
-      auv_driver::InputDeliveryPath::WindowTargetedMouse,
-    );
+    let input_action_result = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse);
 
-    let (reconciled, limits) =
-      reconcile_effective_decision(&l8a_plan, &delivery_plan, &input_action_result);
+    let (reconciled, limits) = reconcile_effective_decision(&l8a_plan, &delivery_plan, &input_action_result);
 
     assert_eq!(reconciled.selected_method, "pointer-click");
     assert!(limits.is_empty());
@@ -2885,23 +2383,15 @@ mod tests {
       &decision,
       &request,
       RunId::new("run_l8b_plan_delivery_mismatch"),
-      auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
     )
     .expect("execution artifact should build");
 
-    assert_eq!(
-      artifact.action_resolver_decision.selected_method,
-      "pointer-click"
-    );
+    assert_eq!(artifact.action_resolver_decision.selected_method, "pointer-click");
     assert_eq!(artifact.detail["plan_method"], json!("ax-action"));
     assert_eq!(artifact.detail["effective_method"], json!("pointer-click"));
     assert!(
-      artifact
-        .known_limits
-        .iter()
-        .any(|limit| limit.starts_with("plan_delivery_mismatch:")),
+      artifact.known_limits.iter().any(|limit| limit.starts_with("plan_delivery_mismatch:")),
       "known_limits={:?}",
       artifact.known_limits
     );
@@ -2935,76 +2425,47 @@ mod tests {
       window_y: 60.0,
       click_count: 1,
     };
-    let input_action_result =
-      auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::ClipboardPaste);
+    let input_action_result = auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::ClipboardPaste);
 
-    let (reconciled, limits) =
-      reconcile_effective_decision(&l8a_plan, &delivery_plan, &input_action_result);
+    let (reconciled, limits) = reconcile_effective_decision(&l8a_plan, &delivery_plan, &input_action_result);
 
     assert_eq!(reconciled.selected_method, "pointer-click");
-    assert!(
-      limits
-        .iter()
-        .any(|limit| limit.starts_with("effective_method_unmapped_delivery_path: selected_path=")),
-      "limits={limits:?}"
-    );
+    assert!(limits.iter().any(|limit| limit.starts_with("effective_method_unmapped_delivery_path: selected_path=")), "limits={limits:?}");
   }
 
   #[test]
   fn build_decide_only_artifact_from_promoted_candidate_without_input_delivery() {
     let promotion = promoted_artifact();
-    let request =
-      CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision");
-    let artifact = build_candidate_action_decision_artifact(&promotion, &request)
-      .expect("promoted candidate should produce decide-only artifact");
+    let request = CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision");
+    let artifact =
+      build_candidate_action_decision_artifact(&promotion, &request).expect("promoted candidate should produce decide-only artifact");
 
     assert_eq!(artifact.source_promotion_id, "promotion_text_area");
     assert_eq!(artifact.candidate_local_id, "promoted-item_text_area");
-    assert_eq!(
-      artifact.action_resolver_decision.operation,
-      "candidate.action.decide_only"
-    );
-    assert_eq!(
-      artifact.action_resolver_decision.selected_method,
-      "pointer-click"
-    );
-    assert_eq!(
-      artifact.action_resolver_decision.cursor_disturbance,
-      "warp-visible"
-    );
+    assert_eq!(artifact.action_resolver_decision.operation, "candidate.action.decide_only");
+    assert_eq!(artifact.action_resolver_decision.selected_method, "pointer-click");
+    assert_eq!(artifact.action_resolver_decision.cursor_disturbance, "warp-visible");
     assert_eq!(artifact.detail["input_delivery"], json!("not_attempted"));
     assert_eq!(artifact.detail["operation_result"], json!("not_produced"));
-    assert_eq!(
-      artifact.detail["verification_result"],
-      json!("not_produced")
-    );
+    assert_eq!(artifact.detail["verification_result"], json!("not_produced"));
     let rendered = serde_json::to_value(&artifact).expect("artifact should serialize");
     assert!(rendered.get("input_action_result").is_none());
     assert!(rendered.get("operation_result").is_none());
     assert!(rendered.get("verification_result").is_none());
-    assert!(
-      artifact
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("does not call auv-driver"))
-    );
+    assert!(artifact.known_limits.iter().any(|limit| limit.contains("does not call auv-driver")));
   }
 
   #[test]
   fn build_decide_only_artifact_for_type_text_records_typed_action() {
     let promotion = promoted_artifact_with_focused_target(true);
     let request =
-      CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision")
-        .with_action(CandidateActionKind::TypeText {
-          text: "hello from auv".to_string(),
-        });
-    let artifact = build_candidate_action_decision_artifact(&promotion, &request)
-      .expect("type-text candidate should produce decide-only artifact");
+      CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision").with_action(CandidateActionKind::TypeText {
+        text: "hello from auv".to_string(),
+      });
+    let artifact =
+      build_candidate_action_decision_artifact(&promotion, &request).expect("type-text candidate should produce decide-only artifact");
 
-    assert_eq!(
-      artifact.action_resolver_decision.selected_method,
-      "window-targeted-type-text"
-    );
+    assert_eq!(artifact.action_resolver_decision.selected_method, "window-targeted-type-text");
     assert_eq!(artifact.detail["action"]["kind"], json!("type_text"));
     assert_eq!(artifact.detail["action"]["text"], json!("hello from auv"));
   }
@@ -3015,11 +2476,10 @@ mod tests {
     promotion.decision = CandidatePromotion::Refused {
       reasons: vec![crate::candidate_promotion::PromotionRefusal::PermissionMissing],
     };
-    let request =
-      CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision");
+    let request = CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision");
 
-    let error = build_candidate_action_decision_artifact(&promotion, &request)
-      .expect_err("refused promotion must not produce action decision");
+    let error =
+      build_candidate_action_decision_artifact(&promotion, &request).expect_err("refused promotion must not produce action decision");
 
     assert_eq!(error, CandidateActionDecisionError::PromotionDidNotPromote);
   }
@@ -3029,8 +2489,7 @@ mod tests {
     let project_root = temp_dir("candidate-action-decision-record-project");
     let store_root = temp_dir("candidate-action-decision-record-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let promotion = promoted_artifact();
 
     let output = runtime
@@ -3049,36 +2508,24 @@ mod tests {
             )
             .expect("source promotion artifact should stage");
 
-          let mut request =
-            CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision");
+          let mut request = CandidateActionDecisionRequest::new("decision_text_area", "text-area-action-decision");
           request.source_candidate_promotion_artifact = Some(source_promotion_ref);
           record_candidate_action_decision_artifact(context, &promotion, &request)
         },
       )
       .expect("recorded decide-only action decision operation should succeed");
 
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("recorded run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
     assert_eq!(run.artifacts.len(), 2);
     assert_eq!(run.artifacts[0].role, "candidate-promotion");
     assert_eq!(run.artifacts[1].role, "candidate-action-decision");
-    assert!(
-      run
-        .events
-        .iter()
-        .any(|event| event.name == "candidate.action.decision.artifact_recorded")
-    );
+    assert!(run.events.iter().any(|event| event.name == "candidate.action.decision.artifact_recorded"));
     let (_artifact_ref, artifact) = output.value;
-    assert_eq!(
-      artifact.action_resolver_decision.operation,
-      "candidate.action.decide_only"
-    );
+    assert_eq!(artifact.action_resolver_decision.operation, "candidate.action.decide_only");
     assert_eq!(artifact.detail["input_delivery"], json!("not_attempted"));
-    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
-      .expect("recorded decide-only run should inspect");
+    let inspect =
+      crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str()).expect("recorded decide-only run should inspect");
     assert!(inspect.contains("Candidate Action Decision Lineage:"));
     assert!(inspect.contains("resolver=candidate.action.decide_only"));
     assert!(inspect.contains("side_effect=none_decide_only"));
@@ -3094,9 +2541,8 @@ mod tests {
   fn build_execution_artifact_requires_fresh_execution_consent() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref());
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref());
 
     let error = build_candidate_action_execution_artifact(
       &promotion,
@@ -3121,27 +2567,19 @@ mod tests {
       &decision,
       &request,
       RunId::new("run_l8b_execution"),
-      auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
     )
     .expect("approved execution should build");
 
     assert_eq!(artifact.execution_id, "execution_text_area");
     assert_eq!(artifact.source_decision_id, "decision_text_area");
     assert_eq!(artifact.candidate_local_id, "promoted-item_text_area");
-    assert_eq!(
-      artifact.input_action_result.selected_path,
-      auv_driver::InputDeliveryPath::WindowTargetedMouse
-    );
+    assert_eq!(artifact.input_action_result.selected_path, auv_driver::InputDeliveryPath::WindowTargetedMouse);
     assert_eq!(artifact.operation_result.status, OperationStatus::Completed);
     assert_eq!(
       artifact.operation_result.output,
       OperationOutput::Acknowledged {
-        message: Some(
-          "single candidate action activated; semantic verification remains activation_only"
-            .to_string()
-        )
+        message: Some("single candidate action activated; semantic verification remains activation_only".to_string())
       }
     );
     assert_eq!(artifact.operation_result.verifications.len(), 1);
@@ -3163,12 +2601,7 @@ mod tests {
     assert!(rendered.get("input_action_result").is_some());
     assert!(rendered.get("operation_result").is_some());
     assert!(rendered.get("verification_result").is_some());
-    assert!(
-      artifact
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("activation_only verification"))
-    );
+    assert!(artifact.known_limits.iter().any(|limit| limit.contains("activation_only verification")));
   }
 
   #[test]
@@ -3182,23 +2615,15 @@ mod tests {
       &decision,
       &request,
       RunId::new("run_l8b_execution"),
-      auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
     )
     .expect("approved execution with post-action verification should build");
 
     assert_eq!(artifact.operation_result.status, OperationStatus::Completed);
     assert_eq!(artifact.operation_result.verifications.len(), 2);
-    assert_eq!(
-      artifact.verification_result.method,
-      VerificationMethod::SemanticMatch
-    );
+    assert_eq!(artifact.verification_result.method, VerificationMethod::SemanticMatch);
     assert_eq!(artifact.verification_result.semantic_matched, Some(true));
-    assert_eq!(
-      artifact.detail["verification"],
-      json!("activation_only+post_action:semantic_match")
-    );
+    assert_eq!(artifact.detail["verification"], json!("activation_only+post_action:semantic_match"));
     assert_eq!(artifact.detail["verification_count"], json!(2));
     assert_eq!(artifact.detail["post_action_verification_count"], json!(1));
     assert_eq!(artifact.detail["semantic_matched"], json!(true));
@@ -3215,22 +2640,14 @@ mod tests {
       &decision,
       &request,
       RunId::new("run_l8b_execution"),
-      auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
     )
     .expect("semantic mismatch should still produce audit artifact");
 
     assert_eq!(artifact.operation_result.status, OperationStatus::Failed);
-    assert_eq!(
-      artifact.verification_result.method,
-      VerificationMethod::SemanticMatch
-    );
+    assert_eq!(artifact.verification_result.method, VerificationMethod::SemanticMatch);
     assert_eq!(artifact.verification_result.semantic_matched, Some(false));
-    assert_eq!(
-      artifact.verification_result.failure_layer,
-      Some(FailureLayer::SemanticMismatch)
-    );
+    assert_eq!(artifact.verification_result.failure_layer, Some(FailureLayer::SemanticMismatch));
     assert_eq!(artifact.detail["operation_status"], json!("failed"));
     assert_eq!(artifact.detail["semantic_matched"], json!(false));
   }
@@ -3262,10 +2679,7 @@ mod tests {
 
     assert_eq!(artifact.operation_result.status, OperationStatus::Failed);
     assert!(!artifact.verification_result.executed);
-    assert_eq!(
-      artifact.verification_result.failure_layer,
-      Some(FailureLayer::ControlFailed)
-    );
+    assert_eq!(artifact.verification_result.failure_layer, Some(FailureLayer::ControlFailed));
     assert_eq!(artifact.detail["input_delivery"], json!("failed"));
   }
 
@@ -3275,10 +2689,9 @@ mod tests {
     let decision = decision_artifact();
     let mut consent = execution_consent();
     consent.candidate_local_id = "wrong_candidate".to_string();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(consent);
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_consent(consent);
 
     let error = build_candidate_action_execution_artifact(
       &promotion,
@@ -3289,22 +2702,16 @@ mod tests {
     )
     .expect_err("mismatched consent must refuse execution");
 
-    assert!(matches!(
-      error,
-      CandidateActionDecisionError::ExecutionConsentMismatch { .. }
-    ));
+    assert!(matches!(error, CandidateActionDecisionError::ExecutionConsentMismatch { .. }));
   }
 
   #[test]
   fn execution_consent_cannot_be_reused_for_another_execution_id() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request = CandidateActionExecutionRequest::new(
-      "execution_text_area_other",
-      "text-area-action-execution-other",
-    )
-    .with_source_candidate_action_decision_artifact(source_decision_ref())
-    .with_consent(execution_consent());
+    let request = CandidateActionExecutionRequest::new("execution_text_area_other", "text-area-action-execution-other")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_consent(execution_consent());
 
     let error = build_candidate_action_execution_artifact(
       &promotion,
@@ -3315,53 +2722,32 @@ mod tests {
     )
     .expect_err("consent must be bound to one execution id");
 
-    assert!(matches!(
-      error,
-      CandidateActionDecisionError::ExecutionConsentMismatch { .. }
-    ));
+    assert!(matches!(error, CandidateActionDecisionError::ExecutionConsentMismatch { .. }));
   }
 
   #[test]
   fn execute_single_candidate_action_blocks_not_ready_before_executor_delivery() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(execution_consent());
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_consent(execution_consent());
     let mut executor = FakeExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       readiness: not_ready_report("accessibility permission is missing"),
       observed_plan: None,
       executed: false,
     };
 
-    let artifact = execute_single_candidate_action(
-      &mut executor,
-      &promotion,
-      &decision,
-      &request,
-      RunId::new("run_l8b_execution"),
-    )
-    .expect("not-ready path should still produce an audit artifact");
+    let artifact = execute_single_candidate_action(&mut executor, &promotion, &decision, &request, RunId::new("run_l8b_execution"))
+      .expect("not-ready path should still produce an audit artifact");
 
     assert!(executor.observed_plan.is_some());
-    assert!(
-      !executor.executed,
-      "executor must not deliver input when readiness is not ready"
-    );
-    assert_eq!(
-      artifact.side_effect,
-      CandidateActionExecutionSideEffect::BlockedNotReady
-    );
+    assert!(!executor.executed, "executor must not deliver input when readiness is not ready");
+    assert_eq!(artifact.side_effect, CandidateActionExecutionSideEffect::BlockedNotReady);
     assert_eq!(artifact.detail["readiness"], json!("not_ready"));
     assert_eq!(artifact.detail["input_delivery"], json!("not_attempted"));
-    assert_eq!(
-      artifact.input_action_result.selected_path,
-      auv_driver::InputDeliveryPath::Unsupported
-    );
+    assert_eq!(artifact.input_action_result.selected_path, auv_driver::InputDeliveryPath::Unsupported);
     assert_eq!(artifact.operation_result.status, OperationStatus::Failed);
   }
 
@@ -3369,32 +2755,20 @@ mod tests {
   fn execute_single_candidate_action_refuses_before_executor_without_consent() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref());
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref());
     let mut executor = FakeExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
     };
 
-    let error = execute_single_candidate_action(
-      &mut executor,
-      &promotion,
-      &decision,
-      &request,
-      RunId::new("run_l8b_execution"),
-    )
-    .expect_err("missing L8b consent must refuse before input delivery");
+    let error = execute_single_candidate_action(&mut executor, &promotion, &decision, &request, RunId::new("run_l8b_execution"))
+      .expect_err("missing L8b consent must refuse before input delivery");
 
     assert_eq!(error, CandidateActionDecisionError::MissingExecutionConsent);
-    assert!(
-      executor.observed_plan.is_none(),
-      "executor must not be called before L8b consent is validated"
-    );
+    assert!(executor.observed_plan.is_none(), "executor must not be called before L8b consent is validated");
     assert!(!executor.executed);
   }
 
@@ -3403,8 +2777,7 @@ mod tests {
     let project_root = temp_dir("candidate-action-execution-record-project");
     let store_root = temp_dir("candidate-action-execution-record-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let promotion = promoted_artifact();
     let decision = decision_artifact();
 
@@ -3414,8 +2787,7 @@ mod tests {
         "Candidate action execution artifact recording",
         |context| {
           let decision_source_path = project_root.join("candidate-action-decision-source.json");
-          fs::write(&decision_source_path, "{\"fixture\":true}\n")
-            .expect("decision source should write");
+          fs::write(&decision_source_path, "{\"fixture\":true}\n").expect("decision source should write");
           let (_, source_decision_ref) = context
             .stage_artifact_file_with_ref(
               "candidate-action-decision",
@@ -3425,16 +2797,13 @@ mod tests {
             )
             .expect("source decision artifact should stage");
 
-          let request = CandidateActionExecutionRequest::new(
-            "execution_text_area",
-            "text-area-action-execution",
-          )
-          .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
-          .with_consent(CandidateActionExecutionConsent {
-            run_id: source_decision_ref.run_id.as_str().to_string(),
-            ..execution_consent()
-          })
-          .with_readiness(ready_report());
+          let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+            .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
+            .with_consent(CandidateActionExecutionConsent {
+              run_id: source_decision_ref.run_id.as_str().to_string(),
+              ..execution_consent()
+            })
+            .with_readiness(ready_report());
           record_candidate_action_execution_artifact(
             context,
             &promotion,
@@ -3446,10 +2815,7 @@ mod tests {
       )
       .expect("recorded execution operation should succeed");
 
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("recorded run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
     assert_eq!(run.artifacts.len(), 4);
     assert_eq!(run.artifacts[0].role, "candidate-action-decision");
@@ -3458,15 +2824,9 @@ mod tests {
     assert_eq!(run.artifacts[3].role, "candidate-action-execution");
     let (_artifact_ref, artifact) = output.value;
     assert!(artifact.operation_result_artifact.is_some());
-    assert_eq!(
-      artifact.input_action_result.selected_path,
-      auv_driver::InputDeliveryPath::AxPress
-    );
-    let verifications = crate::run_read::list_verifications(
-      runtime.recording_backend().store(),
-      output.run_id.as_str(),
-    )
-    .expect("operation-result verification should read");
+    assert_eq!(artifact.input_action_result.selected_path, auv_driver::InputDeliveryPath::AxPress);
+    let verifications = crate::run_read::list_verifications(runtime.recording_backend().store(), output.run_id.as_str())
+      .expect("operation-result verification should read");
     assert_eq!(verifications.len(), 1);
     assert_eq!(
       verifications[0].method,
@@ -3484,14 +2844,11 @@ mod tests {
     let project_root = temp_dir("candidate-action-execute-record-project");
     let store_root = temp_dir("candidate-action-execute-record-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let promotion = promoted_artifact();
     let decision = decision_artifact();
     let mut executor = FakeExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
@@ -3503,8 +2860,7 @@ mod tests {
         "Candidate action execute-and-record smoke fixture",
         |context| {
           let decision_source_path = project_root.join("candidate-action-decision-source.json");
-          fs::write(&decision_source_path, "{\"fixture\":true}\n")
-            .expect("decision source should write");
+          fs::write(&decision_source_path, "{\"fixture\":true}\n").expect("decision source should write");
           let (_, source_decision_ref) = context
             .stage_artifact_file_with_ref(
               "candidate-action-decision",
@@ -3514,38 +2870,26 @@ mod tests {
             )
             .expect("source decision artifact should stage");
 
-          let request = CandidateActionExecutionRequest::new(
-            "execution_text_area",
-            "text-area-action-execution",
-          )
-          .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
-          .with_consent(CandidateActionExecutionConsent {
-            run_id: source_decision_ref.run_id.as_str().to_string(),
-            ..execution_consent()
-          });
-          execute_and_record_single_candidate_action(
-            context,
-            &mut executor,
-            &promotion,
-            &decision,
-            &request,
-          )
+          let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+            .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
+            .with_consent(CandidateActionExecutionConsent {
+              run_id: source_decision_ref.run_id.as_str().to_string(),
+              ..execution_consent()
+            });
+          execute_and_record_single_candidate_action(context, &mut executor, &promotion, &decision, &request)
         },
       )
       .expect("execute-and-record operation should succeed");
 
     assert!(executor.observed_plan.is_some());
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("recorded run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("recorded run should persist");
     assert_eq!(run.artifacts.len(), 4);
     assert_eq!(run.artifacts[0].role, "candidate-action-decision");
     assert_eq!(run.artifacts[1].role, "operation-result");
     assert_eq!(run.artifacts[2].role, "g3-binding-fact");
     assert_eq!(run.artifacts[3].role, "candidate-action-execution");
-    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
-      .expect("execute-and-record run should inspect");
+    let inspect =
+      crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str()).expect("execute-and-record run should inspect");
     assert!(inspect.contains("[candidate.action.execution.lineage] (ledger)"));
     assert!(inspect.contains("[action.transition.lineage] (seam surface)"));
     assert!(inspect.contains("input_delivery=attempted"));
@@ -3560,14 +2904,11 @@ mod tests {
     let project_root = temp_dir("candidate-action-execute-readiness-debug-record-project");
     let store_root = temp_dir("candidate-action-execute-readiness-debug-record-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let promotion = promoted_artifact();
     let decision = decision_artifact();
     let mut executor = FakeExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
@@ -3579,8 +2920,7 @@ mod tests {
         "Candidate action execute-and-record readiness debug fixture",
         |context| {
           let decision_source_path = project_root.join("candidate-action-decision-source.json");
-          fs::write(&decision_source_path, "{\"fixture\":true}\n")
-            .expect("decision source should write");
+          fs::write(&decision_source_path, "{\"fixture\":true}\n").expect("decision source should write");
           let (_, source_decision_ref) = context
             .stage_artifact_file_with_ref(
               "candidate-action-decision",
@@ -3590,26 +2930,17 @@ mod tests {
             )
             .expect("source decision artifact should stage");
 
-          let request = CandidateActionExecutionRequest::new(
-            "execution_text_area",
-            "text-area-action-execution",
-          )
-          .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
-          .with_consent(CandidateActionExecutionConsent {
-            run_id: source_decision_ref.run_id.as_str().to_string(),
-            ..execution_consent()
-          })
-          .with_readiness_debug(json!({
-            "collector": "execute_path",
-            "window_ref": 11
-          }));
-          execute_and_record_single_candidate_action(
-            context,
-            &mut executor,
-            &promotion,
-            &decision,
-            &request,
-          )
+          let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+            .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
+            .with_consent(CandidateActionExecutionConsent {
+              run_id: source_decision_ref.run_id.as_str().to_string(),
+              ..execution_consent()
+            })
+            .with_readiness_debug(json!({
+              "collector": "execute_path",
+              "window_ref": 11
+            }));
+          execute_and_record_single_candidate_action(context, &mut executor, &promotion, &decision, &request)
         },
       )
       .expect("execute-and-record operation should succeed");
@@ -3632,14 +2963,11 @@ mod tests {
     let project_root = temp_dir("candidate-action-execute-post-action-record-project");
     let store_root = temp_dir("candidate-action-execute-post-action-record-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let promotion = promoted_artifact();
     let decision = decision_artifact();
     let mut executor = FakeVerifyingExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
@@ -3654,8 +2982,7 @@ mod tests {
         "Candidate action execute-and-record post-action verification fixture",
         |context| {
           let decision_source_path = project_root.join("candidate-action-decision-source.json");
-          fs::write(&decision_source_path, "{\"fixture\":true}\n")
-            .expect("decision source should write");
+          fs::write(&decision_source_path, "{\"fixture\":true}\n").expect("decision source should write");
           let (_, source_decision_ref) = context
             .stage_artifact_file_with_ref(
               "candidate-action-decision",
@@ -3665,23 +2992,14 @@ mod tests {
             )
             .expect("source decision artifact should stage");
 
-          let request = CandidateActionExecutionRequest::new(
-            "execution_text_area",
-            "text-area-action-execution",
-          )
-          .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
-          .with_consent(CandidateActionExecutionConsent {
-            run_id: source_decision_ref.run_id.as_str().to_string(),
-            ..execution_consent()
-          })
-          .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
-          execute_and_record_single_candidate_action(
-            context,
-            &mut executor,
-            &promotion,
-            &decision,
-            &request,
-          )
+          let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+            .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
+            .with_consent(CandidateActionExecutionConsent {
+              run_id: source_decision_ref.run_id.as_str().to_string(),
+              ..execution_consent()
+            })
+            .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
+          execute_and_record_single_candidate_action(context, &mut executor, &promotion, &decision, &request)
         },
       )
       .expect("execute-and-record operation with post-action verification should succeed");
@@ -3689,29 +3007,17 @@ mod tests {
     assert!(executor.observed_plan.is_some());
     assert!(executor.executed);
     assert_eq!(executor.verification_calls, 1);
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("recorded run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("recorded run should persist");
     assert_eq!(run.artifacts.len(), 4);
     let (_artifact_ref, artifact) = output.value;
     assert_eq!(artifact.operation_result.status, OperationStatus::Completed);
     assert_eq!(artifact.operation_result.verifications.len(), 2);
-    assert_eq!(
-      artifact.verification_result.method,
-      VerificationMethod::SemanticMatch
-    );
+    assert_eq!(artifact.verification_result.method, VerificationMethod::SemanticMatch);
     assert_eq!(artifact.verification_result.semantic_matched, Some(true));
-    assert_eq!(
-      artifact.detail["verification"],
-      json!("activation_only+post_action:semantic_match")
-    );
+    assert_eq!(artifact.detail["verification"], json!("activation_only+post_action:semantic_match"));
     assert_eq!(artifact.detail["post_action_verification_count"], json!(1));
-    let verifications = crate::run_read::list_verifications(
-      runtime.recording_backend().store(),
-      output.run_id.as_str(),
-    )
-    .expect("recorded run verifications should read");
+    let verifications = crate::run_read::list_verifications(runtime.recording_backend().store(), output.run_id.as_str())
+      .expect("recorded run verifications should read");
     assert_eq!(verifications.len(), 2);
     assert_eq!(
       verifications[0].method,
@@ -3721,8 +3027,8 @@ mod tests {
     );
     assert_eq!(verifications[1].method, VerificationMethod::SemanticMatch);
     assert_eq!(verifications[1].semantic_matched, Some(true));
-    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
-      .expect("execute-and-record run should inspect");
+    let inspect =
+      crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str()).expect("execute-and-record run should inspect");
     assert!(inspect.contains("verification=activation_only+post_action:semantic_match"));
     assert!(inspect.contains("semantic_matched=true"));
 
@@ -3734,40 +3040,26 @@ mod tests {
   fn execute_single_candidate_action_uses_executor_once_and_records_activation_only() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(execution_consent());
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_consent(execution_consent());
     let mut executor = FakeExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
     };
 
-    let artifact = execute_single_candidate_action(
-      &mut executor,
-      &promotion,
-      &decision,
-      &request,
-      RunId::new("run_l8b_execution"),
-    )
-    .expect("fake executor should produce execution artifact");
+    let artifact = execute_single_candidate_action(&mut executor, &promotion, &decision, &request, RunId::new("run_l8b_execution"))
+      .expect("fake executor should produce execution artifact");
 
-    let plan = executor
-      .observed_plan
-      .expect("executor should observe plan");
+    let plan = executor.observed_plan.expect("executor should observe plan");
     assert_eq!(plan.selected_method, "pointer-click");
     assert_eq!(plan.target_grounding, TargetGrounding::Coordinate);
     assert_eq!(plan.window_number, Some(11));
     assert_eq!(plan.window_x, 161.0);
     assert_eq!(plan.window_y, 60.0);
-    assert_eq!(
-      artifact.input_action_result.selected_path,
-      auv_driver::InputDeliveryPath::WindowTargetedMouse
-    );
+    assert_eq!(artifact.input_action_result.selected_path, auv_driver::InputDeliveryPath::WindowTargetedMouse);
     assert!(executor.executed);
     assert_eq!(
       artifact.verification_result.method,
@@ -3781,15 +3073,12 @@ mod tests {
   fn execute_single_candidate_action_runs_explicit_post_action_probe_after_delivery() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(execution_consent())
-        .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_consent(execution_consent())
+      .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
     let mut executor = FakeVerifyingExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
@@ -3798,28 +3087,16 @@ mod tests {
       verification_error: None,
     };
 
-    let artifact = execute_single_candidate_action(
-      &mut executor,
-      &promotion,
-      &decision,
-      &request,
-      RunId::new("run_l8b_execution"),
-    )
-    .expect("explicit post-action probe should produce execution artifact");
+    let artifact = execute_single_candidate_action(&mut executor, &promotion, &decision, &request, RunId::new("run_l8b_execution"))
+      .expect("explicit post-action probe should produce execution artifact");
 
     assert!(executor.executed);
     assert_eq!(executor.verification_calls, 1);
     assert_eq!(artifact.operation_result.status, OperationStatus::Completed);
     assert_eq!(artifact.operation_result.verifications.len(), 2);
-    assert_eq!(
-      artifact.verification_result.method,
-      VerificationMethod::SemanticMatch
-    );
+    assert_eq!(artifact.verification_result.method, VerificationMethod::SemanticMatch);
     assert_eq!(artifact.verification_result.semantic_matched, Some(true));
-    assert_eq!(
-      artifact.detail["verification"],
-      json!("activation_only+post_action:semantic_match")
-    );
+    assert_eq!(artifact.detail["verification"], json!("activation_only+post_action:semantic_match"));
     assert_eq!(artifact.detail["semantic_matched"], json!(true));
   }
 
@@ -3827,35 +3104,26 @@ mod tests {
   fn execute_single_candidate_action_rejects_type_text_consent_for_different_text() {
     let promotion = promoted_artifact_with_focused_target(true);
     let decision = type_text_decision_artifact("hello from auv", true);
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_action(CandidateActionKind::TypeText {
-          text: "hello from auv".to_string(),
-        })
-        .with_consent(CandidateActionExecutionConsent {
-          approved_action: CandidateActionExecutionConsentAction::TypeText {
-            text: "different text".to_string(),
-          },
-          ..execution_consent()
-        });
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_action(CandidateActionKind::TypeText {
+        text: "hello from auv".to_string(),
+      })
+      .with_consent(CandidateActionExecutionConsent {
+        approved_action: CandidateActionExecutionConsentAction::TypeText {
+          text: "different text".to_string(),
+        },
+        ..execution_consent()
+      });
     let mut executor = FakeExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedKeyboard,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedKeyboard),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
     };
 
-    let error = execute_single_candidate_action(
-      &mut executor,
-      &promotion,
-      &decision,
-      &request,
-      RunId::new("run_l8b_execution"),
-    )
-    .expect_err("type-text consent must bind the typed content");
+    let error = execute_single_candidate_action(&mut executor, &promotion, &decision, &request, RunId::new("run_l8b_execution"))
+      .expect_err("type-text consent must bind the typed content");
 
     assert_eq!(
       error,
@@ -3869,39 +3137,28 @@ mod tests {
   fn execute_single_candidate_action_uses_type_text_plan_and_keyboard_delivery() {
     let promotion = promoted_artifact_with_focused_target(true);
     let decision = type_text_decision_artifact("hello from auv", true);
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_action(CandidateActionKind::TypeText {
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_action(CandidateActionKind::TypeText {
+        text: "hello from auv".to_string(),
+      })
+      .with_consent(CandidateActionExecutionConsent {
+        approved_action: CandidateActionExecutionConsentAction::TypeText {
           text: "hello from auv".to_string(),
-        })
-        .with_consent(CandidateActionExecutionConsent {
-          approved_action: CandidateActionExecutionConsentAction::TypeText {
-            text: "hello from auv".to_string(),
-          },
-          ..execution_consent()
-        });
+        },
+        ..execution_consent()
+      });
     let mut executor = FakeExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedKeyboard,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedKeyboard),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
     };
 
-    let artifact = execute_single_candidate_action(
-      &mut executor,
-      &promotion,
-      &decision,
-      &request,
-      RunId::new("run_l8b_execution"),
-    )
-    .expect("type-text fake executor should produce execution artifact");
+    let artifact = execute_single_candidate_action(&mut executor, &promotion, &decision, &request, RunId::new("run_l8b_execution"))
+      .expect("type-text fake executor should produce execution artifact");
 
-    let plan = executor
-      .observed_plan
-      .expect("executor should observe type-text plan");
+    let plan = executor.observed_plan.expect("executor should observe type-text plan");
     assert_eq!(
       plan.action,
       CandidateActionKind::TypeText {
@@ -3909,10 +3166,7 @@ mod tests {
       }
     );
     assert!(plan.focused_target);
-    assert_eq!(
-      artifact.input_action_result.selected_path,
-      auv_driver::InputDeliveryPath::WindowTargetedKeyboard
-    );
+    assert_eq!(artifact.input_action_result.selected_path, auv_driver::InputDeliveryPath::WindowTargetedKeyboard);
   }
 
   #[test]
@@ -3931,10 +3185,7 @@ mod tests {
     )
     .expect("type-text expected focus target should build");
 
-    assert_eq!(
-      expected.text.as_deref(),
-      Some("AUV_TYPE_TEXT_MARKER_2026_06_09_V5")
-    );
+    assert_eq!(expected.text.as_deref(), Some("AUV_TYPE_TEXT_MARKER_2026_06_09_V5"));
   }
 
   #[cfg(target_os = "macos")]
@@ -4023,56 +3274,38 @@ mod tests {
     assert_eq!(attempts, 2);
     assert_eq!(observation.attempts, 2);
     assert!(observation.focused_matches);
-    assert_eq!(
-      observation.observed_preferred_text,
-      "hello from local proposer"
-    );
+    assert_eq!(observation.observed_preferred_text, "hello from local proposer");
   }
 
   #[test]
   fn execute_single_candidate_action_blocks_type_text_when_target_was_not_focused() {
     let promotion = promoted_artifact_with_focused_target(false);
     let decision = type_text_decision_artifact("hello from auv", false);
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_action(CandidateActionKind::TypeText {
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_action(CandidateActionKind::TypeText {
+        text: "hello from auv".to_string(),
+      })
+      .with_consent(CandidateActionExecutionConsent {
+        approved_action: CandidateActionExecutionConsentAction::TypeText {
           text: "hello from auv".to_string(),
-        })
-        .with_consent(CandidateActionExecutionConsent {
-          approved_action: CandidateActionExecutionConsentAction::TypeText {
-            text: "hello from auv".to_string(),
-          },
-          ..execution_consent()
-        });
+        },
+        ..execution_consent()
+      });
     let mut executor = FakeExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedKeyboard,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedKeyboard),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
     };
 
-    let artifact = execute_single_candidate_action(
-      &mut executor,
-      &promotion,
-      &decision,
-      &request,
-      RunId::new("run_l8b_execution"),
-    )
-    .expect("non-focused type-text should still record blocked execution artifact");
+    let artifact = execute_single_candidate_action(&mut executor, &promotion, &decision, &request, RunId::new("run_l8b_execution"))
+      .expect("non-focused type-text should still record blocked execution artifact");
 
     assert!(!executor.executed);
     assert_eq!(artifact.detail["input_delivery"], json!("not_attempted"));
-    assert_eq!(
-      artifact.side_effect,
-      CandidateActionExecutionSideEffect::BlockedNotReady
-    );
-    assert_eq!(
-      artifact.readiness.selected_blocker.as_deref(),
-      Some("window-targeted type-text requires focused target")
-    );
+    assert_eq!(artifact.side_effect, CandidateActionExecutionSideEffect::BlockedNotReady);
+    assert_eq!(artifact.readiness.selected_blocker.as_deref(), Some("window-targeted type-text requires focused target"));
   }
 
   #[test]
@@ -4098,14 +3331,8 @@ mod tests {
         auv_driver::ReadinessCheck::pass("accessibility", "accessibility permission granted"),
         auv_driver::ReadinessCheck::pass("target_window_present", "target window 33460 is present"),
         auv_driver::ReadinessCheck::pass("target_app_frontmost", "target app/window is frontmost"),
-        auv_driver::ReadinessCheck::pass(
-          "window_bounds_stable",
-          "window frame drift 0.00px within tolerance",
-        ),
-        auv_driver::ReadinessCheck::fail(
-          "input_injection_target",
-          "target point is outside the current target window bounds",
-        ),
+        auv_driver::ReadinessCheck::pass("window_bounds_stable", "window frame drift 0.00px within tolerance"),
+        auv_driver::ReadinessCheck::fail("input_injection_target", "target point is outside the current target window bounds"),
       ],
       Some("33460".to_string()),
       Some(auv_driver::Rect::new(49.0, -945.0, 586.0, 488.0)),
@@ -4115,12 +3342,7 @@ mod tests {
     let readiness = enforce_action_specific_readiness(&plan, report);
 
     assert!(readiness.is_ready());
-    assert!(
-      readiness
-        .checks
-        .iter()
-        .all(|check| check.name != "input_injection_target")
-    );
+    assert!(readiness.checks.iter().all(|check| check.name != "input_injection_target"));
   }
 
   #[test]
@@ -4178,14 +3400,11 @@ mod tests {
   fn execute_single_candidate_action_does_not_run_post_action_probe_when_not_requested() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(execution_consent());
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_consent(execution_consent());
     let mut executor = FakeVerifyingExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
@@ -4194,14 +3413,8 @@ mod tests {
       verification_error: None,
     };
 
-    let artifact = execute_single_candidate_action(
-      &mut executor,
-      &promotion,
-      &decision,
-      &request,
-      RunId::new("run_l8b_execution"),
-    )
-    .expect("execution without explicit post-action probe should still succeed");
+    let artifact = execute_single_candidate_action(&mut executor, &promotion, &decision, &request, RunId::new("run_l8b_execution"))
+      .expect("execution without explicit post-action probe should still succeed");
 
     assert!(executor.executed);
     assert_eq!(executor.verification_calls, 0);
@@ -4217,19 +3430,15 @@ mod tests {
   }
 
   #[test]
-  fn execute_single_candidate_action_records_artifact_when_post_action_probe_fails_after_delivery()
-  {
+  fn execute_single_candidate_action_records_artifact_when_post_action_probe_fails_after_delivery() {
     let promotion = promoted_artifact();
     let decision = decision_artifact();
-    let request =
-      CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
-        .with_source_candidate_action_decision_artifact(source_decision_ref())
-        .with_consent(execution_consent())
-        .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
+    let request = CandidateActionExecutionRequest::new("execution_text_area", "text-area-action-execution")
+      .with_source_candidate_action_decision_artifact(source_decision_ref())
+      .with_consent(execution_consent())
+      .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved());
     let mut executor = FakeVerifyingExecutor {
-      result: auv_driver::InputActionResult::single_success(
-        auv_driver::InputDeliveryPath::WindowTargetedMouse,
-      ),
+      result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
       readiness: ready_report(),
       observed_plan: None,
       executed: false,
@@ -4238,24 +3447,15 @@ mod tests {
       verification_error: Some("post observe failed".to_string()),
     };
 
-    let artifact = execute_single_candidate_action(
-      &mut executor,
-      &promotion,
-      &decision,
-      &request,
-      RunId::new("run_l8b_execution"),
-    )
-    .expect("post-action verification failure after delivery must still record execution");
+    let artifact = execute_single_candidate_action(&mut executor, &promotion, &decision, &request, RunId::new("run_l8b_execution"))
+      .expect("post-action verification failure after delivery must still record execution");
 
     assert!(executor.executed);
     assert_eq!(executor.verification_calls, 1);
     assert_eq!(artifact.detail["input_delivery"], json!("attempted"));
     assert_eq!(artifact.operation_result.status, OperationStatus::Failed);
     assert_eq!(artifact.verification_result.semantic_matched, Some(false));
-    assert_eq!(
-      artifact.verification_result.failure_layer,
-      Some(FailureLayer::VerificationUnreliable)
-    );
+    assert_eq!(artifact.verification_result.failure_layer, Some(FailureLayer::VerificationUnreliable));
     assert!(
       artifact
         .verification_result
@@ -4273,29 +3473,18 @@ mod tests {
       return;
     }
 
-    let window_number = match std::env::var("AUV_L8B_WINDOW_NUMBER")
-      .ok()
-      .and_then(|value| value.parse::<i64>().ok())
-    {
+    let window_number = match std::env::var("AUV_L8B_WINDOW_NUMBER").ok().and_then(|value| value.parse::<i64>().ok()) {
       Some(window_number) => window_number,
       None => {
         eprintln!("skip: AUV_L8B_WINDOW_NUMBER is required for L8b smoke");
         return;
       }
     };
-    let window_x = std::env::var("AUV_L8B_WINDOW_X")
-      .ok()
-      .and_then(|value| value.parse::<f64>().ok())
-      .unwrap_or(10.0);
-    let window_y = std::env::var("AUV_L8B_WINDOW_Y")
-      .ok()
-      .and_then(|value| value.parse::<f64>().ok())
-      .unwrap_or(10.0);
+    let window_x = std::env::var("AUV_L8B_WINDOW_X").ok().and_then(|value| value.parse::<f64>().ok()).unwrap_or(10.0);
+    let window_y = std::env::var("AUV_L8B_WINDOW_Y").ok().and_then(|value| value.parse::<f64>().ok()).unwrap_or(10.0);
     let mut executor = MacosCandidateActionExecutor::default();
     let Some(expected_window_frame) = smoke_expected_window_frame() else {
-      eprintln!(
-        "skip: AUV_L8B_WINDOW_FRAME_X/Y/WIDTH/HEIGHT are required for readiness-gated L8b smoke"
-      );
+      eprintln!("skip: AUV_L8B_WINDOW_FRAME_X/Y/WIDTH/HEIGHT are required for readiness-gated L8b smoke");
       return;
     };
     let plan = CandidateActionDeliveryPlan {
@@ -4312,13 +3501,8 @@ mod tests {
       window_y,
       click_count: 1,
     };
-    let readiness = executor
-      .readiness(&plan)
-      .expect("L8b smoke readiness should probe");
-    assert!(
-      readiness.is_ready(),
-      "L8b smoke readiness failed: {readiness:?}"
-    );
+    let readiness = executor.readiness(&plan).expect("L8b smoke readiness should probe");
+    assert!(readiness.is_ready(), "L8b smoke readiness failed: {readiness:?}");
     let result = executor.execute(&plan);
 
     assert!(result.is_ok(), "L8b smoke delivery failed: {result:?}");
@@ -4332,20 +3516,14 @@ mod tests {
       return;
     }
 
-    let Some(window_number) = std::env::var("AUV_L8B_WINDOW_NUMBER")
-      .ok()
-      .and_then(|value| value.parse::<i64>().ok())
-    else {
+    let Some(window_number) = std::env::var("AUV_L8B_WINDOW_NUMBER").ok().and_then(|value| value.parse::<i64>().ok()) else {
       eprintln!("skip: AUV_L8B_WINDOW_NUMBER is required for recorded L8b smoke");
       return;
     };
     let window_title = std::env::var("AUV_L8B_WINDOW_TITLE").ok();
-    let app_bundle_id =
-      std::env::var("AUV_L8B_APP_BUNDLE_ID").unwrap_or_else(|_| "com.apple.TextEdit".to_string());
+    let app_bundle_id = std::env::var("AUV_L8B_APP_BUNDLE_ID").unwrap_or_else(|_| "com.apple.TextEdit".to_string());
     let Some(expected_window_frame) = smoke_expected_window_frame() else {
-      eprintln!(
-        "skip: AUV_L8B_WINDOW_FRAME_X/Y/WIDTH/HEIGHT are required for readiness-gated recorded L8b smoke"
-      );
+      eprintln!("skip: AUV_L8B_WINDOW_FRAME_X/Y/WIDTH/HEIGHT are required for readiness-gated recorded L8b smoke");
       return;
     };
     let expected_window_frame = json!({
@@ -4362,20 +3540,10 @@ mod tests {
     let project_root = temp_dir("candidate-action-execute-recorded-smoke-project");
     let store_root = temp_dir("candidate-action-execute-recorded-smoke-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
-    let mut recognition_1 = sample_frame_with_box_and_window_frame(
-      "recognition_frame_1",
-      target_box.clone(),
-      expected_window_frame.clone(),
-      true,
-    );
-    let mut recognition_2 = sample_frame_with_box_and_window_frame(
-      "recognition_frame_2",
-      target_box,
-      expected_window_frame,
-      true,
-    );
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
+    let mut recognition_1 =
+      sample_frame_with_box_and_window_frame("recognition_frame_1", target_box.clone(), expected_window_frame.clone(), true);
+    let mut recognition_2 = sample_frame_with_box_and_window_frame("recognition_frame_2", target_box, expected_window_frame, true);
     for recognition in [&mut recognition_1, &mut recognition_2] {
       recognition.scope.app_bundle_id = Some(app_bundle_id.clone());
       recognition.scope.window_title = window_title.clone();
@@ -4383,24 +3551,18 @@ mod tests {
     }
     let observations = vec![recognition_1, recognition_2];
     let latest = observations.last().expect("latest frame exists");
-    let mut promotion_request = CandidatePromotionArtifactRequest::new(
-      "promotion_text_area_smoke",
-      "promotion-text-area-smoke",
-    );
+    let mut promotion_request = CandidatePromotionArtifactRequest::new("promotion_text_area_smoke", "promotion-text-area-smoke");
     promotion_request.source_recognition_artifact = Some(sample_artifact_ref());
     promotion_request.stability_policy = StabilityPolicy {
       min_frames: 2,
       max_centroid_drift_px: 4.0,
       require_stable_text: true,
     };
-    promotion_request.projection =
-      crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
+    promotion_request.projection = crate::candidate_promotion::PromotionProjection::IdentityWindowAddressable;
     // Historical fixture operation id: this checks capture-backed recognition
     // freshness, not generic invoke command resolution.
-    promotion_request.freshness = Some(
-      freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh")
-        .expect("latest recognition is capture-backed"),
-    );
+    promotion_request.freshness =
+      Some(freshness_from_capture_backed_recognition(latest, "debug.captureAxTree", "fresh").expect("latest recognition is capture-backed"));
     promotion_request.permission = Some(
       explicit_consent_for_candidate_promotion(
         &promotion_request.promotion_id,
@@ -4415,15 +3577,10 @@ mod tests {
       )
       .expect("latest recognition is capture-backed"),
     );
-    let promotion = build_candidate_promotion_artifact(&observations, &promotion_request)
-      .expect("smoke promotion artifact should build");
-    let decision_request = CandidateActionDecisionRequest::new(
-      "decision_text_area_smoke",
-      "text-area-action-decision-smoke",
-    )
-    .with_source_candidate_promotion_artifact(sample_artifact_ref());
-    let decision = build_candidate_action_decision_artifact(&promotion, &decision_request)
-      .expect("smoke decision should build");
+    let promotion = build_candidate_promotion_artifact(&observations, &promotion_request).expect("smoke promotion artifact should build");
+    let decision_request = CandidateActionDecisionRequest::new("decision_text_area_smoke", "text-area-action-decision-smoke")
+      .with_source_candidate_promotion_artifact(sample_artifact_ref());
+    let decision = build_candidate_action_decision_artifact(&promotion, &decision_request).expect("smoke decision should build");
     let mut executor = MacosCandidateActionExecutor::default();
 
     let output = runtime
@@ -4431,10 +3588,8 @@ mod tests {
         RunSpec::new(RunType::Execute, "auv.candidate.action.execute_single"),
         "Candidate action execute-and-record env-gated smoke",
         |context| {
-          let decision_source_path =
-            project_root.join("candidate-action-decision-smoke-source.json");
-          fs::write(&decision_source_path, "{\"smoke\":true}\n")
-            .expect("decision source should write");
+          let decision_source_path = project_root.join("candidate-action-decision-smoke-source.json");
+          fs::write(&decision_source_path, "{\"smoke\":true}\n").expect("decision source should write");
           let (_, source_decision_ref) = context
             .stage_artifact_file_with_ref(
               "candidate-action-decision",
@@ -4443,50 +3598,37 @@ mod tests {
               Some("Recorded source action decision artifact for L8b smoke.".to_string()),
             )
             .expect("source decision artifact should stage");
-          let request = CandidateActionExecutionRequest::new(
-            "execution_text_area_smoke",
-            "text-area-action-execution-smoke",
-          )
-          .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
-          .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved())
-          .with_consent(CandidateActionExecutionConsent {
-            consent_id: "consent_execute_text_area_smoke".to_string(),
-            execution_id: "execution_text_area_smoke".to_string(),
-            granted_by: "human-review".to_string(),
-            scope_note: "execute exactly one approved TextEdit smoke action".to_string(),
-            run_id: source_decision_ref.run_id.as_str().to_string(),
-            source_promotion_id: promotion.promotion_id.clone(),
-            source_decision_id: decision.decision_id.clone(),
-            candidate_local_id: decision.candidate_local_id.clone(),
-            approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
-            provenance: ConsentProvenance::HumanGesture,
-            grade: ConsentGrade::HumanApproved,
-            approved_at_millis: crate::model::now_millis(),
-            evidence_note: "env-gated L8b recorded smoke execution consent".to_string(),
-          });
-          execute_and_record_single_candidate_action(
-            context,
-            &mut executor,
-            &promotion,
-            &decision,
-            &request,
-          )
+          let request = CandidateActionExecutionRequest::new("execution_text_area_smoke", "text-area-action-execution-smoke")
+            .with_source_candidate_action_decision_artifact(source_decision_ref.clone())
+            .with_post_action_probe(CandidateActionPostActionProbe::focused_ax_node_reobserved())
+            .with_consent(CandidateActionExecutionConsent {
+              consent_id: "consent_execute_text_area_smoke".to_string(),
+              execution_id: "execution_text_area_smoke".to_string(),
+              granted_by: "human-review".to_string(),
+              scope_note: "execute exactly one approved TextEdit smoke action".to_string(),
+              run_id: source_decision_ref.run_id.as_str().to_string(),
+              source_promotion_id: promotion.promotion_id.clone(),
+              source_decision_id: decision.decision_id.clone(),
+              candidate_local_id: decision.candidate_local_id.clone(),
+              approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
+              provenance: ConsentProvenance::HumanGesture,
+              grade: ConsentGrade::HumanApproved,
+              approved_at_millis: crate::model::now_millis(),
+              evidence_note: "env-gated L8b recorded smoke execution consent".to_string(),
+            });
+          execute_and_record_single_candidate_action(context, &mut executor, &promotion, &decision, &request)
         },
       )
       .expect("recorded L8b smoke should execute and persist");
 
-    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
-      .expect("recorded L8b smoke should inspect");
+    let inspect =
+      crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str()).expect("recorded L8b smoke should inspect");
     assert!(inspect.contains("[candidate.action.execution.lineage] (ledger)"));
     assert!(inspect.contains("[action.transition.lineage] (seam surface)"));
     assert!(inspect.contains("input_delivery=attempted"));
     assert!(inspect.contains("verification=activation_only+post_action:semantic_match"));
     assert!(inspect.contains("semantic_matched=true"));
-    eprintln!(
-      "L8b recorded smoke run_id={} store={}",
-      output.run_id.as_str(),
-      store_root.display()
-    );
+    eprintln!("L8b recorded smoke run_id={} store={}", output.run_id.as_str(), store_root.display());
   }
 
   fn temp_dir(label: &str) -> PathBuf {
@@ -4495,8 +3637,7 @@ mod tests {
 
   #[cfg(target_os = "macos")]
   fn smoke_focused_target_box(app_bundle_id: &str) -> Option<RecognitionBox> {
-    let capture =
-      auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80).ok()?;
+    let capture = auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot(app_bundle_id, 8, 80).ok()?;
     let focused = capture.snapshot.nodes.iter().find(|node| node.focused)?;
     Some(RecognitionBox {
       x: focused.bounds.x,
@@ -4511,14 +3652,8 @@ mod tests {
     Some(auv_driver::Rect::new(
       std::env::var("AUV_L8B_WINDOW_FRAME_X").ok()?.parse().ok()?,
       std::env::var("AUV_L8B_WINDOW_FRAME_Y").ok()?.parse().ok()?,
-      std::env::var("AUV_L8B_WINDOW_FRAME_WIDTH")
-        .ok()?
-        .parse()
-        .ok()?,
-      std::env::var("AUV_L8B_WINDOW_FRAME_HEIGHT")
-        .ok()?
-        .parse()
-        .ok()?,
+      std::env::var("AUV_L8B_WINDOW_FRAME_WIDTH").ok()?.parse().ok()?,
+      std::env::var("AUV_L8B_WINDOW_FRAME_HEIGHT").ok()?.parse().ok()?,
     ))
   }
 }

@@ -5,7 +5,4 @@ mod screencast;
 
 pub use clipboard::{ClipboardSession, PortalClipboard};
 pub use input::{InputSession, PortalInput};
-pub use screencast::{
-  ScreenCastFrame, ScreenCastSession, ScreenCastStream, capture_window_frame, decode_streams,
-  select_monitor_sources,
-};
+pub use screencast::{ScreenCastFrame, ScreenCastSession, ScreenCastStream, capture_window_frame, decode_streams, select_monitor_sources};

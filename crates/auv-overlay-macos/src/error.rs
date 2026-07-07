@@ -8,10 +8,7 @@ pub struct NativeOverlayError {
 }
 
 pub fn native_error_to_auv(error: NativeOverlayError) -> String {
-  format!(
-    "macos native overlay {} failed: {}; recovery={}",
-    error.operation, error.message, error.recovery_hint
-  )
+  format!("macos native overlay {} failed: {}; recovery={}", error.operation, error.message, error.recovery_hint)
 }
 
 pub(crate) fn native_result<T>(
@@ -50,9 +47,6 @@ mod tests {
     )
     .unwrap_err();
 
-    assert_eq!(
-      error,
-      "macos native overlay show_overlay_cursor failed: window creation failed; recovery=retry overlay visualization"
-    );
+    assert_eq!(error, "macos native overlay show_overlay_cursor failed: window creation failed; recovery=retry overlay visualization");
   }
 }

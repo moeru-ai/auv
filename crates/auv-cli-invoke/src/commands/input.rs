@@ -1,9 +1,8 @@
 use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
   arg::{
-    KEY_ARGS, QUERY_ARGS, QUERY_OR_CANDIDATE_ARGS, QUERY_OR_CANDIDATE_OVERLAY_ARGS,
-    QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS, WINDOW_CLICK_POINT_ARGS,
-    WINDOW_QUERY_OVERLAY_ARGS,
+    KEY_ARGS, QUERY_ARGS, QUERY_OR_CANDIDATE_ARGS, QUERY_OR_CANDIDATE_OVERLAY_ARGS, QUERY_OVERLAY_ARGS, TARGET_ARGS, TEXT_ARGS, WINDOW_ARGS,
+    WINDOW_CLICK_POINT_ARGS, WINDOW_QUERY_OVERLAY_ARGS,
   },
   invoke_command,
 };
@@ -196,15 +195,8 @@ fn type_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   let text = required_input(&input, "text")?;
   let driver = auv_driver_macos::MacosDriver::new();
   let session = driver.open_local().map_err(|error| error.to_string())?;
-  let result = session
-    .input()
-    .type_text(text, TypeTextOptions::default())
-    .map_err(|error| error.to_string())?;
-  input_action_output(
-    "typed text into active control",
-    "auv-driver-macos.input",
-    &result,
-  )
+  let result = session.input().type_text(text, TypeTextOptions::default()).map_err(|error| error.to_string())?;
+  input_action_output("typed text into active control", "auv-driver-macos.input", &result)
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -234,18 +226,13 @@ fn paste_text_preserve_clipboard_impl(input: InvokeCommandInput<'_>) -> InvokeCo
 
   let mut output = InvokeCommandOutput::new("pasted text into active control");
   output.backend = Some("auv-driver-macos.input".to_string());
-  output
-    .signals
-    .insert("clipboard_disturbance".to_string(), "temporary".to_string());
+  output.signals.insert("clipboard_disturbance".to_string(), "temporary".to_string());
   // TODO(invoke-paste-input-action-result): paste_text currently returns only
   // success/failure, so this handler cannot persist a typed InputActionResult
   // artifact like input.typeText/input.key. Extend the typed paste API to
   // return delivery evidence before claiming full input artifact coverage.
-  output.verification =
-    Some("activation-only; semantic success requires a separate verification result".to_string());
-  output
-    .known_limits
-    .push("input.pasteText records clipboard-based input delivery only; it does not verify target UI state.".to_string());
+  output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
+  output.known_limits.push("input.pasteText records clipboard-based input delivery only; it does not verify target UI state.".to_string());
   Ok(output)
 }
 
@@ -273,12 +260,7 @@ fn press_key_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
       ..KeyPressOptions::default()
     })
     .map_err(|error| error.to_string())?;
-  input_action_output(
-    "pressed key in active app",
-    "auv-driver-macos.input",
-    &result,
-  )
-  .map(|mut output| {
+  input_action_output("pressed key in active app", "auv-driver-macos.input", &result).map(|mut output| {
     attach_input_key_report(&mut output, key, Some("active app"), &result);
     output
   })
@@ -300,40 +282,24 @@ fn click_window_point_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult
     return Ok(dry_run_output(input.command_id));
   }
 
-  let uses_relative_window_point =
-    input.inputs.contains_key("relative_x") || input.inputs.contains_key("relative_y");
+  let uses_relative_window_point = input.inputs.contains_key("relative_x") || input.inputs.contains_key("relative_y");
   let absolute_window_point = if uses_relative_window_point {
     None
   } else {
-    Some(resolve_click_window_point(
-      input.inputs,
-      input.command_id,
-      None,
-    )?)
+    Some(resolve_click_window_point(input.inputs, input.command_id, None)?)
   };
 
   let driver = auv_driver_macos::MacosDriver::new();
   let session = driver.open_local().map_err(|error| error.to_string())?;
-  let window = session
-    .window()
-    .resolve(click_window_selector(&input))
-    .map_err(|error| error.to_string())?;
+  let window = session.window().resolve(click_window_selector(&input)).map_err(|error| error.to_string())?;
   let window_point = if uses_relative_window_point {
     resolve_click_window_point(input.inputs, input.command_id, Some(&window))?
   } else {
-    absolute_window_point
-      .expect("absolute window point must be present when relative inputs are absent")
+    absolute_window_point.expect("absolute window point must be present when relative inputs are absent")
   };
-  let action = session
-    .window()
-    .click(&window, window_point, ClickOptions::default())
-    .map_err(|error| error.to_string())?;
+  let action = session.window().click(&window, window_point, ClickOptions::default()).map_err(|error| error.to_string())?;
 
-  let mut output = input_action_output(
-    "clicked window point",
-    "auv-driver-macos.window.input",
-    &action,
-  )?;
+  let mut output = input_action_output("clicked window point", "auv-driver-macos.window.input", &action)?;
   add_click_window_signals(&mut output, &window, window_point);
   Ok(output)
 }
@@ -357,14 +323,10 @@ fn resolve_click_window_point(
 
   if has_offset_x || has_offset_y {
     if !has_offset_x || !has_offset_y {
-      return Err(format!(
-        "{command_id} requires both --offset_x and --offset_y when using absolute window points"
-      ));
+      return Err(format!("{command_id} requires both --offset_x and --offset_y when using absolute window points"));
     }
     if has_relative_x || has_relative_y {
-      return Err(format!(
-        "{command_id} accepts either --offset_x/--offset_y or --relative_x/--relative_y, not both"
-      ));
+      return Err(format!("{command_id} accepts either --offset_x/--offset_y or --relative_x/--relative_y, not both"));
     }
     let offset_x = parse_required_number(inputs, "offset_x", command_id)?;
     let offset_y = parse_required_number(inputs, "offset_y", command_id)?;
@@ -373,45 +335,24 @@ fn resolve_click_window_point(
 
   if has_relative_x || has_relative_y {
     if !has_relative_x || !has_relative_y {
-      return Err(format!(
-        "{command_id} requires both --relative_x and --relative_y when using relative window points"
-      ));
+      return Err(format!("{command_id} requires both --relative_x and --relative_y when using relative window points"));
     }
-    let window = window.ok_or_else(|| {
-      format!("{command_id} requires a resolved window for --relative_x/--relative_y")
-    })?;
+    let window = window.ok_or_else(|| format!("{command_id} requires a resolved window for --relative_x/--relative_y"))?;
     let relative_x = parse_required_number(inputs, "relative_x", command_id)?;
     let relative_y = parse_required_number(inputs, "relative_y", command_id)?;
     return Ok(window_relative_window_point(window, relative_x, relative_y));
   }
 
-  Err(format!(
-    "{command_id} requires --offset_x/--offset_y or --relative_x/--relative_y"
-  ))
+  Err(format!("{command_id} requires --offset_x/--offset_y or --relative_x/--relative_y"))
 }
 
-fn parse_required_number(
-  inputs: &std::collections::BTreeMap<String, String>,
-  name: &str,
-  command_id: &str,
-) -> Result<f64, String> {
-  let raw = inputs
-    .get(name)
-    .ok_or_else(|| format!("{command_id} requires --{name}"))?;
-  raw
-    .parse::<f64>()
-    .map_err(|error| format!("{command_id} received invalid --{name}: {error}"))
+fn parse_required_number(inputs: &std::collections::BTreeMap<String, String>, name: &str, command_id: &str) -> Result<f64, String> {
+  let raw = inputs.get(name).ok_or_else(|| format!("{command_id} requires --{name}"))?;
+  raw.parse::<f64>().map_err(|error| format!("{command_id} received invalid --{name}: {error}"))
 }
 
-fn window_relative_window_point(
-  window: &auv_driver::Window,
-  relative_x: f64,
-  relative_y: f64,
-) -> auv_driver::geometry::WindowPoint {
-  auv_driver::geometry::WindowPoint::new(
-    window.frame.size.width * relative_x,
-    window.frame.size.height * relative_y,
-  )
+fn window_relative_window_point(window: &auv_driver::Window, relative_x: f64, relative_y: f64) -> auv_driver::geometry::WindowPoint {
+  auv_driver::geometry::WindowPoint::new(window.frame.size.width * relative_x, window.frame.size.height * relative_y)
 }
 
 #[cfg(target_os = "macos")]
@@ -425,55 +366,30 @@ fn click_window_selector(input: &InvokeCommandInput<'_>) -> auv_driver::WindowSe
   if let Some(target) = click_window_target(input) {
     selector.app = Some(App::bundle_id(target));
   }
-  if let Some(title) = input
-    .inputs
-    .get("title")
-    .filter(|value| !value.trim().is_empty())
-  {
+  if let Some(title) = input.inputs.get("title").filter(|value| !value.trim().is_empty()) {
     selector.title = Some(TextMatcher::Contains(title.clone()));
   }
   selector
 }
 
 fn click_window_target<'a>(input: &'a InvokeCommandInput<'_>) -> Option<&'a str> {
-  input
-    .target_application_id
-    .or_else(|| input.inputs.get("target").map(String::as_str))
-    .filter(|value| !value.trim().is_empty())
+  input.target_application_id.or_else(|| input.inputs.get("target").map(String::as_str)).filter(|value| !value.trim().is_empty())
 }
 
 #[cfg(target_os = "macos")]
-fn add_click_window_signals(
-  output: &mut InvokeCommandOutput,
-  window: &auv_driver::Window,
-  window_point: auv_driver::geometry::WindowPoint,
-) {
-  output
-    .signals
-    .insert("window.id".to_string(), window.reference.id.clone());
+fn add_click_window_signals(output: &mut InvokeCommandOutput, window: &auv_driver::Window, window_point: auv_driver::geometry::WindowPoint) {
+  output.signals.insert("window.id".to_string(), window.reference.id.clone());
   if let Some(title) = &window.title {
-    output
-      .signals
-      .insert("window.title".to_string(), title.clone());
+    output.signals.insert("window.title".to_string(), title.clone());
   }
   if let Some(app_name) = &window.app_name {
-    output
-      .signals
-      .insert("window.app_name".to_string(), app_name.clone());
+    output.signals.insert("window.app_name".to_string(), app_name.clone());
   }
   if let Some(bundle_id) = &window.app_bundle_id {
-    output
-      .signals
-      .insert("window.app_bundle_id".to_string(), bundle_id.clone());
+    output.signals.insert("window.app_bundle_id".to_string(), bundle_id.clone());
   }
-  output.signals.insert(
-    "click.window_x".to_string(),
-    window_point.point().x.to_string(),
-  );
-  output.signals.insert(
-    "click.window_y".to_string(),
-    window_point.point().y.to_string(),
-  );
+  output.signals.insert("click.window_x".to_string(), window_point.point().x.to_string());
+  output.signals.insert("click.window_y".to_string(), window_point.point().y.to_string());
 }
 
 fn required_input<'a>(input: &'a InvokeCommandInput<'_>, name: &str) -> Result<&'a str, String> {
@@ -485,17 +401,12 @@ fn required_input<'a>(input: &'a InvokeCommandInput<'_>, name: &str) -> Result<&
     .ok_or_else(|| format!("{} requires --{name}", input.command_id))
 }
 
-fn reject_target_activation(
-  input: &InvokeCommandInput<'_>,
-  command_id: &str,
-) -> Result<(), String> {
+fn reject_target_activation(input: &InvokeCommandInput<'_>, command_id: &str) -> Result<(), String> {
   if input.target_application_id.is_some() {
     // TODO(invoke-input-target-activation): foreground input APIs currently
     // act on the active control; add a typed app/window input lease before
     // honoring --target here.
-    return Err(format!(
-      "{command_id} cannot use --target until typed input target activation is available"
-    ));
+    return Err(format!("{command_id} cannot use --target until typed input target activation is available"));
   }
   Ok(())
 }
@@ -505,55 +416,26 @@ fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
 }
 
 #[cfg(target_os = "macos")]
-fn input_action_output(
-  summary: &str,
-  backend: &str,
-  result: &auv_driver::InputActionResult,
-) -> InvokeCommandResult {
+fn input_action_output(summary: &str, backend: &str, result: &auv_driver::InputActionResult) -> InvokeCommandResult {
   let mut output = InvokeCommandOutput::new(summary);
   output.backend = Some(backend.to_string());
-  output.signals.insert(
-    "input.selected_path".to_string(),
-    format!("{:?}", result.selected_path),
-  );
-  output.signals.insert(
-    "input.attempt_count".to_string(),
-    result.attempts.len().to_string(),
-  );
-  output.signals.insert(
-    "input.mouse_disturbance".to_string(),
-    format!("{:?}", result.mouse_disturbance),
-  );
-  output.signals.insert(
-    "input.focus_disturbance".to_string(),
-    format!("{:?}", result.focus_disturbance),
-  );
-  output.signals.insert(
-    "input.clipboard_disturbance".to_string(),
-    format!("{:?}", result.clipboard_disturbance),
-  );
+  output.signals.insert("input.selected_path".to_string(), format!("{:?}", result.selected_path));
+  output.signals.insert("input.attempt_count".to_string(), result.attempts.len().to_string());
+  output.signals.insert("input.mouse_disturbance".to_string(), format!("{:?}", result.mouse_disturbance));
+  output.signals.insert("input.focus_disturbance".to_string(), format!("{:?}", result.focus_disturbance));
+  output.signals.insert("input.clipboard_disturbance".to_string(), format!("{:?}", result.clipboard_disturbance));
   if let Some(reason) = &result.fallback_reason {
-    output
-      .signals
-      .insert("input.fallback_reason".to_string(), reason.clone());
+    output.signals.insert("input.fallback_reason".to_string(), reason.clone());
   }
-  output
-    .artifacts
-    .push(input_action_artifact(result, "input-action-result")?);
-  output.verification =
-    Some("activation-only; semantic success requires a separate verification result".to_string());
+  output.artifacts.push(input_action_artifact(result, "input-action-result")?);
+  output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
   output
     .known_limits
     .push("input delivery records the selected input path and attempts only; it does not verify target UI state.".to_string());
   Ok(output)
 }
 
-fn input_key_report(
-  key: &str,
-  target: Option<&str>,
-  backend: Option<&str>,
-  result: &auv_driver::InputActionResult,
-) -> InvokeReport {
+fn input_key_report(key: &str, target: Option<&str>, backend: Option<&str>, result: &auv_driver::InputActionResult) -> InvokeReport {
   let mut fields = vec![
     report_field("Result", "delivered"),
     report_field("Key", key),
@@ -569,18 +451,8 @@ fn input_key_report(
   }
 }
 
-fn attach_input_key_report(
-  output: &mut InvokeCommandOutput,
-  key: &str,
-  target: Option<&str>,
-  result: &auv_driver::InputActionResult,
-) {
-  output.report = Some(input_key_report(
-    key,
-    target,
-    output.backend.as_deref(),
-    result,
-  ));
+fn attach_input_key_report(output: &mut InvokeCommandOutput, key: &str, target: Option<&str>, result: &auv_driver::InputActionResult) {
+  output.report = Some(input_key_report(key, target, output.backend.as_deref(), result));
 }
 
 fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
@@ -591,19 +463,10 @@ fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
 }
 
 #[cfg(target_os = "macos")]
-fn input_action_artifact(
-  result: &auv_driver::InputActionResult,
-  label: &str,
-) -> Result<ProducedArtifact, String> {
-  let source_path = std::env::temp_dir().join(format!(
-    "auv-invoke-{label}-{}-{}.json",
-    std::process::id(),
-    now_millis()
-  ));
-  let body = serde_json::to_vec_pretty(result)
-    .map_err(|error| format!("failed to serialize input action artifact: {error}"))?;
-  std::fs::write(&source_path, body)
-    .map_err(|error| format!("failed to write input action artifact: {error}"))?;
+fn input_action_artifact(result: &auv_driver::InputActionResult, label: &str) -> Result<ProducedArtifact, String> {
+  let source_path = std::env::temp_dir().join(format!("auv-invoke-{label}-{}-{}.json", std::process::id(), now_millis()));
+  let body = serde_json::to_vec_pretty(result).map_err(|error| format!("failed to serialize input action artifact: {error}"))?;
+  std::fs::write(&source_path, body).map_err(|error| format!("failed to write input action artifact: {error}"))?;
   Ok(ProducedArtifact {
     kind: "input-action-result".to_string(),
     source_path,
@@ -651,8 +514,7 @@ mod click_window_point_tests {
     let mut inputs = BTreeMap::new();
     inputs.insert("offset_x".to_string(), "640".to_string());
     inputs.insert("offset_y".to_string(), "360".to_string());
-    let point =
-      resolve_click_window_point(&inputs, "input.clickWindowPoint", None).expect("offset pair");
+    let point = resolve_click_window_point(&inputs, "input.clickWindowPoint", None).expect("offset pair");
     assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
   }
 
@@ -680,8 +542,7 @@ mod click_window_point_tests {
       is_main: true,
       is_visible: true,
     };
-    let point = resolve_click_window_point(&inputs, "input.clickWindowPoint", Some(&window))
-      .expect("relative pair");
+    let point = resolve_click_window_point(&inputs, "input.clickWindowPoint", Some(&window)).expect("relative pair");
     assert_eq!(point, auv_driver::geometry::WindowPoint::new(640.0, 360.0));
   }
 
@@ -705,11 +566,6 @@ mod click_window_point_tests {
   }
 
   fn field_value<'a>(report: &'a InvokeReport, label: &str) -> &'a str {
-    report
-      .fields
-      .iter()
-      .find(|field| field.label == label)
-      .map(|field| field.value.as_str())
-      .expect("field should exist")
+    report.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("field should exist")
   }
 }

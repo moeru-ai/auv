@@ -11,11 +11,7 @@ pub struct FrameKey {
 }
 
 impl FrameKey {
-  pub fn from_parts(
-    object_index: usize,
-    phase: CapturePhase,
-    capture_file_name: impl Into<String>,
-  ) -> Self {
+  pub fn from_parts(object_index: usize, phase: CapturePhase, capture_file_name: impl Into<String>) -> Self {
     Self {
       object_index,
       phase: capture_phase_key(&phase).to_string(),
@@ -49,11 +45,7 @@ impl LabelMap {
   }
 
   pub fn expected_label(&self, kind: &ObjectKind) -> Option<&str> {
-    self
-      .entries
-      .iter()
-      .find(|(entry_kind, _)| entry_kind == kind)
-      .map(|(_, label)| label.as_str())
+    self.entries.iter().find(|(entry_kind, _)| entry_kind == kind).map(|(_, label)| label.as_str())
   }
 }
 
@@ -154,11 +146,7 @@ pub struct PlayfieldPixelPoint {
   pub match_radius_px: f32,
 }
 
-pub fn pixel_point_inside_capture(
-  point: &PlayfieldPixelPoint,
-  capture_width: u32,
-  capture_height: u32,
-) -> bool {
+pub fn pixel_point_inside_capture(point: &PlayfieldPixelPoint, capture_width: u32, capture_height: u32) -> bool {
   point.x.is_finite()
     && point.y.is_finite()
     && point.x >= 0.0
@@ -167,11 +155,7 @@ pub fn pixel_point_inside_capture(
     && point.y <= capture_height as f32
 }
 
-pub fn project_playfield_point(
-  playfield_x: f32,
-  playfield_y: f32,
-  projection: &EvalProjection,
-) -> Option<PlayfieldPixelPoint> {
+pub fn project_playfield_point(playfield_x: f32, playfield_y: f32, projection: &EvalProjection) -> Option<PlayfieldPixelPoint> {
   match projection {
     EvalProjection::Unavailable { .. } => None,
     EvalProjection::PlayfieldToPixels {
@@ -204,10 +188,8 @@ pub fn evaluate_visual_truth_with_provenance(
   label_map: &LabelMap,
   detector_provenance: Option<DetectorEvalProvenance>,
 ) -> VisualEvalReport {
-  let detections_lookup = detections_by_frame
-    .iter()
-    .map(|entry| (entry.frame.clone(), &entry.detections))
-    .collect::<std::collections::BTreeMap<_, _>>();
+  let detections_lookup =
+    detections_by_frame.iter().map(|entry| (entry.frame.clone(), &entry.detections)).collect::<std::collections::BTreeMap<_, _>>();
 
   let empty = Vec::new();
   let mut frames = Vec::with_capacity(manifest.frames.len());
@@ -220,24 +202,12 @@ pub fn evaluate_visual_truth_with_provenance(
   let mut spurious_detection_count = 0;
 
   for frame in &manifest.frames {
-    let frame_key = FrameKey::from_parts(
-      frame.object_index,
-      frame.capture.phase.clone(),
-      frame.capture.file_name.clone(),
-    );
-    let detections = detections_lookup
-      .get(&frame_key)
-      .map(|set| &set.detections)
-      .unwrap_or(&empty);
-    let expected_label = label_map
-      .expected_label(&frame.expected_object.object_kind)
-      .map(str::to_string);
+    let frame_key = FrameKey::from_parts(frame.object_index, frame.capture.phase.clone(), frame.capture.file_name.clone());
+    let detections = detections_lookup.get(&frame_key).map(|set| &set.detections).unwrap_or(&empty);
+    let expected_label = label_map.expected_label(&frame.expected_object.object_kind).map(str::to_string);
 
-    let matched_detection_index = expected_label.as_ref().and_then(|label| {
-      detections
-        .iter()
-        .position(|detection| detection.label == *label)
-    });
+    let matched_detection_index =
+      expected_label.as_ref().and_then(|label| detections.iter().position(|detection| detection.label == *label));
 
     let label_outcome = match (&expected_label, matched_detection_index) {
       (None, _) => FrameLabelOutcome::Unmapped,
@@ -321,19 +291,14 @@ fn capture_phase_key(phase: &CapturePhase) -> &'static str {
 }
 
 fn build_known_limits(projection: &EvalProjection) -> Vec<String> {
-  let mut known_limits = vec![
-    "label-presence scoring confirms a detection label exists in a frame, not that it is the correct object instance".to_string(),
-  ];
+  let mut known_limits =
+    vec!["label-presence scoring confirms a detection label exists in a frame, not that it is the correct object instance".to_string()];
   match projection {
     EvalProjection::Unavailable { reason } => {
-      known_limits.push(format!(
-        "spatial scoring skipped: no playfield-to-pixel calibration ({reason})"
-      ));
+      known_limits.push(format!("spatial scoring skipped: no playfield-to-pixel calibration ({reason})"));
     }
     EvalProjection::PlayfieldToPixels { .. } => {
-      known_limits.push(
-        "spatial scoring uses a linear playfield-to-pixel projection; accuracy depends on calibration quality".to_string(),
-      );
+      known_limits.push("spatial scoring uses a linear playfield-to-pixel projection; accuracy depends on calibration quality".to_string());
     }
   }
   known_limits
@@ -370,8 +335,7 @@ pub fn iou(a: &BoundingBox, b: &BoundingBox) -> f32 {
 mod tests {
   use super::*;
   use crate::{
-    CaptureFrame, ExpectedObjectTruth, MapSummary, ProjectionArtifact, ProjectionBounds,
-    ProjectionDerivationMethod, VisualTruthFrame,
+    CaptureFrame, ExpectedObjectTruth, MapSummary, ProjectionArtifact, ProjectionBounds, ProjectionDerivationMethod, VisualTruthFrame,
   };
   use auv_inference_common::{Detection, ImageSize, ModelId};
 
@@ -393,13 +357,7 @@ mod tests {
     }
   }
 
-  fn circle_frame(
-    object_index: usize,
-    phase: CapturePhase,
-    file_name: &str,
-    playfield_x: f32,
-    playfield_y: f32,
-  ) -> VisualTruthFrame {
+  fn circle_frame(object_index: usize, phase: CapturePhase, file_name: &str, playfield_x: f32, playfield_y: f32) -> VisualTruthFrame {
     VisualTruthFrame {
       object_index,
       scheduled_time_ms: 100,
@@ -456,16 +414,8 @@ mod tests {
     }
   }
 
-  fn frame_detections(
-    object_index: usize,
-    phase: CapturePhase,
-    file_name: &str,
-    detections: Vec<Detection>,
-  ) -> FrameDetections {
-    FrameDetections::new(
-      FrameKey::from_parts(object_index, phase, file_name),
-      detection_set(detections),
-    )
+  fn frame_detections(object_index: usize, phase: CapturePhase, file_name: &str, detections: Vec<Detection>) -> FrameDetections {
+    FrameDetections::new(FrameKey::from_parts(object_index, phase, file_name), detection_set(detections))
   }
 
   #[test]
@@ -475,18 +425,8 @@ mod tests {
       circle_frame(1, CapturePhase::AfterDispatch, "frame-1.png", 100.0, 100.0),
     ]);
     let detections = vec![
-      frame_detections(
-        0,
-        CapturePhase::AfterDispatch,
-        "frame-0.png",
-        vec![detection("hit_circle", 10.0, 10.0, 30.0, 30.0)],
-      ),
-      frame_detections(
-        1,
-        CapturePhase::AfterDispatch,
-        "frame-1.png",
-        vec![detection("slider", 0.0, 0.0, 5.0, 5.0)],
-      ),
+      frame_detections(0, CapturePhase::AfterDispatch, "frame-0.png", vec![detection("hit_circle", 10.0, 10.0, 30.0, 30.0)]),
+      frame_detections(1, CapturePhase::AfterDispatch, "frame-1.png", vec![detection("slider", 0.0, 0.0, 5.0, 5.0)]),
     ];
 
     let report = evaluate_visual_truth(
@@ -595,12 +535,7 @@ mod tests {
     assert_eq!(report.spatial_unscored_frames, 1);
     assert_eq!(report.spatial_matched_frames, 0);
     assert_eq!(report.spatial_missing_frames, 0);
-    assert!(
-      report
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("spatial scoring skipped"))
-    );
+    assert!(report.known_limits.iter().any(|limit| limit.contains("spatial scoring skipped")));
   }
 
   #[test]
@@ -631,18 +566,8 @@ mod tests {
     .to_eval_projection()
     .expect("eval projection");
     let detections = vec![
-      frame_detections(
-        0,
-        CapturePhase::AfterDispatch,
-        "frame-0.png",
-        vec![detection("hit_circle", 90.0, 90.0, 110.0, 110.0)],
-      ),
-      frame_detections(
-        1,
-        CapturePhase::AfterDispatch,
-        "frame-1.png",
-        vec![detection("hit_circle", 290.0, 290.0, 310.0, 310.0)],
-      ),
+      frame_detections(0, CapturePhase::AfterDispatch, "frame-0.png", vec![detection("hit_circle", 90.0, 90.0, 110.0, 110.0)]),
+      frame_detections(1, CapturePhase::AfterDispatch, "frame-1.png", vec![detection("hit_circle", 290.0, 290.0, 310.0, 310.0)]),
     ];
 
     let report = evaluate_visual_truth(&manifest, &detections, &projection, &LabelMap::default());
@@ -666,18 +591,8 @@ mod tests {
       match_radius_px: 20.0,
     };
     let detections = vec![
-      frame_detections(
-        0,
-        CapturePhase::AfterDispatch,
-        "frame-0.png",
-        vec![detection("hit_circle", 90.0, 90.0, 110.0, 110.0)],
-      ),
-      frame_detections(
-        1,
-        CapturePhase::AfterDispatch,
-        "frame-1.png",
-        vec![detection("hit_circle", 290.0, 290.0, 310.0, 310.0)],
-      ),
+      frame_detections(0, CapturePhase::AfterDispatch, "frame-0.png", vec![detection("hit_circle", 90.0, 90.0, 110.0, 110.0)]),
+      frame_detections(1, CapturePhase::AfterDispatch, "frame-1.png", vec![detection("hit_circle", 290.0, 290.0, 310.0, 310.0)]),
     ];
 
     let report = evaluate_visual_truth(&manifest, &detections, &projection, &LabelMap::default());

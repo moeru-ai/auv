@@ -1,7 +1,4 @@
-use auv_driver::{
-  PermissionProbe, PermissionStatus, ReadinessCheck, ReadinessProbeInput, ReadinessReport, Rect,
-  Window,
-};
+use auv_driver::{PermissionProbe, PermissionStatus, ReadinessCheck, ReadinessProbeInput, ReadinessReport, Rect, Window};
 
 pub fn assess_readiness(
   permissions: &PermissionProbe,
@@ -17,30 +14,15 @@ pub fn assess_readiness(
   if permissions.screen_capture_kit != PermissionStatus::Granted {
     checks.push(ReadinessCheck::unknown(
       "screen_capture_kit",
-      format!(
-        "screen_capture_kit permission is {}; native window listing may still be usable",
-        permissions.screen_capture_kit.as_str()
-      ),
+      format!("screen_capture_kit permission is {}; native window listing may still be usable", permissions.screen_capture_kit.as_str()),
     ));
   } else {
-    checks.push(ReadinessCheck::pass(
-      "screen_capture_kit",
-      "screen_capture_kit permission granted",
-    ));
+    checks.push(ReadinessCheck::pass("screen_capture_kit", "screen_capture_kit permission granted"));
   }
-  checks.push(permission_check(
-    "automation_to_system_events",
-    permissions.automation_to_system_events,
-  ));
+  checks.push(permission_check("automation_to_system_events", permissions.automation_to_system_events));
   checks.push(match target {
-    Some(window) => ReadinessCheck::pass(
-      "target_window_present",
-      format!("target window {} is present", window.reference.id),
-    ),
-    None => ReadinessCheck::fail(
-      "target_window_present",
-      "target window is missing or no longer matches the execution plan",
-    ),
+    Some(window) => ReadinessCheck::pass("target_window_present", format!("target window {} is present", window.reference.id)),
+    None => ReadinessCheck::fail("target_window_present", "target window is missing or no longer matches the execution plan"),
   });
   if input.require_frontmost {
     checks.push(frontmost_check(frontmost, target, input));
@@ -48,74 +30,38 @@ pub fn assess_readiness(
   if let (Some(expected), Some(window)) = (input.expected_window_frame, target) {
     let drift = max_frame_drift(expected, window.frame);
     if drift <= input.max_window_frame_drift_px {
-      checks.push(ReadinessCheck::pass(
-        "window_bounds_stable",
-        format!("window frame drift {drift:.2}px within tolerance"),
-      ));
+      checks.push(ReadinessCheck::pass("window_bounds_stable", format!("window frame drift {drift:.2}px within tolerance")));
     } else {
       checks.push(ReadinessCheck::fail(
         "window_bounds_stable",
-        format!(
-          "window frame drift {drift:.2}px exceeds tolerance {:.2}px",
-          input.max_window_frame_drift_px
-        ),
+        format!("window frame drift {drift:.2}px exceeds tolerance {:.2}px", input.max_window_frame_drift_px),
       ));
     }
   } else {
-    checks.push(ReadinessCheck::fail(
-      "window_bounds_stable",
-      "expected window frame was not supplied; cannot prove bounds stability",
-    ));
+    checks.push(ReadinessCheck::fail("window_bounds_stable", "expected window frame was not supplied; cannot prove bounds stability"));
   }
   checks.push(match target {
     Some(window) if point_inside_window(input.target_window_x, input.target_window_y, window) => {
-      ReadinessCheck::pass(
-        "input_injection_target",
-        "target point is inside target window",
-      )
+      ReadinessCheck::pass("input_injection_target", "target point is inside target window")
     }
-    Some(_) => ReadinessCheck::fail(
-      "input_injection_target",
-      "target point is outside the current target window bounds",
-    ),
-    None => ReadinessCheck::fail(
-      "input_injection_target",
-      "cannot assess input injection without a target window",
-    ),
+    Some(_) => ReadinessCheck::fail("input_injection_target", "target point is outside the current target window bounds"),
+    None => ReadinessCheck::fail("input_injection_target", "cannot assess input injection without a target window"),
   });
 
-  ReadinessReport::from_checks(
-    checks,
-    target.map(|window| window.reference.id.clone()),
-    target.map(|window| window.frame),
-    None,
-  )
+  ReadinessReport::from_checks(checks, target.map(|window| window.reference.id.clone()), target.map(|window| window.frame), None)
 }
 
-pub fn resolve_target_window<'a>(
-  windows: &'a [Window],
-  input: &ReadinessProbeInput,
-) -> Option<&'a Window> {
+pub fn resolve_target_window<'a>(windows: &'a [Window], input: &ReadinessProbeInput) -> Option<&'a Window> {
   windows.iter().find(|window| {
     if let Some(expected) = input.window_number {
       window.reference.id == expected.to_string()
-        && input.window_title.as_ref().is_none_or(|expected_title| {
-          window
-            .title
-            .as_deref()
-            .is_some_and(|title| title.contains(expected_title))
-        })
+        && input
+          .window_title
+          .as_ref()
+          .is_none_or(|expected_title| window.title.as_deref().is_some_and(|title| title.contains(expected_title)))
     } else {
-      input
-        .app_bundle_id
-        .as_ref()
-        .is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
-        && input.window_title.as_ref().is_none_or(|expected| {
-          window
-            .title
-            .as_deref()
-            .is_some_and(|title| title.contains(expected))
-        })
+      input.app_bundle_id.as_ref().is_none_or(|expected| window.app_bundle_id.as_deref() == Some(expected.as_str()))
+        && input.window_title.as_ref().is_none_or(|expected| window.title.as_deref().is_some_and(|title| title.contains(expected)))
     }
   })
 }
@@ -128,26 +74,16 @@ fn permission_check(name: &str, status: PermissionStatus) -> ReadinessCheck {
   }
 }
 
-fn frontmost_check(
-  frontmost: Option<&Window>,
-  target: Option<&Window>,
-  input: &ReadinessProbeInput,
-) -> ReadinessCheck {
+fn frontmost_check(frontmost: Option<&Window>, target: Option<&Window>, input: &ReadinessProbeInput) -> ReadinessCheck {
   let Some(frontmost) = frontmost else {
-    return ReadinessCheck::fail(
-      "target_app_frontmost",
-      "frontmost window could not be resolved",
-    );
+    return ReadinessCheck::fail("target_app_frontmost", "frontmost window could not be resolved");
   };
   if let Some(target) = target
     && frontmost.reference.id != target.reference.id
   {
     return ReadinessCheck::fail(
       "target_app_frontmost",
-      format!(
-        "frontmost window {} does not match target window {}",
-        frontmost.reference.id, target.reference.id
-      ),
+      format!("frontmost window {} does not match target window {}", frontmost.reference.id, target.reference.id),
     );
   }
   if target.is_none()
@@ -156,10 +92,7 @@ fn frontmost_check(
   {
     return ReadinessCheck::fail(
       "target_app_frontmost",
-      format!(
-        "frontmost app {:?} does not match target bundle {expected_bundle}",
-        frontmost.app_bundle_id
-      ),
+      format!("frontmost app {:?} does not match target bundle {expected_bundle}", frontmost.app_bundle_id),
     );
   }
   ReadinessCheck::pass("target_app_frontmost", "target app/window is frontmost")
@@ -229,20 +162,9 @@ mod tests {
 
   #[test]
   fn readiness_passes_when_permissions_window_and_frontmost_match() {
-    let target = window(
-      "11",
-      "com.apple.TextEdit",
-      "Untitled",
-      input().expected_window_frame.unwrap(),
-      true,
-    );
+    let target = window("11", "com.apple.TextEdit", "Untitled", input().expected_window_frame.unwrap(), true);
 
-    let report = assess_readiness(
-      &permissions(),
-      std::slice::from_ref(&target),
-      Some(&target),
-      &input(),
-    );
+    let report = assess_readiness(&permissions(), std::slice::from_ref(&target), Some(&target), &input());
 
     assert!(report.is_ready());
     assert_eq!(report.target_window_ref.as_deref(), Some("11"));
@@ -251,31 +173,15 @@ mod tests {
 
   #[test]
   fn readiness_blocks_missing_accessibility_before_input_delivery() {
-    let target = window(
-      "11",
-      "com.apple.TextEdit",
-      "Untitled",
-      input().expected_window_frame.unwrap(),
-      true,
-    );
+    let target = window("11", "com.apple.TextEdit", "Untitled", input().expected_window_frame.unwrap(), true);
     let mut permissions = permissions();
     permissions.accessibility = PermissionStatus::Missing;
 
-    let report = assess_readiness(
-      &permissions,
-      std::slice::from_ref(&target),
-      Some(&target),
-      &input(),
-    );
+    let report = assess_readiness(&permissions, std::slice::from_ref(&target), Some(&target), &input());
 
     assert!(!report.is_ready());
     assert_eq!(report.status, ReadinessStatus::NotReady);
-    assert!(
-      report
-        .selected_blocker
-        .as_deref()
-        .is_some_and(|reason| reason.contains("accessibility"))
-    );
+    assert!(report.selected_blocker.as_deref().is_some_and(|reason| reason.contains("accessibility")));
   }
 
   #[test]
@@ -287,12 +193,7 @@ mod tests {
     let report = assess_readiness(&permissions(), &[target.clone()], Some(&target), &input());
 
     assert!(!report.is_ready());
-    assert!(
-      report
-        .selected_blocker
-        .as_deref()
-        .is_some_and(|reason| reason.contains("drift"))
-    );
+    assert!(report.selected_blocker.as_deref().is_some_and(|reason| reason.contains("drift")));
   }
 
   #[test]
@@ -316,31 +217,15 @@ mod tests {
     let report = assess_readiness(&permissions(), &[target.clone()], Some(&target), &input);
 
     assert!(!report.is_ready());
-    assert!(
-      report
-        .selected_blocker
-        .as_deref()
-        .is_some_and(|reason| reason.contains("expected window frame"))
-    );
+    assert!(report.selected_blocker.as_deref().is_some_and(|reason| reason.contains("expected window frame")));
   }
 
   #[test]
   fn readiness_resolves_window_number_even_when_bundle_metadata_is_missing() {
-    let mut target = window(
-      "11",
-      "com.apple.TextEdit",
-      "Untitled",
-      input().expected_window_frame.unwrap(),
-      true,
-    );
+    let mut target = window("11", "com.apple.TextEdit", "Untitled", input().expected_window_frame.unwrap(), true);
     target.app_bundle_id = None;
 
-    let report = assess_readiness(
-      &permissions(),
-      std::slice::from_ref(&target),
-      Some(&target),
-      &input(),
-    );
+    let report = assess_readiness(&permissions(), std::slice::from_ref(&target), Some(&target), &input());
 
     assert!(report.is_ready());
     assert_eq!(report.target_window_ref.as_deref(), Some("11"));

@@ -14,8 +14,8 @@ mod report;
 
 use analysis::{build_app_analysis, resolve_probe_ocr_sample_query};
 use infra::{
-  default_probe_output_dir, finish_failed_app_run, first_non_empty_string, invoke_probe_step,
-  read_json, resolve_app_identity, resolve_probe_path, stage_app_artifact, write_pretty_json,
+  default_probe_output_dir, finish_failed_app_run, first_non_empty_string, invoke_probe_step, read_json, resolve_app_identity,
+  resolve_probe_path, stage_app_artifact, write_pretty_json,
 };
 use report::render_app_analysis_report;
 
@@ -37,60 +37,30 @@ use auv_tracing_driver::trace::{RunType, TraceStatusCode};
 const APP_PROBE_VERSION: &str = "v0";
 const APP_ANALYSIS_VERSION: &str = "v0";
 
-pub(crate) fn resolve_probe_window_title(
-  app: &AppIdentity,
-  steps: &[AppProbeStep],
-) -> Option<String> {
-  let window_report = steps
-    .iter()
-    .find(|step| step.id == "list-windows")
-    .and_then(|step| {
-      step.artifact_paths.iter().find_map(|path| {
-        let is_window_report = path
-          .extension()
-          .and_then(|value| value.to_str())
-          .is_some_and(|value| value.eq_ignore_ascii_case("txt"))
-          && path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .is_some_and(|name| name.contains("window-list"));
-        if !is_window_report {
-          return None;
-        }
-        fs::read_to_string(path).ok()
-      })
-    });
+pub(crate) fn resolve_probe_window_title(app: &AppIdentity, steps: &[AppProbeStep]) -> Option<String> {
+  let window_report = steps.iter().find(|step| step.id == "list-windows").and_then(|step| {
+    step.artifact_paths.iter().find_map(|path| {
+      let is_window_report = path.extension().and_then(|value| value.to_str()).is_some_and(|value| value.eq_ignore_ascii_case("txt"))
+        && path.file_name().and_then(|value| value.to_str()).is_some_and(|name| name.contains("window-list"));
+      if !is_window_report {
+        return None;
+      }
+      fs::read_to_string(path).ok()
+    })
+  });
   first_non_empty_string(&[
+    window_report.as_deref().and_then(|report| extract_window_title_from_window_report(report, &app.bundle_id)),
     window_report
       .as_deref()
-      .and_then(|report| extract_window_title_from_window_report(report, &app.bundle_id)),
-    window_report
-      .as_deref()
-      .and_then(|report| {
-        report
-          .lines()
-          .find_map(|line| line.strip_prefix("frontmostWindowTitle="))
-      })
+      .and_then(|report| report.lines().find_map(|line| line.strip_prefix("frontmostWindowTitle=")))
       .map(str::to_string),
-    window_report
-      .as_deref()
-      .and_then(|report| {
-        report
-          .lines()
-          .find_map(|line| line.strip_prefix("frontmostAppName="))
-      })
-      .map(str::to_string),
+    window_report.as_deref().and_then(|report| report.lines().find_map(|line| line.strip_prefix("frontmostAppName="))).map(str::to_string),
   ])
   .or_else(|| {
     steps
       .iter()
       .find(|step| step.id == "list-windows")
-      .and_then(|step| {
-        step
-          .output_summary
-          .split_once("frontmost app is ")
-          .map(|(_, suffix)| suffix.trim_end_matches('.').to_string())
-      })
+      .and_then(|step| step.output_summary.split_once("frontmost app is ").map(|(_, suffix)| suffix.trim_end_matches('.').to_string()))
       .filter(|value| !value.trim().is_empty())
   })
 }
@@ -102,16 +72,10 @@ fn extract_window_title_from_window_report(report: &str, bundle_id: &str) -> Opt
       return None;
     }
     if fields.len() >= 11 && fields.get(3).copied() == Some(bundle_id) {
-      return fields
-        .get(6)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+      return fields.get(6).map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
     }
     if fields.len() >= 4 {
-      return fields
-        .last()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+      return fields.last().map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
     }
     None
   })
@@ -244,21 +208,14 @@ enum AppCandidateGroundingTaxonomy {
   WindowActionWindowPointPointerClickCaptureEvidence,
 }
 
-const SEARCH_ENTRY_TAXONOMY_ID: &str =
-  "search-entry.ax-text-input.clipboard-submit.capture-evidence";
-const NATIVE_TEXT_CANONICAL_TAXONOMY_ID: &str =
-  "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text";
-const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str =
-  "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text";
-const RESULT_SELECTION_TAXONOMY_ID: &str =
-  "result-selection.ocr-anchor.pointer-click.capture-evidence";
+const SEARCH_ENTRY_TAXONOMY_ID: &str = "search-entry.ax-text-input.clipboard-submit.capture-evidence";
+const NATIVE_TEXT_CANONICAL_TAXONOMY_ID: &str = "native-text.ax-text.ax-perform-action-clipboard-paste.verify-ax-text";
+const NATIVE_TEXT_LEGACY_TAXONOMY_ID: &str = "native-text.ax-text.pointer-focus-clipboard-paste.verify-ax-text";
+const RESULT_SELECTION_TAXONOMY_ID: &str = "result-selection.ocr-anchor.pointer-click.capture-evidence";
 const WINDOW_ACTION_TAXONOMY_ID: &str = "window-action.window-point.pointer-click.capture-evidence";
 
 fn is_native_text_taxonomy_id(raw: &str) -> bool {
-  matches!(
-    raw.trim(),
-    NATIVE_TEXT_CANONICAL_TAXONOMY_ID | NATIVE_TEXT_LEGACY_TAXONOMY_ID
-  )
+  matches!(raw.trim(), NATIVE_TEXT_CANONICAL_TAXONOMY_ID | NATIVE_TEXT_LEGACY_TAXONOMY_ID)
 }
 
 fn canonicalize_app_candidate_grounding_taxonomy_id(raw: &str) -> &str {
@@ -273,16 +230,10 @@ impl AppCandidateGroundingTaxonomy {
   fn parse(raw: &str) -> AuvResult<Self> {
     match canonicalize_app_candidate_grounding_taxonomy_id(raw) {
       SEARCH_ENTRY_TAXONOMY_ID => Ok(Self::SearchEntryAxTextInputClipboardSubmitCaptureEvidence),
-      NATIVE_TEXT_CANONICAL_TAXONOMY_ID => {
-        Ok(Self::NativeTextAxTextAxPerformActionClipboardPasteVerifyAxText)
-      }
+      NATIVE_TEXT_CANONICAL_TAXONOMY_ID => Ok(Self::NativeTextAxTextAxPerformActionClipboardPasteVerifyAxText),
       RESULT_SELECTION_TAXONOMY_ID => Ok(Self::ResultSelectionOcrAnchorPointerClickCaptureEvidence),
       WINDOW_ACTION_TAXONOMY_ID => Ok(Self::WindowActionWindowPointPointerClickCaptureEvidence),
-      other => Err(format!(
-        "unsupported candidate grounding taxonomy {}. allowed values: {}",
-        other,
-        Self::allowed_ids().join(", ")
-      )),
+      other => Err(format!("unsupported candidate grounding taxonomy {}. allowed values: {}", other, Self::allowed_ids().join(", "))),
     }
   }
 
@@ -464,39 +415,18 @@ impl AppRect {
   }
 }
 
-pub fn probe_app(
-  project_root: &Path,
-  runtime: &Runtime,
-  bundle_id: &str,
-  output_dir: Option<PathBuf>,
-) -> AuvResult<AppProbe> {
+pub fn probe_app(project_root: &Path, runtime: &Runtime, bundle_id: &str, output_dir: Option<PathBuf>) -> AuvResult<AppProbe> {
   let app = resolve_app_identity(bundle_id)?;
   let output_dir = output_dir.unwrap_or_else(|| default_probe_output_dir(project_root, bundle_id));
   if output_dir.exists() {
-    return Err(format!(
-      "probe output directory already exists: {}",
-      output_dir.display()
-    ));
+    return Err(format!("probe output directory already exists: {}", output_dir.display()));
   }
-  fs::create_dir_all(&output_dir).map_err(|error| {
-    format!(
-      "failed to create app probe directory {}: {error}",
-      output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&output_dir).map_err(|error| format!("failed to create app probe directory {}: {error}", output_dir.display()))?;
 
   let recording = runtime.recording().handle();
   let mut run = recording.start_run(RunSpec::new(RunType::Probe, "auv.probe"))?;
   let root_span = run.root_span();
-  let result = probe_app_into_run(
-    project_root,
-    runtime,
-    &app,
-    &output_dir,
-    &recording,
-    &mut run,
-    &root_span,
-  );
+  let result = probe_app_into_run(project_root, runtime, &app, &output_dir, &recording, &mut run, &root_span);
   match result {
     Ok(probe) => {
       recording.finish_run(
@@ -509,12 +439,7 @@ pub fn probe_app(
       )?;
       Ok(probe)
     }
-    Err(error) => finish_failed_app_run(
-      &recording,
-      run,
-      error,
-      format!("App probe {bundle_id} failed"),
-    ),
+    Err(error) => finish_failed_app_run(&recording, run, error, format!("App probe {bundle_id} failed")),
   }
 }
 
@@ -528,26 +453,8 @@ fn probe_app_into_run(
   parent: &SpanRef,
 ) -> AuvResult<AppProbe> {
   let mut steps = Vec::new();
-  steps.push(invoke_probe_step(
-    runtime,
-    run,
-    parent,
-    "probe-permissions",
-    "app.probePermissions",
-    None,
-    BTreeMap::new(),
-    false,
-  )?);
-  steps.push(invoke_probe_step(
-    runtime,
-    run,
-    parent,
-    "list-displays",
-    "display.list",
-    None,
-    BTreeMap::new(),
-    false,
-  )?);
+  steps.push(invoke_probe_step(runtime, run, parent, "probe-permissions", "app.probePermissions", None, BTreeMap::new(), false)?);
+  steps.push(invoke_probe_step(runtime, run, parent, "list-displays", "display.list", None, BTreeMap::new(), false)?);
   let can_activate_target = app.apple_script_addressable;
   if can_activate_target {
     let mut activate_inputs = BTreeMap::new();
@@ -566,16 +473,7 @@ fn probe_app_into_run(
 
   let mut window_inputs = BTreeMap::new();
   window_inputs.insert("limit".to_string(), "20".to_string());
-  steps.push(invoke_probe_step(
-    runtime,
-    run,
-    parent,
-    "list-windows",
-    "window.list",
-    Some(app.bundle_id.clone()),
-    window_inputs,
-    true,
-  )?);
+  steps.push(invoke_probe_step(runtime, run, parent, "list-windows", "window.list", Some(app.bundle_id.clone()), window_inputs, true)?);
 
   let can_use_app_scoped_window_ops = can_activate_target || app.launch_services_resolved;
   let fallback_window_title = if can_use_app_scoped_window_ops {
@@ -607,26 +505,15 @@ fn probe_app_into_run(
   let mut capture_inputs = BTreeMap::new();
   capture_inputs.insert("label".to_string(), capture_label);
   if can_activate_target {
-    capture_inputs.insert(
-      "activate_target_before_capture".to_string(),
-      "true".to_string(),
-    );
+    capture_inputs.insert("activate_target_before_capture".to_string(), "true".to_string());
   }
   if !can_use_app_scoped_window_ops {
     if let Some(title) = fallback_window_title.clone() {
       capture_inputs.insert("title".to_string(), title);
     }
   }
-  let capture_step = invoke_probe_step(
-    runtime,
-    run,
-    parent,
-    "capture-window",
-    "window.capture",
-    Some(app.bundle_id.clone()),
-    capture_inputs,
-    true,
-  )?;
+  let capture_step =
+    invoke_probe_step(runtime, run, parent, "capture-window", "window.capture", Some(app.bundle_id.clone()), capture_inputs, true)?;
   steps.push(capture_step);
 
   let ocr_sample_query = resolve_probe_ocr_sample_query(app, &steps);
@@ -644,16 +531,7 @@ fn probe_app_into_run(
       ocr_inputs.insert("title".to_string(), title);
     }
   }
-  steps.push(invoke_probe_step(
-    runtime,
-    run,
-    parent,
-    "ocr-sample",
-    "window.observeRegion",
-    Some(app.bundle_id.clone()),
-    ocr_inputs,
-    true,
-  )?);
+  steps.push(invoke_probe_step(runtime, run, parent, "ocr-sample", "window.observeRegion", Some(app.bundle_id.clone()), ocr_inputs, true)?);
 
   let probe = AppProbe {
     probe_version: APP_PROBE_VERSION.to_string(),
@@ -665,14 +543,7 @@ fn probe_app_into_run(
   };
   let probe_path = output_dir.join("probe.json");
   write_pretty_json(&probe_path, &probe)?;
-  stage_app_artifact(
-    &recording,
-    run,
-    parent,
-    "probe.output",
-    &probe_path,
-    "probe.json",
-  )?;
+  stage_app_artifact(&recording, run, parent, "probe.output", &probe_path, "probe.json")?;
   Ok(probe)
 }
 
@@ -687,10 +558,7 @@ pub fn analyze_app_probe(runtime: &Runtime, query: &Path) -> AuvResult<AppAnalyz
         run,
         RunFinish {
           status_code: TraceStatusCode::Ok,
-          summary: Some(format!(
-            "Analyzed app {}",
-            output.analysis.app_identity.bundle_id
-          )),
+          summary: Some(format!("Analyzed app {}", output.analysis.app_identity.bundle_id)),
           failure: None,
         },
       )?;
@@ -713,28 +581,10 @@ fn analyze_app_probe_into_run(
   let analysis_path = probe.output_dir.join("analysis.json");
   let report_path = probe.output_dir.join("report.md");
   write_pretty_json(&analysis_path, &analysis)?;
-  fs::write(&report_path, render_app_analysis_report(&analysis)).map_err(|error| {
-    format!(
-      "failed to write app analysis report {}: {error}",
-      report_path.display()
-    )
-  })?;
-  stage_app_artifact(
-    &recording,
-    run,
-    span,
-    "analysis.output",
-    &analysis_path,
-    "analysis.json",
-  )?;
-  stage_app_artifact(
-    &recording,
-    run,
-    span,
-    "analysis.report",
-    &report_path,
-    "analysis-report.md",
-  )?;
+  fs::write(&report_path, render_app_analysis_report(&analysis))
+    .map_err(|error| format!("failed to write app analysis report {}: {error}", report_path.display()))?;
+  stage_app_artifact(&recording, run, span, "analysis.output", &analysis_path, "analysis.json")?;
+  stage_app_artifact(&recording, run, span, "analysis.report", &report_path, "analysis-report.md")?;
   Ok(AppAnalyzeOutput {
     analysis,
     analysis_path,

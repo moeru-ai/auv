@@ -3,9 +3,8 @@ use super::types::{CaptureContract, CaptureSource, CoordinateSpace};
 use crate::types::AuvResult;
 
 pub fn render_capture_contract_json(contract: &CaptureContract) -> AuvResult<String> {
-  let mut rendered = serde_json::to_string_pretty(contract).map_err(|error| {
-    format!("capture.backend_failed: failed to encode capture contract JSON: {error}")
-  })?;
+  let mut rendered = serde_json::to_string_pretty(contract)
+    .map_err(|error| format!("capture.backend_failed: failed to encode capture contract JSON: {error}"))?;
   rendered.push('\n');
   Ok(rendered)
 }
@@ -47,10 +46,7 @@ fn render_capture_source(source: &CaptureSource) -> String {
       display_ref,
       input_space,
       ..
-    } => format!(
-      "region:{display_ref}:{}",
-      render_coordinate_space(input_space)
-    ),
+    } => format!("region:{display_ref}:{}", render_coordinate_space(input_space)),
     CaptureSource::Window {
       window_ref,
       display_ref,

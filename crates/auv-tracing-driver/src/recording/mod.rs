@@ -20,12 +20,7 @@ pub mod recorder;
 pub mod update;
 pub mod wire;
 
-pub use backend::{
-  ArtifactRecordingFailure, RecordedArtifacts, RecordingHandle, RunRecordingBackend,
-};
-pub use recorder::{
-  BroadcastRunRecorder, CompositeRunRecorder, InspectServerRunRecorder, MemoryRunRecorder,
-  NoopRunRecorder, RunRecorder,
-};
+pub use backend::{ArtifactRecordingFailure, RecordedArtifacts, RecordingHandle, RunRecordingBackend};
+pub use recorder::{BroadcastRunRecorder, CompositeRunRecorder, InspectServerRunRecorder, MemoryRunRecorder, NoopRunRecorder, RunRecorder};
 pub use update::RunUpdate;
 pub use wire::WireUpdate;

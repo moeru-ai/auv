@@ -228,35 +228,17 @@ impl SessionRuntime {
         provider_id: provider_id.clone(),
       });
     }
-    self
-      .providers
-      .insert(provider_id.clone(), Box::new(provider));
+    self.providers.insert(provider_id.clone(), Box::new(provider));
     provider_id
   }
 
-  pub fn observe(
-    &mut self,
-    provider_id: &ProviderId,
-    request: ObserveRequest,
-  ) -> AuvResult<ObservationResource> {
-    let provider = self.providers.get_mut(provider_id).ok_or_else(|| {
-      format!(
-        "unknown session observation provider {}",
-        provider_id.as_str()
-      )
-    })?;
+  pub fn observe(&mut self, provider_id: &ProviderId, request: ObserveRequest) -> AuvResult<ObservationResource> {
+    let provider =
+      self.providers.get_mut(provider_id).ok_or_else(|| format!("unknown session observation provider {}", provider_id.as_str()))?;
     let mut snapshot = provider.observe(&request)?;
     let sequence = self.next_observation_sequence;
     self.next_observation_sequence += 1;
-    let observation_id = format!(
-      "obs_{}_{}",
-      self
-        .options
-        .session_id
-        .as_str()
-        .replace(|c: char| !c.is_ascii_alphanumeric(), "_"),
-      sequence
-    );
+    let observation_id = format!("obs_{}_{}", self.options.session_id.as_str().replace(|c: char| !c.is_ascii_alphanumeric(), "_"), sequence);
     snapshot.snapshot_id = observation_id.clone();
     if snapshot.captured_at_millis == 0 {
       snapshot.captured_at_millis = now_millis();
@@ -288,31 +270,22 @@ impl SessionRuntime {
   }
 
   pub fn find_node_by_label(&self, label: &str) -> Option<NodeResource> {
-    self
-      .observation_order
-      .iter()
-      .rev()
-      .filter_map(|observation_id| self.observations.get(observation_id))
-      .find_map(|observation| {
-        observation.snapshot.nodes.iter().find_map(move |node| {
-          (node.label.as_deref()? == label).then(|| NodeResource {
-            handle: NodeHandle {
-              observation_id: observation.handle.id.clone(),
-              node_id: node.node_ref.node_id.clone(),
-            },
-            observation_version: observation.version,
-            node: node.clone(),
-            stale_reason: observation.stale_reason.clone(),
-          })
+    self.observation_order.iter().rev().filter_map(|observation_id| self.observations.get(observation_id)).find_map(|observation| {
+      observation.snapshot.nodes.iter().find_map(move |node| {
+        (node.label.as_deref()? == label).then(|| NodeResource {
+          handle: NodeHandle {
+            observation_id: observation.handle.id.clone(),
+            node_id: node.node_ref.node_id.clone(),
+          },
+          observation_version: observation.version,
+          node: node.clone(),
+          stale_reason: observation.stale_reason.clone(),
         })
       })
+    })
   }
 
-  pub fn act_with_result(
-    &mut self,
-    request: ActRequest,
-    result: InputActionResult,
-  ) -> InputActionResult {
+  pub fn act_with_result(&mut self, request: ActRequest, result: InputActionResult) -> InputActionResult {
     if request.invalidate_observations {
       let reason = StaleReason::ActionInvalidated {
         action_label: request.label.clone(),
@@ -334,25 +307,14 @@ impl SessionRuntime {
   }
 
   pub fn verify_with_result(&mut self, result: VerificationResult) -> VerificationResource {
-    let verification_id = format!(
-      "verify_{}_{}",
-      self
-        .options
-        .session_id
-        .as_str()
-        .replace(|c: char| !c.is_ascii_alphanumeric(), "_"),
-      self.verifications.len()
-    );
+    let verification_id =
+      format!("verify_{}_{}", self.options.session_id.as_str().replace(|c: char| !c.is_ascii_alphanumeric(), "_"), self.verifications.len());
     let resource = VerificationResource {
       verification_id: verification_id.clone(),
       result,
     };
-    self
-      .verifications
-      .insert(verification_id.clone(), resource.clone());
-    self
-      .events
-      .push(SessionEvent::VerificationRecorded { verification_id });
+    self.verifications.insert(verification_id.clone(), resource.clone());
+    self.events.push(SessionEvent::VerificationRecorded { verification_id });
     resource
   }
 
@@ -391,18 +353,12 @@ fn synthetic_snapshot(nodes: Vec<SurfaceNode>) -> ObservationSnapshot {
     evidence: Vec::new(),
     nodes,
     detail: serde_json::json!({ "producer": "session.synthetic_snapshot" }),
-    known_limits: vec![
-      "session synthetic snapshot has no durable capture artifact in v0".to_string(),
-    ],
+    known_limits: vec!["session synthetic snapshot has no durable capture artifact in v0".to_string()],
   }
 }
 
 #[cfg(test)]
-fn synthetic_surface_node(
-  node_id: impl Into<String>,
-  label: impl Into<String>,
-  box_: crate::contract::RecognitionBox,
-) -> SurfaceNode {
+fn synthetic_surface_node(node_id: impl Into<String>, label: impl Into<String>, box_: crate::contract::RecognitionBox) -> SurfaceNode {
   let node_id = node_id.into();
   SurfaceNode {
     node_ref: crate::contract::NodeRef {
@@ -452,15 +408,9 @@ impl SessionObservationProvider for BufferedObservationProvider {
   }
 
   fn observe(&mut self, _request: &ObserveRequest) -> AuvResult<ObservationSnapshot> {
-    let index = self
-      .observe_count
-      .min(self.snapshots.len().saturating_sub(1));
+    let index = self.observe_count.min(self.snapshots.len().saturating_sub(1));
     self.observe_count += 1;
-    self
-      .snapshots
-      .get(index)
-      .cloned()
-      .ok_or_else(|| "buffered observation provider has no snapshots".to_string())
+    self.snapshots.get(index).cloned().ok_or_else(|| "buffered observation provider has no snapshots".to_string())
   }
 }
 
@@ -487,11 +437,7 @@ mod tests {
   }
 
   impl CountingObservationProvider {
-    fn new(
-      provider_id: impl Into<String>,
-      snapshot: ObservationSnapshot,
-      stats: Rc<RefCell<CountingProviderStats>>,
-    ) -> Self {
+    fn new(provider_id: impl Into<String>, snapshot: ObservationSnapshot, stats: Rc<RefCell<CountingProviderStats>>) -> Self {
       stats.borrow_mut().load_count += 1;
       Self {
         provider_id: ProviderId::new(provider_id),
@@ -530,24 +476,15 @@ mod tests {
     );
     let provider_id = session.register_provider(provider);
 
-    let first = session
-      .observe(&provider_id, ObserveRequest::default())
-      .expect("first observe should succeed");
-    let second = session
-      .observe(&provider_id, ObserveRequest::default())
-      .expect("second observe should reuse provider");
+    let first = session.observe(&provider_id, ObserveRequest::default()).expect("first observe should succeed");
+    let second = session.observe(&provider_id, ObserveRequest::default()).expect("second observe should reuse provider");
 
     assert_eq!(session.provider_count(), 1);
     assert_eq!(first.snapshot.nodes.len(), 1);
     assert_eq!(second.snapshot.nodes.len(), 1);
-    assert!(matches!(
-      session.events()[1],
-      SessionEvent::ProviderInitialized { .. }
-    ));
+    assert!(matches!(session.events()[1], SessionEvent::ProviderInitialized { .. }));
 
-    let node = session
-      .find_node_by_label("hit_circle")
-      .expect("node should be lookup-addressable");
+    let node = session.find_node_by_label("hit_circle").expect("node should be lookup-addressable");
     assert_eq!(node.node.label.as_deref(), Some("hit_circle"));
     assert!(!node.is_stale());
   }
@@ -570,9 +507,7 @@ mod tests {
     let provider_id = session.register_provider(provider);
 
     for _ in 0..3 {
-      session
-        .observe(&provider_id, ObserveRequest::default())
-        .expect("warm provider observe should succeed");
+      session.observe(&provider_id, ObserveRequest::default()).expect("warm provider observe should succeed");
     }
 
     assert_eq!(
@@ -583,14 +518,7 @@ mod tests {
       }
     );
     assert_eq!(session.provider_count(), 1);
-    assert_eq!(
-      session
-        .events()
-        .iter()
-        .filter(|event| matches!(event, SessionEvent::ProviderInitialized { .. }))
-        .count(),
-      1
-    );
+    assert_eq!(session.events().iter().filter(|event| matches!(event, SessionEvent::ProviderInitialized { .. })).count(), 1);
   }
 
   #[test]
@@ -609,25 +537,17 @@ mod tests {
         },
       )])],
     ));
-    let observation = session
-      .observe(&provider_id, ObserveRequest::default())
-      .expect("observe should succeed");
+    let observation = session.observe(&provider_id, ObserveRequest::default()).expect("observe should succeed");
 
-    let result = session.act_with_result(
-      ActRequest::new("click Play"),
-      InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse),
-    );
+    let result =
+      session.act_with_result(ActRequest::new("click Play"), InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse));
 
     assert_eq!(result.selected_path, InputDeliveryPath::WindowTargetedMouse);
-    let stale_observation = session
-      .observation(&observation.handle)
-      .expect("observation should still be retained");
+    let stale_observation = session.observation(&observation.handle).expect("observation should still be retained");
     assert!(stale_observation.is_stale());
     assert_eq!(stale_observation.version, 2);
 
-    let stale_node = session
-      .find_node_by_label("Play")
-      .expect("stale node should still be lookup-addressable");
+    let stale_node = session.find_node_by_label("Play").expect("stale node should still be lookup-addressable");
     assert!(stale_node.is_stale());
     assert!(session.events().iter().any(|event| {
       matches!(
@@ -661,18 +581,10 @@ mod tests {
 
     assert_eq!(resource.result.semantic_matched, Some(true));
     assert_eq!(
-      session
-        .verification(&resource.verification_id)
-        .expect("verification should be retained")
-        .result
-        .observed_label
-        .as_deref(),
+      session.verification(&resource.verification_id).expect("verification should be retained").result.observed_label.as_deref(),
       Some("hit_circle")
     );
-    assert!(matches!(
-      session.events().last(),
-      Some(SessionEvent::VerificationRecorded { .. })
-    ));
+    assert!(matches!(session.events().last(), Some(SessionEvent::VerificationRecorded { .. })));
   }
 
   #[test]
@@ -680,9 +592,6 @@ mod tests {
     let mut session = SessionRuntime::new(SessionOptions::default());
     session.close();
 
-    assert!(matches!(
-      session.events().last(),
-      Some(SessionEvent::SessionClosed { .. })
-    ));
+    assert!(matches!(session.events().last(), Some(SessionEvent::SessionClosed { .. })));
   }
 }

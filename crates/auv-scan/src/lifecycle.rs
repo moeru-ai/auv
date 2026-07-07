@@ -70,9 +70,7 @@ fn has_evidence(event: &LifecycleEvent) -> bool {
     | LifecycleEvent::Reacquired { evidence, .. }
     | LifecycleEvent::Lost { evidence, .. }
     | LifecycleEvent::AmbiguousReacquire { evidence, .. }
-    | LifecycleEvent::ObservationFailed { evidence, .. } => {
-      !evidence.kind.is_empty() && !evidence.ref_id.is_empty()
-    }
+    | LifecycleEvent::ObservationFailed { evidence, .. } => !evidence.kind.is_empty() && !evidence.ref_id.is_empty(),
   }
 }
 
@@ -195,17 +193,10 @@ mod tests {
   }
 
   fn load_lifecycle_fixture(scenario_dir: &str) -> (LifecycleFixture, Vec<LifecycleEvent>) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan/lifecycle")
-      .join(scenario_dir)
-      .join("events.json");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/lifecycle").join(scenario_dir).join("events.json");
     let text = std::fs::read_to_string(&path).expect("read fixture");
     let fixture: LifecycleFixture = serde_json::from_str(&text).expect("parse fixture");
-    let events = fixture
-      .events
-      .iter()
-      .map(parse_lifecycle_event)
-      .collect::<Vec<_>>();
+    let events = fixture.events.iter().map(parse_lifecycle_event).collect::<Vec<_>>();
     (fixture, events)
   }
 

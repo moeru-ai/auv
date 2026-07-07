@@ -181,10 +181,7 @@ mod tests {
       }
     );
     assert_eq!(options.settle, Duration::from_millis(100));
-    assert_eq!(
-      options.verification,
-      WindowMutationVerification::FrameTolerance { points: 2.0 }
-    );
+    assert_eq!(options.verification, WindowMutationVerification::FrameTolerance { points: 2.0 });
   }
 
   #[test]

@@ -46,9 +46,7 @@ impl PlayerView {
   /// Build a view from the current bottom playback control state.
   pub fn from_control_state(control_state: PlaybackControlState) -> Self {
     let state = match control_state {
-      PlaybackControlState::PlayVisible | PlaybackControlState::PauseVisible => {
-        PlayerState::Present
-      }
+      PlaybackControlState::PlayVisible | PlaybackControlState::PauseVisible => PlayerState::Present,
       PlaybackControlState::Unknown => PlayerState::Unknown,
     };
 
@@ -100,10 +98,7 @@ impl PlayerView {
   }
 
   /// Return a window-local point that should open the current song detail view.
-  pub fn song_detail_click_point(
-    &self,
-    window_size: auv_driver::Size,
-  ) -> Option<auv_driver::Point> {
+  pub fn song_detail_click_point(&self, window_size: auv_driver::Size) -> Option<auv_driver::Point> {
     if !self.exists() {
       return None;
     }
@@ -112,10 +107,7 @@ impl PlayerView {
     // zone on the left side of the bottom playback bar. Wider blank areas in
     // the bar do not open the song detail view, and centered controls toggle
     // playback instead.
-    Some(auv_driver::Point::new(
-      window_size.width * 0.075,
-      window_size.height - 38.0,
-    ))
+    Some(auv_driver::Point::new(window_size.width * 0.075, window_size.height - 38.0))
   }
 }
 
@@ -228,22 +220,13 @@ mod tests {
   fn present_player_exposes_song_detail_click_point() {
     let view = PlayerView::from_control_state(PlaybackControlState::PauseVisible);
 
-    assert_eq!(
-      view.song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)),
-      Some(auv_driver::Point::new(90.0, 762.0))
-    );
+    assert_eq!(view.song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)), Some(auv_driver::Point::new(90.0, 762.0)));
   }
 
   #[test]
   fn absent_or_unknown_player_has_no_song_detail_click_point() {
-    assert_eq!(
-      PlayerView::absent().song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)),
-      None
-    );
-    assert_eq!(
-      PlayerView::unknown().song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)),
-      None
-    );
+    assert_eq!(PlayerView::absent().song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)), None);
+    assert_eq!(PlayerView::unknown().song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)), None);
   }
 
   #[test]
@@ -254,10 +237,7 @@ mod tests {
     assert!(!view.is_playing());
     assert_eq!(view.control_state(), None);
     assert_eq!(view.observed_text(), Some("Eos\nginkinha"));
-    assert_eq!(
-      view.song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)),
-      Some(auv_driver::Point::new(90.0, 762.0))
-    );
+    assert_eq!(view.song_detail_click_point(auv_driver::Size::new(1200.0, 800.0)), Some(auv_driver::Point::new(90.0, 762.0)));
   }
 
   #[test]
@@ -265,14 +245,8 @@ mod tests {
     let pause = playback_control_fixture(PlaybackControlState::PauseVisible);
     let play = playback_control_fixture(PlaybackControlState::PlayVisible);
 
-    assert_eq!(
-      classify_bottom_playback_control_state(&pause),
-      PlaybackControlState::PauseVisible
-    );
-    assert_eq!(
-      classify_bottom_playback_control_state(&play),
-      PlaybackControlState::PlayVisible
-    );
+    assert_eq!(classify_bottom_playback_control_state(&pause), PlaybackControlState::PauseVisible);
+    assert_eq!(classify_bottom_playback_control_state(&play), PlaybackControlState::PlayVisible);
   }
 
   fn playback_control_fixture(state: PlaybackControlState) -> RgbaImage {

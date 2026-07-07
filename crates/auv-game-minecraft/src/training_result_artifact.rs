@@ -8,9 +8,7 @@ use std::process::{Command, Stdio};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::training_result::{
-  TrainingResultArtifactRecord, TrainingResultManifest, TrainingResultStatus,
-};
+use crate::training_result::{TrainingResultArtifactRecord, TrainingResultManifest, TrainingResultStatus};
 
 pub type TrainingResultArtifactFetchResult<T> = Result<T, String>;
 
@@ -40,11 +38,7 @@ impl TrainingResultArtifactFetchEnvironment {
     }
   }
 
-  pub fn with_values(
-    endpoint: Option<String>,
-    token: Option<String>,
-    artifact_fetch_command: Option<String>,
-  ) -> Self {
+  pub fn with_values(endpoint: Option<String>, token: Option<String>, artifact_fetch_command: Option<String>) -> Self {
     Self {
       endpoint,
       token,
@@ -218,20 +212,14 @@ impl TrainingResultArtifactFetchReason {
 pub fn fetch_3dgs_training_result_artifacts(
   inputs: TrainingResultArtifactFetchInputs,
 ) -> TrainingResultArtifactFetchResult<TrainingResultArtifactFetchOutput> {
-  fetch_3dgs_training_result_artifacts_with_environment(
-    inputs,
-    TrainingResultArtifactFetchEnvironment::from_process(),
-  )
+  fetch_3dgs_training_result_artifacts_with_environment(inputs, TrainingResultArtifactFetchEnvironment::from_process())
 }
 
 pub fn fetch_3dgs_training_result_artifacts_with_environment(
   inputs: TrainingResultArtifactFetchInputs,
   env: TrainingResultArtifactFetchEnvironment,
 ) -> TrainingResultArtifactFetchResult<TrainingResultArtifactFetchOutput> {
-  let result_manifest = read_json_file::<TrainingResultManifest>(
-    &inputs.training_result_manifest_path,
-    "MC-7 D7 training result manifest",
-  )?;
+  let result_manifest = read_json_file::<TrainingResultManifest>(&inputs.training_result_manifest_path, "MC-7 D7 training result manifest")?;
 
   let mut warnings = BTreeSet::new();
   let mut known_limits = BTreeSet::new();
@@ -245,20 +233,14 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
       .to_string(),
   );
 
-  let endpoint = env
-    .endpoint
-    .unwrap_or_else(|| result_manifest.job_submission_endpoint.clone());
+  let endpoint = env.endpoint.unwrap_or_else(|| result_manifest.job_submission_endpoint.clone());
   let token = env.token;
   let source_result_dir = PathBuf::from(&result_manifest.result_dir);
   let source_result_dir_exists = source_result_dir.is_dir();
   let normalized_result_dir = inputs.output_dir.join(NORMALIZED_RESULT_ROOT_DIR);
   let generated_at_millis = auv_tracing_driver::now_millis();
-  let manifest_path = inputs
-    .output_dir
-    .join("minecraft-3dgs-training-result-artifact-manifest.json");
-  let inspect_report_path = inputs
-    .output_dir
-    .join("minecraft-3dgs-training-result-artifact-inspect.json");
+  let manifest_path = inputs.output_dir.join("minecraft-3dgs-training-result-artifact-manifest.json");
+  let inspect_report_path = inputs.output_dir.join("minecraft-3dgs-training-result-artifact-inspect.json");
 
   let source_result_status_reason = result_manifest
     .status
@@ -269,52 +251,28 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
   let required_artifacts_present = has_required_source_artifacts(&result_manifest.result_artifacts);
   let artifact_fetch_command = env.artifact_fetch_command;
 
-  let (fetch_status, fetch_reason, normalized_artifacts) = if result_manifest.status
-    != TrainingResultStatus::Succeeded
-  {
+  let (fetch_status, fetch_reason, normalized_artifacts) = if result_manifest.status != TrainingResultStatus::Succeeded {
     warnings.insert(
-      "source training result is not succeeded; D11 records blocked fetch evidence instead of claiming normalized artifacts"
-        .to_string(),
+      "source training result is not succeeded; D11 records blocked fetch evidence instead of claiming normalized artifacts".to_string(),
     );
-    (
-      TrainingResultArtifactFetchStatus::Blocked,
-      Some(TrainingResultArtifactFetchReason::SourceResultBlocked),
-      Vec::new(),
-    )
+    (TrainingResultArtifactFetchStatus::Blocked, Some(TrainingResultArtifactFetchReason::SourceResultBlocked), Vec::new())
   } else if source_result_dir_exists && required_artifacts_present {
     match normalize_result_artifacts(&source_result_dir, &normalized_result_dir) {
-      Ok(artifacts) => (
-        TrainingResultArtifactFetchStatus::Succeeded,
-        None,
-        artifacts,
-      ),
+      Ok(artifacts) => (TrainingResultArtifactFetchStatus::Succeeded, None, artifacts),
       Err(error) => {
         warnings.insert(error);
-        (
-          TrainingResultArtifactFetchStatus::Failed,
-          Some(TrainingResultArtifactFetchReason::CopyFailed),
-          Vec::new(),
-        )
+        (TrainingResultArtifactFetchStatus::Failed, Some(TrainingResultArtifactFetchReason::CopyFailed), Vec::new())
       }
     }
   } else if let Some(command) = artifact_fetch_command {
     match run_artifact_fetch_command(
       &command,
       &TrainingResultArtifactFetchCommandRequest {
-        source_training_result_manifest_path: inputs
-          .training_result_manifest_path
-          .to_string_lossy()
-          .into_owned(),
-        source_training_job_manifest_path: result_manifest
-          .source_training_job_manifest_path
-          .clone(),
+        source_training_result_manifest_path: inputs.training_result_manifest_path.to_string_lossy().into_owned(),
+        source_training_job_manifest_path: result_manifest.source_training_job_manifest_path.clone(),
         source_training_launch_plan_path: result_manifest.source_training_launch_plan_path.clone(),
-        source_training_package_manifest_path: result_manifest
-          .source_training_package_manifest_path
-          .clone(),
-        source_scene_packet_manifest_path: result_manifest
-          .source_scene_packet_manifest_path
-          .clone(),
+        source_training_package_manifest_path: result_manifest.source_training_package_manifest_path.clone(),
+        source_scene_packet_manifest_path: result_manifest.source_scene_packet_manifest_path.clone(),
         source_bundle_manifest_paths: result_manifest.source_bundle_manifest_paths.clone(),
         source_run_ids: result_manifest.source_run_ids.clone(),
         trainer_backend: result_manifest.trainer_backend.clone(),
@@ -346,54 +304,29 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
               .to_string(),
           );
         }
-        (
-          TrainingResultArtifactFetchStatus::Succeeded,
-          None,
-          artifacts,
-        )
+        (TrainingResultArtifactFetchStatus::Succeeded, None, artifacts)
       }
       Err(error) => {
         warnings.insert(error);
-        (
-          TrainingResultArtifactFetchStatus::Failed,
-          Some(TrainingResultArtifactFetchReason::CopyFailed),
-          Vec::new(),
-        )
+        (TrainingResultArtifactFetchStatus::Failed, Some(TrainingResultArtifactFetchReason::CopyFailed), Vec::new())
       }
     }
   } else if !source_result_dir_exists {
-    warnings.insert(
-      "source result directory is missing; D11 cannot fetch normalized artifacts without an artifact fetch command".to_string(),
-    );
-    (
-      TrainingResultArtifactFetchStatus::Failed,
-      Some(TrainingResultArtifactFetchReason::SourceResultDirectoryMissing),
-      Vec::new(),
-    )
+    warnings
+      .insert("source result directory is missing; D11 cannot fetch normalized artifacts without an artifact fetch command".to_string());
+    (TrainingResultArtifactFetchStatus::Failed, Some(TrainingResultArtifactFetchReason::SourceResultDirectoryMissing), Vec::new())
   } else {
-    warnings.insert(
-      "source result manifest does not expose the required config/models artifacts for normalization"
-        .to_string(),
-    );
-    (
-      TrainingResultArtifactFetchStatus::Failed,
-      Some(TrainingResultArtifactFetchReason::SourceResultArtifactsMissing),
-      Vec::new(),
-    )
+    warnings.insert("source result manifest does not expose the required config/models artifacts for normalization".to_string());
+    (TrainingResultArtifactFetchStatus::Failed, Some(TrainingResultArtifactFetchReason::SourceResultArtifactsMissing), Vec::new())
   };
 
   let manifest = TrainingResultArtifactFetchManifest {
     schema_version: TRAINING_RESULT_ARTIFACT_FETCH_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
-    source_training_result_manifest_path: inputs
-      .training_result_manifest_path
-      .to_string_lossy()
-      .into_owned(),
+    source_training_result_manifest_path: inputs.training_result_manifest_path.to_string_lossy().into_owned(),
     source_training_job_manifest_path: result_manifest.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: result_manifest.source_training_launch_plan_path.clone(),
-    source_training_package_manifest_path: result_manifest
-      .source_training_package_manifest_path
-      .clone(),
+    source_training_package_manifest_path: result_manifest.source_training_package_manifest_path.clone(),
     source_scene_packet_manifest_path: result_manifest.source_scene_packet_manifest_path.clone(),
     source_bundle_manifest_paths: result_manifest.source_bundle_manifest_paths.clone(),
     source_run_ids: result_manifest.source_run_ids.clone(),
@@ -407,20 +340,13 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
     normalized_artifacts: normalized_artifacts.clone(),
     known_limits: known_limits.iter().cloned().collect(),
   };
-  write_json(
-    &manifest_path,
-    &manifest,
-    "MC-7 D11 training result artifact fetch manifest",
-  )?;
+  write_json(&manifest_path, &manifest, "MC-7 D11 training result artifact fetch manifest")?;
 
   let inspect_report = TrainingResultArtifactFetchInspectReport {
     schema_version: TRAINING_RESULT_ARTIFACT_FETCH_INSPECT_REPORT_SCHEMA_VERSION,
     generated_at_millis,
     training_result_artifact_fetch_manifest_path: manifest_path.to_string_lossy().into_owned(),
-    source_training_result_manifest_path: inputs
-      .training_result_manifest_path
-      .to_string_lossy()
-      .into_owned(),
+    source_training_result_manifest_path: inputs.training_result_manifest_path.to_string_lossy().into_owned(),
     source_training_job_manifest_path: result_manifest.source_training_job_manifest_path.clone(),
     source_training_launch_plan_path: result_manifest.source_training_launch_plan_path.clone(),
     source_scene_packet_manifest_path: result_manifest.source_scene_packet_manifest_path.clone(),
@@ -441,11 +367,7 @@ pub fn fetch_3dgs_training_result_artifacts_with_environment(
     warnings: warnings.iter().cloned().collect(),
     known_limits: known_limits.iter().cloned().collect(),
   };
-  write_json(
-    &inspect_report_path,
-    &inspect_report,
-    "MC-7 D11 training result artifact fetch inspect JSON",
-  )?;
+  write_json(&inspect_report_path, &inspect_report, "MC-7 D11 training result artifact fetch inspect JSON")?;
 
   Ok(TrainingResultArtifactFetchOutput {
     output_dir: inputs.output_dir,
@@ -482,12 +404,8 @@ fn infer_source_result_reason(manifest: &TrainingResultManifest) -> Option<Strin
 }
 
 fn has_required_source_artifacts(artifacts: &[TrainingResultArtifactRecord]) -> bool {
-  let has_config = artifacts
-    .iter()
-    .any(|artifact| artifact.relative_path == RESULT_CONFIG_FILE && artifact.readable);
-  let has_models = artifacts
-    .iter()
-    .any(|artifact| artifact.relative_path == RESULT_MODELS_DIR && artifact.readable);
+  let has_config = artifacts.iter().any(|artifact| artifact.relative_path == RESULT_CONFIG_FILE && artifact.readable);
+  let has_models = artifacts.iter().any(|artifact| artifact.relative_path == RESULT_MODELS_DIR && artifact.readable);
   has_config && has_models
 }
 
@@ -496,23 +414,15 @@ fn normalize_result_artifacts(
   normalized_result_dir: &Path,
 ) -> TrainingResultArtifactFetchResult<Vec<TrainingResultNormalizedArtifactRecord>> {
   validate_source_result_paths(source_result_dir)?;
-  fs::create_dir_all(normalized_result_dir).map_err(|error| {
-    format!(
-      "failed to create MC-7 D11 normalized result directory {}: {error}",
-      normalized_result_dir.display()
-    )
-  })?;
+  fs::create_dir_all(normalized_result_dir)
+    .map_err(|error| format!("failed to create MC-7 D11 normalized result directory {}: {error}", normalized_result_dir.display()))?;
 
   let mut artifacts = Vec::new();
 
   let source_config = source_result_dir.join(RESULT_CONFIG_FILE);
   let target_config = normalized_result_dir.join(RESULT_CONFIG_FILE);
   copy_file(&source_config, &target_config)?;
-  artifacts.push(normalized_artifact_record(
-    normalized_result_dir,
-    &target_config,
-    TrainingResultNormalizedArtifactKind::Config,
-  ));
+  artifacts.push(normalized_artifact_record(normalized_result_dir, &target_config, TrainingResultNormalizedArtifactKind::Config));
 
   let source_models_dir = source_result_dir.join(RESULT_MODELS_DIR);
   let target_models_dir = normalized_result_dir.join(RESULT_MODELS_DIR);
@@ -527,11 +437,7 @@ fn normalize_result_artifacts(
   if source_status.exists() {
     let target_status = normalized_result_dir.join(STATUS_SNAPSHOT_FILE);
     copy_file(&source_status, &target_status)?;
-    artifacts.push(normalized_artifact_record(
-      normalized_result_dir,
-      &target_status,
-      TrainingResultNormalizedArtifactKind::StatusSnapshot,
-    ));
+    artifacts.push(normalized_artifact_record(normalized_result_dir, &target_status, TrainingResultNormalizedArtifactKind::StatusSnapshot));
   }
 
   Ok(artifacts)
@@ -540,45 +446,27 @@ fn normalize_result_artifacts(
 fn validate_source_result_paths(source_result_dir: &Path) -> TrainingResultArtifactFetchResult<()> {
   let config = source_result_dir.join(RESULT_CONFIG_FILE);
   if config.is_symlink() {
-    return Err(format!(
-      "MC-9 D4 source config {} must not be a symlink",
-      config.display()
-    ));
+    return Err(format!("MC-9 D4 source config {} must not be a symlink", config.display()));
   }
   if !config.is_file() {
-    return Err(format!(
-      "required source file {} is missing or unreadable",
-      config.display()
-    ));
+    return Err(format!("required source file {} is missing or unreadable", config.display()));
   }
 
   let models = source_result_dir.join(RESULT_MODELS_DIR);
   if models.is_symlink() {
-    return Err(format!(
-      "MC-9 D4 source models directory {} must not be a symlink",
-      models.display()
-    ));
+    return Err(format!("MC-9 D4 source models directory {} must not be a symlink", models.display()));
   }
   if !models.is_dir() {
-    return Err(format!(
-      "required source directory {} is missing or unreadable",
-      models.display()
-    ));
+    return Err(format!("required source directory {} is missing or unreadable", models.display()));
   }
 
   let status = source_result_dir.join(STATUS_SNAPSHOT_FILE);
   if status.exists() {
     if status.is_symlink() {
-      return Err(format!(
-        "MC-9 D4 source status snapshot {} must not be a symlink",
-        status.display()
-      ));
+      return Err(format!("MC-9 D4 source status snapshot {} must not be a symlink", status.display()));
     }
     if !status.is_file() {
-      return Err(format!(
-        "required source file {} is missing or unreadable",
-        status.display()
-      ));
+      return Err(format!("required source file {} is missing or unreadable", status.display()));
     }
   }
 
@@ -589,51 +477,28 @@ fn run_artifact_fetch_command(
   command_text: &str,
   request: &TrainingResultArtifactFetchCommandRequest,
   normalized_result_dir: &Path,
-) -> TrainingResultArtifactFetchResult<(Vec<TrainingResultNormalizedArtifactRecord>, Option<String>)>
-{
+) -> TrainingResultArtifactFetchResult<(Vec<TrainingResultNormalizedArtifactRecord>, Option<String>)> {
   if let Some(parent) = normalized_result_dir.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create MC-9 D4 artifact fetch output parent {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent)
+      .map_err(|error| format!("failed to create MC-9 D4 artifact fetch output parent {}: {error}", parent.display()))?;
   }
   if normalized_result_dir.exists() {
-    fs::remove_dir_all(normalized_result_dir).map_err(|error| {
-      format!(
-        "failed to clear MC-9 D4 normalized result dir before fetch {}: {error}",
-        normalized_result_dir.display()
-      )
-    })?;
+    fs::remove_dir_all(normalized_result_dir)
+      .map_err(|error| format!("failed to clear MC-9 D4 normalized result dir before fetch {}: {error}", normalized_result_dir.display()))?;
   }
 
   let mut command = Command::new("sh");
-  command
-    .arg("-lc")
-    .arg(command_text)
-    .stdin(Stdio::piped())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped());
+  command.arg("-lc").arg(command_text).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
-  let mut child = command.spawn().map_err(|error| {
-    format!("failed to run MC-9 D4 artifact fetch command `{command_text}`: {error}")
-  })?;
+  let mut child = command.spawn().map_err(|error| format!("failed to run MC-9 D4 artifact fetch command `{command_text}`: {error}"))?;
   {
-    let stdin = child
-      .stdin
-      .as_mut()
-      .ok_or_else(|| "failed to open stdin for MC-9 D4 artifact fetch command".to_string())?;
-    serde_json::to_writer(&mut *stdin, request)
-      .map_err(|error| format!("failed to write MC-9 D4 artifact fetch request JSON: {error}"))?;
-    stdin
-      .write_all(b"\n")
-      .map_err(|error| format!("failed to finish MC-9 D4 artifact fetch request JSON: {error}"))?;
+    let stdin = child.stdin.as_mut().ok_or_else(|| "failed to open stdin for MC-9 D4 artifact fetch command".to_string())?;
+    serde_json::to_writer(&mut *stdin, request).map_err(|error| format!("failed to write MC-9 D4 artifact fetch request JSON: {error}"))?;
+    stdin.write_all(b"\n").map_err(|error| format!("failed to finish MC-9 D4 artifact fetch request JSON: {error}"))?;
   }
 
-  let output = child.wait_with_output().map_err(|error| {
-    format!("failed to wait for MC-9 D4 artifact fetch command `{command_text}`: {error}")
-  })?;
+  let output =
+    child.wait_with_output().map_err(|error| format!("failed to wait for MC-9 D4 artifact fetch command `{command_text}`: {error}"))?;
   if !output.status.success() {
     return Err(format!(
       "MC-9 D4 artifact fetch command `{}` failed with status {}: {}",
@@ -648,12 +513,7 @@ fn run_artifact_fetch_command(
     None
   } else {
     serde_json::from_str::<TrainingResultArtifactFetchCommandResponse>(&stdout)
-      .map_err(|error| {
-        format!(
-          "failed to parse MC-9 D4 artifact fetch command output for job {}: {error}",
-          request.job_id
-        )
-      })?
+      .map_err(|error| format!("failed to parse MC-9 D4 artifact fetch command output for job {}: {error}", request.job_id))?
       .message
   };
 
@@ -665,50 +525,26 @@ fn collect_normalized_artifacts(
 ) -> TrainingResultArtifactFetchResult<Vec<TrainingResultNormalizedArtifactRecord>> {
   let config = normalized_result_dir.join(RESULT_CONFIG_FILE);
   if config.is_symlink() {
-    return Err(format!(
-      "MC-9 D4 normalized config {} must not be a symlink",
-      config.display()
-    ));
+    return Err(format!("MC-9 D4 normalized config {} must not be a symlink", config.display()));
   }
   if !config.is_file() {
-    return Err(format!(
-      "MC-9 D4 artifact fetch command did not materialize required normalized config {}",
-      config.display()
-    ));
+    return Err(format!("MC-9 D4 artifact fetch command did not materialize required normalized config {}", config.display()));
   }
   let models = normalized_result_dir.join(RESULT_MODELS_DIR);
   if models.is_symlink() {
-    return Err(format!(
-      "MC-9 D4 normalized models directory {} must not be a symlink",
-      models.display()
-    ));
+    return Err(format!("MC-9 D4 normalized models directory {} must not be a symlink", models.display()));
   }
   if !models.is_dir() {
-    return Err(format!(
-      "MC-9 D4 artifact fetch command did not materialize required normalized models directory {}",
-      models.display()
-    ));
+    return Err(format!("MC-9 D4 artifact fetch command did not materialize required normalized models directory {}", models.display()));
   }
 
   let mut artifacts = vec![
-    normalized_artifact_record(
-      normalized_result_dir,
-      &config,
-      TrainingResultNormalizedArtifactKind::Config,
-    ),
-    normalized_artifact_record(
-      normalized_result_dir,
-      &models,
-      TrainingResultNormalizedArtifactKind::ModelsDirectory,
-    ),
+    normalized_artifact_record(normalized_result_dir, &config, TrainingResultNormalizedArtifactKind::Config),
+    normalized_artifact_record(normalized_result_dir, &models, TrainingResultNormalizedArtifactKind::ModelsDirectory),
   ];
   let status = normalized_result_dir.join(STATUS_SNAPSHOT_FILE);
   if status.is_file() {
-    artifacts.push(normalized_artifact_record(
-      normalized_result_dir,
-      &status,
-      TrainingResultNormalizedArtifactKind::StatusSnapshot,
-    ));
+    artifacts.push(normalized_artifact_record(normalized_result_dir, &status, TrainingResultNormalizedArtifactKind::StatusSnapshot));
   }
   Ok(artifacts)
 }
@@ -734,62 +570,26 @@ fn normalized_artifact_record(
 
 fn copy_file(source: &Path, target: &Path) -> TrainingResultArtifactFetchResult<()> {
   if !source.is_file() {
-    return Err(format!(
-      "required source file {} is missing or unreadable",
-      source.display()
-    ));
+    return Err(format!("required source file {} is missing or unreadable", source.display()));
   }
   if let Some(parent) = target.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create normalized artifact directory {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent).map_err(|error| format!("failed to create normalized artifact directory {}: {error}", parent.display()))?;
   }
-  fs::copy(source, target).map_err(|error| {
-    format!(
-      "failed to copy source file {} into normalized artifact {}: {error}",
-      source.display(),
-      target.display()
-    )
-  })?;
+  fs::copy(source, target)
+    .map_err(|error| format!("failed to copy source file {} into normalized artifact {}: {error}", source.display(), target.display()))?;
   Ok(())
 }
 
 fn copy_directory_recursive(source: &Path, target: &Path) -> TrainingResultArtifactFetchResult<()> {
   if !source.is_dir() {
-    return Err(format!(
-      "required source directory {} is missing or unreadable",
-      source.display()
-    ));
+    return Err(format!("required source directory {} is missing or unreadable", source.display()));
   }
-  fs::create_dir_all(target).map_err(|error| {
-    format!(
-      "failed to create normalized directory {}: {error}",
-      target.display()
-    )
-  })?;
-  for entry in fs::read_dir(source).map_err(|error| {
-    format!(
-      "failed to read source result directory {}: {error}",
-      source.display()
-    )
-  })? {
-    let entry = entry.map_err(|error| {
-      format!(
-        "failed to enumerate source result directory {}: {error}",
-        source.display()
-      )
-    })?;
+  fs::create_dir_all(target).map_err(|error| format!("failed to create normalized directory {}: {error}", target.display()))?;
+  for entry in fs::read_dir(source).map_err(|error| format!("failed to read source result directory {}: {error}", source.display()))? {
+    let entry = entry.map_err(|error| format!("failed to enumerate source result directory {}: {error}", source.display()))?;
     let source_path = entry.path();
     let target_path = target.join(entry.file_name());
-    let file_type = entry.file_type().map_err(|error| {
-      format!(
-        "failed to read source artifact type {}: {error}",
-        source_path.display()
-      )
-    })?;
+    let file_type = entry.file_type().map_err(|error| format!("failed to read source artifact type {}: {error}", source_path.display()))?;
     if file_type.is_dir() {
       copy_directory_recursive(&source_path, &target_path)?;
     } else if file_type.is_file() {
@@ -799,9 +599,7 @@ fn copy_directory_recursive(source: &Path, target: &Path) -> TrainingResultArtif
   Ok(())
 }
 
-fn map_training_status(
-  status: crate::training_job::TrainingLaunchJobStatus,
-) -> TrainingResultStatus {
+fn map_training_status(status: crate::training_job::TrainingLaunchJobStatus) -> TrainingResultStatus {
   match status {
     crate::training_job::TrainingLaunchJobStatus::Queued => TrainingResultStatus::Queued,
     crate::training_job::TrainingLaunchJobStatus::Submitted => TrainingResultStatus::Submitted,
@@ -811,18 +609,9 @@ fn map_training_status(
   }
 }
 
-fn write_json(
-  path: &Path,
-  value: &impl Serialize,
-  label: &str,
-) -> TrainingResultArtifactFetchResult<()> {
+fn write_json(path: &Path, value: &impl Serialize, label: &str) -> TrainingResultArtifactFetchResult<()> {
   if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create {label} directory {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent).map_err(|error| format!("failed to create {label} directory {}: {error}", parent.display()))?;
   }
   let json = serde_json::to_string_pretty(value)
     .map(|mut json| {
@@ -830,18 +619,12 @@ fn write_json(
       json
     })
     .map_err(|error| format!("failed to serialize {label}: {error}"))?;
-  fs::write(path, json.as_bytes())
-    .map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
+  fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
 }
 
-fn read_json_file<T: DeserializeOwned>(
-  path: &Path,
-  label: &str,
-) -> TrainingResultArtifactFetchResult<T> {
-  let file = fs::File::open(path)
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
-  serde_json::from_reader(BufReader::new(file))
-    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> TrainingResultArtifactFetchResult<T> {
+  let file = fs::File::open(path).map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
+  serde_json::from_reader(BufReader::new(file)).map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -864,11 +647,7 @@ mod tests {
     let mut result_artifacts = Vec::new();
     if include_config {
       if create_result_dir {
-        fs::write(
-          result_dir.join(RESULT_CONFIG_FILE),
-          b"trainer: splatfacto\n",
-        )
-        .expect("config");
+        fs::write(result_dir.join(RESULT_CONFIG_FILE), b"trainer: splatfacto\n").expect("config");
       }
       result_artifacts.push(TrainingResultArtifactRecord {
         relative_path: RESULT_CONFIG_FILE.to_string(),
@@ -880,11 +659,7 @@ mod tests {
     if include_models {
       if create_result_dir {
         fs::create_dir_all(result_dir.join(RESULT_MODELS_DIR)).expect("models dir");
-        fs::write(
-          result_dir.join(RESULT_MODELS_DIR).join("step-000001.ckpt"),
-          b"checkpoint",
-        )
-        .expect("checkpoint");
+        fs::write(result_dir.join(RESULT_MODELS_DIR).join("step-000001.ckpt"), b"checkpoint").expect("checkpoint");
       }
       result_artifacts.push(TrainingResultArtifactRecord {
         relative_path: RESULT_MODELS_DIR.to_string(),
@@ -895,11 +670,7 @@ mod tests {
     }
     if include_status_snapshot {
       if create_result_dir {
-        fs::write(
-          result_dir.join(STATUS_SNAPSHOT_FILE),
-          br#"{"status":"succeeded"}"#,
-        )
-        .expect("status snapshot");
+        fs::write(result_dir.join(STATUS_SNAPSHOT_FILE), br#"{"status":"succeeded"}"#).expect("status snapshot");
       }
       result_artifacts.push(TrainingResultArtifactRecord {
         relative_path: STATUS_SNAPSHOT_FILE.to_string(),
@@ -933,25 +704,14 @@ mod tests {
       known_limits: vec!["limit-a".to_string()],
     };
     let manifest_path = temp.path().join("minecraft-3dgs-training-result.json");
-    fs::write(
-      &manifest_path,
-      serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
-    )
-    .expect("write manifest");
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("serialize manifest")).expect("write manifest");
     manifest_path
   }
 
   #[test]
   fn fetch_training_result_artifacts_happy_path_writes_normalized_outputs() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      true,
-      true,
-      true,
-      true,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, true, true, true, true);
 
     let output = fetch_3dgs_training_result_artifacts(TrainingResultArtifactFetchInputs {
       training_result_manifest_path: manifest_path,
@@ -959,38 +719,18 @@ mod tests {
     })
     .expect("fetch should succeed");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Succeeded
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Succeeded);
     assert!(output.manifest_path.is_file());
     assert!(output.inspect_report_path.is_file());
-    assert!(
-      output
-        .normalized_result_dir
-        .join(RESULT_CONFIG_FILE)
-        .is_file()
-    );
-    assert!(
-      output
-        .normalized_result_dir
-        .join(RESULT_MODELS_DIR)
-        .is_dir()
-    );
+    assert!(output.normalized_result_dir.join(RESULT_CONFIG_FILE).is_file());
+    assert!(output.normalized_result_dir.join(RESULT_MODELS_DIR).is_dir());
     assert_eq!(output.manifest.normalized_artifacts.len(), 3);
   }
 
   #[test]
   fn fetch_training_result_artifacts_uses_command_when_local_result_dir_missing() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      false,
-      true,
-      true,
-      true,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, false, true, true, true);
     let output_dir = temp.path().join("normalized");
     let normalized_result_dir = output_dir.join(NORMALIZED_RESULT_ROOT_DIR);
     let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); (root/'nerfstudio_models'/'step-000001.ckpt').write_text('checkpoint'); (root/'job_status.json').write_text('{\\\"status\\\":\\\"succeeded\\\"}'); json.dump({'message':'remote artifact fetch bridge'}, sys.stdout)\"".to_string();
@@ -1004,35 +744,19 @@ mod tests {
     )
     .expect("command fetch should succeed");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Succeeded
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Succeeded);
     assert_eq!(output.inspect_report.fetch_reason, None);
     assert!(normalized_result_dir.join(RESULT_CONFIG_FILE).is_file());
     assert!(normalized_result_dir.join(RESULT_MODELS_DIR).is_dir());
     assert!(normalized_result_dir.join(STATUS_SNAPSHOT_FILE).is_file());
     assert_eq!(output.manifest.normalized_artifacts.len(), 3);
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("remote artifact fetch bridge"))
-    );
+    assert!(output.inspect_report.warnings.iter().any(|warning| warning.contains("remote artifact fetch bridge")));
   }
 
   #[test]
   fn fetch_training_result_artifacts_blocks_when_source_result_not_succeeded() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Blocked,
-      true,
-      true,
-      true,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Blocked, true, true, true, false);
 
     let output = fetch_3dgs_training_result_artifacts(TrainingResultArtifactFetchInputs {
       training_result_manifest_path: manifest_path,
@@ -1040,28 +764,15 @@ mod tests {
     })
     .expect("blocked fetch should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Blocked
-    );
-    assert_eq!(
-      output.inspect_report.fetch_reason,
-      Some(TrainingResultArtifactFetchReason::SourceResultBlocked)
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Blocked);
+    assert_eq!(output.inspect_report.fetch_reason, Some(TrainingResultArtifactFetchReason::SourceResultBlocked));
     assert!(output.manifest.normalized_artifacts.is_empty());
   }
 
   #[test]
   fn fetch_training_result_artifacts_fails_when_required_artifacts_missing() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      true,
-      true,
-      false,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, true, true, false, false);
 
     let output = fetch_3dgs_training_result_artifacts(TrainingResultArtifactFetchInputs {
       training_result_manifest_path: manifest_path,
@@ -1069,28 +780,15 @@ mod tests {
     })
     .expect("failed fetch should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Failed
-    );
-    assert_eq!(
-      output.inspect_report.fetch_reason,
-      Some(TrainingResultArtifactFetchReason::SourceResultArtifactsMissing)
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Failed);
+    assert_eq!(output.inspect_report.fetch_reason, Some(TrainingResultArtifactFetchReason::SourceResultArtifactsMissing));
     assert!(output.manifest.normalized_artifacts.is_empty());
   }
 
   #[test]
   fn fetch_training_result_artifacts_fails_when_command_output_missing_models() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      false,
-      true,
-      true,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, false, true, true, false);
     let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); root.mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'missing models'}, sys.stdout)\"".to_string();
 
     let output = fetch_3dgs_training_result_artifacts_with_command(
@@ -1102,34 +800,17 @@ mod tests {
     )
     .expect("failed command fetch still writes outputs");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Failed
-    );
-    assert_eq!(
-      output.inspect_report.fetch_reason,
-      Some(TrainingResultArtifactFetchReason::CopyFailed)
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Failed);
+    assert_eq!(output.inspect_report.fetch_reason, Some(TrainingResultArtifactFetchReason::CopyFailed));
     assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("did not materialize required normalized models directory"))
+      output.inspect_report.warnings.iter().any(|warning| warning.contains("did not materialize required normalized models directory"))
     );
   }
 
   #[test]
   fn fetch_command_clears_stale_normalized_dir_before_running() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      false,
-      true,
-      true,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, false, true, true, false);
     let output_dir = temp.path().join("normalized");
     let normalized_result_dir = output_dir.join(NORMALIZED_RESULT_ROOT_DIR);
     // pre-create stale config.yml with no models dir
@@ -1146,10 +827,7 @@ mod tests {
     )
     .expect("fetch should succeed");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Succeeded
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Succeeded);
     assert!(!normalized_result_dir.join("stale.txt").exists());
   }
 
@@ -1157,14 +835,7 @@ mod tests {
   #[test]
   fn fetch_command_rejects_config_symlink() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      false,
-      true,
-      true,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, false, true, true, false);
     let output_dir = temp.path().join("normalized");
     // command creates a config symlink instead of a real file
     let target = temp.path().join("real-config.yml");
@@ -1183,31 +854,15 @@ mod tests {
     )
     .expect("failed fetch should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Failed
-    );
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|w| w.contains("must not be a symlink"))
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Failed);
+    assert!(output.inspect_report.warnings.iter().any(|w| w.contains("must not be a symlink")));
   }
 
   #[cfg(unix)]
   #[test]
   fn fetch_command_rejects_models_dir_symlink() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      false,
-      true,
-      true,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, false, true, true, false);
     let output_dir = temp.path().join("normalized");
     let real_models = temp.path().join("real-models");
     fs::create_dir_all(&real_models).expect("real models dir");
@@ -1225,17 +880,8 @@ mod tests {
     )
     .expect("failed fetch should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Failed
-    );
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|w| w.contains("must not be a symlink"))
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Failed);
+    assert!(output.inspect_report.warnings.iter().any(|w| w.contains("must not be a symlink")));
   }
 
   #[cfg(unix)]
@@ -1244,14 +890,7 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      true,
-      true,
-      true,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, true, true, true, false);
     let result_dir = temp.path().join("trainer-output/nerfstudio-splatfacto");
     let real_config = temp.path().join("real-config.yml");
     fs::write(&real_config, b"trainer: splatfacto\n").expect("real config");
@@ -1264,17 +903,11 @@ mod tests {
     })
     .expect("failed fetch should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Failed
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Failed);
+    assert_eq!(output.inspect_report.fetch_reason, Some(TrainingResultArtifactFetchReason::CopyFailed));
+    assert!(
+      output.inspect_report.warnings.iter().any(|warning| warning.contains("source config") && warning.contains("must not be a symlink"))
     );
-    assert_eq!(
-      output.inspect_report.fetch_reason,
-      Some(TrainingResultArtifactFetchReason::CopyFailed)
-    );
-    assert!(output.inspect_report.warnings.iter().any(
-      |warning| warning.contains("source config") && warning.contains("must not be a symlink")
-    ));
   }
 
   #[cfg(unix)]
@@ -1283,14 +916,7 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      true,
-      true,
-      true,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, true, true, true, false);
     let result_dir = temp.path().join("trainer-output/nerfstudio-splatfacto");
     let real_models = temp.path().join("real-models");
     fs::create_dir_all(&real_models).expect("real models dir");
@@ -1303,35 +929,21 @@ mod tests {
     })
     .expect("failed fetch should still write outputs");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Failed
-    );
-    assert_eq!(
-      output.inspect_report.fetch_reason,
-      Some(TrainingResultArtifactFetchReason::CopyFailed)
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Failed);
+    assert_eq!(output.inspect_report.fetch_reason, Some(TrainingResultArtifactFetchReason::CopyFailed));
     assert!(
       output
         .inspect_report
         .warnings
         .iter()
-        .any(|warning| warning.contains("source models directory")
-          && warning.contains("must not be a symlink"))
+        .any(|warning| warning.contains("source models directory") && warning.contains("must not be a symlink"))
     );
   }
 
   #[test]
   fn fetch_command_receives_endpoint_and_job_token_on_stdin() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      false,
-      false,
-      false,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, false, false, false, false);
     let output_dir = temp.path().join("normalized");
     let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); (root/'nerfstudio_models'/'step-000001.ckpt').write_text('checkpoint'); root.parent.joinpath('token-check.txt').write_text(str(req.get('job_token'))); json.dump({'message':'endpoint='+req['endpoint']}, sys.stdout)\"".to_string();
 
@@ -1348,21 +960,9 @@ mod tests {
     )
     .expect("command fetch with endpoint/token should succeed");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Succeeded
-    );
-    assert_eq!(
-      fs::read_to_string(output_dir.join("token-check.txt")).expect("token check file"),
-      "fetch-secret"
-    );
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| { warning.contains("endpoint=https://override.example.test/v1") })
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Succeeded);
+    assert_eq!(fs::read_to_string(output_dir.join("token-check.txt")).expect("token check file"), "fetch-secret");
+    assert!(output.inspect_report.warnings.iter().any(|warning| { warning.contains("endpoint=https://override.example.test/v1") }));
     for persisted in [&output.manifest_path, &output.inspect_report_path] {
       let raw = fs::read_to_string(persisted).expect("persisted json");
       assert!(!raw.contains("fetch-secret"));
@@ -1373,14 +973,7 @@ mod tests {
   #[test]
   fn fetch_command_uses_manifest_endpoint_when_env_and_cli_override_missing() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      false,
-      false,
-      false,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, false, false, false, false);
     let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'endpoint='+req['endpoint']}, sys.stdout)\"".to_string();
 
     let output = fetch_3dgs_training_result_artifacts_with_environment(
@@ -1392,26 +985,13 @@ mod tests {
     )
     .expect("command fetch should fall back to manifest endpoint");
 
-    assert!(
-      output
-        .inspect_report
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("endpoint=https://jobs.example.test/v1"))
-    );
+    assert!(output.inspect_report.warnings.iter().any(|warning| warning.contains("endpoint=https://jobs.example.test/v1")));
   }
 
   #[test]
   fn fetch_command_branch_succeeds_without_downgrading_source_observation() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      false,
-      false,
-      false,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, false, false, false, false);
     let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'materialized'}, sys.stdout)\"".to_string();
 
     let output = fetch_3dgs_training_result_artifacts_with_command(
@@ -1423,10 +1003,7 @@ mod tests {
     )
     .expect("command branch should succeed");
 
-    assert_eq!(
-      output.inspect_report.fetch_status,
-      TrainingResultArtifactFetchStatus::Succeeded
-    );
+    assert_eq!(output.inspect_report.fetch_status, TrainingResultArtifactFetchStatus::Succeeded);
     assert!(!output.inspect_report.source_result_dir_exists);
     assert!(!output.inspect_report.required_artifacts_present);
     assert!(output.inspect_report.normalized_artifact_count > 0);
@@ -1435,14 +1012,7 @@ mod tests {
   #[test]
   fn fetch_warnings_do_not_contain_stale_mc8_d3_wording() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let manifest_path = write_training_result_manifest_fixture(
-      &temp,
-      TrainingResultStatus::Succeeded,
-      false,
-      true,
-      true,
-      false,
-    );
+    let manifest_path = write_training_result_manifest_fixture(&temp, TrainingResultStatus::Succeeded, false, true, true, false);
     let command = "python3 -c \"import json, pathlib, sys; req=json.load(sys.stdin); root=pathlib.Path(req['normalized_result_dir']); (root/'nerfstudio_models').mkdir(parents=True, exist_ok=True); (root/'config.yml').write_text('trainer: remote\\n'); json.dump({'message':'ok'}, sys.stdout)\"".to_string();
 
     let output = fetch_3dgs_training_result_artifacts_with_command(

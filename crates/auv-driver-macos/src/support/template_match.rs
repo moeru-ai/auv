@@ -26,11 +26,7 @@ pub struct TemplateMatchOutput {
 const MAX_SEARCH_PIXELS: u64 = 10_000_000;
 const MAX_RESULTS: usize = 16;
 
-fn compute_search_window(
-  search_region: Option<&ObservedRect>,
-  img_w: u32,
-  img_h: u32,
-) -> (u32, u32, u32, u32) {
+fn compute_search_window(search_region: Option<&ObservedRect>, img_w: u32, img_h: u32) -> (u32, u32, u32, u32) {
   if let Some(region) = search_region {
     let x = region.x.max(0) as u32;
     let y = region.y.max(0) as u32;
@@ -71,17 +67,9 @@ pub fn match_template(
   search_region: Option<&ObservedRect>,
   threshold: f64,
 ) -> AuvResult<TemplateMatchOutput> {
-  let screenshot = image::open(screenshot_path)
-    .map_err(|e| {
-      format!(
-        "failed to open screenshot {}: {e}",
-        screenshot_path.display()
-      )
-    })?
-    .to_luma8();
-  let template = image::open(template_path)
-    .map_err(|e| format!("failed to open template {}: {e}", template_path.display()))?
-    .to_luma8();
+  let screenshot =
+    image::open(screenshot_path).map_err(|e| format!("failed to open screenshot {}: {e}", screenshot_path.display()))?.to_luma8();
+  let template = image::open(template_path).map_err(|e| format!("failed to open template {}: {e}", template_path.display()))?.to_luma8();
 
   let (img_w, img_h) = screenshot.dimensions();
   let (tw, th) = template.dimensions();
@@ -229,18 +217,7 @@ mod tests {
   }
 
   // Writes a non-uniform pattern (checkerboard of `lo` and `hi`) into a region.
-  fn write_pattern_png(
-    path: &Path,
-    width: u32,
-    height: u32,
-    bg: u8,
-    px: u32,
-    py: u32,
-    pw: u32,
-    ph: u32,
-    lo: u8,
-    hi: u8,
-  ) {
+  fn write_pattern_png(path: &Path, width: u32, height: u32, bg: u8, px: u32, py: u32, pw: u32, ph: u32, lo: u8, hi: u8) {
     let mut img = GrayImage::from_pixel(width, height, Luma([bg]));
     for dy in 0..ph {
       for dx in 0..pw {
@@ -260,18 +237,13 @@ mod tests {
     write_pattern_png(&screenshot_path, 200, 150, 50, 80, 60, 20, 20, 50, 220);
     write_pattern_png(&template_path, 20, 20, 50, 0, 0, 20, 20, 50, 220);
 
-    let output = match_template(&screenshot_path, &template_path, None, 0.9)
-      .expect("template match should succeed");
+    let output = match_template(&screenshot_path, &template_path, None, 0.9).expect("template match should succeed");
 
     assert!(!output.matches.is_empty(), "should find at least one match");
     let best = &output.matches[0];
     assert_eq!(best.x, 80, "match x should align with patch");
     assert_eq!(best.y, 60, "match y should align with patch");
-    assert!(
-      best.score > 0.95,
-      "score should be near 1.0 for exact match: {}",
-      best.score
-    );
+    assert!(best.score > 0.95, "score should be near 1.0 for exact match: {}", best.score);
   }
 
   #[test]
@@ -282,12 +254,8 @@ mod tests {
     write_gray_png(&screenshot_path, 100, 100, 128);
     write_gray_png(&template_path, 10, 10, 200);
 
-    let output = match_template(&screenshot_path, &template_path, None, 0.5)
-      .expect("should handle uniform template");
-    assert!(
-      output.matches.is_empty(),
-      "uniform template returns no matches"
-    );
+    let output = match_template(&screenshot_path, &template_path, None, 0.5).expect("should handle uniform template");
+    assert!(output.matches.is_empty(), "uniform template returns no matches");
   }
 
   #[test]
@@ -305,16 +273,11 @@ mod tests {
       width: 100,
       height: 80,
     };
-    let output = match_template(&screenshot_path, &template_path, Some(&region), 0.9)
-      .expect("should match with region");
+    let output = match_template(&screenshot_path, &template_path, Some(&region), 0.9).expect("should match with region");
     assert!(
       output.matches.is_empty(),
       "patch outside region should not be found: {:?}",
-      output
-        .matches
-        .iter()
-        .map(|m| (m.x, m.y))
-        .collect::<Vec<_>>()
+      output.matches.iter().map(|m| (m.x, m.y)).collect::<Vec<_>>()
     );
   }
 
@@ -323,28 +286,11 @@ mod tests {
     let screenshot_path = test_png("oversize_ss");
     let template_path = test_png("oversize_tmpl");
 
-    write_pattern_png(
-      &screenshot_path,
-      3024,
-      1964,
-      50,
-      100,
-      100,
-      128,
-      128,
-      50,
-      220,
-    );
+    write_pattern_png(&screenshot_path, 3024, 1964, 50, 100, 100, 128, 128, 50, 220);
     write_pattern_png(&template_path, 128, 128, 50, 0, 0, 128, 128, 50, 220);
 
     let result = match_template(&screenshot_path, &template_path, None, 0.9);
-    assert!(
-      result.is_err(),
-      "should reject oversized search without region"
-    );
-    assert!(
-      result.unwrap_err().contains("too large"),
-      "error should mention size"
-    );
+    assert!(result.is_err(), "should reject oversized search without region");
+    assert!(result.unwrap_err().contains("too large"), "error should mention size");
   }
 }

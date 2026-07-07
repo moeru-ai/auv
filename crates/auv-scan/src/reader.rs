@@ -24,9 +24,7 @@ pub enum ScanInspectError {
   NoFramesFound,
   #[error("image file missing: {path}")]
   ImageFileMissing { path: String },
-  #[error(
-    "image dimension mismatch: expected {expected_w}x{expected_h}, found {actual_w}x{actual_h}"
-  )]
+  #[error("image dimension mismatch: expected {expected_w}x{expected_h}, found {actual_w}x{actual_h}")]
   ImageDimensionMismatch {
     expected_w: u32,
     expected_h: u32,
@@ -80,10 +78,7 @@ pub fn load_scan_frames_from_dir(dir: &Path) -> Result<ScanFrameBundle, ScanInsp
 
   let mut first_by_index: HashMap<u32, String> = HashMap::new();
   for (path, frame) in &entries {
-    let file_name = path
-      .file_name()
-      .map(|name| name.to_string_lossy().into_owned())
-      .unwrap_or_default();
+    let file_name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
     if let Some(first_file) = first_by_index.get(&frame.sequence_index) {
       return Err(ScanInspectError::DuplicateSequenceIndex {
         index: frame.sequence_index,
@@ -95,10 +90,7 @@ pub fn load_scan_frames_from_dir(dir: &Path) -> Result<ScanFrameBundle, ScanInsp
   }
 
   entries.sort_by(|(path_a, frame_a), (path_b, frame_b)| {
-    frame_a
-      .sequence_index
-      .cmp(&frame_b.sequence_index)
-      .then_with(|| path_a.file_name().cmp(&path_b.file_name()))
+    frame_a.sequence_index.cmp(&frame_b.sequence_index).then_with(|| path_a.file_name().cmp(&path_b.file_name()))
   });
 
   for window in entries.windows(2) {
@@ -123,16 +115,11 @@ fn png_dimensions(image_bytes: &[u8]) -> Result<(u32, u32), ScanInspectError> {
   let reader = image::ImageReader::new(std::io::Cursor::new(image_bytes))
     .with_guessed_format()
     .map_err(|err| ScanInspectError::Io(std::io::Error::other(err)))?;
-  reader
-    .into_dimensions()
-    .map_err(|err| ScanInspectError::Io(std::io::Error::other(err)))
+  reader.into_dimensions().map_err(|err| ScanInspectError::Io(std::io::Error::other(err)))
 }
 
 /// Read PNG dimensions from disk and compare to wire `image.width` / `image.height`.
-pub fn verify_frame_image_dimensions(
-  source_dir: &Path,
-  frame: &ScanFrame,
-) -> Result<(), ScanInspectError> {
+pub fn verify_frame_image_dimensions(source_dir: &Path, frame: &ScanFrame) -> Result<(), ScanInspectError> {
   let image_path = source_dir.join(&frame.image.file_name);
   if !image_path.is_file() {
     return Err(ScanInspectError::ImageFileMissing {
@@ -216,16 +203,8 @@ mod tests {
   fn copy_golden_artifact_dir(out_dir: &Path) {
     let fixture_dir = single_frame_fixture_dir();
     fs::create_dir_all(out_dir).unwrap();
-    fs::copy(
-      fixture_dir.join("golden").join(frame_artifact_file_name(0)),
-      out_dir.join(frame_artifact_file_name(0)),
-    )
-    .unwrap();
-    fs::copy(
-      fixture_dir.join("frame-0001.png"),
-      out_dir.join("frame-0001.png"),
-    )
-    .unwrap();
+    fs::copy(fixture_dir.join("golden").join(frame_artifact_file_name(0)), out_dir.join(frame_artifact_file_name(0))).unwrap();
+    fs::copy(fixture_dir.join("frame-0001.png"), out_dir.join("frame-0001.png")).unwrap();
   }
 
   #[test]
@@ -237,10 +216,7 @@ mod tests {
     let bundle = load_scan_frames_from_dir(&dir).expect("load");
     assert_eq!(bundle.frames.len(), 1);
     assert_eq!(bundle.loaded_json_paths.len(), 1);
-    assert_frame_matches_expectation(
-      &bundle.frames[0],
-      &FrameFieldExpectation { expected: golden },
-    );
+    assert_frame_matches_expectation(&bundle.frames[0], &FrameFieldExpectation { expected: golden });
     cleanup(&dir);
   }
 
@@ -308,10 +284,7 @@ mod tests {
     fs::write(dup_path, serde_json::to_string_pretty(&duplicate).unwrap()).unwrap();
 
     let err = load_scan_frames_from_dir(&dir).expect_err("duplicate");
-    assert!(matches!(
-      err,
-      ScanInspectError::DuplicateSequenceIndex { index: 0, .. }
-    ));
+    assert!(matches!(err, ScanInspectError::DuplicateSequenceIndex { index: 0, .. }));
     cleanup(&dir);
   }
 
@@ -366,10 +339,7 @@ mod tests {
     let path = dir.join(frame_artifact_file_name(0));
     fs::write(path, serde_json::to_string_pretty(&frame).unwrap()).unwrap();
     let err = load_scan_frames_from_dir(&dir).expect_err("schema");
-    assert!(matches!(
-      err,
-      ScanInspectError::Artifact(ScanArtifactError::SchemaMismatch { .. })
-    ));
+    assert!(matches!(err, ScanInspectError::Artifact(ScanArtifactError::SchemaMismatch { .. })));
     cleanup(&dir);
   }
 

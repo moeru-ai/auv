@@ -8,9 +8,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use auv_scan::{
-  FrameObservation, LifecycleEvent, SCAN_COVERAGE_ARTIFACT_ROLE, ScanCoverageWire, ScanFrame,
-  ScanFrameBundle, SceneStateInput, SceneStateInspect, TransitionEvidence,
-  build_scene_state_inspect, format_scene_state_inspect_text, read_coverage_artifact,
+  FrameObservation, LifecycleEvent, SCAN_COVERAGE_ARTIFACT_ROLE, ScanCoverageWire, ScanFrame, ScanFrameBundle, SceneStateInput,
+  SceneStateInspect, TransitionEvidence, build_scene_state_inspect, format_scene_state_inspect_text, read_coverage_artifact,
 };
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
@@ -74,74 +73,44 @@ fn parse_lifecycle_event(raw: &LifecycleEventWire) -> Result<LifecycleEvent, Str
   };
   match raw.event.as_str() {
     "observed" => Ok(LifecycleEvent::Observed {
-      observation_id: raw
-        .observation_id
-        .clone()
-        .ok_or_else(|| "lifecycle observed missing observation_id".to_string())?,
+      observation_id: raw.observation_id.clone().ok_or_else(|| "lifecycle observed missing observation_id".to_string())?,
       evidence,
     }),
     "association_linked" => Ok(LifecycleEvent::AssociationLinked {
-      track_id: raw
-        .track_id
-        .clone()
-        .ok_or_else(|| "lifecycle association_linked missing track_id".to_string())?,
+      track_id: raw.track_id.clone().ok_or_else(|| "lifecycle association_linked missing track_id".to_string())?,
       evidence,
     }),
     "stale" => Ok(LifecycleEvent::Stale {
-      reason_code: raw
-        .reason_code
-        .clone()
-        .ok_or_else(|| "lifecycle stale missing reason_code".to_string())?,
+      reason_code: raw.reason_code.clone().ok_or_else(|| "lifecycle stale missing reason_code".to_string())?,
       evidence,
     }),
     "reacquisition_needed" => Ok(LifecycleEvent::ReacquisitionNeeded {
-      track_id: raw
-        .track_id
-        .clone()
-        .ok_or_else(|| "lifecycle reacquisition_needed missing track_id".to_string())?,
+      track_id: raw.track_id.clone().ok_or_else(|| "lifecycle reacquisition_needed missing track_id".to_string())?,
       evidence,
     }),
     "reacquired" => Ok(LifecycleEvent::Reacquired {
-      track_id: raw
-        .track_id
-        .clone()
-        .ok_or_else(|| "lifecycle reacquired missing track_id".to_string())?,
+      track_id: raw.track_id.clone().ok_or_else(|| "lifecycle reacquired missing track_id".to_string())?,
       evidence,
     }),
     "lost" => Ok(LifecycleEvent::Lost {
-      track_id: raw
-        .track_id
-        .clone()
-        .ok_or_else(|| "lifecycle lost missing track_id".to_string())?,
+      track_id: raw.track_id.clone().ok_or_else(|| "lifecycle lost missing track_id".to_string())?,
       evidence,
     }),
     "ambiguous_reacquire" => Ok(LifecycleEvent::AmbiguousReacquire {
-      track_id: raw
-        .track_id
-        .clone()
-        .ok_or_else(|| "lifecycle ambiguous_reacquire missing track_id".to_string())?,
+      track_id: raw.track_id.clone().ok_or_else(|| "lifecycle ambiguous_reacquire missing track_id".to_string())?,
       evidence,
     }),
     "observation_failed" => Ok(LifecycleEvent::ObservationFailed {
-      reason_code: raw
-        .reason_code
-        .clone()
-        .ok_or_else(|| "lifecycle observation_failed missing reason_code".to_string())?,
+      reason_code: raw.reason_code.clone().ok_or_else(|| "lifecycle observation_failed missing reason_code".to_string())?,
       evidence,
     }),
     other => Err(format!("unknown lifecycle event: {other}")),
   }
 }
 
-fn wire_to_scene_state_input(
-  wire: SceneStateInputWire,
-  source_dir: PathBuf,
-) -> Result<SceneStateInput, String> {
+fn wire_to_scene_state_input(wire: SceneStateInputWire, source_dir: PathBuf) -> Result<SceneStateInput, String> {
   if wire.schema_version != SCENE_STATE_INPUT_SCHEMA_VERSION {
-    return Err(format!(
-      "schema version mismatch: found {}",
-      wire.schema_version
-    ));
+    return Err(format!("schema version mismatch: found {}", wire.schema_version));
   }
   if wire.frames.is_empty() {
     return Err("empty frames".to_string());
@@ -182,19 +151,10 @@ fn wire_to_scene_state_input(
 }
 
 fn matching_coverage_artifacts(run: &CanonicalRun) -> Vec<&ArtifactRecordV1Alpha1> {
-  run
-    .artifacts
-    .iter()
-    .filter(|artifact| {
-      artifact.role == SCAN_COVERAGE_ARTIFACT_ROLE && is_json_mime(&artifact.mime_type)
-    })
-    .collect()
+  run.artifacts.iter().filter(|artifact| artifact.role == SCAN_COVERAGE_ARTIFACT_ROLE && is_json_mime(&artifact.mime_type)).collect()
 }
 
-fn resolve_coverage_wire_for_run(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<Option<ScanCoverageWire>, String> {
+fn resolve_coverage_wire_for_run(store: &LocalStore, run: &CanonicalRun) -> Result<Option<ScanCoverageWire>, String> {
   let matches = matching_coverage_artifacts(run);
   match matches.len() {
     0 => Ok(None),
@@ -202,26 +162,16 @@ fn resolve_coverage_wire_for_run(
       let (_record, path) = store
         .artifact_file(run.run.run_id.as_str(), matches[0].artifact_id.as_str())
         .map_err(|error| format!("open coverage artifact: {error}"))?;
-      read_coverage_artifact(&path).map(Some).map_err(|error| {
-        format!(
-          "failed to read {} for run {}: {error}",
-          path.display(),
-          run.run.run_id
-        )
-      })
+      read_coverage_artifact(&path)
+        .map(Some)
+        .map_err(|error| format!("failed to read {} for run {}: {error}", path.display(), run.run.run_id))
     }
     _ => Err("multiple scan-coverage-v0 artifacts".to_string()),
   }
 }
 
 fn matching_scene_state_artifacts(run: &CanonicalRun) -> Vec<&ArtifactRecordV1Alpha1> {
-  run
-    .artifacts
-    .iter()
-    .filter(|artifact| {
-      artifact.role == SCENE_STATE_INPUT_ARTIFACT_ROLE && is_json_mime(&artifact.mime_type)
-    })
-    .collect()
+  run.artifacts.iter().filter(|artifact| artifact.role == SCENE_STATE_INPUT_ARTIFACT_ROLE && is_json_mime(&artifact.mime_type)).collect()
 }
 
 fn read_scene_state_input_from_artifact(
@@ -232,34 +182,20 @@ fn read_scene_state_input_from_artifact(
   let (_record, path) = store
     .artifact_file(run.run.run_id.as_str(), artifact.artifact_id.as_str())
     .map_err(|error| SceneStateReadError::Read(format!("open artifact: {error}")))?;
-  let source_dir = path
-    .parent()
-    .map(std::path::Path::to_path_buf)
-    .ok_or_else(|| SceneStateReadError::Read("artifact path has no parent".to_string()))?;
-  let file = File::open(&path).map_err(|error| {
-    SceneStateReadError::Read(format!(
-      "open {} for run {}: {error}",
-      path.display(),
-      run.run.run_id
-    ))
-  })?;
+  let source_dir =
+    path.parent().map(std::path::Path::to_path_buf).ok_or_else(|| SceneStateReadError::Read("artifact path has no parent".to_string()))?;
+  let file =
+    File::open(&path).map_err(|error| SceneStateReadError::Read(format!("open {} for run {}: {error}", path.display(), run.run.run_id)))?;
   let wire: SceneStateInputWire = match serde_json::from_reader(BufReader::new(file)) {
     Ok(wire) => wire,
     Err(error) => {
-      return Ok(Err(format!(
-        "failed to parse {} for run {}: {error}",
-        path.display(),
-        run.run.run_id
-      )));
+      return Ok(Err(format!("failed to parse {} for run {}: {error}", path.display(), run.run.run_id)));
     }
   };
   Ok(wire_to_scene_state_input(wire, source_dir))
 }
 
-pub fn build_scene_state_inspect_for_run(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Result<SceneStateReadOutcome, SceneStateReadError> {
+pub fn build_scene_state_inspect_for_run(store: &LocalStore, run: &CanonicalRun) -> Result<SceneStateReadOutcome, SceneStateReadError> {
   let matches = matching_scene_state_artifacts(run);
   match matches.len() {
     0 => Ok(SceneStateReadOutcome::Missing),
@@ -294,9 +230,7 @@ pub fn format_scene_state_read_text(outcome: &SceneStateReadOutcome) -> String {
       text.push_str(&format_scene_state_inspect_text(inspect));
       text
     }
-    SceneStateReadOutcome::Missing => {
-      "Scene state: missing scan-scene-state-input-v0 artifact\n".to_string()
-    }
+    SceneStateReadOutcome::Missing => "Scene state: missing scan-scene-state-input-v0 artifact\n".to_string(),
     SceneStateReadOutcome::Unsupported { reason } => {
       format!("Scene state: unsupported ({reason})\n")
     }
@@ -312,14 +246,12 @@ mod tests {
   use serde::{Deserialize, Serialize};
 
   use auv_scan::{
-    CoverageInspectSource, SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_ARTIFACT_ROLE,
-    ScanCoverageWire, build_scene_state_inspect, load_scan_frames_from_dir,
-    produce_frames_from_fixture_dir, read_coverage_artifact,
+    CoverageInspectSource, SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_ARTIFACT_ROLE, ScanCoverageWire, build_scene_state_inspect,
+    load_scan_frames_from_dir, produce_frames_from_fixture_dir, read_coverage_artifact,
   };
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
-    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId,
-    SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
 
   use std::sync::atomic::{AtomicU64, Ordering};
@@ -329,8 +261,8 @@ mod tests {
   use crate::inspect::inspect_run;
 
   use super::{
-    SCENE_STATE_INPUT_ARTIFACT_ROLE, SCENE_STATE_INPUT_SCHEMA_VERSION, SceneStateReadOutcome,
-    build_scene_state_inspect_for_run, format_scene_state_read_text,
+    SCENE_STATE_INPUT_ARTIFACT_ROLE, SCENE_STATE_INPUT_SCHEMA_VERSION, SceneStateReadOutcome, build_scene_state_inspect_for_run,
+    format_scene_state_read_text,
   };
 
   #[derive(Debug, Deserialize, Serialize)]
@@ -365,8 +297,7 @@ mod tests {
     value: &T,
   ) -> auv_tracing_driver::trace::ArtifactRecordV1Alpha1 {
     let source_path = root.join(format!("source-{index}-{preferred_name}"));
-    let rendered =
-      serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
+    let rendered = serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
     fs::write(&source_path, rendered).expect("artifact source should write");
     store
       .stage_artifact_file(
@@ -385,10 +316,7 @@ mod tests {
   }
 
   fn scene_manifest_path(scenario: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-scan/tests/fixtures/scan/scene")
-      .join(scenario)
-      .join("manifest.json")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/auv-scan/tests/fixtures/scan/scene").join(scenario).join("manifest.json")
   }
 
   fn coverage_golden_scenario_for_scene(scene_scenario: &str) -> Option<&'static str> {
@@ -412,11 +340,8 @@ mod tests {
   fn build_scene_state_wire_from_scene(scenario: &str) -> SceneStateInputWireFixture {
     let manifest_path = scene_manifest_path(scenario);
     let manifest_text = fs::read_to_string(&manifest_path).expect("read scene manifest");
-    let manifest: SceneStableManifest =
-      serde_json::from_str(&manifest_text).expect("parse scene manifest");
-    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-scan/tests/fixtures/scan")
-      .join(&manifest.frame_fixture);
+    let manifest: SceneStableManifest = serde_json::from_str(&manifest_text).expect("parse scene manifest");
+    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/auv-scan/tests/fixtures/scan").join(&manifest.frame_fixture);
     let seq = WIRE_FIXTURE_SEQ.fetch_add(1, Ordering::Relaxed);
     let out_dir = std::env::temp_dir().join(format!(
       "auv-scene-state-wire-{}-{}-{}-{}",
@@ -521,13 +446,10 @@ mod tests {
   }
 
   fn assert_durable_parity_with_in_memory(scene_scenario: &str) {
-    let coverage_scenario = coverage_golden_scenario_for_scene(scene_scenario)
-      .unwrap_or_else(|| panic!("no coverage mapping for {scene_scenario}"));
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-durable-{}-{}",
-      scene_scenario.replace('/', "-"),
-      crate::model::now_millis()
-    ));
+    let coverage_scenario =
+      coverage_golden_scenario_for_scene(scene_scenario).unwrap_or_else(|| panic!("no coverage mapping for {scene_scenario}"));
+    let root =
+      std::env::temp_dir().join(format!("auv-scene-state-durable-{}-{}", scene_scenario.replace('/', "-"), crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let wire = build_scene_state_wire_from_scene(scene_scenario);
@@ -535,32 +457,21 @@ mod tests {
     let run_id = write_scene_state_run_fixture(&store, &root, &wire, Some(&coverage));
     let canonical = store.read_run(&run_id).expect("run should read");
 
-    let durable_outcome =
-      build_scene_state_inspect_for_run(&store, &canonical).expect("inspect read");
+    let durable_outcome = build_scene_state_inspect_for_run(&store, &canonical).expect("inspect read");
     let SceneStateReadOutcome::Present(ref durable_inspect) = durable_outcome else {
       panic!("expected present durable inspect for {scene_scenario}");
     };
-    assert_eq!(
-      durable_inspect.coverage_source,
-      CoverageInspectSource::Durable
-    );
+    assert_eq!(durable_inspect.coverage_source, CoverageInspectSource::Durable);
 
     let in_memory_input = super::read_scene_state_input_from_artifact(
       &store,
       &canonical,
-      canonical
-        .artifacts
-        .iter()
-        .find(|artifact| artifact.role == SCENE_STATE_INPUT_ARTIFACT_ROLE)
-        .expect("scene input artifact"),
+      canonical.artifacts.iter().find(|artifact| artifact.role == SCENE_STATE_INPUT_ARTIFACT_ROLE).expect("scene input artifact"),
     )
     .expect("read scene input")
     .expect("parse scene input");
     let in_memory_inspect = build_scene_state_inspect(&in_memory_input).expect("in-memory inspect");
-    assert_eq!(
-      in_memory_inspect.coverage_source,
-      CoverageInspectSource::InMemory
-    );
+    assert_eq!(in_memory_inspect.coverage_source, CoverageInspectSource::InMemory);
     assert_eq!(durable_inspect.product, in_memory_inspect.product);
     let text = auv_scan::format_scene_state_inspect_text(durable_inspect);
     assert!(text.contains("[scene.coverage] source=durable"));
@@ -570,10 +481,7 @@ mod tests {
 
   #[test]
   fn build_scene_state_inspect_for_run_present() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-present-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-scene-state-present-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let wire = build_scene_state_wire_from_fixture();
@@ -598,10 +506,7 @@ mod tests {
 
   #[test]
   fn build_scene_state_inspect_for_run_missing() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-missing-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-scene-state-missing-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let wire = build_scene_state_wire_from_fixture();
@@ -611,20 +516,14 @@ mod tests {
 
     let outcome = build_scene_state_inspect_for_run(&store, &canonical).expect("inspect read");
     assert_eq!(outcome, SceneStateReadOutcome::Missing);
-    assert_eq!(
-      format_scene_state_read_text(&outcome),
-      "Scene state: missing scan-scene-state-input-v0 artifact\n"
-    );
+    assert_eq!(format_scene_state_read_text(&outcome), "Scene state: missing scan-scene-state-input-v0 artifact\n");
 
     let _ = fs::remove_dir_all(root);
   }
 
   #[test]
   fn build_scene_state_inspect_for_run_unsupported_bad_schema() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-bad-schema-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-scene-state-bad-schema-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let mut wire = build_scene_state_wire_from_fixture();
@@ -633,10 +532,7 @@ mod tests {
     let canonical = store.read_run(&run_id).expect("run should read");
 
     let outcome = build_scene_state_inspect_for_run(&store, &canonical).expect("inspect read");
-    assert!(
-      matches!(outcome, SceneStateReadOutcome::Unsupported { .. }),
-      "expected unsupported outcome"
-    );
+    assert!(matches!(outcome, SceneStateReadOutcome::Unsupported { .. }), "expected unsupported outcome");
     let text = format_scene_state_read_text(&outcome);
     assert!(text.starts_with("Scene state: unsupported ("));
     assert!(text.contains("schema version mismatch"));
@@ -646,10 +542,7 @@ mod tests {
 
   #[test]
   fn build_scene_state_inspect_for_run_unsupported_multiple_artifacts() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-multiple-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-scene-state-multiple-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let wire = build_scene_state_wire_from_fixture();
@@ -687,22 +580,15 @@ mod tests {
 
   #[test]
   fn build_scene_state_inspect_for_run_unsupported_multiple_coverage_artifacts() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-multiple-coverage-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-scene-state-multiple-coverage-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let wire = build_scene_state_wire_from_fixture();
     let coverage = load_coverage_golden_wire("coverage_stable_v0");
     let run_id = write_scene_state_run_fixture(&store, &root, &wire, Some(&coverage));
     let mut canonical = store.read_run(&run_id).expect("run should read");
-    let second = canonical
-      .artifacts
-      .iter()
-      .find(|artifact| artifact.role == SCAN_COVERAGE_ARTIFACT_ROLE)
-      .expect("coverage artifact")
-      .clone();
+    let second =
+      canonical.artifacts.iter().find(|artifact| artifact.role == SCAN_COVERAGE_ARTIFACT_ROLE).expect("coverage artifact").clone();
     canonical.artifacts.push(second);
 
     let outcome = build_scene_state_inspect_for_run(&store, &canonical).expect("inspect read");
@@ -718,10 +604,7 @@ mod tests {
 
   #[test]
   fn build_scene_state_inspect_for_run_unsupported_bad_coverage_schema() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-bad-coverage-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-scene-state-bad-coverage-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let wire = build_scene_state_wire_from_fixture();
@@ -731,10 +614,7 @@ mod tests {
     let canonical = store.read_run(&run_id).expect("run should read");
 
     let outcome = build_scene_state_inspect_for_run(&store, &canonical).expect("inspect read");
-    assert!(
-      matches!(outcome, SceneStateReadOutcome::Unsupported { .. }),
-      "expected unsupported outcome"
-    );
+    assert!(matches!(outcome, SceneStateReadOutcome::Unsupported { .. }), "expected unsupported outcome");
     let text = format_scene_state_read_text(&outcome);
     assert!(text.contains("schema_version mismatch"));
 
@@ -743,10 +623,7 @@ mod tests {
 
   #[test]
   fn build_scene_state_inspect_for_run_prefers_bad_scene_input_over_bad_coverage() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-bad-scene-and-coverage-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-scene-state-bad-scene-and-coverage-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let mut wire = build_scene_state_wire_from_fixture();
@@ -757,10 +634,7 @@ mod tests {
     let canonical = store.read_run(&run_id).expect("run should read");
 
     let outcome = build_scene_state_inspect_for_run(&store, &canonical).expect("inspect read");
-    assert!(
-      matches!(outcome, SceneStateReadOutcome::Unsupported { .. }),
-      "expected unsupported outcome"
-    );
+    assert!(matches!(outcome, SceneStateReadOutcome::Unsupported { .. }), "expected unsupported outcome");
     let text = format_scene_state_read_text(&outcome);
     assert!(text.contains("scan-scene-state-input-v1"));
     assert!(!text.contains("scan-coverage-v1"));
@@ -770,10 +644,7 @@ mod tests {
 
   #[test]
   fn inspect_run_includes_durable_coverage() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-inspect-durable-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-scene-state-inspect-durable-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let wire = build_scene_state_wire_from_fixture();
@@ -789,10 +660,7 @@ mod tests {
 
   #[test]
   fn inspect_run_includes_scene_state_block() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-scene-state-inspect-run-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-scene-state-inspect-run-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let wire = build_scene_state_wire_from_fixture();

@@ -85,23 +85,11 @@ fn choose_control<'a>(
   matches.sort_by(|left, right| right.0.cmp(&left.0));
 
   let Some((best_score, best)) = matches.first().copied() else {
-    return Err(format!(
-      "no UIA control matched NetEase transport action {action}"
-    ));
+    return Err(format!("no UIA control matched NetEase transport action {action}"));
   };
-  if matches
-    .get(1)
-    .is_some_and(|(score, _)| *score == best_score)
-  {
-    let paths = matches
-      .iter()
-      .take_while(|(score, _)| *score == best_score)
-      .map(|(_, node)| node.path)
-      .collect::<Vec<_>>()
-      .join(", ");
-    return Err(format!(
-      "multiple UIA controls matched NetEase transport action {action} equally: {paths}"
-    ));
+  if matches.get(1).is_some_and(|(score, _)| *score == best_score) {
+    let paths = matches.iter().take_while(|(score, _)| *score == best_score).map(|(_, node)| node.path).collect::<Vec<_>>().join(", ");
+    return Err(format!("multiple UIA controls matched NetEase transport action {action} equally: {paths}"));
   }
   Ok(best)
 }
@@ -124,14 +112,10 @@ fn control_score(node: NodeEvidence<'_>, action: TransportAction) -> Option<u8> 
   let actionable = control_type.contains("button") || control_type.contains("menuitem");
 
   let (names, ids): (&[&str], &[&str]) = match action {
-    TransportAction::PlayPause => (
-      &["播放", "暂停", "播放暂停", "play", "pause", "playpause"],
-      &["playpause", "playbutton", "pausebutton", "btnpcminibarplay"],
-    ),
-    TransportAction::Next => (
-      &["下一首", "下一曲", "next", "nexttrack"],
-      &["next", "nexttrack"],
-    ),
+    TransportAction::PlayPause => {
+      (&["播放", "暂停", "播放暂停", "play", "pause", "playpause"], &["playpause", "playbutton", "pausebutton", "btnpcminibarplay"])
+    }
+    TransportAction::Next => (&["下一首", "下一曲", "next", "nexttrack"], &["next", "nexttrack"]),
     TransportAction::Previous => (
       &[
         "上一首",
@@ -148,28 +132,17 @@ fn control_score(node: NodeEvidence<'_>, action: TransportAction) -> Option<u8> 
   if actionable && names.iter().any(|candidate| name == *candidate) {
     return Some(4);
   }
-  if ids
-    .iter()
-    .any(|candidate| automation_id.contains(candidate))
-  {
+  if ids.iter().any(|candidate| automation_id.contains(candidate)) {
     return Some(if actionable { 3 } else { 2 });
   }
-  if actionable
-    && names
-      .iter()
-      .any(|candidate| name.contains(candidate) && !candidate.is_empty())
-  {
+  if actionable && names.iter().any(|candidate| name.contains(candidate) && !candidate.is_empty()) {
     return Some(1);
   }
   None
 }
 
 fn normalize(value: &str) -> String {
-  value
-    .chars()
-    .filter(|character| character.is_alphanumeric())
-    .flat_map(char::to_lowercase)
-    .collect()
+  value.chars().filter(|character| character.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -183,16 +156,11 @@ mod platform {
   use crate::windows::resolve_window;
 
   pub fn run(inputs: &TransportInputs) -> Result<TransportResult, String> {
-    let window = resolve_window(&inputs.resolve)?.ok_or_else(|| {
-      "NetEase Cloud Music has no visible window; run `open-window` first".to_string()
-    })?;
-    let session = WindowsDriver::new()
-      .open_local()
-      .map_err(|error| format!("failed to open Windows driver: {error}"))?;
-    let snapshot = session
-      .accessibility()
-      .snapshot_window(&window)
-      .map_err(|error| format!("failed to capture NetEase UIA tree: {error}"))?;
+    let window =
+      resolve_window(&inputs.resolve)?.ok_or_else(|| "NetEase Cloud Music has no visible window; run `open-window` first".to_string())?;
+    let session = WindowsDriver::new().open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
+    let snapshot =
+      session.accessibility().snapshot_window(&window).map_err(|error| format!("failed to capture NetEase UIA tree: {error}"))?;
     let matched = choose_control(
       snapshot.nodes.iter().map(|node| NodeEvidence {
         path: &node.path,
@@ -220,9 +188,7 @@ mod platform {
     let delivery = session
       .accessibility()
       .select_node(&window, &node_path)
-      .map_err(|error| {
-        format!("failed to invoke NetEase UIA control {control_name:?} at {node_path}: {error}")
-      })?;
+      .map_err(|error| format!("failed to invoke NetEase UIA control {control_name:?} at {node_path}: {error}"))?;
 
     if inputs.settle_ms > 0 {
       std::thread::sleep(Duration::from_millis(inputs.settle_ms));
@@ -253,13 +219,7 @@ mod platform {
 mod tests {
   use super::*;
 
-  fn node<'a>(
-    path: &'a str,
-    name: &'a str,
-    automation_id: &'a str,
-    control_type: &'a str,
-    x: f64,
-  ) -> NodeEvidence<'a> {
+  fn node<'a>(path: &'a str, name: &'a str, automation_id: &'a str, control_type: &'a str, x: f64) -> NodeEvidence<'a> {
     NodeEvidence {
       path,
       name,
@@ -281,34 +241,14 @@ mod tests {
       node("0/3", "下一首", "", "button", 540.0),
     ];
 
-    assert_eq!(
-      choose_control(nodes, TransportAction::PlayPause, window_bounds())
-        .unwrap()
-        .path,
-      "0/2"
-    );
-    assert_eq!(
-      choose_control(nodes, TransportAction::Next, window_bounds())
-        .unwrap()
-        .path,
-      "0/3"
-    );
-    assert_eq!(
-      choose_control(nodes, TransportAction::Previous, window_bounds())
-        .unwrap()
-        .path,
-      "0/1"
-    );
+    assert_eq!(choose_control(nodes, TransportAction::PlayPause, window_bounds()).unwrap().path, "0/2");
+    assert_eq!(choose_control(nodes, TransportAction::Next, window_bounds()).unwrap().path, "0/3");
+    assert_eq!(choose_control(nodes, TransportAction::Previous, window_bounds()).unwrap().path, "0/1");
   }
 
   #[test]
   fn automation_id_matches_when_accessible_name_is_missing() {
-    let matched = choose_control(
-      [node("0/4", "", "player-next-track", "custom", 520.0)],
-      TransportAction::Next,
-      window_bounds(),
-    )
-    .unwrap();
+    let matched = choose_control([node("0/4", "", "player-next-track", "custom", 520.0)], TransportAction::Next, window_bounds()).unwrap();
 
     assert_eq!(matched.path, "0/4");
   }
@@ -333,12 +273,7 @@ mod tests {
 
   #[test]
   fn chooses_live_netease_pre_name_for_previous() {
-    let matched = choose_control(
-      [node("0/0/0/0/36/8", "pre", "", "button", 440.0)],
-      TransportAction::Previous,
-      window_bounds(),
-    )
-    .unwrap();
+    let matched = choose_control([node("0/0/0/0/36/8", "pre", "", "button", 440.0)], TransportAction::Previous, window_bounds()).unwrap();
 
     assert_eq!(matched.path, "0/0/0/0/36/8");
   }
@@ -375,12 +310,7 @@ mod tests {
 
   #[test]
   fn does_not_match_non_button_text_by_name_alone() {
-    let error = choose_control(
-      [node("0/1", "Next", "", "text", 500.0)],
-      TransportAction::Next,
-      window_bounds(),
-    )
-    .unwrap_err();
+    let error = choose_control([node("0/1", "Next", "", "text", 500.0)], TransportAction::Next, window_bounds()).unwrap_err();
 
     assert!(error.contains("no UIA control matched"));
   }

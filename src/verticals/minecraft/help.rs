@@ -55,10 +55,7 @@ mod tests {
     let help = render_minecraft_help();
     assert_eq!(MINECRAFT_USAGE_LINES.len(), 18);
     for line in MINECRAFT_USAGE_LINES {
-      assert!(
-        help.contains(line),
-        "minecraft help should include usage line: {line}"
-      );
+      assert!(help.contains(line), "minecraft help should include usage line: {line}");
     }
   }
 }

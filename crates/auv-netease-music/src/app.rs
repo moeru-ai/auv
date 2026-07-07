@@ -132,18 +132,9 @@ where
     }
   }
 
-  pub fn observe(
-    &mut self,
-    options: ObserveOptions,
-  ) -> Result<&NeteaseCloudMusicObservation, String> {
+  pub fn observe(&mut self, options: ObserveOptions) -> Result<&NeteaseCloudMusicObservation, String> {
     if self.can_reuse_cache(options) {
-      return Ok(
-        &self
-          .cache
-          .as_ref()
-          .expect("cache checked above")
-          .observation,
-      );
+      return Ok(&self.cache.as_ref().expect("cache checked above").observation);
     }
 
     self.refresh(options.scope)
@@ -165,13 +156,7 @@ where
       observation,
     });
 
-    Ok(
-      &self
-        .cache
-        .as_ref()
-        .expect("cache was just written")
-        .observation,
-    )
+    Ok(&self.cache.as_ref().expect("cache was just written").observation)
   }
 
   pub fn invalidate_observation(&mut self) {
@@ -238,32 +223,20 @@ impl ObservationProvider for LiveObservationProvider {
 impl LiveObservationProvider {
   fn observe_window(&self, scope: ObserveScope) -> Result<(ScreenView, PlayerView), String> {
     let driver = MacosDriver::new();
-    let session = driver
-      .open_local()
-      .map_err(|error| format!("live observation driver open failed: {error}"))?;
+    let session = driver.open_local().map_err(|error| format!("live observation driver open failed: {error}"))?;
     let window = session
       .window()
       .resolve(Window::main_visible().owned_by(App::bundle(self.inputs.app_id.clone())))
       .map_err(|error| format!("live observation target window not found: {error}"))?;
-    let capture = session
-      .window()
-      .capture(&window)
-      .map_err(|error| format!("live observation window capture failed: {error}"))?;
+    let capture = session.window().capture(&window).map_err(|error| format!("live observation window capture failed: {error}"))?;
 
     let screen = if scope.screen {
       let recognition = session
         .vision()
-        .recognize_text_in_capture_with_options(
-          &capture,
-          RatioRect::new(0.0, 0.0, 1.0, 1.0),
-          self.inputs.ocr_options.clone(),
-        )
+        .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
         .map_err(|error| format!("live observation full-window OCR failed: {error}"))?;
       let recognition = recognition_in_window_space(recognition, &capture);
-      screen::classify_screen(
-        &recognition,
-        Size::new(window.frame.size.width, window.frame.size.height),
-      )
+      screen::classify_screen(&recognition, Size::new(window.frame.size.width, window.frame.size.height))
     } else {
       ScreenView::unknown()
     };
@@ -297,10 +270,7 @@ struct CachedObservation {
 }
 
 fn observed_at_millis() -> u128 {
-  SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .unwrap_or_default()
-    .as_millis()
+  SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis()
 }
 
 #[cfg(test)]
@@ -327,10 +297,7 @@ mod tests {
   fn force_refresh_calls_provider_and_advances_generation() {
     let mut app = NeteaseCloudMusic::new(FakeProvider::new());
 
-    let first_generation = app
-      .observe(ObserveOptions::default())
-      .expect("observe")
-      .generation();
+    let first_generation = app.observe(ObserveOptions::default()).expect("observe").generation();
     let second_generation = app
       .observe(ObserveOptions {
         reuse: ObserveReuseMode::ForceRefresh,

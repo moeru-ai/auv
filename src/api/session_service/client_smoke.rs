@@ -12,9 +12,7 @@ use tonic::transport::Channel;
 
 use crate::api::session_service::operation_result_store::INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT;
 use crate::api::session_service::test_fixtures::session_api_temp_store_root;
-use crate::api::session_service::transport::{
-  DEFAULT_SESSION_API_HOST, SessionApiServeConfig, bind_session_api, serve_on_listener,
-};
+use crate::api::session_service::transport::{DEFAULT_SESSION_API_HOST, SessionApiServeConfig, bind_session_api, serve_on_listener};
 
 async fn with_smoke_server<T, F, Fut>(store_root: PathBuf, f: F) -> T
 where
@@ -31,9 +29,7 @@ where
   let server = tokio::spawn(serve_on_listener(listener, local_address, store_root));
 
   let endpoint = format!("http://{local_address}");
-  let client = SessionServiceClient::connect(endpoint)
-    .await
-    .expect("connect client");
+  let client = SessionServiceClient::connect(endpoint).await.expect("connect client");
 
   let output = f(client).await;
 
@@ -55,10 +51,7 @@ async fn create_session(client: &mut SessionServiceClient<Channel>) -> proto::Se
     .expect("session ref")
 }
 
-async fn invoke_fixture_observe(
-  client: &mut SessionServiceClient<Channel>,
-  session: proto::SessionRef,
-) -> proto::InvokeResponse {
+async fn invoke_fixture_observe(client: &mut SessionServiceClient<Channel>, session: proto::SessionRef) -> proto::InvokeResponse {
   client
     .invoke(proto::InvokeRequest {
       session: Some(session),
@@ -105,16 +98,8 @@ async fn session_api_smoke_invoke_then_get_operation_round_trips() {
 
     assert_eq!(response.status, "completed");
     assert_eq!(response.output_summary, "fixture observed");
-    assert_eq!(
-      response.operation.expect("operation ref").operation_id,
-      "fixture.observe"
-    );
-    assert!(
-      response
-        .known_limits
-        .iter()
-        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
-    );
+    assert_eq!(response.operation.expect("operation ref").operation_id, "fixture.observe");
+    assert!(response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
   })
   .await;
 }

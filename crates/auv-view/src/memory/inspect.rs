@@ -177,10 +177,7 @@ pub fn summarize_view_parser_inspect(inspect: &ViewParserInspect) -> ViewParserL
     return ViewParserListSummary::default();
   }
 
-  let latest = inspect
-    .resolution_summaries
-    .last()
-    .expect("non-empty resolution_summaries checked above");
+  let latest = inspect.resolution_summaries.last().expect("non-empty resolution_summaries checked above");
   let latest_outcome = match latest.resolution.outcome.as_str() {
     "reacquired" | "not_found" | "stale" => Some(latest.resolution.outcome.clone()),
     _ => None,
@@ -189,10 +186,7 @@ pub fn summarize_view_parser_inspect(inspect: &ViewParserInspect) -> ViewParserL
     "passed" | "failed" => Some(latest.verification.status.clone()),
     _ => None,
   };
-  let has_known_limits = inspect
-    .select_results
-    .iter()
-    .any(|select| !select.known_limits.is_empty());
+  let has_known_limits = inspect.select_results.iter().any(|select| !select.known_limits.is_empty());
 
   ViewParserListSummary {
     has_proof: true,
@@ -301,10 +295,7 @@ mod tests {
     assert!(summary.has_proof);
     assert_eq!(summary.resolution_count, 2);
     assert_eq!(summary.latest_outcome.as_deref(), Some("stale"));
-    assert_eq!(
-      summary.latest_verification_status.as_deref(),
-      Some("failed")
-    );
+    assert_eq!(summary.latest_verification_status.as_deref(), Some("failed"));
     assert!(!summary.has_known_limits);
   }
 
@@ -351,10 +342,7 @@ mod tests {
     let summary = summarize_view_parser_inspect(&inspect);
     assert!(summary.has_known_limits);
     assert_eq!(summary.latest_outcome.as_deref(), Some("reacquired"));
-    assert_eq!(
-      summary.latest_verification_status.as_deref(),
-      Some("passed")
-    );
+    assert_eq!(summary.latest_verification_status.as_deref(), Some("passed"));
   }
 
   #[test]

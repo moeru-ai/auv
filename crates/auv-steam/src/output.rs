@@ -1,9 +1,7 @@
 use comfy_table::{Cell, Table, presets::NOTHING};
 use serde::Serialize;
 
-use crate::library::{
-  Grounding, LibraryQuery, LibraryQueryResult, ResolvedLibraryScope, SteamInstalledApp,
-};
+use crate::library::{Grounding, LibraryQuery, LibraryQueryResult, ResolvedLibraryScope, SteamInstalledApp};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct LibraryLsJsonOutput<'a> {
@@ -55,21 +53,13 @@ fn grounding_label(grounding: Grounding) -> &'static str {
 }
 
 fn render_table(table: Table) -> String {
-  table
-    .to_string()
-    .lines()
-    .map(str::trim)
-    .collect::<Vec<_>>()
-    .join("\n")
+  table.to_string().lines().map(str::trim).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::library::{
-    Grounding, LibraryQuery, LibraryQueryResult, LibrarySource, LibraryStatus,
-    ResolvedLibraryScope, SteamInstalledApp,
-  };
+  use crate::library::{Grounding, LibraryQuery, LibraryQueryResult, LibrarySource, LibraryStatus, ResolvedLibraryScope, SteamInstalledApp};
 
   fn result() -> LibraryQueryResult {
     LibraryQueryResult {
@@ -143,9 +133,6 @@ mod tests {
 
     let summary = render_library_summary(&result);
 
-    assert_eq!(
-      summary,
-      "APPID  NAME  INSTALL DIR  SOURCE  GROUNDING\n(no matching installed Steam apps)"
-    );
+    assert_eq!(summary, "APPID  NAME  INSTALL DIR  SOURCE  GROUNDING\n(no matching installed Steam apps)");
   }
 }

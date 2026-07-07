@@ -35,9 +35,7 @@ pub struct CopySystemDetailsResult {
   pub delivery: Option<InputActionResult>,
 }
 
-pub fn run_copy_system_details(
-  inputs: &CopySystemDetailsInputs,
-) -> Result<CopySystemDetailsResult, String> {
+pub fn run_copy_system_details(inputs: &CopySystemDetailsInputs) -> Result<CopySystemDetailsResult, String> {
   platform::run(inputs)
 }
 
@@ -57,43 +55,23 @@ mod platform {
     let (window, open_report) = open_or_resolve(&ResolveOptions {
       settle: Duration::from_millis(inputs.settle_ms),
     })?;
-    let session = LinuxDriver::new()
-      .open_local()
-      .map_err(|error| format!("failed to open Linux driver: {error}"))?;
+    let session = LinuxDriver::new().open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
     let mut steps = open_report.steps.clone();
 
-    let system_node =
-      select_visible_labeled_node(&session, &window, SYSTEM_PAGE, "select-system", &mut steps)?;
+    let system_node = select_visible_labeled_node(&session, &window, SYSTEM_PAGE, "select-system", &mut steps)?;
     std::thread::sleep(Duration::from_millis(350));
 
-    let about_node =
-      select_visible_labeled_node(&session, &window, ABOUT_PAGE, "select-about", &mut steps)?;
+    let about_node = select_visible_labeled_node(&session, &window, ABOUT_PAGE, "select-about", &mut steps)?;
     std::thread::sleep(Duration::from_millis(350));
 
-    let details_node = select_visible_labeled_node(
-      &session,
-      &window,
-      SYSTEM_DETAILS_PAGE,
-      "select-system-details",
-      &mut steps,
-    )?;
+    let details_node = select_visible_labeled_node(&session, &window, SYSTEM_DETAILS_PAGE, "select-system-details", &mut steps)?;
     std::thread::sleep(Duration::from_millis(350));
 
     let clipboard_before = session.clipboard().snapshot().unwrap_or_default();
-    let copy_node = click_visible_labeled_node(
-      &session,
-      &window,
-      COPY_BUTTON,
-      "copy-system-details",
-      &mut steps,
-    )?;
+    let copy_node = click_visible_labeled_node(&session, &window, COPY_BUTTON, "copy-system-details", &mut steps)?;
 
-    let clipboard_text =
-      wait_for_clipboard_text(&session, &clipboard_before, Duration::from_secs(2))?;
-    steps.push(
-      InteractionStep::new("read-clipboard", StepOutcome::Copied)
-        .note(format!("{} bytes", clipboard_text.len())),
-    );
+    let clipboard_text = wait_for_clipboard_text(&session, &clipboard_before, Duration::from_secs(2))?;
+    steps.push(InteractionStep::new("read-clipboard", StepOutcome::Copied).note(format!("{} bytes", clipboard_text.len())));
 
     Ok(CopySystemDetailsResult {
       command: "copy-system-details",
@@ -108,18 +86,11 @@ mod platform {
     })
   }
 
-  fn wait_for_clipboard_text(
-    session: &LinuxDriverSession,
-    previous: &str,
-    timeout: Duration,
-  ) -> Result<String, String> {
+  fn wait_for_clipboard_text(session: &LinuxDriverSession, previous: &str, timeout: Duration) -> Result<String, String> {
     let deadline = Instant::now() + timeout;
     let mut last_text = String::new();
     while Instant::now() < deadline {
-      last_text = session
-        .clipboard()
-        .snapshot()
-        .map_err(|error| format!("failed to read clipboard after copy: {error}"))?;
+      last_text = session.clipboard().snapshot().map_err(|error| format!("failed to read clipboard after copy: {error}"))?;
       if !last_text.trim().is_empty() && last_text != previous {
         return Ok(last_text);
       }

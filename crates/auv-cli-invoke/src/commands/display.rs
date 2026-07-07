@@ -23,9 +23,7 @@ pub fn group() -> CommandGroup {
 )]
 fn capture_display(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   if input.dry_run {
-    return Ok(InvokeCommandOutput::new(
-      "dry run: display.capture would capture the primary display",
-    ));
+    return Ok(InvokeCommandOutput::new("dry run: display.capture would capture the primary display"));
   }
   capture_display_impl()
 }
@@ -38,9 +36,7 @@ fn capture_display(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 )]
 fn list_displays(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   if input.dry_run {
-    return Ok(InvokeCommandOutput::new(
-      "dry run: display.list would enumerate connected displays",
-    ));
+    return Ok(InvokeCommandOutput::new("dry run: display.list would enumerate connected displays"));
   }
   list_displays_impl()
 }
@@ -55,10 +51,7 @@ fn project_screenshot_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResu
   // TODO(invoke-display-typed-api): projectScreenshotPoint needs a typed
   // display projection API before this invoke command can replace root-driver
   // routing.
-  Err(
-    "display.projectScreenshotPoint requires a typed display API for screenshot point projection"
-      .to_string(),
-  )
+  Err("display.projectScreenshotPoint requires a typed display API for screenshot point projection".to_string())
 }
 
 #[invoke_command(
@@ -79,18 +72,12 @@ fn list_displays_impl() -> InvokeCommandResult {
 
   let driver = auv_driver_macos::MacosDriver::new();
   let session = driver.open_local().map_err(|error| error.to_string())?;
-  let displays = session
-    .display()
-    .list()
-    .map_err(|error| error.to_string())?;
+  let displays = session.display().list().map_err(|error| error.to_string())?;
   Ok(display_list_output(&displays.displays))
 }
 
 fn display_list_output(displays: &[auv_driver::Display]) -> InvokeCommandOutput {
-  let primary = displays
-    .iter()
-    .find(|display| display.is_primary)
-    .or_else(|| displays.first());
+  let primary = displays.iter().find(|display| display.is_primary).or_else(|| displays.first());
   let mut output = InvokeCommandOutput::new(match primary {
     Some(display) => format!(
       "Listed {} display(s); primary display is {} at {:.0}x{:.0} logical.",
@@ -103,9 +90,7 @@ fn display_list_output(displays: &[auv_driver::Display]) -> InvokeCommandOutput 
   });
   output.backend = Some("auv-driver-macos.display".to_string());
   output.report = Some(display_list_report(displays));
-  output
-    .signals
-    .insert("display.count".to_string(), displays.len().to_string());
+  output.signals.insert("display.count".to_string(), displays.len().to_string());
   if let Some(display) = primary {
     insert_display_signals(&mut output, "display.primary", display);
   }
@@ -113,9 +98,7 @@ fn display_list_output(displays: &[auv_driver::Display]) -> InvokeCommandOutput 
     insert_display_signals(&mut output, &format!("display.{index}"), display);
   }
   output.verification = Some("read-only; no semantic success claim".to_string());
-  output
-    .known_limits
-    .push("display.list records the observed display inventory only.".to_string());
+  output.known_limits.push("display.list records the observed display inventory only.".to_string());
   output
 }
 
@@ -130,10 +113,7 @@ fn capture_display_impl() -> InvokeCommandResult {
 
   let driver = auv_driver_macos::MacosDriver::new();
   let session = driver.open_local().map_err(|error| error.to_string())?;
-  let result = session
-    .display()
-    .capture(CaptureOptions::default())
-    .map_err(|error| error.to_string())?;
+  let result = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
   let mut output = InvokeCommandOutput::new(format!(
     "Captured {} through {} ({}x{} pixels).",
     display_label(&result.display),
@@ -143,37 +123,19 @@ fn capture_display_impl() -> InvokeCommandResult {
   ));
   output.backend = Some(result.capture.backend.clone());
   insert_display_signals(&mut output, "display", &result.display);
-  output.signals.insert(
-    "capture.pixel_width".to_string(),
-    result.capture.image.width().to_string(),
-  );
-  output.signals.insert(
-    "capture.pixel_height".to_string(),
-    result.capture.image.height().to_string(),
-  );
-  output.signals.insert(
-    "capture.bounds".to_string(),
-    format_rect(result.capture.bounds),
-  );
-  output.signals.insert(
-    "capture.scale_factor".to_string(),
-    format!("{:.3}", result.capture.scale_factor),
-  );
+  output.signals.insert("capture.pixel_width".to_string(), result.capture.image.width().to_string());
+  output.signals.insert("capture.pixel_height".to_string(), result.capture.image.height().to_string());
+  output.signals.insert("capture.bounds".to_string(), format_rect(result.capture.bounds));
+  output.signals.insert("capture.scale_factor".to_string(), format!("{:.3}", result.capture.scale_factor));
   if let Some(reason) = result.capture.fallback_reason {
-    output
-      .signals
-      .insert("capture.fallback_reason".to_string(), reason);
+    output.signals.insert("capture.fallback_reason".to_string(), reason);
   }
   // TODO(invoke-capture-contract-artifacts): this handler records the screenshot
   // and coordinate signals, but not the old standalone capture-contract
   // artifact. Add the contract artifact after its direct-invoke JSON shape is
   // accepted in `2026-06-18-invoke-direct-command-implementations-handoff.md`.
   let source_path = invoke_artifact_path("display-capture", "png");
-  result
-    .capture
-    .image
-    .save(&source_path)
-    .map_err(|error| format!("failed to write display.capture screenshot artifact: {error}"))?;
+  result.capture.image.save(&source_path).map_err(|error| format!("failed to write display.capture screenshot artifact: {error}"))?;
   output.artifacts.push(ProducedArtifact {
     kind: "display-screenshot".to_string(),
     source_path,
@@ -181,9 +143,7 @@ fn capture_display_impl() -> InvokeCommandResult {
     note: Some("Screenshot captured by display.capture.".to_string()),
   });
   output.verification = Some("capture-only; no semantic success claim".to_string());
-  output
-    .known_limits
-    .push("display.capture records a screenshot and coordinate signals only; it does not verify UI semantics.".to_string());
+  output.known_limits.push("display.capture records a screenshot and coordinate signals only; it does not verify UI semantics.".to_string());
   Ok(output)
 }
 
@@ -192,40 +152,19 @@ fn capture_display_impl() -> InvokeCommandResult {
   Err("display.capture is only available on macOS through auv-driver-macos".to_string())
 }
 
-fn insert_display_signals(
-  output: &mut InvokeCommandOutput,
-  prefix: &str,
-  display: &auv_driver::Display,
-) {
-  output
-    .signals
-    .insert(format!("{prefix}.id"), display.id.clone());
-  output
-    .signals
-    .insert(format!("{prefix}.label"), display_label(display));
-  output
-    .signals
-    .insert(format!("{prefix}.frame"), format_rect(display.frame));
-  output.signals.insert(
-    format!("{prefix}.scale_factor"),
-    format!("{:.3}", display.scale_factor),
-  );
-  output.signals.insert(
-    format!("{prefix}.is_primary"),
-    display.is_primary.to_string(),
-  );
+fn insert_display_signals(output: &mut InvokeCommandOutput, prefix: &str, display: &auv_driver::Display) {
+  output.signals.insert(format!("{prefix}.id"), display.id.clone());
+  output.signals.insert(format!("{prefix}.label"), display_label(display));
+  output.signals.insert(format!("{prefix}.frame"), format_rect(display.frame));
+  output.signals.insert(format!("{prefix}.scale_factor"), format!("{:.3}", display.scale_factor));
+  output.signals.insert(format!("{prefix}.is_primary"), display.is_primary.to_string());
   if let Some(is_builtin) = display.is_builtin {
-    output
-      .signals
-      .insert(format!("{prefix}.is_builtin"), is_builtin.to_string());
+    output.signals.insert(format!("{prefix}.is_builtin"), is_builtin.to_string());
   }
 }
 
 fn display_label(display: &auv_driver::Display) -> String {
-  display
-    .name
-    .clone()
-    .unwrap_or_else(|| format!("display {}", display.id))
+  display.name.clone().unwrap_or_else(|| format!("display {}", display.id))
 }
 
 fn display_list_report(displays: &[auv_driver::Display]) -> InvokeReport {
@@ -248,13 +187,7 @@ fn display_list_report(displays: &[auv_driver::Display]) -> InvokeReport {
             },
           ),
           report_field("Kind", display_kind(display)),
-          report_field(
-            "Size",
-            format!(
-              "{:.0}x{:.0} logical",
-              display.frame.size.width, display.frame.size.height
-            ),
-          ),
+          report_field("Size", format!("{:.0}x{:.0} logical", display.frame.size.width, display.frame.size.height)),
           report_field("Scale", format!("{:.3}", display.scale_factor)),
           report_field("Frame", format_report_rect(display.frame)),
         ],
@@ -272,17 +205,11 @@ fn display_kind(display: &auv_driver::Display) -> &'static str {
 }
 
 fn format_rect(rect: auv_driver::Rect) -> String {
-  format!(
-    "x={:.0},y={:.0},width={:.0},height={:.0}",
-    rect.origin.x, rect.origin.y, rect.size.width, rect.size.height
-  )
+  format!("x={:.0},y={:.0},width={:.0},height={:.0}", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
 }
 
 fn format_report_rect(rect: auv_driver::Rect) -> String {
-  format!(
-    "x={:.0},y={:.0},w={:.0},h={:.0}",
-    rect.origin.x, rect.origin.y, rect.size.width, rect.size.height
-  )
+  format!("x={:.0},y={:.0},w={:.0},h={:.0}", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
 }
 
 fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
@@ -294,12 +221,7 @@ fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
 
 #[cfg(target_os = "macos")]
 fn invoke_artifact_path(label: &str, extension: &str) -> std::path::PathBuf {
-  std::env::temp_dir().join(format!(
-    "auv-invoke-{label}-{}-{}.{}",
-    std::process::id(),
-    now_millis(),
-    extension
-  ))
+  std::env::temp_dir().join(format!("auv-invoke-{label}-{}-{}.{}", std::process::id(), now_millis(), extension))
 }
 
 #[cfg(test)]
@@ -313,10 +235,7 @@ mod tests {
 
   use super::*;
 
-  fn input<'a>(
-    command_id: &'static str,
-    inputs: &'a BTreeMap<String, String>,
-  ) -> InvokeCommandInput<'a> {
+  fn input<'a>(command_id: &'static str, inputs: &'a BTreeMap<String, String>) -> InvokeCommandInput<'a> {
     InvokeCommandInput {
       command_id,
       target_application_id: None,
@@ -367,17 +286,11 @@ mod tests {
     assert_eq!(field_value(&report.sections[0], "Role"), "primary");
     assert_eq!(field_value(&report.sections[0], "Kind"), "built-in");
     assert_eq!(field_value(&report.sections[0], "Scale"), "2.000");
-    assert_eq!(
-      field_value(&report.sections[0], "Frame"),
-      "x=0,y=0,w=3008,h=1692"
-    );
+    assert_eq!(field_value(&report.sections[0], "Frame"), "x=0,y=0,w=3008,h=1692");
     assert_eq!(field_value(&report.sections[1], "Role"), "secondary");
     assert_eq!(field_value(&report.sections[1], "Kind"), "external");
     assert_eq!(field_value(&report.sections[1], "Scale"), "1.000");
-    assert_eq!(
-      field_value(&report.sections[1], "Frame"),
-      "x=3008,y=0,w=1920,h=1080"
-    );
+    assert_eq!(field_value(&report.sections[1], "Frame"), "x=3008,y=0,w=1920,h=1080");
   }
 
   #[test]
@@ -385,31 +298,16 @@ mod tests {
     let inputs = BTreeMap::new();
 
     for (command_id, invoke) in [
-      (
-        "display.identifyPoint",
-        identify_point as fn(InvokeCommandInput<'_>) -> InvokeCommandResult,
-      ),
-      (
-        "display.projectScreenshotPoint",
-        project_screenshot_point as fn(InvokeCommandInput<'_>) -> InvokeCommandResult,
-      ),
+      ("display.identifyPoint", identify_point as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
+      ("display.projectScreenshotPoint", project_screenshot_point as fn(InvokeCommandInput<'_>) -> InvokeCommandResult),
     ] {
-      let error =
-        invoke(input(command_id, &inputs)).expect_err("command should not route to root driver");
+      let error = invoke(input(command_id, &inputs)).expect_err("command should not route to root driver");
 
-      assert!(
-        error.contains("typed display API"),
-        "{command_id} returned unclear error: {error}"
-      );
+      assert!(error.contains("typed display API"), "{command_id} returned unclear error: {error}");
     }
   }
 
   fn field_value<'a>(section: &'a InvokeReportSection, label: &str) -> &'a str {
-    section
-      .fields
-      .iter()
-      .find(|field| field.label == label)
-      .map(|field| field.value.as_str())
-      .expect("field should exist")
+    section.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("field should exist")
   }
 }

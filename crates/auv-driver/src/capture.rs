@@ -65,11 +65,7 @@ pub struct CaptureBinding {
 }
 
 impl CaptureBinding {
-  pub fn new(
-    source_observation_id: impl Into<String>,
-    capture_ref: impl Into<String>,
-    capture_skew_ms: i64,
-  ) -> Self {
+  pub fn new(source_observation_id: impl Into<String>, capture_ref: impl Into<String>, capture_skew_ms: i64) -> Self {
     Self {
       source_observation_id: source_observation_id.into(),
       capture_ref: capture_ref.into(),
@@ -110,10 +106,7 @@ mod tests {
     let value = serde_json::to_value(&binding).expect("serialize capture binding");
 
     assert_eq!(value["source_observation_id"], serde_json::json!("frame-1"));
-    assert_eq!(
-      value["capture_ref"],
-      serde_json::json!("artifact://capture-1")
-    );
+    assert_eq!(value["capture_ref"], serde_json::json!("artifact://capture-1"));
     assert_eq!(value["capture_skew_ms"], serde_json::json!(12));
     assert_eq!(value["source_timestamp_millis"], serde_json::json!(1_000));
     assert_eq!(value["capture_timestamp_millis"], serde_json::json!(988));

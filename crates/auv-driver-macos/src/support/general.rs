@@ -1,21 +1,15 @@
 use crate::types::{
-  AuvResult, ObservedDisplaySnapshot, ObservedOcrRow, ObservedPointResolution, ObservedRect,
-  ObservedWindow, OcrTextMatch,
+  AuvResult, ObservedDisplaySnapshot, ObservedOcrRow, ObservedPointResolution, ObservedRect, ObservedWindow, OcrTextMatch,
 };
 
 pub fn looks_like_bundle_identifier(raw: &str) -> bool {
-  raw.contains('.')
-    && raw
-      .chars()
-      .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_'))
+  raw.contains('.') && raw.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_'))
 }
 
 pub fn app_contains_window(app_identifier: &str, app_name: &str) -> bool {
   let app_identifier = app_identifier.trim().to_ascii_lowercase();
   let app_name = app_name.trim().to_ascii_lowercase();
-  app_identifier == app_name
-    || app_identifier.contains(&app_name)
-    || app_name.contains(&app_identifier)
+  app_identifier == app_name || app_identifier.contains(&app_name) || app_name.contains(&app_identifier)
 }
 
 pub fn window_area(window: &ObservedWindow) -> i64 {
@@ -27,10 +21,7 @@ pub fn render_rect_compact(rect: &ObservedRect) -> String {
 }
 
 pub fn ocr_match_center(matched: &OcrTextMatch) -> (f64, f64) {
-  (
-    matched.bounds.x as f64 + (matched.bounds.width as f64 / 2.0),
-    matched.bounds.y as f64 + (matched.bounds.height as f64 / 2.0),
-  )
+  (matched.bounds.x as f64 + (matched.bounds.width as f64 / 2.0), matched.bounds.y as f64 + (matched.bounds.height as f64 / 2.0))
 }
 
 pub fn group_ocr_matches_into_rows(matches: &[&OcrTextMatch]) -> Vec<ObservedOcrRow> {
@@ -38,10 +29,7 @@ pub fn group_ocr_matches_into_rows(matches: &[&OcrTextMatch]) -> Vec<ObservedOcr
   sorted.sort_by(|left, right| {
     let (_, left_center_y) = ocr_match_center(left);
     let (_, right_center_y) = ocr_match_center(right);
-    left_center_y
-      .partial_cmp(&right_center_y)
-      .unwrap_or(std::cmp::Ordering::Equal)
-      .then_with(|| left.bounds.x.cmp(&right.bounds.x))
+    left_center_y.partial_cmp(&right_center_y).unwrap_or(std::cmp::Ordering::Equal).then_with(|| left.bounds.x.cmp(&right.bounds.x))
   });
 
   let mut rows = Vec::<ObservedOcrRow>::new();
@@ -49,15 +37,10 @@ pub fn group_ocr_matches_into_rows(matches: &[&OcrTextMatch]) -> Vec<ObservedOcr
     let (_, center_y) = ocr_match_center(matched);
     if let Some(existing) = rows.last_mut() {
       let existing_center_y = existing.bounds.y as f64 + (existing.bounds.height as f64 / 2.0);
-      let vertical_threshold =
-        ((existing.bounds.height.max(matched.bounds.height) as f64) * 1.5).max(36.0);
+      let vertical_threshold = ((existing.bounds.height.max(matched.bounds.height) as f64) * 1.5).max(36.0);
       if (center_y - existing_center_y).abs() <= vertical_threshold {
         existing.bounds = union_rects(&existing.bounds, &matched.bounds);
-        if !existing
-          .text_fragments
-          .iter()
-          .any(|value| value == &matched.text)
-        {
+        if !existing.text_fragments.iter().any(|value| value == &matched.text) {
           existing.text_fragments.push(matched.text.clone());
         }
         continue;
@@ -91,11 +74,7 @@ fn union_rects(left: &ObservedRect, right: &ObservedRect) -> ObservedRect {
   }
 }
 
-pub fn project_main_screenshot_point(
-  snapshot: &ObservedDisplaySnapshot,
-  screenshot_x: f64,
-  screenshot_y: f64,
-) -> AuvResult<(f64, f64)> {
+pub fn project_main_screenshot_point(snapshot: &ObservedDisplaySnapshot, screenshot_x: f64, screenshot_y: f64) -> AuvResult<(f64, f64)> {
   let main_display = snapshot
     .displays
     .iter()
@@ -118,11 +97,7 @@ pub fn project_main_screenshot_point(
   ))
 }
 
-pub fn resolve_display_point(
-  snapshot: &ObservedDisplaySnapshot,
-  x: f64,
-  y: f64,
-) -> Option<ObservedPointResolution> {
+pub fn resolve_display_point(snapshot: &ObservedDisplaySnapshot, x: f64, y: f64) -> Option<ObservedPointResolution> {
   let display = snapshot.displays.iter().find(|display| {
     let left = display.bounds.x as f64;
     let top = display.bounds.y as f64;

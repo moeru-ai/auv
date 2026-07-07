@@ -26,9 +26,7 @@ use crate::api::session_service::SessionApiError;
 use crate::api::session_service::mapper;
 use crate::api::session_service::operation_result_store::record_invoke_operation_result;
 use crate::api::session_service::registry::SessionRegistry;
-use crate::api::session_service::summary::{
-  JoinedOperationSummaryLoad, load_joined_operation_summary,
-};
+use crate::api::session_service::summary::{JoinedOperationSummaryLoad, load_joined_operation_summary};
 use crate::api::session_service::summary_store::record_invoke_summary;
 
 /// Process-local session API handler over one store path.
@@ -63,18 +61,11 @@ impl SessionApiHandler {
 
   /// `CreateSession`: allocate + register lightweight session metadata, return a
   /// `SessionRef`.
-  pub fn create_session(
-    &self,
-    _request: proto::CreateSessionRequest,
-  ) -> Result<proto::CreateSessionResponse, SessionApiError> {
+  pub fn create_session(&self, _request: proto::CreateSessionRequest) -> Result<proto::CreateSessionResponse, SessionApiError> {
     // TODO(api-p8-event): emit a `session_created` SessionEvent once the event
     // projector (API-P4 responsibility D) has a source. No event bus is wired in
     // this skeleton, so creation is silent.
-    let session_id = self
-      .registry
-      .lock()
-      .expect("session registry mutex poisoned")
-      .create();
+    let session_id = self.registry.lock().expect("session registry mutex poisoned").create();
     Ok(proto::CreateSessionResponse {
       session: Some(proto::SessionRef {
         session_id: session_id.as_str().to_string(),
@@ -88,20 +79,10 @@ impl SessionApiHandler {
   /// NOTICE(api-p8-ephemeral-recording): each call opens a new `LocalStore` and
   /// `RunRecordingBackend`; nothing session-scoped survives the return. This
   /// mirrors the MCP invoke surface and is not a session-bound runtime.
-  pub fn invoke(
-    &self,
-    request: proto::InvokeRequest,
-  ) -> Result<proto::InvokeResponse, SessionApiError> {
-    let session = request
-      .session
-      .ok_or(SessionApiError::MissingField("session"))?;
+  pub fn invoke(&self, request: proto::InvokeRequest) -> Result<proto::InvokeResponse, SessionApiError> {
+    let session = request.session.ok_or(SessionApiError::MissingField("session"))?;
     let session_id = session.session_id;
-    if !self
-      .registry
-      .lock()
-      .expect("session registry mutex poisoned")
-      .contains(&session_id)
-    {
+    if !self.registry.lock().expect("session registry mutex poisoned").contains(&session_id) {
       return Err(SessionApiError::UnknownSession(session_id));
     }
 
@@ -111,13 +92,8 @@ impl SessionApiHandler {
     let store = self.open_store()?;
     let recording = RunRecordingBackend::new(store, Arc::new(MemoryRunRecorder::new()));
     let registry = default_registry();
-    let result = auv_cli_invoke::invoke_recorded_with_session(
-      &recording,
-      &registry,
-      host_request,
-      SessionId::new(session_id),
-    )
-    .map_err(SessionApiError::InvokeExecution)?;
+    let result = auv_cli_invoke::invoke_recorded_with_session(&recording, &registry, host_request, SessionId::new(session_id))
+      .map_err(SessionApiError::InvokeExecution)?;
 
     Ok(self.finish_invoke_response(&command_id, &result, &recording))
   }
@@ -133,18 +109,10 @@ impl SessionApiHandler {
     // persistence failure must not surface as an invoke error (clients must not
     // blind-retry non-idempotent commands). Durability gaps go to known_limits.
     let mut durability_limits = record_invoke_summary(recording.store(), result, &summary);
-    durability_limits.extend(record_invoke_operation_result(
-      recording.store(),
-      command_id,
-      result,
-    ));
+    durability_limits.extend(record_invoke_operation_result(recording.store(), command_id, result));
     // Process-local cache is populated only when both summary and operation-result persist succeed.
     if durability_limits.is_empty() {
-      self
-        .summaries
-        .lock()
-        .expect("summary cache mutex poisoned")
-        .record(summary.clone());
+      self.summaries.lock().expect("summary cache mutex poisoned").record(summary.clone());
     }
     let known_limits: Vec<&str> = durability_limits.iter().map(String::as_str).collect();
     mapper::invoke_result_to_response(command_id, result, &known_limits)
@@ -157,13 +125,8 @@ impl SessionApiHandler {
   /// `process_local_runtime_override` for the join. A new handler or cache miss
   /// falls back to the persisted `operation-summary` artifact (API-P11). A
   /// persisted `OperationResult` skeleton is still required.
-  pub fn get_operation(
-    &self,
-    request: proto::GetOperationRequest,
-  ) -> Result<proto::GetOperationResponse, SessionApiError> {
-    let operation = request
-      .operation
-      .ok_or(SessionApiError::MissingField("operation"))?;
+  pub fn get_operation(&self, request: proto::GetOperationRequest) -> Result<proto::GetOperationResponse, SessionApiError> {
+    let operation = request.operation.ok_or(SessionApiError::MissingField("operation"))?;
     let run_id = operation.run_id.clone();
     let requested_operation_id = operation.operation_id;
 
@@ -174,9 +137,7 @@ impl SessionApiHandler {
 
     let store = self.open_store()?;
     let local_override = runtime_summary.as_ref();
-    match load_joined_operation_summary(&store, &run_id, local_override)
-      .map_err(SessionApiError::Storage)?
-    {
+    match load_joined_operation_summary(&store, &run_id, local_override).map_err(SessionApiError::Storage)? {
       JoinedOperationSummaryLoad::Found(joined) => {
         if !requested_operation_id.is_empty() {
           match &joined.command_id {
@@ -200,9 +161,7 @@ impl SessionApiHandler {
         Ok(mapper::joined_to_get_operation_response(&joined))
       }
       JoinedOperationSummaryLoad::RunNotFound => Err(SessionApiError::RunNotFound(run_id)),
-      JoinedOperationSummaryLoad::NoPersistedOperationResult => {
-        Err(SessionApiError::PersistedOperationRequired(run_id))
-      }
+      JoinedOperationSummaryLoad::NoPersistedOperationResult => Err(SessionApiError::PersistedOperationRequired(run_id)),
     }
   }
 
@@ -211,19 +170,9 @@ impl SessionApiHandler {
   /// API-P4 responsibility D (event projector) has no internal event source yet
   /// (gate 4). Rather than emit a fabricated/empty stream, the skeleton returns
   /// `NotWired` so callers see the gap explicitly.
-  pub fn stream_session_events(
-    &self,
-    request: proto::StreamSessionEventsRequest,
-  ) -> Result<Vec<proto::SessionEvent>, SessionApiError> {
-    let session = request
-      .session
-      .ok_or(SessionApiError::MissingField("session"))?;
-    if !self
-      .registry
-      .lock()
-      .expect("session registry mutex poisoned")
-      .contains(&session.session_id)
-    {
+  pub fn stream_session_events(&self, request: proto::StreamSessionEventsRequest) -> Result<Vec<proto::SessionEvent>, SessionApiError> {
+    let session = request.session.ok_or(SessionApiError::MissingField("session"))?;
+    if !self.registry.lock().expect("session registry mutex poisoned").contains(&session.session_id) {
       return Err(SessionApiError::UnknownSession(session.session_id));
     }
     Err(SessionApiError::NotWired {
@@ -258,22 +207,13 @@ mod tests {
     SessionApiHandler::new(root)
   }
 
-  fn handler_with_music_search_cached(
-    label: &str,
-    run_id: &str,
-  ) -> (SessionApiHandler, std::path::PathBuf) {
-    use crate::api::session_service::test_fixtures::{
-      music_runtime_summary, music_search_operation_result_fixture,
-    };
+  fn handler_with_music_search_cached(label: &str, run_id: &str) -> (SessionApiHandler, std::path::PathBuf) {
+    use crate::api::session_service::test_fixtures::{music_runtime_summary, music_search_operation_result_fixture};
 
     let fixture = music_search_operation_result_fixture(label, run_id);
     let root = fixture.root.clone();
     let handler = SessionApiHandler::new(root.clone());
-    handler
-      .summaries
-      .lock()
-      .expect("summary cache mutex poisoned")
-      .record(music_runtime_summary(run_id));
+    handler.summaries.lock().expect("summary cache mutex poisoned").record(music_runtime_summary(run_id));
     (handler, root)
   }
 
@@ -287,13 +227,7 @@ mod tests {
       .expect("create_session");
     let session = response.session.expect("session ref");
     assert!(!session.session_id.is_empty());
-    assert!(
-      handler
-        .registry
-        .lock()
-        .unwrap()
-        .contains(&session.session_id)
-    );
+    assert!(handler.registry.lock().unwrap().contains(&session.session_id));
   }
 
   #[test]
@@ -367,12 +301,7 @@ mod tests {
     let operation_ref = response.operation.expect("operation ref");
     assert_eq!(operation_ref.run_id, run_id);
     assert_eq!(operation_ref.operation_id, "fixture.observe");
-    assert!(
-      response
-        .known_limits
-        .iter()
-        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
-    );
+    assert!(response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
   }
 
   #[test]
@@ -393,10 +322,7 @@ mod tests {
 
     assert_eq!(response.status, "completed");
     assert_eq!(response.output_summary, "did the thing");
-    assert_eq!(
-      response.signals.get("now_playing").map(String::as_str),
-      Some("track-x")
-    );
+    assert_eq!(response.signals.get("now_playing").map(String::as_str), Some("track-x"));
     let operation_ref = response.operation.expect("operation ref");
     assert_eq!(operation_ref.run_id, run_id);
     assert_eq!(operation_ref.operation_id, "music.search");
@@ -440,12 +366,7 @@ mod tests {
     assert_eq!(response.status, "completed");
     assert_eq!(response.output_summary, "fixture observed");
     assert_eq!(response.operation.expect("operation ref").run_id, run_id);
-    assert!(
-      response
-        .known_limits
-        .iter()
-        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
-    );
+    assert!(response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
 
     let _ = std::fs::remove_dir_all(root);
   }
@@ -465,9 +386,7 @@ mod tests {
     let run_id = "run-summary-persist-fail";
     persist_operation_result_on_store(&store, &root, run_id, &music_search_operation(run_id));
     let run_dir = store.run_dir(run_id).expect("run dir");
-    let mut permissions = std::fs::metadata(&run_dir)
-      .expect("run dir metadata")
-      .permissions();
+    let mut permissions = std::fs::metadata(&run_dir).expect("run dir metadata").permissions();
     permissions.set_mode(0o500);
     std::fs::set_permissions(&run_dir, permissions).expect("run dir should be read-only");
 
@@ -477,26 +396,9 @@ mod tests {
     );
     let result = fixture_observe_invoke_result(run_id);
     let response = handler.finish_invoke_response("fixture.observe", &result, &recording);
-    assert!(
-      response
-        .known_limits
-        .iter()
-        .any(|limit| limit == OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT)
-    );
-    assert!(
-      response
-        .known_limits
-        .iter()
-        .any(|limit| limit == OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT)
-    );
-    assert!(
-      handler
-        .summaries
-        .lock()
-        .expect("summary cache mutex poisoned")
-        .get(run_id)
-        .is_none()
-    );
+    assert!(response.known_limits.iter().any(|limit| limit == OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT));
+    assert!(response.known_limits.iter().any(|limit| limit == OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT));
+    assert!(handler.summaries.lock().expect("summary cache mutex poisoned").get(run_id).is_none());
 
     let persisted_failure_response = handler
       .get_operation(proto::GetOperationRequest {
@@ -508,16 +410,9 @@ mod tests {
       .expect("get_operation should succeed with persisted result");
 
     assert!(persisted_failure_response.output_summary.is_empty());
-    assert!(
-      persisted_failure_response
-        .known_limits
-        .iter()
-        .any(|limit| limit == "auv.api.session.runtime_summary_unavailable")
-    );
+    assert!(persisted_failure_response.known_limits.iter().any(|limit| limit == "auv.api.session.runtime_summary_unavailable"));
 
-    let mut cleanup_permissions = std::fs::metadata(&run_dir)
-      .expect("run dir metadata after test")
-      .permissions();
+    let mut cleanup_permissions = std::fs::metadata(&run_dir).expect("run dir metadata after test").permissions();
     cleanup_permissions.set_mode(0o700);
     let _ = std::fs::set_permissions(&run_dir, cleanup_permissions);
     let _ = std::fs::remove_dir_all(root);
@@ -525,9 +420,7 @@ mod tests {
 
   #[test]
   fn finish_invoke_response_persists_failed_skeleton_and_get_operation_reads_it() {
-    use crate::api::session_service::test_fixtures::{
-      fixture_observe_invoke_result, write_minimal_run,
-    };
+    use crate::api::session_service::test_fixtures::{fixture_observe_invoke_result, write_minimal_run};
     use auv_cli_invoke::RunStatus;
 
     let root = unique_temp_dir("session-api-failed-invoke");
@@ -545,14 +438,7 @@ mod tests {
 
     let response = handler.finish_invoke_response("fixture.observe", &result, &recording);
     assert_eq!(response.status, "failed");
-    assert!(
-      handler
-        .summaries
-        .lock()
-        .expect("summary cache mutex poisoned")
-        .get("run-failed-invoke")
-        .is_some()
-    );
+    assert!(handler.summaries.lock().expect("summary cache mutex poisoned").get("run-failed-invoke").is_some());
 
     let response = handler
       .get_operation(proto::GetOperationRequest {
@@ -566,12 +452,7 @@ mod tests {
     assert_eq!(response.status, "failed");
     assert_eq!(response.output_summary, "fixture failed");
     assert_eq!(response.failure_message, "boom");
-    assert!(
-      response
-        .known_limits
-        .iter()
-        .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
-    );
+    assert!(response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
 
     let _ = std::fs::remove_dir_all(root);
   }
@@ -608,32 +489,13 @@ mod tests {
       )
       .expect("invoke fixture.observe");
       let run_dir = store.run_dir(result.run_id.as_str()).expect("run dir");
-      let mut permissions = std::fs::metadata(&run_dir)
-        .expect("run dir metadata")
-        .permissions();
+      let mut permissions = std::fs::metadata(&run_dir).expect("run dir metadata").permissions();
       permissions.set_mode(0o500);
       std::fs::set_permissions(&run_dir, permissions).expect("run dir should be read-only");
       let response = handler.finish_invoke_response("fixture.observe", &result, &recording);
-      assert!(
-        response
-          .known_limits
-          .iter()
-          .any(|limit| limit == OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT)
-      );
-      assert!(
-        response
-          .known_limits
-          .iter()
-          .any(|limit| limit == OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT)
-      );
-      assert!(
-        handler
-          .summaries
-          .lock()
-          .expect("summary cache mutex poisoned")
-          .get(result.run_id.as_str())
-          .is_none()
-      );
+      assert!(response.known_limits.iter().any(|limit| limit == OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT));
+      assert!(response.known_limits.iter().any(|limit| limit == OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT));
+      assert!(handler.summaries.lock().expect("summary cache mutex poisoned").get(result.run_id.as_str()).is_none());
       result.run_id
     };
 
@@ -645,19 +507,10 @@ mod tests {
         }),
       })
       .expect_err("missing synthetic operation-result should preserve precondition");
-    assert!(matches!(
-      error,
-      SessionApiError::PersistedOperationRequired(_)
-    ));
+    assert!(matches!(error, SessionApiError::PersistedOperationRequired(_)));
 
-    let run_dir = handler
-      .open_store()
-      .expect("open store")
-      .run_dir(run_id.as_str())
-      .expect("run dir");
-    let mut cleanup_permissions = std::fs::metadata(&run_dir)
-      .expect("run dir metadata after test")
-      .permissions();
+    let run_dir = handler.open_store().expect("open store").run_dir(run_id.as_str()).expect("run dir");
+    let mut cleanup_permissions = std::fs::metadata(&run_dir).expect("run dir metadata after test").permissions();
     cleanup_permissions.set_mode(0o700);
     let _ = std::fs::set_permissions(&run_dir, cleanup_permissions);
     let _ = std::fs::remove_dir_all(root);

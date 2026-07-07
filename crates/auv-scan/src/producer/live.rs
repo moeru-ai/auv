@@ -5,24 +5,14 @@
 
 use std::path::Path;
 
-use super::{
-  FrameCaptureMeta, ProducedFrame, ScanProducerError, frame_from_capture, write_frame_with_image,
-};
+use super::{FrameCaptureMeta, ProducedFrame, ScanProducerError, frame_from_capture, write_frame_with_image};
 use auv_driver::Capture;
 
 /// Build a frame from an in-memory [`Capture`] and write PNG + JSON to `out_dir`.
-pub fn produce_frame_from_capture(
-  out_dir: &Path,
-  capture: &Capture,
-  meta: FrameCaptureMeta,
-) -> Result<ProducedFrame, ScanProducerError> {
+pub fn produce_frame_from_capture(out_dir: &Path, capture: &Capture, meta: FrameCaptureMeta) -> Result<ProducedFrame, ScanProducerError> {
   let frame = frame_from_capture(capture, meta)?;
-  let png = image::ImageBuffer::from_raw(
-    frame.image.width,
-    frame.image.height,
-    capture.image.clone().into_raw(),
-  )
-  .ok_or(ScanProducerError::ZeroImageDimension)?;
+  let png = image::ImageBuffer::from_raw(frame.image.width, frame.image.height, capture.image.clone().into_raw())
+    .ok_or(ScanProducerError::ZeroImageDimension)?;
   let mut image_bytes = Vec::new();
   let mut cursor = std::io::Cursor::new(&mut image_bytes);
   image::DynamicImage::ImageRgba8(png)
@@ -67,8 +57,7 @@ mod tests {
       image_file_name: "frame-0001.png".to_string(),
       media_type: "image/png".to_string(),
     };
-    let out_dir =
-      PathBuf::from(std::env::temp_dir()).join(format!("auv-scan-live-{}", std::process::id()));
+    let out_dir = PathBuf::from(std::env::temp_dir()).join(format!("auv-scan-live-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out_dir);
     let produced = produce_frame_from_capture(&out_dir, &capture, meta).expect("produce");
     read_frame_artifact(&produced.json_path).expect("read");

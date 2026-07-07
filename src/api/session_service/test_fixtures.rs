@@ -12,14 +12,12 @@ use auv_cli_invoke::{InvokeResult, OperationSummary, OperationSummarySource, Run
 use auv_tracing_driver::artifact::ArtifactFileSource;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::{
-  ArtifactRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
-  SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+  ArtifactRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId,
+  TraceState, TraceStatusCode,
 };
 use serde::Serialize;
 
-use crate::contract::{
-  OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
-};
+use crate::contract::{OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus};
 use crate::model::now_millis;
 
 static FIXTURE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -110,8 +108,7 @@ pub fn stage_json_artifact<T: Serialize>(
   value: &T,
 ) -> ArtifactRecordV1Alpha1 {
   let source_path = root.join(format!("source-{index}-{preferred_name}"));
-  let rendered =
-    serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
+  let rendered = serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
   fs::write(&source_path, rendered).expect("artifact source should write");
   store
     .stage_artifact_file(
@@ -167,10 +164,7 @@ pub fn music_runtime_summary(run_id: &str) -> OperationSummary {
 
 pub fn fixture_observe_invoke_result(run_id: &str) -> InvokeResult {
   let mut signals = std::collections::BTreeMap::new();
-  signals.insert(
-    "fixture.observe".to_string(),
-    "records deterministic fixture output only.".to_string(),
-  );
+  signals.insert("fixture.observe".to_string(), "records deterministic fixture output only.".to_string());
   InvokeResult {
     run_id: run_id.to_string(),
     producer_span_id: SpanId::new("0000000000000001"),
@@ -223,24 +217,10 @@ pub fn write_minimal_run(store: &LocalStore, run_id: &str) {
     .expect("run snapshot should persist");
 }
 
-pub fn persist_operation_result_on_store(
-  store: &LocalStore,
-  root: &Path,
-  run_id: &str,
-  operation: &OperationResult,
-) {
+pub fn persist_operation_result_on_store(store: &LocalStore, root: &Path, run_id: &str, operation: &OperationResult) {
   let run = dummy_run(run_id);
   let span = dummy_read_span(&run.root_span_id);
-  let artifact = stage_json_artifact(
-    store,
-    root,
-    &run.run_id,
-    &span.span_id,
-    0,
-    "operation-result",
-    "operation-result.json",
-    operation,
-  );
+  let artifact = stage_json_artifact(store, root, &run.run_id, &span.span_id, 0, "operation-result", "operation-result.json", operation);
   store
     .write_run_snapshot(&CanonicalRun {
       run,
@@ -251,11 +231,7 @@ pub fn persist_operation_result_on_store(
     .expect("run snapshot should persist");
 }
 
-pub fn persist_operation_result_run(
-  label: &str,
-  run_id: &str,
-  operation: &OperationResult,
-) -> SessionRunFixture {
+pub fn persist_operation_result_run(label: &str, run_id: &str, operation: &OperationResult) -> SessionRunFixture {
   let root = unique_temp_dir(label);
   let store = LocalStore::new(root.clone()).expect("store should initialize");
   persist_operation_result_on_store(&store, &root, run_id, operation);
@@ -275,11 +251,7 @@ pub fn persist_operation_result_and_summary_run(
 ) -> SessionRunFixture {
   let fixture = persist_operation_result_run(label, run_id, operation);
   let result = invoke_result_matching_summary(run_id, summary);
-  crate::api::session_service::summary_store::persist_operation_summary(
-    &fixture.store,
-    &result,
-    summary,
-  )
-  .expect("summary artifact should persist");
+  crate::api::session_service::summary_store::persist_operation_summary(&fixture.store, &result, summary)
+    .expect("summary artifact should persist");
   fixture
 }

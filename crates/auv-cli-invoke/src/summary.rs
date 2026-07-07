@@ -266,10 +266,7 @@ mod tests {
 
     assert_eq!(result.status(), RunStatus::Completed);
     assert_eq!(result.output_summary(), "fixture observed");
-    assert_eq!(
-      result.signals().get("fixture").map(String::as_str),
-      Some("observed")
-    );
+    assert_eq!(result.signals().get("fixture").map(String::as_str), Some("observed"));
     assert_eq!(result.failure_message(), None);
   }
 
@@ -306,10 +303,7 @@ mod tests {
     assert_eq!(summary.command_id(), "fixture.observe");
     assert_eq!(summary.status(), RunStatus::Completed);
     assert_eq!(summary.output_summary(), "fixture observed");
-    assert_eq!(
-      summary.signals().get("fixture").map(String::as_str),
-      Some("observed")
-    );
+    assert_eq!(summary.signals().get("fixture").map(String::as_str), Some("observed"));
     assert_eq!(summary.failure_message(), None);
   }
 
@@ -342,11 +336,6 @@ mod tests {
     cache.record_result(&updated);
 
     assert_eq!(cache.len(), 1);
-    assert_eq!(
-      cache
-        .get("run-dup")
-        .map(OperationSummarySource::output_summary),
-      Some("second observation")
-    );
+    assert_eq!(cache.get("run-dup").map(OperationSummarySource::output_summary), Some("second observation"));
   }
 }

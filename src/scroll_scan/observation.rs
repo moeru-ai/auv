@@ -5,9 +5,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::contract::{
-  ArtifactRef, NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource,
-  RatioRegion, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
-  RecognitionSurface, RecognizedItem, SurfaceNode,
+  ArtifactRef, NodeRef, OBSERVATION_SNAPSHOT_API_VERSION, ObservationSnapshot, ObservationSource, RatioRegion, RecognitionBox,
+  RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem, SurfaceNode,
 };
 use crate::model::{AuvResult, now_millis};
 use auv_tracing_driver::trace::{ArtifactRecordV1Alpha1, RunId, SpanId};
@@ -15,17 +14,10 @@ use auv_tracing_driver::trace::{ArtifactRecordV1Alpha1, RunId, SpanId};
 use super::{CollectionObservation, ObservationCluster, ScanRect, ScanTarget};
 
 pub fn normalize_observation_text(raw: &str) -> String {
-  raw
-    .split_whitespace()
-    .collect::<Vec<_>>()
-    .join(" ")
-    .trim()
-    .to_lowercase()
+  raw.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_lowercase()
 }
 
-pub fn conservative_merge_observations(
-  observations: &[CollectionObservation],
-) -> Vec<ObservationCluster> {
+pub fn conservative_merge_observations(observations: &[CollectionObservation]) -> Vec<ObservationCluster> {
   let mut clusters: Vec<ObservationCluster> = Vec::new();
   let mut assigned = vec![false; observations.len()];
 
@@ -46,8 +38,7 @@ pub fn conservative_merge_observations(
       if should_merge_adjacent_observations(observation, candidate) {
         ids.push(candidate.observation_id.clone());
         assigned[candidate_index] = true;
-        let decision = merge_decision(observation, candidate)
-          .expect("merge decision should exist when adjacent observations merge");
+        let decision = merge_decision(observation, candidate).expect("merge decision should exist when adjacent observations merge");
         merge_reason = decision.reason.to_string();
         confidence = decision.confidence;
       }
@@ -68,10 +59,7 @@ pub fn conservative_merge_observations(
 // TODO: Revisit merge identity after scroll-boundary evidence and row-local
 // image hashes exist. This first rule is intentionally conservative and only
 // merges adjacent-page overlap with nearly identical y positions.
-pub(crate) fn should_merge_adjacent_observations(
-  left: &CollectionObservation,
-  right: &CollectionObservation,
-) -> bool {
+pub(crate) fn should_merge_adjacent_observations(left: &CollectionObservation, right: &CollectionObservation) -> bool {
   merge_decision(left, right).is_some()
 }
 
@@ -80,10 +68,7 @@ struct MergeDecision {
   confidence: f64,
 }
 
-fn merge_decision(
-  left: &CollectionObservation,
-  right: &CollectionObservation,
-) -> Option<MergeDecision> {
+fn merge_decision(left: &CollectionObservation, right: &CollectionObservation) -> Option<MergeDecision> {
   if left.section_context != right.section_context {
     return None;
   }
@@ -105,10 +90,7 @@ fn merge_decision(
 
   let left_slot_identity = recognition_slot_identity(left);
   let right_slot_identity = recognition_slot_identity(right);
-  if left_slot_identity.is_some()
-    && right_slot_identity.is_some()
-    && left_slot_identity != right_slot_identity
-  {
+  if left_slot_identity.is_some() && right_slot_identity.is_some() && left_slot_identity != right_slot_identity {
     return None;
   }
   if left_slot_identity == right_slot_identity && left_slot_identity.is_some() {
@@ -131,11 +113,7 @@ fn merge_decision(
   })
 }
 
-fn shared_attribute<'a>(
-  left: &'a CollectionObservation,
-  right: &'a CollectionObservation,
-  key: &str,
-) -> Option<&'a str> {
+fn shared_attribute<'a>(left: &'a CollectionObservation, right: &'a CollectionObservation, key: &str) -> Option<&'a str> {
   let left_value = left.attributes.get(key)?;
   let right_value = right.attributes.get(key)?;
   if left_value == right_value {
@@ -145,11 +123,7 @@ fn shared_attribute<'a>(
   }
 }
 
-fn attribute_values_conflict(
-  left: &CollectionObservation,
-  right: &CollectionObservation,
-  key: &str,
-) -> bool {
+fn attribute_values_conflict(left: &CollectionObservation, right: &CollectionObservation, key: &str) -> bool {
   match (left.attributes.get(key), right.attributes.get(key)) {
     (Some(left_value), Some(right_value)) => left_value != right_value,
     _ => false,
@@ -180,9 +154,7 @@ pub(crate) fn observation_from_row(
     .and_then(Value::as_str)
     .ok_or_else(|| format!("malformed observe JSON: row {row_index} missing text string"))?
     .to_string();
-  let bounds = row
-    .get("bounds")
-    .ok_or_else(|| format!("malformed observe JSON: row {row_index} missing bounds object"))?;
+  let bounds = row.get("bounds").ok_or_else(|| format!("malformed observe JSON: row {row_index} missing bounds object"))?;
 
   Ok(CollectionObservation {
     observation_id: format!("obs_{:04}_{:04}", page_index + 1, row_index + 1),
@@ -238,10 +210,7 @@ fn observation_attributes_from_row(row: &Value) -> BTreeMap<String, String> {
     attributes.insert("item_index".to_string(), item_index.to_string());
   }
   if let Some(row_candidate_index) = row.get("row_candidate_index").and_then(Value::as_u64) {
-    attributes.insert(
-      "row_candidate_index".to_string(),
-      row_candidate_index.to_string(),
-    );
+    attributes.insert("row_candidate_index".to_string(), row_candidate_index.to_string());
   }
   if let Some(role) = row.get("segmented_region_role").and_then(Value::as_str) {
     attributes.insert("segmented_region_role".to_string(), role.to_string());
@@ -250,11 +219,7 @@ fn observation_attributes_from_row(row: &Value) -> BTreeMap<String, String> {
     attributes.insert("filter_reason".to_string(), reason.to_string());
   }
   if let Some(fragments) = row.get("text_fragments").and_then(Value::as_array) {
-    let text = fragments
-      .iter()
-      .filter_map(Value::as_str)
-      .collect::<Vec<_>>()
-      .join(" | ");
+    let text = fragments.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" | ");
     if !text.is_empty() {
       attributes.insert("text_fragments".to_string(), text);
     }
@@ -269,19 +234,10 @@ fn observation_attributes_from_recognized_item(
 ) -> BTreeMap<String, String> {
   let mut attributes = BTreeMap::new();
   attributes.insert("item_index".to_string(), item_index.to_string());
-  attributes.insert(
-    "recognition_id".to_string(),
-    recognition.recognition_id.clone(),
-  );
+  attributes.insert("recognition_id".to_string(), recognition.recognition_id.clone());
   attributes.insert("recognized_item_id".to_string(), item.item_id.clone());
-  attributes.insert(
-    "recognition_source".to_string(),
-    recognition_source_name(recognition.source).to_string(),
-  );
-  attributes.insert(
-    "recognition_surface".to_string(),
-    recognition_surface_name(recognition.scope.surface).to_string(),
-  );
+  attributes.insert("recognition_source".to_string(), recognition_source_name(recognition.source).to_string());
+  attributes.insert("recognition_surface".to_string(), recognition_surface_name(recognition.scope.surface).to_string());
   attributes.insert("recognized_item_kind".to_string(), item.kind.clone());
   if let Some(provider_score) = item.provider_score {
     attributes.insert("provider_score".to_string(), provider_score.to_string());
@@ -289,13 +245,7 @@ fn observation_attributes_from_recognized_item(
   if let Some(source) = item.detail.get("source").and_then(Value::as_str) {
     attributes.insert("source".to_string(), source.to_string());
   } else {
-    attributes.insert(
-      "source".to_string(),
-      format!(
-        "recognition:{}",
-        recognition_source_name(recognition.source)
-      ),
-    );
+    attributes.insert("source".to_string(), format!("recognition:{}", recognition_source_name(recognition.source)));
   }
   if let Some(row_index) = item.detail.get("row_index").and_then(Value::as_u64) {
     attributes.insert("row_index".to_string(), row_index.to_string());
@@ -309,15 +259,8 @@ fn observation_attributes_from_recognized_item(
   attributes
 }
 
-pub(crate) fn surface_nodes_from_observations(
-  run_id: &RunId,
-  span_id: &SpanId,
-  observations: &[CollectionObservation],
-) -> Vec<SurfaceNode> {
-  observations
-    .iter()
-    .map(|observation| surface_node_from_observation(run_id, span_id, observation))
-    .collect()
+pub(crate) fn surface_nodes_from_observations(run_id: &RunId, span_id: &SpanId, observations: &[CollectionObservation]) -> Vec<SurfaceNode> {
+  observations.iter().map(|observation| surface_node_from_observation(run_id, span_id, observation)).collect()
 }
 
 /// Build a v0 `ObservationSnapshot` record for one scanned page. The
@@ -343,36 +286,22 @@ pub(crate) fn build_page_observation_snapshot(
   let nodes = surface_nodes_from_observations(run_id, span_id, page_observations);
   let screenshot_path = screenshot_artifact.map(|path| path.display().to_string());
   let capture_artifact = screenshot_artifact_record.map(|artifact| artifact_ref(run_id, artifact));
-  let evidence = evidence_artifacts
-    .iter()
-    .map(|artifact| artifact_ref(run_id, artifact))
-    .collect::<Vec<_>>();
+  let evidence = evidence_artifacts.iter().map(|artifact| artifact_ref(run_id, artifact)).collect::<Vec<_>>();
   let observation_count = page_observations.len();
   let mut detail = serde_json::Map::new();
   detail.insert("page_index".to_string(), Value::from(page_index));
-  detail.insert(
-    "observation_count".to_string(),
-    Value::from(observation_count),
-  );
-  detail.insert(
-    "new_observation_count".to_string(),
-    Value::from(new_observation_count),
-  );
+  detail.insert("observation_count".to_string(), Value::from(observation_count));
+  detail.insert("new_observation_count".to_string(), Value::from(new_observation_count));
   if let Some(path) = &screenshot_path {
     detail.insert("screenshot_artifact".to_string(), Value::from(path.clone()));
   }
 
   let mut known_limits = Vec::new();
   if screenshot_artifact.is_none() {
-    known_limits.push(
-      "scroll_scan: observe response did not include a png artifact for this page".to_string(),
-    );
+    known_limits.push("scroll_scan: observe response did not include a png artifact for this page".to_string());
   }
   if evidence.is_empty() {
-    known_limits.push(
-      "scroll_scan: observe response did not expose any evidence artifacts for this page"
-        .to_string(),
-    );
+    known_limits.push("scroll_scan: observe response did not expose any evidence artifacts for this page".to_string());
   }
 
   ObservationSnapshot {
@@ -450,12 +379,7 @@ fn observation_source_hint(observation: &CollectionObservation) -> Option<Observ
     .attributes
     .get("recognition_source")
     .and_then(|value| classify_source_tag(value))
-    .or_else(|| {
-      observation
-        .attributes
-        .get("source")
-        .and_then(|value| classify_source_tag(value))
-    })
+    .or_else(|| observation.attributes.get("source").and_then(|value| classify_source_tag(value)))
 }
 
 fn classify_source_tag(value: &str) -> Option<ObservationSource> {
@@ -464,41 +388,21 @@ fn classify_source_tag(value: &str) -> Option<ObservationSource> {
     Some(ObservationSource::Ax)
   } else if normalized.contains("ocr") {
     Some(ObservationSource::Ocr)
-  } else if normalized.contains("visual")
-    || normalized.contains("segment")
-    || normalized.contains("icon")
-  {
+  } else if normalized.contains("visual") || normalized.contains("segment") || normalized.contains("icon") {
     Some(ObservationSource::Visual)
   } else {
     None
   }
 }
 
-fn surface_node_from_observation(
-  run_id: &RunId,
-  span_id: &SpanId,
-  observation: &CollectionObservation,
-) -> SurfaceNode {
-  let source_artifacts = observation
-    .source_artifacts
-    .iter()
-    .map(|path| path.display().to_string())
-    .collect::<Vec<_>>();
+fn surface_node_from_observation(run_id: &RunId, span_id: &SpanId, observation: &CollectionObservation) -> SurfaceNode {
+  let source_artifacts = observation.source_artifacts.iter().map(|path| path.display().to_string()).collect::<Vec<_>>();
   let recognition_id = observation.attributes.get("recognition_id").cloned();
-  let recognition_source = observation
-    .attributes
-    .get("recognition_source")
-    .and_then(|value| parse_recognition_source_name(value));
-  let recognition_surface = observation
-    .attributes
-    .get("recognition_surface")
-    .and_then(|value| parse_recognition_surface_name(value));
+  let recognition_source = observation.attributes.get("recognition_source").and_then(|value| parse_recognition_source_name(value));
+  let recognition_surface = observation.attributes.get("recognition_surface").and_then(|value| parse_recognition_surface_name(value));
   let recognized_item_id = observation.attributes.get("recognized_item_id").cloned();
   let recognized_item_kind = observation.attributes.get("recognized_item_kind").cloned();
-  let provider_score = observation
-    .attributes
-    .get("provider_score")
-    .and_then(|value| value.parse::<f64>().ok());
+  let provider_score = observation.attributes.get("provider_score").and_then(|value| value.parse::<f64>().ok());
   let kind = recognized_item_kind
     .clone()
     .or_else(|| observation.attributes.get("segmented_region_role").cloned())
@@ -547,9 +451,7 @@ mod tests {
   use std::collections::BTreeMap;
   use std::path::PathBuf;
 
-  use super::{
-    build_page_observation_snapshot, infer_observation_source, normalize_observation_text,
-  };
+  use super::{build_page_observation_snapshot, infer_observation_source, normalize_observation_text};
   use crate::contract::ObservationSource;
   use crate::scroll_scan::{CollectionObservation, ScanRect, ScanRegion, ScanTarget};
   use auv_tracing_driver::trace::{RunId, SpanId};
@@ -592,10 +494,7 @@ mod tests {
       "recognition_source",
       "visual_row",
     )];
-    assert_eq!(
-      infer_observation_source(&observations),
-      ObservationSource::Visual
-    );
+    assert_eq!(infer_observation_source(&observations), ObservationSource::Visual);
   }
 
   #[test]
@@ -604,10 +503,7 @@ mod tests {
       sample_observation("obs_ocr", "recognition_source", "ocr_row"),
       sample_observation("obs_visual", "recognition_source", "visual_row"),
     ];
-    assert_eq!(
-      infer_observation_source(&observations),
-      ObservationSource::Merged
-    );
+    assert_eq!(infer_observation_source(&observations), ObservationSource::Merged);
   }
 
   #[test]
@@ -705,7 +601,5 @@ fn recognition_surface_name(surface: RecognitionSurface) -> &'static str {
 }
 
 fn json_i64(bounds: &Value, key: &str, row_index: usize) -> AuvResult<i64> {
-  bounds.get(key).and_then(Value::as_i64).ok_or_else(|| {
-    format!("malformed observe JSON: row {row_index} bounds.{key} must be an integer")
-  })
+  bounds.get(key).and_then(Value::as_i64).ok_or_else(|| format!("malformed observe JSON: row {row_index} bounds.{key} must be an integer"))
 }

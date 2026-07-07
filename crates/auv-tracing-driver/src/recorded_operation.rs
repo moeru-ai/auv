@@ -14,8 +14,8 @@ use crate::recording::RunRecordingBackend;
 use crate::run_builder::{Attributes, RecordingRun, RunFinish, RunSpec, SpanFinish, SpanRef};
 use crate::time::now_millis;
 use crate::trace::{
-  EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RunId, SPAN_API_VERSION, SpanRecordV1Alpha1,
-  TraceState, TraceStatusCode, new_event_id, new_span_id,
+  EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RunId, SPAN_API_VERSION, SpanRecordV1Alpha1, TraceState, TraceStatusCode, new_event_id,
+  new_span_id,
 };
 
 pub struct RecordedOperationContext<'a> {
@@ -94,14 +94,9 @@ impl<'a> RecordedOperationContext<'a> {
       Some(render_artifact_event(&artifact)),
       vec![artifact.artifact_id.clone()],
     );
-    let staged_path = self
-      .recording()
-      .run_dir(self.run.id())?
-      .join(&artifact.path);
+    let staged_path = self.recording().run_dir(self.run.id())?.join(&artifact.path);
     self.run.record_artifact(artifact.clone());
-    self
-      .recording()
-      .record_artifact_bytes(self.run.id(), &artifact, &staged_path)?;
+    self.recording().record_artifact_bytes(self.run.id(), &artifact, &staged_path)?;
     Ok(staged_path)
   }
 
@@ -145,10 +140,7 @@ impl<'a> RecordedOperationContext<'a> {
       Some(render_artifact_event(&artifact)),
       vec![artifact.artifact_id.clone()],
     );
-    let staged_path = self
-      .recording()
-      .run_dir(self.run.id())?
-      .join(&artifact.path);
+    let staged_path = self.recording().run_dir(self.run.id())?.join(&artifact.path);
     let artifact_ref = ArtifactRef {
       run_id: self.run.id().clone(),
       artifact_id: artifact.artifact_id.clone(),
@@ -156,9 +148,7 @@ impl<'a> RecordedOperationContext<'a> {
       captured_event_id: Some(event_id),
     };
     self.run.record_artifact(artifact.clone());
-    self
-      .recording()
-      .record_artifact_bytes(self.run.id(), &artifact, &staged_path)?;
+    self.recording().record_artifact_bytes(self.run.id(), &artifact, &staged_path)?;
     Ok((staged_path, artifact_ref))
   }
 
@@ -202,10 +192,7 @@ impl<'a> RecordedOperationContext<'a> {
       Some(render_artifact_event(&artifact)),
       vec![artifact.artifact_id.clone()],
     );
-    let staged_path = self
-      .recording()
-      .run_dir(self.run.id())?
-      .join(&artifact.path);
+    let staged_path = self.recording().run_dir(self.run.id())?.join(&artifact.path);
     let artifact_ref = ArtifactRef {
       run_id: self.run.id().clone(),
       artifact_id: artifact.artifact_id.clone(),
@@ -213,9 +200,7 @@ impl<'a> RecordedOperationContext<'a> {
       captured_event_id: Some(event_id),
     };
     self.run.record_artifact(artifact.clone());
-    self
-      .recording()
-      .record_artifact_bytes(self.run.id(), &artifact, &staged_path)?;
+    self.recording().record_artifact_bytes(self.run.id(), &artifact, &staged_path)?;
     Ok((staged_path, artifact_ref))
   }
 
@@ -227,21 +212,13 @@ impl<'a> RecordedOperationContext<'a> {
     self.in_span_with_attributes(name, Attributes::new(), operation)
   }
 
-  pub fn in_span_with_attributes<T, E, F>(
-    &mut self,
-    name: impl Into<String>,
-    attributes: Attributes,
-    operation: F,
-  ) -> Result<T, E>
+  pub fn in_span_with_attributes<T, E, F>(&mut self, name: impl Into<String>, attributes: Attributes, operation: F) -> Result<T, E>
   where
     E: Display + From<String>,
     F: FnOnce(&mut Self) -> Result<T, E>,
   {
     let span_name = name.into();
-    let span = self
-      .run
-      .start_span(&self.current, operation_span_record(&span_name, attributes))
-      .map_err(E::from)?;
+    let span = self.run.start_span(&self.current, operation_span_record(&span_name, attributes)).map_err(E::from)?;
     let previous = self.current.clone();
     self.current = span.clone();
     let result = operation(self);
@@ -272,9 +249,7 @@ impl<'a> RecordedOperationContext<'a> {
             failure: Some(message.clone()),
           },
         ) {
-          return Err(E::from(format!(
-            "{message}; additionally failed to finish failed span {span_name}: {finish_error}"
-          )));
+          return Err(E::from(format!("{message}; additionally failed to finish failed span {span_name}: {finish_error}")));
         }
         Err(error)
       }
@@ -323,12 +298,7 @@ where
   );
   let _operation_span_guard = operation_span.enter();
 
-  record_operation_event(
-    &mut run,
-    &root,
-    "operation.started".to_string(),
-    Some(format!("recorded operation {operation_label} started")),
-  );
+  record_operation_event(&mut run, &root, "operation.started".to_string(), Some(format!("recorded operation {operation_label} started")));
 
   let result = {
     let mut context = RecordedOperationContext {
@@ -342,12 +312,7 @@ where
 
   match result {
     Ok(value) => {
-      record_operation_event(
-        &mut run,
-        &root,
-        "operation.completed".to_string(),
-        Some(success_summary.clone()),
-      );
+      record_operation_event(&mut run, &root, "operation.completed".to_string(), Some(success_summary.clone()));
       (services.finish_run)(
         run,
         RunFinish {
@@ -363,12 +328,7 @@ where
       })
     }
     Err(error) => {
-      record_operation_event(
-        &mut run,
-        &root,
-        "operation.failed".to_string(),
-        Some(format!("{failure_summary}: {error}")),
-      );
+      record_operation_event(&mut run, &root, "operation.failed".to_string(), Some(format!("{failure_summary}: {error}")));
       let finish_result = (services.finish_run)(
         run,
         RunFinish {
@@ -378,21 +338,14 @@ where
         },
       );
       if let Err(finish_error) = finish_result {
-        return Err(format!(
-          "{error}; additionally failed to persist failed run {run_id}: {finish_error}"
-        ));
+        return Err(format!("{error}; additionally failed to persist failed run {run_id}: {finish_error}"));
       }
       Err(format!("{error}; recorded run: {}", run_dir.display()))
     }
   }
 }
 
-fn record_operation_event(
-  run: &mut RecordingRun,
-  span: &SpanRef,
-  name: String,
-  message: Option<String>,
-) -> EventId {
+fn record_operation_event(run: &mut RecordingRun, span: &SpanRef, name: String, message: Option<String>) -> EventId {
   run.record_event(EventRecordV1Alpha1 {
     api_version: EVENT_API_VERSION.to_string(),
     event_id: new_event_id(),
@@ -442,14 +395,8 @@ fn record_event_with_id(
 }
 
 fn render_artifact_event(artifact: &crate::trace::ArtifactRecordV1Alpha1) -> String {
-  let note = artifact
-    .summary
-    .clone()
-    .unwrap_or_else(|| "n/a".to_string());
-  format!(
-    "{} kind={} path={} note={}",
-    artifact.artifact_id, artifact.role, artifact.path, note
-  )
+  let note = artifact.summary.clone().unwrap_or_else(|| "n/a".to_string());
+  format!("{} kind={} path={} note={}", artifact.artifact_id, artifact.role, artifact.path, note)
 }
 
 #[cfg(test)]
@@ -474,73 +421,31 @@ mod tests {
     let recording = test_recording(store_root.clone());
 
     let output = recording
-      .run_recorded_operation(
-        RunSpec::new(RunType::Execute, "auv.example.typed"),
-        "Typed operation sample",
-        |context| {
-          context.in_span("typed.step", |context| {
-            context.record_event(
-              "typed.step.event",
-              Some("typed operation closure executed".to_string()),
-            );
-            context.stage_artifact_file(
-              "debug",
-              &source_path,
-              "sample.txt",
-              Some("first sample artifact".to_string()),
-            )?;
-            Ok::<_, String>(())
-          })?;
-          context.stage_artifact_file(
-            "debug",
-            &source_path,
-            "sample-2.txt",
-            Some("second sample artifact".to_string()),
-          )?;
-          Ok::<_, String>("ok".to_string())
-        },
-      )
+      .run_recorded_operation(RunSpec::new(RunType::Execute, "auv.example.typed"), "Typed operation sample", |context| {
+        context.in_span("typed.step", |context| {
+          context.record_event("typed.step.event", Some("typed operation closure executed".to_string()));
+          context.stage_artifact_file("debug", &source_path, "sample.txt", Some("first sample artifact".to_string()))?;
+          Ok::<_, String>(())
+        })?;
+        context.stage_artifact_file("debug", &source_path, "sample-2.txt", Some("second sample artifact".to_string()))?;
+        Ok::<_, String>("ok".to_string())
+      })
       .expect("recorded operation should succeed");
 
-    let run = recording
-      .recording_backend()
-      .read_run(output.run_id.as_str())
-      .expect("run should persist");
+    let run = recording.recording_backend().read_run(output.run_id.as_str()).expect("run should persist");
     assert_eq!(output.value, "ok");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
-    assert_eq!(
-      run.run.summary.as_deref(),
-      Some("Typed operation sample completed")
-    );
+    assert_eq!(run.run.summary.as_deref(), Some("Typed operation sample completed"));
     assert_eq!(run.artifacts.len(), 2);
     assert_eq!(run.artifacts[0].artifact_id.as_str(), "artifact_0001");
     assert_eq!(run.artifacts[1].artifact_id.as_str(), "artifact_0002");
-    let child_span = run
-      .spans
-      .iter()
-      .find(|span| span.name == "typed.step")
-      .expect("child span should be recorded");
+    let child_span = run.spans.iter().find(|span| span.name == "typed.step").expect("child span should be recorded");
     assert_eq!(child_span.status_code, TraceStatusCode::Ok);
     assert_eq!(run.artifacts[0].span_id, child_span.span_id);
     assert_eq!(run.artifacts[1].span_id, run.run.root_span_id);
-    assert!(
-      run
-        .events
-        .iter()
-        .any(|event| event.name == "operation.started")
-    );
-    assert!(
-      run
-        .events
-        .iter()
-        .any(|event| event.name == "typed.step.event" && event.span_id == child_span.span_id)
-    );
-    assert!(
-      run
-        .events
-        .iter()
-        .any(|event| event.name == "artifact.captured" && event.span_id == child_span.span_id)
-    );
+    assert!(run.events.iter().any(|event| event.name == "operation.started"));
+    assert!(run.events.iter().any(|event| event.name == "typed.step.event" && event.span_id == child_span.span_id));
+    assert!(run.events.iter().any(|event| event.name == "artifact.captured" && event.span_id == child_span.span_id));
     assert!(output.run_dir.join(&run.artifacts[0].path).exists());
 
     let _ = fs::remove_dir_all(project_root);
@@ -557,55 +462,23 @@ mod tests {
     let mut observed_run_id = None;
 
     let error = recording
-      .run_recorded_operation(
-        RunSpec::new(RunType::Execute, "auv.example.typed_failure"),
-        "Typed operation failure sample",
-        |context| {
-          observed_run_id = Some(context.run_id().to_string());
-          context.in_span("typed.failure", |_context| Err::<(), _>("boom".to_string()))
-        },
-      )
+      .run_recorded_operation(RunSpec::new(RunType::Execute, "auv.example.typed_failure"), "Typed operation failure sample", |context| {
+        observed_run_id = Some(context.run_id().to_string());
+        context.in_span("typed.failure", |_context| Err::<(), _>("boom".to_string()))
+      })
       .expect_err("recorded operation should fail");
 
     let run_id = observed_run_id.expect("closure should observe run id");
-    let run = recording
-      .recording_backend()
-      .read_run(&run_id)
-      .expect("failed run should persist");
+    let run = recording.recording_backend().read_run(&run_id).expect("failed run should persist");
     assert!(error.contains("boom"));
     assert!(error.contains("recorded run:"));
     assert_eq!(run.run.status_code, TraceStatusCode::Error);
-    assert_eq!(
-      run.run.summary.as_deref(),
-      Some("Typed operation failure sample failed")
-    );
-    assert_eq!(
-      run
-        .run
-        .failure
-        .as_ref()
-        .map(|failure| failure.message.as_str()),
-      Some("boom")
-    );
-    let child_span = run
-      .spans
-      .iter()
-      .find(|span| span.name == "typed.failure")
-      .expect("failed child span should be recorded");
+    assert_eq!(run.run.summary.as_deref(), Some("Typed operation failure sample failed"));
+    assert_eq!(run.run.failure.as_ref().map(|failure| failure.message.as_str()), Some("boom"));
+    let child_span = run.spans.iter().find(|span| span.name == "typed.failure").expect("failed child span should be recorded");
     assert_eq!(child_span.status_code, TraceStatusCode::Error);
-    assert_eq!(
-      child_span
-        .failure
-        .as_ref()
-        .map(|failure| failure.message.as_str()),
-      Some("boom")
-    );
-    assert!(
-      run
-        .events
-        .iter()
-        .any(|event| event.name == "operation.failed")
-    );
+    assert_eq!(child_span.failure.as_ref().map(|failure| failure.message.as_str()), Some("boom"));
+    assert!(run.events.iter().any(|event| event.name == "operation.failed"));
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

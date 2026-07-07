@@ -10,14 +10,12 @@ use serde::de::DeserializeOwned;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 use auv_view::memory::{
-  ATTR_MEMORY_LOAD_MEMORY_ID, ATTR_MEMORY_LOAD_SOURCE_RUN_ID, ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND,
-  ATTR_REACQUIRE_OBSERVATION_COUNT, ATTR_REACQUIRE_OUTCOME, ATTR_REACQUIRE_SCOPE_ID,
-  ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY, ATTR_REACQUIRE_STAGE_USED, ATTR_REACQUIRE_TARGET_KIND,
-  GeometryProofSummary, IdentityProofSummary, MemoryProofSummary,
-  PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, ReacquisitionRecord, ReplayProofSummary,
-  ResolutionProofSummary, SPAN_REACQUIRE_MEMORY_LOAD, SPAN_REACQUIRE_ROOT_PREFIX,
-  SPAN_REACQUIRE_STAGE_PREFIX, VIEW_MEMORY_ARTIFACT_ROLE, VerificationProofSummary, ViewMemory,
-  ViewParserInspect, ViewParserSelectResultWire, ViewResolutionSummary,
+  ATTR_MEMORY_LOAD_MEMORY_ID, ATTR_MEMORY_LOAD_SOURCE_RUN_ID, ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND, ATTR_REACQUIRE_OBSERVATION_COUNT,
+  ATTR_REACQUIRE_OUTCOME, ATTR_REACQUIRE_SCOPE_ID, ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY, ATTR_REACQUIRE_STAGE_USED,
+  ATTR_REACQUIRE_TARGET_KIND, GeometryProofSummary, IdentityProofSummary, MemoryProofSummary, PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE,
+  ReacquisitionRecord, ReplayProofSummary, ResolutionProofSummary, SPAN_REACQUIRE_MEMORY_LOAD, SPAN_REACQUIRE_ROOT_PREFIX,
+  SPAN_REACQUIRE_STAGE_PREFIX, VIEW_MEMORY_ARTIFACT_ROLE, VerificationProofSummary, ViewMemory, ViewParserInspect,
+  ViewParserSelectResultWire, ViewResolutionSummary,
 };
 
 use crate::model::AuvResult;
@@ -36,18 +34,10 @@ fn read_artifact_json<T: DeserializeOwned>(
     .artifact_file(run_id, artifact.artifact_id.as_str())
     .map_err(|error| format!("failed to open {artifact_role} artifact: {error}"))?;
   let file = File::open(&path).map_err(|error| {
-    format!(
-      "failed to open {artifact_role} artifact {} for run {run_id} from {}: {error}",
-      artifact.artifact_id,
-      path.display()
-    )
+    format!("failed to open {artifact_role} artifact {} for run {run_id} from {}: {error}", artifact.artifact_id, path.display())
   })?;
   serde_json::from_reader(BufReader::new(file)).map_err(|error| {
-    format!(
-      "failed to parse {artifact_role} artifact {} for run {run_id} from {}: {error}",
-      artifact.artifact_id,
-      path.display()
-    )
+    format!("failed to parse {artifact_role} artifact {} for run {run_id} from {}: {error}", artifact.artifact_id, path.display())
   })
 }
 
@@ -56,21 +46,13 @@ pub fn list_view_memory_writes(store: &LocalStore, run_id: &str) -> AuvResult<Ve
   extract_view_memory_writes(store, &run)
 }
 
-pub fn extract_view_memory_writes(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<Vec<ViewMemory>> {
+pub fn extract_view_memory_writes(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<ViewMemory>> {
   let mut memories = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != VIEW_MEMORY_ARTIFACT_ROLE || !is_json_mime(&artifact.mime_type) {
       continue;
     }
-    let memory: ViewMemory = read_artifact_json(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      VIEW_MEMORY_ARTIFACT_ROLE,
-    )?;
+    let memory: ViewMemory = read_artifact_json(store, run.run.run_id.as_str(), artifact, VIEW_MEMORY_ARTIFACT_ROLE)?;
     memories.push(memory);
   }
   Ok(memories)
@@ -80,24 +62,12 @@ fn normalize_reacquire_outcome(outcome: &str) -> String {
   outcome.replace('-', "_")
 }
 
-fn span_attr_str(
-  span: &auv_tracing_driver::trace::SpanRecordV1Alpha1,
-  key: &str,
-) -> Option<String> {
-  span
-    .attributes
-    .get(key)
-    .and_then(|value| value.as_str())
-    .map(str::to_string)
+fn span_attr_str(span: &auv_tracing_driver::trace::SpanRecordV1Alpha1, key: &str) -> Option<String> {
+  span.attributes.get(key).and_then(|value| value.as_str()).map(str::to_string)
 }
 
 fn span_attr_usize(span: &auv_tracing_driver::trace::SpanRecordV1Alpha1, key: &str) -> usize {
-  span
-    .attributes
-    .get(key)
-    .and_then(|value| value.as_u64())
-    .map(|value| value as usize)
-    .unwrap_or(0)
+  span.attributes.get(key).and_then(|value| value.as_u64()).map(|value| value as usize).unwrap_or(0)
 }
 
 fn span_attr_bool(span: &auv_tracing_driver::trace::SpanRecordV1Alpha1, key: &str) -> Option<bool> {
@@ -117,17 +87,14 @@ pub fn extract_reacquisition_records(run: &CanonicalRun) -> Vec<ReacquisitionRec
     .spans
     .iter()
     .filter_map(|span| {
-      if span.name == SPAN_REACQUIRE_MEMORY_LOAD
-        || span.name.starts_with(SPAN_REACQUIRE_STAGE_PREFIX)
-      {
+      if span.name == SPAN_REACQUIRE_MEMORY_LOAD || span.name.starts_with(SPAN_REACQUIRE_STAGE_PREFIX) {
         return None;
       }
       let scope_id = span.name.strip_prefix(SPAN_REACQUIRE_ROOT_PREFIX)?;
       let outcome = span_attr_str(span, ATTR_REACQUIRE_OUTCOME)
         .map(|value| normalize_reacquire_outcome(&value))
         .unwrap_or_else(|| "unknown".to_string());
-      let stage_used =
-        span_attr_str(span, ATTR_REACQUIRE_STAGE_USED).unwrap_or_else(|| "none".into());
+      let stage_used = span_attr_str(span, ATTR_REACQUIRE_STAGE_USED).unwrap_or_else(|| "none".into());
       let strategy_used = if stage_used == "none" {
         None
       } else {
@@ -136,10 +103,8 @@ pub fn extract_reacquisition_records(run: &CanonicalRun) -> Vec<ReacquisitionRec
       let stale_reason = span_attr_str(span, ATTR_REACQUIRE_FATAL_DIAGNOSTIC_KIND);
       Some(ReacquisitionRecord {
         span_name: span.name.clone(),
-        scope_id: span_attr_str(span, ATTR_REACQUIRE_SCOPE_ID)
-          .unwrap_or_else(|| scope_id.to_string()),
-        target_kind: span_attr_str(span, ATTR_REACQUIRE_TARGET_KIND)
-          .unwrap_or_else(|| "unknown".into()),
+        scope_id: span_attr_str(span, ATTR_REACQUIRE_SCOPE_ID).unwrap_or_else(|| scope_id.to_string()),
+        target_kind: span_attr_str(span, ATTR_REACQUIRE_TARGET_KIND).unwrap_or_else(|| "unknown".into()),
         outcome,
         stage_used,
         observation_count: span_attr_usize(span, ATTR_REACQUIRE_OBSERVATION_COUNT),
@@ -151,21 +116,14 @@ pub fn extract_reacquisition_records(run: &CanonicalRun) -> Vec<ReacquisitionRec
     .collect()
 }
 
-pub fn extract_playlist_select_result_wires(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<Vec<ViewParserSelectResultWire>> {
+pub fn extract_playlist_select_result_wires(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<ViewParserSelectResultWire>> {
   let mut wires = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE || !is_json_mime(&artifact.mime_type) {
       continue;
     }
-    let wire: ViewParserSelectResultWire = read_artifact_json(
-      store,
-      run.run.run_id.as_str(),
-      artifact,
-      PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE,
-    )?;
+    let wire: ViewParserSelectResultWire =
+      read_artifact_json(store, run.run.run_id.as_str(), artifact, PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE)?;
     wires.push(wire);
   }
   Ok(wires)
@@ -177,15 +135,10 @@ pub fn build_view_resolution_summary(
   reacquisitions: &[ReacquisitionRecord],
   select_wire: &ViewParserSelectResultWire,
 ) -> ViewResolutionSummary {
-  let scope_id = reacquisitions
-    .first()
-    .map(|record| record.scope_id.as_str())
-    .unwrap_or("playlist_sidebar");
+  let scope_id = reacquisitions.first().map(|record| record.scope_id.as_str()).unwrap_or("playlist_sidebar");
   let memory = memory_proof_for_scope(run, memory_writes, scope_id);
   let reacquire = select_wire.reacquire.as_ref();
-  let span_record = reacquisitions
-    .iter()
-    .find(|record| record.scope_id == scope_id);
+  let span_record = reacquisitions.iter().find(|record| record.scope_id == scope_id);
   let resolution = ResolutionProofSummary {
     outcome: reacquire
       .map(|value| normalize_reacquire_outcome(&value.outcome))
@@ -204,20 +157,13 @@ pub fn build_view_resolution_summary(
     span_scope_id: span_record.map(|record| record.scope_id.clone()),
   };
   let replay = ReplayProofSummary {
-    step_names: select_wire
-      .steps
-      .iter()
-      .map(|step| step.name.clone())
-      .collect(),
+    step_names: select_wire.steps.iter().map(|step| step.name.clone()).collect(),
     skipped_rescan_replay: reacquire
       .map(|value| value.skipped_rescan_replay)
       .or_else(|| span_record.and_then(|record| record.skipped_rescan_replay))
       .unwrap_or(false),
   };
-  let has_bounds = select_wire
-    .steps
-    .iter()
-    .any(|step| step.target_bounds.is_some());
+  let has_bounds = select_wire.steps.iter().any(|step| step.target_bounds.is_some());
   ViewResolutionSummary {
     query: select_wire.query.clone(),
     identity: IdentityProofSummary {
@@ -239,15 +185,8 @@ pub fn build_view_resolution_summary(
   }
 }
 
-fn memory_proof_for_scope(
-  run: &CanonicalRun,
-  memory_writes: &[ViewMemory],
-  scope_id: &str,
-) -> MemoryProofSummary {
-  if let Some(memory) = memory_writes
-    .iter()
-    .find(|memory| memory.scope_id == scope_id)
-  {
+fn memory_proof_for_scope(run: &CanonicalRun, memory_writes: &[ViewMemory], scope_id: &str) -> MemoryProofSummary {
+  if let Some(memory) = memory_writes.iter().find(|memory| memory.scope_id == scope_id) {
     return MemoryProofSummary {
       present: true,
       memory_id: Some(memory.memory_id.clone()),
@@ -256,11 +195,7 @@ fn memory_proof_for_scope(
       anchor_count: Some(memory.anchors.len()),
     };
   }
-  if let Some(span) = run
-    .spans
-    .iter()
-    .find(|span| span.name == SPAN_REACQUIRE_MEMORY_LOAD)
-  {
+  if let Some(span) = run.spans.iter().find(|span| span.name == SPAN_REACQUIRE_MEMORY_LOAD) {
     return MemoryProofSummary {
       present: true,
       memory_id: span_attr_str(span, ATTR_MEMORY_LOAD_MEMORY_ID),
@@ -278,17 +213,12 @@ fn memory_proof_for_scope(
   }
 }
 
-pub fn build_view_parser_inspect(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> AuvResult<ViewParserInspect> {
+pub fn build_view_parser_inspect(store: &LocalStore, run: &CanonicalRun) -> AuvResult<ViewParserInspect> {
   let memory_writes = extract_view_memory_writes(store, run)?;
   let reacquisitions = extract_reacquisition_records(run);
   let select_results = extract_playlist_select_result_wires(store, run)?;
-  let resolution_summaries = select_results
-    .iter()
-    .map(|wire| build_view_resolution_summary(run, &memory_writes, &reacquisitions, wire))
-    .collect();
+  let resolution_summaries =
+    select_results.iter().map(|wire| build_view_resolution_summary(run, &memory_writes, &reacquisitions, wire)).collect();
   Ok(ViewParserInspect {
     memory_writes,
     reacquisitions,
@@ -307,22 +237,20 @@ mod tests {
 
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
-    ArtifactRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION,
-    SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+    ArtifactRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId,
+    TraceState, TraceStatusCode,
   };
   use auv_view::ViewBounds;
   use auv_view::memory::{
-    ATTR_MEMORY_LOAD_MEMORY_ID, ATTR_MEMORY_LOAD_SOURCE_RUN_ID, ATTR_REACQUIRE_OBSERVATION_COUNT,
-    ATTR_REACQUIRE_OUTCOME, ATTR_REACQUIRE_SCOPE_ID, ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY,
-    ATTR_REACQUIRE_STAGE_USED, ATTR_REACQUIRE_TARGET_KIND, PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE,
-    SPAN_REACQUIRE_MEMORY_LOAD, VIEW_MEMORY_ARTIFACT_ROLE, VIEW_MEMORY_SCHEMA_VERSION, ViewMemory,
-    ViewMemoryScopeSnapshot, build_memory_id, reacquire_root_span_name,
-    view_memory_lineage_ref_wire,
+    ATTR_MEMORY_LOAD_MEMORY_ID, ATTR_MEMORY_LOAD_SOURCE_RUN_ID, ATTR_REACQUIRE_OBSERVATION_COUNT, ATTR_REACQUIRE_OUTCOME,
+    ATTR_REACQUIRE_SCOPE_ID, ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY, ATTR_REACQUIRE_STAGE_USED, ATTR_REACQUIRE_TARGET_KIND,
+    PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, SPAN_REACQUIRE_MEMORY_LOAD, VIEW_MEMORY_ARTIFACT_ROLE, VIEW_MEMORY_SCHEMA_VERSION, ViewMemory,
+    ViewMemoryScopeSnapshot, build_memory_id, reacquire_root_span_name, view_memory_lineage_ref_wire,
   };
 
   use super::{
-    build_view_parser_inspect, build_view_resolution_summary, extract_playlist_select_result_wires,
-    extract_reacquisition_records, extract_view_memory_writes, list_view_memory_writes,
+    build_view_parser_inspect, build_view_resolution_summary, extract_playlist_select_result_wires, extract_reacquisition_records,
+    extract_view_memory_writes, list_view_memory_writes,
   };
 
   fn stage_json_artifact<T: Serialize>(
@@ -336,8 +264,7 @@ mod tests {
     value: &T,
   ) -> ArtifactRecordV1Alpha1 {
     let source_path = root.join(format!("source-{index}-{preferred_name}"));
-    let rendered =
-      serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
+    let rendered = serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
     fs::write(&source_path, rendered).expect("artifact source should write");
     store
       .stage_artifact_file(
@@ -406,42 +333,15 @@ mod tests {
 
     let root_span_name = reacquire_root_span_name("playlist_sidebar");
     let mut reacquire_attrs = BTreeMap::new();
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_SCOPE_ID.into(),
-      serde_json::Value::String("playlist_sidebar".into()),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_TARGET_KIND.into(),
-      serde_json::Value::String("label".into()),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_OUTCOME.into(),
-      serde_json::Value::String("reacquired".into()),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_STAGE_USED.into(),
-      serde_json::Value::String("label_current_viewport".into()),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_OBSERVATION_COUNT.into(),
-      serde_json::json!(2),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY.into(),
-      serde_json::Value::Bool(true),
-    );
+    reacquire_attrs.insert(ATTR_REACQUIRE_SCOPE_ID.into(), serde_json::Value::String("playlist_sidebar".into()));
+    reacquire_attrs.insert(ATTR_REACQUIRE_TARGET_KIND.into(), serde_json::Value::String("label".into()));
+    reacquire_attrs.insert(ATTR_REACQUIRE_OUTCOME.into(), serde_json::Value::String("reacquired".into()));
+    reacquire_attrs.insert(ATTR_REACQUIRE_STAGE_USED.into(), serde_json::Value::String("label_current_viewport".into()));
+    reacquire_attrs.insert(ATTR_REACQUIRE_OBSERVATION_COUNT.into(), serde_json::json!(2));
+    reacquire_attrs.insert(ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY.into(), serde_json::Value::Bool(true));
 
     let artifacts = vec![
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        0,
-        VIEW_MEMORY_ARTIFACT_ROLE,
-        "view-memory.json",
-        &memory,
-      ),
+      stage_json_artifact(store, root, &run_id, &span_id, 0, VIEW_MEMORY_ARTIFACT_ROLE, "view-memory.json", &memory),
       stage_json_artifact(
         store,
         root,
@@ -494,14 +394,8 @@ mod tests {
             started_at_millis: 1,
             finished_at_millis: Some(2),
             attributes: BTreeMap::from([
-              (
-                ATTR_MEMORY_LOAD_MEMORY_ID.into(),
-                serde_json::Value::String(memory.memory_id.clone()),
-              ),
-              (
-                ATTR_MEMORY_LOAD_SOURCE_RUN_ID.into(),
-                serde_json::Value::String(run_id_str.clone()),
-              ),
+              (ATTR_MEMORY_LOAD_MEMORY_ID.into(), serde_json::Value::String(memory.memory_id.clone())),
+              (ATTR_MEMORY_LOAD_SOURCE_RUN_ID.into(), serde_json::Value::String(run_id_str.clone())),
             ]),
             summary: None,
             failure: None,
@@ -517,10 +411,7 @@ mod tests {
 
   #[test]
   fn select_run_fixture_answers_six_owner_inspect_questions() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-view-parser-read-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-view-parser-read-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run_id = write_select_run_fixture(&store, &root);
@@ -545,33 +436,18 @@ mod tests {
 
     // II — memory
     assert!(summary.memory.present);
-    assert_eq!(
-      summary.memory.memory_id.as_deref(),
-      Some(memories[0].memory_id.as_str())
-    );
-    assert_eq!(
-      summary.memory.source_run_id.as_deref(),
-      Some(run_id.as_str())
-    );
+    assert_eq!(summary.memory.memory_id.as_deref(), Some(memories[0].memory_id.as_str()));
+    assert_eq!(summary.memory.source_run_id.as_deref(), Some(run_id.as_str()));
     assert_eq!(summary.memory.anchor_count, Some(0));
 
     // III — resolution
     assert_eq!(summary.resolution.outcome, "reacquired");
-    assert_eq!(
-      summary.resolution.strategy_used.as_deref(),
-      Some("label_current_viewport")
-    );
+    assert_eq!(summary.resolution.strategy_used.as_deref(), Some("label_current_viewport"));
     assert_eq!(summary.resolution.observation_count, 2);
-    assert_eq!(
-      summary.resolution.span_scope_id.as_deref(),
-      Some("playlist_sidebar")
-    );
+    assert_eq!(summary.resolution.span_scope_id.as_deref(), Some("playlist_sidebar"));
 
     // III — replay
-    assert_eq!(
-      summary.replay.step_names,
-      vec!["reacquire-target".to_string(), "deliver-click".to_string()]
-    );
+    assert_eq!(summary.replay.step_names, vec!["reacquire-target".to_string(), "deliver-click".to_string()]);
     assert!(summary.replay.skipped_rescan_replay);
 
     // verification (A5 separate from tiers I–III)
@@ -636,42 +512,15 @@ mod tests {
 
     let root_span_name = reacquire_root_span_name("playlist_sidebar");
     let mut reacquire_attrs = BTreeMap::new();
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_SCOPE_ID.into(),
-      serde_json::Value::String("playlist_sidebar".into()),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_TARGET_KIND.into(),
-      serde_json::Value::String("label".into()),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_OUTCOME.into(),
-      serde_json::Value::String("reacquired".into()),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_STAGE_USED.into(),
-      serde_json::Value::String("label_current_viewport".into()),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_OBSERVATION_COUNT.into(),
-      serde_json::json!(1),
-    );
-    reacquire_attrs.insert(
-      ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY.into(),
-      serde_json::Value::Bool(true),
-    );
+    reacquire_attrs.insert(ATTR_REACQUIRE_SCOPE_ID.into(), serde_json::Value::String("playlist_sidebar".into()));
+    reacquire_attrs.insert(ATTR_REACQUIRE_TARGET_KIND.into(), serde_json::Value::String("label".into()));
+    reacquire_attrs.insert(ATTR_REACQUIRE_OUTCOME.into(), serde_json::Value::String("reacquired".into()));
+    reacquire_attrs.insert(ATTR_REACQUIRE_STAGE_USED.into(), serde_json::Value::String("label_current_viewport".into()));
+    reacquire_attrs.insert(ATTR_REACQUIRE_OBSERVATION_COUNT.into(), serde_json::json!(1));
+    reacquire_attrs.insert(ATTR_REACQUIRE_SKIPPED_RESCAN_REPLAY.into(), serde_json::Value::Bool(true));
 
     let artifacts = vec![
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        0,
-        VIEW_MEMORY_ARTIFACT_ROLE,
-        "view-memory.json",
-        &memory,
-      ),
+      stage_json_artifact(store, root, &run_id, &span_id, 0, VIEW_MEMORY_ARTIFACT_ROLE, "view-memory.json", &memory),
       stage_json_artifact(
         store,
         root,
@@ -723,10 +572,7 @@ mod tests {
 
   #[test]
   fn producer_select_result_json_roundtrips_through_inspect_read() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-view-parser-producer-{}",
-      crate::model::now_millis()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-view-parser-producer-{}", crate::model::now_millis()));
     let _ = fs::remove_dir_all(&root);
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     let run_id = write_producer_select_run_fixture(&store, &root);
@@ -736,23 +582,13 @@ mod tests {
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].query, "Test");
     assert_eq!(wires[0].target.label, "Test Playlist");
-    assert_eq!(
-      wires[0].verification.method,
-      "main_title_ocr_full_window_v1"
-    );
-    assert_eq!(
-      wires[0]
-        .reacquire
-        .as_ref()
-        .map(|value| value.outcome.as_str()),
-      Some("reacquired")
-    );
+    assert_eq!(wires[0].verification.method, "main_title_ocr_full_window_v1");
+    assert_eq!(wires[0].reacquire.as_ref().map(|value| value.outcome.as_str()), Some("reacquired"));
     assert_eq!(wires[0].run_id.as_deref(), Some(run_id.as_str()));
 
     let memory_writes = extract_view_memory_writes(&store, &canonical).expect("memory writes");
     let reacquisitions = extract_reacquisition_records(&canonical);
-    let summary =
-      build_view_resolution_summary(&canonical, &memory_writes, &reacquisitions, &wires[0]);
+    let summary = build_view_resolution_summary(&canonical, &memory_writes, &reacquisitions, &wires[0]);
     assert_eq!(summary.identity.label, "Test Playlist");
     assert_eq!(summary.resolution.outcome, "reacquired");
     assert_eq!(summary.verification.method, "main_title_ocr_full_window_v1");
@@ -760,18 +596,9 @@ mod tests {
     let inspect = build_view_parser_inspect(&store, &canonical).expect("inspect");
     assert_eq!(inspect.resolution_summaries.len(), 1);
     assert_eq!(inspect.resolution_summaries[0].query, "Test");
-    assert_eq!(
-      inspect.resolution_summaries[0].identity.label,
-      "Test Playlist"
-    );
-    assert_eq!(
-      inspect.resolution_summaries[0].resolution.outcome,
-      "reacquired"
-    );
-    assert_eq!(
-      inspect.resolution_summaries[0].verification.method,
-      "main_title_ocr_full_window_v1"
-    );
+    assert_eq!(inspect.resolution_summaries[0].identity.label, "Test Playlist");
+    assert_eq!(inspect.resolution_summaries[0].resolution.outcome, "reacquired");
+    assert_eq!(inspect.resolution_summaries[0].verification.method, "main_title_ocr_full_window_v1");
 
     let _ = fs::remove_dir_all(root);
   }

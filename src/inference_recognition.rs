@@ -2,17 +2,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use auv_inference_common::{
-  BoundingBox, ClassLabelSource, DetectionCoordinateSpace, DetectionEvidenceManifest, ImageSize,
-  ProjectionBasis,
-};
+use auv_inference_common::{BoundingBox, ClassLabelSource, DetectionCoordinateSpace, DetectionEvidenceManifest, ImageSize, ProjectionBasis};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::contract::{
-  ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
-  RecognizedItem,
-};
+use crate::contract::{ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource, RecognizedItem};
 use crate::model::AuvResult;
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 
@@ -78,32 +72,22 @@ impl std::fmt::Display for DetectorRecognitionMappingError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Self::MissingRuntimeEvidence => {
-        write!(
-          f,
-          "detector manifest mapping requires runtime ArtifactRef evidence"
-        )
+        write!(f, "detector manifest mapping requires runtime ArtifactRef evidence")
       }
       Self::MissingCaptureArtifact => {
-        write!(
-          f,
-          "detector manifest mapping requires scope.capture_artifact"
-        )
+        write!(f, "detector manifest mapping requires scope.capture_artifact")
       }
       Self::ProjectionUnavailable => {
-        write!(
-          f,
-          "detector manifest mapping requires honest runtime projection context"
-        )
+        write!(f, "detector manifest mapping requires honest runtime projection context")
       }
       Self::SourceImageSizeMismatch { manifest, runtime } => write!(
         f,
         "detector manifest image size {}x{} does not match runtime source image size {}x{}",
         manifest.width, manifest.height, runtime.width, runtime.height
       ),
-      Self::UnsupportedCoordinateSpace(space) => write!(
-        f,
-        "detector manifest coordinate space {space:?} is not supported by the v0 recognition bridge"
-      ),
+      Self::UnsupportedCoordinateSpace(space) => {
+        write!(f, "detector manifest coordinate space {space:?} is not supported by the v0 recognition bridge")
+      }
     }
   }
 }
@@ -157,30 +141,20 @@ pub fn record_detector_manifest_recognition_artifact(
   capture_artifact_summary: Option<String>,
   request: &DetectorRecognitionArtifactRequest,
 ) -> AuvResult<(ArtifactRef, ArtifactRef, RecognitionResult)> {
-  let (_, capture_artifact_ref) = context.stage_artifact_file_with_ref(
-    capture_artifact_role,
-    capture_artifact_path,
-    capture_artifact_name,
-    capture_artifact_summary,
-  )?;
+  let (_, capture_artifact_ref) =
+    context.stage_artifact_file_with_ref(capture_artifact_role, capture_artifact_path, capture_artifact_name, capture_artifact_summary)?;
 
   let mut scope = request.scope.clone();
   scope.capture_artifact = Some(capture_artifact_ref.clone());
   let runtime_context = DetectorRecognitionRuntimeContext {
     recognition_id: request.recognition_id.clone(),
     scope,
-    evidence: detector_runtime_evidence(
-      &capture_artifact_ref,
-      request.scope.capture_contract_artifact.as_ref(),
-    ),
+    evidence: detector_runtime_evidence(&capture_artifact_ref, request.scope.capture_contract_artifact.as_ref()),
     source_image_size: manifest.detection_set.image_size,
     projection: request.projection.clone(),
   };
-  let recognition =
-    map_detector_manifest_to_recognition_result(manifest, &runtime_context, &request.policy)
-      .map_err(|error| {
-        format!("failed to map detector manifest into recognition result: {error}")
-      })?;
+  let recognition = map_detector_manifest_to_recognition_result(manifest, &runtime_context, &request.policy)
+    .map_err(|error| format!("failed to map detector manifest into recognition result: {error}"))?;
 
   let recognition_json = serde_json::to_string_pretty(&recognition)
     .map(|mut rendered| {
@@ -189,12 +163,8 @@ pub fn record_detector_manifest_recognition_artifact(
     })
     .map_err(|error| format!("failed to encode detector recognition result JSON: {error}"))?;
   let recognition_source_path = detector_recognition_temp_json_path(&request.artifact_label);
-  fs::write(&recognition_source_path, recognition_json).map_err(|error| {
-    format!(
-      "failed to write detector recognition temp artifact {}: {error}",
-      recognition_source_path.display()
-    )
-  })?;
+  fs::write(&recognition_source_path, recognition_json)
+    .map_err(|error| format!("failed to write detector recognition temp artifact {}: {error}", recognition_source_path.display()))?;
 
   let (_, recognition_artifact_ref) = context.stage_artifact_file_with_ref(
     &request.artifact_role,
@@ -206,10 +176,7 @@ pub fn record_detector_manifest_recognition_artifact(
 
   context.record_event(
     "detector.recognition.artifact_recorded",
-    Some(format!(
-      "recorded {} from detector manifest {}",
-      recognition_artifact_ref.artifact_id, manifest.detection_set.model_id.0
-    )),
+    Some(format!("recorded {} from detector manifest {}", recognition_artifact_ref.artifact_id, manifest.detection_set.model_id.0)),
   );
   Ok((capture_artifact_ref, recognition_artifact_ref, recognition))
 }
@@ -228,11 +195,7 @@ pub fn map_detector_manifest_to_recognition_result(
     .enumerate()
     .map(|(index, detection)| projected_item(index, detection, manifest, context))
     .collect::<Vec<_>>();
-  let filtered = all
-    .iter()
-    .filter(|item| item_passes_filter(item, policy))
-    .cloned()
-    .collect::<Vec<_>>();
+  let filtered = all.iter().filter(|item| item_passes_filter(item, policy)).cloned().collect::<Vec<_>>();
   let best = select_best(&filtered, policy);
 
   Ok(RecognitionResult {
@@ -278,24 +241,13 @@ fn validate_mapping_inputs(
     });
   }
   if manifest.source_image.coordinate_space != DetectionCoordinateSpace::SourceImagePixels {
-    return Err(DetectorRecognitionMappingError::UnsupportedCoordinateSpace(
-      manifest.source_image.coordinate_space,
-    ));
+    return Err(DetectorRecognitionMappingError::UnsupportedCoordinateSpace(manifest.source_image.coordinate_space));
   }
-  match (
-    &manifest.source_image.projection_basis,
-    &context.projection.kind,
-  ) {
-    (_, RuntimeProjectionKind::Unavailable { .. }) => {
-      Err(DetectorRecognitionMappingError::ProjectionUnavailable)
-    }
-    (ProjectionBasis::Unavailable { .. }, RuntimeProjectionKind::IdentitySourceImagePixels) => {
-      Ok(())
-    }
+  match (&manifest.source_image.projection_basis, &context.projection.kind) {
+    (_, RuntimeProjectionKind::Unavailable { .. }) => Err(DetectorRecognitionMappingError::ProjectionUnavailable),
+    (ProjectionBasis::Unavailable { .. }, RuntimeProjectionKind::IdentitySourceImagePixels) => Ok(()),
     (ProjectionBasis::Projected { .. }, RuntimeProjectionKind::IdentitySourceImagePixels) => {
-      Err(DetectorRecognitionMappingError::UnsupportedCoordinateSpace(
-        manifest.source_image.coordinate_space,
-      ))
+      Err(DetectorRecognitionMappingError::UnsupportedCoordinateSpace(manifest.source_image.coordinate_space))
     }
   }
 }
@@ -349,10 +301,7 @@ fn item_passes_filter(item: &RecognizedItem, policy: &DetectorRecognitionBridgeP
   }
 }
 
-fn select_best(
-  filtered: &[RecognizedItem],
-  policy: &DetectorRecognitionBridgePolicy,
-) -> Option<RecognizedItem> {
+fn select_best(filtered: &[RecognizedItem], policy: &DetectorRecognitionBridgePolicy) -> Option<RecognizedItem> {
   match policy.best_selection {
     BestSelectionStrategy::None => None,
     BestSelectionStrategy::SingleFilteredItem if filtered.len() == 1 => filtered.first().cloned(),
@@ -370,14 +319,8 @@ fn bridge_filter_strategy(policy: &DetectorRecognitionBridgePolicy) -> &'static 
 
 fn carried_known_limits(manifest_limits: &[String]) -> Vec<String> {
   let mut known_limits = manifest_limits.to_vec();
-  known_limits.push(
-    "detector provider_score preserves model confidence semantics, not semantic success"
-      .to_string(),
-  );
-  known_limits.push(
-    "detector RecognitionResult is recognition evidence only, not candidate-ready output"
-      .to_string(),
-  );
+  known_limits.push("detector provider_score preserves model confidence semantics, not semantic success".to_string());
+  known_limits.push("detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string());
   known_limits
 }
 
@@ -392,10 +335,7 @@ fn class_label_source_detail(source: &ClassLabelSource) -> serde_json::Value {
   }
 }
 
-fn detector_runtime_evidence(
-  capture_artifact: &ArtifactRef,
-  capture_contract_artifact: Option<&ArtifactRef>,
-) -> Vec<ArtifactRef> {
+fn detector_runtime_evidence(capture_artifact: &ArtifactRef, capture_contract_artifact: Option<&ArtifactRef>) -> Vec<ArtifactRef> {
   let mut evidence = vec![capture_artifact.clone()];
   if let Some(capture_contract_artifact) = capture_contract_artifact {
     evidence.push(capture_contract_artifact.clone());
@@ -436,16 +376,14 @@ mod tests {
   use std::path::PathBuf;
 
   use auv_inference_common::{
-    BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest,
-    DetectionSet, ImageSize, ModelId, ModelRunMetadata, ProjectionBasis, SourceImageEvidence,
-    SourceImageRef,
+    BoundingBox, ClassLabelSource, Detection, DetectionCoordinateSpace, DetectionEvidenceManifest, DetectionSet, ImageSize, ModelId,
+    ModelRunMetadata, ProjectionBasis, SourceImageEvidence, SourceImageRef,
   };
   use serde_json::json;
 
   use super::{
-    BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy,
-    DetectorRecognitionMappingError, DetectorRecognitionRuntimeContext, RuntimeProjection,
-    RuntimeProjectionKind, map_detector_manifest_to_recognition_result,
+    BestSelectionStrategy, DetectorRecognitionArtifactRequest, DetectorRecognitionBridgePolicy, DetectorRecognitionMappingError,
+    DetectorRecognitionRuntimeContext, RuntimeProjection, RuntimeProjectionKind, map_detector_manifest_to_recognition_result,
     record_detector_manifest_recognition_artifact,
   };
   use crate::build_runtime_with_store_root;
@@ -576,17 +514,10 @@ mod tests {
       },
     };
 
-    let error = map_detector_manifest_to_recognition_result(
-      &manifest,
-      &context,
-      &DetectorRecognitionBridgePolicy::default(),
-    )
-    .expect_err("projection-unavailable runtime context should be rejected");
+    let error = map_detector_manifest_to_recognition_result(&manifest, &context, &DetectorRecognitionBridgePolicy::default())
+      .expect_err("projection-unavailable runtime context should be rejected");
 
-    assert_eq!(
-      error,
-      DetectorRecognitionMappingError::ProjectionUnavailable
-    );
+    assert_eq!(error, DetectorRecognitionMappingError::ProjectionUnavailable);
   }
 
   #[test]
@@ -595,17 +526,10 @@ mod tests {
     let mut context = sample_context();
     context.evidence.clear();
 
-    let error = map_detector_manifest_to_recognition_result(
-      &manifest,
-      &context,
-      &DetectorRecognitionBridgePolicy::default(),
-    )
-    .expect_err("manifest-only input should be rejected");
+    let error = map_detector_manifest_to_recognition_result(&manifest, &context, &DetectorRecognitionBridgePolicy::default())
+      .expect_err("manifest-only input should be rejected");
 
-    assert_eq!(
-      error,
-      DetectorRecognitionMappingError::MissingRuntimeEvidence
-    );
+    assert_eq!(error, DetectorRecognitionMappingError::MissingRuntimeEvidence);
   }
 
   #[test]
@@ -614,17 +538,10 @@ mod tests {
     let mut context = sample_context();
     context.scope.capture_artifact = None;
 
-    let error = map_detector_manifest_to_recognition_result(
-      &manifest,
-      &context,
-      &DetectorRecognitionBridgePolicy::default(),
-    )
-    .expect_err("scope without capture artifact should be rejected");
+    let error = map_detector_manifest_to_recognition_result(&manifest, &context, &DetectorRecognitionBridgePolicy::default())
+      .expect_err("scope without capture artifact should be rejected");
 
-    assert_eq!(
-      error,
-      DetectorRecognitionMappingError::MissingCaptureArtifact
-    );
+    assert_eq!(error, DetectorRecognitionMappingError::MissingCaptureArtifact);
   }
 
   #[test]
@@ -636,12 +553,8 @@ mod tests {
       height: 900,
     };
 
-    let error = map_detector_manifest_to_recognition_result(
-      &manifest,
-      &context,
-      &DetectorRecognitionBridgePolicy::default(),
-    )
-    .expect_err("size mismatch should be rejected");
+    let error = map_detector_manifest_to_recognition_result(&manifest, &context, &DetectorRecognitionBridgePolicy::default())
+      .expect_err("size mismatch should be rejected");
 
     assert_eq!(
       error,
@@ -677,9 +590,7 @@ mod tests {
     assert_eq!(result.filtered.len(), 1);
     assert_eq!(result.filtered[0].kind, "ui_score_chips");
     assert_eq!(result.filtered[0].text, None);
-    let provider_score = result.filtered[0]
-      .provider_score
-      .expect("projected detection should preserve provider score");
+    let provider_score = result.filtered[0].provider_score.expect("projected detection should preserve provider score");
     assert!((provider_score - 0.9867_f64).abs() < 0.000_001);
     assert_eq!(
       result.filtered[0].box_,
@@ -691,32 +602,16 @@ mod tests {
       }
     );
     assert_eq!(result.detail["backend"], json!("ultralytics-inference"));
-    assert_eq!(
-      result.detail["model_id"],
-      json!("games-balatro-2024-yolo-ui-detection")
-    );
-    assert_eq!(
-      result.detail["class_label_source"]["kind"],
-      json!("override_file")
-    );
-    assert_eq!(
-      result.detail["bridge_policy_version"],
-      json!("detector-manifest-recognitionresult.v0")
-    );
+    assert_eq!(result.detail["model_id"], json!("games-balatro-2024-yolo-ui-detection"));
+    assert_eq!(result.detail["class_label_source"]["kind"], json!("override_file"));
+    assert_eq!(result.detail["bridge_policy_version"], json!("detector-manifest-recognitionresult.v0"));
     let detail_string = serde_json::to_string(&result.detail).expect("detail should serialize");
     assert!(!detail_string.contains("candidate"));
     assert!(!detail_string.contains("action"));
     assert!(!detail_string.contains("click"));
+    assert!(result.known_limits.contains(&"source image identity is inference-scoped, not a runtime artifact".to_string()));
     assert!(
-      result
-        .known_limits
-        .contains(&"source image identity is inference-scoped, not a runtime artifact".to_string())
-    );
-    assert!(
-      result.known_limits.contains(
-        &"detector RecognitionResult is recognition evidence only, not candidate-ready output"
-          .to_string()
-      )
+      result.known_limits.contains(&"detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string())
     );
   }
 
@@ -730,15 +625,11 @@ mod tests {
       best_selection: BestSelectionStrategy::SingleFilteredItem,
     };
 
-    let result = map_detector_manifest_to_recognition_result(&manifest, &context, &policy)
-      .expect("single filtered item should map");
+    let result = map_detector_manifest_to_recognition_result(&manifest, &context, &policy).expect("single filtered item should map");
 
     assert_eq!(result.filtered.len(), 1);
     assert!(result.best.is_some());
-    assert_eq!(
-      result.best.as_ref().map(|item| item.item_id.as_str()),
-      Some("detector:games-balatro-2024-yolo-ui-detection:0")
-    );
+    assert_eq!(result.best.as_ref().map(|item| item.item_id.as_str()), Some("detector:games-balatro-2024-yolo-ui-detection:0"));
   }
 
   #[test]
@@ -746,12 +637,8 @@ mod tests {
     let manifest = sample_manifest();
     let context = sample_context();
 
-    let result = map_detector_manifest_to_recognition_result(
-      &manifest,
-      &context,
-      &DetectorRecognitionBridgePolicy::default(),
-    )
-    .expect("default pass-through policy should map");
+    let result = map_detector_manifest_to_recognition_result(&manifest, &context, &DetectorRecognitionBridgePolicy::default())
+      .expect("default pass-through policy should map");
 
     assert!(result.best.is_none());
     assert_eq!(result.filtered, result.all);
@@ -765,8 +652,7 @@ mod tests {
     let capture_path = project_root.join("capture.png");
     fs::write(&capture_path, "fake png bytes").expect("capture source should write");
 
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let manifest = sample_manifest();
     let request = DetectorRecognitionArtifactRequest {
       recognition_id: "recognition_detector_runtime_recorded".to_string(),
@@ -818,10 +704,7 @@ mod tests {
       )
       .expect("recorded detector recognition operation should succeed");
 
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("recorded run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
     assert_eq!(run.artifacts.len(), 2);
     assert_eq!(run.artifacts[0].role, "capture-image");
@@ -830,27 +713,11 @@ mod tests {
     let (_, recognition_ref, recognition) = output.value;
     assert_eq!(recognition_ref.run_id, output.run_id);
     assert_eq!(recognition_ref.artifact_id.as_str(), "artifact_0002");
-    assert_eq!(
-      recognition
-        .scope
-        .capture_artifact
-        .as_ref()
-        .map(|reference| reference.artifact_id.as_str()),
-      Some("artifact_0001")
-    );
+    assert_eq!(recognition.scope.capture_artifact.as_ref().map(|reference| reference.artifact_id.as_str()), Some("artifact_0001"));
     assert_eq!(recognition.evidence.len(), 2);
-    assert_eq!(
-      recognition.evidence[0].artifact_id.as_str(),
-      "artifact_0001"
-    );
-    assert_eq!(
-      recognition.evidence[1].artifact_id.as_str(),
-      "artifact_contract_seed"
-    );
-    assert_eq!(
-      recognition.detail["runtime_projection"]["kind"],
-      json!("identity_source_image_pixels")
-    );
+    assert_eq!(recognition.evidence[0].artifact_id.as_str(), "artifact_0001");
+    assert_eq!(recognition.evidence[1].artifact_id.as_str(), "artifact_contract_seed");
+    assert_eq!(recognition.detail["runtime_projection"]["kind"], json!("identity_source_image_pixels"));
 
     let recognition_artifact = run
       .artifacts
@@ -858,33 +725,14 @@ mod tests {
       .find(|artifact| artifact.artifact_id == recognition_ref.artifact_id)
       .expect("recognition artifact should exist in recorded run");
     let recognition_path = output.run_dir.join(&recognition_artifact.path);
-    let recorded_recognition: crate::contract::RecognitionResult = serde_json::from_slice(
-      &fs::read(&recognition_path).expect("recognition artifact bytes should read"),
-    )
-    .expect("recognition artifact JSON should decode");
-    assert_eq!(
-      recorded_recognition
-        .scope
-        .capture_artifact
-        .as_ref()
-        .map(|reference| reference.artifact_id.as_str()),
-      Some("artifact_0001")
-    );
-    assert_eq!(
-      recorded_recognition.evidence[0].artifact_id.as_str(),
-      "artifact_0001"
-    );
-    assert_eq!(
-      recorded_recognition.source,
-      crate::contract::RecognitionSource::Custom
-    );
+    let recorded_recognition: crate::contract::RecognitionResult =
+      serde_json::from_slice(&fs::read(&recognition_path).expect("recognition artifact bytes should read"))
+        .expect("recognition artifact JSON should decode");
+    assert_eq!(recorded_recognition.scope.capture_artifact.as_ref().map(|reference| reference.artifact_id.as_str()), Some("artifact_0001"));
+    assert_eq!(recorded_recognition.evidence[0].artifact_id.as_str(), "artifact_0001");
+    assert_eq!(recorded_recognition.source, crate::contract::RecognitionSource::Custom);
     assert_eq!(recorded_recognition.best, None);
-    assert!(
-      run
-        .events
-        .iter()
-        .any(|event| event.name == "detector.recognition.artifact_recorded")
-    );
+    assert!(run.events.iter().any(|event| event.name == "detector.recognition.artifact_recorded"));
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

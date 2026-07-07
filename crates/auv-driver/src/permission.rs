@@ -33,10 +33,7 @@ mod tests {
 
   #[test]
   fn permission_status_serializes_as_snake_case() {
-    assert_eq!(
-      serde_json::to_value(PermissionStatus::Granted).expect("serialize"),
-      serde_json::json!("granted")
-    );
+    assert_eq!(serde_json::to_value(PermissionStatus::Granted).expect("serialize"), serde_json::json!("granted"));
   }
 
   #[test]

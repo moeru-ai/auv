@@ -1,18 +1,11 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::contract::{
-  ArtifactRef, FreshnessBasis, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult,
-  VerificationResult,
-};
+use crate::contract::{ArtifactRef, FreshnessBasis, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, VerificationResult};
 use crate::model::{InvokeRequest, RunStatus};
-use crate::verticals::query_wired_live_action_status::{
-  MINECRAFT_LABELS, operation_status_and_message,
-};
+use crate::verticals::query_wired_live_action_status::{MINECRAFT_LABELS, operation_status_and_message};
 use auv_driver::geometry::WindowPoint;
-use auv_game_minecraft::{
-  QueryActionWiringLineage, QueryActionWiringOutcome, QueryLiveClickExecutor,
-};
+use auv_game_minecraft::{QueryActionWiringLineage, QueryActionWiringOutcome, QueryLiveClickExecutor};
 use auv_tracing_driver::RunRecordingBackend;
 use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 use auv_tracing_driver::trace::RunId;
@@ -37,9 +30,7 @@ pub fn invoke_click_at_window_point(
   inputs.insert("offset_y".to_string(), format!("{:.3}", window_point.0.y));
 
   let registry = auv_cli_invoke::default_registry();
-  let command = registry
-    .resolve("input.clickWindowPoint")
-    .ok_or_else(|| "input.clickWindowPoint command is not registered".to_string())?;
+  let command = registry.resolve("input.clickWindowPoint").ok_or_else(|| "input.clickWindowPoint command is not registered".to_string())?;
   let parent = context.current_span().clone();
   let invoke_result = auv_cli_invoke::invoke_resolved_recorded_in_span(
     recording,
@@ -62,16 +53,9 @@ pub fn invoke_click_at_window_point(
 
 /// Maps a recorded `input.clickWindowPoint` invoke into the MC-19 click summary
 /// string, or an operator-facing error when invoke finished as `Failed`.
-pub(crate) fn click_summary_from_invoke_result(
-  invoke_result: &auv_cli_invoke::InvokeResult,
-) -> Result<String, String> {
+pub(crate) fn click_summary_from_invoke_result(invoke_result: &auv_cli_invoke::InvokeResult) -> Result<String, String> {
   if invoke_result.status == RunStatus::Failed {
-    return Err(
-      invoke_result
-        .failure_message
-        .clone()
-        .unwrap_or_else(|| invoke_result.output_summary.clone()),
-    );
+    return Err(invoke_result.failure_message.clone().unwrap_or_else(|| invoke_result.output_summary.clone()));
   }
   Ok(invoke_result.output_summary.clone())
 }
@@ -84,11 +68,7 @@ pub struct InvokeWindowPointClickExecutor<'ctx> {
 }
 
 impl<'ctx> InvokeWindowPointClickExecutor<'ctx> {
-  pub fn new(
-    context: &mut RecordedOperationContext<'ctx>,
-    target_app: impl Into<String>,
-    target_title: impl Into<String>,
-  ) -> Self {
+  pub fn new(context: &mut RecordedOperationContext<'ctx>, target_app: impl Into<String>, target_title: impl Into<String>) -> Self {
     Self {
       recording: context.recording() as *const RunRecordingBackend,
       context: context as *mut RecordedOperationContext<'ctx>,
@@ -99,23 +79,13 @@ impl<'ctx> InvokeWindowPointClickExecutor<'ctx> {
 }
 
 impl QueryLiveClickExecutor for InvokeWindowPointClickExecutor<'_> {
-  fn attempt_click(
-    &self,
-    window_point: WindowPoint,
-    _lineage: &QueryActionWiringLineage,
-  ) -> Result<String, String> {
+  fn attempt_click(&self, window_point: WindowPoint, _lineage: &QueryActionWiringLineage) -> Result<String, String> {
     // NOTICE(mc19-d3-executor-borrow): wiring calls `attempt_click` synchronously
     // while the recorded-operation closure already holds `&mut context`; the raw
     // pointers are only valid for this non-reentrant dispatch.
     let recording = unsafe { &*self.recording };
     let context = unsafe { &mut *self.context };
-    invoke_click_at_window_point(
-      recording,
-      context,
-      &self.target_app,
-      &self.target_title,
-      window_point,
-    )
+    invoke_click_at_window_point(recording, context, &self.target_app, &self.target_title, window_point)
   }
 }
 
@@ -127,18 +97,12 @@ pub fn build_query_wired_live_action_operation_result(
   witness_absent_limit_needed: bool,
 ) -> OperationResult {
   let (status, message) = operation_status_and_message(wiring, &MINECRAFT_LABELS);
-  let freshness_basis = query_manifest_ref
-    .as_ref()
-    .map(|artifact_ref| FreshnessBasis {
-      source_artifact: Some(artifact_ref.clone()),
-      source_operation_id: Some("auv.minecraft.query_3dgs_training_result".to_string()),
-      notes: vec!["MC-12 spatial query manifest staged in the same run".to_string()],
-    });
-  let known_limits = resolve_query_wired_live_action_known_limits(
-    wiring,
-    &verifications,
-    witness_absent_limit_needed,
-  );
+  let freshness_basis = query_manifest_ref.as_ref().map(|artifact_ref| FreshnessBasis {
+    source_artifact: Some(artifact_ref.clone()),
+    source_operation_id: Some("auv.minecraft.query_3dgs_training_result".to_string()),
+    notes: vec!["MC-12 spatial query manifest staged in the same run".to_string()],
+  });
+  let known_limits = resolve_query_wired_live_action_known_limits(wiring, &verifications, witness_absent_limit_needed);
 
   OperationResult {
     api_version: OPERATION_RESULT_API_VERSION.to_string(),
@@ -172,8 +136,7 @@ fn resolve_query_wired_live_action_known_limits(
     .collect::<Vec<_>>();
 
   if witness_absent_limit_needed {
-    known_limits
-      .push(auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT.to_string());
+    known_limits.push(auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT.to_string());
   }
 
   known_limits
@@ -188,17 +151,13 @@ pub fn stage_query_wired_live_action_operation_result(
       json.push('\n');
       json
     })
-    .map_err(|error| {
-      format!("failed to serialize query wired live action operation result: {error}")
-    })?;
+    .map_err(|error| format!("failed to serialize query wired live action operation result: {error}"))?;
   context
     .stage_artifact_bytes_with_ref(
       "operation-result",
       artifact_json.as_bytes(),
       "operation-result.json",
-      Some(
-        "MC-19 D4 query wired live action operation result with MC-12 query lineage".to_string(),
-      ),
+      Some("MC-19 D4 query wired live action operation result with MC-12 query lineage".to_string()),
     )
     .map_err(|error| error.to_string())
 }
@@ -210,11 +169,7 @@ mod click_summary_tests {
   use auv_tracing_driver::trace::SpanId;
   use std::collections::BTreeMap;
 
-  fn sample_invoke(
-    status: RunStatus,
-    output_summary: &str,
-    failure_message: Option<&str>,
-  ) -> InvokeResult {
+  fn sample_invoke(status: RunStatus, output_summary: &str, failure_message: Option<&str>) -> InvokeResult {
     InvokeResult {
       run_id: "run_test".to_string(),
       producer_span_id: SpanId::new("0000000000000001"),
@@ -236,11 +191,7 @@ mod click_summary_tests {
 
   #[test]
   fn click_summary_from_failed_invoke_result_returns_failure_message() {
-    let invoke = sample_invoke(
-      RunStatus::Failed,
-      "dispatch failed summary",
-      Some("window not found"),
-    );
+    let invoke = sample_invoke(RunStatus::Failed, "dispatch failed summary", Some("window not found"));
     let error = click_summary_from_invoke_result(&invoke).expect_err("failed invoke");
     assert_eq!(error, "window not found");
   }

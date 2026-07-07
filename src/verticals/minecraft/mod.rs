@@ -7,27 +7,20 @@ pub mod session;
 pub mod verification;
 
 use auv_game_minecraft::{
-  QueryActionWiringOutcome, QueryLiveClickExecutor, ScenePacketInputs, ScenePacketOutput,
-  SourceRunSummary, SpatialBundleInputs, SpatialBundleOutput, SpatialBundleSourceArtifact,
-  TextureSweepInputs, TextureSweepPreparationInputs, TextureSweepPreparationOutput,
-  TextureSweepReport, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput,
-  TextureSweepThresholds, TrainingLaunchJobInputs, TrainingLaunchPreparationInputs,
-  TrainingLaunchPreparationOutput, TrainingPackageInputs, TrainingPackageOutput,
-  TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput,
-  TrainingResultHoldoutPreviewInputs, TrainingResultHoldoutPreviewOutput,
-  TrainingResultHoldoutRenderQualityInputs, TrainingResultHoldoutRenderQualityOutput,
-  TrainingResultInputs, TrainingResultOutput, TrainingResultSemanticValidationInputs,
-  TrainingResultSemanticValidationOutput, TrainingResultSpatialQueryInputs,
-  TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryOutput,
-  build_texture_sweep_samples_from_bundles, collect_3dgs_training_job_result,
-  collect_3dgs_training_job_result_with_environment, evaluate_texture_sweep,
-  export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
-  fetch_3dgs_training_result_artifacts_with_environment, inspect_3dgs_training_result_holdout,
-  launch_3dgs_training_job, launch_3dgs_training_job_with_environment,
-  measure_3dgs_holdout_render_quality, prepare_3dgs_training_launch,
-  prepare_texture_sweep_resource_packs, query_3dgs_training_result,
-  query_action_wiring_lineage_from_manifest, validate_3dgs_training_result,
-  wire_query_manifest_to_action,
+  QueryActionWiringOutcome, QueryLiveClickExecutor, ScenePacketInputs, ScenePacketOutput, SourceRunSummary, SpatialBundleInputs,
+  SpatialBundleOutput, SpatialBundleSourceArtifact, TextureSweepInputs, TextureSweepPreparationInputs, TextureSweepPreparationOutput,
+  TextureSweepReport, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput, TextureSweepThresholds, TrainingLaunchJobInputs,
+  TrainingLaunchPreparationInputs, TrainingLaunchPreparationOutput, TrainingPackageInputs, TrainingPackageOutput,
+  TrainingResultArtifactFetchInputs, TrainingResultArtifactFetchOutput, TrainingResultHoldoutPreviewInputs,
+  TrainingResultHoldoutPreviewOutput, TrainingResultHoldoutRenderQualityInputs, TrainingResultHoldoutRenderQualityOutput,
+  TrainingResultInputs, TrainingResultOutput, TrainingResultSemanticValidationInputs, TrainingResultSemanticValidationOutput,
+  TrainingResultSpatialQueryInputs, TrainingResultSpatialQueryManifest, TrainingResultSpatialQueryOutput,
+  build_texture_sweep_samples_from_bundles, collect_3dgs_training_job_result, collect_3dgs_training_job_result_with_environment,
+  evaluate_texture_sweep, export_3dgs_scene_packet, export_3dgs_training_package, export_spatial_bundle,
+  fetch_3dgs_training_result_artifacts_with_environment, inspect_3dgs_training_result_holdout, launch_3dgs_training_job,
+  launch_3dgs_training_job_with_environment, measure_3dgs_holdout_render_quality, prepare_3dgs_training_launch,
+  prepare_texture_sweep_resource_packs, query_3dgs_training_result, query_action_wiring_lineage_from_manifest,
+  validate_3dgs_training_result, wire_query_manifest_to_action,
 };
 
 use auv_tracing_driver::RecordingHandle;
@@ -38,8 +31,8 @@ use auv_tracing_driver::store::CanonicalRun;
 use auv_tracing_driver::trace::{RunType, TraceStatusCode};
 
 use self::query_live_action::{
-  InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID,
-  build_query_wired_live_action_operation_result, stage_query_wired_live_action_operation_result,
+  InvokeWindowPointClickExecutor, QUERY_WIRED_LIVE_ACTION_OPERATION_ID, build_query_wired_live_action_operation_result,
+  stage_query_wired_live_action_operation_result,
 };
 
 use crate::model::AuvResult;
@@ -51,46 +44,28 @@ pub const MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep
 pub const MINECRAFT_TEXTURE_SWEEP_PREP_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-prep";
 pub const MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE: &str = "minecraft-texture-sweep-runbook";
 pub const MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE: &str = "minecraft-3dgs-scene-packet";
-pub const MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE: &str =
-  "minecraft-3dgs-scene-packet-inspect";
+pub const MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE: &str = "minecraft-3dgs-scene-packet-inspect";
 pub const MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-package";
-pub const MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE: &str =
-  "minecraft-3dgs-training-package-inspect";
-pub const MINECRAFT_3DGS_TRAINING_LAUNCH_PLAN_ARTIFACT_ROLE: &str =
-  "minecraft-3dgs-training-launch-plan";
-pub const MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE: &str =
-  "minecraft-3dgs-training-launch-inspect";
-pub const MINECRAFT_3DGS_TRAINING_LAUNCH_RUNBOOK_ARTIFACT_ROLE: &str =
-  "minecraft-3dgs-training-launch-runbook";
+pub const MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-package-inspect";
+pub const MINECRAFT_3DGS_TRAINING_LAUNCH_PLAN_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-launch-plan";
+pub const MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-launch-inspect";
+pub const MINECRAFT_3DGS_TRAINING_LAUNCH_RUNBOOK_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-launch-runbook";
 pub const MINECRAFT_3DGS_TRAINING_JOB_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-job";
-pub const MINECRAFT_3DGS_TRAINING_JOB_INSPECT_ARTIFACT_ROLE: &str =
-  "minecraft-3dgs-training-job-inspect";
-pub const MINECRAFT_3DGS_TRAINING_JOB_RUNBOOK_ARTIFACT_ROLE: &str =
-  "minecraft-3dgs-training-job-runbook";
+pub const MINECRAFT_3DGS_TRAINING_JOB_INSPECT_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-job-inspect";
+pub const MINECRAFT_3DGS_TRAINING_JOB_RUNBOOK_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-job-runbook";
 pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-result";
-pub const MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE: &str =
-  "minecraft-3dgs-training-result-inspect";
-pub const MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE: &str =
-  "minecraft-3dgs-training-result-runbook";
-pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE: &str =
-  "minecraft-3dgs-training-result-artifact-manifest";
-pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE: &str =
-  "minecraft-3dgs-training-result-artifact-inspect";
-pub const MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE: &str =
-  "minecraft-3dgs-training-result-semantic";
-pub const MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE: &str =
-  "minecraft-3dgs-training-result-semantic-inspect";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-result-inspect";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE: &str = "minecraft-3dgs-training-result-runbook";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE: &str = "minecraft-3dgs-training-result-artifact-manifest";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE: &str = "minecraft-3dgs-training-result-artifact-inspect";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE: &str = "minecraft-3dgs-training-result-semantic";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE: &str = "minecraft-3dgs-training-result-semantic-inspect";
 pub const MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE: &str = "minecraft-3dgs-training-result-query";
-pub const MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE: &str =
-  "minecraft-3dgs-training-result-query-inspect";
-pub const MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_ROLE: &str =
-  "minecraft-3dgs-training-result-holdout-preview";
-pub const MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_ROLE: &str =
-  "minecraft-3dgs-training-result-holdout-preview-inspect";
-pub const MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_ROLE: &str =
-  "minecraft-3dgs-holdout-render-quality";
-pub const MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_INSPECT_ROLE: &str =
-  "minecraft-3dgs-holdout-render-quality-inspect";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE: &str = "minecraft-3dgs-training-result-query-inspect";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_ROLE: &str = "minecraft-3dgs-training-result-holdout-preview";
+pub const MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_ROLE: &str = "minecraft-3dgs-training-result-holdout-preview-inspect";
+pub const MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_ROLE: &str = "minecraft-3dgs-holdout-render-quality";
+pub const MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_INSPECT_ROLE: &str = "minecraft-3dgs-holdout-render-quality-inspect";
 pub const MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE: &str = "minecraft-projection-calibration";
 
 pub fn run_minecraft_3dgs_scene_packet_export(
@@ -106,11 +81,7 @@ pub fn run_minecraft_3dgs_scene_packet_export(
         "minecraft.export_3dgs_scene_packet.inputs",
         Some(format!(
           "bundle_manifests={} output_dir={} trained_3dgs=false action_path=false",
-          bundle_manifest_paths
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(","),
+          bundle_manifest_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(","),
           output_dir.display()
         )),
       );
@@ -129,10 +100,7 @@ pub fn run_minecraft_3dgs_scene_packet_export(
           MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE,
           &result.inspect_report_path,
           "minecraft-3dgs-scene-packet-inspect.json",
-          Some(
-            "MC-7 accepted-only scene packet inspect report; offline inspect artifact only"
-              .to_string(),
-          ),
+          Some("MC-7 accepted-only scene packet inspect report; offline inspect artifact only".to_string()),
         )?;
         Ok::<_, String>(())
       })?;
@@ -147,10 +115,7 @@ pub fn run_minecraft_3dgs_training_package_export(
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<TrainingPackageOutput>> {
   recording.run_recorded_operation(
-    RunSpec::new(
-      RunType::Execute,
-      "auv.minecraft.export_3dgs_training_package",
-    ),
+    RunSpec::new(RunType::Execute, "auv.minecraft.export_3dgs_training_package"),
     "Minecraft export MC-7 D3 training-prep package",
     |context| {
       context.record_event(
@@ -165,30 +130,21 @@ pub fn run_minecraft_3dgs_training_package_export(
         scene_packet_manifest_path: scene_packet_manifest_path.clone(),
         output_dir: output_dir.clone(),
       })?;
-      context.in_span(
-        "minecraft.export_3dgs_training_package.artifacts",
-        |context| {
-          context.stage_artifact_file(
-            MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE,
-            &result.manifest_path,
-            "minecraft-3dgs-training-package-run.json",
-            Some(
-              "MC-7 D3 canonical training-prep package manifest; offline inspect artifact only"
-                .to_string(),
-            ),
-          )?;
-          context.stage_artifact_file(
-            MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE,
-            &result.inspect_report_path,
-            "minecraft-3dgs-training-package-inspect.json",
-            Some(
-              "MC-7 D3 training-prep inspect report plus Nerfstudio compatibility view status"
-                .to_string(),
-            ),
-          )?;
-          Ok::<_, String>(())
-        },
-      )?;
+      context.in_span("minecraft.export_3dgs_training_package.artifacts", |context| {
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE,
+          &result.manifest_path,
+          "minecraft-3dgs-training-package-run.json",
+          Some("MC-7 D3 canonical training-prep package manifest; offline inspect artifact only".to_string()),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE,
+          &result.inspect_report_path,
+          "minecraft-3dgs-training-package-inspect.json",
+          Some("MC-7 D3 training-prep inspect report plus Nerfstudio compatibility view status".to_string()),
+        )?;
+        Ok::<_, String>(())
+      })?;
       Ok::<_, String>(result)
     },
   )
@@ -205,11 +161,7 @@ pub fn run_minecraft_texture_sweep_preparation(
     |context| {
       context.record_event(
         "minecraft.prepare_texture_sweep.inputs",
-        Some(format!(
-          "sidecar_run_dir={} output_dir={} live_chain=false",
-          sidecar_run_dir.display(),
-          output_dir.display()
-        )),
+        Some(format!("sidecar_run_dir={} output_dir={} live_chain=false", sidecar_run_dir.display(), output_dir.display())),
       );
       let result = prepare_texture_sweep_resource_packs(TextureSweepPreparationInputs {
         sidecar_run_dir: sidecar_run_dir.clone(),
@@ -241,10 +193,7 @@ pub fn run_minecraft_3dgs_training_launch_preparation(
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<TrainingLaunchPreparationOutput>> {
   recording.run_recorded_operation(
-    RunSpec::new(
-      RunType::Execute,
-      "auv.minecraft.prepare_3dgs_training",
-    ),
+    RunSpec::new(RunType::Execute, "auv.minecraft.prepare_3dgs_training"),
     "Minecraft prepare MC-7 D5 training launch inputs",
     |context| {
       context.record_event(
@@ -264,17 +213,13 @@ pub fn run_minecraft_3dgs_training_launch_preparation(
           MINECRAFT_3DGS_TRAINING_LAUNCH_PLAN_ARTIFACT_ROLE,
           &result.manifest_path,
           "minecraft-3dgs-training-launch-plan.json",
-          Some(
-            "MC-7 D5 training launch preparation plan; offline inspect artifact only".to_string(),
-          ),
+          Some("MC-7 D5 training launch preparation plan; offline inspect artifact only".to_string()),
         )?;
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE,
           &result.inspect_report_path,
           "minecraft-3dgs-training-launch-inspect.json",
-          Some(
-            "MC-7 D5 training launch readiness report; offline inspect artifact only".to_string(),
-          ),
+          Some("MC-7 D5 training launch readiness report; offline inspect artifact only".to_string()),
         )?;
         context.stage_artifact_file(
           MINECRAFT_3DGS_TRAINING_LAUNCH_RUNBOOK_ARTIFACT_ROLE,
@@ -294,14 +239,7 @@ pub fn run_minecraft_3dgs_training_job_launch(
   training_launch_plan_path: PathBuf,
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<auv_game_minecraft::TrainingLaunchJobOutput>> {
-  run_minecraft_3dgs_training_job_launch_with_environment(
-    recording,
-    training_launch_plan_path,
-    output_dir,
-    None,
-    None,
-    None,
-  )
+  run_minecraft_3dgs_training_job_launch_with_environment(recording, training_launch_plan_path, output_dir, None, None, None)
 }
 
 pub fn run_minecraft_3dgs_training_job_launch_with_environment(
@@ -376,14 +314,7 @@ pub fn run_minecraft_3dgs_training_result_collection(
   training_job_manifest_path: PathBuf,
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<TrainingResultOutput>> {
-  run_minecraft_3dgs_training_result_collection_with_environment(
-    recording,
-    training_job_manifest_path,
-    output_dir,
-    None,
-    None,
-    None,
-  )
+  run_minecraft_3dgs_training_result_collection_with_environment(recording, training_job_manifest_path, output_dir, None, None, None)
 }
 
 pub fn run_minecraft_3dgs_training_result_collection_with_environment(
@@ -524,10 +455,7 @@ pub fn run_minecraft_3dgs_training_result_semantic_validation(
   output_dir: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<TrainingResultSemanticValidationOutput>> {
   recording.run_recorded_operation(
-    RunSpec::new(
-      RunType::Execute,
-      "auv.minecraft.validate_3dgs_training_result",
-    ),
+    RunSpec::new(RunType::Execute, "auv.minecraft.validate_3dgs_training_result"),
     "Minecraft validate MC-10 3DGS training result semantic gate",
     move |context| {
       context.record_event(
@@ -542,24 +470,21 @@ pub fn run_minecraft_3dgs_training_result_semantic_validation(
         training_result_artifact_manifest_path: training_result_artifact_manifest_path.clone(),
         output_dir: output_dir.clone(),
       })?;
-      context.in_span(
-        "minecraft.validate_3dgs_training_result.artifacts",
-        |context| {
-          context.stage_artifact_file(
-            MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE,
-            &result.manifest_path,
-            "minecraft-3dgs-training-result-semantic.json",
-            Some("MC-10 training result semantic manifest".to_string()),
-          )?;
-          context.stage_artifact_file(
-            MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE,
-            &result.inspect_report_path,
-            "minecraft-3dgs-training-result-semantic-inspect.json",
-            Some("MC-10 training result semantic inspect report".to_string()),
-          )?;
-          Ok::<_, String>(())
-        },
-      )?;
+      context.in_span("minecraft.validate_3dgs_training_result.artifacts", |context| {
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE,
+          &result.manifest_path,
+          "minecraft-3dgs-training-result-semantic.json",
+          Some("MC-10 training result semantic manifest".to_string()),
+        )?;
+        context.stage_artifact_file(
+          MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE,
+          &result.inspect_report_path,
+          "minecraft-3dgs-training-result-semantic-inspect.json",
+          Some("MC-10 training result semantic inspect report".to_string()),
+        )?;
+        Ok::<_, String>(())
+      })?;
       Ok::<_, String>(result)
     },
   )
@@ -810,11 +735,7 @@ pub fn run_minecraft_query_wired_live_action(
     RunSpec::new(RunType::Execute, QUERY_WIRED_LIVE_ACTION_OPERATION_ID),
     "Minecraft MC-19 query wired live action",
     |context| {
-      let click_executor = InvokeWindowPointClickExecutor::new(
-        context,
-        inputs.target_app.as_str(),
-        inputs.target_title.as_str(),
-      );
+      let click_executor = InvokeWindowPointClickExecutor::new(context, inputs.target_app.as_str(), inputs.target_title.as_str());
       run_query_wired_live_action_core(context, &inputs, &click_executor)
     },
   )
@@ -870,59 +791,46 @@ fn run_query_wired_live_action_core<E: QueryLiveClickExecutor>(
     output_dir: inputs.output_dir.clone(),
   })?;
 
-  let (_staged_manifest_path, query_manifest_ref) = context.in_span(
-    "minecraft.query_3dgs_training_result.artifacts",
-    |context| {
-      context.stage_artifact_file_with_ref(
-        MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
-        &query.manifest_path,
-        "minecraft-3dgs-training-result-query.json",
-        Some("MC-12 training result spatial query manifest".to_string()),
-      )
-    },
-  )?;
-  context.in_span(
-    "minecraft.query_3dgs_training_result.artifacts",
-    |context| {
-      context.stage_artifact_file(
-        MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE,
-        &query.inspect_report_path,
-        "minecraft-3dgs-training-result-query-inspect.json",
-        Some("MC-12 training result spatial query inspect report".to_string()),
-      )?;
-      Ok::<_, String>(())
-    },
-  )?;
+  let (_staged_manifest_path, query_manifest_ref) = context.in_span("minecraft.query_3dgs_training_result.artifacts", |context| {
+    context.stage_artifact_file_with_ref(
+      MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE,
+      &query.manifest_path,
+      "minecraft-3dgs-training-result-query.json",
+      Some("MC-12 training result spatial query manifest".to_string()),
+    )
+  })?;
+  context.in_span("minecraft.query_3dgs_training_result.artifacts", |context| {
+    context.stage_artifact_file(
+      MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE,
+      &query.inspect_report_path,
+      "minecraft-3dgs-training-result-query-inspect.json",
+      Some("MC-12 training result spatial query inspect report".to_string()),
+    )?;
+    Ok::<_, String>(())
+  })?;
 
   let pre_frame = if let Some(witness) = inputs.telemetry_witness.as_ref() {
     Some(
       auv_game_minecraft::read_latest_spatial_frame_from_tail(&witness.pre_telemetry_sample)?
-        .ok_or_else(|| {
-          format!(
-            "no valid minecraft pre frame found in {}",
-            witness.pre_telemetry_sample.display()
-          )
-        })?,
+        .ok_or_else(|| format!("no valid minecraft pre frame found in {}", witness.pre_telemetry_sample.display()))?,
     )
   } else {
     None
   };
 
-  let wiring =
-    wire_spatial_query_manifest_to_action(&query.manifest, &query.manifest_path, executor);
+  let wiring = wire_spatial_query_manifest_to_action(&query.manifest, &query.manifest_path, executor);
 
-  let (verifications, witness_absent_limit_needed) =
-    verification::build_query_wired_post_action_verifications(
-      context,
-      &wiring,
-      verification::QueryWiredPostActionVerificationInput {
-        telemetry_witness: inputs.telemetry_witness.as_ref(),
-        input_target_block: inputs.target_block,
-        manifest_target_block: query.manifest.target_block,
-        pre_frame,
-        verification_expected_item_id: inputs.verification_expected_item_id.clone(),
-      },
-    );
+  let (verifications, witness_absent_limit_needed) = verification::build_query_wired_post_action_verifications(
+    context,
+    &wiring,
+    verification::QueryWiredPostActionVerificationInput {
+      telemetry_witness: inputs.telemetry_witness.as_ref(),
+      input_target_block: inputs.target_block,
+      manifest_target_block: query.manifest.target_block,
+      pre_frame,
+      verification_expected_item_id: inputs.verification_expected_item_id.clone(),
+    },
+  );
 
   let operation_result = build_query_wired_live_action_operation_result(
     context.run_id(),
@@ -931,8 +839,7 @@ fn run_query_wired_live_action_core<E: QueryLiveClickExecutor>(
     verifications,
     witness_absent_limit_needed,
   );
-  let (_staged_operation_result_path, operation_result_ref) =
-    stage_query_wired_live_action_operation_result(context, &operation_result)?;
+  let (_staged_operation_result_path, operation_result_ref) = stage_query_wired_live_action_operation_result(context, &operation_result)?;
 
   context.record_event(
     "minecraft.query_wired_live_action.outcome",
@@ -958,21 +865,14 @@ pub fn run_minecraft_texture_sweep_sample_build(
   output_path: PathBuf,
 ) -> AuvResult<RecordedOperationOutput<TextureSweepSampleBuildOutput>> {
   recording.run_recorded_operation(
-    RunSpec::new(
-      RunType::Execute,
-      "auv.minecraft.build_texture_sweep_samples",
-    ),
+    RunSpec::new(RunType::Execute, "auv.minecraft.build_texture_sweep_samples"),
     "Minecraft build MC-6 texture sweep samples",
     |context| {
       context.record_event(
         "minecraft.build_texture_sweep_samples.inputs",
         Some(format!(
           "bundle_manifests={} output={}",
-          bundle_manifest_paths
-            .iter()
-            .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
-            .join(","),
+          bundle_manifest_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(","),
           output_path.display()
         )),
       );
@@ -980,18 +880,15 @@ pub fn run_minecraft_texture_sweep_sample_build(
         bundle_manifest_paths: bundle_manifest_paths.clone(),
         output_path: output_path.clone(),
       })?;
-      context.in_span(
-        "minecraft.build_texture_sweep_samples.artifacts",
-        |context| {
-          context.stage_artifact_file(
-            MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE,
-            &result.output_path,
-            "texture_sweep_samples.json",
-            Some("MC-6 texture sweep samples built from spatial bundles".to_string()),
-          )?;
-          Ok::<_, String>(())
-        },
-      )?;
+      context.in_span("minecraft.build_texture_sweep_samples.artifacts", |context| {
+        context.stage_artifact_file(
+          MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE,
+          &result.output_path,
+          "texture_sweep_samples.json",
+          Some("MC-6 texture sweep samples built from spatial bundles".to_string()),
+        )?;
+        Ok::<_, String>(())
+      })?;
       Ok::<_, String>(result)
     },
   )
@@ -1009,11 +906,7 @@ pub fn run_minecraft_spatial_bundle_export(
     |context| {
       context.record_event(
         "minecraft.export_spatial_bundle.inputs",
-        Some(format!(
-          "source_run_id={} output_dir={}",
-          source_run_id,
-          output_dir.display()
-        )),
+        Some(format!("source_run_id={} output_dir={}", source_run_id, output_dir.display())),
       );
       let source_run = context.recording().read_run(&source_run_id)?;
       let source_run_dir = context.recording().run_dir(&source_run_id)?;
@@ -1084,10 +977,7 @@ pub fn run_minecraft_texture_sweep_eval(
 }
 
 pub fn current_git_commit() -> Option<String> {
-  let output = std::process::Command::new("git")
-    .args(["rev-parse", "HEAD"])
-    .output()
-    .ok()?;
+  let output = std::process::Command::new("git").args(["rev-parse", "HEAD"]).output().ok()?;
   if !output.status.success() {
     return None;
   }
@@ -1112,10 +1002,7 @@ fn source_run_summary(source_run: &CanonicalRun, git_commit: Option<String>) -> 
   }
 }
 
-fn source_bundle_artifacts(
-  source_run_dir: PathBuf,
-  source_run: &CanonicalRun,
-) -> Vec<SpatialBundleSourceArtifact> {
+fn source_bundle_artifacts(source_run_dir: PathBuf, source_run: &CanonicalRun) -> Vec<SpatialBundleSourceArtifact> {
   source_run
     .artifacts
     .iter()
@@ -1129,21 +1016,10 @@ fn source_bundle_artifacts(
     .collect()
 }
 
-pub fn read_spatial_bundle_manifest(
-  path: PathBuf,
-) -> AuvResult<auv_game_minecraft::SpatialBundleManifest> {
-  let bytes = fs::read(&path).map_err(|error| {
-    format!(
-      "failed to read minecraft spatial bundle manifest {}: {error}",
-      path.display()
-    )
-  })?;
-  serde_json::from_slice::<auv_game_minecraft::SpatialBundleManifest>(&bytes).map_err(|error| {
-    format!(
-      "failed to parse minecraft spatial bundle manifest {}: {error}",
-      path.display()
-    )
-  })
+pub fn read_spatial_bundle_manifest(path: PathBuf) -> AuvResult<auv_game_minecraft::SpatialBundleManifest> {
+  let bytes = fs::read(&path).map_err(|error| format!("failed to read minecraft spatial bundle manifest {}: {error}", path.display()))?;
+  serde_json::from_slice::<auv_game_minecraft::SpatialBundleManifest>(&bytes)
+    .map_err(|error| format!("failed to parse minecraft spatial bundle manifest {}: {error}", path.display()))
 }
 
 pub fn texture_sweep_status(report: &TextureSweepReport) -> TraceStatusCode {
@@ -1211,11 +1087,8 @@ mod tests {
       screen_state: Some("in_game".to_string()),
       resource_pack_ids: vec!["fabric".to_string(), "file/auv-mc6-rich".to_string()],
     };
-    fs::write(
-      frames_dir.join("artifact_0001-frame-rich.json"),
-      serde_json::to_vec_pretty(&frame).expect("frame json"),
-    )
-    .expect("frame write");
+    fs::write(frames_dir.join("artifact_0001-frame-rich.json"), serde_json::to_vec_pretty(&frame).expect("frame json"))
+      .expect("frame write");
     let manifest = auv_game_minecraft::SpatialBundleManifest {
       schema_version: auv_game_minecraft::SPATIAL_BUNDLE_SCHEMA_VERSION,
       source_run: SourceRunSummary {
@@ -1253,11 +1126,7 @@ mod tests {
       known_limits: Vec::new(),
     };
     let manifest_path = bundle_dir.join("run.json");
-    fs::write(
-      &manifest_path,
-      serde_json::to_vec_pretty(&manifest).expect("manifest json"),
-    )
-    .expect("manifest write");
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("manifest json")).expect("manifest write");
     manifest_path
   }
 
@@ -1268,32 +1137,16 @@ mod tests {
     let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
     let manifest_path = write_sample_bundle(&temp);
 
-    let output = run_minecraft_3dgs_scene_packet_export(
-      &recording,
-      vec![manifest_path],
-      temp.join("scene-packet"),
-    )
-    .expect("scene packet export");
+    let output =
+      run_minecraft_3dgs_scene_packet_export(&recording, vec![manifest_path], temp.join("scene-packet")).expect("scene packet export");
 
     assert_eq!(output.value.manifest.counts.frames, 1);
     assert_eq!(output.value.manifest.counts.screenshots, 1);
     assert!(output.value.inspect_report_path.is_file());
     assert_eq!(output.value.inspect_report.counts.camera_records, 1);
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("scene packet run should persist");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE)
-    );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE)
-    );
+    let run = recording.read_run(output.run_id.as_str()).expect("scene packet run should persist");
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_ARTIFACT_ROLE));
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_SCENE_PACKET_INSPECT_ARTIFACT_ROLE));
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -1304,38 +1157,19 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
     let manifest_path = write_sample_bundle(&temp);
-    let scene_packet = run_minecraft_3dgs_scene_packet_export(
-      &recording,
-      vec![manifest_path],
-      temp.join("scene-packet"),
-    )
-    .expect("scene packet export");
+    let scene_packet =
+      run_minecraft_3dgs_scene_packet_export(&recording, vec![manifest_path], temp.join("scene-packet")).expect("scene packet export");
 
-    let output = run_minecraft_3dgs_training_package_export(
-      &recording,
-      scene_packet.value.manifest_path.clone(),
-      temp.join("training-package"),
-    )
-    .expect("training package export");
+    let output =
+      run_minecraft_3dgs_training_package_export(&recording, scene_packet.value.manifest_path.clone(), temp.join("training-package"))
+        .expect("training package export");
 
     assert_eq!(output.value.manifest.counts.frames, 1);
     assert!(output.value.manifest_path.is_file());
     assert!(output.value.inspect_report_path.is_file());
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("training package run should persist");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE)
-    );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE)
-    );
+    let run = recording.read_run(output.run_id.as_str()).expect("training package run should persist");
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE));
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_PACKAGE_INSPECT_ARTIFACT_ROLE));
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -1347,37 +1181,16 @@ mod tests {
     let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
     let training_manifest_path = write_blocked_training_package_fixture(&temp);
 
-    let output = run_minecraft_3dgs_training_launch_preparation(
-      &recording,
-      training_manifest_path,
-      temp.join("training-launch"),
-    )
-    .expect("training launch prep");
+    let output = run_minecraft_3dgs_training_launch_preparation(&recording, training_manifest_path, temp.join("training-launch"))
+      .expect("training launch prep");
 
     assert!(output.value.manifest_path.is_file());
     assert!(output.value.inspect_report_path.is_file());
     assert!(output.value.runbook_path.is_file());
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("training launch run should persist");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_LAUNCH_PLAN_ARTIFACT_ROLE)
-    );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE)
-    );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_LAUNCH_RUNBOOK_ARTIFACT_ROLE)
-    );
+    let run = recording.read_run(output.run_id.as_str()).expect("training launch run should persist");
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_LAUNCH_PLAN_ARTIFACT_ROLE));
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE));
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_LAUNCH_RUNBOOK_ARTIFACT_ROLE));
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -1389,37 +1202,16 @@ mod tests {
     let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
     let job_manifest_path = write_training_job_fixture(&temp);
 
-    let output = run_minecraft_3dgs_training_result_collection(
-      &recording,
-      job_manifest_path,
-      temp.join("training-result"),
-    )
-    .expect("training result collection");
+    let output = run_minecraft_3dgs_training_result_collection(&recording, job_manifest_path, temp.join("training-result"))
+      .expect("training result collection");
 
     assert!(output.value.manifest_path.is_file());
     assert!(output.value.inspect_report_path.is_file());
     assert!(output.value.runbook_path.is_file());
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("training result run should persist");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE)
-    );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE)
-    );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE)
-    );
+    let run = recording.read_run(output.run_id.as_str()).expect("training result run should persist");
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE));
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE));
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_RUNBOOK_ARTIFACT_ROLE));
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -1433,56 +1225,25 @@ mod tests {
     fs::write(&source_file, br#"{"spatial_frame_id":"frame-1"}"#).expect("source write");
 
     let source = recording
-      .run_recorded_operation(
-        RunSpec::new(RunType::Execute, "auv.minecraft.fixture"),
-        "fixture source run",
-        |context| {
-          context.stage_artifact_file(
-            MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE,
-            &source_file,
-            "frame.json",
-            Some("frame".to_string()),
-          )?;
-          Ok::<_, String>(())
-        },
-      )
+      .run_recorded_operation(RunSpec::new(RunType::Execute, "auv.minecraft.fixture"), "fixture source run", |context| {
+        context.stage_artifact_file(MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE, &source_file, "frame.json", Some("frame".to_string()))?;
+        Ok::<_, String>(())
+      })
       .expect("source run");
 
     let output_dir = temp.join("bundle");
-    let output = run_minecraft_spatial_bundle_export(
-      &recording,
-      source.run_id.as_str().to_string(),
-      output_dir.clone(),
-      Some("abc123".to_string()),
-    )
-    .expect("bundle export");
+    let output =
+      run_minecraft_spatial_bundle_export(&recording, source.run_id.as_str().to_string(), output_dir.clone(), Some("abc123".to_string()))
+        .expect("bundle export");
 
     assert_eq!(output.value.manifest.counts.spatial_frames, 1);
     assert!(output_dir.join("run.json").is_file());
-    let export_run = recording
-      .read_run(output.run_id.as_str())
-      .expect("export run should persist");
-    assert!(
-      export_run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE)
-    );
-    let manifests = crate::run_read::list_minecraft_spatial_bundle_manifests(
-      recording.recording_backend().store(),
-      output.run_id.as_str(),
-    )
-    .expect("spatial bundle manifests should list");
+    let export_run = recording.read_run(output.run_id.as_str()).expect("export run should persist");
+    assert!(export_run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_SPATIAL_BUNDLE_ARTIFACT_ROLE));
+    let manifests = crate::run_read::list_minecraft_spatial_bundle_manifests(recording.recording_backend().store(), output.run_id.as_str())
+      .expect("spatial bundle manifests should list");
     assert_eq!(manifests.len(), 1);
-    assert_eq!(
-      manifests[0]
-        .manifest
-        .as_ref()
-        .expect("manifest should parse")
-        .source_run
-        .source_run_id,
-      source.run_id.as_str()
-    );
+    assert_eq!(manifests[0].manifest.as_ref().expect("manifest should parse").source_run.source_run_id, source.run_id.as_str());
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -1493,29 +1254,13 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
 
-    let output = run_minecraft_texture_sweep_preparation(
-      &recording,
-      temp.join("sidecar-run"),
-      temp.join("prep-output"),
-    )
-    .expect("texture sweep prep");
+    let output =
+      run_minecraft_texture_sweep_preparation(&recording, temp.join("sidecar-run"), temp.join("prep-output")).expect("texture sweep prep");
 
     assert_eq!(output.value.manifest.profiles.len(), 3);
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("prep run should persist");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_PREP_ARTIFACT_ROLE)
-    );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE)
-    );
+    let run = recording.read_run(output.run_id.as_str()).expect("prep run should persist");
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_PREP_ARTIFACT_ROLE));
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_RUNBOOK_ARTIFACT_ROLE));
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -1527,23 +1272,11 @@ mod tests {
     let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
     let manifest_path = write_sample_bundle(&temp);
 
-    let output = run_minecraft_texture_sweep_sample_build(
-      &recording,
-      vec![manifest_path],
-      temp.join("samples.json"),
-    )
-    .expect("sample build");
+    let output = run_minecraft_texture_sweep_sample_build(&recording, vec![manifest_path], temp.join("samples.json")).expect("sample build");
 
     assert_eq!(output.value.sample_set.samples.len(), 1);
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("sample build run should persist");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE)
-    );
+    let run = recording.read_run(output.run_id.as_str()).expect("sample build run should persist");
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE));
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -1601,26 +1334,12 @@ mod tests {
     )
     .expect("samples write");
 
-    let output =
-      run_minecraft_texture_sweep_eval(&recording, samples_path, temp.join("sweep-output"), false)
-        .expect("sweep eval");
+    let output = run_minecraft_texture_sweep_eval(&recording, samples_path, temp.join("sweep-output"), false).expect("sweep eval");
 
     assert!(output.value.passed);
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("run should persist");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE)
-    );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE)
-    );
+    let run = recording.read_run(output.run_id.as_str()).expect("run should persist");
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_ARTIFACT_ROLE));
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_TEXTURE_SWEEP_SAMPLES_ARTIFACT_ROLE));
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -1631,10 +1350,7 @@ mod tests {
     fs::create_dir_all(training_dir.join("compat/nerfstudio")).expect("compat dir");
     fs::write(
       training_dir.join("known_limits.json"),
-      serde_json::to_vec_pretty(&vec![
-        "canonical package only; no trainer output".to_string(),
-      ])
-      .expect("known limits json"),
+      serde_json::to_vec_pretty(&vec!["canonical package only; no trainer output".to_string()]).expect("known limits json"),
     )
     .expect("known limits write");
 
@@ -1662,9 +1378,7 @@ mod tests {
         resource_pack_ids: vec!["fabric".to_string(), "file/auv-mc6-rich".to_string()],
         primary_file_resource_pack_id: Some("file/auv-mc6-rich".to_string()),
         compatibility_status: auv_game_minecraft::TrainingCompatibilityStatus::Blocked,
-        compatibility_skip_reasons: vec![
-          auv_game_minecraft::TrainingCompatibilitySkipReason::MissingScreenshot,
-        ],
+        compatibility_skip_reasons: vec![auv_game_minecraft::TrainingCompatibilitySkipReason::MissingScreenshot],
       }],
       compatibility_views: vec![auv_game_minecraft::TrainingCompatibilityViewReport {
         view_name: "nerfstudio".to_string(),
@@ -1679,9 +1393,7 @@ mod tests {
           spatial_frame_id: "frame-1".to_string(),
           source_run_id: "run-1".to_string(),
           status: auv_game_minecraft::TrainingCompatibilityStatus::Blocked,
-          skip_reasons: vec![
-            auv_game_minecraft::TrainingCompatibilitySkipReason::MissingScreenshot,
-          ],
+          skip_reasons: vec![auv_game_minecraft::TrainingCompatibilitySkipReason::MissingScreenshot],
         }],
         skip_reason_counts: vec![auv_game_minecraft::TrainingCompatibilitySkipReasonCount {
           reason: auv_game_minecraft::TrainingCompatibilitySkipReason::MissingScreenshot,
@@ -1693,20 +1405,13 @@ mod tests {
       }],
       known_limits: vec!["canonical package only; no trainer output".to_string()],
     };
-    fs::write(
-      training_dir.join("run.json"),
-      serde_json::to_vec_pretty(&manifest).expect("manifest json"),
-    )
-    .expect("manifest write");
+    fs::write(training_dir.join("run.json"), serde_json::to_vec_pretty(&manifest).expect("manifest json")).expect("manifest write");
     fs::write(
       training_dir.join("inspect_report.json"),
       serde_json::to_vec_pretty(&auv_game_minecraft::TrainingPackageInspectReport {
         schema_version: 1,
         generated_at_millis: 1,
-        training_package_manifest_path: training_dir
-          .join("run.json")
-          .to_string_lossy()
-          .into_owned(),
+        training_package_manifest_path: training_dir.join("run.json").to_string_lossy().into_owned(),
         scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
         source_bundle_manifest_paths: vec!["/tmp/run-1/run.json".to_string()],
         source_run_ids: vec!["run-1".to_string()],
@@ -1748,21 +1453,16 @@ mod tests {
     .expect("status write");
 
     unsafe {
-      std::env::set_var(
-        "AUV_MINECRAFT_TRAINING_JOB_ENDPOINT",
-        "https://jobs.example.test/v1",
-      );
+      std::env::set_var("AUV_MINECRAFT_TRAINING_JOB_ENDPOINT", "https://jobs.example.test/v1");
       std::env::set_var("AUV_MINECRAFT_TRAINING_JOB_TOKEN", "secret");
     }
 
     let job_manifest = auv_game_minecraft::TrainingLaunchJobManifest {
       schema_version: 1,
       generated_at_millis: 1,
-      source_training_launch_plan_path:
-        "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json".to_string(),
+      source_training_launch_plan_path: "/tmp/training-launch/minecraft-3dgs-training-launch-plan.json".to_string(),
       source_training_package_manifest_path: "/tmp/training-package/run.json".to_string(),
-      source_training_package_inspect_report_path: "/tmp/training-package/inspect_report.json"
-        .to_string(),
+      source_training_package_inspect_report_path: "/tmp/training-package/inspect_report.json".to_string(),
       source_scene_packet_manifest_path: "/tmp/scene/run.json".to_string(),
       source_bundle_manifest_paths: vec!["/tmp/bundle/run.json".to_string()],
       source_run_ids: vec!["run-1".to_string()],
@@ -1792,11 +1492,7 @@ mod tests {
       known_limits: vec!["limit-a".to_string()],
     };
     let job_manifest_path = root.join("minecraft-3dgs-training-job.json");
-    fs::write(
-      &job_manifest_path,
-      serde_json::to_vec_pretty(&job_manifest).expect("job manifest json"),
-    )
-    .expect("job manifest write");
+    fs::write(&job_manifest_path, serde_json::to_vec_pretty(&job_manifest).expect("job manifest json")).expect("job manifest write");
     job_manifest_path
   }
 
@@ -1806,12 +1502,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store, Arc::new(NoopRunRecorder)).handle();
     let training_package_manifest = write_blocked_training_package_fixture(&temp);
-    let launch_output = run_minecraft_3dgs_training_launch_preparation(
-      &recording,
-      training_package_manifest,
-      temp.join("launch"),
-    )
-    .expect("launch prep");
+    let launch_output =
+      run_minecraft_3dgs_training_launch_preparation(&recording, training_package_manifest, temp.join("launch")).expect("launch prep");
 
     let job_output = run_minecraft_3dgs_training_job_launch_with_environment(
       &recording,
@@ -1825,22 +1517,13 @@ mod tests {
     )
     .expect("job launch with explicit environment");
 
-    assert_eq!(
-      job_output.value.manifest.job_submission_endpoint,
-      "https://jobs.example.test/v1"
-    );
+    assert_eq!(job_output.value.manifest.job_submission_endpoint, "https://jobs.example.test/v1");
     assert_eq!(
       job_output.value.manifest.job_submission_command,
       "python3 -c \"import json,sys; req=json.load(sys.stdin); json.dump({'status':'submitted','job_id':'job-from-runtime','job_url':req['endpoint'].rstrip('/') + '/jobs/job-from-runtime','blocker':None}, sys.stdout)\""
     );
-    assert_eq!(
-      job_output.value.inspect_report.status,
-      auv_game_minecraft::TrainingLaunchJobStatus::Submitted
-    );
-    assert_eq!(
-      job_output.value.inspect_report.job_id.as_deref(),
-      Some("job-from-runtime")
-    );
+    assert_eq!(job_output.value.inspect_report.status, auv_game_minecraft::TrainingLaunchJobStatus::Submitted);
+    assert_eq!(job_output.value.inspect_report.job_id.as_deref(), Some("job-from-runtime"));
     let _ = fs::remove_dir_all(temp);
   }
 
@@ -1857,20 +1540,12 @@ mod tests {
       temp.join("result"),
       Some("https://jobs.example.test/v1".to_string()),
       Some("secret-token".to_string()),
-      Some(
-        "python3 -c \"import json,sys; json.dump({'status':'succeeded','message':'runtime-status-bridge'}, sys.stdout)\"".to_string(),
-      ),
+      Some("python3 -c \"import json,sys; json.dump({'status':'succeeded','message':'runtime-status-bridge'}, sys.stdout)\"".to_string()),
     )
     .expect("result collection with explicit environment");
 
-    assert_eq!(
-      result_output.value.manifest.job_submission_endpoint,
-      "https://jobs.example.test/v1"
-    );
-    assert_eq!(
-      result_output.value.inspect_report.status,
-      auv_game_minecraft::TrainingResultStatus::Succeeded
-    );
+    assert_eq!(result_output.value.manifest.job_submission_endpoint, "https://jobs.example.test/v1");
+    assert_eq!(result_output.value.inspect_report.status, auv_game_minecraft::TrainingResultStatus::Succeeded);
     let _ = fs::remove_dir_all(temp);
   }
 
@@ -1900,55 +1575,29 @@ mod tests {
       known_limits: vec!["limit-a".to_string()],
     };
     let manifest_path = root.join("minecraft-3dgs-training-result.json");
-    fs::write(
-      &manifest_path,
-      serde_json::to_vec_pretty(&manifest).expect("result manifest json"),
-    )
-    .expect("result manifest write");
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("result manifest json")).expect("result manifest write");
     manifest_path
   }
 
   fn assert_run_store_excludes_secret(store: &LocalStore, run: &CanonicalRun, secret: &str) {
-    let serialized_run =
-      serde_json::to_string(run).expect("run snapshot should serialize for leak scan");
-    assert!(
-      !serialized_run.contains(secret),
-      "run snapshot leaked secret in serialized run record"
-    );
+    let serialized_run = serde_json::to_string(run).expect("run snapshot should serialize for leak scan");
+    assert!(!serialized_run.contains(secret), "run snapshot leaked secret in serialized run record");
     for event in &run.events {
       if let Some(message) = &event.message {
-        assert!(
-          !message.contains(secret),
-          "run event `{}` leaked secret in message",
-          event.name
-        );
+        assert!(!message.contains(secret), "run event `{}` leaked secret in message", event.name);
       }
       for (key, value) in &event.attributes {
         let serialized = value.to_string();
-        assert!(
-          !serialized.contains(secret),
-          "run event `{}` attribute `{}` leaked secret",
-          event.name,
-          key
-        );
+        assert!(!serialized.contains(secret), "run event `{}` attribute `{}` leaked secret", event.name, key);
       }
     }
     for span in &run.spans {
       if let Some(summary) = &span.summary {
-        assert!(
-          !summary.contains(secret),
-          "run span `{}` leaked secret in summary",
-          span.name
-        );
+        assert!(!summary.contains(secret), "run span `{}` leaked secret in summary", span.name);
       }
       for (key, value) in &span.attributes {
         let serialized = value.to_string();
-        assert!(
-          !serialized.contains(secret),
-          "run span `{}` attribute `{}` leaked secret",
-          span.name,
-          key
-        );
+        assert!(!serialized.contains(secret), "run span `{}` attribute `{}` leaked secret", span.name, key);
       }
     }
     if let Some(summary) = &run.run.summary {
@@ -1956,31 +1605,16 @@ mod tests {
     }
     for (key, value) in &run.run.attributes {
       let serialized = value.to_string();
-      assert!(
-        !serialized.contains(secret),
-        "run attribute `{}` leaked secret",
-        key
-      );
+      assert!(!serialized.contains(secret), "run attribute `{}` leaked secret", key);
     }
     for artifact in &run.artifacts {
       if let Some(summary) = &artifact.summary {
-        assert!(
-          !summary.contains(secret),
-          "artifact `{}` summary leaked secret",
-          artifact.role
-        );
+        assert!(!summary.contains(secret), "artifact `{}` summary leaked secret", artifact.role);
       }
-      let artifact_path = store
-        .run_dir(&run.run.run_id)
-        .expect("run dir")
-        .join(&artifact.path);
+      let artifact_path = store.run_dir(&run.run.run_id).expect("run dir").join(&artifact.path);
       if artifact_path.is_file() {
         let content = fs::read_to_string(&artifact_path).unwrap_or_default();
-        assert!(
-          !content.contains(secret),
-          "artifact `{}` body leaked secret",
-          artifact.role
-        );
+        assert!(!content.contains(secret), "artifact `{}` body leaked secret", artifact.role);
       }
     }
   }
@@ -2004,30 +1638,19 @@ mod tests {
     )
     .expect("artifact fetch with explicit token should succeed");
 
-    assert_eq!(
-      output.value.inspect_report.fetch_status,
-      auv_game_minecraft::TrainingResultArtifactFetchStatus::Succeeded
-    );
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("fetch run should persist");
+    assert_eq!(output.value.inspect_report.fetch_status, auv_game_minecraft::TrainingResultArtifactFetchStatus::Succeeded);
+    let run = recording.read_run(output.run_id.as_str()).expect("fetch run should persist");
     let input_event = run
       .events
       .iter()
       .find(|event| event.name == "minecraft.fetch_3dgs_training_result_artifacts.inputs")
       .expect("fetch input event should be recorded");
     assert!(
-      input_event
-        .message
-        .as_deref()
-        .is_some_and(|message| message.contains("training_job_token_present=true")),
+      input_event.message.as_deref().is_some_and(|message| message.contains("training_job_token_present=true")),
       "recorded input event should expose token presence only"
     );
     assert!(
-      input_event
-        .message
-        .as_deref()
-        .is_some_and(|message| !message.contains(RUN_STORE_SECRET)),
+      input_event.message.as_deref().is_some_and(|message| !message.contains(RUN_STORE_SECRET)),
       "recorded input event must not include token value"
     );
 
@@ -2039,18 +1662,8 @@ mod tests {
   fn write_d11_artifact_manifest_for_semantic(root: &Path) -> PathBuf {
     let normalized_result_dir = root.join("normalized-result");
     fs::create_dir_all(normalized_result_dir.join("nerfstudio_models")).expect("models dir");
-    fs::write(
-      normalized_result_dir.join("config.yml"),
-      "trainer: nerfstudio.splatfacto\n",
-    )
-    .expect("config");
-    fs::write(
-      normalized_result_dir
-        .join("nerfstudio_models")
-        .join("step-000001.ckpt"),
-      b"checkpoint",
-    )
-    .expect("checkpoint");
+    fs::write(normalized_result_dir.join("config.yml"), "trainer: nerfstudio.splatfacto\n").expect("config");
+    fs::write(normalized_result_dir.join("nerfstudio_models").join("step-000001.ckpt"), b"checkpoint").expect("checkpoint");
 
     let manifest = auv_game_minecraft::TrainingResultArtifactFetchManifest {
       schema_version: 1,
@@ -2073,11 +1686,7 @@ mod tests {
       known_limits: vec!["limit-a".to_string()],
     };
     let manifest_path = root.join("minecraft-3dgs-training-result-artifact-manifest.json");
-    fs::write(
-      &manifest_path,
-      serde_json::to_vec_pretty(&manifest).expect("d11 manifest json"),
-    )
-    .expect("d11 manifest write");
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest).expect("d11 manifest json")).expect("d11 manifest write");
     manifest_path
   }
 
@@ -2088,20 +1697,11 @@ mod tests {
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let d11_manifest_path = write_d11_artifact_manifest_for_semantic(&temp);
 
-    let output = run_minecraft_3dgs_training_result_semantic_validation(
-      &recording,
-      d11_manifest_path,
-      temp.join("semantic-output"),
-    )
-    .expect("semantic validation should succeed");
+    let output = run_minecraft_3dgs_training_result_semantic_validation(&recording, d11_manifest_path, temp.join("semantic-output"))
+      .expect("semantic validation should succeed");
 
-    assert_eq!(
-      output.value.inspect_report.semantic_status,
-      auv_game_minecraft::TrainingResultSemanticStatus::Ready
-    );
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("semantic validation run should persist");
+    assert_eq!(output.value.inspect_report.semantic_status, auv_game_minecraft::TrainingResultSemanticStatus::Ready);
+    let run = recording.read_run(output.run_id.as_str()).expect("semantic validation run should persist");
     let input_event = run
       .events
       .iter()
@@ -2109,23 +1709,16 @@ mod tests {
       .expect("semantic validation input event should be recorded");
     assert!(
       input_event.message.as_deref().is_some_and(|message| {
-        message.contains("semantic_validated_3dgs_result=true")
-          && message.contains("render_preview_generated=false")
+        message.contains("semantic_validated_3dgs_result=true") && message.contains("render_preview_generated=false")
       }),
       "recorded input event should expose MC-10 semantic-only boundary"
     );
     assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE),
+      run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE),
       "semantic manifest artifact should be staged"
     );
     assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE }),
+      run.artifacts.iter().any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE }),
       "semantic inspect artifact should be staged"
     );
 
@@ -2170,11 +1763,8 @@ mod tests {
       screen_state: Some("in_game".to_string()),
       resource_pack_ids: Vec::new(),
     };
-    fs::write(
-      scene_packet_dir.join("frames/frame_000001.json"),
-      serde_json::to_vec_pretty(&frame).expect("frame json"),
-    )
-    .expect("frame write");
+    fs::write(scene_packet_dir.join("frames/frame_000001.json"), serde_json::to_vec_pretty(&frame).expect("frame json"))
+      .expect("frame write");
     let scene_packet_manifest = auv_game_minecraft::ScenePacketManifest {
       schema_version: 1,
       generated_at_millis: 1,
@@ -2203,11 +1793,8 @@ mod tests {
       known_limits: Vec::new(),
     };
     let scene_packet_manifest_path = scene_packet_dir.join("scene-packet.json");
-    fs::write(
-      &scene_packet_manifest_path,
-      serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"),
-    )
-    .expect("scene packet write");
+    fs::write(&scene_packet_manifest_path, serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"))
+      .expect("scene packet write");
     let semantic_manifest = auv_game_minecraft::TrainingResultSemanticManifest {
       schema_version: 1,
       generated_at_millis: 1,
@@ -2225,14 +1812,8 @@ mod tests {
       normalized_result_dir: temp.join("normalized").to_string_lossy().into_owned(),
       semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
       semantic_reason: None,
-      config_path: temp
-        .join("normalized/config.yml")
-        .to_string_lossy()
-        .into_owned(),
-      models_dir_path: temp
-        .join("normalized/nerfstudio_models")
-        .to_string_lossy()
-        .into_owned(),
+      config_path: temp.join("normalized/config.yml").to_string_lossy().into_owned(),
+      models_dir_path: temp.join("normalized/nerfstudio_models").to_string_lossy().into_owned(),
       status_snapshot_path: None,
       config_trainer: Some("nerfstudio.splatfacto".to_string()),
       checkpoint_files: Vec::new(),
@@ -2240,11 +1821,7 @@ mod tests {
       known_limits: vec!["fixture".to_string()],
     };
     let semantic_manifest_path = temp.join("semantic.json");
-    fs::write(
-      &semantic_manifest_path,
-      serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json"),
-    )
-    .expect("semantic write");
+    fs::write(&semantic_manifest_path, serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json")).expect("semantic write");
 
     let output = run_minecraft_3dgs_training_result_spatial_query(
       &recording,
@@ -2260,37 +1837,26 @@ mod tests {
     )
     .expect("spatial query should succeed");
 
-    assert_eq!(
-      output.value.manifest.status,
-      auv_game_minecraft::TrainingResultSpatialQueryStatus::Answered
-    );
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("spatial query run should persist");
+    assert_eq!(output.value.manifest.status, auv_game_minecraft::TrainingResultSpatialQueryStatus::Answered);
+    let run = recording.read_run(output.run_id.as_str()).expect("spatial query run should persist");
     let input_event = run
       .events
       .iter()
       .find(|event| event.name == "minecraft.query_3dgs_training_result.inputs")
       .expect("spatial query input event should be recorded");
     assert!(
-      input_event.message.as_deref().is_some_and(|message| {
-        message.contains("block_projection_query=true")
-          && message.contains("gaussian_native_query=false")
-      }),
+      input_event
+        .message
+        .as_deref()
+        .is_some_and(|message| { message.contains("block_projection_query=true") && message.contains("gaussian_native_query=false") }),
       "recorded input event should expose MC-12 contract boundary"
     );
     assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE),
+      run.artifacts.iter().any(|artifact| artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE),
       "query manifest artifact should be staged"
     );
     assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE }),
+      run.artifacts.iter().any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE }),
       "query inspect artifact should be staged"
     );
 
@@ -2306,11 +1872,7 @@ mod tests {
     let normalized_dir = temp.join("normalized");
     let models_dir = normalized_dir.join("nerfstudio_models");
     fs::create_dir_all(&models_dir).expect("models dir");
-    fs::write(
-      normalized_dir.join("config.yml"),
-      "trainer: nerfstudio.splatfacto\n",
-    )
-    .expect("config");
+    fs::write(normalized_dir.join("config.yml"), "trainer: nerfstudio.splatfacto\n").expect("config");
     fs::write(models_dir.join("step-000001.ckpt"), b"fake-checkpoint").expect("ckpt");
 
     let scene_packet_dir = temp.join("scene-packet");
@@ -2346,11 +1908,8 @@ mod tests {
       screen_state: Some("in_game".to_string()),
       resource_pack_ids: Vec::new(),
     };
-    fs::write(
-      scene_packet_dir.join("frames/frame_000001.json"),
-      serde_json::to_vec_pretty(&frame).expect("frame json"),
-    )
-    .expect("frame write");
+    fs::write(scene_packet_dir.join("frames/frame_000001.json"), serde_json::to_vec_pretty(&frame).expect("frame json"))
+      .expect("frame write");
     let scene_packet_manifest = auv_game_minecraft::ScenePacketManifest {
       schema_version: 1,
       generated_at_millis: 1,
@@ -2379,11 +1938,8 @@ mod tests {
       known_limits: Vec::new(),
     };
     let scene_packet_manifest_path = scene_packet_dir.join("scene-packet.json");
-    fs::write(
-      &scene_packet_manifest_path,
-      serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"),
-    )
-    .expect("scene packet write");
+    fs::write(&scene_packet_manifest_path, serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"))
+      .expect("scene packet write");
 
     let semantic_manifest = auv_game_minecraft::TrainingResultSemanticManifest {
       schema_version: 1,
@@ -2402,10 +1958,7 @@ mod tests {
       normalized_result_dir: normalized_dir.to_string_lossy().into_owned(),
       semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
       semantic_reason: None,
-      config_path: normalized_dir
-        .join("config.yml")
-        .to_string_lossy()
-        .into_owned(),
+      config_path: normalized_dir.join("config.yml").to_string_lossy().into_owned(),
       models_dir_path: models_dir.to_string_lossy().into_owned(),
       status_snapshot_path: None,
       config_trainer: Some("nerfstudio.splatfacto".to_string()),
@@ -2414,11 +1967,7 @@ mod tests {
       known_limits: vec!["fixture".to_string()],
     };
     let semantic_manifest_path = temp.join("semantic.json");
-    fs::write(
-      &semantic_manifest_path,
-      serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json"),
-    )
-    .expect("semantic write");
+    fs::write(&semantic_manifest_path, serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json")).expect("semantic write");
 
     let output = run_minecraft_3dgs_training_result_spatial_query(
       &recording,
@@ -2434,23 +1983,18 @@ mod tests {
     )
     .expect("checkpoint native spatial query should succeed");
 
-    assert_eq!(
-      output.value.manifest.selected_backend,
-      Some(auv_game_minecraft::TrainingResultSpatialQueryBackend::CheckpointNative)
-    );
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("spatial query run should persist");
+    assert_eq!(output.value.manifest.selected_backend, Some(auv_game_minecraft::TrainingResultSpatialQueryBackend::CheckpointNative));
+    let run = recording.read_run(output.run_id.as_str()).expect("spatial query run should persist");
     let input_event = run
       .events
       .iter()
       .find(|event| event.name == "minecraft.query_3dgs_training_result.inputs")
       .expect("spatial query input event should be recorded");
     assert!(
-      input_event.message.as_deref().is_some_and(|message| {
-        message.contains("checkpoint_native_provider=true")
-          && message.contains("gaussian_native_query=true")
-      }),
+      input_event
+        .message
+        .as_deref()
+        .is_some_and(|message| { message.contains("checkpoint_native_provider=true") && message.contains("gaussian_native_query=true") }),
       "recorded input event should expose MC-15 checkpoint-native boundary"
     );
 
@@ -2495,11 +2039,8 @@ mod tests {
       screen_state: Some("in_game".to_string()),
       resource_pack_ids: Vec::new(),
     };
-    fs::write(
-      scene_packet_dir.join("frames/frame_000001.json"),
-      serde_json::to_vec_pretty(&frame).expect("frame json"),
-    )
-    .expect("frame write");
+    fs::write(scene_packet_dir.join("frames/frame_000001.json"), serde_json::to_vec_pretty(&frame).expect("frame json"))
+      .expect("frame write");
     let scene_packet_manifest = auv_game_minecraft::ScenePacketManifest {
       schema_version: 1,
       generated_at_millis: 1,
@@ -2528,11 +2069,8 @@ mod tests {
       known_limits: Vec::new(),
     };
     let scene_packet_manifest_path = scene_packet_dir.join("scene-packet.json");
-    fs::write(
-      &scene_packet_manifest_path,
-      serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"),
-    )
-    .expect("scene packet write");
+    fs::write(&scene_packet_manifest_path, serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"))
+      .expect("scene packet write");
 
     let normalized_dir = temp.join("normalized");
     fs::create_dir_all(normalized_dir.join("nerfstudio_models")).expect("models dir");
@@ -2560,14 +2098,8 @@ mod tests {
       normalized_result_dir: normalized_dir.to_string_lossy().into_owned(),
       semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
       semantic_reason: None,
-      config_path: normalized_dir
-        .join("config.yml")
-        .to_string_lossy()
-        .into_owned(),
-      models_dir_path: normalized_dir
-        .join("nerfstudio_models")
-        .to_string_lossy()
-        .into_owned(),
+      config_path: normalized_dir.join("config.yml").to_string_lossy().into_owned(),
+      models_dir_path: normalized_dir.join("nerfstudio_models").to_string_lossy().into_owned(),
       status_snapshot_path: None,
       config_trainer: Some("nerfstudio.splatfacto".to_string()),
       checkpoint_files: Vec::new(),
@@ -2575,14 +2107,9 @@ mod tests {
       known_limits: vec!["fixture".to_string()],
     };
     let semantic_manifest_path = temp.join("semantic.json");
-    fs::write(
-      &semantic_manifest_path,
-      serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json"),
-    )
-    .expect("semantic write");
+    fs::write(&semantic_manifest_path, serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json")).expect("semantic write");
 
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
 
     let output = run_minecraft_3dgs_training_result_spatial_query(
       &recording,
@@ -2598,23 +2125,18 @@ mod tests {
     )
     .expect("closed scene toy spatial query should succeed");
 
-    assert_eq!(
-      output.value.manifest.selected_backend,
-      Some(auv_game_minecraft::TrainingResultSpatialQueryBackend::ClosedSceneToy)
-    );
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("spatial query run should persist");
+    assert_eq!(output.value.manifest.selected_backend, Some(auv_game_minecraft::TrainingResultSpatialQueryBackend::ClosedSceneToy));
+    let run = recording.read_run(output.run_id.as_str()).expect("spatial query run should persist");
     let input_event = run
       .events
       .iter()
       .find(|event| event.name == "minecraft.query_3dgs_training_result.inputs")
       .expect("spatial query input event should be recorded");
     assert!(
-      input_event.message.as_deref().is_some_and(|message| {
-        message.contains("closed_scene_toy_provider=true")
-          && message.contains("gaussian_native_query=true")
-      }),
+      input_event
+        .message
+        .as_deref()
+        .is_some_and(|message| { message.contains("closed_scene_toy_provider=true") && message.contains("gaussian_native_query=true") }),
       "recorded input event should expose MC-18 closed-scene toy boundary"
     );
 
@@ -2654,12 +2176,7 @@ mod tests {
       if let Some(message) = &self.dispatch_error {
         return Err(message.clone());
       }
-      Ok(
-        self
-          .summary
-          .clone()
-          .unwrap_or_else(|| "clicked".to_string()),
-      )
+      Ok(self.summary.clone().unwrap_or_else(|| "clicked".to_string()))
     }
   }
 
@@ -2670,11 +2187,8 @@ mod tests {
   ) -> PathBuf {
     let scene_packet_dir = temp.join("scene-packet");
     fs::create_dir_all(scene_packet_dir.join("frames")).expect("frames dir");
-    fs::write(
-      scene_packet_dir.join("frames/frame_000001.json"),
-      serde_json::to_vec_pretty(&frame).expect("frame json"),
-    )
-    .expect("frame write");
+    fs::write(scene_packet_dir.join("frames/frame_000001.json"), serde_json::to_vec_pretty(&frame).expect("frame json"))
+      .expect("frame write");
     let scene_packet_manifest = auv_game_minecraft::ScenePacketManifest {
       schema_version: 1,
       generated_at_millis: 1,
@@ -2703,19 +2217,12 @@ mod tests {
       known_limits: Vec::new(),
     };
     let scene_packet_manifest_path = scene_packet_dir.join("scene-packet.json");
-    fs::write(
-      &scene_packet_manifest_path,
-      serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"),
-    )
-    .expect("scene packet write");
+    fs::write(&scene_packet_manifest_path, serde_json::to_vec_pretty(&scene_packet_manifest).expect("scene packet json"))
+      .expect("scene packet write");
 
     let normalized_dir = temp.join("normalized");
     fs::create_dir_all(normalized_dir.join("nerfstudio_models")).expect("models dir");
-    fs::write(
-      normalized_dir.join("config.yml"),
-      "trainer: nerfstudio.splatfacto\n",
-    )
-    .expect("config");
+    fs::write(normalized_dir.join("config.yml"), "trainer: nerfstudio.splatfacto\n").expect("config");
 
     let semantic_manifest = auv_game_minecraft::TrainingResultSemanticManifest {
       schema_version: 1,
@@ -2734,14 +2241,8 @@ mod tests {
       normalized_result_dir: normalized_dir.to_string_lossy().into_owned(),
       semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
       semantic_reason: None,
-      config_path: normalized_dir
-        .join("config.yml")
-        .to_string_lossy()
-        .into_owned(),
-      models_dir_path: normalized_dir
-        .join("nerfstudio_models")
-        .to_string_lossy()
-        .into_owned(),
+      config_path: normalized_dir.join("config.yml").to_string_lossy().into_owned(),
+      models_dir_path: normalized_dir.join("nerfstudio_models").to_string_lossy().into_owned(),
       status_snapshot_path: None,
       config_trainer: Some("nerfstudio.splatfacto".to_string()),
       checkpoint_files: Vec::new(),
@@ -2749,17 +2250,11 @@ mod tests {
       known_limits: vec!["fixture".to_string()],
     };
     let semantic_manifest_path = temp.join("semantic.json");
-    fs::write(
-      &semantic_manifest_path,
-      serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json"),
-    )
-    .expect("semantic write");
+    fs::write(&semantic_manifest_path, serde_json::to_vec_pretty(&semantic_manifest).expect("semantic json")).expect("semantic write");
     semantic_manifest_path
   }
 
-  fn mc18_target_frame(
-    target_block: auv_game_minecraft::BlockPosition,
-  ) -> auv_game_minecraft::MinecraftSpatialFrame {
+  fn mc18_target_frame(target_block: auv_game_minecraft::BlockPosition) -> auv_game_minecraft::MinecraftSpatialFrame {
     auv_game_minecraft::MinecraftSpatialFrame {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 1,
@@ -2790,30 +2285,17 @@ mod tests {
 
   fn operation_output_message(output: &crate::contract::OperationOutput) -> String {
     match output {
-      crate::contract::OperationOutput::Acknowledged { message } => {
-        message.clone().unwrap_or_default()
-      }
+      crate::contract::OperationOutput::Acknowledged { message } => message.clone().unwrap_or_default(),
       _ => String::new(),
     }
   }
 
-  fn read_operation_result_artifact(
-    store: &LocalStore,
-    run: &CanonicalRun,
-  ) -> crate::contract::OperationResult {
-    let artifact = run
-      .artifacts
-      .iter()
-      .find(|artifact| artifact.role == "operation-result")
-      .expect("operation-result artifact should be staged");
-    let artifact_path = store
-      .run_dir(run.run.run_id.as_str())
-      .expect("run dir")
-      .join(&artifact.path);
-    serde_json::from_slice(
-      &fs::read(&artifact_path).expect("operation-result artifact should be readable"),
-    )
-    .expect("operation-result json should parse")
+  fn read_operation_result_artifact(store: &LocalStore, run: &CanonicalRun) -> crate::contract::OperationResult {
+    let artifact =
+      run.artifacts.iter().find(|artifact| artifact.role == "operation-result").expect("operation-result artifact should be staged");
+    let artifact_path = store.run_dir(run.run.run_id.as_str()).expect("run dir").join(&artifact.path);
+    serde_json::from_slice(&fs::read(&artifact_path).expect("operation-result artifact should be readable"))
+      .expect("operation-result json should parse")
   }
 
   #[test]
@@ -2822,10 +2304,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
     let executor = CountingQueryLiveClickExecutor::success("mock live click dispatched");
 
     let output = run_minecraft_query_wired_live_action_with_executor(
@@ -2851,60 +2331,23 @@ mod tests {
 
     assert!(output.value.wiring.attempted);
     assert_eq!(executor.calls.get(), 1);
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE })
-    );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE })
-    );
-    let outcome_event = run
-      .events
-      .iter()
-      .find(|event| event.name == "minecraft.query_wired_live_action.outcome")
-      .expect("outcome event should be recorded");
-    assert!(
-      outcome_event
-        .message
-        .as_deref()
-        .is_some_and(|message| message.contains("attempted=true"))
-    );
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
+    assert!(run.artifacts.iter().any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE }));
+    assert!(run.artifacts.iter().any(|artifact| { artifact.role == MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE }));
+    let outcome_event =
+      run.events.iter().find(|event| event.name == "minecraft.query_wired_live_action.outcome").expect("outcome event should be recorded");
+    assert!(outcome_event.message.as_deref().is_some_and(|message| message.contains("attempted=true")));
     let operation_result = read_operation_result_artifact(&store, &run);
-    assert_eq!(
-      operation_result.operation_id,
-      QUERY_WIRED_LIVE_ACTION_OPERATION_ID
-    );
-    assert_eq!(
-      operation_result.status,
-      crate::contract::OperationStatus::Completed
-    );
-    assert!(
-      operation_output_message(&operation_result.output).contains("mock live click dispatched")
-    );
+    assert_eq!(operation_result.operation_id, QUERY_WIRED_LIVE_ACTION_OPERATION_ID);
+    assert_eq!(operation_result.status, crate::contract::OperationStatus::Completed);
+    assert!(operation_output_message(&operation_result.output).contains("mock live click dispatched"));
     assert_eq!(operation_result.verifications.len(), 1);
-    assert_eq!(
-      operation_result.verifications[0].failure_layer,
-      Some(crate::contract::FailureLayer::VerificationUnreliable)
-    );
+    assert_eq!(operation_result.verifications[0].failure_layer, Some(crate::contract::FailureLayer::VerificationUnreliable));
+    assert!(!operation_result.known_limits.iter().any(|limit| limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT));
     assert!(
-      !operation_result
-        .known_limits
-        .iter()
-        .any(|limit| limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT)
+      operation_result.known_limits.iter().any(|limit| { limit == auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT })
     );
-    assert!(operation_result.known_limits.iter().any(|limit| {
-      limit == auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT
-    }));
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
-      .expect("summary should derive");
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
     assert_eq!(summary.verification_outcome, "unreliable");
 
     let _ = fs::remove_dir_all(temp);
@@ -2915,9 +2358,7 @@ mod tests {
     fs::write(path, format!("{body}\n")).expect("telemetry sample should write");
   }
 
-  fn mc20_semantic_pre_frame(
-    target_block: auv_game_minecraft::BlockPosition,
-  ) -> auv_game_minecraft::MinecraftSpatialFrame {
+  fn mc20_semantic_pre_frame(target_block: auv_game_minecraft::BlockPosition) -> auv_game_minecraft::MinecraftSpatialFrame {
     auv_game_minecraft::MinecraftSpatialFrame {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 10,
@@ -3009,10 +2450,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
     let pre_frame = mc20_semantic_pre_frame(target_block);
     let post_frame = mc20_semantic_pass_post_frame(target_block, &pre_frame);
     let pre_telemetry = temp.join("pre.jsonl");
@@ -3045,19 +2484,13 @@ mod tests {
     )
     .expect("semantic pass witness should succeed");
 
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
     let operation_result = read_operation_result_artifact(&store, &run);
     assert_eq!(operation_result.verifications.len(), 1);
-    assert_eq!(
-      operation_result.verifications[0].semantic_matched,
-      Some(true)
-    );
+    assert_eq!(operation_result.verifications[0].semantic_matched, Some(true));
     assert!(operation_result.verifications[0].state_changed);
     assert_eq!(operation_result.verifications[0].failure_layer, None);
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
-      .expect("summary should derive");
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
     assert_eq!(summary.verification_outcome, "passed");
 
     let _ = fs::remove_dir_all(temp);
@@ -3069,10 +2502,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
     let pre_frame = mc20_semantic_pre_frame(target_block);
     let post_frame = mc20_semantic_fail_post_frame(target_block, &pre_frame);
     let pre_telemetry = temp.join("pre.jsonl");
@@ -3105,21 +2536,12 @@ mod tests {
     )
     .expect("semantic fail witness should succeed");
 
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
     let operation_result = read_operation_result_artifact(&store, &run);
     assert_eq!(operation_result.verifications.len(), 1);
-    assert_eq!(
-      operation_result.verifications[0].semantic_matched,
-      Some(false)
-    );
-    assert_eq!(
-      operation_result.verifications[0].failure_layer,
-      Some(crate::contract::FailureLayer::StateChangedNoMatch)
-    );
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
-      .expect("summary should derive");
+    assert_eq!(operation_result.verifications[0].semantic_matched, Some(false));
+    assert_eq!(operation_result.verifications[0].failure_layer, Some(crate::contract::FailureLayer::StateChangedNoMatch));
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
     assert_eq!(summary.verification_outcome, "failed");
 
     let _ = fs::remove_dir_all(temp);
@@ -3159,10 +2581,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
     let pre_frame = mc18_target_frame(target_block);
     let post_frame = mc20_post_frame_after_click(target_block, &pre_frame);
     let pre_telemetry = temp.join("pre.jsonl");
@@ -3196,38 +2616,21 @@ mod tests {
     .expect("witness wired live action should succeed");
 
     assert!(output.value.wiring.attempted);
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
     let operation_result = read_operation_result_artifact(&store, &run);
     assert_eq!(operation_result.verifications.len(), 1);
     assert_eq!(operation_result.verifications[0].semantic_matched, None);
     assert!(operation_result.verifications[0].state_changed);
     assert_eq!(operation_result.verifications[0].failure_layer, None);
-    assert!(
-      !operation_result
-        .known_limits
-        .iter()
-        .any(|limit| limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT)
-    );
-    assert!(
-      !operation_result
-        .known_limits
-        .iter()
-        .any(|limit| limit == auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT)
-    );
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
-      .expect("summary should derive");
+    assert!(!operation_result.known_limits.iter().any(|limit| limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT));
+    assert!(!operation_result.known_limits.iter().any(|limit| limit == auv_game_minecraft::MC20_V1_QUERY_WIRED_WITNESS_ABSENT_KNOWN_LIMIT));
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
     assert_eq!(summary.verification_outcome, "inconclusive");
     assert_eq!(
       summary.verification_source.as_deref(),
       Some(
-        format!(
-          "kind=operation_result artifact_id={} run_id={}",
-          output.value.operation_result_artifact_id,
-          output.run_id.as_str()
-        )
-        .as_str()
+        format!("kind=operation_result artifact_id={} run_id={}", output.value.operation_result_artifact_id, output.run_id.as_str())
+          .as_str()
       )
     );
 
@@ -3240,10 +2643,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
     let pre_frame = mc18_target_frame(target_block);
     let post_frame = mc20_post_frame_after_click(target_block, &pre_frame);
     let pre_telemetry = temp.join("pre.jsonl");
@@ -3276,19 +2677,13 @@ mod tests {
     )
     .expect("tick-advance witness with expected item should succeed");
 
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
     let operation_result = read_operation_result_artifact(&store, &run);
     assert_eq!(operation_result.verifications.len(), 1);
-    assert_eq!(
-      operation_result.verifications[0].semantic_matched,
-      Some(false)
-    );
+    assert_eq!(operation_result.verifications[0].semantic_matched, Some(false));
     assert!(operation_result.verifications[0].state_changed);
     assert_eq!(operation_result.verifications[0].failure_layer, None);
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
-      .expect("summary should derive");
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
     assert_eq!(summary.verification_outcome, "failed");
 
     let _ = fs::remove_dir_all(temp);
@@ -3300,10 +2695,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
     let executor = CountingQueryLiveClickExecutor::dispatch_error("click invoke failed");
 
     let output = run_minecraft_query_wired_live_action_with_executor(
@@ -3329,20 +2722,14 @@ mod tests {
 
     assert!(output.value.wiring.attempted);
     assert!(output.value.wiring.click_summary.is_none());
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
     let operation_result = read_operation_result_artifact(&store, &run);
     assert!(operation_result.verifications.is_empty());
-    assert_eq!(
-      operation_result.status,
-      crate::contract::OperationStatus::Failed
+    assert_eq!(operation_result.status, crate::contract::OperationStatus::Failed);
+    assert!(
+      operation_result.known_limits.iter().any(|limit| { limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT })
     );
-    assert!(operation_result.known_limits.iter().any(|limit| {
-      limit == auv_game_minecraft::MC19_V1_D4_QUERY_WIRED_LIVE_ACTION_KNOWN_LIMIT
-    }));
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
-      .expect("summary should derive");
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
     assert_eq!(summary.verification_outcome, "absent");
 
     let _ = fs::remove_dir_all(temp);
@@ -3354,10 +2741,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
     let pre_frame = mc20_semantic_pre_frame(target_block);
     let stale_post = pre_frame.clone();
     let fresher_post = mc20_semantic_pass_post_frame(target_block, &pre_frame);
@@ -3370,10 +2755,7 @@ mod tests {
     let writer = std::thread::spawn(move || {
       std::thread::sleep(std::time::Duration::from_millis(25));
       let body = serde_json::to_string(&writer_frame).expect("frame should serialize");
-      let mut file = fs::OpenOptions::new()
-        .append(true)
-        .open(&writer_path)
-        .expect("telemetry sample should open for append");
+      let mut file = fs::OpenOptions::new().append(true).open(&writer_path).expect("telemetry sample should open for append");
       use std::io::Write as _;
       writeln!(file, "{body}").expect("telemetry sample should append");
     });
@@ -3404,17 +2786,11 @@ mod tests {
     .expect("fresher post witness should succeed");
 
     writer.join().expect("writer thread should join");
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
     let operation_result = read_operation_result_artifact(&store, &run);
     assert_eq!(operation_result.verifications.len(), 1);
-    assert_eq!(
-      operation_result.verifications[0].semantic_matched,
-      Some(true)
-    );
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
-      .expect("summary should derive");
+    assert_eq!(operation_result.verifications[0].semantic_matched, Some(true));
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
     assert_eq!(summary.verification_outcome, "passed");
 
     let _ = fs::remove_dir_all(temp);
@@ -3426,10 +2802,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/visible.json");
     let pre_frame = mc18_target_frame(target_block);
     let pre_telemetry = temp.join("pre.jsonl");
     write_telemetry_jsonl(&pre_telemetry, &pre_frame);
@@ -3459,23 +2833,12 @@ mod tests {
     )
     .expect("post-missing witness should still complete operation");
 
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
     let operation_result = read_operation_result_artifact(&store, &run);
     assert_eq!(operation_result.verifications.len(), 1);
-    assert_eq!(
-      operation_result.verifications[0].failure_layer,
-      Some(crate::contract::FailureLayer::VerificationUnreliable)
-    );
-    assert!(
-      operation_result.verifications[0]
-        .observed_label
-        .as_deref()
-        .is_some_and(|label| label.contains("missing-post.jsonl"))
-    );
-    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run)
-      .expect("summary should derive");
+    assert_eq!(operation_result.verifications[0].failure_layer, Some(crate::contract::FailureLayer::VerificationUnreliable));
+    assert!(operation_result.verifications[0].observed_label.as_deref().is_some_and(|label| label.contains("missing-post.jsonl")));
+    let summary = crate::run_read::derive_minecraft_query_wired_live_action_summary(&store, &run).expect("summary should derive");
     assert_eq!(summary.verification_outcome, "unreliable");
 
     let _ = fs::remove_dir_all(temp);
@@ -3487,10 +2850,8 @@ mod tests {
     let store = LocalStore::new(temp.join("store")).expect("store");
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let target_block = auv_game_minecraft::BlockPosition::new(511, 73, 728);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
-    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("crates/auv-game-minecraft/tests/fixtures/mc18/outside_window.json");
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, target_block, mc18_target_frame(target_block));
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-game-minecraft/tests/fixtures/mc18/outside_window.json");
     let executor = CountingQueryLiveClickExecutor::success("should not run");
 
     let output = run_minecraft_query_wired_live_action_with_executor(
@@ -3516,17 +2877,10 @@ mod tests {
 
     assert!(!output.value.wiring.attempted);
     assert_eq!(executor.calls.get(), 0);
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
     let operation_result = read_operation_result_artifact(&store, &run);
-    assert_eq!(
-      operation_result.status,
-      crate::contract::OperationStatus::Completed
-    );
-    assert!(
-      operation_output_message(&operation_result.output).contains("visibility=outside_window")
-    );
+    assert_eq!(operation_result.status, crate::contract::OperationStatus::Completed);
+    assert!(operation_output_message(&operation_result.output).contains("visibility=outside_window"));
 
     let _ = fs::remove_dir_all(temp);
   }
@@ -3538,8 +2892,7 @@ mod tests {
     let recording = RunRecordingBackend::new(store.clone(), Arc::new(NoopRunRecorder)).handle();
     let frame_block = auv_game_minecraft::BlockPosition::new(0, 0, 0);
     let target_block = auv_game_minecraft::BlockPosition::new(9, 9, 9);
-    let semantic_manifest_path =
-      write_mc18_semantic_fixture(&temp, frame_block, mc18_target_frame(frame_block));
+    let semantic_manifest_path = write_mc18_semantic_fixture(&temp, frame_block, mc18_target_frame(frame_block));
     let executor = CountingQueryLiveClickExecutor::success("should not run");
 
     let output = run_minecraft_query_wired_live_action_with_executor(
@@ -3565,14 +2918,9 @@ mod tests {
 
     assert!(!output.value.wiring.attempted);
     assert_eq!(executor.calls.get(), 0);
-    let run = recording
-      .read_run(output.run_id.as_str())
-      .expect("wired live action run should persist");
+    let run = recording.read_run(output.run_id.as_str()).expect("wired live action run should persist");
     let operation_result = read_operation_result_artifact(&store, &run);
-    assert_eq!(
-      operation_result.status,
-      crate::contract::OperationStatus::Completed
-    );
+    assert_eq!(operation_result.status, crate::contract::OperationStatus::Completed);
     let message = operation_output_message(&operation_result.output);
     assert!(message.contains("status=failed"));
     assert!(message.contains("reason=target_block_absent_from_scene_packet"));

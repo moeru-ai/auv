@@ -1,8 +1,8 @@
 // File: src/driver/macos/native/ax_tree.rs
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
-  NativeAxActionRequest, NativeAxActionResponse, NativeAxFocusRequest, NativeAxFocusResponse,
-  NativeAxTreeRequest, NativeAxTreeResponse, capture_ax_tree, perform_ax_action, set_ax_focused,
+  NativeAxActionRequest, NativeAxActionResponse, NativeAxFocusRequest, NativeAxFocusResponse, NativeAxTreeRequest, NativeAxTreeResponse,
+  capture_ax_tree, perform_ax_action, set_ax_focused,
 };
 use super::types::{AuvResult, ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
@@ -33,84 +33,51 @@ pub struct NativeAxFocus {
 }
 
 #[cfg(target_os = "macos")]
-pub fn capture_ax_tree_snapshot(
-  app: &str,
-  max_depth: i64,
-  max_children: i64,
-) -> AuvResult<NativeAxTreeCapture> {
-  decode_ax_tree_response(DecodedAxTreeResponse::from(capture_ax_tree(
-    NativeAxTreeRequest {
-      app: app.to_string(),
-      max_depth,
-      max_children,
-    },
-  )))
+pub fn capture_ax_tree_snapshot(app: &str, max_depth: i64, max_children: i64) -> AuvResult<NativeAxTreeCapture> {
+  decode_ax_tree_response(DecodedAxTreeResponse::from(capture_ax_tree(NativeAxTreeRequest {
+    app: app.to_string(),
+    max_depth,
+    max_children,
+  })))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn capture_ax_tree_snapshot(
-  _app: &str,
-  _max_depth: i64,
-  _max_children: i64,
-) -> AuvResult<NativeAxTreeCapture> {
+pub fn capture_ax_tree_snapshot(_app: &str, _max_depth: i64, _max_children: i64) -> AuvResult<NativeAxTreeCapture> {
   Err("macOS native AX tree capture is unsupported on this target".to_string())
 }
 
 #[cfg(target_os = "macos")]
-pub fn perform_ax_path_action(
-  pid: i32,
-  path: &str,
-  expected_role: &str,
-  action_name: &str,
-) -> AuvResult<NativeAxAction> {
-  decode_ax_action_response(DecodedAxActionResponse::from(perform_ax_action(
-    NativeAxActionRequest {
-      pid: i64::from(pid),
-      path: path.to_string(),
-      expected_role: expected_role.to_string(),
-      action_name: action_name.to_string(),
-    },
-  )))
+pub fn perform_ax_path_action(pid: i32, path: &str, expected_role: &str, action_name: &str) -> AuvResult<NativeAxAction> {
+  decode_ax_action_response(DecodedAxActionResponse::from(perform_ax_action(NativeAxActionRequest {
+    pid: i64::from(pid),
+    path: path.to_string(),
+    expected_role: expected_role.to_string(),
+    action_name: action_name.to_string(),
+  })))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn perform_ax_path_action(
-  _pid: i32,
-  _path: &str,
-  _expected_role: &str,
-  _action_name: &str,
-) -> AuvResult<NativeAxAction> {
+pub fn perform_ax_path_action(_pid: i32, _path: &str, _expected_role: &str, _action_name: &str) -> AuvResult<NativeAxAction> {
   Err("macOS native AX action dispatch is unsupported on this target".to_string())
 }
 
 #[cfg(target_os = "macos")]
 pub fn set_ax_focused_path(pid: i32, path: &str, expected_role: &str) -> AuvResult<NativeAxFocus> {
-  decode_ax_focus_response(DecodedAxFocusResponse::from(set_ax_focused(
-    NativeAxFocusRequest {
-      pid: i64::from(pid),
-      path: path.to_string(),
-      expected_role: expected_role.to_string(),
-    },
-  )))
+  decode_ax_focus_response(DecodedAxFocusResponse::from(set_ax_focused(NativeAxFocusRequest {
+    pid: i64::from(pid),
+    path: path.to_string(),
+    expected_role: expected_role.to_string(),
+  })))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn set_ax_focused_path(
-  _pid: i32,
-  _path: &str,
-  _expected_role: &str,
-) -> AuvResult<NativeAxFocus> {
+pub fn set_ax_focused_path(_pid: i32, _path: &str, _expected_role: &str) -> AuvResult<NativeAxFocus> {
   Err("macOS native AX focus dispatch is unsupported on this target".to_string())
 }
 
 pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<NativeAxTreeCapture> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "capture_ax_tree",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("capture_ax_tree", None, response.error_message, response.recovery_hint);
   }
 
   let count = response.depths.len();
@@ -136,12 +103,8 @@ pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<Nat
 
   let nodes = (0..count)
     .map(|index| {
-      let depth = usize::try_from(response.depths[index]).map_err(|error| {
-        format!(
-          "native AX tree response had invalid depth {}: {error}",
-          response.depths[index]
-        )
-      })?;
+      let depth = usize::try_from(response.depths[index])
+        .map_err(|error| format!("native AX tree response had invalid depth {}: {error}", response.depths[index]))?;
       Ok(ObservedAxNode {
         depth,
         path: response.paths[index].clone(),
@@ -168,12 +131,7 @@ pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<Nat
     return Err("AX tree report contained no nodes".to_string());
   }
 
-  let pid = i32::try_from(response.pid).map_err(|error| {
-    format!(
-      "native AX tree response had invalid pid {}: {error}",
-      response.pid
-    )
-  })?;
+  let pid = i32::try_from(response.pid).map_err(|error| format!("native AX tree response had invalid pid {}: {error}", response.pid))?;
 
   Ok(NativeAxTreeCapture {
     snapshot: ObservedAxTreeSnapshot {
@@ -191,12 +149,7 @@ pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<Nat
 
 pub fn decode_ax_action_response(response: DecodedAxActionResponse) -> AuvResult<NativeAxAction> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "perform_ax_action",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("perform_ax_action", None, response.error_message, response.recovery_hint);
   }
 
   Ok(NativeAxAction {
@@ -207,12 +160,7 @@ pub fn decode_ax_action_response(response: DecodedAxActionResponse) -> AuvResult
 
 pub fn decode_ax_focus_response(response: DecodedAxFocusResponse) -> AuvResult<NativeAxFocus> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "set_ax_focused",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("set_ax_focused", None, response.error_message, response.recovery_hint);
   }
 
   Ok(NativeAxFocus {

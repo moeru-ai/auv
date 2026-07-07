@@ -3,12 +3,10 @@ use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
-  NativeOcrRgbaRequest, NativeOcrTextRequest, NativeOcrTextResponse, NativeVisualRowsRequest,
-  NativeVisualRowsResponse, find_ocr_text, find_ocr_text_rgba, find_visual_rows,
+  NativeOcrRgbaRequest, NativeOcrTextRequest, NativeOcrTextResponse, NativeVisualRowsRequest, NativeVisualRowsResponse, find_ocr_text,
+  find_ocr_text_rgba, find_visual_rows,
 };
-use super::types::{
-  AuvResult, DetectedScreenRows, ObservedOcrRow, ObservedRect, OcrTextMatch, OcrTextSnapshot,
-};
+use super::types::{AuvResult, DetectedScreenRows, ObservedOcrRow, ObservedRect, OcrTextMatch, OcrTextSnapshot};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeOcrTextCapture {
@@ -48,24 +46,20 @@ pub fn find_text(
     width: 0,
     height: 0,
   });
-  decode_ocr_text_response(DecodedOcrTextResponse::from(find_ocr_text(
-    NativeOcrTextRequest {
-      image_path: image_path.display().to_string(),
-      query: query.to_string(),
-      exact,
-      case_sensitive,
-      max_observations,
-      custom_words: custom_words.to_vec(),
-      recognition_languages: recognition_languages
-        .map(<[String]>::to_vec)
-        .unwrap_or_default(),
-      crop_enabled: crop_region.is_some(),
-      crop_x: crop.x,
-      crop_y: crop.y,
-      crop_width: crop.width,
-      crop_height: crop.height,
-    },
-  )))
+  decode_ocr_text_response(DecodedOcrTextResponse::from(find_ocr_text(NativeOcrTextRequest {
+    image_path: image_path.display().to_string(),
+    query: query.to_string(),
+    exact,
+    case_sensitive,
+    max_observations,
+    custom_words: custom_words.to_vec(),
+    recognition_languages: recognition_languages.map(<[String]>::to_vec).unwrap_or_default(),
+    crop_enabled: crop_region.is_some(),
+    crop_x: crop.x,
+    crop_y: crop.y,
+    crop_width: crop.width,
+    crop_height: crop.height,
+  })))
 }
 
 #[cfg(target_os = "macos")]
@@ -88,26 +82,22 @@ pub fn find_text_in_rgba(
     width: 0,
     height: 0,
   });
-  decode_ocr_text_response(DecodedOcrTextResponse::from(find_ocr_text_rgba(
-    NativeOcrRgbaRequest {
-      image_width,
-      image_height,
-      rgba_bytes,
-      query: query.to_string(),
-      exact,
-      case_sensitive,
-      max_observations,
-      custom_words: custom_words.to_vec(),
-      recognition_languages: recognition_languages
-        .map(<[String]>::to_vec)
-        .unwrap_or_default(),
-      crop_enabled: crop_region.is_some(),
-      crop_x: crop.x,
-      crop_y: crop.y,
-      crop_width: crop.width,
-      crop_height: crop.height,
-    },
-  )))
+  decode_ocr_text_response(DecodedOcrTextResponse::from(find_ocr_text_rgba(NativeOcrRgbaRequest {
+    image_width,
+    image_height,
+    rgba_bytes,
+    query: query.to_string(),
+    exact,
+    case_sensitive,
+    max_observations,
+    custom_words: custom_words.to_vec(),
+    recognition_languages: recognition_languages.map(<[String]>::to_vec).unwrap_or_default(),
+    crop_enabled: crop_region.is_some(),
+    crop_x: crop.x,
+    crop_y: crop.y,
+    crop_width: crop.width,
+    crop_height: crop.height,
+  })))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -142,46 +132,31 @@ pub fn find_text(
 }
 
 #[cfg(target_os = "macos")]
-pub fn find_rows(
-  image_path: &Path,
-  crop_region: Option<&ObservedRect>,
-) -> AuvResult<NativeVisualRowsCapture> {
+pub fn find_rows(image_path: &Path, crop_region: Option<&ObservedRect>) -> AuvResult<NativeVisualRowsCapture> {
   let crop = crop_region.cloned().unwrap_or(ObservedRect {
     x: 0,
     y: 0,
     width: 0,
     height: 0,
   });
-  decode_visual_rows_response(DecodedVisualRowsResponse::from(find_visual_rows(
-    NativeVisualRowsRequest {
-      image_path: image_path.display().to_string(),
-      crop_enabled: crop_region.is_some(),
-      crop_x: crop.x,
-      crop_y: crop.y,
-      crop_width: crop.width,
-      crop_height: crop.height,
-    },
-  )))
+  decode_visual_rows_response(DecodedVisualRowsResponse::from(find_visual_rows(NativeVisualRowsRequest {
+    image_path: image_path.display().to_string(),
+    crop_enabled: crop_region.is_some(),
+    crop_x: crop.x,
+    crop_y: crop.y,
+    crop_width: crop.width,
+    crop_height: crop.height,
+  })))
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn find_rows(
-  _image_path: &Path,
-  _crop_region: Option<&ObservedRect>,
-) -> AuvResult<NativeVisualRowsCapture> {
+pub fn find_rows(_image_path: &Path, _crop_region: Option<&ObservedRect>) -> AuvResult<NativeVisualRowsCapture> {
   Err("macOS native visual row detection is unsupported on this target".to_string())
 }
 
-pub fn decode_ocr_text_response(
-  response: DecodedOcrTextResponse,
-) -> AuvResult<NativeOcrTextCapture> {
+pub fn decode_ocr_text_response(response: DecodedOcrTextResponse) -> AuvResult<NativeOcrTextCapture> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "find_ocr_text",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("find_ocr_text", None, response.error_message, response.recovery_hint);
   }
 
   let count = response.match_indices.len();
@@ -199,12 +174,8 @@ pub fn decode_ocr_text_response(
 
   let matches = (0..count)
     .map(|index| {
-      let match_index = usize::try_from(response.match_indices[index]).map_err(|error| {
-        format!(
-          "native OCR text response had invalid match index {}: {error}",
-          response.match_indices[index]
-        )
-      })?;
+      let match_index = usize::try_from(response.match_indices[index])
+        .map_err(|error| format!("native OCR text response had invalid match index {}: {error}", response.match_indices[index]))?;
       Ok(OcrTextMatch {
         match_index,
         text: response.texts[index].clone(),
@@ -243,16 +214,9 @@ pub fn decode_ocr_text_response(
   })
 }
 
-pub fn decode_visual_rows_response(
-  response: DecodedVisualRowsResponse,
-) -> AuvResult<NativeVisualRowsCapture> {
+pub fn decode_visual_rows_response(response: DecodedVisualRowsResponse) -> AuvResult<NativeVisualRowsCapture> {
   if response.error_message.is_some() {
-    return super::error::native_result(
-      "find_visual_rows",
-      None,
-      response.error_message,
-      response.recovery_hint,
-    );
+    return super::error::native_result("find_visual_rows", None, response.error_message, response.recovery_hint);
   }
 
   let count = response.row_indices.len();
@@ -269,12 +233,8 @@ pub fn decode_visual_rows_response(
 
   let rows = (0..count)
     .map(|index| {
-      let row_index = usize::try_from(response.row_indices[index]).map_err(|error| {
-        format!(
-          "native visual rows response had invalid row index {}: {error}",
-          response.row_indices[index]
-        )
-      })?;
+      let row_index = usize::try_from(response.row_indices[index])
+        .map_err(|error| format!("native visual rows response had invalid row index {}: {error}", response.row_indices[index]))?;
       Ok(ObservedOcrRow {
         row_index,
         source: "visual-bands".to_string(),
@@ -344,32 +304,20 @@ pub fn render_ocr_text_report(capture: &NativeOcrTextCapture) -> String {
     format!("normalizedQuery={}", capture.normalized_query),
   ];
   if let Some(crop) = capture.crop_rect.as_ref() {
-    lines.push(format!(
-      "cropRect={},{},{},{}",
-      crop.x, crop.y, crop.width, crop.height
-    ));
+    lines.push(format!("cropRect={},{},{},{}", crop.x, crop.y, crop.width, crop.height));
     lines.push(format!("ocrScaleFactor={:.3}", capture.ocr_scale_factor));
   }
   for matched in &snapshot.matches {
     lines.push(format!(
       "match\t{}\t{}\t{:.6}\t{}\t{}\t{}\t{}",
-      matched.match_index,
-      matched.text,
-      matched.confidence,
-      matched.bounds.x,
-      matched.bounds.y,
-      matched.bounds.width,
-      matched.bounds.height
+      matched.match_index, matched.text, matched.confidence, matched.bounds.x, matched.bounds.y, matched.bounds.width, matched.bounds.height
     ));
   }
   lines.push(format!("matchCount={}", snapshot.matches.len()));
   lines.join("\n") + "\n"
 }
 
-pub fn render_visual_rows_report(
-  capture: NativeVisualRowsCapture,
-  rows: &[ObservedOcrRow],
-) -> String {
+pub fn render_visual_rows_report(capture: NativeVisualRowsCapture, rows: &[ObservedOcrRow]) -> String {
   let mut lines = vec![
     format!("detectedAt={}", capture.detected_at),
     format!("imagePath={}", capture.image_path.display()),
@@ -378,17 +326,11 @@ pub fn render_visual_rows_report(
     "rowStrategy=visual-bands".to_string(),
   ];
   if let Some(crop) = capture.crop_rect.as_ref() {
-    lines.push(format!(
-      "cropRect={},{},{},{}",
-      crop.x, crop.y, crop.width, crop.height
-    ));
+    lines.push(format!("cropRect={},{},{},{}", crop.x, crop.y, crop.width, crop.height));
   }
   lines.push(format!(
     "analysisStrip={},{},{},{}",
-    capture.analysis_strip.x,
-    capture.analysis_strip.y,
-    capture.analysis_strip.width,
-    capture.analysis_strip.height
+    capture.analysis_strip.x, capture.analysis_strip.y, capture.analysis_strip.width, capture.analysis_strip.height
   ));
   for (index, row) in rows.iter().enumerate() {
     let peak_density = capture.peak_densities.get(index).copied().unwrap_or(0.0);

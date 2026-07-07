@@ -13,8 +13,7 @@ pub const ATTR_MEMORY_NODE_SNAPSHOT_COUNT: &str = "view.memory.node_snapshot_cou
 pub const ATTR_MEMORY_ANCHOR_COUNT: &str = "view.memory.anchor_count";
 pub const ATTR_MEMORY_LANDMARK_COUNT: &str = "view.memory.landmark_count";
 pub const ATTR_MEMORY_EVICTION_COUNT: &str = "view.memory.eviction_count";
-pub const ATTR_MEMORY_LAST_RECONSTRUCTED_AT_MILLIS: &str =
-  "view.memory.last_reconstructed_at_millis";
+pub const ATTR_MEMORY_LAST_RECONSTRUCTED_AT_MILLIS: &str = "view.memory.last_reconstructed_at_millis";
 
 pub const ATTR_REACQUIRE_SCOPE_ID: &str = "view.reacquire.scope_id";
 pub const ATTR_REACQUIRE_TARGET_KIND: &str = "view.reacquire.target_kind";
@@ -42,43 +41,22 @@ pub fn reacquire_stage_span_name(stage_index: u8, strategy: &str) -> String {
 /// `source_run_id` is accepted for caller context (persist run id); it is not
 /// emitted as a span attribute in A8a — the six required keys come from
 /// [`ViewMemory`] fields only.
-pub fn memory_write_span_attributes(
-  memory: &ViewMemory,
-  _source_run_id: &str,
-) -> Vec<(String, String)> {
+pub fn memory_write_span_attributes(memory: &ViewMemory, _source_run_id: &str) -> Vec<(String, String)> {
   vec![
     (ATTR_MEMORY_MEMORY_ID.to_string(), memory.memory_id.clone()),
-    (
-      ATTR_MEMORY_NODE_SNAPSHOT_COUNT.to_string(),
-      memory.node_snapshots.len().to_string(),
-    ),
-    (
-      ATTR_MEMORY_ANCHOR_COUNT.to_string(),
-      memory.anchors.len().to_string(),
-    ),
-    (
-      ATTR_MEMORY_LANDMARK_COUNT.to_string(),
-      memory.landmarks.len().to_string(),
-    ),
+    (ATTR_MEMORY_NODE_SNAPSHOT_COUNT.to_string(), memory.node_snapshots.len().to_string()),
+    (ATTR_MEMORY_ANCHOR_COUNT.to_string(), memory.anchors.len().to_string()),
+    (ATTR_MEMORY_LANDMARK_COUNT.to_string(), memory.landmarks.len().to_string()),
     (ATTR_MEMORY_EVICTION_COUNT.to_string(), "0".to_string()),
-    (
-      ATTR_MEMORY_LAST_RECONSTRUCTED_AT_MILLIS.to_string(),
-      memory.last_reconstructed_at_millis.to_string(),
-    ),
+    (ATTR_MEMORY_LAST_RECONSTRUCTED_AT_MILLIS.to_string(), memory.last_reconstructed_at_millis.to_string()),
   ]
 }
 
 /// Minimal attributes for `view.reacquire.memory_load`.
 pub fn reacquire_memory_load_span_attributes(memory: &ViewMemory) -> Vec<(String, String)> {
   vec![
-    (
-      ATTR_MEMORY_LOAD_MEMORY_ID.to_string(),
-      memory.memory_id.clone(),
-    ),
-    (
-      ATTR_MEMORY_LOAD_SOURCE_RUN_ID.to_string(),
-      memory.source_run_id.clone(),
-    ),
+    (ATTR_MEMORY_LOAD_MEMORY_ID.to_string(), memory.memory_id.clone()),
+    (ATTR_MEMORY_LOAD_SOURCE_RUN_ID.to_string(), memory.source_run_id.clone()),
   ]
 }
 
@@ -167,17 +145,11 @@ mod tests {
 
   #[test]
   fn reacquire_root_span_name_appends_scope_id() {
-    assert_eq!(
-      reacquire_root_span_name("playlist_sidebar"),
-      "view.reacquire.playlist_sidebar"
-    );
+    assert_eq!(reacquire_root_span_name("playlist_sidebar"), "view.reacquire.playlist_sidebar");
   }
 
   #[test]
   fn reacquire_stage_span_name_formats_index_and_strategy() {
-    assert_eq!(
-      reacquire_stage_span_name(3, "label_current_viewport"),
-      "view.reacquire.stage.3.label_current_viewport"
-    );
+    assert_eq!(reacquire_stage_span_name(3, "label_current_viewport"), "view.reacquire.stage.3.label_current_viewport");
   }
 }

@@ -14,17 +14,13 @@ use auv_driver::error::DriverResult;
 use auv_driver::geometry::Rect;
 use auv_driver::input::DisturbanceLevel;
 use auv_driver::window::{
-  Window, WindowMutationAttempt, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
-  WindowMutationResult, WindowMutationVerification, WindowState,
+  Window, WindowMutationAttempt, WindowMutationKind, WindowMutationOptions, WindowMutationPath, WindowMutationResult,
+  WindowMutationVerification, WindowState,
 };
 
 use crate::error::{backend, invalid_input};
 
-pub fn mutate_window(
-  window: &Window,
-  kind: WindowMutationKind,
-  options: WindowMutationOptions,
-) -> DriverResult<WindowMutationResult> {
+pub fn mutate_window(window: &Window, kind: WindowMutationKind, options: WindowMutationOptions) -> DriverResult<WindowMutationResult> {
   validate_window_mutation_kind(kind)?;
   let outcome = perform_native_mutation(window, kind, options.settle)?;
   let result = window_mutation_result(kind, outcome);
@@ -50,27 +46,17 @@ struct NativeMutationOutcome {
 /// deactivate the window and therefore report a foreground disturbance.
 fn focus_disturbance_for(kind: WindowMutationKind) -> DisturbanceLevel {
   match kind {
-    WindowMutationKind::MoveTo { .. }
-    | WindowMutationKind::Resize { .. }
-    | WindowMutationKind::SetFrame { .. } => DisturbanceLevel::None,
-    WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => {
-      DisturbanceLevel::Foreground
-    }
+    WindowMutationKind::MoveTo { .. } | WindowMutationKind::Resize { .. } | WindowMutationKind::SetFrame { .. } => DisturbanceLevel::None,
+    WindowMutationKind::Minimize | WindowMutationKind::Restore | WindowMutationKind::Zoom => DisturbanceLevel::Foreground,
   }
 }
 
-fn window_mutation_result(
-  kind: WindowMutationKind,
-  outcome: NativeMutationOutcome,
-) -> WindowMutationResult {
+fn window_mutation_result(kind: WindowMutationKind, outcome: NativeMutationOutcome) -> WindowMutationResult {
   WindowMutationResult {
     selected_path: WindowMutationPath::PlatformNative,
     attempts: vec![WindowMutationAttempt::success(
       WindowMutationPath::PlatformNative,
-      format!(
-        "{} via SetWindowPos/ShowWindow",
-        window_mutation_kind_name(kind)
-      ),
+      format!("{} via SetWindowPos/ShowWindow", window_mutation_kind_name(kind)),
     )],
     fallback_reason: None,
     before_frame: Some(outcome.before_frame),
@@ -124,9 +110,7 @@ fn validate_window_mutation_kind(kind: WindowMutationKind) -> DriverResult<()> {
 /// APIs, rejecting non-finite or out-of-range values.
 fn rounded_i32(value: f64, field: &str) -> DriverResult<i32> {
   if !value.is_finite() || value < f64::from(i32::MIN) || value > f64::from(i32::MAX) {
-    return Err(invalid_input(format!(
-      "{field} must be a finite i32-sized value"
-    )));
+    return Err(invalid_input(format!("{field} must be a finite i32-sized value")));
   }
   Ok(value.round() as i32)
 }
@@ -153,15 +137,9 @@ fn verify_window_mutation(
   }
 }
 
-fn verify_window_frame(
-  kind: WindowMutationKind,
-  result: &WindowMutationResult,
-  tolerance: f64,
-) -> DriverResult<()> {
+fn verify_window_frame(kind: WindowMutationKind, result: &WindowMutationResult, tolerance: f64) -> DriverResult<()> {
   if !tolerance.is_finite() || tolerance < 0.0 {
-    return Err(invalid_input(
-      "window mutation frame tolerance must be a finite non-negative value",
-    ));
+    return Err(invalid_input("window mutation frame tolerance must be a finite non-negative value"));
   }
   let Some(after_frame) = result.after_frame else {
     return Err(backend("window mutation did not report an after frame"));
@@ -172,44 +150,14 @@ fn verify_window_frame(
       verify_close(after_frame.origin.y, point.y, tolerance, "frame.origin.y")?;
     }
     WindowMutationKind::Resize { size } => {
-      verify_close(
-        after_frame.size.width,
-        size.width,
-        tolerance,
-        "frame.size.width",
-      )?;
-      verify_close(
-        after_frame.size.height,
-        size.height,
-        tolerance,
-        "frame.size.height",
-      )?;
+      verify_close(after_frame.size.width, size.width, tolerance, "frame.size.width")?;
+      verify_close(after_frame.size.height, size.height, tolerance, "frame.size.height")?;
     }
     WindowMutationKind::SetFrame { frame } => {
-      verify_close(
-        after_frame.origin.x,
-        frame.origin.x,
-        tolerance,
-        "frame.origin.x",
-      )?;
-      verify_close(
-        after_frame.origin.y,
-        frame.origin.y,
-        tolerance,
-        "frame.origin.y",
-      )?;
-      verify_close(
-        after_frame.size.width,
-        frame.size.width,
-        tolerance,
-        "frame.size.width",
-      )?;
-      verify_close(
-        after_frame.size.height,
-        frame.size.height,
-        tolerance,
-        "frame.size.height",
-      )?;
+      verify_close(after_frame.origin.x, frame.origin.x, tolerance, "frame.origin.x")?;
+      verify_close(after_frame.origin.y, frame.origin.y, tolerance, "frame.origin.y")?;
+      verify_close(after_frame.size.width, frame.size.width, tolerance, "frame.size.width")?;
+      verify_close(after_frame.size.height, frame.size.height, tolerance, "frame.size.height")?;
     }
     // State changes do not assert a frame; geometry after minimize/restore/zoom
     // is window-manager defined.
@@ -218,10 +166,7 @@ fn verify_window_frame(
   Ok(())
 }
 
-fn verify_window_state(
-  kind: WindowMutationKind,
-  result: &WindowMutationResult,
-) -> DriverResult<()> {
+fn verify_window_state(kind: WindowMutationKind, result: &WindowMutationResult) -> DriverResult<()> {
   match kind {
     WindowMutationKind::Minimize => {
       if minimized_flag(result) != Some(true) {
@@ -249,27 +194,18 @@ fn verify_window_state(
 }
 
 fn minimized_flag(result: &WindowMutationResult) -> Option<bool> {
-  result
-    .after_state
-    .as_ref()
-    .and_then(|state| state.is_minimized)
+  result.after_state.as_ref().and_then(|state| state.is_minimized)
 }
 
 fn verify_close(actual: f64, expected: f64, tolerance: f64, field: &str) -> DriverResult<()> {
   if (actual - expected).abs() <= tolerance {
     return Ok(());
   }
-  Err(backend(format!(
-    "window mutation verification failed: {field} expected {expected:.3} got {actual:.3} tolerance {tolerance:.3}"
-  )))
+  Err(backend(format!("window mutation verification failed: {field} expected {expected:.3} got {actual:.3} tolerance {tolerance:.3}")))
 }
 
 #[cfg(target_os = "windows")]
-fn perform_native_mutation(
-  window: &Window,
-  kind: WindowMutationKind,
-  settle: std::time::Duration,
-) -> DriverResult<NativeMutationOutcome> {
+fn perform_native_mutation(window: &Window, kind: WindowMutationKind, settle: std::time::Duration) -> DriverResult<NativeMutationOutcome> {
   native::perform(window, kind, settle)
 }
 
@@ -295,19 +231,15 @@ mod native {
   use windows::Win32::Foundation::{HWND, RECT};
   use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
   use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, IsIconic, IsWindowVisible, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos, ShowWindow,
+    GetWindowRect, IsIconic, IsWindowVisible, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SetWindowPos, ShowWindow,
   };
 
   use super::{NativeMutationOutcome, rounded_i32, rounded_positive_i32};
   use crate::error::backend;
   use crate::window::window_handle;
 
-  pub(super) fn perform(
-    window: &Window,
-    kind: WindowMutationKind,
-    settle: Duration,
-  ) -> DriverResult<NativeMutationOutcome> {
+  pub(super) fn perform(window: &Window, kind: WindowMutationKind, settle: Duration) -> DriverResult<NativeMutationOutcome> {
     let hwnd = window_handle(window)?;
     let before = read_state(hwnd)?;
     apply(hwnd, kind)?;
@@ -344,52 +276,22 @@ mod native {
       WindowMutationKind::MoveTo { point } => {
         let x = rounded_i32(point.x, "point.x")?;
         let y = rounded_i32(point.y, "point.y")?;
-        unsafe {
-          SetWindowPos(
-            hwnd,
-            None,
-            x,
-            y,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-          )
-        }
-        .map_err(|error| backend(format!("SetWindowPos move failed: {error}")))
+        unsafe { SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) }
+          .map_err(|error| backend(format!("SetWindowPos move failed: {error}")))
       }
       WindowMutationKind::Resize { size } => {
         let width = rounded_positive_i32(size.width, "size.width")?;
         let height = rounded_positive_i32(size.height, "size.height")?;
-        unsafe {
-          SetWindowPos(
-            hwnd,
-            None,
-            0,
-            0,
-            width,
-            height,
-            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
-          )
-        }
-        .map_err(|error| backend(format!("SetWindowPos resize failed: {error}")))
+        unsafe { SetWindowPos(hwnd, None, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) }
+          .map_err(|error| backend(format!("SetWindowPos resize failed: {error}")))
       }
       WindowMutationKind::SetFrame { frame } => {
         let x = rounded_i32(frame.origin.x, "frame.origin.x")?;
         let y = rounded_i32(frame.origin.y, "frame.origin.y")?;
         let width = rounded_positive_i32(frame.size.width, "frame.size.width")?;
         let height = rounded_positive_i32(frame.size.height, "frame.size.height")?;
-        unsafe {
-          SetWindowPos(
-            hwnd,
-            None,
-            x,
-            y,
-            width,
-            height,
-            SWP_NOZORDER | SWP_NOACTIVATE,
-          )
-        }
-        .map_err(|error| backend(format!("SetWindowPos set_frame failed: {error}")))
+        unsafe { SetWindowPos(hwnd, None, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE) }
+          .map_err(|error| backend(format!("SetWindowPos set_frame failed: {error}")))
       }
       // ShowWindow returns the prior visibility as a BOOL and does not signal
       // failure, so the return value is intentionally ignored.
@@ -412,26 +314,14 @@ mod native {
   /// bounds and falling back to `GetWindowRect`. Matches `window::native`.
   fn window_frame(hwnd: HWND) -> DriverResult<Rect> {
     let mut rect = RECT::default();
-    let dwm = unsafe {
-      DwmGetWindowAttribute(
-        hwnd,
-        DWMWA_EXTENDED_FRAME_BOUNDS,
-        &mut rect as *mut RECT as *mut c_void,
-        size_of::<RECT>() as u32,
-      )
-    };
+    let dwm =
+      unsafe { DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &mut rect as *mut RECT as *mut c_void, size_of::<RECT>() as u32) };
     if dwm.is_err() {
       unsafe {
-        GetWindowRect(hwnd, &mut rect)
-          .map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
+        GetWindowRect(hwnd, &mut rect).map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
       }
     }
-    Ok(Rect::new(
-      f64::from(rect.left),
-      f64::from(rect.top),
-      f64::from(rect.right - rect.left),
-      f64::from(rect.bottom - rect.top),
-    ))
+    Ok(Rect::new(f64::from(rect.left), f64::from(rect.top), f64::from(rect.right - rect.left), f64::from(rect.bottom - rect.top)))
   }
 }
 
@@ -439,9 +329,7 @@ mod native {
 mod tests {
   use auv_driver::geometry::{Point, Rect, Size};
   use auv_driver::input::DisturbanceLevel;
-  use auv_driver::window::{
-    WindowMutationKind, WindowMutationPath, WindowMutationVerification, WindowState,
-  };
+  use auv_driver::window::{WindowMutationKind, WindowMutationPath, WindowMutationVerification, WindowState};
 
   use super::*;
 
@@ -461,13 +349,7 @@ mod tests {
     let kind = WindowMutationKind::MoveTo {
       point: Point::new(10.0, 20.0),
     };
-    let result = window_mutation_result(
-      kind,
-      outcome(
-        Rect::new(0.0, 0.0, 100.0, 80.0),
-        Rect::new(10.0, 20.0, 100.0, 80.0),
-      ),
-    );
+    let result = window_mutation_result(kind, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(10.0, 20.0, 100.0, 80.0)));
 
     assert_eq!(result.selected_path, WindowMutationPath::PlatformNative);
     assert_eq!(result.focus_disturbance, DisturbanceLevel::None);
@@ -476,13 +358,8 @@ mod tests {
 
   #[test]
   fn state_change_reports_foreground_focus_disturbance() {
-    let result = window_mutation_result(
-      WindowMutationKind::Minimize,
-      outcome(
-        Rect::new(0.0, 0.0, 100.0, 80.0),
-        Rect::new(0.0, 0.0, 100.0, 80.0),
-      ),
-    );
+    let result =
+      window_mutation_result(WindowMutationKind::Minimize, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(0.0, 0.0, 100.0, 80.0)));
 
     assert_eq!(result.focus_disturbance, DisturbanceLevel::Foreground);
   }
@@ -492,22 +369,9 @@ mod tests {
     let kind = WindowMutationKind::MoveTo {
       point: Point::new(10.0, 20.0),
     };
-    let result = window_mutation_result(
-      kind,
-      outcome(
-        Rect::new(0.0, 0.0, 100.0, 80.0),
-        Rect::new(11.0, 19.0, 100.0, 80.0),
-      ),
-    );
+    let result = window_mutation_result(kind, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(11.0, 19.0, 100.0, 80.0)));
 
-    assert!(
-      verify_window_mutation(
-        kind,
-        &WindowMutationVerification::FrameTolerance { points: 2.0 },
-        &result
-      )
-      .is_ok()
-    );
+    assert!(verify_window_mutation(kind, &WindowMutationVerification::FrameTolerance { points: 2.0 }, &result).is_ok());
   }
 
   #[test]
@@ -515,22 +379,9 @@ mod tests {
     let kind = WindowMutationKind::MoveTo {
       point: Point::new(10.0, 20.0),
     };
-    let result = window_mutation_result(
-      kind,
-      outcome(
-        Rect::new(0.0, 0.0, 100.0, 80.0),
-        Rect::new(50.0, 20.0, 100.0, 80.0),
-      ),
-    );
+    let result = window_mutation_result(kind, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(50.0, 20.0, 100.0, 80.0)));
 
-    assert!(
-      verify_window_mutation(
-        kind,
-        &WindowMutationVerification::FrameTolerance { points: 2.0 },
-        &result
-      )
-      .is_err()
-    );
+    assert!(verify_window_mutation(kind, &WindowMutationVerification::FrameTolerance { points: 2.0 }, &result).is_err());
   }
 
   #[test]
@@ -541,45 +392,25 @@ mod tests {
     let result = window_mutation_result(
       kind,
       // Origin moved but size matched; resize verification ignores origin.
-      outcome(
-        Rect::new(0.0, 0.0, 100.0, 80.0),
-        Rect::new(33.0, 44.0, 640.0, 480.0),
-      ),
+      outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(33.0, 44.0, 640.0, 480.0)),
     );
 
-    assert!(
-      verify_window_mutation(
-        kind,
-        &WindowMutationVerification::FrameTolerance { points: 1.0 },
-        &result
-      )
-      .is_ok()
-    );
+    assert!(verify_window_mutation(kind, &WindowMutationVerification::FrameTolerance { points: 1.0 }, &result).is_ok());
   }
 
   #[test]
   fn minimize_state_verification_requires_minimized_flag() {
     let kind = WindowMutationKind::Minimize;
-    let mut result = window_mutation_result(
-      kind,
-      outcome(
-        Rect::new(0.0, 0.0, 100.0, 80.0),
-        Rect::new(0.0, 0.0, 100.0, 80.0),
-      ),
-    );
+    let mut result = window_mutation_result(kind, outcome(Rect::new(0.0, 0.0, 100.0, 80.0), Rect::new(0.0, 0.0, 100.0, 80.0)));
 
     // Default outcome leaves after_minimized false -> verification fails.
-    assert!(
-      verify_window_mutation(kind, &WindowMutationVerification::BestEffortState, &result).is_err()
-    );
+    assert!(verify_window_mutation(kind, &WindowMutationVerification::BestEffortState, &result).is_err());
 
     result.after_state = Some(WindowState {
       is_minimized: Some(true),
       is_visible: Some(false),
     });
-    assert!(
-      verify_window_mutation(kind, &WindowMutationVerification::BestEffortState, &result).is_ok()
-    );
+    assert!(verify_window_mutation(kind, &WindowMutationVerification::BestEffortState, &result).is_ok());
   }
 
   #[test]

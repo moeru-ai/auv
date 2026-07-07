@@ -117,13 +117,9 @@ pub fn reacquire(
 
   if let ReacquireTarget::NodeId(node_id) = &resolved {
     attempted.push(ReacquireStrategy::DirectId);
-    if let Some(observation) = observe(
-      adapter,
-      &mut observation_count,
-      &mut observe_error_count,
-      &mut observe_diagnostics,
-      &mut saw_any_candidates,
-    ) {
+    if let Some(observation) =
+      observe(adapter, &mut observation_count, &mut observe_error_count, &mut observe_diagnostics, &mut saw_any_candidates)
+    {
       if let Some(node) = match_direct_id(node_id, &observation) {
         return ReacquireOutcome::Reacquired {
           node,
@@ -137,13 +133,9 @@ pub fn reacquire(
 
   let (label, section_hint) = target_label_and_section(&checked_memory, &resolved);
   attempted.push(ReacquireStrategy::LabelCurrentViewport);
-  if let Some(observation) = observe(
-    adapter,
-    &mut observation_count,
-    &mut observe_error_count,
-    &mut observe_diagnostics,
-    &mut saw_any_candidates,
-  ) {
+  if let Some(observation) =
+    observe(adapter, &mut observation_count, &mut observe_error_count, &mut observe_diagnostics, &mut saw_any_candidates)
+  {
     match match_label(&label, section_hint.as_deref(), &observation, false) {
       LabelMatch::Unique(node) => {
         return ReacquireOutcome::Reacquired {
@@ -159,13 +151,9 @@ pub fn reacquire(
 
   attempted.push(ReacquireStrategy::LabelPlusSection);
   for _ in 0..config.max_scroll_attempts {
-    if let Some(observation) = observe(
-      adapter,
-      &mut observation_count,
-      &mut observe_error_count,
-      &mut observe_diagnostics,
-      &mut saw_any_candidates,
-    ) {
+    if let Some(observation) =
+      observe(adapter, &mut observation_count, &mut observe_error_count, &mut observe_diagnostics, &mut saw_any_candidates)
+    {
       match match_label(&label, section_hint.as_deref(), &observation, true) {
         LabelMatch::Unique(node) => {
           return ReacquireOutcome::Reacquired {
@@ -200,9 +188,7 @@ pub fn reacquire(
       diagnostics: vec![ParserDiagnostic {
         code: "reacquire_not_found".into(),
         message: if observation_count > 0 {
-          format!(
-            "no sidebar candidates observed across {observation_count} viewport(s) while reacquiring label={label:?}"
-          )
+          format!("no sidebar candidates observed across {observation_count} viewport(s) while reacquiring label={label:?}")
         } else {
           format!("no sidebar candidates observed while reacquiring label={label:?}")
         },
@@ -241,25 +227,15 @@ fn resolve_target(memory: &ViewMemory, target: ReacquireTarget) -> ReacquireTarg
   }
 }
 
-fn target_label_and_section(
-  memory: &ViewMemory,
-  target: &ReacquireTarget,
-) -> (String, Option<String>) {
+fn target_label_and_section(memory: &ViewMemory, target: &ReacquireTarget) -> (String, Option<String>) {
   match target {
     ReacquireTarget::LabelWithSection {
       label,
       section_hint,
     } => (label.clone(), section_hint.clone()),
-    ReacquireTarget::NodeId(node_id) => memory
-      .node_snapshots
-      .get(node_id)
-      .map(|snap| {
-        (
-          snap.label.clone().unwrap_or_default(),
-          snap.section_hint.clone(),
-        )
-      })
-      .unwrap_or_default(),
+    ReacquireTarget::NodeId(node_id) => {
+      memory.node_snapshots.get(node_id).map(|snap| (snap.label.clone().unwrap_or_default(), snap.section_hint.clone())).unwrap_or_default()
+    }
     ReacquireTarget::Anchor(id) => (id.clone(), None),
   }
 }
@@ -294,19 +270,10 @@ fn observe(
 }
 
 fn match_direct_id(node_id: &str, observation: &ReacquireObservation) -> Option<ReacquiredNode> {
-  observation
-    .candidates
-    .iter()
-    .find(|candidate| candidate.node_id.as_deref() == Some(node_id))
-    .map(candidate_to_node)
+  observation.candidates.iter().find(|candidate| candidate.node_id.as_deref() == Some(node_id)).map(candidate_to_node)
 }
 
-fn match_label(
-  label: &str,
-  section_hint: Option<&str>,
-  observation: &ReacquireObservation,
-  require_section: bool,
-) -> LabelMatch {
+fn match_label(label: &str, section_hint: Option<&str>, observation: &ReacquireObservation, require_section: bool) -> LabelMatch {
   let normalized = normalize_identity(label);
   let matches: Vec<_> = observation
     .candidates
@@ -314,17 +281,9 @@ fn match_label(
     .filter(|candidate| normalize_identity(&candidate.label) == normalized)
     .filter(|candidate| {
       if require_section {
-        section_hint.is_none_or(|hint| {
-          candidate
-            .section_hint
-            .as_deref()
-            .is_some_and(|value| value == hint)
-        })
+        section_hint.is_none_or(|hint| candidate.section_hint.as_deref().is_some_and(|value| value == hint))
       } else if let Some(hint) = section_hint {
-        candidate
-          .section_hint
-          .as_deref()
-          .is_none_or(|value| value == hint)
+        candidate.section_hint.as_deref().is_none_or(|value| value == hint)
       } else {
         true
       }
@@ -340,10 +299,7 @@ fn match_label(
 
 fn candidate_to_node(candidate: &ReacquireCandidate) -> ReacquiredNode {
   ReacquiredNode {
-    node_id: candidate
-      .node_id
-      .clone()
-      .unwrap_or_else(|| normalize_identity(&candidate.label)),
+    node_id: candidate.node_id.clone().unwrap_or_else(|| normalize_identity(&candidate.label)),
     label: Some(candidate.label.clone()),
     bounds: candidate.bounds,
     section_hint: candidate.section_hint.clone(),
@@ -429,12 +385,7 @@ mod tests {
       scrolls: 0,
     };
 
-    let outcome = reacquire(
-      &memory,
-      ReacquireTarget::NodeId("item.coding-bgm-synth".into()),
-      &mut adapter,
-      &ReacquireConfig::default(),
-    );
+    let outcome = reacquire(&memory, ReacquireTarget::NodeId("item.coding-bgm-synth".into()), &mut adapter, &ReacquireConfig::default());
     match outcome {
       ReacquireOutcome::Reacquired {
         strategy_used: ReacquireStrategy::DirectId,
@@ -683,11 +634,7 @@ mod tests {
         ..
       } => {
         assert_eq!(observation_count, 1);
-        assert!(
-          attempted_strategies
-            .iter()
-            .any(|strategy| *strategy == ReacquireStrategy::LabelCurrentViewport)
-        );
+        assert!(attempted_strategies.iter().any(|strategy| *strategy == ReacquireStrategy::LabelCurrentViewport));
       }
       other => panic!("expected not_found after successful observe, got {other:?}"),
     }

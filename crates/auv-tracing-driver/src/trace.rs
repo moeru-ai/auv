@@ -286,12 +286,7 @@ pub struct ArtifactRecordV1Alpha1 {
 
 pub fn new_run_id() -> RunId {
   let sequence = RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
-  RunId::new(format!(
-    "run_{}_{}_{}",
-    now_millis(),
-    process::id(),
-    sequence
-  ))
+  RunId::new(format!("run_{}_{}_{}", now_millis(), process::id(), sequence))
 }
 
 pub fn new_trace_id() -> TraceId {
@@ -314,12 +309,7 @@ pub fn string_attr(value: impl Into<String>) -> serde_json::Value {
 }
 
 fn format_trace_id(timestamp_millis: u64, process_id: u32, sequence: u64) -> String {
-  format!(
-    "{:012x}{:08x}{:012x}",
-    timestamp_millis & 0x0000_ffff_ffff_ffff,
-    process_id,
-    sequence & 0x0000_ffff_ffff_ffff
-  )
+  format!("{:012x}{:08x}{:012x}", timestamp_millis & 0x0000_ffff_ffff_ffff, process_id, sequence & 0x0000_ffff_ffff_ffff)
 }
 
 #[cfg(test)]
@@ -356,20 +346,9 @@ mod tests {
 
     assert_eq!(trace_id, "123456789abcdef0123456789abcdef0");
     assert_eq!(trace_id.len(), 32);
-    assert!(
-      trace_id
-        .chars()
-        .all(|character| character.is_ascii_hexdigit())
-    );
-    assert!(
-      trace_id
-        .chars()
-        .all(|character| !character.is_ascii_uppercase())
-    );
-    assert_ne!(
-      format_trace_id(0x1234_5678_9abc, 0xdef0_1234, 0),
-      format_trace_id(0x1234_5678_9abc, 0xdef0_1235, 0)
-    );
+    assert!(trace_id.chars().all(|character| character.is_ascii_hexdigit()));
+    assert!(trace_id.chars().all(|character| !character.is_ascii_uppercase()));
+    assert_ne!(format_trace_id(0x1234_5678_9abc, 0xdef0_1234, 0), format_trace_id(0x1234_5678_9abc, 0xdef0_1235, 0));
   }
 
   #[test]
@@ -386,14 +365,8 @@ mod tests {
     assert_eq!(value["run_id"], json!("run-1"));
     assert_eq!(value["span_id"], json!("span-1"));
     assert_eq!(value["source_artifact_id"], json!("artifact-source"));
-    assert_eq!(
-      value["verification_artifact_id"],
-      json!("artifact-verification")
-    );
-    assert!(
-      value.get("action_artifact_id").is_none(),
-      "absent optional lineage should stay absent"
-    );
+    assert_eq!(value["verification_artifact_id"], json!("artifact-verification"));
+    assert!(value.get("action_artifact_id").is_none(), "absent optional lineage should stay absent");
   }
 
   #[test]
@@ -441,8 +414,7 @@ mod tests {
       })
     );
 
-    let decoded: RunRecordV1Alpha1 =
-      serde_json::from_value(value).expect("run record should deserialize");
+    let decoded: RunRecordV1Alpha1 = serde_json::from_value(value).expect("run record should deserialize");
     assert_eq!(decoded.api_version, RUN_API_VERSION);
     assert_eq!(decoded.run_id.as_str(), "run_contract");
     assert_eq!(decoded.run_type, RunType::Command);
@@ -490,14 +462,10 @@ mod tests {
       })
     );
 
-    let decoded: SpanRecordV1Alpha1 =
-      serde_json::from_value(value).expect("span record should deserialize");
+    let decoded: SpanRecordV1Alpha1 = serde_json::from_value(value).expect("span record should deserialize");
     assert_eq!(decoded.api_version, SPAN_API_VERSION);
     assert_eq!(decoded.span_id.as_str(), "0000000000000002");
-    assert_eq!(
-      decoded.parent_span_id.expect("parent span").as_str(),
-      "0000000000000001"
-    );
+    assert_eq!(decoded.parent_span_id.expect("parent span").as_str(), "0000000000000001");
     assert_eq!(decoded.state, TraceState::Running);
     assert_eq!(decoded.status_code, TraceStatusCode::Unset);
   }
@@ -532,8 +500,7 @@ mod tests {
       })
     );
 
-    let decoded: EventRecordV1Alpha1 =
-      serde_json::from_value(value).expect("event record should deserialize");
+    let decoded: EventRecordV1Alpha1 = serde_json::from_value(value).expect("event record should deserialize");
     assert_eq!(decoded.api_version, EVENT_API_VERSION);
     assert_eq!(decoded.event_id.as_str(), "event_contract");
     assert_eq!(decoded.span_id.as_str(), "0000000000000002");
@@ -574,14 +541,10 @@ mod tests {
       })
     );
 
-    let decoded: ArtifactRecordV1Alpha1 =
-      serde_json::from_value(value).expect("artifact record should deserialize");
+    let decoded: ArtifactRecordV1Alpha1 = serde_json::from_value(value).expect("artifact record should deserialize");
     assert_eq!(decoded.api_version, ARTIFACT_API_VERSION);
     assert_eq!(decoded.artifact_id.as_str(), "artifact_contract");
     assert_eq!(decoded.span_id.as_str(), "0000000000000002");
-    assert_eq!(
-      decoded.event_id.expect("artifact event").as_str(),
-      "event_contract"
-    );
+    assert_eq!(decoded.event_id.expect("artifact event").as_str(), "event_contract");
   }
 }

@@ -1,23 +1,17 @@
 use crate::*;
 
 #[cfg(not(target_os = "macos"))]
-pub fn run_daily_recommended_play(
-  _inputs: &DailyRecommendedPlayInputs,
-) -> Result<DailyRecommendedPlayResult, String> {
+pub fn run_daily_recommended_play(_inputs: &DailyRecommendedPlayInputs) -> Result<DailyRecommendedPlayResult, String> {
   Err("live NetEase daily recommended play is only supported on macOS".to_string())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn run_daily_recommended_songs_scan(
-  _inputs: &SongListInputs,
-) -> Result<SongListScanResult, String> {
+pub fn run_daily_recommended_songs_scan(_inputs: &SongListInputs) -> Result<SongListScanResult, String> {
   Err("live NetEase daily recommended song scan is only supported on macOS".to_string())
 }
 
 #[cfg(target_os = "macos")]
-pub fn run_daily_recommended_songs_scan(
-  inputs: &SongListInputs,
-) -> Result<SongListScanResult, String> {
+pub fn run_daily_recommended_songs_scan(inputs: &SongListInputs) -> Result<SongListScanResult, String> {
   let daily_inputs = DailyRecommendedPlayInputs {
     app_id: inputs.app_id.clone(),
     artifact_dir: inputs.artifact_dir.clone(),
@@ -28,40 +22,24 @@ pub fn run_daily_recommended_songs_scan(
     play_icon_threshold: 0.72,
     ocr_options: inputs.ocr_options.clone(),
   };
-  std::fs::create_dir_all(&daily_inputs.artifact_dir).map_err(|error| {
-    format!(
-      "failed to create {}: {error}",
-      daily_inputs.artifact_dir.display()
-    )
-  })?;
+  std::fs::create_dir_all(&daily_inputs.artifact_dir)
+    .map_err(|error| format!("failed to create {}: {error}", daily_inputs.artifact_dir.display()))?;
 
   let driver = MacosDriver::new();
-  let session = driver
-    .open_local()
-    .map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let app = App::bundle(inputs.app_id.clone());
-  let window = session
-    .window()
-    .resolve(Window::main_visible().owned_by(app))
-    .map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
+  let window =
+    session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
 
   let app_context = ScanAppContext {
-    app_id: window
-      .app_bundle_id
-      .clone()
-      .or_else(|| Some(inputs.app_id.clone())),
+    app_id: window.app_bundle_id.clone().or_else(|| Some(inputs.app_id.clone())),
     name: window.app_name.clone(),
     version: None,
   };
   let window_context = ScanWindowContext {
     id: Some(window.reference.id.clone()),
     title: window.title.clone(),
-    bounds: Some(ViewBounds::new(
-      0.0,
-      0.0,
-      window.frame.size.width,
-      window.frame.size.height,
-    )),
+    bounds: Some(ViewBounds::new(0.0, 0.0, window.frame.size.width, window.frame.size.height)),
   };
 
   let mut run = DailyRecommendedRun {
@@ -74,15 +52,10 @@ pub fn run_daily_recommended_songs_scan(
     known_limits: Vec::new(),
   };
   run.scroll_sidebar_to_top();
-  run.click_text("select-sidebar-recommend", "推荐", |bounds, size| {
-    bounds.x < size.width * 0.28
-  })?;
+  run.click_text("select-sidebar-recommend", "推荐", |bounds, size| bounds.x < size.width * 0.28)?;
   run.open_daily_recommended()?;
 
-  let region_bounds = daily_song_list_bounds(Size::new(
-    run.window.frame.size.width,
-    run.window.frame.size.height,
-  ));
+  let region_bounds = daily_song_list_bounds(Size::new(run.window.frame.size.width, run.window.frame.size.height));
   let song_list_region = ViewRegionRecord {
     id: None,
     name: Some("daily_recommended_song_list".to_string()),
@@ -92,52 +65,28 @@ pub fn run_daily_recommended_songs_scan(
   let mut scanner = SongListScanner::new(run, inputs, region_bounds);
   scanner.seek_boundary(ScrollDirection::Up)?;
   scanner.scan_down()?;
-  Ok(scanner.finish(
-    app_context,
-    window_context,
-    song_list_region,
-    "daily-recommended",
-  ))
+  Ok(scanner.finish(app_context, window_context, song_list_region, "daily-recommended"))
 }
 
 #[cfg(target_os = "macos")]
-pub fn run_daily_recommended_play(
-  inputs: &DailyRecommendedPlayInputs,
-) -> Result<DailyRecommendedPlayResult, String> {
-  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| {
-    format!(
-      "failed to create {}: {error}",
-      inputs.artifact_dir.display()
-    )
-  })?;
+pub fn run_daily_recommended_play(inputs: &DailyRecommendedPlayInputs) -> Result<DailyRecommendedPlayResult, String> {
+  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
 
   let driver = MacosDriver::new();
-  let session = driver
-    .open_local()
-    .map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let app = App::bundle(inputs.app_id.clone());
-  let window = session
-    .window()
-    .resolve(Window::main_visible().owned_by(app))
-    .map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
+  let window =
+    session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
 
   let app_context = ScanAppContext {
-    app_id: window
-      .app_bundle_id
-      .clone()
-      .or_else(|| Some(inputs.app_id.clone())),
+    app_id: window.app_bundle_id.clone().or_else(|| Some(inputs.app_id.clone())),
     name: window.app_name.clone(),
     version: None,
   };
   let window_context = ScanWindowContext {
     id: Some(window.reference.id.clone()),
     title: window.title.clone(),
-    bounds: Some(ViewBounds::new(
-      0.0,
-      0.0,
-      window.frame.size.width,
-      window.frame.size.height,
-    )),
+    bounds: Some(ViewBounds::new(0.0, 0.0, window.frame.size.width, window.frame.size.height)),
   };
 
   let mut run = DailyRecommendedRun {
@@ -151,22 +100,13 @@ pub fn run_daily_recommended_play(
   };
 
   run.scroll_sidebar_to_top();
-  run.click_text("select-sidebar-recommend", "推荐", |bounds, size| {
-    bounds.x < size.width * 0.28
-  })?;
+  run.click_text("select-sidebar-recommend", "推荐", |bounds, size| bounds.x < size.width * 0.28)?;
   run.open_daily_recommended()?;
   run.click_text("click-play-all", "播放全部", |bounds, _| bounds.y > 0.0)?;
   let mut verification = run.verify_play_icon()?;
   if verification.status != "passed" {
-    run.known_limits.push(
-      "window-targeted Play All click did not verify playback; retried with foreground click"
-        .to_string(),
-    );
-    run.click_text_foreground(
-      "click-play-all-foreground-retry",
-      "播放全部",
-      |bounds, _| bounds.y > 0.0,
-    )?;
+    run.known_limits.push("window-targeted Play All click did not verify playback; retried with foreground click".to_string());
+    run.click_text_foreground("click-play-all-foreground-retry", "播放全部", |bounds, _| bounds.y > 0.0)?;
     verification = run.verify_play_icon()?;
   }
 
@@ -200,11 +140,7 @@ fn daily_song_list_bounds(window_size: Size) -> ViewBounds {
   ViewBounds::new(x, y, window_size.width - x - 24.0, (bottom - y).max(1.0))
 }
 
-fn parse_song_list_rows(
-  observation_index: usize,
-  bounds: ViewBounds,
-  recognition: &TextRecognition,
-) -> Vec<SongListItem> {
+fn parse_song_list_rows(observation_index: usize, bounds: ViewBounds, recognition: &TextRecognition) -> Vec<SongListItem> {
   let mut index_regions = recognition
     .regions
     .iter()
@@ -217,14 +153,7 @@ fn parse_song_list_rows(
         && center_y > bounds.y + 36.0
     })
     .collect::<Vec<_>>();
-  index_regions.sort_by(|left, right| {
-    left
-      .bounds
-      .origin
-      .y
-      .partial_cmp(&right.bounds.origin.y)
-      .unwrap_or(std::cmp::Ordering::Equal)
-  });
+  index_regions.sort_by(|left, right| left.bounds.origin.y.partial_cmp(&right.bounds.origin.y).unwrap_or(std::cmp::Ordering::Equal));
 
   let mut rows = Vec::new();
   for index_region in index_regions {
@@ -245,14 +174,7 @@ fn parse_song_list_rows(
           && region.bounds.origin.x > index_region.bounds.origin.x + 16.0
       })
       .collect::<Vec<_>>();
-    parts.sort_by(|left, right| {
-      left
-        .bounds
-        .origin
-        .x
-        .partial_cmp(&right.bounds.origin.x)
-        .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    parts.sort_by(|left, right| left.bounds.origin.x.partial_cmp(&right.bounds.origin.x).unwrap_or(std::cmp::Ordering::Equal));
     let title = parts
       .iter()
       .find(|region| {
@@ -260,23 +182,13 @@ fn parse_song_list_rows(
         x > bounds.x + 60.0 && x < bounds.x + bounds.width * 0.52
       })
       .map(|region| region.text.trim().to_string());
-    let row_text = parts
-      .iter()
-      .map(|region| region.text.trim())
-      .filter(|text| !text.is_empty())
-      .collect::<Vec<_>>()
-      .join(" | ");
+    let row_text = parts.iter().map(|region| region.text.trim()).filter(|text| !text.is_empty()).collect::<Vec<_>>().join(" | ");
     let Some(title) = title.filter(|title| !title.is_empty()) else {
       continue;
     };
     let row_bounds = ViewBounds::new(bounds.x, row_top, bounds.width, row_bottom - row_top);
     rows.push(SongListItem {
-      id: format!(
-        "daily.song.obs{observation_index}.{}",
-        index
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| slug(&title))
-      ),
+      id: format!("daily.song.obs{observation_index}.{}", index.map(|value| value.to_string()).unwrap_or_else(|| slug(&title))),
       index,
       title,
       row_text,
@@ -287,19 +199,11 @@ fn parse_song_list_rows(
 }
 
 fn song_item_key(row: &SongListItem) -> String {
-  row
-    .index
-    .map(|index| format!("index:{index}"))
-    .unwrap_or_else(|| format!("text:{}", normalize_identity(&row.row_text)))
+  row.index.map(|index| format!("index:{index}")).unwrap_or_else(|| format!("text:{}", normalize_identity(&row.row_text)))
 }
 
 fn recognized_bounds(bounds: &auv_driver::Rect) -> ViewBounds {
-  ViewBounds::new(
-    bounds.origin.x,
-    bounds.origin.y,
-    bounds.size.width,
-    bounds.size.height,
-  )
+  ViewBounds::new(bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height)
 }
 
 #[cfg(target_os = "macos")]
@@ -318,11 +222,7 @@ struct SongListScanner<'a> {
 
 #[cfg(target_os = "macos")]
 impl<'a> SongListScanner<'a> {
-  fn new(
-    run: DailyRecommendedRun<'a>,
-    inputs: &'a SongListInputs,
-    region_bounds: ViewBounds,
-  ) -> Self {
+  fn new(run: DailyRecommendedRun<'a>, inputs: &'a SongListInputs, region_bounds: ViewBounds) -> Self {
     Self {
       run,
       inputs,
@@ -337,13 +237,7 @@ impl<'a> SongListScanner<'a> {
     }
   }
 
-  fn finish(
-    self,
-    app: ScanAppContext,
-    window: ScanWindowContext,
-    song_list_region: ViewRegionRecord,
-    target: &str,
-  ) -> SongListScanResult {
+  fn finish(self, app: ScanAppContext, window: ScanWindowContext, song_list_region: ViewRegionRecord, target: &str) -> SongListScanResult {
     SongListScanResult {
       command: "playlist.songs.ls".to_string(),
       target: target.to_string(),
@@ -369,15 +263,11 @@ impl<'a> SongListScanner<'a> {
     let mut no_motion_confirmations = 0usize;
     for _ in 0..LIVE_TOP_SEEK_MAX_SCROLL_INPUTS {
       self.scroll_region(delta, std::time::Duration::ZERO)?;
-      std::thread::sleep(std::time::Duration::from_millis(
-        LIVE_FAST_SEEK_SAMPLE_INTERVAL_MS,
-      ));
+      std::thread::sleep(std::time::Duration::from_millis(LIVE_FAST_SEEK_SAMPLE_INTERVAL_MS));
       let crop = self.capture_region_crop()?;
       if let Some(previous) = self.previous_crop.as_ref() {
         let motion = self.motion_policy.compare(previous, &crop);
-        if motion.no_motion
-          && successful_scroll_delivery_path(self.pending_scroll_delivery_path.as_deref())
-        {
+        if motion.no_motion && successful_scroll_delivery_path(self.pending_scroll_delivery_path.as_deref()) {
           no_motion_confirmations += 1;
           if no_motion_confirmations >= 2 {
             match direction {
@@ -416,11 +306,7 @@ impl<'a> SongListScanner<'a> {
       } else if observation.incoming_scroll_delivery_path.is_some() {
         consecutive_no_new += 1;
       }
-      if observation
-        .scroll_motion
-        .as_ref()
-        .is_some_and(|motion| motion.no_motion)
-      {
+      if observation.scroll_motion.as_ref().is_some_and(|motion| motion.no_motion) {
         consecutive_no_motion += 1;
       } else {
         consecutive_no_motion = 0;
@@ -436,16 +322,10 @@ impl<'a> SongListScanner<'a> {
       }
 
       if self.observations.len() > self.inputs.max_scrolls {
-        self.run.known_limits.push(format!(
-          "song list scan stopped after max_scrolls={}",
-          self.inputs.max_scrolls
-        ));
+        self.run.known_limits.push(format!("song list scan stopped after max_scrolls={}", self.inputs.max_scrolls));
         return Ok(());
       }
-      self.scroll_region(
-        -self.inputs.scroll_amount,
-        std::time::Duration::from_millis(self.inputs.scroll_settle_ms),
-      )?;
+      self.scroll_region(-self.inputs.scroll_amount, std::time::Duration::from_millis(self.inputs.scroll_settle_ms))?;
     }
     Ok(())
   }
@@ -463,30 +343,19 @@ impl<'a> SongListScanner<'a> {
   }
 
   fn observe_page(&mut self, observation_index: usize) -> Result<SongListObservation, String> {
-    let capture = self
-      .run
-      .session
-      .window()
-      .capture(&self.run.window)
-      .map_err(|error| format!("song list capture failed: {error}"))?;
+    let capture = self.run.session.window().capture(&self.run.window).map_err(|error| format!("song list capture failed: {error}"))?;
     let artifact = self.write_song_observation_artifact(observation_index, &capture)?;
     let recognition = self
       .run
       .session
       .vision()
-      .recognize_text_in_capture_with_options(
-        &capture,
-        bounds_to_ratio(self.region_bounds, &capture),
-        self.inputs.ocr_options.clone(),
-      )
+      .recognize_text_in_capture_with_options(&capture, bounds_to_ratio(self.region_bounds, &capture), self.inputs.ocr_options.clone())
       .map_err(|error| format!("song list OCR failed: {error}"))?;
     let recognition = recognition_in_window_space(recognition, &capture);
     let crop = crop_image(&capture.image, self.region_bounds, capture.scale_factor);
     let incoming_scroll_delivery_path = self.pending_scroll_delivery_path.take();
-    let scroll_motion = incoming_scroll_delivery_path
-      .as_ref()
-      .and(self.previous_crop.as_ref())
-      .map(|previous| self.motion_policy.compare(previous, &crop));
+    let scroll_motion =
+      incoming_scroll_delivery_path.as_ref().and(self.previous_crop.as_ref()).map(|previous| self.motion_policy.compare(previous, &crop));
     self.previous_crop = Some(crop);
     Ok(SongListObservation {
       observation_index,
@@ -497,47 +366,22 @@ impl<'a> SongListScanner<'a> {
     })
   }
 
-  fn write_song_observation_artifact(
-    &mut self,
-    observation_index: usize,
-    capture: &Capture,
-  ) -> Result<String, String> {
-    let path = self
-      .inputs
-      .artifact_dir
-      .join(format!("songs-obs-{observation_index:04}.png"));
-    capture
-      .image
-      .save(&path)
-      .map_err(|error| format!("failed to save {}: {error}", path.display()))?;
+  fn write_song_observation_artifact(&mut self, observation_index: usize, capture: &Capture) -> Result<String, String> {
+    let path = self.inputs.artifact_dir.join(format!("songs-obs-{observation_index:04}.png"));
+    capture.image.save(&path).map_err(|error| format!("failed to save {}: {error}", path.display()))?;
     let rendered = path.display().to_string();
     self.run.artifacts.push(rendered.clone());
     Ok(rendered)
   }
 
   fn capture_region_crop(&mut self) -> Result<RgbaImage, String> {
-    let capture = self
-      .run
-      .session
-      .window()
-      .capture(&self.run.window)
-      .map_err(|error| format!("song list seek capture failed: {error}"))?;
-    Ok(crop_image(
-      &capture.image,
-      self.region_bounds,
-      capture.scale_factor,
-    ))
+    let capture = self.run.session.window().capture(&self.run.window).map_err(|error| format!("song list seek capture failed: {error}"))?;
+    Ok(crop_image(&capture.image, self.region_bounds, capture.scale_factor))
   }
 
-  fn scroll_region(
-    &mut self,
-    vertical_delta: f64,
-    settle: std::time::Duration,
-  ) -> Result<(), String> {
-    let point = WindowPoint::new(
-      self.region_bounds.x + self.region_bounds.width * 0.5,
-      self.region_bounds.y + self.region_bounds.height * 0.65,
-    );
+  fn scroll_region(&mut self, vertical_delta: f64, settle: std::time::Duration) -> Result<(), String> {
+    let point =
+      WindowPoint::new(self.region_bounds.x + self.region_bounds.width * 0.5, self.region_bounds.y + self.region_bounds.height * 0.65);
     let result = self
       .run
       .session
@@ -563,10 +407,7 @@ impl DailyRecommendedRun<'_> {
   fn scroll_sidebar_to_top(&mut self) {
     let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
     let bounds = broad_sidebar_probe_bounds(window_size);
-    let anchor = WindowPoint::new(
-      bounds.x + bounds.width * 0.5,
-      bounds.y + bounds.height * 0.45,
-    );
+    let anchor = WindowPoint::new(bounds.x + bounds.width * 0.5, bounds.y + bounds.height * 0.45);
     for index in 0..self.inputs.max_top_scrolls {
       match self.session.window().scroll(
         &self.window,
@@ -592,56 +433,32 @@ impl DailyRecommendedRun<'_> {
             message: error.to_string(),
             node_id: None,
           });
-          self
-            .known_limits
-            .push("top seek stopped early after a typed scroll failure".to_string());
+          self.known_limits.push("top seek stopped early after a typed scroll failure".to_string());
           break;
         }
       }
     }
   }
 
-  fn click_text(
-    &mut self,
-    step_name: &str,
-    query: &str,
-    guard: impl Fn(ViewBounds, Size) -> bool,
-  ) -> Result<(), String> {
-    let capture = self
-      .session
-      .window()
-      .capture(&self.window)
-      .map_err(|error| format!("{step_name}: capture failed: {error}"))?;
+  fn click_text(&mut self, step_name: &str, query: &str, guard: impl Fn(ViewBounds, Size) -> bool) -> Result<(), String> {
+    let capture = self.session.window().capture(&self.window).map_err(|error| format!("{step_name}: capture failed: {error}"))?;
     let artifact = self.write_capture_artifact(step_name, &capture)?;
     let recognition = self
       .session
       .vision()
-      .recognize_text_in_capture_with_options(
-        &capture,
-        RatioRect::new(0.0, 0.0, 1.0, 1.0),
-        self.inputs.ocr_options.clone(),
-      )
+      .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("{step_name}: OCR failed: {error}"))?;
     let recognition = recognition_in_window_space(recognition, &capture);
     let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
     let Some(target) = best_text_match(&recognition, query, window_size, guard) else {
       return Err(format!("{step_name}: text {query:?} was not found"));
     };
-    let bounds = ViewBounds::new(
-      target.bounds.origin.x,
-      target.bounds.origin.y,
-      target.bounds.size.width,
-      target.bounds.size.height,
-    );
+    let bounds = ViewBounds::new(target.bounds.origin.x, target.bounds.origin.y, target.bounds.size.width, target.bounds.size.height);
     let point = target.action_point();
     let result = self
       .session
       .window()
-      .click(
-        &self.window,
-        WindowPoint::new(point.x, point.y),
-        daily_recommended_window_click_options(),
-      )
+      .click(&self.window, WindowPoint::new(point.x, point.y), daily_recommended_window_click_options())
       .map_err(|error| format!("{step_name}: click failed: {error}"))?;
     if self.inputs.settle_ms > 0 {
       std::thread::sleep(std::time::Duration::from_millis(self.inputs.settle_ms));
@@ -657,38 +474,20 @@ impl DailyRecommendedRun<'_> {
     Ok(())
   }
 
-  fn click_text_foreground(
-    &mut self,
-    step_name: &str,
-    query: &str,
-    guard: impl Fn(ViewBounds, Size) -> bool,
-  ) -> Result<(), String> {
-    let capture = self
-      .session
-      .window()
-      .capture(&self.window)
-      .map_err(|error| format!("{step_name}: capture failed: {error}"))?;
+  fn click_text_foreground(&mut self, step_name: &str, query: &str, guard: impl Fn(ViewBounds, Size) -> bool) -> Result<(), String> {
+    let capture = self.session.window().capture(&self.window).map_err(|error| format!("{step_name}: capture failed: {error}"))?;
     let artifact = self.write_capture_artifact(step_name, &capture)?;
     let recognition = self
       .session
       .vision()
-      .recognize_text_in_capture_with_options(
-        &capture,
-        RatioRect::new(0.0, 0.0, 1.0, 1.0),
-        self.inputs.ocr_options.clone(),
-      )
+      .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("{step_name}: OCR failed: {error}"))?;
     let recognition = recognition_in_window_space(recognition, &capture);
     let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
     let Some(target) = best_text_match(&recognition, query, window_size, guard) else {
       return Err(format!("{step_name}: text {query:?} was not found"));
     };
-    let bounds = ViewBounds::new(
-      target.bounds.origin.x,
-      target.bounds.origin.y,
-      target.bounds.size.width,
-      target.bounds.size.height,
-    );
+    let bounds = ViewBounds::new(target.bounds.origin.x, target.bounds.origin.y, target.bounds.size.width, target.bounds.size.height);
     let point = target.action_point();
     let screen_point = self
       .session
@@ -710,10 +509,7 @@ impl DailyRecommendedRun<'_> {
         },
       )
       .map_err(|error| format!("{step_name}: foreground preparation failed: {error}"))?;
-    let click_result = self
-      .session
-      .input()
-      .click_at(screen_point.point(), Click::Single);
+    let click_result = self.session.input().click_at(screen_point.point(), Click::Single);
     let restore_result = self.session.window().restore_input(lease);
     click_result.map_err(|error| format!("{step_name}: foreground click failed: {error}"))?;
     restore_result.map_err(|error| format!("{step_name}: foreground restore failed: {error}"))?;
@@ -740,45 +536,26 @@ impl DailyRecommendedRun<'_> {
   }
 
   fn click_daily_recommended_card_body(&mut self) -> Result<(), String> {
-    let capture = self
-      .session
-      .window()
-      .capture(&self.window)
-      .map_err(|error| format!("daily recommended card capture failed: {error}"))?;
+    let capture = self.session.window().capture(&self.window).map_err(|error| format!("daily recommended card capture failed: {error}"))?;
     let artifact = self.write_capture_artifact("open-daily-recommended-card-body", &capture)?;
     let recognition = self
       .session
       .vision()
-      .recognize_text_in_capture_with_options(
-        &capture,
-        RatioRect::new(0.0, 0.0, 1.0, 1.0),
-        self.inputs.ocr_options.clone(),
-      )
+      .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("daily recommended card OCR failed: {error}"))?;
     let recognition = recognition_in_window_space(recognition, &capture);
     let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
-    let Some(target) =
-      best_text_match(&recognition, "每日推荐", window_size, |bounds, size| {
-        bounds.x > size.width * 0.18 && bounds.y < size.height * 0.35
-      })
-    else {
+    let Some(target) = best_text_match(&recognition, "每日推荐", window_size, |bounds, size| {
+      bounds.x > size.width * 0.18 && bounds.y < size.height * 0.35
+    }) else {
       return Err("daily recommended card title was not found on recommendation home".to_string());
     };
-    let bounds = ViewBounds::new(
-      target.bounds.origin.x,
-      target.bounds.origin.y,
-      target.bounds.size.width,
-      target.bounds.size.height,
-    );
+    let bounds = ViewBounds::new(target.bounds.origin.x, target.bounds.origin.y, target.bounds.size.width, target.bounds.size.height);
     let point = daily_recommended_card_click_point(bounds);
     let result = self
       .session
       .window()
-      .click(
-        &self.window,
-        WindowPoint::new(point.x, point.y),
-        daily_recommended_window_click_options(),
-      )
+      .click(&self.window, WindowPoint::new(point.x, point.y), daily_recommended_window_click_options())
       .map_err(|error| format!("daily recommended card body click failed: {error}"))?;
     if self.inputs.settle_ms > 0 {
       std::thread::sleep(std::time::Duration::from_millis(self.inputs.settle_ms));
@@ -794,11 +571,9 @@ impl DailyRecommendedRun<'_> {
     if self.play_all_is_visible(false)? {
       Ok(())
     } else {
-      self.click_text_foreground(
-        "open-daily-recommended-title-foreground-retry",
-        "每日推荐",
-        |bounds, size| bounds.x > size.width * 0.18 && bounds.y < size.height * 0.35,
-      )?;
+      self.click_text_foreground("open-daily-recommended-title-foreground-retry", "每日推荐", |bounds, size| {
+        bounds.x > size.width * 0.18 && bounds.y < size.height * 0.35
+      })?;
       if self.play_all_is_visible(true)? {
         Ok(())
       } else {
@@ -808,31 +583,19 @@ impl DailyRecommendedRun<'_> {
   }
 
   fn play_all_is_visible(&mut self, record_absent_diagnostic: bool) -> Result<bool, String> {
-    let capture = self
-      .session
-      .window()
-      .capture(&self.window)
-      .map_err(|error| format!("daily recommended fallback capture failed: {error}"))?;
+    let capture =
+      self.session.window().capture(&self.window).map_err(|error| format!("daily recommended fallback capture failed: {error}"))?;
     let artifact = self.write_capture_artifact("open-daily-recommended-fallback", &capture)?;
     let recognition = self
       .session
       .vision()
-      .recognize_text_in_capture_with_options(
-        &capture,
-        RatioRect::new(0.0, 0.0, 1.0, 1.0),
-        self.inputs.ocr_options.clone(),
-      )
+      .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.0, 1.0, 1.0), self.inputs.ocr_options.clone())
       .map_err(|error| format!("daily recommended fallback OCR failed: {error}"))?;
     let recognition = recognition_in_window_space(recognition, &capture);
     let window_size = Size::new(self.window.frame.size.width, self.window.frame.size.height);
-    let visible = best_text_match(&recognition, "播放全部", window_size, |bounds, size| {
-      bounds.x > size.width * 0.18
-    })
-    .is_some();
+    let visible = best_text_match(&recognition, "播放全部", window_size, |bounds, size| bounds.x > size.width * 0.18).is_some();
     if visible {
-      self
-        .known_limits
-        .push("Play All was visible while opening Daily Recommended".to_string());
+      self.known_limits.push("Play All was visible while opening Daily Recommended".to_string());
     } else if record_absent_diagnostic {
       self.diagnostics.push(ParserDiagnostic {
         code: "daily_recommended_fallback_not_visible".to_string(),
@@ -851,16 +614,9 @@ impl DailyRecommendedRun<'_> {
     Ok(visible)
   }
 
-  fn write_capture_artifact(
-    &mut self,
-    step_name: &str,
-    capture: &Capture,
-  ) -> Result<String, String> {
+  fn write_capture_artifact(&mut self, step_name: &str, capture: &Capture) -> Result<String, String> {
     let path = self.inputs.artifact_dir.join(format!("{step_name}.png"));
-    capture
-      .image
-      .save(&path)
-      .map_err(|error| format!("failed to save {}: {error}", path.display()))?;
+    capture.image.save(&path).map_err(|error| format!("failed to save {}: {error}", path.display()))?;
     let rendered = path.display().to_string();
     self.artifacts.push(rendered.clone());
     Ok(rendered)
@@ -874,11 +630,7 @@ impl DailyRecommendedRun<'_> {
       return Err(format!("icon template not found: {}", template.display()));
     }
 
-    let capture = self
-      .session
-      .window()
-      .capture(&self.window)
-      .map_err(|error| format!("post-click icon capture failed: {error}"))?;
+    let capture = self.session.window().capture(&self.window).map_err(|error| format!("post-click icon capture failed: {error}"))?;
     let screenshot = self.write_capture_artifact("post-click-icon-match", &capture)?;
     let scale = if capture.scale_factor.is_finite() && capture.scale_factor > 0.0 {
       capture.scale_factor
@@ -915,8 +667,7 @@ impl DailyRecommendedRun<'_> {
     });
     std::fs::write(
       &verification_json,
-      serde_json::to_string_pretty(&payload)
-        .map_err(|error| format!("failed to serialize icon verification: {error}"))?,
+      serde_json::to_string_pretty(&payload).map_err(|error| format!("failed to serialize icon verification: {error}"))?,
     )
     .map_err(|error| format!("failed to write {}: {error}", verification_json.display()))?;
     let verification_artifact = verification_json.display().to_string();
@@ -931,35 +682,23 @@ impl DailyRecommendedRun<'_> {
       match_count,
       best_score,
       artifact: Some(verification_artifact),
-      note: Some(
-        "icon match searches the bottom-center playback-control region after Play All".to_string(),
-      ),
+      note: Some("icon match searches the bottom-center playback-control region after Play All".to_string()),
     })
   }
 
   fn verify_bottom_playback_control(&mut self) -> Result<DailyRecommendedVerification, String> {
-    let capture = self
-      .session
-      .window()
-      .capture(&self.window)
-      .map_err(|error| format!("post-click playback-state capture failed: {error}"))?;
+    let capture =
+      self.session.window().capture(&self.window).map_err(|error| format!("post-click playback-state capture failed: {error}"))?;
     let screenshot = self.write_capture_artifact("post-click-playback-state", &capture)?;
     let control_state = classify_bottom_playback_control_state(&capture.image);
     let bottom_text = self
       .session
       .vision()
-      .recognize_text_in_capture_with_options(
-        &capture,
-        RatioRect::new(0.0, 0.88, 0.46, 0.12),
-        self.inputs.ocr_options.clone(),
-      )
+      .recognize_text_in_capture_with_options(&capture, RatioRect::new(0.0, 0.88, 0.46, 0.12), self.inputs.ocr_options.clone())
       .ok()
       .map(|recognition| recognition.text.trim().to_string())
       .filter(|text| !text.is_empty());
-    let verification_json = self
-      .inputs
-      .artifact_dir
-      .join("post-click-playback-state.json");
+    let verification_json = self.inputs.artifact_dir.join("post-click-playback-state.json");
     let payload = serde_json::json!({
       "method": "bottom_control_icon",
       "control_state": control_state,
@@ -968,8 +707,7 @@ impl DailyRecommendedRun<'_> {
     });
     std::fs::write(
       &verification_json,
-      serde_json::to_string_pretty(&payload)
-        .map_err(|error| format!("failed to serialize playback-state verification: {error}"))?,
+      serde_json::to_string_pretty(&payload).map_err(|error| format!("failed to serialize playback-state verification: {error}"))?,
     )
     .map_err(|error| format!("failed to write {}: {error}", verification_json.display()))?;
     let verification_artifact = verification_json.display().to_string();
@@ -990,7 +728,8 @@ impl DailyRecommendedRun<'_> {
       best_score: None,
       artifact: Some(verification_artifact),
       note: Some(
-        "default verification checks the bottom playback control for a pause icon, which is title-independent under shuffle/random playback".to_string(),
+        "default verification checks the bottom playback control for a pause icon, which is title-independent under shuffle/random playback"
+          .to_string(),
       ),
     })
   }
@@ -1009,23 +748,11 @@ pub(crate) fn best_text_match(
     .filter(|region| normalize_identity(&region.text).contains(&normalize_identity(query)))
     .filter(|region| {
       guard(
-        ViewBounds::new(
-          region.bounds.origin.x,
-          region.bounds.origin.y,
-          region.bounds.size.width,
-          region.bounds.size.height,
-        ),
+        ViewBounds::new(region.bounds.origin.x, region.bounds.origin.y, region.bounds.size.width, region.bounds.size.height),
         window_size,
       )
     })
-    .min_by(|left, right| {
-      left
-        .bounds
-        .origin
-        .y
-        .partial_cmp(&right.bounds.origin.y)
-        .unwrap_or(std::cmp::Ordering::Equal)
-    })
+    .min_by(|left, right| left.bounds.origin.y.partial_cmp(&right.bounds.origin.y).unwrap_or(std::cmp::Ordering::Equal))
     .cloned()
 }
 
@@ -1077,9 +804,6 @@ mod tests {
     let options = daily_recommended_window_click_options();
 
     assert_eq!(options.policy, auv_driver::InputPolicy::BackgroundPreferred);
-    assert_eq!(
-      options.window_strategy,
-      auv_driver::WindowClickStrategy::ChromiumCompatible
-    );
+    assert_eq!(options.window_strategy, auv_driver::WindowClickStrategy::ChromiumCompatible);
   }
 }

@@ -31,18 +31,13 @@ impl LinuxPortalProbe {
 
 pub fn probe_portals() -> LinuxPortalProbe {
   let session_type = std::env::var("XDG_SESSION_TYPE").ok();
-  let desktop = std::env::var("XDG_CURRENT_DESKTOP")
-    .ok()
-    .or_else(|| std::env::var("DESKTOP_SESSION").ok());
-  let wayland_session = if session_type
-    .as_deref()
-    .is_some_and(|value| value.eq_ignore_ascii_case("wayland"))
-    || std::env::var_os("WAYLAND_DISPLAY").is_some()
-  {
-    PermissionStatus::Granted
-  } else {
-    PermissionStatus::Missing
-  };
+  let desktop = std::env::var("XDG_CURRENT_DESKTOP").ok().or_else(|| std::env::var("DESKTOP_SESSION").ok());
+  let wayland_session =
+    if session_type.as_deref().is_some_and(|value| value.eq_ignore_ascii_case("wayland")) || std::env::var_os("WAYLAND_DISPLAY").is_some() {
+      PermissionStatus::Granted
+    } else {
+      PermissionStatus::Missing
+    };
 
   #[cfg(target_os = "linux")]
   let (portal_bus, screencast, remote_desktop, screenshot) = probe_portal_bus();
@@ -78,23 +73,13 @@ pub fn probe_portals() -> LinuxPortalProbe {
 }
 
 #[cfg(target_os = "linux")]
-fn probe_portal_bus() -> (
-  PermissionStatus,
-  PortalInterfaceProbe,
-  PortalInterfaceProbe,
-  PortalInterfaceProbe,
-) {
+fn probe_portal_bus() -> (PermissionStatus, PortalInterfaceProbe, PortalInterfaceProbe, PortalInterfaceProbe) {
   match zbus::blocking::Connection::session() {
     Ok(connection) => {
       let screencast = probe_interface(&connection, "org.freedesktop.portal.ScreenCast");
       let remote_desktop = probe_interface(&connection, "org.freedesktop.portal.RemoteDesktop");
       let screenshot = probe_interface(&connection, "org.freedesktop.portal.Screenshot");
-      (
-        PermissionStatus::Granted,
-        screencast,
-        remote_desktop,
-        screenshot,
-      )
+      (PermissionStatus::Granted, screencast, remote_desktop, screenshot)
     }
     Err(error) => {
       let missing = PortalInterfaceProbe {
@@ -102,27 +87,14 @@ fn probe_portal_bus() -> (
         version: None,
         details: Some(format!("failed to connect to session bus: {error}")),
       };
-      (
-        PermissionStatus::Unknown,
-        missing.clone(),
-        missing.clone(),
-        missing,
-      )
+      (PermissionStatus::Unknown, missing.clone(), missing.clone(), missing)
     }
   }
 }
 
 #[cfg(target_os = "linux")]
-fn probe_interface(
-  connection: &zbus::blocking::Connection,
-  interface: &'static str,
-) -> PortalInterfaceProbe {
-  let proxy = match zbus::blocking::Proxy::new(
-    connection,
-    "org.freedesktop.portal.Desktop",
-    "/org/freedesktop/portal/desktop",
-    interface,
-  ) {
+fn probe_interface(connection: &zbus::blocking::Connection, interface: &'static str) -> PortalInterfaceProbe {
+  let proxy = match zbus::blocking::Proxy::new(connection, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", interface) {
     Ok(proxy) => proxy,
     Err(error) => {
       return PortalInterfaceProbe {
@@ -168,9 +140,6 @@ mod tests {
     let shared = probe.as_permission_probe();
 
     assert_eq!(shared.screen_recording, PermissionStatus::Granted);
-    assert_eq!(
-      shared.automation_to_system_events,
-      PermissionStatus::Missing
-    );
+    assert_eq!(shared.automation_to_system_events, PermissionStatus::Missing);
   }
 }

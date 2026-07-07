@@ -26,8 +26,7 @@ pub mod view_parser_read;
 
 pub use verticals::balatro;
 pub use verticals::minecraft::{
-  self as minecraft, query_live_action as minecraft_query_live_action,
-  session as minecraft_session, verification as minecraft_verification,
+  self as minecraft, query_live_action as minecraft_query_live_action, session as minecraft_session, verification as minecraft_verification,
 };
 pub use verticals::osu::{self as osu, query_live_action as osu_query_live_action};
 
@@ -42,10 +41,7 @@ pub fn build_default_runtime(project_root: PathBuf) -> AuvResult<Runtime> {
   build_runtime_with_store_root(project_root, store_root)
 }
 
-pub fn build_runtime_with_store_root(
-  project_root: PathBuf,
-  store_root: PathBuf,
-) -> AuvResult<Runtime> {
+pub fn build_runtime_with_store_root(project_root: PathBuf, store_root: PathBuf) -> AuvResult<Runtime> {
   let store = LocalStore::new(store_root)?;
   Ok(Runtime::new(project_root, store))
 }

@@ -19,12 +19,9 @@ pub struct BalatroDetectionSets {
 
 impl BalatroDetectors {
   pub fn load(config: BalatroModelConfig) -> InferenceResult<Self> {
-    let config =
-      config
-        .resolve()
-        .map_err(|error| auv_inference_common::InferenceError::Backend {
-          message: error.to_string(),
-        })?;
+    let config = config.resolve().map_err(|error| auv_inference_common::InferenceError::Backend {
+      message: error.to_string(),
+    })?;
     let entities = UltralyticsDetector::load(UltralyticsModelConfig {
       model_id: ModelId("balatro-entities".to_owned()),
       model_path: config.entities_model,

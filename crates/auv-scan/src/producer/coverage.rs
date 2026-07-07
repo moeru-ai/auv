@@ -26,9 +26,7 @@ use thiserror::Error;
 use super::{ScanProducerError, produce_frames_from_fixture_dir};
 use crate::association::{FrameObservation, associate_adjacent_frames};
 use crate::coverage::build_coverage_view;
-use crate::coverage_artifact::{
-  CoverageArtifactError, ScanCoverageWire, coverage_view_to_wire, write_coverage_artifact,
-};
+use crate::coverage_artifact::{CoverageArtifactError, ScanCoverageWire, coverage_view_to_wire, write_coverage_artifact};
 use crate::reader::ScanFrameBundle;
 
 const MANIFEST_FILE: &str = "manifest.json";
@@ -53,16 +51,12 @@ pub enum CoverageProducerError {
   MissingManifest { path: String },
   #[error("coverage fixture manifest invalid: {0}")]
   InvalidManifest(String),
-  #[error(
-    "observations_by_frame length {observation_frames} does not match bundle frame count {bundle_frames}"
-  )]
+  #[error("observations_by_frame length {observation_frames} does not match bundle frame count {bundle_frames}")]
   InvalidObservationShape {
     observation_frames: usize,
     bundle_frames: usize,
   },
-  #[error(
-    "frame fixture not found at resolved path (frame_fixture={frame_fixture}, resolved_path={resolved_path})"
-  )]
+  #[error("frame fixture not found at resolved path (frame_fixture={frame_fixture}, resolved_path={resolved_path})")]
   InvalidFixtureLayout {
     frame_fixture: String,
     resolved_path: String,
@@ -99,14 +93,8 @@ fn observations_from_fixture(raw: &[Vec<ObservationFixture>]) -> Vec<Vec<FrameOb
     .collect()
 }
 
-fn resolve_frame_fixture_dir(
-  coverage_fixture_dir: &Path,
-  frame_fixture: &str,
-) -> Result<PathBuf, CoverageProducerError> {
-  let Some(scan_fixtures_root) = coverage_fixture_dir
-    .parent()
-    .and_then(|parent| parent.parent())
-  else {
+fn resolve_frame_fixture_dir(coverage_fixture_dir: &Path, frame_fixture: &str) -> Result<PathBuf, CoverageProducerError> {
+  let Some(scan_fixtures_root) = coverage_fixture_dir.parent().and_then(|parent| parent.parent()) else {
     return Err(CoverageProducerError::InvalidFixtureLayout {
       frame_fixture: frame_fixture.to_string(),
       resolved_path: coverage_fixture_dir.display().to_string(),
@@ -122,9 +110,7 @@ fn resolve_frame_fixture_dir(
   Ok(frame_fixture_dir)
 }
 
-fn load_coverage_fixture(
-  coverage_fixture_dir: &Path,
-) -> Result<CoverageFixture, CoverageProducerError> {
+fn load_coverage_fixture(coverage_fixture_dir: &Path) -> Result<CoverageFixture, CoverageProducerError> {
   let manifest_path = coverage_fixture_dir.join(MANIFEST_FILE);
   if !manifest_path.is_file() {
     return Err(CoverageProducerError::MissingManifest {
@@ -132,33 +118,20 @@ fn load_coverage_fixture(
     });
   }
   let text = fs::read_to_string(&manifest_path)?;
-  serde_json::from_str(&text)
-    .map_err(|error| CoverageProducerError::InvalidManifest(error.to_string()))
+  serde_json::from_str(&text).map_err(|error| CoverageProducerError::InvalidManifest(error.to_string()))
 }
 
 /// Produce `scan-coverage-v0` from a coverage scenario fixture directory.
-pub fn produce_coverage_from_fixture_dir(
-  coverage_fixture_dir: &Path,
-  out_dir: &Path,
-) -> Result<ProducedCoverage, CoverageProducerError> {
+pub fn produce_coverage_from_fixture_dir(coverage_fixture_dir: &Path, out_dir: &Path) -> Result<ProducedCoverage, CoverageProducerError> {
   let fixture = load_coverage_fixture(coverage_fixture_dir)?;
   let frame_fixture_dir = resolve_frame_fixture_dir(coverage_fixture_dir, &fixture.frame_fixture)?;
 
   let frame_temp = TempDir::new().map_err(CoverageProducerError::Io)?;
-  let batch = produce_frames_from_fixture_dir(&frame_fixture_dir, frame_temp.path())
-    .map_err(CoverageProducerError::FrameProducer)?;
+  let batch = produce_frames_from_fixture_dir(&frame_fixture_dir, frame_temp.path()).map_err(CoverageProducerError::FrameProducer)?;
   let bundle = ScanFrameBundle {
-    frames: batch
-      .produced
-      .iter()
-      .map(|produced| produced.frame.clone())
-      .collect(),
+    frames: batch.produced.iter().map(|produced| produced.frame.clone()).collect(),
     source_dir: frame_fixture_dir.clone(),
-    loaded_json_paths: batch
-      .produced
-      .iter()
-      .map(|produced| produced.json_path.clone())
-      .collect(),
+    loaded_json_paths: batch.produced.iter().map(|produced| produced.json_path.clone()).collect(),
   };
 
   let observations_by_frame = observations_from_fixture(&fixture.observations_by_frame);
@@ -173,10 +146,7 @@ pub fn produce_coverage_from_fixture_dir(
     Vec::new()
   } else {
     let last = bundle.frames.len() - 1;
-    associate_adjacent_frames(
-      &observations_by_frame[last - 1],
-      &observations_by_frame[last],
-    )
+    associate_adjacent_frames(&observations_by_frame[last - 1], &observations_by_frame[last])
   };
 
   let view = build_coverage_view(&bundle, &associations);
@@ -195,27 +165,19 @@ mod tests {
   use super::*;
 
   fn coverage_fixture_dir(scenario: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan/coverage")
-      .join(scenario)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/coverage").join(scenario)
   }
 
   fn golden_path(scenario: &str) -> PathBuf {
-    coverage_fixture_dir(scenario)
-      .join("golden")
-      .join(SCAN_COVERAGE_ARTIFACT_FILE_NAME)
+    coverage_fixture_dir(scenario).join("golden").join(SCAN_COVERAGE_ARTIFACT_FILE_NAME)
   }
 
   #[test]
   fn produce_coverage_from_fixture_dir_matches_golden_stable() {
     let fixture_dir = coverage_fixture_dir("coverage_stable_v0");
-    let out_dir = std::env::temp_dir().join(format!(
-      "auv-scan-coverage-produce-stable-{}",
-      std::process::id()
-    ));
+    let out_dir = std::env::temp_dir().join(format!("auv-scan-coverage-produce-stable-{}", std::process::id()));
     let _ = fs::remove_dir_all(&out_dir);
-    let produced =
-      produce_coverage_from_fixture_dir(&fixture_dir, &out_dir).expect("produce stable");
+    let produced = produce_coverage_from_fixture_dir(&fixture_dir, &out_dir).expect("produce stable");
     let golden = read_coverage_artifact(&golden_path("coverage_stable_v0")).expect("golden");
     assert_eq!(produced.wire, golden);
     let read_back = read_coverage_artifact(&produced.json_path).expect("read produced");
@@ -226,15 +188,10 @@ mod tests {
   #[test]
   fn produce_coverage_from_fixture_dir_matches_golden_no_observation() {
     let fixture_dir = coverage_fixture_dir("coverage_no_observation_v0");
-    let out_dir = std::env::temp_dir().join(format!(
-      "auv-scan-coverage-produce-no-obs-{}",
-      std::process::id()
-    ));
+    let out_dir = std::env::temp_dir().join(format!("auv-scan-coverage-produce-no-obs-{}", std::process::id()));
     let _ = fs::remove_dir_all(&out_dir);
-    let produced =
-      produce_coverage_from_fixture_dir(&fixture_dir, &out_dir).expect("produce no observation");
-    let golden =
-      read_coverage_artifact(&golden_path("coverage_no_observation_v0")).expect("golden");
+    let produced = produce_coverage_from_fixture_dir(&fixture_dir, &out_dir).expect("produce no observation");
+    let golden = read_coverage_artifact(&golden_path("coverage_no_observation_v0")).expect("golden");
     assert_eq!(produced.wire, golden);
     let _ = fs::remove_dir_all(&out_dir);
   }
@@ -242,13 +199,9 @@ mod tests {
   #[test]
   fn produce_coverage_from_fixture_dir_matches_golden_ambiguous() {
     let fixture_dir = coverage_fixture_dir("coverage_ambiguous_v0");
-    let out_dir = std::env::temp_dir().join(format!(
-      "auv-scan-coverage-produce-ambiguous-{}",
-      std::process::id()
-    ));
+    let out_dir = std::env::temp_dir().join(format!("auv-scan-coverage-produce-ambiguous-{}", std::process::id()));
     let _ = fs::remove_dir_all(&out_dir);
-    let produced =
-      produce_coverage_from_fixture_dir(&fixture_dir, &out_dir).expect("produce ambiguous");
+    let produced = produce_coverage_from_fixture_dir(&fixture_dir, &out_dir).expect("produce ambiguous");
     let golden = read_coverage_artifact(&golden_path("coverage_ambiguous_v0")).expect("golden");
     assert_eq!(produced.wire, golden);
     let _ = fs::remove_dir_all(&out_dir);
@@ -256,37 +209,23 @@ mod tests {
 
   #[test]
   fn produce_coverage_rejects_missing_manifest() {
-    let out_dir = std::env::temp_dir().join(format!(
-      "auv-scan-coverage-missing-manifest-{}",
-      std::process::id()
-    ));
+    let out_dir = std::env::temp_dir().join(format!("auv-scan-coverage-missing-manifest-{}", std::process::id()));
     let _ = fs::remove_dir_all(&out_dir);
     fs::create_dir_all(&out_dir).expect("mkdir");
-    let err = produce_coverage_from_fixture_dir(&out_dir, &out_dir.join("nested"))
-      .expect_err("missing manifest");
+    let err = produce_coverage_from_fixture_dir(&out_dir, &out_dir.join("nested")).expect_err("missing manifest");
     assert!(matches!(err, CoverageProducerError::MissingManifest { .. }));
     let _ = fs::remove_dir_all(&out_dir);
   }
 
   #[test]
   fn produce_coverage_rejects_invalid_fixture_layout() {
-    let bad_dir = std::env::temp_dir().join(format!(
-      "auv-scan-coverage-bad-layout-{}",
-      std::process::id()
-    ));
+    let bad_dir = std::env::temp_dir().join(format!("auv-scan-coverage-bad-layout-{}", std::process::id()));
     let _ = fs::remove_dir_all(&bad_dir);
     fs::create_dir_all(&bad_dir).expect("mkdir");
-    fs::write(
-      bad_dir.join(MANIFEST_FILE),
-      r#"{"scenario":"x","frame_fixture":"temporal/two_frame_v0","observations_by_frame":[[],[]]}"#,
-    )
-    .expect("write manifest");
-    let err =
-      produce_coverage_from_fixture_dir(&bad_dir, &bad_dir.join("out")).expect_err("bad layout");
-    assert!(matches!(
-      err,
-      CoverageProducerError::InvalidFixtureLayout { .. }
-    ));
+    fs::write(bad_dir.join(MANIFEST_FILE), r#"{"scenario":"x","frame_fixture":"temporal/two_frame_v0","observations_by_frame":[[],[]]}"#)
+      .expect("write manifest");
+    let err = produce_coverage_from_fixture_dir(&bad_dir, &bad_dir.join("out")).expect_err("bad layout");
+    assert!(matches!(err, CoverageProducerError::InvalidFixtureLayout { .. }));
     let _ = fs::remove_dir_all(&bad_dir);
   }
 }

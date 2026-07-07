@@ -92,11 +92,7 @@ pub struct JoinedOperationSummary {
 }
 
 fn runtime_status_matches_persisted(persisted: OperationStatus, runtime: RunStatus) -> bool {
-  matches!(
-    (persisted, runtime),
-    (OperationStatus::Completed, RunStatus::Completed)
-      | (OperationStatus::Failed, RunStatus::Failed)
-  )
+  matches!((persisted, runtime), (OperationStatus::Completed, RunStatus::Completed) | (OperationStatus::Failed, RunStatus::Failed))
 }
 
 /// Join a persisted `OperationResult` with an optional runtime summary source.
@@ -170,10 +166,7 @@ fn artifact_role_catalog(store: &LocalStore, run_id: &str) -> AuvResult<BTreeMap
   let run = store.read_run(run_id)?;
   let mut catalog = BTreeMap::new();
   for artifact in &run.artifacts {
-    catalog.insert(
-      artifact.artifact_id.as_str().to_string(),
-      artifact.role.clone(),
-    );
+    catalog.insert(artifact.artifact_id.as_str().to_string(), artifact.role.clone());
   }
   Ok(catalog)
 }
@@ -204,23 +197,11 @@ pub fn load_joined_operation_summary(
   };
   let runtime: Option<&dyn OperationSummarySource> = match process_local_runtime_override {
     Some(summary) => Some(summary as &dyn OperationSummarySource),
-    None => stored_summary
-      .as_ref()
-      .map(|summary| summary as &dyn OperationSummarySource),
+    None => stored_summary.as_ref().map(|summary| summary as &dyn OperationSummarySource),
   };
-  let command_id = resolve_wire_command_id(
-    store,
-    run_id,
-    process_local_runtime_override,
-    stored_summary.as_ref(),
-  )?;
+  let command_id = resolve_wire_command_id(store, run_id, process_local_runtime_override, stored_summary.as_ref())?;
   let artifact_roles = artifact_role_catalog(store, run_id)?;
-  Ok(JoinedOperationSummaryLoad::Found(join_operation_summary(
-    &operation,
-    runtime,
-    command_id,
-    artifact_roles,
-  )))
+  Ok(JoinedOperationSummaryLoad::Found(join_operation_summary(&operation, runtime, command_id, artifact_roles)))
 }
 
 #[cfg(test)]
@@ -228,20 +209,14 @@ mod tests {
   use std::collections::BTreeMap;
   use std::fs;
 
-  use auv_cli_invoke::{
-    InvokeResult, OperationSummary, OperationSummaryRecord, OperationSummarySource, RunStatus,
-  };
+  use auv_cli_invoke::{InvokeResult, OperationSummary, OperationSummaryRecord, OperationSummarySource, RunStatus};
   use auv_tracing_driver::store::LocalStore;
   use auv_tracing_driver::trace::SpanId;
 
-  use super::{
-    JoinedOperationSummary, JoinedOperationSummaryLoad, join_operation_summary,
-    load_joined_operation_summary,
-  };
+  use super::{JoinedOperationSummary, JoinedOperationSummaryLoad, join_operation_summary, load_joined_operation_summary};
   use crate::api::session_service::test_fixtures::{
-    SessionRunFixture, music_runtime_summary, music_search_operation,
-    persist_operation_result_and_summary_run, persist_operation_result_run, unique_temp_dir,
-    write_minimal_run,
+    SessionRunFixture, music_runtime_summary, music_search_operation, persist_operation_result_and_summary_run,
+    persist_operation_result_run, unique_temp_dir, write_minimal_run,
   };
   use crate::contract::{OPERATION_SUMMARY_API_VERSION, OperationStatus};
 
@@ -272,10 +247,7 @@ mod tests {
     assert_eq!(joined.known_limits, vec!["semantic_shaping_synthetic"]);
     let runtime = joined.runtime.expect("runtime summary should be present");
     assert_eq!(runtime.output_summary, "did the thing");
-    assert_eq!(
-      runtime.signals.get("now_playing").map(String::as_str),
-      Some("track-x")
-    );
+    assert_eq!(runtime.signals.get("now_playing").map(String::as_str), Some("track-x"));
     assert_eq!(runtime.failure_message, None);
   }
 
@@ -287,10 +259,7 @@ mod tests {
     let joined = join_operation_summary(&operation, None, command_id, roles);
 
     assert_eq!(joined.domain_operation_id, "music.search.results");
-    assert_eq!(
-      joined.known_limits,
-      vec!["semantic_shaping_synthetic".to_string(),]
-    );
+    assert_eq!(joined.known_limits, vec!["semantic_shaping_synthetic".to_string(),]);
     // Runtime summary explicitly absent, not fabricated as empty strings.
     assert!(joined.runtime.is_none());
   }
@@ -304,9 +273,7 @@ mod tests {
     let joined = join_operation_summary(&operation, None, None, BTreeMap::new());
 
     assert_eq!(joined.status, OperationStatus::Failed);
-    assert!(joined.known_limits.iter().any(|limit| {
-      limit == "dispatch_failed" || limit == super::COMMAND_ID_UNAVAILABLE_KNOWN_LIMIT
-    }));
+    assert!(joined.known_limits.iter().any(|limit| { limit == "dispatch_failed" || limit == super::COMMAND_ID_UNAVAILABLE_KNOWN_LIMIT }));
   }
 
   #[test]
@@ -334,12 +301,7 @@ mod tests {
     let joined = join_operation_summary(&operation, Some(&summary), command_id, roles);
 
     assert_eq!(joined.status, OperationStatus::Completed);
-    assert!(
-      joined
-        .known_limits
-        .iter()
-        .any(|limit| limit == "auv.api.session.runtime_status_mismatch")
-    );
+    assert!(joined.known_limits.iter().any(|limit| limit == "auv.api.session.runtime_status_mismatch"));
     let runtime = joined.runtime.expect("runtime summary should be present");
     assert_eq!(runtime.failure_message.as_deref(), Some("boom"));
   }
@@ -349,8 +311,7 @@ mod tests {
     let root = unique_temp_dir("session-summary-missing-run");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
 
-    let loaded =
-      load_joined_operation_summary(&store, "missing-run", None).expect("load should succeed");
+    let loaded = load_joined_operation_summary(&store, "missing-run", None).expect("load should succeed");
     assert_eq!(loaded, JoinedOperationSummaryLoad::RunNotFound);
 
     let _ = fs::remove_dir_all(root);
@@ -362,12 +323,8 @@ mod tests {
     let store = LocalStore::new(root.clone()).expect("store should initialize");
     write_minimal_run(&store, "run-no-op-result");
 
-    let loaded =
-      load_joined_operation_summary(&store, "run-no-op-result", None).expect("load should succeed");
-    assert_eq!(
-      loaded,
-      JoinedOperationSummaryLoad::NoPersistedOperationResult
-    );
+    let loaded = load_joined_operation_summary(&store, "run-no-op-result", None).expect("load should succeed");
+    assert_eq!(loaded, JoinedOperationSummaryLoad::NoPersistedOperationResult);
 
     let _ = fs::remove_dir_all(root);
   }
@@ -375,12 +332,10 @@ mod tests {
   #[test]
   fn load_joined_operation_summary_joins_persisted_and_runtime_halves() {
     let operation = sample_operation("run-happy");
-    let SessionRunFixture { root, store } =
-      persist_operation_result_run("session-summary-load", "run-happy", &operation);
+    let SessionRunFixture { root, store } = persist_operation_result_run("session-summary-load", "run-happy", &operation);
     let summary = runtime_summary("run-happy");
 
-    let loaded = load_joined_operation_summary(&store, "run-happy", Some(&summary))
-      .expect("load should succeed");
+    let loaded = load_joined_operation_summary(&store, "run-happy", Some(&summary)).expect("load should succeed");
     let JoinedOperationSummaryLoad::Found(joined) = loaded else {
       panic!("expected joined summary, got {loaded:?}");
     };
@@ -390,10 +345,7 @@ mod tests {
     assert_eq!(joined.status, OperationStatus::Completed);
     let runtime = joined.runtime.expect("runtime summary should be present");
     assert_eq!(runtime.output_summary, "did the thing");
-    assert_eq!(
-      runtime.signals.get("now_playing").map(String::as_str),
-      Some("track-x")
-    );
+    assert_eq!(runtime.signals.get("now_playing").map(String::as_str), Some("track-x"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -402,25 +354,17 @@ mod tests {
   fn load_joined_operation_summary_loads_persisted_runtime_when_cache_absent() {
     let operation = sample_operation("run-stored-runtime");
     let summary = runtime_summary("run-stored-runtime");
-    let SessionRunFixture { root, store } = persist_operation_result_and_summary_run(
-      "session-summary-stored-runtime",
-      "run-stored-runtime",
-      &operation,
-      &summary,
-    );
+    let SessionRunFixture { root, store } =
+      persist_operation_result_and_summary_run("session-summary-stored-runtime", "run-stored-runtime", &operation, &summary);
 
-    let loaded = load_joined_operation_summary(&store, "run-stored-runtime", None)
-      .expect("load should succeed");
+    let loaded = load_joined_operation_summary(&store, "run-stored-runtime", None).expect("load should succeed");
     let JoinedOperationSummaryLoad::Found(joined) = loaded else {
       panic!("expected joined summary, got {loaded:?}");
     };
 
     let runtime = joined.runtime.expect("runtime summary should be present");
     assert_eq!(runtime.output_summary, "did the thing");
-    assert_eq!(
-      runtime.signals.get("now_playing").map(String::as_str),
-      Some("track-x")
-    );
+    assert_eq!(runtime.signals.get("now_playing").map(String::as_str), Some("track-x"));
 
     let _ = fs::remove_dir_all(root);
   }
@@ -429,12 +373,8 @@ mod tests {
   fn load_joined_operation_summary_prefers_process_local_override_over_stored_summary() {
     let operation = sample_operation("run-override");
     let stored_summary = runtime_summary("run-override");
-    let SessionRunFixture { root, store } = persist_operation_result_and_summary_run(
-      "session-summary-override",
-      "run-override",
-      &operation,
-      &stored_summary,
-    );
+    let SessionRunFixture { root, store } =
+      persist_operation_result_and_summary_run("session-summary-override", "run-override", &operation, &stored_summary);
     let override_summary = OperationSummary::capture(&InvokeResult {
       run_id: "run-override".to_string(),
       producer_span_id: SpanId::new("0000000000000001"),
@@ -453,8 +393,7 @@ mod tests {
       failure_message: None,
     });
 
-    let loaded = load_joined_operation_summary(&store, "run-override", Some(&override_summary))
-      .expect("load should succeed");
+    let loaded = load_joined_operation_summary(&store, "run-override", Some(&override_summary)).expect("load should succeed");
     let JoinedOperationSummaryLoad::Found(joined) = loaded else {
       panic!("expected joined summary, got {loaded:?}");
     };

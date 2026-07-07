@@ -1,9 +1,6 @@
 use auv_driver::geometry::Point;
 
-use crate::types::{
-  BlockPosition, MinecraftBlockTarget, MinecraftProjectedPoint, MinecraftSpatialFrame,
-  ProjectionVisibility, Vec3,
-};
+use crate::types::{BlockPosition, MinecraftBlockTarget, MinecraftProjectedPoint, MinecraftSpatialFrame, ProjectionVisibility, Vec3};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ScreenProjection {
@@ -27,10 +24,7 @@ impl MinecraftProjector {
     validate_matrix(&frame.view_matrix, "view_matrix")?;
     validate_matrix(&frame.projection_matrix, "projection_matrix")?;
     if frame.viewport.width == 0 || frame.viewport.height == 0 {
-      return Err(format!(
-        "viewport must have positive dimensions, got {}x{}",
-        frame.viewport.width, frame.viewport.height
-      ));
+      return Err(format!("viewport must have positive dimensions, got {}x{}", frame.viewport.width, frame.viewport.height));
     }
     Ok(Self { frame })
   }
@@ -39,14 +33,9 @@ impl MinecraftProjector {
     &self.frame
   }
 
-  pub fn project_block_target(
-    &self,
-    target: &MinecraftBlockTarget,
-  ) -> Result<MinecraftProjectedPoint, String> {
+  pub fn project_block_target(&self, target: &MinecraftBlockTarget) -> Result<MinecraftProjectedPoint, String> {
     if is_zero_matrix(&self.frame.view_matrix) || is_zero_matrix(&self.frame.projection_matrix) {
-      return Err(
-        "projection basis is invalid: view_matrix/projection_matrix are all zero".to_string(),
-      );
+      return Err("projection basis is invalid: view_matrix/projection_matrix are all zero".to_string());
     }
 
     let clip = self.project_vec4(target.aim_point());
@@ -95,10 +84,7 @@ impl MinecraftProjector {
     let extent_y = max_y - min_y;
     let radius = 0.5 * extent_x.max(extent_y);
     if !radius.is_finite() || radius <= 0.0 {
-      return Err(format!(
-        "projected block radius must be positive finite, got {}",
-        radius
-      ));
+      return Err(format!("projected block radius must be positive finite, got {}", radius));
     }
     Ok(radius)
   }
@@ -108,11 +94,7 @@ impl MinecraftProjector {
     projected_point: Option<MinecraftProjectedPoint>,
     verification_reference: Option<String>,
   ) -> crate::artifact::MinecraftProjectionArtifact {
-    crate::artifact::MinecraftProjectionArtifact::for_frame(
-      &self.frame,
-      projected_point,
-      verification_reference,
-    )
+    crate::artifact::MinecraftProjectionArtifact::for_frame(&self.frame, projected_point, verification_reference)
   }
 
   fn non_visible_point(&self, visibility: ProjectionVisibility) -> MinecraftProjectedPoint {
@@ -125,34 +107,20 @@ impl MinecraftProjector {
     }
   }
 
-  fn project_screen_point(
-    &self,
-    world: Vec3,
-    ndc_limit: f64,
-  ) -> Result<Option<ScreenProjection>, String> {
+  fn project_screen_point(&self, world: Vec3, ndc_limit: f64) -> Result<Option<ScreenProjection>, String> {
     let clip = self.project_vec4(world);
     self.clip_to_screen_projection(clip, ndc_limit)
   }
 
-  fn projected_screen_point_from_clip(
-    &self,
-    clip: [f64; 4],
-    ndc_limit: f64,
-  ) -> Result<ProjectedScreenPoint, String> {
+  fn projected_screen_point_from_clip(&self, clip: [f64; 4], ndc_limit: f64) -> Result<ProjectedScreenPoint, String> {
     if let Some(screen_projection) = self.clip_to_screen_projection(clip, ndc_limit)? {
       return Ok(ProjectedScreenPoint::Visible(screen_projection));
     }
 
-    Ok(ProjectedScreenPoint::Hidden(
-      self.hidden_visibility_from_clip(clip, ndc_limit)?,
-    ))
+    Ok(ProjectedScreenPoint::Hidden(self.hidden_visibility_from_clip(clip, ndc_limit)?))
   }
 
-  fn hidden_visibility_from_clip(
-    &self,
-    clip: [f64; 4],
-    ndc_limit: f64,
-  ) -> Result<ProjectionVisibility, String> {
+  fn hidden_visibility_from_clip(&self, clip: [f64; 4], ndc_limit: f64) -> Result<ProjectionVisibility, String> {
     if !clip.iter().all(|value| value.is_finite()) {
       return Err("projection produced non-finite clip coordinates".to_string());
     }
@@ -179,11 +147,7 @@ impl MinecraftProjector {
     )
   }
 
-  fn clip_to_screen_projection(
-    &self,
-    clip: [f64; 4],
-    ndc_limit: f64,
-  ) -> Result<Option<ScreenProjection>, String> {
+  fn clip_to_screen_projection(&self, clip: [f64; 4], ndc_limit: f64) -> Result<Option<ScreenProjection>, String> {
     if !clip.iter().all(|value| value.is_finite()) {
       return Err("projection produced non-finite clip coordinates".to_string());
     }
@@ -197,9 +161,7 @@ impl MinecraftProjector {
     if [ndc_x, ndc_y, ndc_z].iter().any(|value| !value.is_finite()) {
       return Err("projection produced non-finite normalized device coordinates".to_string());
     }
-    if !(-ndc_limit..=ndc_limit).contains(&ndc_x)
-      || !(-ndc_limit..=ndc_limit).contains(&ndc_y)
-      || !(-ndc_limit..=ndc_limit).contains(&ndc_z)
+    if !(-ndc_limit..=ndc_limit).contains(&ndc_x) || !(-ndc_limit..=ndc_limit).contains(&ndc_y) || !(-ndc_limit..=ndc_limit).contains(&ndc_z)
     {
       return Ok(None);
     }
@@ -267,9 +229,7 @@ fn multiply_mat4_vec4(matrix: &[f64; 16], vector: [f64; 4]) -> [f64; 4] {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::types::{
-    BlockPosition, InventorySummaryEntry, NearbyBlock, NearbyEntity, PlayerPose, Viewport,
-  };
+  use crate::types::{BlockPosition, InventorySummaryEntry, NearbyBlock, NearbyEntity, PlayerPose, Viewport};
 
   fn identity_matrix() -> [f64; 16] {
     [
@@ -283,11 +243,7 @@ mod tests {
     ]
   }
 
-  fn test_frame(
-    view_matrix: [f64; 16],
-    projection_matrix: [f64; 16],
-    viewport: Viewport,
-  ) -> MinecraftSpatialFrame {
+  fn test_frame(view_matrix: [f64; 16], projection_matrix: [f64; 16], viewport: Viewport) -> MinecraftSpatialFrame {
     MinecraftSpatialFrame {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 42,
@@ -337,24 +293,15 @@ mod tests {
     let frame = test_frame([0.0; 16], identity_matrix(), Viewport::new(854, 508));
 
     let projector = MinecraftProjector::new(frame).expect("projector");
-    let error = projector
-      .project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(1, 2, 3)))
-      .expect_err("zero basis must fail");
+    let error = projector.project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(1, 2, 3))).expect_err("zero basis must fail");
 
     assert!(error.contains("all zero"));
   }
 
   #[test]
   fn projects_center_point_into_center_pixel() {
-    let projector = MinecraftProjector::new(test_frame(
-      identity_matrix(),
-      identity_matrix(),
-      Viewport::new(800, 600),
-    ))
-    .expect("projector");
-    let point = projector
-      .project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0)))
-      .expect("projected point");
+    let projector = MinecraftProjector::new(test_frame(identity_matrix(), identity_matrix(), Viewport::new(800, 600))).expect("projector");
+    let point = projector.project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0))).expect("projected point");
 
     assert_eq!(point.visibility, ProjectionVisibility::Visible);
     let screen_point = point.screen_point.expect("visible point");
@@ -374,60 +321,36 @@ mod tests {
     ))
     .expect("projector");
 
-    let point = projector
-      .project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0)))
-      .expect("projected point");
+    let point = projector.project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0))).expect("projected point");
     assert_eq!(point.visibility, ProjectionVisibility::BehindCamera);
     assert!(point.screen_point.is_none());
   }
 
   #[test]
   fn out_of_frustum_when_ndc_exceeds_clip_range() {
-    let projector = MinecraftProjector::new(test_frame(
-      translated_view_matrix(5.0),
-      identity_matrix(),
-      Viewport::new(800, 600),
-    ))
-    .expect("projector");
+    let projector =
+      MinecraftProjector::new(test_frame(translated_view_matrix(5.0), identity_matrix(), Viewport::new(800, 600))).expect("projector");
 
-    let point = projector
-      .project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0)))
-      .expect("projected point");
+    let point = projector.project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0))).expect("projected point");
     assert_eq!(point.visibility, ProjectionVisibility::OutOfFrustum);
     assert!(point.screen_point.is_none());
   }
 
   #[test]
   fn builds_projection_artifact_from_frame() {
-    let projector = MinecraftProjector::new(test_frame(
-      identity_matrix(),
-      identity_matrix(),
-      Viewport::new(800, 600),
-    ))
-    .expect("projector");
+    let projector = MinecraftProjector::new(test_frame(identity_matrix(), identity_matrix(), Viewport::new(800, 600))).expect("projector");
 
-    let point = projector
-      .project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0)))
-      .expect("projected point");
-    let artifact =
-      projector.build_projection_artifact(Some(point), Some("verification-1".to_string()));
+    let point = projector.project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(0, 0, 0))).expect("projected point");
+    let artifact = projector.build_projection_artifact(Some(point), Some("verification-1".to_string()));
 
     assert_eq!(artifact.spatial_frame_id, "frame-1");
-    assert_eq!(
-      artifact.verification_reference.as_deref(),
-      Some("verification-1")
-    );
+    assert_eq!(artifact.verification_reference.as_deref(), Some("verification-1"));
     artifact.validate().expect("artifact validates");
   }
 
   #[test]
   fn rejects_zero_sized_viewport() {
-    let error = MinecraftProjector::new(test_frame(
-      identity_matrix(),
-      identity_matrix(),
-      Viewport::new(0, 600),
-    ))
-    .expect_err("must fail");
+    let error = MinecraftProjector::new(test_frame(identity_matrix(), identity_matrix(), Viewport::new(0, 600))).expect_err("must fail");
     assert!(error.contains("positive dimensions"));
   }
 
@@ -435,12 +358,7 @@ mod tests {
   fn rejects_non_finite_matrix_values() {
     let mut matrix = identity_matrix();
     matrix[0] = f64::NAN;
-    let error = MinecraftProjector::new(test_frame(
-      matrix,
-      identity_matrix(),
-      Viewport::new(800, 600),
-    ))
-    .expect_err("must fail");
+    let error = MinecraftProjector::new(test_frame(matrix, identity_matrix(), Viewport::new(800, 600))).expect_err("must fail");
     assert!(error.contains("view_matrix contains non-finite values"));
   }
 
@@ -448,21 +366,17 @@ mod tests {
   fn projects_live_rotation_only_matrix_with_eye_position_fallback() {
     let frame = test_frame_with_eye(
       [
-        0.719950, 0.115742, -0.684307, 0.0, -0.0, 0.985996, 0.166769, 0.0, 0.694026, -0.120065,
-        0.709867, 0.0, 0.0, 0.0, 0.0, 1.0,
+        0.719950, 0.115742, -0.684307, 0.0, -0.0, 0.985996, 0.166769, 0.0, 0.694026, -0.120065, 0.709867, 0.0, 0.0, 0.0, 0.0, 1.0,
       ],
       [
-        0.802706, 0.0, -0.0, -0.0, 0.0, 1.428148, -0.0, -0.0, 0.0, 0.0, -1.000130, -1.0, -0.0,
-        -0.0, -0.100007, -0.0,
+        0.802706, 0.0, -0.0, -0.0, 0.0, 1.428148, -0.0, -0.0, 0.0, 0.0, -1.000130, -1.0, -0.0, -0.0, -0.100007, -0.0,
       ],
       Viewport::new(1708, 960),
       Vec3::new(511.028439, 73.62, 728.652906),
     );
     let projector = MinecraftProjector::new(frame).expect("projector");
 
-    let point = projector
-      .project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(513, 72, 726)))
-      .expect("projected point");
+    let point = projector.project_block_target(&MinecraftBlockTarget::new(BlockPosition::new(513, 72, 726))).expect("projected point");
 
     assert_eq!(point.visibility, ProjectionVisibility::Visible);
     let screen_point = point.screen_point.expect("visible point");

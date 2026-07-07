@@ -11,21 +11,9 @@ pub const MINECRAFT_1_21_1_RESOURCE_PACK_FORMAT: u32 = 34;
 pub const TEXTURE_SWEEP_PROFILE_DURATION_SECONDS: f64 = 30.0;
 
 const PROFILE_PACKS: [(&str, &str, &str); 3] = [
-  (
-    "rich",
-    "auv-mc6-rich",
-    "AUV MC-6 rich texture sweep profile",
-  ),
-  (
-    "flat_color",
-    "auv-mc6-flat-color",
-    "AUV MC-6 flat-color texture sweep profile",
-  ),
-  (
-    "repetitive",
-    "auv-mc6-repetitive",
-    "AUV MC-6 repetitive texture sweep profile",
-  ),
+  ("rich", "auv-mc6-rich", "AUV MC-6 rich texture sweep profile"),
+  ("flat_color", "auv-mc6-flat-color", "AUV MC-6 flat-color texture sweep profile"),
+  ("repetitive", "auv-mc6-repetitive", "AUV MC-6 repetitive texture sweep profile"),
 ];
 
 const BLOCK_TEXTURES: [&str; 10] = [
@@ -87,22 +75,12 @@ pub struct TextureSweepRunStep {
   pub acceptance_note: String,
 }
 
-pub fn prepare_texture_sweep_resource_packs(
-  inputs: TextureSweepPreparationInputs,
-) -> PrepResult<TextureSweepPreparationOutput> {
+pub fn prepare_texture_sweep_resource_packs(inputs: TextureSweepPreparationInputs) -> PrepResult<TextureSweepPreparationOutput> {
   let resourcepacks_dir = inputs.sidecar_run_dir.join("resourcepacks");
-  fs::create_dir_all(&resourcepacks_dir).map_err(|error| {
-    format!(
-      "failed to create Minecraft resourcepacks directory {}: {error}",
-      resourcepacks_dir.display()
-    )
-  })?;
-  fs::create_dir_all(&inputs.output_dir).map_err(|error| {
-    format!(
-      "failed to create MC-6 preparation output directory {}: {error}",
-      inputs.output_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&resourcepacks_dir)
+    .map_err(|error| format!("failed to create Minecraft resourcepacks directory {}: {error}", resourcepacks_dir.display()))?;
+  fs::create_dir_all(&inputs.output_dir)
+    .map_err(|error| format!("failed to create MC-6 preparation output directory {}: {error}", inputs.output_dir.display()))?;
 
   let mut profiles = Vec::new();
   for (profile, pack_id, description) in PROFILE_PACKS {
@@ -115,10 +93,7 @@ pub fn prepare_texture_sweep_resource_packs(
       options_resource_packs_value: options_resource_packs_value(pack_id),
       expected_telemetry_resource_pack_id: format!("file/{pack_id}"),
       required_duration_seconds: TEXTURE_SWEEP_PROFILE_DURATION_SECONDS,
-      texture_overrides: BLOCK_TEXTURES
-        .iter()
-        .map(|name| format!("assets/minecraft/textures/block/{name}.png"))
-        .collect(),
+      texture_overrides: BLOCK_TEXTURES.iter().map(|name| format!("assets/minecraft/textures/block/{name}.png")).collect(),
     });
   }
 
@@ -154,12 +129,8 @@ pub fn prepare_texture_sweep_resource_packs(
   let manifest_path = inputs.output_dir.join("mc6-texture-sweep-prep.json");
   write_json(&manifest_path, &manifest)?;
   let runbook_path = inputs.output_dir.join("mc6-texture-sweep-runbook.md");
-  fs::write(&runbook_path, render_runbook(&manifest).as_bytes()).map_err(|error| {
-    format!(
-      "failed to write MC-6 texture sweep runbook {}: {error}",
-      runbook_path.display()
-    )
-  })?;
+  fs::write(&runbook_path, render_runbook(&manifest).as_bytes())
+    .map_err(|error| format!("failed to write MC-6 texture sweep runbook {}: {error}", runbook_path.display()))?;
 
   Ok(TextureSweepPreparationOutput {
     output_dir: inputs.output_dir,
@@ -171,20 +142,12 @@ pub fn prepare_texture_sweep_resource_packs(
 
 fn write_resource_pack(pack_dir: &Path, profile: &str, description: &str) -> PrepResult<()> {
   if pack_dir.exists() {
-    fs::remove_dir_all(pack_dir).map_err(|error| {
-      format!(
-        "failed to refresh MC-6 resource pack directory {}: {error}",
-        pack_dir.display()
-      )
-    })?;
+    fs::remove_dir_all(pack_dir)
+      .map_err(|error| format!("failed to refresh MC-6 resource pack directory {}: {error}", pack_dir.display()))?;
   }
   let textures_dir = pack_dir.join("assets/minecraft/textures/block");
-  fs::create_dir_all(&textures_dir).map_err(|error| {
-    format!(
-      "failed to create MC-6 resource pack texture directory {}: {error}",
-      textures_dir.display()
-    )
-  })?;
+  fs::create_dir_all(&textures_dir)
+    .map_err(|error| format!("failed to create MC-6 resource pack texture directory {}: {error}", textures_dir.display()))?;
   let pack_meta = serde_json::json!({
     "pack": {
       "pack_format": MINECRAFT_1_21_1_RESOURCE_PACK_FORMAT,
@@ -194,11 +157,7 @@ fn write_resource_pack(pack_dir: &Path, profile: &str, description: &str) -> Pre
   write_json(&pack_dir.join("pack.mcmeta"), &pack_meta)?;
   write_texture(&pack_dir.join("pack.png"), profile, 255)?;
   for (index, texture_name) in BLOCK_TEXTURES.iter().enumerate() {
-    write_texture(
-      &textures_dir.join(format!("{texture_name}.png")),
-      profile,
-      index as u8,
-    )?;
+    write_texture(&textures_dir.join(format!("{texture_name}.png")), profile, index as u8)?;
   }
   Ok(())
 }
@@ -210,9 +169,7 @@ fn write_texture(path: &Path, profile: &str, seed: u8) -> PrepResult<()> {
       image.put_pixel(x, y, pixel_for(profile, seed, x as u8, y as u8));
     }
   }
-  image
-    .save(path)
-    .map_err(|error| format!("failed to write texture {}: {error}", path.display()))
+  image.save(path).map_err(|error| format!("failed to write texture {}: {error}", path.display()))
 }
 
 fn pixel_for(profile: &str, seed: u8, x: u8, y: u8) -> Rgba<u8> {
@@ -256,9 +213,7 @@ fn render_runbook(manifest: &TextureSweepPreparationManifest) -> String {
   for step in &manifest.live_run_sequence {
     output.push_str(&format!(
       "- `{}`: `resourcePacks:{}`; expect telemetry id `{}`.\n",
-      step.texture_profile,
-      step.options_resource_packs_value,
-      step.expected_telemetry_resource_pack_id
+      step.texture_profile, step.options_resource_packs_value, step.expected_telemetry_resource_pack_id
     ));
   }
   output.push_str("\nAfter all three source runs are exported as spatial bundles, build the sample file and evaluate with:\n\n");
@@ -276,12 +231,7 @@ fn write_json(path: &Path, value: &impl Serialize) -> PrepResult<()> {
       json
     })
     .map_err(|error| format!("failed to serialize MC-6 preparation JSON: {error}"))?;
-  fs::write(path, json.as_bytes()).map_err(|error| {
-    format!(
-      "failed to write MC-6 preparation JSON {}: {error}",
-      path.display()
-    )
-  })
+  fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write MC-6 preparation JSON {}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -307,16 +257,8 @@ mod tests {
       let pack_dir = PathBuf::from(&profile.pack_dir);
       assert!(pack_dir.join("pack.mcmeta").is_file());
       assert!(pack_dir.join("pack.png").is_file());
-      assert!(
-        pack_dir
-          .join("assets/minecraft/textures/block/stone.png")
-          .is_file()
-      );
-      assert!(
-        profile
-          .options_resource_packs_value
-          .contains(&format!("file/{}", profile.pack_id))
-      );
+      assert!(pack_dir.join("assets/minecraft/textures/block/stone.png").is_file());
+      assert!(profile.options_resource_packs_value.contains(&format!("file/{}", profile.pack_id)));
     }
     assert!(output_dir.join("mc6-texture-sweep-prep.json").is_file());
     assert!(output_dir.join("mc6-texture-sweep-runbook.md").is_file());

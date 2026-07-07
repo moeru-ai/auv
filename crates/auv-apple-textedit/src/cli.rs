@@ -3,8 +3,8 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 
 use crate::commands::document::{
-  DEFAULT_APP_ID, DEFAULT_BODY_ROLE, DEFAULT_FOCUS_QUERY, DEFAULT_SETTLE_MS, DocumentCommand,
-  DocumentCompare, DocumentFocus, DocumentWrite, run_document_command,
+  DEFAULT_APP_ID, DEFAULT_BODY_ROLE, DEFAULT_FOCUS_QUERY, DEFAULT_SETTLE_MS, DocumentCommand, DocumentCompare, DocumentFocus, DocumentWrite,
+  run_document_command,
 };
 use crate::driver::MacosTextEditDriver;
 

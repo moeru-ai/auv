@@ -22,10 +22,7 @@ mod tests {
 
   use super::*;
 
-  fn projected_point(
-    visibility: ProjectionVisibility,
-    screen_point: Option<Point>,
-  ) -> MinecraftProjectedPoint {
+  fn projected_point(visibility: ProjectionVisibility, screen_point: Option<Point>) -> MinecraftProjectedPoint {
     MinecraftProjectedPoint {
       screen_point,
       visibility,
@@ -37,10 +34,7 @@ mod tests {
 
   #[test]
   fn returns_window_point_for_visible_projection() {
-    let projected = projected_point(
-      ProjectionVisibility::Visible,
-      Some(Point::new(320.0, 240.0)),
-    );
+    let projected = projected_point(ProjectionVisibility::Visible, Some(Point::new(320.0, 240.0)));
 
     let window_point = projected_window_point(&projected).expect("window point");
 

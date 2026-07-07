@@ -6,10 +6,9 @@ use auv_tracing_driver::recorded_operation::RecordedOperationContext;
 use auv_tracing_driver::run_builder::Attributes;
 use auv_tracing_driver::{LocalStore, RunRecordingBackend, RunSpec, RunType};
 use auv_view::memory::{
-  ARTIFACT_DIR_BRIDGE_RUN_ID, PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, SPAN_MEMORY_WRITE,
-  SPAN_REACQUIRE_MEMORY_LOAD, VIEW_MEMORY_ARTIFACT_ROLE, ViewMemory, memory_file_path,
-  memory_write_span_attributes, reacquire_memory_load_span_attributes, reacquire_root_span_name,
-  serialize_memory_bytes,
+  ARTIFACT_DIR_BRIDGE_RUN_ID, PLAYLIST_SELECT_RESULT_ARTIFACT_ROLE, SPAN_MEMORY_WRITE, SPAN_REACQUIRE_MEMORY_LOAD,
+  VIEW_MEMORY_ARTIFACT_ROLE, ViewMemory, memory_file_path, memory_write_span_attributes, reacquire_memory_load_span_attributes,
+  reacquire_root_span_name, serialize_memory_bytes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -54,10 +53,7 @@ pub fn read_lineage_manifest(artifact_dir: &Path) -> Option<ViewMemoryRunLineage
   Some(lineage)
 }
 
-pub fn read_lineage_manifest_for_inputs(
-  artifact_dir: &Path,
-  inputs: &Inputs,
-) -> Option<ViewMemoryRunLineage> {
+pub fn read_lineage_manifest_for_inputs(artifact_dir: &Path, inputs: &Inputs) -> Option<ViewMemoryRunLineage> {
   let lineage = read_lineage_manifest(artifact_dir)?;
   if lineage.app_bundle_id != inputs.app_id {
     return None;
@@ -81,36 +77,20 @@ pub fn parse_lineage_scan_artifact_id(source_reconstruction_ref: &str) -> Option
   None
 }
 
-pub fn write_lineage_manifest(
-  artifact_dir: &Path,
-  lineage: &ViewMemoryRunLineage,
-) -> Result<(), String> {
-  std::fs::create_dir_all(artifact_dir)
-    .map_err(|error| format!("failed to create {}: {error}", artifact_dir.display()))?;
+pub fn write_lineage_manifest(artifact_dir: &Path, lineage: &ViewMemoryRunLineage) -> Result<(), String> {
+  std::fs::create_dir_all(artifact_dir).map_err(|error| format!("failed to create {}: {error}", artifact_dir.display()))?;
   let path = lineage_manifest_path(artifact_dir);
-  let json = serde_json::to_string_pretty(lineage)
-    .map_err(|error| format!("failed to serialize lineage manifest: {error}"))?;
+  let json = serde_json::to_string_pretty(lineage).map_err(|error| format!("failed to serialize lineage manifest: {error}"))?;
   let tmp = path.with_extension("json.tmp");
-  std::fs::write(&tmp, json)
-    .map_err(|error| format!("failed to write {}: {error}", tmp.display()))?;
-  std::fs::rename(&tmp, &path).map_err(|error| {
-    format!(
-      "failed to rename {} to {}: {error}",
-      tmp.display(),
-      path.display()
-    )
-  })
+  std::fs::write(&tmp, json).map_err(|error| format!("failed to write {}: {error}", tmp.display()))?;
+  std::fs::rename(&tmp, &path).map_err(|error| format!("failed to rename {} to {}: {error}", tmp.display(), path.display()))
 }
 
 /// Remove artifact-dir view-memory so store-first scan cannot pair with stale memory.
 pub fn clear_artifact_dir_view_memory(inputs: &Inputs) -> Result<(), String> {
-  let path = memory_file_path(
-    &inputs.artifact_dir,
-    crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID,
-  );
+  let path = memory_file_path(&inputs.artifact_dir, crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID);
   if path.is_file() {
-    std::fs::remove_file(&path)
-      .map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
+    std::fs::remove_file(&path).map_err(|error| format!("failed to remove {}: {error}", path.display()))?;
   }
   Ok(())
 }
@@ -129,15 +109,12 @@ pub fn persist_playlist_ls_artifacts(
 ) -> Result<PersistedLineage, String> {
   let store = LocalStore::new(store_root.to_path_buf()).map_err(|error| error.to_string())?;
   let recording = RunRecordingBackend::local_only(store).handle();
-  let scan_json = serde_json::to_vec_pretty(scan)
-    .map_err(|error| format!("failed to serialize playlist scan: {error}"))?;
+  let scan_json = serde_json::to_vec_pretty(scan).map_err(|error| format!("failed to serialize playlist scan: {error}"))?;
 
   let output = recording
-    .run_recorded_operation(
-      RunSpec::new(RunType::Command, "auv.netease.playlist.ls"),
-      "playlist ls store artifacts",
-      |ctx| persist_in_recorded_context(ctx, &scan_json, inputs, scan, memory_enabled),
-    )
+    .run_recorded_operation(RunSpec::new(RunType::Command, "auv.netease.playlist.ls"), "playlist ls store artifacts", |ctx| {
+      persist_in_recorded_context(ctx, &scan_json, inputs, scan, memory_enabled)
+    })
     .map_err(|error| error.to_string())?;
 
   Ok(output.value)
@@ -186,10 +163,7 @@ fn persist_in_recorded_context(
   } else {
     None
   };
-  let memory_id = auv_view::memory::build_memory_id(
-    &inputs.app_id,
-    crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID,
-  );
+  let memory_id = auv_view::memory::build_memory_id(&inputs.app_id, crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID);
   Ok(PersistedLineage {
     lineage: ViewMemoryRunLineage {
       schema_version: VIEW_MEMORY_LINEAGE_SCHEMA_VERSION.to_string(),
@@ -205,19 +179,13 @@ fn persist_in_recorded_context(
   })
 }
 
-pub fn load_scan_from_store(
-  store_root: &Path,
-  lineage: &ViewMemoryRunLineage,
-) -> Option<PlaylistSidebarScan> {
+pub fn load_scan_from_store(store_root: &Path, lineage: &ViewMemoryRunLineage) -> Option<PlaylistSidebarScan> {
   let bytes = read_artifact_bytes(store_root, &lineage.run_id, &lineage.scan_artifact_id)?;
   let json = std::str::from_utf8(&bytes).ok()?;
   crate::decode_playlist_sidebar_scan_json(json).ok()
 }
 
-pub fn load_memory_from_store(
-  store_root: &Path,
-  lineage: &ViewMemoryRunLineage,
-) -> Option<ViewMemory> {
+pub fn load_memory_from_store(store_root: &Path, lineage: &ViewMemoryRunLineage) -> Option<ViewMemory> {
   let artifact_id = lineage.memory_artifact_id.as_deref()?;
   let bytes = read_artifact_bytes(store_root, &lineage.run_id, artifact_id)?;
   serde_json::from_slice(&bytes).ok()
@@ -229,26 +197,18 @@ pub fn try_load_scan_cache(inputs: &Inputs) -> Option<PlaylistSidebarScan> {
   try_load_scan_cache_with_limits(inputs).0
 }
 
-pub fn try_load_scan_cache_with_limits(
-  inputs: &Inputs,
-) -> (Option<PlaylistSidebarScan>, Vec<String>) {
+pub fn try_load_scan_cache_with_limits(inputs: &Inputs) -> (Option<PlaylistSidebarScan>, Vec<String>) {
   let mut known_limits = Vec::new();
   if let Some(store_root) = &inputs.store_root {
     if let Some(lineage) = read_lineage_manifest_for_inputs(&inputs.artifact_dir, inputs) {
       if let Some(scan) = load_scan_from_store(store_root, &lineage) {
         return (Some(scan), known_limits);
       }
-      known_limits.push(format!(
-        "store scan artifact missing for run {}; using artifact-dir fallback",
-        lineage.run_id
-      ));
+      known_limits.push(format!("store scan artifact missing for run {}; using artifact-dir fallback", lineage.run_id));
     } else if read_lineage_manifest(&inputs.artifact_dir).is_some() {
-      known_limits.push(
-        "lineage manifest rejected for current app/scope; using artifact-dir fallback".into(),
-      );
+      known_limits.push("lineage manifest rejected for current app/scope; using artifact-dir fallback".into());
     } else {
-      known_limits
-        .push("lineage manifest missing with --store-root; using artifact-dir fallback".into());
+      known_limits.push("lineage manifest missing with --store-root; using artifact-dir fallback".into());
     }
     if let Some(scan) = try_load_scan_from_memory_lineage(inputs, store_root) {
       return (Some(scan), known_limits);
@@ -259,10 +219,7 @@ pub fn try_load_scan_cache_with_limits(
     Ok(json) => json,
     Err(_) => return (None, known_limits),
   };
-  (
-    crate::decode_playlist_sidebar_scan_json(&json).ok(),
-    known_limits,
-  )
+  (crate::decode_playlist_sidebar_scan_json(&json).ok(), known_limits)
 }
 
 pub fn try_load_view_memory(inputs: &Inputs) -> Option<ViewMemory> {
@@ -275,17 +232,11 @@ pub fn try_load_view_memory(inputs: &Inputs) -> Option<ViewMemory> {
     }
     return None;
   }
-  let path = memory_file_path(
-    &inputs.artifact_dir,
-    crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID,
-  );
+  let path = memory_file_path(&inputs.artifact_dir, crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID);
   auv_view::memory::parse_memory_file(&path)
 }
 
-fn try_load_scan_from_memory_lineage(
-  inputs: &Inputs,
-  store_root: &Path,
-) -> Option<PlaylistSidebarScan> {
+fn try_load_scan_from_memory_lineage(inputs: &Inputs, store_root: &Path) -> Option<PlaylistSidebarScan> {
   let memory = load_artifact_dir_memory(inputs)?;
   if !artifact_memory_pairs_with_store(memory.source_run_id.as_str()) {
     return None;
@@ -303,20 +254,14 @@ fn try_load_memory_from_artifact_lineage(inputs: &Inputs, store_root: &Path) -> 
   let scan_artifact_id = parse_lineage_scan_artifact_id(&memory_file.source_reconstruction_ref)?;
   let store = LocalStore::new(store_root.to_path_buf()).ok()?;
   let canonical = store.read_run(&memory_file.source_run_id).ok()?;
-  let scan_present = canonical
-    .artifacts
-    .iter()
-    .any(|artifact| artifact.artifact_id.as_str() == scan_artifact_id);
+  let scan_present = canonical.artifacts.iter().any(|artifact| artifact.artifact_id.as_str() == scan_artifact_id);
   if !scan_present {
     return None;
   }
   let memory_artifact_id = canonical
     .artifacts
     .iter()
-    .find(|artifact| {
-      artifact.role == VIEW_MEMORY_ARTIFACT_ROLE
-        && artifact.path.ends_with("view-memory-playlist_sidebar.json")
-    })
+    .find(|artifact| artifact.role == VIEW_MEMORY_ARTIFACT_ROLE && artifact.path.ends_with("view-memory-playlist_sidebar.json"))
     .map(|artifact| artifact.artifact_id.as_str().to_string())?;
   let lineage = lineage_from_memory(&memory_file, scan_artifact_id, Some(memory_artifact_id));
   load_memory_from_store(store_root, &lineage)
@@ -327,18 +272,11 @@ fn artifact_memory_pairs_with_store(source_run_id: &str) -> bool {
 }
 
 fn load_artifact_dir_memory(inputs: &Inputs) -> Option<ViewMemory> {
-  let path = memory_file_path(
-    &inputs.artifact_dir,
-    crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID,
-  );
+  let path = memory_file_path(&inputs.artifact_dir, crate::view_memory::PLAYLIST_SIDEBAR_SCOPE_ID);
   auv_view::memory::parse_memory_file(&path)
 }
 
-fn lineage_from_memory(
-  memory: &ViewMemory,
-  scan_artifact_id: String,
-  memory_artifact_id: Option<String>,
-) -> ViewMemoryRunLineage {
+fn lineage_from_memory(memory: &ViewMemory, scan_artifact_id: String, memory_artifact_id: Option<String>) -> ViewMemoryRunLineage {
   ViewMemoryRunLineage {
     schema_version: VIEW_MEMORY_LINEAGE_SCHEMA_VERSION.to_string(),
     run_id: memory.source_run_id.clone(),
@@ -358,10 +296,7 @@ fn read_artifact_bytes(store_root: &Path, run_id: &str, artifact_id: &str) -> Op
 }
 
 fn span_attributes_from_pairs(pairs: Vec<(String, String)>) -> Attributes {
-  pairs
-    .into_iter()
-    .map(|(key, value)| (key, serde_json::Value::String(value)))
-    .collect()
+  pairs.into_iter().map(|(key, value)| (key, serde_json::Value::String(value))).collect()
 }
 
 /// Post-hoc durable proof run for `playlist select --store-root` (A8a).
@@ -375,11 +310,9 @@ pub fn persist_playlist_select_proof(
   let recording = RunRecordingBackend::local_only(store).handle();
 
   let output = recording
-    .run_recorded_operation(
-      RunSpec::new(RunType::Command, "auv.netease.playlist.select"),
-      "playlist select store proof",
-      |ctx| persist_select_proof_in_recorded_context(ctx, evidence, memory, build_result_json),
-    )
+    .run_recorded_operation(RunSpec::new(RunType::Command, "auv.netease.playlist.select"), "playlist select store proof", |ctx| {
+      persist_select_proof_in_recorded_context(ctx, evidence, memory, build_result_json)
+    })
     .map_err(|error| error.to_string())?;
 
   Ok(output.run_id.as_str().to_string())
@@ -427,10 +360,7 @@ where
   Ok(run_id)
 }
 
-fn emit_winning_reacquire_stage_span(
-  ctx: &mut RecordedOperationContext<'_>,
-  evidence: &ReacquireTraceEvidence,
-) -> Result<(), String> {
+fn emit_winning_reacquire_stage_span(ctx: &mut RecordedOperationContext<'_>, evidence: &ReacquireTraceEvidence) -> Result<(), String> {
   if let Some(stage_name) = evidence.winning_stage_span_name() {
     // NOTICE(a8-controlled-subset): only the winning stage span is recorded in A8 v1.
     ctx.in_span(&stage_name, |ctx| {
@@ -445,8 +375,7 @@ fn emit_winning_reacquire_stage_span(
 mod tests {
   use super::*;
   use auv_view::memory::{
-    VIEW_MEMORY_SCHEMA_VERSION, ViewMemoryScopeSnapshot, build_memory_id,
-    view_memory_lineage_ref_wire, write_memory_file,
+    VIEW_MEMORY_SCHEMA_VERSION, ViewMemoryScopeSnapshot, build_memory_id, view_memory_lineage_ref_wire, write_memory_file,
   };
   use auv_view::{VIEW_IR_SCHEMA_VERSION, ViewBounds};
 
@@ -511,8 +440,7 @@ mod tests {
   }
 
   fn minimal_blocking_scan_json() -> String {
-    let mut value: serde_json::Value =
-      serde_json::from_str(&minimal_scan_json()).expect("minimal scan json");
+    let mut value: serde_json::Value = serde_json::from_str(&minimal_scan_json()).expect("minimal scan json");
     value["diagnostics"] = serde_json::json!([{
       "code": "parser_no_reliable_candidates",
       "message": "blocking",
@@ -531,8 +459,7 @@ mod tests {
     let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
     let mut inputs = Inputs::with_defaults();
     inputs.app_id = "com.netease.163music".to_string();
-    let persisted =
-      persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
+    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
     assert_ne!(persisted.lineage.run_id, ARTIFACT_DIR_BRIDGE_RUN_ID);
     assert!(persisted.lineage.memory_artifact_id.is_some());
     write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
@@ -541,10 +468,7 @@ mod tests {
     inputs.artifact_dir = artifact_dir.clone();
     inputs.store_root = Some(store_root.clone());
     let loaded = try_load_scan_cache(&inputs).expect("load scan");
-    assert_eq!(
-      loaded.projection().sections[0].items[0].label,
-      "Store Label"
-    );
+    assert_eq!(loaded.projection().sections[0].items[0].label, "Store Label");
 
     let _ = std::fs::remove_dir_all(&root);
   }
@@ -559,8 +483,7 @@ mod tests {
     let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
     let mut inputs = Inputs::with_defaults();
     inputs.app_id = "com.netease.163music".to_string();
-    let persisted =
-      persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
+    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
     write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
 
     let stale = minimal_scan_json().replace("Store Label", "Stale Artifact Dir Label");
@@ -570,10 +493,7 @@ mod tests {
     inputs.artifact_dir = artifact_dir;
     inputs.store_root = Some(store_root);
     let loaded = try_load_scan_cache(&inputs).expect("store wins");
-    assert_eq!(
-      loaded.projection().sections[0].items[0].label,
-      "Store Label"
-    );
+    assert_eq!(loaded.projection().sections[0].items[0].label, "Store Label");
 
     let _ = std::fs::remove_dir_all(&root);
   }
@@ -581,10 +501,7 @@ mod tests {
   #[test]
   fn parse_lineage_scan_artifact_id_reads_wire_form() {
     let wire = view_memory_lineage_ref_wire("run_abc", "artifact_0001");
-    assert_eq!(
-      parse_lineage_scan_artifact_id(&wire).as_deref(),
-      Some("artifact_0001")
-    );
+    assert_eq!(parse_lineage_scan_artifact_id(&wire).as_deref(), Some("artifact_0001"));
   }
 
   #[test]
@@ -597,8 +514,7 @@ mod tests {
     let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
     let mut inputs = Inputs::with_defaults();
     inputs.app_id = "com.netease.163music".to_string();
-    let persisted =
-      persist_playlist_ls_artifacts(&store_root, &scan, &inputs, false).expect("persist");
+    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, false).expect("persist");
     write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
 
     let stale = minimal_scan_json().replace("obs1.candidate.test", "obs9.candidate.stale");
@@ -608,9 +524,7 @@ mod tests {
     inputs.artifact_dir = artifact_dir;
     inputs.store_root = Some(store_root);
     let loaded = try_load_scan_cache(&inputs).expect("store-first scan");
-    let target = loaded
-      .select_target_by_candidate_id("obs1.candidate.test")
-      .expect("candidate id resolves");
+    let target = loaded.select_target_by_candidate_id("obs1.candidate.test").expect("candidate id resolves");
     assert_eq!(target.label, "Store Label");
   }
 
@@ -624,8 +538,7 @@ mod tests {
     let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
     let mut inputs = Inputs::with_defaults();
     inputs.app_id = "com.netease.163music".to_string();
-    let persisted =
-      persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
+    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
     write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
 
     let stale = minimal_scan_json().replace("Store Label", "Stale Query Label");
@@ -655,10 +568,7 @@ mod tests {
     inputs.artifact_dir = artifact_dir;
     assert!(inputs.store_root.is_none());
     let loaded = try_load_scan_cache(&inputs).expect("artifact-dir scan");
-    assert_eq!(
-      loaded.projection().sections[0].items[0].label,
-      "Store Label"
-    );
+    assert_eq!(loaded.projection().sections[0].items[0].label, "Store Label");
 
     let _ = std::fs::remove_dir_all(&root);
   }
@@ -669,11 +579,7 @@ mod tests {
     inputs.store_root = Some(std::env::temp_dir());
     let (_scan, limits) = try_load_scan_cache_with_limits(&inputs);
     assert!(_scan.is_none());
-    assert!(
-      limits
-        .iter()
-        .any(|limit| limit.contains("lineage manifest missing"))
-    );
+    assert!(limits.iter().any(|limit| limit.contains("lineage manifest missing")));
   }
 
   #[test]
@@ -683,8 +589,7 @@ mod tests {
     let store_root = root.join("store");
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&artifact_dir).expect("artifact dir");
-    let blocking =
-      crate::decode_playlist_sidebar_scan_json(&minimal_blocking_scan_json()).expect("scan");
+    let blocking = crate::decode_playlist_sidebar_scan_json(&minimal_blocking_scan_json()).expect("scan");
     let mut inputs = Inputs::with_defaults();
     inputs.app_id = "com.netease.163music".to_string();
     inputs.artifact_dir = artifact_dir.clone();
@@ -707,14 +612,9 @@ mod tests {
       },
       diagnostics: Vec::new(),
     };
-    write_memory_file(
-      &memory_file_path(&artifact_dir, "playlist_sidebar"),
-      &stale_memory,
-    )
-    .expect("stale memory");
+    write_memory_file(&memory_file_path(&artifact_dir, "playlist_sidebar"), &stale_memory).expect("stale memory");
 
-    let persisted =
-      persist_playlist_ls_artifacts(&store_root, &blocking, &inputs, true).expect("persist");
+    let persisted = persist_playlist_ls_artifacts(&store_root, &blocking, &inputs, true).expect("persist");
     assert!(persisted.lineage.memory_artifact_id.is_none());
     write_lineage_manifest(&artifact_dir, &persisted.lineage).expect("manifest");
 
@@ -729,10 +629,7 @@ mod tests {
 
   #[test]
   fn removed_manifest_falls_back_to_fresh_artifact_dir_scan() {
-    let root = std::env::temp_dir().join(format!(
-      "auv-recording-manifest-drop-{}",
-      std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("auv-recording-manifest-drop-{}", std::process::id()));
     let artifact_dir = root.join("artifacts");
     let store_root = root.join("store");
     let _ = std::fs::remove_dir_all(&root);
@@ -741,20 +638,13 @@ mod tests {
     let old_scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
     let mut inputs = Inputs::with_defaults();
     inputs.app_id = "com.netease.163music".to_string();
-    let old_persisted =
-      persist_playlist_ls_artifacts(&store_root, &old_scan, &inputs, false).expect("old persist");
+    let old_persisted = persist_playlist_ls_artifacts(&store_root, &old_scan, &inputs, false).expect("old persist");
     write_lineage_manifest(&artifact_dir, &old_persisted.lineage).expect("old manifest");
 
-    let fresh_scan = crate::decode_playlist_sidebar_scan_json(
-      &minimal_scan_json().replace("Store Label", "Fresh Mirror Label"),
-    )
-    .expect("fresh scan");
+    let fresh_scan =
+      crate::decode_playlist_sidebar_scan_json(&minimal_scan_json().replace("Store Label", "Fresh Mirror Label")).expect("fresh scan");
     let fresh_json = serde_json::to_string_pretty(&fresh_scan).expect("json");
-    std::fs::write(
-      artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE),
-      fresh_json,
-    )
-    .expect("mirror");
+    std::fs::write(artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE), fresh_json).expect("mirror");
     remove_lineage_manifest(&artifact_dir);
 
     let mut inputs = Inputs::with_defaults();
@@ -763,15 +653,8 @@ mod tests {
     inputs.app_id = "com.netease.163music".to_string();
     let (loaded, limits) = try_load_scan_cache_with_limits(&inputs);
     let loaded = loaded.expect("artifact-dir fallback scan");
-    assert_eq!(
-      loaded.projection().sections[0].items[0].label,
-      "Fresh Mirror Label"
-    );
-    assert!(
-      limits
-        .iter()
-        .any(|limit| limit.contains("lineage manifest missing"))
-    );
+    assert_eq!(loaded.projection().sections[0].items[0].label, "Fresh Mirror Label");
+    assert!(limits.iter().any(|limit| limit.contains("lineage manifest missing")));
 
     let _ = std::fs::remove_dir_all(&root);
   }
@@ -849,21 +732,13 @@ mod tests {
     let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
     let mut inputs = Inputs::with_defaults();
     inputs.app_id = "com.netease.163music".to_string();
-    let persisted =
-      persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
+    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, true).expect("persist");
     let store = LocalStore::new(store_root.clone()).expect("store");
     let run = store.read_run(&persisted.lineage.run_id).expect("run");
-    let span = run
-      .spans
-      .iter()
-      .find(|span| span.name == SPAN_MEMORY_WRITE)
-      .expect("memory_write span");
+    let span = run.spans.iter().find(|span| span.name == SPAN_MEMORY_WRITE).expect("memory_write span");
     assert_eq!(span.attributes.len(), 6);
     assert_eq!(
-      span
-        .attributes
-        .get(auv_view::memory::ATTR_MEMORY_MEMORY_ID)
-        .and_then(|value| value.as_str()),
+      span.attributes.get(auv_view::memory::ATTR_MEMORY_MEMORY_ID).and_then(|value| value.as_str()),
       Some("com.netease.163music:playlist_sidebar")
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -877,8 +752,7 @@ mod tests {
     let scan = crate::decode_playlist_sidebar_scan_json(&minimal_scan_json()).expect("scan");
     let mut inputs = Inputs::with_defaults();
     inputs.app_id = "com.netease.163music".to_string();
-    let persisted =
-      persist_playlist_ls_artifacts(&store_root, &scan, &inputs, false).expect("persist");
+    let persisted = persist_playlist_ls_artifacts(&store_root, &scan, &inputs, false).expect("persist");
     let store = LocalStore::new(store_root.clone()).expect("store");
     let run = store.read_run(&persisted.lineage.run_id).expect("run");
     assert!(!run.spans.iter().any(|span| span.name == SPAN_MEMORY_WRITE));
@@ -901,22 +775,12 @@ mod tests {
     // Contrast: explicit store_root + persist creates durable reacquire spans.
     let evidence = sample_reacquire_evidence();
     let memory = sample_store_memory("run_no_store_contrast");
-    let run_id = persist_playlist_select_proof(
-      &store_root,
-      Some(&evidence),
-      Some(&memory),
-      sample_select_result_json,
-    )
-    .expect("persist select proof");
+    let run_id =
+      persist_playlist_select_proof(&store_root, Some(&evidence), Some(&memory), sample_select_result_json).expect("persist select proof");
     let runs = store.list_runs().expect("list runs");
     assert_eq!(runs.len(), 1);
     let run = store.read_run(&run_id).expect("run");
-    assert!(
-      run
-        .spans
-        .iter()
-        .any(|span| span.name.starts_with("view.reacquire"))
-    );
+    assert!(run.spans.iter().any(|span| span.name.starts_with("view.reacquire")));
     let _ = std::fs::remove_dir_all(&root);
   }
 
@@ -927,46 +791,18 @@ mod tests {
     let _ = std::fs::remove_dir_all(&root);
     let evidence = sample_reacquire_evidence();
     let memory = sample_store_memory("run_ls");
-    let run_id = persist_playlist_select_proof(
-      &store_root,
-      Some(&evidence),
-      Some(&memory),
-      sample_select_result_json,
-    )
-    .expect("persist select proof");
+    let run_id =
+      persist_playlist_select_proof(&store_root, Some(&evidence), Some(&memory), sample_select_result_json).expect("persist select proof");
     let store = LocalStore::new(store_root.clone()).expect("store");
     let run = store.read_run(&run_id).expect("run");
-    let root_span = run
-      .spans
-      .iter()
-      .find(|span| span.name == "view.reacquire.playlist_sidebar")
-      .expect("reacquire root span");
+    let root_span = run.spans.iter().find(|span| span.name == "view.reacquire.playlist_sidebar").expect("reacquire root span");
+    assert_eq!(root_span.attributes.get(auv_view::memory::ATTR_REACQUIRE_OUTCOME).and_then(|value| value.as_str()), Some("reacquired"));
     assert_eq!(
-      root_span
-        .attributes
-        .get(auv_view::memory::ATTR_REACQUIRE_OUTCOME)
-        .and_then(|value| value.as_str()),
-      Some("reacquired")
-    );
-    assert_eq!(
-      root_span
-        .attributes
-        .get(auv_view::memory::ATTR_REACQUIRE_STAGE_USED)
-        .and_then(|value| value.as_str()),
+      root_span.attributes.get(auv_view::memory::ATTR_REACQUIRE_STAGE_USED).and_then(|value| value.as_str()),
       Some("label_current_viewport")
     );
-    assert!(
-      run
-        .spans
-        .iter()
-        .any(|span| span.name == SPAN_REACQUIRE_MEMORY_LOAD)
-    );
-    assert!(
-      run
-        .spans
-        .iter()
-        .any(|span| { span.name == "view.reacquire.stage.3.label_current_viewport" })
-    );
+    assert!(run.spans.iter().any(|span| span.name == SPAN_REACQUIRE_MEMORY_LOAD));
+    assert!(run.spans.iter().any(|span| { span.name == "view.reacquire.stage.3.label_current_viewport" }));
     let _ = std::fs::remove_dir_all(&root);
   }
 
@@ -976,32 +812,15 @@ mod tests {
     let store_root = root.join("store");
     let _ = std::fs::remove_dir_all(&root);
     let evidence = sample_reacquire_evidence();
-    let run_id = persist_playlist_select_proof(
-      &store_root,
-      Some(&evidence),
-      None,
-      sample_select_result_json,
-    )
-    .expect("persist");
+    let run_id = persist_playlist_select_proof(&store_root, Some(&evidence), None, sample_select_result_json).expect("persist");
     let store = LocalStore::new(store_root.clone()).expect("store");
     let run = store.read_run(&run_id).expect("run");
-    let artifact = run
-      .artifacts
-      .iter()
-      .find(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE)
-      .expect("select result artifact");
-    let bytes = read_artifact_bytes(&store_root, &run_id, artifact.artifact_id.as_str())
-      .expect("artifact bytes");
+    let artifact =
+      run.artifacts.iter().find(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE).expect("select result artifact");
+    let bytes = read_artifact_bytes(&store_root, &run_id, artifact.artifact_id.as_str()).expect("artifact bytes");
     let value: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-    assert_eq!(
-      value["verification"]["method"],
-      "main_title_ocr_full_window_v1"
-    );
-    assert!(
-      value["steps"]
-        .as_array()
-        .is_some_and(|steps| !steps.is_empty())
-    );
+    assert_eq!(value["verification"]["method"], "main_title_ocr_full_window_v1");
+    assert!(value["steps"].as_array().is_some_and(|steps| !steps.is_empty()));
     let _ = std::fs::remove_dir_all(&root);
   }
 
@@ -1011,22 +830,11 @@ mod tests {
     let store_root = root.join("store");
     let _ = std::fs::remove_dir_all(&root);
     let evidence = sample_reacquire_evidence();
-    let run_id = persist_playlist_select_proof(
-      &store_root,
-      Some(&evidence),
-      None,
-      sample_select_result_json,
-    )
-    .expect("persist");
+    let run_id = persist_playlist_select_proof(&store_root, Some(&evidence), None, sample_select_result_json).expect("persist");
     let store = LocalStore::new(store_root.clone()).expect("store");
     let run = store.read_run(&run_id).expect("run");
-    let artifact = run
-      .artifacts
-      .iter()
-      .find(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE)
-      .expect("artifact");
-    let bytes =
-      read_artifact_bytes(&store_root, &run_id, artifact.artifact_id.as_str()).expect("bytes");
+    let artifact = run.artifacts.iter().find(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE).expect("artifact");
+    let bytes = read_artifact_bytes(&store_root, &run_id, artifact.artifact_id.as_str()).expect("bytes");
     let decoded: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
     assert_eq!(decoded["run_id"].as_str(), Some(run_id.as_str()));
     let _ = std::fs::remove_dir_all(&root);
@@ -1034,32 +842,18 @@ mod tests {
 
   #[test]
   fn select_proof_without_reacquire_summary_emits_no_reacquire_spans() {
-    let root =
-      std::env::temp_dir().join(format!("auv-a8-no-reacquire-span-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("auv-a8-no-reacquire-span-{}", std::process::id()));
     let store_root = root.join("store");
     let _ = std::fs::remove_dir_all(&root);
-    let run_id = persist_playlist_select_proof(&store_root, None, None, sample_select_result_json)
-      .expect("persist");
+    let run_id = persist_playlist_select_proof(&store_root, None, None, sample_select_result_json).expect("persist");
     let store = LocalStore::new(store_root.clone()).expect("store");
     let run = store.read_run(&run_id).expect("run");
     assert!(
-      !run
-        .spans
-        .iter()
-        .any(|span| span.name.starts_with("view.reacquire")),
+      !run.spans.iter().any(|span| span.name.starts_with("view.reacquire")),
       "unexpected reacquire spans: {:?}",
-      run
-        .spans
-        .iter()
-        .map(|span| span.name.as_str())
-        .collect::<Vec<_>>()
+      run.spans.iter().map(|span| span.name.as_str()).collect::<Vec<_>>()
     );
-    assert!(
-      run
-        .artifacts
-        .iter()
-        .any(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE)
-    );
+    assert!(run.artifacts.iter().any(|artifact| artifact.role == NETEASE_PLAYLIST_SELECT_RESULT_ROLE));
     let _ = std::fs::remove_dir_all(&root);
   }
 }

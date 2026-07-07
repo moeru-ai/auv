@@ -6,12 +6,8 @@ use auv_cli_invoke::{InvokeNamespace, invoke_command};
   summary = "External generated test command.",
   args = auv_cli_invoke::arg::NO_ARGS,
 )]
-fn external_generated_command_handler(
-  _input: auv_cli_invoke::InvokeCommandInput<'_>,
-) -> auv_cli_invoke::InvokeCommandResult {
-  Ok(auv_cli_invoke::InvokeCommandOutput::new(
-    "external handler ran",
-  ))
+fn external_generated_command_handler(_input: auv_cli_invoke::InvokeCommandInput<'_>) -> auv_cli_invoke::InvokeCommandResult {
+  Ok(auv_cli_invoke::InvokeCommandOutput::new("external handler ran"))
 }
 
 #[test]

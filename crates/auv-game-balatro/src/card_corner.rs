@@ -107,10 +107,7 @@ pub fn card_corner_input_tensor(image: &RgbImage, image_size: u32) -> F32Tensor 
   }
 }
 
-pub fn prediction_from_logits(
-  rank_logits: &F32Tensor,
-  suit_logits: &F32Tensor,
-) -> InferenceResult<CardCornerPrediction> {
+pub fn prediction_from_logits(rank_logits: &F32Tensor, suit_logits: &F32Tensor) -> InferenceResult<CardCornerPrediction> {
   let rank_probabilities = softmax(&rank_logits.data);
   let suit_probabilities = softmax(&suit_logits.data);
   let rank = top1(&rank_probabilities).ok_or_else(|| InferenceError::Backend {
@@ -135,12 +132,9 @@ pub fn prediction_from_logits(
 }
 
 fn named_output<'a>(outputs: &'a [F32Tensor], name: &str) -> InferenceResult<&'a F32Tensor> {
-  outputs
-    .iter()
-    .find(|output| output.name == name)
-    .ok_or_else(|| InferenceError::Backend {
-      message: format!("missing ONNX output: {name}"),
-    })
+  outputs.iter().find(|output| output.name == name).ok_or_else(|| InferenceError::Backend {
+    message: format!("missing ONNX output: {name}"),
+  })
 }
 
 #[cfg(test)]
@@ -148,9 +142,7 @@ mod tests {
   use auv_inference_ort::F32Tensor;
   use image::{Rgb, RgbImage};
 
-  use crate::card_corner::{
-    CardCornerPrediction, card_corner_input_tensor, prediction_from_logits, rank_label, suit_label,
-  };
+  use crate::card_corner::{CardCornerPrediction, card_corner_input_tensor, prediction_from_logits, rank_label, suit_label};
 
   #[test]
   fn rank_and_suit_labels_match_training_order() {

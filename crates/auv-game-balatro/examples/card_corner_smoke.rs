@@ -1,7 +1,5 @@
 #[cfg(feature = "card-corner-onnx")]
-use auv_game_balatro::card_corner::{
-  CARD_CORNER_MODEL_ID, CardCornerClassifier, CardCornerClassifierConfig,
-};
+use auv_game_balatro::card_corner::{CARD_CORNER_MODEL_ID, CardCornerClassifier, CardCornerClassifierConfig};
 #[cfg(feature = "card-corner-onnx")]
 use auv_game_balatro::config::BalatroModelAsset;
 #[cfg(feature = "card-corner-onnx")]
@@ -58,18 +56,10 @@ impl Args {
     while let Some(arg) = args.next() {
       match arg.as_str() {
         "--model" => {
-          model = Some(PathBuf::from(
-            args
-              .next()
-              .ok_or_else(|| "--model requires a path".to_string())?,
-          ));
+          model = Some(PathBuf::from(args.next().ok_or_else(|| "--model requires a path".to_string())?));
         }
         "--image" => {
-          image = Some(PathBuf::from(
-            args
-              .next()
-              .ok_or_else(|| "--image requires a path".to_string())?,
-          ));
+          image = Some(PathBuf::from(args.next().ok_or_else(|| "--image requires a path".to_string())?));
         }
         _ => return Err(format!("unknown argument: {arg}")),
       }

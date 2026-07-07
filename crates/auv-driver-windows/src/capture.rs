@@ -34,13 +34,9 @@ struct DisplayTarget {
 
 #[cfg(target_os = "windows")]
 pub fn list_displays() -> DriverResult<ObservedDisplays> {
-  let monitors = xcap::Monitor::all()
-    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   Ok(ObservedDisplays {
-    displays: display_targets_from_monitors(&monitors)?
-      .into_iter()
-      .map(|target| target.display)
-      .collect(),
+    displays: display_targets_from_monitors(&monitors)?.into_iter().map(|target| target.display).collect(),
   })
 }
 
@@ -51,16 +47,11 @@ pub fn list_displays() -> DriverResult<ObservedDisplays> {
 
 #[cfg(target_os = "windows")]
 pub fn capture_display(selector: Option<&str>) -> DriverResult<DisplayCapture> {
-  let monitors = xcap::Monitor::all()
-    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   let targets = display_targets_from_monitors(&monitors)?;
   let target = resolve_display_target(&targets, selector)?;
-  let monitor = monitors
-    .get(target.index)
-    .ok_or_else(|| not_found(format!("display index {}", target.index)))?;
-  let image = monitor
-    .capture_image()
-    .map_err(|error| backend(format!("failed to capture display: {error}")))?;
+  let monitor = monitors.get(target.index).ok_or_else(|| not_found(format!("display index {}", target.index)))?;
+  let image = monitor.capture_image().map_err(|error| backend(format!("failed to capture display: {error}")))?;
   let image = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
     .ok_or_else(|| backend("failed to decode captured display RGBA image"))?;
   let capture = Capture {
@@ -83,13 +74,10 @@ pub fn capture_display(_selector: Option<&str>) -> DriverResult<DisplayCapture> 
 
 #[cfg(target_os = "windows")]
 pub fn capture_region(selector: Option<&str>, region: Rect) -> DriverResult<RegionCapture> {
-  let monitors = xcap::Monitor::all()
-    .map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
+  let monitors = xcap::Monitor::all().map_err(|error| backend(format!("failed to enumerate displays: {error}")))?;
   let targets = display_targets_from_monitors(&monitors)?;
   let target = resolve_display_for_region(&targets, selector, region)?;
-  let monitor = monitors
-    .get(target.index)
-    .ok_or_else(|| not_found(format!("display index {}", target.index)))?;
+  let monitor = monitors.get(target.index).ok_or_else(|| not_found(format!("display index {}", target.index)))?;
   let local_x = integral_capture_dimension("x", region.origin.x - target.display.frame.origin.x)?;
   let local_y = integral_capture_dimension("y", region.origin.y - target.display.frame.origin.y)?;
   let width = integral_positive_capture_dimension("width", region.size.width)?;
@@ -158,30 +146,12 @@ fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec
     .iter()
     .enumerate()
     .map(|(index, monitor)| {
-      let x = monitor
-        .x()
-        .map_err(|error| backend(format!("failed to read display x: {error}")))?
-        as f64;
-      let y = monitor
-        .y()
-        .map_err(|error| backend(format!("failed to read display y: {error}")))?
-        as f64;
-      let width = monitor
-        .width()
-        .map_err(|error| backend(format!("failed to read display width: {error}")))?
-        as f64;
-      let height = monitor
-        .height()
-        .map_err(|error| backend(format!("failed to read display height: {error}")))?
-        as f64;
-      let scale_factor = monitor
-        .scale_factor()
-        .map_err(|error| backend(format!("failed to read display scale: {error}")))?
-        as f64;
-      let native_id = monitor
-        .id()
-        .map_err(|error| backend(format!("failed to read display id: {error}")))?
-        .to_string();
+      let x = monitor.x().map_err(|error| backend(format!("failed to read display x: {error}")))? as f64;
+      let y = monitor.y().map_err(|error| backend(format!("failed to read display y: {error}")))? as f64;
+      let width = monitor.width().map_err(|error| backend(format!("failed to read display width: {error}")))? as f64;
+      let height = monitor.height().map_err(|error| backend(format!("failed to read display height: {error}")))? as f64;
+      let scale_factor = monitor.scale_factor().map_err(|error| backend(format!("failed to read display scale: {error}")))? as f64;
+      let native_id = monitor.id().map_err(|error| backend(format!("failed to read display id: {error}")))?.to_string();
       Ok(DisplayTarget {
         index,
         display: Display {
@@ -190,9 +160,7 @@ fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec
           frame: Rect::new(x, y, width, height),
           coordinate_space: CoordinateSpace::Screen,
           scale_factor,
-          is_primary: monitor
-            .is_primary()
-            .map_err(|error| backend(format!("failed to read display primary flag: {error}")))?,
+          is_primary: monitor.is_primary().map_err(|error| backend(format!("failed to read display primary flag: {error}")))?,
           // NOTICE: xcap exposes `is_builtin` on macOS; on Windows the concept
           // is not meaningful, so the shared `is_builtin` flag stays None.
           is_builtin: None,
@@ -202,48 +170,26 @@ fn display_targets_from_monitors(monitors: &[xcap::Monitor]) -> DriverResult<Vec
     .collect()
 }
 
-fn resolve_display_target(
-  targets: &[DisplayTarget],
-  selector: Option<&str>,
-) -> DriverResult<DisplayTarget> {
+fn resolve_display_target(targets: &[DisplayTarget], selector: Option<&str>) -> DriverResult<DisplayTarget> {
   if let Some(selector) = selector {
     let selector = selector.trim();
     return targets
       .iter()
-      .find(|target| {
-        target.display.id == selector
-          || target
-            .display
-            .name
-            .as_deref()
-            .is_some_and(|display_ref| display_ref == selector)
-      })
+      .find(|target| target.display.id == selector || target.display.name.as_deref().is_some_and(|display_ref| display_ref == selector))
       .cloned()
       .ok_or_else(|| not_found(format!("display {selector:?}")));
   }
 
-  targets
-    .iter()
-    .find(|target| target.display.is_primary)
-    .or_else(|| targets.first())
-    .cloned()
-    .ok_or_else(|| not_found("primary display"))
+  targets.iter().find(|target| target.display.is_primary).or_else(|| targets.first()).cloned().ok_or_else(|| not_found("primary display"))
 }
 
-fn resolve_display_for_region(
-  targets: &[DisplayTarget],
-  selector: Option<&str>,
-  region: Rect,
-) -> DriverResult<DisplayTarget> {
+fn resolve_display_for_region(targets: &[DisplayTarget], selector: Option<&str>, region: Rect) -> DriverResult<DisplayTarget> {
   let selected = if selector.is_some() {
     vec![resolve_display_target(targets, selector)?]
   } else {
     targets.to_vec()
   };
-  selected
-    .into_iter()
-    .find(|target| rect_contains_rect(target.display.frame, region))
-    .ok_or_else(|| not_found("display containing region"))
+  selected.into_iter().find(|target| rect_contains_rect(target.display.frame, region)).ok_or_else(|| not_found("display containing region"))
 }
 
 fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
@@ -255,14 +201,10 @@ fn rect_contains_rect(container: Rect, candidate: Rect) -> bool {
 
 fn integral_capture_dimension(name: &str, value: f64) -> DriverResult<u32> {
   if value.fract() != 0.0 {
-    return Err(invalid_input(format!(
-      "region {name} must be an integer in backend capture units"
-    )));
+    return Err(invalid_input(format!("region {name} must be an integer in backend capture units")));
   }
   if value < 0.0 || value > u32::MAX as f64 {
-    return Err(invalid_input(format!(
-      "region {name} is outside the capture backend range"
-    )));
+    return Err(invalid_input(format!("region {name} is outside the capture backend range")));
   }
   Ok(value as u32)
 }
@@ -288,8 +230,8 @@ mod window_native {
   use auv_driver::window::Window;
   use windows::Win32::Foundation::{HWND, RECT};
   use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC,
-    DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HDC, ReleaseDC, SelectObject,
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC,
+    GetDIBits, HDC, ReleaseDC, SelectObject,
   };
   use windows::Win32::Storage::Xps::{PRINT_WINDOW_FLAGS, PrintWindow};
   use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, PW_RENDERFULLCONTENT};
@@ -317,14 +259,11 @@ mod window_native {
 
   fn window_pixel_size(hwnd: HWND) -> DriverResult<(i32, i32)> {
     let mut rect = RECT::default();
-    unsafe { GetWindowRect(hwnd, &mut rect) }
-      .map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
+    unsafe { GetWindowRect(hwnd, &mut rect) }.map_err(|error| backend(format!("GetWindowRect failed: {error}")))?;
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
     if width <= 0 || height <= 0 {
-      return Err(invalid_input(format!(
-        "window has non-capturable size {width}x{height}"
-      )));
+      return Err(invalid_input(format!("window has non-capturable size {width}x{height}")));
     }
     Ok((width, height))
   }
@@ -372,17 +311,8 @@ mod window_native {
       ..Default::default()
     };
     let mut buffer = vec![0u8; width as usize * height as usize * 4];
-    let scanlines = unsafe {
-      GetDIBits(
-        memory_dc,
-        bitmap,
-        0,
-        height as u32,
-        Some(buffer.as_mut_ptr() as *mut c_void),
-        &mut info,
-        DIB_RGB_COLORS,
-      )
-    };
+    let scanlines =
+      unsafe { GetDIBits(memory_dc, bitmap, 0, height as u32, Some(buffer.as_mut_ptr() as *mut c_void), &mut info, DIB_RGB_COLORS) };
 
     unsafe {
       SelectObject(memory_dc, previous);
@@ -448,16 +378,8 @@ mod tests {
       target(1, "b", Rect::new(100.0, 0.0, 100.0, 100.0), false),
     ];
 
-    assert_eq!(
-      resolve_display_target(&targets, Some("b")).unwrap().index,
-      1
-    );
-    assert_eq!(
-      resolve_display_target(&targets, Some("display_1"))
-        .unwrap()
-        .index,
-      1
-    );
+    assert_eq!(resolve_display_target(&targets, Some("b")).unwrap().index, 1);
+    assert_eq!(resolve_display_target(&targets, Some("display_1")).unwrap().index, 1);
     assert!(resolve_display_target(&targets, Some("missing")).is_err());
   }
 
@@ -469,8 +391,7 @@ mod tests {
     ];
 
     let region = Rect::new(110.0, 10.0, 20.0, 20.0);
-    let resolved =
-      resolve_display_for_region(&targets, None, region).expect("region is within display b");
+    let resolved = resolve_display_for_region(&targets, None, region).expect("region is within display b");
 
     assert_eq!(resolved.index, 1);
   }
@@ -494,9 +415,6 @@ mod tests {
   #[test]
   fn integral_positive_capture_dimension_rejects_zero() {
     assert!(integral_positive_capture_dimension("width", 0.0).is_err());
-    assert_eq!(
-      integral_positive_capture_dimension("width", 4.0).unwrap(),
-      4
-    );
+    assert_eq!(integral_positive_capture_dimension("width", 4.0).unwrap(), 4);
   }
 }

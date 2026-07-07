@@ -15,8 +15,7 @@ use tonic::transport::Channel;
 
 const SERVER_READY_PREFIX: &str = "session API: grpc://";
 const SERVER_READY_TIMEOUT: Duration = Duration::from_secs(30);
-const INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT: &str =
-  "auv.api.session.invoke_synthetic_operation_result";
+const INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT: &str = "auv.api.session.invoke_synthetic_operation_result";
 
 fn temp_store_root(label: &str) -> PathBuf {
   let dir = std::env::temp_dir().join(format!("auv-session-api-{label}-{}", std::process::id()));
@@ -25,19 +24,13 @@ fn temp_store_root(label: &str) -> PathBuf {
 }
 
 fn parse_grpc_endpoint(line: &str) -> Option<String> {
-  line
-    .strip_prefix(SERVER_READY_PREFIX)
-    .map(|rest| format!("http://{rest}"))
+  line.strip_prefix(SERVER_READY_PREFIX).map(|rest| format!("http://{rest}"))
 }
 
 async fn wait_for_server_endpoint(stdout: tokio::process::ChildStdout) -> String {
   let mut lines = BufReader::new(stdout).lines();
   loop {
-    let line = lines
-      .next_line()
-      .await
-      .expect("read server stdout")
-      .expect("server stdout closed before ready line");
+    let line = lines.next_line().await.expect("read server stdout").expect("server stdout closed before ready line");
     if let Some(endpoint) = parse_grpc_endpoint(&line) {
       return endpoint;
     }
@@ -56,10 +49,7 @@ async fn create_session(client: &mut SessionServiceClient<Channel>) -> proto::Se
     .expect("session ref")
 }
 
-async fn invoke_fixture_observe(
-  client: &mut SessionServiceClient<Channel>,
-  session: proto::SessionRef,
-) -> proto::InvokeResponse {
+async fn invoke_fixture_observe(client: &mut SessionServiceClient<Channel>, session: proto::SessionRef) -> proto::InvokeResponse {
   client
     .invoke(proto::InvokeRequest {
       session: Some(session),
@@ -81,10 +71,7 @@ async fn session_api_subprocess_smoke_invoke_then_get_operation_round_trips() {
     }
   }
   let _cleanup = Cleanup(store_root.clone());
-  let store_root_arg = store_root
-    .to_str()
-    .expect("store_root path must be valid UTF-8")
-    .to_string();
+  let store_root_arg = store_root.to_str().expect("store_root path must be valid UTF-8").to_string();
   let auv_bin = env!("CARGO_BIN_EXE_auv");
 
   let mut child = Command::new(auv_bin)
@@ -105,13 +92,10 @@ async fn session_api_subprocess_smoke_invoke_then_get_operation_round_trips() {
     .expect("spawn auv session serve");
 
   let stdout = child.stdout.take().expect("child stdout");
-  let endpoint = timeout(SERVER_READY_TIMEOUT, wait_for_server_endpoint(stdout))
-    .await
-    .expect("timed out waiting for session API ready line");
+  let endpoint =
+    timeout(SERVER_READY_TIMEOUT, wait_for_server_endpoint(stdout)).await.expect("timed out waiting for session API ready line");
 
-  let mut client = SessionServiceClient::connect(endpoint)
-    .await
-    .expect("connect gRPC client");
+  let mut client = SessionServiceClient::connect(endpoint).await.expect("connect gRPC client");
 
   let session = create_session(&mut client).await;
   assert!(!session.session_id.is_empty());
@@ -130,16 +114,8 @@ async fn session_api_subprocess_smoke_invoke_then_get_operation_round_trips() {
 
   assert_eq!(response.status, "completed");
   assert_eq!(response.output_summary, "fixture observed");
-  assert_eq!(
-    response.operation.expect("operation ref").operation_id,
-    "fixture.observe"
-  );
-  assert!(
-    response
-      .known_limits
-      .iter()
-      .any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT)
-  );
+  assert_eq!(response.operation.expect("operation ref").operation_id, "fixture.observe");
+  assert!(response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
 
   child.kill().await.expect("kill session serve child");
   let _ = child.wait().await;

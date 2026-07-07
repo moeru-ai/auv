@@ -3,10 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::candidate_promotion::PromotionProjection;
 use crate::contract::RecognitionResult;
 #[cfg(target_os = "macos")]
-use crate::contract::{
-  ArtifactRef, RecognitionBox, RecognitionScope, RecognitionSource, RecognitionSurface,
-  RecognizedItem,
-};
+use crate::contract::{ArtifactRef, RecognitionBox, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem};
 #[cfg(target_os = "macos")]
 use crate::model::AuvResult;
 #[cfg(target_os = "macos")]
@@ -79,9 +76,7 @@ impl AxRecognitionArtifactRequest {
       recognition_id,
       policy: AxRecognitionPolicy::default(),
       artifact_role: AX_RECOGNITION_ARTIFACT_ROLE.to_string(),
-      artifact_note:
-        "AX tree-backed RecognitionResult runtime artifact for window-addressable evidence."
-          .to_string(),
+      artifact_note: "AX tree-backed RecognitionResult runtime artifact for window-addressable evidence.".to_string(),
     }
   }
 }
@@ -124,9 +119,7 @@ pub fn map_ax_tree_to_recognition_result(
 
   let all = scored_nodes
     .iter()
-    .map(|(index, node, score)| {
-      recognized_ax_item(*index, node, *score, window_frame_from_snapshot(snapshot))
-    })
+    .map(|(index, node, score)| recognized_ax_item(*index, node, *score, window_frame_from_snapshot(snapshot)))
     .collect::<Vec<_>>();
   let filtered = all.clone();
   let filtered_node_count = filtered.len();
@@ -167,10 +160,8 @@ pub fn map_ax_tree_to_recognition_result(
     }),
     evidence: vec![context.source_artifact.clone()],
     known_limits: vec![
-      "AX RecognitionResult is addressability evidence only; it does not imply action permission"
-        .to_string(),
-      "AX node bounds are AX frame coordinates for re-addressing, not detector source-image pixels"
-        .to_string(),
+      "AX RecognitionResult is addressability evidence only; it does not imply action permission".to_string(),
+      "AX node bounds are AX frame coordinates for re-addressing, not detector source-image pixels".to_string(),
     ],
   })
 }
@@ -185,12 +176,8 @@ pub fn record_ax_tree_recognition_artifact(
   ax_tree_artifact_summary: Option<String>,
   request: &AxRecognitionArtifactRequest,
 ) -> AuvResult<(ArtifactRef, ArtifactRef, RecognitionResult)> {
-  let (_, ax_tree_artifact_ref) = context.stage_artifact_file_with_ref(
-    ax_tree_artifact_role,
-    ax_tree_report_path,
-    ax_tree_artifact_name,
-    ax_tree_artifact_summary,
-  )?;
+  let (_, ax_tree_artifact_ref) =
+    context.stage_artifact_file_with_ref(ax_tree_artifact_role, ax_tree_report_path, ax_tree_artifact_name, ax_tree_artifact_summary)?;
 
   let runtime_context = AxRecognitionRuntimeContext {
     recognition_id: request.recognition_id.clone(),
@@ -207,12 +194,8 @@ pub fn record_ax_tree_recognition_artifact(
     })
     .map_err(|error| format!("failed to encode AX recognition result JSON: {error}"))?;
   let recognition_source_path = ax_recognition_temp_json_path(&request.artifact_label);
-  fs::write(&recognition_source_path, recognition_json).map_err(|error| {
-    format!(
-      "failed to write AX recognition temp artifact {}: {error}",
-      recognition_source_path.display()
-    )
-  })?;
+  fs::write(&recognition_source_path, recognition_json)
+    .map_err(|error| format!("failed to write AX recognition temp artifact {}: {error}", recognition_source_path.display()))?;
 
   let (_, recognition_artifact_ref) = context.stage_artifact_file_with_ref(
     &request.artifact_role,
@@ -224,26 +207,15 @@ pub fn record_ax_tree_recognition_artifact(
 
   context.record_event(
     "ax.recognition.artifact_recorded",
-    Some(format!(
-      "recorded {} from AX tree {}",
-      recognition_artifact_ref.artifact_id, ax_tree_artifact_ref.artifact_id
-    )),
+    Some(format!("recorded {} from AX tree {}", recognition_artifact_ref.artifact_id, ax_tree_artifact_ref.artifact_id)),
   );
 
   Ok((ax_tree_artifact_ref, recognition_artifact_ref, recognition))
 }
 
-pub fn promotion_projection_for_recognition(
-  recognition: &RecognitionResult,
-) -> PromotionProjection {
-  let provider = recognition
-    .detail
-    .get("provider")
-    .and_then(serde_json::Value::as_str);
-  let projection_candidate = recognition
-    .detail
-    .get("projection_candidate")
-    .and_then(serde_json::Value::as_str);
+pub fn promotion_projection_for_recognition(recognition: &RecognitionResult) -> PromotionProjection {
+  let provider = recognition.detail.get("provider").and_then(serde_json::Value::as_str);
+  let projection_candidate = recognition.detail.get("projection_candidate").and_then(serde_json::Value::as_str);
 
   if provider == Some("macos.ax_tree")
     && projection_candidate == Some("identity_window_addressable")
@@ -296,12 +268,7 @@ fn score_node(index: usize, node: &ObservedAxNode, policy: &AxRecognitionPolicy)
 }
 
 #[cfg(target_os = "macos")]
-fn recognized_ax_item(
-  index: usize,
-  node: &ObservedAxNode,
-  score: i64,
-  window_frame: Option<&ObservedRect>,
-) -> RecognizedItem {
+fn recognized_ax_item(index: usize, node: &ObservedAxNode, score: i64, window_frame: Option<&ObservedRect>) -> RecognizedItem {
   RecognizedItem {
     item_id: format!("ax:{}:{}", node.path, index),
     kind: ax_item_kind(node),
@@ -341,30 +308,18 @@ fn recognized_ax_item(
 
 #[cfg(target_os = "macos")]
 fn window_frame_from_snapshot(snapshot: &ObservedAxTreeSnapshot) -> Option<&ObservedRect> {
-  snapshot
-    .nodes
-    .iter()
-    .find(|node| node.role == "AXWindow" && has_bounds(node))
-    .map(|node| &node.bounds)
+  snapshot.nodes.iter().find(|node| node.role == "AXWindow" && has_bounds(node)).map(|node| &node.bounds)
 }
 
 #[cfg(target_os = "macos")]
-fn select_best(
-  filtered: &[RecognizedItem],
-  policy: &AxRecognitionPolicy,
-) -> Option<RecognizedItem> {
+fn select_best(filtered: &[RecognizedItem], policy: &AxRecognitionPolicy) -> Option<RecognizedItem> {
   match policy.best_selection {
     AxBestSelectionStrategy::None => None,
     AxBestSelectionStrategy::SingleFilteredItem if filtered.len() == 1 => filtered.first().cloned(),
     AxBestSelectionStrategy::SingleFilteredItem => None,
     AxBestSelectionStrategy::HighestScore => filtered
       .iter()
-      .max_by(|left, right| {
-        left
-          .provider_score
-          .partial_cmp(&right.provider_score)
-          .unwrap_or(std::cmp::Ordering::Equal)
-      })
+      .max_by(|left, right| left.provider_score.partial_cmp(&right.provider_score).unwrap_or(std::cmp::Ordering::Equal))
       .cloned(),
   }
 }
@@ -391,11 +346,7 @@ fn searchable_text(node: &ObservedAxNode) -> String {
 
 #[cfg(target_os = "macos")]
 fn normalize(value: &str) -> String {
-  value
-    .chars()
-    .filter(|character| !character.is_whitespace())
-    .collect::<String>()
-    .to_lowercase()
+  value.chars().filter(|character| !character.is_whitespace()).collect::<String>().to_lowercase()
 }
 
 #[cfg(target_os = "macos")]
@@ -469,9 +420,8 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    AxBestSelectionStrategy, AxRecognitionArtifactRequest, AxRecognitionPolicy,
-    AxRecognitionRuntimeContext, map_ax_tree_to_recognition_result,
-    promotion_projection_for_recognition, record_ax_tree_recognition_artifact,
+    AxBestSelectionStrategy, AxRecognitionArtifactRequest, AxRecognitionPolicy, AxRecognitionRuntimeContext,
+    map_ax_tree_to_recognition_result, promotion_projection_for_recognition, record_ax_tree_recognition_artifact,
   };
   use crate::build_runtime_with_store_root;
   use crate::candidate_promotion::PromotionProjection;
@@ -545,30 +495,15 @@ mod tests {
     .expect("AX tree should map into RecognitionResult");
 
     assert_eq!(result.recognition_id, "recognition_ax_done");
-    assert_eq!(
-      result.scope.app_bundle_id.as_deref(),
-      Some("com.apple.Notes")
-    );
+    assert_eq!(result.scope.app_bundle_id.as_deref(), Some("com.apple.Notes"));
     assert_eq!(result.scope.window_title.as_deref(), Some("Notes"));
     assert_eq!(result.evidence.len(), 1);
     assert_eq!(result.all.len(), 1);
+    assert_eq!(result.best.as_ref().map(|item| item.text.as_deref()), Some(Some("Done")));
+    assert_eq!(result.detail["projection_candidate"], json!("identity_window_addressable"));
+    assert_eq!(promotion_projection_for_recognition(&result), PromotionProjection::IdentityWindowAddressable);
     assert_eq!(
-      result.best.as_ref().map(|item| item.text.as_deref()),
-      Some(Some("Done"))
-    );
-    assert_eq!(
-      result.detail["projection_candidate"],
-      json!("identity_window_addressable")
-    );
-    assert_eq!(
-      promotion_projection_for_recognition(&result),
-      PromotionProjection::IdentityWindowAddressable
-    );
-    assert_eq!(
-      result
-        .best
-        .as_ref()
-        .and_then(|item| item.detail.get("window_frame")),
+      result.best.as_ref().and_then(|item| item.detail.get("window_frame")),
       Some(&json!({
         "x": 0,
         "y": 0,
@@ -592,10 +527,7 @@ mod tests {
     .expect("AX tree should map");
     result.detail = json!({"provider": "manual-fixture"});
 
-    assert!(matches!(
-      promotion_projection_for_recognition(&result),
-      PromotionProjection::Unavailable { .. }
-    ));
+    assert!(matches!(promotion_projection_for_recognition(&result), PromotionProjection::Unavailable { .. }));
   }
 
   #[test]
@@ -605,8 +537,7 @@ mod tests {
     fs::create_dir_all(&project_root).expect("project root should exist");
     let ax_report_path = project_root.join("ax-tree.txt");
     fs::write(&ax_report_path, "synthetic ax tree").expect("AX report should write");
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let snapshot = snapshot();
     let request = AxRecognitionArtifactRequest {
       recognition_id: "recognition_ax_done_recorded".to_string(),
@@ -622,27 +553,20 @@ mod tests {
     };
 
     let output = runtime
-      .run_recorded_operation(
-        RunSpec::new(RunType::Execute, "auv.ax.recognition"),
-        "AX recognition artifact recording",
-        |context| {
-          record_ax_tree_recognition_artifact(
-            context,
-            &snapshot,
-            &ax_report_path,
-            "ax-tree",
-            "ax-tree.txt",
-            Some("Source AX tree artifact.".to_string()),
-            &request,
-          )
-        },
-      )
+      .run_recorded_operation(RunSpec::new(RunType::Execute, "auv.ax.recognition"), "AX recognition artifact recording", |context| {
+        record_ax_tree_recognition_artifact(
+          context,
+          &snapshot,
+          &ax_report_path,
+          "ax-tree",
+          "ax-tree.txt",
+          Some("Source AX tree artifact.".to_string()),
+          &request,
+        )
+      })
       .expect("recorded AX recognition operation should succeed");
 
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("recorded run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
     assert_eq!(run.artifacts.len(), 2);
     assert_eq!(run.artifacts[0].role, "ax-tree");
@@ -651,24 +575,9 @@ mod tests {
     let (ax_tree_ref, recognition_ref, recognition) = output.value;
     assert_eq!(ax_tree_ref.artifact_id.as_str(), "artifact_0001");
     assert_eq!(recognition_ref.artifact_id.as_str(), "artifact_0002");
-    assert_eq!(
-      recognition
-        .scope
-        .capture_artifact
-        .as_ref()
-        .map(|reference| reference.artifact_id.as_str()),
-      Some("artifact_0001")
-    );
-    assert_eq!(
-      promotion_projection_for_recognition(&recognition),
-      PromotionProjection::IdentityWindowAddressable
-    );
-    assert!(
-      run
-        .events
-        .iter()
-        .any(|event| event.name == "ax.recognition.artifact_recorded")
-    );
+    assert_eq!(recognition.scope.capture_artifact.as_ref().map(|reference| reference.artifact_id.as_str()), Some("artifact_0001"));
+    assert_eq!(promotion_projection_for_recognition(&recognition), PromotionProjection::IdentityWindowAddressable);
+    assert!(run.events.iter().any(|event| event.name == "ax.recognition.artifact_recorded"));
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);

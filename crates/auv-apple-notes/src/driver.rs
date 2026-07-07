@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use auv_driver::{
-  ActivationPolicy, App, Driver, InputActionResult, InputDeliveryPath, PasteTextOptions,
-  PrepareForInputOptions, TextSubmit, Window, WindowSelector,
+  ActivationPolicy, App, Driver, InputActionResult, InputDeliveryPath, PasteTextOptions, PrepareForInputOptions, TextSubmit, Window,
+  WindowSelector,
 };
 use auv_driver_macos::MacosDriverSession;
 use serde::{Deserialize, Serialize};
@@ -28,12 +28,7 @@ pub trait NotesDriver {
 
   fn create_note(&mut self, app_id: &str, settle: Duration) -> OperationResult<StepOutcome>;
 
-  fn focus_note_body(
-    &mut self,
-    app_id: &str,
-    query: &str,
-    candidate: &str,
-  ) -> OperationResult<StepOutcome>;
+  fn focus_note_body(&mut self, app_id: &str, query: &str, candidate: &str) -> OperationResult<StepOutcome>;
 
   fn paste_text_preserve_clipboard(
     &mut self,
@@ -43,12 +38,7 @@ pub trait NotesDriver {
     settle: Duration,
   ) -> OperationResult<StepOutcome>;
 
-  fn verify_ax_text(
-    &mut self,
-    app_id: &str,
-    target_text: &str,
-    target_role: &str,
-  ) -> OperationResult<VerificationOutcome>;
+  fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> OperationResult<VerificationOutcome>;
 }
 
 pub struct MacosNotesDriver {
@@ -57,9 +47,7 @@ pub struct MacosNotesDriver {
 
 impl MacosNotesDriver {
   pub fn open_local() -> OperationResult<Self> {
-    let session = auv_driver_macos::MacosDriver::new()
-      .open_local()
-      .map_err(|error| error.to_string())?;
+    let session = auv_driver_macos::MacosDriver::new().open_local().map_err(|error| error.to_string())?;
     Ok(Self { session })
   }
 
@@ -68,11 +56,7 @@ impl MacosNotesDriver {
   }
 
   fn main_window(&self, app_id: &str) -> OperationResult<Window> {
-    self
-      .session
-      .window()
-      .resolve(main_window_selector(app_id))
-      .map_err(|error| error.to_string())
+    self.session.window().resolve(main_window_selector(app_id)).map_err(|error| error.to_string())
   }
 }
 
@@ -106,12 +90,7 @@ impl NotesDriver for MacosNotesDriver {
     Err("typed Notes AX note creation is not available yet".to_string())
   }
 
-  fn focus_note_body(
-    &mut self,
-    _app_id: &str,
-    _query: &str,
-    _candidate: &str,
-  ) -> OperationResult<StepOutcome> {
+  fn focus_note_body(&mut self, _app_id: &str, _query: &str, _candidate: &str) -> OperationResult<StepOutcome> {
     // TODO(auv-driver-macos-ax-focus): `note focus` needs typed AX text-input
     // focus before app-local Notes commands can safely paste into the note
     // body.
@@ -138,18 +117,11 @@ impl NotesDriver for MacosNotesDriver {
     Ok(StepOutcome {
       step_id: "note-write.paste",
       summary: "pasted Notes body through auv-driver-macos clipboard input".to_string(),
-      input_action_result: Some(InputActionResult::single_success(
-        InputDeliveryPath::ClipboardPaste,
-      )),
+      input_action_result: Some(InputActionResult::single_success(InputDeliveryPath::ClipboardPaste)),
     })
   }
 
-  fn verify_ax_text(
-    &mut self,
-    _app_id: &str,
-    _target_text: &str,
-    _target_role: &str,
-  ) -> OperationResult<VerificationOutcome> {
+  fn verify_ax_text(&mut self, _app_id: &str, _target_text: &str, _target_role: &str) -> OperationResult<VerificationOutcome> {
     // TODO(auv-driver-macos-ax-verify): `note compare` needs typed AX text
     // observation in `auv-driver-macos` before Notes can verify note body text
     // without root legacy verify.axText behavior.

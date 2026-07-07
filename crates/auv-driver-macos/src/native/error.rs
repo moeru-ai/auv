@@ -8,18 +8,10 @@ pub struct NativeDriverError {
 }
 
 pub fn native_error_to_auv(error: NativeDriverError) -> String {
-  format!(
-    "macos native {} failed: {}; recovery={}",
-    error.operation, error.message, error.recovery_hint
-  )
+  format!("macos native {} failed: {}; recovery={}", error.operation, error.message, error.recovery_hint)
 }
 
-pub fn native_result<T>(
-  operation: &str,
-  value: Option<T>,
-  error_message: Option<String>,
-  recovery_hint: Option<String>,
-) -> AuvResult<T> {
+pub fn native_result<T>(operation: &str, value: Option<T>, error_message: Option<String>, recovery_hint: Option<String>) -> AuvResult<T> {
   match value {
     Some(value) => Ok(value),
     None => Err(native_error_to_auv(NativeDriverError {
@@ -50,9 +42,6 @@ mod tests {
     )
     .unwrap_err();
 
-    assert_eq!(
-      error,
-      "macos native list_windows failed: screen recording denied; recovery=grant Screen Recording permission"
-    );
+    assert_eq!(error, "macos native list_windows failed: screen recording denied; recovery=grant Screen Recording permission");
   }
 }

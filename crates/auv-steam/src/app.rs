@@ -1,7 +1,4 @@
-use crate::library::{
-  LibraryDiagnostic, LibraryQuery, LibraryQueryResult, SteamError, SteamLibraryStore,
-  SteamlocateSource,
-};
+use crate::library::{LibraryDiagnostic, LibraryQuery, LibraryQueryResult, SteamError, SteamLibraryStore, SteamlocateSource};
 
 pub struct Steam {
   library: SteamLibraryStore<SteamlocateSource>,
@@ -19,9 +16,7 @@ impl Steam {
   }
 }
 
-pub fn query_local_library_apps(
-  query: LibraryQuery,
-) -> Result<LibraryQueryResult, LibraryDiagnostic> {
+pub fn query_local_library_apps(query: LibraryQuery) -> Result<LibraryQueryResult, LibraryDiagnostic> {
   let steam = Steam::locate().map_err(|error| LibraryDiagnostic {
     severity: crate::library::LibraryDiagnosticSeverity::Error,
     code: "steam_not_found".to_string(),

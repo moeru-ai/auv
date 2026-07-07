@@ -13,30 +13,20 @@ pub mod view_parsers;
 pub mod views;
 pub mod windows;
 
-pub use commands::daily_recommended::{
-  run_daily_recommended_play, run_daily_recommended_songs_scan,
-};
+pub use commands::daily_recommended::{run_daily_recommended_play, run_daily_recommended_songs_scan};
 pub use commands::launch::{LaunchResult, LaunchStep, OpenWindowInputs, run_open_window};
 pub use commands::playback::{
-  PlaybackStatus, PlaybackStatusHumanReadable, PlaybackStatusInputs, PlaybackStatusJson,
-  run_playback_status_probe,
+  PlaybackStatus, PlaybackStatusHumanReadable, PlaybackStatusInputs, PlaybackStatusJson, run_playback_status_probe,
 };
 pub use commands::playlist::{
-  PlaylistPlayResult, PlaylistPlayStep, PlaylistPlayVerification, PlaylistSelectResult,
-  PlaylistSelectStep, PlaylistSelectVerification, run_playlist_play,
-  run_playlist_play_candidate_id, run_playlist_select,
+  PlaylistPlayResult, PlaylistPlayStep, PlaylistPlayVerification, PlaylistSelectResult, PlaylistSelectStep, PlaylistSelectVerification,
+  run_playlist_play, run_playlist_play_candidate_id, run_playlist_select,
 };
-pub use commands::transport::{
-  TransportAction, TransportInputs, TransportResult, run_transport_action,
-};
-pub use interaction::{
-  InteractionEvent, InteractionEventKind, InteractionPhase, ScrollDirection, ScrollInteraction,
-};
+pub use commands::transport::{TransportAction, TransportInputs, TransportResult, run_transport_action};
+pub use interaction::{InteractionEvent, InteractionEventKind, InteractionPhase, ScrollDirection, ScrollInteraction};
 pub use view_parsers::sidebar::live::{run_live_scan, run_live_scan_until_query};
 pub use views::player::PlaybackControlState;
-pub use views::sidebar::{
-  PlaylistSidebarItem, PlaylistSidebarProjection, SidebarSection, SidebarSectionKind,
-};
+pub use views::sidebar::{PlaylistSidebarItem, PlaylistSidebarProjection, SidebarSection, SidebarSectionKind};
 
 use std::collections::HashSet;
 use std::fmt;
@@ -55,13 +45,11 @@ use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
 // crate because they consume NetEase-shaped observations.
 use auv_driver::{RatioRect, Size};
 use auv_view::{
-  AnchorStrength, BoundaryConfidence, CandidateRole, Confidence, LandmarkUse, ParserDiagnostic,
-  ReconstructionOutput, ReconstructionPolicy, ScanAppContext, ScanOptions, ScanWindowContext,
-  ScrollBoundarySummary, TopSeekOutcome, VIEW_IR_SCHEMA_VERSION, ViewAction, ViewAnchor, ViewAxis,
-  ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind,
-  ViewNodeRecord, ViewObservation, ViewObserver, ViewReconstructionRecord, ViewRegionRecord,
-  ViewScrollable, ViewViewportRecord, confidence_from_ocr, normalize_identity, reconstruct, slug,
-  viewport_contains_center, viewport_fingerprint,
+  AnchorStrength, BoundaryConfidence, CandidateRole, Confidence, LandmarkUse, ParserDiagnostic, ReconstructionOutput, ReconstructionPolicy,
+  ScanAppContext, ScanOptions, ScanWindowContext, ScrollBoundarySummary, TopSeekOutcome, VIEW_IR_SCHEMA_VERSION, ViewAction, ViewAnchor,
+  ViewAxis, ViewBounds, ViewEvidenceNode, ViewEvidenceSource, ViewLandmark, ViewLayout, ViewNodeKind, ViewNodeRecord, ViewObservation,
+  ViewObserver, ViewReconstructionRecord, ViewRegionRecord, ViewScrollable, ViewViewportRecord, confidence_from_ocr, normalize_identity,
+  reconstruct, slug, viewport_contains_center, viewport_fingerprint,
 };
 use clap::ValueEnum;
 use image::{Rgba, RgbaImage};
@@ -72,10 +60,7 @@ use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
-use auv_driver::{
-  ActivationPolicy, Click, Driver, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions,
-  WindowPoint,
-};
+use auv_driver::{ActivationPolicy, Click, Driver, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions, WindowPoint};
 #[cfg(target_os = "macos")]
 use auv_driver_macos::native::ax_tree::capture_ax_tree_snapshot;
 #[cfg(target_os = "macos")]
@@ -88,8 +73,7 @@ use auv_view::draw_rect;
 pub const DEFAULT_APP_ID: &str = "com.netease.163music";
 pub const DEFAULT_ARTIFACT_DIR: &str = "/tmp/auv-netease-playlist-ls-artifacts";
 pub const PLAYLIST_SCAN_CACHE_FILE: &str = "playlist-scan-cache.json";
-pub const DEFAULT_DAILY_RECOMMENDED_ARTIFACT_DIR: &str =
-  "/tmp/auv-netease-play-daily-recommended-artifacts";
+pub const DEFAULT_DAILY_RECOMMENDED_ARTIFACT_DIR: &str = "/tmp/auv-netease-play-daily-recommended-artifacts";
 // TODO(netease-scroll-completion): this conservative default is only a
 // product-agnostic safety cap, not an account-size estimate or completion
 // policy. Full playlist enumeration should derive its budget from section
@@ -199,17 +183,8 @@ impl fmt::Display for DailyRecommendedHumanSummary<'_> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let result = self.result;
     writeln!(f, "NetEase daily recommended play")?;
-    writeln!(
-      f,
-      "app: id={} name={}",
-      optional(result.app.app_id.as_deref()),
-      optional(result.app.name.as_deref())
-    )?;
-    writeln!(
-      f,
-      "window: title={}",
-      optional(result.window.title.as_deref())
-    )?;
+    writeln!(f, "app: id={} name={}", optional(result.app.app_id.as_deref()), optional(result.app.name.as_deref()))?;
+    writeln!(f, "window: title={}", optional(result.window.title.as_deref()))?;
     writeln!(f, "steps:")?;
     for step in &result.steps {
       writeln!(
@@ -224,11 +199,7 @@ impl fmt::Display for DailyRecommendedHumanSummary<'_> {
       f,
       "verification: {}{}",
       result.verification.status,
-      result
-        .verification
-        .best_score
-        .map(|score| format!(" best_score={score:.3}"))
-        .unwrap_or_default()
+      result.verification.best_score.map(|score| format!(" best_score={score:.3}")).unwrap_or_default()
     )?;
     if result.diagnostics.is_empty() {
       write!(f, "diagnostics: (none)")
@@ -366,11 +337,7 @@ pub struct PlaylistSelectTarget {
 }
 
 impl PlaylistSidebarScan {
-  fn empty(
-    app: ScanAppContext,
-    window: ScanWindowContext,
-    sidebar_region: ViewRegionRecord,
-  ) -> Self {
+  fn empty(app: ScanAppContext, window: ScanWindowContext, sidebar_region: ViewRegionRecord) -> Self {
     let mut root = empty_root();
     if let Some(bounds) = sidebar_region.bounds {
       root.bounds = bounds;
@@ -455,9 +422,7 @@ impl PlaylistSidebarScan {
     let [playlist] = matches.as_slice() else {
       return match matches.len() {
         0 => Err(format!("no playlist matched {query:?}")),
-        count => Err(format!(
-          "playlist query {query:?} matched {count} items; refine the query"
-        )),
+        count => Err(format!("playlist query {query:?} matched {count} items; refine the query")),
       };
     };
     let (observation_index, bounds) = playlist
@@ -480,30 +445,22 @@ impl PlaylistSidebarScan {
     })
   }
 
-  pub fn select_target_by_candidate_id(
-    &self,
-    candidate_id: &str,
-  ) -> Result<PlaylistSelectTarget, String> {
+  pub fn select_target_by_candidate_id(&self, candidate_id: &str) -> Result<PlaylistSelectTarget, String> {
     let candidate_id = candidate_id.trim();
     if candidate_id.is_empty() {
       return Err("playlist candidate_id must not be empty".to_string());
     }
 
     for section in &self.projection.sections {
-      if !matches!(
-        section.kind,
-        SidebarSectionKind::MyPlaylists | SidebarSectionKind::FavoritePlaylists
-      ) {
+      if !matches!(section.kind, SidebarSectionKind::MyPlaylists | SidebarSectionKind::FavoritePlaylists) {
         continue;
       }
       for item in &section.items {
         if item.candidate_id.as_deref() != Some(candidate_id) {
           continue;
         }
-        let (observation_index, bounds) = self
-          .candidate_bounds(candidate_id)
-          .map(|(index, bounds)| (Some(index), Some(bounds)))
-          .unwrap_or((None, None));
+        let (observation_index, bounds) =
+          self.candidate_bounds(candidate_id).map(|(index, bounds)| (Some(index), Some(bounds))).unwrap_or((None, None));
         return Ok(PlaylistSelectTarget {
           label: item.label.clone(),
           section_id: section.id.clone(),
@@ -517,9 +474,7 @@ impl PlaylistSidebarScan {
       }
     }
 
-    Err(format!(
-      "no playlist candidate_id matched {candidate_id:?}; run `playlist ls <query> --json` first with the same --artifact-dir"
-    ))
+    Err(format!("no playlist candidate_id matched {candidate_id:?}; run `playlist ls <query> --json` first with the same --artifact-dir"))
   }
 
   pub fn to_human_readable(&self) -> PlaylistSidebarHumanSummary<'_> {
@@ -528,11 +483,7 @@ impl PlaylistSidebarScan {
 
   #[cfg(test)]
   pub(crate) fn from_projection_for_tests(projection: PlaylistSidebarProjection) -> Self {
-    let mut scan = Self::empty(
-      ScanAppContext::default(),
-      ScanWindowContext::default(),
-      ViewRegionRecord::default(),
-    );
+    let mut scan = Self::empty(ScanAppContext::default(), ScanWindowContext::default(), ViewRegionRecord::default());
     scan.projection = projection;
     scan
   }
@@ -588,23 +539,12 @@ impl fmt::Display for PlaylistSidebarHumanSummary<'_> {
       writeln!(f, "  (none)")?;
     } else {
       for section in &scan.projection.sections {
-        writeln!(
-          f,
-          "  - {} [{:?}]",
-          optional(section.label.as_deref()),
-          section.kind
-        )?;
+        writeln!(f, "  - {} [{:?}]", optional(section.label.as_deref()), section.kind)?;
         if section.items.is_empty() {
           writeln!(f, "    (no items)")?;
         } else {
           for item in &section.items {
-            writeln!(
-              f,
-              "    - {} confidence={:?} anchor={}",
-              item.label,
-              item.confidence,
-              optional(item.anchor_id.as_deref())
-            )?;
+            writeln!(f, "    - {} confidence={:?} anchor={}", item.label, item.confidence, optional(item.anchor_id.as_deref()))?;
           }
         }
       }
@@ -619,11 +559,7 @@ impl fmt::Display for PlaylistSidebarHumanSummary<'_> {
           "  - {}: {}{}",
           diagnostic.code,
           diagnostic.message,
-          diagnostic
-            .node_id
-            .as_deref()
-            .map(|node_id| format!(" node={node_id}"))
-            .unwrap_or_default()
+          diagnostic.node_id.as_deref().map(|node_id| format!(" node={node_id}")).unwrap_or_default()
         )?;
       }
     }
@@ -710,36 +646,25 @@ enum SidebarScrollbarBoundary {
 /// Decode a stored playlist sidebar scan artifact and reject unknown wire
 /// shapes before interpreting the app-specific fields.
 pub fn decode_playlist_sidebar_scan_json(input: &str) -> Result<PlaylistSidebarScan, String> {
-  let value: serde_json::Value = serde_json::from_str(input)
-    .map_err(|error| format!("invalid playlist sidebar scan JSON: {error}"))?;
+  let value: serde_json::Value = serde_json::from_str(input).map_err(|error| format!("invalid playlist sidebar scan JSON: {error}"))?;
   let schema_version = value
     .get("schema_version")
     .and_then(serde_json::Value::as_str)
     .ok_or_else(|| "playlist sidebar scan JSON is missing schema_version".to_string())?;
   if schema_version != VIEW_IR_SCHEMA_VERSION {
-    return Err(format!(
-      "unsupported playlist sidebar scan schema_version {schema_version:?}; expected {VIEW_IR_SCHEMA_VERSION:?}"
-    ));
+    return Err(format!("unsupported playlist sidebar scan schema_version {schema_version:?}; expected {VIEW_IR_SCHEMA_VERSION:?}"));
   }
 
-  serde_json::from_value(value)
-    .map_err(|error| format!("invalid playlist sidebar scan shape: {error}"))
+  serde_json::from_value(value).map_err(|error| format!("invalid playlist sidebar scan shape: {error}"))
 }
 
 fn optional(value: Option<&str>) -> &str {
-  value
-    .filter(|value| !value.trim().is_empty())
-    .unwrap_or("-")
+  value.filter(|value| !value.trim().is_empty()).unwrap_or("-")
 }
 
 fn render_optional_bounds(bounds: Option<ViewBounds>) -> String {
   bounds
-    .map(|bounds| {
-      format!(
-        "x={:.1},y={:.1},w={:.1},h={:.1}",
-        bounds.x, bounds.y, bounds.width, bounds.height
-      )
-    })
+    .map(|bounds| format!("x={:.1},y={:.1},w={:.1},h={:.1}", bounds.x, bounds.y, bounds.width, bounds.height))
     .unwrap_or_else(|| "-".to_string())
 }
 
@@ -775,9 +700,7 @@ fn delivery_path_label(path: auv_driver::InputDeliveryPath) -> &'static str {
     auv_driver::InputDeliveryPath::WindowTargetedMouse => "window_targeted_mouse",
     auv_driver::InputDeliveryPath::WindowTargetedWheel => "window_targeted_wheel",
     auv_driver::InputDeliveryPath::WindowTargetedKeyboard => "window_targeted_keyboard",
-    auv_driver::InputDeliveryPath::WindowTargetedKeyboardScroll => {
-      "window_targeted_keyboard_scroll"
-    }
+    auv_driver::InputDeliveryPath::WindowTargetedKeyboardScroll => "window_targeted_keyboard_scroll",
     auv_driver::InputDeliveryPath::ClipboardPaste => "clipboard_paste",
     auv_driver::InputDeliveryPath::ForegroundSystemEvents => "foreground_system_events",
     auv_driver::InputDeliveryPath::Unsupported => "unsupported",
@@ -785,10 +708,7 @@ fn delivery_path_label(path: auv_driver::InputDeliveryPath) -> &'static str {
 }
 
 #[cfg(target_os = "macos")]
-fn recognition_in_window_space(
-  mut recognition: TextRecognition,
-  capture: &Capture,
-) -> TextRecognition {
+fn recognition_in_window_space(mut recognition: TextRecognition, capture: &Capture) -> TextRecognition {
   for region in &mut recognition.regions {
     region.bounds.origin.x -= capture.bounds.origin.x;
     region.bounds.origin.y -= capture.bounds.origin.y;
@@ -822,11 +742,7 @@ fn crop_image(image: &RgbaImage, bounds: ViewBounds, scale_factor: f64) -> RgbaI
 }
 
 #[cfg(target_os = "macos")]
-fn draw_overlay(
-  image: &mut RgbaImage,
-  sidebar_bounds: ViewBounds,
-  observation: &SidebarViewportObservation,
-) {
+fn draw_overlay(image: &mut RgbaImage, sidebar_bounds: ViewBounds, observation: &SidebarViewportObservation) {
   draw_rect(image, sidebar_bounds, Rgba([255, 64, 64, 255]), 3);
   for evidence in &observation.evidence_nodes {
     if let Some(bounds) = evidence.bounds {
@@ -850,12 +766,7 @@ fn draw_overlay(
 fn bounds_to_ratio(bounds: ViewBounds, capture: &Capture) -> RatioRect {
   let width = capture.bounds.size.width.max(1.0);
   let height = capture.bounds.size.height.max(1.0);
-  RatioRect::new(
-    bounds.x / width,
-    bounds.y / height,
-    bounds.width / width,
-    bounds.height / height,
-  )
+  RatioRect::new(bounds.x / width, bounds.y / height, bounds.width / width, bounds.height / height)
 }
 
 fn section_node(
@@ -938,21 +849,8 @@ fn item_node(
   }
 }
 
-fn candidate_evidence(
-  candidate: &SidebarViewportCandidate,
-  observation: &SidebarViewportObservation,
-) -> Vec<ViewEvidenceNode> {
-  candidate
-    .evidence_ids
-    .iter()
-    .filter_map(|id| {
-      observation
-        .evidence_nodes
-        .iter()
-        .find(|node| node.id == *id)
-        .cloned()
-    })
-    .collect()
+fn candidate_evidence(candidate: &SidebarViewportCandidate, observation: &SidebarViewportObservation) -> Vec<ViewEvidenceNode> {
+  candidate.evidence_ids.iter().filter_map(|id| observation.evidence_nodes.iter().find(|node| node.id == *id).cloned()).collect()
 }
 
 #[cfg(test)]
@@ -991,9 +889,7 @@ mod tests {
       ..SidebarViewportObservation::default()
     });
 
-    let target = scan
-      .select_target("人造")
-      .expect("single playlist match should resolve");
+    let target = scan.select_target("人造").expect("single playlist match should resolve");
 
     assert_eq!(target.label, "人造器械");
     assert_eq!(target.item_id, "item-human-machine");
@@ -1034,9 +930,7 @@ mod tests {
       ..SidebarViewportObservation::default()
     });
 
-    let target = scan
-      .select_target_by_candidate_id(candidate_id)
-      .expect("candidate id should resolve");
+    let target = scan.select_target_by_candidate_id(candidate_id).expect("candidate id should resolve");
 
     assert_eq!(target.label, "我喜欢的风格 | Trance Vol.2");
     assert_eq!(target.candidate_id.as_deref(), Some(candidate_id));

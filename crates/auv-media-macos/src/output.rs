@@ -99,10 +99,7 @@ mod tests {
     let output = build_now_playing_output(&playing_state());
     assert_eq!(output.schema_version, "now-playing-v0");
     assert!(output.present && output.is_playing);
-    assert_eq!(
-      output.source_bundle_id.as_deref(),
-      Some("com.netease.163music")
-    );
+    assert_eq!(output.source_bundle_id.as_deref(), Some("com.netease.163music"));
     let json = serde_json::to_string(&output).unwrap();
     assert!(json.contains("\"schema_version\":\"now-playing-v0\""));
     assert!(json.contains("\"title\":\"Song\""));
@@ -132,10 +129,7 @@ mod tests {
 
   #[test]
   fn human_summary_idle() {
-    assert_eq!(
-      render_human_summary(&NowPlayingState::default()),
-      "Nothing playing"
-    );
+    assert_eq!(render_human_summary(&NowPlayingState::default()), "Nothing playing");
   }
 
   #[test]

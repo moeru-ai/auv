@@ -7,13 +7,11 @@ use clap::{Args, Parser, Subcommand};
 use crate::commands::launch::OpenWindowInputs;
 use crate::commands::playback::PlaybackStatusInputs;
 use crate::commands::search::{
-  DEFAULT_RESULT_SELECTION_TIMEOUT_MS, DEFAULT_SEARCH_SETTLE_MS,
-  DEFAULT_SEARCH_VERIFICATION_TIMEOUT_MS, SearchInputs, SearchResultSelectInputs,
+  DEFAULT_RESULT_SELECTION_TIMEOUT_MS, DEFAULT_SEARCH_SETTLE_MS, DEFAULT_SEARCH_VERIFICATION_TIMEOUT_MS, SearchInputs,
+  SearchResultSelectInputs,
 };
 use crate::commands::transport::{TransportAction, TransportInputs};
-use crate::{
-  run_open_window, run_playback_status, run_search, run_search_result_select, run_transport_action,
-};
+use crate::{run_open_window, run_playback_status, run_search, run_search_result_select, run_transport_action};
 
 #[derive(Clone, Debug, Parser)]
 #[command(
@@ -160,11 +158,7 @@ fn run_open_window_cmd(args: OpenWindowArgs) -> ExitCode {
           println!("  title: {title}");
         }
         for step in &result.steps {
-          let note = step
-            .note
-            .as_deref()
-            .map(|n| format!(" ({n})"))
-            .unwrap_or_default();
+          let note = step.note.as_deref().map(|n| format!(" ({n})")).unwrap_or_default();
           println!("  step: {} -> {}{}", step.name, step.outcome, note);
         }
       }
@@ -349,10 +343,7 @@ mod tests {
     let CliCommand::Search(search) = args.command else {
       panic!("expected search command");
     };
-    assert_eq!(
-      search.select.as_deref(),
-      Some("Ballade No. 1 in G Minor, Op. 23 YUNDI")
-    );
+    assert_eq!(search.select.as_deref(), Some("Ballade No. 1 in G Minor, Op. 23 YUNDI"));
     assert_eq!(search.selection_timeout_ms, 1200);
   }
 

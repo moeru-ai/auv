@@ -8,21 +8,15 @@ use auv_driver::vision::TextRecognitionOptions;
 use auv_media_macos::OutputFormat;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::output::{
-  build_playlist_json_output, playlist_view_memory_report, render_playlist_human_output,
-};
+use crate::output::{build_playlist_json_output, playlist_view_memory_report, render_playlist_human_output};
 use crate::{
-  Confidence, DailyRecommendedPlayInputs, Inputs, OpenWindowInputs, PlaybackStatusInputs,
-  PlaylistCategory, PlaylistSidebarScan, SongListInputs, run_daily_recommended_play,
-  run_daily_recommended_songs_scan, run_live_scan, run_live_scan_until_query, run_open_window,
-  run_playback_status_probe, run_playlist_play, run_playlist_play_candidate_id,
-  run_playlist_select,
+  Confidence, DailyRecommendedPlayInputs, Inputs, OpenWindowInputs, PlaybackStatusInputs, PlaylistCategory, PlaylistSidebarScan,
+  SongListInputs, run_daily_recommended_play, run_daily_recommended_songs_scan, run_live_scan, run_live_scan_until_query, run_open_window,
+  run_playback_status_probe, run_playlist_play, run_playlist_play_candidate_id, run_playlist_select,
 };
 
 pub(crate) fn positive_scroll_amount(raw: &str) -> Result<f64, String> {
-  let parsed = raw
-    .parse::<f64>()
-    .map_err(|_| "expects a number".to_string())?;
+  let parsed = raw.parse::<f64>().map_err(|_| "expects a number".to_string())?;
   if !parsed.is_finite() || parsed <= 0.0 {
     return Err("must be greater than 0".to_string());
   }
@@ -30,9 +24,7 @@ pub(crate) fn positive_scroll_amount(raw: &str) -> Result<f64, String> {
 }
 
 pub(crate) fn zero_to_one(raw: &str) -> Result<f64, String> {
-  let parsed = raw
-    .parse::<f64>()
-    .map_err(|_| "expects a number".to_string())?;
+  let parsed = raw.parse::<f64>().map_err(|_| "expects a number".to_string())?;
   if !parsed.is_finite() || !(0.0..=1.0).contains(&parsed) {
     return Err("must be between 0 and 1".to_string());
   }
@@ -40,12 +32,7 @@ pub(crate) fn zero_to_one(raw: &str) -> Result<f64, String> {
 }
 
 pub(crate) fn split_csv(value: &str) -> Vec<String> {
-  value
-    .split(',')
-    .map(str::trim)
-    .filter(|part| !part.is_empty())
-    .map(ToOwned::to_owned)
-    .collect()
+  value.split(',').map(str::trim).filter(|part| !part.is_empty()).map(ToOwned::to_owned).collect()
 }
 
 pub(crate) fn push_trimmed(values: &mut Vec<String>, value: String) {
@@ -72,12 +59,8 @@ pub(crate) fn push_ocr_language(options: &mut TextRecognitionOptions, language: 
   }
 }
 
-pub(crate) fn load_custom_words_file(
-  values: &mut Vec<String>,
-  path: PathBuf,
-) -> Result<(), String> {
-  let content = std::fs::read_to_string(&path)
-    .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+pub(crate) fn load_custom_words_file(values: &mut Vec<String>, path: PathBuf) -> Result<(), String> {
+  let content = std::fs::read_to_string(&path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
   for line in content.lines() {
     let word = line.trim();
     if !word.is_empty() && !word.starts_with('#') {
@@ -91,11 +74,7 @@ pub(crate) fn parse_ratio_region(value: String) -> Result<RatioRect, String> {
   let parts = value
     .split(',')
     .map(str::trim)
-    .map(|part| {
-      part
-        .parse::<f64>()
-        .map_err(|_| "--sidebar-region expects x,y,width,height".to_string())
-    })
+    .map(|part| part.parse::<f64>().map_err(|_| "--sidebar-region expects x,y,width,height".to_string()))
     .collect::<Result<Vec<_>, _>>()?;
 
   if parts.len() != 4 {
@@ -573,14 +552,9 @@ fn command_from_args(parsed: CliArgs) -> Result<Command, String> {
     CliSubcommand::NowPlaying(args) => parse_now_playing(args),
     CliSubcommand::Play(args) => Ok(control(auv_media_macos::MediaCommand::Play, args)),
     CliSubcommand::Pause(args) => Ok(control(auv_media_macos::MediaCommand::Pause, args)),
-    CliSubcommand::Toggle(args) => Ok(control(
-      auv_media_macos::MediaCommand::TogglePlayPause,
-      args,
-    )),
+    CliSubcommand::Toggle(args) => Ok(control(auv_media_macos::MediaCommand::TogglePlayPause, args)),
     CliSubcommand::Next(args) => Ok(control(auv_media_macos::MediaCommand::NextTrack, args)),
-    CliSubcommand::Previous(args) => {
-      Ok(control(auv_media_macos::MediaCommand::PreviousTrack, args))
-    }
+    CliSubcommand::Previous(args) => Ok(control(auv_media_macos::MediaCommand::PreviousTrack, args)),
     CliSubcommand::Seek(args) => parse_seek(args),
     CliSubcommand::Playback(args) => parse_playback(args),
     CliSubcommand::Invoke(args) => Ok(Command::Invoke(args)),
@@ -640,10 +614,7 @@ fn parse_seek(args: SeekArgs) -> Result<Command, String> {
   // values past `Duration::MAX`. The old check missed the overflow case;
   // `Duration::from_secs_f64` would have panicked on inputs like `1e20`.
   if std::time::Duration::try_from_secs_f64(args.seconds).is_err() {
-    return Err(
-      "seek position must be a non-negative finite number of seconds within the representable range"
-        .to_string(),
-    );
+    return Err("seek position must be a non-negative finite number of seconds within the representable range".to_string());
   }
   Ok(Command::Seek(SeekCommand {
     seconds: args.seconds,
@@ -654,9 +625,7 @@ fn parse_seek(args: SeekArgs) -> Result<Command, String> {
 fn parse_playlist(args: PlaylistArgs) -> Result<Command, String> {
   match args.command {
     PlaylistSubcommand::Ls(ls) => parse_playlist_ls(ls).map(Command::PlaylistLs),
-    PlaylistSubcommand::Select(select) => {
-      parse_playlist_select(select).map(Command::PlaylistSelect)
-    }
+    PlaylistSubcommand::Select(select) => parse_playlist_select(select).map(Command::PlaylistSelect),
     PlaylistSubcommand::Play(play) => parse_playlist_play(play),
     PlaylistSubcommand::Songs(songs) => parse_playlist_songs(songs),
   }
@@ -720,9 +689,7 @@ fn parse_playlist_ls(args: PlaylistLsArgs) -> Result<PlaylistCommand, String> {
   let output = PlaylistOutputOptions {
     mode,
     detail: args.detail,
-    min_confidence: args
-      .min_confidence
-      .map(PlaylistConfidenceArg::into_confidence),
+    min_confidence: args.min_confidence.map(PlaylistConfidenceArg::into_confidence),
   };
   Ok(PlaylistCommand {
     inputs,
@@ -804,9 +771,7 @@ fn parse_playlist_play_query(args: PlaylistPlayArgs) -> Result<PlaylistPlayComma
     }
     (None, Some(candidate_id)) => PlaylistPlayTarget::CandidateId(candidate_id.to_string()),
     (None, None) => {
-      return Err(
-        "playlist play requires a query, daily-recommended, or --candidate-id".to_string(),
-      );
+      return Err("playlist play requires a query, daily-recommended, or --candidate-id".to_string());
     }
   };
   let mut inputs = Inputs::with_defaults();
@@ -869,9 +834,7 @@ fn parse_songs_ls(args: SongsLsArgs) -> Result<SongsLsCommand, String> {
   let target = match args.target.as_str() {
     "daily-recommended" => SongsLsTarget::DailyRecommended,
     other => {
-      return Err(format!(
-        "unsupported songs ls target {other:?}; expected \"daily-recommended\""
-      ));
+      return Err(format!("unsupported songs ls target {other:?}; expected \"daily-recommended\""));
     }
   };
   let mut inputs = SongListInputs::with_defaults();
@@ -1146,17 +1109,12 @@ mod tests {
       "--json",
     ])
     .expect("open-window args should parse");
-    let Command::OpenWindow(command) =
-      command_from_args(parsed).expect("open-window command should parse")
-    else {
+    let Command::OpenWindow(command) = command_from_args(parsed).expect("open-window command should parse") else {
       panic!("expected open-window command");
     };
 
     assert_eq!(command.inputs.settle_ms, 2_500);
-    assert_eq!(
-      command.inputs.executable,
-      Some(PathBuf::from("C:\\Apps\\cloudmusic.exe"))
-    );
+    assert_eq!(command.inputs.executable, Some(PathBuf::from("C:\\Apps\\cloudmusic.exe")));
     assert_eq!(command.inputs.resolve.process_name, "music.exe");
     assert_eq!(command.inputs.resolve.title, "NetEase");
     assert!(command.json);
@@ -1168,14 +1126,8 @@ mod tests {
 
   impl TempWordsFile {
     fn new(contents: &str) -> Self {
-      let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after unix epoch")
-        .as_nanos();
-      let path = std::env::temp_dir().join(format!(
-        "auv-netease-cli-custom-words-{}-{unique}.txt",
-        std::process::id()
-      ));
+      let unique = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time should be after unix epoch").as_nanos();
+      let path = std::env::temp_dir().join(format!("auv-netease-cli-custom-words-{}-{unique}.txt", std::process::id()));
       std::fs::write(&path, contents).expect("temp custom words file should be writable");
       Self { path }
     }
@@ -1276,19 +1228,15 @@ mod tests {
 
   #[test]
   fn clap_playlist_requires_explicit_subcommand() {
-    let error = CliArgs::try_parse_from(["auv-netease-music", "playlist"])
-      .expect_err("playlist should require an explicit subcommand");
+    let error = CliArgs::try_parse_from(["auv-netease-music", "playlist"]).expect_err("playlist should require an explicit subcommand");
 
-    assert_eq!(
-      error.kind(),
-      clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-    );
+    assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand);
   }
 
   #[test]
   fn clap_playlist_rejects_legacy_keyword_without_ls() {
-    let error = CliArgs::try_parse_from(["auv-netease-music", "playlist", "daily"])
-      .expect_err("legacy playlist keyword should require explicit ls");
+    let error =
+      CliArgs::try_parse_from(["auv-netease-music", "playlist", "daily"]).expect_err("legacy playlist keyword should require explicit ls");
 
     assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
   }
@@ -1304,16 +1252,12 @@ mod tests {
       "/tmp/playlists.json",
     ]);
 
-    assert_eq!(
-      command.output.mode,
-      OutputMode::JsonFile(PathBuf::from("/tmp/playlists.json"))
-    );
+    assert_eq!(command.output.mode, OutputMode::JsonFile(PathBuf::from("/tmp/playlists.json")));
   }
 
   #[test]
   fn clap_playlist_format_json_aliases_stdout_json() {
-    let command =
-      parse_playlist_command(&["auv-netease-music", "playlist", "ls", "--format", "json"]);
+    let command = parse_playlist_command(&["auv-netease-music", "playlist", "ls", "--format", "json"]);
 
     assert_eq!(command.output.mode, OutputMode::Json);
   }
@@ -1330,10 +1274,7 @@ mod tests {
       "/tmp/playlists.json",
     ]);
 
-    assert_eq!(
-      command.output.mode,
-      OutputMode::JsonFile(PathBuf::from("/tmp/playlists.json"))
-    );
+    assert_eq!(command.output.mode, OutputMode::JsonFile(PathBuf::from("/tmp/playlists.json")));
   }
 
   #[test]
@@ -1377,17 +1318,11 @@ mod tests {
 
     assert_eq!(command.inputs.category, PlaylistCategory::Favorite);
     assert_eq!(command.inputs.app_id, "com.example.Player");
-    assert_eq!(
-      command.inputs.artifact_dir,
-      PathBuf::from("/tmp/netease-artifacts")
-    );
+    assert_eq!(command.inputs.artifact_dir, PathBuf::from("/tmp/netease-artifacts"));
     assert_eq!(command.inputs.max_scrolls, 9);
     assert_eq!(command.inputs.scroll_amount, 512.0);
     assert_eq!(command.inputs.scroll_settle_ms, 750);
-    assert_eq!(
-      command.inputs.sidebar_region,
-      Some(parse_ratio_region("0.1,0.2,0.3,0.4".to_string()).expect("region should parse"))
-    );
+    assert_eq!(command.inputs.sidebar_region, Some(parse_ratio_region("0.1,0.2,0.3,0.4".to_string()).expect("region should parse")));
   }
 
   #[test]
@@ -1469,14 +1404,8 @@ mod tests {
     ]);
 
     assert_eq!(command.output, OutputMode::Json);
-    assert_eq!(
-      command.inputs.artifact_dir,
-      PathBuf::from("/tmp/netease-daily")
-    );
-    assert_eq!(
-      command.inputs.play_icon_template,
-      Some(PathBuf::from("/tmp/play.png"))
-    );
+    assert_eq!(command.inputs.artifact_dir, PathBuf::from("/tmp/netease-daily"));
+    assert_eq!(command.inputs.play_icon_template, Some(PathBuf::from("/tmp/play.png")));
   }
 
   #[test]
@@ -1493,10 +1422,7 @@ mod tests {
       "120",
     ]);
 
-    assert_eq!(
-      command.target,
-      PlaylistPlayTarget::Query("Trance vol.2".to_string())
-    );
+    assert_eq!(command.target, PlaylistPlayTarget::Query("Trance vol.2".to_string()));
     assert_eq!(command.output, OutputMode::Json);
     assert_eq!(command.inputs.max_scrolls, 8);
     assert_eq!(command.inputs.scroll_settle_ms, 120);
@@ -1515,15 +1441,9 @@ mod tests {
       "/tmp/netease-playlist-cache",
     ]);
 
-    assert_eq!(
-      command.target,
-      PlaylistPlayTarget::CandidateId("obs6.candidate.ocr4.trance_vol_2".to_string())
-    );
+    assert_eq!(command.target, PlaylistPlayTarget::CandidateId("obs6.candidate.ocr4.trance_vol_2".to_string()));
     assert_eq!(command.output, OutputMode::Json);
-    assert_eq!(
-      command.inputs.artifact_dir,
-      PathBuf::from("/tmp/netease-playlist-cache")
-    );
+    assert_eq!(command.inputs.artifact_dir, PathBuf::from("/tmp/netease-playlist-cache"));
   }
 
   #[test]
@@ -1543,10 +1463,7 @@ mod tests {
     ]);
 
     assert_eq!(command.target, SongsLsTarget::DailyRecommended);
-    assert_eq!(
-      command.output,
-      OutputMode::JsonFile(PathBuf::from("/tmp/songs.json"))
-    );
+    assert_eq!(command.output, OutputMode::JsonFile(PathBuf::from("/tmp/songs.json")));
     assert_eq!(command.inputs.max_scrolls, 42);
     assert_eq!(command.inputs.scroll_settle_ms, 0);
   }
@@ -1564,33 +1481,25 @@ mod tests {
       "--wide",
     ]);
 
-    assert_eq!(
-      command.output,
-      OutputMode::JsonFile(PathBuf::from("/tmp/playback-status.json"))
-    );
+    assert_eq!(command.output, OutputMode::JsonFile(PathBuf::from("/tmp/playback-status.json")));
     assert_eq!(command.inputs.settle_ms, 250);
     assert!(command.wide);
   }
 
   #[test]
   fn clap_playback_status_accepts_detailed_alias_for_wide_output() {
-    let command =
-      parse_playback_status_command(&["auv-netease-music", "playback", "status", "--detailed"]);
+    let command = parse_playback_status_command(&["auv-netease-music", "playback", "status", "--detailed"]);
 
     assert!(command.wide);
   }
 
   #[test]
   fn playlist_songs_ls_rejects_unknown_target() {
-    let parsed =
-      CliArgs::try_parse_from(["auv-netease-music", "playlist", "songs", "ls", "current"])
-        .expect("unknown target is rejected by semantic parser");
+    let parsed = CliArgs::try_parse_from(["auv-netease-music", "playlist", "songs", "ls", "current"])
+      .expect("unknown target is rejected by semantic parser");
     let error = command_from_args(parsed).expect_err("unknown target should fail");
 
-    assert_eq!(
-      error,
-      "unsupported songs ls target \"current\"; expected \"daily-recommended\""
-    );
+    assert_eq!(error, "unsupported songs ls target \"current\"; expected \"daily-recommended\"");
   }
 
   #[test]
@@ -1618,9 +1527,7 @@ mod tests {
   #[test]
   fn select_store_proof_failure_records_known_limit_and_clears_run_id() {
     use super::apply_playlist_select_store_proof;
-    use crate::commands::playlist::{
-      PlaylistSelectResult, PlaylistSelectStep, PlaylistSelectVerification,
-    };
+    use crate::commands::playlist::{PlaylistSelectResult, PlaylistSelectStep, PlaylistSelectVerification};
     use crate::{Inputs, PlaylistSelectTarget, SidebarSectionKind};
     use auv_view::{ScanAppContext, ScanWindowContext};
 
@@ -1673,10 +1580,7 @@ mod tests {
 
     assert!(result.run_id.is_none());
     assert!(
-      result
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("store select proof failed")),
+      result.known_limits.iter().any(|limit| limit.contains("store select proof failed")),
       "expected known_limits entry, got {:?}",
       result.known_limits
     );
@@ -1704,30 +1608,19 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
   let mut view_memory_write = Ok(());
 
   if let Some(store_root) = &cmd.inputs.store_root {
-    match crate::recording::persist_playlist_ls_artifacts(
-      store_root,
-      &scan,
-      &cmd.inputs,
-      gate_enabled,
-    ) {
+    match crate::recording::persist_playlist_ls_artifacts(store_root, &scan, &cmd.inputs, gate_enabled) {
       Ok(persisted) => {
-        match crate::recording::write_lineage_manifest(&cmd.inputs.artifact_dir, &persisted.lineage)
-        {
+        match crate::recording::write_lineage_manifest(&cmd.inputs.artifact_dir, &persisted.lineage) {
           Ok(()) => run_id = Some(persisted.lineage.run_id.clone()),
           Err(error) => {
             crate::recording::remove_lineage_manifest(&cmd.inputs.artifact_dir);
-            let message = format!(
-              "lineage manifest write failed; store read may require fallback scan: {error}"
-            );
+            let message = format!("lineage manifest write failed; store read may require fallback scan: {error}");
             eprintln!("warning: {message}");
             ls_known_limits.push(message);
           }
         }
         if let Err(error) = write_playlist_scan_cache(&cmd.inputs, &scan) {
-          let message = format!(
-            "artifact-dir mirror incomplete; durable source is store run {}",
-            persisted.lineage.run_id
-          );
+          let message = format!("artifact-dir mirror incomplete; durable source is store run {}", persisted.lineage.run_id);
           eprintln!("warning: {message}: {error}");
           ls_known_limits.push(message);
         }
@@ -1735,10 +1628,8 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
           match persisted.memory.as_ref() {
             Some(memory) => {
               if let Err(error) = crate::view_memory::write_memory_mirror(&cmd.inputs, memory) {
-                let message = format!(
-                  "artifact-dir view-memory mirror incomplete; durable source is store run {}",
-                  persisted.lineage.run_id
-                );
+                let message =
+                  format!("artifact-dir view-memory mirror incomplete; durable source is store run {}", persisted.lineage.run_id);
                 eprintln!("warning: {message}: {error}");
                 ls_known_limits.push(message);
                 view_memory_write = Err(error);
@@ -1748,15 +1639,12 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
             }
             None => {
               if let Err(error) = crate::recording::clear_artifact_dir_view_memory(&cmd.inputs) {
-                let message =
-                  format!("failed to clear stale artifact-dir view-memory before skip: {error}");
+                let message = format!("failed to clear stale artifact-dir view-memory before skip: {error}");
                 eprintln!("warning: {message}");
                 ls_known_limits.push(message);
               }
-              ls_known_limits.push(format!(
-                "view-memory not written; durable store run {} has no memory artifact",
-                persisted.lineage.run_id
-              ));
+              ls_known_limits
+                .push(format!("view-memory not written; durable store run {} has no memory artifact", persisted.lineage.run_id));
               view_memory_write = Err("scan did not produce writable ViewMemory".to_string());
             }
           }
@@ -1798,10 +1686,7 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
   }
 
   let view_memory = playlist_view_memory_report(gate_enabled, view_memory_write);
-  let scan_cache_path = cmd
-    .inputs
-    .artifact_dir
-    .join(crate::PLAYLIST_SCAN_CACHE_FILE);
+  let scan_cache_path = cmd.inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE);
   let output = build_playlist_json_output(
     &scan,
     cmd.query.as_deref(),
@@ -1856,17 +1741,10 @@ fn run_playlist(cmd: PlaylistCommand) -> ExitCode {
 }
 
 fn write_playlist_scan_cache(inputs: &Inputs, scan: &PlaylistSidebarScan) -> Result<(), String> {
-  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| {
-    format!(
-      "failed to create {}: {error}",
-      inputs.artifact_dir.display()
-    )
-  })?;
+  std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
   let cache_path = inputs.artifact_dir.join(crate::PLAYLIST_SCAN_CACHE_FILE);
-  let json = serde_json::to_string_pretty(scan)
-    .map_err(|error| format!("failed to serialize playlist scan cache: {error}"))?;
-  std::fs::write(&cache_path, json)
-    .map_err(|error| format!("failed to write {}: {error}", cache_path.display()))
+  let json = serde_json::to_string_pretty(scan).map_err(|error| format!("failed to serialize playlist scan cache: {error}"))?;
+  std::fs::write(&cache_path, json).map_err(|error| format!("failed to write {}: {error}", cache_path.display()))
 }
 
 fn run_open_window_command(cmd: OpenWindowCommand) -> ExitCode {
@@ -1899,11 +1777,7 @@ fn run_open_window_command(cmd: OpenWindowCommand) -> ExitCode {
       println!("title: {title}");
     }
     for step in &result.steps {
-      let note = step
-        .note
-        .as_deref()
-        .map(|note| format!(" ({note})"))
-        .unwrap_or_default();
+      let note = step.note.as_deref().map(|note| format!(" ({note})")).unwrap_or_default();
       println!("step: {} -> {}{}", step.name, step.outcome, note);
     }
   }
@@ -1915,10 +1789,7 @@ fn run_open_window_command(cmd: OpenWindowCommand) -> ExitCode {
   }
 }
 
-fn apply_playlist_select_store_proof(
-  inputs: &Inputs,
-  result: &mut crate::commands::playlist::PlaylistSelectResult,
-) {
+fn apply_playlist_select_store_proof(inputs: &Inputs, result: &mut crate::commands::playlist::PlaylistSelectResult) {
   let Some(store_root) = &inputs.store_root else {
     return;
   };
@@ -1928,22 +1799,14 @@ fn apply_playlist_select_store_proof(
     &result.target,
     result.reacquire.as_ref(),
   );
-  match crate::recording::persist_playlist_select_proof(
-    store_root,
-    evidence.as_ref(),
-    memory.as_ref(),
-    |run_id| {
-      result.run_id = Some(run_id.to_string());
-      serde_json::to_vec_pretty(result)
-        .map_err(|error| format!("failed to serialize playlist select result: {error}"))
-    },
-  ) {
+  match crate::recording::persist_playlist_select_proof(store_root, evidence.as_ref(), memory.as_ref(), |run_id| {
+    result.run_id = Some(run_id.to_string());
+    serde_json::to_vec_pretty(result).map_err(|error| format!("failed to serialize playlist select result: {error}"))
+  }) {
     Ok(run_id) => result.run_id = Some(run_id),
     Err(error) => {
       eprintln!("warning: store select proof failed: {error}");
-      result
-        .known_limits
-        .push(format!("store select proof failed: {error}"));
+      result.known_limits.push(format!("store select proof failed: {error}"));
       result.run_id = None;
     }
   }
@@ -1997,9 +1860,7 @@ fn run_playlist_select_command(cmd: PlaylistSelectCommand) -> ExitCode {
 fn run_playlist_play_command(cmd: PlaylistPlayCommand) -> ExitCode {
   let result = match &cmd.target {
     PlaylistPlayTarget::Query(query) => run_playlist_play(&cmd.inputs, query),
-    PlaylistPlayTarget::CandidateId(candidate_id) => {
-      run_playlist_play_candidate_id(&cmd.inputs, candidate_id)
-    }
+    PlaylistPlayTarget::CandidateId(candidate_id) => run_playlist_play_candidate_id(&cmd.inputs, candidate_id),
   };
   let result = match result {
     Ok(result) => result,
@@ -2145,19 +2006,13 @@ fn run_control(cmd: ControlCommand) -> ExitCode {
       // TODO(netease-windows-idempotent-playback): separate play and pause
       // require a reliable UIA-observed current state; add them only after a
       // live player-state selector is owner-approved and covered by a smoke.
-      eprintln!(
-        "{} is not available through the Windows UIA slice; use `toggle`",
-        cmd.control.label()
-      );
+      eprintln!("{} is not available through the Windows UIA slice; use `toggle`", cmd.control.label());
       return ExitCode::from(1);
     }
   };
   match run_transport_action(&TransportInputs::new(action)) {
     Ok(result) => {
-      println!(
-        "ok: {} via {:?} control={:?} path={}",
-        result.action, result.delivery.selected_path, result.control_name, result.node_path
-      );
+      println!("ok: {} via {:?} control={:?} path={}", result.action, result.delivery.selected_path, result.control_name, result.node_path);
       ExitCode::SUCCESS
     }
     Err(error) => {
@@ -2181,9 +2036,7 @@ fn run_seek(cmd: SeekCommand) -> ExitCode {
   let duration = match std::time::Duration::try_from_secs_f64(cmd.seconds) {
     Ok(duration) => duration,
     Err(_) => {
-      eprintln!(
-        "seek failed: seek position must be a non-negative finite number of seconds within the representable range"
-      );
+      eprintln!("seek failed: seek position must be a non-negative finite number of seconds within the representable range");
       return ExitCode::from(1);
     }
   };

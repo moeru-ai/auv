@@ -28,9 +28,9 @@ impl OperationDisturbance {
       "keyboard" => Ok(Self::Keyboard),
       "clipboard" => Ok(Self::Clipboard),
       "pointer" => Ok(Self::Pointer),
-      other => Err(format!(
-        "unknown operation disturbance {other:?}; expected one of none, focus, foreground_app, keyboard, clipboard, pointer"
-      )),
+      other => {
+        Err(format!("unknown operation disturbance {other:?}; expected one of none, focus, foreground_app, keyboard, clipboard, pointer"))
+      }
     }
   }
 }
@@ -86,14 +86,8 @@ mod tests {
 
   #[test]
   fn operation_disturbance_parses_known_values() {
-    assert_eq!(
-      OperationDisturbance::parse("clipboard").expect("clipboard should parse"),
-      OperationDisturbance::Clipboard
-    );
-    assert_eq!(
-      OperationDisturbance::parse("pointer").expect("pointer should parse"),
-      OperationDisturbance::Pointer
-    );
+    assert_eq!(OperationDisturbance::parse("clipboard").expect("clipboard should parse"), OperationDisturbance::Clipboard);
+    assert_eq!(OperationDisturbance::parse("pointer").expect("pointer should parse"), OperationDisturbance::Pointer);
     assert!(OperationDisturbance::parse("network").is_err());
   }
 }

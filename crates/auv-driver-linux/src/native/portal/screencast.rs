@@ -11,16 +11,11 @@ use pw::properties::properties;
 use pw::spa;
 use spa::pod::Pod;
 use zbus::blocking::Connection;
-use zbus::zvariant::{
-  DeserializeDict, OwnedFd as ZbusOwnedFd, OwnedObjectPath, OwnedValue, Type, Value,
-};
+use zbus::zvariant::{DeserializeDict, OwnedFd as ZbusOwnedFd, OwnedObjectPath, OwnedValue, Type, Value};
 
 use crate::error::{backend, invalid_input};
 
-use super::request::{
-  close_session, create_session, portal_proxy, response_signal, session_connection,
-  session_request, wait_response,
-};
+use super::request::{close_session, create_session, portal_proxy, response_signal, session_connection, session_request, wait_response};
 
 const SCREENCAST_INTERFACE: &str = "org.freedesktop.portal.ScreenCast";
 const SOURCE_MONITOR: u32 = 1;
@@ -51,12 +46,7 @@ impl ScreenCastStream {
     if width <= 0 || height <= 0 {
       return None;
     }
-    Some(Rect::new(
-      f64::from(x),
-      f64::from(y),
-      f64::from(width),
-      f64::from(height),
-    ))
+    Some(Rect::new(f64::from(x), f64::from(y), f64::from(width), f64::from(height)))
   }
 
   pub fn contains(&self, point: Point) -> bool {
@@ -69,14 +59,9 @@ impl ScreenCastStream {
   }
 
   pub fn local_point(&self, point: Point) -> DriverResult<Point> {
-    let rect = self
-      .logical_rect()
-      .ok_or_else(|| backend("screencast stream is missing logical position/size"))?;
+    let rect = self.logical_rect().ok_or_else(|| backend("screencast stream is missing logical position/size"))?;
     if !self.contains(point) {
-      return Err(invalid_input(format!(
-        "point {:?} is outside screencast stream {:?}",
-        point, rect
-      )));
+      return Err(invalid_input(format!("point {:?} is outside screencast stream {:?}", point, rect)));
     }
     Ok(Point::new(point.x - rect.origin.x, point.y - rect.origin.y))
   }
@@ -94,59 +79,33 @@ struct StartStreamProperties {
   pub pipewire_serial: Option<u64>,
 }
 
-pub fn select_monitor_sources(
-  connection: &Connection,
-  session_handle: &OwnedObjectPath,
-) -> DriverResult<()> {
+pub fn select_monitor_sources(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<()> {
   select_sources(connection, session_handle, SOURCE_MONITOR, true)?;
   Ok(())
 }
 
-pub fn select_window_sources(
-  connection: &Connection,
-  session_handle: &OwnedObjectPath,
-) -> DriverResult<()> {
+pub fn select_window_sources(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<()> {
   select_sources(connection, session_handle, SOURCE_WINDOW, false)?;
   Ok(())
 }
 
-fn select_sources(
-  connection: &Connection,
-  session_handle: &OwnedObjectPath,
-  source_type: u32,
-  multiple: bool,
-) -> DriverResult<()> {
+fn select_sources(connection: &Connection, session_handle: &OwnedObjectPath, source_type: u32, multiple: bool) -> DriverResult<()> {
   let mut options = HashMap::new();
   options.insert("types", Value::from(source_type));
   options.insert("multiple", Value::from(multiple));
   options.insert("cursor_mode", Value::from(CURSOR_HIDDEN));
-  session_request(
-    connection,
-    SCREENCAST_INTERFACE,
-    "SelectSources",
-    session_handle,
-    options,
-  )?;
+  session_request(connection, SCREENCAST_INTERFACE, "SelectSources", session_handle, options)?;
   Ok(())
 }
 
-pub fn decode_streams(
-  results: &HashMap<String, OwnedValue>,
-) -> DriverResult<Vec<ScreenCastStream>> {
+pub fn decode_streams(results: &HashMap<String, OwnedValue>) -> DriverResult<Vec<ScreenCastStream>> {
   let Some(value) = results.get("streams") else {
     return Err(backend("screencast start response missing streams"));
   };
-  let streams =
-    <Vec<(u32, StartStreamProperties)>>::try_from(value.try_clone().map_err(|error| {
-      backend(format!(
-        "failed to clone screencast stream metadata: {error}"
-      ))
-    })?)
-    .map_err(|error| {
-      backend(format!(
-        "failed to decode screencast stream metadata: {error}"
-      ))
-    })?;
+  let streams = <Vec<(u32, StartStreamProperties)>>::try_from(
+    value.try_clone().map_err(|error| backend(format!("failed to clone screencast stream metadata: {error}")))?,
+  )
+  .map_err(|error| backend(format!("failed to decode screencast stream metadata: {error}")))?;
   Ok(
     streams
       .into_iter()
@@ -188,10 +147,7 @@ impl ScreenCastSession {
     }
   }
 
-  pub fn capture_monitor_frame(
-    &mut self,
-    target_bounds: Option<Rect>,
-  ) -> DriverResult<ScreenCastFrame> {
+  pub fn capture_monitor_frame(&mut self, target_bounds: Option<Rect>) -> DriverResult<ScreenCastFrame> {
     let stream = select_stream(&self.streams, target_bounds)?.clone();
     let fd = open_pipewire_remote(&self.connection, &self.session_handle)?;
     let image = read_pipewire_frame(fd.into(), stream.id)?;
@@ -226,9 +182,7 @@ fn start_session(
       let close_result = close_session(&connection, &session_handle);
       return match close_result {
         Ok(()) => Err(error),
-        Err(close_error) => Err(backend(format!(
-          "{error}; also failed to close screencast portal session: {close_error}"
-        ))),
+        Err(close_error) => Err(backend(format!("{error}; also failed to close screencast portal session: {close_error}"))),
       };
     }
   };
@@ -248,10 +202,7 @@ pub fn capture_window_frame() -> DriverResult<ScreenCastFrame> {
   session.capture_window_frame()
 }
 
-fn start_screencast(
-  connection: &Connection,
-  session_handle: &OwnedObjectPath,
-) -> DriverResult<HashMap<String, OwnedValue>> {
+fn start_screencast(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<HashMap<String, OwnedValue>> {
   let handle_token = super::request::portal_token("start");
   let request = super::request::portal_request_proxy(connection, &handle_token)?;
   let mut responses = response_signal(&request, SCREENCAST_INTERFACE, "Start")?;
@@ -260,18 +211,11 @@ fn start_screencast(
   options.insert("handle_token", Value::from(handle_token.as_str()));
   proxy
     .call_method("Start", &(session_handle, "", options))
-    .map_err(|error| {
-      backend(format!(
-        "failed to start screencast portal session: {error}"
-      ))
-    })?;
+    .map_err(|error| backend(format!("failed to start screencast portal session: {error}")))?;
   wait_response(&mut responses, SCREENCAST_INTERFACE, "Start")
 }
 
-fn open_pipewire_remote(
-  connection: &Connection,
-  session_handle: &OwnedObjectPath,
-) -> DriverResult<ZbusOwnedFd> {
+fn open_pipewire_remote(connection: &Connection, session_handle: &OwnedObjectPath) -> DriverResult<ZbusOwnedFd> {
   let proxy = portal_proxy(connection, SCREENCAST_INTERFACE)?;
   let options: HashMap<&str, Value<'_>> = HashMap::new();
   proxy
@@ -279,28 +223,14 @@ fn open_pipewire_remote(
     .map_err(|error| backend(format!("failed to open portal PipeWire remote: {error}")))
 }
 
-fn select_stream<'a>(
-  streams: &'a [ScreenCastStream],
-  target_bounds: Option<Rect>,
-) -> DriverResult<&'a ScreenCastStream> {
+fn select_stream<'a>(streams: &'a [ScreenCastStream], target_bounds: Option<Rect>) -> DriverResult<&'a ScreenCastStream> {
   if let Some(target_bounds) = target_bounds {
     return streams
       .iter()
-      .find(|stream| {
-        stream
-          .logical_rect()
-          .is_some_and(|rect| rect_contains_rect(rect, target_bounds))
-      })
-      .ok_or_else(|| {
-        backend(format!(
-          "no screencast stream contains target bounds {:?}; streams={streams:?}",
-          target_bounds
-        ))
-      });
+      .find(|stream| stream.logical_rect().is_some_and(|rect| rect_contains_rect(rect, target_bounds)))
+      .ok_or_else(|| backend(format!("no screencast stream contains target bounds {:?}; streams={streams:?}", target_bounds)));
   }
-  streams
-    .first()
-    .ok_or_else(|| backend("screencast start response contained no streams"))
+  streams.first().ok_or_else(|| backend("screencast start response contained no streams"))
 }
 
 fn select_window_stream(streams: &[ScreenCastStream]) -> DriverResult<&ScreenCastStream> {
@@ -325,15 +255,9 @@ struct PipeWireCaptureState {
 
 fn read_pipewire_frame(fd: StdOwnedFd, node_id: u32) -> DriverResult<image::RgbaImage> {
   pw::init();
-  let mainloop = pw::main_loop::MainLoop::new(None)
-    .map_err(|error| backend(format!("failed to create PipeWire mainloop: {error}")))?;
-  let context = pw::context::Context::new(&mainloop)
-    .map_err(|error| backend(format!("failed to create PipeWire context: {error}")))?;
-  let core = context.connect_fd(fd, None).map_err(|error| {
-    backend(format!(
-      "failed to connect to portal PipeWire remote: {error}"
-    ))
-  })?;
+  let mainloop = pw::main_loop::MainLoop::new(None).map_err(|error| backend(format!("failed to create PipeWire mainloop: {error}")))?;
+  let context = pw::context::Context::new(&mainloop).map_err(|error| backend(format!("failed to create PipeWire context: {error}")))?;
+  let core = context.connect_fd(fd, None).map_err(|error| backend(format!("failed to connect to portal PipeWire remote: {error}")))?;
   let result = Rc::new(RefCell::new(None));
   let state = PipeWireCaptureState {
     format: Default::default(),
@@ -367,18 +291,12 @@ fn read_pipewire_frame(fd: StdOwnedFd, node_id: u32) -> DriverResult<image::Rgba
         *state.result.borrow_mut() = Some(Err(backend("failed to parse PipeWire stream format")));
         return;
       };
-      if media_type != spa::param::format::MediaType::Video
-        || media_subtype != spa::param::format::MediaSubtype::Raw
-      {
-        *state.result.borrow_mut() = Some(Err(backend(format!(
-          "unsupported PipeWire stream media type {media_type:?}/{media_subtype:?}"
-        ))));
+      if media_type != spa::param::format::MediaType::Video || media_subtype != spa::param::format::MediaSubtype::Raw {
+        *state.result.borrow_mut() = Some(Err(backend(format!("unsupported PipeWire stream media type {media_type:?}/{media_subtype:?}"))));
         return;
       }
       if let Err(error) = state.format.parse(param) {
-        *state.result.borrow_mut() = Some(Err(backend(format!(
-          "failed to parse PipeWire raw video format: {error}"
-        ))));
+        *state.result.borrow_mut() = Some(Err(backend(format!("failed to parse PipeWire raw video format: {error}"))));
       }
     })
     .process(|stream, state| {
@@ -396,15 +314,10 @@ fn read_pipewire_frame(fd: StdOwnedFd, node_id: u32) -> DriverResult<image::Rgba
       *state.result.borrow_mut() = Some(frame);
     })
     .register()
-    .map_err(|error| {
-      backend(format!(
-        "failed to register PipeWire stream listener: {error}"
-      ))
-    })?;
+    .map_err(|error| backend(format!("failed to register PipeWire stream listener: {error}")))?;
 
   let enum_format = pipewire_raw_video_format_param();
-  let mut params = [Pod::from_bytes(&enum_format)
-    .ok_or_else(|| backend("failed to build PipeWire raw video format param"))?];
+  let mut params = [Pod::from_bytes(&enum_format).ok_or_else(|| backend("failed to build PipeWire raw video format param"))?];
   stream
     .connect(
       spa::utils::Direction::Input,
@@ -412,36 +325,21 @@ fn read_pipewire_frame(fd: StdOwnedFd, node_id: u32) -> DriverResult<image::Rgba
       pw::stream::StreamFlags::AUTOCONNECT | pw::stream::StreamFlags::MAP_BUFFERS,
       &mut params,
     )
-    .map_err(|error| {
-      backend(format!(
-        "failed to connect PipeWire stream {node_id}: {error}"
-      ))
-    })?;
+    .map_err(|error| backend(format!("failed to connect PipeWire stream {node_id}: {error}")))?;
 
   let deadline = Instant::now() + PIPEWIRE_FRAME_TIMEOUT;
   while result.borrow().is_none() && Instant::now() < deadline {
     mainloop.loop_().iterate(Duration::from_millis(100));
   }
-  result
-    .borrow_mut()
-    .take()
-    .unwrap_or_else(|| Err(backend("timed out waiting for PipeWire screencast frame")))
+  result.borrow_mut().take().unwrap_or_else(|| Err(backend("timed out waiting for PipeWire screencast frame")))
 }
 
 fn pipewire_raw_video_format_param() -> Vec<u8> {
   let object = spa::pod::object!(
     spa::utils::SpaTypes::ObjectParamFormat,
     spa::param::ParamType::EnumFormat,
-    spa::pod::property!(
-      spa::param::format::FormatProperties::MediaType,
-      Id,
-      spa::param::format::MediaType::Video
-    ),
-    spa::pod::property!(
-      spa::param::format::FormatProperties::MediaSubtype,
-      Id,
-      spa::param::format::MediaSubtype::Raw
-    ),
+    spa::pod::property!(spa::param::format::FormatProperties::MediaType, Id, spa::param::format::MediaType::Video),
+    spa::pod::property!(spa::param::format::FormatProperties::MediaSubtype, Id, spa::param::format::MediaSubtype::Raw),
     spa::pod::property!(
       spa::param::format::FormatProperties::VideoFormat,
       Choice,
@@ -484,19 +382,13 @@ fn pipewire_raw_video_format_param() -> Vec<u8> {
       spa::utils::Fraction { num: 120, denom: 1 }
     ),
   );
-  spa::pod::serialize::PodSerializer::serialize(
-    std::io::Cursor::new(Vec::new()),
-    &spa::pod::Value::Object(object),
-  )
-  .expect("PipeWire format pod serialization should be valid")
-  .0
-  .into_inner()
+  spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(object))
+    .expect("PipeWire format pod serialization should be valid")
+    .0
+    .into_inner()
 }
 
-fn decode_pipewire_frame(
-  data: &mut spa::buffer::Data,
-  format: spa::param::video::VideoInfoRaw,
-) -> DriverResult<image::RgbaImage> {
+fn decode_pipewire_frame(data: &mut spa::buffer::Data, format: spa::param::video::VideoInfoRaw) -> DriverResult<image::RgbaImage> {
   let size = format.size();
   let width = size.width;
   let height = size.height;
@@ -508,41 +400,22 @@ fn decode_pipewire_frame(
   let chunk = data.chunk();
   let stride = chunk.stride();
   if stride <= 0 {
-    return Err(backend(format!(
-      "unsupported PipeWire frame stride {stride}"
-    )));
+    return Err(backend(format!("unsupported PipeWire frame stride {stride}")));
   }
-  let offset = usize::try_from(chunk.offset())
-    .map_err(|error| backend(format!("invalid PipeWire frame offset: {error}")))?;
-  let stride = usize::try_from(stride)
-    .map_err(|error| backend(format!("invalid PipeWire frame stride: {error}")))?;
-  let width = usize::try_from(width)
-    .map_err(|error| backend(format!("invalid PipeWire frame width: {error}")))?;
-  let height = usize::try_from(height)
-    .map_err(|error| backend(format!("invalid PipeWire frame height: {error}")))?;
-  let row_bytes = width
-    .checked_mul(bytes_per_pixel)
-    .ok_or_else(|| backend("PipeWire frame row size overflowed"))?;
-  let image_len = width
-    .checked_mul(height)
-    .and_then(|pixels| pixels.checked_mul(4))
-    .ok_or_else(|| backend("PipeWire RGBA image size overflowed"))?;
-  let source = data
-    .data()
-    .ok_or_else(|| backend("PipeWire frame buffer is not memory-mapped"))?;
+  let offset = usize::try_from(chunk.offset()).map_err(|error| backend(format!("invalid PipeWire frame offset: {error}")))?;
+  let stride = usize::try_from(stride).map_err(|error| backend(format!("invalid PipeWire frame stride: {error}")))?;
+  let width = usize::try_from(width).map_err(|error| backend(format!("invalid PipeWire frame width: {error}")))?;
+  let height = usize::try_from(height).map_err(|error| backend(format!("invalid PipeWire frame height: {error}")))?;
+  let row_bytes = width.checked_mul(bytes_per_pixel).ok_or_else(|| backend("PipeWire frame row size overflowed"))?;
+  let image_len =
+    width.checked_mul(height).and_then(|pixels| pixels.checked_mul(4)).ok_or_else(|| backend("PipeWire RGBA image size overflowed"))?;
+  let source = data.data().ok_or_else(|| backend("PipeWire frame buffer is not memory-mapped"))?;
   let required = offset
-    .checked_add(
-      stride
-        .checked_mul(height.saturating_sub(1))
-        .ok_or_else(|| backend("PipeWire frame stride overflowed"))?,
-    )
+    .checked_add(stride.checked_mul(height.saturating_sub(1)).ok_or_else(|| backend("PipeWire frame stride overflowed"))?)
     .and_then(|start| start.checked_add(row_bytes))
     .ok_or_else(|| backend("PipeWire frame bounds overflowed"))?;
   if required > source.len() {
-    return Err(backend(format!(
-      "PipeWire frame buffer is too small: need {required} bytes, have {}",
-      source.len()
-    )));
+    return Err(backend(format!("PipeWire frame buffer is too small: need {required} bytes, have {}", source.len())));
   }
   let mut rgba = vec![0; image_len];
   for y in 0..height {
@@ -551,24 +424,15 @@ fn decode_pipewire_frame(
     for x in 0..width {
       let source_pixel = source_row + x * bytes_per_pixel;
       let dest_pixel = dest_row + x * 4;
-      write_rgba_pixel(
-        video_format,
-        &source[source_pixel..source_pixel + bytes_per_pixel],
-        &mut rgba[dest_pixel..dest_pixel + 4],
-      )?;
+      write_rgba_pixel(video_format, &source[source_pixel..source_pixel + bytes_per_pixel], &mut rgba[dest_pixel..dest_pixel + 4])?;
     }
   }
-  image::RgbaImage::from_raw(
-    u32::try_from(width).expect("width came from u32"),
-    u32::try_from(height).expect("height came from u32"),
-    rgba,
-  )
-  .ok_or_else(|| backend("failed to build RGBA image from PipeWire frame"))
+  image::RgbaImage::from_raw(u32::try_from(width).expect("width came from u32"), u32::try_from(height).expect("height came from u32"), rgba)
+    .ok_or_else(|| backend("failed to build RGBA image from PipeWire frame"))
 }
 
 fn pipewire_bytes_per_pixel(format: spa::param::video::VideoFormat) -> DriverResult<usize> {
-  if format == spa::param::video::VideoFormat::RGB || format == spa::param::video::VideoFormat::BGR
-  {
+  if format == spa::param::video::VideoFormat::RGB || format == spa::param::video::VideoFormat::BGR {
     Ok(3)
   } else if format == spa::param::video::VideoFormat::RGBx
     || format == spa::param::video::VideoFormat::RGBA
@@ -578,17 +442,11 @@ fn pipewire_bytes_per_pixel(format: spa::param::video::VideoFormat) -> DriverRes
   {
     Ok(4)
   } else {
-    Err(backend(format!(
-      "unsupported PipeWire raw video format {format:?}"
-    )))
+    Err(backend(format!("unsupported PipeWire raw video format {format:?}")))
   }
 }
 
-fn write_rgba_pixel(
-  format: spa::param::video::VideoFormat,
-  source: &[u8],
-  dest: &mut [u8],
-) -> DriverResult<()> {
+fn write_rgba_pixel(format: spa::param::video::VideoFormat, source: &[u8], dest: &mut [u8]) -> DriverResult<()> {
   if format == spa::param::video::VideoFormat::RGB {
     dest.copy_from_slice(&[source[0], source[1], source[2], 255]);
   } else if format == spa::param::video::VideoFormat::BGR {
@@ -604,9 +462,7 @@ fn write_rgba_pixel(
   } else if format == spa::param::video::VideoFormat::xRGB {
     dest.copy_from_slice(&[source[1], source[2], source[3], 255]);
   } else {
-    return Err(backend(format!(
-      "unsupported PipeWire raw video format {format:?}"
-    )));
+    return Err(backend(format!("unsupported PipeWire raw video format {format:?}")));
   }
   Ok(())
 }
@@ -626,9 +482,7 @@ mod tests {
       pipewire_serial: None,
     };
 
-    let point = stream
-      .local_point(Point::new(120.0, 80.0))
-      .expect("point maps into stream");
+    let point = stream.local_point(Point::new(120.0, 80.0)).expect("point maps into stream");
 
     assert_eq!(point, Point::new(20.0, 30.0));
   }
@@ -651,12 +505,7 @@ mod tests {
   fn bgrx_pixel_converts_to_rgba() {
     let mut dest = [0, 0, 0, 0];
 
-    write_rgba_pixel(
-      spa::param::video::VideoFormat::BGRx,
-      &[3, 2, 1, 0],
-      &mut dest,
-    )
-    .expect("BGRx converts");
+    write_rgba_pixel(spa::param::video::VideoFormat::BGRx, &[3, 2, 1, 0], &mut dest).expect("BGRx converts");
 
     assert_eq!(dest, [1, 2, 3, 255]);
   }
@@ -665,12 +514,7 @@ mod tests {
   fn xrgb_pixel_converts_to_rgba() {
     let mut dest = [0, 0, 0, 0];
 
-    write_rgba_pixel(
-      spa::param::video::VideoFormat::xRGB,
-      &[0, 1, 2, 3],
-      &mut dest,
-    )
-    .expect("xRGB converts");
+    write_rgba_pixel(spa::param::video::VideoFormat::xRGB, &[0, 1, 2, 3], &mut dest).expect("xRGB converts");
 
     assert_eq!(dest, [1, 2, 3, 255]);
   }

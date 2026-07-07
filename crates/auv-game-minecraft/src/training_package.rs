@@ -6,9 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::scene_packet::{
-  ScenePacketCameraRecord, ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketManifest,
-};
+use crate::scene_packet::{ScenePacketCameraRecord, ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketManifest};
 use crate::types::{MinecraftSpatialFrame, Viewport};
 
 pub type TrainingPackageResult<T> = Result<T, String>;
@@ -187,39 +185,23 @@ struct CompatibilityEvaluation {
   used_legacy_view_translation_fallback: bool,
 }
 
-pub fn export_3dgs_training_package(
-  inputs: TrainingPackageInputs,
-) -> TrainingPackageResult<TrainingPackageOutput> {
-  let scene_packet_manifest = read_json_file::<ScenePacketManifest>(
-    &inputs.scene_packet_manifest_path,
-    "MC-7 D2 scene packet manifest",
-  )?;
-  let scene_packet_dir = inputs.scene_packet_manifest_path.parent().ok_or_else(|| {
-    format!(
-      "MC-7 D2 scene packet manifest {} has no parent directory",
-      inputs.scene_packet_manifest_path.display()
-    )
-  })?;
+pub fn export_3dgs_training_package(inputs: TrainingPackageInputs) -> TrainingPackageResult<TrainingPackageOutput> {
+  let scene_packet_manifest = read_json_file::<ScenePacketManifest>(&inputs.scene_packet_manifest_path, "MC-7 D2 scene packet manifest")?;
+  let scene_packet_dir = inputs
+    .scene_packet_manifest_path
+    .parent()
+    .ok_or_else(|| format!("MC-7 D2 scene packet manifest {} has no parent directory", inputs.scene_packet_manifest_path.display()))?;
 
   let source_cameras_path = scene_packet_dir.join("cameras.json");
   let source_known_limits_path = scene_packet_dir.join("known_limits.json");
-  let cameras = read_json_file::<Vec<ScenePacketCameraRecord>>(
-    &source_cameras_path,
-    "MC-7 D2 scene packet cameras JSON",
-  )?;
-  let source_known_limits = read_json_file::<Vec<String>>(
-    &source_known_limits_path,
-    "MC-7 D2 scene packet known limits JSON",
-  )?;
+  let cameras = read_json_file::<Vec<ScenePacketCameraRecord>>(&source_cameras_path, "MC-7 D2 scene packet cameras JSON")?;
+  let source_known_limits = read_json_file::<Vec<String>>(&source_known_limits_path, "MC-7 D2 scene packet known limits JSON")?;
   let camera_records = index_camera_records(&scene_packet_manifest, cameras)?;
 
   let mut warnings = BTreeSet::new();
   let mut known_limits = BTreeSet::new();
   known_limits.extend(source_known_limits);
-  known_limits.insert(
-    "MC-7 training package is training-prep only; no trainer/backend or trained splat is included"
-      .to_string(),
-  );
+  known_limits.insert("MC-7 training package is training-prep only; no trainer/backend or trained splat is included".to_string());
 
   let mut frame_records = Vec::new();
   let mut frame_decisions = Vec::new();
@@ -240,45 +222,31 @@ pub fn export_3dgs_training_package(
     }
 
     let source_frame_json_path = scene_packet_dir.join(&frame_record.frame_json_path);
-    let mut frame_payload = read_json_file::<ScenePacketFramePayload>(
-      &source_frame_json_path,
-      "MC-7 D2 scene packet frame JSON",
-    )?;
+    let mut frame_payload = read_json_file::<ScenePacketFramePayload>(&source_frame_json_path, "MC-7 D2 scene packet frame JSON")?;
     validate_frame_payload(frame_record, &frame_payload, &source_frame_json_path)?;
 
     let frame_json_relative_path = format!("frames/frame_{:06}.json", frame_record.frame_index);
-    let canonical_image_path =
-      if let Some(source_screenshot_relative_path) = frame_record.screenshot_path.as_deref() {
-        let extension = extension_for(source_screenshot_relative_path);
-        let relative_path = format!("images/frame_{:06}.{extension}", frame_record.frame_index);
-        copy_file(
-          &scene_packet_dir.join(source_screenshot_relative_path),
-          &inputs.output_dir.join(&relative_path),
-          "MC-7 D3 canonical screenshot",
-        )?;
-        image_count += 1;
-        Some(relative_path)
-      } else {
-        None
-      };
+    let canonical_image_path = if let Some(source_screenshot_relative_path) = frame_record.screenshot_path.as_deref() {
+      let extension = extension_for(source_screenshot_relative_path);
+      let relative_path = format!("images/frame_{:06}.{extension}", frame_record.frame_index);
+      copy_file(
+        &scene_packet_dir.join(source_screenshot_relative_path),
+        &inputs.output_dir.join(&relative_path),
+        "MC-7 D3 canonical screenshot",
+      )?;
+      image_count += 1;
+      Some(relative_path)
+    } else {
+      None
+    };
 
     frame_payload.screenshot_path = canonical_image_path.clone();
-    write_json(
-      &inputs.output_dir.join(&frame_json_relative_path),
-      &frame_payload,
-      "MC-7 D3 canonical frame JSON",
-    )?;
+    write_json(&inputs.output_dir.join(&frame_json_relative_path), &frame_payload, "MC-7 D3 canonical frame JSON")?;
 
-    let primary_file_resource_pack_id =
-      primary_file_resource_pack_id(&frame_record.resource_pack_ids);
+    let primary_file_resource_pack_id = primary_file_resource_pack_id(&frame_record.resource_pack_ids);
     let camera_record = camera_records
       .get(&frame_record.frame_index)
-      .ok_or_else(|| {
-        format!(
-          "missing camera record for frame {}",
-          frame_record.frame_index
-        )
-      })?;
+      .ok_or_else(|| format!("missing camera record for frame {}", frame_record.frame_index))?;
     let evaluation = evaluate_compatibility(
       frame_record,
       &frame_payload.spatial_frame,
@@ -292,23 +260,13 @@ pub fn export_3dgs_training_package(
       legacy_fallback_frame_indices.push(frame_record.frame_index);
     }
     if evaluation.status == TrainingCompatibilityStatus::Ready {
-      let source_canonical_image =
-        inputs
-          .output_dir
-          .join(canonical_image_path.as_deref().ok_or_else(|| {
-            format!(
-              "missing canonical image for frame {}",
-              frame_record.frame_index
-            )
-          })?);
+      let source_canonical_image = inputs
+        .output_dir
+        .join(canonical_image_path.as_deref().ok_or_else(|| format!("missing canonical image for frame {}", frame_record.frame_index))?);
       let compatibility_image_relative_path = format!(
         "compat/nerfstudio/images/frame_{:06}.{}",
         frame_record.frame_index,
-        extension_for(
-          canonical_image_path
-            .as_deref()
-            .expect("ready compatibility frame must have canonical image"),
-        )
+        extension_for(canonical_image_path.as_deref().expect("ready compatibility frame must have canonical image"),)
       );
       copy_file(
         &source_canonical_image,
@@ -317,16 +275,8 @@ pub fn export_3dgs_training_package(
       )?;
       exported_frame_indices.push(frame_record.frame_index);
       nerfstudio_frames.push(NerfstudioFrame {
-        file_path: format!(
-          "images/frame_{:06}.{}",
-          frame_record.frame_index,
-          extension_for(&compatibility_image_relative_path)
-        ),
-        transform_matrix: matrix_rows(
-          &evaluation
-            .camera_to_world
-            .expect("ready compatibility frame must include camera transform"),
-        ),
+        file_path: format!("images/frame_{:06}.{}", frame_record.frame_index, extension_for(&compatibility_image_relative_path)),
+        transform_matrix: matrix_rows(&evaluation.camera_to_world.expect("ready compatibility frame must include camera transform")),
       });
     }
 
@@ -361,11 +311,7 @@ pub fn export_3dgs_training_package(
   if !legacy_fallback_frame_indices.is_empty() {
     known_limits.insert(format!(
       "MC-7 D3 Nerfstudio compatibility reused the legacy rotation-only view_matrix fallback on frame indices {}",
-      legacy_fallback_frame_indices
-        .iter()
-        .map(|index| index.to_string())
-        .collect::<Vec<_>>()
-        .join(",")
+      legacy_fallback_frame_indices.iter().map(|index| index.to_string()).collect::<Vec<_>>().join(",")
     ));
   }
   let known_limits = known_limits.into_iter().collect::<Vec<_>>();
@@ -378,19 +324,13 @@ pub fn export_3dgs_training_package(
     compatibility_skipped_frames: frame_records.len().saturating_sub(nerfstudio_frames.len()),
   };
 
-  let compatibility_export_report_relative_path =
-    "compat/nerfstudio/export_report.json".to_string();
-  let compatibility_transforms_relative_path = (compatibility_status
-    != TrainingCompatibilityStatus::Blocked)
-    .then_some("compat/nerfstudio/transforms.json".to_string());
+  let compatibility_export_report_relative_path = "compat/nerfstudio/export_report.json".to_string();
+  let compatibility_transforms_relative_path =
+    (compatibility_status != TrainingCompatibilityStatus::Blocked).then_some("compat/nerfstudio/transforms.json".to_string());
   let compatibility_known_limits = if legacy_fallback_frame_indices.is_empty() {
     Vec::new()
   } else {
-    known_limits
-      .iter()
-      .filter(|value| value.contains("legacy rotation-only view_matrix fallback"))
-      .cloned()
-      .collect::<Vec<_>>()
+    known_limits.iter().filter(|value| value.contains("legacy rotation-only view_matrix fallback")).cloned().collect::<Vec<_>>()
   };
   let compatibility_report = TrainingCompatibilityViewReport {
     view_name: "nerfstudio".to_string(),
@@ -412,20 +352,13 @@ pub fn export_3dgs_training_package(
   let cameras_path = inputs.output_dir.join("cameras.json");
   let known_limits_path = inputs.output_dir.join("known_limits.json");
   let inspect_report_path = inputs.output_dir.join("inspect_report.json");
-  let compatibility_export_report_path = inputs
-    .output_dir
-    .join(&compatibility_export_report_relative_path);
-  let compatibility_transforms_path = compatibility_transforms_relative_path
-    .as_ref()
-    .map(|path| inputs.output_dir.join(path));
+  let compatibility_export_report_path = inputs.output_dir.join(&compatibility_export_report_relative_path);
+  let compatibility_transforms_path = compatibility_transforms_relative_path.as_ref().map(|path| inputs.output_dir.join(path));
 
   let manifest = TrainingPackageManifest {
     schema_version: TRAINING_PACKAGE_SCHEMA_VERSION,
     generated_at_millis,
-    source_scene_packet_manifest_path: inputs
-      .scene_packet_manifest_path
-      .to_string_lossy()
-      .into_owned(),
+    source_scene_packet_manifest_path: inputs.scene_packet_manifest_path.to_string_lossy().into_owned(),
     source_bundle_manifest_paths: scene_packet_manifest.source_bundle_manifest_paths.clone(),
     source_run_ids: scene_packet_manifest.source_run_ids.clone(),
     counts: counts.clone(),
@@ -433,33 +366,11 @@ pub fn export_3dgs_training_package(
     compatibility_views: vec![compatibility_report.clone()],
     known_limits: known_limits.clone(),
   };
-  write_json(
-    &manifest_path,
-    &manifest,
-    "MC-7 D3 training package manifest JSON",
-  )?;
-  write_json(
-    &cameras_path,
-    &camera_records
-      .values()
-      .cloned()
-      .collect::<Vec<ScenePacketCameraRecord>>(),
-    "MC-7 D3 cameras JSON",
-  )?;
-  write_json(
-    &known_limits_path,
-    &known_limits,
-    "MC-7 D3 known limits JSON",
-  )?;
-  write_json(
-    &compatibility_export_report_path,
-    &compatibility_report,
-    "MC-7 D3 Nerfstudio compatibility export report JSON",
-  )?;
-  if let (Some(transforms_path), Some(intrinsics)) = (
-    compatibility_transforms_path.as_ref(),
-    compatibility_baseline,
-  ) {
+  write_json(&manifest_path, &manifest, "MC-7 D3 training package manifest JSON")?;
+  write_json(&cameras_path, &camera_records.values().cloned().collect::<Vec<ScenePacketCameraRecord>>(), "MC-7 D3 cameras JSON")?;
+  write_json(&known_limits_path, &known_limits, "MC-7 D3 known limits JSON")?;
+  write_json(&compatibility_export_report_path, &compatibility_report, "MC-7 D3 Nerfstudio compatibility export report JSON")?;
+  if let (Some(transforms_path), Some(intrinsics)) = (compatibility_transforms_path.as_ref(), compatibility_baseline) {
     write_json(
       transforms_path,
       &NerfstudioTransforms {
@@ -484,10 +395,7 @@ pub fn export_3dgs_training_package(
     schema_version: TRAINING_PACKAGE_INSPECT_REPORT_SCHEMA_VERSION,
     generated_at_millis,
     training_package_manifest_path: manifest_path.to_string_lossy().into_owned(),
-    scene_packet_manifest_path: inputs
-      .scene_packet_manifest_path
-      .to_string_lossy()
-      .into_owned(),
+    scene_packet_manifest_path: inputs.scene_packet_manifest_path.to_string_lossy().into_owned(),
     source_bundle_manifest_paths: scene_packet_manifest.source_bundle_manifest_paths,
     source_run_ids: scene_packet_manifest.source_run_ids,
     counts,
@@ -495,11 +403,7 @@ pub fn export_3dgs_training_package(
     warnings,
     known_limits,
   };
-  write_json(
-    &inspect_report_path,
-    &inspect_report,
-    "MC-7 D3 inspect report JSON",
-  )?;
+  write_json(&inspect_report_path, &inspect_report, "MC-7 D3 inspect report JSON")?;
 
   Ok(TrainingPackageOutput {
     output_dir: inputs.output_dir,
@@ -522,10 +426,7 @@ fn index_camera_records(
   for record in cameras {
     let frame_index = record.frame_index;
     if index.insert(frame_index, record).is_some() {
-      return Err(format!(
-        "duplicate camera record for frame_index {} in scene packet cameras JSON",
-        frame_index
-      ));
+      return Err(format!("duplicate camera record for frame_index {} in scene packet cameras JSON", frame_index));
     }
   }
   if index.len() != manifest.frames.len() {
@@ -537,10 +438,7 @@ fn index_camera_records(
   }
   for frame in &manifest.frames {
     if !index.contains_key(&frame.frame_index) {
-      return Err(format!(
-        "scene packet cameras JSON missing frame_index {}",
-        frame.frame_index
-      ));
+      return Err(format!("scene packet cameras JSON missing frame_index {}", frame.frame_index));
     }
   }
   Ok(index)
@@ -571,11 +469,8 @@ fn validate_frame_payload(
 }
 
 fn primary_file_resource_pack_id(resource_pack_ids: &[String]) -> Option<String> {
-  let file_resource_packs = resource_pack_ids
-    .iter()
-    .filter(|resource_pack_id| resource_pack_id.starts_with("file/"))
-    .cloned()
-    .collect::<Vec<_>>();
+  let file_resource_packs =
+    resource_pack_ids.iter().filter(|resource_pack_id| resource_pack_id.starts_with("file/")).cloned().collect::<Vec<_>>();
   if file_resource_packs.len() == 1 {
     Some(file_resource_packs[0].clone())
   } else {
@@ -592,10 +487,7 @@ fn evaluate_compatibility(
   warnings: &mut BTreeSet<String>,
 ) -> TrainingPackageResult<CompatibilityEvaluation> {
   if camera_record.frame_index != frame_record.frame_index {
-    return Err(format!(
-      "camera record frame_index {} did not match frame record {}",
-      camera_record.frame_index, frame_record.frame_index
-    ));
+    return Err(format!("camera record frame_index {} did not match frame record {}", camera_record.frame_index, frame_record.frame_index));
   }
   if camera_record.spatial_frame_id != frame_record.spatial_frame_id {
     return Err(format!(
@@ -611,12 +503,8 @@ fn evaluate_compatibility(
   if spatial_frame.screen_state.as_deref() != Some("in_game") {
     skip_reasons.push(TrainingCompatibilitySkipReason::NonIngameScreenState);
   }
-  let file_resource_packs = spatial_frame
-    .resource_pack_ids
-    .iter()
-    .filter(|resource_pack_id| resource_pack_id.starts_with("file/"))
-    .cloned()
-    .collect::<Vec<_>>();
+  let file_resource_packs =
+    spatial_frame.resource_pack_ids.iter().filter(|resource_pack_id| resource_pack_id.starts_with("file/")).cloned().collect::<Vec<_>>();
   match file_resource_packs.len() {
     0 => skip_reasons.push(TrainingCompatibilitySkipReason::NoFileResourcePack),
     1 => {}
@@ -653,8 +541,7 @@ fn evaluate_compatibility(
       }
     }
     if skip_reasons.is_empty() {
-      intrinsics =
-        intrinsics_from_projection(spatial_frame.viewport, &spatial_frame.projection_matrix);
+      intrinsics = intrinsics_from_projection(spatial_frame.viewport, &spatial_frame.projection_matrix);
       if intrinsics.is_none() {
         skip_reasons.push(TrainingCompatibilitySkipReason::InvalidIntrinsics);
       }
@@ -684,11 +571,7 @@ fn evaluate_compatibility(
   };
   if !skip_reasons.is_empty() {
     for reason in &skip_reasons {
-      warnings.insert(format!(
-        "frame {} compatibility skipped because of {}",
-        frame_record.frame_index,
-        skip_reason_label(*reason)
-      ));
+      warnings.insert(format!("frame {} compatibility skipped because of {}", frame_record.frame_index, skip_reason_label(*reason)));
     }
   }
   Ok(CompatibilityEvaluation {
@@ -700,9 +583,7 @@ fn evaluate_compatibility(
   })
 }
 
-fn effective_world_to_camera_matrix(
-  spatial_frame: &MinecraftSpatialFrame,
-) -> Option<([f64; 16], bool)> {
+fn effective_world_to_camera_matrix(spatial_frame: &MinecraftSpatialFrame) -> Option<([f64; 16], bool)> {
   let mut matrix = spatial_frame.view_matrix;
   let used_legacy_view_translation_fallback = uses_rotation_only_view_matrix(spatial_frame);
   if used_legacy_view_translation_fallback {
@@ -726,10 +607,7 @@ fn uses_rotation_only_view_matrix(spatial_frame: &MinecraftSpatialFrame) -> bool
       || spatial_frame.player_pose.eye_position.z.abs() > EPSILON)
 }
 
-fn intrinsics_from_projection(
-  viewport: Viewport,
-  projection_matrix: &[f64; 16],
-) -> Option<CompatibilityIntrinsics> {
+fn intrinsics_from_projection(viewport: Viewport, projection_matrix: &[f64; 16]) -> Option<CompatibilityIntrinsics> {
   let width = viewport.width;
   let height = viewport.height;
   if width == 0 || height == 0 {
@@ -741,17 +619,14 @@ fn intrinsics_from_projection(
   let fl_y = projection_matrix[5] * height_f64 / 2.0;
   let cx = width_f64 / 2.0;
   let cy = height_f64 / 2.0;
-  [fl_x, fl_y, cx, cy]
-    .iter()
-    .all(|value| value.is_finite() && *value > 0.0)
-    .then_some(CompatibilityIntrinsics {
-      width,
-      height,
-      fl_x,
-      fl_y,
-      cx,
-      cy,
-    })
+  [fl_x, fl_y, cx, cy].iter().all(|value| value.is_finite() && *value > 0.0).then_some(CompatibilityIntrinsics {
+    width,
+    height,
+    fl_x,
+    fl_y,
+    cx,
+    cy,
+  })
 }
 
 fn intrinsics_match(left: CompatibilityIntrinsics, right: CompatibilityIntrinsics) -> bool {
@@ -855,19 +730,14 @@ fn matrix_rows(matrix: &[f64; 16]) -> [[f64; 4]; 4] {
   ]
 }
 
-fn summarize_skip_reason_counts(
-  frame_decisions: &[TrainingCompatibilityFrameDecision],
-) -> Vec<TrainingCompatibilitySkipReasonCount> {
+fn summarize_skip_reason_counts(frame_decisions: &[TrainingCompatibilityFrameDecision]) -> Vec<TrainingCompatibilitySkipReasonCount> {
   let mut counts = BTreeMap::<TrainingCompatibilitySkipReason, usize>::new();
   for decision in frame_decisions {
     for reason in &decision.skip_reasons {
       *counts.entry(*reason).or_default() += 1;
     }
   }
-  counts
-    .into_iter()
-    .map(|(reason, count)| TrainingCompatibilitySkipReasonCount { reason, count })
-    .collect()
+  counts.into_iter().map(|(reason, count)| TrainingCompatibilitySkipReasonCount { reason, count }).collect()
 }
 
 fn all_finite(values: &[f64; 16]) -> bool {
@@ -877,10 +747,7 @@ fn all_finite(values: &[f64; 16]) -> bool {
 fn is_affine_matrix(matrix: &[f64; 16]) -> bool {
   const EPSILON: f64 = 1e-6;
 
-  matrix[3].abs() <= EPSILON
-    && matrix[7].abs() <= EPSILON
-    && matrix[11].abs() <= EPSILON
-    && (matrix[15] - 1.0).abs() <= EPSILON
+  matrix[3].abs() <= EPSILON && matrix[7].abs() <= EPSILON && matrix[11].abs() <= EPSILON && (matrix[15] - 1.0).abs() <= EPSILON
 }
 
 fn skip_reason_label(reason: TrainingCompatibilitySkipReason) -> &'static str {
@@ -891,9 +758,7 @@ fn skip_reason_label(reason: TrainingCompatibilitySkipReason) -> &'static str {
     TrainingCompatibilitySkipReason::MultipleFileResourcePacks => "multiple_file_resource_packs",
     TrainingCompatibilitySkipReason::InvalidViewMatrix => "invalid_view_matrix",
     TrainingCompatibilitySkipReason::InvalidProjectionMatrix => "invalid_projection_matrix",
-    TrainingCompatibilitySkipReason::NoninvertibleCameraTransform => {
-      "noninvertible_camera_transform"
-    }
+    TrainingCompatibilitySkipReason::NoninvertibleCameraTransform => "noninvertible_camera_transform",
     TrainingCompatibilitySkipReason::InvalidIntrinsics => "invalid_intrinsics",
   }
 }
@@ -909,31 +774,16 @@ fn extension_for(path: &str) -> String {
 
 fn copy_file(source: &Path, destination: &Path, label: &str) -> TrainingPackageResult<()> {
   if let Some(parent) = destination.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create {label} directory {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent).map_err(|error| format!("failed to create {label} directory {}: {error}", parent.display()))?;
   }
-  fs::copy(source, destination).map_err(|error| {
-    format!(
-      "failed to copy {label} from {} to {}: {error}",
-      source.display(),
-      destination.display()
-    )
-  })?;
+  fs::copy(source, destination)
+    .map_err(|error| format!("failed to copy {label} from {} to {}: {error}", source.display(), destination.display()))?;
   Ok(())
 }
 
 fn write_json(path: &Path, value: &impl Serialize, label: &str) -> TrainingPackageResult<()> {
   if let Some(parent) = path.parent() {
-    fs::create_dir_all(parent).map_err(|error| {
-      format!(
-        "failed to create {label} directory {}: {error}",
-        parent.display()
-      )
-    })?;
+    fs::create_dir_all(parent).map_err(|error| format!("failed to create {label} directory {}: {error}", parent.display()))?;
   }
   let json = serde_json::to_string_pretty(value)
     .map(|mut json| {
@@ -941,15 +791,12 @@ fn write_json(path: &Path, value: &impl Serialize, label: &str) -> TrainingPacka
       json
     })
     .map_err(|error| format!("failed to serialize {label}: {error}"))?;
-  fs::write(path, json.as_bytes())
-    .map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
+  fs::write(path, json.as_bytes()).map_err(|error| format!("failed to write {label} {}: {error}", path.display()))
 }
 
 fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> TrainingPackageResult<T> {
-  let file = fs::File::open(path)
-    .map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
-  serde_json::from_reader(BufReader::new(file))
-    .map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
+  let file = fs::File::open(path).map_err(|error| format!("failed to open {label} {}: {error}", path.display()))?;
+  serde_json::from_reader(BufReader::new(file)).map_err(|error| format!("failed to parse {label} {}: {error}", path.display()))
 }
 
 #[cfg(test)]
@@ -1007,28 +854,15 @@ mod tests {
     assert_eq!(output.manifest.counts.frames, 6);
     assert_eq!(output.manifest.counts.images, 6);
     assert_eq!(output.manifest.counts.compatibility_exported_frames, 6);
-    assert_eq!(
-      output.inspect_report.compatibility_views[0].status,
-      TrainingCompatibilityStatus::Ready
-    );
+    assert_eq!(output.inspect_report.compatibility_views[0].status, TrainingCompatibilityStatus::Ready);
     assert!(output.output_dir.join("run.json").is_file());
     assert!(output.output_dir.join("frames/frame_000001.json").is_file());
     assert!(output.output_dir.join("images/frame_000001.png").is_file());
     assert!(output.output_dir.join("cameras.json").is_file());
     assert!(output.output_dir.join("known_limits.json").is_file());
     assert!(output.output_dir.join("inspect_report.json").is_file());
-    assert!(
-      output
-        .output_dir
-        .join("compat/nerfstudio/transforms.json")
-        .is_file()
-    );
-    assert!(
-      output
-        .output_dir
-        .join("compat/nerfstudio/export_report.json")
-        .is_file()
-    );
+    assert!(output.output_dir.join("compat/nerfstudio/transforms.json").is_file());
+    assert!(output.output_dir.join("compat/nerfstudio/export_report.json").is_file());
   }
 
   #[test]
@@ -1072,18 +906,8 @@ mod tests {
     assert_eq!(report.exported_frame_count, 1);
     assert_eq!(report.skipped_frame_count, 4);
     assert!(output.output_dir.join("frames/frame_000002.json").is_file());
-    assert!(
-      output
-        .output_dir
-        .join("compat/nerfstudio/export_report.json")
-        .is_file()
-    );
-    assert!(
-      output
-        .output_dir
-        .join("compat/nerfstudio/transforms.json")
-        .is_file()
-    );
+    assert!(output.output_dir.join("compat/nerfstudio/export_report.json").is_file());
+    assert!(output.output_dir.join("compat/nerfstudio/transforms.json").is_file());
     assert!(
       report
         .frame_decisions
@@ -1129,34 +953,15 @@ mod tests {
 
     let report = &output.inspect_report.compatibility_views[0];
     assert_eq!(report.status, TrainingCompatibilityStatus::Blocked);
-    assert!(
-      !output
-        .output_dir
-        .join("compat/nerfstudio/transforms.json")
-        .exists()
-    );
-    assert!(
-      output
-        .output_dir
-        .join("compat/nerfstudio/export_report.json")
-        .is_file()
-    );
+    assert!(!output.output_dir.join("compat/nerfstudio/transforms.json").exists());
+    assert!(output.output_dir.join("compat/nerfstudio/export_report.json").is_file());
   }
 
   #[test]
   fn hard_fails_when_cameras_json_is_missing() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let scene_packet_manifest_path = write_scene_packet_fixture(
-      &temp,
-      vec![synthetic_frame(1, "run_1", "file/auv-mc6-rich")],
-    );
-    fs::remove_file(
-      scene_packet_manifest_path
-        .parent()
-        .unwrap()
-        .join("cameras.json"),
-    )
-    .expect("remove cameras");
+    let scene_packet_manifest_path = write_scene_packet_fixture(&temp, vec![synthetic_frame(1, "run_1", "file/auv-mc6-rich")]);
+    fs::remove_file(scene_packet_manifest_path.parent().unwrap().join("cameras.json")).expect("remove cameras");
 
     let error = export_3dgs_training_package(TrainingPackageInputs {
       scene_packet_manifest_path,
@@ -1170,17 +975,8 @@ mod tests {
   #[test]
   fn hard_fails_when_frame_json_is_missing() {
     let temp = tempfile::tempdir().expect("temp dir");
-    let scene_packet_manifest_path = write_scene_packet_fixture(
-      &temp,
-      vec![synthetic_frame(1, "run_1", "file/auv-mc6-rich")],
-    );
-    fs::remove_file(
-      scene_packet_manifest_path
-        .parent()
-        .unwrap()
-        .join("frames/frame_000001.json"),
-    )
-    .expect("remove frame");
+    let scene_packet_manifest_path = write_scene_packet_fixture(&temp, vec![synthetic_frame(1, "run_1", "file/auv-mc6-rich")]);
+    fs::remove_file(scene_packet_manifest_path.parent().unwrap().join("frames/frame_000001.json")).expect("remove frame");
 
     let error = export_3dgs_training_package(TrainingPackageInputs {
       scene_packet_manifest_path,
@@ -1218,12 +1014,10 @@ mod tests {
       &temp,
       vec![SyntheticFrameSpec {
         view_matrix: [
-          0.719950, 0.115742, -0.684307, 0.0, -0.0, 0.985996, 0.166769, 0.0, 0.694026, -0.120065,
-          0.709867, 0.0, 0.0, 0.0, 0.0, 1.0,
+          0.719950, 0.115742, -0.684307, 0.0, -0.0, 0.985996, 0.166769, 0.0, 0.694026, -0.120065, 0.709867, 0.0, 0.0, 0.0, 0.0, 1.0,
         ],
         projection_matrix: [
-          0.802706, 0.0, -0.0, -0.0, 0.0, 1.428148, -0.0, -0.0, 0.0, 0.0, -1.000130, -1.0, -0.0,
-          -0.0, -0.100007, -0.0,
+          0.802706, 0.0, -0.0, -0.0, 0.0, 1.428148, -0.0, -0.0, 0.0, 0.0, -1.000130, -1.0, -0.0, -0.0, -0.100007, -0.0,
         ],
         viewport: Viewport::new(1708, 960),
         player_eye: Vec3::new(511.028439, 73.62, 728.652906),
@@ -1239,24 +1033,11 @@ mod tests {
 
     let report = &output.inspect_report.compatibility_views[0];
     assert_eq!(report.status, TrainingCompatibilityStatus::Ready);
-    assert_eq!(
-      report.used_legacy_view_translation_fallback_frame_indices,
-      vec![1]
-    );
-    assert!(
-      output
-        .inspect_report
-        .known_limits
-        .iter()
-        .any(|value| value.contains("legacy rotation-only view_matrix fallback"))
-    );
+    assert_eq!(report.used_legacy_view_translation_fallback_frame_indices, vec![1]);
+    assert!(output.inspect_report.known_limits.iter().any(|value| value.contains("legacy rotation-only view_matrix fallback")));
   }
 
-  fn synthetic_frame(
-    frame_index: usize,
-    source_run_id: &str,
-    file_pack: &str,
-  ) -> SyntheticFrameSpec {
+  fn synthetic_frame(frame_index: usize, source_run_id: &str, file_pack: &str) -> SyntheticFrameSpec {
     SyntheticFrameSpec {
       frame_index,
       source_run_id: source_run_id.to_string(),
@@ -1290,14 +1071,10 @@ mod tests {
 
     for spec in specs {
       let screenshot_relative_path = match spec.screenshot {
-        ScreenshotDisposition::Present | ScreenshotDisposition::MissingFile => {
-          Some(format!("frames/frame_{:06}.png", spec.frame_index))
-        }
+        ScreenshotDisposition::Present | ScreenshotDisposition::MissingFile => Some(format!("frames/frame_{:06}.png", spec.frame_index)),
         ScreenshotDisposition::MissingPath => None,
       };
-      let screenshot_artifact_id = screenshot_relative_path
-        .as_ref()
-        .map(|_| format!("artifact_{}", spec.frame_index));
+      let screenshot_artifact_id = screenshot_relative_path.as_ref().map(|_| format!("artifact_{}", spec.frame_index));
 
       let spatial_frame = MinecraftSpatialFrame {
         spatial_frame_id: spec.spatial_frame_id.clone(),
@@ -1320,9 +1097,7 @@ mod tests {
         nearby_blocks: Vec::new(),
         nearby_entities: Vec::new(),
         inventory_summary: Vec::new(),
-        screenshot_artifact_ref: screenshot_artifact_id
-          .as_ref()
-          .map(|artifact_id| format!("artifact://{artifact_id}")),
+        screenshot_artifact_ref: screenshot_artifact_id.as_ref().map(|artifact_id| format!("artifact://{artifact_id}")),
         mc_capture_skew_ms: Some(0),
         screen_state: spec.screen_state.clone(),
         resource_pack_ids: spec.resource_pack_ids.clone(),
@@ -1338,22 +1113,11 @@ mod tests {
         screenshot_path: screenshot_relative_path.clone(),
         spatial_frame,
       };
-      write_json(
-        &scene_packet_dir.join(&frame_json_relative_path),
-        &frame_payload,
-        "MC-7 D2 test frame JSON",
-      )
-      .expect("frame payload write");
+      write_json(&scene_packet_dir.join(&frame_json_relative_path), &frame_payload, "MC-7 D2 test frame JSON").expect("frame payload write");
 
       match spec.screenshot {
         ScreenshotDisposition::Present => {
-          write_png(
-            &scene_packet_dir.join(
-              screenshot_relative_path
-                .as_ref()
-                .expect("present screenshot path should exist"),
-            ),
-          );
+          write_png(&scene_packet_dir.join(screenshot_relative_path.as_ref().expect("present screenshot path should exist")));
           screenshot_count += 1;
         }
         ScreenshotDisposition::MissingPath => {
@@ -1398,42 +1162,20 @@ mod tests {
     let manifest = ScenePacketManifest {
       schema_version: 1,
       generated_at_millis: 1,
-      source_bundle_manifest_paths: manifest_frames
-        .iter()
-        .map(|frame| frame.source_bundle_manifest_path.clone())
-        .collect(),
-      source_run_ids: manifest_frames
-        .iter()
-        .map(|frame| frame.source_run_id.clone())
-        .collect(),
+      source_bundle_manifest_paths: manifest_frames.iter().map(|frame| frame.source_bundle_manifest_path.clone()).collect(),
+      source_run_ids: manifest_frames.iter().map(|frame| frame.source_run_id.clone()).collect(),
       counts: ScenePacketCounts {
         frames: manifest_frames.len(),
         screenshots: screenshot_count,
         missing_screenshots: missing_screenshot_count,
       },
       frames: manifest_frames,
-      known_limits: vec![
-        "MC-7 scene packet is 3DGS input material only; no trained splat is present".to_string(),
-      ],
+      known_limits: vec!["MC-7 scene packet is 3DGS input material only; no trained splat is present".to_string()],
     };
-    write_json(
-      &scene_packet_dir.join("run.json"),
-      &manifest,
-      "MC-7 D2 test manifest JSON",
-    )
-    .expect("manifest write");
-    write_json(
-      &scene_packet_dir.join("cameras.json"),
-      &cameras,
-      "MC-7 D2 test cameras JSON",
-    )
-    .expect("cameras write");
-    write_json(
-      &scene_packet_dir.join("known_limits.json"),
-      &manifest.known_limits,
-      "MC-7 D2 test known limits JSON",
-    )
-    .expect("known limits write");
+    write_json(&scene_packet_dir.join("run.json"), &manifest, "MC-7 D2 test manifest JSON").expect("manifest write");
+    write_json(&scene_packet_dir.join("cameras.json"), &cameras, "MC-7 D2 test cameras JSON").expect("cameras write");
+    write_json(&scene_packet_dir.join("known_limits.json"), &manifest.known_limits, "MC-7 D2 test known limits JSON")
+      .expect("known limits write");
 
     scene_packet_dir.join("run.json")
   }

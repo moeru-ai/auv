@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::candidate_promotion::{
-  ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentProvenance,
-  ConsentScope, PromotionContext, PromotionProjection, promote_recognition_to_candidates,
+  ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentProvenance, ConsentScope, PromotionContext,
+  PromotionProjection, promote_recognition_to_candidates,
 };
 use crate::contract::{ArtifactRef, FreshnessBasis, RecognitionResult};
 use crate::model::{AuvResult, now_millis};
@@ -79,22 +79,13 @@ impl std::fmt::Display for CandidatePromotionArtifactError {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
       Self::NoRecognitionFrames => {
-        write!(
-          f,
-          "candidate promotion recording requires at least one RecognitionResult"
-        )
+        write!(f, "candidate promotion recording requires at least one RecognitionResult")
       }
       Self::MissingCaptureArtifactForFreshness => {
-        write!(
-          f,
-          "candidate promotion freshness requires recognition.scope.capture_artifact"
-        )
+        write!(f, "candidate promotion freshness requires recognition.scope.capture_artifact")
       }
       Self::MissingCaptureArtifactForConsent => {
-        write!(
-          f,
-          "candidate promotion consent requires recognition.scope.capture_artifact"
-        )
+        write!(f, "candidate promotion consent requires recognition.scope.capture_artifact")
       }
     }
   }
@@ -125,10 +116,7 @@ pub fn freshness_from_capture_backed_recognition(
     source_operation_id: Some(source_operation_id.into()),
     notes: vec![
       note.into(),
-      format!(
-        "freshness derived from capture-backed recognition {}",
-        recognition.recognition_id
-      ),
+      format!("freshness derived from capture-backed recognition {}", recognition.recognition_id),
     ],
   })
 }
@@ -163,8 +151,7 @@ pub fn build_candidate_promotion_artifact(
   observations: &[RecognitionResult],
   request: &CandidatePromotionArtifactRequest,
 ) -> Result<CandidatePromotionArtifact, CandidatePromotionArtifactError> {
-  let Some((promotion_input_frame_index, recognition)) = observations.iter().enumerate().last()
-  else {
+  let Some((promotion_input_frame_index, recognition)) = observations.iter().enumerate().last() else {
     return Err(CandidatePromotionArtifactError::NoRecognitionFrames);
   };
 
@@ -182,10 +169,7 @@ pub fn build_candidate_promotion_artifact(
     artifact_version: CANDIDATE_PROMOTION_ARTIFACT_VERSION.to_string(),
     promotion_id: request.promotion_id.clone(),
     source_recognition_artifact: request.source_recognition_artifact.clone(),
-    observed_recognition_ids: observations
-      .iter()
-      .map(|recognition| recognition.recognition_id.clone())
-      .collect(),
+    observed_recognition_ids: observations.iter().map(|recognition| recognition.recognition_id.clone()).collect(),
     promotion_input_recognition_id: recognition.recognition_id.clone(),
     promotion_input_frame_index,
     stability_policy: request.stability_policy.clone(),
@@ -248,9 +232,8 @@ pub fn record_candidate_promotion_artifact_with_recognition_projection(
   observations: &[RecognitionResult],
   request: &CandidatePromotionArtifactRequest,
 ) -> AuvResult<(ArtifactRef, CandidatePromotionArtifact)> {
-  let artifact =
-    build_candidate_promotion_artifact_with_recognition_projection(observations, request)
-      .map_err(|error| format!("failed to build candidate-promotion artifact: {error}"))?;
+  let artifact = build_candidate_promotion_artifact_with_recognition_projection(observations, request)
+    .map_err(|error| format!("failed to build candidate-promotion artifact: {error}"))?;
   record_built_candidate_promotion_artifact(context, artifact, request)
 }
 
@@ -266,12 +249,8 @@ fn record_built_candidate_promotion_artifact(
     })
     .map_err(|error| format!("failed to encode candidate-promotion artifact JSON: {error}"))?;
   let artifact_source_path = candidate_promotion_temp_json_path(&request.artifact_label);
-  fs::write(&artifact_source_path, rendered).map_err(|error| {
-    format!(
-      "failed to write candidate-promotion temp artifact {}: {error}",
-      artifact_source_path.display()
-    )
-  })?;
+  fs::write(&artifact_source_path, rendered)
+    .map_err(|error| format!("failed to write candidate-promotion temp artifact {}: {error}", artifact_source_path.display()))?;
 
   let (_, artifact_ref) = context.stage_artifact_file_with_ref(
     &request.artifact_role,
@@ -283,10 +262,7 @@ fn record_built_candidate_promotion_artifact(
 
   context.record_event(
     "candidate.promotion.artifact_recorded",
-    Some(format!(
-      "recorded {} from recognition {}",
-      artifact_ref.artifact_id, artifact.promotion_input_recognition_id
-    )),
+    Some(format!("recorded {} from recognition {}", artifact_ref.artifact_id, artifact.promotion_input_recognition_id)),
   );
 
   Ok((artifact_ref, artifact))
@@ -299,15 +275,9 @@ fn decision_kind(decision: &CandidatePromotion) -> &'static str {
   }
 }
 
-fn artifact_known_limits(
-  recognition: &RecognitionResult,
-  decision: &CandidatePromotion,
-) -> Vec<String> {
+fn artifact_known_limits(recognition: &RecognitionResult, decision: &CandidatePromotion) -> Vec<String> {
   let mut known_limits = recognition.known_limits.clone();
-  push_known_limit(
-    &mut known_limits,
-    "candidate promotion v0 selects the latest recognition frame after stability assessment",
-  );
+  push_known_limit(&mut known_limits, "candidate promotion v0 selects the latest recognition frame after stability assessment");
   push_known_limit(
     &mut known_limits,
     "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred",
@@ -365,18 +335,13 @@ mod tests {
   use serde_json::json;
 
   use super::{
-    CandidatePromotionArtifactError, CandidatePromotionArtifactRequest,
-    CandidatePromotionConsentInput, build_candidate_promotion_artifact,
-    explicit_consent_for_candidate_promotion, freshness_from_capture_backed_recognition,
-    record_candidate_promotion_artifact,
+    CandidatePromotionArtifactError, CandidatePromotionArtifactRequest, CandidatePromotionConsentInput, build_candidate_promotion_artifact,
+    explicit_consent_for_candidate_promotion, freshness_from_capture_backed_recognition, record_candidate_promotion_artifact,
   };
   use crate::build_runtime_with_store_root;
-  use crate::candidate_promotion::{
-    CandidatePromotion, ConsentProvenance, PromotionProjection, PromotionRefusal,
-  };
+  use crate::candidate_promotion::{CandidatePromotion, ConsentProvenance, PromotionProjection, PromotionRefusal};
   use crate::contract::{
-    ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource,
-    RecognitionSurface, RecognizedItem,
+    ArtifactRef, RecognitionBox, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
   };
   use crate::stability::StabilityPolicy;
   use auv_tracing_driver::run_builder::RunSpec;
@@ -491,12 +456,8 @@ mod tests {
       },
       projection: PromotionProjection::IdentityWindowAddressable,
       freshness: Some(
-        freshness_from_capture_backed_recognition(
-          &latest_recognition,
-          "observe.window.capture",
-          "fixture freshness seed",
-        )
-        .expect("sample recognition is capture-backed"),
+        freshness_from_capture_backed_recognition(&latest_recognition, "observe.window.capture", "fixture freshness seed")
+          .expect("sample recognition is capture-backed"),
       ),
       permission: Some(
         explicit_consent_for_candidate_promotion(
@@ -520,8 +481,7 @@ mod tests {
 
   #[test]
   fn empty_observation_list_is_rejected() {
-    let error = build_candidate_promotion_artifact(&[], &sample_request())
-      .expect_err("empty promotion input should be rejected");
+    let error = build_candidate_promotion_artifact(&[], &sample_request()).expect_err("empty promotion input should be rejected");
 
     assert_eq!(error, CandidatePromotionArtifactError::NoRecognitionFrames);
   }
@@ -537,19 +497,9 @@ mod tests {
       .expect("stable observations should build candidate-promotion artifact");
 
     assert_eq!(artifact.promotion_input_frame_index, 2);
-    assert_eq!(
-      artifact.promotion_input_recognition_id,
-      "recognition_frame_3"
-    );
+    assert_eq!(artifact.promotion_input_recognition_id, "recognition_frame_3");
     assert_eq!(artifact.observed_recognition_ids.len(), 3);
-    assert_eq!(
-      artifact
-        .promotion_context
-        .permission
-        .as_ref()
-        .map(|permission| permission.granted_by.as_str()),
-      Some("human-review")
-    );
+    assert_eq!(artifact.promotion_context.permission.as_ref().map(|permission| permission.granted_by.as_str()), Some("human-review"));
     assert_eq!(
       artifact
         .promotion_context
@@ -569,10 +519,7 @@ mod tests {
         panic!("expected promoted decision, got refusal reasons: {reasons:?}");
       }
     }
-    assert_eq!(
-      artifact.detail["frame_selection_strategy"],
-      json!("latest_observation")
-    );
+    assert_eq!(artifact.detail["frame_selection_strategy"], json!("latest_observation"));
     assert!(
       artifact
         .known_limits
@@ -585,8 +532,7 @@ mod tests {
     let project_root = temp_dir("candidate-promotion-record-project");
     let store_root = temp_dir("candidate-promotion-record-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
     let observations = vec![
       sample_frame("recognition_frame_1", 1638, 792),
       sample_frame("recognition_frame_2", 1641, 794),
@@ -617,10 +563,7 @@ mod tests {
       )
       .expect("recorded candidate promotion operation should succeed");
 
-    let run = runtime
-      .recording()
-      .read_run(output.run_id.as_str())
-      .expect("recorded run should persist");
+    let run = runtime.recording().read_run(output.run_id.as_str()).expect("recorded run should persist");
     assert_eq!(run.run.status_code, TraceStatusCode::Ok);
     assert_eq!(run.artifacts.len(), 2);
     assert_eq!(run.artifacts[0].role, "detector-recognition");
@@ -628,17 +571,8 @@ mod tests {
 
     let (artifact_ref, artifact) = output.value;
     assert_eq!(artifact_ref.run_id, output.run_id);
-    assert_eq!(
-      artifact.promotion_input_recognition_id,
-      "recognition_frame_3"
-    );
-    assert_eq!(
-      artifact
-        .source_recognition_artifact
-        .as_ref()
-        .map(|reference| reference.artifact_id.as_str()),
-      Some("artifact_0001")
-    );
+    assert_eq!(artifact.promotion_input_recognition_id, "recognition_frame_3");
+    assert_eq!(artifact.source_recognition_artifact.as_ref().map(|reference| reference.artifact_id.as_str()), Some("artifact_0001"));
 
     let promotion_artifact = run
       .artifacts
@@ -646,21 +580,12 @@ mod tests {
       .find(|artifact_record| artifact_record.artifact_id == artifact_ref.artifact_id)
       .expect("candidate-promotion artifact should exist in recorded run");
     let promotion_path = output.run_dir.join(&promotion_artifact.path);
-    let recorded_artifact: super::CandidatePromotionArtifact = serde_json::from_slice(
-      &fs::read(&promotion_path).expect("promotion artifact bytes should read"),
-    )
-    .expect("promotion artifact JSON should decode");
+    let recorded_artifact: super::CandidatePromotionArtifact =
+      serde_json::from_slice(&fs::read(&promotion_path).expect("promotion artifact bytes should read"))
+        .expect("promotion artifact JSON should decode");
     assert_eq!(recorded_artifact.promotion_id, "promotion_end_turn");
-    assert!(matches!(
-      recorded_artifact.decision,
-      CandidatePromotion::Promoted { .. }
-    ));
-    assert!(
-      run
-        .events
-        .iter()
-        .any(|event| event.name == "candidate.promotion.artifact_recorded")
-    );
+    assert!(matches!(recorded_artifact.decision, CandidatePromotion::Promoted { .. }));
+    assert!(run.events.iter().any(|event| event.name == "candidate.promotion.artifact_recorded"));
 
     let _ = fs::remove_dir_all(project_root);
     let _ = fs::remove_dir_all(store_root);
@@ -671,8 +596,7 @@ mod tests {
   fn ax_backed_recognition_satisfies_projection_without_manual_context() {
     use super::build_candidate_promotion_artifact_with_recognition_projection;
     use crate::ax_recognition::{
-      AxBestSelectionStrategy, AxRecognitionPolicy, AxRecognitionRuntimeContext,
-      map_ax_tree_to_recognition_result,
+      AxBestSelectionStrategy, AxRecognitionPolicy, AxRecognitionRuntimeContext, map_ax_tree_to_recognition_result,
     };
     use auv_driver_macos::types::{ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
@@ -729,32 +653,22 @@ mod tests {
     request.freshness = None;
     request.permission = None;
 
-    let artifact =
-      build_candidate_promotion_artifact_with_recognition_projection(&[ax_recognition], &request)
-        .expect("AX-backed recognition should build promotion artifact");
+    let artifact = build_candidate_promotion_artifact_with_recognition_projection(&[ax_recognition], &request)
+      .expect("AX-backed recognition should build promotion artifact");
 
-    assert_eq!(
-      artifact.promotion_context.projection,
-      PromotionProjection::IdentityWindowAddressable
-    );
+    assert_eq!(artifact.promotion_context.projection, PromotionProjection::IdentityWindowAddressable);
     match artifact.decision {
       CandidatePromotion::Refused { reasons } => {
         assert!(
-          !reasons
-            .iter()
-            .any(|reason| matches!(reason, PromotionRefusal::ProjectionUnavailable { .. })),
+          !reasons.iter().any(|reason| matches!(reason, PromotionRefusal::ProjectionUnavailable { .. })),
           "AX projection should not remain refused: {reasons:?}"
         );
         assert!(
-          reasons
-            .iter()
-            .any(|reason| matches!(reason, PromotionRefusal::FreshnessUnknown)),
+          reasons.iter().any(|reason| matches!(reason, PromotionRefusal::FreshnessUnknown)),
           "freshness remains intentionally deferred for the next slice"
         );
         assert!(
-          reasons
-            .iter()
-            .any(|reason| matches!(reason, PromotionRefusal::PermissionMissing)),
+          reasons.iter().any(|reason| matches!(reason, PromotionRefusal::PermissionMissing)),
           "permission remains intentionally deferred for the next slice"
         );
       }
@@ -769,13 +683,9 @@ mod tests {
     let mut recognition = sample_frame("recognition_no_capture", 10, 20);
     recognition.scope.capture_artifact = None;
 
-    let freshness_error =
-      freshness_from_capture_backed_recognition(&recognition, "observe.window.capture", "fresh")
-        .expect_err("freshness producer should require capture artifact");
-    assert_eq!(
-      freshness_error,
-      CandidatePromotionArtifactError::MissingCaptureArtifactForFreshness
-    );
+    let freshness_error = freshness_from_capture_backed_recognition(&recognition, "observe.window.capture", "fresh")
+      .expect_err("freshness producer should require capture artifact");
+    assert_eq!(freshness_error, CandidatePromotionArtifactError::MissingCaptureArtifactForFreshness);
 
     let consent_error = explicit_consent_for_candidate_promotion(
       "promotion_no_capture",
@@ -789,10 +699,7 @@ mod tests {
       },
     )
     .expect_err("consent producer should require capture artifact");
-    assert_eq!(
-      consent_error,
-      CandidatePromotionArtifactError::MissingCaptureArtifactForConsent
-    );
+    assert_eq!(consent_error, CandidatePromotionArtifactError::MissingCaptureArtifactForConsent);
   }
 
   #[test]
@@ -804,8 +711,7 @@ mod tests {
     ];
     let mut request = sample_request();
     request.permission = None;
-    let refused = build_candidate_promotion_artifact(&observations, &request)
-      .expect("artifact should build without permission");
+    let refused = build_candidate_promotion_artifact(&observations, &request).expect("artifact should build without permission");
     assert!(matches!(
       refused.decision,
       CandidatePromotion::Refused { ref reasons }
@@ -827,18 +733,9 @@ mod tests {
       )
       .expect("latest recognition is capture-backed"),
     );
-    let promoted = build_candidate_promotion_artifact(&observations, &request)
-      .expect("artifact should build with explicit consent");
-    assert!(matches!(
-      promoted.decision,
-      CandidatePromotion::Promoted { .. }
-    ));
-    assert!(
-      promoted
-        .known_limits
-        .iter()
-        .any(|limit| limit.contains("runtime action consumption remains deferred"))
-    );
+    let promoted = build_candidate_promotion_artifact(&observations, &request).expect("artifact should build with explicit consent");
+    assert!(matches!(promoted.decision, CandidatePromotion::Promoted { .. }));
+    assert!(promoted.known_limits.iter().any(|limit| limit.contains("runtime action consumption remains deferred")));
   }
 
   #[cfg(target_os = "macos")]
@@ -846,8 +743,7 @@ mod tests {
   fn gated_ax_report_records_projection_satisfied_candidate_promotion_lineage() {
     use super::record_candidate_promotion_artifact_with_recognition_projection;
     use crate::ax_recognition::{
-      AxBestSelectionStrategy, AxRecognitionArtifactRequest, AxRecognitionPolicy,
-      record_ax_tree_recognition_artifact,
+      AxBestSelectionStrategy, AxRecognitionArtifactRequest, AxRecognitionPolicy, record_ax_tree_recognition_artifact,
     };
     use auv_driver_macos::support::parse_observed_ax_tree;
 
@@ -856,16 +752,14 @@ mod tests {
       return;
     };
     let ax_report_path = PathBuf::from(ax_report_path);
-    let report = fs::read_to_string(&ax_report_path)
-      .expect("AUV_AX_TREE_REPORT should point at a readable AX tree report");
+    let report = fs::read_to_string(&ax_report_path).expect("AUV_AX_TREE_REPORT should point at a readable AX tree report");
     let snapshot = parse_observed_ax_tree(&report).expect("AX tree report should parse");
     let query = std::env::var("AUV_AX_QUERY").unwrap_or_else(|_| "First Text View".to_string());
     let role = std::env::var("AUV_AX_ROLE").unwrap_or_else(|_| "AXTextArea".to_string());
     let project_root = temp_dir("ax-projection-live-smoke-project");
     let store_root = temp_dir("ax-projection-live-smoke-store");
     fs::create_dir_all(&project_root).expect("project root should exist");
-    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone())
-      .expect("runtime should build");
+    let runtime = build_runtime_with_store_root(project_root.clone(), store_root.clone()).expect("runtime should build");
 
     let output = runtime
       .run_recorded_operation(
@@ -893,10 +787,7 @@ mod tests {
             },
           )?;
 
-          let mut request = CandidatePromotionArtifactRequest::new(
-            "promotion_ax_projection_smoke",
-            "ax-projection-smoke-promotion",
-          );
+          let mut request = CandidatePromotionArtifactRequest::new("promotion_ax_projection_smoke", "ax-projection-smoke-promotion");
           request.source_recognition_artifact = Some(recognition_ref);
           request.stability_policy = StabilityPolicy {
             min_frames: 1,
@@ -931,26 +822,16 @@ mod tests {
             .map_err(|error| error.to_string())?,
           );
 
-          record_candidate_promotion_artifact_with_recognition_projection(
-            context,
-            &[recognition],
-            &request,
-          )
+          record_candidate_promotion_artifact_with_recognition_projection(context, &[recognition], &request)
         },
       )
       .expect("gated AX projection smoke should record artifacts");
 
     let (_promotion_ref, artifact) = output.value;
-    assert_eq!(
-      artifact.promotion_context.projection,
-      PromotionProjection::IdentityWindowAddressable
-    );
-    assert!(matches!(
-      artifact.decision,
-      CandidatePromotion::Promoted { .. }
-    ));
-    let inspect = crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str())
-      .expect("recorded smoke run should inspect");
+    assert_eq!(artifact.promotion_context.projection, PromotionProjection::IdentityWindowAddressable);
+    assert!(matches!(artifact.decision, CandidatePromotion::Promoted { .. }));
+    let inspect =
+      crate::inspect::inspect_run(runtime.recording().store(), output.run_id.as_str()).expect("recorded smoke run should inspect");
     assert!(inspect.contains("Candidate Promotion Lineage:"));
     assert!(inspect.contains("projection=identity_window_addressable"));
     assert!(inspect.contains("decision=promoted"));

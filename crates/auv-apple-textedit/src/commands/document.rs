@@ -71,10 +71,7 @@ pub struct DocumentCommandReport {
   pub verification: Option<VerificationOutcome>,
 }
 
-pub fn run_document_command(
-  command: &DocumentCommand,
-  driver: &mut impl TextEditDriver,
-) -> OperationResult<DocumentCommandReport> {
+pub fn run_document_command(command: &DocumentCommand, driver: &mut impl TextEditDriver) -> OperationResult<DocumentCommandReport> {
   match command {
     DocumentCommand::Write(command) => run_write(command, driver),
     DocumentCommand::Compare(command) => run_compare(command, driver),
@@ -82,20 +79,10 @@ pub fn run_document_command(
   }
 }
 
-fn run_write(
-  command: &DocumentWrite,
-  driver: &mut impl TextEditDriver,
-) -> OperationResult<DocumentCommandReport> {
+fn run_write(command: &DocumentWrite, driver: &mut impl TextEditDriver) -> OperationResult<DocumentCommandReport> {
   let mut outcomes = vec![
-    driver.activate_app(
-      &command.app_id,
-      Duration::from_millis(command.activate_settle_ms),
-    )?,
-    driver.focus_text_input(
-      &command.app_id,
-      &command.focus_query,
-      &command.focus_candidate,
-    )?,
+    driver.activate_app(&command.app_id, Duration::from_millis(command.activate_settle_ms))?,
+    driver.focus_text_input(&command.app_id, &command.focus_query, &command.focus_candidate)?,
     driver.paste_text_preserve_clipboard(
       &command.app_id,
       &command.content,
@@ -116,10 +103,7 @@ fn run_write(
   })
 }
 
-fn run_compare(
-  command: &DocumentCompare,
-  driver: &mut impl TextEditDriver,
-) -> OperationResult<DocumentCommandReport> {
+fn run_compare(command: &DocumentCompare, driver: &mut impl TextEditDriver) -> OperationResult<DocumentCommandReport> {
   let verification = driver.verify_ax_text(&command.app_id, &command.content, &command.role)?;
   Ok(DocumentCommandReport {
     command: "document.compare",
@@ -128,10 +112,7 @@ fn run_compare(
   })
 }
 
-fn run_focus(
-  command: &DocumentFocus,
-  driver: &mut impl TextEditDriver,
-) -> OperationResult<DocumentCommandReport> {
+fn run_focus(command: &DocumentFocus, driver: &mut impl TextEditDriver) -> OperationResult<DocumentCommandReport> {
   let outcome = driver.focus_text_input(&command.app_id, &command.query, &command.candidate)?;
   Ok(DocumentCommandReport {
     command: "document.focus",
@@ -163,9 +144,7 @@ mod tests {
 
   impl TextEditDriver for RecordingTextEditDriver {
     fn activate_app(&mut self, app_id: &str, settle: Duration) -> OperationResult<StepOutcome> {
-      self
-        .calls
-        .push(format!("activate:{app_id}:{}", settle.as_millis()));
+      self.calls.push(format!("activate:{app_id}:{}", settle.as_millis()));
       Ok(StepOutcome {
         step_id: "activate",
         summary: "activated".to_string(),
@@ -173,21 +152,12 @@ mod tests {
       })
     }
 
-    fn focus_text_input(
-      &mut self,
-      app_id: &str,
-      query: &str,
-      candidate: &str,
-    ) -> OperationResult<StepOutcome> {
-      self
-        .calls
-        .push(format!("focus:{app_id}:{query}:{candidate}"));
+    fn focus_text_input(&mut self, app_id: &str, query: &str, candidate: &str) -> OperationResult<StepOutcome> {
+      self.calls.push(format!("focus:{app_id}:{query}:{candidate}"));
       Ok(StepOutcome {
         step_id: "focus",
         summary: "focused".to_string(),
-        input_action_result: Some(InputActionResult::single_success(
-          InputDeliveryPath::WindowTargetedMouse,
-        )),
+        input_action_result: Some(InputActionResult::single_success(InputDeliveryPath::WindowTargetedMouse)),
       })
     }
 
@@ -198,28 +168,16 @@ mod tests {
       replace_existing: bool,
       settle: Duration,
     ) -> OperationResult<StepOutcome> {
-      self.calls.push(format!(
-        "paste:{app_id}:{text}:{replace_existing}:{}",
-        settle.as_millis()
-      ));
+      self.calls.push(format!("paste:{app_id}:{text}:{replace_existing}:{}", settle.as_millis()));
       Ok(StepOutcome {
         step_id: "paste",
         summary: "pasted".to_string(),
-        input_action_result: Some(InputActionResult::single_success(
-          InputDeliveryPath::ClipboardPaste,
-        )),
+        input_action_result: Some(InputActionResult::single_success(InputDeliveryPath::ClipboardPaste)),
       })
     }
 
-    fn verify_ax_text(
-      &mut self,
-      app_id: &str,
-      target_text: &str,
-      target_role: &str,
-    ) -> OperationResult<VerificationOutcome> {
-      self
-        .calls
-        .push(format!("compare:{app_id}:{target_text}:{target_role}"));
+    fn verify_ax_text(&mut self, app_id: &str, target_text: &str, target_role: &str) -> OperationResult<VerificationOutcome> {
+      self.calls.push(format!("compare:{app_id}:{target_text}:{target_role}"));
       Ok(VerificationOutcome {
         matched_role: target_role.to_string(),
         matched_text: format!("prefix {target_text} suffix"),
@@ -246,11 +204,7 @@ mod tests {
       ]
     );
     assert_eq!(
-      report
-        .outcomes
-        .iter()
-        .map(|outcome| outcome.step_id)
-        .collect::<Vec<_>>(),
+      report.outcomes.iter().map(|outcome| outcome.step_id).collect::<Vec<_>>(),
       vec![
         "document-write.activate",
         "document-write.focus",
@@ -272,10 +226,7 @@ mod tests {
     let report = run_document_command(&command, &mut driver).expect("command should run");
 
     assert_eq!(report.command, "document.compare");
-    assert_eq!(
-      driver.calls,
-      vec!["compare:com.apple.TextEdit:hello:AXTextArea"]
-    );
+    assert_eq!(driver.calls, vec!["compare:com.apple.TextEdit:hello:AXTextArea"]);
     assert!(report.outcomes.is_empty());
     assert!(report.verification.is_some());
   }
@@ -292,10 +243,7 @@ mod tests {
     let report = run_document_command(&command, &mut driver).expect("command should run");
 
     assert_eq!(report.command, "document.focus");
-    assert_eq!(
-      driver.calls,
-      vec!["focus:com.apple.TextEdit:First Text View:"]
-    );
+    assert_eq!(driver.calls, vec!["focus:com.apple.TextEdit:First Text View:"]);
     assert_eq!(report.outcomes.len(), 1);
   }
 }

@@ -124,12 +124,7 @@ impl ReadinessReport {
 
   pub fn blocked(reason: impl Into<String>) -> Self {
     let reason = reason.into();
-    Self::from_checks(
-      vec![ReadinessCheck::fail("readiness", reason.clone())],
-      None,
-      None,
-      Some(reason),
-    )
+    Self::from_checks(vec![ReadinessCheck::fail("readiness", reason.clone())], None, None, Some(reason))
   }
 
   pub fn is_ready(&self) -> bool {
@@ -138,10 +133,7 @@ impl ReadinessReport {
 }
 
 fn first_blocker(checks: &[ReadinessCheck]) -> Option<String> {
-  checks
-    .iter()
-    .find(|check| check.status == ReadinessCheckStatus::Fail)
-    .and_then(|check| check.reason.clone())
+  checks.iter().find(|check| check.status == ReadinessCheckStatus::Fail).and_then(|check| check.reason.clone())
 }
 
 #[cfg(test)]

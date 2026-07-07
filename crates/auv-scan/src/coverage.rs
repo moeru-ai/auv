@@ -34,18 +34,11 @@ pub struct CoverageView {
 }
 
 /// Build an in-memory coverage view from a frame bundle and association results.
-pub fn build_coverage_view(
-  bundle: &ScanFrameBundle,
-  associations: &[AssociationResult],
-) -> CoverageView {
+pub fn build_coverage_view(bundle: &ScanFrameBundle, associations: &[AssociationResult]) -> CoverageView {
   let mut entries = Vec::new();
   let mut open_uncertainty_codes = Vec::new();
   let mut negative_evidence = Vec::new();
-  let last_frame_id = bundle
-    .frames
-    .last()
-    .map(|f| f.frame_id.as_str())
-    .unwrap_or_default();
+  let last_frame_id = bundle.frames.last().map(|f| f.frame_id.as_str()).unwrap_or_default();
 
   for association in associations {
     match association {
@@ -101,10 +94,8 @@ mod tests {
 
   #[test]
   fn build_coverage_view_records_last_seen_frame() {
-    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan/temporal/two_frame_v0");
-    let out_dir =
-      std::env::temp_dir().join(format!("auv-scan-coverage-view-{}", std::process::id()));
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/two_frame_v0");
+    let out_dir = std::env::temp_dir().join(format!("auv-scan-coverage-view-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out_dir);
     produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
@@ -130,10 +121,8 @@ mod tests {
 
   #[test]
   fn build_coverage_view_records_no_new_observation_negative_evidence() {
-    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan/temporal/two_frame_v0");
-    let out_dir =
-      std::env::temp_dir().join(format!("auv-scan-coverage-negative-{}", std::process::id()));
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/two_frame_v0");
+    let out_dir = std::env::temp_dir().join(format!("auv-scan-coverage-negative-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out_dir);
     produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
@@ -141,21 +130,14 @@ mod tests {
     assert!(view.entries.is_empty());
     assert_eq!(view.negative_evidence.len(), 1);
     assert_eq!(view.negative_evidence[0].code, "no_new_observation");
-    assert!(matches!(
-      view.completeness,
-      CompletenessClaim::Incomplete { .. }
-    ));
+    assert!(matches!(view.completeness, CompletenessClaim::Incomplete { .. }));
     let _ = std::fs::remove_dir_all(&out_dir);
   }
 
   #[test]
   fn build_coverage_view_records_ambiguous_association_uncertainty() {
-    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-      .join("tests/fixtures/scan/temporal/two_frame_v0");
-    let out_dir = std::env::temp_dir().join(format!(
-      "auv-scan-coverage-ambiguous-{}",
-      std::process::id()
-    ));
+    let fixture_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/two_frame_v0");
+    let out_dir = std::env::temp_dir().join(format!("auv-scan-coverage-ambiguous-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out_dir);
     produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect("produce");
     let bundle = load_scan_frames_from_dir(&out_dir).expect("load");
@@ -178,10 +160,7 @@ mod tests {
     let view = build_coverage_view(&bundle, &associations);
     assert!(view.entries.is_empty());
     assert_eq!(view.open_uncertainty_codes, vec!["ambiguous_association"]);
-    assert!(matches!(
-      view.completeness,
-      CompletenessClaim::Incomplete { .. }
-    ));
+    assert!(matches!(view.completeness, CompletenessClaim::Incomplete { .. }));
     let _ = std::fs::remove_dir_all(&out_dir);
   }
 }
