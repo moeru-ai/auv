@@ -32,7 +32,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::contract::{ObservationSnapshot, VerificationResult};
 use crate::model::{AuvResult, now_millis};
-use crate::run_read::{CandidatePromotionLineage, DetectorRecognitionLineage};
+use crate::run_read::DetectorRecognitionLineage;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::{RunId, RunRecordV1Alpha1, TraceState};
 use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
@@ -276,14 +276,6 @@ async fn get_run(State(state): State<InspectServerState>, Path(run_id): Path<Str
     crate::run_read::extract_observation_snapshots(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let detector_recognition_lineage =
     crate::run_read::extract_detector_recognition_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
-  let candidate_promotion_lineage =
-    crate::run_read::extract_candidate_promotion_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
-  let candidate_action_decision_lineage =
-    crate::run_read::extract_candidate_action_decision_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
-  let candidate_action_execution_lineage =
-    crate::run_read::extract_candidate_action_execution_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
-  let action_transition_lineage =
-    crate::run_read::extract_action_transition_lineage(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let view_parser =
     crate::inspect_view_parser::build_view_parser_inspect_for_run(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
   let view_parser_summary = summarize_view_parser_inspect(&view_parser);
@@ -295,10 +287,6 @@ async fn get_run(State(state): State<InspectServerState>, Path(run_id): Path<Str
       verifications,
       observation_snapshots,
       detector_recognition_lineage,
-      candidate_promotion_lineage,
-      candidate_action_decision_lineage,
-      candidate_action_execution_lineage,
-      action_transition_lineage,
       view_parser,
       view_parser_summary,
     })
@@ -466,14 +454,6 @@ struct InspectRunResponse {
   observation_snapshots: Vec<ObservationSnapshot>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   detector_recognition_lineage: Vec<DetectorRecognitionLineage>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  candidate_promotion_lineage: Vec<CandidatePromotionLineage>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  candidate_action_decision_lineage: Vec<crate::run_read::CandidateActionDecisionLineage>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  candidate_action_execution_lineage: Vec<crate::run_read::CandidateActionExecutionLineage>,
-  #[serde(default, skip_serializing_if = "Vec::is_empty")]
-  action_transition_lineage: Vec<crate::run_read::ActionTransitionLineage>,
   view_parser: ViewParserInspect,
   view_parser_summary: ViewParserListSummary,
 }
@@ -785,27 +765,16 @@ mod tests {
   use tower::ServiceExt;
 
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
-  use crate::action_resolver_decision::{ActionResolverDecision, ActionResolverDecisionInput};
-  use crate::candidate_action_decision::{
-    CandidateActionDecisionArtifact, CandidateActionExecutionArtifact, CandidateActionExecutionConsent,
-    CandidateActionExecutionConsentAction, CandidateActionExecutionSideEffect, CandidateActionSideEffect,
-  };
-  use crate::candidate_promotion::{
-    ActionConsentRecord, ActionPermission, CandidatePromotion, ConsentAction, ConsentScope, PromotionContext, PromotionProjection,
-    StabilityInput,
-  };
-  use crate::candidate_promotion_recording::CandidatePromotionArtifact;
   use crate::contract::{
     ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot, ObservationSource, OperationOutput,
     OperationResult, OperationStatus, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
-    TargetGrounding, TargetSpec, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
+    VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::model::now_millis;
   use crate::scroll_scan::{
     CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster, ScanPageRecord, ScanRegion, ScanTarget,
     ScrollBoundaryCandidate, ScrollScanArtifact, SectionCandidate, StopEvidence, StopPolicy, StopReason,
   };
-  use crate::stability::{StabilityAssessment, StabilityPolicy};
   use auv_tracing_driver::ArtifactFileSource;
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
@@ -1641,46 +1610,10 @@ mod tests {
     assert_eq!(run["detector_recognition_lineage"][0]["capture_artifact"]["role"], "capture-image");
     assert_eq!(run["detector_recognition_lineage"][0]["filtered_count"], 1);
     assert_eq!(run["detector_recognition_lineage"][0]["all_count"], 2);
-    assert_eq!(run["candidate_promotion_lineage"][0]["status"], "ready");
-    assert_eq!(run["candidate_promotion_lineage"][0]["promotion_id"], "promotion_end_turn");
-    assert_eq!(run["candidate_promotion_lineage"][0]["decision_kind"], "promoted");
-    assert_eq!(run["candidate_promotion_lineage"][0]["projection_kind"], "identity_window_addressable");
-    assert_eq!(run["candidate_promotion_lineage"][0]["promoted_candidate_local_ids"][0], "promoted-item_end_turn");
-    assert_eq!(run["candidate_promotion_lineage"][0]["freshness_source_artifact"]["role"], "capture-image");
-    assert_eq!(run["candidate_promotion_lineage"][0]["freshness_source_operation_id"], "observe.window.capture");
-    assert_eq!(run["candidate_promotion_lineage"][0]["consent_scope"], "candidate_promotion_only");
-    assert_eq!(run["candidate_promotion_lineage"][0]["consent_approved_action"], "promote_recognition_to_candidate");
-    assert_eq!(run["candidate_promotion_lineage"][0]["permission_granted_by"], "human-review");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["status"], "ready");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["decision_id"], "decision_end_turn");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["source_candidate_promotion_artifact"]["role"], "candidate-promotion");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["candidate_local_id"], "promoted-item_end_turn");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["resolver_operation"], "candidate.action.decide_only");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["selected_method"], "pointer-click");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["side_effect"], "none_decide_only");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["input_delivery"], "not_attempted");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["operation_result"], "not_produced");
-    assert_eq!(run["candidate_action_decision_lineage"][0]["verification_result"], "not_produced");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["status"], "ready");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["execution_id"], "execution_end_turn");
-    assert_eq!(
-      run["candidate_action_execution_lineage"][0]["source_candidate_action_decision_artifact"]["role"],
-      "candidate-action-decision"
-    );
-    assert_eq!(run["candidate_action_execution_lineage"][0]["operation_result_artifact"]["role"], "operation-result");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["candidate_local_id"], "promoted-item_end_turn");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["input_delivery"], "attempted");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["selected_path"], "window_targeted_mouse");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["operation_status"], "completed");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["verification"], "activation_only");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["semantic_matched"], serde_json::Value::Null);
-    assert_eq!(run["candidate_action_execution_lineage"][0]["readiness"], "ready");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["readiness_blocker"], serde_json::Value::Null);
-    assert_eq!(run["candidate_action_execution_lineage"][0]["side_effect"], "single_input_delivered");
-    assert_eq!(run["candidate_action_execution_lineage"][0]["consent_id"], "consent_execute_end_turn");
-    assert_eq!(run["action_transition_lineage"][0]["status"], "ready");
-    assert_eq!(run["action_transition_lineage"][0]["effective_decision"]["selected_method"], "pointer-click");
-    assert_eq!(run["action_transition_lineage"][0]["verification"]["verification_outcome"], "activation_only");
+    assert!(run.get("candidate_promotion_lineage").is_none());
+    assert!(run.get("candidate_action_decision_lineage").is_none());
+    assert!(run.get("candidate_action_execution_lineage").is_none());
+    assert!(run.get("action_transition_lineage").is_none());
     assert!(run.get("spans").is_none(), "/runs/{run_id} should not inline spans even when enriched");
 
     let _ = fs::remove_dir_all(root);
@@ -1704,14 +1637,17 @@ mod tests {
     assert!(html.starts_with("<!doctype html>"), "expected HTML5 doctype, got prefix {:?}", &html[..32.min(html.len())]);
     assert!(html.contains("/runs"), "viewer payload should reference the /runs JSON endpoint");
     assert!(html.contains("--brand: #00c4d2"), "viewer payload should inline the canonical brand token");
-    assert!(html.contains("action-transition-lineage"), "viewer payload should include action transition lineage panel (L9)");
-    assert!(html.contains("selfTestActionTransitionLineage"), "viewer payload should self-test action transition lineage rendering");
+    assert!(!html.contains("action-transition-lineage"), "viewer payload should not include archived action transition lineage panel");
+    assert!(
+      !html.contains("selfTestActionTransitionLineage"),
+      "viewer payload should not self-test archived action transition lineage rendering"
+    );
 
     let _ = fs::remove_dir_all(root);
   }
 
   #[test]
-  fn viewer_action_transition_self_test_executes_in_node() {
+  fn viewer_self_tests_execute_in_node() {
     let script_template = r##"const html = __VIEWER_HTML__;
 const start = html.indexOf("<script>");
 const end = html.lastIndexOf("</script>");
@@ -1919,7 +1855,6 @@ function registerElement(document, tagName, id) {
 }
 
 const document = new Document();
-registerElement(document, "div", "action-transition-lineage").hidden = true;
 registerElement(document, "div", "netease-select-proof-hint").hidden = true;
 registerElement(document, "div", "view-parser-proof").hidden = true;
 registerElement(document, "div", "conn").className = "conn-pill bad";
@@ -2185,11 +2120,15 @@ eval(scriptBody);
   }
 
   #[test]
-  fn viewer_seam_panel_does_not_reference_cael() {
-    assert!(
-      !super::VIEWER_HTML.contains("candidate_action_execution_lineage"),
-      "viewer seam panel must not reference candidate_action_execution_lineage"
-    );
+  fn viewer_does_not_reference_removed_candidate_action_fields() {
+    for removed_field in [
+      "candidate_promotion_lineage",
+      "candidate_action_decision_lineage",
+      "candidate_action_execution_lineage",
+      "action_transition_lineage",
+    ] {
+      assert!(!super::VIEWER_HTML.contains(removed_field), "viewer payload must not reference removed field {removed_field}");
+    }
   }
 
   #[test]
@@ -2201,38 +2140,6 @@ eval(scriptBody);
     assert!(super::VIEWER_HTML.contains("packaging lane only"), "viewer payload should disambiguate packaging hint from seam surface");
     assert!(super::VIEWER_HTML.contains("selfTestNeteaseSelectProofHint"), "viewer payload should self-test netease select proof hint");
     assert!(!super::VIEWER_HTML.contains("ACP-1 (selectProof)"), "viewer payload must not use selectProof-specific hint wording");
-  }
-
-  #[test]
-  fn viewer_renders_action_transition_lineage_hooks() {
-    assert!(super::VIEWER_HTML.contains("action-transition-lineage"), "viewer payload should mount the action transition lineage panel");
-    assert!(super::VIEWER_HTML.contains("renderActionTransitionLineage"), "viewer payload should render action_transition_lineage entries");
-    assert!(
-      super::VIEWER_HTML.contains("action_transition_lineage"),
-      "viewer payload should read action_transition_lineage from run detail"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("refreshViewParserProofFromRunDetail")
-        && super::VIEWER_HTML.contains("renderActionTransitionLineage(state.activeRun)"),
-      "viewer payload should refresh action transition lineage on narrow run refetch"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("!Array.isArray(merged.action_transition_lineage)")
-        && super::VIEWER_HTML.contains("previous.action_transition_lineage"),
-      "viewer payload should preserve action_transition_lineage across mergeRunDetail"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("startsWith(\"plan_delivery_mismatch\")"),
-      "viewer payload should detect prefixed plan_delivery_mismatch limits"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("actionTransitionIssueHeadline"),
-      "viewer payload should map action transition issue codes to headlines"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("selfTestActionTransitionLineage"),
-      "viewer payload should self-test action transition lineage rendering"
-    );
   }
 
   #[test]
@@ -2899,397 +2806,6 @@ eval(scriptBody);
             "projection basis is unavailable outside capture-integrated runtime".to_string(),
             "detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string(),
           ],
-        },
-      ),
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        5,
-        "candidate-promotion",
-        "candidate-promotion.json",
-        &CandidatePromotionArtifact {
-          artifact_version: "candidate_promotion_artifact_v0".to_string(),
-          promotion_id: "promotion_end_turn".to_string(),
-          source_recognition_artifact: Some(ArtifactRef {
-            run_id: run_id.clone(),
-            artifact_id: ArtifactId::new("artifact_0005"),
-            span_id: span_id.clone(),
-            captured_event_id: None,
-          }),
-          observed_recognition_ids: vec![
-            "recognition_detector_server_test_prev".to_string(),
-            "recognition_detector_server_test".to_string(),
-          ],
-          promotion_input_recognition_id: "recognition_detector_server_test".to_string(),
-          promotion_input_frame_index: 1,
-          stability_policy: StabilityPolicy {
-            min_frames: 2,
-            max_centroid_drift_px: 8.0,
-            require_stable_text: false,
-          },
-          stability_assessment: StabilityAssessment::Stable {
-            observed_frames: 2,
-            max_observed_drift_px: 2.0,
-          },
-          promotion_context: PromotionContext {
-            projection: PromotionProjection::IdentityWindowAddressable,
-            stability: StabilityInput::Proven { observed_frames: 2 },
-            freshness: Some(crate::contract::FreshnessBasis {
-              source_artifact: Some(ArtifactRef {
-                run_id: run_id.clone(),
-                artifact_id: ArtifactId::new("artifact_0004"),
-                span_id: span_id.clone(),
-                captured_event_id: None,
-              }),
-              source_operation_id: Some("observe.window.capture".to_string()),
-              notes: vec!["fixture freshness".to_string()],
-            }),
-            permission: Some(ActionPermission {
-              granted_by: "human-review".to_string(),
-              scope_note: "single end-turn action".to_string(),
-              consent: Some(ActionConsentRecord {
-                consent_id: "consent_promotion_end_turn".to_string(),
-                recognition_id: "recognition_detector_server_test".to_string(),
-                run_id: run_id.as_str().to_string(),
-                scope: ConsentScope::CandidatePromotionOnly,
-                approved_action: ConsentAction::PromoteRecognitionToCandidate,
-                provenance: crate::candidate_promotion::ConsentProvenance::HumanGesture,
-                grade: crate::candidate_promotion::ConsentGrade::HumanApproved,
-                approved_at_millis: 1,
-                evidence_note: "server fixture consent".to_string(),
-              }),
-            }),
-            allow_dev_self_minted_consent: false,
-          },
-          decision: CandidatePromotion::Promoted {
-            candidates: vec![crate::contract::Candidate {
-              candidate_local_id: "promoted-item_end_turn".to_string(),
-              kind: "button".to_string(),
-              label: Some("End Turn".to_string()),
-              target_spec: TargetSpec {
-                grounding: TargetGrounding::Coordinate,
-                anchor_text: Some("End Turn".to_string()),
-                region_hint: None,
-                row_index: None,
-              },
-              evidence: crate::contract::CandidateEvidence {
-                artifact_ref: ArtifactRef {
-                  run_id: run_id.clone(),
-                  artifact_id: ArtifactId::new("artifact_0004"),
-                  span_id: span_id.clone(),
-                  captured_event_id: None,
-                },
-                observation: serde_json::json!({"item_id": "item_end_turn"}),
-              },
-              liveness: crate::contract::CandidateLiveness {
-                preconditions: crate::contract::LivenessPreconditions {
-                  window_ref: Some(crate::contract::WindowRefPrecondition {
-                    app_bundle_id: "com.playstack.balatro".to_string(),
-                    window_title_substring: Some("Balatro".to_string()),
-                    window_number: Some(7),
-                  }),
-                  anchor_recheck: None,
-                },
-                ttl_hint_ms: None,
-              },
-              control: crate::contract::ControlRequirements {
-                requires_app_frontmost: true,
-                requires_window_focus: true,
-              },
-              known_limits: vec!["fixture-backed candidate".to_string()],
-            }],
-            residual_known_limits: vec!["fixture-backed candidate".to_string()],
-          },
-          recognition: RecognitionResult {
-            recognition_id: "recognition_detector_server_test".to_string(),
-            source: RecognitionSource::Custom,
-            scope: RecognitionScope {
-              surface: RecognitionSurface::Region,
-              display_ref: Some("display-main".to_string()),
-              native_display_id: Some("69733248".to_string()),
-              app_bundle_id: Some("com.playstack.balatro".to_string()),
-              window_title: Some("Balatro".to_string()),
-              window_number: Some(7),
-              region_hint: None,
-              capture_artifact: Some(ArtifactRef {
-                run_id: run_id.clone(),
-                artifact_id: ArtifactId::new("artifact_0004"),
-                span_id: span_id.clone(),
-                captured_event_id: None,
-              }),
-              capture_contract_artifact: None,
-            },
-            best: Some(RecognizedItem {
-              item_id: "item_end_turn".to_string(),
-              kind: "button".to_string(),
-              box_: crate::contract::RecognitionBox {
-                x: 1638,
-                y: 792,
-                width: 228,
-                height: 178,
-              },
-              text: Some("End Turn".to_string()),
-              provider_score: Some(0.99),
-              detail: serde_json::json!({"backend": "fixture"}),
-            }),
-            filtered: vec![RecognizedItem {
-              item_id: "item_end_turn".to_string(),
-              kind: "button".to_string(),
-              box_: crate::contract::RecognitionBox {
-                x: 1638,
-                y: 792,
-                width: 228,
-                height: 178,
-              },
-              text: Some("End Turn".to_string()),
-              provider_score: Some(0.99),
-              detail: serde_json::json!({"backend": "fixture"}),
-            }],
-            all: vec![RecognizedItem {
-              item_id: "item_end_turn".to_string(),
-              kind: "button".to_string(),
-              box_: crate::contract::RecognitionBox {
-                x: 1638,
-                y: 792,
-                width: 228,
-                height: 178,
-              },
-              text: Some("End Turn".to_string()),
-              provider_score: Some(0.99),
-              detail: serde_json::json!({"backend": "fixture"}),
-            }],
-            detail: serde_json::json!({
-              "backend": "ultralytics-inference",
-              "model_id": "games-balatro-ui",
-            }),
-            evidence: vec![ArtifactRef {
-              run_id: run_id.clone(),
-              artifact_id: ArtifactId::new("artifact_0004"),
-              span_id: span_id.clone(),
-              captured_event_id: None,
-            }],
-            known_limits: vec![
-              "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
-            ],
-          },
-          detail: serde_json::json!({
-            "artifact_version": "candidate_promotion_artifact_v0",
-            "producer": "candidate_promotion_recording",
-          }),
-          known_limits: vec![
-            "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
-          ],
-        },
-      ),
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        6,
-        "candidate-action-decision",
-        "candidate-action-decision.json",
-        &CandidateActionDecisionArtifact {
-          artifact_version: "candidate_action_decision_artifact_v0".to_string(),
-          decision_id: "decision_end_turn".to_string(),
-          source_candidate_promotion_artifact: Some(ArtifactRef {
-            run_id: run_id.clone(),
-            artifact_id: ArtifactId::new("artifact_0006"),
-            span_id: span_id.clone(),
-            captured_event_id: None,
-          }),
-          source_promotion_id: "promotion_end_turn".to_string(),
-          candidate_local_id: "promoted-item_end_turn".to_string(),
-          action_resolver_decision: ActionResolverDecision::new(ActionResolverDecisionInput {
-            operation: "candidate.action.decide_only",
-            target_query: "End Turn",
-            primary_method: "pointer-click",
-            selected_method: "pointer-click",
-            fallback_allowed: false,
-            fallback_used: false,
-            fallback_reason: None,
-            policy: "candidate-coordinate-pointer",
-            cursor_disturbance: "warp-visible",
-            press_mechanism: "pointer-click",
-          }),
-          side_effect: CandidateActionSideEffect::NoneDecideOnly,
-          detail: serde_json::json!({
-            "input_delivery": "not_attempted",
-            "operation_result": "not_produced",
-            "verification_result": "not_produced",
-          }),
-          known_limits: vec![
-            "L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string(),
-          ],
-        },
-      ),
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        7,
-        "operation-result",
-        "candidate-action-operation-result.json",
-        &OperationResult {
-          api_version: OPERATION_RESULT_API_VERSION.to_string(),
-          run_id: run_id.clone(),
-          status: OperationStatus::Completed,
-          operation_id: "candidate.action.execute_single".to_string(),
-          evidence_artifacts: vec![ArtifactRef {
-            run_id: run_id.clone(),
-            artifact_id: ArtifactId::new("artifact_0008"),
-            span_id: span_id.clone(),
-            captured_event_id: None,
-          }],
-          output: OperationOutput::Acknowledged {
-            message: Some("single candidate action activated; semantic verification remains activation_only".to_string()),
-          },
-          verifications: vec![VerificationResult {
-            api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-            method: VerificationMethod::Custom {
-              name: "activation_only".to_string(),
-            },
-            executed: true,
-            state_changed: false,
-            semantic_matched: None,
-            failure_layer: None,
-            evidence: vec![ArtifactRef {
-              run_id: run_id.clone(),
-              artifact_id: ArtifactId::new("artifact_0008"),
-              span_id: span_id.clone(),
-              captured_event_id: None,
-            }],
-            consumed_candidate_ref: None,
-            consumed_node_ref: None,
-            consumed_recognition_artifact_ref: None,
-            consumed_recognition_id: None,
-            consumed_recognized_item_id: Some("item_end_turn".to_string()),
-            observed_label: Some("End Turn".to_string()),
-          }],
-          freshness_basis: None,
-          known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
-        },
-      ),
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        8,
-        "candidate-action-execution",
-        "candidate-action-execution.json",
-        &CandidateActionExecutionArtifact {
-          artifact_version: "candidate_action_execution_artifact_v0".to_string(),
-          execution_id: "execution_end_turn".to_string(),
-          source_candidate_action_decision_artifact: ArtifactRef {
-            run_id: run_id.clone(),
-            artifact_id: ArtifactId::new("artifact_0007"),
-            span_id: span_id.clone(),
-            captured_event_id: None,
-          },
-          source_candidate_promotion_artifact: Some(ArtifactRef {
-            run_id: run_id.clone(),
-            artifact_id: ArtifactId::new("artifact_0006"),
-            span_id: span_id.clone(),
-            captured_event_id: None,
-          }),
-          operation_result_artifact: Some(ArtifactRef {
-            run_id: run_id.clone(),
-            artifact_id: ArtifactId::new("artifact_0008"),
-            span_id: span_id.clone(),
-            captured_event_id: None,
-          }),
-          source_promotion_id: "promotion_end_turn".to_string(),
-          source_decision_id: "decision_end_turn".to_string(),
-          candidate_local_id: "promoted-item_end_turn".to_string(),
-          action_resolver_decision: ActionResolverDecision::new(ActionResolverDecisionInput {
-            operation: "candidate.action.decide_only",
-            target_query: "End Turn",
-            primary_method: "pointer-click",
-            selected_method: "pointer-click",
-            fallback_allowed: false,
-            fallback_used: false,
-            fallback_reason: None,
-            policy: "candidate-coordinate-pointer",
-            cursor_disturbance: "warp-visible",
-            press_mechanism: "pointer-click",
-          }),
-          consent: CandidateActionExecutionConsent {
-            consent_id: "consent_execute_end_turn".to_string(),
-            execution_id: "execution_end_turn".to_string(),
-            granted_by: "human-review".to_string(),
-            scope_note: "execute exactly one approved candidate action".to_string(),
-            run_id: run_id.as_str().to_string(),
-            source_promotion_id: "promotion_end_turn".to_string(),
-            source_decision_id: "decision_end_turn".to_string(),
-            candidate_local_id: "promoted-item_end_turn".to_string(),
-            approved_action: CandidateActionExecutionConsentAction::ExecuteSingleCandidateAction,
-            provenance: crate::candidate_promotion::ConsentProvenance::HumanGesture,
-            grade: crate::candidate_promotion::ConsentGrade::HumanApproved,
-            approved_at_millis: 2,
-            evidence_note: "server fixture execution consent".to_string(),
-          },
-          readiness: auv_driver::ReadinessReport::ready(vec![auv_driver::ReadinessCheck::pass(
-            "target_window_present",
-            "target window present",
-          )]),
-          input_action_result: auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse),
-          operation_result: OperationResult {
-            api_version: OPERATION_RESULT_API_VERSION.to_string(),
-            run_id: run_id.clone(),
-            status: OperationStatus::Completed,
-            operation_id: "candidate.action.execute_single".to_string(),
-            evidence_artifacts: vec![ArtifactRef {
-              run_id: run_id.clone(),
-              artifact_id: ArtifactId::new("artifact_0008"),
-              span_id: span_id.clone(),
-              captured_event_id: None,
-            }],
-            output: OperationOutput::Acknowledged {
-              message: Some("single candidate action activated; semantic verification remains activation_only".to_string()),
-            },
-            verifications: Vec::new(),
-            freshness_basis: None,
-            known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
-          },
-          verification_result: VerificationResult {
-            api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-            method: VerificationMethod::Custom {
-              name: "activation_only".to_string(),
-            },
-            executed: true,
-            state_changed: false,
-            semantic_matched: None,
-            failure_layer: None,
-            evidence: vec![ArtifactRef {
-              run_id: run_id.clone(),
-              artifact_id: ArtifactId::new("artifact_0008"),
-              span_id: span_id.clone(),
-              captured_event_id: None,
-            }],
-            consumed_candidate_ref: None,
-            consumed_node_ref: None,
-            consumed_recognition_artifact_ref: None,
-            consumed_recognition_id: None,
-            consumed_recognized_item_id: Some("item_end_turn".to_string()),
-            observed_label: Some("End Turn".to_string()),
-          },
-          side_effect: CandidateActionExecutionSideEffect::SingleInputDelivered,
-          detail: serde_json::json!({
-            "input_delivery": "attempted",
-            "selected_path": "window_targeted_mouse",
-            "attempt_count": 1,
-            "attempts_succeeded": 1,
-            "operation_status": "completed",
-            "verification": "activation_only",
-            "semantic_matched": null,
-            "readiness": "ready",
-            "readiness_blocker": null,
-          }),
-          known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
         },
       ),
     ];

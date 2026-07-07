@@ -106,51 +106,6 @@ async fn run() -> Result<(), String> {
     CliCommand::PermissionCheck { .. } => {
       unreachable!("permission check is handled before runtime setup")
     }
-    CliCommand::CandidateActionRun { request, inspect } => {
-      let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = runtime.run_candidate_action_command(auv_cli::candidate_action_command::CandidateActionCommandRequest {
-        app_bundle_id: request.app_bundle_id,
-        query: request.query,
-        role: request.role,
-        action: request.action,
-        intent: request.intent,
-        proposer_model: request.proposer_model,
-        proposer_base_url: request.proposer_base_url,
-        reveal_shortcut: request.reveal_shortcut,
-        reveal_settle_ms: request.reveal_settle_ms,
-        stable_frames: request.stable_frames,
-        stable_frame_delay_ms: request.stable_frame_delay_ms,
-        max_centroid_drift_px: request.max_centroid_drift_px,
-        require_stable_text: request.require_stable_text,
-        dev_self_minted_consent: request.dev_self_minted_consent,
-        human_gesture_consent: request.human_gesture_consent,
-        human_gesture_timeout_ms: request.human_gesture_timeout_ms,
-        proposal_id: request.proposal_id,
-        promotion_id: request.promotion_id,
-        decision_id: request.decision_id,
-        execution_id: request.execution_id,
-        granted_by: request.granted_by,
-        promotion_scope_note: request.promotion_scope_note,
-        promotion_evidence_note: request.promotion_evidence_note,
-        execution_scope_note: request.execution_scope_note,
-        execution_evidence_note: request.execution_evidence_note,
-      })?;
-      println!("runId: {}", output.run_id);
-      println!("status: {}", output.value.status.as_str());
-      if let Some(proposal_artifact_id) = output.value.proposal_artifact_id.as_deref() {
-        println!("proposalArtifact: {proposal_artifact_id}");
-      }
-      println!("promotionArtifact: {}", output.value.promotion_artifact_id);
-      if let Some(decision_artifact_id) = output.value.decision_artifact_id.as_deref() {
-        println!("decisionArtifact: {decision_artifact_id}");
-      }
-      if let Some(execution_artifact_id) = output.value.execution_artifact_id.as_deref() {
-        println!("executionArtifact: {execution_artifact_id}");
-      }
-      if !output.value.promotion_refusals.is_empty() {
-        println!("promotionRefusals: {}", output.value.promotion_refusals.join(","));
-      }
-    }
     CliCommand::MinecraftProjectionBridge {
       telemetry_sample,
       screenshot,

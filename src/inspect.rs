@@ -8,12 +8,10 @@
 use crate::contract::{FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult};
 use crate::model::AuvResult;
 use crate::run_read::{
-  ActionTransitionLineage, ActionTransitionLineageStatus, BalatroCardDetectionEvalWitnessInspectReportLineage,
-  BalatroCardDetectionEvalWitnessManifestLineage, BalatroCardDetectionQualityInspectReportLineage,
-  BalatroCardDetectionQualityManifestLineage, BalatroCardDetectionSemanticInspectReportLineage, BalatroCardDetectionSemanticManifestLineage,
-  BalatroCardDetectionSpatialQueryInspectReportLineage, BalatroCardDetectionSpatialQueryManifestLineage, CandidateActionDecisionLineage,
-  CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
-  CandidateActionExecutionLineageStatus, CandidatePromotionLineage, CandidatePromotionLineageStatus, DetectorRecognitionLineage,
+  BalatroCardDetectionEvalWitnessInspectReportLineage, BalatroCardDetectionEvalWitnessManifestLineage,
+  BalatroCardDetectionQualityInspectReportLineage, BalatroCardDetectionQualityManifestLineage,
+  BalatroCardDetectionSemanticInspectReportLineage, BalatroCardDetectionSemanticManifestLineage,
+  BalatroCardDetectionSpatialQueryInspectReportLineage, BalatroCardDetectionSpatialQueryManifestLineage, DetectorRecognitionLineage,
   MinecraftHoldoutRenderQualityInspectReportLineage, MinecraftHoldoutRenderQualityManifestLineage, MinecraftQueryWiredLiveActionSummary,
   MinecraftSpatialBundleManifestLineage, MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage,
   MinecraftTrainingJobManifestLineage, MinecraftTrainingLaunchInspectReportLineage, MinecraftTrainingLaunchManifestLineage,
@@ -123,22 +121,6 @@ pub fn list_detector_recognition_lineage(store: &LocalStore, run_id: &str) -> Au
   crate::run_read::list_detector_recognition_lineage(store, run_id)
 }
 
-pub fn list_candidate_promotion_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<CandidatePromotionLineage>> {
-  crate::run_read::list_candidate_promotion_lineage(store, run_id)
-}
-
-pub fn list_candidate_action_decision_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<CandidateActionDecisionLineage>> {
-  crate::run_read::list_candidate_action_decision_lineage(store, run_id)
-}
-
-pub fn list_candidate_action_execution_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<CandidateActionExecutionLineage>> {
-  crate::run_read::list_candidate_action_execution_lineage(store, run_id)
-}
-
-pub fn list_action_transition_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ActionTransitionLineage>> {
-  crate::run_read::list_action_transition_lineage(store, run_id)
-}
-
 pub fn list_view_memory_writes(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ViewMemory>> {
   crate::inspect_view_parser::list_view_memory_writes(store, run_id)
 }
@@ -152,10 +134,6 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let verifications = list_verifications(store, run_id)?;
   let observation_snapshots = list_observation_snapshots(store, run_id)?;
   let detector_recognition_lineage = list_detector_recognition_lineage(store, run_id)?;
-  let candidate_promotion_lineage = list_candidate_promotion_lineage(store, run_id)?;
-  let candidate_action_decision_lineage = list_candidate_action_decision_lineage(store, run_id)?;
-  let candidate_action_execution_lineage = list_candidate_action_execution_lineage(store, run_id)?;
-  let action_transition_lineage = list_action_transition_lineage(store, run_id)?;
   let minecraft_projection_artifacts = list_minecraft_projection_artifacts(store, run_id)?;
   let minecraft_telemetry_sample_artifacts = list_minecraft_telemetry_sample_artifacts(store, run_id)?;
   let minecraft_spatial_bundle_manifests = list_minecraft_spatial_bundle_manifests(store, run_id)?;
@@ -222,10 +200,6 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     &verifications,
     &observation_snapshots,
     &detector_recognition_lineage,
-    &candidate_promotion_lineage,
-    &candidate_action_decision_lineage,
-    &candidate_action_execution_lineage,
-    &action_transition_lineage,
     &minecraft_projection_artifacts,
     &minecraft_telemetry_sample_artifacts,
     &minecraft_spatial_bundle_manifests,
@@ -312,10 +286,6 @@ pub fn render_run_text(
   verifications: &[VerificationResult],
   observation_snapshots: &[ObservationSnapshot],
   detector_recognition_lineage: &[DetectorRecognitionLineage],
-  candidate_promotion_lineage: &[CandidatePromotionLineage],
-  candidate_action_decision_lineage: &[CandidateActionDecisionLineage],
-  candidate_action_execution_lineage: &[CandidateActionExecutionLineage],
-  action_transition_lineage: &[ActionTransitionLineage],
   minecraft_projection_artifacts: &[auv_game_minecraft::artifact::MinecraftProjectionArtifact],
   minecraft_telemetry_sample_artifacts: &[MinecraftTelemetrySampleArtifactLineage],
   minecraft_spatial_bundle_manifests: &[MinecraftSpatialBundleManifestLineage],
@@ -478,119 +448,6 @@ pub fn render_run_text(
         lineage.class_label_source_kind.as_deref().unwrap_or("n/a"),
         lineage.execution_provider.as_deref().unwrap_or("n/a"),
         lineage.issue.as_deref().unwrap_or("n/a")
-      ));
-      if !lineage.known_limits.is_empty() {
-        output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
-      }
-    }
-  }
-
-  output.push_str("\nCandidate Promotion Lineage:\n");
-  if candidate_promotion_lineage.is_empty() {
-    output.push_str("- none\n");
-  } else {
-    for lineage in candidate_promotion_lineage {
-      output.push_str(&format!(
-        "- artifact={} status={} promotion_id={} decision={} stability={} projection={} source_recognition={} capture={} promoted={} refusals={}\n",
-        lineage.artifact.artifact_id,
-        render_candidate_promotion_status(&lineage.status),
-        lineage.promotion_id.as_deref().unwrap_or("n/a"),
-        lineage.decision_kind.as_deref().unwrap_or("n/a"),
-        lineage.stability_kind.as_deref().unwrap_or("n/a"),
-        lineage.projection_kind.as_deref().unwrap_or("n/a"),
-        lineage
-          .source_recognition_artifact
-          .as_ref()
-          .and_then(|artifact| artifact.path.as_deref())
-          .unwrap_or("n/a"),
-        lineage
-          .capture_artifact
-          .as_ref()
-          .and_then(|artifact| artifact.path.as_deref())
-          .unwrap_or("n/a"),
-        if lineage.promoted_candidate_local_ids.is_empty() {
-          "none".to_string()
-        } else {
-          lineage.promoted_candidate_local_ids.join(",")
-        },
-        if lineage.refusal_reasons.is_empty() {
-          "none".to_string()
-        } else {
-          lineage.refusal_reasons.join(" | ")
-        }
-      ));
-      output.push_str(&format!(
-        "  recognition={} observed_frames={} freshness_present={} freshness_source={} permission_granted={} consent_id={} consent_provenance={} consent_grade={} consent_scope={} permission_by={} issue={}\n",
-        lineage
-          .promotion_input_recognition_id
-          .as_deref()
-          .unwrap_or("n/a"),
-        lineage
-          .stability_observed_frames
-          .map(|value| value.to_string())
-          .unwrap_or_else(|| "n/a".to_string()),
-        lineage
-          .freshness_present
-          .map(|value| if value { "true" } else { "false" })
-          .unwrap_or("n/a"),
-        lineage
-          .freshness_source_artifact
-          .as_ref()
-          .and_then(|artifact| artifact.path.as_deref())
-          .unwrap_or("n/a"),
-        lineage
-          .permission_granted
-          .map(|value| if value { "true" } else { "false" })
-          .unwrap_or("n/a"),
-        lineage.consent_id.as_deref().unwrap_or("n/a"),
-        lineage.consent_provenance.as_deref().unwrap_or("n/a"),
-        lineage.consent_grade.as_deref().unwrap_or("n/a"),
-        lineage.consent_scope.as_deref().unwrap_or("n/a"),
-        lineage.permission_granted_by.as_deref().unwrap_or("n/a"),
-        lineage.issue.as_deref().unwrap_or("n/a")
-      ));
-      if let Some(stability_reason) = &lineage.stability_reason {
-        output.push_str(&format!("  stability_reason={stability_reason}\n"));
-      }
-      if !lineage.known_limits.is_empty() {
-        output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
-      }
-    }
-  }
-
-  output.push_str("\nCandidate Action Decision Lineage:\n");
-  if candidate_action_decision_lineage.is_empty() {
-    output.push_str("- none\n");
-  } else {
-    for lineage in candidate_action_decision_lineage {
-      output.push_str(&format!(
-        "- artifact={} status={} decision_id={} source_promotion={} candidate={} resolver={} selected={} side_effect={} input_delivery={} operation_result={} verification_result={}\n",
-        lineage.artifact.artifact_id,
-        render_candidate_action_decision_status(&lineage.status),
-        lineage.decision_id.as_deref().unwrap_or("n/a"),
-        lineage
-          .source_candidate_promotion_artifact
-          .as_ref()
-          .and_then(|artifact| artifact.path.as_deref())
-          .unwrap_or("n/a"),
-        lineage.candidate_local_id.as_deref().unwrap_or("n/a"),
-        lineage.resolver_operation.as_deref().unwrap_or("n/a"),
-        lineage.selected_method.as_deref().unwrap_or("n/a"),
-        lineage.side_effect.as_deref().unwrap_or("n/a"),
-        lineage.input_delivery.as_deref().unwrap_or("n/a"),
-        lineage.operation_result.as_deref().unwrap_or("n/a"),
-        lineage.verification_result.as_deref().unwrap_or("n/a"),
-      ));
-      output.push_str(&format!(
-        "  primary={} fallback_allowed={} fallback_used={} fallback_reason={} policy={} cursor={} press={} issue={}\n",
-        lineage.primary_method.as_deref().unwrap_or("n/a"),
-        lineage.fallback_allowed.map(|value| if value { "true" } else { "false" }).unwrap_or("n/a"),
-        lineage.fallback_used.map(|value| if value { "true" } else { "false" }).unwrap_or("n/a"),
-        lineage.fallback_reason.as_deref().unwrap_or("none"),
-        lineage.policy.as_deref().unwrap_or("n/a"),
-        lineage.cursor_disturbance.as_deref().unwrap_or("n/a"),
-        lineage.press_mechanism.as_deref().unwrap_or("n/a"),
-        lineage.issue.as_deref().unwrap_or("n/a"),
       ));
       if !lineage.known_limits.is_empty() {
         output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
@@ -2314,106 +2171,7 @@ pub fn render_run_text(
     }
   }
 
-  output.push_str("\n[action.transition.lineage] (seam surface)\n");
-  output.push_str("Seam read surface: ActionTransitionLineage is the canonical action seam projection for inspect.\n");
-  if action_transition_lineage.is_empty() {
-    output.push_str("- none\n");
-  } else {
-    for lineage in action_transition_lineage {
-      output.push_str(&format!(
-        "- artifact={} status={} execution_id={} candidate={} verification_outcome={} issue={}\n",
-        lineage.artifact.artifact_id,
-        render_action_transition_lineage_status(&lineage.status),
-        lineage.execution_id.as_deref().unwrap_or("n/a"),
-        lineage.pre_state.candidate_local_id.as_deref().unwrap_or("n/a"),
-        lineage.verification.verification_outcome,
-        lineage.issue.as_deref().unwrap_or("n/a"),
-      ));
-      if let Some(effective) = &lineage.effective_decision {
-        output.push_str(&format!(
-          "  effective_decision: operation={} selected_method={} primary_method={} policy={}\n",
-          effective.operation, effective.selected_method, effective.primary_method, effective.policy,
-        ));
-      }
-      if let Some(planned) = &lineage.planned_decision {
-        output.push_str(&format!(
-          "  planned_decision: operation={} selected_method={} primary_method={} policy={}\n",
-          planned.operation, planned.selected_method, planned.primary_method, planned.policy,
-        ));
-      }
-      if let Some(driver) = &lineage.driver_result {
-        output.push_str(&format!(
-          "  driver_result: selected_path={:?} attempts={} fallback_reason={}\n",
-          driver.selected_path,
-          driver.attempts.len(),
-          driver.fallback_reason.as_deref().unwrap_or("n/a"),
-        ));
-      }
-      if !lineage.known_limits.is_empty() {
-        output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
-      }
-    }
-  }
-
-  output.push_str("\n[candidate.action.execution.lineage] (ledger)\n");
-  output.push_str("Execution ledger: flat consent/closure/detail fields; prefer action.transition.lineage for seam reads.\n");
-  if candidate_action_execution_lineage.is_empty() {
-    output.push_str("- none\n");
-  } else {
-    for lineage in candidate_action_execution_lineage {
-      output.push_str(&format!(
-        "- artifact={} status={} closure_state={} execution_id={} source_decision={} operation_result_artifact={} candidate={} resolver={} selected={} input_delivery={} selected_path={} operation_status={} verification={} semantic_matched={} readiness={} blocker={} side_effect={} consent={} by={} consent_provenance={} consent_grade={} issue={}\n",
-        lineage.artifact.artifact_id,
-        render_candidate_action_execution_status(&lineage.status),
-        render_candidate_action_execution_closure_state(&lineage.closure_state),
-        lineage.execution_id.as_deref().unwrap_or("n/a"),
-        lineage
-          .source_candidate_action_decision_artifact
-          .as_ref()
-          .and_then(|artifact| artifact.path.as_deref())
-          .unwrap_or("n/a"),
-        lineage
-          .operation_result_artifact
-          .as_ref()
-          .and_then(|artifact| artifact.path.as_deref())
-          .unwrap_or("n/a"),
-        lineage.candidate_local_id.as_deref().unwrap_or("n/a"),
-        lineage.resolver_operation.as_deref().unwrap_or("n/a"),
-        lineage.selected_method.as_deref().unwrap_or("n/a"),
-        lineage.input_delivery.as_deref().unwrap_or("n/a"),
-        lineage.selected_path.as_deref().unwrap_or("n/a"),
-        lineage.operation_status.as_deref().unwrap_or("n/a"),
-        lineage.verification.as_deref().unwrap_or("n/a"),
-        render_optional_bool(lineage.semantic_matched),
-        lineage.readiness.as_deref().unwrap_or("n/a"),
-        lineage.readiness_blocker.as_deref().unwrap_or("n/a"),
-        lineage.side_effect.as_deref().unwrap_or("n/a"),
-        lineage.consent_id.as_deref().unwrap_or("n/a"),
-        lineage.consent_granted_by.as_deref().unwrap_or("n/a"),
-        lineage.consent_provenance.as_deref().unwrap_or("n/a"),
-        lineage.consent_grade.as_deref().unwrap_or("n/a"),
-        lineage.issue.as_deref().unwrap_or("n/a"),
-      ));
-      output.push_str(&format!(
-        "  attempts={} succeeded={}\n",
-        lineage.attempts.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
-        lineage.attempts_succeeded.map(|value| value.to_string()).unwrap_or_else(|| "n/a".to_string()),
-      ));
-      if !lineage.known_limits.is_empty() {
-        output.push_str(&format!("  known_limits={}\n", lineage.known_limits.join(" | ")));
-      }
-    }
-  }
-
   output
-}
-
-fn render_action_transition_lineage_status(status: &ActionTransitionLineageStatus) -> &'static str {
-  match status {
-    ActionTransitionLineageStatus::Ready => "ready",
-    ActionTransitionLineageStatus::Partial => "partial",
-    ActionTransitionLineageStatus::Malformed => "malformed",
-  }
 }
 
 fn render_detector_status(status: &crate::run_read::DetectorRecognitionLineageStatus) -> &'static str {
@@ -2423,51 +2181,6 @@ fn render_detector_status(status: &crate::run_read::DetectorRecognitionLineageSt
     crate::run_read::DetectorRecognitionLineageStatus::MissingEvidence => "missing_evidence",
     crate::run_read::DetectorRecognitionLineageStatus::CaptureArtifactUnresolved => "capture_artifact_unresolved",
     crate::run_read::DetectorRecognitionLineageStatus::Malformed => "malformed",
-  }
-}
-
-fn render_candidate_promotion_status(status: &CandidatePromotionLineageStatus) -> &'static str {
-  match status {
-    CandidatePromotionLineageStatus::Ready => "ready",
-    CandidatePromotionLineageStatus::MissingSourceRecognitionArtifact => "missing_source_recognition_artifact",
-    CandidatePromotionLineageStatus::SourceRecognitionArtifactUnresolved => "source_recognition_artifact_unresolved",
-    CandidatePromotionLineageStatus::MissingCaptureArtifact => "missing_capture_artifact",
-    CandidatePromotionLineageStatus::CaptureArtifactUnresolved => "capture_artifact_unresolved",
-    CandidatePromotionLineageStatus::MissingRecognitionEvidence => "missing_recognition_evidence",
-    CandidatePromotionLineageStatus::Malformed => "malformed",
-  }
-}
-
-fn render_candidate_action_decision_status(status: &CandidateActionDecisionLineageStatus) -> &'static str {
-  match status {
-    CandidateActionDecisionLineageStatus::Ready => "ready",
-    CandidateActionDecisionLineageStatus::MissingSourceCandidatePromotionArtifact => "missing_source_candidate_promotion_artifact",
-    CandidateActionDecisionLineageStatus::SourceCandidatePromotionArtifactUnresolved => "source_candidate_promotion_artifact_unresolved",
-    CandidateActionDecisionLineageStatus::Malformed => "malformed",
-  }
-}
-
-fn render_candidate_action_execution_status(status: &CandidateActionExecutionLineageStatus) -> &'static str {
-  match status {
-    CandidateActionExecutionLineageStatus::Ready => "ready",
-    CandidateActionExecutionLineageStatus::BlockedNotReady => "blocked_not_ready",
-    CandidateActionExecutionLineageStatus::MissingSourceCandidateActionDecisionArtifact => {
-      "missing_source_candidate_action_decision_artifact"
-    }
-    CandidateActionExecutionLineageStatus::SourceCandidateActionDecisionArtifactUnresolved => {
-      "source_candidate_action_decision_artifact_unresolved"
-    }
-    CandidateActionExecutionLineageStatus::MissingOperationResultArtifact => "missing_operation_result_artifact",
-    CandidateActionExecutionLineageStatus::OperationResultArtifactUnresolved => "operation_result_artifact_unresolved",
-    CandidateActionExecutionLineageStatus::Malformed => "malformed",
-  }
-}
-
-fn render_candidate_action_execution_closure_state(state: &CandidateActionExecutionClosureState) -> &'static str {
-  match state {
-    CandidateActionExecutionClosureState::EvidenceClosed => "evidence_closed",
-    CandidateActionExecutionClosureState::SemanticOpen => "semantic_open",
-    CandidateActionExecutionClosureState::BlockedByReadiness => "blocked_by_readiness",
   }
 }
 
@@ -2568,11 +2281,7 @@ mod tests {
     VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
   };
   use crate::run_read::{
-    ActionResolverDecisionProjection, ActionTransitionLineage, ActionTransitionLineageStatus, ActionTransitionPostState,
-    ActionTransitionPreState, ActionTransitionVerificationProjection, ArtifactRefLineage, CandidateActionDecisionLineage,
-    CandidateActionDecisionLineageStatus, CandidateActionExecutionClosureState, CandidateActionExecutionLineage,
-    CandidateActionExecutionLineageStatus, CandidatePromotionLineage, CandidatePromotionLineageStatus,
-    DetectorRecognitionArtifactRefLineage, DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
+    ArtifactRefLineage, DetectorRecognitionArtifactRefLineage, DetectorRecognitionLineage, DetectorRecognitionLineageStatus,
     MinecraftTelemetrySampleArtifactLineage, MinecraftTrainingJobInspectReportLineage, MinecraftTrainingJobManifestLineage,
     MinecraftTrainingLaunchInspectReportLineage, MinecraftTrainingLaunchManifestLineage, MinecraftTrainingPackageInspectReportLineage,
     MinecraftTrainingPackageInspectReportSummary, MinecraftTrainingPackageManifestLineage, MinecraftTrainingPackageManifestSummary,
@@ -2826,243 +2535,6 @@ mod tests {
       ],
       issue: None,
     }];
-    let candidate_promotion_lineage = vec![CandidatePromotionLineage {
-      artifact: ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_candidate_promotion"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_candidate_promotion")),
-        role: Some("candidate-promotion".to_string()),
-        path: Some("artifacts/candidate-promotion.json".to_string()),
-        summary: Some("candidate promotion".to_string()),
-        resolved: true,
-      },
-      status: CandidatePromotionLineageStatus::Ready,
-      promotion_id: Some("promotion_end_turn".to_string()),
-      source_recognition_artifact: Some(ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_detector_recognition"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_detector_recognition")),
-        role: Some("detector-recognition".to_string()),
-        path: Some("artifacts/detector-recognition.json".to_string()),
-        summary: Some("detector recognition".to_string()),
-        resolved: true,
-      }),
-      capture_artifact: Some(ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_capture"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_capture")),
-        role: Some("capture-image".to_string()),
-        path: Some("artifacts/capture.png".to_string()),
-        summary: Some("capture".to_string()),
-        resolved: true,
-      }),
-      promotion_input_recognition_id: Some("recognition_detector_1".to_string()),
-      observed_recognition_ids: vec![
-        "recognition_detector_0".to_string(),
-        "recognition_detector_1".to_string(),
-      ],
-      recognition_source: Some(RecognitionSource::Custom),
-      projection_kind: Some("identity_window_addressable".to_string()),
-      stability_kind: Some("stable".to_string()),
-      stability_observed_frames: Some(2),
-      stability_reason: None,
-      freshness_present: Some(true),
-      freshness_source_artifact: Some(ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_capture"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_capture")),
-        role: Some("capture-image".to_string()),
-        path: Some("artifacts/capture.png".to_string()),
-        summary: Some("capture".to_string()),
-        resolved: true,
-      }),
-      freshness_source_operation_id: Some("observe.window.capture".to_string()),
-      permission_granted: Some(true),
-      permission_granted_by: Some("human-review".to_string()),
-      permission_scope_note: Some("fixture promotion".to_string()),
-      consent_id: Some("consent_promotion_end_turn".to_string()),
-      consent_provenance: Some("human_gesture".to_string()),
-      consent_grade: Some("human_approved".to_string()),
-      consent_scope: Some("candidate_promotion_only".to_string()),
-      consent_approved_action: Some("promote_recognition_to_candidate".to_string()),
-      consent_recognition_id: Some("recognition_detector_1".to_string()),
-      decision_kind: Some("promoted".to_string()),
-      refusal_reasons: Vec::new(),
-      promoted_candidate_local_ids: vec!["promoted-item_end_turn".to_string()],
-      known_limits: vec![
-        "candidate promotion artifact records gate decisions only; runtime action consumption remains deferred".to_string(),
-      ],
-      issue: None,
-    }];
-    let candidate_action_decision_lineage = vec![CandidateActionDecisionLineage {
-      artifact: ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_candidate_action_decision"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_candidate_action_decision")),
-        role: Some("candidate-action-decision".to_string()),
-        path: Some("artifacts/candidate-action-decision.json".to_string()),
-        summary: Some("candidate action decision".to_string()),
-        resolved: true,
-      },
-      status: CandidateActionDecisionLineageStatus::Ready,
-      decision_id: Some("decision_end_turn".to_string()),
-      source_candidate_promotion_artifact: Some(ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_candidate_promotion"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_candidate_promotion")),
-        role: Some("candidate-promotion".to_string()),
-        path: Some("artifacts/candidate-promotion.json".to_string()),
-        summary: Some("candidate promotion".to_string()),
-        resolved: true,
-      }),
-      source_promotion_id: Some("promotion_end_turn".to_string()),
-      candidate_local_id: Some("promoted-item_end_turn".to_string()),
-      resolver_operation: Some("candidate.action.decide_only".to_string()),
-      selected_method: Some("pointer-click".to_string()),
-      primary_method: Some("pointer-click".to_string()),
-      fallback_allowed: Some(false),
-      fallback_used: Some(false),
-      fallback_reason: None,
-      policy: Some("candidate-coordinate-pointer".to_string()),
-      cursor_disturbance: Some("warp-visible".to_string()),
-      press_mechanism: Some("pointer-click".to_string()),
-      side_effect: Some("none_decide_only".to_string()),
-      input_delivery: Some("not_attempted".to_string()),
-      operation_result: Some("not_produced".to_string()),
-      verification_result: Some("not_produced".to_string()),
-      known_limits: vec!["L8a records an ActionResolverDecision only; it does not call auv-driver or produce InputActionResult".to_string()],
-      issue: None,
-    }];
-    let candidate_action_execution_lineage = vec![CandidateActionExecutionLineage {
-      artifact: ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_candidate_action_execution"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_candidate_action_execution")),
-        role: Some("candidate-action-execution".to_string()),
-        path: Some("artifacts/candidate-action-execution.json".to_string()),
-        summary: Some("candidate action execution".to_string()),
-        resolved: true,
-      },
-      status: CandidateActionExecutionLineageStatus::Ready,
-      execution_id: Some("execution_end_turn".to_string()),
-      source_candidate_action_decision_artifact: Some(ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_candidate_action_decision"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_candidate_action_decision")),
-        role: Some("candidate-action-decision".to_string()),
-        path: Some("artifacts/candidate-action-decision.json".to_string()),
-        summary: Some("candidate action decision".to_string()),
-        resolved: true,
-      }),
-      source_candidate_promotion_artifact: None,
-      operation_result_artifact: Some(ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_operation_result"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_operation_result")),
-        role: Some("operation-result".to_string()),
-        path: Some("artifacts/operation-result.json".to_string()),
-        summary: Some("operation result".to_string()),
-        resolved: true,
-      }),
-      source_promotion_id: Some("promotion_end_turn".to_string()),
-      source_decision_id: Some("decision_end_turn".to_string()),
-      candidate_local_id: Some("promoted-item_end_turn".to_string()),
-      resolver_operation: Some("candidate.action.decide_only".to_string()),
-      selected_method: Some("pointer-click".to_string()),
-      input_delivery: Some("attempted".to_string()),
-      selected_path: Some("window_targeted_mouse".to_string()),
-      attempts: Some(1),
-      attempts_succeeded: Some(1),
-      operation_status: Some("completed".to_string()),
-      verification: Some("activation_only".to_string()),
-      closure_state: CandidateActionExecutionClosureState::SemanticOpen,
-      semantic_matched: None,
-      readiness: Some("ready".to_string()),
-      readiness_blocker: None,
-      consent_id: Some("consent_execute_end_turn".to_string()),
-      consent_granted_by: Some("human-review".to_string()),
-      consent_provenance: Some("human_gesture".to_string()),
-      consent_grade: Some("human_approved".to_string()),
-      side_effect: Some("single_input_delivered".to_string()),
-      known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
-      issue: None,
-    }];
-    let action_transition_lineage = vec![ActionTransitionLineage {
-      artifact: ArtifactRefLineage {
-        run_id: run_id.clone(),
-        artifact_id: ArtifactId::new("artifact_candidate_action_execution"),
-        span_id: SpanId::new("span_root"),
-        captured_event_id: Some(EventId::new("event_candidate_action_execution")),
-        role: Some("candidate-action-execution".to_string()),
-        path: Some("artifacts/candidate-action-execution.json".to_string()),
-        summary: Some("candidate action execution".to_string()),
-        resolved: true,
-      },
-      status: ActionTransitionLineageStatus::Ready,
-      execution_id: Some("execution_end_turn".to_string()),
-      pre_state: ActionTransitionPreState {
-        source_candidate_promotion_artifact: None,
-        source_promotion_id: Some("promotion_end_turn".to_string()),
-        candidate_local_id: Some("promoted-item_end_turn".to_string()),
-      },
-      effective_decision: Some(ActionResolverDecisionProjection {
-        version: "v0".to_string(),
-        operation: "candidate.action.execute_single".to_string(),
-        target_query: "End Turn".to_string(),
-        primary_method: "pointer-click".to_string(),
-        selected_method: "pointer-click".to_string(),
-        fallback_allowed: false,
-        fallback_used: false,
-        fallback_reason: None,
-        policy: "candidate-coordinate-pointer".to_string(),
-        cursor_disturbance: "warp-visible".to_string(),
-        press_mechanism: "pointer-click".to_string(),
-      }),
-      planned_decision: Some(ActionResolverDecisionProjection {
-        version: "v0".to_string(),
-        operation: "candidate.action.decide_only".to_string(),
-        target_query: "End Turn".to_string(),
-        primary_method: "pointer-click".to_string(),
-        selected_method: "pointer-click".to_string(),
-        fallback_allowed: false,
-        fallback_used: false,
-        fallback_reason: None,
-        policy: "candidate-coordinate-pointer".to_string(),
-        cursor_disturbance: "warp-visible".to_string(),
-        press_mechanism: "pointer-click".to_string(),
-      }),
-      driver_result: Some(auv_driver::InputActionResult::single_success(auv_driver::InputDeliveryPath::WindowTargetedMouse)),
-      post_state: ActionTransitionPostState {
-        operation_result_artifact: Some(ArtifactRefLineage {
-          run_id: run_id.clone(),
-          artifact_id: ArtifactId::new("artifact_operation_result"),
-          span_id: SpanId::new("span_root"),
-          captured_event_id: Some(EventId::new("event_operation_result")),
-          role: Some("operation-result".to_string()),
-          path: Some("artifacts/operation-result.json".to_string()),
-          summary: Some("operation result".to_string()),
-          resolved: true,
-        }),
-        operation_status: Some("completed".to_string()),
-      },
-      verification: ActionTransitionVerificationProjection {
-        verification_outcome: "activation_only".to_string(),
-        verification_reason: None,
-        semantic_matched: None,
-      },
-      known_limits: vec!["activation_only verification records input delivery, not semantic success".to_string()],
-      issue: None,
-    }];
-
     let minecraft_projection_artifacts = vec![auv_game_minecraft::artifact::MinecraftProjectionArtifact {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 42,
@@ -3829,10 +3301,6 @@ mod tests {
       &verifications,
       &observation_snapshots,
       &detector_recognition_lineage,
-      &candidate_promotion_lineage,
-      &candidate_action_decision_lineage,
-      &candidate_action_execution_lineage,
-      &action_transition_lineage,
       &minecraft_projection_artifacts,
       &minecraft_telemetry_sample_artifacts,
       &[],
@@ -3897,27 +3365,6 @@ mod tests {
     assert!(output.contains("backend=ultralytics-inference"));
     assert!(output.contains("capture=artifacts/capture.png"));
     assert!(output.contains("known_limits=projection basis is unavailable outside capture-integrated runtime | detector RecognitionResult is recognition evidence only, not candidate-ready output"));
-    assert!(output.contains("Candidate Promotion Lineage:"));
-    assert!(output.contains("artifact=artifact_candidate_promotion"));
-    assert!(output.contains("promotion_id=promotion_end_turn"));
-    assert!(output.contains("decision=promoted"));
-    assert!(output.contains("projection=identity_window_addressable"));
-    assert!(output.contains("source_recognition=artifacts/detector-recognition.json"));
-    assert!(output.contains("freshness_source=artifacts/capture.png"));
-    assert!(output.contains("consent_scope=candidate_promotion_only"));
-    assert!(output.contains("consent_provenance=human_gesture"));
-    assert!(output.contains("consent_grade=human_approved"));
-    assert!(output.contains("permission_by=human-review"));
-    assert!(output.contains("Candidate Action Decision Lineage:"));
-    assert!(output.contains("artifact=artifact_candidate_action_decision"));
-    assert!(output.contains("decision_id=decision_end_turn"));
-    assert!(output.contains("resolver=candidate.action.decide_only"));
-    assert!(output.contains("selected=pointer-click"));
-    assert!(output.contains("side_effect=none_decide_only"));
-    assert!(output.contains("input_delivery=not_attempted"));
-    assert!(output.contains("operation_result=not_produced"));
-    assert!(output.contains("verification_result=not_produced"));
-    assert!(output.contains("cursor=warp-visible"));
     assert!(output.contains("MC-2 Projection Artifacts:"));
     assert!(output.contains("frame=frame-1"));
     assert!(output.contains("screenshot_artifact_ref=artifact://screenshot-1"));
@@ -4003,25 +3450,6 @@ mod tests {
     assert!(output.contains("paired_inspect_artifact=artifact_mc12_query_inspect"));
 
     assert!(output.contains("normalized_artifacts=3"));
-    assert!(output.contains("[action.transition.lineage] (seam surface)"));
-    assert!(output.contains("[candidate.action.execution.lineage] (ledger)"));
-    let atl_pos = output.find("[action.transition.lineage]").expect("atl section should be present");
-    let cael_pos = output.find("[candidate.action.execution.lineage]").expect("cael section should be present");
-    assert!(atl_pos < cael_pos, "seam surface section should precede ledger section");
-    assert!(output.contains("artifact=artifact_candidate_action_execution"));
-    assert!(output.contains("execution_id=execution_end_turn"));
-    assert!(output.contains("input_delivery=attempted"));
-    assert!(output.contains("selected_path=window_targeted_mouse"));
-    assert!(output.contains("operation_status=completed"));
-    assert!(output.contains("verification=activation_only"));
-    assert!(output.contains("closure_state=semantic_open"));
-    assert!(output.contains("semantic_matched=n/a"));
-    assert!(output.contains("side_effect=single_input_delivered"));
-    assert!(output.contains("consent=consent_execute_end_turn"));
-    assert!(output.contains("consent_provenance=human_gesture"));
-    assert!(output.contains("consent_grade=human_approved"));
-    assert!(output.contains("effective_decision:"));
-    assert!(output.contains("driver_result:"));
   }
 
   #[test]
@@ -4050,10 +3478,6 @@ mod tests {
 
     let output = render_run_text(
       &run,
-      &[],
-      &[],
-      &[],
-      &[],
       &[],
       &[],
       &[],
@@ -4324,10 +3748,6 @@ mod tests {
       &[],
       &[],
       &[],
-      &[],
-      &[],
-      &[],
-      &[],
       &manifests,
       &[],
       &[],
@@ -4453,10 +3873,6 @@ mod tests {
 
     let output = render_run_text(
       &run,
-      &[],
-      &[],
-      &[],
-      &[],
       &[],
       &[],
       &[],
@@ -4615,10 +4031,6 @@ mod tests {
 
     let output = render_run_text(
       &run,
-      &[],
-      &[],
-      &[],
-      &[],
       &[],
       &[],
       &[],
@@ -4812,10 +4224,6 @@ mod tests {
       &[],
       &[],
       &[],
-      &[],
-      &[],
-      &[],
-      &[],
       &summaries,
       &[],
       &[],
@@ -4977,10 +4385,6 @@ mod tests {
 
     let output = render_run_text(
       &run,
-      &[],
-      &[],
-      &[],
-      &[],
       &[],
       &[],
       &[],
@@ -5200,10 +4604,6 @@ mod tests {
       &[],
       &[],
       &[],
-      &[],
-      &[],
-      &[],
-      &[],
       &[job_manifest],
       &duplicate_reports,
       &[],
@@ -5407,10 +4807,6 @@ mod tests {
       &[],
       &[],
       &[],
-      &[],
-      &[],
-      &[],
-      &[],
       &[package_manifest],
       &duplicate_reports,
       &[],
@@ -5602,10 +4998,6 @@ mod tests {
 
     let output = render_run_text(
       &run,
-      &[],
-      &[],
-      &[],
-      &[],
       &[],
       &[],
       &[],
@@ -5827,10 +5219,6 @@ mod tests {
       &[],
       &[],
       &[],
-      &[],
-      &[],
-      &[],
-      &[],
       &[holdout_manifest],
       &duplicate_reports,
       &[],
@@ -5938,10 +5326,6 @@ mod tests {
 
     let output = render_run_text(
       &run,
-      &[],
-      &[],
-      &[],
-      &[],
       &[],
       &[],
       &[],

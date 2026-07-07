@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use crate::model::AuvResult;
 use auv_tracing_driver::store::LocalStore;
-use auv_tracing_driver::trace::RunType;
 use auv_tracing_driver::{MemoryRunRecorder, RunRecordingBackend};
 
 pub struct Runtime {
@@ -44,18 +43,6 @@ impl Runtime {
     F: FnOnce(&mut auv_tracing_driver::recorded_operation::RecordedOperationContext<'_>) -> Result<T, E>,
   {
     self.recording.handle().run_recorded_operation(spec, operation_label, operation)
-  }
-  pub fn run_candidate_action_command(
-    &self,
-    request: crate::candidate_action_command::CandidateActionCommandRequest,
-  ) -> AuvResult<
-    auv_tracing_driver::recorded_operation::RecordedOperationOutput<crate::candidate_action_command::CandidateActionCommandOutput>,
-  > {
-    self.run_recorded_operation(
-      auv_tracing_driver::run_builder::RunSpec::new(RunType::Execute, "auv.candidate.action.command"),
-      "Consent-gated candidate action command",
-      |context| crate::candidate_action_command::execute_candidate_action_command(context, &request),
-    )
   }
   #[cfg(test)]
   pub(crate) fn recording_backend(&self) -> &RunRecordingBackend {

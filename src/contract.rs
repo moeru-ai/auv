@@ -15,10 +15,6 @@
 //!
 //! ```text
 //! recognition / AX / candidates
-//!   -> ActionResolver
-//!        (src/driver/macos/control/action_resolver.rs;
-//!         `ActionResolverDecision`, pub(crate), serialize-only,
-//!         records WHICH input method got picked + fallback policy)
 //!   -> auv-driver InputActionResult
 //!        (crates/auv-driver/src/input.rs;
 //!         `InputActionResult`, pub, full serde,
@@ -31,10 +27,10 @@
 //!         is the orchestration bridge, not a contract record)
 //! ```
 //!
-//! `ActionResolverDecision` and `InputActionResult` are the only two
-//! action-result schemas in v0. Per CLAUDE.md, a third action-result
-//! schema must not be introduced beside them — extend one or escalate
-//! to the owner before adding another.
+//! The archived candidate-action `ActionResolverDecision` schema was removed.
+//! Current input delivery evidence should use `InputActionResult` together
+//! with current `OperationResult` and `VerificationResult` records. Do not
+//! introduce a replacement action-result schema without owner approval.
 //!
 //! Reader-side `api_version` rejection is deferred; see
 //! `NOTICE(contract-api-version-reader-check)` immediately below.
@@ -118,9 +114,9 @@ pub enum OperationStatus {
 ///
 /// - **Produced by** typed driver / runtime command handlers via
 ///   `Runtime::record_operation` (see [`auv_tracing_driver::recorded_operation`]).
-///   Action commands record the `InputActionResult` from
-///   `crates/auv-driver` through the macos `ActionResolverDecision`
-///   layer, then attach the resulting `OperationResult` here.
+///   Action commands attach current input delivery evidence such as
+///   `InputActionResult` from `crates/auv-driver` and any verification
+///   claims to the resulting `OperationResult` here.
 /// - **Consumed by** `run_read::extract_verifications` (which scans
 ///   `operation-result` JSON artifacts and lifts both top-level
 ///   `verifications` and the legacy `OperationOutput::Verification`),
