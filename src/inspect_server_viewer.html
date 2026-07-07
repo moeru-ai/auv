@@ -799,18 +799,6 @@
     outline-offset: 2px;
   }
 
-  #action-transition-lineage {
-    flex: none;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--shell-line);
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    overflow: auto;
-    max-height: 40vh;
-    background: var(--shell);
-  }
-  #action-transition-lineage[hidden] { display: none; }
   #netease-select-proof-hint {
     margin: 0.75rem 1rem 0;
     padding: 0.5rem 0.75rem;
@@ -831,81 +819,6 @@
     margin-top: 0.25rem;
     color: var(--fg-3);
     font-size: 0.75rem;
-  }
-  #action-transition-lineage .action-transition-issue-banner {
-    font-family: var(--font-mono), monospace;
-    font-size: 11px;
-    color: var(--fg-2);
-    padding: 6px 8px;
-    border-radius: 4px;
-    background: rgba(180, 106, 20, 0.08);
-    border: 1px solid var(--shell-line);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  #action-transition-lineage .action-transition-issue-headline {
-    font-weight: 600;
-    color: var(--candidate);
-  }
-  #action-transition-lineage .action-transition-card {
-    border: 1px solid var(--shell-line);
-    border-radius: 4px;
-    background: var(--shell-2);
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  #action-transition-lineage .action-transition-card.mismatch {
-    border-color: var(--candidate);
-    box-shadow: inset 0 0 0 1px rgba(180, 106, 20, 0.25);
-  }
-  #action-transition-lineage .action-transition-card-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-  #action-transition-lineage .action-transition-candidate {
-    font-family: var(--font-mono), monospace;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--fg);
-  }
-  #action-transition-lineage .action-transition-section-label {
-    font-family: var(--font-ui), sans-serif;
-    font-size: 10px;
-    letter-spacing: 0.6px;
-    text-transform: uppercase;
-    font-weight: 600;
-    color: var(--fg-3);
-    margin-bottom: 4px;
-  }
-  #action-transition-lineage .action-transition-mismatch-banner {
-    font-family: var(--font-mono), monospace;
-    font-size: 11px;
-    color: var(--candidate);
-    padding: 6px 8px;
-    border-radius: 4px;
-    background: var(--candidate-soft);
-    border: 1px solid var(--candidate-line);
-  }
-  #action-transition-lineage .json-summary {
-    border: 1px solid var(--shell-line);
-    background: rgba(0, 196, 210, 0.07);
-    border-radius: 4px;
-    padding: 10px 12px;
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 4px 12px;
-    font-family: var(--font-mono), monospace;
-    font-size: 11px;
-  }
-  #action-transition-lineage .json-summary .k { color: var(--fg-3); }
-  #action-transition-lineage .json-summary .v {
-    color: var(--fg);
-    word-break: break-word;
   }
 </style>
 </head>
@@ -945,7 +858,6 @@
       </div>
       <div id="netease-select-proof-hint" hidden></div>
       <div id="view-parser-proof" hidden></div>
-      <div id="action-transition-lineage" hidden></div>
       <div id="run-list-filter-banner" class="run-list-filter-banner" hidden></div>
       <div class="placeholder" id="main-body">
         <div>select a run from the sidebar.</div>
@@ -1141,13 +1053,6 @@
     }
     if (!merged.view_parser_summary && previous && previous.view_parser_summary) {
       merged.view_parser_summary = previous.view_parser_summary;
-    }
-    if (
-      !Array.isArray(merged.action_transition_lineage)
-      && previous
-      && Array.isArray(previous.action_transition_lineage)
-    ) {
-      merged.action_transition_lineage = previous.action_transition_lineage.slice();
     }
     return merged;
   }
@@ -1582,212 +1487,9 @@
     }
   }
 
-  function clearActionTransitionLineage() {
-    const panel = document.getElementById("action-transition-lineage");
-    if (!panel) return;
-    panel.innerHTML = "";
-    panel.hidden = true;
-  }
-
-  function hasActionTransitionLineage(run) {
-    return !!(
-      run
-      && Array.isArray(run.action_transition_lineage)
-      && run.action_transition_lineage.length > 0
-    );
-  }
-
-  function actionTransitionStatusPillClass(status) {
-    const value = String(status || "").toLowerCase();
-    if (value === "ready") return "s-validated";
-    if (value === "partial") return "s-candidate";
-    if (value === "malformed") return "s-failed";
-    return "s-frozen";
-  }
-
-  function actionTransitionKnownLimits(entry) {
-    return Array.isArray(entry && entry.known_limits) ? entry.known_limits : [];
-  }
-
-  function actionTransitionHasPlanDeliveryMismatch(entry) {
-    return actionTransitionKnownLimits(entry).some(function (limit) {
-      return String(limit || "").toLowerCase().startsWith("plan_delivery_mismatch");
-    });
-  }
-
-  function actionTransitionEffectiveMethod(entry) {
-    const effective = entry && entry.effective_decision;
-    return effective && effective.selected_method
-      ? String(effective.selected_method)
-      : "";
-  }
-
-  function actionTransitionPlannedMethod(entry) {
-    const planned = entry && entry.planned_decision;
-    return planned && planned.selected_method
-      ? String(planned.selected_method)
-      : "";
-  }
-
-  function actionTransitionMethodsDiverge(entry) {
-    const effective = actionTransitionEffectiveMethod(entry);
-    const planned = actionTransitionPlannedMethod(entry);
-    return !!planned && !!effective && planned !== effective;
-  }
-
-  function actionTransitionDriverPath(entry) {
-    const driver = entry && entry.driver_result;
-    if (!driver) return "—";
-    if (driver.selected_path != null && driver.selected_path !== "") {
-      return String(driver.selected_path);
-    }
-    return "—";
-  }
-
-  function actionTransitionPlanDeliveryMismatchLimits(entry) {
-    return actionTransitionKnownLimits(entry).filter(function (limit) {
-      return String(limit || "").toLowerCase().startsWith("plan_delivery_mismatch");
-    });
-  }
-
-  function actionTransitionNonMismatchLimits(entry) {
-    return actionTransitionKnownLimits(entry).filter(function (limit) {
-      return !String(limit || "").toLowerCase().startsWith("plan_delivery_mismatch");
-    });
-  }
-
-  function actionTransitionIssueHeadline(issue) {
-    const value = String(issue || "");
-    if (value === "missing_action_resolver_decision") {
-      return "Missing action resolver decision";
-    }
-    if (value === "missing_input_action_result") {
-      return "Missing input action result";
-    }
-    if (value.toLowerCase().startsWith("plan_effective_method_divergence:")) {
-      return "Plan/effective method divergence";
-    }
-    return value || "Issue";
-  }
-
-  function actionTransitionIssueExplanation(issue) {
-    const value = String(issue || "");
-    if (value === "missing_action_resolver_decision") {
-      return "Decision fact absent on artifact; partial legacy or incomplete producer path.";
-    }
-    if (value === "missing_input_action_result") {
-      return "Driver result absent; input delivery was attempted but InputActionResult is missing.";
-    }
-    if (value.toLowerCase().startsWith("plan_effective_method_divergence:")) {
-      return value;
-    }
-    return "";
-  }
-
   function appendJsonSummaryRow(grid, key, value) {
     grid.appendChild(el("span", { className: "k" }, [key]));
     grid.appendChild(el("span", { className: "v" }, [value != null && value !== "" ? String(value) : "—"]));
-  }
-
-  function renderActionTransitionLineageCard(entry) {
-    const candidate = entry && entry.pre_state && entry.pre_state.candidate_local_id
-      ? entry.pre_state.candidate_local_id
-      : "—";
-    const executionId = entry && entry.execution_id ? entry.execution_id : "—";
-    const status = entry && entry.status ? entry.status : "—";
-    const mismatch = actionTransitionMethodsDiverge(entry)
-      || actionTransitionHasPlanDeliveryMismatch(entry);
-    const cardClass = "action-transition-card" + (mismatch ? " mismatch" : "");
-    const header = el("div", { className: "action-transition-card-head" }, [
-      el("span", { className: "action-transition-candidate" }, [candidate]),
-      makeProofPill("status · " + status, actionTransitionStatusPillClass(status)),
-    ]);
-    const cardEl = el("div", { className: cardClass }, [header]);
-
-    for (const limit of actionTransitionPlanDeliveryMismatchLimits(entry)) {
-      cardEl.appendChild(el("div", { className: "action-transition-mismatch-banner" }, [limit]));
-    }
-
-    if (actionTransitionMethodsDiverge(entry)) {
-      const planned = actionTransitionPlannedMethod(entry) || "—";
-      const effective = actionTransitionEffectiveMethod(entry) || "—";
-      cardEl.appendChild(el("div", { className: "action-transition-mismatch-banner" }, [
-        "plan/effective tension: planned="
-          + planned
-          + " · effective="
-          + effective,
-      ]));
-    }
-
-    if (entry && entry.issue) {
-      const headline = actionTransitionIssueHeadline(entry.issue);
-      const explanation = actionTransitionIssueExplanation(entry.issue);
-      const issueBanner = el("div", { className: "action-transition-issue-banner" }, [
-        el("span", { className: "action-transition-issue-headline" }, [headline]),
-      ]);
-      if (explanation && explanation !== headline) {
-        issueBanner.appendChild(document.createTextNode(explanation));
-      }
-      cardEl.appendChild(issueBanner);
-    }
-
-    const summary = el("div", { className: "json-summary" }, []);
-    appendJsonSummaryRow(summary, "execution_id", executionId);
-    appendJsonSummaryRow(
-      summary,
-      "effective_decision.selected_method",
-      actionTransitionEffectiveMethod(entry) || null
-    );
-    if (entry && entry.planned_decision) {
-      appendJsonSummaryRow(
-        summary,
-        "planned_decision.selected_method",
-        actionTransitionPlannedMethod(entry) || null
-      );
-    }
-    appendJsonSummaryRow(
-      summary,
-      "verification.verification_outcome",
-      entry && entry.verification ? entry.verification.verification_outcome : null
-    );
-    appendJsonSummaryRow(summary, "driver_result.selected_path", actionTransitionDriverPath(entry));
-    cardEl.appendChild(summary);
-
-    const limits = actionTransitionNonMismatchLimits(entry);
-    if (limits.length > 0 || String(status).toLowerCase() === "partial") {
-      const limitsSection = el("div", { className: "action-transition-section" }, [
-        el("div", { className: "action-transition-section-label" }, ["Known limits / partial"]),
-        el("div", { className: "json-summary" }, []),
-      ]);
-      const limitsGrid = limitsSection.lastChild;
-      if (limits.length === 0) {
-        appendJsonSummaryRow(limitsGrid, "status", "partial (no limits listed)");
-      } else {
-        for (let index = 0; index < limits.length; index++) {
-          appendJsonSummaryRow(limitsGrid, "limit[" + index + "]", limits[index]);
-        }
-      }
-      cardEl.appendChild(limitsSection);
-    }
-
-    return cardEl;
-  }
-
-  function renderActionTransitionLineage(run) {
-    const panel = document.getElementById("action-transition-lineage");
-    if (!panel) return;
-    if (!hasActionTransitionLineage(run)) {
-      clearActionTransitionLineage();
-      return;
-    }
-    panel.innerHTML = "";
-    panel.hidden = false;
-    panel.appendChild(el("div", { className: "action-transition-section-label" }, [
-      "Action transition lineage",
-    ]));
-    for (const entry of run.action_transition_lineage) {
-      panel.appendChild(renderActionTransitionLineageCard(entry));
-    }
   }
 
   async function refreshViewParserProofFromRunDetail(runId) {
@@ -1803,13 +1505,11 @@
       if (runIndex >= 0) state.runs[runIndex] = state.activeRun;
       setMainHeader(state.activeRun, false);
       renderViewParserProof(state.activeRun);
-      renderActionTransitionLineage(state.activeRun);
       renderNeteaseSelectProofHint(state.activeRun, state.spans, state.artifacts);
       renderRunList();
     } catch (err) {
       if (state.activeRunId !== runId) return;
       clearViewParserProof();
-      clearActionTransitionLineage();
       clearNeteaseSelectProofHint();
     }
   }
@@ -2070,7 +1770,6 @@
   async function selectRun(runId) {
     closeStream();
     clearViewParserProof();
-    clearActionTransitionLineage();
     clearNeteaseSelectProofHint();
     state.activeRunId = runId;
     state.activeRun = state.runs.find(function (r) { return r.run_id === runId; }) || null;
@@ -2135,12 +1834,10 @@
       renderArtifactList(state.artifacts);
       renderArtifactPreview(findArtifact(state.activeArtifactKey), state.artifacts);
       renderViewParserProof(state.activeRun);
-      renderActionTransitionLineage(state.activeRun);
       renderNeteaseSelectProofHint(state.activeRun, state.spans, state.artifacts);
     } catch (err) {
       if (state.activeRunId !== runId) return;
       clearViewParserProof();
-      clearActionTransitionLineage();
       clearNeteaseSelectProofHint();
       setConnection(false, "/runs/:id (" + err.message + ")");
       renderPlaceholder([
@@ -4641,173 +4338,6 @@
   }
   selfTestRunListFilters();
 
-  function selfTestActionTransitionLineage() {
-    const canonicalMismatchLimit =
-      "plan_delivery_mismatch: l8a_selected=ax-action effective=pointer-click";
-    const mismatchEntry = {
-      status: "partial",
-      execution_id: "exec-1",
-      pre_state: { candidate_local_id: "item_end_turn" },
-      effective_decision: { selected_method: "pointer-click" },
-      planned_decision: { selected_method: "ax-action" },
-      driver_result: { selected_path: "window_targeted_mouse" },
-      verification: { verification_outcome: "activation_only" },
-      known_limits: [canonicalMismatchLimit],
-    };
-    console.assert(
-      actionTransitionMethodsDiverge(mismatchEntry),
-      "planned vs effective should register as divergence"
-    );
-    console.assert(
-      actionTransitionHasPlanDeliveryMismatch(mismatchEntry),
-      "prefixed plan_delivery_mismatch limit should be detected"
-    );
-    console.assert(
-      actionTransitionHasPlanDeliveryMismatch({
-        known_limits: [canonicalMismatchLimit],
-      }),
-      "prefixed limit alone should register plan_delivery_mismatch"
-    );
-    console.assert(
-      actionTransitionDriverPath(mismatchEntry) === "window_targeted_mouse",
-      "driver selected_path should surface"
-    );
-
-    const panel = document.getElementById("action-transition-lineage");
-    console.assert(!!panel, "action-transition-lineage panel should exist in DOM");
-
-    const run = { action_transition_lineage: [mismatchEntry] };
-    renderActionTransitionLineage(run);
-    console.assert(!panel.hidden, "panel should be visible when lineage present");
-    console.assert(
-      panel.querySelector(".action-transition-card.mismatch") !== null,
-      "mismatch card highlight should render"
-    );
-    console.assert(
-      panel.querySelector(".action-transition-mismatch-banner") !== null,
-      "mismatch banner should render in UI"
-    );
-    console.assert(
-      panel.querySelector(".action-transition-issue-banner") === null,
-      "mismatch-only entry should not render issue banner"
-    );
-    console.assert(
-      panel.textContent.indexOf(canonicalMismatchLimit) >= 0,
-      "canonical known_limits should be visible in UI text"
-    );
-    console.assert(
-      panel.textContent.indexOf("activation_only") >= 0,
-      "verification_outcome should be visible in UI"
-    );
-    console.assert(
-      panel.textContent.indexOf("window_targeted_mouse") >= 0,
-      "driver_result.selected_path should be visible in UI"
-    );
-    console.assert(
-      panel.textContent.indexOf("pointer-click") >= 0,
-      "effective_decision.selected_method should be visible in UI"
-    );
-
-    const limitOnlyEntry = {
-      status: "partial",
-      execution_id: "exec-limit-only",
-      pre_state: { candidate_local_id: "item_limit_only" },
-      effective_decision: { selected_method: "pointer-click" },
-      driver_result: { selected_path: "window_targeted_mouse" },
-      verification: { verification_outcome: "activation_only" },
-      known_limits: [canonicalMismatchLimit],
-    };
-    renderActionTransitionLineage({ action_transition_lineage: [limitOnlyEntry] });
-    console.assert(
-      panel.querySelector(".action-transition-card.mismatch") !== null,
-      "limit-only mismatch should still highlight card"
-    );
-
-    const missingDecisionEntry = {
-      status: "partial",
-      execution_id: "exec-missing-decision",
-      pre_state: { candidate_local_id: "item_missing_decision" },
-      issue: "missing_action_resolver_decision",
-      verification: { verification_outcome: "activation_only" },
-    };
-    renderActionTransitionLineage({ action_transition_lineage: [missingDecisionEntry] });
-    console.assert(
-      panel.querySelector(".action-transition-issue-banner") !== null,
-      "missing_action_resolver_decision should render issue banner"
-    );
-    console.assert(
-      panel.textContent.indexOf("Missing action resolver decision") >= 0,
-      "missing decision headline should be visible"
-    );
-    console.assert(
-      panel.textContent.indexOf("Decision fact absent") >= 0,
-      "missing decision explanation should be visible"
-    );
-
-    const missingDriverEntry = {
-      status: "partial",
-      execution_id: "exec-missing-driver",
-      pre_state: { candidate_local_id: "item_missing_driver" },
-      effective_decision: { selected_method: "pointer-click" },
-      issue: "missing_input_action_result",
-      verification: { verification_outcome: "activation_only" },
-    };
-    renderActionTransitionLineage({ action_transition_lineage: [missingDriverEntry] });
-    console.assert(
-      panel.textContent.indexOf("Missing input action result") >= 0,
-      "missing driver headline should be visible"
-    );
-    console.assert(
-      panel.textContent.indexOf("Driver result absent") >= 0,
-      "missing driver explanation should be visible"
-    );
-
-    const divergenceIssue =
-      "plan_effective_method_divergence: planned=ax-action effective=pointer-click";
-    const divergenceEntry = {
-      status: "partial",
-      execution_id: "exec-divergence",
-      pre_state: { candidate_local_id: "item_divergence" },
-      effective_decision: { selected_method: "pointer-click" },
-      planned_decision: { selected_method: "ax-action" },
-      issue: divergenceIssue,
-      verification: { verification_outcome: "activation_only" },
-    };
-    renderActionTransitionLineage({ action_transition_lineage: [divergenceEntry] });
-    console.assert(
-      panel.textContent.indexOf("Plan/effective method divergence") >= 0,
-      "divergence issue headline should be visible"
-    );
-    console.assert(
-      panel.textContent.indexOf(divergenceIssue) >= 0,
-      "divergence issue detail should be visible"
-    );
-
-    const malformedEntry = {
-      status: "malformed",
-      execution_id: "exec-bad",
-      pre_state: { candidate_local_id: "item_bad" },
-      issue: "failed to parse candidate-action-execution artifact",
-    };
-    renderActionTransitionLineage({ action_transition_lineage: [malformedEntry] });
-    console.assert(
-      panel.textContent.indexOf("malformed") >= 0,
-      "malformed status should be visible in UI"
-    );
-    console.assert(
-      panel.textContent.indexOf("failed to parse candidate-action-execution artifact") >= 0,
-      "malformed issue should be visible in UI"
-    );
-    console.assert(
-      panel.querySelector(".action-transition-issue-banner") !== null,
-      "malformed entry should render issue banner"
-    );
-
-    clearActionTransitionLineage();
-    console.assert(panel.hidden, "panel should hide after clear");
-  }
-  selfTestActionTransitionLineage();
-
   function selfTestNeteaseSelectProofHint() {
     const hintPanel = document.getElementById("netease-select-proof-hint");
     console.assert(!!hintPanel, "netease-select-proof-hint panel should exist in DOM");
@@ -4852,33 +4382,7 @@
       );
     }
 
-    const atlPanel = document.getElementById("action-transition-lineage");
-    const coexistRun = {
-      run_id: "run_netease_hint_coexist",
-      action_transition_lineage: [{
-        status: "ready",
-        execution_id: "exec_coexist",
-        pre_state: { candidate_local_id: "item_coexist" },
-        effective_decision: { selected_method: "pointer-click" },
-        driver_result: { selected_path: "window_targeted_mouse" },
-        verification: { verification_outcome: "activation_only" },
-      }],
-    };
-    renderActionTransitionLineage(coexistRun);
-    renderNeteaseSelectProofHint(coexistRun, spans, artifacts);
-    console.assert(!atlPanel.hidden, "ATL panel should remain visible with hint");
-    console.assert(
-      atlPanel.textContent.indexOf("pointer-click") >= 0,
-      "ATL panel should show seam fields when coexisting with hint"
-    );
-    console.assert(!hintPanel.hidden, "hint should remain visible with ATL");
-    console.assert(
-      hintPanel.querySelector(".netease-select-proof-hint-secondary") !== null,
-      "hint should keep secondary note styling when ATL is present"
-    );
-
     clearNeteaseSelectProofHint();
-    clearActionTransitionLineage();
     console.assert(hintPanel.hidden, "hint should hide after clear");
   }
   selfTestNeteaseSelectProofHint();
