@@ -1,23 +1,19 @@
 {
-  "capture_file_name": "capture-object-0000-before-16ms.png",
-  "detection_set": {
-    "model_id": "test-osu-fixture-detector",
-    "image_size": {
-      "width": 1512,
-      "height": 949
-    },
-    "detections": [
-      {
-        "class_id": 0,
-        "label": "hit_circle",
-        "confidence": 0.99,
-        "bbox": {
-          "x1": 286.44272,
-          "y1": 91.4401,
-          "x2": 444.6094,
-          "y2": 249.60678
-        }
+  "image_size": {
+    "width": 1512,
+    "height": 949
+  },
+  "detections": [
+    {
+      "class_id": 0,
+      "label": "hit_circle",
+      "confidence": 0.99,
+      "bbox": {
+        "x1": 286.44272,
+        "y1": 91.4401,
+        "x2": 444.6094,
+        "y2": 249.60678
       }
-    ]
-  }
+    }
+  ]
 }

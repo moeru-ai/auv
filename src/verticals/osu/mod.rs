@@ -468,7 +468,6 @@ fn osu_frame_detections_snapshot(index: usize, frame: FrameDetections) -> Observ
         provider_score: Some(f64::from(detection.confidence)),
         detail: serde_json::json!({
           "class_id": detection.class_id,
-          "model_id": frame.detections.model_id.0,
           "source_image_size": {
             "width": frame.detections.image_size.width,
             "height": frame.detections.image_size.height,
@@ -701,7 +700,7 @@ fn build_live_playfield_projection(target_app: &str, target_title: &str, circle_
 #[cfg(test)]
 mod tests {
   use auv_game_osu::{CapturePhase, FrameDetections, FrameKey};
-  use auv_inference_common::{BoundingBox, Detection, DetectionSet, ImageSize, ModelId};
+  use auv_task_object_detection::{BoundingBox, Detection, DetectionResult, ImageSize};
 
   use crate::session::{ObserveRequest, SessionOptions, SessionRuntime};
 
@@ -713,8 +712,7 @@ mod tests {
       "osu.fixture.detector",
       vec![FrameDetections::new(
         FrameKey::from_parts(0, CapturePhase::AfterDispatch, "capture-after.png"),
-        DetectionSet {
-          model_id: ModelId("osu-yolo-fixture".to_string()),
+        DetectionResult {
           image_size: ImageSize {
             width: 640,
             height: 480,

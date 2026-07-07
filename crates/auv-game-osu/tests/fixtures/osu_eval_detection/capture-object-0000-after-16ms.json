@@ -1,11 +1,7 @@
 {
-  "capture_file_name": "capture-object-0000-after-16ms.png",
-  "detection_set": {
-    "model_id": "test-osu-fixture-detector",
-    "image_size": {
-      "width": 1512,
-      "height": 949
-    },
-    "detections": []
-  }
+  "image_size": {
+    "width": 1512,
+    "height": 949
+  },
+  "detections": []
 }

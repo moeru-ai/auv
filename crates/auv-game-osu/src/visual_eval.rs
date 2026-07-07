@@ -1,4 +1,4 @@
-use auv_inference_common::{BoundingBox, DetectionSet};
+use auv_task_object_detection::{BoundingBox, DetectionResult};
 use serde::{Deserialize, Serialize};
 
 use crate::{CapturePhase, ObjectKind, VisualTruthManifest};
@@ -23,11 +23,11 @@ impl FrameKey {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FrameDetections {
   pub frame: FrameKey,
-  pub detections: DetectionSet,
+  pub detections: DetectionResult,
 }
 
 impl FrameDetections {
-  pub fn new(frame: FrameKey, detections: DetectionSet) -> Self {
+  pub fn new(frame: FrameKey, detections: DetectionResult) -> Self {
     Self { frame, detections }
   }
 }
@@ -337,7 +337,7 @@ mod tests {
   use crate::{
     CaptureFrame, ExpectedObjectTruth, MapSummary, ProjectionArtifact, ProjectionBounds, ProjectionDerivationMethod, VisualTruthFrame,
   };
-  use auv_inference_common::{Detection, ImageSize, ModelId};
+  use auv_task_object_detection::{Detection, ImageSize};
 
   fn test_map_summary() -> MapSummary {
     MapSummary {
@@ -403,9 +403,8 @@ mod tests {
     }
   }
 
-  fn detection_set(detections: Vec<Detection>) -> DetectionSet {
-    DetectionSet {
-      model_id: ModelId("test-osu-detector".to_string()),
+  fn detection_set(detections: Vec<Detection>) -> DetectionResult {
+    DetectionResult {
       image_size: ImageSize {
         width: 640,
         height: 480,

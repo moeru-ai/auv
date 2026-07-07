@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use auv_inference_common::{BoundingBox, Detection, DetectionCoordinateSpace, DetectionSet, ImageSize, ModelId, render_annotated_image};
+use auv_task_object_detection::{BoundingBox, Detection, ImageSize, render_annotated_image};
 use image::ImageReader;
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +13,6 @@ use crate::{CapturePhase, VisualTruthManifest};
 pub type DatasetResult<T> = Result<T, String>;
 
 const DATASET_SCHEMA_VERSION: u32 = 1;
-const DEFAULT_MODEL_ID: &str = "osu-auto-label-truth-v1";
 const VISIBILITY_RULE: &str = "label frames captured before dispatch or within 128ms after dispatch; skip later frames";
 const AFTER_DISPATCH_LABEL_WINDOW_MS: i64 = 128;
 
@@ -36,7 +35,7 @@ pub struct DatasetManifest {
   pub beatmap_path: String,
   pub label_map: Vec<DatasetLabelEntry>,
   pub visibility_rule: String,
-  pub coordinate_space: DetectionCoordinateSpace,
+  pub coordinate_space: DatasetCoordinateSpace,
   pub projection: ProjectionArtifact,
   pub checked_frames: Vec<String>,
   pub exported_frames: Vec<DatasetFrameRecord>,
@@ -47,6 +46,12 @@ pub struct DatasetManifest {
 pub struct DatasetLabelEntry {
   pub class_id: usize,
   pub label: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DatasetCoordinateSpace {
+  SourceImagePixels,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -110,7 +115,7 @@ pub fn export_dataset(inputs: &DatasetExportInputs) -> DatasetResult<DatasetExpo
       beatmap_path: manifest.beatmap_path.clone(),
       label_map: label_entries,
       visibility_rule: VISIBILITY_RULE.to_string(),
-      coordinate_space: DetectionCoordinateSpace::SourceImagePixels,
+      coordinate_space: DatasetCoordinateSpace::SourceImagePixels,
       projection,
       checked_frames,
       exported_frames: Vec::new(),
@@ -231,12 +236,7 @@ fn write_dataset_export(output_dir: &Path, plans: &[ExportFramePlan], mut manife
       confidence: 1.0,
       bbox: plan.bbox,
     }];
-    let detection_set = DetectionSet {
-      model_id: ModelId(DEFAULT_MODEL_ID.to_string()),
-      image_size: plan.image_size,
-      detections: detections.clone(),
-    };
-    let overlay = render_annotated_image(&source_image, &detection_set.detections);
+    let overlay = render_annotated_image(&source_image, &detections);
     let overlay_target = overlays_dir.join(&plan.overlay_file);
     overlay.save(&overlay_target).map_err(|error| format!("failed to write overlay image {}: {error}", overlay_target.display()))?;
 
