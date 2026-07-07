@@ -2,7 +2,7 @@
 //!
 //! Centralizes run/artifact staging so operation-result and operation-summary
 //! shape changes touch one place. Callers: `summary`, `summary_store`,
-//! `handler`, `transport`, and `client_smoke` test modules.
+//! `handler`, and `transport` test modules.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,12 +28,6 @@ pub struct SessionRunFixture {
   pub store: LocalStore,
 }
 
-impl SessionRunFixture {
-  pub fn cleanup(self) {
-    let _ = fs::remove_dir_all(self.root);
-  }
-}
-
 pub fn unique_temp_dir(label: &str) -> PathBuf {
   let unique = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
   let path = std::env::temp_dir().join(format!("auv-{label}-{}-{unique}", now_millis()));
@@ -42,7 +36,7 @@ pub fn unique_temp_dir(label: &str) -> PathBuf {
   path
 }
 
-/// Temp store root for session API gRPC tests (`transport`, `client_smoke`).
+/// Temp store root for session API gRPC tests (`transport`).
 pub fn session_api_temp_store_root(label: &str) -> PathBuf {
   unique_temp_dir(&format!("session-api-{label}"))
 }
