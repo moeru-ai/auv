@@ -295,24 +295,22 @@ impl InputAttempt {
 ///
 /// # Seam role
 ///
-/// Lower / "what actually happened" half of the v0 action-result pair
-/// (per CLAUDE.md). Sibling: `ActionResolverDecision` in
-/// `src/driver/macos/control/action_resolver.rs` (`pub(crate)`), which
-/// records the upstream method-selection decision.
+/// Current "what actually happened" input delivery evidence for action-
+/// bearing operations. The archived candidate-action `ActionResolverDecision`
+/// peer schema was removed; method-selection details should now be represented
+/// through current operation records, verification records, and delivery
+/// evidence instead of a separate resolver-decision artifact.
 ///
 /// - **Upstream**: AUV's macOS smart-press path produces an
-///   `ActionResolverDecision` alongside this struct. Direct driver-
-///   API consumers (recipes, typed commands invoking driver primitives
-///   without a resolver) construct `InputActionResult` without a peer
-///   decision record.
+///   `InputActionResult` when it attempts typed delivery. Direct driver-
+///   API consumers (recipes, typed commands invoking driver primitives)
+///   construct `InputActionResult` the same way.
 /// - **Downstream**: action-bearing operations attach this (and any
-///   peer `ActionResolverDecision`) to the resulting `OperationResult`
-///   artifact (`src/contract.rs`) as delivery evidence — typically
-///   through evidence artifacts or signal flattening.
+///   current verification records) to the resulting `OperationResult`
+///   artifact (`src/contract.rs`) as delivery evidence.
 ///
-/// Per CLAUDE.md, this is one of the two action-result schemas in v0;
-/// `ActionResolverDecision` is the other. Do not introduce a third
-/// action-result schema beside these two.
+/// Do not introduce a new action-result schema beside `InputActionResult`
+/// without owner approval.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputActionResult {
   pub selected_path: InputDeliveryPath,

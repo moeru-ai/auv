@@ -140,7 +140,6 @@ pub fn directory_for_role(role: &str) -> Option<SpatialBundleDirectory> {
   match role {
     "minecraft-screenshot" => Some(SpatialBundleDirectory::Screenshots),
     "minecraft-spatial-frame" | "minecraft-projection" => Some(SpatialBundleDirectory::SpatialFrames),
-    "candidate-action-decision" | "candidate-action-execution" | "candidate-promotion" => Some(SpatialBundleDirectory::Actions),
     "operation-result" => Some(SpatialBundleDirectory::Verification),
     "minecraft-overlay" => Some(SpatialBundleDirectory::Overlays),
     _ => None,
