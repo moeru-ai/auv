@@ -88,20 +88,13 @@ documentation.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
-[features]
-default = []
-ultralytics = ["dep:auv-inference-ultralytics"]
-
 [dependencies]
 auv-inference-common = { path = "../auv-inference-common" }
-auv-inference-ultralytics = { path = "../auv-inference-ultralytics", optional = true }
 image.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-ndarray.workspace = true
 serde_json.workspace = true
-ultralytics-inference.workspace = true
 ```
 
 - [ ] **Step 3: Create public exports**
@@ -112,15 +105,9 @@ Create `crates/auv-task-object-detection/src/lib.rs`:
 pub mod render;
 pub mod types;
 
-#[cfg(feature = "ultralytics")]
-pub mod ultralytics;
-
 pub use auv_inference_common::{BoundingBox, ImageSize};
 pub use render::render_annotated_image;
 pub use types::{Detection, DetectionOptions, DetectionResult};
-
-#[cfg(feature = "ultralytics")]
-pub use ultralytics::UltralyticsObjectDetector;
 ```
 
 - [ ] **Step 4: Create lightweight detection types**
@@ -210,6 +197,15 @@ mod tests {
       );
     }
   }
+
+  #[test]
+  fn detection_options_default_matches_object_detection_defaults() {
+    let options = DetectionOptions::default();
+
+    assert_eq!(options.confidence_threshold, 0.25);
+    assert_eq!(options.iou_threshold, 0.45);
+    assert_eq!(options.max_detections, 300);
+  }
 }
 ```
 
@@ -218,6 +214,9 @@ mod tests {
 Create `crates/auv-task-object-detection/src/render.rs` by moving the existing implementation from `crates/auv-inference-common/src/render.rs` and changing the imports to:
 
 ```rust
+// NOTICE(object-detection-render-owner): This renderer moves from
+// `auv-inference-common` because it depends on object detection task types.
+// Task 2 deletes the old common copy, leaving this crate as the sole owner.
 use crate::{BoundingBox, Detection};
 use image::{Rgb, RgbImage};
 ```
@@ -586,10 +585,34 @@ git commit -m "refactor(auv-inference-ultralytics): expose backend prediction se
 ### Task 4: Implement Ultralytics Object Detection Adapter
 
 **Files:**
+- Modify: `crates/auv-task-object-detection/Cargo.toml`
 - Create: `crates/auv-task-object-detection/src/ultralytics.rs`
 - Modify: `crates/auv-task-object-detection/src/lib.rs`
 
-- [ ] **Step 1: Add the adapter implementation**
+- [ ] **Step 1: Add the backend feature and dependencies**
+
+In `crates/auv-task-object-detection/Cargo.toml`, add:
+
+```toml
+[features]
+default = []
+ultralytics = ["dep:auv-inference-ultralytics"]
+```
+
+Add the optional backend dependency:
+
+```toml
+auv-inference-ultralytics = { path = "../auv-inference-ultralytics", optional = true }
+```
+
+Add test dependencies needed by the adapter conversion tests:
+
+```toml
+ndarray.workspace = true
+ultralytics-inference.workspace = true
+```
+
+- [ ] **Step 2: Add the adapter implementation**
 
 Create `crates/auv-task-object-detection/src/ultralytics.rs`:
 
@@ -688,11 +711,14 @@ pub fn detection_result_from_prediction(
 }
 ```
 
-- [ ] **Step 2: Export the adapter config**
+- [ ] **Step 3: Export the adapter config**
 
-In `crates/auv-task-object-detection/src/lib.rs`, change the ultralytics export to:
+In `crates/auv-task-object-detection/src/lib.rs`, add the feature-gated module and export:
 
 ```rust
+#[cfg(feature = "ultralytics")]
+pub mod ultralytics;
+
 #[cfg(feature = "ultralytics")]
 pub use ultralytics::{
   UltralyticsObjectDetector, UltralyticsObjectDetectorConfig,
@@ -700,7 +726,7 @@ pub use ultralytics::{
 };
 ```
 
-- [ ] **Step 3: Move conversion tests into the task crate**
+- [ ] **Step 4: Move conversion tests into the task crate**
 
 Add tests in `crates/auv-task-object-detection/src/ultralytics.rs` using the existing `ultralytics_inference::{Boxes, Results, Speed}` fixture pattern from the old `convert.rs`. The expected result should omit `model_id`:
 
@@ -727,7 +753,7 @@ assert_eq!(
 );
 ```
 
-- [ ] **Step 4: Run task crate tests with backend feature**
+- [ ] **Step 5: Run task crate tests with backend feature**
 
 Run:
 
@@ -737,7 +763,7 @@ cargo test -p auv-task-object-detection --features ultralytics
 
 Expected: task crate conversion and renderer tests pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add crates/auv-task-object-detection
