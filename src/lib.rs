@@ -1,12 +1,7 @@
 // File: src/lib.rs
-mod action_resolver_decision;
 pub mod api;
 pub mod app;
-pub mod ax_recognition;
-pub mod candidate_action_command;
-pub mod candidate_action_decision;
 pub mod candidate_promotion;
-pub mod candidate_promotion_recording;
 pub mod contract;
 pub mod inference_recognition;
 pub mod inspect;
