@@ -15,7 +15,7 @@ use auv_cli::contract::{OPERATION_RESULT_API_VERSION, OperationOutput, Operation
 use auv_cli::minecraft::{QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action};
 use auv_cli::minecraft_verification::query_wired_verification_readable;
 use auv_cli::model::InvokeRequest;
-use auv_cli::{build_default_runtime, build_runtime_with_store_root};
+use auv_cli::{RootInspectReadProjection, build_default_runtime, build_runtime_with_store_root};
 use auv_tracing_driver::run_builder::RunSpec;
 use cli::{CliCommand, InspectClientOptions, help_text, parse_cli};
 
@@ -60,17 +60,16 @@ async fn run() -> Result<(), String> {
     let store = auv_tracing_driver::store::LocalStore::new(store_root.clone())?;
     let recorder = Arc::new(auv_tracing_driver::BroadcastRunRecorder::new(1024));
     let token = resolve_inspect_serve_write_token(write)?;
-    let config = auv_cli::inspect_server::InspectServeConfig {
+    let config = auv_inspect_server::InspectServeConfig {
       host: host.clone(),
       port: *port,
-      store_root: Some(store_root.clone()),
-      write: auv_cli::inspect_server::InspectWriteConfig {
+      write: auv_inspect_server::InspectWriteConfig {
         enabled: write.enabled || token.is_some(),
         token,
         no_token: write.no_token,
       },
     };
-    auv_cli::inspect_server::serve(store, recorder, config).await?;
+    auv_inspect_server::serve(store, recorder, config, Arc::new(RootInspectReadProjection)).await?;
     return Ok(());
   }
 

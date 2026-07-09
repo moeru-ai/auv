@@ -756,8 +756,8 @@ fn parse_inspect(arguments: &[String]) -> AuvResult<CliCommand> {
 }
 
 fn parse_inspect_serve(arguments: &[String]) -> AuvResult<CliCommand> {
-  let mut host = auv_cli::inspect_server::DEFAULT_INSPECT_HOST.to_string();
-  let mut port = auv_cli::inspect_server::DEFAULT_INSPECT_PORT;
+  let mut host = auv_inspect_server::DEFAULT_INSPECT_HOST.to_string();
+  let mut port = auv_inspect_server::DEFAULT_INSPECT_PORT;
   let mut store_root = None;
   let mut write = InspectServeWriteOptions::default();
   let mut index = 2;
@@ -3837,8 +3837,8 @@ mod tests {
         store_root,
         write,
       } => {
-        assert_eq!(host, auv_cli::inspect_server::DEFAULT_INSPECT_HOST);
-        assert_eq!(port, auv_cli::inspect_server::DEFAULT_INSPECT_PORT);
+        assert_eq!(host, auv_inspect_server::DEFAULT_INSPECT_HOST);
+        assert_eq!(port, auv_inspect_server::DEFAULT_INSPECT_PORT);
         assert_eq!(store_root.as_deref(), Some("/tmp/auv-store"));
         assert!(write.enabled);
         assert_eq!(write.token.as_deref(), Some("secret"));
