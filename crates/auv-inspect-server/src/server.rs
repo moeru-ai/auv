@@ -744,7 +744,6 @@ mod tests {
   use std::collections::BTreeMap;
   use std::fs;
   use std::io::Write;
-  use std::path::Path;
   use std::process::{Command, Stdio};
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
@@ -754,24 +753,40 @@ mod tests {
   use axum::http::{Request, StatusCode};
   use tower::ServiceExt;
 
-  use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config};
-  use crate::contract::{
-    ArtifactRef, OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot, ObservationSource, OperationOutput,
-    OperationResult, OperationStatus, RecognitionResult, RecognitionScope, RecognitionSource, RecognitionSurface, RecognizedItem,
-    VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
-  };
-  use crate::model::now_millis;
-  use crate::scroll_scan::{
-    CollectionObservation, CompletenessClaim, HookDecisionRecord, ObservationCluster, ScanPageRecord, ScanRegion, ScanTarget,
-    ScrollBoundaryCandidate, ScrollScanArtifact, SectionCandidate, StopEvidence, StopPolicy, StopReason,
-  };
-  use auv_tracing_driver::ArtifactFileSource;
+  use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config, router_with_projection};
+  use crate::read_projection::{CommandBoundaryClaim, InspectReadProjection, InspectRunEnrichment};
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RUN_API_VERSION, RunId,
     RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
   use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate};
+
+  struct EnrichedProjection;
+
+  impl InspectReadProjection for EnrichedProjection {
+    fn run_enrichment(&self, _store: &LocalStore, _run: &CanonicalRun) -> super::InspectResult<InspectRunEnrichment> {
+      Ok(InspectRunEnrichment {
+        command_boundary_claims: vec![CommandBoundaryClaim {
+          span_id: SpanId::new("0000000000000001"),
+          kind: "verification".to_string(),
+          message: "semantic verification passed".to_string(),
+        }],
+        verifications: vec![serde_json::json!({"method":{"kind":"semantic_match"}})],
+        observation_snapshots: vec![serde_json::json!({"snapshot_id":"snapshot_projection_test"})],
+        detector_recognition_lineage: vec![serde_json::json!({"status":"ready"})],
+        ..Default::default()
+      })
+    }
+  }
+
+  struct FailingProjection;
+
+  impl InspectReadProjection for FailingProjection {
+    fn run_enrichment(&self, _store: &LocalStore, _run: &CanonicalRun) -> super::InspectResult<InspectRunEnrichment> {
+      Err("projection failed".to_string())
+    }
+  }
 
   fn camel_case_keys_to_snake(value: &mut serde_json::Value) {
     rename_json_keys(value, camel_to_snake);
@@ -1570,38 +1585,69 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn run_route_includes_read_side_verifications_and_observation_snapshots() {
-    let root = temp_dir("inspect-server-run-read-side");
+  async fn run_detail_serializes_generic_projection_enrichments() {
+    let root = temp_dir("inspect-server-projection-detail");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let run_id = RunId::new("run_inspect_server_contracts");
-    write_test_run_with_read_side_contracts(&store, &root, run_id.clone());
+    let run_id = RunId::new("run_projection_detail_test");
+    write_test_run(&store, run_id, None);
 
-    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
-    let run_response = app
-      .oneshot(Request::builder().uri("/runs/run_inspect_server_contracts").body(Body::empty()).expect("request should build"))
+    let app = router_with_projection(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig::default(),
+      Arc::new(EnrichedProjection),
+    );
+    let response = app
+      .oneshot(Request::builder().uri("/runs/run_projection_detail_test").body(Body::empty()).expect("request should build"))
       .await
       .expect("route should respond");
-    assert_eq!(run_response.status(), StatusCode::OK);
-    let run_body = to_bytes(run_response.into_body(), usize::MAX).await.expect("body should read");
-    let run: serde_json::Value = serde_json::from_slice(&run_body).expect("run should be json");
-    assert_eq!(run["run_id"], "run_inspect_server_contracts");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
+    let run: serde_json::Value = serde_json::from_slice(&body).expect("run should be json");
+    assert_eq!(run["run_id"], "run_projection_detail_test");
     assert_eq!(run["command_boundary_claims"][0]["kind"], "verification");
-    assert_eq!(run["command_boundary_claims"][0]["message"], "activation-only; semantic success requires a separate verification result");
-    assert_eq!(run["command_boundary_claims"][1]["kind"], "known_limit");
+    assert_eq!(run["command_boundary_claims"][0]["message"], "semantic verification passed");
     assert_eq!(run["verifications"][0]["method"]["kind"], "semantic_match");
-    assert_eq!(run["observation_snapshots"][0]["snapshot_id"], "snapshot_server_test");
+    assert_eq!(run["observation_snapshots"][0]["snapshot_id"], "snapshot_projection_test");
     assert_eq!(run["detector_recognition_lineage"][0]["status"], "ready");
-    assert_eq!(run["detector_recognition_lineage"][0]["source"], "custom");
-    assert_eq!(run["detector_recognition_lineage"][0]["backend"], "ultralytics-inference");
-    assert_eq!(run["detector_recognition_lineage"][0]["model_id"], "games-balatro-ui");
-    assert_eq!(run["detector_recognition_lineage"][0]["capture_artifact"]["role"], "capture-image");
-    assert_eq!(run["detector_recognition_lineage"][0]["filtered_count"], 1);
-    assert_eq!(run["detector_recognition_lineage"][0]["all_count"], 2);
-    assert!(run.get("candidate_promotion_lineage").is_none());
-    assert!(run.get("candidate_action_decision_lineage").is_none());
-    assert!(run.get("candidate_action_execution_lineage").is_none());
-    assert!(run.get("action_transition_lineage").is_none());
-    assert!(run.get("spans").is_none(), "/runs/{run_id} should not inline spans even when enriched");
+    assert!(run["command_boundary_claims"].as_array().is_some_and(|claims| !claims.is_empty()));
+    assert!(run["verifications"].as_array().is_some_and(|verifications| !verifications.is_empty()));
+    assert!(run["observation_snapshots"].as_array().is_some_and(|snapshots| !snapshots.is_empty()));
+    assert!(run["detector_recognition_lineage"].as_array().is_some_and(|lineage| !lineage.is_empty()));
+    assert!(run.get("view_parser").is_some(), "GET /runs/{{id}} must always include view_parser");
+    assert!(run.get("view_parser_summary").is_some(), "GET /runs/{{id}} must always include view_parser_summary");
+    assert!(run.get("spans").is_none(), "/runs/{{run_id}} should not inline spans");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn run_list_degrades_projection_failure_to_default_summary() {
+    let root = temp_dir("inspect-server-projection-list-failure");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_projection_list_failure_test");
+    write_test_run(&store, run_id, None);
+
+    let app = router_with_projection(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig::default(),
+      Arc::new(FailingProjection),
+    );
+    let response =
+      app.oneshot(Request::builder().uri("/runs").body(Body::empty()).expect("request should build")).await.expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
+    let runs: serde_json::Value = serde_json::from_slice(&body).expect("runs should be json");
+    let rows = runs.as_array().expect("run list should be an array");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["run_id"], "run_projection_list_failure_test");
+    assert_eq!(
+      rows[0]["view_parser_summary"],
+      serde_json::to_value(auv_view::memory::ViewParserListSummary::default()).expect("default summary should serialize")
+    );
 
     let _ = fs::remove_dir_all(root);
   }
@@ -2058,54 +2104,6 @@ eval(scriptBody);
     let _ = fs::remove_dir_all(root);
   }
 
-  #[tokio::test]
-  async fn list_runs_includes_view_parser_summary_on_every_row() {
-    let root = temp_dir("inspect-server-list-summary");
-    let store = LocalStore::new(root.clone()).expect("store should initialize");
-    write_test_run(&store, RunId::new("run_list_summary_ok"), None);
-    write_list_degraded_run(&store, &root, "run_list_summary_bad");
-
-    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
-    let response =
-      app.oneshot(Request::builder().uri("/runs").body(Body::empty()).expect("request should build")).await.expect("route should respond");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
-    let runs: Vec<serde_json::Value> = serde_json::from_slice(&body).expect("runs should be json array");
-    assert_eq!(runs.len(), 2);
-    for run in &runs {
-      assert!(run.get("view_parser_summary").is_some(), "every list row must include view_parser_summary");
-      let summary = &run["view_parser_summary"];
-      assert!(summary.get("has_proof").is_some());
-      assert!(summary.get("resolution_count").is_some());
-      assert!(summary.get("has_known_limits").is_some());
-    }
-    let bad = runs.iter().find(|run| run["run_id"] == "run_list_summary_bad").expect("degraded run should remain in list");
-    assert_eq!(bad["view_parser_summary"]["has_proof"], false);
-    assert_eq!(bad["view_parser_summary"]["resolution_count"], 0);
-
-    let _ = fs::remove_dir_all(root);
-  }
-
-  #[tokio::test]
-  async fn run_detail_includes_view_parser_summary() {
-    let root = temp_dir("inspect-server-detail-summary");
-    let store = LocalStore::new(root.clone()).expect("store should initialize");
-    write_test_run(&store, RunId::new("run_detail_summary"), None);
-
-    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
-    let response = app
-      .oneshot(Request::builder().uri("/runs/run_detail_summary").body(Body::empty()).expect("request should build"))
-      .await
-      .expect("route should respond");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
-    let run: serde_json::Value = serde_json::from_slice(&body).expect("run should be json");
-    assert!(run.get("view_parser_summary").is_some(), "GET /runs/{{id}} must always include view_parser_summary");
-    assert_eq!(run["view_parser_summary"]["has_proof"], false);
-
-    let _ = fs::remove_dir_all(root);
-  }
-
   #[test]
   fn viewer_does_not_reference_removed_candidate_action_fields() {
     for removed_field in [
@@ -2378,7 +2376,7 @@ eval(scriptBody);
   }
 
   fn temp_dir(label: &str) -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("auv-{}-{}", label, now_millis()));
+    let path = std::env::temp_dir().join(format!("auv-{}-{}", label, super::now_millis()));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("temp dir should be creatable");
     path
@@ -2577,284 +2575,6 @@ eval(scriptBody);
         artifacts,
       })
       .expect("run should persist");
-  }
-
-  fn write_list_degraded_run(store: &LocalStore, root: &Path, run_id: &str) {
-    write_test_run(store, RunId::new(run_id), None);
-    let spans_path = root.join("runs").join(run_id).join("spans.jsonl");
-    fs::write(
-      &spans_path,
-      "not valid jsonl
-",
-    )
-    .expect("corrupt spans should write");
-  }
-
-  fn write_test_run_with_read_side_contracts(store: &LocalStore, root: &Path, run_id: RunId) {
-    let span_id = SpanId::new("0000000000000001");
-    let run = RunRecordV1Alpha1 {
-      api_version: RUN_API_VERSION.to_string(),
-      run_id: run_id.clone(),
-      trace_id: TraceId::new("00000000000000000000000000000001"),
-      run_type: RunType::Execute,
-      state: TraceState::Ended,
-      status_code: TraceStatusCode::Ok,
-      started_at_millis: 100,
-      finished_at_millis: Some(101),
-      root_span_id: span_id.clone(),
-      attributes: BTreeMap::new(),
-      summary: Some("done".to_string()),
-      failure: None,
-    };
-    let span = SpanRecordV1Alpha1 {
-      api_version: SPAN_API_VERSION.to_string(),
-      span_id: span_id.clone(),
-      parent_span_id: None,
-      name: "auv.inspect.server".to_string(),
-      state: TraceState::Ended,
-      status_code: TraceStatusCode::Ok,
-      started_at_millis: 100,
-      finished_at_millis: Some(101),
-      attributes: BTreeMap::new(),
-      summary: None,
-      failure: None,
-    };
-    let verification = VerificationResult {
-      api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
-      method: VerificationMethod::SemanticMatch,
-      executed: true,
-      state_changed: true,
-      semantic_matched: Some(true),
-      failure_layer: None,
-      evidence: Vec::new(),
-      consumed_candidate_ref: None,
-      consumed_node_ref: None,
-      consumed_recognition_artifact_ref: None,
-      consumed_recognition_id: None,
-      consumed_recognized_item_id: None,
-      observed_label: Some("Now Playing".to_string()),
-    };
-    let operation_result = OperationResult {
-      api_version: OPERATION_RESULT_API_VERSION.to_string(),
-      run_id: run_id.clone(),
-      status: OperationStatus::Completed,
-      operation_id: "music.result.play".to_string(),
-      evidence_artifacts: Vec::new(),
-      output: OperationOutput::Verification {
-        verification: Box::new(verification.clone()),
-      },
-      verifications: vec![verification],
-      freshness_basis: None,
-      known_limits: Vec::new(),
-    };
-    let observation_snapshot = ObservationSnapshot {
-      api_version: OBSERVATION_SNAPSHOT_API_VERSION.to_string(),
-      snapshot_id: "snapshot_server_test".to_string(),
-      run_id: run_id.clone(),
-      span_id: span_id.clone(),
-      captured_at_millis: 100,
-      source: ObservationSource::Visual,
-      scope: RecognitionScope {
-        surface: RecognitionSurface::Window,
-        display_ref: None,
-        native_display_id: None,
-        app_bundle_id: Some("com.example.music".to_string()),
-        window_title: Some("Example Music".to_string()),
-        window_number: None,
-        region_hint: None,
-        capture_artifact: None,
-        capture_contract_artifact: None,
-      },
-      capture_contract_ref: None,
-      evidence: Vec::new(),
-      nodes: Vec::new(),
-      detail: serde_json::json!({"producer": "scroll_scan"}),
-      known_limits: vec!["visual only".to_string()],
-    };
-    let scroll_scan_artifact = ScrollScanArtifact {
-      scan_id: "scan_server_test".to_string(),
-      target: ScanTarget {
-        application_id: Some("com.example.music".to_string()),
-        window_title: Some("Example Music".to_string()),
-        region: ScanRegion {
-          left_ratio: 0.1,
-          top_ratio: 0.2,
-          right_ratio: 0.9,
-          bottom_ratio: 0.8,
-        },
-      },
-      stop_policy: StopPolicy::Bounded {
-        max_pages: 1,
-        max_scrolls: 0,
-      },
-      pages: Vec::<ScanPageRecord>::new(),
-      observations: Vec::<CollectionObservation>::new(),
-      nodes: Vec::new(),
-      snapshots: vec![observation_snapshot],
-      clusters: Vec::<ObservationCluster>::new(),
-      section_candidates: Vec::<SectionCandidate>::new(),
-      scroll_boundary_candidates: Vec::<ScrollBoundaryCandidate>::new(),
-      hook_decisions: Vec::<HookDecisionRecord>::new(),
-      stop_evidence: StopEvidence {
-        reason: StopReason::MaxPages,
-        message: "bounded for test".to_string(),
-        page_index: 0,
-      },
-      completeness_claim: CompletenessClaim::PartialMaxPages,
-      warnings: Vec::new(),
-    };
-    let artifacts = vec![
-      stage_json_artifact(store, root, &run_id, &span_id, 0, "operation-result", "music-result-play.json", &operation_result),
-      stage_json_artifact(store, root, &run_id, &span_id, 1, "scroll-scan", "scroll-scan.json", &scroll_scan_artifact),
-      stage_json_artifact(store, root, &run_id, &span_id, 3, "capture-image", "capture.json", &serde_json::json!({"capture": "artifact"})),
-      stage_json_artifact(
-        store,
-        root,
-        &run_id,
-        &span_id,
-        4,
-        "detector-recognition",
-        "detector-recognition.json",
-        &RecognitionResult {
-          recognition_id: "recognition_detector_server_test".to_string(),
-          source: RecognitionSource::Custom,
-          scope: RecognitionScope {
-            surface: RecognitionSurface::Region,
-            display_ref: Some("display-main".to_string()),
-            native_display_id: Some("69733248".to_string()),
-            app_bundle_id: Some("com.playstack.balatro".to_string()),
-            window_title: Some("Balatro".to_string()),
-            window_number: Some(7),
-            region_hint: None,
-            capture_artifact: Some(ArtifactRef {
-              run_id: run_id.clone(),
-              artifact_id: ArtifactId::new("artifact_0004"),
-              span_id: span_id.clone(),
-              captured_event_id: None,
-            }),
-            capture_contract_artifact: None,
-          },
-          best: None,
-          filtered: vec![RecognizedItem {
-            item_id: "detector:games-balatro-ui:0".to_string(),
-            kind: "ui_button_play".to_string(),
-            box_: crate::contract::RecognitionBox {
-              x: 10,
-              y: 20,
-              width: 30,
-              height: 40,
-            },
-            text: None,
-            provider_score: Some(0.98),
-            detail: serde_json::json!({}),
-          }],
-          all: vec![
-            RecognizedItem {
-              item_id: "detector:games-balatro-ui:0".to_string(),
-              kind: "ui_button_play".to_string(),
-              box_: crate::contract::RecognitionBox {
-                x: 10,
-                y: 20,
-                width: 30,
-                height: 40,
-              },
-              text: None,
-              provider_score: Some(0.98),
-              detail: serde_json::json!({}),
-            },
-            RecognizedItem {
-              item_id: "detector:games-balatro-ui:1".to_string(),
-              kind: "ui_score".to_string(),
-              box_: crate::contract::RecognitionBox {
-                x: 50,
-                y: 60,
-                width: 70,
-                height: 80,
-              },
-              text: None,
-              provider_score: Some(0.87),
-              detail: serde_json::json!({}),
-            },
-          ],
-          detail: serde_json::json!({
-            "backend": "ultralytics-inference",
-            "model_id": "games-balatro-ui",
-            "execution_provider": "cpu",
-            "class_label_source": { "kind": "override_file" },
-            "runtime_projection": { "kind": "identity_source_image_pixels" },
-          }),
-          evidence: vec![ArtifactRef {
-            run_id: run_id.clone(),
-            artifact_id: ArtifactId::new("artifact_0004"),
-            span_id: span_id.clone(),
-            captured_event_id: None,
-          }],
-          known_limits: vec![
-            "projection basis is unavailable outside capture-integrated runtime".to_string(),
-            "detector RecognitionResult is recognition evidence only, not candidate-ready output".to_string(),
-          ],
-        },
-      ),
-    ];
-
-    store
-      .write_run_snapshot(&CanonicalRun {
-        run,
-        spans: vec![span],
-        events: vec![
-          EventRecordV1Alpha1 {
-            api_version: EVENT_API_VERSION.to_string(),
-            event_id: EventId::new("event_command_verification"),
-            span_id: span_id.clone(),
-            name: "command.verification".to_string(),
-            timestamp_millis: 100,
-            attributes: BTreeMap::new(),
-            message: Some("activation-only; semantic success requires a separate verification result".to_string()),
-            artifact_ids: Vec::new(),
-          },
-          EventRecordV1Alpha1 {
-            api_version: EVENT_API_VERSION.to_string(),
-            event_id: EventId::new("event_command_known_limit"),
-            span_id: span_id.clone(),
-            name: "command.known_limit".to_string(),
-            timestamp_millis: 100,
-            attributes: BTreeMap::new(),
-            message: Some("input delivery does not verify target UI state".to_string()),
-            artifact_ids: Vec::new(),
-          },
-        ],
-        artifacts,
-      })
-      .expect("run should persist");
-  }
-
-  fn stage_json_artifact<T: serde::Serialize>(
-    store: &LocalStore,
-    root: &Path,
-    run_id: &RunId,
-    span_id: &SpanId,
-    index: usize,
-    role: &str,
-    preferred_name: &str,
-    value: &T,
-  ) -> ArtifactRecordV1Alpha1 {
-    let source_path = root.join(format!("source-{index}-{preferred_name}"));
-    let rendered = serde_json::to_string_pretty(value).expect("artifact json should serialize") + "\n";
-    fs::write(&source_path, rendered).expect("artifact source should write");
-    store
-      .stage_artifact_file(
-        run_id,
-        index,
-        span_id,
-        None,
-        ArtifactFileSource {
-          role: role.to_string(),
-          source_path,
-          preferred_name: preferred_name.to_string(),
-          summary: None,
-        },
-      )
-      .expect("artifact should stage")
   }
 
   fn write_test_run_with_duplicate_artifacts(store: &LocalStore, run_id: RunId) {
