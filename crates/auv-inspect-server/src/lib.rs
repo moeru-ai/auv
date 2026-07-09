@@ -6,10 +6,12 @@
 pub mod read_projection;
 pub mod session;
 
-pub use read_projection::{DefaultInspectReadProjection, InspectReadProjection, InspectRunEnrichment};
-pub use session::{InspectServerSession, default_session_path, read_inspect_session, write_inspect_session};
+mod server;
 
-// TODO(inspect-server-task-3): server module and exports are deferred until the
-// owner-approved server move lands.
+pub use read_projection::{CommandBoundaryClaim, DefaultInspectReadProjection, InspectReadProjection, InspectRunEnrichment};
+pub use server::{
+  DEFAULT_INSPECT_HOST, DEFAULT_INSPECT_PORT, InspectServeConfig, InspectWriteConfig, router, router_with_projection, serve,
+};
+pub use session::{InspectServerSession, default_session_path, read_inspect_session, write_inspect_session};
 
 pub type InspectResult<T> = Result<T, String>;

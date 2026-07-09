@@ -5,6 +5,11 @@ use crate::InspectResult;
 
 pub trait InspectReadProjection: Send + Sync + 'static {
   fn run_enrichment(&self, store: &LocalStore, run: &CanonicalRun) -> InspectResult<InspectRunEnrichment>;
+
+  fn run_json_extension(&self, extension: &str, store: &LocalStore, run_id: &str) -> InspectResult<serde_json::Value> {
+    let _ = store;
+    Err(format!("inspect run extension {extension:?} is not available for run {run_id}"))
+  }
 }
 
 #[derive(Clone, Debug, Default)]
