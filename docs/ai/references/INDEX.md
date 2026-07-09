@@ -1,6 +1,6 @@
 # AUV Reference Index
 
-`docs/ai/references/` 下 **305** 篇 reference 的归类索引（不含本文件）。
+`docs/ai/references/` 下 **307** 篇 reference 的归类索引（不含本文件）。
 文件仍保持扁平路径（避免破坏代码与文档互链）；本索引负责导航。
 
 维护：新增 reference 时按命名规范落盘，并在本文件对应 lane 补一行。
@@ -49,7 +49,7 @@ YYYY-MM-DD-<topic-slug>-<doc-type>.md
 | `core/runtime` | Active | AUV core runtime、contract、graduation、query-readiness | 41 |
 | `core/invoke-cli` | Active | invoke 路由、CLI handler、catalog | 14 |
 | `core/api-mcp` | Active | session API、proto、MCP 前端 | 19 |
-| `core/inspect-trace` | Active | run 录制、inspect viewer、trace | 6 |
+| `core/inspect-trace` | Active | run 录制、inspect viewer、trace | 8 |
 | `core/driver-macos` | Active | auv-driver、macOS 输入/窗口/权限 | 20 |
 | `core/view-parser` | Active | view-parser IR 与 inspect 消费 | 40 |
 | `core/scenebridge` | Active | cross-app scene identity / grounding | 8 |
@@ -249,14 +249,16 @@ session API、proto、MCP 前端
 
 run 录制、inspect viewer、trace
 
-#### design (2)
+#### design (3)
 
 - [`2026-05-19-trace-run-inspect-design.md`](2026-05-19-trace-run-inspect-design.md)
 - [`2026-05-21-live-inspect-recording-design.md`](2026-05-21-live-inspect-recording-design.md)
+- [`2026-07-10-auv-inspect-server-crate-viewer-spec.md`](2026-07-10-auv-inspect-server-crate-viewer-spec.md) — proposed split of inspect HTTP/WebSocket server into `auv-inspect-server` plus Vite/Vue/TypeScript viewer authoring
 
-#### implementation-plan (1)
+#### implementation-plan (2)
 
 - [`2026-05-19-trace-run-inspect-implementation-plan.md`](2026-05-19-trace-run-inspect-implementation-plan.md)
+- [`2026-07-10-auv-inspect-server-crate-viewer-implementation-plan.md`](2026-07-10-auv-inspect-server-crate-viewer-implementation-plan.md) — implementation plan for extracting `auv-inspect-server` and migrating the viewer to Vite/Vue/TypeScript
 
 #### note (2)
 
