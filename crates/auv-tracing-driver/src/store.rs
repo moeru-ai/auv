@@ -5,8 +5,9 @@
 //! and `artifacts.jsonl` under `runs/<run_id>/`, and manages the associated
 //! `artifacts/` directory.
 //!
-//! Boundary: storage only. Viewer/server code lives in `inspect_server`, and
-//! execution/orchestration lives in `runtime`/`recording`.
+//! Boundary: storage only. Viewer/server API code lives in `auv-inspect-server`
+//! and root read-side projection adapters; execution/orchestration lives in
+//! `runtime`/`recording`.
 
 use std::fs;
 use std::io::ErrorKind;

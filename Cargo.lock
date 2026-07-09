@@ -386,7 +386,6 @@ dependencies = [
  "auv-view",
  "axum",
  "image",
- "libc",
  "objc2-core-foundation",
  "objc2-core-graphics",
  "reqwest 0.12.28",

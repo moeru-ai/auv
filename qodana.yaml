@@ -104,27 +104,30 @@ exclude:
   # applied via JavaScript/React className; static analysis cannot see dynamic use.
   - name: CssUnusedSymbol
     paths:
+      - crates/auv-inspect-server/src/inspect_server_viewer.html
       - src/inspect_server_viewer.html
       - docs/design/colors_and_type.css
       - docs/design/ui_kits/cli/index-print.html
       - docs/design
       - src
   # NOTICE(qodana-false_positive): inspect viewer serves /assets/* at runtime via
-  # inspect_server's embedded design-asset route, not as filesystem-relative paths.
+  # auv-inspect-server's embedded design asset route, not as filesystem-relative paths.
   - name: HtmlUnknownTarget
     paths:
+      - crates/auv-inspect-server/src/inspect_server_viewer.html
       - src/inspect_server_viewer.html
   # NOTICE(qodana-false_positive): fractional px values are intentional for
   # typography, letter-spacing, and sub-pixel UI alignment in design previews.
   - name: CssNonIntegerLengthInPixels
     paths:
+      - crates/auv-inspect-server/src/inspect_server_viewer.html
       - src/inspect_server_viewer.html
       - docs/design
   # NOTICE(qodana-false_positive): local dev and smoke-test servers bind plain HTTP
   # on loopback; TLS is not applicable for these ephemeral test endpoints.
   - name: HttpUrlsUsage
     paths:
-      - src/inspect_server
+      - crates/auv-inspect-server/src/server.rs
       - src/api/session_service
       - src/candidate_action_command.rs
       - crates/auv-tracing-driver/src/recording/recorder.rs

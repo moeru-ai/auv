@@ -1,4 +1,10 @@
 <!doctype html>
+<!--
+NOTICE(inspect-viewer-migration): This root copy is retained only as the
+legacy migration source for the Vite/Vue viewer extraction. The served viewer
+payload now lives under `crates/auv-inspect-server/`; delete this file when
+the built viewer asset pipeline replaces it.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1691,7 +1697,7 @@
   }
 
   // Sparkle sprite reused by the empty-state span detail. Served from
-  // /assets/sparkle.svg by inspect_server's design asset route; both
+  // /assets/sparkle.svg by auv-inspect-server's design asset route; both
   // the HTML scaffold and dynamic re-renders point at the same URL.
   const SPARKLE_IMG = '<img class="sparkle" src="/assets/sparkle.svg" alt="">';
 

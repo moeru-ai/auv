@@ -3,7 +3,8 @@
 //!
 //! This module renders stored run snapshots (`CanonicalRun`) into a simple text
 //! form (useful for CLI/debug output). It does not provide a live viewer or any
-//! runtime execution logic; see `inspect_server` for the HTTP/WebSocket UI.
+//! runtime execution logic; the HTTP/WebSocket viewer API lives in
+//! `auv-inspect-server`.
 
 use crate::contract::{FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult};
 use crate::model::AuvResult;

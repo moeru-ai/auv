@@ -11,7 +11,7 @@ context.
 |---|---|---|
 | **A — overlay cursor** | `7f18b27` | `NativeOverlayCursorView.draw()` renders the pixel cyan+lime AUV cursor + cyan-strong (`#009ba6`) brand pill; default label `auv · replay`. Sprite ported from `assets/cursor-auv.svg`. |
 | **B — vendor bundle** | `7b7061f` | Full upstream bundle vendored to `docs/design/` with `README.md` recording vendoring decisions + implementation status. |
-| **C.1 — viewer shell + run list** | `3ae972b` | `GET /` on `inspect_server` returns a vanilla HTML+CSS+JS viewer. Pixel logo top bar, 320px sidebar fetching `/runs`, status pills, run cards. |
+| **C.1 — viewer shell + run list** | `3ae972b` | `GET /` on `auv-inspect-server` returns a vanilla HTML+CSS+JS viewer. Pixel logo top bar, 320px sidebar fetching `/runs`, status pills, run cards. |
 | **C.2 — viewer span tree** | `4f0cbe0` | Run selection fetches `/runs/:id` + `/runs/:id/spans`; renders span sigils, statuses, durations, and timing bars. (Landed by Codex.) |
 | **C.3a — viewer events rail** | `132ef3d` | 320px events rail below the span tree, fetching `/runs/:id/events`. Span-detail panel above the rail re-renders on row click. |
 | **C.5 — viewer asset route (early)** | `e7726a4` | `GET /assets/:name` serves design-system SVGs from a compile-time map (path-traversal hardened, immutable cache). Inlined logo + sparkle migrated. |
@@ -24,7 +24,7 @@ These were settled in C.1. New phases should follow:
 
 1. **Vanilla HTML+CSS+JS, no React, no Babel, no build step.**
    The viewer is a single self-contained file
-   (`src/inspect_server_viewer.html`) pulled in via `include_str!`.
+   (`crates/auv-inspect-server/src/inspect_server_viewer.html`) pulled in via `include_str!`.
    The upstream JSX mocks in `ui_kits/viewer/*.jsx` are **prototypes
    to match visually**, not code to port — recreate them in plain
    DOM.
@@ -32,7 +32,7 @@ These were settled in C.1. New phases should follow:
 2. **Design tokens are inlined.** The viewer's `:root` CSS block
    duplicates the relevant tokens from
    `docs/design/colors_and_type.css`. A regression test
-   (`root_serves_inline_viewer_html` in `src/inspect_server.rs`)
+   (`root_serves_inline_viewer_html` in `crates/auv-inspect-server/src/server.rs`)
    asserts `--brand: #00c4d2` is present so drift is caught.
    When adding tokens, copy from `colors_and_type.css` verbatim,
    keep the same names (`--brand`, `--validated`, etc.), and add a
@@ -43,7 +43,7 @@ These were settled in C.1. New phases should follow:
    from a compile-time `include_bytes!` map keyed on
    `docs/design/assets/` filenames. To add a new asset, drop the
    SVG into that directory and add an entry to `DESIGN_ASSETS`
-   in `src/inspect_server.rs`. The filename is the URL — keep
+   in `crates/auv-inspect-server/src/server.rs`. The filename is the URL — keep
    them stable.
 
 4. **The JSON contract is fixed.** Endpoints already exist:
@@ -83,7 +83,7 @@ placeholder with the span tree.
 
 **Where to add code**:
 
-1. Edit `src/inspect_server_viewer.html`. No new files.
+1. Edit `crates/auv-inspect-server/src/inspect_server_viewer.html`. No new files.
 2. The `selectRun(runId)` function is the entry point. Today it
    updates the pane header and the placeholder. Replace the
    placeholder branch with `await loadRunDetail(runId)` that:
@@ -312,8 +312,8 @@ instead.
 
 For each new phase:
 
-1. `cargo test --lib` — every new HTML feature should have at least
-   one assertion in `src/inspect_server.rs` that the payload
+1. `cargo test -p auv-inspect-server` — every new HTML feature should have at least
+   one assertion in `crates/auv-inspect-server/src/server.rs` that the payload
    contains a stable marker string (e.g. `"events.jsonl"` for C.3a).
 2. End-to-end smoke:
    ```
