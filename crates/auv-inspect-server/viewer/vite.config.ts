@@ -2,7 +2,13 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue({
+      template: {
+        transformAssetUrls: false
+      }
+    })
+  ],
   base: "/viewer-assets/",
   build: {
     outDir: "dist",
