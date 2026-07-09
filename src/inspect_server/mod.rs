@@ -8,9 +8,7 @@
 //! Boundary: this is a viewer-facing storage API. It does not execute commands
 //! or perform UI automation; those live in `runtime`, drivers, and recipes.
 
-pub mod session;
-
-pub use session::{InspectServerSession, default_session_path, read_inspect_session, write_inspect_session};
+pub use auv_inspect_server::{InspectServerSession, default_session_path, read_inspect_session, write_inspect_session};
 
 use std::collections::HashMap;
 use std::net::SocketAddr;

@@ -97,6 +97,7 @@ auv-driver-macos = { path = "crates/auv-driver-macos" }
 auv-cli-invoke = { path = "crates/auv-cli-invoke" }
 auv-api-proto = { path = "crates/auv-api-proto" }
 auv-tracing-driver = { path = "crates/auv-tracing-driver" }
+auv-inspect-server = { path = "crates/auv-inspect-server" }
 auv-scan = { path = "crates/auv-scan" }
 auv-view = { path = "crates/auv-view" }
 axum = { version = "0.8", features = ["ws"] }

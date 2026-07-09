@@ -4,13 +4,12 @@
 //! execute commands, drive applications, or own runtime semantics.
 
 pub mod read_projection;
+pub mod session;
 
 pub use read_projection::{DefaultInspectReadProjection, InspectReadProjection, InspectRunEnrichment};
+pub use session::{InspectServerSession, default_session_path, read_inspect_session, write_inspect_session};
 
-// TODO(inspect-server-task-2): server module and exports are deferred until the
-// owner-approved server move lands; Task 1 only establishes the crate shell and
-// read projection boundary.
-// TODO(inspect-server-task-3): session module and exports are deferred until
-// the existing inspect-session code is moved into this crate.
+// TODO(inspect-server-task-3): server module and exports are deferred until the
+// owner-approved server move lands.
 
 pub type InspectResult<T> = Result<T, String>;

@@ -378,6 +378,7 @@ dependencies = [
  "auv-game-minecraft",
  "auv-game-osu",
  "auv-godot",
+ "auv-inspect-server",
  "auv-media-macos",
  "auv-scan",
  "auv-task-object-detection",
@@ -606,6 +607,7 @@ version = "0.0.1"
 dependencies = [
  "auv-tracing-driver",
  "auv-view",
+ "libc",
  "serde",
  "serde_json",
 ]
