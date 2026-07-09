@@ -66,9 +66,9 @@ fn probe_permissions_impl() -> InvokeCommandResult {
 }
 
 fn permission_report(permissions: &auv_driver::PermissionProbe) -> InvokeReport {
-  InvokeReport {
-    fields: vec![report_field("Result", "permissions probed")],
-    sections: vec![InvokeReportSection {
+  InvokeReport::new(
+    vec![report_field("Result", "permissions probed")],
+    vec![InvokeReportSection {
       title: "Permissions".to_string(),
       fields: vec![
         report_field("Screen Recording", permissions.screen_recording.as_str()),
@@ -77,7 +77,7 @@ fn permission_report(permissions: &auv_driver::PermissionProbe) -> InvokeReport 
         report_field("Automation to System Events", permissions.automation_to_system_events.as_str()),
       ],
     }],
-  }
+  )
 }
 
 fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {

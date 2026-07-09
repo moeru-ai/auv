@@ -445,10 +445,7 @@ fn input_key_report(key: &str, target: Option<&str>, backend: Option<&str>, resu
   if let Some(backend) = backend {
     fields.push(report_field("Backend", backend));
   }
-  InvokeReport {
-    fields,
-    sections: Vec::new(),
-  }
+  InvokeReport::new(fields, Vec::new())
 }
 
 fn attach_input_key_report(output: &mut InvokeCommandOutput, key: &str, target: Option<&str>, result: &auv_driver::InputActionResult) {

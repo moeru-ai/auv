@@ -21,6 +21,7 @@ pub struct InvokeRequest {
 pub struct InvokeOutputOptions {
   pub json: bool,
   pub detail: bool,
+  pub wide: bool,
 }
 
 impl Default for InvokeOutputOptions {
@@ -28,6 +29,7 @@ impl Default for InvokeOutputOptions {
     Self {
       json: false,
       detail: false,
+      wide: false,
     }
   }
 }
@@ -35,7 +37,22 @@ impl Default for InvokeOutputOptions {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InvokeReport {
   pub fields: Vec<InvokeReportField>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub tables: Vec<InvokeReportTable>,
+  #[serde(default, skip)]
+  pub wide_tables: Vec<InvokeReportTable>,
   pub sections: Vec<InvokeReportSection>,
+}
+
+impl InvokeReport {
+  pub fn new(fields: Vec<InvokeReportField>, sections: Vec<InvokeReportSection>) -> Self {
+    Self {
+      fields,
+      tables: Vec::new(),
+      wide_tables: Vec::new(),
+      sections,
+    }
+  }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -48,6 +65,34 @@ pub struct InvokeReportField {
 pub struct InvokeReportSection {
   pub title: String,
   pub fields: Vec<InvokeReportField>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InvokeReportTable {
+  pub columns: Vec<String>,
+  pub rows: Vec<InvokeReportTableRow>,
+  #[serde(default, skip)]
+  pub display_max_chars: Vec<Option<usize>>,
+}
+
+impl InvokeReportTable {
+  pub fn new(columns: Vec<String>, rows: Vec<InvokeReportTableRow>) -> Self {
+    Self {
+      columns,
+      rows,
+      display_max_chars: Vec::new(),
+    }
+  }
+
+  pub fn with_display_max_chars(mut self, display_max_chars: Vec<Option<usize>>) -> Self {
+    self.display_max_chars = display_max_chars;
+    self
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InvokeReportTableRow {
+  pub cells: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

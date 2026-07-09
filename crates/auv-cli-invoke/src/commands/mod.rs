@@ -3,6 +3,8 @@ pub mod display;
 pub mod fixture;
 pub mod input;
 pub mod media_control;
+#[cfg(target_os = "macos")]
+mod ocr;
 pub mod overlay;
 pub mod scan;
 pub mod screen;

@@ -3,7 +3,7 @@ use crate::{
   arg::{NO_ARGS, TARGET_ARGS},
   invoke_command,
 };
-use crate::{InvokeReport, InvokeReportField, InvokeReportSection};
+use crate::{InvokeReport, InvokeReportField, InvokeReportTable, InvokeReportTableRow};
 #[cfg(target_os = "macos")]
 use auv_tracing_driver::{ProducedArtifact, now_millis};
 
@@ -173,26 +173,59 @@ fn display_list_report(displays: &[auv_driver::Display]) -> InvokeReport {
       "Result",
       format!("{} display(s)", displays.len()),
     )],
-    sections: displays
-      .iter()
-      .map(|display| InvokeReportSection {
-        title: display.id.clone(),
-        fields: vec![
-          report_field(
-            "Role",
-            if display.is_primary {
-              "primary"
-            } else {
-              "secondary"
-            },
-          ),
-          report_field("Kind", display_kind(display)),
-          report_field("Size", format!("{:.0}x{:.0} logical", display.frame.size.width, display.frame.size.height)),
-          report_field("Scale", format!("{:.3}", display.scale_factor)),
-          report_field("Frame", format_report_rect(display.frame)),
-        ],
-      })
-      .collect(),
+    tables: vec![InvokeReportTable::new(
+      vec![
+        "REF".to_string(),
+        "ROLE".to_string(),
+        "NAME".to_string(),
+        "FRAME".to_string(),
+        "SCALE".to_string(),
+      ],
+      displays
+        .iter()
+        .map(|display| InvokeReportTableRow {
+          cells: vec![
+            display.id.clone(),
+            display_role(display).to_string(),
+            display_label(display),
+            format_table_rect(display.frame),
+            format!("{:.3}", display.scale_factor),
+          ],
+        })
+        .collect(),
+    )],
+    wide_tables: vec![InvokeReportTable::new(
+      vec![
+        "REF".to_string(),
+        "ROLE".to_string(),
+        "NAME".to_string(),
+        "FRAME".to_string(),
+        "SCALE".to_string(),
+        "KIND".to_string(),
+      ],
+      displays
+        .iter()
+        .map(|display| InvokeReportTableRow {
+          cells: vec![
+            display.id.clone(),
+            display_role(display).to_string(),
+            display_label(display),
+            format_table_rect(display.frame),
+            format!("{:.3}", display.scale_factor),
+            display_kind(display).to_string(),
+          ],
+        })
+        .collect(),
+    )],
+    sections: Vec::new(),
+  }
+}
+
+fn display_role(display: &auv_driver::Display) -> &'static str {
+  if display.is_primary {
+    "primary"
+  } else {
+    "secondary"
   }
 }
 
@@ -208,8 +241,8 @@ fn format_rect(rect: auv_driver::Rect) -> String {
   format!("x={:.0},y={:.0},width={:.0},height={:.0}", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
 }
 
-fn format_report_rect(rect: auv_driver::Rect) -> String {
-  format!("x={:.0},y={:.0},w={:.0},h={:.0}", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+fn format_table_rect(rect: auv_driver::Rect) -> String {
+  format!("{:.0},{:.0} {:.0}x{:.0}", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
 }
 
 fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
@@ -245,7 +278,7 @@ mod tests {
   }
 
   #[test]
-  fn display_list_report_includes_ids_and_preserves_role_kind_scale_and_frame() {
+  fn display_list_report_uses_human_first_table_and_wide_kind_column() {
     let displays = vec![
       Display {
         id: "display_0".to_string(),
@@ -281,16 +314,31 @@ mod tests {
     let report = output.report.as_ref().expect("report should be set");
 
     assert_eq!(report.fields[0].value, "2 display(s)");
-    assert_eq!(report.sections[0].title, "display_0");
-    assert_eq!(report.sections[1].title, "display_1");
-    assert_eq!(field_value(&report.sections[0], "Role"), "primary");
-    assert_eq!(field_value(&report.sections[0], "Kind"), "built-in");
-    assert_eq!(field_value(&report.sections[0], "Scale"), "2.000");
-    assert_eq!(field_value(&report.sections[0], "Frame"), "x=0,y=0,w=3008,h=1692");
-    assert_eq!(field_value(&report.sections[1], "Role"), "secondary");
-    assert_eq!(field_value(&report.sections[1], "Kind"), "external");
-    assert_eq!(field_value(&report.sections[1], "Scale"), "1.000");
-    assert_eq!(field_value(&report.sections[1], "Frame"), "x=3008,y=0,w=1920,h=1080");
+    assert!(report.sections.is_empty());
+    assert_eq!(report.tables[0].columns, ["REF", "ROLE", "NAME", "FRAME", "SCALE"]);
+    assert_eq!(
+      report.tables[0].rows[0].cells,
+      [
+        "display_0",
+        "primary",
+        "Built-in Retina Display",
+        "0,0 3008x1692",
+        "2.000"
+      ]
+    );
+    assert_eq!(
+      report.tables[0].rows[1].cells,
+      [
+        "display_1",
+        "secondary",
+        "display display_1",
+        "3008,0 1920x1080",
+        "1.000"
+      ]
+    );
+    assert_eq!(report.wide_tables[0].columns, ["REF", "ROLE", "NAME", "FRAME", "SCALE", "KIND"]);
+    assert_eq!(report.wide_tables[0].rows[0].cells[5], "built-in");
+    assert_eq!(report.wide_tables[0].rows[1].cells[5], "external");
   }
 
   #[test]
@@ -305,9 +353,5 @@ mod tests {
 
       assert!(error.contains("typed display API"), "{command_id} returned unclear error: {error}");
     }
-  }
-
-  fn field_value<'a>(section: &'a InvokeReportSection, label: &str) -> &'a str {
-    section.fields.iter().find(|field| field.label == label).map(|field| field.value.as_str()).expect("field should exist")
   }
 }

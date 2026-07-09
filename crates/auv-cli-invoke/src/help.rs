@@ -2,7 +2,7 @@ use crate::{ArgSpec, CommandGroup, CommandNode, InvokeCommand, InvokeRegistry};
 
 pub fn render_help_index(registry: &InvokeRegistry) -> String {
   let mut help = String::from(
-    "USAGE\n  auv invoke <command> [options]\n\nOPTIONS\n  --json    Render machine-readable JSON output\n  --detail  Include diagnostic detail in human output\n\nUse auv invoke <command> --help for command-specific options.\n",
+    "USAGE\n  auv invoke <command> [options]\n\nOPTIONS\n  --json    Render machine-readable JSON output\n  --detail  Include diagnostic detail in human output\n  --wide    Include extra columns in human table output\n\nUse auv invoke <command> --help for command-specific options.\n",
   );
 
   for group in registry.groups() {
@@ -61,23 +61,22 @@ pub fn render_command_help(command: &InvokeCommand) -> String {
   );
 
   help.push_str("\nOPTIONS\n");
-  if command.args.is_empty() {
-    help.push_str("  none\n");
-  } else {
-    for arg in command.args {
-      help.push_str("  ");
-      help.push_str(arg.flag);
-      help.push(' ');
-      help.push_str(arg.value_name);
-      if arg.required {
-        help.push_str("  required  ");
-      } else {
-        help.push_str("  optional  ");
-      }
-      help.push_str(arg.help);
-      help.push('\n');
+  for arg in command.args {
+    help.push_str("  ");
+    help.push_str(arg.flag);
+    help.push(' ');
+    help.push_str(arg.value_name);
+    if arg.required {
+      help.push_str("  required  ");
+    } else {
+      help.push_str("  optional  ");
     }
+    help.push_str(arg.help);
+    help.push('\n');
   }
+  help.push_str("  --json    Render machine-readable JSON output\n");
+  help.push_str("  --detail  Include diagnostic detail in human output\n");
+  help.push_str("  --wide    Include extra columns in human table output\n");
 
   help
 }

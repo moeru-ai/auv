@@ -24,7 +24,8 @@ pub use auv_cli_invoke_macros::invoke_command;
 pub use command::{CommandGroup, CommandNode, InvokeCommand, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace};
 pub use help::{render_command_help, render_help_index};
 pub use model::{
-  ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeRequest, InvokeResult, RunStatus,
+  ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow,
+  InvokeRequest, InvokeResult, RunStatus,
 };
 pub use recorded::{invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_session, invoke_resolved_recorded_in_span};
 pub use registry::{InvokeRegistry, default_registry};
@@ -75,13 +76,14 @@ pub fn parse_invoke_args(arguments: &[String]) -> Result<InvokeCliParse, String>
     output: InvokeOutputOptions {
       json: matches.get_flag("json") || matches.get_flag("format"),
       detail: matches.get_flag("detail"),
+      wide: matches.get_flag("wide"),
     },
   })
 }
 
 pub fn invoke_argument_consumes_value(argument: &str) -> bool {
   match argument {
-    "--dry-run" | "--detail" | "--json" | "--format" | "--help" | "-h" => false,
+    "--dry-run" | "--detail" | "--wide" | "--json" | "--format" | "--help" | "-h" => false,
     other => other.starts_with("--"),
   }
 }
@@ -107,6 +109,7 @@ fn invoke_cli_command() -> Command {
     .arg(Arg::new("target").long("target").value_name("bundle-id").num_args(1))
     .arg(Arg::new("label").long("label").value_name("value").num_args(1))
     .arg(Arg::new("detail").long("detail").action(ArgAction::SetTrue))
+    .arg(Arg::new("wide").long("wide").action(ArgAction::SetTrue))
     .arg(Arg::new("json").long("json").action(ArgAction::SetTrue))
     .arg(Arg::new("format").long("format").action(ArgAction::SetTrue).hide(true))
 }
@@ -127,7 +130,7 @@ fn normalize_for_clap(tokens: &[String]) -> Result<NormalizedInvokeArguments, St
           help: Some(InvokeCliParse::Help { command_id }),
         });
       }
-      "--dry-run" | "--detail" | "--json" | "--format" => {
+      "--dry-run" | "--detail" | "--wide" | "--json" | "--format" => {
         clap_arguments.push(token.clone());
         index += 1;
       }
@@ -182,6 +185,7 @@ mod tests {
     assert!(help.contains("DISPLAY\n"));
     assert!(help.contains("--json"));
     assert!(help.contains("--detail"));
+    assert!(help.contains("--wide"));
     assert!(!help.contains("--format"));
     assert!(help.contains("  display.list"));
     assert!(help.contains("WINDOW\n"));
@@ -300,6 +304,26 @@ mod tests {
       crate::InvokeCliParse::Invoke { output, .. } => {
         assert!(output.detail);
         assert!(!output.json);
+      }
+      other => panic!("unexpected parse result: {other:?}"),
+    }
+  }
+
+  #[test]
+  fn parse_invoke_wide_keeps_human_output_mode_and_does_not_become_command_input() {
+    let parsed = crate::parse_invoke_args(&[
+      "invoke".to_string(),
+      "window.list".to_string(),
+      "--wide".to_string(),
+    ])
+    .expect("wide should parse");
+
+    match parsed {
+      crate::InvokeCliParse::Invoke { inputs, output, .. } => {
+        assert!(output.wide);
+        assert!(!output.json);
+        assert!(!output.detail);
+        assert!(!inputs.contains_key("wide"));
       }
       other => panic!("unexpected parse result: {other:?}"),
     }
@@ -431,7 +455,10 @@ mod tests {
     assert!(help.contains("COMMAND\n  fixture.observe"));
     assert!(help.contains("USAGE\n  auv invoke fixture.observe"));
     assert!(help.contains("SUMMARY\n  Emit a deterministic observation result"));
-    assert!(help.contains("OPTIONS\n  none"));
+    assert!(help.contains("OPTIONS\n  --json"));
+    assert!(help.contains("--detail"));
+    assert!(help.contains("--wide"));
+    assert!(!help.contains("OPTIONS\n  none"));
     assert!(!help.contains("DRIVER\n"));
     assert!(!help.contains("DISTURBANCE\n"));
     assert!(!help.contains("ARTIFACTS\n"));
