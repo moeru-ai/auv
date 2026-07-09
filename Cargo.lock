@@ -601,6 +601,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-inspect-server"
+version = "0.0.1"
+dependencies = [
+ "auv-tracing-driver",
+ "auv-view",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "auv-media-macos"
 version = "0.0.1"
 dependencies = [
