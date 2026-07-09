@@ -267,19 +267,19 @@ mod tests {
     output.notes.push("fixture note".to_string());
     output.known_limits.push("fixture limit".to_string());
     output.verification = Some("read-only; no semantic success claim".to_string());
-    output.report = Some(InvokeReport {
-      fields: vec![InvokeReportField {
+    output.report = Some(InvokeReport::new(
+      vec![InvokeReportField {
         label: "Result".to_string(),
         value: "Observed".to_string(),
       }],
-      sections: vec![InvokeReportSection {
+      vec![InvokeReportSection {
         title: "Fixture".to_string(),
         fields: vec![InvokeReportField {
           label: "Signal".to_string(),
           value: "observed".to_string(),
         }],
       }],
-    });
+    ));
     output.signals.insert("fixture".to_string(), "observed".to_string());
     Ok(output)
   }
@@ -294,19 +294,19 @@ mod tests {
     output.notes.push("artifact failure fixture note".to_string());
     output.known_limits.push("artifact failure fixture limit".to_string());
     output.verification = Some("capture-only; no semantic success claim".to_string());
-    output.report = Some(InvokeReport {
-      fields: vec![InvokeReportField {
+    output.report = Some(InvokeReport::new(
+      vec![InvokeReportField {
         label: "Result".to_string(),
         value: "Artifact pending".to_string(),
       }],
-      sections: vec![InvokeReportSection {
+      vec![InvokeReportSection {
         title: "Artifact Failure Fixture".to_string(),
         fields: vec![InvokeReportField {
           label: "Backend".to_string(),
           value: "fixture.artifact.backend".to_string(),
         }],
       }],
-    });
+    ));
     output.artifacts.push(ProducedArtifact {
       kind: "missing-fixture-artifact".to_string(),
       source_path: temp_dir("missing-artifact-source").join("missing.txt"),
@@ -408,19 +408,19 @@ mod tests {
     assert_eq!(result.verification.as_deref(), Some("read-only; no semantic success claim"));
     assert_eq!(
       result.report,
-      Some(InvokeReport {
-        fields: vec![InvokeReportField {
+      Some(InvokeReport::new(
+        vec![InvokeReportField {
           label: "Result".to_string(),
           value: "Observed".to_string(),
         }],
-        sections: vec![InvokeReportSection {
+        vec![InvokeReportSection {
           title: "Fixture".to_string(),
           fields: vec![InvokeReportField {
             label: "Signal".to_string(),
             value: "observed".to_string(),
           }],
         }],
-      })
+      ))
     );
 
     let _ = fs::remove_dir_all(store_root);
@@ -588,19 +588,19 @@ mod tests {
     assert_eq!(result.verification.as_deref(), Some("capture-only; no semantic success claim"));
     assert_eq!(
       result.report,
-      Some(InvokeReport {
-        fields: vec![InvokeReportField {
+      Some(InvokeReport::new(
+        vec![InvokeReportField {
           label: "Result".to_string(),
           value: "Artifact pending".to_string(),
         }],
-        sections: vec![InvokeReportSection {
+        vec![InvokeReportSection {
           title: "Artifact Failure Fixture".to_string(),
           fields: vec![InvokeReportField {
             label: "Backend".to_string(),
             value: "fixture.artifact.backend".to_string(),
           }],
         }],
-      })
+      ))
     );
     assert!(result.failure_message.as_deref().is_some_and(|message| message.contains("artifact recording failed")));
     assert!(result.artifacts.is_empty());

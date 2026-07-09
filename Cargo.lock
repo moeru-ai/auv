@@ -415,6 +415,7 @@ dependencies = [
  "auv-scan",
  "auv-tracing-driver",
  "clap",
+ "comfy-table",
  "serde",
  "serde_json",
  "tempfile",

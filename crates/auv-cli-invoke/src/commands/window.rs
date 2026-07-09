@@ -1,5 +1,6 @@
 use crate::{
-  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
+  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportTable,
+  InvokeReportTableRow,
   arg::{NO_ARGS, WINDOW_ARGS, WINDOW_TEXT_ARGS, WINDOW_VERIFY_TEXT_ARGS},
   invoke_command,
 };
@@ -188,7 +189,7 @@ fn list_windows_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   let driver = auv_driver_macos::MacosDriver::new();
   let session = driver.open_local().map_err(|error| error.to_string())?;
   let windows = session.window().list().map_err(|error| error.to_string())?;
-  let mut output = InvokeCommandOutput::new(format!("listed {} window(s)", windows.len()));
+  let mut output = window_list_output(&windows);
   output.backend = Some("auv-driver-macos.window".to_string());
   output.signals.insert("window.count".to_string(), windows.len().to_string());
   if let Some(front) = windows.first() {
@@ -278,12 +279,7 @@ fn find_window_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCom
         return Err(format!("window.waitForText did not find text {query:?} before timeout"));
       }
 
-      let mut output = text_matches_output(
-        input.command_id,
-        "auv-driver-macos.window.vision",
-        matches.matches.len(),
-        matches.best_match().map(|matched| matched.text.as_str()),
-      );
+      let mut output = text_matches_output(input.command_id, "auv-driver-macos.window.vision", &matches.matches, None);
       add_window_signals(&mut output, &window);
       // TODO(invoke-recognition-result-artifacts): this records the window OCR
       // source screenshot and scalar match signals, but not a structured
@@ -332,8 +328,7 @@ fn click_window_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult 
   let window_point = session.window().to_window_point(&window, screen_point).map_err(|error| error.to_string())?;
   let action = session.window().click(&window, window_point, ClickOptions::default()).map_err(|error| error.to_string())?;
 
-  let mut output =
-    text_matches_output(input.command_id, "auv-driver-macos.window.input", matches.matches.len(), Some(matched.text.as_str()));
+  let mut output = text_matches_output(input.command_id, "auv-driver-macos.window.input", &matches.matches, Some(0));
   add_window_signals(&mut output, &window);
   // TODO(invoke-recognition-result-artifacts): clickText records the OCR source
   // screenshot used for target resolution, but not the structured
@@ -421,12 +416,196 @@ fn add_window_signals(output: &mut InvokeCommandOutput, window: &auv_driver::Win
   }
 }
 
-fn text_matches_output(command_id: &str, backend: &str, count: usize, best_text: Option<&str>) -> InvokeCommandOutput {
+fn window_list_output(windows: &[auv_driver::Window]) -> InvokeCommandOutput {
+  let mut output = InvokeCommandOutput::new(format!("listed {} window(s)", windows.len()));
+  output.report = Some(window_list_report(windows));
+  output
+}
+
+fn window_list_report(windows: &[auv_driver::Window]) -> InvokeReport {
+  InvokeReport {
+    fields: vec![report_field(
+      "Result",
+      format!("{} window(s)", windows.len()),
+    )],
+    tables: vec![
+      InvokeReportTable::new(
+        vec![
+          "REF".to_string(),
+          "APP".to_string(),
+          "TITLE".to_string(),
+          "FRAME".to_string(),
+        ],
+        windows
+          .iter()
+          .map(|window| InvokeReportTableRow {
+            cells: vec![
+              window.reference.id.clone(),
+              optional_field(window.app_name.as_deref(), "unknown").to_string(),
+              optional_field(window.title.as_deref(), "untitled").to_string(),
+              format_table_rect(window.frame),
+            ],
+          })
+          .collect(),
+      )
+      .with_display_max_chars(vec![None, Some(18), Some(40), None]),
+    ],
+    wide_tables: vec![
+      InvokeReportTable::new(
+        vec![
+          "REF".to_string(),
+          "APP".to_string(),
+          "TITLE".to_string(),
+          "FRAME".to_string(),
+          "BUNDLE".to_string(),
+          "PID".to_string(),
+          "FLAGS".to_string(),
+        ],
+        windows
+          .iter()
+          .map(|window| InvokeReportTableRow {
+            cells: vec![
+              window.reference.id.clone(),
+              optional_field(window.app_name.as_deref(), "unknown").to_string(),
+              optional_field(window.title.as_deref(), "untitled").to_string(),
+              format_table_rect(window.frame),
+              optional_field(window.app_bundle_id.as_deref(), "unknown").to_string(),
+              window.process_id.map(|pid| pid.to_string()).unwrap_or_else(|| "unknown".to_string()),
+              window_flags(window),
+            ],
+          })
+          .collect(),
+      )
+      .with_display_max_chars(vec![None, Some(18), Some(40), None, Some(32), None, None]),
+    ],
+    sections: Vec::new(),
+  }
+}
+
+fn optional_field<'a>(value: Option<&'a str>, fallback: &'a str) -> &'a str {
+  value.filter(|value| !value.trim().is_empty()).unwrap_or(fallback)
+}
+
+fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
+  InvokeReportField {
+    label: label.to_string(),
+    value: value.into(),
+  }
+}
+
+fn format_table_rect(rect: auv_driver::Rect) -> String {
+  format!("{:.0},{:.0} {:.0}x{:.0}", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+}
+
+fn window_flags(window: &auv_driver::Window) -> String {
+  let mut flags = Vec::new();
+  if window.is_main {
+    flags.push("main");
+  }
+  if window.is_visible {
+    flags.push("visible");
+  } else {
+    flags.push("hidden");
+  }
+  flags.join(",")
+}
+
+#[cfg(target_os = "macos")]
+fn text_matches_output(
+  command_id: &str,
+  backend: &str,
+  matches: &[auv_driver_macos::OcrMatch],
+  selected_index: Option<usize>,
+) -> InvokeCommandOutput {
+  let count = matches.len();
   let mut output = InvokeCommandOutput::new(format!("{command_id} matched {count} text region(s)"));
   output.backend = Some(backend.to_string());
   output.signals.insert("match.count".to_string(), count.to_string());
-  if let Some(best_text) = best_text {
-    output.signals.insert("match.best_text".to_string(), best_text.to_string());
+  if let Some(best_text) = matches.first() {
+    output.signals.insert("match.best_text".to_string(), best_text.text.clone());
   }
+  output.report = Some(crate::commands::ocr::match_report(matches, selected_index));
   output
+}
+
+#[cfg(test)]
+mod tests {
+  use auv_driver::{CoordinateSpace, Rect, Window, WindowRef};
+
+  use super::*;
+
+  #[test]
+  fn window_list_report_uses_human_first_table_and_wide_diagnostic_columns() {
+    let windows = vec![
+      Window {
+        reference: WindowRef {
+          id: "window_10".to_string(),
+        },
+        title: Some("Project Notes".to_string()),
+        app_name: Some("TextEdit".to_string()),
+        app_bundle_id: Some("com.apple.TextEdit".to_string()),
+        process_id: Some(1234),
+        frame: Rect::new(12.0, 34.0, 640.0, 480.0),
+        coordinate_space: CoordinateSpace::Screen,
+        is_main: true,
+        is_visible: true,
+      },
+      Window {
+        reference: WindowRef {
+          id: "window_11".to_string(),
+        },
+        title: None,
+        app_name: None,
+        app_bundle_id: None,
+        process_id: None,
+        frame: Rect::new(-100.0, 20.0, 300.0, 200.0),
+        coordinate_space: CoordinateSpace::Screen,
+        is_main: false,
+        is_visible: false,
+      },
+    ];
+
+    let output = window_list_output(&windows);
+    let report = output.report.as_ref().expect("window.list should expose a human-readable report");
+
+    assert_eq!(report.fields[0].value, "2 window(s)");
+    assert!(report.sections.is_empty());
+    assert_eq!(report.tables[0].columns, ["REF", "APP", "TITLE", "FRAME"]);
+    assert_eq!(report.tables[0].display_max_chars, [None, Some(18), Some(40), None]);
+    assert_eq!(report.tables[0].rows[0].cells, ["window_10", "TextEdit", "Project Notes", "12,34 640x480"]);
+    assert_eq!(report.tables[0].rows[1].cells, ["window_11", "unknown", "untitled", "-100,20 300x200"]);
+    assert_eq!(report.wide_tables[0].columns, ["REF", "APP", "TITLE", "FRAME", "BUNDLE", "PID", "FLAGS"]);
+    assert_eq!(report.wide_tables[0].display_max_chars, [None, Some(18), Some(40), None, Some(32), None, None]);
+    assert_eq!(report.wide_tables[0].rows[0].cells[4], "com.apple.TextEdit");
+    assert_eq!(report.wide_tables[0].rows[0].cells[5], "1234");
+    assert_eq!(report.wide_tables[0].rows[0].cells[6], "main,visible");
+    assert_eq!(report.wide_tables[0].rows[1].cells[6], "hidden");
+  }
+
+  #[test]
+  fn window_list_report_preserves_full_cell_values_for_machine_output() {
+    let long_title = "Fixture Window Title With Enough Words To Exceed The Human Display Limit".to_string();
+    let long_app_name = "Fixture Application Name Beyond Human Display Limit".to_string();
+    let long_bundle_id = "com.example.fixture.application.identifier.with.extra.segments".to_string();
+    let windows = vec![Window {
+      reference: WindowRef {
+        id: "window_long".to_string(),
+      },
+      title: Some(long_title.clone()),
+      app_name: Some(long_app_name.clone()),
+      app_bundle_id: Some(long_bundle_id.clone()),
+      process_id: Some(4321),
+      frame: Rect::new(1.0, 2.0, 3.0, 4.0),
+      coordinate_space: CoordinateSpace::Screen,
+      is_main: false,
+      is_visible: true,
+    }];
+
+    let output = window_list_output(&windows);
+    let report = output.report.as_ref().expect("window.list should expose a report");
+
+    assert_eq!(report.tables[0].rows[0].cells[1], long_app_name);
+    assert_eq!(report.tables[0].rows[0].cells[2], long_title);
+    assert_eq!(report.wide_tables[0].rows[0].cells[4], long_bundle_id);
+  }
 }

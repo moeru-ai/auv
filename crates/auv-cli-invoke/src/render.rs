@@ -3,9 +3,10 @@ use std::io::{self, Write};
 
 use anstream::{AutoStream, ColorChoice};
 use anstyle::{AnsiColor, Style};
+use comfy_table::{Cell, Table, presets::NOTHING};
 use serde::Serialize;
 
-use crate::{InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeResult, RunStatus};
+use crate::{InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportTable, InvokeResult, RunStatus};
 
 pub fn render_invoke_result(result: &InvokeResult, options: InvokeOutputOptions) -> Result<(), String> {
   if options.json {
@@ -48,7 +49,7 @@ fn write_human<W: Write>(writer: &mut W, result: &InvokeResult, options: InvokeO
   }
 
   match result.report.as_ref() {
-    Some(report) => write_report(writer, report, color)?,
+    Some(report) => write_report(writer, report, options, color)?,
     None => write_field_rows(writer, &[field("Output", &result.output_summary)], color)?,
   }
 
@@ -64,8 +65,18 @@ fn write_human<W: Write>(writer: &mut W, result: &InvokeResult, options: InvokeO
   Ok(())
 }
 
-fn write_report<W: Write>(writer: &mut W, report: &InvokeReport, color: bool) -> Result<(), String> {
+fn write_report<W: Write>(writer: &mut W, report: &InvokeReport, options: InvokeOutputOptions, color: bool) -> Result<(), String> {
   write_field_rows(writer, &report.fields, color)?;
+
+  let tables = if options.wide && !report.wide_tables.is_empty() {
+    &report.wide_tables
+  } else {
+    &report.tables
+  };
+  for table in tables {
+    writeln!(writer).map_err(write_error)?;
+    write_table(writer, table)?;
+  }
 
   for section in &report.sections {
     writeln!(writer).map_err(write_error)?;
@@ -74,6 +85,38 @@ fn write_report<W: Write>(writer: &mut W, report: &InvokeReport, color: bool) ->
   }
 
   Ok(())
+}
+
+fn write_table<W: Write>(writer: &mut W, table: &InvokeReportTable) -> Result<(), String> {
+  let mut rendered = Table::new();
+  rendered.load_preset(NOTHING);
+  rendered.set_header(table.columns.iter().map(Cell::new));
+  for row in &table.rows {
+    rendered.add_row(row.cells.iter().enumerate().map(|(index, cell)| Cell::new(display_cell(table, index, cell))));
+  }
+  for line in rendered.to_string().lines() {
+    writeln!(writer, "  {}", line.trim()).map_err(write_error)?;
+  }
+  Ok(())
+}
+
+fn display_cell(table: &InvokeReportTable, column_index: usize, value: &str) -> String {
+  match table.display_max_chars.get(column_index).copied().flatten() {
+    Some(max_chars) => truncate(value, max_chars),
+    None => value.to_string(),
+  }
+}
+
+fn truncate(value: &str, max_chars: usize) -> String {
+  if value.chars().count() <= max_chars {
+    return value.to_string();
+  }
+  if max_chars <= 3 {
+    return ".".repeat(max_chars);
+  }
+  let mut truncated = value.chars().take(max_chars - 3).collect::<String>();
+  truncated.push_str("...");
+  truncated
 }
 
 fn write_detail<W: Write>(writer: &mut W, result: &InvokeResult, color: bool) -> Result<(), String> {
@@ -222,7 +265,10 @@ mod tests {
   use auv_tracing_driver::trace::{ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EventId, SpanId};
   use serde_json::Value;
 
-  use crate::{InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeResult, RunStatus};
+  use crate::{
+    InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow, InvokeResult,
+    RunStatus,
+  };
 
   fn fixture_result(status: RunStatus) -> InvokeResult {
     let mut signals = BTreeMap::new();
@@ -247,6 +293,28 @@ mod tests {
           label: "Result".to_string(),
           value: "observed".to_string(),
         }],
+        tables: vec![
+          InvokeReportTable::new(
+            vec!["REF".to_string(), "APP".to_string()],
+            vec![InvokeReportTableRow {
+              cells: vec![
+                "fixture_0".to_string(),
+                "Fixture Application With A Long Display Name".to_string(),
+              ],
+            }],
+          )
+          .with_display_max_chars(vec![None, Some(16)]),
+        ],
+        wide_tables: vec![InvokeReportTable::new(
+          vec!["REF".to_string(), "APP".to_string(), "PID".to_string()],
+          vec![InvokeReportTableRow {
+            cells: vec![
+              "fixture_0".to_string(),
+              "Fixture Application With A Long Display Name".to_string(),
+              "1234".to_string(),
+            ],
+          }],
+        )],
         sections: vec![InvokeReportSection {
           title: "fixture_0".to_string(),
           fields: vec![InvokeReportField {
@@ -279,7 +347,13 @@ mod tests {
     assert!(output.contains("OK. Run: run_fixture"));
     assert!(output.contains("fixture.observe - Observe fixture"));
     assert!(output.contains("Result: observed"));
+    assert!(output.contains("REF"));
     assert!(output.contains("fixture_0"));
+    assert!(output.contains("Fixture Appli..."));
+    assert!(!output.contains("Fixture Application With A Long Display Name"));
+    assert!(output.contains("fixture_0"));
+    assert!(!output.contains("PID"));
+    assert!(!output.contains("1234"));
     assert!(!output.contains("operatorSummary"));
     assert!(!output.contains("raw operator text"));
     assert!(!output.contains("Signals"));
@@ -307,6 +381,7 @@ mod tests {
       InvokeOutputOptions {
         json: false,
         detail: true,
+        wide: false,
       },
     )
     .expect("render should succeed");
@@ -324,12 +399,29 @@ mod tests {
   }
 
   #[test]
+  fn wide_output_renders_wide_report_table() {
+    let output = super::render_to_string(
+      &fixture_result(RunStatus::Completed),
+      InvokeOutputOptions {
+        json: false,
+        detail: false,
+        wide: true,
+      },
+    )
+    .expect("render should succeed");
+
+    assert!(output.contains("PID"));
+    assert!(output.contains("1234"));
+  }
+
+  #[test]
   fn json_output_parses_and_contains_no_ansi() {
     let output = super::render_to_string(
       &fixture_result(RunStatus::Completed),
       InvokeOutputOptions {
         json: true,
         detail: false,
+        wide: false,
       },
     )
     .expect("render should succeed");
@@ -341,6 +433,9 @@ mod tests {
     assert_eq!(value["command_id"], "fixture.observe");
     assert_eq!(value["summary"], "fixture observed");
     assert!(value.get("report").is_some());
+    assert_eq!(value["report"]["tables"][0]["rows"][0]["cells"][1], "Fixture Application With A Long Display Name");
+    assert!(value["report"].get("wide_tables").is_none());
+    assert!(value["report"]["tables"][0].get("display_max_chars").is_none());
     assert!(value.get("artifacts").is_some());
     assert!(value.get("signals").is_none());
   }

@@ -190,12 +190,7 @@ fn find_screen_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCom
       if wait && matches.matches.is_empty() {
         return Err(format!("screen.waitForText did not find text {query:?} before timeout"));
       }
-      let mut output = text_matches_output(
-        input.command_id,
-        "auv-driver-macos.vision",
-        matches.matches.len(),
-        matches.best_match().map(|matched| matched.text.as_str()),
-      );
+      let mut output = text_matches_output(input.command_id, "auv-driver-macos.vision", &matches.matches, None);
       // TODO(invoke-recognition-result-artifacts): this records the OCR source
       // screenshot and scalar match signals, but not a structured
       // recognition-result artifact with query/bounds/confidence. Add that
@@ -242,7 +237,7 @@ fn click_screen_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult 
   let point = matched.action_point();
   session.input().click_at(point, Click::Single).map_err(|error| error.to_string())?;
 
-  let mut output = text_matches_output(input.command_id, "auv-driver-macos.input", matches.matches.len(), Some(matched.text.as_str()));
+  let mut output = text_matches_output(input.command_id, "auv-driver-macos.input", &matches.matches, Some(0));
   // TODO(invoke-recognition-result-artifacts): clickText records the OCR
   // source screenshot used for target resolution, but not the structured
   // recognition-result artifact. Add it with screen.findText once the
@@ -308,12 +303,20 @@ fn invoke_artifact_path(command_id: &str, label: &str, extension: &str) -> std::
   ))
 }
 
-fn text_matches_output(command_id: &str, backend: &str, count: usize, best_text: Option<&str>) -> InvokeCommandOutput {
+#[cfg(target_os = "macos")]
+fn text_matches_output(
+  command_id: &str,
+  backend: &str,
+  matches: &[auv_driver_macos::OcrMatch],
+  selected_index: Option<usize>,
+) -> InvokeCommandOutput {
+  let count = matches.len();
   let mut output = InvokeCommandOutput::new(format!("{command_id} matched {count} text region(s)"));
   output.backend = Some(backend.to_string());
   output.signals.insert("match.count".to_string(), count.to_string());
-  if let Some(best_text) = best_text {
-    output.signals.insert("match.best_text".to_string(), best_text.to_string());
+  if let Some(best_text) = matches.first() {
+    output.signals.insert("match.best_text".to_string(), best_text.text.clone());
   }
+  output.report = Some(crate::commands::ocr::match_report(matches, selected_index));
   output
 }
