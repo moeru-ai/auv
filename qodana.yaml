@@ -101,11 +101,11 @@ exclude:
     paths:
       - .qodana/profiles/qodana.yaml
   # NOTICE(qodana-false_positive): inspect viewer and design-kit CSS classes are
-  # applied via JavaScript/React className; static analysis cannot see dynamic use.
+  # applied via Vue templates and legacy DOM className calls; static analysis
+  # cannot see every dynamic use.
   - name: CssUnusedSymbol
     paths:
-      - crates/auv-inspect-server/src/inspect_server_viewer.html
-      - src/inspect_server_viewer.html
+      - crates/auv-inspect-server/viewer/src/styles/viewer.css
       - docs/design/colors_and_type.css
       - docs/design/ui_kits/cli/index-print.html
       - docs/design
@@ -114,14 +114,12 @@ exclude:
   # auv-inspect-server's embedded design asset route, not as filesystem-relative paths.
   - name: HtmlUnknownTarget
     paths:
-      - crates/auv-inspect-server/src/inspect_server_viewer.html
-      - src/inspect_server_viewer.html
+      - crates/auv-inspect-server/viewer/src/App.vue
   # NOTICE(qodana-false_positive): fractional px values are intentional for
   # typography, letter-spacing, and sub-pixel UI alignment in design previews.
   - name: CssNonIntegerLengthInPixels
     paths:
-      - crates/auv-inspect-server/src/inspect_server_viewer.html
-      - src/inspect_server_viewer.html
+      - crates/auv-inspect-server/viewer/src/styles/viewer.css
       - docs/design
   # NOTICE(qodana-false_positive): local dev and smoke-test servers bind plain HTTP
   # on loopback; TLS is not applicable for these ephemeral test endpoints.
