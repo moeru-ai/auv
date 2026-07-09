@@ -7,6 +7,7 @@ pub mod read_projection;
 pub mod session;
 
 mod server;
+mod viewer_assets;
 
 pub use read_projection::{CommandBoundaryClaim, DefaultInspectReadProjection, InspectReadProjection, InspectRunEnrichment};
 pub use server::{

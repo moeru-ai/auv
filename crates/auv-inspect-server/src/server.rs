@@ -29,6 +29,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 use crate::InspectResult;
 use crate::read_projection::{CommandBoundaryClaim, DefaultInspectReadProjection, InspectReadProjection, InspectRunEnrichment};
 use crate::session::{InspectServerSession, write_inspect_session};
+use crate::viewer_assets::{VIEWER_HTML, viewer_asset};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::{RunId, RunRecordV1Alpha1, TraceState};
 use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate, WireUpdate};
@@ -112,13 +113,6 @@ fn now_millis() -> u64 {
   SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_millis() as u64).unwrap_or(0)
 }
 
-/// Single-payload HTML viewer served at `GET /`. Inlines CSS + JS; SVG
-/// assets used by the viewer are served separately under `/assets/:name`
-/// from the design-system asset library (see [`design_asset`]). Visual
-/// tokens match `docs/design/colors_and_type.css`; when the canonical
-/// tokens drift, sync the inlined `:root` block in the embedded HTML.
-const VIEWER_HTML: &str = include_str!("inspect_server_viewer.html");
-
 /// Compile-time map of design-system asset filename -> bytes, mounted at
 /// `GET /assets/:name`. Each entry is pulled in via `include_bytes!`
 /// from `docs/design/assets/` so the bundle ships a single binary and
@@ -158,6 +152,7 @@ pub fn router_with_projection(
   };
   Router::new()
     .route("/", get(serve_viewer))
+    .route("/viewer-assets/{*asset_name}", get(serve_viewer_asset))
     .route("/assets/{asset_name}", get(serve_design_asset))
     .route("/runs", get(list_runs))
     .route("/runs/{run_id}", get(get_run))
@@ -181,6 +176,21 @@ async fn serve_viewer() -> Response {
   let mut response = Body::from(VIEWER_HTML).into_response();
   response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
   response
+}
+
+async fn serve_viewer_asset(Path(asset_name): Path<String>) -> Response {
+  match viewer_asset(&asset_name) {
+    Some((bytes, mime)) => {
+      let mut response = Body::from(bytes).into_response();
+      let content_type = HeaderValue::from_str(mime).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream"));
+      response.headers_mut().insert(CONTENT_TYPE, content_type);
+      if let Ok(cache_control) = HeaderValue::from_str("no-cache") {
+        response.headers_mut().insert("cache-control", cache_control);
+      }
+      response
+    }
+    None => InspectHttpError::not_found(format!("viewer asset {asset_name:?} not found")).into_response(),
+  }
 }
 
 fn design_asset(name: &str) -> Option<(&'static [u8], &'static str)> {
@@ -743,8 +753,6 @@ impl IntoResponse for InspectHttpError {
 mod tests {
   use std::collections::BTreeMap;
   use std::fs;
-  use std::io::Write;
-  use std::process::{Command, Stdio};
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -786,6 +794,18 @@ mod tests {
     fn run_enrichment(&self, _store: &LocalStore, _run: &CanonicalRun) -> super::InspectResult<InspectRunEnrichment> {
       Err("projection failed".to_string())
     }
+  }
+
+  fn viewer_entry_js() -> &'static str {
+    let (bytes, mime) = super::viewer_asset("assets/viewer.js").expect("viewer entry asset should be embedded");
+    assert_eq!(mime, "text/javascript; charset=utf-8");
+    std::str::from_utf8(bytes).expect("viewer entry asset should be utf-8")
+  }
+
+  fn viewer_styles_css() -> &'static str {
+    let (bytes, mime) = super::viewer_asset("assets/index.css").expect("viewer stylesheet asset should be embedded");
+    assert_eq!(mime, "text/css; charset=utf-8");
+    std::str::from_utf8(bytes).expect("viewer stylesheet asset should be utf-8")
   }
 
   fn camel_case_keys_to_snake(value: &mut serde_json::Value) {
@@ -1665,11 +1685,9 @@ mod tests {
     assert_eq!(response.headers().get("content-type").and_then(|value| value.to_str().ok()), Some("text/html; charset=utf-8"),);
     let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
-    // Sanity: payload starts with a doctype, references /runs, and includes
-    // the brand cyan token so it stays in sync with docs/design/.
+    // Sanity: payload starts with a doctype and loads the built Vite entry.
     assert!(html.starts_with("<!doctype html>"), "expected HTML5 doctype, got prefix {:?}", &html[..32.min(html.len())]);
-    assert!(html.contains("/runs"), "viewer payload should reference the /runs JSON endpoint");
-    assert!(html.contains("--brand: #00c4d2"), "viewer payload should inline the canonical brand token");
+    assert!(html.contains("/viewer-assets/assets/viewer.js"), "viewer payload should load the Vite entry asset");
     assert!(!html.contains("action-transition-lineage"), "viewer payload should not include archived action transition lineage panel");
     assert!(
       !html.contains("selfTestActionTransitionLineage"),
@@ -1679,352 +1697,73 @@ mod tests {
     let _ = fs::remove_dir_all(root);
   }
 
+  #[tokio::test]
+  async fn viewer_asset_route_serves_vite_entry() {
+    let root = temp_dir("inspect-server-vite-assets");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+
+    let response = app
+      .oneshot(Request::builder().uri("/viewer-assets/assets/viewer.js").body(Body::empty()).expect("request should build"))
+      .await
+      .expect("route should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get("content-type").and_then(|value| value.to_str().ok()), Some("text/javascript; charset=utf-8"));
+    assert_eq!(response.headers().get("cache-control").and_then(|value| value.to_str().ok()), Some("no-cache"));
+    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
+    let js = std::str::from_utf8(&body).expect("asset should be utf-8");
+    assert!(js.contains("/runs"), "viewer entry should fetch the inspect runs endpoint");
+    assert!(js.contains("select a run from the sidebar"), "viewer entry should include the legacy viewer shell");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
   #[test]
-  fn viewer_self_tests_execute_in_node() {
-    let script_template = r##"const html = __VIEWER_HTML__;
-const start = html.indexOf("<script>");
-const end = html.lastIndexOf("</script>");
-if (start < 0 || end < 0 || end <= start) {
-  throw new Error("viewer HTML missing inline script");
-}
-const scriptBody = html.slice(start + "<script>".length, end);
+  fn viewer_self_tests_are_bundled() {
+    let js = viewer_entry_js();
 
-class TextNode {
-  constructor(text, ownerDocument) {
-    this.nodeType = 3;
-    this.text = String(text);
-    this.ownerDocument = ownerDocument;
-    this.parentNode = null;
-  }
-  get textContent() {
-    return this.text;
-  }
-  set textContent(value) {
-    this.text = String(value);
-  }
-}
-
-class Element {
-  constructor(tagName, ownerDocument) {
-    this.tagName = String(tagName).toUpperCase();
-    this.ownerDocument = ownerDocument;
-    this.attributes = {};
-    this.dataset = {};
-    this.children = [];
-    this.parentNode = null;
-    this.hidden = false;
-    this._className = "";
-    this._listeners = new Map();
-  }
-  appendChild(child) {
-    if (child == null) return child;
-    child.parentNode = this;
-    this.children.push(child);
-    return child;
-  }
-  setAttribute(name, value) {
-    const normalized = String(name);
-    const rendered = String(value);
-    this.attributes[normalized] = rendered;
-    if (normalized === "id") {
-      this.id = rendered;
-      this.ownerDocument._elementsById.set(rendered, this);
-    } else if (normalized === "class") {
-      this.className = rendered;
-    }
-  }
-  addEventListener(name, handler) {
-    if (!this._listeners.has(name)) this._listeners.set(name, []);
-    this._listeners.get(name).push(handler);
-  }
-  get className() {
-    return this._className;
-  }
-  set className(value) {
-    this._className = String(value);
-    this.attributes.class = this._className;
-  }
-  get textContent() {
-    return this.children.map((child) => child.textContent).join("");
-  }
-  set textContent(value) {
-    this.children = [new TextNode(String(value), this.ownerDocument)];
-  }
-  get innerHTML() {
-    return this._innerHTML || "";
-  }
-  set innerHTML(value) {
-    this._innerHTML = String(value);
-    this.children = [];
-  }
-  get lastChild() {
-    return this.children.length ? this.children[this.children.length - 1] : null;
-  }
-  get childNodes() {
-    return this.children;
-  }
-  get classList() {
-    const self = this;
-    function ownClasses() {
-      return (self.className || "").split(/\s+/).filter(Boolean);
-    }
-    function write(next) {
-      self.className = next.join(" ");
-    }
-    return {
-      add(...names) {
-        const next = ownClasses();
-        for (const name of names) {
-          if (!next.includes(name)) next.push(name);
-        }
-        write(next);
-      },
-      remove(...names) {
-        write(ownClasses().filter((name) => !names.includes(name)));
-      },
-      toggle(name, force) {
-        const exists = ownClasses().includes(name);
-        const shouldHave = force == null ? !exists : !!force;
-        if (shouldHave && !exists) this.add(name);
-        if (!shouldHave && exists) this.remove(name);
-        return shouldHave;
-      },
-      contains(name) {
-        return ownClasses().includes(name);
-      },
-    };
-  }
-  removeAttribute(name) {
-    const normalized = String(name);
-    delete this.attributes[normalized];
-    if (normalized === "hidden") this.hidden = false;
-  }
-  scrollIntoView() {}
-  matches(selector) {
-    if (!selector) return false;
-    const trimmed = selector.trim();
-    if (!trimmed) return false;
-    let tag = null;
-    let id = null;
-    const classes = [];
-    const hiddenRequired = trimmed.includes("[hidden]");
-    const selectorWithoutHidden = trimmed.replace("[hidden]", "");
-    const segments = selectorWithoutHidden.split(".");
-    if (segments[0].startsWith("#")) {
-      id = segments[0].slice(1);
-    } else if (segments[0]) {
-      tag = segments[0].toUpperCase();
-    }
-    for (let i = 1; i < segments.length; i++) {
-      if (segments[i]) classes.push(segments[i]);
-    }
-    if (selectorWithoutHidden.startsWith(".")) {
-      tag = null;
-    }
-    if (selectorWithoutHidden.startsWith("#") && selectorWithoutHidden.includes(".")) {
-      const firstDot = selectorWithoutHidden.indexOf(".");
-      id = selectorWithoutHidden.slice(1, firstDot);
-      classes.length = 0;
-      selectorWithoutHidden
-        .slice(firstDot + 1)
-        .split(".")
-        .filter(Boolean)
-        .forEach((value) => classes.push(value));
-    }
-    if (tag && this.tagName !== tag) return false;
-    if (id && this.id !== id) return false;
-    if (hiddenRequired && !this.hidden) return false;
-    if (classes.length) {
-      const ownClasses = (this.className || "").split(/\s+/).filter(Boolean);
-      if (!classes.every((cls) => ownClasses.includes(cls))) return false;
-    }
-    return true;
-  }
-  querySelector(selector) {
-    for (const child of this.children) {
-      if (child instanceof Element) {
-        if (child.matches(selector)) return child;
-        const nested = child.querySelector(selector);
-        if (nested) return nested;
-      }
-    }
-    return null;
-  }
-  querySelectorAll(selector, results = []) {
-    for (const child of this.children) {
-      if (child instanceof Element) {
-        if (child.matches(selector)) results.push(child);
-        child.querySelectorAll(selector, results);
-      }
-    }
-    return results;
-  }
-}
-
-class Document {
-  constructor() {
-    this._elementsById = new Map();
-    this.body = new Element("body", this);
-  }
-  createElement(tagName) {
-    return new Element(tagName, this);
-  }
-  createTextNode(text) {
-    return new TextNode(text, this);
-  }
-  getElementById(id) {
-    return this._elementsById.get(String(id)) || null;
-  }
-  querySelector(selector) {
-    return this.body.querySelector(selector);
-  }
-}
-
-function registerElement(document, tagName, id) {
-  const node = document.createElement(tagName);
-  node.setAttribute("id", id);
-  document.body.appendChild(node);
-  return node;
-}
-
-const document = new Document();
-registerElement(document, "div", "netease-select-proof-hint").hidden = true;
-registerElement(document, "div", "view-parser-proof").hidden = true;
-registerElement(document, "div", "conn").className = "conn-pill bad";
-registerElement(document, "div", "conn-label");
-registerElement(document, "div", "conn-endpoint");
-registerElement(document, "div", "main-label");
-registerElement(document, "div", "main-crumb");
-registerElement(document, "div", "main-status");
-registerElement(document, "div", "main-body");
-registerElement(document, "div", "run-list");
-registerElement(document, "div", "run-count");
-registerElement(document, "div", "run-list-filters");
-registerElement(document, "div", "span-tree");
-registerElement(document, "div", "span-detail");
-registerElement(document, "div", "event-list");
-registerElement(document, "div", "event-count");
-registerElement(document, "div", "artifact-list");
-registerElement(document, "div", "artifact-preview");
-registerElement(document, "div", "artifact-count");
-registerElement(document, "div", "artifact-panel").hidden = true;
-registerElement(document, "div", "events-rail").hidden = true;
-registerElement(document, "div", "run-list-filter-banner").hidden = true;
-registerElement(document, "button", "run-list-filter-toggle");
-registerElement(document, "div", "run-list-filter-menu");
-registerElement(document, "button", "run-list-filter-clear");
-registerElement(document, "button", "reload");
-registerElement(document, "div", "connection");
-
-const noop = () => {};
-const fetch = () => Promise.resolve({
-  ok: true,
-  json: async () => [],
-  text: async () => "",
-});
-
-globalThis.window = globalThis;
-globalThis.document = document;
-globalThis.fetch = fetch;
-globalThis.console = console;
-globalThis.setTimeout = setTimeout;
-globalThis.clearTimeout = clearTimeout;
-globalThis.requestAnimationFrame = (cb) => setTimeout(cb, 0);
-globalThis.cancelAnimationFrame = clearTimeout;
-globalThis.WebSocket = function WebSocket() {
-  this.close = noop;
-  this.addEventListener = noop;
-};
-globalThis.location = { origin: "http://127.0.0.1:8765" };
-globalThis.navigator = { userAgent: "node" };
-
-eval(scriptBody);
-"##;
-    let script = script_template.replace("__VIEWER_HTML__", &format!("{:?}", super::VIEWER_HTML));
-
-    let mut child = Command::new("node")
-      .arg("-")
-      .stdin(Stdio::piped())
-      .stdout(Stdio::piped())
-      .stderr(Stdio::piped())
-      .spawn()
-      .expect("node should be available to execute viewer self-test");
-    {
-      let stdin = child.stdin.as_mut().expect("node child stdin should be available");
-      stdin.write_all(script.as_bytes()).expect("viewer self-test script should write to node stdin");
-    }
-    let output = child.wait_with_output().expect("node child should return viewer self-test output");
-
+    assert!(js.contains("cache miss should yield null source_readiness_ref"), "viewer bundle should include MC-19 self-test assertions");
+    assert!(js.contains("empty filters should match any run"), "viewer bundle should include run list filter self-test assertions");
     assert!(
-      output.status.success(),
-      "viewer self-test should execute without runtime errors\nstdout:\n{}\nstderr:\n{}",
-      String::from_utf8_lossy(&output.stdout),
-      String::from_utf8_lossy(&output.stderr)
+      js.contains("netease-select-proof-hint panel should exist in DOM"),
+      "viewer bundle should include netease select proof hint self-test assertions"
     );
   }
 
-  #[tokio::test]
-  async fn root_payload_includes_span_tree_markers() {
-    let root = temp_dir("inspect-server-viewer-span-tree");
-    let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+  #[test]
+  fn viewer_entry_includes_span_tree_markers() {
+    let js = viewer_entry_js();
+    let css = viewer_styles_css();
 
-    let response =
-      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
-    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
-
-    assert!(html.contains("span · name / step_id"), "viewer payload should include the C.2 span-tree header");
-    assert!(html.contains("loadRunDetail(runId)"), "viewer payload should fetch /runs/:id and /runs/:id/spans on selection");
-    assert!(html.contains("@keyframes auv-pulse"), "viewer payload should include running-span pulse animation");
-
-    let _ = fs::remove_dir_all(root);
+    assert!(js.contains("span · name / step_id"), "viewer bundle should include the C.2 span-tree header");
+    assert!(js.contains("/spans"), "viewer bundle should fetch /runs/:id/spans on selection");
+    assert!(css.contains("@keyframes auv-pulse"), "viewer stylesheet should include running-span pulse animation");
   }
 
-  #[tokio::test]
-  async fn root_payload_includes_events_rail_markers() {
-    let root = temp_dir("inspect-server-viewer-events-rail");
-    let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
-
-    let response =
-      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
-    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
+  #[test]
+  fn viewer_entry_includes_events_rail_markers() {
+    let js = viewer_entry_js();
 
     // Layout shell for the events rail.
-    assert!(html.contains("Events · events.jsonl"), "viewer payload should include the C.3a events rail header");
-    assert!(html.contains("id=\"events-rail\""), "viewer payload should mount the events rail container");
-    assert!(html.contains("id=\"span-detail\""), "viewer payload should mount the span detail panel above the rail");
-    assert!(html.contains("Select a span to inspect its attributes."), "viewer payload should include the empty-state span detail copy");
+    assert!(js.contains("Events · events.jsonl"), "viewer bundle should include the C.3a events rail header");
+    assert!(js.contains("id=\"events-rail\""), "viewer bundle should mount the events rail container");
+    assert!(js.contains("id=\"span-detail\""), "viewer bundle should mount the span detail panel above the rail");
+    assert!(js.contains("Select a span to inspect its attributes."), "viewer bundle should include the empty-state span detail copy");
     // Fetch wiring: events come in alongside spans on run selection.
-    assert!(html.contains("/runs/:id/events"), "viewer payload should document the events endpoint");
-    assert!(html.contains("/events\")"), "viewer payload should fetch /runs/:id/events on selection");
-
-    let _ = fs::remove_dir_all(root);
+    assert!(js.contains("/runs/:id/events"), "viewer bundle should document the events endpoint");
+    assert!(js.contains("/events"), "viewer bundle should fetch /runs/:id/events on selection");
   }
 
-  #[tokio::test]
-  async fn root_payload_includes_websocket_stream_markers() {
-    let root = temp_dir("inspect-server-viewer-stream");
-    let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
-
-    let response =
-      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
-    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
+  #[test]
+  fn viewer_entry_includes_websocket_stream_markers() {
+    let js = viewer_entry_js();
+    let css = viewer_styles_css();
 
     // The viewer should open the documented /stream endpoint when a
     // running run is selected, and react to all five RunStreamEvent
     // tag values.
-    assert!(html.contains("/runs/\" + encodeURIComponent(runId) + \"/stream"), "viewer payload should open ws on /runs/:id/stream");
+    assert!(js.contains("/stream"), "viewer bundle should open ws on /runs/:id/stream");
     for tag in [
       "span_started",
       "span_finished",
@@ -2032,196 +1771,139 @@ eval(scriptBody);
       "artifact_created",
       "run_finished",
     ] {
-      assert!(html.contains(tag), "viewer payload should handle RunStreamEvent variant {tag}");
+      assert!(js.contains(tag), "viewer bundle should handle RunStreamEvent variant {tag}");
     }
     // The "live" tint reserved in C.3a is now produced by streamed
     // events.
-    assert!(html.contains("event-row.live") && html.contains("_live = true"), "viewer payload should tag streamed events as live");
-
-    let _ = fs::remove_dir_all(root);
+    assert!(css.contains("event-row.live") && js.contains("_live"), "viewer bundle should tag streamed events as live");
   }
 
-  #[tokio::test]
-  async fn root_payload_includes_artifact_panel_markers() {
-    let root = temp_dir("inspect-server-viewer-artifact-panel");
-    let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+  #[test]
+  fn viewer_entry_includes_artifact_panel_markers() {
+    let js = viewer_entry_js();
+    let css = viewer_styles_css();
 
-    let response =
-      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
-    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
-
-    assert!(html.contains("Artifacts · /artifacts"), "viewer payload should include the C.3b artifact panel header");
-    assert!(html.contains("id=\"artifact-panel\""), "viewer payload should mount the artifact panel container");
-    assert!(html.contains("id=\"artifact-list\""), "viewer payload should mount the artifact list");
-    assert!(html.contains("id=\"artifact-preview\""), "viewer payload should mount the artifact preview surface");
-    assert!(html.contains("/artifacts\")"), "viewer payload should fetch /runs/:id/artifacts on selection");
+    assert!(js.contains("Artifacts · /artifacts"), "viewer bundle should include the C.3b artifact panel header");
+    assert!(js.contains("id=\"artifact-panel\""), "viewer bundle should mount the artifact panel container");
+    assert!(js.contains("id=\"artifact-list\""), "viewer bundle should mount the artifact list");
+    assert!(js.contains("id=\"artifact-preview\""), "viewer bundle should mount the artifact preview surface");
+    assert!(js.contains("/artifacts"), "viewer bundle should fetch /runs/:id/artifacts on selection");
     assert!(
-      html.contains("encodeURIComponent(artifact.artifact_id)") && html.contains("spanId"),
-      "viewer payload should reference the per-artifact bytes endpoint with span scoping"
+      js.contains("encodeURIComponent") && js.contains("spanId"),
+      "viewer bundle should reference the per-artifact bytes endpoint with span scoping"
     );
-    assert!(html.contains("sprite-inspector.svg"), "viewer payload should use the inspector sprite for the empty preview state");
+    assert!(js.contains("sprite-inspector.svg"), "viewer bundle should use the inspector sprite for the empty preview state");
     assert!(
-      html.contains("click.overlay") && html.contains("click.overlay.annotation") && html.contains("evidence-summary"),
-      "viewer payload should include click overlay evidence-aware preview helpers"
+      js.contains("click.overlay") && js.contains("click.overlay.annotation") && css.contains("evidence-summary"),
+      "viewer bundle should include click overlay evidence-aware preview helpers"
     );
     assert!(
-      html.contains("defaultArtifactKey")
-        && html.contains("artifactKey")
-        && html.contains("preferredArtifactKeyForSpan")
-        && html.contains("findClickOverlayAnnotationArtifact")
-        && html.contains("loadEvidenceSummary")
-        && html.contains("primary_error")
-        && html.contains("payload.decision"),
-      "viewer payload should prioritize click overlay artifacts, sync them to span selection, and render decision-aware annotation summaries"
+      js.contains("artifactKey") && js.contains("span_id") && js.contains("primary_error") && js.contains("decision"),
+      "viewer bundle should prioritize click overlay artifacts, sync them to span selection, and render decision-aware annotation summaries"
     );
-
-    let _ = fs::remove_dir_all(root);
   }
 
-  #[tokio::test]
-  async fn root_payload_includes_surface_node_preview_markers() {
-    let root = temp_dir("inspect-server-viewer-surface-nodes");
-    let store = LocalStore::new(root.clone()).expect("store should initialize");
-    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+  #[test]
+  fn viewer_entry_includes_surface_node_preview_markers() {
+    let js = viewer_entry_js();
 
-    let response =
-      app.oneshot(Request::builder().uri("/").body(Body::empty()).expect("request should build")).await.expect("route should respond");
-
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
-    let html = std::str::from_utf8(&body).expect("viewer payload should be utf-8");
-
-    assert!(html.contains("surface-nodes"), "viewer payload should include the lightweight surface-node preview shell");
+    assert!(js.contains("surface-nodes"), "viewer bundle should include the lightweight surface-node preview shell");
     assert!(
-      html.contains("renderSurfaceNodesPanel") && html.contains("surface-node-meta") && html.contains("node_ref"),
-      "viewer payload should include the surface-node preview helper and shape accessors"
+      js.contains("surface-node-meta") && js.contains("node_ref"),
+      "viewer bundle should include the surface-node preview markup and shape accessors"
     );
-
-    let _ = fs::remove_dir_all(root);
   }
 
   #[test]
   fn viewer_does_not_reference_removed_candidate_action_fields() {
+    let js = viewer_entry_js();
+
     for removed_field in [
       "candidate_promotion_lineage",
       "candidate_action_decision_lineage",
       "candidate_action_execution_lineage",
       "action_transition_lineage",
     ] {
-      assert!(!super::VIEWER_HTML.contains(removed_field), "viewer payload must not reference removed field {removed_field}");
+      assert!(!js.contains(removed_field), "viewer bundle must not reference removed field {removed_field}");
     }
   }
 
   #[test]
   fn viewer_renders_netease_select_proof_hint_hooks() {
-    assert!(super::VIEWER_HTML.contains("netease-select-proof-hint"), "viewer payload should mount the netease select proof hint panel");
-    assert!(super::VIEWER_HTML.contains("renderNeteaseSelectProofHint"), "viewer payload should render netease select proof hint");
-    assert!(super::VIEWER_HTML.contains("auv.netease.playlist.select"), "viewer payload should match netease select proof run root span");
-    assert!(super::VIEWER_HTML.contains("NetEase playlist select proof"), "viewer payload should use generic netease select proof label");
-    assert!(super::VIEWER_HTML.contains("packaging lane only"), "viewer payload should disambiguate packaging hint from seam surface");
-    assert!(super::VIEWER_HTML.contains("selfTestNeteaseSelectProofHint"), "viewer payload should self-test netease select proof hint");
-    assert!(!super::VIEWER_HTML.contains("ACP-1 (selectProof)"), "viewer payload must not use selectProof-specific hint wording");
+    let js = viewer_entry_js();
+
+    assert!(js.contains("netease-select-proof-hint"), "viewer bundle should mount the netease select proof hint panel");
+    assert!(js.contains("auv.netease.playlist.select"), "viewer bundle should match netease select proof run root span");
+    assert!(js.contains("NetEase playlist select proof"), "viewer bundle should use generic netease select proof label");
+    assert!(js.contains("packaging lane only"), "viewer bundle should disambiguate packaging hint from seam surface");
+    assert!(js.contains("hint should show for netease select proof run"), "viewer bundle should self-test netease select proof hint");
+    assert!(!js.contains("ACP-1 (selectProof)"), "viewer bundle must not use selectProof-specific hint wording");
   }
 
   #[test]
   fn viewer_renders_view_parser_list_badges_hooks() {
-    assert!(super::VIEWER_HTML.contains("view_parser_summary"), "viewer payload should read view_parser_summary on list rows");
-    assert!(super::VIEWER_HTML.contains("renderViewParserListBadges"), "viewer payload should render list proof badges");
-    assert!(super::VIEWER_HTML.contains("outcomePillClass"), "viewer payload should reuse outcome pill styling for list badges");
+    let js = viewer_entry_js();
+
+    assert!(js.contains("view_parser_summary"), "viewer bundle should read view_parser_summary on list rows");
+    assert!(js.contains("row-proof-badges"), "viewer bundle should render list proof badges");
+    assert!(js.contains("latest_outcome") && js.contains("latest_verification_status"), "viewer bundle should render outcome/status badges");
     assert!(
-      super::VIEWER_HTML.contains("!merged.view_parser_summary && previous && previous.view_parser_summary"),
-      "viewer payload should preserve view_parser_summary across mergeRunDetail"
+      js.contains("view_parser_summary") && js.contains("previous"),
+      "viewer bundle should preserve view_parser_summary across run detail merges"
     );
   }
 
   #[test]
   fn viewer_renders_view_parser_proof_hooks() {
-    assert!(super::VIEWER_HTML.contains("view-parser-proof"), "viewer payload should mount the view-parser proof panel");
-    assert!(super::VIEWER_HTML.contains("renderViewParserProof"), "viewer payload should render view_parser resolution summaries");
-    assert!(super::VIEWER_HTML.contains("resolution_summaries"), "viewer payload should read resolution_summaries from view_parser");
+    let js = viewer_entry_js();
+
+    assert!(js.contains("view-parser-proof"), "viewer bundle should mount the view-parser proof panel");
+    assert!(js.contains("resolution_summaries"), "viewer bundle should read resolution_summaries from view_parser");
+    assert!(js.contains("select_results"), "viewer bundle should read select_results for known_limits pairing");
+    assert!(js.contains("view-parser-proof-card"), "viewer bundle should render view-parser proof cards");
+    assert!(js.contains("known_limits"), "viewer bundle should expose known_limits proof sections");
     assert!(
-      super::VIEWER_HTML.contains("refreshViewParserProofFromRunDetail"),
-      "viewer payload should narrow-refetch proof on run_finished without full loadRunDetail"
+      js.contains("view-memory") && js.contains("netease-playlist-select-result"),
+      "viewer bundle should reference view-memory and playlist-select artifact roles"
     );
     assert!(
-      super::VIEWER_HTML.contains("pairViewParserProofCards"),
-      "viewer payload should index-pair resolution_summaries with select_results"
-    );
-    assert!(super::VIEWER_HTML.contains("select_results"), "viewer payload should read select_results for known_limits pairing");
-    assert!(
-      super::VIEWER_HTML.contains("jumpToViewParserArtifactRole"),
-      "viewer payload should jump artifact list by view-parser proof roles"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("view-memory") && super::VIEWER_HTML.contains("netease-playlist-select-result"),
-      "viewer payload should reference view-memory and playlist-select artifact roles"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("formatViewParserLineageRow"),
-      "viewer payload should render memory_id · source_run_id · run_id lineage row"
+      js.contains("memory_id") && js.contains("source_run_id") && js.contains("run_id"),
+      "viewer bundle should render memory_id · source_run_id · run_id lineage row"
     );
   }
 
   #[test]
   fn viewer_renders_view_parser_diagnostic_links_hooks() {
-    assert!(
-      super::VIEWER_HTML.contains("renderViewParserDiagnosticLinks"),
-      "viewer payload should render view-parser diagnostic link chips"
-    );
-    assert!(super::VIEWER_HTML.contains("scrollToProofCardSection"), "viewer payload should scroll and highlight proof card sections");
-    assert!(
-      super::VIEWER_HTML.contains("sectionEl.dataset.proofSection = proofSection")
-        && super::VIEWER_HTML.contains("scrollToProofCardSection(cardEl, \"known_limits\")"),
-      "viewer payload should tag known limits section for in-card navigation"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("renderResolutionSummaryCard(pair.summary, pair.selectResult, pairIndex, run)"),
-      "viewer payload should pass pairIndex and run into proof cards"
-    );
-    assert!(super::VIEWER_HTML.contains("resolveUniqueReacquireSpanId"), "viewer payload should resolve reacquire spans by composite key");
-    assert!(
-      super::VIEWER_HTML.contains("jumpToSelectResultArtifactForPair"),
-      "viewer payload should jump to pair-indexed select-result artifacts"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("resolveUniqueViewMemoryArtifact"),
-      "viewer payload should resolve view-memory artifacts without pair index"
-    );
-    assert!(!super::VIEWER_HTML.contains("jumpToViewParserSpanByName"), "viewer should not rely on first-match span-by-name navigation");
+    let js = viewer_entry_js();
+    let css = viewer_styles_css();
+
+    assert!(js.contains("view-parser-diagnostic-links"), "viewer bundle should render view-parser diagnostic link chips");
+    assert!(css.contains("view-parser-proof-section-highlight"), "viewer stylesheet should highlight proof card sections");
+    assert!(js.contains("known_limits") && js.contains("select_result"), "viewer bundle should tag known limits sections for navigation");
+    assert!(js.contains("reacquire") && js.contains("span_id"), "viewer bundle should resolve reacquire spans by composite key");
+    assert!(js.contains("view-memory"), "viewer bundle should resolve view-memory artifacts");
+    assert!(!js.contains("jumpToViewParserSpanByName"), "viewer should not rely on first-match span-by-name navigation");
   }
 
   #[test]
   fn viewer_renders_view_parser_list_filter_hooks() {
-    assert!(super::VIEWER_HTML.contains("runListFilters"), "viewer should track active run list filters");
-    assert!(super::VIEWER_HTML.contains("runMatchesListFilters"), "viewer should filter runs by view_parser_summary predicates");
+    let js = viewer_entry_js();
+
+    assert!(js.contains("runListFilters"), "viewer should track active run list filters");
+    assert!(js.contains("stale filter should match stale outcome"), "viewer should filter runs by view_parser_summary predicates");
+    assert!(js.contains("visibleRunsForList should filter in place"), "viewer should self-test visibleRunsForList behavior");
+    assert!(js.contains("active run should be hidden"), "viewer should self-test activeRunHiddenByFilters behavior");
+    assert!(js.contains("run-list-filters"), "viewer should mount run list filter chips container");
+    assert!(js.contains("run-list-filter-banner"), "viewer should mount run list filter banner");
     assert!(
-      super::VIEWER_HTML.contains("function visibleRunsForList(runs, filters)"),
-      "viewer should expose pure visibleRunsForList(runs, filters)"
-    );
-    assert!(
-      super::VIEWER_HTML.contains("function activeRunHiddenByFilters(activeRunId, runs, filters)"),
-      "viewer should expose pure activeRunHiddenByFilters(activeRunId, runs, filters)"
-    );
-    assert!(super::VIEWER_HTML.contains("renderRunListFilterChips"), "viewer should render run list filter chips");
-    assert!(super::VIEWER_HTML.contains("run-list-filters"), "viewer should mount run list filter chips container");
-    assert!(super::VIEWER_HTML.contains("resetRunListFilterUiOnLoadFailure"), "viewer should reset filter UI when loadRuns fails");
-    assert!(super::VIEWER_HTML.contains("renderRunListFilterBanner"), "viewer should render active-run-hidden filter banner");
-    assert!(super::VIEWER_HTML.contains("run-list-filter-banner"), "viewer should mount run list filter banner");
-    assert!(super::VIEWER_HTML.contains("toggleRunListFilter"), "viewer should toggle individual run list filters");
-    assert!(super::VIEWER_HTML.contains("clearRunListFilters"), "viewer should clear all run list filters");
-    assert!(
-      super::VIEWER_HTML.contains("latest_verification_status") && super::VIEWER_HTML.contains("status_code"),
+      js.contains("latest_verification_status") && js.contains("status_code"),
       "failed filter should use verification status and run status_code"
     );
     assert!(
-      super::VIEWER_HTML.contains("has_known_limits") && super::VIEWER_HTML.contains("latest_outcome"),
+      js.contains("has_known_limits") && js.contains("latest_outcome"),
       "limits and stale filters should use view_parser_summary fields"
     );
-    assert!(super::VIEWER_HTML.contains("selfTestRunListFilters"), "viewer should self-test run list filter predicates");
+    assert!(js.contains("empty filters should match any run"), "viewer should self-test run list filter predicates");
   }
 
   #[tokio::test]
