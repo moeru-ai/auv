@@ -22,9 +22,7 @@ use auv_task_object_detection::DetectionResult;
 #[cfg(target_os = "macos")]
 use auv_driver::capture::Capture;
 #[cfg(target_os = "macos")]
-use auv_driver::{App, Click, ClickOptions, Driver, InputPolicy, WindowClickStrategy, WindowPoint, WindowSelector};
-#[cfg(target_os = "macos")]
-use auv_driver_macos::MacosDriver;
+use auv_driver::{App, Click, ClickOptions, InputPolicy, WindowClickStrategy, WindowPoint, WindowSelector};
 
 pub type OsuResult<T> = Result<T, String>;
 
@@ -510,8 +508,7 @@ fn run_typed_dispatch(
 ) -> OsuResult<(Vec<DispatchSample>, Vec<CaptureTraceSample>, Option<VerificationSummary>, Option<ProjectionArtifact>)> {
   let target_app = inputs.target_app.as_deref().ok_or_else(|| "typed dispatch requires target_app".to_string())?;
   let dispatch_limit = inputs.dispatch_limit.unwrap_or(8).min(schedule.len());
-  let driver = MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let window = session
     .window()
     .resolve(WindowSelector::default().owned_by(App::name(target_app.to_string())).title_contains("osu"))

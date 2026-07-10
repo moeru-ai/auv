@@ -43,8 +43,7 @@ pub fn run_copy_system_details(inputs: &CopySystemDetailsInputs) -> Result<CopyS
 mod platform {
   use std::time::Instant;
 
-  use auv_driver::Driver;
-  use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
+  use auv_driver_linux::LinuxDriverSession;
 
   use super::*;
   use crate::app::{ABOUT_PAGE, COPY_BUTTON, SYSTEM_DETAILS_PAGE, SYSTEM_PAGE};
@@ -55,7 +54,7 @@ mod platform {
     let (window, open_report) = open_or_resolve(&ResolveOptions {
       settle: Duration::from_millis(inputs.settle_ms),
     })?;
-    let session = LinuxDriver::new().open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
+    let session = auv_driver::open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
     let mut steps = open_report.steps.clone();
 
     let system_node = select_visible_labeled_node(&session, &window, SYSTEM_PAGE, "select-system", &mut steps)?;

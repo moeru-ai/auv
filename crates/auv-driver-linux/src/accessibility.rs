@@ -4,10 +4,10 @@
 //! AUV captures a flattened tree for one top-level window, then re-resolves
 //! path-targeted focus/action requests against the current AT-SPI tree.
 
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::Rect;
-use auv_driver::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
-use auv_driver::window::Window;
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::Rect;
+use auv_driver_common::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
+use auv_driver_common::window::Window;
 
 use crate::atspi;
 
@@ -82,8 +82,8 @@ pub fn select_node(window: &Window, node_path: &str) -> DriverResult<InputAction
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::geometry::{CoordinateSpace, Rect};
-  use auv_driver::window::WindowRef;
+  use auv_driver_common::geometry::{CoordinateSpace, Rect};
+  use auv_driver_common::window::WindowRef;
 
   use super::*;
 

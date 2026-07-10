@@ -185,7 +185,7 @@ fn scroll_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn type_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{Driver, TypeTextOptions};
+  use auv_driver::TypeTextOptions;
 
   reject_target_activation(&input, "input.typeText")?;
   if input.dry_run {
@@ -193,8 +193,7 @@ fn type_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   }
 
   let text = required_input(&input, "text")?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let result = session.input().type_text(text, TypeTextOptions::default()).map_err(|error| error.to_string())?;
   input_action_output("typed text into active control", "auv-driver-macos.input", &result)
 }
@@ -206,7 +205,7 @@ fn type_text_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn paste_text_preserve_clipboard_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{Driver, PasteTextOptions};
+  use auv_driver::PasteTextOptions;
 
   reject_target_activation(&input, "input.pasteText")?;
   if input.dry_run {
@@ -214,8 +213,7 @@ fn paste_text_preserve_clipboard_impl(input: InvokeCommandInput<'_>) -> InvokeCo
   }
 
   let text = required_input(&input, "text")?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   session
     .input()
     .paste_text(PasteTextOptions {
@@ -243,7 +241,7 @@ fn paste_text_preserve_clipboard_impl(_input: InvokeCommandInput<'_>) -> InvokeC
 
 #[cfg(target_os = "macos")]
 fn press_key_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{Driver, KeyPressOptions};
+  use auv_driver::KeyPressOptions;
 
   reject_target_activation(&input, "input.key")?;
   if input.dry_run {
@@ -251,8 +249,7 @@ fn press_key_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   }
 
   let key = required_input(&input, "key")?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let result = session
     .input()
     .press_key(KeyPressOptions {
@@ -273,7 +270,7 @@ fn press_key_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn click_window_point_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{ClickOptions, Driver};
+  use auv_driver::ClickOptions;
 
   // TODO(invoke-input-click-window-point-candidate): --candidate JSON promotion
   // path is documented on the command summary but intentionally deferred; MC-19
@@ -289,8 +286,7 @@ fn click_window_point_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult
     Some(resolve_click_window_point(input.inputs, input.command_id, None)?)
   };
 
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let window = session.window().resolve(click_window_selector(&input)).map_err(|error| error.to_string())?;
   let window_point = if uses_relative_window_point {
     resolve_click_window_point(input.inputs, input.command_id, Some(&window))?

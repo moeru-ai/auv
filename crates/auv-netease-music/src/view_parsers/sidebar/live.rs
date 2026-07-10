@@ -41,13 +41,12 @@ pub(crate) fn sidebar_ls_scan_ocr_options(base: &TextRecognitionOptions, query: 
 
 #[cfg(target_os = "macos")]
 fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistSidebarScan, String> {
-  let driver = MacosDriver::new();
   let default_app_context = ScanAppContext {
     app_id: Some(inputs.app_id.clone()),
     name: None,
     version: None,
   };
-  let mut session = match driver.open_local() {
+  let mut session = match auv_driver::open_local() {
     Ok(session) => session,
     Err(error) => {
       return Ok(PlaylistSidebarScan::empty_with_diagnostic(
@@ -384,7 +383,7 @@ fn run_live_scan_inner(inputs: &Inputs, query: Option<&str>) -> Result<PlaylistS
 
 #[cfg(target_os = "macos")]
 struct LiveSidebarObserver {
-  session: MacosDriverSession,
+  session: LocalDriverSession,
   window: auv_driver::Window,
   sidebar_bounds: ViewBounds,
   sidebar_ratio: RatioRect,

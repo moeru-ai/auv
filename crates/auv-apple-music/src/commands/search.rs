@@ -260,25 +260,23 @@ mod platform {
 mod platform {
   use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-  use auv_driver::Driver;
   use auv_driver::geometry::RatioRect;
   use auv_driver::input::{InputPolicy, TextSubmit, TypeTextOptions};
   use auv_driver::window::{Window, WindowMutationOptions, WindowMutationVerification};
-  use auv_driver_windows::{WindowsDriver, WindowsDriverSession};
+  use auv_driver_windows::WindowsDriverSession;
 
   use super::{
     SearchDriver, SearchResultMatch, SearchVerification, SearchVerificationStatus, normalized, resolve_result_match, search_input_path,
     selection_navigation_evidence, uia_query_evidence,
   };
   use crate::app::{ResolveOptions, resolve_window};
-
   pub(super) struct WindowsSearchDriver {
     session: WindowsDriverSession,
     window: Option<Window>,
   }
 
   pub(super) fn open_driver() -> Result<WindowsSearchDriver, String> {
-    let session = WindowsDriver::new().open_local().map_err(|error| format!("windows driver open failed: {error}"))?;
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     Ok(WindowsSearchDriver {
       session,
       window: None,

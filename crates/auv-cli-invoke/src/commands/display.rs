@@ -68,10 +68,7 @@ fn identify_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn list_displays_impl() -> InvokeCommandResult {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let displays = session.display().list().map_err(|error| error.to_string())?;
   Ok(display_list_output(&displays.displays))
 }
@@ -109,10 +106,9 @@ fn list_displays_impl() -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn capture_display_impl() -> InvokeCommandResult {
-  use auv_driver::{CaptureOptions, Driver};
+  use auv_driver::CaptureOptions;
 
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let result = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
   let mut output = InvokeCommandOutput::new(format!(
     "Captured {} through {} ({}x{} pixels).",

@@ -1,4 +1,4 @@
-use auv_driver::{PermissionProbe, PermissionStatus, ReadinessCheck, ReadinessProbeInput, ReadinessReport, Rect, Window};
+use auv_driver_common::{PermissionProbe, PermissionStatus, ReadinessCheck, ReadinessProbeInput, ReadinessReport, Rect, Window};
 
 pub fn assess_readiness(
   permissions: &PermissionProbe,
@@ -116,7 +116,7 @@ fn point_inside_window(x: f64, y: f64, window: &Window) -> bool {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use auv_driver::{CoordinateSpace, Point, ReadinessStatus, Size, WindowRef};
+  use auv_driver_common::{CoordinateSpace, Point, ReadinessStatus, Size, WindowRef};
 
   fn permissions() -> PermissionProbe {
     PermissionProbe {

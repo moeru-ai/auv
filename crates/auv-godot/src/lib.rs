@@ -297,11 +297,9 @@ fn write_json_artifact(path: &Path, value: &Value) -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn capture_final_window(instance: &InstanceDiscoveryRecord, path: &Path) -> Result<FinalCaptureResult> {
-  use auv_driver::Driver;
   use auv_driver::selector::{App, Window};
 
-  let driver = auv_driver_windows::WindowsDriver::new();
-  let session = driver.open_local().map_err(|error| GodotDevObservationError::FinalCapture(error.to_string()))?;
+  let session = auv_driver::open_local().map_err(|error| GodotDevObservationError::FinalCapture(error.to_string()))?;
   let window = session
     .window()
     .resolve(Window::main_visible().owned_by(App::pid(instance.pid)))

@@ -377,6 +377,11 @@ pub enum CliError {
   Message(String),
 }
 
+#[cfg(target_os = "macos")]
+fn open_macos_session() -> Result<auv_driver::LocalDriverSession, CliError> {
+  Ok(auv_driver::open_local()?)
+}
+
 pub fn run_from_env() -> Result<(), CliError> {
   run(CliArgs::parse())
 }
@@ -661,10 +666,7 @@ fn click_consumable_sell(args: SlotOperationArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_sell_object(zone: ObjectReadZone, slot_index: u32, args: SlotOperationArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
   let operation = match zone {
     ObjectReadZone::Joker => "jokers.sell",
@@ -978,10 +980,7 @@ fn click_game_cash_out(_args: OperationControlArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_game_restart(args: OperationControlArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "game-restart-before")?;
   let before = observe_image(&before_image, &BalatroModelConfig::default(), true).ok();
@@ -1088,11 +1087,8 @@ fn click_game_restart(_args: OperationControlArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_store_buy(args: SlotOperationArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
   let slot_index = parse_store_slot_index(&args.slot)?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "store-buy-before")?;
   let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
@@ -1189,11 +1185,8 @@ fn read_cards_from_args(args: &SlotObserveArgs) -> Result<Vec<CardReadResult>, C
 
 #[cfg(target_os = "macos")]
 fn read_object_live(args: &SlotObserveArgs, zone: ObjectReadZone) -> Result<ObjectReadResult, CliError> {
-  use auv_driver::Driver;
-
   let config = BalatroModelConfig::from_observe_args(&args.observe);
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.observe.target.clone())))?;
   let capture = capture_window(&session, &window)?;
   let frame = match args.frame_out.as_deref() {
@@ -1228,10 +1221,7 @@ fn read_cards_from_image(
   no_cache: bool,
   requested: &Option<Vec<u32>>,
 ) -> Result<Vec<CardReadResult>, CliError> {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let capture = capture_from_image(image)?;
   let state = observe_image_with_ui_readings(image, config, no_cache)?;
   let cards = select_cards_for_read(&state, requested)?;
@@ -1358,12 +1348,9 @@ fn strip_operation_details(value: &mut Value) {
 
 #[cfg(target_os = "macos")]
 fn click_consumable_use(args: TargetSlotOperationArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
   let slot_index = parse_consumable_slot_index(&args.slot)?;
   let target_indices = parse_hand_target_indices(&args.targets)?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "consumable-use-before")?;
   let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
@@ -1451,10 +1438,7 @@ fn click_consumable_use(args: TargetSlotOperationArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_pack_skip(args: OperationControlArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "pack-skip-before")?;
   let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
@@ -1513,12 +1497,9 @@ fn click_pack_skip(_args: OperationControlArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_pack_choose(args: TargetSlotOperationArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
   let slot_index = parse_pack_slot_index(&args.slot)?;
   let target_indices = parse_hand_target_indices(&args.targets)?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "pack-choose-before")?;
   let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
@@ -1604,10 +1585,7 @@ fn click_pack_choose(args: TargetSlotOperationArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_store_next_round(args: OperationControlArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, "store-next-round-before")?;
   let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
@@ -1678,11 +1656,8 @@ fn click_cards_select(_args: MultiSlotOperationArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_cards_clear(args: OperationControlArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
   let operation = "cards.clear";
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
   let (before_image, before_result) = capture_observable_window(&session, &window, operation, args.timeout_ms.unwrap_or(1500), 0)?;
   let before = before_result?;
@@ -1767,11 +1742,8 @@ fn click_cards_commit(_operation: &str, _button_id: &str, _args: MultiSlotOperat
 
 #[cfg(target_os = "macos")]
 fn click_cards(operation: &str, commit_button_id: Option<&str>, args: MultiSlotOperationArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
   let slot_indices = parse_hand_slot_indices(&args.slots)?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.control.target.clone())))?;
   let (before_image, before_result) = capture_observable_window(&session, &window, operation, args.control.timeout_ms.unwrap_or(1500), 0)?;
   let before = before_result?;
@@ -2060,10 +2032,7 @@ fn click_blind_skip(_args: OperationControlArgs) -> Result<(), CliError> {
 
 #[cfg(target_os = "macos")]
 fn click_blind_button(operation: &str, button_id: &str, slot_index: Option<u32>, args: OperationControlArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, operation)?;
   let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
@@ -2124,10 +2093,7 @@ fn click_blind_button(operation: &str, button_id: &str, slot_index: Option<u32>,
 
 #[cfg(target_os = "macos")]
 fn click_single_button(operation: &str, button_id: &str, args: OperationControlArgs) -> Result<(), CliError> {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
   let before_image = capture_window_to_temp(&session, &window, operation)?;
   let before = observe_image(&before_image, &BalatroModelConfig::default(), true)?;
@@ -2174,10 +2140,7 @@ fn click_single_button(operation: &str, button_id: &str, args: OperationControlA
 
 #[cfg(target_os = "macos")]
 fn observe_live_target(target: &str, config: &BalatroModelConfig, no_cache: bool) -> Result<BalatroState, CliError> {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(target.to_string())))?;
   let image = capture_window_to_temp(&session, &window, "observe-live")?;
   observe_image_with_ui_readings(&image, config, no_cache)
@@ -2191,10 +2154,7 @@ fn read_cards_live(
   requested: &Option<Vec<u32>>,
   frame_out: Option<&Path>,
 ) -> Result<Vec<CardReadResult>, CliError> {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(target.to_string())))?;
   let capture = capture_window(&session, &window)?;
   let frame = match frame_out {
@@ -2227,11 +2187,8 @@ fn read_cards_live(
 
 #[cfg(target_os = "macos")]
 fn read_pack_live(args: &ObserveArgs) -> Result<PackReadOutput, CliError> {
-  use auv_driver::Driver;
-
   let config = BalatroModelConfig::from_observe_args(args);
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local()?;
+  let session = open_macos_session()?;
   let window = session.window().resolve(Window::main_visible().owned_by(App::name(args.target.clone())))?;
   let capture = capture_window(&session, &window)?;
   let frame = save_capture_to_temp(&capture, "pack-read")?;

@@ -180,14 +180,11 @@ fn click_window_row(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn list_windows_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::Driver;
-
   if input.dry_run {
     return Ok(dry_run_output(input.command_id));
   }
 
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let windows = session.window().list().map_err(|error| error.to_string())?;
   let mut output = window_list_output(&windows);
   output.backend = Some("auv-driver-macos.window".to_string());
@@ -212,14 +209,11 @@ fn list_windows_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn capture_window_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::Driver;
-
   if input.dry_run {
     return Ok(dry_run_output(input.command_id));
   }
 
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let window = session.window().resolve(window_selector(&input)).map_err(|error| error.to_string())?;
   let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
 
@@ -257,7 +251,7 @@ fn capture_window_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn find_window_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCommandResult {
-  use auv_driver::{Driver, RatioRect, WaitOptions};
+  use auv_driver::{RatioRect, WaitOptions};
   use std::{thread, time::Instant};
 
   if input.dry_run {
@@ -265,8 +259,7 @@ fn find_window_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCom
   }
 
   let query = required_input(&input, "query")?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let window = session.window().resolve(window_selector(&input)).map_err(|error| error.to_string())?;
   let wait_options = WaitOptions::default();
   let started = Instant::now();
@@ -310,15 +303,14 @@ fn find_window_text_impl(_input: InvokeCommandInput<'_>, _wait: bool) -> InvokeC
 
 #[cfg(target_os = "macos")]
 fn click_window_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{ClickOptions, Driver, RatioRect, ScreenPoint};
+  use auv_driver::{ClickOptions, RatioRect, ScreenPoint};
 
   if input.dry_run {
     return Ok(dry_run_output(input.command_id));
   }
 
   let query = required_input(&input, "query")?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let window = session.window().resolve(window_selector(&input)).map_err(|error| error.to_string())?;
   let capture = session.window().capture(&window).map_err(|error| error.to_string())?;
   let matches =
@@ -514,7 +506,7 @@ fn window_flags(window: &auv_driver::Window) -> String {
 fn text_matches_output(
   command_id: &str,
   backend: &str,
-  matches: &[auv_driver_macos::OcrMatch],
+  matches: &[auv_driver::OcrMatch],
   selected_index: Option<usize>,
 ) -> InvokeCommandOutput {
   let count = matches.len();

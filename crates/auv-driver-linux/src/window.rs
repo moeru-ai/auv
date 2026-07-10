@@ -10,12 +10,12 @@ use crate::driver::LinuxDriverSessionState;
 use crate::error::{invalid_input, not_found};
 #[cfg(target_os = "linux")]
 use crate::native::portal::capture_window_frame;
-use auv_driver::capture::Capture;
-use auv_driver::error::DriverResult;
+use auv_driver_common::capture::Capture;
+use auv_driver_common::error::DriverResult;
 #[cfg(any(target_os = "linux", test))]
-use auv_driver::geometry::Rect;
-use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
-use auv_driver::window::Window;
+use auv_driver_common::geometry::Rect;
+use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
+use auv_driver_common::window::Window;
 
 #[cfg(target_os = "linux")]
 pub fn list_windows() -> DriverResult<Vec<Window>> {
@@ -24,7 +24,7 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn list_windows() -> DriverResult<Vec<Window>> {
-  Err(auv_driver::error::DriverError::unsupported("window.list"))
+  Err(auv_driver_common::error::DriverError::unsupported("window.list"))
 }
 
 pub fn resolve_window(selector: &WindowSelector) -> DriverResult<Window> {
@@ -57,7 +57,7 @@ pub fn capture_window(
   _state: &std::sync::Arc<std::sync::Mutex<crate::driver::LinuxDriverSessionState>>,
   _window: &Window,
 ) -> DriverResult<Capture> {
-  Err(auv_driver::error::DriverError::unsupported("window.capture"))
+  Err(auv_driver_common::error::DriverError::unsupported("window.capture"))
 }
 
 fn resolve_from_windows(windows: &[Window], selector: &WindowSelector) -> DriverResult<Window> {
@@ -282,9 +282,9 @@ fn scaled_positive_capture_dimension(name: &str, value: f64, scale: f64) -> Driv
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::geometry::CoordinateSpace;
-  use auv_driver::selector::Window as SelectWindow;
-  use auv_driver::window::WindowRef;
+  use auv_driver_common::geometry::CoordinateSpace;
+  use auv_driver_common::selector::Window as SelectWindow;
+  use auv_driver_common::window::WindowRef;
 
   use super::*;
 

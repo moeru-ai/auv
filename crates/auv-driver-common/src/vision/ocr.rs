@@ -15,6 +15,30 @@ impl RecognizedText {
   }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OcrMatch {
+  pub text: String,
+  pub confidence: f64,
+  pub bounds: Rect,
+}
+
+impl OcrMatch {
+  pub fn action_point(&self) -> Point {
+    self.bounds.center()
+  }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct OcrMatches {
+  pub matches: Vec<OcrMatch>,
+}
+
+impl OcrMatches {
+  pub fn best_match(&self) -> Option<&OcrMatch> {
+    self.matches.first()
+  }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TextRecognition {
   pub text: String,
@@ -88,5 +112,20 @@ mod tests {
 
     assert_eq!(options.custom_words, vec!["绚香", "AURORA"]);
     assert_eq!(options.recognition_languages, Some(vec!["zh-Hans".to_string(), "en-US".to_string()]));
+  }
+
+  #[test]
+  fn ocr_matches_share_action_point_and_best_match_contract() {
+    let matches = OcrMatches {
+      matches: vec![OcrMatch {
+        text: "Play".to_string(),
+        confidence: 0.92,
+        bounds: Rect::new(10.0, 20.0, 30.0, 40.0),
+      }],
+    };
+
+    let matched = matches.best_match().expect("one match");
+
+    assert_eq!(matched.action_point(), Point::new(25.0, 40.0));
   }
 }

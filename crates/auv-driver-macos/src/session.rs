@@ -4,19 +4,19 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
-use auv_driver::display::{Display, ObservedDisplays};
-use auv_driver::error::{DriverError, DriverResult};
-use auv_driver::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
-use auv_driver::input::{
+use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
+use auv_driver_common::display::{Display, ObservedDisplays};
+use auv_driver_common::error::{DriverError, DriverResult};
+use auv_driver_common::geometry::{CoordinateSpace, Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
+use auv_driver_common::input::{
   ActivationPolicy, Click, ClickOptions, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy,
   InputPreparationLease, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions,
   TextSubmit, TypeTextOptions, WaitOptions, WindowClickStrategy,
 };
-use auv_driver::permission::{PermissionProbe, PermissionStatus};
-use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
-use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
-use auv_driver::window::{
+use auv_driver_common::permission::{PermissionProbe, PermissionStatus};
+use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
+use auv_driver_common::vision::{OcrMatch, OcrMatches, RecognizedText, TextRecognition, TextRecognitionOptions};
+use auv_driver_common::window::{
   Window, WindowMutationAttempt, WindowMutationCandidate, WindowMutationKind, WindowMutationOptions, WindowMutationPath,
   WindowMutationPolicy, WindowMutationResult, WindowMutationVerification, WindowRef, WindowState,
 };
@@ -29,30 +29,6 @@ use crate::native::types::{ObservedRect, ObservedWindow, ObservedWindowSnapshot}
 use crate::native::window::ListWindowsOptions;
 use crate::support::{build_window_candidates, parse_app_selector, resolve_app_ref};
 use crate::types::{WindowRef as NativeWindowRef, WindowSelection};
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct OcrMatch {
-  pub text: String,
-  pub confidence: f64,
-  pub bounds: Rect,
-}
-
-impl OcrMatch {
-  pub fn action_point(&self) -> Point {
-    self.bounds.center()
-  }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct OcrMatches {
-  pub matches: Vec<OcrMatch>,
-}
-
-impl OcrMatches {
-  pub fn best_match(&self) -> Option<&OcrMatch> {
-    self.matches.first()
-  }
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct WindowApi<'a> {
@@ -1839,7 +1815,7 @@ fn not_found(target: impl std::fmt::Display) -> DriverError {
 
 #[cfg(test)]
 mod no_steal_tests {
-  use auv_driver::geometry::{ScreenPoint, WindowPoint};
+  use auv_driver_common::geometry::{ScreenPoint, WindowPoint};
 
   use super::*;
 
@@ -2192,7 +2168,7 @@ mod no_steal_tests {
   fn window_mutation_native_only_preserves_explicit_foreground_candidate() {
     let candidates = window_mutation_candidates(&WindowMutationOptions {
       policy: WindowMutationPolicy::NativeOnly,
-      strategy: auv_driver::WindowMutationStrategy {
+      strategy: auv_driver_common::WindowMutationStrategy {
         candidates: vec![WindowMutationCandidate::ForegroundSystemEvents],
       },
       ..WindowMutationOptions::default()
@@ -2352,7 +2328,7 @@ mod no_steal_tests {
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::selector::{App, Window as SelectWindow};
+  use auv_driver_common::selector::{App, Window as SelectWindow};
 
   use super::*;
 

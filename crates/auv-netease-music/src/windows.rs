@@ -27,12 +27,10 @@ impl Default for ResolveOptions {
 
 #[cfg(target_os = "windows")]
 pub fn resolve_window(options: &ResolveOptions) -> Result<Option<Window>, String> {
-  use auv_driver::Driver;
   use auv_driver::error::DriverError;
   use auv_driver::selector::{App, Window as WindowSelector};
-  use auv_driver_windows::WindowsDriver;
 
-  let session = WindowsDriver::new().open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
+  let session = auv_driver::open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
 
   let by_process = WindowSelector::main_visible().owned_by(App::name(options.process_name.clone()));
   match session.window().resolve(by_process) {

@@ -10,10 +10,10 @@
 // only candidate this slice wires. Add a fallback only when an owner-approved
 // reliability gap appears for background repositioning.
 
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::Rect;
-use auv_driver::input::DisturbanceLevel;
-use auv_driver::window::{
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::Rect;
+use auv_driver_common::input::DisturbanceLevel;
+use auv_driver_common::window::{
   Window, WindowMutationAttempt, WindowMutationKind, WindowMutationOptions, WindowMutationPath, WindowMutationResult,
   WindowMutationVerification, WindowState,
 };
@@ -215,7 +215,7 @@ fn perform_native_mutation(
   _kind: WindowMutationKind,
   _settle: std::time::Duration,
 ) -> DriverResult<NativeMutationOutcome> {
-  Err(auv_driver::error::DriverError::unsupported("window.mutate"))
+  Err(auv_driver_common::error::DriverError::unsupported("window.mutate"))
 }
 
 #[cfg(target_os = "windows")]
@@ -225,9 +225,9 @@ mod native {
   use std::thread;
   use std::time::Duration;
 
-  use auv_driver::error::DriverResult;
-  use auv_driver::geometry::Rect;
-  use auv_driver::window::{Window, WindowMutationKind};
+  use auv_driver_common::error::DriverResult;
+  use auv_driver_common::geometry::Rect;
+  use auv_driver_common::window::{Window, WindowMutationKind};
   use windows::Win32::Foundation::{HWND, RECT};
   use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
   use windows::Win32::UI::WindowsAndMessaging::{
@@ -327,9 +327,9 @@ mod native {
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::geometry::{Point, Rect, Size};
-  use auv_driver::input::DisturbanceLevel;
-  use auv_driver::window::{WindowMutationKind, WindowMutationPath, WindowMutationVerification, WindowState};
+  use auv_driver_common::geometry::{Point, Rect, Size};
+  use auv_driver_common::input::DisturbanceLevel;
+  use auv_driver_common::window::{WindowMutationKind, WindowMutationPath, WindowMutationVerification, WindowState};
 
   use super::*;
 

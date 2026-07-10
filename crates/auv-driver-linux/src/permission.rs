@@ -1,4 +1,4 @@
-use auv_driver::permission::{PermissionProbe, PermissionStatus};
+use auv_driver_common::permission::{PermissionProbe, PermissionStatus};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PortalInterfaceProbe {

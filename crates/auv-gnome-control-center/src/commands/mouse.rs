@@ -100,8 +100,8 @@ pub fn run_natural_scrolling_toggle(inputs: &NaturalScrollingToggleInputs) -> Re
 mod platform {
   use std::process::Command;
 
-  use auv_driver::{Click, ClickOptions, Driver};
-  use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
+  use auv_driver::{Click, ClickOptions};
+  use auv_driver_linux::LinuxDriverSession;
 
   use super::*;
   use crate::app::{MOUSE_PAGE, NATURAL_SCROLLING, POINTER_SPEED, TRADITIONAL_SCROLLING};
@@ -114,7 +114,7 @@ mod platform {
     let (window, open_report) = open_or_resolve(&ResolveOptions {
       settle: Duration::from_millis(inputs.settle_ms),
     })?;
-    let session = LinuxDriver::new().open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
+    let session = auv_driver::open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
     set_pointer_speed(&session, &window, open_report, inputs.position)
   }
 
@@ -141,7 +141,7 @@ mod platform {
     let (window, open_report) = open_or_resolve(&ResolveOptions {
       settle: Duration::from_millis(inputs.settle_ms),
     })?;
-    let session = LinuxDriver::new().open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
+    let session = auv_driver::open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
     toggle_natural_scrolling(&session, &window, open_report)
   }
 

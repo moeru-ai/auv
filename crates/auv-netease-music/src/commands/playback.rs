@@ -209,9 +209,8 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   use crate::views::screen;
   use auv_driver::selector::{App, Window};
   use auv_driver::{
-    ActivationPolicy, Click, ClickOptions, Driver, InputPolicy, PrepareForInputOptions, RatioRect, Size, WindowClickStrategy, WindowPoint,
+    ActivationPolicy, Click, ClickOptions, InputPolicy, PrepareForInputOptions, RatioRect, Size, WindowClickStrategy, WindowPoint,
   };
-  use auv_driver_macos::MacosDriver;
   use auv_view::ViewBounds;
 
   std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
@@ -220,8 +219,7 @@ pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<Playba
   let mut diagnostics = Vec::new();
   let mut known_limits = Vec::new();
 
-  let driver = MacosDriver::new();
-  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let window = session
     .window()
     .resolve(Window::main_visible().owned_by(App::bundle(inputs.app_id.clone())))

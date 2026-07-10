@@ -13,7 +13,7 @@
 // macOS `assess_readiness`) is deferred until an owner-approved slice; it needs
 // Windows equivalents for the macOS app-bundle/frontmost concepts first.
 
-use auv_driver::permission::PermissionStatus;
+use auv_driver_common::permission::PermissionStatus;
 
 /// Windows-specific automation readiness signals.
 ///
@@ -46,7 +46,7 @@ mod native {
   use std::ffi::c_void;
   use std::mem::size_of;
 
-  use auv_driver::permission::PermissionStatus;
+  use auv_driver_common::permission::PermissionStatus;
   use windows::Win32::Foundation::{CloseHandle, HANDLE};
   use windows::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation, TokenUIAccess};
   use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
@@ -141,7 +141,7 @@ mod native {
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::permission::PermissionStatus;
+  use auv_driver_common::permission::PermissionStatus;
 
   use super::*;
 

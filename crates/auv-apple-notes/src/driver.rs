@@ -1,8 +1,8 @@
 use std::time::Duration;
 
+use auv_driver::LocalDriverSession;
 use auv_driver::{
-  ActivationPolicy, App, Driver, InputActionResult, InputDeliveryPath, PasteTextOptions, PrepareForInputOptions, TextSubmit, Window,
-  WindowSelector,
+  ActivationPolicy, App, InputActionResult, InputDeliveryPath, PasteTextOptions, PrepareForInputOptions, TextSubmit, Window, WindowSelector,
 };
 use auv_driver_macos::MacosDriverSession;
 use serde::{Deserialize, Serialize};
@@ -42,17 +42,19 @@ pub trait NotesDriver {
 }
 
 pub struct MacosNotesDriver {
-  session: MacosDriverSession,
+  session: LocalDriverSession,
 }
 
 impl MacosNotesDriver {
   pub fn open_local() -> OperationResult<Self> {
-    let session = auv_driver_macos::MacosDriver::new().open_local().map_err(|error| error.to_string())?;
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     Ok(Self { session })
   }
 
   pub fn from_session(session: MacosDriverSession) -> Self {
-    Self { session }
+    Self {
+      session: LocalDriverSession::Macos(session),
+    }
   }
 
   fn main_window(&self, app_id: &str) -> OperationResult<Window> {

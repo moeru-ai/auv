@@ -43,12 +43,14 @@
 
 use std::error::Error;
 
-use auv_driver::Driver;
-use auv_driver::capture::CaptureOptions;
-use auv_driver::geometry::{Point, RatioRect, Rect, WindowPoint};
-use auv_driver::input::{Click, ClickOptions, KeyPressOptions, PasteTextOptions, Scroll, ScrollOptions, TypeTextOptions, WaitOptions};
-use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
-use auv_driver::window::Window;
+use auv_driver_common::Driver;
+use auv_driver_common::capture::CaptureOptions;
+use auv_driver_common::geometry::{Point, RatioRect, Rect, WindowPoint};
+use auv_driver_common::input::{
+  Click, ClickOptions, KeyPressOptions, PasteTextOptions, Scroll, ScrollOptions, TypeTextOptions, WaitOptions,
+};
+use auv_driver_common::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
+use auv_driver_common::window::Window;
 use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
 
 type Run = Result<(), Box<dyn Error>>;

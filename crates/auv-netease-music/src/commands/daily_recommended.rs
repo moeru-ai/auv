@@ -25,8 +25,7 @@ pub fn run_daily_recommended_songs_scan(inputs: &SongListInputs) -> Result<SongL
   std::fs::create_dir_all(&daily_inputs.artifact_dir)
     .map_err(|error| format!("failed to create {}: {error}", daily_inputs.artifact_dir.display()))?;
 
-  let driver = MacosDriver::new();
-  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let app = App::bundle(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
@@ -72,8 +71,7 @@ pub fn run_daily_recommended_songs_scan(inputs: &SongListInputs) -> Result<SongL
 pub fn run_daily_recommended_play(inputs: &DailyRecommendedPlayInputs) -> Result<DailyRecommendedPlayResult, String> {
   std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
 
-  let driver = MacosDriver::new();
-  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let app = App::bundle(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
@@ -124,7 +122,7 @@ pub fn run_daily_recommended_play(inputs: &DailyRecommendedPlayInputs) -> Result
 
 #[cfg(target_os = "macos")]
 struct DailyRecommendedRun<'a> {
-  session: MacosDriverSession,
+  session: LocalDriverSession,
   window: auv_driver::Window,
   inputs: &'a DailyRecommendedPlayInputs,
   steps: Vec<DailyRecommendedPlayStep>,

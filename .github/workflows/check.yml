@@ -39,7 +39,9 @@ jobs:
             libdbus-1-dev \
             libpipewire-0.3-dev \
             libwayland-dev \
-            libegl-dev
+            libegl-dev \
+            libleptonica-dev \
+            libtesseract-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt

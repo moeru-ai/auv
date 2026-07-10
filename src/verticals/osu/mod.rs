@@ -685,11 +685,9 @@ fn circle_size_for_wired_live_action_inputs(inputs: &QueryWiredLiveActionInputs)
 
 #[cfg(target_os = "macos")]
 fn build_live_playfield_projection(target_app: &str, target_title: &str, circle_size: f32) -> Result<PlayfieldProjection, String> {
-  use auv_driver::{App, Driver, WindowSelector};
-  use auv_driver_macos::MacosDriver;
+  use auv_driver::{App, WindowSelector};
 
-  let driver = MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let window = session
     .window()
     .resolve(WindowSelector::default().owned_by(App::name(target_app.to_string())).title_contains(target_title))

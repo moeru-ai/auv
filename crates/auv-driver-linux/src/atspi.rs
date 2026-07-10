@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::{CoordinateSpace, Point, Rect};
-use auv_driver::window::{Window, WindowRef};
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::{CoordinateSpace, Point, Rect};
+use auv_driver_common::window::{Window, WindowRef};
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 

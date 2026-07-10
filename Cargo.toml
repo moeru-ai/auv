@@ -16,6 +16,7 @@ members = [
   "crates/auv-stage-status",
   "crates/auv-qqmusic",
   "crates/auv-driver",
+  "crates/auv-driver-common",
   "crates/auv-driver-linux",
   "crates/auv-driver-macos",
   "crates/auv-driver-windows",

@@ -19,9 +19,9 @@ pub mod vision;
 pub mod window;
 
 pub use accessibility::{AxNode, AxTreeSnapshot, focus_node, select_node, snapshot_window};
+pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
 pub use descriptor::{WINDOWS_DESKTOP_CAPABILITIES, WindowsDriverDescriptor, windows_driver_descriptor};
 pub use driver::{WindowsDriver, WindowsDriverSession};
 pub use ocr::{OcrError, recognize_text_in_rgba};
 pub use permission::{WindowsPermissionProbe, probe as probe_permissions};
 pub use session::{AccessibilityApi, ClipboardApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};
-pub use vision::{OcrMatch, OcrMatches};

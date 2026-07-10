@@ -1,5 +1,5 @@
 [package]
-name = "auv-driver"
+name = "auv-driver-common"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,18 +13,8 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-auv-driver-common = { path = "../auv-driver-common" }
 image.workspace = true
 serde.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-auv-driver-linux = { path = "../auv-driver-linux" }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-auv-driver-macos = { path = "../auv-driver-macos" }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-auv-driver-windows = { path = "../auv-driver-windows" }
 
 [dev-dependencies]
 serde_json.workspace = true

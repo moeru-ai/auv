@@ -1,4 +1,4 @@
-use auv_driver::error::DriverError;
+use auv_driver_common::error::DriverError;
 
 pub(crate) fn backend(message: impl Into<String>) -> DriverError {
   DriverError::Backend {

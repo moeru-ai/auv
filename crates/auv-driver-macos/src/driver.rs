@@ -1,4 +1,4 @@
-use auv_driver::{Driver, DriverDescriptor, DriverResult, DriverSession};
+use auv_driver_common::{Driver, DriverDescriptor, DriverResult, DriverSession};
 
 use crate::descriptor::{MacosDriverDescriptor, macos_driver_descriptor};
 
@@ -46,7 +46,7 @@ impl DriverSession for MacosDriverSession {
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::{Driver, DriverSession, PlatformKind};
+  use auv_driver_common::{Driver, DriverSession, PlatformKind};
 
   use crate::{MacosDriver, macos_legacy_descriptor_metadata};
 

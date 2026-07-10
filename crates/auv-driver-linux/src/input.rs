@@ -4,9 +4,9 @@ use std::time::Duration;
 use crate::driver::LinuxDriverSessionState;
 use crate::error::invalid_input;
 use crate::native::portal::{InputSession, PortalInput};
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::Point;
-use auv_driver::input::{
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::Point;
+use auv_driver_common::input::{
   Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll,
   TextSubmit, TypeTextOptions,
 };
@@ -200,7 +200,7 @@ fn parse_key_chord(input: &str) -> DriverResult<KeyChord> {
 }
 
 mod keysym {
-  use auv_driver::error::DriverResult;
+  use auv_driver_common::error::DriverResult;
 
   use crate::error::invalid_input;
 

@@ -1,8 +1,8 @@
-use auv_driver::display::Display;
-use auv_driver::error::DriverResult;
+use auv_driver_common::display::Display;
+use auv_driver_common::error::DriverResult;
 #[cfg(any(target_os = "linux", test))]
-use auv_driver::geometry::CoordinateSpace;
-use auv_driver::geometry::Rect;
+use auv_driver_common::geometry::CoordinateSpace;
+use auv_driver_common::geometry::Rect;
 
 use crate::error::{backend, not_found};
 
@@ -38,7 +38,7 @@ pub fn list_targets() -> DriverResult<Vec<DisplayTarget>> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn list_targets() -> DriverResult<Vec<DisplayTarget>> {
-  Err(auv_driver::error::DriverError::unsupported("display.list"))
+  Err(auv_driver_common::error::DriverError::unsupported("display.list"))
 }
 
 pub fn resolve_target(targets: &[DisplayTarget], selector: Option<&str>) -> DriverResult<DisplayTarget> {

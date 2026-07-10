@@ -109,7 +109,7 @@ pub(crate) fn song_detail_restore_point(_window_size: Size) -> Point {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn click_default_screen_restore(session: &MacosDriverSession, window: &Window, point: Point) -> Result<(), String> {
+pub(crate) fn click_default_screen_restore(session: &LocalDriverSession, window: &Window, point: Point) -> Result<(), String> {
   let lease = session
     .window()
     .prepare_for_input(

@@ -1,6 +1,6 @@
 use crate::{InvokeReport, InvokeReportField, InvokeReportTable, InvokeReportTableRow};
 
-pub(super) fn match_report(matches: &[auv_driver_macos::OcrMatch], selected_index: Option<usize>) -> InvokeReport {
+pub(super) fn match_report(matches: &[auv_driver::OcrMatch], selected_index: Option<usize>) -> InvokeReport {
   let has_selection = selected_index.is_some();
   InvokeReport {
     fields: vec![report_field(
@@ -43,7 +43,7 @@ fn display_max_chars(has_selection: bool, wide: bool) -> Vec<Option<usize>> {
   max_chars
 }
 
-fn rows(matches: &[auv_driver_macos::OcrMatch], selected_index: Option<usize>, wide: bool) -> Vec<InvokeReportTableRow> {
+fn rows(matches: &[auv_driver::OcrMatch], selected_index: Option<usize>, wide: bool) -> Vec<InvokeReportTableRow> {
   matches
     .iter()
     .enumerate()
@@ -83,8 +83,7 @@ fn format_rect(rect: auv_driver::Rect) -> String {
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::Rect;
-  use auv_driver_macos::OcrMatch;
+  use auv_driver::{OcrMatch, Rect};
 
   use super::*;
 

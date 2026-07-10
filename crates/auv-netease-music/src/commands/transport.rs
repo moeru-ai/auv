@@ -149,16 +149,13 @@ fn normalize(value: &str) -> String {
 mod platform {
   use std::time::Duration;
 
-  use auv_driver::Driver;
-  use auv_driver_windows::WindowsDriver;
-
   use super::*;
   use crate::windows::resolve_window;
 
   pub fn run(inputs: &TransportInputs) -> Result<TransportResult, String> {
     let window =
       resolve_window(&inputs.resolve)?.ok_or_else(|| "NetEase Cloud Music has no visible window; run `open-window` first".to_string())?;
-    let session = WindowsDriver::new().open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
+    let session = auv_driver::open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
     let snapshot =
       session.accessibility().snapshot_window(&window).map_err(|error| format!("failed to capture NetEase UIA tree: {error}"))?;
     let matched = choose_control(
