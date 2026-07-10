@@ -41,12 +41,7 @@ pub fn resolve_window(options: &ResolveOptions) -> Result<Option<Window>, String
     }
   }
 
-  let mut titles = vec![
-    options.title.as_str(),
-    DEFAULT_WINDOW_TITLE,
-    ENGLISH_WINDOW_TITLE,
-    "CloudMusic",
-  ];
+  let mut titles = candidate_titles(options);
   titles.dedup();
   for title in titles {
     match session.window().resolve(WindowSelector::title_contains(title)) {
@@ -61,7 +56,91 @@ pub fn resolve_window(options: &ResolveOptions) -> Result<Option<Window>, String
   Ok(None)
 }
 
+/// Builds the ordered list of window-title candidates to try, preferring the
+/// caller-supplied title before falling back to NetEase's known localized and
+/// English window titles.
+///
+/// `dedup()` only removes *consecutive* duplicates, so this only collapses
+/// the common case where `options.title` already equals `DEFAULT_WINDOW_TITLE`;
+/// it does not deduplicate non-adjacent repeats.
+fn candidate_titles(options: &ResolveOptions) -> Vec<&str> {
+  vec![
+    options.title.as_str(),
+    DEFAULT_WINDOW_TITLE,
+    ENGLISH_WINDOW_TITLE,
+    "CloudMusic",
+  ]
+}
+
 #[cfg(not(target_os = "windows"))]
 pub fn resolve_window(_options: &ResolveOptions) -> Result<Option<Window>, String> {
   Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn candidate_titles_dedups_when_option_title_matches_the_default() {
+    let options = ResolveOptions::default();
+    let titles = candidate_titles(&options);
+    let mut deduped = titles.clone();
+    deduped.dedup();
+
+    assert_eq!(
+      titles,
+      [
+        DEFAULT_WINDOW_TITLE,
+        DEFAULT_WINDOW_TITLE,
+        ENGLISH_WINDOW_TITLE,
+        "CloudMusic"
+      ]
+    );
+    assert_eq!(deduped, [DEFAULT_WINDOW_TITLE, ENGLISH_WINDOW_TITLE, "CloudMusic"]);
+  }
+
+  #[test]
+  fn candidate_titles_keeps_a_custom_option_title_first() {
+    let options = ResolveOptions {
+      process_name: DEFAULT_PROCESS_NAME.to_string(),
+      title: "My NetEase".to_string(),
+    };
+
+    let titles = candidate_titles(&options);
+
+    assert_eq!(
+      titles,
+      [
+        "My NetEase",
+        DEFAULT_WINDOW_TITLE,
+        ENGLISH_WINDOW_TITLE,
+        "CloudMusic"
+      ]
+    );
+  }
+
+  #[test]
+  fn candidate_titles_does_not_dedup_non_adjacent_repeats() {
+    // NOTICE: dedup() only removes consecutive duplicates. An option title
+    // equal to `ENGLISH_WINDOW_TITLE` (not adjacent to it in this list) is not
+    // deduplicated; this documents that existing, unchanged behavior.
+    let options = ResolveOptions {
+      process_name: DEFAULT_PROCESS_NAME.to_string(),
+      title: ENGLISH_WINDOW_TITLE.to_string(),
+    };
+
+    let mut titles = candidate_titles(&options);
+    titles.dedup();
+
+    assert_eq!(
+      titles,
+      [
+        ENGLISH_WINDOW_TITLE,
+        DEFAULT_WINDOW_TITLE,
+        ENGLISH_WINDOW_TITLE,
+        "CloudMusic"
+      ]
+    );
+  }
 }

@@ -197,9 +197,122 @@ fn render_table(table: Table) -> String {
   table.to_string().lines().map(str::trim).collect::<Vec<_>>().join("\n")
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn run_playback_status_probe(_inputs: &PlaybackStatusInputs) -> Result<PlaybackStatus, String> {
-  Err("live NetEase playback status probe is only supported on macOS".to_string())
+  Err("live NetEase playback status probe is only supported on macOS and Windows".to_string())
+}
+
+#[cfg(target_os = "windows")]
+pub fn run_playback_status_probe(inputs: &PlaybackStatusInputs) -> Result<PlaybackStatus, String> {
+  use crate::commands::transport::{NodeEvidence, classify_playpause_state, find_playpause_control};
+  use crate::views::player::PlayerView;
+  use crate::windows::{ResolveOptions, resolve_window};
+  use auv_view::ViewBounds;
+
+  // NOTICE(netease-windows-playback-status-scope): unlike the macOS probe,
+  // this reads UIA control state directly and does not capture screenshots,
+  // run OCR, or click into the song-detail screen. `artifact_dir` and
+  // `ocr_options` are part of the shared `PlaybackStatusInputs` contract for
+  // the macOS branch and are intentionally unused here.
+  let _ = (&inputs.artifact_dir, &inputs.ocr_options);
+
+  let mut diagnostics = Vec::new();
+  let mut known_limits = Vec::new();
+
+  let Some(window) = resolve_window(&ResolveOptions::default())? else {
+    known_limits.push("NetEase Cloud Music window not found; run `open-window` first".to_string());
+    return Ok(PlaybackStatus {
+      command: "playback.status".to_string(),
+      app: ScanAppContext::default(),
+      window: ScanWindowContext::default(),
+      playback_exists: false,
+      was_playing: false,
+      control_state: None,
+      click_point: None,
+      detail_screen_detected: false,
+      source: None,
+      artifacts: Vec::new(),
+      diagnostics,
+      known_limits,
+    });
+  };
+
+  let app = ScanAppContext {
+    app_id: None,
+    name: window.app_name.clone(),
+    version: None,
+  };
+  let window_context = ScanWindowContext {
+    id: Some(window.reference.id.clone()),
+    title: window.title.clone(),
+    bounds: Some(ViewBounds::new(0.0, 0.0, window.frame.size.width, window.frame.size.height)),
+  };
+
+  let session = auv_driver::open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
+  let snapshot = session.accessibility().snapshot_window(&window).map_err(|error| format!("failed to capture NetEase UIA tree: {error}"))?;
+
+  let matched = match find_playpause_control(
+    snapshot.nodes.iter().map(|node| NodeEvidence {
+      path: &node.path,
+      name: &node.name,
+      value: node.value.as_deref(),
+      automation_id: &node.automation_id,
+      control_type: &node.control_type,
+      bounds: node.bounds,
+    }),
+    window.frame,
+  ) {
+    Ok(matched) => matched,
+    Err(error) => {
+      known_limits.push(format!(
+        "{error}; captured {} UIA nodes. If the tree contains only CEF containers, relaunch NetEase with `auv-netease-music open-window` so renderer accessibility is enabled",
+        snapshot.nodes.len()
+      ));
+      return Ok(PlaybackStatus {
+        command: "playback.status".to_string(),
+        app,
+        window: window_context,
+        playback_exists: false,
+        was_playing: false,
+        control_state: None,
+        click_point: None,
+        detail_screen_detected: false,
+        source: None,
+        artifacts: Vec::new(),
+        diagnostics,
+        known_limits,
+      });
+    }
+  };
+
+  let control_state = classify_playpause_state(matched.name, matched.value);
+  let was_playing = PlayerView::from_control_state(control_state).is_playing();
+  if control_state == PlaybackControlState::Unknown {
+    diagnostics.push(ParserDiagnostic {
+      code: "windows_playpause_state_unknown".to_string(),
+      message: format!("could not classify play/pause state from UIA control name {:?} value {:?}", matched.name, matched.value),
+      node_id: Some(matched.path.to_string()),
+    });
+    known_limits.push(
+      "NetEase's Windows play/pause control did not expose a distinguishable Name/Value; state detection needs a UIA TogglePattern read that auv-driver-windows does not yet expose".to_string(),
+    );
+  }
+  known_limits.push("song-detail screen detection and `source` extraction are not implemented for Windows in this slice".to_string());
+
+  Ok(PlaybackStatus {
+    command: "playback.status".to_string(),
+    app,
+    window: window_context,
+    playback_exists: true,
+    was_playing,
+    control_state: Some(control_state),
+    click_point: None,
+    detail_screen_detected: false,
+    source: None,
+    artifacts: Vec::new(),
+    diagnostics,
+    known_limits,
+  })
 }
 
 #[cfg(target_os = "macos")]

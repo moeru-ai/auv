@@ -11,6 +11,7 @@ use auv_driver::geometry::Rect;
 use auv_driver::input::InputActionResult;
 use serde::{Deserialize, Serialize};
 
+use crate::views::player::PlaybackControlState;
 use crate::windows::ResolveOptions;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,16 +64,22 @@ pub fn run_transport_action(inputs: &TransportInputs) -> Result<TransportResult,
   platform::run(inputs)
 }
 
+pub(crate) const PLAY_STATE_NAMES: &[&str] = &["播放", "play"];
+pub(crate) const PAUSE_STATE_NAMES: &[&str] = &["暂停", "pause"];
+pub(crate) const PLAYPAUSE_GENERIC_NAMES: &[&str] = &["播放暂停", "playpause"];
+const PLAYPAUSE_AUTOMATION_IDS: &[&str] = &["playpause", "playbutton", "pausebutton", "btnpcminibarplay"];
+
 #[derive(Clone, Copy, Debug)]
-struct NodeEvidence<'a> {
-  path: &'a str,
-  name: &'a str,
-  automation_id: &'a str,
-  control_type: &'a str,
-  bounds: Rect,
+pub(crate) struct NodeEvidence<'a> {
+  pub(crate) path: &'a str,
+  pub(crate) name: &'a str,
+  pub(crate) value: Option<&'a str>,
+  pub(crate) automation_id: &'a str,
+  pub(crate) control_type: &'a str,
+  pub(crate) bounds: Rect,
 }
 
-fn choose_control<'a>(
+pub(crate) fn choose_control<'a>(
   nodes: impl IntoIterator<Item = NodeEvidence<'a>>,
   action: TransportAction,
   window_bounds: Rect,
@@ -94,7 +101,7 @@ fn choose_control<'a>(
   Ok(best)
 }
 
-fn is_in_transport_band(bounds: Rect, window_bounds: Rect) -> bool {
+pub(crate) fn is_in_transport_band(bounds: Rect, window_bounds: Rect) -> bool {
   if bounds.size.width <= 0.0 || bounds.size.height <= 0.0 {
     return false;
   }
@@ -111,13 +118,13 @@ fn control_score(node: NodeEvidence<'_>, action: TransportAction) -> Option<u8> 
   let control_type = normalize(&node.control_type);
   let actionable = control_type.contains("button") || control_type.contains("menuitem");
 
-  let (names, ids): (&[&str], &[&str]) = match action {
+  let (names, ids): (Vec<&str>, &[&str]) = match action {
     TransportAction::PlayPause => {
-      (&["播放", "暂停", "播放暂停", "play", "pause", "playpause"], &["playpause", "playbutton", "pausebutton", "btnpcminibarplay"])
+      (PLAY_STATE_NAMES.iter().chain(PAUSE_STATE_NAMES).chain(PLAYPAUSE_GENERIC_NAMES).copied().collect(), PLAYPAUSE_AUTOMATION_IDS)
     }
-    TransportAction::Next => (&["下一首", "下一曲", "next", "nexttrack"], &["next", "nexttrack"]),
+    TransportAction::Next => (vec!["下一首", "下一曲", "next", "nexttrack"], &["next", "nexttrack"]),
     TransportAction::Previous => (
-      &[
+      vec![
         "上一首",
         "上一曲",
         "previous",
@@ -141,8 +148,45 @@ fn control_score(node: NodeEvidence<'_>, action: TransportAction) -> Option<u8> 
   None
 }
 
-fn normalize(value: &str) -> String {
+pub(crate) fn normalize(value: &str) -> String {
   value.chars().filter(|character| character.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// Finds NetEase's Windows play/pause UIA control without invoking it.
+///
+/// Read-only wrapper over `choose_control` so callers that only need to
+/// inspect current state (see `classify_playpause_state`) don't need to model
+/// their call site around `TransportAction`, which is otherwise an
+/// invoke-flavored concept.
+pub(crate) fn find_playpause_control<'a>(
+  nodes: impl IntoIterator<Item = NodeEvidence<'a>>,
+  window_bounds: Rect,
+) -> Result<NodeEvidence<'a>, String> {
+  choose_control(nodes, TransportAction::PlayPause, window_bounds)
+}
+
+// TODO(netease-windows-playpause-toggle-state): this infers play/pause state
+// from the control's accessible Name/ValuePattern text, not a UIA
+// TogglePattern read (auv-driver-windows does not currently expose
+// TogglePattern.CurrentToggleState). If NetEase's control exposes only a
+// static/generic label regardless of playback state, this will always
+// return `Unknown`; validate live before relying on this signal. Adding a
+// TogglePattern read to auv-driver-windows is a separate, owner-approved
+// driver-side slice, not part of this one.
+pub(crate) fn classify_playpause_state(name: &str, value: Option<&str>) -> PlaybackControlState {
+  for candidate in [Some(name), value].into_iter().flatten() {
+    let normalized = normalize(candidate);
+    if PLAYPAUSE_GENERIC_NAMES.iter().any(|generic| normalized == *generic) {
+      continue;
+    }
+    if PAUSE_STATE_NAMES.iter().any(|pause| normalized == *pause) {
+      return PlaybackControlState::PauseVisible;
+    }
+    if PLAY_STATE_NAMES.iter().any(|play| normalized == *play) {
+      return PlaybackControlState::PlayVisible;
+    }
+  }
+  PlaybackControlState::Unknown
 }
 
 #[cfg(target_os = "windows")]
@@ -162,6 +206,7 @@ mod platform {
       snapshot.nodes.iter().map(|node| NodeEvidence {
         path: &node.path,
         name: &node.name,
+        value: node.value.as_deref(),
         automation_id: &node.automation_id,
         control_type: &node.control_type,
         bounds: node.bounds,
@@ -220,6 +265,7 @@ mod tests {
     NodeEvidence {
       path,
       name,
+      value: None,
       automation_id,
       control_type,
       bounds: Rect::new(x, 650.0, 40.0, 40.0),
@@ -318,6 +364,7 @@ mod tests {
       [NodeEvidence {
         path: "0/30/29",
         name: "play",
+        value: None,
         automation_id: "",
         control_type: "button",
         bounds: Rect::new(300.0, 400.0, 43.0, 43.0),
@@ -328,5 +375,42 @@ mod tests {
     .unwrap_err();
 
     assert!(error.contains("no UIA control matched"));
+  }
+
+  #[test]
+  fn find_playpause_control_matches_the_same_node_as_choose_control() {
+    let nodes = [
+      node("0/1", "上一首", "", "button", 420.0),
+      node("0/2", "暂停", "", "button", 480.0),
+      node("0/3", "下一首", "", "button", 540.0),
+    ];
+
+    assert_eq!(find_playpause_control(nodes, window_bounds()).unwrap().path, "0/2");
+  }
+
+  #[test]
+  fn classify_playpause_state_detects_pause_from_localized_name() {
+    assert_eq!(classify_playpause_state("暂停", None), PlaybackControlState::PauseVisible);
+    assert_eq!(classify_playpause_state("Pause", None), PlaybackControlState::PauseVisible);
+  }
+
+  #[test]
+  fn classify_playpause_state_detects_play_from_localized_name() {
+    assert_eq!(classify_playpause_state("播放", None), PlaybackControlState::PlayVisible);
+    assert_eq!(classify_playpause_state("Play", None), PlaybackControlState::PlayVisible);
+  }
+
+  #[test]
+  fn classify_playpause_state_falls_back_to_value_when_name_is_generic() {
+    assert_eq!(classify_playpause_state("播放暂停", Some("暂停")), PlaybackControlState::PauseVisible);
+    assert_eq!(classify_playpause_state("playpause", Some("Play")), PlaybackControlState::PlayVisible);
+  }
+
+  #[test]
+  fn classify_playpause_state_is_unknown_for_generic_or_unrelated_labels() {
+    assert_eq!(classify_playpause_state("播放暂停", None), PlaybackControlState::Unknown);
+    assert_eq!(classify_playpause_state("playpause", Some("playpause")), PlaybackControlState::Unknown);
+    assert_eq!(classify_playpause_state("", None), PlaybackControlState::Unknown);
+    assert_eq!(classify_playpause_state("上一首", None), PlaybackControlState::Unknown);
   }
 }
