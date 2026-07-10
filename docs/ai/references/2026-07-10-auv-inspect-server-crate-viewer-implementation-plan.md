@@ -55,14 +55,16 @@ Remove after replacement is proven:
 - `src/inspect_server/session.rs`
 - `src/inspect_server_viewer.html`
 - `crates/auv-inspect-server/src/inspect_server_viewer.html`
-
-Leave unchanged in this plan:
-
-- `src/inspect.rs`
 - `src/inspect_view_parser.rs`
 - `src/inspect_scene_state.rs`
+
+Keep:
+
+- `src/inspect.rs`: root text inspect entrypoint; it calls read-side helpers
+  directly after the thin wrapper modules are removed.
 - `src/run_read.rs`
 - `src/view_parser_read.rs`
+- `src/scene_state_read.rs`
 
 ## Task 1: Add The Inspect Server Crate Shell
 
@@ -889,7 +891,7 @@ impl InspectReadProjection for RootInspectReadProjection {
     store: &auv_tracing_driver::store::LocalStore,
     run: &auv_tracing_driver::store::CanonicalRun,
   ) -> Result<InspectRunEnrichment, String> {
-    let view_parser = inspect_view_parser::build_view_parser_inspect_for_run(store, run)?;
+    let view_parser = view_parser_read::build_view_parser_inspect(store, run)?;
     let view_parser_summary = auv_view::memory::summarize_view_parser_inspect(&view_parser);
     Ok(InspectRunEnrichment {
       command_boundary_claims: extract_command_boundary_claims_for_inspect(run),
@@ -1694,6 +1696,8 @@ Spec coverage:
 - Vite, Vue, and TypeScript frontend authoring is covered by Tasks 8-10.
 - Static Rust serving of built Vite assets is covered by Task 10.
 - Removal of old root server and legacy viewer files is covered by Tasks 7 and 11.
+- Removal of thin root inspect wrapper modules is included in the final cleanup
+  after Task 12.
 - Validation commands from the spec are covered by Task 12.
 
 Implementation constraints:

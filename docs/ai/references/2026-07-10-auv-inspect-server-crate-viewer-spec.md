@@ -21,7 +21,8 @@ frontend maintainable without expanding the inspect contract.
 
 ## Current Evidence
 
-The current inspect surface is spread across these root-crate files:
+Before this split, the inspect surface was spread across these root-crate
+files:
 
 - `src/inspect_server/`: Axum routes, live WebSocket stream, write endpoints,
   session discovery, static viewer serving, design asset serving, and tests.
@@ -32,13 +33,18 @@ The current inspect surface is spread across these root-crate files:
 - `src/inspect_scene_state.rs`: thin wrappers over `scene_state_read` for
   text inspect consumption.
 
+The final implementation removes the server/viewer files and also deletes the
+two thin read wrapper modules. Text inspect now calls `view_parser_read` and
+`scene_state_read` directly from `src/inspect.rs`; the root projection adapter
+calls `view_parser_read` directly.
+
 `src/inspect_server/mod.rs` already documents its boundary as a viewer-facing
 storage API. It does not execute commands and does not perform UI automation.
 That matches the AUV architecture rule that inspection/viewer APIs read durable
 run data and artifacts instead of depending on transient CLI behavior.
 
-The current blocker to a mechanical move is dependency direction. The server
-module still imports root-crate modules:
+The blocker to a mechanical move was dependency direction. The old server
+module imported root-crate modules:
 
 - `crate::contract::{ObservationSnapshot, VerificationResult}`
 - `crate::model::{AuvResult, now_millis}`
@@ -163,7 +169,7 @@ For the first slice, define a root-crate adapter that calls existing helpers:
 - `run_read::extract_verifications`
 - `run_read::extract_observation_snapshots`
 - `run_read::extract_detector_recognition_lineage`
-- `inspect_view_parser::build_view_parser_inspect_for_run`
+- `view_parser_read::build_view_parser_inspect`
 
 This keeps the server crate independent from root-crate internals while still
 preserving the current HTTP shape.

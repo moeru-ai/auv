@@ -4,8 +4,6 @@ pub mod app;
 pub mod candidate_promotion;
 pub mod contract;
 pub mod inspect;
-pub mod inspect_scene_state;
-pub mod inspect_view_parser;
 pub mod mcp;
 pub mod model;
 pub mod run_read;
@@ -38,7 +36,7 @@ impl auv_inspect_server::InspectReadProjection for RootInspectReadProjection {
     store: &auv_tracing_driver::store::LocalStore,
     run: &auv_tracing_driver::store::CanonicalRun,
   ) -> Result<auv_inspect_server::InspectRunEnrichment, String> {
-    let view_parser = inspect_view_parser::build_view_parser_inspect_for_run(store, run)?;
+    let view_parser = view_parser_read::build_view_parser_inspect(store, run)?;
     let view_parser_summary = auv_view::memory::summarize_view_parser_inspect(&view_parser);
     Ok(auv_inspect_server::InspectRunEnrichment {
       command_boundary_claims: extract_command_boundary_claims_for_inspect(run),
