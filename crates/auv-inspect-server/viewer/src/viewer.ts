@@ -1,9 +1,9 @@
 // @ts-nocheck
-// NOTICE(inspect-viewer-vite-migration): this file is a mechanical port of the
-// legacy inline viewer script. Internal type checking is deferred until the
-// script is split into typed Vue components; the module boundary remains typed.
+// NOTICE(inspect-viewer-dom-module): this file owns the current DOM renderer
+// for the inspect viewer. Internal type checking is deferred until this module
+// is split into typed Vue components; the module boundary remains typed.
 
-export function mountLegacyViewer(document: Document): void {
+export function mountInspectViewer(document: Document): void {
   const window = document.defaultView;
   if (window === null) {
     throw new Error("viewer document has no default window");
@@ -12,10 +12,10 @@ export function mountLegacyViewer(document: Document): void {
   const originalAddEventListener = window.addEventListener.bind(window);
   void originalAddEventListener;
 
-  copiedViewerMain(document, window);
+  runInspectViewer(document, window);
 }
 
-function copiedViewerMain(document: Document, window: Window): void {
+function runInspectViewer(document: Document, window: Window): void {
   "use strict";
 
   function el(tag, props, children) {

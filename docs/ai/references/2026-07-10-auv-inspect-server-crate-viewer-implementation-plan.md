@@ -30,7 +30,7 @@ Create:
 - `crates/auv-inspect-server/src/read_projection.rs`: `InspectReadProjection`, default empty projection, and enrichment response types.
 - `crates/auv-inspect-server/src/server.rs`: moved Axum routes, write handling, live stream, static asset serving, and route tests.
 - `crates/auv-inspect-server/src/session.rs`: moved inspect session descriptor code and tests.
-- `crates/auv-inspect-server/src/inspect_server_viewer.html`: temporary crate-owned copy of the legacy viewer payload until Vite output replaces it; removed after Task 11.
+- `crates/auv-inspect-server/src/inspect_server_viewer.html`: temporary crate-owned copy of the inline viewer payload until Vite output replaces it; removed after Task 11.
 - `crates/auv-inspect-server/src/viewer_assets.rs`: Vite build asset embed table after the frontend migration.
 - `pnpm-workspace.yaml`: root pnpm workspace including the inspect viewer package.
 - `pnpm-lock.yaml`: root shared pnpm lockfile.
@@ -40,7 +40,7 @@ Create:
 - `crates/auv-inspect-server/viewer/index.html`: Vite HTML entry.
 - `crates/auv-inspect-server/viewer/src/main.ts`: Vue app entry.
 - `crates/auv-inspect-server/viewer/src/App.vue`: initial viewer component produced from the existing HTML body.
-- `crates/auv-inspect-server/viewer/src/legacy/viewer.ts`: initial TypeScript port of the existing inline script.
+- `crates/auv-inspect-server/viewer/src/viewer.ts`: initial TypeScript port of the existing inline script.
 - `crates/auv-inspect-server/viewer/src/styles/viewer.css`: initial CSS port of the existing inline style.
 
 Modify:
@@ -614,7 +614,7 @@ Delete the local `CommandBoundaryClaim` struct from `server.rs`; the type now co
 
 - [ ] **Step 8: Move the temporary viewer payload into the new crate**
 
-Create a crate-owned temporary legacy viewer copy:
+Create a crate-owned temporary inline viewer copy:
 
 ```bash
 cp src/inspect_server_viewer.html crates/auv-inspect-server/src/inspect_server_viewer.html
@@ -1151,7 +1151,7 @@ git commit -m "refactor: remove root inspect server module"
 - Create: `crates/auv-inspect-server/viewer/index.html`
 - Create: `crates/auv-inspect-server/viewer/src/main.ts`
 - Create: `crates/auv-inspect-server/viewer/src/App.vue`
-- Create: `crates/auv-inspect-server/viewer/src/legacy/viewer.ts`
+- Create: `crates/auv-inspect-server/viewer/src/viewer.ts`
 - Create: `crates/auv-inspect-server/viewer/src/styles/viewer.css`
 
 - [ ] **Step 1: Create the package manifest**
@@ -1275,30 +1275,30 @@ Create `crates/auv-inspect-server/viewer/src/App.vue`:
 ```vue
 <template>
   <main id="auv-inspect-viewer">
-    <div id="legacy-viewer-root"></div>
+    <div id="inspect-viewer-root"></div>
   </main>
 </template>
 
 <script setup lang="ts">
 import { onMounted } from "vue";
-import { mountLegacyViewer } from "./legacy/viewer";
+import { mountInspectViewer } from "./viewer";
 
 onMounted(() => {
-  const root = document.getElementById("legacy-viewer-root");
+  const root = document.getElementById("inspect-viewer-root");
   if (root === null) {
-    throw new Error("legacy viewer root is missing");
+    throw new Error("inspect viewer root is missing");
   }
-  mountLegacyViewer(root);
+  mountInspectViewer(root);
 });
 </script>
 ```
 
-- [ ] **Step 7: Add the legacy viewer TypeScript module**
+- [ ] **Step 7: Add the viewer TypeScript module**
 
-Create `crates/auv-inspect-server/viewer/src/legacy/viewer.ts`:
+Create `crates/auv-inspect-server/viewer/src/viewer.ts`:
 
 ```ts
-export function mountLegacyViewer(root: HTMLElement): void {
+export function mountInspectViewer(root: HTMLElement): void {
   root.innerHTML = '<section class="empty">Inspect viewer is loading.</section>';
 }
 ```
@@ -1357,7 +1357,7 @@ git commit -m "feat(auv-inspect-server): add vite vue inspect viewer"
 **Files:**
 
 - Modify: `crates/auv-inspect-server/viewer/src/App.vue`
-- Modify: `crates/auv-inspect-server/viewer/src/legacy/viewer.ts`
+- Modify: `crates/auv-inspect-server/viewer/src/viewer.ts`
 - Modify: `crates/auv-inspect-server/viewer/src/styles/viewer.css`
 
 - [ ] **Step 1: Extract the old CSS**
@@ -1375,29 +1375,29 @@ The resulting `App.vue` must keep this script block:
 ```vue
 <script setup lang="ts">
 import { onMounted } from "vue";
-import { mountLegacyViewer } from "./legacy/viewer";
+import { mountInspectViewer } from "./viewer";
 
 onMounted(() => {
-  mountLegacyViewer(document);
+  mountInspectViewer(document);
 });
 </script>
 ```
 
-Use `mountLegacyViewer(document)` because the existing script expects document-level element IDs.
+Use `mountInspectViewer(document)` because the existing script expects document-level element IDs.
 
 - [ ] **Step 3: Extract the old script**
 
-Open `src/inspect_server_viewer.html`. Copy the contents between the opening `<script>` tag and the closing `</script>` tag into `crates/auv-inspect-server/viewer/src/legacy/viewer.ts`.
+Open `src/inspect_server_viewer.html`. Copy the contents between the opening `<script>` tag and the closing `</script>` tag into `crates/auv-inspect-server/viewer/src/viewer.ts`.
 
 Wrap the copied script with this function:
 
 ```ts
 // @ts-nocheck
 // NOTICE(inspect-viewer-vite-migration): this file is a mechanical port of the
-// legacy inline viewer script. Internal type checking is deferred until the
-// script is split into typed Vue components; the module boundary remains typed.
+// current DOM viewer script. Internal type checking is deferred until the
+// module is split into typed Vue components; the module boundary remains typed.
 
-export function mountLegacyViewer(document: Document): void {
+export function mountInspectViewer(document: Document): void {
   const window = document.defaultView;
   if (window === null) {
     throw new Error("viewer document has no default window");
@@ -1406,14 +1406,14 @@ export function mountLegacyViewer(document: Document): void {
   const originalAddEventListener = window.addEventListener.bind(window);
   void originalAddEventListener;
 
-  copiedViewerMain(document, window);
+  runInspectViewer(document, window);
 }
 
-function copiedViewerMain(document: Document, window: Window): void {
+function runInspectViewer(document: Document, window: Window): void {
 }
 ```
 
-Move the copied script body inside `copiedViewerMain`. Keep the original statement order. Do not change viewer behavior in this task.
+Move the copied script body inside `runInspectViewer`. Keep the original statement order. Do not change viewer behavior in this task.
 
 - [ ] **Step 4: Run the frontend typecheck**
 
@@ -1440,7 +1440,7 @@ Expected: PASS.
 Run:
 
 ```bash
-git add crates/auv-inspect-server/viewer/src/App.vue crates/auv-inspect-server/viewer/src/legacy/viewer.ts crates/auv-inspect-server/viewer/src/styles/viewer.css crates/auv-inspect-server/viewer/dist
+git add crates/auv-inspect-server/viewer/src/App.vue crates/auv-inspect-server/viewer/src/viewer.ts crates/auv-inspect-server/viewer/src/styles/viewer.css crates/auv-inspect-server/viewer/dist
 git commit -m "refactor(auv-inspect-server): port inspect viewer into vite"
 ```
 
@@ -1563,7 +1563,7 @@ async fn viewer_asset_route_serves_vite_entry() {
   let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
   let js = std::str::from_utf8(&body).expect("asset should be utf-8");
   assert!(js.contains("/runs"), "viewer entry should fetch the inspect runs endpoint");
-  assert!(js.contains("select a run from the sidebar"), "viewer entry should include the legacy viewer shell");
+  assert!(js.contains("select a run from the sidebar"), "viewer entry should include the inspect viewer shell");
 
   let _ = fs::remove_dir_all(root);
 }
@@ -1609,7 +1609,7 @@ Run:
 rg "inspect_server_viewer.html|VIEWER_HTML" src crates/auv-inspect-server/src
 ```
 
-Expected: only `crates/auv-inspect-server/src/viewer_assets.rs` refers to `VIEWER_HTML`; no code refers to either deleted legacy viewer HTML file.
+Expected: only `crates/auv-inspect-server/src/viewer_assets.rs` refers to `VIEWER_HTML`; no code refers to either deleted inline viewer HTML file.
 
 - [ ] **Step 2: Delete the old viewer file**
 
@@ -1636,7 +1636,7 @@ Run:
 
 ```bash
 git add src/inspect_server_viewer.html crates/auv-inspect-server/src/inspect_server_viewer.html qodana.yaml docs/design/README.md docs/design/IMPLEMENTATION_HANDOFF.md
-git commit -m "refactor(auv-inspect-server): remove legacy viewer html"
+git commit -m "refactor(auv-inspect-server): remove inline viewer html"
 ```
 
 ## Task 12: Final Validation And Documentation Index
@@ -1697,7 +1697,7 @@ Spec coverage:
 - Root adapter read projection is covered by Tasks 3, 5, and 6.
 - Vite, Vue, and TypeScript frontend authoring is covered by Tasks 8-10.
 - Static Rust serving of built Vite assets is covered by Task 10.
-- Removal of old root server and legacy viewer files is covered by Tasks 7 and 11.
+- Removal of old root server and inline viewer files is covered by Tasks 7 and 11.
 - Removal of thin root inspect wrapper modules is included in the final cleanup
   after Task 12.
 - Validation commands from the spec are covered by Task 12.

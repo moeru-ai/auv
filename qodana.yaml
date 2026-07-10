@@ -101,7 +101,7 @@ exclude:
     paths:
       - .qodana/profiles/qodana.yaml
   # NOTICE(qodana-false_positive): inspect viewer and design-kit CSS classes are
-  # applied via Vue templates and legacy DOM className calls; static analysis
+  # applied via Vue templates and DOM className calls; static analysis
   # cannot see every dynamic use.
   - name: CssUnusedSymbol
     paths:

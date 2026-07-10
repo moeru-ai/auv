@@ -22,13 +22,13 @@ context.
 
 These were settled in C.1. New phases should follow:
 
-1. **Vite/Vue shell with a DOM-oriented legacy viewer module.**
+1. **Vite/Vue shell with a DOM-oriented viewer module.**
    The viewer source lives in `crates/auv-inspect-server/viewer/src/App.vue`,
-   `src/legacy/viewer.ts`, and `src/styles/viewer.css`, then ships through
+   `src/viewer.ts`, and `src/styles/viewer.css`, then ships through
    the checked-in Vite build under `crates/auv-inspect-server/viewer/dist/`.
    The upstream JSX mocks in `ui_kits/viewer/*.jsx` are **prototypes
    to match visually**, not code to port directly. Preserve the existing
-   DOM IDs/classes until the legacy module is deliberately split into typed
+   DOM IDs/classes until the DOM module is deliberately split into typed
    Vue components.
 
 2. **Design tokens are inlined.** The viewer's `:root` CSS block
@@ -86,7 +86,7 @@ placeholder with the span tree.
 **Where to add code**:
 
 1. Edit `crates/auv-inspect-server/viewer/src/App.vue`,
-   `src/legacy/viewer.ts`, and `src/styles/viewer.css`. Rebuild the Vite
+   `src/viewer.ts`, and `src/styles/viewer.css`. Rebuild the Vite
    output before validating the Rust server.
 2. The `selectRun(runId)` function is the entry point. Today it
    updates the pane header and the placeholder. Replace the

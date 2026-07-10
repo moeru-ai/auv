@@ -1714,7 +1714,7 @@ mod tests {
     let body = to_bytes(response.into_body(), usize::MAX).await.expect("body should read");
     let js = std::str::from_utf8(&body).expect("asset should be utf-8");
     assert!(js.contains("/runs"), "viewer entry should fetch the inspect runs endpoint");
-    assert!(js.contains("select a run from the sidebar"), "viewer entry should include the legacy viewer shell");
+    assert!(js.contains("select a run from the sidebar"), "viewer entry should include the inspect viewer shell");
 
     let _ = fs::remove_dir_all(root);
   }

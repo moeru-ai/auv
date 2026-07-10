@@ -87,7 +87,7 @@ crates/auv-inspect-server/
     src/
       main.ts
       App.vue
-      legacy/viewer.ts
+      viewer.ts
       styles/viewer.css
       ...
 ```
@@ -175,7 +175,7 @@ This keeps the server crate independent from root-crate internals while still
 preserving the current HTTP shape.
 
 When the existing Minecraft quality baseline HTTP route moves, preserve the
-legacy route by passing the extension key
+existing route by passing the extension key
 `minecraft-quality-baseline-report` through a generic root adapter hook that
 calls `run_read::quality_baseline_report_with_verdicts_for_run`.
 
@@ -332,7 +332,7 @@ cargo run --quiet -- invoke --help
 - The built binary still serves a viewer without requiring a separate frontend
   dev server.
 - Frontend source is authored as Vue single-file components with TypeScript.
-- The legacy viewer HTML files (`src/inspect_server_viewer.html` and the
+- The inline viewer HTML files (`src/inspect_server_viewer.html` and the
   temporary `crates/auv-inspect-server/src/inspect_server_viewer.html`) are
   removed after the Vite build is wired.
 - No runtime, driver, command execution, or archived vertical behavior changes

@@ -52,11 +52,11 @@ from, without re-fetching the original bundle.
 | Brand cyan pill (`#009ba6`) | `crates/auv-overlay-macos/.../Overlay.swift` | done (Phase A) |
 | `assets/logo-mark.svg` (top-bar pixel logo) | `crates/auv-inspect-server/viewer/src/App.vue` | done (Phase C.1; served from Vite build) |
 | `colors_and_type.css` core tokens (shell, brand, status) | `crates/auv-inspect-server/viewer/src/styles/viewer.css` | done (Phase C.1; served from Vite build) |
-| `ui_kits/viewer/Sidebar.jsx` (run list) | `crates/auv-inspect-server/viewer/src/App.vue` + `src/legacy/viewer.ts` | done (Phase C.1; served from Vite build) |
-| `ui_kits/viewer/SpanTree.jsx` | `crates/auv-inspect-server/viewer/src/App.vue` + `src/legacy/viewer.ts` | done (Phase C.2; served from Vite build) |
-| `ui_kits/viewer/EventsRail.jsx` | `crates/auv-inspect-server/viewer/src/App.vue` + `src/legacy/viewer.ts` | done (Phase C.3a; served from Vite build) |
-| `ui_kits/viewer/ArtifactPanel.jsx` | `crates/auv-inspect-server/viewer/src/App.vue` + `src/legacy/viewer.ts` | done (Phase C.3b; served from Vite build) |
-| WebSocket live streaming on `/runs/:id/stream` | `crates/auv-inspect-server/viewer/src/legacy/viewer.ts` + `crates/auv-inspect-server/src/server.rs` | done (Phase C.4; served from Vite build) |
+| `ui_kits/viewer/Sidebar.jsx` (run list) | `crates/auv-inspect-server/viewer/src/App.vue` + `src/viewer.ts` | done (Phase C.1; served from Vite build) |
+| `ui_kits/viewer/SpanTree.jsx` | `crates/auv-inspect-server/viewer/src/App.vue` + `src/viewer.ts` | done (Phase C.2; served from Vite build) |
+| `ui_kits/viewer/EventsRail.jsx` | `crates/auv-inspect-server/viewer/src/App.vue` + `src/viewer.ts` | done (Phase C.3a; served from Vite build) |
+| `ui_kits/viewer/ArtifactPanel.jsx` | `crates/auv-inspect-server/viewer/src/App.vue` + `src/viewer.ts` | done (Phase C.3b; served from Vite build) |
+| WebSocket live streaming on `/runs/:id/stream` | `crates/auv-inspect-server/viewer/src/viewer.ts` + `crates/auv-inspect-server/src/server.rs` | done (Phase C.4; served from Vite build) |
 | Extract assets to `/assets/:name` route | `crates/auv-inspect-server/src/server.rs` | done (Phase C.5, landed early) |
 | `assets/cursor-auv-click.svg` (4-ray burst) | — | pending (future Overlay click-state) |
 | `ui_kits/cli/*` | — | reference only; the Rust CLI ships plain text today |
