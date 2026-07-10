@@ -300,7 +300,7 @@ cargo fmt --check
 cargo check
 cargo test -p auv-inspect-server
 cargo test -p auv-cli inspect
-npm --prefix crates/auv-inspect-server/viewer run build
+pnpm --filter auv-inspect-viewer build
 git diff --check
 cargo run --quiet -- invoke --help
 ```

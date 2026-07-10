@@ -1,0 +1,5 @@
+packages:
+  - "crates/auv-inspect-server/viewer"
+
+allowBuilds:
+  esbuild: true

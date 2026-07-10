@@ -32,7 +32,9 @@ Create:
 - `crates/auv-inspect-server/src/session.rs`: moved inspect session descriptor code and tests.
 - `crates/auv-inspect-server/src/inspect_server_viewer.html`: temporary crate-owned copy of the legacy viewer payload until Vite output replaces it; removed after Task 11.
 - `crates/auv-inspect-server/src/viewer_assets.rs`: Vite build asset embed table after the frontend migration.
-- `crates/auv-inspect-server/viewer/package.json`: npm scripts and frontend dependencies.
+- `pnpm-workspace.yaml`: root pnpm workspace including the inspect viewer package.
+- `pnpm-lock.yaml`: root shared pnpm lockfile.
+- `crates/auv-inspect-server/viewer/package.json`: frontend scripts and dependencies.
 - `crates/auv-inspect-server/viewer/tsconfig.json`: TypeScript project configuration.
 - `crates/auv-inspect-server/viewer/vite.config.ts`: Vite build and dev proxy configuration.
 - `crates/auv-inspect-server/viewer/index.html`: Vite HTML entry.
@@ -1326,17 +1328,17 @@ body {
 Run:
 
 ```bash
-npm --prefix crates/auv-inspect-server/viewer install
+pnpm install
 ```
 
-Expected: `crates/auv-inspect-server/viewer/package-lock.json` is created and npm exits successfully.
+Expected: root `pnpm-lock.yaml` is created and pnpm exits successfully.
 
 - [ ] **Step 10: Build the starter viewer**
 
 Run:
 
 ```bash
-npm --prefix crates/auv-inspect-server/viewer run build
+pnpm --filter auv-inspect-viewer build
 ```
 
 Expected: PASS and `crates/auv-inspect-server/viewer/dist/index.html` exists.
@@ -1418,7 +1420,7 @@ Move the copied script body inside `copiedViewerMain`. Keep the original stateme
 Run:
 
 ```bash
-npm --prefix crates/auv-inspect-server/viewer run typecheck
+pnpm --filter auv-inspect-viewer typecheck
 ```
 
 Expected: PASS.
@@ -1428,7 +1430,7 @@ Expected: PASS.
 Run:
 
 ```bash
-npm --prefix crates/auv-inspect-server/viewer run build
+pnpm --filter auv-inspect-viewer build
 ```
 
 Expected: PASS.
@@ -1572,8 +1574,8 @@ async fn viewer_asset_route_serves_vite_entry() {
 Run:
 
 ```bash
-npm --prefix crates/auv-inspect-server/viewer run build
-npm --prefix crates/auv-inspect-server/viewer run smoke
+pnpm --filter auv-inspect-viewer build
+pnpm --filter auv-inspect-viewer smoke
 cargo test -p auv-inspect-server root_serves_inline_viewer_html
 cargo test -p auv-inspect-server viewer_asset_route_serves_vite_entry
 ```
@@ -1660,7 +1662,7 @@ Run:
 cargo fmt --check
 cargo check
 cargo test
-npm --prefix crates/auv-inspect-server/viewer run build
+pnpm --filter auv-inspect-viewer build
 git diff --check
 cargo run --quiet -- invoke --help
 ```
