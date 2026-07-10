@@ -1,4 +1,4 @@
-use auv_driver::{DriverDescriptor, PlatformKind};
+use auv_driver_common::{DriverDescriptor, PlatformKind};
 
 /// Capabilities the Windows desktop driver currently exposes.
 ///

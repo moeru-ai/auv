@@ -1,4 +1,4 @@
-use auv_driver::{DriverDescriptor, PlatformKind};
+use auv_driver_common::{DriverDescriptor, PlatformKind};
 
 pub const MACOS_DESKTOP_CAPABILITIES: &[&str] = &[
   "desktop.capture-display",

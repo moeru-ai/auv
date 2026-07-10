@@ -1,11 +1,11 @@
-use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
-use auv_driver::display::ObservedDisplays;
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::{Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
-use auv_driver::input::{Click, InputActionResult, KeyPressOptions, Scroll, TypeTextOptions};
-use auv_driver::selector::WindowSelector;
-use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
-use auv_driver::window::{Window, WindowMutationKind, WindowMutationOptions, WindowMutationResult};
+use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
+use auv_driver_common::display::ObservedDisplays;
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::{Point, RatioRect, Rect, ScreenPoint, Size, WindowPoint};
+use auv_driver_common::input::{Click, InputActionResult, KeyPressOptions, Scroll, TypeTextOptions};
+use auv_driver_common::selector::WindowSelector;
+use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
+use auv_driver_common::window::{Window, WindowMutationKind, WindowMutationOptions, WindowMutationResult};
 
 use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
 use crate::capture::{capture_display, capture_region, capture_window, list_displays};
@@ -347,10 +347,10 @@ fn window_point_for_screen_point(window: &Window, point: ScreenPoint) -> WindowP
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::Driver;
-  use auv_driver::capture::{Activation, CaptureOptions};
-  use auv_driver::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};
-  use auv_driver::window::{Window, WindowRef};
+  use auv_driver_common::Driver;
+  use auv_driver_common::capture::{Activation, CaptureOptions};
+  use auv_driver_common::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};
+  use auv_driver_common::window::{Window, WindowRef};
 
   use super::{screen_point_for_window_point, window_point_for_screen_point};
   use crate::WindowsDriver;

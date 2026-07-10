@@ -5,9 +5,9 @@
 //! Enumeration uses Win32 `EnumWindows`; frames prefer the DWM extended frame
 //! bounds (the visible window rectangle) and fall back to `GetWindowRect`.
 
-use auv_driver::error::DriverResult;
-use auv_driver::selector::{AppSelector, TextMatcher, WindowSelector};
-use auv_driver::window::Window;
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::selector::{AppSelector, TextMatcher, WindowSelector};
+use auv_driver_common::window::Window;
 
 use crate::error::{invalid_input, not_found};
 
@@ -18,7 +18,7 @@ pub fn list_windows() -> DriverResult<Vec<Window>> {
 
 #[cfg(not(target_os = "windows"))]
 pub fn list_windows() -> DriverResult<Vec<Window>> {
-  Err(auv_driver::error::DriverError::unsupported("window.list"))
+  Err(auv_driver_common::error::DriverError::unsupported("window.list"))
 }
 
 pub fn resolve_window(selector: &WindowSelector) -> DriverResult<Window> {
@@ -34,7 +34,7 @@ pub fn activate_window(window: &Window) -> DriverResult<()> {
 
 #[cfg(not(target_os = "windows"))]
 pub fn activate_window(_window: &Window) -> DriverResult<()> {
-  Err(auv_driver::error::DriverError::unsupported("window.activate"))
+  Err(auv_driver_common::error::DriverError::unsupported("window.activate"))
 }
 
 /// Parses the native `HWND` value previously encoded in a [`Window`] reference.
@@ -140,9 +140,9 @@ mod native {
   use std::mem::size_of;
   use std::path::Path;
 
-  use auv_driver::error::DriverResult;
-  use auv_driver::geometry::{CoordinateSpace, Rect};
-  use auv_driver::window::{Window, WindowRef};
+  use auv_driver_common::error::DriverResult;
+  use auv_driver_common::geometry::{CoordinateSpace, Rect};
+  use auv_driver_common::window::{Window, WindowRef};
   use windows::Win32::Foundation::{BOOL, CloseHandle, FALSE, HWND, LPARAM, RECT, TRUE};
   use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
   use windows::Win32::System::Threading::{
@@ -316,9 +316,9 @@ mod native {
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::geometry::{CoordinateSpace, Rect};
-  use auv_driver::selector::{App, TextMatcher, Window as WindowQuery, WindowSelector};
-  use auv_driver::window::{Window, WindowRef};
+  use auv_driver_common::geometry::{CoordinateSpace, Rect};
+  use auv_driver_common::selector::{App, TextMatcher, Window as WindowQuery, WindowSelector};
+  use auv_driver_common::window::{Window, WindowRef};
 
   use super::*;
 

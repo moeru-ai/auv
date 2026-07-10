@@ -7,8 +7,8 @@
 
 use std::fmt;
 
-use auv_driver::geometry::Rect;
-use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
+use auv_driver_common::geometry::Rect;
+use auv_driver_common::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
 #[cfg(target_os = "linux")]
 use image::ImageEncoder;
 
@@ -217,7 +217,7 @@ fn mean_confidence(words: &[Word]) -> Option<f32> {
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::geometry::Rect;
+  use auv_driver_common::geometry::Rect;
 
   use super::*;
 

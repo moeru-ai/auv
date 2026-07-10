@@ -13,7 +13,7 @@
 // deferred until an owner-approved slice needs format-preserving capture; the
 // macOS surface is text-only today and this mirror keeps that contract.
 
-use auv_driver::error::DriverResult;
+use auv_driver_common::error::DriverResult;
 
 /// Reads the current clipboard text. Returns an empty string when the clipboard
 /// holds no Unicode text, mirroring the macOS text-only snapshot.
@@ -33,7 +33,7 @@ pub fn set_text(text: &str) -> DriverResult<()> {
 
 #[cfg(target_os = "windows")]
 mod native {
-  use auv_driver::error::DriverResult;
+  use auv_driver_common::error::DriverResult;
   use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
   use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard, SetClipboardData,
@@ -129,7 +129,7 @@ mod native {
 
 #[cfg(not(target_os = "windows"))]
 mod native {
-  use auv_driver::error::{DriverError, DriverResult};
+  use auv_driver_common::error::{DriverError, DriverResult};
 
   pub(super) fn read_text() -> DriverResult<String> {
     Err(DriverError::unsupported("clipboard.snapshot"))

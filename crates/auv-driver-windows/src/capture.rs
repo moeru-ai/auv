@@ -9,13 +9,13 @@
 #[cfg(target_os = "windows")]
 use crate::error::backend;
 use crate::error::{invalid_input, not_found};
-use auv_driver::capture::{Capture, DisplayCapture, RegionCapture};
-use auv_driver::display::{Display, ObservedDisplays};
+use auv_driver_common::capture::{Capture, DisplayCapture, RegionCapture};
+use auv_driver_common::display::{Display, ObservedDisplays};
 #[cfg(not(target_os = "windows"))]
-use auv_driver::error::DriverError;
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::{CoordinateSpace, Rect};
-use auv_driver::window::Window;
+use auv_driver_common::error::DriverError;
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::{CoordinateSpace, Rect};
+use auv_driver_common::window::Window;
 
 /// Capture backend tag recorded on every produced display/region [`Capture`].
 #[cfg(target_os = "windows")]
@@ -226,8 +226,8 @@ mod window_native {
   use std::ffi::c_void;
   use std::mem::size_of;
 
-  use auv_driver::error::DriverResult;
-  use auv_driver::window::Window;
+  use auv_driver_common::error::DriverResult;
+  use auv_driver_common::window::Window;
   use windows::Win32::Foundation::{HWND, RECT};
   use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC,

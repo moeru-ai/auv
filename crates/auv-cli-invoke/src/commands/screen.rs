@@ -112,7 +112,7 @@ fn click_screen_row(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn capture_region_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{CaptureOptions, Driver, Rect};
+  use auv_driver::{CaptureOptions, Rect};
 
   reject_target_activation(&input, "screen.captureRegion")?;
   if input.dry_run {
@@ -121,8 +121,7 @@ fn capture_region_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
   let region =
     Rect::new(required_f64(&input, "x")?, required_f64(&input, "y")?, required_f64(&input, "width")?, required_f64(&input, "height")?);
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let capture = session
     .display()
     .capture_region(CaptureOptions {
@@ -160,7 +159,7 @@ fn capture_region_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn find_screen_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCommandResult {
-  use auv_driver::{CaptureOptions, Driver, RatioRect, WaitOptions};
+  use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
   use std::{thread, time::Instant};
 
   reject_target_activation(
@@ -176,8 +175,7 @@ fn find_screen_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCom
   }
 
   let query = required_input(&input, "query")?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let wait_options = WaitOptions::default();
   let started = Instant::now();
   loop {
@@ -220,7 +218,7 @@ fn find_screen_text_impl(_input: InvokeCommandInput<'_>, _wait: bool) -> InvokeC
 
 #[cfg(target_os = "macos")]
 fn click_screen_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{CaptureOptions, Click, Driver, RatioRect};
+  use auv_driver::{CaptureOptions, Click, RatioRect};
 
   reject_target_activation(&input, "screen.clickText")?;
   if input.dry_run {
@@ -228,8 +226,7 @@ fn click_screen_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult 
   }
 
   let query = required_input(&input, "query")?;
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let capture = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
   let matches =
     session.vision().find_text_in_capture(&capture.capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
@@ -307,7 +304,7 @@ fn invoke_artifact_path(command_id: &str, label: &str, extension: &str) -> std::
 fn text_matches_output(
   command_id: &str,
   backend: &str,
-  matches: &[auv_driver_macos::OcrMatch],
+  matches: &[auv_driver::OcrMatch],
   selected_index: Option<usize>,
 ) -> InvokeCommandOutput {
   let count = matches.len();

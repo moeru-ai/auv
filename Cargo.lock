@@ -433,6 +433,19 @@ version = "0.0.1"
 name = "auv-driver"
 version = "0.0.1"
 dependencies = [
+ "auv-driver-common",
+ "auv-driver-linux",
+ "auv-driver-macos",
+ "auv-driver-windows",
+ "image",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "auv-driver-common"
+version = "0.0.1"
+dependencies = [
  "image",
  "serde",
  "serde_json",
@@ -442,7 +455,7 @@ dependencies = [
 name = "auv-driver-linux"
 version = "0.0.1"
 dependencies = [
- "auv-driver",
+ "auv-driver-common",
  "image",
  "leptess",
  "pipewire",
@@ -456,7 +469,7 @@ dependencies = [
 name = "auv-driver-macos"
 version = "0.0.1"
 dependencies = [
- "auv-driver",
+ "auv-driver-common",
  "image",
  "objc2-core-foundation",
  "objc2-core-graphics",
@@ -471,7 +484,7 @@ dependencies = [
 name = "auv-driver-windows"
 version = "0.0.1"
 dependencies = [
- "auv-driver",
+ "auv-driver-common",
  "image",
  "thiserror 2.0.18",
  "windows 0.58.0",

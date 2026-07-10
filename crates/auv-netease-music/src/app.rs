@@ -16,9 +16,7 @@ use auv_driver::Capture;
 #[cfg(target_os = "macos")]
 use auv_driver::selector::{App, Window};
 #[cfg(target_os = "macos")]
-use auv_driver::{Driver, RatioRect, Size};
-#[cfg(target_os = "macos")]
-use auv_driver_macos::MacosDriver;
+use auv_driver::{RatioRect, Size};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObserveReuseMode {
@@ -222,8 +220,7 @@ impl ObservationProvider for LiveObservationProvider {
 #[cfg(target_os = "macos")]
 impl LiveObservationProvider {
   fn observe_window(&self, scope: ObserveScope) -> Result<(ScreenView, PlayerView), String> {
-    let driver = MacosDriver::new();
-    let session = driver.open_local().map_err(|error| format!("live observation driver open failed: {error}"))?;
+    let session = auv_driver::open_local().map_err(|error| format!("live observation driver open failed: {error}"))?;
     let window = session
       .window()
       .resolve(Window::main_visible().owned_by(App::bundle(self.inputs.app_id.clone())))

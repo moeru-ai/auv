@@ -1,4 +1,4 @@
-use auv_driver::{DriverDescriptor, PlatformKind};
+use auv_driver_common::{DriverDescriptor, PlatformKind};
 
 /// Capabilities exposed by the Linux Wayland desktop driver slice.
 ///

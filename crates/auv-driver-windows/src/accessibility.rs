@@ -13,10 +13,10 @@
 // an owner-approved consumer needs them. Read-only ValuePattern text,
 // path-targeted SetFocus, and result-item selection are exposed for Apple Music.
 
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::Rect;
-use auv_driver::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
-use auv_driver::window::Window;
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::Rect;
+use auv_driver_common::input::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
+use auv_driver_common::window::Window;
 
 use crate::error::invalid_input;
 
@@ -119,9 +119,9 @@ fn rect_from_edges(left: i32, top: i32, right: i32, bottom: i32) -> Rect {
 
 #[cfg(target_os = "windows")]
 mod native {
-  use auv_driver::error::DriverResult;
-  use auv_driver::geometry::Rect;
-  use auv_driver::window::Window;
+  use auv_driver_common::error::DriverResult;
+  use auv_driver_common::geometry::Rect;
+  use auv_driver_common::window::Window;
   use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize};
   use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationInvokePattern, IUIAutomationSelectionItemPattern,
@@ -271,8 +271,8 @@ mod native {
 
 #[cfg(not(target_os = "windows"))]
 mod native {
-  use auv_driver::error::{DriverError, DriverResult};
-  use auv_driver::window::Window;
+  use auv_driver_common::error::{DriverError, DriverResult};
+  use auv_driver_common::window::Window;
 
   use super::AxTreeSnapshot;
 

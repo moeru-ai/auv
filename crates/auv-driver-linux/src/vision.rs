@@ -4,37 +4,14 @@
 //! while this module owns crop math and projection from cropped-image pixels
 //! back into capture coordinates.
 
-use auv_driver::capture::Capture;
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::{Point, RatioRect, Rect};
-use auv_driver::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
+use auv_driver_common::capture::Capture;
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::{RatioRect, Rect};
+pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
+use auv_driver_common::vision::{RecognizedText, TextRecognition, TextRecognitionOptions};
 
 use crate::error::backend;
 use crate::ocr::recognize_text_in_rgba;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct OcrMatch {
-  pub text: String,
-  pub confidence: f64,
-  pub bounds: Rect,
-}
-
-impl OcrMatch {
-  pub fn action_point(&self) -> Point {
-    self.bounds.center()
-  }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct OcrMatches {
-  pub matches: Vec<OcrMatch>,
-}
-
-impl OcrMatches {
-  pub fn best_match(&self) -> Option<&OcrMatch> {
-    self.matches.first()
-  }
-}
 
 pub fn recognize_text_in_capture(capture: &Capture, region: RatioRect, options: &TextRecognitionOptions) -> DriverResult<TextRecognition> {
   let crop = crop_pixels(capture, region);
@@ -137,7 +114,7 @@ fn ocr_matches_from_recognition(recognition: &TextRecognition, query: &str) -> O
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::geometry::Rect;
+  use auv_driver_common::geometry::Rect;
   use image::RgbaImage;
 
   use super::*;

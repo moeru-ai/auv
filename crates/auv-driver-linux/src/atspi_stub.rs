@@ -1,6 +1,6 @@
-use auv_driver::error::{DriverError, DriverResult};
-use auv_driver::geometry::Rect;
-use auv_driver::window::Window;
+use auv_driver_common::error::{DriverError, DriverResult};
+use auv_driver_common::geometry::Rect;
+use auv_driver_common::window::Window;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Node {

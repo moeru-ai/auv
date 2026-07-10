@@ -35,11 +35,11 @@ use std::error::Error;
 use std::thread::sleep;
 use std::time::Duration;
 
-use auv_driver::Driver;
-use auv_driver::capture::CaptureOptions;
-use auv_driver::geometry::{Point, RatioRect, WindowPoint};
-use auv_driver::input::{Click, KeyPressOptions, Scroll, TypeTextOptions};
-use auv_driver::window::{Window, WindowMutationOptions};
+use auv_driver_common::Driver;
+use auv_driver_common::capture::CaptureOptions;
+use auv_driver_common::geometry::{Point, RatioRect, WindowPoint};
+use auv_driver_common::input::{Click, KeyPressOptions, Scroll, TypeTextOptions};
+use auv_driver_common::window::{Window, WindowMutationOptions};
 use auv_driver_windows::{WindowsDriver, WindowsDriverSession};
 
 type Run = Result<(), Box<dyn Error>>;
@@ -243,7 +243,7 @@ fn move_window(session: &WindowsDriverSession, substr: &str, x: f64, y: f64) -> 
 
 fn resize_window(session: &WindowsDriverSession, substr: &str, w: f64, h: f64) -> Run {
   let window = find_window(session, substr)?;
-  let result = session.window().resize(&window, auv_driver::geometry::Size::new(w, h), WindowMutationOptions::default())?;
+  let result = session.window().resize(&window, auv_driver_common::geometry::Size::new(w, h), WindowMutationOptions::default())?;
   println!("resized {:?} -> {w}x{h}; result {:?}", window.title, result);
   Ok(())
 }

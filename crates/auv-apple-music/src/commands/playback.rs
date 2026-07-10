@@ -130,14 +130,11 @@ mod platform {
 
 #[cfg(target_os = "windows")]
 mod platform {
-  use auv_driver::Driver;
   use auv_driver::geometry::RatioRect;
   use auv_driver::vision::TextRecognitionOptions;
-  use auv_driver_windows::WindowsDriver;
 
   use super::{BOTTOM_BAR_TOP, MetadataSource, PlaybackState, PlaybackStatus, PlaybackStatusInputs};
   use crate::app::resolve_window;
-
   pub fn run(inputs: &PlaybackStatusInputs) -> Result<PlaybackStatus, String> {
     let mut diagnostics: Vec<String> = Vec::new();
 
@@ -148,7 +145,7 @@ mod platform {
     let window_title = window.title.clone();
 
     // --- Open driver session ---
-    let session = WindowsDriver::new().open_local().map_err(|e| format!("windows driver open failed: {e}"))?;
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
 
     // --- Playback state via UIA ---
     let (state, mut ax_track, mut ax_artist) = probe_via_ax(&session, window, &mut diagnostics);

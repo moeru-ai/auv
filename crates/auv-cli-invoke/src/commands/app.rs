@@ -37,10 +37,7 @@ fn activate_app(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
 #[cfg(target_os = "macos")]
 fn probe_permissions_impl() -> InvokeCommandResult {
-  use auv_driver::Driver;
-
-  let driver = auv_driver_macos::MacosDriver::new();
-  let session = driver.open_local().map_err(|error| error.to_string())?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
   let permissions = session.permission().probe().map_err(|error| error.to_string())?;
   Ok(permission_probe_output(&permissions))
 }

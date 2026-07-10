@@ -3,9 +3,9 @@ pub mod portal;
 
 #[cfg(not(target_os = "linux"))]
 pub mod portal {
-  use auv_driver::error::{DriverError, DriverResult};
-  use auv_driver::geometry::Point;
-  use auv_driver::input::{Click, Scroll};
+  use auv_driver_common::error::{DriverError, DriverResult};
+  use auv_driver_common::geometry::Point;
+  use auv_driver_common::input::{Click, Scroll};
 
   // NOTICE(linux-portal-nonlinux-stub): the real portal sessions depend on Linux-only
   // crates (`zbus`, `pipewire`) wired under target-specific Cargo dependencies. Keep a

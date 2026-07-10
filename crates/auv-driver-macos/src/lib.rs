@@ -22,9 +22,10 @@ pub mod types;
 #[doc(hidden)]
 pub mod native;
 
+pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
 pub use descriptor::{MacosDriverDescriptor, macos_driver_descriptor};
 #[doc(hidden)]
 pub use descriptor::{MacosLegacyDescriptorMetadata, macos_legacy_descriptor_metadata};
 pub use driver::{MacosDriver, MacosDriverSession};
 pub use readiness::assess_readiness;
-pub use session::{ClipboardApi, InputApi, OcrMatch, OcrMatches, PermissionApi, VisionApi, WindowApi};
+pub use session::{ClipboardApi, InputApi, PermissionApi, VisionApi, WindowApi};

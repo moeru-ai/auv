@@ -1,17 +1,17 @@
 use std::thread;
 
-use auv_driver::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
-use auv_driver::display::ObservedDisplays;
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::{Point, RatioRect, ScreenPoint, WindowPoint};
-use auv_driver::input::{
+use auv_driver_common::capture::{Activation, Capture, CaptureOptions, DisplayCapture, RegionCapture};
+use auv_driver_common::display::ObservedDisplays;
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::{Point, RatioRect, ScreenPoint, WindowPoint};
+use auv_driver_common::input::{
   Click, ClickOptions, InputActionResult, InputPolicy, KeyPressOptions, PasteTextOptions, Scroll, ScrollDeliveryCandidate, ScrollOptions,
   TypeTextOptions, WaitOptions,
 };
-use auv_driver::permission::PermissionProbe;
-use auv_driver::selector::WindowSelector;
-use auv_driver::vision::{TextRecognition, TextRecognitionOptions};
-use auv_driver::window::Window;
+use auv_driver_common::permission::PermissionProbe;
+use auv_driver_common::selector::WindowSelector;
+use auv_driver_common::vision::{TextRecognition, TextRecognitionOptions};
+use auv_driver_common::window::Window;
 
 use crate::accessibility::{AxTreeSnapshot, focus_node, select_node, snapshot_window};
 use crate::capture::{capture_display, capture_region, list_displays};
@@ -336,9 +336,9 @@ impl ClipboardApi<'_> {
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::Driver;
-  use auv_driver::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};
-  use auv_driver::window::{Window, WindowRef};
+  use auv_driver_common::Driver;
+  use auv_driver_common::geometry::{CoordinateSpace, Rect, ScreenPoint, WindowPoint};
+  use auv_driver_common::window::{Window, WindowRef};
 
   use super::*;
   use crate::LinuxDriver;
@@ -464,7 +464,7 @@ mod tests {
         WindowPoint::new(1.0, 1.0),
         Scroll::new(0.0, 10.0),
         ScrollOptions {
-          delivery_strategy: auv_driver::input::ScrollDeliveryStrategy {
+          delivery_strategy: auv_driver_common::input::ScrollDeliveryStrategy {
             candidates: vec![ScrollDeliveryCandidate::WindowTargetedWheel],
           },
           ..ScrollOptions::default()

@@ -4,8 +4,8 @@ use std::os::fd::OwnedFd as StdOwnedFd;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::{Point, Rect};
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::{Point, Rect};
 use pipewire as pw;
 use pw::properties::properties;
 use pw::spa;

@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use auv_driver::{Driver, DriverDescriptor, DriverResult, DriverSession};
+use auv_driver_common::{Driver, DriverDescriptor, DriverResult, DriverSession};
 
 use crate::descriptor::{LinuxDriverDescriptor, linux_driver_descriptor};
 use crate::native::portal::{ClipboardSession, InputSession, ScreenCastSession};
@@ -63,7 +63,7 @@ impl DriverSession for LinuxDriverSession {
 
 #[cfg(test)]
 mod tests {
-  use auv_driver::{Driver, DriverSession, PlatformKind};
+  use auv_driver_common::{Driver, DriverSession, PlatformKind};
 
   use crate::LinuxDriver;
 

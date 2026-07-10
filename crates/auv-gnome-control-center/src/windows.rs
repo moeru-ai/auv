@@ -47,14 +47,13 @@ mod platform {
   use std::process::Stdio;
   use std::time::Instant;
 
+  use auv_driver::DriverError;
   use auv_driver::selector::{AppSelector, TextMatcher, Window as SelectWindow, WindowSelector};
-  use auv_driver::{Driver, DriverError};
-  use auv_driver_linux::{LinuxDriver, LinuxDriverSession};
+  use auv_driver_linux::LinuxDriverSession;
 
   use super::*;
-
   pub fn open_or_resolve(options: &ResolveOptions) -> Result<(Window, OpenWindowReport), String> {
-    let session = LinuxDriver::new().open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
+    let session = auv_driver::open_local().map_err(|error| format!("failed to open Linux driver: {error}"))?;
     let mut report = report();
 
     match resolve_window(&session) {

@@ -13,9 +13,9 @@
 
 use std::time::Duration;
 
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::Point;
-use auv_driver::input::{
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::Point;
+use auv_driver_common::input::{
   Click, DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath, InputPolicy, KeyPressOptions, Scroll, TextSubmit,
   TypeTextOptions,
 };
@@ -243,9 +243,9 @@ mod native {
   use std::thread;
   use std::time::Duration;
 
-  use auv_driver::error::DriverResult;
-  use auv_driver::geometry::Point;
-  use auv_driver::input::{Scroll, TypeTextOptions};
+  use auv_driver_common::error::DriverResult;
+  use auv_driver_common::geometry::Point;
+  use auv_driver_common::input::{Scroll, TypeTextOptions};
   use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSE_EVENT_FLAGS,
     MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK,
@@ -423,9 +423,9 @@ mod native {
 mod native {
   use std::time::Duration;
 
-  use auv_driver::error::{DriverError, DriverResult};
-  use auv_driver::geometry::Point;
-  use auv_driver::input::{Scroll, TypeTextOptions};
+  use auv_driver_common::error::{DriverError, DriverResult};
+  use auv_driver_common::geometry::Point;
+  use auv_driver_common::input::{Scroll, TypeTextOptions};
 
   use super::KeyChord;
 

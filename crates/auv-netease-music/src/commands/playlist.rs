@@ -921,15 +921,13 @@ fn run_playlist_select_resolved(
     preceding_scroll_context, sidebar_rescan_target_seek_budget, sidebar_target_probe_diagnostic_message, top_seek_scroll_budget,
   };
   use auv_driver::selector::{App, Window};
-  use auv_driver::{ActivationPolicy, Click, Driver, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions, Size, WindowPoint};
-  use auv_driver_macos::MacosDriver;
+  use auv_driver::{ActivationPolicy, Click, InputPolicy, PrepareForInputOptions, Scroll, ScrollOptions, Size, WindowPoint};
 
   let target_bounds =
     target.bounds.ok_or_else(|| format!("playlist target {:?} did not carry live bounds; rerun playlist ls/select", target.label))?;
   let target_observation_index = target.observation_index.unwrap_or(0);
 
-  let driver = MacosDriver::new();
-  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let app = App::bundle(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;
@@ -1475,8 +1473,7 @@ fn run_playlist_play_resolved(
   use crate::commands::daily_recommended::best_text_match;
   use crate::delivery_path_label;
   use auv_driver::selector::{App, Window};
-  use auv_driver::{ActivationPolicy, Click, Driver, PrepareForInputOptions, RatioRect, Size, WindowPoint};
-  use auv_driver_macos::MacosDriver;
+  use auv_driver::{ActivationPolicy, Click, PrepareForInputOptions, RatioRect, Size, WindowPoint};
 
   let select = run_playlist_select_resolved(inputs, query, scan, target, target_from_scan_cache, store_read_limits)?;
   if select.verification.status != "passed" {
@@ -1485,8 +1482,7 @@ fn run_playlist_play_resolved(
 
   std::fs::create_dir_all(&inputs.artifact_dir).map_err(|error| format!("failed to create {}: {error}", inputs.artifact_dir.display()))?;
 
-  let driver = MacosDriver::new();
-  let session = driver.open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
+  let session = auv_driver::open_local().map_err(|error| format!("failed to open macOS driver: {error}"))?;
   let app = App::bundle(inputs.app_id.clone());
   let window =
     session.window().resolve(Window::main_visible().owned_by(app)).map_err(|error| format!("failed to resolve NetEase window: {error}"))?;

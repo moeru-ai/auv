@@ -1,7 +1,8 @@
 use std::time::Duration;
 
+use auv_driver::LocalDriverSession;
 use auv_driver::{
-  ActivationPolicy, App, Click, ClickOptions, Driver, InputPolicy, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, TextSubmit,
+  ActivationPolicy, App, Click, ClickOptions, InputPolicy, KeyPressOptions, PasteTextOptions, PrepareForInputOptions, TextSubmit,
   WaitOptions, Window, WindowPoint, WindowSelector,
 };
 use auv_driver_macos::MacosDriverSession;
@@ -23,17 +24,19 @@ pub trait QqMusicDriver {
 }
 
 pub struct MacosQqMusicDriver {
-  session: MacosDriverSession,
+  session: LocalDriverSession,
 }
 
 impl MacosQqMusicDriver {
   pub fn open_local() -> OperationResult<Self> {
-    let session = auv_driver_macos::MacosDriver::new().open_local().map_err(|error| error.to_string())?;
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
     Ok(Self { session })
   }
 
   pub fn from_session(session: MacosDriverSession) -> Self {
-    Self { session }
+    Self {
+      session: LocalDriverSession::Macos(session),
+    }
   }
 
   fn main_window(&self, app_id: &str) -> OperationResult<Window> {

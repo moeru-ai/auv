@@ -2,15 +2,15 @@
 use std::sync::{Arc, Mutex};
 
 #[cfg(target_os = "linux")]
-use auv_driver::capture::Capture;
-use auv_driver::capture::{DisplayCapture, RegionCapture};
+use auv_driver_common::capture::Capture;
+use auv_driver_common::capture::{DisplayCapture, RegionCapture};
 #[cfg(target_os = "linux")]
-use auv_driver::display::Display;
-use auv_driver::display::ObservedDisplays;
-use auv_driver::error::DriverResult;
+use auv_driver_common::display::Display;
+use auv_driver_common::display::ObservedDisplays;
+use auv_driver_common::error::DriverResult;
 #[cfg(target_os = "linux")]
-use auv_driver::geometry::CoordinateSpace;
-use auv_driver::geometry::Rect;
+use auv_driver_common::geometry::CoordinateSpace;
+use auv_driver_common::geometry::Rect;
 
 #[cfg(target_os = "linux")]
 use crate::driver::LinuxDriverSessionState;
@@ -39,7 +39,7 @@ pub fn list_displays() -> DriverResult<ObservedDisplays> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn list_displays() -> DriverResult<ObservedDisplays> {
-  Err(auv_driver::error::DriverError::unsupported("display.list"))
+  Err(auv_driver_common::error::DriverError::unsupported("display.list"))
 }
 
 #[cfg(target_os = "linux")]
@@ -88,7 +88,7 @@ pub fn capture_display(
   _state: &std::sync::Arc<std::sync::Mutex<crate::driver::LinuxDriverSessionState>>,
   _selector: Option<&str>,
 ) -> DriverResult<DisplayCapture> {
-  Err(auv_driver::error::DriverError::unsupported("display.capture"))
+  Err(auv_driver_common::error::DriverError::unsupported("display.capture"))
 }
 
 #[cfg(target_os = "linux")]
@@ -123,7 +123,7 @@ pub fn capture_region(
   _selector: Option<&str>,
   _region: Rect,
 ) -> DriverResult<RegionCapture> {
-  Err(auv_driver::error::DriverError::unsupported("display.capture_region"))
+  Err(auv_driver_common::error::DriverError::unsupported("display.capture_region"))
 }
 
 struct CapturedImage {

@@ -6,7 +6,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use auv_driver::error::DriverResult;
+use auv_driver_common::error::DriverResult;
 
 use crate::driver::LinuxDriverSessionState;
 use crate::native::portal::{ClipboardSession, PortalClipboard};

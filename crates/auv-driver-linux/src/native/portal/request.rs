@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use auv_driver::error::DriverResult;
+use auv_driver_common::error::DriverResult;
 use zbus::blocking::{Connection, Proxy};
 use zbus::message::Message;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};

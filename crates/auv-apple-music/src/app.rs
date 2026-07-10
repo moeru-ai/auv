@@ -43,11 +43,9 @@ impl Default for ResolveOptions {
 /// none are visible, and `Err(...)` when the driver itself fails.
 #[cfg(target_os = "windows")]
 pub fn resolve_window(options: &ResolveOptions) -> Result<Option<AppleMusicWindow>, String> {
-  use auv_driver::Driver;
   use auv_driver::selector::{App, Window as WindowSel, WindowSelector};
-  use auv_driver_windows::WindowsDriver;
 
-  let session = WindowsDriver::new().open_local().map_err(|e| format!("windows driver open failed: {e}"))?;
+  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
 
   // Prefer matching by process name (app name) so we find the window even if
   // the title has been localised. Fall back to title-only when process name

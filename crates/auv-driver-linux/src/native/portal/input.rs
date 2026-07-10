@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use auv_driver::display::Display;
-use auv_driver::error::DriverResult;
-use auv_driver::geometry::{Point, Rect};
-use auv_driver::input::{Click, MouseButton, Scroll};
+use auv_driver_common::display::Display;
+use auv_driver_common::error::DriverResult;
+use auv_driver_common::geometry::{Point, Rect};
+use auv_driver_common::input::{Click, MouseButton, Scroll};
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
@@ -407,7 +407,7 @@ mod tests {
       id: "display".to_string(),
       name: None,
       frame,
-      coordinate_space: auv_driver::geometry::CoordinateSpace::Screen,
+      coordinate_space: auv_driver_common::geometry::CoordinateSpace::Screen,
       scale_factor,
       is_primary: true,
       is_builtin: None,

@@ -110,13 +110,10 @@ mod platform {
 mod platform {
   use std::time::Duration;
 
-  use auv_driver::Driver;
   use auv_driver::input::KeyPressOptions;
-  use auv_driver_windows::WindowsDriver;
 
   use super::{TransportInputs, TransportResult, media_key_name};
   use crate::app::resolve_window;
-
   pub fn run(inputs: &TransportInputs) -> Result<TransportResult, String> {
     let mut diagnostics: Vec<String> = Vec::new();
     let key = media_key_name(inputs.action);
@@ -127,7 +124,7 @@ mod platform {
       resolve_window(&inputs.resolve)?.ok_or_else(|| "Apple Music window not found -- is the app running?".to_string())?;
     }
 
-    let session = WindowsDriver::new().open_local().map_err(|e| format!("driver open failed: {e}"))?;
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
 
     let opts = KeyPressOptions {
       key: key.to_string(),

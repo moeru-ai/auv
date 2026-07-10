@@ -77,11 +77,7 @@ pub fn run_open_window(inputs: &OpenWindowInputs) -> Result<LaunchResult, String
 mod platform {
   use std::process::Command;
 
-  use auv_driver::Driver;
-  use auv_driver_windows::WindowsDriver;
-
   use super::*;
-
   pub fn run(inputs: &OpenWindowInputs) -> Result<LaunchResult, String> {
     let mut result = LaunchResult::new(inputs);
     if let Some(window) = resolve_window(&inputs.resolve)? {
@@ -135,7 +131,7 @@ mod platform {
   }
 
   fn activate(window: &auv_driver::window::Window) -> Result<(), String> {
-    let session = WindowsDriver::new().open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
+    let session = auv_driver::open_local().map_err(|error| format!("failed to open Windows driver: {error}"))?;
     session.window().activate(window).map_err(|error| format!("failed to activate NetEase window: {error}"))
   }
 

@@ -28,9 +28,9 @@ mod window;
 pub(crate) use atspi_stub as atspi;
 
 pub use accessibility::{AxNode, AxTreeSnapshot};
+pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
 pub use descriptor::{LINUX_DESKTOP_CAPABILITIES, LinuxDriverDescriptor, linux_driver_descriptor};
 pub use driver::{LinuxDriver, LinuxDriverSession};
 pub use ocr::{OcrError, recognize_text_in_rgba};
 pub use permission::{LinuxPortalProbe, PortalInterfaceProbe, probe_portals};
 pub use session::{AccessibilityApi, ClipboardApi, DisplayApi, InputApi, PermissionApi, VisionApi, WindowApi};
-pub use vision::{OcrMatch, OcrMatches};
