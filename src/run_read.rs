@@ -1,7 +1,8 @@
 //! Read-side helpers for stored operation results and observation snapshots.
 //!
-//! These helpers intentionally sit below `runtime` and `inspect_server` so
-//! both call sites reuse one artifact scan / compatibility policy:
+//! These helpers intentionally sit below `runtime` and the root inspect read
+//! projection used by `auv-inspect-server` so both call sites reuse one artifact
+//! scan / compatibility policy:
 //!
 //! - verification claims come from `operation-result` JSON artifacts
 //! - observation snapshots come from `scroll-scan` JSON artifacts

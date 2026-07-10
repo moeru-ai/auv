@@ -1,7 +1,7 @@
 //! Session API service seam (API-P4 boundary).
 //!
 //! Owns the execute-facing `SessionService` surface separately from the
-//! viewer-facing `inspect_server` and the tool-facing `mcp`.
+//! inspect viewer/server API and the tool-facing `mcp`.
 //!
 //! Modules:
 //! - `registry`: lightweight in-memory session registry (API-P4 responsibility A).

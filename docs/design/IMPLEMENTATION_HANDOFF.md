@@ -11,7 +11,7 @@ context.
 |---|---|---|
 | **A — overlay cursor** | `7f18b27` | `NativeOverlayCursorView.draw()` renders the pixel cyan+lime AUV cursor + cyan-strong (`#009ba6`) brand pill; default label `auv · replay`. Sprite ported from `assets/cursor-auv.svg`. |
 | **B — vendor bundle** | `7b7061f` | Full upstream bundle vendored to `docs/design/` with `README.md` recording vendoring decisions + implementation status. |
-| **C.1 — viewer shell + run list** | `3ae972b` | `GET /` on `inspect_server` returns a vanilla HTML+CSS+JS viewer. Pixel logo top bar, 320px sidebar fetching `/runs`, status pills, run cards. |
+| **C.1 — viewer shell + run list** | `3ae972b` | `GET /` on `auv-inspect-server` returns a vanilla HTML+CSS+JS viewer. Pixel logo top bar, 320px sidebar fetching `/runs`, status pills, run cards. |
 | **C.2 — viewer span tree** | `4f0cbe0` | Run selection fetches `/runs/:id` + `/runs/:id/spans`; renders span sigils, statuses, durations, and timing bars. (Landed by Codex.) |
 | **C.3a — viewer events rail** | `132ef3d` | 320px events rail below the span tree, fetching `/runs/:id/events`. Span-detail panel above the rail re-renders on row click. |
 | **C.5 — viewer asset route (early)** | `e7726a4` | `GET /assets/:name` serves design-system SVGs from a compile-time map (path-traversal hardened, immutable cache). Inlined logo + sparkle migrated. |
@@ -22,17 +22,19 @@ context.
 
 These were settled in C.1. New phases should follow:
 
-1. **Vanilla HTML+CSS+JS, no React, no Babel, no build step.**
-   The viewer is a single self-contained file
-   (`src/inspect_server_viewer.html`) pulled in via `include_str!`.
+1. **Vite/Vue shell with a DOM-oriented viewer module.**
+   The viewer source lives in `crates/auv-inspect-server/viewer/src/App.vue`,
+   `src/viewer.ts`, and `src/styles/viewer.css`, then ships through
+   the checked-in Vite build under `crates/auv-inspect-server/viewer/dist/`.
    The upstream JSX mocks in `ui_kits/viewer/*.jsx` are **prototypes
-   to match visually**, not code to port — recreate them in plain
-   DOM.
+   to match visually**, not code to port directly. Preserve the existing
+   DOM IDs/classes until the DOM module is deliberately split into typed
+   Vue components.
 
 2. **Design tokens are inlined.** The viewer's `:root` CSS block
    duplicates the relevant tokens from
    `docs/design/colors_and_type.css`. A regression test
-   (`root_serves_inline_viewer_html` in `src/inspect_server.rs`)
+   (`root_serves_inline_viewer_html` in `crates/auv-inspect-server/src/server.rs`)
    asserts `--brand: #00c4d2` is present so drift is caught.
    When adding tokens, copy from `colors_and_type.css` verbatim,
    keep the same names (`--brand`, `--validated`, etc.), and add a
@@ -43,7 +45,7 @@ These were settled in C.1. New phases should follow:
    from a compile-time `include_bytes!` map keyed on
    `docs/design/assets/` filenames. To add a new asset, drop the
    SVG into that directory and add an entry to `DESIGN_ASSETS`
-   in `src/inspect_server.rs`. The filename is the URL — keep
+   in `crates/auv-inspect-server/src/server.rs`. The filename is the URL — keep
    them stable.
 
 4. **The JSON contract is fixed.** Endpoints already exist:
@@ -83,7 +85,9 @@ placeholder with the span tree.
 
 **Where to add code**:
 
-1. Edit `src/inspect_server_viewer.html`. No new files.
+1. Edit `crates/auv-inspect-server/viewer/src/App.vue`,
+   `src/viewer.ts`, and `src/styles/viewer.css`. Rebuild the Vite
+   output before validating the Rust server.
 2. The `selectRun(runId)` function is the entry point. Today it
    updates the pane header and the placeholder. Replace the
    placeholder branch with `await loadRunDetail(runId)` that:
@@ -153,9 +157,11 @@ Pure HTML assertion — no need to round-trip data.
 
 **Where**:
 
-- Same HTML file. The `<main class="main">` becomes a vertical flex
-  column with two children: the span tree (flex 1) and the events
-  rail (flex `0 0 320px`).
+- Historical implementation note: this originally changed the single-file
+  viewer. Current work should edit the Vite viewer source under
+  `crates/auv-inspect-server/viewer/src/`, then rebuild `viewer/dist`.
+  The `<main class="main">` is a vertical flex column with two children:
+  the span tree (flex 1) and the events rail (flex `0 0 320px`).
 - New `loadEvents(runId)` function fetching `/runs/:id/events`.
 
 **Visual contract** (from `EventsRail.jsx`):
@@ -164,8 +170,8 @@ Pure HTML assertion — no need to round-trip data.
   render its `name`, `span_id`, and a `key/value` grid of
   `attributes`. When nothing selected, the empty state pairs a
   `sparkle.svg` (24×24) with the line "Select a span to inspect its
-  attributes." Since assets aren't routed yet (per C.1), inline the
-  `sparkle.svg` directly in the HTML, same approach as the logo.
+  attributes." Current code references `/assets/sparkle.svg`; do not
+  re-inline design SVGs.
 - Pane header reading `Events · events.jsonl` with right-side count
   `<n> · tail`.
 - Each event row: `grid-template-columns: 70px 160px 60px 1fr`,
@@ -219,19 +225,10 @@ pass it to `renderSpanDetail`. When unset, show the empty state.
       var(--shell-3) 12px 24px)`) with center caption
       `binary · <bytes>`.
 
-**Asset inlining for C.3b**: 4 small SVGs land here
-(`icon-png`, `icon-json`, `icon-bin`, `sprite-inspector`). At this
-point inlining starts to bloat the HTML. **Decide between**:
-
-- **Keep inlining** (~5–10 KB extra in `inspect_server_viewer.html`).
-  Acceptable until total payload crosses ~50 KB.
-- **Promote to `/assets/:filename` routes now** (C.5 early). Wires
-  up `tower-http`'s `ServeDir` against `docs/design/assets/`, or
-  hand-rolls `GET /assets/:name` that streams from a static map.
-  Cleaner long-term but adds a dependency or boilerplate.
-
-Recommended: inline for C.3b, promote in C.5 only if/when the HTML
-crosses 30 KB. Note the choice in the commit message either way.
+**Historical asset note**: the original C.3b design considered inlining
+`icon-png`, `icon-json`, `icon-bin`, and `sprite-inspector`. C.5 has since
+landed, so current viewer work should reference `/assets/<name>.svg` and keep
+the design asset map in `crates/auv-inspect-server/src/server.rs` in sync.
 
 ## Phase C.4 — WebSocket live streaming
 
@@ -248,7 +245,7 @@ connection pill cyan.
 
 **Where**:
 
-- Same HTML file. Add a `connectStream(runId)` function that opens
+- Same viewer source. Add a `connectStream(runId)` function that opens
   `new WebSocket(\`ws://\${location.host}/runs/\${runId}/stream\`)`.
 - On `message`, parse JSON (each frame is a serialized
   `RunStreamEvent` — see `src/recording.rs`). Push the event into
@@ -286,7 +283,7 @@ Two options:
    `include_bytes!`. Zero new dependencies. More boilerplate.
 
 When you do this, also remove inline SVG copies from
-`inspect_server_viewer.html` and reference `/assets/<name>.svg`
+the viewer source and reference `/assets/<name>.svg`
 instead.
 
 ## Common pitfalls
@@ -312,8 +309,8 @@ instead.
 
 For each new phase:
 
-1. `cargo test --lib` — every new HTML feature should have at least
-   one assertion in `src/inspect_server.rs` that the payload
+1. `cargo test -p auv-inspect-server` — every new viewer feature should have at least
+   one assertion in `crates/auv-inspect-server/src/server.rs` that the payload
    contains a stable marker string (e.g. `"events.jsonl"` for C.3a).
 2. End-to-end smoke:
    ```
@@ -328,10 +325,11 @@ For each new phase:
 
 ## Don't do
 
-- Don't switch to React / Vue / any framework. The whole bundle was
-  designed to recreate visually, not to port internal structure.
-  See `docs/design/HANDOFF_README.md`.
-- Don't add a JS build step. No webpack, no esbuild, no node_modules.
+- Don't switch to React or another framework. The viewer is currently
+  Vue/Vite; keep changes inside that toolchain unless the owner approves a
+  migration.
+- Don't edit generated `viewer/dist` by hand. Change `viewer/src/*`, run the
+  Vite build, and commit the generated asset changes with the source change.
 - Don't add emoji or icons from Lucide or any icon font. Use the
   `assets/` SVG sprites or status sigil glyphs only.
 - Don't rename frozen contract fields (`cursorDisturbance`,

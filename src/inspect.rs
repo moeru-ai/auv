@@ -3,7 +3,8 @@
 //!
 //! This module renders stored run snapshots (`CanonicalRun`) into a simple text
 //! form (useful for CLI/debug output). It does not provide a live viewer or any
-//! runtime execution logic; see `inspect_server` for the HTTP/WebSocket UI.
+//! runtime execution logic; the HTTP/WebSocket viewer API lives in
+//! `auv-inspect-server`.
 
 use crate::contract::{FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult};
 use crate::model::AuvResult;
@@ -47,6 +48,7 @@ use crate::run_read::{
   list_osu_visual_truth_spatial_query_inspect_reports, list_osu_visual_truth_spatial_query_manifests, quality_baseline_profile_v1,
   quality_baseline_verdict_thresholds_probe_v1, quality_baseline_verdict_thresholds_trained_render_v1,
 };
+use crate::{scene_state_read, view_parser_read};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 pub use auv_view::memory::format_view_resolution_summary_text;
 use auv_view::memory::{ViewMemory, ViewParserInspect};
@@ -122,11 +124,30 @@ pub fn list_detector_recognition_lineage(store: &LocalStore, run_id: &str) -> Au
 }
 
 pub fn list_view_memory_writes(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ViewMemory>> {
-  crate::inspect_view_parser::list_view_memory_writes(store, run_id)
+  view_parser_read::list_view_memory_writes(store, run_id)
 }
 
 pub fn view_parser_inspect(store: &LocalStore, run_id: &str) -> AuvResult<ViewParserInspect> {
-  crate::inspect_view_parser::view_parser_inspect(store, run_id)
+  let run = read_run(store, run_id)?;
+  view_parser_read::build_view_parser_inspect(store, &run)
+}
+
+fn append_view_parser_proof_text_from_run(store: &LocalStore, run: &CanonicalRun, output: &mut String) -> AuvResult<()> {
+  let view_parser = view_parser_read::build_view_parser_inspect(store, run)?;
+  if view_parser.resolution_summaries.is_empty() {
+    return Ok(());
+  }
+  output.push_str("\nView parser proof:\n");
+  for summary in &view_parser.resolution_summaries {
+    output.push_str(&format_view_resolution_summary_text(summary));
+  }
+  Ok(())
+}
+
+fn append_scene_state_text_from_run(store: &LocalStore, run: &CanonicalRun, output: &mut String) -> AuvResult<()> {
+  let outcome = scene_state_read::build_scene_state_inspect_for_run(store, run).map_err(|error| error.to_string())?;
+  output.push_str(&scene_state_read::format_scene_state_read_text(&outcome));
+  Ok(())
 }
 
 pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
@@ -243,8 +264,8 @@ pub fn inspect_run(store: &LocalStore, run_id: &str) -> AuvResult<String> {
     quality_verdict_probe.as_ref(),
     quality_verdict_trained_render.as_ref(),
   );
-  crate::inspect_view_parser::append_view_parser_proof_text_from_run(store, &canonical, &mut output)?;
-  crate::inspect_scene_state::append_scene_state_text_from_run(store, &canonical, &mut output)?;
+  append_view_parser_proof_text_from_run(store, &canonical, &mut output)?;
+  append_scene_state_text_from_run(store, &canonical, &mut output)?;
   Ok(output)
 }
 

@@ -378,6 +378,7 @@ dependencies = [
  "auv-game-minecraft",
  "auv-game-osu",
  "auv-godot",
+ "auv-inspect-server",
  "auv-media-macos",
  "auv-scan",
  "auv-task-object-detection",
@@ -385,7 +386,6 @@ dependencies = [
  "auv-view",
  "axum",
  "image",
- "libc",
  "objc2-core-foundation",
  "objc2-core-graphics",
  "reqwest 0.12.28",
@@ -598,6 +598,21 @@ dependencies = [
  "serde",
  "serde_json",
  "ultralytics-inference",
+]
+
+[[package]]
+name = "auv-inspect-server"
+version = "0.0.1"
+dependencies = [
+ "auv-tracing-driver",
+ "auv-view",
+ "axum",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tracing",
 ]
 
 [[package]]
