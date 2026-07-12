@@ -44,21 +44,13 @@ auv-api-proto = { path = "../auv-api-proto" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
 auv-inspect-server = { path = "../auv-inspect-server" }
 auv-inspect-model = { path = "../auv-inspect-model" }
-auv-scan = { path = "../auv-scan" }
-auv-view = { path = "../auv-view" }
 auv-query-readiness = { path = "../auv-query-readiness" }
 serde.workspace = true
-thiserror.workspace = true
 serde_json.workspace = true
-schemars = "1.2.1"
 tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "sync"] }
-tokio-util = { version = "0.7", features = ["rt"] }
-tokio-stream = "0.1"
 tonic = { version = "0.14", features = ["transport"] }
-tracing = "0.1"
 image.workspace = true
 reqwest.workspace = true
-rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 auv-media-macos = { path = "../auv-media-macos" }
@@ -67,7 +59,6 @@ objc2-core-foundation.workspace = true
 swift-bridge-build.workspace = true
 
 [dev-dependencies]
-anyhow = "1"
 auv-api-proto = { path = "../auv-api-proto" }
 axum = { version = "0.8", default-features = false }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "time"] }

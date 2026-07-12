@@ -378,14 +378,11 @@ dependencies = [
  "auv-inspect-server",
  "auv-media-macos",
  "auv-scan",
- "auv-task-object-detection",
  "auv-tracing-driver",
  "auv-view",
- "axum",
  "image",
  "objc2-core-foundation",
  "objc2-core-graphics",
- "reqwest 0.12.28",
  "rmcp",
  "schemars",
  "serde",
@@ -396,8 +393,6 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tonic",
- "tower",
- "tracing",
 ]
 
 [[package]]
@@ -434,9 +429,6 @@ dependencies = [
  "auv-driver-linux",
  "auv-driver-macos",
  "auv-driver-windows",
- "image",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -546,7 +538,6 @@ dependencies = [
  "auv-driver",
  "auv-driver-macos",
  "auv-file",
- "auv-inference-common",
  "auv-inspect-model",
  "auv-query-readiness",
  "auv-stage-status",
@@ -677,7 +668,6 @@ dependencies = [
 name = "auv-product"
 version = "0.0.1"
 dependencies = [
- "anyhow",
  "auv-api-proto",
  "auv-cli",
  "auv-cli-invoke",
@@ -691,27 +681,19 @@ dependencies = [
  "auv-inspect-server",
  "auv-media-macos",
  "auv-query-readiness",
- "auv-scan",
  "auv-task-object-detection",
  "auv-tracing-driver",
- "auv-view",
  "axum",
  "image",
  "objc2-core-foundation",
  "objc2-core-graphics",
  "reqwest 0.12.28",
- "rmcp",
- "schemars",
  "serde",
  "serde_json",
  "swift-bridge-build",
- "thiserror 2.0.18",
  "tokio",
- "tokio-stream",
- "tokio-util",
  "tonic",
  "tower",
- "tracing",
 ]
 
 [[package]]

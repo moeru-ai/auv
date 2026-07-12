@@ -88,7 +88,6 @@ objc2-core-foundation = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [dependencies]
-auv-task-object-detection = { path = "crates/auv-task-object-detection" }
 auv-driver = { path = "crates/auv-driver" }
 auv-driver-macos = { path = "crates/auv-driver-macos" }
 auv-cli-invoke = { path = "crates/auv-cli-invoke" }
@@ -106,9 +105,7 @@ tokio = { version = "1", features = ["fs", "macros", "net", "rt-multi-thread", "
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 tonic = { version = "0.14", features = ["transport"] }
-tracing = "0.1"
 image.workspace = true
-reqwest.workspace = true
 rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -120,7 +117,5 @@ swift-bridge-build.workspace = true
 [dev-dependencies]
 anyhow = "1"
 auv-api-proto = { path = "crates/auv-api-proto" }
-axum = { version = "0.8", default-features = false }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "time"] }
 tonic = { version = "0.14", features = ["transport"] }
-tower = { version = "0.5", features = ["util"] }
