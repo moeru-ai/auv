@@ -3442,6 +3442,7 @@ mod tests {
     assert!(error.contains("mutually exclusive"));
   }
 
+  #[test]
   fn parse_minecraft_validate_3dgs_training_result_command_requires_manifest() {
     let error = parse_cli(&[
       "minecraft".to_string(),
