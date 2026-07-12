@@ -1,10 +1,5 @@
-This reference moved to:
+# Moved
 
-`docs/archive/verticals/ax-copilot/2026-06-09-auv-macos-ax-copilot-mvp-evidence-pack.md`
+This note moved to [`archive/ax-copilot/2026-06-09-macos-ax-copilot-mvp-evidence-pack.md`](archive/ax-copilot/2026-06-09-macos-ax-copilot-mvp-evidence-pack.md).
 
-Reason:
-
-- it records an archived AX copilot vertical proof
-- it is not the active AUV roadmap
-- active references should bias agents toward invoke, run-artifact-inspect, and
-  app-local Rust command work instead
+Reason: references reorganized by responsibility folder; engineering slice codes removed from navigation.

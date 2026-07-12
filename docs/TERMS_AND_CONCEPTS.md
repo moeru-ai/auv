@@ -15,6 +15,24 @@ A trace is the unit that inspection tools load as a whole. It should contain
 enough structure to reconstruct what AUV attempted, what happened, what state
 was observed, and which captured materials support that account.
 
+## InspectSection / InspectDocument / InspectComposer (provisional)
+
+Provisional core vocabulary for shared inspect composition across frontends
+(owned by `crates/auv-inspect-model`):
+
+- **InspectSection** — one collectible inspect unit (`id` + `collect` → optional
+  type-erased `InspectSectionOutput { id, text, json }`).
+- **InspectDocument** — ordered list of collected section outputs; `render_text`
+  concatenates section text in registration order.
+- **InspectComposer** — explicit value holding registered sections; CLI and MCP
+  must share the same composer instance for text inspect. Inspect-server /
+  viewer section parity is deferred (owner-gated).
+
+Semantics: registration order is render order; duplicate ids fail assembly;
+`collect` returning `None` omits the section; a section error aborts the
+document. Product assembly (not the core library default) owns donor-including
+composers.
+
 ## Device
 
 A device is the controllable/observable computer target a run executes
@@ -232,7 +250,7 @@ producer artifact
 ```
 
 This is a pattern note, not a stable runtime API. See
-`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-pattern.md`
+`docs/ai/references/runtime/2026-06-27-core-spatial-result-consumption-pattern.md`
 for the current design boundary, ownership split, and defer list.
 
 ## Semantic Gate
@@ -248,9 +266,9 @@ actionability.
 The current expected stage-state shape is `ready`, `blocked`, or `failed`.
 This term is design vocabulary, not approval to extract current app-specific
 semantic gate code into core. See
-`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-pattern.md`
+`docs/ai/references/runtime/2026-06-27-core-spatial-result-consumption-pattern.md`
 and
-`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-admission-table.md`.
+`docs/ai/references/runtime/2026-06-27-core-spatial-result-consumption-admission-table.md`.
 
 ## Action Readiness View
 

@@ -1,7 +1,7 @@
 # `auv` Inspect Viewer — UI Kit
 
 A speculative recreation of the **browser-based inspect viewer** described in
-[`docs/ai/references/2026-05-19-trace-run-inspect-design.md`](https://github.com/moeru-ai/auv/blob/main/docs/ai/references/2026-05-19-trace-run-inspect-design.md)
+[`docs/ai/references/inspect/2026-05-19-trace-run-inspect-design.md`](https://github.com/moeru-ai/auv/blob/main/docs/ai/references/inspect/2026-05-19-trace-run-inspect-design.md)
 from `moeru-ai/auv`.
 
 **Important caveat:** This viewer does **not exist yet** in the repository. The

@@ -41,7 +41,7 @@ from, without re-fetching the original bundle.
 | `colors_and_type.css` | Single source of truth for design tokens — colors, type stack, spacing, radii, shadows, motion. |
 | `preview/` | One-card-per-concept HTML previews (color cards, type cards, component cards). |
 | `ui_kits/cli/` | High-fidelity HTML recreation of `auv-cli` terminal output. Not yet wired into the Rust CLI. |
-| `ui_kits/viewer/` | Speculative recreation of the still-unbuilt browser viewer described in `docs/ai/references/2026-05-19-trace-run-inspect-design.md`. |
+| `ui_kits/viewer/` | Speculative recreation of the still-unbuilt browser viewer described in `docs/ai/references/inspect/2026-05-19-trace-run-inspect-design.md`. |
 
 ## What's implemented from this bundle
 

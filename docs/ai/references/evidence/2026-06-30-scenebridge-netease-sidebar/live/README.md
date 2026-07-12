@@ -6,7 +6,7 @@ Owner-labeled macOS evidence for **A6** NetEase ViewMemory reacquire sign-off.
 Hermetic tests remain the required CI gate; this folder holds the **live** acceptance
 matrix (Cases A–E) and redacted attachments.
 
-**Closure:** [A6 live evidence closure](../../2026-06-30-auv-scenebridge-a6-live-evidence-closure.md)
+**Closure:** [A6 live evidence closure](../../../scenebridge/2026-06-30-scenebridge-closure.md)
 
 ## Prerequisites
 

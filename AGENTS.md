@@ -190,10 +190,11 @@ while quarantining the archived vertical.
 - `docs/README.md`: documentation layout, placement rules, and quick entry
   points.
 - `docs/TERMS_AND_CONCEPTS.md`: shared vocabulary for core AUV concepts.
-- `docs/ai/references/INDEX.md`: lane- and doc-type index for flat reference
+- `docs/ai/references/INDEX.md`: responsibility-folder index for reference
   notes (start here when browsing references).
-- `docs/ai/references/`: durable reference notes, coverage reports, evidence
-  packs, and implementation handoffs.
+- `docs/ai/references/<responsibility>/`: durable reference notes by duty
+  (runtime, invoke-cli, scan, apps/*, archive/*, …), plus evidence packs and
+  handoffs.
 - `docs/ai/explanations/`: committed tutorials, explainers, walkthroughs, and
   diagrams.
 - `docs/notes/<owner>/`: personal or exploratory scratch material that should
@@ -437,16 +438,18 @@ Use this root-cause block format in regression tests when relevant:
 ## Documentation Workflow
 
 - During active design or implementation, write specs, plans, and working notes
-  directly under `docs/ai/references/`.
+  under `docs/ai/references/<responsibility>/` (see
+  `docs/ai/references/INDEX.md`).
 - Do not create or use `docs/superpowers/specs/` or `docs/superpowers/plans/`
   for this repository. If a skill suggests those default locations, treat this
-  repository guide as the override and place the document in
-  `docs/ai/references/` instead.
+  repository guide as the override and place the document in the matching
+  responsibility folder under `docs/ai/references/` instead.
 - In-progress documents are the source of truth while the work is underway.
 - When an implementation is mostly complete, update durable reference material
-  in `docs/ai/references/`.
+  in the owning responsibility folder and its `INDEX.md`.
 - Add, merge, or revise reference docs so completed and partially completed work
-  is discoverable outside the original plan or spec.
+  is discoverable outside the original plan or spec. Prefer folding intermediate
+  handoffs into one durable note rather than leaving long slice-code chains.
 - When editing design docs, preserve open questions and clearly label
   provisional names so the team can review them before implementation.
 - When a document records a finished but non-active vertical proof, move it out
@@ -456,10 +459,11 @@ Use this root-cause block format in regression tests when relevant:
 
 ### Documentation Placement
 
-- Use `docs/ai/references/` only for durable project reference material:
-  accepted design notes, implementation handoffs, evidence packs, coverage
-  reports, and records that should be useful to reviewers after the original
-  task context is gone.
+- Use `docs/ai/references/<responsibility>/` for durable project reference
+  material: accepted design notes, implementation handoffs, evidence packs,
+  coverage reports, and records that should be useful to reviewers after the
+  original task context is gone. Do not use engineering slice codes as folder
+  or navigation labels.
 - Content in `docs/ai/references/` should describe the current project state or
   a clearly labeled historical decision.
 - Use `docs/archive/verticals/` for archived proofs that should remain
