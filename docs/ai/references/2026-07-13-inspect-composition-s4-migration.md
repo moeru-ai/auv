@@ -7,9 +7,9 @@ Status: **S3a + S3b + S4 + S5 complete and root-reviewed** (`COMPLETE_READY_FOR_
 
 | Package | Owns |
 |---|---|
-| `auv-inspect-model` | Neutral `InspectSection` / `InspectDocument` / `InspectComposer`, `ArtifactRefLineage`, MIME policy, generic store/JSON helpers |
+| `auv-inspect-model` | Neutral `InspectSection` / `InspectDocument` / `InspectComposer`, `ArtifactRefView`, MIME policy, generic store/JSON helpers |
 | `auv-cli` | Library-only core: contract/runtime/session/core inspect & MCP; **CorePrefixSection + CoreSuffixSection** only for full-run text; **no** `auv-game-*` / `auv-godot` package deps; **zero** `auv_game_*` in `src/`; core `RootInspectReadProjection` consumes injected core composer for document/text |
-| `auv-product` | Bins `auv` / `auv-minecraft` / `auv-osu` / `auv-godot`; CLI; verticals; product composer (locked order); query-wired bridges (S3b); product projection (composer + named JSON extensions) |
+| `auv-product` | Bins `auv` / `auv-minecraft` / `auv-osu` / `auv-godot`; CLI; app integrations; product composer (locked order); query-wired bridges (S3b); product projection (composer + named JSON extensions) |
 | `auv-game-*` | Domain types + ordinary run_read/inspect section factories; must not depend on `auv-cli` |
 | `auv-inspect-server` | Generic HTTP routes: enrichment, `/inspect`, `/inspect/document`, `/extensions/{extension}`; no Minecraft-first routes |
 
@@ -33,7 +33,7 @@ bins; `cargo run --quiet -- invoke --help` keeps working from repo root.
 
 ### Deleted / moved out of `auv-cli` library
 
-- Root bins / CLI frontend / verticals tree removed from `src/` (now
+- Root bins / CLI frontend / integrations tree removed from `src/` (now
   `crates/auv-product`).
 - Root product/default donor composer removed. Core
   `build_core_inspect_composer` emits **only** `CorePrefixSection` +

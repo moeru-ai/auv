@@ -7,32 +7,32 @@ use crate::{
   VisualTruthSemanticInspectReport, VisualTruthSemanticManifest, VisualTruthSpatialQueryInspectReport, VisualTruthSpatialQueryManifest,
   derive_visual_truth_spatial_query_action_readiness,
 };
-use auv_inspect_model::{ArtifactRefLineage, artifact_record_lineage, is_json_mime, read_artifact_json};
+use auv_inspect_model::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 pub struct OsuVisualTruthSemanticManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<OsuVisualTruthSemanticManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuVisualTruthSemanticInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<OsuVisualTruthSemanticInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuVisualTruthSpatialQueryManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<OsuVisualTruthSpatialQueryManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuVisualTruthSpatialQueryInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<OsuVisualTruthSpatialQueryInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -110,28 +110,28 @@ pub struct OsuVisualTruthSpatialQueryInspectReportSummary {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuDetectionEvalWitnessManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<OsuDetectionEvalWitnessManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuDetectionEvalWitnessInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<OsuDetectionEvalWitnessInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuDetectionEvalQualityManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<OsuDetectionEvalQualityManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct OsuDetectionEvalQualityInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<OsuDetectionEvalQualityInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -234,7 +234,7 @@ pub fn extract_osu_visual_truth_semantic_manifests(
     if artifact.role != crate::OSU_VISUAL_TRUTH_SEMANTIC_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(OsuVisualTruthSemanticManifestLineage {
         artifact: artifact_ref,
@@ -271,7 +271,7 @@ pub fn extract_osu_visual_truth_semantic_inspect_reports(
     if artifact.role != crate::OSU_VISUAL_TRUTH_SEMANTIC_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(OsuVisualTruthSemanticInspectReportLineage {
         artifact: artifact_ref,
@@ -312,7 +312,7 @@ pub fn extract_osu_visual_truth_spatial_query_manifests(
     if artifact.role != crate::OSU_VISUAL_TRUTH_SPATIAL_QUERY_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(OsuVisualTruthSpatialQueryManifestLineage {
         artifact: artifact_ref,
@@ -353,7 +353,7 @@ pub fn extract_osu_visual_truth_spatial_query_inspect_reports(
     if artifact.role != crate::OSU_VISUAL_TRUTH_SPATIAL_QUERY_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(OsuVisualTruthSpatialQueryInspectReportLineage {
         artifact: artifact_ref,
@@ -426,7 +426,7 @@ pub fn extract_osu_detection_eval_witness_manifests(
     if artifact.role != crate::OSU_DETECTION_EVAL_WITNESS_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(OsuDetectionEvalWitnessManifestLineage {
         artifact: artifact_ref,
@@ -463,7 +463,7 @@ pub fn extract_osu_detection_eval_witness_inspect_reports(
     if artifact.role != crate::OSU_DETECTION_EVAL_WITNESS_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(OsuDetectionEvalWitnessInspectReportLineage {
         artifact: artifact_ref,
@@ -504,7 +504,7 @@ pub fn extract_osu_detection_eval_quality_manifests(
     if artifact.role != crate::OSU_DETECTION_EVAL_QUALITY_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(OsuDetectionEvalQualityManifestLineage {
         artifact: artifact_ref,
@@ -541,7 +541,7 @@ pub fn extract_osu_detection_eval_quality_inspect_reports(
     if artifact.role != crate::OSU_DETECTION_EVAL_QUALITY_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(OsuDetectionEvalQualityInspectReportLineage {
         artifact: artifact_ref,

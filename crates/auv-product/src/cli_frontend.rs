@@ -14,9 +14,11 @@ use std::sync::Arc;
 use image::ImageReader;
 
 use crate::cli::{CliCommand, InspectClientOptions, help_text, parse_cli, parse_donor_cli, root_donor_tombstone};
+use crate::integrations::minecraft::verification::query_wired_verification_readable;
+use crate::integrations::minecraft::{
+  QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action,
+};
 use crate::projection::ProductInspectReadProjection;
-use crate::verticals::minecraft::verification::query_wired_verification_readable;
-use crate::verticals::minecraft::{QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action};
 use auv_cli::app::{analyze_app_probe, probe_app};
 use auv_cli::contract::{OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus, VerificationResult};
 use auv_cli::model::InvokeRequest;
@@ -113,17 +115,14 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
     CliCommand::Help => {
       print!("{}", help_text());
     }
-    CliCommand::VerticalsHelp => {
-      print!("{}", crate::verticals::help::render_verticals_help());
-    }
     CliCommand::MinecraftHelp => {
-      print!("{}", crate::verticals::minecraft::help::render_minecraft_help());
+      print!("{}", crate::integrations::minecraft::help::render_minecraft_help());
     }
     CliCommand::OsuHelp => {
-      print!("{}", crate::verticals::osu::help::render_osu_help());
+      print!("{}", crate::integrations::osu::help::render_osu_help());
     }
     CliCommand::GodotHelp => {
-      print!("{}", crate::verticals::godot::help::render_godot_help());
+      print!("{}", crate::integrations::godot::help::render_godot_help());
     }
     CliCommand::PermissionCheck { .. } => {
       unreachable!("permission check is handled before runtime setup")
@@ -235,11 +234,11 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_spatial_bundle_export(
+      let output = crate::integrations::minecraft::run_minecraft_spatial_bundle_export(
         &runtime.recording().handle(),
         run_id,
         PathBuf::from(output_dir),
-        crate::verticals::minecraft::current_git_commit(),
+        crate::integrations::minecraft::current_git_commit(),
       )?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
@@ -256,7 +255,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_3dgs_scene_packet_export(
+      let output = crate::integrations::minecraft::run_minecraft_3dgs_scene_packet_export(
         &runtime.recording().handle(),
         bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
         PathBuf::from(output_dir),
@@ -278,7 +277,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_3dgs_training_package_export(
+      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_package_export(
         &runtime.recording().handle(),
         PathBuf::from(scene_packet_manifest_path),
         PathBuf::from(output_dir),
@@ -313,7 +312,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_3dgs_training_launch_preparation(
+      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_launch_preparation(
         &runtime.recording().handle(),
         PathBuf::from(training_package_manifest_path),
         PathBuf::from(output_dir),
@@ -358,7 +357,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_3dgs_training_job_launch_with_environment(
+      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_job_launch_with_environment(
         &runtime.recording().handle(),
         PathBuf::from(training_launch_plan_path),
         PathBuf::from(output_dir),
@@ -426,7 +425,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_3dgs_training_result_collection_with_environment(
+      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_collection_with_environment(
         &runtime.recording().handle(),
         PathBuf::from(training_job_manifest_path),
         PathBuf::from(output_dir),
@@ -522,7 +521,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_3dgs_training_result_artifact_fetch(
+      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_artifact_fetch(
         &runtime.recording().handle(),
         PathBuf::from(training_result_manifest_path),
         PathBuf::from(output_dir),
@@ -553,7 +552,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_3dgs_training_result_holdout_preview(
+      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_holdout_preview(
         &runtime.recording().handle(),
         PathBuf::from(training_result_semantic_manifest_path),
         holdout_frame_index,
@@ -582,7 +581,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_measure_3dgs_holdout_render_quality(
+      let output = crate::integrations::minecraft::run_minecraft_measure_3dgs_holdout_render_quality(
         &runtime.recording().handle(),
         PathBuf::from(training_result_semantic_manifest_path),
         PathBuf::from(holdout_preview_manifest_path),
@@ -620,7 +619,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       let target_block = parse_block_position(&target_block)?;
       let target_face = target_face.as_deref().map(parse_block_face).transpose()?;
       let target_semantics = parse_target_semantics(&target_semantics)?;
-      let output = crate::verticals::minecraft::run_minecraft_3dgs_training_result_spatial_query(
+      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_spatial_query(
         &runtime.recording().handle(),
         PathBuf::from(training_result_semantic_manifest_path),
         target_block,
@@ -711,7 +710,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_3dgs_training_result_semantic_validation(
+      let output = crate::integrations::minecraft::run_minecraft_3dgs_training_result_semantic_validation(
         &runtime.recording().handle(),
         PathBuf::from(training_result_artifact_manifest_path),
         PathBuf::from(output_dir),
@@ -731,7 +730,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_texture_sweep_preparation(
+      let output = crate::integrations::minecraft::run_minecraft_texture_sweep_preparation(
         &runtime.recording().handle(),
         PathBuf::from(sidecar_run_dir),
         PathBuf::from(output_dir),
@@ -755,7 +754,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_texture_sweep_sample_build(
+      let output = crate::integrations::minecraft::run_minecraft_texture_sweep_sample_build(
         &runtime.recording().handle(),
         bundle_manifest_paths.into_iter().map(PathBuf::from).collect(),
         PathBuf::from(output_path),
@@ -777,7 +776,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       inspect,
     } => {
       let runtime = build_runtime_for_inspect(&project_root, &inspect)?;
-      let output = crate::verticals::minecraft::run_minecraft_texture_sweep_eval(
+      let output = crate::integrations::minecraft::run_minecraft_texture_sweep_eval(
         &runtime.recording().handle(),
         PathBuf::from(samples_path),
         PathBuf::from(output_dir),
@@ -896,7 +895,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       let recording = runtime.recording().handle();
       let beatmap_path = PathBuf::from(beatmap_path);
       let output_dir = output_dir.map(PathBuf::from).unwrap_or_else(|| temp_runtime_store_root().join("osu-benchmark-output"));
-      let output = crate::verticals::osu::run_osu_benchmark(&recording, beatmap_path, output_dir)?;
+      let output = crate::integrations::osu::run_osu_benchmark(&recording, beatmap_path, output_dir)?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
       println!("beatmap: {}", output.value.map_summary.beatmap_path);
@@ -921,7 +920,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
         inputs.dispatch_limit = Some(dispatch_limit);
       }
       inputs.capture_verify = capture_verify;
-      let output = crate::verticals::osu::run_osu_benchmark_with_inputs(
+      let output = crate::integrations::osu::run_osu_benchmark_with_inputs(
         &recording,
         inputs,
         if capture_verify {
@@ -948,7 +947,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
       let recording = runtime.recording().handle();
-      let output = crate::verticals::osu::run_osu_dataset_export(&recording, PathBuf::from(run_artifact_dir), PathBuf::from(output_dir))?;
+      let output = crate::integrations::osu::run_osu_dataset_export(&recording, PathBuf::from(run_artifact_dir), PathBuf::from(output_dir))?;
       println!("runId: {}", output.run_id);
       println!("status: completed");
       println!("exportedFrames: {}", output.value.dataset_manifest.exported_frames.len());
@@ -962,7 +961,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
       let recording = runtime.recording().handle();
-      let output = crate::verticals::osu::run_osu_detection_eval(
+      let output = crate::integrations::osu::run_osu_detection_eval(
         &recording,
         PathBuf::from(run_artifact_dir),
         PathBuf::from(detections_path),
@@ -984,7 +983,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
     } => {
       let runtime = build_default_runtime(project_root.clone())?;
       let recording = runtime.recording().handle();
-      let output = crate::verticals::osu::run_osu_vision_demo(
+      let output = crate::integrations::osu::run_osu_vision_demo(
         &recording,
         PathBuf::from(beatmap_path),
         target_app,
@@ -1175,7 +1174,7 @@ fn dispatch_minecraft_live_click(
   target_title: &str,
   window_point: auv_driver::geometry::WindowPoint,
 ) -> Result<String, String> {
-  crate::verticals::minecraft::query_live_action::invoke_click_at_window_point(
+  crate::integrations::minecraft::query_live_action::invoke_click_at_window_point(
     runtime.recording(),
     context,
     target_app,
@@ -1214,7 +1213,7 @@ fn run_minecraft_live_click_with_dispatch(
       )?;
       let screenshot_artifact_id = screenshot_ref.artifact_id.as_str().to_string();
       let (staged_frame_path, _frame_ref) =
-        crate::verticals::minecraft::verification::stage_minecraft_spatial_frame_artifact(context, &pre_frame)?;
+        crate::integrations::minecraft::verification::stage_minecraft_spatial_frame_artifact(context, &pre_frame)?;
       let capture_timestamp_ms = if let Some(skew) = capture_skew_ms {
         if skew >= 0 {
           pre_frame.monotonic_timestamp_ms.saturating_sub(skew as u64)
@@ -1265,7 +1264,7 @@ fn run_minecraft_live_click_with_dispatch(
       let world_diff_request =
         auv_game_minecraft::verify::WorldDiffRequest::new(auv_game_minecraft::MinecraftBlockTarget::new(target_block))
           .allow_same_block_state_change();
-      let verification = crate::verticals::minecraft::verification::map_world_diff_verdict_to_verification_result(
+      let verification = crate::integrations::minecraft::verification::map_world_diff_verdict_to_verification_result(
         &auv_game_minecraft::verify::evaluate_world_diff(&pre_frame, &post_frame, &world_diff_request),
         vec![screenshot_ref.clone(), projection_ref.clone()],
       );
@@ -1324,7 +1323,7 @@ fn run_minecraft_projection_bridge(
 
       let bound = auv_game_minecraft::bind_capture_to_frame(frame, format!("artifact://{screenshot_artifact_id}"), capture_timestamp_ms);
       let (staged_frame_path, _frame_ref) =
-        crate::verticals::minecraft::verification::stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
+        crate::integrations::minecraft::verification::stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
 
       let assessment = auv_game_minecraft::evidence::assess_bound_projection(
         bound.frame.clone(),
@@ -1489,7 +1488,7 @@ fn stage_minecraft_projection_artifact(
   let artifact_path = env::temp_dir().join(format!("auv-minecraft-projection-{}-{}.json", context.run_id(), auv_cli::model::now_millis()));
   fs::write(&artifact_path, artifact_json.as_bytes()).map_err(|error| format!("failed to write minecraft projection artifact: {error}"))?;
   let staged = context.stage_artifact_file_with_ref(
-    crate::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
+    crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE,
     &artifact_path,
     "projection-artifact.json",
     Some("durable minecraft projection artifact".to_string()),
@@ -1508,7 +1507,7 @@ fn stage_minecraft_projection_calibration_artifact(
     env::temp_dir().join(format!("auv-minecraft-projection-calibration-{}-{}.json", context.run_id(), auv_cli::model::now_millis()));
   fs::write(&artifact_path, artifact_json.as_bytes()).map_err(|error| format!("failed to write minecraft calibration artifact: {error}"))?;
   let staged = context.stage_artifact_file_with_ref(
-    crate::verticals::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE,
+    crate::integrations::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE,
     &artifact_path,
     "projection-calibration.json",
     Some("durable minecraft projection calibration summary".to_string()),
@@ -1552,7 +1551,7 @@ fn run_minecraft_calibrate_projection(
         frame.monotonic_timestamp_ms,
       );
       let (staged_frame_path, _frame_ref) =
-        crate::verticals::minecraft::verification::stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
+        crate::integrations::minecraft::verification::stage_minecraft_spatial_frame_artifact(context, &bound.frame)?;
       let target = auv_game_minecraft::mc6_projection_target_for_frame(target_block, &bound.frame, semantics);
       let assessment = auv_game_minecraft::evidence::assess_bound_projection(
         bound.frame.clone(),
@@ -2646,7 +2645,7 @@ mod tests {
       observed_item_delta: Some(1),
     };
 
-    let verification = crate::verticals::minecraft::verification::map_world_diff_verdict_to_verification_result(&verdict, Vec::new());
+    let verification = crate::integrations::minecraft::verification::map_world_diff_verdict_to_verification_result(&verdict, Vec::new());
 
     assert_eq!(verification.method, auv_cli::contract::VerificationMethod::SemanticMatch);
     assert_eq!(verification.executed, true);
@@ -2682,7 +2681,7 @@ mod tests {
         observed_item_delta: Some(0),
       };
 
-      let verification = crate::verticals::minecraft::verification::map_world_diff_verdict_to_verification_result(&verdict, Vec::new());
+      let verification = crate::integrations::minecraft::verification::map_world_diff_verdict_to_verification_result(&verdict, Vec::new());
       assert_eq!(verification.failure_layer, expected_layer);
       assert_eq!(verification.observed_label.as_deref(), Some("minecraft:stone"));
     }
@@ -2791,8 +2790,8 @@ mod tests {
     let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
     assert_eq!(run.artifacts.len(), 4);
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(run.artifacts[1].role, crate::verticals::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[2].role, crate::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[3].role, "operation-result");
 
     let verifications =
@@ -2832,8 +2831,8 @@ mod tests {
     let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
     assert_eq!(run.artifacts.len(), 4);
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(run.artifacts[1].role, crate::verticals::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[2].role, crate::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[3].role, "minecraft-overlay");
 
     let inspect_text = crate::product_inspect::inspect_run_with(
@@ -2867,8 +2866,8 @@ mod tests {
     let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
     assert_eq!(run.artifacts.len(), 3);
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(run.artifacts[1].role, crate::verticals::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[2].role, crate::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
 
     let inspect_text = crate::product_inspect::inspect_run_with(
       &crate::product_inspect::build_product_inspect_composer().expect("product composer"),
@@ -2901,17 +2900,17 @@ mod tests {
     let run = runtime.recording().read_run(output.run_id.as_str()).expect("run should persist");
     assert_eq!(run.artifacts.len(), 5);
     assert_eq!(run.artifacts[0].role, "minecraft-screenshot");
-    assert_eq!(run.artifacts[1].role, crate::verticals::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
-    assert_eq!(run.artifacts[2].role, crate::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[3].role, "minecraft-overlay");
-    assert_eq!(run.artifacts[4].role, crate::verticals::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE);
+    assert_eq!(run.artifacts[4].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE);
     assert_eq!(output.value.overlay_artifact_id.is_some(), true);
     assert_eq!(output.value.refusal_reason, None);
 
     let calibration_artifact = run
       .artifacts
       .iter()
-      .find(|artifact| artifact.role == crate::verticals::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE)
+      .find(|artifact| artifact.role == crate::integrations::minecraft::MINECRAFT_PROJECTION_CALIBRATION_ARTIFACT_ROLE)
       .expect("calibration artifact should exist");
     let calibration_path =
       runtime.recording().run_dir(output.run_id.as_str()).expect("run dir should exist").join(&calibration_artifact.path);

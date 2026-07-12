@@ -119,14 +119,14 @@ fn query_artifact_id_from_operation_result(operation_result: &OperationResult) -
   })
 }
 
-fn find_query_wired_live_action_operation_result(store: &LocalStore, run: &CanonicalRun) -> Option<(ArtifactRefLineage, OperationResult)> {
+fn find_query_wired_live_action_operation_result(store: &LocalStore, run: &CanonicalRun) -> Option<(ArtifactRefView, OperationResult)> {
   for artifact in &run.artifacts {
     if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
       continue;
     }
     let parsed = read_artifact_json::<OperationResult>(store, run.run.run_id.as_str(), artifact, "operation-result").ok()?;
     if parsed.operation_id == QUERY_WIRED_LIVE_ACTION_OPERATION_ID {
-      return Some((artifact_record_lineage(run.run.run_id.clone(), artifact), parsed));
+      return Some((artifact_record_view(run.run.run_id.clone(), artifact), parsed));
     }
   }
   None
@@ -411,17 +411,14 @@ pub fn derive_minecraft_query_wired_live_action_summary(
   })
 }
 
-fn find_osu_query_wired_live_action_operation_result(
-  store: &LocalStore,
-  run: &CanonicalRun,
-) -> Option<(ArtifactRefLineage, OperationResult)> {
+fn find_osu_query_wired_live_action_operation_result(store: &LocalStore, run: &CanonicalRun) -> Option<(ArtifactRefView, OperationResult)> {
   for artifact in &run.artifacts {
     if artifact.role != "operation-result" || !is_json_mime(&artifact.mime_type) {
       continue;
     }
     let parsed = read_artifact_json::<OperationResult>(store, run.run.run_id.as_str(), artifact, "operation-result").ok()?;
     if parsed.operation_id == OSU_QUERY_WIRED_LIVE_ACTION_OPERATION_ID {
-      return Some((artifact_record_lineage(run.run.run_id.clone(), artifact), parsed));
+      return Some((artifact_record_view(run.run.run_id.clone(), artifact), parsed));
     }
   }
   None

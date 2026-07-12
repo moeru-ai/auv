@@ -6,7 +6,7 @@
 pub fn render_osu_help() -> String {
   let mut help = String::from(
     "\
-auv-osu — reference vertical for spatial-result consumption research
+auv-osu — osu! integration for spatial-result consumption research
 
 USAGE
 ",

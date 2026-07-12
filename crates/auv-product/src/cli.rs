@@ -63,7 +63,6 @@ pub enum CliCommand {
   InvokeHelp {
     command_id: Option<String>,
   },
-  VerticalsHelp,
   MinecraftHelp,
   OsuHelp,
   GodotHelp,
@@ -288,7 +287,6 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "session" => parse_session(arguments),
     "mcp" => parse_mcp(arguments),
     "invoke" => parse_invoke(arguments),
-    "verticals" => parse_verticals(arguments),
     "minecraft" => parse_minecraft(arguments),
     "skill" => Err("skill commands have been removed; use app-local Rust commands instead".to_string()),
     other => Err(format!("unknown subcommand {other}; use `help` to see supported commands")),
@@ -480,7 +478,7 @@ fn parse_godot_render_observe(arguments: &[String]) -> AuvResult<CliCommand> {
   }
 
   Ok(CliCommand::GodotRenderObserve {
-    output_dir: output_dir.ok_or_else(|| format!("usage: {}", crate::verticals::godot::help::render_observe_usage_line()))?,
+    output_dir: output_dir.ok_or_else(|| format!("usage: {}", crate::integrations::godot::help::render_observe_usage_line()))?,
     stages,
     json,
   })
@@ -532,14 +530,6 @@ fn parse_help_only_invocation(arguments: &[String], command: &str) -> AuvResult<
     }
     _ => Ok(false),
   }
-}
-
-fn parse_verticals(arguments: &[String]) -> AuvResult<CliCommand> {
-  if parse_help_only_invocation(arguments, "verticals")? {
-    return Ok(CliCommand::VerticalsHelp);
-  }
-  let other = arguments.get(1).map(String::as_str).unwrap_or("<missing>");
-  Err(format!("unknown verticals argument {other}; verticals is a help-only index — use `auv verticals --help`"))
 }
 
 fn parse_osu(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -2172,17 +2162,8 @@ mod tests {
   fn help_text_is_core_only() {
     let help = help_text();
 
-    // Root help may name donor bins (`auv-minecraft` / `auv-osu` / `auv-godot`) and
-    // the tombstone note, but must not revive the old verticals help surface or
-    // expand live donor subcommands under `auv <donor> …`.
-    for omitted in [
-      "REFERENCE VERTICALS",
-      "reference verticals",
-      "auv verticals",
-    ] {
-      assert!(!help.contains(omitted), "top-level help should not mention vertical surface: {omitted}");
-    }
-
+    // Root help may name separate app bins, but must not expand their live
+    // subcommands under `auv <app> …`.
     for omitted in [
       "auv minecraft bridge",
       "auv minecraft calibrate-projection",
@@ -2190,42 +2171,13 @@ mod tests {
       "auv osu dispatch",
       "auv godot capability-query",
     ] {
-      assert!(!help.contains(omitted), "top-level help should not expand vertical command: {omitted}");
+      assert!(!help.contains(omitted), "top-level help should not expand app command: {omitted}");
     }
 
     assert!(
       help.contains("tombstone") || help.contains("has been removed") || help.contains("use `auv-minecraft`"),
       "top-level help should point donors at separate bins"
     );
-  }
-
-  #[test]
-  fn parse_verticals_help_command() {
-    let command = parse_cli(&["verticals".to_string(), "--help".to_string()]).expect("verticals --help should parse");
-    assert!(matches!(command, CliCommand::VerticalsHelp));
-  }
-
-  #[test]
-  fn parse_verticals_bare_command_as_help() {
-    let command = parse_cli(&["verticals".to_string()]).expect("bare verticals should parse as help");
-    assert!(matches!(command, CliCommand::VerticalsHelp));
-  }
-
-  #[test]
-  fn parse_verticals_rejects_execution_namespace() {
-    let error = parse_cli(&["verticals".to_string(), "minecraft".to_string()]).expect_err("verticals minecraft should fail");
-    assert!(error.contains("help-only index"));
-  }
-
-  #[test]
-  fn parse_verticals_help_rejects_trailing_arguments() {
-    let error = parse_cli(&[
-      "verticals".to_string(),
-      "help".to_string(),
-      "extra".to_string(),
-    ])
-    .expect_err("verticals help extra should fail");
-    assert!(error.contains("unexpected verticals help argument"));
   }
 
   #[test]
@@ -2305,6 +2257,15 @@ mod tests {
 
     let help = help_text();
     assert!(!help.contains("auv scan"));
+  }
+
+  #[test]
+  fn verticals_command_is_removed() {
+    let error = parse_cli(&["verticals".to_string()]).expect_err("verticals should be removed");
+    assert!(error.contains("unknown subcommand verticals"));
+
+    let help = help_text();
+    assert!(!help.contains("auv verticals"));
   }
 
   #[test]

@@ -2,60 +2,60 @@
 //!
 //! Depends on `auv-inspect-model` only (no `auv-cli`). Query-wired adapters stay in product (S3b).
 
-use auv_inspect_model::{ArtifactRefLineage, artifact_record_lineage, is_json_mime, read_artifact_json};
+use auv_inspect_model::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 pub struct BalatroCardDetectionSemanticManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<BalatroCardDetectionSemanticManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct BalatroCardDetectionSemanticInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<BalatroCardDetectionSemanticInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct BalatroCardDetectionSpatialQueryManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<BalatroCardDetectionSpatialQueryManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct BalatroCardDetectionSpatialQueryInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<BalatroCardDetectionSpatialQueryInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct BalatroCardDetectionEvalWitnessManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<BalatroCardDetectionEvalWitnessManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct BalatroCardDetectionEvalWitnessInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<BalatroCardDetectionEvalWitnessInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct BalatroCardDetectionQualityManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<BalatroCardDetectionQualityManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct BalatroCardDetectionQualityInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<BalatroCardDetectionQualityInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -255,7 +255,7 @@ pub fn extract_balatro_card_detection_semantic_manifests(
     if artifact.role != crate::BALATRO_CARD_DETECTION_SEMANTIC_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(BalatroCardDetectionSemanticManifestLineage {
         artifact: artifact_ref,
@@ -297,7 +297,7 @@ pub fn extract_balatro_card_detection_semantic_inspect_reports(
     if artifact.role != crate::BALATRO_CARD_DETECTION_SEMANTIC_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(BalatroCardDetectionSemanticInspectReportLineage {
         artifact: artifact_ref,
@@ -339,7 +339,7 @@ pub fn extract_balatro_card_detection_spatial_query_manifests(
     if artifact.role != crate::BALATRO_CARD_DETECTION_SPATIAL_QUERY_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(BalatroCardDetectionSpatialQueryManifestLineage {
         artifact: artifact_ref,
@@ -381,7 +381,7 @@ pub fn extract_balatro_card_detection_spatial_query_inspect_reports(
     if artifact.role != crate::BALATRO_CARD_DETECTION_SPATIAL_QUERY_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(BalatroCardDetectionSpatialQueryInspectReportLineage {
         artifact: artifact_ref,
@@ -423,7 +423,7 @@ pub fn extract_balatro_card_detection_eval_witness_manifests(
     if artifact.role != crate::BALATRO_CARD_DETECTION_EVAL_WITNESS_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(BalatroCardDetectionEvalWitnessManifestLineage {
         artifact: artifact_ref,
@@ -465,7 +465,7 @@ pub fn extract_balatro_card_detection_eval_witness_inspect_reports(
     if artifact.role != crate::BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(BalatroCardDetectionEvalWitnessInspectReportLineage {
         artifact: artifact_ref,
@@ -507,7 +507,7 @@ pub fn extract_balatro_card_detection_quality_manifests(
     if artifact.role != crate::BALATRO_CARD_DETECTION_QUALITY_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(BalatroCardDetectionQualityManifestLineage {
         artifact: artifact_ref,
@@ -549,7 +549,7 @@ pub fn extract_balatro_card_detection_quality_inspect_reports(
     if artifact.role != crate::BALATRO_CARD_DETECTION_QUALITY_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(BalatroCardDetectionQualityInspectReportLineage {
         artifact: artifact_ref,

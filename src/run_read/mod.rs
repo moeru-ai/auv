@@ -14,7 +14,7 @@ use crate::contract::{
 };
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
-use auv_inspect_model::{artifact_record_lineage, is_json_mime, read_artifact_json};
+use auv_inspect_model::{artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
 
@@ -34,13 +34,11 @@ pub enum DetectorRecognitionLineageStatus {
   Malformed,
 }
 
-/// Back-compat alias: lineage identity now lives in `auv-inspect-model`.
-pub type DetectorRecognitionArtifactRefLineage = auv_inspect_model::ArtifactRefLineage;
-pub use auv_inspect_model::ArtifactRefLineage;
+pub use auv_inspect_model::ArtifactRefView;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct DetectorRecognitionLineage {
-  pub artifact: DetectorRecognitionArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub status: DetectorRecognitionLineageStatus,
   pub recognition_id: Option<String>,
   pub source: Option<RecognitionSource>,
@@ -49,9 +47,9 @@ pub struct DetectorRecognitionLineage {
   pub execution_provider: Option<String>,
   pub class_label_source_kind: Option<String>,
   pub runtime_projection_kind: Option<String>,
-  pub capture_artifact: Option<DetectorRecognitionArtifactRefLineage>,
-  pub capture_contract_artifact: Option<DetectorRecognitionArtifactRefLineage>,
-  pub evidence_artifacts: Vec<DetectorRecognitionArtifactRefLineage>,
+  pub capture_artifact: Option<ArtifactRefView>,
+  pub capture_contract_artifact: Option<ArtifactRefView>,
+  pub evidence_artifacts: Vec<ArtifactRefView>,
   pub all_count: Option<usize>,
   pub filtered_count: Option<usize>,
   pub best_item_id: Option<String>,
@@ -151,7 +149,7 @@ pub(crate) fn extract_detector_recognition_lineage(store: &LocalStore, run: &Can
       continue;
     }
 
-    let detector_artifact = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let detector_artifact = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       lineage.push(DetectorRecognitionLineage {
         artifact: detector_artifact,
@@ -214,7 +212,7 @@ fn detector_recognition_lineage_entry(
   let (status, issue) = classify_detector_recognition_lineage(&recognition, capture_artifact.as_ref());
 
   DetectorRecognitionLineage {
-    artifact: artifact_record_lineage(run.run.run_id.clone(), artifact),
+    artifact: artifact_record_view(run.run.run_id.clone(), artifact),
     status,
     recognition_id: Some(recognition.recognition_id.clone()),
     source: Some(recognition.source),
@@ -236,7 +234,7 @@ fn detector_recognition_lineage_entry(
 
 fn classify_detector_recognition_lineage(
   recognition: &RecognitionResult,
-  capture_artifact: Option<&DetectorRecognitionArtifactRefLineage>,
+  capture_artifact: Option<&ArtifactRefView>,
 ) -> (DetectorRecognitionLineageStatus, Option<String>) {
   if recognition.scope.capture_artifact.is_none() {
     return (DetectorRecognitionLineageStatus::MissingCaptureArtifact, Some("scope.capture_artifact is missing".to_string()));
@@ -255,14 +253,14 @@ fn classify_detector_recognition_lineage(
   (DetectorRecognitionLineageStatus::Ready, None)
 }
 
-fn resolve_artifact_ref(run: &CanonicalRun, reference: &ArtifactRef) -> DetectorRecognitionArtifactRefLineage {
+fn resolve_artifact_ref(run: &CanonicalRun, reference: &ArtifactRef) -> ArtifactRefView {
   let resolved = if reference.run_id == run.run.run_id {
     run.artifacts.iter().find(|artifact| artifact.artifact_id == reference.artifact_id && artifact.span_id == reference.span_id)
   } else {
     None
   };
 
-  DetectorRecognitionArtifactRefLineage {
+  ArtifactRefView {
     run_id: reference.run_id.clone(),
     artifact_id: reference.artifact_id.clone(),
     span_id: reference.span_id.clone(),

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::verticals::minecraft::query_live_action::invoke_click_at_window_point;
-use crate::verticals::query_wired_live_action_status::{OSU_LABELS, operation_status_and_message};
+use crate::integrations::minecraft::query_live_action::invoke_click_at_window_point;
+use crate::integrations::query_wired_live_action_status::{OSU_LABELS, operation_status_and_message};
 use auv_cli::contract::{ArtifactRef, FreshnessBasis, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult};
 use auv_driver::geometry::WindowPoint;
 use auv_game_osu::{VisualTruthQueryActionWiringLineage, VisualTruthQueryActionWiringOutcome, VisualTruthQueryLiveClickExecutor};

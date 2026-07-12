@@ -41,10 +41,10 @@ registered `section.id()` (mismatch aborts the document); `collect` returning
 
 ## Product package / auv-product (provisional)
 
-Provisional packaging term for the donor/product composition crate
+Provisional packaging term for the app-integration composition crate
 (`crates/auv-product`):
 
-- Owns root `auv` and donor bins, CLI frontend, vertical wiring, product
+- Owns root `auv` and app-specific bins, CLI frontend, integration wiring, product
   `InspectComposer`, query-wired OperationResult adapters (S3b; stay in product
   until contract ownership moves), and product inspect-server projection wrappers.
 - Depends on library-only `auv-cli` plus `auv-game-*` / `auv-godot`.

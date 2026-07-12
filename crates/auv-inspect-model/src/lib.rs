@@ -33,12 +33,12 @@ use thiserror::Error;
 /// fork the durable role string.
 pub const TELEMETRY_SAMPLE_ARTIFACT_ROLE: &str = "telemetry-sample";
 
-/// Shared artifact identity projection used by inspect / run_read donors.
+/// Shared artifact reference view used by inspect and run readers.
 ///
 /// NOTICE(inspect-composition / S3a): owned here so game crates can parse
 /// artifacts without depending on `auv-cli`. Do not fork a same-shape copy.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-pub struct ArtifactRefLineage {
+pub struct ArtifactRefView {
   pub run_id: RunId,
   pub artifact_id: ArtifactId,
   pub span_id: SpanId,
@@ -54,9 +54,9 @@ pub fn is_json_mime(mime_type: &str) -> bool {
   mime_type == "application/json" || mime_type.ends_with("+json")
 }
 
-/// Build an [`ArtifactRefLineage`] from a recorded artifact row.
-pub fn artifact_record_lineage(run_id: RunId, artifact: &ArtifactRecordV1Alpha1) -> ArtifactRefLineage {
-  ArtifactRefLineage {
+/// Build an [`ArtifactRefView`] from a recorded artifact row.
+pub fn artifact_record_view(run_id: RunId, artifact: &ArtifactRecordV1Alpha1) -> ArtifactRefView {
+  ArtifactRefView {
     run_id,
     artifact_id: artifact.artifact_id.clone(),
     span_id: artifact.span_id.clone(),

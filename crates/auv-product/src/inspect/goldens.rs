@@ -327,7 +327,7 @@ fn golden_minecraft_training_package_inspect_run() {
     &run.run_id,
     &span.span_id,
     0,
-    crate::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE,
+    crate::integrations::minecraft::MINECRAFT_3DGS_TRAINING_PACKAGE_ARTIFACT_ROLE,
     "minecraft-3dgs-training-package-run.json",
     &manifest,
   )];
@@ -349,7 +349,7 @@ fn golden_minecraft_training_package_inspect_run() {
 fn golden_osu_visual_truth_inspect_run() {
   use auv_tracing_driver::recording::RunRecordingBackend;
 
-  use crate::osu::run_osu_visual_truth_semantic_validation;
+  use crate::integrations::osu::run_osu_visual_truth_semantic_validation;
 
   let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../auv-game-osu/tests/fixtures/osu_visual_truth_probe");
   let work = std::env::temp_dir().join(format!("auv-inspect-golden-osu-work-{}", stamp()));
@@ -378,7 +378,7 @@ fn golden_balatro_card_detection_inspect_run() {
   use auv_game_balatro::ObjectZone;
   use auv_tracing_driver::recording::RunRecordingBackend;
 
-  use crate::balatro::run_balatro_consumption_probe_chain;
+  use crate::integrations::balatro::run_balatro_consumption_probe_chain;
 
   let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../auv-game-balatro/tests/fixtures/balatro_consumption_probe");
   let store_root = std::env::temp_dir().join(format!("auv-inspect-golden-balatro-store-{}", stamp()));

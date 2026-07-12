@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::verticals::query_wired_live_action_status::{MINECRAFT_LABELS, operation_status_and_message};
+use crate::integrations::query_wired_live_action_status::{MINECRAFT_LABELS, operation_status_and_message};
 use auv_cli::contract::{ArtifactRef, FreshnessBasis, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, VerificationResult};
 use auv_cli::model::{InvokeRequest, RunStatus};
 use auv_driver::geometry::WindowPoint;

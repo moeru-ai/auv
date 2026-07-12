@@ -2,7 +2,7 @@
 //!
 //! Depends on `auv-inspect-model` only (no `auv-cli`). Query-wired adapters stay in product (S3b).
 
-use auv_inspect_model::{ArtifactRefLineage, artifact_record_lineage, is_json_mime, read_artifact_json, read_telemetry_artifact_summary};
+use auv_inspect_model::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json, read_telemetry_artifact_summary};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 use crate::artifact::MinecraftProjectionArtifact;
@@ -18,98 +18,98 @@ use crate::{
 use std::fs;
 
 pub struct MinecraftTelemetrySampleArtifactLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub line_count: Option<usize>,
   pub byte_size: Option<u64>,
   pub issue: Option<String>,
 }
 
 pub struct MinecraftSpatialBundleManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftSpatialBundleManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingPackageManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingPackageManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingLaunchManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingLaunchManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingLaunchInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingLaunchInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingJobManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingJobManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingJobInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingJobInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingResultManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultArtifactFetchManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingResultArtifactFetchManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultArtifactFetchInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultArtifactFetchInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultSemanticManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingResultSemanticManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultSemanticInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultSemanticInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultSpatialQueryManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingResultSpatialQueryManifestSummary>,
   pub issue: Option<String>,
 }
@@ -126,7 +126,7 @@ pub struct MinecraftTrainingResultSpatialQueryActionReadinessSummary {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultSpatialQueryInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultSpatialQueryInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -196,14 +196,14 @@ pub struct MinecraftTrainingResultHoldoutPreviewInspectReportSummary {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultHoldoutPreviewManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingResultHoldoutPreviewManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingResultHoldoutPreviewInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultHoldoutPreviewInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -261,21 +261,21 @@ pub struct MinecraftHoldoutRenderQualityInspectReportSummary {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftHoldoutRenderQualityManifestLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftHoldoutRenderQualityManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftHoldoutRenderQualityInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<MinecraftHoldoutRenderQualityInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct MinecraftTrainingPackageInspectReportLineage {
-  pub artifact: ArtifactRefLineage,
+  pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingPackageInspectReportSummary>,
   pub issue: Option<String>,
 }
@@ -809,7 +809,7 @@ pub fn extract_minecraft_holdout_render_quality_manifests(
     if artifact.role != crate::MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftHoldoutRenderQualityManifestLineage {
         artifact: artifact_ref,
@@ -850,7 +850,7 @@ pub fn extract_minecraft_holdout_render_quality_inspect_reports(
     if artifact.role != crate::MINECRAFT_3DGS_HOLDOUT_RENDER_QUALITY_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(MinecraftHoldoutRenderQualityInspectReportLineage {
         artifact: artifact_ref,
@@ -924,7 +924,7 @@ pub fn extract_minecraft_spatial_bundle_manifests(
       continue;
     }
 
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftSpatialBundleManifestLineage {
         artifact: artifact_ref,
@@ -966,7 +966,7 @@ pub fn extract_minecraft_training_launch_manifests(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_LAUNCH_PLAN_ARTIFACT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftTrainingLaunchManifestLineage {
         artifact: artifact_ref,
@@ -1007,7 +1007,7 @@ pub fn extract_minecraft_training_launch_inspect_reports(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_LAUNCH_INSPECT_ARTIFACT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(MinecraftTrainingLaunchInspectReportLineage {
         artifact: artifact_ref,
@@ -1048,7 +1048,7 @@ pub fn extract_minecraft_training_job_manifests(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_JOB_ARTIFACT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftTrainingJobManifestLineage {
         artifact: artifact_ref,
@@ -1089,7 +1089,7 @@ pub fn extract_minecraft_training_job_inspect_reports(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_JOB_INSPECT_ARTIFACT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(MinecraftTrainingJobInspectReportLineage {
         artifact: artifact_ref,
@@ -1130,7 +1130,7 @@ pub fn extract_minecraft_training_result_manifests(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftTrainingResultManifestLineage {
         artifact: artifact_ref,
@@ -1171,7 +1171,7 @@ pub fn extract_minecraft_training_result_inspect_reports(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_INSPECT_ARTIFACT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(MinecraftTrainingResultInspectReportLineage {
         artifact: artifact_ref,
@@ -1212,7 +1212,7 @@ pub fn extract_minecraft_training_result_artifact_fetch_manifests(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_MANIFEST_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftTrainingResultArtifactFetchManifestLineage {
         artifact: artifact_ref,
@@ -1253,7 +1253,7 @@ pub fn extract_minecraft_training_result_artifact_fetch_inspect_reports(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_ARTIFACT_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(MinecraftTrainingResultArtifactFetchInspectReportLineage {
         artifact: artifact_ref,
@@ -1294,7 +1294,7 @@ pub fn extract_minecraft_training_result_semantic_manifests(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftTrainingResultSemanticManifestLineage {
         artifact: artifact_ref,
@@ -1335,7 +1335,7 @@ pub fn extract_minecraft_training_result_semantic_inspect_reports(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_SEMANTIC_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(MinecraftTrainingResultSemanticInspectReportLineage {
         artifact: artifact_ref,
@@ -1376,7 +1376,7 @@ pub fn extract_minecraft_training_result_spatial_query_manifests(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftTrainingResultSpatialQueryManifestLineage {
         artifact: artifact_ref,
@@ -1417,7 +1417,7 @@ pub fn extract_minecraft_training_result_spatial_query_inspect_reports(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_QUERY_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(MinecraftTrainingResultSpatialQueryInspectReportLineage {
         artifact: artifact_ref,
@@ -1474,7 +1474,7 @@ pub fn extract_minecraft_training_result_holdout_preview_manifests(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftTrainingResultHoldoutPreviewManifestLineage {
         artifact: artifact_ref,
@@ -1515,7 +1515,7 @@ pub fn extract_minecraft_training_result_holdout_preview_inspect_reports(
     if artifact.role != crate::MINECRAFT_3DGS_TRAINING_RESULT_HOLDOUT_PREVIEW_INSPECT_ROLE {
       continue;
     }
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(MinecraftTrainingResultHoldoutPreviewInspectReportLineage {
         artifact: artifact_ref,
@@ -2464,7 +2464,7 @@ pub fn extract_minecraft_training_package_manifests(
       continue;
     }
 
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       manifests.push(MinecraftTrainingPackageManifestLineage {
         artifact: artifact_ref,
@@ -2508,7 +2508,7 @@ pub fn extract_minecraft_training_package_inspect_reports(
       continue;
     }
 
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       reports.push(MinecraftTrainingPackageInspectReportLineage {
         artifact: artifact_ref,
@@ -2552,7 +2552,7 @@ pub fn extract_minecraft_telemetry_sample_artifacts(
       continue;
     }
 
-    let artifact_ref = artifact_record_lineage(run.run.run_id.clone(), artifact);
+    let artifact_ref = artifact_record_view(run.run.run_id.clone(), artifact);
     if !is_json_mime(&artifact.mime_type) {
       artifacts.push(MinecraftTelemetrySampleArtifactLineage {
         artifact: artifact_ref,
@@ -2567,7 +2567,7 @@ pub fn extract_minecraft_telemetry_sample_artifacts(
 
     match parsed {
       Ok((artifact_path, line_count, byte_size)) => artifacts.push(MinecraftTelemetrySampleArtifactLineage {
-        artifact: ArtifactRefLineage {
+        artifact: ArtifactRefView {
           path: Some(artifact_path.display().to_string()),
           ..artifact_ref
         },

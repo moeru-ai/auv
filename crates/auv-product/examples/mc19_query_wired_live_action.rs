@@ -5,7 +5,9 @@ use std::env;
 use std::path::PathBuf;
 
 use auv_cli::build_runtime_with_store_root;
-use auv_product::minecraft::{QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action};
+use auv_product::integrations::minecraft::{
+  QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action,
+};
 
 fn main() -> Result<(), String> {
   eprintln!("notice: canonical entry is `auv-minecraft query-wired-live-click`; this example is a thin library wrapper");

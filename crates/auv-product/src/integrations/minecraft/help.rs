@@ -8,7 +8,7 @@ const INSPECT_OPTIONS: &str = " [--store-root <path>] [--inspect-local-write tru
 pub fn render_minecraft_help() -> String {
   let mut help = String::from(
     "\
-auv-minecraft — reference vertical for spatial-result consumption research
+auv-minecraft — Minecraft integration for spatial-result consumption research
 
 USAGE
 ",
