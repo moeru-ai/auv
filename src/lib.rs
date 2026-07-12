@@ -12,23 +12,56 @@ pub mod scene_state_read;
 pub mod scroll_scan;
 pub mod session;
 pub mod stability;
-pub mod verticals;
 pub mod view_parser_read;
 
-pub use verticals::balatro;
-pub use verticals::minecraft::{
-  self as minecraft, query_live_action as minecraft_query_live_action, session as minecraft_session, verification as minecraft_verification,
-};
-pub use verticals::osu::{self as osu, query_live_action as osu_query_live_action};
-
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use auv_inspect_model::{InspectComposer, InspectDocument};
+use auv_inspect_server::{InspectDocumentWire, InspectSectionWire};
 use auv_tracing_driver::store::LocalStore;
 use model::AuvResult;
 use runtime::Runtime;
 
+/// Convert a model document into the inspect-server wire shape.
+pub fn inspect_document_to_wire(document: InspectDocument) -> InspectDocumentWire {
+  InspectDocumentWire {
+    sections: document
+      .sections
+      .into_iter()
+      .map(|section| InspectSectionWire {
+        id: section.id.to_string(),
+        text: section.text,
+        json: section.json,
+      })
+      .collect(),
+  }
+}
+
+/// Core inspect-server read projection (no donor JSON extensions).
+///
+/// Holds the injected core [`InspectComposer`] so HTTP inspect text/document
+/// routes share the same composition path as core MCP defaults.
 #[derive(Clone, Debug)]
-pub struct RootInspectReadProjection;
+pub struct RootInspectReadProjection {
+  composer: Arc<InspectComposer>,
+}
+
+impl Default for RootInspectReadProjection {
+  fn default() -> Self {
+    Self::with_composer(crate::inspect::build_core_inspect_composer().expect("core inspect composer"))
+  }
+}
+
+impl RootInspectReadProjection {
+  pub fn with_composer(composer: Arc<InspectComposer>) -> Self {
+    Self { composer }
+  }
+
+  pub fn composer(&self) -> &Arc<InspectComposer> {
+    &self.composer
+  }
+}
 
 impl auv_inspect_server::InspectReadProjection for RootInspectReadProjection {
   fn run_enrichment(
@@ -62,15 +95,24 @@ impl auv_inspect_server::InspectReadProjection for RootInspectReadProjection {
 
   fn run_json_extension(
     &self,
-    extension: &str,
+    _extension: &str,
+    _store: &auv_tracing_driver::store::LocalStore,
+    _run: &auv_tracing_driver::store::CanonicalRun,
+  ) -> Result<Option<serde_json::Value>, String> {
+    Ok(None)
+  }
+
+  fn inspect_document(
+    &self,
     store: &auv_tracing_driver::store::LocalStore,
-    run_id: &str,
-  ) -> Result<serde_json::Value, String> {
-    match extension {
-      "minecraft-quality-baseline-report" => serde_json::to_value(run_read::quality_baseline_report_with_verdicts_for_run(store, run_id)?)
-        .map_err(|error| format!("failed to encode minecraft quality baseline report: {error}")),
-      other => Err(format!("inspect run extension {other:?} is not supported by the root projection")),
-    }
+    run: &auv_tracing_driver::store::CanonicalRun,
+  ) -> Result<Option<InspectDocumentWire>, String> {
+    let document = self.composer.collect_document(store, run).map_err(|error| error.to_string())?;
+    Ok(Some(inspect_document_to_wire(document)))
+  }
+
+  fn inspect_text(&self, store: &auv_tracing_driver::store::LocalStore, run_id: &str) -> Result<Option<String>, String> {
+    self.composer.inspect_text(store, run_id).map(Some).map_err(|error| error.to_string())
   }
 }
 

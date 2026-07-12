@@ -75,10 +75,7 @@ pub const VERIFICATION_RESULT_API_VERSION: &str = "auv.verification_result.v1alp
 pub const OBSERVATION_SNAPSHOT_API_VERSION: &str = "auv.observation_snapshot.v1alpha1";
 
 /// Artifact role for telemetry sample payloads.
-pub const TELEMETRY_SAMPLE_ARTIFACT_ROLE: &str = "telemetry-sample";
-
-/// Artifact role for Minecraft projection payloads.
-pub const MINECRAFT_PROJECTION_ARTIFACT_ROLE: &str = "minecraft-projection";
+pub use auv_inspect_model::TELEMETRY_SAMPLE_ARTIFACT_ROLE;
 
 fn default_operation_result_api_version() -> String {
   OPERATION_RESULT_API_VERSION.to_string()

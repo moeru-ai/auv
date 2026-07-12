@@ -11,6 +11,8 @@ members = [
   "crates/auv-file",
   "crates/auv-godot",
   "crates/auv-inspect-server",
+  "crates/auv-inspect-model",
+  "crates/auv-product",
   "crates/auv-query-readiness",
   "crates/auv-scan",
   "crates/auv-stage-status",
@@ -35,6 +37,8 @@ members = [
   "crates/auv-tracing-driver",
   "crates/auv-view",
 ]
+default-members = [".", "crates/auv-product"]
+resolver = "2"
 
 [workspace.package]
 version = "0.0.1"
@@ -63,10 +67,6 @@ homepage.workspace = true
 repository.workspace = true
 autobins = false
 
-[[bin]]
-name = "auv"
-path = "src/main.rs"
-
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -88,10 +88,6 @@ objc2-core-foundation = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [dependencies]
-auv-game-osu = { path = "crates/auv-game-osu" }
-auv-game-balatro = { path = "crates/auv-game-balatro" }
-auv-game-minecraft = { path = "crates/auv-game-minecraft" }
-auv-godot = { path = "crates/auv-godot" }
 auv-task-object-detection = { path = "crates/auv-task-object-detection" }
 auv-driver = { path = "crates/auv-driver" }
 auv-driver-macos = { path = "crates/auv-driver-macos" }
@@ -99,6 +95,7 @@ auv-cli-invoke = { path = "crates/auv-cli-invoke" }
 auv-api-proto = { path = "crates/auv-api-proto" }
 auv-tracing-driver = { path = "crates/auv-tracing-driver" }
 auv-inspect-server = { path = "crates/auv-inspect-server" }
+auv-inspect-model = { path = "crates/auv-inspect-model" }
 auv-scan = { path = "crates/auv-scan" }
 auv-view = { path = "crates/auv-view" }
 serde.workspace = true

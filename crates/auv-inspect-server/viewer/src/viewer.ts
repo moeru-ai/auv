@@ -1146,6 +1146,10 @@ function runInspectViewer(document: Document, window: Window): void {
     return !!artifact && artifact.role === "click.overlay.annotation";
   }
 
+  // NOTICE(inspect-composition / S5): HTTP inspect routes are generic, while
+  // donor artifact cards intentionally remain role-specific. Revisit only with
+  // owner approval for viewer role-table generalization; see
+  // docs/ai/references/2026-07-13-inspect-composition-s4-migration.md.
   function isMinecraftTrainingPackageArtifact(artifact) {
     return !!artifact && artifact.role === "minecraft-3dgs-training-package";
   }
@@ -1420,7 +1424,13 @@ function runInspectViewer(document: Document, window: Window): void {
 
   function loadQualityBaselineSummaryCard(preview, insertBeforeNode, requestId) {
     if (!state.activeRunId) return;
-    fetch("/runs/" + encodeURIComponent(state.activeRunId) + "/minecraft-quality-baseline-report")
+    // Donor quality payload via generic extension route (key registered by product projection).
+    fetch(
+      "/runs/"
+        + encodeURIComponent(state.activeRunId)
+        + "/extensions/"
+        + encodeURIComponent("minecraft-quality-baseline-report"),
+    )
       .then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();

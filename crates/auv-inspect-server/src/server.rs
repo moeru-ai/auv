@@ -160,7 +160,9 @@ pub fn router_with_projection(
     .route("/runs/{run_id}/events", get(get_events))
     .route("/runs/{run_id}/artifacts", get(get_artifacts))
     .route("/runs/{run_id}/artifacts/{artifact_id}", get(get_artifact))
-    .route("/runs/{run_id}/minecraft-quality-baseline-report", get(get_minecraft_quality_baseline_report))
+    .route("/runs/{run_id}/inspect", get(get_inspect_text))
+    .route("/runs/{run_id}/inspect/document", get(get_inspect_document))
+    .route("/runs/{run_id}/extensions/{extension}", get(get_run_json_extension))
     .route("/runs/{run_id}/stream", get(stream_run))
     .route("/write/runs/{run_id}/updates", post(write_updates))
     .route("/write/runs/{run_id}/artifacts/{artifact_id}", post(write_artifact))
@@ -329,15 +331,30 @@ async fn get_events(State(state): State<InspectServerState>, Path(run_id): Path<
   Ok(Json(run.events).into_response())
 }
 
-async fn get_minecraft_quality_baseline_report(
+async fn get_inspect_text(State(state): State<InspectServerState>, Path(run_id): Path<String>) -> Result<Response, InspectHttpError> {
+  match state.projection.inspect_text(state.store.as_ref(), &run_id).map_err(InspectHttpError::from_store)? {
+    Some(text) => Ok(Json(serde_json::json!({ "run_id": run_id, "text": text })).into_response()),
+    None => Err(InspectHttpError::not_found(format!("inspect text is not available for run {run_id}"))),
+  }
+}
+
+async fn get_inspect_document(State(state): State<InspectServerState>, Path(run_id): Path<String>) -> Result<Response, InspectHttpError> {
+  let run = state.store.read_run(&run_id).map_err(InspectHttpError::from_store)?;
+  match state.projection.inspect_document(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)? {
+    Some(document) => Ok(Json(serde_json::json!({ "run_id": run_id, "document": document })).into_response()),
+    None => Err(InspectHttpError::not_found(format!("inspect document is not available for run {run_id}"))),
+  }
+}
+
+async fn get_run_json_extension(
   State(state): State<InspectServerState>,
-  Path(run_id): Path<String>,
+  Path((run_id, extension)): Path<(String, String)>,
 ) -> Result<Response, InspectHttpError> {
-  let payload = state
-    .projection
-    .run_json_extension("minecraft-quality-baseline-report", state.store.as_ref(), &run_id)
-    .map_err(InspectHttpError::from_store)?;
-  Ok(Json(payload).into_response())
+  let run = state.store.read_run(&run_id).map_err(InspectHttpError::from_store)?;
+  match state.projection.run_json_extension(&extension, state.store.as_ref(), &run).map_err(InspectHttpError::from_store)? {
+    Some(payload) => Ok(Json(payload).into_response()),
+    None => Err(InspectHttpError::not_found(format!("inspect run extension {extension:?} is not available for run {run_id}"))),
+  }
 }
 
 async fn get_artifacts(State(state): State<InspectServerState>, Path(run_id): Path<String>) -> Result<Response, InspectHttpError> {
@@ -762,13 +779,47 @@ mod tests {
   use tower::ServiceExt;
 
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config, router_with_projection};
-  use crate::read_projection::{CommandBoundaryClaim, InspectReadProjection, InspectRunEnrichment};
+  use crate::read_projection::{CommandBoundaryClaim, InspectDocumentWire, InspectReadProjection, InspectRunEnrichment, InspectSectionWire};
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RUN_API_VERSION, RunId,
     RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
   };
   use auv_tracing_driver::{BroadcastRunRecorder, RunRecorder, RunUpdate};
+
+  struct ExtensionProjection;
+
+  impl InspectReadProjection for ExtensionProjection {
+    fn run_enrichment(&self, _store: &LocalStore, _run: &CanonicalRun) -> super::InspectResult<InspectRunEnrichment> {
+      Ok(InspectRunEnrichment::default())
+    }
+
+    fn run_json_extension(
+      &self,
+      extension: &str,
+      _store: &LocalStore,
+      run: &CanonicalRun,
+    ) -> super::InspectResult<Option<serde_json::Value>> {
+      if extension == "demo-extension" {
+        return Ok(Some(serde_json::json!({
+          "extension": extension,
+          "run_id": run.run.run_id.as_str(),
+          "ok": true
+        })));
+      }
+      Ok(None)
+    }
+
+    fn inspect_document(&self, _store: &LocalStore, run: &CanonicalRun) -> super::InspectResult<Option<InspectDocumentWire>> {
+      Ok(Some(InspectDocumentWire {
+        sections: vec![InspectSectionWire {
+          id: "demo".to_string(),
+          text: format!("demo for {}\n", run.run.run_id),
+          json: Some(serde_json::json!({ "kind": "demo" })),
+        }],
+      }))
+    }
+  }
 
   struct EnrichedProjection;
 
@@ -1638,6 +1689,141 @@ mod tests {
     assert!(run.get("view_parser").is_some(), "GET /runs/{{id}} must always include view_parser");
     assert!(run.get("view_parser_summary").is_some(), "GET /runs/{{id}} must always include view_parser_summary");
     assert!(run.get("spans").is_none(), "/runs/{{run_id}} should not inline spans");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn generic_extension_and_inspect_document_routes_use_projection() {
+    let root = temp_dir("inspect-server-s5-generic-routes");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_s5_generic_routes");
+    write_test_run(&store, run_id, None);
+
+    let app = router_with_projection(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig::default(),
+      Arc::new(ExtensionProjection),
+    );
+
+    let extension_response = app
+      .clone()
+      .oneshot(
+        Request::builder().uri("/runs/run_s5_generic_routes/extensions/demo-extension").body(Body::empty()).expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(extension_response.status(), StatusCode::OK);
+    let extension_body = to_bytes(extension_response.into_body(), usize::MAX).await.expect("body");
+    let extension: serde_json::Value = serde_json::from_slice(&extension_body).expect("json");
+    assert_eq!(extension["ok"], true);
+    assert_eq!(extension["extension"], "demo-extension");
+
+    let document_response = app
+      .clone()
+      .oneshot(Request::builder().uri("/runs/run_s5_generic_routes/inspect/document").body(Body::empty()).expect("request should build"))
+      .await
+      .expect("route should respond");
+    assert_eq!(document_response.status(), StatusCode::OK);
+    let document_body = to_bytes(document_response.into_body(), usize::MAX).await.expect("body");
+    let document: serde_json::Value = serde_json::from_slice(&document_body).expect("json");
+    assert_eq!(document["document"]["sections"][0]["id"], "demo");
+    assert_eq!(document["document"]["sections"][0]["json"]["kind"], "demo");
+
+    let text_response = app
+      .clone()
+      .oneshot(Request::builder().uri("/runs/run_s5_generic_routes/inspect").body(Body::empty()).expect("request should build"))
+      .await
+      .expect("route should respond");
+    assert_eq!(text_response.status(), StatusCode::OK);
+    let text_body = to_bytes(text_response.into_body(), usize::MAX).await.expect("body");
+    let text_json: serde_json::Value = serde_json::from_slice(&text_body).expect("json");
+    assert_eq!(text_json["text"], "demo for run_s5_generic_routes\n");
+
+    let legacy_minecraft_response = app
+      .oneshot(
+        Request::builder()
+          .uri("/runs/run_s5_generic_routes/minecraft-quality-baseline-report")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(legacy_minecraft_response.status(), StatusCode::NOT_FOUND, "Minecraft-first quality route must be removed after S5");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn extension_route_returns_404_for_nonexistent_run() {
+    let root = temp_dir("inspect-server-extension-missing-run");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let app = router_with_projection(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig::default(),
+      Arc::new(ExtensionProjection),
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder().uri("/runs/run_does_not_exist/extensions/demo-extension").body(Body::empty()).expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn default_projection_returns_404_for_composer_routes() {
+    let root = temp_dir("inspect-server-default-projection-no-composer");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_default_projection_no_composer");
+    write_test_run(&store, run_id, None);
+    let app = router(store, Arc::new(BroadcastRunRecorder::new(16)));
+
+    for uri in [
+      "/runs/run_default_projection_no_composer/inspect",
+      "/runs/run_default_projection_no_composer/inspect/document",
+    ] {
+      let response = app
+        .clone()
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).expect("request should build"))
+        .await
+        .expect("route should respond");
+      assert_eq!(response.status(), StatusCode::NOT_FOUND, "default projection should not advertise composer output for {uri}");
+    }
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[tokio::test]
+  async fn extension_route_returns_404_for_unknown_extension_key() {
+    let root = temp_dir("inspect-server-extension-unknown-key");
+    let store = LocalStore::new(root.clone()).expect("store should initialize");
+    let run_id = RunId::new("run_s5_unknown_extension");
+    write_test_run(&store, run_id, None);
+
+    let app = router_with_projection(
+      store,
+      Arc::new(BroadcastRunRecorder::new(16)),
+      super::InspectWriteConfig::default(),
+      Arc::new(ExtensionProjection),
+    );
+
+    let response = app
+      .oneshot(
+        Request::builder()
+          .uri("/runs/run_s5_unknown_extension/extensions/not-a-real-extension")
+          .body(Body::empty())
+          .expect("request should build"),
+      )
+      .await
+      .expect("route should respond");
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     let _ = fs::remove_dir_all(root);
   }

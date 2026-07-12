@@ -1,0 +1,131 @@
+Run <RUN_ID>
+Type: execute
+Status: ok
+State: ended
+Summary: balatro consumption probe chain completed
+
+Spans: 2
+- <SPAN_ID> name=auv.balatro.consumption_probe_chain parent=n/a status=ok
+- <SPAN_ID> name=balatro.consumption_probe_chain.artifacts parent=<SPAN_ID> status=ok
+
+Events: 11
+- <EVENT_ID> span=<SPAN_ID> name=operation.started recorded operation balatro consumption probe chain started
+- <EVENT_ID> span=<SPAN_ID> name=balatro.consumption_probe_chain.inputs bundle_input=<TMP> expected_slots=<TMP>/expected_slots.json target_slot=hand:0 work_dir=<TMP>
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0001 kind=balatro-card-detection-semantic path=artifacts/artifact_0001_balatro-card-detection-semantic.json note=balatro consumption probe artifact balatro-card-detection-semantic.json
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0002 kind=balatro-card-detection-semantic-inspect path=artifacts/artifact_0002_balatro-card-detection-semantic-inspect.json note=balatro consumption probe artifact balatro-card-detection-semantic-inspect.json
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0003 kind=balatro-card-detection-spatial-query path=artifacts/artifact_0003_balatro-card-detection-spatial-query.json note=balatro consumption probe artifact balatro-card-detection-spatial-query.json
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0004 kind=balatro-card-detection-spatial-query-inspect path=artifacts/artifact_0004_balatro-card-detection-spatial-query-inspect.json note=balatro consumption probe artifact balatro-card-detection-spatial-query-inspect.json
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0005 kind=balatro-card-detection-eval-witness path=artifacts/artifact_0005_balatro-card-detection-eval-witness.json note=balatro consumption probe artifact balatro-card-detection-eval-witness.json
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0006 kind=balatro-card-detection-eval-witness-inspect path=artifacts/artifact_0006_balatro-card-detection-eval-witness-inspect.json note=balatro consumption probe artifact balatro-card-detection-eval-witness-inspect.json
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0007 kind=balatro-card-detection-quality path=artifacts/artifact_0007_balatro-card-detection-quality.json note=balatro consumption probe artifact balatro-card-detection-quality.json
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0008 kind=balatro-card-detection-quality-inspect path=artifacts/artifact_0008_balatro-card-detection-quality-inspect.json note=balatro consumption probe artifact balatro-card-detection-quality-inspect.json
+- <EVENT_ID> span=<SPAN_ID> name=operation.completed balatro consumption probe chain completed
+
+Artifacts: 8
+- artifact_0001 span=<SPAN_ID> role=balatro-card-detection-semantic path=artifacts/artifact_0001_balatro-card-detection-semantic.json
+- artifact_0002 span=<SPAN_ID> role=balatro-card-detection-semantic-inspect path=artifacts/artifact_0002_balatro-card-detection-semantic-inspect.json
+- artifact_0003 span=<SPAN_ID> role=balatro-card-detection-spatial-query path=artifacts/artifact_0003_balatro-card-detection-spatial-query.json
+- artifact_0004 span=<SPAN_ID> role=balatro-card-detection-spatial-query-inspect path=artifacts/artifact_0004_balatro-card-detection-spatial-query-inspect.json
+- artifact_0005 span=<SPAN_ID> role=balatro-card-detection-eval-witness path=artifacts/artifact_0005_balatro-card-detection-eval-witness.json
+- artifact_0006 span=<SPAN_ID> role=balatro-card-detection-eval-witness-inspect path=artifacts/artifact_0006_balatro-card-detection-eval-witness-inspect.json
+- artifact_0007 span=<SPAN_ID> role=balatro-card-detection-quality path=artifacts/artifact_0007_balatro-card-detection-quality.json
+- artifact_0008 span=<SPAN_ID> role=balatro-card-detection-quality-inspect path=artifacts/artifact_0008_balatro-card-detection-quality-inspect.json
+
+Command Boundary Claims:
+- none
+
+Verifications:
+- none
+
+Observations:
+- none
+
+Detector Recognition Lineage:
+- none
+
+MC-1 Telemetry Samples:
+- none
+
+MC-2 Projection Artifacts:
+- none
+
+MC-6 Spatial Bundles:
+- none
+
+MC-7 Training Packages:
+- none
+
+MC-7 Training Launches:
+- none
+
+MC-7 Training Jobs:
+- none
+
+MC-7 Training Results:
+- none
+
+MC-7 Training Result Artifacts:
+- none
+
+MC-10 Training Result Semantics:
+- none
+
+MC-16 Training Result Holdout Preview:
+- none
+
+MC-17 Holdout Render Quality:
+- none
+
+Balatro Card Detection Semantic:
+- manifest_artifact=artifact_0001 semantic_status=ready semantic_reason=n/a ui_detection_count=2 entities_detection_count=4 frame_source=sample.png issue=n/a
+- inspect_artifact=artifact_0002 semantic_status=ready detection_bundle_readable=true detection_sets_non_empty=true warnings=0 issue=n/a
+
+Balatro Card Detection Spatial Query:
+- query_artifact=artifact_0003 target_slot=hand:0 status=answered reason=n/a pixel_point=440,560 query_backend=detection_bundle_reference issue=n/a
+- inspect_artifact=artifact_0004 status=answered semantic_status=ready warnings=0 issue=n/a
+
+Balatro Card Detection Eval Witness:
+- witness_artifact=artifact_0005 status=ready reason=n/a expected_slot_count=3 scored_slot_count=3 unscored_slot_count=0 below_confidence_slot_count=0 quality_backend=ultralytics_onnx_entities semantic_manifest=<TMP>/semantic/balatro-card-detection-semantic.json spatial_query_manifest=<TMP>/query/balatro-card-detection-spatial-query.json issue=n/a
+- witness_inspect_artifact=artifact_0006 status=ready slot_score_count=3 semantic_readable=true spatial_query_readable=true expected_slots_readable=true warnings=0 issue=n/a
+
+Balatro Card Detection Quality:
+- quality_artifact=artifact_0007 witness_status=ready status=ready verdict=measured_only quality_backend=ultralytics_onnx_entities expected_slot_count=3 scored_slot_count=3 unscored_slot_count=0 slot_coverage_ratio=1.000 issue=n/a
+- quality_inspect_artifact=artifact_0008 verdict=measured_only quality_backend=ultralytics_onnx_entities slot_coverage_ratio_available=true issue=n/a
+
+MC-17 Quality Baseline Report:
+- profile_id=mc17-d2-primary-v1 evidence_coverage=missing_stage training_result_semantic_manifest=.tmp/mc10-smoke-review/semantic/minecraft-3dgs-training-result-semantic.json spatial_query_status=n/a visibility=n/a screen_point=n/a holdout_status=n/a holdout_frame_index=n/a basis_checkpoint_path=n/a render_quality_status=n/a verdict=n/a image_size_match=n/a l1_mean=n/a mse=n/a psnr=n/a issue=n/a
+  trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence
+
+MC-17 Quality Verdict:
+- profile_id=mc17-d2-primary-v1 render_evidence_mode=screenshot_copy_probe evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing issue=evidence_coverage=missing_stage blocks threshold verdict evaluation
+  trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence | screenshot_copy_probe thresholds judge pipeline wiring only, not splat usefulness
+- profile_id=mc17-d2-primary-v1 render_evidence_mode=trained_render evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing issue=evidence_coverage=missing_stage blocks threshold verdict evaluation
+  trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence | trained_render thresholds are provisional v1 photometric gates; tune only via fixture revision plus new closure, not inline code | pass under trained_render profile means metrics met pre-committed bounds, not downstream action eligibility
+
+MC-12 Training Result Spatial Query:
+- none
+
+MC-14 Training Result Spatial Query Action Readiness:
+- none
+
+Osu Visual Truth Semantic:
+- none
+
+Osu Visual Truth Spatial Query:
+- none
+
+Osu Visual Truth Spatial Query Action Readiness:
+- none
+
+Osu Visual Truth Query Wired Live Action:
+- none
+
+Osu Detection Eval Witness:
+- none
+
+Osu Detection Eval Quality:
+- none
+
+MC-19 Query Wired Live Action:
+- none
+Scene state: missing scan-scene-state-input-v0 artifact
