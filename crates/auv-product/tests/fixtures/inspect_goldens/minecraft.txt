@@ -34,7 +34,7 @@ MC-6 Spatial Bundles:
 - none
 
 MC-7 Training Packages:
-- manifest_artifact=artifact_0001 role=minecraft-3dgs-training-package path=artifacts/artifact_0001_minecraft-3dgs-training-package-run.json schema=1 source_scene_packet=/tmp/scene-packet/run.json source_runs=1 frames=2 images=2 compatibility_view=nerfstudio compatibility_status=ready exported=2 skipped=0 transforms=present paired_report_artifact=n/a issue=n/a
+- manifest_artifact=artifact_0001 role=minecraft-3dgs-training-package path=artifacts/artifact_0001_minecraft-3dgs-training-package-run.json schema=1 source_scene_packet=<TMP>/scene-packet/run.json source_runs=1 frames=2 images=2 compatibility_view=nerfstudio compatibility_status=ready exported=2 skipped=0 transforms=present paired_report_artifact=n/a issue=n/a
   known_limits=golden fixture
 
 MC-7 Training Launches:

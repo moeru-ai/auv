@@ -295,8 +295,8 @@ fn golden_minecraft_training_package_inspect_run() {
   let manifest = TrainingPackageManifest {
     schema_version: 1,
     generated_at_millis: 1,
-    source_scene_packet_manifest_path: "/tmp/scene-packet/run.json".to_string(),
-    source_bundle_manifest_paths: vec!["/tmp/bundle-a/run.json".to_string()],
+    source_scene_packet_manifest_path: root.join("scene-packet/run.json").display().to_string(),
+    source_bundle_manifest_paths: vec![root.join("bundle-a/run.json").display().to_string()],
     source_run_ids: vec!["run_a".to_string()],
     counts: TrainingPackageCounts {
       frames: 2,
