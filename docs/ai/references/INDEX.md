@@ -260,10 +260,11 @@ run 录制、inspect viewer、trace
 - [`2026-05-19-trace-run-inspect-implementation-plan.md`](2026-05-19-trace-run-inspect-implementation-plan.md)
 - [`2026-07-10-auv-inspect-server-crate-viewer-implementation-plan.md`](2026-07-10-auv-inspect-server-crate-viewer-implementation-plan.md) — implementation plan for extracting `auv-inspect-server` and migrating the viewer to Vite/Vue/TypeScript
 
-#### note (2)
+#### note (3)
 
 - [`2026-06-10-auv-tracing-driver-runtime-recording-split.md`](2026-06-10-auv-tracing-driver-runtime-recording-split.md)
 - [`2026-06-18-recording-root-shim-removal-spec.md`](2026-06-18-recording-root-shim-removal-spec.md)
+- [`2026-07-13-inspect-composition-s4-migration.md`](2026-07-13-inspect-composition-s4-migration.md) — `auv-cli` library core-only + `auv-product` packaging; S3b query-wired stays in product; S5 server/viewer composer + generic extension routes landed
 
 #### plan (1)
 
