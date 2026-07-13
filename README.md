@@ -1,16 +1,16 @@
 <p align="center">
   <picture>
     <source
-      width="20%"
+      width="30%"
       srcset="./docs/assets/logo-short-height-dark.svg"
       media="(prefers-color-scheme: dark)"
     />
     <source
-      width="20%"
+      width="30%"
       srcset="./docs/assets/logo-short-height-light.svg"
       media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)"
     />
-    <img width="20%" src="./docs/assets/logo-short-height-light.svg" />
+    <img width="30%" src="./docs/assets/logo-short-height-light.svg" />
   </picture>
 </p>
 
