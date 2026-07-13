@@ -1,30 +1,43 @@
-//! Temporal scan contracts — `scan-frame-v0` wire, artifact IO, producers, and read-side loader.
+//! Temporal scan contracts, producers, artifact IO, and read-side projections.
+//!
+//! The crate root is the only public import path. Implementation modules stay
+//! private so one concept cannot be imported through both `auv_scan::Type` and
+//! `auv_scan::module::Type`.
+//!
+//! ```
+//! use auv_scan::ScanFrame;
+//! ```
+//!
+//! ```compile_fail
+//! use auv_scan::frame::ScanFrame;
+//! ```
 
 #[cfg(test)]
 mod fixture;
 #[cfg(test)]
 mod scene_fixture_support;
 
-pub mod artifact;
-pub mod association;
-pub mod coverage;
-pub mod coverage_artifact;
-pub mod frame;
-pub mod lifecycle;
-pub mod motion;
-pub mod producer;
-pub mod reader;
-pub mod scene_state;
-pub mod scene_state_inspect;
-pub mod timeline;
-pub mod tracks;
+mod artifact;
+mod association;
+mod coverage;
+mod coverage_artifact;
+mod frame;
+mod lifecycle;
+mod motion;
+mod producer;
+mod reader;
+mod scene_state;
+mod scene_state_inspect;
+mod timeline;
+mod tracks;
 
 pub use artifact::{ScanArtifactError, frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
 pub use association::{AssociationDiagnostic, AssociationResult, FrameObservation, associate_adjacent_frames};
 pub use coverage::{CompletenessClaim, CoverageEntry, CoverageView, NegativeEvidence, build_coverage_view};
 pub use coverage_artifact::{
-  CoverageArtifactError, SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_ARTIFACT_ROLE, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire,
-  coverage_view_to_wire, read_coverage_artifact, write_coverage_artifact,
+  CompletenessWire, CoverageArtifactError, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_ARTIFACT_FILE_NAME,
+  SCAN_COVERAGE_ARTIFACT_ROLE, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire, coverage_view_to_wire, read_coverage_artifact,
+  write_coverage_artifact,
 };
 pub use frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
 pub use lifecycle::{LifecycleError, LifecycleEvent, LifecycleVerdict, TransitionEvidence, evaluate_lifecycle};
