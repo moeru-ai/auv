@@ -13,11 +13,11 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+auv-inspect-model = { path = "../auv-inspect-model" }
 auv-file = { path = "../auv-file" }
 auv-query-readiness = { path = "../auv-query-readiness" }
 auv-stage-status = { path = "../auv-stage-status" }
 auv-driver = { path = "../auv-driver" }
-auv-inference-common = { path = "../auv-inference-common" }
 auv-task-object-detection = { path = "../auv-task-object-detection" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
 image.workspace = true

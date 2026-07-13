@@ -69,11 +69,13 @@ lerna-debug.log*
 
 # Node.js dependencies
 node_modules
+.pnpm-store/
 dist
 dist-ssr
 *.local
 
 .eslintcache
+.alintcache
 
 .auv/
 .runs/

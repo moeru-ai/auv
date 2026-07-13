@@ -15,6 +15,42 @@ A trace is the unit that inspection tools load as a whole. It should contain
 enough structure to reconstruct what AUV attempted, what happened, what state
 was observed, and which captured materials support that account.
 
+## InspectSection / InspectDocument / InspectComposer (provisional)
+
+Provisional core vocabulary for shared inspect composition across frontends
+(owned by `crates/auv-inspect-model`):
+
+- **InspectSection** — one collectible inspect unit (`id` + `collect` → optional
+  type-erased `InspectSectionOutput { id, text, json }`).
+- **InspectDocument** — ordered list of collected section outputs; `render_text`
+  concatenates section text in registration order.
+- **InspectComposer** — explicit value holding registered sections; product CLI,
+  product MCP, and product inspect-server projection use the same product factory
+  and section set, with each frontend explicitly injecting its composer `Arc`
+  into all text / document paths for that lifecycle. Core library default
+  composer is core-only (prefix+suffix). Named JSON extensions (e.g. quality
+  baseline) are served via generic `/runs/{id}/extensions/{extension}` keys
+  registered by the product projection — not first-class donor routes in the
+  shared server.
+
+Semantics: registration order is render order; duplicate registered ids fail
+assembly; after `collect` returns `Some(output)`, `output.id` must equal the
+registered `section.id()` (mismatch aborts the document); `collect` returning
+`None` omits the section; a section error aborts the document. Product assembly
+(not the core library default) owns donor-including composers.
+
+## Product package / auv-product (provisional)
+
+Provisional packaging term for the app-integration composition crate
+(`crates/auv-product`):
+
+- Owns root `auv` and app-specific bins, CLI frontend, integration wiring, product
+  `InspectComposer`, query-wired OperationResult adapters (S3b; stay in product
+  until contract ownership moves), and product inspect-server projection wrappers.
+- Depends on library-only `auv-cli` plus `auv-game-*` / `auv-godot`.
+- Must not be confused with core `auv-cli`; game crates must not depend on
+  `auv-cli` to reach product types.
+
 ## Device
 
 A device is the controllable/observable computer target a run executes

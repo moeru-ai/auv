@@ -374,22 +374,15 @@ dependencies = [
  "auv-cli-invoke",
  "auv-driver",
  "auv-driver-macos",
- "auv-game-balatro",
- "auv-game-minecraft",
- "auv-game-osu",
- "auv-godot",
+ "auv-inspect-model",
  "auv-inspect-server",
  "auv-media-macos",
  "auv-scan",
- "auv-stage-status",
- "auv-task-object-detection",
  "auv-tracing-driver",
  "auv-view",
- "axum",
  "image",
  "objc2-core-foundation",
  "objc2-core-graphics",
- "reqwest 0.12.28",
  "rmcp",
  "schemars",
  "serde",
@@ -400,8 +393,6 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tonic",
- "tower",
- "tracing",
 ]
 
 [[package]]
@@ -438,9 +429,6 @@ dependencies = [
  "auv-driver-linux",
  "auv-driver-macos",
  "auv-driver-windows",
- "image",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -511,6 +499,7 @@ dependencies = [
  "auv-inference-common",
  "auv-inference-ort",
  "auv-inference-ultralytics",
+ "auv-inspect-model",
  "auv-stage-status",
  "auv-task-object-detection",
  "auv-tracing-driver",
@@ -531,6 +520,7 @@ dependencies = [
  "auv-compare",
  "auv-driver",
  "auv-file",
+ "auv-inspect-model",
  "auv-query-readiness",
  "auv-stage-status",
  "auv-tracing-driver",
@@ -548,7 +538,7 @@ dependencies = [
  "auv-driver",
  "auv-driver-macos",
  "auv-file",
- "auv-inference-common",
+ "auv-inspect-model",
  "auv-query-readiness",
  "auv-stage-status",
  "auv-task-object-detection",
@@ -615,9 +605,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "auv-inspect-model"
+version = "0.0.1"
+dependencies = [
+ "auv-tracing-driver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "auv-inspect-server"
 version = "0.0.1"
 dependencies = [
+ "auv-inspect-model",
  "auv-tracing-driver",
  "auv-view",
  "axum",
@@ -662,6 +663,39 @@ version = "0.0.1"
 dependencies = [
  "swift-bridge",
  "swift-bridge-build",
+]
+
+[[package]]
+name = "auv-product"
+version = "0.0.1"
+dependencies = [
+ "auv-api-proto",
+ "auv-cli",
+ "auv-cli-invoke",
+ "auv-driver",
+ "auv-driver-macos",
+ "auv-game-balatro",
+ "auv-game-minecraft",
+ "auv-game-osu",
+ "auv-godot",
+ "auv-inspect-model",
+ "auv-inspect-server",
+ "auv-media-macos",
+ "auv-query-readiness",
+ "auv-stage-status",
+ "auv-task-object-detection",
+ "auv-tracing-driver",
+ "axum",
+ "image",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "swift-bridge-build",
+ "tokio",
+ "tonic",
+ "tower",
 ]
 
 [[package]]

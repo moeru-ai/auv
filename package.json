@@ -1,0 +1,13 @@
+{
+  "name": "auv",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "devDependencies": {
+    "@alint-js/cli": "0.0.20",
+    "@auv/alint-config": "workspace:*",
+    "@types/node": "^26.1.1",
+    "tsdown": "^0.22.3",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,3 +1,7 @@
+pub mod artifact_roles;
+pub mod inspect;
+pub mod run_read;
+
 pub mod artifact;
 pub mod bind;
 pub mod closed_scene_toy_fixture;
@@ -142,3 +146,6 @@ pub use verify::{
 // proven from projection visibility, telemetry ordering, pre/post witness quality, and screenshot
 // binding metadata already present on `MinecraftSpatialFrame`; real client samples are still required
 // before this can claim live acceptance coverage for occlusion, skew thresholds, or runtime wiring.
+
+pub use artifact_roles::*;
+pub use inspect::{inspect_sections_primary, inspect_sections_quality_spatial};

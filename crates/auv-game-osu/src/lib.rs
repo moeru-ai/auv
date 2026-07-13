@@ -1,3 +1,7 @@
+pub mod artifact_roles;
+pub mod inspect;
+pub mod run_read;
+
 pub mod benchmark;
 pub mod dataset;
 pub mod detection_eval_quality;
@@ -51,3 +55,7 @@ pub use visual_truth_spatial_query_action_wiring::{
   VisualTruthQueryLiveClickExecutor, visual_truth_query_action_wiring_lineage_from_manifest,
   wire_visual_truth_spatial_query_manifest_to_action,
 };
+
+pub use inspect::{inspect_sections_detection_eval, inspect_sections_primary};
+
+pub use artifact_roles::*;
