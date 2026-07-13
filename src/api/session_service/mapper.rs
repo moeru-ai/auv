@@ -1,6 +1,7 @@
-//! Proto <-> host mapping for the session API, isolated from handler and
-//! transport code (API-P4 handoff checklist: "isolate proto/host mapping from
-//! transport handler code").
+//! Protobuf and host-model mapping for the session API.
+//!
+//! Mapping stays separate from both application orchestration and tonic RPC
+//! dispatch.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -26,11 +27,9 @@ pub fn operation_status_str(status: OperationStatus) -> String {
   }
 }
 
-// NOTICE(api-p3-od5): the json_payload envelope schema is UNRESOLVED. This
-// provisional decoder follows the API-P3 sketch
-// ({target:{application_id,target_label}, inputs:{...}, dry_run}); an empty
-// payload maps to host defaults. A real slice must version this envelope and
-// define malformed-payload behavior. Trigger: an owner-named envelope decision.
+// TODO: The json_payload envelope remains provisional and unversioned. Keep the
+// current target/inputs/dry_run shape until an approved wire-version decision
+// defines compatibility and malformed-payload behavior.
 #[derive(serde::Deserialize, Default)]
 struct InvokePayloadEnvelope {
   #[serde(default)]
@@ -49,8 +48,10 @@ struct InvokeTargetEnvelope {
   target_label: Option<String>,
 }
 
-/// Decode a proto `json_payload` into a host `InvokeRequest` (provisional, see
-/// the od5 NOTICE above). An empty payload yields host defaults.
+/// Decode a protobuf `json_payload` into a host `InvokeRequest`.
+///
+/// An empty payload yields host defaults. The non-empty envelope is
+/// provisional as documented above.
 pub fn decode_invoke_payload(command_id: String, json_payload: &[u8]) -> Result<HostInvokeRequest, SessionApiError> {
   let envelope = if json_payload.is_empty() {
     InvokePayloadEnvelope::default()
@@ -68,8 +69,8 @@ pub fn decode_invoke_payload(command_id: String, json_payload: &[u8]) -> Result<
   })
 }
 
-// NOTICE(api-p3-od4): resolved in API-P12 — invoke path uses ArtifactRecordV1Alpha1;
-// GetOperation joins contract refs against the run artifact catalog.
+// Invoke returns recorder artifact records directly. GetOperation instead
+// joins slim contract references against the durable run artifact catalog.
 fn artifact_ref_from_record(run_id: &str, record: &ArtifactRecordV1Alpha1) -> proto::ArtifactRef {
   proto::ArtifactRef {
     run_id: run_id.to_string(),
@@ -78,8 +79,8 @@ fn artifact_ref_from_record(run_id: &str, record: &ArtifactRecordV1Alpha1) -> pr
   }
 }
 
-// API-P12: role on GetOperation comes from the run artifact catalog keyed by
-// artifact_id; contract::ArtifactRef stays slim (reference-only).
+// The durable run catalog supplies GetOperation roles by artifact id;
+// contract::ArtifactRef intentionally remains a slim reference.
 fn artifact_ref_from_contract(
   artifact: &ContractArtifactRef,
   artifact_roles: &BTreeMap<String, String>,
@@ -99,9 +100,10 @@ fn artifact_ref_from_contract(
 
 /// Map an `InvokeResult` (plus the request `command_id`) to a proto
 /// `InvokeResponse`. `extra_known_limits` surfaces invoke-path durability gaps
-/// without changing execution status (see API-P11 partial-success policy).
+/// without changing execution status.
 pub fn invoke_result_to_response(command_id: &str, result: &InvokeResult, extra_known_limits: &[&str]) -> proto::InvokeResponse {
-  // API-P12: wire operation_id is invoke command_id on both Invoke and GetOperation.
+  // The wire operation id is the invoke command id on both Invoke and
+  // GetOperation.
   let artifacts = result.artifacts.iter().map(|record| artifact_ref_from_record(&result.run_id, record)).collect();
   proto::InvokeResponse {
     operation: Some(proto::OperationRef {
@@ -110,16 +112,15 @@ pub fn invoke_result_to_response(command_id: &str, result: &InvokeResult, extra_
     }),
     status: run_status_str(&result.status),
     artifacts,
-    // NOTICE(api-p3-od1): known_limits is OperationResult-sourced and is not on
-    // the InvokeResult return value; empty on the invoke path until the summary
-    // source is joined with the persisted record. API-P11 may append durability
-    // limits when summary persistence fails after a successful command.
+    // InvokeResult has no domain known_limits field. This response therefore
+    // reports only durability limits discovered after command execution; the
+    // full OperationResult limits become available through GetOperation.
     known_limits: extra_known_limits.iter().map(|limit| (*limit).to_string()).collect(),
     failure_message: result.failure_message.clone().unwrap_or_default(),
   }
 }
 
-/// Map a joined two-source summary (API-P7) to a proto `GetOperationResponse`.
+/// Map a joined two-source summary to a protobuf `GetOperationResponse`.
 pub fn joined_to_get_operation_response(joined: &JoinedOperationSummary) -> proto::GetOperationResponse {
   let mut known_limits = joined.known_limits.clone();
   let (output_summary, signals, failure_message): (String, HashMap<String, String>, String) = match &joined.runtime {
@@ -127,10 +128,8 @@ pub fn joined_to_get_operation_response(joined: &JoinedOperationSummary) -> prot
       (runtime.output_summary.clone(), runtime.signals.clone().into_iter().collect(), runtime.failure_message.clone().unwrap_or_default())
     }
     None => {
-      // NOTICE(api-p4-two-source): the runtime summary is absent. API-P4 says we
-      // must not fabricate empty strings as authoritative data, so we surface
-      // the gap as an explicit known_limit rather than silently returning empty
-      // output_summary/signals.
+      // Do not present protobuf defaults as authoritative runtime data. The
+      // known limit makes the missing half of the projection explicit.
       known_limits.push("auv.api.session.runtime_summary_unavailable".to_string());
       (String::new(), HashMap::new(), String::new())
     }

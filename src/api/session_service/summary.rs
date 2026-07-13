@@ -1,26 +1,23 @@
-//! Two-source operation summary read path and join policy (API-P7/P12).
+//! Two-source operation summary read path and join policy.
 //!
-//! API-P3 showed `GetOperation` is a two-source projection:
+//! `GetOperation` is a two-source projection:
 //! - `OperationResult` (persisted) owns `operation_id`, `status`,
 //!   `known_limits`, and evidence artifact refs.
 //! - the `InvokeResult`-sourced summary (via `OperationSummarySource`) owns
 //!   `output_summary`, `signals`, and `failure_message`.
 //!
-//! This module joins them explicitly. Per API-P4 (`GetOperation` flow), the
-//! persisted record is the required skeleton and the runtime summary is layered
-//! on when available. When the runtime summary is absent, the join records it as
-//! `None` rather than fabricating empty strings as authoritative data (API-P4:
-//! "It must not silently fabricate empty strings").
+//! The persisted record is the required skeleton and the runtime summary is
+//! layered on when available. When the runtime summary is absent, the join
+//! records `None` rather than treating protobuf defaults as authoritative data.
 //!
 //! ## Runtime summary resolution
 //!
-//! [`load_joined_operation_summary`] picks the InvokeResult-sourced half in this
-//! order (see also API-P11 handoff in
-//! `docs/ai/references/2026-06-30-auv-api-p11-summary-durability-handoff.md`):
+//! [`load_joined_operation_summary`] picks the invoke-result-sourced half in
+//! this order:
 //!
 //! 1. `process_local_runtime_override` — same-process cache hit from
-//!    [`SessionApiHandler`](super::handler::SessionApiHandler) (API-P6).
-//! 2. Persisted `operation-summary` artifact on the run (API-P11, store read).
+//!    [`SessionApiHandler`](super::handler::SessionApiHandler).
+//! 2. Persisted `operation-summary` artifact on the run.
 //! 3. `None` — join leaves `runtime` absent; callers must not treat that as empty output.
 
 use std::collections::BTreeMap;
@@ -32,10 +29,10 @@ use crate::contract::{ArtifactRef, OperationResult, OperationStatus};
 use crate::model::AuvResult;
 use crate::run_read;
 
-/// Known limit when wire `command_id` cannot be resolved (API-P12).
+/// Known limit when the wire `command_id` cannot be resolved.
 pub const COMMAND_ID_UNAVAILABLE_KNOWN_LIMIT: &str = "auv.api.session.command_id_unavailable";
 
-/// Known limit when an evidence artifact has no catalog role entry (API-P12).
+/// Known limit when an evidence artifact has no catalog role entry.
 pub const ARTIFACT_ROLE_UNAVAILABLE_KNOWN_LIMIT: &str = "auv.api.session.artifact_role_unavailable";
 
 /// Outcome of loading and joining a `GetOperation` summary for one run.
@@ -80,12 +77,12 @@ pub struct JoinedOperationSummary {
   pub run_id: String,
   /// Internal domain label from `OperationResult.operation_id` (not API wire).
   pub domain_operation_id: String,
-  /// Invoke `command_id` for proto `OperationRef.operation_id` (API-P12).
+  /// Invoke `command_id` for protobuf `OperationRef.operation_id`.
   pub command_id: Option<String>,
   pub status: OperationStatus,
   pub known_limits: Vec<String>,
   pub artifacts: Vec<ArtifactRef>,
-  /// Run artifact catalog `artifact_id` → `role` (API-P12).
+  /// Run artifact catalog from `artifact_id` to `role`.
   pub artifact_roles: BTreeMap<String, String>,
   // InvokeResult-sourced (runtime return value, may be absent).
   pub runtime: Option<RuntimeOperationSummary>,
@@ -176,7 +173,7 @@ fn artifact_role_catalog(store: &LocalStore, run_id: &str) -> AuvResult<BTreeMap
 /// Reads the persisted `OperationResult` (storage-side read path via
 /// [`run_read::read_operation_result`]) and joins it with the runtime summary
 /// source. When `process_local_runtime_override` is absent, falls back to the
-/// persisted `operation-summary` artifact (API-P11). Distinguishes a missing run
+/// persisted `operation-summary` artifact. Distinguishes a missing run
 /// from a run that exists but recorded no `OperationResult`.
 pub fn load_joined_operation_summary(
   store: &LocalStore,

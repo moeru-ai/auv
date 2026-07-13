@@ -1,4 +1,4 @@
-//! Persisted operation-result artifact write path (API-R2).
+//! Persisted operation-result artifact write path.
 //!
 //! Write-through companion after invoke: the persisted skeleton required by
 //! `GetOperation` is staged as an `operation-result` JSON artifact on the
@@ -17,8 +17,8 @@ use crate::contract::{ArtifactRef, OPERATION_RESULT_API_VERSION, OperationOutput
 pub const INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT: &str = "auv.api.session.invoke_synthetic_operation_result";
 
 /// Known limit when invoke succeeded but the operation-result artifact could not
-/// be persisted (API-R2). The command already executed; callers must not treat
-/// this as a failed invoke suitable for blind retry.
+/// be persisted. The command already executed; callers must not treat this as a
+/// failed invoke suitable for blind retry.
 pub const OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT: &str = "auv.api.session.operation_result_persist_failed";
 
 const OPERATION_RESULT_ARTIFACT_ROLE: &str = "operation-result";
@@ -60,9 +60,10 @@ fn synthetic_operation_result_from_invoke(command_id: &str, result: &InvokeResul
 /// `operation-result`, and replaces the run snapshot with the new artifact
 /// list. Uses [`InvokeResult::producer_span_id`] as the artifact span.
 ///
-/// NOTICE(api-r2-duplicate-artifacts): invoke retries may append multiple
-/// `operation-result` artifacts; the read path takes the **first** match,
-/// mirroring [`crate::run_read::read_operation_result`].
+/// NOTICE: Invoke retries may append multiple `operation-result` artifacts.
+/// The read path takes the first match, mirroring
+/// [`crate::run_read::read_operation_result`]. Remove this behavior only with an
+/// explicit idempotency and artifact-replacement policy.
 pub fn persist_operation_result(store: &LocalStore, result: &InvokeResult, operation: &OperationResult) -> Result<(), SessionApiError> {
   let run_id = result.run_id.as_str();
   let mut canonical = store.read_run(run_id).map_err(SessionApiError::Storage)?;

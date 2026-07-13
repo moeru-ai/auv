@@ -80,12 +80,12 @@ async fn run() -> Result<(), String> {
   } = &command
   {
     let store_root = resolve_store_root(&project_root, store_root.as_ref());
-    let config = auv_cli::api::session_service::transport::SessionApiServeConfig {
+    let config = auv_cli::api::session_service::server::SessionApiServeConfig {
       host: host.clone(),
       port: *port,
       store_root,
     };
-    auv_cli::api::session_service::transport::serve(config).await?;
+    auv_cli::api::session_service::server::serve(config).await?;
     return Ok(());
   }
 

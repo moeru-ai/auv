@@ -1977,8 +1977,8 @@ fn parse_session(arguments: &[String]) -> AuvResult<CliCommand> {
 }
 
 fn parse_session_serve(arguments: &[String]) -> AuvResult<CliCommand> {
-  let mut host = auv_cli::api::session_service::transport::DEFAULT_SESSION_API_HOST.to_string();
-  let mut port = auv_cli::api::session_service::transport::DEFAULT_SESSION_API_PORT;
+  let mut host = auv_cli::api::session_service::server::DEFAULT_SESSION_API_HOST.to_string();
+  let mut port = auv_cli::api::session_service::server::DEFAULT_SESSION_API_PORT;
   let mut store_root = None;
   let mut index = 2;
   while index < arguments.len() {
@@ -3706,8 +3706,8 @@ mod tests {
         port,
         store_root,
       } => {
-        assert_eq!(host, auv_cli::api::session_service::transport::DEFAULT_SESSION_API_HOST);
-        assert_eq!(port, auv_cli::api::session_service::transport::DEFAULT_SESSION_API_PORT);
+        assert_eq!(host, auv_cli::api::session_service::server::DEFAULT_SESSION_API_HOST);
+        assert_eq!(port, auv_cli::api::session_service::server::DEFAULT_SESSION_API_PORT);
         assert_eq!(store_root.as_deref(), Some("/tmp/auv-session-store"));
       }
       other => panic!("unexpected command: {other:?}"),

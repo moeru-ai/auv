@@ -1,39 +1,40 @@
-//! Session API service seam (API-P4 boundary).
+//! Execute-facing session API boundary.
 //!
 //! Owns the execute-facing `SessionService` surface separately from the
 //! inspect viewer/server API and the tool-facing `mcp`.
 //!
 //! Modules:
-//! - `registry`: lightweight in-memory session registry (API-P4 responsibility A).
-//! - `mapper`: proto <-> host mapping, isolated from handler code (API-P4 checklist).
-//! - `summary`: two-source `GetOperation` read path + join policy (API-P7/P12).
-//! - `summary_store`: persisted `operation-summary` write path (API-P11).
-//! - `operation_result_store`: persisted `operation-result` write path (API-R2).
-//! - `handler`: transport-agnostic handler skeleton wiring proto RPCs to the
-//!   internal seams (API-P8).
-//! - `transport`: loopback-only tonic gRPC adapter (API-P9).
+//! - `handler`: protobuf-aware application orchestration.
+//! - `grpc`: tonic request adaptation and cancellation.
+//! - `server`: loopback listen policy and server lifecycle.
+//! - `registry`: lightweight in-memory session registry.
+//! - `mapper`: protobuf and host-model mapping.
+//! - `summary`: two-source `GetOperation` read path and join policy.
+//! - `summary_store`: persisted `operation-summary` write path.
+//! - `operation_result_store`: persisted `operation-result` write path.
 //! - `test_fixtures` (tests only): shared run/artifact staging helpers.
 //!
-//! TODO(api-p4-stream-events): `StreamSessionEvents` remains deferred to the
-//! event projector (API-P4 responsibility D); the transport returns
-//! `UNIMPLEMENTED` until that seam is wired.
+//! TODO: `StreamSessionEvents` remains deferred because no event projector
+//! exists. Implement it only after an application event source is approved;
+//! until then the gRPC adapter returns `UNIMPLEMENTED`.
 
-pub mod handler;
-pub mod mapper;
+pub(crate) mod grpc;
+pub(crate) mod handler;
+pub(crate) mod mapper;
 pub(crate) mod operation_result_store;
-pub mod registry;
-pub mod summary;
-pub mod summary_store;
-pub mod transport;
+pub(crate) mod registry;
+pub mod server;
+pub(crate) mod summary;
+pub(crate) mod summary_store;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 
 use std::fmt;
 
-/// Errors surfaced by the session API handler skeleton (API-P8).
+/// Errors surfaced by session application orchestration.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SessionApiError {
+pub(crate) enum SessionApiError {
   /// A required proto field was absent.
   MissingField(&'static str),
   /// `Invoke` / `StreamSessionEvents` referenced a session that was never created.
@@ -54,8 +55,6 @@ pub enum SessionApiError {
     requested: String,
     resolved: String,
   },
-  /// A seam this RPC depends on is not wired in the current skeleton.
-  NotWired { gate: &'static str },
 }
 
 impl fmt::Display for SessionApiError {
@@ -75,7 +74,6 @@ impl fmt::Display for SessionApiError {
         requested,
         resolved,
       } => write!(f, "operation_id mismatch for run {run_id}: requested {requested}, resolved {resolved}"),
-      Self::NotWired { gate } => write!(f, "session API seam not wired: {gate}"),
     }
   }
 }

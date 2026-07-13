@@ -1,11 +1,10 @@
 //! External API service seams over AUV's runtime.
 //!
-//! API-P4 calls for a dedicated session API server boundary, separate from the
-//! tool-facing `mcp` surface and the inspect viewer/server API. This module is
-//! that owned subtree.
+//! The session API server is separate from the tool-facing `mcp` surface and
+//! the inspect viewer/server API.
 //!
 //! Current contents:
-//! - `session_service`: the execute-facing `SessionService` seam (summary read
-//!   path + join policy today; transport handlers are a later slice).
+//! - `session_service`: execute-facing application, gRPC, server, and summary
+//!   read/write boundaries.
 
 pub mod session_service;

@@ -1,9 +1,9 @@
-//! Lightweight in-memory session registry (API-P4 responsibility A).
+//! Lightweight in-memory session registry.
 //!
 //! Creates and looks up session handles and lets the handler reject unknown
 //! sessions on `Invoke` / `StreamSessionEvents`. Deliberately metadata-only: it
-//! does NOT materialize a `SessionRuntime` (API-P4: lazy provider/observation
-//! state is a later RPC's concern, not the invoke-only first slice).
+//! does not materialize a `SessionRuntime`; provider and observation state stay
+//! lazy until an approved session-runtime design owns them.
 
 use std::collections::HashMap;
 
@@ -30,9 +30,8 @@ impl SessionRegistry {
 
   /// Allocate a fresh session id, register lightweight metadata, and return it.
   ///
-  /// API-P4 `CreateSession`: allocate/normalize then register. This skeleton
-  /// always allocates a new id (the proto `CreateSessionRequest` carries only a
-  /// `client_label` hint, no caller-supplied id).
+  /// Always allocates a new id because `CreateSessionRequest` carries only a
+  /// client label, not a caller-supplied id.
   pub fn create(&mut self) -> SessionId {
     self.counter += 1;
     let session_id = SessionId::new(format!("session_{}_{}", now_millis(), self.counter));
@@ -51,17 +50,9 @@ impl SessionRegistry {
     self.entries.contains_key(session_id)
   }
 
-  /// Look up a registered session entry.
-  pub fn get(&self, session_id: &str) -> Option<&SessionEntry> {
-    self.entries.get(session_id)
-  }
-
+  #[cfg(test)]
   pub fn len(&self) -> usize {
     self.entries.len()
-  }
-
-  pub fn is_empty(&self) -> bool {
-    self.entries.is_empty()
   }
 }
 

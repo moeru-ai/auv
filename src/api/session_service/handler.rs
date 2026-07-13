@@ -1,18 +1,14 @@
-//! Session API handler skeleton (API-P8).
+//! Session API application orchestration.
 //!
-//! Transport-agnostic: this is NOT a gRPC server and implements no tonic
-//! service trait. API-P4 defers the tonic/axum transport decision; this skeleton
-//! only wires the proto request/response shapes to the internal seams:
-//! session-aware invoke (API-P5), the operation summary cache (API-P6), the
-//! persisted operation-summary artifact (API-P11), synthetic operation-result
-//! artifact (API-R2), and the two-source `GetOperation` join (API-P7). Binding a
-//! transport is a later owner-named slice (see the `mod.rs` TODO).
+//! This module implements no tonic service trait, but it accepts generated
+//! protobuf request and response types, so it is tonic-independent rather than
+//! transport-agnostic. It wires session validation, recorded invoke, operation
+//! persistence, and the two-source `GetOperation` join.
 //!
-//! NOTICE(api-r2-invoke-persist): `Invoke` records a run, caches the runtime
-//! summary (API-P6), persists the runtime summary artifact (API-P11), and writes
-//! a synthetic `operation-result` skeleton (API-R2) so fresh `GetOperation` joins
-//! succeed on the happy path. Typed producers may still record richer domain
-//! `operation_id` labels outside this session invoke write path.
+//! Invoke records a run, caches the runtime summary only after both durability
+//! writes succeed, persists the runtime summary artifact, and writes a synthetic
+//! `operation-result` so fresh `GetOperation` joins succeed. Typed producers may
+//! still record richer domain operation identifiers outside this path.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -34,12 +30,12 @@ use crate::api::session_service::summary_store::record_invoke_summary;
 /// **Not** a long-lived `Runtime`, `RunRecordingBackend`, or shared invoke executor.
 /// **Is** a process-local façade over:
 /// - `store_root` — durable runs and artifacts live here
-/// - `SessionRegistry` — lightweight session id registry (API-P4)
-/// - `OperationSummaryCache` — InvokeResult-sourced summary cache (API-P6)
+/// - `SessionRegistry` — lightweight session id registry
+/// - `OperationSummaryCache` — invoke-result-sourced summary cache
 ///
 /// Each `invoke` opens a fresh `LocalStore` + `RunRecordingBackend` (see
-/// `NOTICE(api-p8-ephemeral-recording)`); recording is discarded when the call
-/// returns. Durability is store-backed artifacts, not handler fields.
+/// [`SessionApiHandler::invoke`]); recording is discarded when the call returns.
+/// Durability is store-backed artifacts, not handler fields.
 pub struct SessionApiHandler {
   store_root: PathBuf,
   registry: Mutex<SessionRegistry>,
@@ -62,9 +58,8 @@ impl SessionApiHandler {
   /// `CreateSession`: allocate + register lightweight session metadata, return a
   /// `SessionRef`.
   pub fn create_session(&self, _request: proto::CreateSessionRequest) -> Result<proto::CreateSessionResponse, SessionApiError> {
-    // TODO(api-p8-event): emit a `session_created` SessionEvent once the event
-    // projector (API-P4 responsibility D) has a source. No event bus is wired in
-    // this skeleton, so creation is silent.
+    // TODO: Emit `session_created` after an application event source and event
+    // projector are approved. No event bus exists, so creation is silent.
     let session_id = self.registry.lock().expect("session registry mutex poisoned").create();
     Ok(proto::CreateSessionResponse {
       session: Some(proto::SessionRef {
@@ -74,11 +69,11 @@ impl SessionApiHandler {
   }
 
   /// `Invoke`: validate the session, decode the payload, run the session-aware
-  /// recorded invoke (API-P5), record the summary (API-P6), and map the result.
+  /// recorded invoke, record the summary, and map the result.
   ///
-  /// NOTICE(api-p8-ephemeral-recording): each call opens a new `LocalStore` and
-  /// `RunRecordingBackend`; nothing session-scoped survives the return. This
-  /// mirrors the MCP invoke surface and is not a session-bound runtime.
+  /// Each call opens a new `LocalStore` and `RunRecordingBackend`; nothing
+  /// session-scoped survives the return. This mirrors the MCP invoke surface
+  /// and is not a session-bound runtime.
   pub fn invoke(&self, request: proto::InvokeRequest) -> Result<proto::InvokeResponse, SessionApiError> {
     let session = request.session.ok_or(SessionApiError::MissingField("session"))?;
     let session_id = session.session_id;
@@ -105,9 +100,9 @@ impl SessionApiHandler {
     recording: &RunRecordingBackend,
   ) -> proto::InvokeResponse {
     let summary = OperationSummary::capture(result);
-    // NOTICE(api-p11-invoke-partial-success): invoke already finished; summary
-    // persistence failure must not surface as an invoke error (clients must not
-    // blind-retry non-idempotent commands). Durability gaps go to known_limits.
+    // Invoke already finished, so persistence failure must not surface as an
+    // invoke error that invites blind retry of a non-idempotent command.
+    // Durability gaps are reported through known_limits.
     let mut durability_limits = record_invoke_summary(recording.store(), result, &summary);
     durability_limits.extend(record_invoke_operation_result(recording.store(), command_id, result));
     // Process-local cache is populated only when both summary and operation-result persist succeed.
@@ -119,11 +114,11 @@ impl SessionApiHandler {
   }
 
   /// `GetOperation`: read the persisted record + runtime summary and return the
-  /// explicit two-source join (API-P7).
+  /// explicit two-source join.
   ///
   /// On this handler instance, a process-local cache hit becomes
   /// `process_local_runtime_override` for the join. A new handler or cache miss
-  /// falls back to the persisted `operation-summary` artifact (API-P11). A
+  /// falls back to the persisted `operation-summary` artifact. A
   /// persisted `OperationResult` skeleton is still required.
   pub fn get_operation(&self, request: proto::GetOperationRequest) -> Result<proto::GetOperationResponse, SessionApiError> {
     let operation = request.operation.ok_or(SessionApiError::MissingField("operation"))?;
@@ -163,21 +158,6 @@ impl SessionApiHandler {
       JoinedOperationSummaryLoad::RunNotFound => Err(SessionApiError::RunNotFound(run_id)),
       JoinedOperationSummaryLoad::NoPersistedOperationResult => Err(SessionApiError::PersistedOperationRequired(run_id)),
     }
-  }
-
-  /// `StreamSessionEvents`: validates the session, then refuses.
-  ///
-  /// API-P4 responsibility D (event projector) has no internal event source yet
-  /// (gate 4). Rather than emit a fabricated/empty stream, the skeleton returns
-  /// `NotWired` so callers see the gap explicitly.
-  pub fn stream_session_events(&self, request: proto::StreamSessionEventsRequest) -> Result<Vec<proto::SessionEvent>, SessionApiError> {
-    let session = request.session.ok_or(SessionApiError::MissingField("session"))?;
-    if !self.registry.lock().expect("session registry mutex poisoned").contains(&session.session_id) {
-      return Err(SessionApiError::UnknownSession(session.session_id));
-    }
-    Err(SessionApiError::NotWired {
-      gate: "event projector (API-P4 responsibility D)",
-    })
   }
 }
 
@@ -462,10 +442,9 @@ mod tests {
   fn invoke_durability_failure_keeps_cache_empty_and_get_operation_preconditions() {
     use std::os::unix::fs::PermissionsExt;
 
-    // NOTICE(api-r2-test-gap): without a store fault-injection seam, this test can
-    // only exercise the current "both write-through persists fail" path. That is
-    // enough to lock the cache gate and precondition behavior without widening
-    // API-R2 into injectable storage abstractions.
+    // TODO: A store fault-injection seam is needed to reproduce only the second
+    // durability write failing after the first succeeds. Add that case when
+    // durability writes gain an injectable storage boundary.
     let root = unique_temp_dir("session-api-op-result-persist-fail");
     let handler = SessionApiHandler::new(root.clone());
     let session = handler
@@ -519,7 +498,7 @@ mod tests {
   #[test]
   fn get_operation_rejects_operation_id_mismatch() {
     let run_id = "run-p12-mismatch";
-    let (handler, root) = handler_with_music_search_cached("session-api-p12-mismatch", run_id);
+    let (handler, root) = handler_with_music_search_cached("session-operation-id-mismatch", run_id);
 
     let error = handler
       .get_operation(proto::GetOperationRequest {
@@ -533,23 +512,5 @@ mod tests {
     assert!(matches!(error, SessionApiError::OperationIdMismatch { .. }));
 
     let _ = std::fs::remove_dir_all(root);
-  }
-
-  #[test]
-  fn stream_session_events_is_not_wired() {
-    let handler = handler();
-    let session = handler
-      .create_session(proto::CreateSessionRequest {
-        client_label: String::new(),
-      })
-      .expect("create_session")
-      .session
-      .expect("session ref");
-    let error = handler
-      .stream_session_events(proto::StreamSessionEventsRequest {
-        session: Some(session),
-      })
-      .expect_err("stream should be not wired");
-    assert!(matches!(error, SessionApiError::NotWired { .. }));
   }
 }

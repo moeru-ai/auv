@@ -1,4 +1,4 @@
-//! Persisted operation-summary artifact write path (API-P11).
+//! Persisted operation-summary artifact write path.
 //!
 //! Write-through companion to the in-memory [`OperationSummaryCache`]: after
 //! invoke, the runtime half of the `GetOperation` projection is staged as an
@@ -13,8 +13,8 @@ use crate::api::session_service::SessionApiError;
 use crate::contract::{OPERATION_SUMMARY_API_VERSION, OPERATION_SUMMARY_ARTIFACT_ROLE};
 
 /// Known limit surfaced when invoke succeeded but the operation-summary artifact
-/// could not be persisted (API-P11). The command already executed; callers must
-/// not treat this as a failed invoke suitable for blind retry.
+/// could not be persisted. The command already executed; callers must not treat
+/// this as a failed invoke suitable for blind retry.
 pub const OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT: &str = "auv.api.session.operation_summary_persist_failed";
 
 /// Stage and append an `operation-summary` artifact onto an existing run.
@@ -24,9 +24,10 @@ pub const OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT: &str = "auv.api.session.
 /// new artifact list. Uses [`InvokeResult::producer_span_id`] as the artifact
 /// span.
 ///
-/// NOTICE(api-p11-duplicate-artifacts): invoke retries may append multiple
-/// `operation-summary` artifacts; the read path takes the **first** match,
-/// mirroring [`crate::run_read::read_operation_result`].
+/// NOTICE: Invoke retries may append multiple `operation-summary` artifacts.
+/// The read path takes the first match, mirroring
+/// [`crate::run_read::read_operation_result`]. Remove this behavior only with an
+/// explicit idempotency and artifact-replacement policy.
 pub fn persist_operation_summary(store: &LocalStore, result: &InvokeResult, summary: &OperationSummary) -> Result<(), SessionApiError> {
   let run_id = result.run_id.as_str();
   let mut canonical = store.read_run(run_id).map_err(SessionApiError::Storage)?;
