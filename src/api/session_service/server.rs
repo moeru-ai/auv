@@ -111,7 +111,7 @@ mod tests {
   use auv_api_proto::v1::session::session_service_client::SessionServiceClient;
 
   use super::*;
-  use crate::api::session_service::operation_result_store::INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT;
+  use crate::api::session_service::durability::INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT;
   use crate::api::session_service::test_fixtures::session_api_temp_store_root;
 
   #[test]

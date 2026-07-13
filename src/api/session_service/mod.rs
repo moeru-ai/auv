@@ -7,25 +7,23 @@
 //! - `handler`: protobuf-aware application orchestration.
 //! - `grpc`: tonic request adaptation and cancellation.
 //! - `server`: loopback listen policy and server lifecycle.
+//! - `durability`: post-invoke write order and partial-success policy.
 //! - `registry`: lightweight in-memory session registry.
 //! - `mapper`: protobuf and host-model mapping.
 //! - `summary`: two-source `GetOperation` read path and join policy.
-//! - `summary_store`: persisted `operation-summary` write path.
-//! - `operation_result_store`: persisted `operation-result` write path.
 //! - `test_fixtures` (tests only): shared run/artifact staging helpers.
 //!
 //! TODO: `StreamSessionEvents` remains deferred because no event projector
 //! exists. Implement it only after an application event source is approved;
 //! until then the gRPC adapter returns `UNIMPLEMENTED`.
 
+pub(crate) mod durability;
 pub(crate) mod grpc;
 pub(crate) mod handler;
 pub(crate) mod mapper;
-pub(crate) mod operation_result_store;
 pub(crate) mod registry;
 pub mod server;
 pub(crate) mod summary;
-pub(crate) mod summary_store;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures;
