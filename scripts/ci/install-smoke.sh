@@ -12,7 +12,9 @@ target_dir="$temp_root/target"
 # Cargo installs a Git revision, so make a disposable Git snapshot that includes
 # tracked and non-ignored uncommitted files from the worktree under test.
 git clone --quiet --no-hardlinks --recurse-submodules "$workspace" "$source_snapshot"
-git -C "$workspace" diff --binary HEAD | git -C "$source_snapshot" apply --binary
+if ! git -C "$workspace" diff --quiet HEAD; then
+  git -C "$workspace" diff --binary HEAD | git -C "$source_snapshot" apply --binary
+fi
 while IFS= read -r -d '' path; do
   mkdir -p "$(dirname "$source_snapshot/$path")"
   cp -p "$workspace/$path" "$source_snapshot/$path"
