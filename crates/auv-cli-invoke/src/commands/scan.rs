@@ -7,7 +7,7 @@ use crate::{
   invoke_command,
 };
 use auv_scan::{
-  SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_ARTIFACT_ROLE, artifact::frame_artifact_file_name, produce_coverage_from_fixture_dir,
+  SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_ARTIFACT_ROLE, frame_artifact_file_name, produce_coverage_from_fixture_dir,
   produce_frame_from_fixture_dir,
 };
 use auv_tracing_driver::{ProducedArtifact, now_millis};
