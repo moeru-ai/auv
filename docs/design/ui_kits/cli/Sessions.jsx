@@ -103,7 +103,7 @@ function SessionInspect() {
       <Out indent={1} color={T.failed}>{`  "message": "0 ocr matches in constrained result region" }`}</Out>
       <Blank/>
       <Out color={T.fg3}>// known boundary — chinese requested-title selection is not yet validated.</Out>
-      <Out color={T.fg3}>// see  docs/ai/references/2026-05-17-qqmusic-narrow-skill-coverage.md</Out>
+      <Out color={T.fg3}>// see  docs/ai/references/apps/qqmusic/2026-05-17-qqmusic-narrow-skill-coverage.md</Out>
     </>
   );
 }

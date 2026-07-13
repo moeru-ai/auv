@@ -24,7 +24,7 @@ The reader is encouraged to skim those before designing anything substantial
 against AUV. The repository does not ship a UI; the design language here is
 *derived* from terminal output, JSON manifest shapes, and the planned
 browser-based viewer described in
-[`docs/ai/references/2026-05-19-trace-run-inspect-design.md`](https://github.com/moeru-ai/auv/blob/main/docs/ai/references/2026-05-19-trace-run-inspect-design.md).
+[`docs/ai/references/inspect/2026-05-19-trace-run-inspect-design.md`](https://github.com/moeru-ai/auv/blob/main/docs/ai/references/inspect/2026-05-19-trace-run-inspect-design.md).
 
 ---
 

@@ -56,7 +56,7 @@ These were settled in C.1. New phases should follow:
    change these to fit the UI; render against them as-is.
 
 5. **Honest boundaries.** Match the AUV voice from
-   `docs/ai/references/2026-05-18-phase-1-freeze.md`: when a feature
+   `docs/ai/references/archive/phase-history/2026-05-18-phase-1-freeze.md`: when a feature
    isn't shipped yet, say so explicitly in the UI (e.g. C.1's
    placeholder reads "span tree, events, and artifact panel land in
    a follow-on commit"). Do not paper over.

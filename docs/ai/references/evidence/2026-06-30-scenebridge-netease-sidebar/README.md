@@ -16,7 +16,7 @@ directory and contains **no production screenshots**.
 - `hermetic-reconstruct-sidebar-synthetic.json`
   - Redacted projection excerpt authored from
     `reconstruct_sidebar_groups_items_under_carried_section` test vectors
-    ([`tests.rs`](../../../../crates/auv-netease-music/src/view_parsers/sidebar/tests.rs) L7–54)
+    ([`tests.rs`](../../../../../crates/auv-netease-music/src/view_parsers/sidebar/tests.rs) L7–54)
 - `match-ref-vocabulary.json`
   - Example `MatchRef` JSON plus field glossary for agent-facing CLI output
 - `gap-view-memory-and-reacquire.txt`
@@ -36,7 +36,7 @@ directory and contains **no production screenshots**.
 
 **A5 field tiers:** [inspect identity proof charter](../../2026-06-30-auv-scenebridge-a5-inspect-identity-proof-charter.md)
 
-**A6 live closure:** [live evidence closure](../../2026-06-30-auv-scenebridge-a6-live-evidence-closure.md) (**PARTIAL** @ A6c-3 — baseline unblocked; Case B open)
+**A6 live closure:** [live evidence closure](../../scenebridge/2026-06-30-scenebridge-closure.md) (**PARTIAL** @ A6c-3 — baseline unblocked; Case B open)
 
 ## What this folder proves
 
