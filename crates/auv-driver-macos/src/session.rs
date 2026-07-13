@@ -60,6 +60,11 @@ pub struct PermissionApi<'a> {
   session: &'a MacosDriverSession,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct AccessibilityApi<'a> {
+  session: &'a MacosDriverSession,
+}
+
 impl MacosDriverSession {
   // Session APIs are grouped by automation target, not by native backend
   // mechanism. Window operations are relative to an application window;
@@ -88,6 +93,10 @@ impl MacosDriverSession {
   pub fn permission(&self) -> PermissionApi<'_> {
     PermissionApi { session: self }
   }
+
+  pub fn accessibility(&self) -> AccessibilityApi<'_> {
+    AccessibilityApi { session: self }
+  }
 }
 
 impl PermissionApi<'_> {
@@ -100,6 +109,38 @@ impl PermissionApi<'_> {
       accessibility: permission_status_from_label(native.accessibility),
       automation_to_system_events: probe_automation_to_system_events(),
     })
+  }
+}
+
+impl AccessibilityApi<'_> {
+  /// Captures a flattened AX tree for an application name or bundle id.
+  pub fn capture_app_tree(&self, app: &str, max_depth: i64, max_children: i64) -> DriverResult<crate::types::ObservedAxTreeSnapshot> {
+    let _ = self.session;
+    crate::accessibility::capture_app_tree(app, max_depth, max_children)
+  }
+
+  /// Focuses a previously observed AX node path within a process.
+  pub fn focus_node_path(&self, pid: i32, path: &str, expected_role: &str) -> DriverResult<InputActionResult> {
+    let _ = self.session;
+    crate::accessibility::focus_node_path(pid, path, expected_role)
+  }
+
+  /// Resolves a document/text node by query (or exact path candidate) and focuses it.
+  pub fn focus_text_by_query(
+    &self,
+    app: &str,
+    query: &str,
+    expected_role: Option<&str>,
+    candidate: &str,
+  ) -> DriverResult<crate::accessibility::AxFocusObservation> {
+    let _ = self.session;
+    crate::accessibility::focus_text_by_query(app, query, expected_role, candidate)
+  }
+
+  /// Captures the current AX tree and verifies expected text on a role-matched node.
+  pub fn verify_text(&self, app: &str, expected_text: &str, expected_role: &str) -> DriverResult<crate::accessibility::AxTextObservation> {
+    let _ = self.session;
+    crate::accessibility::verify_text(app, expected_text, expected_role)
   }
 }
 

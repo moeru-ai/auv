@@ -17,30 +17,46 @@ use serde_json::Value;
 
 use crate::build_default_store;
 use crate::model::{ExecutionTarget, InvokeRequest};
-use auv_cli_invoke::{ArgSpec, InvokeCommand, default_registry};
+use auv_cli_invoke::{ArgSpec, InvokeCommand, InvokeRegistry, InvokeResult, default_registry};
+use auv_tracing_driver::store::LocalStore;
+
+/// Optional post-invoke finalize hook (product uses this for canonical operation-result lineage).
+pub type InvokeFinalizeHook = Arc<dyn Fn(&LocalStore, &InvokeResult) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct McpServer {
   project_root: PathBuf,
   tool_router: ToolRouter<Self>,
   inspect_composer: Arc<auv_inspect_model::InspectComposer>,
+  invoke_registry: Arc<InvokeRegistry>,
+  invoke_finalize: Option<InvokeFinalizeHook>,
 }
 
 impl McpServer {
   /// Builds the core-only MCP server.
   ///
-  /// Product callers inject their composer through
-  /// [`Self::with_inspect_composer`]; this core library does not construct
-  /// app-specific inspect sections.
+  /// Product callers inject composer + registry through
+  /// [`Self::with_inspect_composer_and_registry`].
   pub fn new(project_root: PathBuf) -> Self {
     Self::with_inspect_composer(project_root, crate::inspect::build_core_inspect_composer().expect("core inspect composer"))
   }
 
   pub fn with_inspect_composer(project_root: PathBuf, inspect_composer: Arc<auv_inspect_model::InspectComposer>) -> Self {
+    Self::with_inspect_composer_and_registry(project_root, inspect_composer, Arc::new(default_registry()), None)
+  }
+
+  pub fn with_inspect_composer_and_registry(
+    project_root: PathBuf,
+    inspect_composer: Arc<auv_inspect_model::InspectComposer>,
+    invoke_registry: Arc<InvokeRegistry>,
+    invoke_finalize: Option<InvokeFinalizeHook>,
+  ) -> Self {
     Self {
       project_root,
       tool_router: Self::tool_router(),
       inspect_composer,
+      invoke_registry,
+      invoke_finalize,
     }
   }
 
@@ -49,9 +65,13 @@ impl McpServer {
     &self.inspect_composer
   }
 
-  fn store(&self, store_root: Option<String>) -> Result<auv_tracing_driver::store::LocalStore, McpError> {
+  pub fn invoke_registry(&self) -> &Arc<InvokeRegistry> {
+    &self.invoke_registry
+  }
+
+  fn store(&self, store_root: Option<String>) -> Result<LocalStore, McpError> {
     let store = match store_root {
-      Some(root) => auv_tracing_driver::store::LocalStore::new(PathBuf::from(root)),
+      Some(root) => LocalStore::new(PathBuf::from(root)),
       None => build_default_store(self.project_root.clone()),
     };
     store.map_err(invalid_params)
@@ -66,11 +86,10 @@ impl McpServer {
   )]
   async fn invoke(&self, Parameters(req): Parameters<InvokeToolRequest>) -> Result<CallToolResult, McpError> {
     let store = self.store(req.inspect.store_root.clone())?;
-    let recording = auv_tracing_driver::RunRecordingBackend::new(store, Arc::new(auv_tracing_driver::MemoryRunRecorder::new()));
-    let registry = default_registry();
+    let recording = auv_tracing_driver::RunRecordingBackend::new(store.clone(), Arc::new(auv_tracing_driver::MemoryRunRecorder::new()));
     let result = auv_cli_invoke::invoke_recorded(
       &recording,
-      &registry,
+      self.invoke_registry.as_ref(),
       InvokeRequest {
         command_id: req.command_id,
         target: ExecutionTarget {
@@ -82,18 +101,35 @@ impl McpServer {
       },
     )
     .map_err(invalid_params)?;
+    if let Some(finalize) = &self.invoke_finalize {
+      finalize(&store, &result).map_err(invalid_params)?;
+    }
 
-    let artifacts = result
-      .artifacts
-      .iter()
-      .map(|artifact| {
-        serde_json::json!({
-          "artifact_id": artifact.artifact_id.as_str(),
-          "role": artifact.role,
-          "path": artifact.path,
+    // Re-read after finalize so response artifacts include canonical operation-result.
+    let artifacts = match store.read_run(result.run_id.as_str()) {
+      Ok(canonical) => canonical
+        .artifacts
+        .iter()
+        .map(|artifact| {
+          serde_json::json!({
+            "artifact_id": artifact.artifact_id.as_str(),
+            "role": artifact.role,
+            "path": artifact.path,
+          })
         })
-      })
-      .collect::<Vec<_>>();
+        .collect::<Vec<_>>(),
+      Err(_) => result
+        .artifacts
+        .iter()
+        .map(|artifact| {
+          serde_json::json!({
+            "artifact_id": artifact.artifact_id.as_str(),
+            "role": artifact.role,
+            "path": artifact.path,
+          })
+        })
+        .collect::<Vec<_>>(),
+    };
     let artifact_paths = result.artifact_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>();
 
     json_result(serde_json::json!({
@@ -147,7 +183,11 @@ impl ServerHandler for McpServer {
     _request: Option<PaginatedRequestParam>,
     _context: RequestContext<RoleServer>,
   ) -> Result<ListToolsResult, McpError> {
-    Ok(ListToolsResult::with_all_items(self.tool_router.list_all()))
+    let mut tools = self.tool_router.list_all();
+    if let Some(invoke_tool) = tools.iter_mut().find(|tool| tool.name == "invoke") {
+      invoke_tool.input_schema = invoke_tool_input_schema_for_registry(self.invoke_registry.as_ref());
+    }
+    Ok(ListToolsResult::with_all_items(tools))
   }
 
   fn get_info(&self) -> ServerInfo {
@@ -162,8 +202,13 @@ impl ServerHandler for McpServer {
 }
 
 fn invoke_tool_input_schema() -> Arc<JsonObject> {
+  // Static schema uses core registry; product servers rewrite via list_tools
+  // with the explicitly injected registry.
+  invoke_tool_input_schema_for_registry(&default_registry())
+}
+
+fn invoke_tool_input_schema_for_registry(registry: &InvokeRegistry) -> Arc<JsonObject> {
   let mut schema = rmcp::handler::server::common::cached_schema_for_type::<InvokeToolRequest>().as_ref().clone();
-  let registry = default_registry();
   let command_ids = registry.all().iter().map(|command| Value::String(command.id.to_string())).collect::<Vec<_>>();
 
   if let Some(command_id_schema) = schema
@@ -262,7 +307,17 @@ pub async fn serve_stdio_with_composer(
   project_root: PathBuf,
   inspect_composer: Arc<auv_inspect_model::InspectComposer>,
 ) -> Result<(), String> {
-  let service = McpServer::with_inspect_composer(project_root, inspect_composer)
+  serve_stdio_with_composer_and_registry(project_root, inspect_composer, Arc::new(default_registry()), None).await
+}
+
+/// Serve MCP stdio with explicit inspect composer + invoke registry (+ optional finalize).
+pub async fn serve_stdio_with_composer_and_registry(
+  project_root: PathBuf,
+  inspect_composer: Arc<auv_inspect_model::InspectComposer>,
+  invoke_registry: Arc<InvokeRegistry>,
+  invoke_finalize: Option<InvokeFinalizeHook>,
+) -> Result<(), String> {
+  let service = McpServer::with_inspect_composer_and_registry(project_root, inspect_composer, invoke_registry, invoke_finalize)
     .serve(stdio())
     .await
     .map_err(|error| format!("failed to serve MCP stdio transport: {error}"))?;

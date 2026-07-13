@@ -32,6 +32,8 @@ path = "src/bin/auv-minecraft.rs"
 
 [dependencies]
 auv-runtime = { path = "../.." }
+auv-apple-textedit = { path = "../auv-apple-textedit" }
+auv-cli-invoke-macros = { path = "../auv-cli-invoke-macros" }
 auv-game-osu = { path = "../auv-game-osu" }
 auv-game-balatro = { path = "../auv-game-balatro" }
 auv-game-minecraft = { path = "../auv-game-minecraft" }

@@ -8,9 +8,13 @@ pub mod cli;
 pub mod cli_frontend;
 pub mod inspect;
 pub mod integrations;
+pub mod invoke;
 pub mod mcp;
 pub mod projection;
+pub mod registry;
 pub mod run_read;
 pub mod xtask;
 
+pub use invoke::invoke_recorded;
 pub use projection::ProductInspectReadProjection;
+pub use registry::product_registry;
