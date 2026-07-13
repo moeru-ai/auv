@@ -39,16 +39,16 @@ registered `section.id()` (mismatch aborts the document); `collect` returning
 `None` omits the section; a section error aborts the document. Product assembly
 (not the core library default) owns donor-including composers.
 
-## Product package / auv-product (provisional)
+## Product CLI package / auv-cli (provisional)
 
-Provisional packaging term for the app-integration composition crate
-(`crates/auv-product`):
+Provisional packaging term for the app-integration composition package
+(`auv-cli`, located at `crates/auv-cli`):
 
 - Owns root `auv` and app-specific bins, CLI frontend, integration wiring, product
   `InspectComposer`, query-wired OperationResult adapters (S3b; stay in product
   until contract ownership moves), and product inspect-server projection wrappers.
-- Depends on library-only `auv-cli` plus `auv-game-*` / `auv-godot`.
-- Must not be confused with core `auv-cli`; game crates must not depend on
+- Depends on library-only `auv-runtime` plus `auv-game-*` / `auv-godot`.
+- Must not be confused with core `auv-runtime`; game crates must not depend on
   `auv-cli` to reach product types.
 
 ## Device

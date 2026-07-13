@@ -369,30 +369,33 @@ dependencies = [
 name = "auv-cli"
 version = "0.0.1"
 dependencies = [
- "anyhow",
  "auv-api-proto",
  "auv-cli-invoke",
  "auv-driver",
  "auv-driver-macos",
+ "auv-game-balatro",
+ "auv-game-minecraft",
+ "auv-game-osu",
+ "auv-godot",
  "auv-inspect-model",
  "auv-inspect-server",
  "auv-media-macos",
- "auv-scan",
+ "auv-query-readiness",
+ "auv-runtime",
+ "auv-stage-status",
+ "auv-task-object-detection",
  "auv-tracing-driver",
- "auv-view",
+ "axum",
  "image",
  "objc2-core-foundation",
  "objc2-core-graphics",
- "rmcp",
- "schemars",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "swift-bridge-build",
- "thiserror 2.0.18",
  "tokio",
- "tokio-stream",
- "tokio-util",
  "tonic",
+ "tower",
 ]
 
 [[package]]
@@ -666,39 +669,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "auv-product"
-version = "0.0.1"
-dependencies = [
- "auv-api-proto",
- "auv-cli",
- "auv-cli-invoke",
- "auv-driver",
- "auv-driver-macos",
- "auv-game-balatro",
- "auv-game-minecraft",
- "auv-game-osu",
- "auv-godot",
- "auv-inspect-model",
- "auv-inspect-server",
- "auv-media-macos",
- "auv-query-readiness",
- "auv-stage-status",
- "auv-task-object-detection",
- "auv-tracing-driver",
- "axum",
- "image",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "swift-bridge-build",
- "tokio",
- "tonic",
- "tower",
-]
-
-[[package]]
 name = "auv-qqmusic"
 version = "0.0.1"
 dependencies = [
@@ -711,6 +681,36 @@ dependencies = [
 [[package]]
 name = "auv-query-readiness"
 version = "0.0.1"
+
+[[package]]
+name = "auv-runtime"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "auv-api-proto",
+ "auv-cli-invoke",
+ "auv-driver",
+ "auv-driver-macos",
+ "auv-inspect-model",
+ "auv-inspect-server",
+ "auv-media-macos",
+ "auv-scan",
+ "auv-tracing-driver",
+ "auv-view",
+ "image",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "swift-bridge-build",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tonic",
+]
 
 [[package]]
 name = "auv-scan"

@@ -19,7 +19,7 @@ toolchain declared in `Cargo.toml`.
 Install directly from GitHub:
 
 ```sh
-cargo install --git https://github.com/moeru-ai/auv auv-cli
+cargo install --git https://github.com/moeru-ai/auv --package auv-cli --bin auv
 auv --help
 ```
 

@@ -1,6 +1,6 @@
-//! Guards the core `auv-cli` package against regaining game or Godot dependencies.
+//! Guards the core `auv-runtime` package against regaining game or Godot dependencies.
 //!
-//! Prefer this + `rg 'auv_game_' src/` over any `cargo tree -p auv-cli --lib`
+//! Prefer this + `rg 'auv_game_' src/` over any `cargo tree -p auv-runtime --lib`
 //! trick (that graph is not a reliable library-only proof).
 
 fn package_dependency_table_bodies(cargo_toml: &str) -> Vec<String> {
@@ -55,7 +55,7 @@ fn dependency_keys(table_body: &str) -> Vec<String> {
 }
 
 #[test]
-fn root_auv_cli_package_dependencies_exclude_game_and_godot_crates() {
+fn root_auv_runtime_package_dependencies_exclude_game_and_godot_crates() {
   let cargo_toml = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
   let mut offenders = Vec::new();
 
@@ -69,8 +69,8 @@ fn root_auv_cli_package_dependencies_exclude_game_and_godot_crates() {
 
   assert!(
     offenders.is_empty(),
-    "auv-cli package [dependencies]/[dev-dependencies]/[target.*.dependencies] must not list game/godot crates; found {offenders:?}. \
-     Keep donor wiring in auv-product. Companion falsifier: rg 'auv_game_' src/"
+    "auv-runtime package [dependencies]/[dev-dependencies]/[target.*.dependencies] must not list game/godot crates; found {offenders:?}. \
+     Keep donor wiring in the product CLI package. Companion falsifier: rg 'auv_game_' src/"
   );
 }
 

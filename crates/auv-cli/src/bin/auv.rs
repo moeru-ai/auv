@@ -1,0 +1,6 @@
+//! Root `auv` binary (product CLI).
+
+#[tokio::main]
+async fn main() {
+  auv_cli::cli_frontend::exit_on_error(auv_cli::cli_frontend::run_root().await);
+}

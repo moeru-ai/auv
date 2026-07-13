@@ -12,7 +12,7 @@ members = [
   "crates/auv-godot",
   "crates/auv-inspect-server",
   "crates/auv-inspect-model",
-  "crates/auv-product",
+  "crates/auv-cli",
   "crates/auv-query-readiness",
   "crates/auv-scan",
   "crates/auv-stage-status",
@@ -37,7 +37,7 @@ members = [
   "crates/auv-tracing-driver",
   "crates/auv-view",
 ]
-default-members = [".", "crates/auv-product"]
+default-members = [".", "crates/auv-cli"]
 resolver = "2"
 
 [workspace.package]
@@ -54,7 +54,7 @@ license = ""
 publish = false
 
 [package]
-name = "auv-cli"
+name = "auv-runtime"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
