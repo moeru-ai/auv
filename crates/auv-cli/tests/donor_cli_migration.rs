@@ -34,6 +34,15 @@ fn root_donor_subcommands_are_tombstoned() {
 }
 
 #[test]
+fn root_version_exits_zero_and_names_the_package_version() {
+  let out = run(env!("CARGO_BIN_EXE_auv"), &["--version"]);
+
+  assert_eq!(out.status.code(), Some(0), "auv --version must exit 0; stderr={}", stderr(&out));
+  assert_eq!(stdout(&out), format!("auv {}\n", env!("CARGO_PKG_VERSION")));
+  assert!(stderr(&out).is_empty(), "auv --version must not write stderr: {}", stderr(&out));
+}
+
+#[test]
 fn donor_bins_help_exit_zero_and_name_live_bins() {
   let cases = [
     (env!("CARGO_BIN_EXE_auv-minecraft"), "auv-minecraft", "auv minecraft "),

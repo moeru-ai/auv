@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use image::ImageReader;
 
-use crate::cli::{CliCommand, InspectClientOptions, help_text, parse_cli, parse_donor_cli, root_donor_tombstone};
+use crate::cli::{CliCommand, InspectClientOptions, help_text, parse_cli, parse_donor_cli, root_donor_tombstone, version_text};
 use crate::integrations::minecraft::verification::query_wired_verification_readable;
 use crate::integrations::minecraft::{
   QueryWiredLiveActionInputs, QueryWiredLiveActionTelemetryWitness, run_minecraft_query_wired_live_action,
@@ -49,6 +49,11 @@ pub fn exit_on_error(result: Result<(), String>) {
 }
 
 async fn dispatch(command: CliCommand) -> Result<(), String> {
+  if matches!(&command, CliCommand::Version) {
+    print!("{}", version_text());
+    return Ok(());
+  }
+
   let project_root = env::current_dir().map_err(|error| format!("failed to resolve current directory: {error}"))?;
   if let CliCommand::XtaskGenerateSwiftBridge = &command {
     let outputs = crate::xtask::generate_swift_bridge_for_ide(&project_root)?;
@@ -114,6 +119,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
     CliCommand::Help => {
       print!("{}", help_text());
     }
+    CliCommand::Version => unreachable!("version is handled before runtime setup"),
     CliCommand::MinecraftHelp => {
       print!("{}", crate::integrations::minecraft::help::render_minecraft_help());
     }

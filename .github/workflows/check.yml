@@ -49,4 +49,6 @@ jobs:
       - run: cargo check
       - run: cargo test
       - run: cargo run --quiet -- invoke --help
+      - run: bash scripts/ci/public-claims-check.sh
+      - run: bash scripts/ci/install-smoke.sh
       - run: git diff --check
