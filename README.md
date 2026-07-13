@@ -1,4 +1,20 @@
-# AUV
+<p align="center">
+  <picture>
+    <source
+      width="20%"
+      srcset="./docs/assets/logo-short-height-dark.svg"
+      media="(prefers-color-scheme: dark)"
+    />
+    <source
+      width="20%"
+      srcset="./docs/assets/logo-short-height-light.svg"
+      media="(prefers-color-scheme: light), (prefers-color-scheme: no-preference)"
+    />
+    <img width="20%" src="./docs/assets/logo-short-height-light.svg" />
+  </picture>
+</p>
+
+<h1 align="center">AUV</h1>
 
 [![License](https://badgen.net/github/license/moeru-ai/auv)](LICENSE.md)
 
