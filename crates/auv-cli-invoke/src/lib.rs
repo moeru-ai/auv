@@ -27,7 +27,10 @@ pub use model::{
   ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow,
   InvokeRequest, InvokeResult, RunStatus,
 };
-pub use recorded::{invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_session, invoke_resolved_recorded_in_span};
+pub use recorded::{
+  InvokeFinalizeHook, invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_finalize, invoke_recorded_with_session,
+  invoke_resolved_recorded_in_span,
+};
 pub use registry::{InvokeRegistry, default_registry};
 pub use render::{render_invoke_result, render_to_string, write_rendered};
 pub use summary::{OperationSummary, OperationSummaryCache, OperationSummaryRecord, OperationSummarySource};

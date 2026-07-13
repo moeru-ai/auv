@@ -17,11 +17,8 @@ use serde_json::Value;
 
 use crate::build_default_store;
 use crate::model::{ExecutionTarget, InvokeRequest};
-use auv_cli_invoke::{ArgSpec, InvokeCommand, InvokeRegistry, InvokeResult, default_registry};
+use auv_cli_invoke::{ArgSpec, InvokeCommand, InvokeFinalizeHook, InvokeRegistry, default_registry};
 use auv_tracing_driver::store::LocalStore;
-
-/// Optional post-invoke finalize hook (product uses this for canonical operation-result lineage).
-pub type InvokeFinalizeHook = Arc<dyn Fn(&LocalStore, &InvokeResult) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct McpServer {
@@ -29,7 +26,7 @@ pub struct McpServer {
   tool_router: ToolRouter<Self>,
   inspect_composer: Arc<auv_inspect_model::InspectComposer>,
   invoke_registry: Arc<InvokeRegistry>,
-  invoke_finalize: Option<InvokeFinalizeHook>,
+  invoke_finalize: Option<Arc<InvokeFinalizeHook>>,
 }
 
 impl McpServer {
@@ -49,7 +46,7 @@ impl McpServer {
     project_root: PathBuf,
     inspect_composer: Arc<auv_inspect_model::InspectComposer>,
     invoke_registry: Arc<InvokeRegistry>,
-    invoke_finalize: Option<InvokeFinalizeHook>,
+    invoke_finalize: Option<Arc<InvokeFinalizeHook>>,
   ) -> Self {
     Self {
       project_root,
@@ -87,49 +84,31 @@ impl McpServer {
   async fn invoke(&self, Parameters(req): Parameters<InvokeToolRequest>) -> Result<CallToolResult, McpError> {
     let store = self.store(req.inspect.store_root.clone())?;
     let recording = auv_tracing_driver::RunRecordingBackend::new(store.clone(), Arc::new(auv_tracing_driver::MemoryRunRecorder::new()));
-    let result = auv_cli_invoke::invoke_recorded(
-      &recording,
-      self.invoke_registry.as_ref(),
-      InvokeRequest {
-        command_id: req.command_id,
-        target: ExecutionTarget {
-          application_id: req.target.application_id,
-          target_label: req.target.target_label,
-        },
-        inputs: req.inputs,
-        dry_run: req.dry_run,
+    let request = InvokeRequest {
+      command_id: req.command_id,
+      target: ExecutionTarget {
+        application_id: req.target.application_id,
+        target_label: req.target.target_label,
       },
-    )
-    .map_err(invalid_params)?;
-    if let Some(finalize) = &self.invoke_finalize {
-      finalize(&store, &result).map_err(invalid_params)?;
-    }
-
-    // Re-read after finalize so response artifacts include canonical operation-result.
-    let artifacts = match store.read_run(result.run_id.as_str()) {
-      Ok(canonical) => canonical
-        .artifacts
-        .iter()
-        .map(|artifact| {
-          serde_json::json!({
-            "artifact_id": artifact.artifact_id.as_str(),
-            "role": artifact.role,
-            "path": artifact.path,
-          })
-        })
-        .collect::<Vec<_>>(),
-      Err(_) => result
-        .artifacts
-        .iter()
-        .map(|artifact| {
-          serde_json::json!({
-            "artifact_id": artifact.artifact_id.as_str(),
-            "role": artifact.role,
-            "path": artifact.path,
-          })
-        })
-        .collect::<Vec<_>>(),
+      inputs: req.inputs,
+      dry_run: req.dry_run,
     };
+    let result = match &self.invoke_finalize {
+      Some(finalize) => auv_cli_invoke::invoke_recorded_with_finalize(&recording, self.invoke_registry.as_ref(), request, finalize.as_ref()),
+      None => auv_cli_invoke::invoke_recorded(&recording, self.invoke_registry.as_ref(), request),
+    }
+    .map_err(invalid_params)?;
+    let artifacts = result
+      .artifacts
+      .iter()
+      .map(|artifact| {
+        serde_json::json!({
+          "artifact_id": artifact.artifact_id.as_str(),
+          "role": artifact.role,
+          "path": artifact.path,
+        })
+      })
+      .collect::<Vec<_>>();
     let artifact_paths = result.artifact_paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>();
 
     json_result(serde_json::json!({
@@ -315,7 +294,7 @@ pub async fn serve_stdio_with_composer_and_registry(
   project_root: PathBuf,
   inspect_composer: Arc<auv_inspect_model::InspectComposer>,
   invoke_registry: Arc<InvokeRegistry>,
-  invoke_finalize: Option<InvokeFinalizeHook>,
+  invoke_finalize: Option<Arc<InvokeFinalizeHook>>,
 ) -> Result<(), String> {
   let service = McpServer::with_inspect_composer_and_registry(project_root, inspect_composer, invoke_registry, invoke_finalize)
     .serve(stdio())

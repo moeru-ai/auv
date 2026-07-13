@@ -24,8 +24,8 @@ app.textedit.document.write
 | Workflow (activate → focus → paste → verify) | `auv-apple-textedit` (`DocumentWrite` / `run_document_command`) |
 | Typed AX capability | `auv-driver-macos` `AccessibilityApi` on `MacosDriverSession` |
 | Core invoke catalog | `auv-cli-invoke::default_registry` (no TextEdit dep) |
-| Product registry extension | `auv-product` (`product_registry` = core + TextEdit) |
-| Recording | `auv-cli-invoke::invoke_recorded` |
+| Product registry extension | `auv-cli` (`product_registry` = core + TextEdit) |
+| Recording lifecycle | `auv-cli-invoke::invoke_recorded_with_finalize` |
 | Inspect composition | existing product `InspectComposer` |
 
 ## Public command shape
@@ -50,13 +50,36 @@ MacosDriverSession::accessibility()
 
 ## Evidence
 
-Handler stages:
+The handler stages:
 
 - `input-action-result` for focus / paste steps (`InputActionResult`)
 - `ax-text-observation` for verify observation
-- `operation-result` with `VerificationResult { method: AxText, ... }`
+
+The product finalize hook runs after those artifacts are recorded but before the
+command span and run finish. It derives semantic status from the staged AX
+observation, updates `InvokeResult`, and stages `operation-result` with
+`VerificationResult { method: AxText, ... }` on the same run. The hook also runs
+for failed handler results; if finalization itself fails, recorded invoke
+persists an error run and returns the failure to the caller.
 
 `InvokeCommandOutput.verification` remains the human boundary string; semantic success is the staged `VerificationResult`.
+
+## Lifecycle closeout decision
+
+- **Shared helper in core:** `InvokeFinalizeHook` stays in `auv-cli-invoke`
+  because CLI and MCP must finalize before the shared span/run status decision.
+- **App-specific:** AX observation decoding and TextEdit `OperationResult`
+  construction stay in the TextEdit product integration.
+- **Rejected:** patching `run.json` after `invoke_recorded` finishes; that leaves
+  a completed run visible before canonical evidence exists.
+- **Rejected:** making the handler return an unstructured error for semantic
+  mismatch; that loses the failed `VerificationResult` evidence.
+- **Deferred:** broader `OperationResult` schema graduation; this slice adds no
+  contract fields or variants.
+
+Validation locks handler failure, finalize failure, semantic mismatch status
+parity, same-run artifact lineage, and CLI/MCP finalized artifact parity in
+`auv-cli-invoke` unit tests and `textedit_document_write_parity`.
 
 ## Non-goals
 

@@ -18,8 +18,8 @@ use auv_runtime::contract::{
   VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
 };
 use auv_tracing_driver::artifact::ArtifactBytesSource;
-use auv_tracing_driver::store::LocalStore;
-use auv_tracing_driver::{ProducedArtifact, RunId, now_millis};
+use auv_tracing_driver::trace::{EVENT_API_VERSION, EventRecordV1Alpha1, new_event_id};
+use auv_tracing_driver::{ProducedArtifact, RecordingRun, RunId, RunRecordingBackend, SpanRef, now_millis};
 
 pub const DOCUMENT_WRITE_COMMAND_ID: &str = "app.textedit.document.write";
 pub const TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT: &str = "auv.product.textedit.document_write.v0";
@@ -51,9 +51,14 @@ fn document_write_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
 
   let command = parse_document_write(&input)?;
   let driver_kind = input.inputs.get("driver").map(String::as_str).unwrap_or("live");
+  // NOTICE(textedit-fixture-only): this undocumented input exists only so hermetic
+  // recorded mismatch tests can force a semantic mismatch without live TextEdit.
+  // Expose a first-class flag only if the owner approves fixture controls.
+  let fixture_observed_text = input.inputs.get("fixture_observed_text").cloned();
   let report = match driver_kind {
     "fixture" => {
       let mut driver = FixtureTextEditDriver::from_write(&command);
+      driver.observed_override = fixture_observed_text;
       run_document_command(&DocumentCommand::Write(command.clone()), &mut driver)?
     }
     "live" => {
@@ -73,8 +78,9 @@ fn document_write_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   build_invoke_output_from_report(&report, &command)
 }
 
-/// Stages evidence artifacts only. Canonical `operation-result` is written after
-/// `invoke_recorded` assigns the real run id (see [`persist_canonical_operation_result`]).
+/// Stages evidence artifacts only. Canonical `operation-result` is appended by
+/// the recorded invoke finalize hook after evidence artifacts are recorded and
+/// before the run closes.
 pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, command: &DocumentWrite) -> InvokeCommandResult {
   let semantic_matched = report.verification.as_ref().map(|verification| verification.semantic_matched);
   let mut output = InvokeCommandOutput::new(format!(
@@ -125,15 +131,40 @@ pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, co
   Ok(output)
 }
 
-/// Persist a lineage-complete `operation-result` after invoke assigns `run_id`.
-pub fn persist_canonical_operation_result(store: &LocalStore, result: &InvokeResult) -> Result<(), String> {
+/// Finalize the recorded invoke inside the shared lifecycle so result status,
+/// run status, and canonical `operation-result` stay in sync.
+pub fn finalize_recorded_invoke(
+  recording: &RunRecordingBackend,
+  run: &mut RecordingRun,
+  producer_span: &SpanRef,
+  result: &mut InvokeResult,
+) -> Result<(), String> {
   if result.command_id != DOCUMENT_WRITE_COMMAND_ID {
     return Ok(());
   }
   if result.dry_run_like() {
     return Ok(());
   }
+  if result.artifacts.iter().any(|artifact| artifact.role == "operation-result") {
+    return Ok(());
+  }
 
+  let observation = read_ax_observation(recording, result)?;
+  if let Some(verification) = observation.as_ref()
+    && !verification.semantic_matched
+  {
+    apply_semantic_mismatch(result, verification);
+  }
+
+  let operation = build_canonical_operation_result(result, observation.as_ref());
+  let rendered = serde_json::to_string_pretty(&operation).map_err(|error| format!("serialize operation-result: {error}"))? + "\n";
+  let (artifact, path) = stage_operation_result_artifact(recording, run, producer_span, rendered.into_bytes())?;
+  result.artifacts.push(artifact);
+  result.artifact_paths.push(path);
+  Ok(())
+}
+
+fn build_canonical_operation_result(result: &InvokeResult, observation: Option<&VerificationOutcome>) -> OperationResult {
   let run_id = RunId::new(result.run_id.as_str());
   let evidence_artifacts = result
     .artifacts
@@ -146,11 +177,8 @@ pub fn persist_canonical_operation_result(store: &LocalStore, result: &InvokeRes
       captured_event_id: artifact.event_id.clone(),
     })
     .collect::<Vec<_>>();
-
-  let observation = read_ax_observation(store, result)?;
-  let semantic_matched = observation.as_ref().map(|value| value.semantic_matched);
+  let semantic_matched = observation.map(|value| value.semantic_matched);
   let verifications = observation
-    .as_ref()
     .map(|verification| {
       vec![VerificationResult {
         api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
@@ -178,57 +206,81 @@ pub fn persist_canonical_operation_result(store: &LocalStore, result: &InvokeRes
       }]
     })
     .unwrap_or_default();
-
   let status = match (result.status.clone(), semantic_matched) {
     (_, Some(false)) => OperationStatus::Failed,
     (auv_cli_invoke::RunStatus::Failed, _) => OperationStatus::Failed,
     (auv_cli_invoke::RunStatus::Completed, _) => OperationStatus::Completed,
   };
-
   let mut known_limits = result.known_limits.clone();
   if !known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT) {
     known_limits.push(TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT.to_string());
   }
-
-  let operation = OperationResult {
+  OperationResult {
     api_version: OPERATION_RESULT_API_VERSION.to_string(),
     run_id: run_id.clone(),
     status,
     operation_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
-    evidence_artifacts: evidence_artifacts.clone(),
+    evidence_artifacts,
     output: OperationOutput::Acknowledged {
       message: Some(result.output_summary.clone()),
     },
     verifications,
     freshness_basis: None,
-    known_limits: known_limits.clone(),
-  };
-
-  let rendered = serde_json::to_string_pretty(&operation).map_err(|error| format!("serialize operation-result: {error}"))? + "\n";
-  let mut canonical = store.read_run(result.run_id.as_str()).map_err(|error| error.to_string())?;
-  if canonical.artifacts.iter().any(|artifact| artifact.role == "operation-result") {
-    // Already finalized (or synthetic). Prefer first match; do not duplicate.
-    return Ok(());
+    known_limits,
   }
-  let artifact = store
+}
+
+fn apply_semantic_mismatch(result: &mut InvokeResult, verification: &VerificationOutcome) {
+  let observed = truncate(&verification.matched_text, 80);
+  result.status = auv_cli_invoke::RunStatus::Failed;
+  result.output_summary =
+    format!("TextEdit document.write failed semantic verification (role={}, observed={observed})", verification.matched_role);
+  result.failure_message = Some(format!(
+    "TextEdit semantic verification failed: expected content was not present in observed AX text role={} observed={observed}",
+    verification.matched_role
+  ));
+}
+
+fn stage_operation_result_artifact(
+  recording: &RunRecordingBackend,
+  run: &mut RecordingRun,
+  producer_span: &SpanRef,
+  bytes: Vec<u8>,
+) -> Result<(auv_tracing_driver::trace::ArtifactRecordV1Alpha1, PathBuf), String> {
+  let event_id = new_event_id();
+  let artifact = recording
     .stage_artifact_bytes(
-      &run_id,
-      canonical.artifacts.len(),
-      &result.producer_span_id,
-      None,
+      run.id(),
+      run.artifact_count(),
+      producer_span.id(),
+      Some(event_id.clone()),
       ArtifactBytesSource {
         role: "operation-result".to_string(),
-        bytes: rendered.into_bytes(),
+        bytes,
         preferred_name: "operation-result.json".to_string(),
         summary: Some("Canonical TextEdit document.write OperationResult".to_string()),
       },
     )
     .map_err(|error| error.to_string())?;
-  canonical.artifacts.push(artifact);
-  store.replace_run_snapshot(&canonical).map_err(|error| error.to_string())?;
-  let _ = evidence_artifacts;
-  let _ = known_limits;
-  Ok(())
+  run.record_event(EventRecordV1Alpha1 {
+    api_version: EVENT_API_VERSION.to_string(),
+    event_id,
+    span_id: producer_span.id().clone(),
+    name: "artifact.captured".to_string(),
+    timestamp_millis: now_millis(),
+    attributes: Default::default(),
+    message: Some(render_artifact_event(&artifact)),
+    artifact_ids: vec![artifact.artifact_id.clone()],
+  });
+  let staged_path = recording.run_dir(run.id()).map_err(|error| error.to_string())?.join(&artifact.path);
+  run.record_artifact(artifact.clone());
+  recording.record_artifact_bytes(run.id(), &artifact, &staged_path).map_err(|error| error.to_string())?;
+  Ok((artifact, staged_path))
+}
+
+fn render_artifact_event(artifact: &auv_tracing_driver::trace::ArtifactRecordV1Alpha1) -> String {
+  let note = artifact.summary.clone().unwrap_or_else(|| "n/a".to_string());
+  format!("{} kind={} path={} note={}", artifact.artifact_id, artifact.role, artifact.path, note)
 }
 
 trait InvokeResultExt {
@@ -241,11 +293,11 @@ impl InvokeResultExt for InvokeResult {
   }
 }
 
-fn read_ax_observation(store: &LocalStore, result: &InvokeResult) -> Result<Option<VerificationOutcome>, String> {
+fn read_ax_observation(recording: &RunRecordingBackend, result: &InvokeResult) -> Result<Option<VerificationOutcome>, String> {
   let Some(artifact) = result.artifacts.iter().find(|artifact| artifact.role == "ax-text-observation") else {
     return Ok(None);
   };
-  let (_record, path) = store.artifact_file(result.run_id.as_str(), artifact.artifact_id.as_str()).map_err(|error| error.to_string())?;
+  let path = recording.run_dir(result.run_id.as_str()).map_err(|error| error.to_string())?.join(&artifact.path);
   let body = fs::read_to_string(&path).map_err(|error| format!("read ax-text-observation: {error}"))?;
   let observation: VerificationOutcome = serde_json::from_str(&body).map_err(|error| format!("decode ax-text-observation: {error}"))?;
   Ok(Some(observation))
@@ -334,7 +386,7 @@ fn parse_bool(value: &str, name: &str) -> Result<bool, String> {
 
 fn json_artifact<T: serde::Serialize>(kind: &str, label: &str, value: &T, note: &str) -> Result<ProducedArtifact, String> {
   let source_path =
-    PathBuf::from(std::env::temp_dir()).join(format!("auv-invoke-textedit-{label}-{}-{}.json", std::process::id(), now_millis()));
+    PathBuf::from(std::env::temp_dir()).join(format!("auv-invoke-textedit-{label}-{}-{}.json", std::process::id(), new_event_id()));
   let body = serde_json::to_vec_pretty(value).map_err(|error| format!("failed to serialize {kind} artifact: {error}"))?;
   fs::write(&source_path, body).map_err(|error| format!("failed to write {kind} artifact: {error}"))?;
   Ok(ProducedArtifact {
@@ -427,7 +479,7 @@ mod tests {
 
   use auv_cli_invoke::InvokeNamespace;
   use auv_runtime::model::{ExecutionTarget, InvokeRequest};
-  use auv_tracing_driver::{MemoryRunRecorder, RunRecordingBackend, store::LocalStore};
+  use auv_tracing_driver::{MemoryRunRecorder, RunRecordingBackend, TraceStatusCode, store::LocalStore};
 
   use super::*;
   use crate::product_registry;
@@ -458,7 +510,7 @@ mod tests {
   }
 
   #[test]
-  fn persist_canonical_operation_result_backfills_run_id_and_evidence() {
+  fn invoke_recorded_finalize_backfills_run_id_and_result_artifacts() {
     let root = std::env::temp_dir().join(format!("auv-textedit-finalize-{}-{}", std::process::id(), now_millis()));
     std::fs::create_dir_all(&root).expect("temp");
     let store = LocalStore::new(root.clone()).expect("store");
@@ -484,6 +536,8 @@ mod tests {
     assert!(operation.evidence_artifacts.iter().all(|artifact| artifact.run_id.as_str() == result.run_id));
     assert!(operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT));
     assert_eq!(operation.verifications[0].semantic_matched, Some(true));
+    assert!(result.artifacts.iter().any(|artifact| artifact.role == "operation-result"));
+    assert_eq!(result.artifacts.len(), result.artifact_paths.len());
     let _ = std::fs::remove_dir_all(root);
   }
 
@@ -502,6 +556,75 @@ mod tests {
 
     let output = build_invoke_output_from_report(&report, &command).expect("output");
     assert_eq!(output.signals.get("textedit.semantic_matched").map(String::as_str), Some("false"));
+  }
+
+  // ROOT CAUSE:
+  //
+  // Artifact source names used only process id plus millisecond time, so
+  // concurrent invokes could overwrite each other's semantic evidence before
+  // the recorder copied it into the run directory.
+  #[test]
+  fn json_artifact_source_paths_are_unique_within_one_process() {
+    let first = json_artifact("fixture", "same-label", &serde_json::json!({"value": 1}), "first").expect("first artifact");
+    let second = json_artifact("fixture", "same-label", &serde_json::json!({"value": 2}), "second").expect("second artifact");
+
+    assert_ne!(first.source_path, second.source_path);
+    let _ = fs::remove_file(first.source_path);
+    let _ = fs::remove_file(second.source_path);
+  }
+
+  // ROOT CAUSE:
+  //
+  // The in-lifecycle finalizer tried to resolve the AX artifact through
+  // `LocalStore::artifact_file`, which requires the not-yet-written `run.json`.
+  //
+  // Before the fix, finalization failed before it could synchronize the invoke,
+  // run, and operation statuses. The fix reads the already-staged artifact.
+  // https://github.com/moeru-ai/auv/pull/102#issuecomment-4958351155
+  #[test]
+  fn recorded_semantic_mismatch_keeps_result_run_and_operation_in_sync() {
+    let root = std::env::temp_dir().join(format!("auv-textedit-mismatch-{}-{}", std::process::id(), now_millis()));
+    std::fs::create_dir_all(&root).expect("temp");
+    let store = LocalStore::new(root.clone()).expect("store");
+    let recording = RunRecordingBackend::new(store.clone(), Arc::new(MemoryRunRecorder::new()));
+    let mut inputs = BTreeMap::new();
+    inputs.insert("content".to_string(), "expected-marker".to_string());
+    inputs.insert("driver".to_string(), "fixture".to_string());
+    inputs.insert("fixture_observed_text".to_string(), "observed-without-expected".to_string());
+    let result = crate::invoke::invoke_recorded(
+      &recording,
+      &product_registry(),
+      InvokeRequest {
+        command_id: DOCUMENT_WRITE_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs,
+        dry_run: false,
+      },
+    )
+    .expect("invoke");
+
+    assert_eq!(result.status, auv_cli_invoke::RunStatus::Failed);
+    assert!(result.failure_message.as_deref().is_some_and(|message| message.contains("semantic verification failed")));
+    assert!(result.artifacts.iter().any(|artifact| artifact.role == "operation-result"));
+    assert_eq!(result.artifacts.len(), result.artifact_paths.len());
+
+    let canonical = store.read_run(&result.run_id).expect("run");
+    assert_eq!(canonical.run.status_code, TraceStatusCode::Error);
+    let command_span = canonical.spans.iter().find(|span| span.name == "auv.command.invoke").expect("command span");
+    assert_eq!(command_span.status_code, TraceStatusCode::Error);
+    assert!(canonical.artifacts.iter().any(|artifact| artifact.role == "operation-result"));
+
+    let operation = auv_runtime::run_read::read_operation_result(&store, &result.run_id).expect("read").expect("operation-result");
+    assert_eq!(operation.status, OperationStatus::Failed);
+    assert_eq!(operation.verifications.len(), 1);
+    assert_eq!(operation.verifications[0].semantic_matched, Some(false));
+    assert_eq!(operation.verifications[0].failure_layer, Some(FailureLayer::SemanticMismatch));
+    assert!(operation.evidence_artifacts.iter().all(|artifact| artifact.run_id.as_str() == result.run_id));
+    let operation_artifact =
+      canonical.artifacts.iter().find(|artifact| artifact.role == "operation-result").expect("operation-result artifact");
+    assert_eq!(operation_artifact.span_id, result.producer_span_id);
+
+    let _ = std::fs::remove_dir_all(root);
   }
 
   #[test]
@@ -525,7 +648,11 @@ mod tests {
     )
     .expect("failed handler still returns InvokeResult after run creation");
     assert_eq!(result.status, auv_cli_invoke::RunStatus::Failed);
-    assert!(store.read_run(&result.run_id).is_ok(), "failed run must remain readable");
+    assert!(result.artifacts.iter().any(|artifact| artifact.role == "operation-result"));
+    let canonical = store.read_run(&result.run_id).expect("failed run must remain readable");
+    assert_eq!(canonical.run.status_code, TraceStatusCode::Error);
+    let operation = auv_runtime::run_read::read_operation_result(&store, &result.run_id).expect("read").expect("operation-result");
+    assert_eq!(operation.status, OperationStatus::Failed);
     let _ = std::fs::remove_dir_all(root);
   }
 }
