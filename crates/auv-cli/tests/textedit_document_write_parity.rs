@@ -15,7 +15,10 @@ use rmcp::{
   model::{CallToolRequestParam, ClientInfo},
 };
 
-use auv_cli::integrations::textedit::{DOCUMENT_WRITE_COMMAND_ID, TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT, finalize_recorded_invoke};
+use auv_cli::integrations::textedit::{
+  DOCUMENT_WRITE_COMMAND_ID, TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT, TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT,
+  finalize_recorded_invoke,
+};
 use auv_cli::{inspect, invoke_recorded, product_registry, projection::ProductInspectReadProjection};
 
 #[derive(Debug, Clone, Default)]
@@ -74,6 +77,8 @@ fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
   assert_eq!(operation.verifications.len(), 1);
   assert!(matches!(operation.verifications[0].method, auv_runtime::contract::VerificationMethod::AxText));
   assert_eq!(operation.verifications[0].semantic_matched, Some(true));
+  assert!(!operation.verifications[0].state_changed);
+  assert!(operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
 
   let run = store.read_run(&run_id).expect("run");
   let artifact_roles: BTreeMap<String, String> =
@@ -103,6 +108,7 @@ fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
   assert_eq!(enrichment.verifications.len(), 1);
   assert_eq!(enrichment.verifications[0]["method"]["kind"], "ax_text");
   assert_eq!(enrichment.verifications[0]["semantic_matched"], true);
+  assert_eq!(enrichment.verifications[0]["state_changed"], false);
 
   // Lock same-run artifact identity: store fingerprint + evidence refs + shared projection sections.
   let expected_identity = artifact_identity_fingerprint(&run);
@@ -254,6 +260,7 @@ fn textedit_document_write_live_macos_closure() {
   assert_eq!(operation.run_id.as_str(), result.run_id.as_str());
   assert!(!operation.evidence_artifacts.is_empty());
   assert_eq!(operation.verifications[0].semantic_matched, Some(true));
+  assert!(!operation.verifications[0].state_changed);
   let _ = std::fs::remove_dir_all(root);
 }
 
@@ -299,7 +306,9 @@ fn assert_recorded_semantic_mismatch(store: &LocalStore, run_id: &str) {
   assert_eq!(operation.status, OperationStatus::Failed);
   assert_eq!(operation.verifications.len(), 1);
   assert_eq!(operation.verifications[0].semantic_matched, Some(false));
+  assert!(!operation.verifications[0].state_changed);
   assert_eq!(operation.verifications[0].failure_layer, Some(FailureLayer::SemanticMismatch));
+  assert!(operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
 
   let operation_artifacts = canonical.artifacts.iter().filter(|artifact| artifact.role == "operation-result").collect::<Vec<_>>();
   assert_eq!(operation_artifacts.len(), 1);

@@ -23,6 +23,8 @@ use auv_tracing_driver::{ProducedArtifact, RecordingRun, RunId, RunRecordingBack
 
 pub const DOCUMENT_WRITE_COMMAND_ID: &str = "app.textedit.document.write";
 pub const TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT: &str = "auv.product.textedit.document_write.v0";
+pub const TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT: &str =
+  "TextEdit document.write observes only post-write AX text; without a pre-write observation it cannot prove state_changed.";
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("textedit", "TEXTEDIT").command(document_write_invoke_command())
@@ -127,6 +129,9 @@ pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, co
     None => "activation and input delivery only; verify=false so no semantic VerificationResult was attached".to_string(),
   });
   output.known_limits.push(TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT.to_string());
+  if report.verification.is_some() {
+    output.known_limits.push(TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT.to_string());
+  }
   output.report = Some(document_write_report(report, command));
   Ok(output)
 }
@@ -184,7 +189,9 @@ fn build_canonical_operation_result(result: &InvokeResult, observation: Option<&
         api_version: VERIFICATION_RESULT_API_VERSION.to_string(),
         method: VerificationMethod::AxText,
         executed: true,
-        state_changed: true,
+        // NOTICE(textedit-state-changed): only post-write AX text is recorded.
+        // Keep this false until a pre-write observation is available for comparison.
+        state_changed: false,
         semantic_matched: Some(verification.semantic_matched),
         failure_layer: (!verification.semantic_matched).then_some(FailureLayer::SemanticMismatch),
         evidence: evidence_artifacts
@@ -214,6 +221,9 @@ fn build_canonical_operation_result(result: &InvokeResult, observation: Option<&
   let mut known_limits = result.known_limits.clone();
   if !known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT) {
     known_limits.push(TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT.to_string());
+  }
+  if observation.is_some() && !known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT) {
+    known_limits.push(TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT.to_string());
   }
   OperationResult {
     api_version: OPERATION_RESULT_API_VERSION.to_string(),
@@ -503,6 +513,24 @@ mod tests {
   }
 
   #[test]
+  fn fixture_document_write_without_ax_verification_omits_state_change_known_limit() {
+    let mut inputs = BTreeMap::new();
+    inputs.insert("content".to_string(), "hello-fixture".to_string());
+    inputs.insert("driver".to_string(), "fixture".to_string());
+    inputs.insert("verify".to_string(), "false".to_string());
+    let input = InvokeCommandInput {
+      command_id: DOCUMENT_WRITE_COMMAND_ID,
+      target_application_id: None,
+      inputs: &inputs,
+      dry_run: false,
+    };
+
+    let output = document_write_impl(input).expect("fixture write without verification");
+
+    assert!(!output.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
+  }
+
+  #[test]
   fn document_write_command_metadata_uses_app_namespace() {
     let command = document_write_invoke_command();
     assert_eq!(command.id, DOCUMENT_WRITE_COMMAND_ID);
@@ -536,6 +564,8 @@ mod tests {
     assert!(operation.evidence_artifacts.iter().all(|artifact| artifact.run_id.as_str() == result.run_id));
     assert!(operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_KNOWN_LIMIT));
     assert_eq!(operation.verifications[0].semantic_matched, Some(true));
+    assert!(!operation.verifications[0].state_changed);
+    assert!(operation.known_limits.iter().any(|limit| limit == TEXTEDIT_DOCUMENT_WRITE_STATE_CHANGED_KNOWN_LIMIT));
     assert!(result.artifacts.iter().any(|artifact| artifact.role == "operation-result"));
     assert_eq!(result.artifacts.len(), result.artifact_paths.len());
     let _ = std::fs::remove_dir_all(root);
@@ -618,6 +648,7 @@ mod tests {
     assert_eq!(operation.status, OperationStatus::Failed);
     assert_eq!(operation.verifications.len(), 1);
     assert_eq!(operation.verifications[0].semantic_matched, Some(false));
+    assert!(!operation.verifications[0].state_changed);
     assert_eq!(operation.verifications[0].failure_layer, Some(FailureLayer::SemanticMismatch));
     assert!(operation.evidence_artifacts.iter().all(|artifact| artifact.run_id.as_str() == result.run_id));
     let operation_artifact =
