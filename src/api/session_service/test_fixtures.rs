@@ -1,8 +1,8 @@
 //! Shared hermetic fixtures for `session_service` unit tests.
 //!
 //! Centralizes run/artifact staging so operation-result and operation-summary
-//! shape changes touch one place. Callers: `summary`, `summary_store`,
-//! `handler`, and `transport` test modules.
+//! shape changes touch one place. Callers include summary, durability, handler,
+//! and server tests.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -245,7 +245,7 @@ pub fn persist_operation_result_and_summary_run(
 ) -> SessionRunFixture {
   let fixture = persist_operation_result_run(label, run_id, operation);
   let result = invoke_result_matching_summary(run_id, summary);
-  crate::api::session_service::summary_store::persist_operation_summary(&fixture.store, &result, summary)
+  crate::api::session_service::durability::persist_operation_summary_fixture(&fixture.store, &result, summary)
     .expect("summary artifact should persist");
   fixture
 }

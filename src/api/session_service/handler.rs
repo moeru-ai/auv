@@ -19,11 +19,10 @@ use auv_tracing_driver::store::LocalStore;
 use auv_tracing_driver::{MemoryRunRecorder, RunRecordingBackend, SessionId};
 
 use crate::api::session_service::SessionApiError;
+use crate::api::session_service::durability::record_invoke_durability;
 use crate::api::session_service::mapper;
-use crate::api::session_service::operation_result_store::record_invoke_operation_result;
 use crate::api::session_service::registry::SessionRegistry;
 use crate::api::session_service::summary::{JoinedOperationSummaryLoad, load_joined_operation_summary};
-use crate::api::session_service::summary_store::record_invoke_summary;
 
 /// Process-local session API handler over one store path.
 ///
@@ -103,13 +102,11 @@ impl SessionApiHandler {
     // Invoke already finished, so persistence failure must not surface as an
     // invoke error that invites blind retry of a non-idempotent command.
     // Durability gaps are reported through known_limits.
-    let mut durability_limits = record_invoke_summary(recording.store(), result, &summary);
-    durability_limits.extend(record_invoke_operation_result(recording.store(), command_id, result));
-    // Process-local cache is populated only when both summary and operation-result persist succeed.
-    if durability_limits.is_empty() {
+    let durability = record_invoke_durability(recording.store(), command_id, result, &summary);
+    if durability.cache_allowed() {
       self.summaries.lock().expect("summary cache mutex poisoned").record(summary.clone());
     }
-    let known_limits: Vec<&str> = durability_limits.iter().map(String::as_str).collect();
+    let known_limits = durability.known_limits();
     mapper::invoke_result_to_response(command_id, result, &known_limits)
   }
 
@@ -172,11 +169,10 @@ mod tests {
 
   use super::SessionApiHandler;
   use crate::api::session_service::SessionApiError;
-  use crate::api::session_service::mapper;
-  use crate::api::session_service::operation_result_store::{
-    INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT, OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT,
+  use crate::api::session_service::durability::{
+    INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT, OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT, OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT,
   };
-  use crate::api::session_service::summary_store::OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT;
+  use crate::api::session_service::mapper;
   use crate::api::session_service::test_fixtures::unique_temp_dir;
 
   static DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
