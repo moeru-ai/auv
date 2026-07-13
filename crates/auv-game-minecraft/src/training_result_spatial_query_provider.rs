@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use auv_stage_status::StageStatus;
+
 use crate::closed_scene_toy_fixture::load_closed_scene_fixture;
 use crate::scene_packet::ScenePacketManifest;
-use crate::training_result_semantic::{
-  TrainingResultSemanticCheckpointRecord, TrainingResultSemanticManifest, TrainingResultSemanticStatus, collect_checkpoint_files,
-};
+use crate::training_result_semantic::{TrainingResultSemanticCheckpointRecord, TrainingResultSemanticManifest, collect_checkpoint_files};
 use crate::training_result_spatial_query::{
   BackendOutcome, TrainingResultSpatialQueryAnswer, TrainingResultSpatialQueryInputs, TrainingResultSpatialQueryKind,
   TrainingResultSpatialQueryReason, TrainingResultSpatialQueryRequest, TrainingResultSpatialQueryResult, TrainingResultSpatialQueryStatus,
@@ -132,7 +132,7 @@ pub(crate) fn run_checkpoint_native_provider_backend(
 ) -> TrainingResultSpatialQueryResult<BackendOutcome> {
   let provider_inputs = CheckpointNativeProviderInputs::from_spatial_query(semantic_manifest, inputs);
 
-  if semantic_manifest.semantic_status != TrainingResultSemanticStatus::Ready {
+  if semantic_manifest.semantic_status != StageStatus::Ready {
     return Ok(
       blocked_answer(
         TrainingResultSpatialQueryReason::SemanticSourceNotReady,
@@ -245,7 +245,7 @@ pub(crate) fn run_closed_scene_toy_provider_backend(
   let provider_inputs =
     ClosedSceneToyProviderInputs::from_spatial_query(semantic_manifest, inputs, closed_scene_fixture_path.map(Path::to_path_buf));
 
-  if semantic_manifest.semantic_status != TrainingResultSemanticStatus::Ready {
+  if semantic_manifest.semantic_status != StageStatus::Ready {
     return Ok(
       toy_blocked_answer(
         TrainingResultSpatialQueryReason::SemanticSourceNotReady,
@@ -419,7 +419,7 @@ mod tests {
 
   fn write_semantic_manifest(
     temp: &TempDir,
-    semantic_status: TrainingResultSemanticStatus,
+    semantic_status: StageStatus,
     scene_packet_manifest_path: &Path,
     with_checkpoint: bool,
   ) -> (PathBuf, PathBuf) {
@@ -530,8 +530,7 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
+    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
       serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let scene_packet_manifest: ScenePacketManifest =
@@ -565,7 +564,7 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, true);
+    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, true);
     let semantic_manifest: TrainingResultSemanticManifest =
       serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let scene_packet_manifest: ScenePacketManifest =
@@ -601,8 +600,7 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Blocked, &scene_packet_manifest_path, true);
+    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, StageStatus::Blocked, &scene_packet_manifest_path, true);
     let semantic_manifest: TrainingResultSemanticManifest =
       serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let scene_packet_manifest: ScenePacketManifest =
@@ -658,8 +656,7 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
+    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
       serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));
@@ -676,8 +673,7 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(0, 0, 0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Blocked, &scene_packet_manifest_path, false);
+    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, StageStatus::Blocked, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
       serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));
@@ -693,8 +689,7 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(511, 73, 728);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
+    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
       serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let mut inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));
@@ -714,8 +709,7 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(511, 73, 728);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
+    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
       serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let mut inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));
@@ -735,8 +729,7 @@ mod tests {
     let temp = TempDir::new().expect("tempdir");
     let target_block = BlockPosition::new(511, 73, 728);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block);
-    let (semantic_manifest_path, _) =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, false);
+    let (semantic_manifest_path, _) = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, false);
     let semantic_manifest: TrainingResultSemanticManifest =
       serde_json::from_slice(&fs::read(&semantic_manifest_path).expect("read semantic")).expect("parse semantic");
     let inputs = spatial_query_inputs(semantic_manifest_path, target_block, temp.path().join("query-output"));

@@ -60,6 +60,7 @@ swift-bridge-build.workspace = true
 
 [dev-dependencies]
 auv-api-proto = { path = "../auv-api-proto" }
+auv-stage-status = { path = "../auv-stage-status" }
 axum = { version = "0.8", default-features = false }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "time"] }
 tonic = { version = "0.14", features = ["transport"] }

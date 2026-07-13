@@ -11,11 +11,12 @@ use std::process::{Command, Stdio};
 use auv_game_minecraft::training_result_holdout_render_quality::{HoldoutRenderQualityAnswer, HoldoutRenderQualityRequest};
 use auv_game_minecraft::types::{PlayerPose, Vec3, Viewport};
 use auv_game_minecraft::{
-  BlockPosition, HoldoutPreviewStatus, HoldoutRenderQualityStatus, HoldoutRenderQualityVerdict, MinecraftTargetSemantics,
-  SCENE_PACKET_SCHEMA_VERSION, ScenePacketInputs, TrainingPackageInputs, TrainingResultHoldoutPreviewInputs,
-  TrainingResultHoldoutRenderQualityInputs, TrainingResultSemanticManifest, TrainingResultSpatialQueryInputs, export_3dgs_scene_packet,
-  export_3dgs_training_package, inspect_3dgs_training_result_holdout, measure_3dgs_holdout_render_quality, query_3dgs_training_result,
+  BlockPosition, HoldoutRenderQualityVerdict, MinecraftTargetSemantics, SCENE_PACKET_SCHEMA_VERSION, ScenePacketInputs,
+  TrainingPackageInputs, TrainingResultHoldoutPreviewInputs, TrainingResultHoldoutRenderQualityInputs, TrainingResultSemanticManifest,
+  TrainingResultSpatialQueryInputs, export_3dgs_scene_packet, export_3dgs_training_package, inspect_3dgs_training_result_holdout,
+  measure_3dgs_holdout_render_quality, query_3dgs_training_result,
 };
+use auv_stage_status::StageStatus;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -246,14 +247,14 @@ fn real_source_mc16_mc17_chain_exports_and_probes_holdout_without_splat_diff() {
   })
   .expect("mc16 holdout preview");
 
-  assert_eq!(holdout.manifest.status, HoldoutPreviewStatus::Ready);
+  assert_eq!(holdout.manifest.status, StageStatus::Ready);
   assert!(
     holdout.manifest.holdout_screenshot_path.as_deref().is_some_and(|path| Path::new(path).is_file()),
     "holdout screenshot path should resolve to a real file"
   );
 
   let probe_answer = run_holdout_render_probe(HOLDOUT_RENDER_PROBE_COMMAND, &holdout_dir);
-  assert_eq!(probe_answer.status, HoldoutRenderQualityStatus::Blocked);
+  assert_eq!(probe_answer.status, StageStatus::Blocked);
 
   let quality_dir = chain._root.path().join("holdout-quality");
   let quality = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
@@ -264,7 +265,7 @@ fn real_source_mc16_mc17_chain_exports_and_probes_holdout_without_splat_diff() {
   })
   .expect("mc17 holdout render quality");
 
-  assert_eq!(quality.manifest.status, HoldoutRenderQualityStatus::Ready);
+  assert_eq!(quality.manifest.status, StageStatus::Ready);
   assert_eq!(quality.manifest.verdict, HoldoutRenderQualityVerdict::MeasuredOnly);
   assert!(quality.manifest.image_size_match);
   assert!(

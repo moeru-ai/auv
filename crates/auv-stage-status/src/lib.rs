@@ -1,12 +1,7 @@
-//! NOTICE(stage-status-helper): this crate owns only the shared persisted-stage
-//! status triad (`ready | blocked | failed`) used by semantic, witness, and
-//! quality stage producers. It is **not** query status (`answered/blocked/failed`)
-//! or action readiness; see `crates/auv-query-readiness` for the derived-action
-//! eligibility triad.
+//! Shared status for persisted semantic, witness, and quality stages.
 //!
-//! Manifest lineage, domain reasons, and vertical-specific stage logic stay
-//! donor-local per
-//! `docs/ai/references/2026-06-29-auv-core-a3-stage-status-triad-helper-design.md`.
+//! Query outcomes and action readiness use their own domain contracts. Stage
+//! reasons, lineage, and vertical-specific policy remain in the producing crate.
 
 use std::fmt;
 

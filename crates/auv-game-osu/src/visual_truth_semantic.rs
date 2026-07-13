@@ -6,6 +6,7 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -46,7 +47,7 @@ pub struct VisualTruthSemanticManifest {
   pub source_projection_path: String,
   pub beatmap_path: String,
   pub frame_count: usize,
-  pub semantic_status: VisualTruthSemanticStatus,
+  pub semantic_status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub semantic_reason: Option<VisualTruthSemanticReason>,
   pub known_limits: Vec<String>,
@@ -62,7 +63,7 @@ pub struct VisualTruthSemanticInspectReport {
   pub source_projection_path: String,
   pub beatmap_path: String,
   pub frame_count: usize,
-  pub semantic_status: VisualTruthSemanticStatus,
+  pub semantic_status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub semantic_reason: Option<VisualTruthSemanticReason>,
   pub visual_truth_manifest_readable: bool,
@@ -71,8 +72,6 @@ pub struct VisualTruthSemanticInspectReport {
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
-
-pub type VisualTruthSemanticStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -167,7 +166,7 @@ pub fn validate_visual_truth_semantic(
 }
 
 struct SemanticGateEvaluation {
-  semantic_status: VisualTruthSemanticStatus,
+  semantic_status: StageStatus,
   semantic_reason: Option<VisualTruthSemanticReason>,
   visual_truth_manifest: Option<VisualTruthManifest>,
   projection_artifact: Option<ProjectionArtifact>,
@@ -182,7 +181,7 @@ fn evaluate_semantic_gate(
 ) -> SemanticGateEvaluation {
   if path_is_symlink(run_artifact_dir) || path_is_symlink(visual_truth_manifest_path) || path_is_symlink(projection_path) {
     return SemanticGateEvaluation {
-      semantic_status: VisualTruthSemanticStatus::Blocked,
+      semantic_status: StageStatus::Blocked,
       semantic_reason: Some(VisualTruthSemanticReason::NormalizedPathsInvalid),
       visual_truth_manifest: None,
       projection_artifact: None,
@@ -192,7 +191,7 @@ fn evaluate_semantic_gate(
 
   if !visual_truth_manifest_path.is_file() {
     return SemanticGateEvaluation {
-      semantic_status: VisualTruthSemanticStatus::Blocked,
+      semantic_status: StageStatus::Blocked,
       semantic_reason: Some(VisualTruthSemanticReason::MissingVisualTruthManifest),
       visual_truth_manifest: None,
       projection_artifact: None,
@@ -202,7 +201,7 @@ fn evaluate_semantic_gate(
 
   if !projection_path.is_file() {
     return SemanticGateEvaluation {
-      semantic_status: VisualTruthSemanticStatus::Blocked,
+      semantic_status: StageStatus::Blocked,
       semantic_reason: Some(VisualTruthSemanticReason::MissingProjection),
       visual_truth_manifest: None,
       projection_artifact: None,
@@ -215,7 +214,7 @@ fn evaluate_semantic_gate(
     Err(error) => {
       warnings.insert(error);
       return SemanticGateEvaluation {
-        semantic_status: VisualTruthSemanticStatus::Failed,
+        semantic_status: StageStatus::Failed,
         semantic_reason: Some(VisualTruthSemanticReason::VisualTruthManifestParseFailed),
         visual_truth_manifest: None,
         projection_artifact: None,
@@ -229,7 +228,7 @@ fn evaluate_semantic_gate(
     Err(error) => {
       warnings.insert(error);
       return SemanticGateEvaluation {
-        semantic_status: VisualTruthSemanticStatus::Failed,
+        semantic_status: StageStatus::Failed,
         semantic_reason: Some(VisualTruthSemanticReason::ProjectionParseFailed),
         visual_truth_manifest,
         projection_artifact: None,
@@ -242,7 +241,7 @@ fn evaluate_semantic_gate(
 
   if !projection_eval_ready {
     return SemanticGateEvaluation {
-      semantic_status: VisualTruthSemanticStatus::Failed,
+      semantic_status: StageStatus::Failed,
       semantic_reason: Some(VisualTruthSemanticReason::ProjectionNonFinite),
       visual_truth_manifest,
       projection_artifact,
@@ -252,7 +251,7 @@ fn evaluate_semantic_gate(
 
   let Some(manifest) = visual_truth_manifest.as_ref() else {
     return SemanticGateEvaluation {
-      semantic_status: VisualTruthSemanticStatus::Failed,
+      semantic_status: StageStatus::Failed,
       semantic_reason: Some(VisualTruthSemanticReason::VisualTruthManifestParseFailed),
       visual_truth_manifest,
       projection_artifact,
@@ -262,7 +261,7 @@ fn evaluate_semantic_gate(
 
   if manifest.frames.is_empty() {
     return SemanticGateEvaluation {
-      semantic_status: VisualTruthSemanticStatus::Blocked,
+      semantic_status: StageStatus::Blocked,
       semantic_reason: Some(VisualTruthSemanticReason::EmptyFrames),
       visual_truth_manifest: Some(manifest.clone()),
       projection_artifact,
@@ -271,7 +270,7 @@ fn evaluate_semantic_gate(
   }
 
   SemanticGateEvaluation {
-    semantic_status: VisualTruthSemanticStatus::Ready,
+    semantic_status: StageStatus::Ready,
     semantic_reason: None,
     visual_truth_manifest: Some(manifest.clone()),
     projection_artifact,
@@ -315,14 +314,14 @@ mod tests {
   use crate::visual_truth::{CaptureFrame, ExpectedObjectTruth, VisualTruthFrame};
 
   #[test]
-  fn semantic_status_type_alias_preserves_wire_labels() {
+  fn stage_status_preserves_wire_labels() {
     for (status, wire) in [
-      (VisualTruthSemanticStatus::Ready, "\"ready\""),
-      (VisualTruthSemanticStatus::Blocked, "\"blocked\""),
-      (VisualTruthSemanticStatus::Failed, "\"failed\""),
+      (StageStatus::Ready, "\"ready\""),
+      (StageStatus::Blocked, "\"blocked\""),
+      (StageStatus::Failed, "\"failed\""),
     ] {
       assert_eq!(serde_json::to_string(&status).expect("serialize"), wire);
-      let decoded: VisualTruthSemanticStatus = serde_json::from_str(wire).expect("deserialize");
+      let decoded: StageStatus = serde_json::from_str(wire).expect("deserialize");
       assert_eq!(decoded, status);
     }
   }
@@ -413,7 +412,7 @@ mod tests {
     })
     .expect("semantic validation should succeed");
 
-    assert_eq!(output.manifest.semantic_status, VisualTruthSemanticStatus::Ready);
+    assert_eq!(output.manifest.semantic_status, StageStatus::Ready);
     assert_eq!(output.manifest.frame_count, 1);
     assert!(output.manifest_path.exists());
     assert!(output.inspect_report_path.exists());
@@ -431,7 +430,7 @@ mod tests {
     })
     .expect("semantic validation should still write artifacts");
 
-    assert_eq!(output.manifest.semantic_status, VisualTruthSemanticStatus::Blocked);
+    assert_eq!(output.manifest.semantic_status, StageStatus::Blocked);
     assert_eq!(output.manifest.semantic_reason, Some(VisualTruthSemanticReason::MissingProjection));
   }
 

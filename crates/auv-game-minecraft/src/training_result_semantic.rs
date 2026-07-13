@@ -6,6 +6,7 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -55,7 +56,7 @@ pub struct TrainingResultSemanticManifest {
   pub job_backend: String,
   pub source_result_status: TrainingResultStatus,
   pub normalized_result_dir: String,
-  pub semantic_status: TrainingResultSemanticStatus,
+  pub semantic_status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub semantic_reason: Option<TrainingResultSemanticReason>,
   pub config_path: String,
@@ -86,7 +87,7 @@ pub struct TrainingResultSemanticInspectReport {
   pub job_backend: String,
   pub source_result_status: TrainingResultStatus,
   pub normalized_result_dir: String,
-  pub semantic_status: TrainingResultSemanticStatus,
+  pub semantic_status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub semantic_reason: Option<TrainingResultSemanticReason>,
   pub config_yaml_parsed: bool,
@@ -105,8 +106,6 @@ pub struct TrainingResultSemanticCheckpointRecord {
   pub relative_path: String,
   pub byte_size: u64,
 }
-
-pub type TrainingResultSemanticStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -245,15 +244,7 @@ fn evaluate_semantic_gate(
   models_dir_path: &Path,
   trainer_backend: &str,
   warnings: &mut BTreeSet<String>,
-) -> (
-  TrainingResultSemanticStatus,
-  Option<TrainingResultSemanticReason>,
-  bool,
-  Option<String>,
-  bool,
-  bool,
-  Vec<TrainingResultSemanticCheckpointRecord>,
-) {
+) -> (StageStatus, Option<TrainingResultSemanticReason>, bool, Option<String>, bool, bool, Vec<TrainingResultSemanticCheckpointRecord>) {
   if path_is_symlink(normalized_result_dir) || path_is_symlink(config_path) || path_is_symlink(models_dir_path) {
     return blocked_gate(TrainingResultSemanticReason::NormalizedPathsInvalid, false, None, false, false, Vec::new());
   }
@@ -317,7 +308,7 @@ fn evaluate_semantic_gate(
     return failed_gate(TrainingResultSemanticReason::CheckpointMissing, true, config_trainer, true, models_dir_readable, Vec::new());
   }
 
-  (TrainingResultSemanticStatus::Ready, None, true, config_trainer, true, true, checkpoint_files)
+  (StageStatus::Ready, None, true, config_trainer, true, true, checkpoint_files)
 }
 
 fn blocked_gate(
@@ -327,24 +318,8 @@ fn blocked_gate(
   config_backend_matches: bool,
   models_dir_readable: bool,
   checkpoint_files: Vec<TrainingResultSemanticCheckpointRecord>,
-) -> (
-  TrainingResultSemanticStatus,
-  Option<TrainingResultSemanticReason>,
-  bool,
-  Option<String>,
-  bool,
-  bool,
-  Vec<TrainingResultSemanticCheckpointRecord>,
-) {
-  (
-    TrainingResultSemanticStatus::Blocked,
-    Some(reason),
-    config_yaml_parsed,
-    config_trainer,
-    config_backend_matches,
-    models_dir_readable,
-    checkpoint_files,
-  )
+) -> (StageStatus, Option<TrainingResultSemanticReason>, bool, Option<String>, bool, bool, Vec<TrainingResultSemanticCheckpointRecord>) {
+  (StageStatus::Blocked, Some(reason), config_yaml_parsed, config_trainer, config_backend_matches, models_dir_readable, checkpoint_files)
 }
 
 fn failed_gate(
@@ -354,24 +329,8 @@ fn failed_gate(
   config_backend_matches: bool,
   models_dir_readable: bool,
   checkpoint_files: Vec<TrainingResultSemanticCheckpointRecord>,
-) -> (
-  TrainingResultSemanticStatus,
-  Option<TrainingResultSemanticReason>,
-  bool,
-  Option<String>,
-  bool,
-  bool,
-  Vec<TrainingResultSemanticCheckpointRecord>,
-) {
-  (
-    TrainingResultSemanticStatus::Failed,
-    Some(reason),
-    config_yaml_parsed,
-    config_trainer,
-    config_backend_matches,
-    models_dir_readable,
-    checkpoint_files,
-  )
+) -> (StageStatus, Option<TrainingResultSemanticReason>, bool, Option<String>, bool, bool, Vec<TrainingResultSemanticCheckpointRecord>) {
+  (StageStatus::Failed, Some(reason), config_yaml_parsed, config_trainer, config_backend_matches, models_dir_readable, checkpoint_files)
 }
 
 fn extract_top_level_trainer(value: &Value) -> Result<Option<String>, String> {
@@ -473,14 +432,14 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T, label: &str) -> Trainin
 mod tests {
   use super::*;
   #[test]
-  fn semantic_status_type_alias_preserves_wire_labels() {
+  fn stage_status_preserves_wire_labels() {
     for (status, wire) in [
-      (TrainingResultSemanticStatus::Ready, "\"ready\""),
-      (TrainingResultSemanticStatus::Blocked, "\"blocked\""),
-      (TrainingResultSemanticStatus::Failed, "\"failed\""),
+      (StageStatus::Ready, "\"ready\""),
+      (StageStatus::Blocked, "\"blocked\""),
+      (StageStatus::Failed, "\"failed\""),
     ] {
       assert_eq!(serde_json::to_string(&status).expect("serialize"), wire);
-      let decoded: TrainingResultSemanticStatus = serde_json::from_str(wire).expect("deserialize");
+      let decoded: StageStatus = serde_json::from_str(wire).expect("deserialize");
       assert_eq!(decoded, status);
     }
   }
@@ -552,7 +511,7 @@ mod tests {
     })
     .expect("semantic validation should succeed");
 
-    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Ready);
+    assert_eq!(output.inspect_report.semantic_status, StageStatus::Ready);
     assert_eq!(output.inspect_report.semantic_reason, None);
     assert_eq!(output.inspect_report.checkpoint_count, 1);
     assert_eq!(output.inspect_report.config_trainer.as_deref(), Some("nerfstudio.splatfacto"));
@@ -573,7 +532,7 @@ mod tests {
     })
     .expect("semantic validation should write blocked inspect");
 
-    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Blocked);
+    assert_eq!(output.inspect_report.semantic_status, StageStatus::Blocked);
     assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::NormalizedConfigMissing));
   }
 
@@ -717,7 +676,7 @@ mod tests {
     })
     .expect("semantic validation should succeed without job_status.json");
 
-    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Ready);
+    assert_eq!(output.inspect_report.semantic_status, StageStatus::Ready);
     assert!(!output.inspect_report.status_snapshot_present);
     assert!(output.inspect_report.warnings.iter().any(|warning| warning.contains("job_status.json")));
   }
@@ -766,7 +725,7 @@ mod tests {
     })
     .expect("semantic validation should write blocked inspect");
 
-    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Blocked);
+    assert_eq!(output.inspect_report.semantic_status, StageStatus::Blocked);
     assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::NormalizedPathsInvalid));
   }
 
@@ -798,7 +757,7 @@ mod tests {
 
     fs::set_permissions(&blocked_dir, original_permissions).expect("restore permissions");
 
-    assert_eq!(output.inspect_report.semantic_status, TrainingResultSemanticStatus::Failed);
+    assert_eq!(output.inspect_report.semantic_status, StageStatus::Failed);
     assert_eq!(output.inspect_report.semantic_reason, Some(TrainingResultSemanticReason::CheckpointMissing));
     assert_eq!(output.inspect_report.checkpoint_count, 1);
     assert_eq!(output.manifest.checkpoint_count, 1);

@@ -6,6 +6,7 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +14,7 @@ use crate::benchmark::{CapturePhase, ObjectKind};
 use crate::projection::ProjectionArtifact;
 use crate::visual_eval::{EvalProjection, pixel_point_inside_capture, project_playfield_point};
 use crate::visual_truth::{VisualTruthFrame, VisualTruthManifest};
-use crate::visual_truth_semantic::{VisualTruthSemanticManifest, VisualTruthSemanticStatus};
+use crate::visual_truth_semantic::VisualTruthSemanticManifest;
 
 pub type VisualTruthSpatialQueryResult<T> = Result<T, String>;
 
@@ -89,7 +90,7 @@ pub struct VisualTruthSpatialQueryInspectReport {
   pub reason: Option<VisualTruthSpatialQueryReason>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub pixel_visibility: Option<VisualTruthPixelVisibility>,
-  pub semantic_status: VisualTruthSemanticStatus,
+  pub semantic_status: StageStatus,
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
@@ -173,7 +174,7 @@ pub fn query_visual_truth_spatial(inputs: VisualTruthSpatialQueryInputs) -> Visu
   ]);
   let mut warnings = BTreeSet::new();
 
-  if semantic_manifest.semantic_status != VisualTruthSemanticStatus::Ready {
+  if semantic_manifest.semantic_status != StageStatus::Ready {
     return write_query_output(
       inputs,
       generated_at_millis,

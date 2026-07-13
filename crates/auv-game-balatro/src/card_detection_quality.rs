@@ -6,12 +6,11 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::card_detection_eval_witness::{
-  CardDetectionEvalWitnessManifest, CardDetectionEvalWitnessReason, CardDetectionEvalWitnessStatus, CardDetectionQualityBackend,
-};
+use crate::card_detection_eval_witness::{CardDetectionEvalWitnessManifest, CardDetectionEvalWitnessReason, CardDetectionQualityBackend};
 
 pub type CardDetectionQualityResult<T> = Result<T, String>;
 
@@ -54,8 +53,8 @@ pub struct CardDetectionQualityManifest {
   pub schema_version: u32,
   pub generated_at_millis: u64,
   pub card_detection_eval_witness_manifest_path: String,
-  pub witness_status: CardDetectionEvalWitnessStatus,
-  pub status: CardDetectionQualityStatus,
+  pub witness_status: StageStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<CardDetectionQualityReason>,
   pub verdict: CardDetectionQualityVerdict,
@@ -74,8 +73,8 @@ pub struct CardDetectionQualityInspectReport {
   pub generated_at_millis: u64,
   pub card_detection_quality_manifest_path: String,
   pub card_detection_eval_witness_manifest_path: String,
-  pub witness_status: CardDetectionEvalWitnessStatus,
-  pub status: CardDetectionQualityStatus,
+  pub witness_status: StageStatus,
+  pub status: StageStatus,
   pub verdict: CardDetectionQualityVerdict,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub quality_backend: Option<CardDetectionQualityBackend>,
@@ -85,8 +84,6 @@ pub struct CardDetectionQualityInspectReport {
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
-
-pub type CardDetectionQualityStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -145,7 +142,7 @@ pub fn build_card_detection_quality(inputs: &CardDetectionQualityInputs) -> Card
   let witness = gate.witness_manifest.as_ref();
 
   let outcome = match gate.witness_manifest.as_ref() {
-    Some(witness) if witness.status == CardDetectionEvalWitnessStatus::Ready => derive_quality_outcome(witness),
+    Some(witness) if witness.status == StageStatus::Ready => derive_quality_outcome(witness),
     _ => QualityOutcome {
       status: gate.quality_status,
       reason: gate.quality_reason,
@@ -160,7 +157,7 @@ pub fn build_card_detection_quality(inputs: &CardDetectionQualityInputs) -> Card
     schema_version: CARD_DETECTION_QUALITY_MANIFEST_SCHEMA_VERSION,
     generated_at_millis,
     card_detection_eval_witness_manifest_path: inputs.witness_manifest_path.display().to_string(),
-    witness_status: witness.map(|w| w.status).unwrap_or(CardDetectionEvalWitnessStatus::Blocked),
+    witness_status: witness.map(|w| w.status).unwrap_or(StageStatus::Blocked),
     status: outcome.status,
     reason: outcome.reason,
     verdict: outcome.verdict,
@@ -215,14 +212,14 @@ pub fn derive_card_detection_quality_verdict(witness: &CardDetectionEvalWitnessM
 }
 
 struct QualityGateEvaluation {
-  quality_status: CardDetectionQualityStatus,
+  quality_status: StageStatus,
   quality_reason: Option<CardDetectionQualityReason>,
   verdict: CardDetectionQualityVerdict,
   witness_manifest: Option<CardDetectionEvalWitnessManifest>,
 }
 
 struct QualityOutcome {
-  status: CardDetectionQualityStatus,
+  status: StageStatus,
   reason: Option<CardDetectionQualityReason>,
   verdict: CardDetectionQualityVerdict,
   metrics: Option<CardDetectionQualityMetrics>,
@@ -233,7 +230,7 @@ struct QualityOutcome {
 fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<String>) -> QualityGateEvaluation {
   if !witness_manifest_path.is_file() {
     return QualityGateEvaluation {
-      quality_status: CardDetectionQualityStatus::Blocked,
+      quality_status: StageStatus::Blocked,
       quality_reason: Some(CardDetectionQualityReason::MissingWitnessManifest),
       verdict: CardDetectionQualityVerdict::Blocked,
       witness_manifest: None,
@@ -246,7 +243,7 @@ fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<S
       Err(error) => {
         warnings.insert(error);
         return QualityGateEvaluation {
-          quality_status: CardDetectionQualityStatus::Failed,
+          quality_status: StageStatus::Failed,
           quality_reason: Some(CardDetectionQualityReason::WitnessManifestParseFailed),
           verdict: CardDetectionQualityVerdict::Failed,
           witness_manifest: None,
@@ -256,7 +253,7 @@ fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<S
 
   let Some(witness) = witness_manifest.as_ref() else {
     return QualityGateEvaluation {
-      quality_status: CardDetectionQualityStatus::Failed,
+      quality_status: StageStatus::Failed,
       quality_reason: Some(CardDetectionQualityReason::WitnessManifestParseFailed),
       verdict: CardDetectionQualityVerdict::Failed,
       witness_manifest,
@@ -264,8 +261,8 @@ fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<S
   };
 
   match witness.status {
-    CardDetectionEvalWitnessStatus::Blocked => QualityGateEvaluation {
-      quality_status: CardDetectionQualityStatus::Blocked,
+    StageStatus::Blocked => QualityGateEvaluation {
+      quality_status: StageStatus::Blocked,
       quality_reason: witness.reason.map(|reason| match reason {
         CardDetectionEvalWitnessReason::SemanticNotReady
         | CardDetectionEvalWitnessReason::MissingExpectedSlots
@@ -276,13 +273,13 @@ fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<S
       verdict: CardDetectionQualityVerdict::Blocked,
       witness_manifest,
     },
-    CardDetectionEvalWitnessStatus::Failed => QualityGateEvaluation {
-      quality_status: CardDetectionQualityStatus::Failed,
+    StageStatus::Failed => QualityGateEvaluation {
+      quality_status: StageStatus::Failed,
       quality_reason: Some(CardDetectionQualityReason::WitnessFailed),
       verdict: CardDetectionQualityVerdict::Failed,
       witness_manifest,
     },
-    CardDetectionEvalWitnessStatus::Ready => {
+    StageStatus::Ready => {
       let outcome = derive_quality_outcome(witness);
       QualityGateEvaluation {
         quality_status: outcome.status,
@@ -307,7 +304,7 @@ fn derive_quality_outcome(witness: &CardDetectionEvalWitnessManifest) -> Quality
   };
 
   QualityOutcome {
-    status: CardDetectionQualityStatus::Ready,
+    status: StageStatus::Ready,
     reason: None,
     verdict,
     metrics: Some(metrics),
@@ -401,7 +398,7 @@ mod tests {
     })
     .expect("quality");
 
-    assert_eq!(output.manifest.status, CardDetectionQualityStatus::Ready);
+    assert_eq!(output.manifest.status, StageStatus::Ready);
     assert_eq!(output.manifest.verdict, CardDetectionQualityVerdict::MeasuredOnly);
     assert_eq!(output.manifest.quality_backend, Some(CardDetectionQualityBackend::UltralyticsOnnxEntities));
     let metrics = output.manifest.metrics.as_ref().expect("metrics");
@@ -436,7 +433,7 @@ mod tests {
     })
     .expect("quality");
 
-    assert_eq!(output.manifest.status, CardDetectionQualityStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
     assert_eq!(output.manifest.verdict, CardDetectionQualityVerdict::Blocked);
     assert!(output.manifest.metrics.is_none());
   }
@@ -464,7 +461,7 @@ mod tests {
     })
     .expect("quality");
 
-    assert_eq!(output.manifest.status, CardDetectionQualityStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
     assert_eq!(output.manifest.verdict, CardDetectionQualityVerdict::Blocked);
     assert!(output.manifest.metrics.is_none());
   }
@@ -475,7 +472,7 @@ mod tests {
     let witness_path =
       witness_manifest_for_bundle(fixture_root().join("partial_coverage"), fixture_root().join("partial_expected_slots.json"), &temp);
     let witness = read_json_file::<CardDetectionEvalWitnessManifest>(&witness_path, "witness").expect("read witness");
-    assert_eq!(witness.status, CardDetectionEvalWitnessStatus::Ready);
+    assert_eq!(witness.status, StageStatus::Ready);
     assert_eq!(derive_card_detection_quality_verdict(&witness), CardDetectionQualityVerdict::MetricPartial);
   }
 
@@ -542,7 +539,7 @@ mod tests {
     })
     .expect("quality");
 
-    assert_eq!(output.manifest.status, CardDetectionQualityStatus::Failed);
+    assert_eq!(output.manifest.status, StageStatus::Failed);
     assert_eq!(output.manifest.reason, Some(CardDetectionQualityReason::WitnessManifestParseFailed));
     assert_eq!(output.manifest.verdict, CardDetectionQualityVerdict::Failed);
     assert!(output.manifest.metrics.is_none());
@@ -578,7 +575,7 @@ mod tests {
     })
     .expect("quality");
 
-    assert_eq!(output.manifest.status, CardDetectionQualityStatus::Failed);
+    assert_eq!(output.manifest.status, StageStatus::Failed);
     assert_eq!(output.manifest.reason, Some(CardDetectionQualityReason::WitnessFailed));
     assert_eq!(output.manifest.verdict, CardDetectionQualityVerdict::Failed);
     assert!(output.manifest.metrics.is_none());

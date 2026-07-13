@@ -682,6 +682,7 @@ dependencies = [
  "auv-inspect-server",
  "auv-media-macos",
  "auv-query-readiness",
+ "auv-stage-status",
  "auv-task-object-detection",
  "auv-tracing-driver",
  "axum",
