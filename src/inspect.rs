@@ -660,9 +660,10 @@ mod tests {
     OsuVisualTruthSpatialQueryManifestLineage,
   };
   use auv_game_minecraft::{
-    HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewStatus, TrainingCompatibilityStatus, TrainingCompatibilityViewReport,
-    TrainingPackageCounts, TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
+    HoldoutFrameSelection, HoldoutFrameWitness, TrainingCompatibilityStatus, TrainingCompatibilityViewReport, TrainingPackageCounts,
+    TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
   };
+  use auv_stage_status::StageStatus;
   use auv_tracing_driver::store::CanonicalRun;
   use auv_tracing_driver::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RUN_API_VERSION, RunId,
@@ -1499,7 +1500,7 @@ mod tests {
       ),
       holdout_screenshot_path: Some(holdout_witness.screenshot_path.clone()),
       reference_overlay_path: Some("/tmp/holdout/holdout_overlay_frame_000006.png".to_string()),
-      status: HoldoutPreviewStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       known_limits: vec!["holdout preview only".to_string()],
     };
@@ -1524,7 +1525,7 @@ mod tests {
       basis_checkpoint_path: holdout_manifest_value.basis_checkpoint_path.clone(),
       holdout_screenshot_path: holdout_manifest_value.holdout_screenshot_path.clone(),
       reference_overlay_path: holdout_manifest_value.reference_overlay_path.clone(),
-      status: HoldoutPreviewStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       holdout_frame_selection: HoldoutFrameSelection::LastInGame,
       checkpoint_count: 1,
@@ -3469,7 +3470,7 @@ mod tests {
       ),
       holdout_screenshot_path: Some(holdout_witness.screenshot_path.clone()),
       reference_overlay_path: None,
-      status: HoldoutPreviewStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       known_limits: vec![],
     };
@@ -3516,7 +3517,7 @@ mod tests {
             basis_checkpoint_path: manifest.basis_checkpoint_path.clone(),
             holdout_screenshot_path: manifest.holdout_screenshot_path.clone(),
             reference_overlay_path: manifest.reference_overlay_path.clone(),
-            status: HoldoutPreviewStatus::Ready,
+            status: StageStatus::Ready,
             reason: None,
             holdout_frame_selection: HoldoutFrameSelection::LastInGame,
             checkpoint_count: 1,

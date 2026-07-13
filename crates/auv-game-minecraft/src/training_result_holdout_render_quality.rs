@@ -8,12 +8,13 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use image::RgbImage;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::scene_packet::ScenePacketFramePayload;
-use crate::training_result_holdout_preview::{HoldoutFrameWitness, HoldoutPreviewStatus, TrainingResultHoldoutPreviewManifest};
+use crate::training_result_holdout_preview::{HoldoutFrameWitness, TrainingResultHoldoutPreviewManifest};
 use crate::training_result_semantic::TrainingResultSemanticManifest;
 use crate::types::{MinecraftSpatialFrame, PlayerPose, Viewport};
 
@@ -66,7 +67,7 @@ pub struct HoldoutRenderQualityRequest {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HoldoutRenderQualityAnswer {
-  pub status: HoldoutRenderQualityStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub rendered_image_path: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -141,7 +142,7 @@ pub struct TrainingResultHoldoutRenderQualityManifest {
   pub rendered_image_size: Option<HoldoutRenderQualityImageSize>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub metrics: Option<HoldoutRenderQualityMetrics>,
-  pub status: HoldoutRenderQualityStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<HoldoutRenderQualityReason>,
   pub verdict: HoldoutRenderQualityVerdict,
@@ -183,15 +184,13 @@ pub struct TrainingResultHoldoutRenderQualityInspectReport {
   pub ssim_available: bool,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub metrics: Option<HoldoutRenderQualityMetrics>,
-  pub status: HoldoutRenderQualityStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<HoldoutRenderQualityReason>,
   pub verdict: HoldoutRenderQualityVerdict,
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
-
-pub type HoldoutRenderQualityStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -247,7 +246,7 @@ impl HoldoutRenderQualityVerdict {
 
 #[derive(Clone, Debug, PartialEq)]
 struct HoldoutRenderQualityOutcome {
-  status: HoldoutRenderQualityStatus,
+  status: StageStatus,
   reason: Option<HoldoutRenderQualityReason>,
   verdict: HoldoutRenderQualityVerdict,
   holdout_frame_index: usize,
@@ -303,7 +302,7 @@ pub fn measure_3dgs_holdout_render_quality(
     let holdout_preview = holdout_preview_manifest.as_ref().expect("holdout preview present");
     known_limits.extend(holdout_preview.known_limits.iter().cloned());
 
-    if holdout_preview.status != HoldoutPreviewStatus::Ready
+    if holdout_preview.status != StageStatus::Ready
       || holdout_preview.holdout_frame.is_none()
       || holdout_preview.basis_checkpoint_path.is_none()
     {
@@ -569,7 +568,7 @@ fn blocked_outcome(
   warnings: BTreeSet<String>,
 ) -> HoldoutRenderQualityOutcome {
   HoldoutRenderQualityOutcome {
-    status: HoldoutRenderQualityStatus::Blocked,
+    status: StageStatus::Blocked,
     reason: Some(reason),
     verdict: HoldoutRenderQualityVerdict::Blocked,
     holdout_frame_index,
@@ -594,7 +593,7 @@ fn failed_outcome(
   warnings: BTreeSet<String>,
 ) -> HoldoutRenderQualityOutcome {
   HoldoutRenderQualityOutcome {
-    status: HoldoutRenderQualityStatus::Failed,
+    status: StageStatus::Failed,
     reason: Some(reason),
     verdict: HoldoutRenderQualityVerdict::Failed,
     holdout_frame_index: holdout_preview.holdout_frame_index,
@@ -685,7 +684,7 @@ fn run_holdout_render_and_metrics(
     }
   };
 
-  if answer.status != HoldoutRenderQualityStatus::Ready {
+  if answer.status != StageStatus::Ready {
     return Ok(failed_outcome(
       HoldoutRenderQualityReason::HoldoutRenderCommandFailed,
       holdout_preview,
@@ -725,7 +724,7 @@ fn run_holdout_render_and_metrics(
   if source_rgb.width() == rendered_rgb.width() && source_rgb.height() == rendered_rgb.height() {
     let metrics = compute_rgb8_metrics(&source_rgb, &rendered_rgb);
     Ok(HoldoutRenderQualityOutcome {
-      status: HoldoutRenderQualityStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       verdict: HoldoutRenderQualityVerdict::MeasuredOnly,
       holdout_frame_index: holdout_preview.holdout_frame_index,
@@ -743,7 +742,7 @@ fn run_holdout_render_and_metrics(
   } else {
     warnings.insert("holdout screenshot and rendered image dimensions differ; MC-17 records metric_partial without resize".to_string());
     Ok(HoldoutRenderQualityOutcome {
-      status: HoldoutRenderQualityStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       verdict: HoldoutRenderQualityVerdict::MetricPartial,
       holdout_frame_index: holdout_preview.holdout_frame_index,
@@ -862,9 +861,9 @@ mod tests {
   use crate::scene_packet::{ScenePacketCounts, ScenePacketFrameRecord, ScenePacketManifest};
   use crate::training_result::TrainingResultStatus;
   use crate::training_result_holdout_preview::{
-    HoldoutPreviewStatus, TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION, TrainingResultHoldoutPreviewManifest,
+    TRAINING_RESULT_HOLDOUT_PREVIEW_MANIFEST_SCHEMA_VERSION, TrainingResultHoldoutPreviewManifest,
   };
-  use crate::training_result_semantic::{TrainingResultSemanticManifest, TrainingResultSemanticStatus};
+  use crate::training_result_semantic::TrainingResultSemanticManifest;
   use crate::types::{BlockFace, PlayerPose, RaycastHit, Vec3};
   use image::{ImageBuffer, Rgb};
   use tempfile::TempDir;
@@ -932,7 +931,7 @@ mod tests {
       job_backend: "remote".to_string(),
       source_result_status: TrainingResultStatus::Succeeded,
       normalized_result_dir: normalized_dir.to_string_lossy().into_owned(),
-      semantic_status: TrainingResultSemanticStatus::Ready,
+      semantic_status: StageStatus::Ready,
       semantic_reason: None,
       config_path: config_path.to_string_lossy().into_owned(),
       models_dir_path: models_dir.to_string_lossy().into_owned(),
@@ -955,7 +954,7 @@ mod tests {
 
   fn write_holdout_fixture(
     temp: &TempDir,
-    holdout_status: HoldoutPreviewStatus,
+    holdout_status: StageStatus,
     include_checkpoint: bool,
     include_config: bool,
     include_screenshot: bool,
@@ -1042,17 +1041,17 @@ mod tests {
       job_backend: "remote".to_string(),
       normalized_result_dir: normalized_dir.to_string_lossy().into_owned(),
       holdout_frame_index: 1,
-      holdout_frame: if holdout_status == HoldoutPreviewStatus::Ready {
+      holdout_frame: if holdout_status == StageStatus::Ready {
         Some(holdout_frame.clone())
       } else {
         None
       },
-      basis_checkpoint_path: if holdout_status == HoldoutPreviewStatus::Ready {
+      basis_checkpoint_path: if holdout_status == StageStatus::Ready {
         Some(checkpoint_path.to_string_lossy().into_owned())
       } else {
         None
       },
-      holdout_screenshot_path: if holdout_status == HoldoutPreviewStatus::Ready && include_screenshot {
+      holdout_screenshot_path: if holdout_status == StageStatus::Ready && include_screenshot {
         Some(holdout_screenshot_path.to_string_lossy().into_owned())
       } else {
         None
@@ -1097,7 +1096,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   #[test]
   fn blocked_invalid_mc16_manifest_records_quality_evidence() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, None);
+    let fixture = write_holdout_fixture(&temp, StageStatus::Ready, true, true, true, None);
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1107,7 +1106,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     })
     .expect("blocked invalid mc16");
 
-    assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
     assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::HoldoutPreviewUnreadable));
     assert_eq!(output.manifest.verdict, HoldoutRenderQualityVerdict::Blocked);
     assert!(output.manifest_path.is_file());
@@ -1117,7 +1116,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   #[test]
   fn blocked_lineage_mismatch_records_quality_evidence() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, Some("-mismatch"));
+    let fixture = write_holdout_fixture(&temp, StageStatus::Ready, true, true, true, Some("-mismatch"));
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1127,14 +1126,14 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     })
     .expect("blocked lineage mismatch");
 
-    assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
     assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::LineageMismatch));
   }
 
   #[test]
   fn blocked_missing_checkpoint_records_quality_evidence() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, false, true, true, None);
+    let fixture = write_holdout_fixture(&temp, StageStatus::Ready, false, true, true, None);
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1144,14 +1143,14 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     })
     .expect("blocked missing checkpoint");
 
-    assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
     assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::CheckpointMissing));
   }
 
   #[test]
   fn failed_render_command_nonzero_records_quality_evidence() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, None);
+    let fixture = write_holdout_fixture(&temp, StageStatus::Ready, true, true, true, None);
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1161,7 +1160,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     })
     .expect("failed render command");
 
-    assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Failed);
+    assert_eq!(output.manifest.status, StageStatus::Failed);
     assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::HoldoutRenderCommandFailed));
     assert_eq!(output.manifest.verdict, HoldoutRenderQualityVerdict::Failed);
   }
@@ -1169,7 +1168,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   #[test]
   fn failed_render_bad_stdout_records_quality_evidence() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, None);
+    let fixture = write_holdout_fixture(&temp, StageStatus::Ready, true, true, true, None);
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1179,14 +1178,14 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     })
     .expect("failed bad stdout");
 
-    assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Failed);
+    assert_eq!(output.manifest.status, StageStatus::Failed);
     assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::HoldoutRenderCommandFailed));
   }
 
   #[test]
   fn metric_partial_on_dimension_mismatch_records_quality_evidence() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, None);
+    let fixture = write_holdout_fixture(&temp, StageStatus::Ready, true, true, true, None);
     let mismatch_png = temp.path().join("mismatch_8x8.png");
     write_png(&mismatch_png, 8, 8, 1);
 
@@ -1198,7 +1197,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     })
     .expect("metric partial");
 
-    assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Ready);
+    assert_eq!(output.manifest.status, StageStatus::Ready);
     assert_eq!(output.manifest.verdict, HoldoutRenderQualityVerdict::MetricPartial);
     assert!(!output.manifest.image_size_match);
     assert!(output.manifest.metrics.is_none());
@@ -1208,7 +1207,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   #[test]
   fn measured_only_on_dimension_match_populates_metrics() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, None);
+    let fixture = write_holdout_fixture(&temp, StageStatus::Ready, true, true, true, None);
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1218,7 +1217,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     })
     .expect("measured only");
 
-    assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Ready);
+    assert_eq!(output.manifest.status, StageStatus::Ready);
     assert_eq!(output.manifest.verdict, HoldoutRenderQualityVerdict::MeasuredOnly);
     assert!(output.manifest.image_size_match);
     let metrics = output.manifest.metrics.expect("metrics");
@@ -1233,7 +1232,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   #[test]
   fn blocked_mc16_not_ready_skips_render_command() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Blocked, true, true, true, None);
+    let fixture = write_holdout_fixture(&temp, StageStatus::Blocked, true, true, true, None);
 
     let output = measure_3dgs_holdout_render_quality(TrainingResultHoldoutRenderQualityInputs {
       training_result_semantic_manifest_path: fixture.semantic_manifest_path,
@@ -1243,7 +1242,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
     })
     .expect("blocked mc16");
 
-    assert_eq!(output.manifest.status, HoldoutRenderQualityStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
     assert_eq!(output.manifest.reason, Some(HoldoutRenderQualityReason::HoldoutPreviewNotReady));
     assert!(output.manifest.rendered_image_path.is_none());
   }
@@ -1251,7 +1250,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   #[test]
   fn lineage_matches_semantic_compares_manifest_path_and_business_keys() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, None);
+    let fixture = write_holdout_fixture(&temp, StageStatus::Ready, true, true, true, None);
     let semantic = read_json_file::<TrainingResultSemanticManifest>(&fixture.semantic_manifest_path, "semantic").expect("semantic");
     let holdout =
       read_json_file::<TrainingResultHoldoutPreviewManifest>(&fixture.holdout_preview_manifest_path, "holdout").expect("holdout");
@@ -1262,7 +1261,7 @@ print(json.dumps({{"status": "ready", "rendered_image_path": dest}}))
   #[test]
   fn persisted_artifacts_do_not_contain_render_command_text() {
     let temp = TempDir::new().expect("tempdir");
-    let fixture = write_holdout_fixture(&temp, HoldoutPreviewStatus::Ready, true, true, true, None);
+    let fixture = write_holdout_fixture(&temp, StageStatus::Ready, true, true, true, None);
     let secret = "super-secret-render-command-token-abc123";
     let render_command = format!("printf '{{\"status\":\"blocked\"}}' # {secret}");
 

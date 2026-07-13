@@ -8,13 +8,14 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::overlay::render_projection_overlay;
 use crate::projection::MinecraftProjector;
 use crate::scene_packet::{ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketManifest};
-use crate::training_result_semantic::{TrainingResultSemanticManifest, TrainingResultSemanticStatus, collect_checkpoint_files};
+use crate::training_result_semantic::{TrainingResultSemanticManifest, collect_checkpoint_files};
 use crate::types::{MinecraftSpatialFrame, MinecraftTargetSemantics, mc6_projection_target_for_frame};
 
 pub type TrainingResultHoldoutPreviewResult<T> = Result<T, String>;
@@ -72,7 +73,7 @@ pub struct HoldoutPreviewRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HoldoutPreviewAnswer {
-  pub status: HoldoutPreviewStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<HoldoutPreviewReason>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,7 +111,7 @@ pub struct TrainingResultHoldoutPreviewManifest {
   pub holdout_screenshot_path: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reference_overlay_path: Option<String>,
-  pub status: HoldoutPreviewStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<HoldoutPreviewReason>,
   pub known_limits: Vec<String>,
@@ -142,7 +143,7 @@ pub struct TrainingResultHoldoutPreviewInspectReport {
   pub holdout_screenshot_path: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reference_overlay_path: Option<String>,
-  pub status: HoldoutPreviewStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<HoldoutPreviewReason>,
   pub holdout_frame_selection: HoldoutFrameSelection,
@@ -151,8 +152,6 @@ pub struct TrainingResultHoldoutPreviewInspectReport {
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
-
-pub type HoldoutPreviewStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -202,7 +201,7 @@ impl HoldoutFrameSelection {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct HoldoutPreviewOutcome {
-  status: HoldoutPreviewStatus,
+  status: StageStatus,
   reason: Option<HoldoutPreviewReason>,
   holdout_frame_index: usize,
   holdout_frame: Option<HoldoutFrameWitness>,
@@ -233,7 +232,7 @@ pub fn inspect_3dgs_training_result_holdout(
     );
 
   let generated_at_millis = auv_tracing_driver::now_millis();
-  let semantic_ready = semantic_manifest.semantic_status == TrainingResultSemanticStatus::Ready;
+  let semantic_ready = semantic_manifest.semantic_status == StageStatus::Ready;
 
   let scene_packet_manifest_path = PathBuf::from(&semantic_manifest.source_scene_packet_manifest_path);
   let scene_packet_dir =
@@ -249,7 +248,7 @@ pub fn inspect_3dgs_training_result_holdout(
 
   let outcome = if !semantic_ready {
     HoldoutPreviewOutcome {
-      status: HoldoutPreviewStatus::Blocked,
+      status: StageStatus::Blocked,
       reason: Some(HoldoutPreviewReason::SemanticSourceNotReady),
       holdout_frame_index: inputs.holdout_frame_index.unwrap_or(0),
       holdout_frame: None,
@@ -262,7 +261,7 @@ pub fn inspect_3dgs_training_result_holdout(
     }
   } else if scene_packet_manifest.is_none() {
     HoldoutPreviewOutcome {
-      status: HoldoutPreviewStatus::Blocked,
+      status: StageStatus::Blocked,
       reason: Some(HoldoutPreviewReason::ScenePacketUnreadable),
       holdout_frame_index: inputs.holdout_frame_index.unwrap_or(0),
       holdout_frame: None,
@@ -379,7 +378,7 @@ fn run_default_holdout_seam(
   let models_dir_path = PathBuf::from(&semantic_manifest.models_dir_path);
   if !models_dir_path.is_dir() {
     return Ok(HoldoutPreviewOutcome {
-      status: HoldoutPreviewStatus::Blocked,
+      status: StageStatus::Blocked,
       reason: Some(HoldoutPreviewReason::NormalizedPathsInvalid),
       holdout_frame_index: inputs.holdout_frame_index.unwrap_or(0),
       holdout_frame: None,
@@ -396,7 +395,7 @@ fn run_default_holdout_seam(
     Ok(files) => files,
     Err(_) => {
       return Ok(HoldoutPreviewOutcome {
-        status: HoldoutPreviewStatus::Failed,
+        status: StageStatus::Failed,
         reason: Some(HoldoutPreviewReason::CheckpointMissing),
         holdout_frame_index: inputs.holdout_frame_index.unwrap_or(0),
         holdout_frame: None,
@@ -412,7 +411,7 @@ fn run_default_holdout_seam(
 
   if checkpoint_files.is_empty() {
     return Ok(HoldoutPreviewOutcome {
-      status: HoldoutPreviewStatus::Failed,
+      status: StageStatus::Failed,
       reason: Some(HoldoutPreviewReason::CheckpointMissing),
       holdout_frame_index: inputs.holdout_frame_index.unwrap_or(0),
       holdout_frame: None,
@@ -435,7 +434,7 @@ fn run_default_holdout_seam(
       HoldoutPreviewReason::NoInGameHoldoutFrame
     };
     return Ok(HoldoutPreviewOutcome {
-      status: HoldoutPreviewStatus::Failed,
+      status: StageStatus::Failed,
       reason: Some(reason),
       holdout_frame_index: inputs.holdout_frame_index.unwrap_or(0),
       holdout_frame: None,
@@ -453,7 +452,7 @@ fn run_default_holdout_seam(
     Ok(frame) => frame,
     Err(error) => {
       return Ok(HoldoutPreviewOutcome {
-        status: HoldoutPreviewStatus::Failed,
+        status: StageStatus::Failed,
         reason: Some(HoldoutPreviewReason::ScenePacketUnreadable),
         holdout_frame_index: frame_record.frame_index,
         holdout_frame: None,
@@ -489,7 +488,7 @@ fn run_default_holdout_seam(
   }
 
   Ok(HoldoutPreviewOutcome {
-    status: HoldoutPreviewStatus::Ready,
+    status: StageStatus::Ready,
     reason: None,
     holdout_frame_index: frame_record.frame_index,
     holdout_frame: Some(holdout_frame),
@@ -542,7 +541,7 @@ fn run_external_holdout_render(
 
   if !output.status.success() {
     return Ok(HoldoutPreviewOutcome {
-      status: HoldoutPreviewStatus::Failed,
+      status: StageStatus::Failed,
       reason: Some(HoldoutPreviewReason::HoldoutRenderCommandFailed),
       holdout_frame_index: inputs.holdout_frame_index.unwrap_or(0),
       holdout_frame: None,
@@ -564,7 +563,7 @@ fn run_external_holdout_render(
     Ok(answer) => answer,
     Err(error) => {
       return Ok(HoldoutPreviewOutcome {
-        status: HoldoutPreviewStatus::Failed,
+        status: StageStatus::Failed,
         reason: Some(HoldoutPreviewReason::HoldoutRenderOutputInvalid),
         holdout_frame_index: inputs.holdout_frame_index.unwrap_or(0),
         holdout_frame: None,
@@ -687,7 +686,7 @@ mod tests {
 
   fn write_semantic_manifest(
     temp: &TempDir,
-    semantic_status: TrainingResultSemanticStatus,
+    semantic_status: StageStatus,
     scene_packet_manifest_path: &Path,
     normalized_dir: &Path,
   ) -> PathBuf {
@@ -812,8 +811,7 @@ mod tests {
     let normalized_dir = temp.path().join("normalized");
     let frame = test_frame(identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, vec![(1, 100, frame)]);
-    let semantic_manifest_path =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Blocked, &scene_packet_manifest_path, &normalized_dir);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Blocked, &scene_packet_manifest_path, &normalized_dir);
 
     let output = inspect_3dgs_training_result_holdout(TrainingResultHoldoutPreviewInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -823,7 +821,7 @@ mod tests {
     })
     .expect("blocked semantic");
 
-    assert_eq!(output.manifest.status, HoldoutPreviewStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
     assert_eq!(output.manifest.reason, Some(HoldoutPreviewReason::SemanticSourceNotReady));
     assert!(output.manifest.holdout_frame.is_none());
   }
@@ -834,8 +832,7 @@ mod tests {
     let normalized_dir = temp.path().join("normalized");
     let frame = test_frame(identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, vec![(1, 100, frame)]);
-    let semantic_manifest_path =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, &normalized_dir);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, &normalized_dir);
 
     let output = inspect_3dgs_training_result_holdout(TrainingResultHoldoutPreviewInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -845,7 +842,7 @@ mod tests {
     })
     .expect("missing checkpoint");
 
-    assert_eq!(output.manifest.status, HoldoutPreviewStatus::Failed);
+    assert_eq!(output.manifest.status, StageStatus::Failed);
     assert_eq!(output.manifest.reason, Some(HoldoutPreviewReason::CheckpointMissing));
   }
 
@@ -859,8 +856,7 @@ mod tests {
     let mut late_frame = test_frame(identity_matrix(), identity_matrix());
     late_frame.spatial_frame_id = "frame-late".to_string();
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, vec![(1, 100, early_frame), (2, 200, late_frame)]);
-    let semantic_manifest_path =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, &normalized_dir);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, &normalized_dir);
 
     let output = inspect_3dgs_training_result_holdout(TrainingResultHoldoutPreviewInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -870,7 +866,7 @@ mod tests {
     })
     .expect("happy path");
 
-    assert_eq!(output.manifest.status, HoldoutPreviewStatus::Ready);
+    assert_eq!(output.manifest.status, StageStatus::Ready);
     assert_eq!(output.manifest.holdout_frame_index, 2);
     assert_eq!(output.manifest.holdout_frame.as_ref().map(|witness| witness.spatial_frame_id.as_str()), Some("frame-late"));
     assert!(output.manifest.basis_checkpoint_path.as_deref().is_some_and(|path| path.ends_with("step-000001.ckpt")));
@@ -884,8 +880,7 @@ mod tests {
     write_checkpoint(&temp, &normalized_dir);
     let frame = test_frame(identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, vec![(1, 100, frame)]);
-    let semantic_manifest_path =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, &normalized_dir);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, &normalized_dir);
 
     let output = inspect_3dgs_training_result_holdout(TrainingResultHoldoutPreviewInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -895,7 +890,7 @@ mod tests {
     })
     .expect("invalid frame index");
 
-    assert_eq!(output.manifest.status, HoldoutPreviewStatus::Failed);
+    assert_eq!(output.manifest.status, StageStatus::Failed);
     assert_eq!(output.manifest.reason, Some(HoldoutPreviewReason::InvalidHoldoutFrameIndex));
   }
 
@@ -906,8 +901,7 @@ mod tests {
     write_checkpoint(&temp, &normalized_dir);
     let frame = test_frame(identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, vec![(1, 100, frame)]);
-    let semantic_manifest_path =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path, &normalized_dir);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path, &normalized_dir);
 
     let output = inspect_3dgs_training_result_holdout(TrainingResultHoldoutPreviewInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -917,7 +911,7 @@ mod tests {
     })
     .expect("external command parse failure");
 
-    assert_eq!(output.manifest.status, HoldoutPreviewStatus::Failed);
+    assert_eq!(output.manifest.status, StageStatus::Failed);
     assert_eq!(output.manifest.reason, Some(HoldoutPreviewReason::HoldoutRenderOutputInvalid));
     assert_eq!(output.inspect_report.holdout_frame_selection, HoldoutFrameSelection::ExternalCommand);
   }

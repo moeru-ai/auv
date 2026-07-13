@@ -13,12 +13,13 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::projection::MinecraftProjector;
 use crate::scene_packet::{ScenePacketFramePayload, ScenePacketFrameRecord, ScenePacketManifest};
-use crate::training_result_semantic::{TrainingResultSemanticManifest, TrainingResultSemanticStatus};
+use crate::training_result_semantic::TrainingResultSemanticManifest;
 use crate::training_result_spatial_query_provider::{
   MC15_V1_CHECKPOINT_NATIVE_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_KNOWN_LIMIT, MC18_V1_CLOSED_SCENE_TOY_NO_REFERENCE_LIMIT,
   run_checkpoint_native_provider_backend, run_closed_scene_toy_provider_backend,
@@ -332,7 +333,7 @@ pub fn query_3dgs_training_result(
   }
 
   let mut warnings = BTreeSet::new();
-  let semantic_ready = semantic_manifest.semantic_status == TrainingResultSemanticStatus::Ready;
+  let semantic_ready = semantic_manifest.semantic_status == StageStatus::Ready;
 
   let (provider_outcome, configured_provider_backend) = if inputs.use_checkpoint_native_provider {
     (
@@ -803,7 +804,7 @@ mod tests {
     ]
   }
 
-  fn write_semantic_manifest(temp: &TempDir, semantic_status: TrainingResultSemanticStatus, scene_packet_manifest_path: &Path) -> PathBuf {
+  fn write_semantic_manifest(temp: &TempDir, semantic_status: StageStatus, scene_packet_manifest_path: &Path) -> PathBuf {
     let manifest = TrainingResultSemanticManifest {
       schema_version: 1,
       generated_at_millis: 1,
@@ -908,7 +909,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -936,7 +937,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Blocked, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Blocked, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -963,7 +964,7 @@ mod tests {
     let target_block = BlockPosition::new(9, 9, 9);
     let frame = test_frame(BlockPosition::new(0, 0, 0), identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -988,7 +989,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
 
     let provider_command = "printf '%s' '{\"status\":\"answered\",\"basis_frame_id\":\"provider-frame\",\"visibility\":\"visible\",\"screen_point\":{\"x\":600.0,\"y\":150.0},\"match_radius_px\":8.0,\"confidence\":0.9}'";
 
@@ -1019,7 +1020,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
     let provider_command = "printf not-json".to_string();
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
@@ -1054,7 +1055,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1086,7 +1087,7 @@ mod tests {
       ],
     );
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1112,7 +1113,7 @@ mod tests {
     let mut frame = test_frame(target_block, identity_matrix(), identity_matrix());
     frame.player_pose.eye_position = Vec3::new(5.0, 0.0, 0.0);
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1185,7 +1186,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
     let provider_command = "printf '%s' '{\"status\":\"answered\",\"basis_frame_id\":\"provider-frame\",\"visibility\":\"outside_window\",\"match_radius_px\":8.0,\"confidence\":0.9}'";
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
@@ -1222,7 +1223,7 @@ mod tests {
         (200, "frame-newest", newer_frame),
       ],
     );
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1252,7 +1253,7 @@ mod tests {
       block_id: "minecraft:stone".to_string(),
     });
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
 
     let hit_face_center = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path.clone(),
@@ -1305,8 +1306,7 @@ mod tests {
   #[test]
   fn hard_fails_when_scene_packet_manifest_missing() {
     let temp = TempDir::new().expect("tempdir");
-    let semantic_manifest_path =
-      write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, Path::new("/tmp/missing-scene-packet.json"));
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, Path::new("/tmp/missing-scene-packet.json"));
 
     let error = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1359,7 +1359,7 @@ mod tests {
     let target_block = BlockPosition::new(0, 0, 0);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {
       training_result_semantic_manifest_path: semantic_manifest_path,
@@ -1390,7 +1390,7 @@ mod tests {
     let target_block = BlockPosition::new(511, 73, 728);
     let frame = test_frame(target_block, identity_matrix(), identity_matrix());
     let scene_packet_manifest_path = write_scene_packet_fixture(&temp, target_block, frame);
-    let semantic_manifest_path = write_semantic_manifest(&temp, TrainingResultSemanticStatus::Ready, &scene_packet_manifest_path);
+    let semantic_manifest_path = write_semantic_manifest(&temp, StageStatus::Ready, &scene_packet_manifest_path);
     let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/mc18/visible.json");
 
     let output = query_3dgs_training_result(TrainingResultSpatialQueryInputs {

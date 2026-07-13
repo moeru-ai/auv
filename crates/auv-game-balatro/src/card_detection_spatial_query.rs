@@ -6,12 +6,13 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use auv_task_object_detection::Detection;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::card_detection_producer::load_detection_bundle;
-use crate::card_detection_semantic::{CardDetectionSemanticManifest, CardDetectionSemanticStatus};
+use crate::card_detection_semantic::CardDetectionSemanticManifest;
 use crate::model::{ObjectZone, SlotId};
 
 pub type CardDetectionSpatialQueryResult<T> = Result<T, String>;
@@ -73,7 +74,7 @@ pub struct CardDetectionSpatialQueryInspectReport {
   pub status: CardDetectionSpatialQueryStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<CardDetectionSpatialQueryReason>,
-  pub semantic_status: CardDetectionSemanticStatus,
+  pub semantic_status: StageStatus,
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
@@ -147,7 +148,7 @@ pub fn query_card_detection_spatial(
   ]);
   let mut warnings = BTreeSet::new();
 
-  if semantic_manifest.semantic_status != CardDetectionSemanticStatus::Ready {
+  if semantic_manifest.semantic_status != StageStatus::Ready {
     return write_query_output(
       inputs,
       generated_at_millis,

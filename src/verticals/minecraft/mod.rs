@@ -1034,6 +1034,7 @@ pub fn texture_sweep_status(report: &TextureSweepReport) -> TraceStatusCode {
 mod tests {
   use super::*;
   use auv_game_minecraft::QueryActionWiringLineage;
+  use auv_stage_status::StageStatus;
   use auv_tracing_driver::RunRecordingBackend;
   use auv_tracing_driver::recording::NoopRunRecorder;
   use auv_tracing_driver::run_builder::RunSpec;
@@ -1700,7 +1701,7 @@ mod tests {
     let output = run_minecraft_3dgs_training_result_semantic_validation(&recording, d11_manifest_path, temp.join("semantic-output"))
       .expect("semantic validation should succeed");
 
-    assert_eq!(output.value.inspect_report.semantic_status, auv_game_minecraft::TrainingResultSemanticStatus::Ready);
+    assert_eq!(output.value.inspect_report.semantic_status, StageStatus::Ready);
     let run = recording.read_run(output.run_id.as_str()).expect("semantic validation run should persist");
     let input_event = run
       .events
@@ -1810,7 +1811,7 @@ mod tests {
       job_backend: "remote".to_string(),
       source_result_status: auv_game_minecraft::TrainingResultStatus::Succeeded,
       normalized_result_dir: temp.join("normalized").to_string_lossy().into_owned(),
-      semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
+      semantic_status: StageStatus::Ready,
       semantic_reason: None,
       config_path: temp.join("normalized/config.yml").to_string_lossy().into_owned(),
       models_dir_path: temp.join("normalized/nerfstudio_models").to_string_lossy().into_owned(),
@@ -1956,7 +1957,7 @@ mod tests {
       job_backend: "remote".to_string(),
       source_result_status: auv_game_minecraft::TrainingResultStatus::Succeeded,
       normalized_result_dir: normalized_dir.to_string_lossy().into_owned(),
-      semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
+      semantic_status: StageStatus::Ready,
       semantic_reason: None,
       config_path: normalized_dir.join("config.yml").to_string_lossy().into_owned(),
       models_dir_path: models_dir.to_string_lossy().into_owned(),
@@ -2096,7 +2097,7 @@ mod tests {
       job_backend: "remote".to_string(),
       source_result_status: auv_game_minecraft::TrainingResultStatus::Succeeded,
       normalized_result_dir: normalized_dir.to_string_lossy().into_owned(),
-      semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
+      semantic_status: StageStatus::Ready,
       semantic_reason: None,
       config_path: normalized_dir.join("config.yml").to_string_lossy().into_owned(),
       models_dir_path: normalized_dir.join("nerfstudio_models").to_string_lossy().into_owned(),
@@ -2239,7 +2240,7 @@ mod tests {
       job_backend: "remote".to_string(),
       source_result_status: auv_game_minecraft::TrainingResultStatus::Succeeded,
       normalized_result_dir: normalized_dir.to_string_lossy().into_owned(),
-      semantic_status: auv_game_minecraft::TrainingResultSemanticStatus::Ready,
+      semantic_status: StageStatus::Ready,
       semantic_reason: None,
       config_path: normalized_dir.join("config.yml").to_string_lossy().into_owned(),
       models_dir_path: normalized_dir.join("nerfstudio_models").to_string_lossy().into_owned(),

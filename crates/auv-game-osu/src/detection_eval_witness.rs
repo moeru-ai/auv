@@ -6,6 +6,7 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -73,7 +74,7 @@ pub struct DetectionEvalWitnessManifest {
   pub spurious_detection_count: usize,
   pub projection_kind: String,
   pub frame_witnesses: Vec<DetectionEvalFrameWitness>,
-  pub status: DetectionEvalWitnessStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<DetectionEvalWitnessReason>,
   pub known_limits: Vec<String>,
@@ -102,14 +103,12 @@ pub struct DetectionEvalWitnessInspectReport {
   pub frame_witness_count: usize,
   pub visual_eval_report_readable: bool,
   pub detection_eval_manifest_readable: bool,
-  pub status: DetectionEvalWitnessStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<DetectionEvalWitnessReason>,
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
-
-pub type DetectionEvalWitnessStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -232,7 +231,7 @@ pub fn build_detection_eval_witness(inputs: &DetectionEvalWitnessInputs) -> Dete
 }
 
 struct WitnessGateEvaluation {
-  status: DetectionEvalWitnessStatus,
+  status: StageStatus,
   reason: Option<DetectionEvalWitnessReason>,
   visual_eval_report: Option<VisualEvalReport>,
   detection_eval_manifest: Option<DetectionEvalManifest>,
@@ -245,7 +244,7 @@ fn evaluate_witness_gate(
 ) -> WitnessGateEvaluation {
   if !visual_eval_report_path.is_file() {
     return WitnessGateEvaluation {
-      status: DetectionEvalWitnessStatus::Blocked,
+      status: StageStatus::Blocked,
       reason: Some(DetectionEvalWitnessReason::MissingVisualEvalReport),
       visual_eval_report: None,
       detection_eval_manifest: None,
@@ -254,7 +253,7 @@ fn evaluate_witness_gate(
 
   if !detection_eval_manifest_path.is_file() {
     return WitnessGateEvaluation {
-      status: DetectionEvalWitnessStatus::Blocked,
+      status: StageStatus::Blocked,
       reason: Some(DetectionEvalWitnessReason::MissingDetectionEvalManifest),
       visual_eval_report: None,
       detection_eval_manifest: None,
@@ -266,7 +265,7 @@ fn evaluate_witness_gate(
     Err(error) => {
       warnings.insert(error);
       return WitnessGateEvaluation {
-        status: DetectionEvalWitnessStatus::Failed,
+        status: StageStatus::Failed,
         reason: Some(DetectionEvalWitnessReason::VisualEvalReportParseFailed),
         visual_eval_report: None,
         detection_eval_manifest: None,
@@ -279,7 +278,7 @@ fn evaluate_witness_gate(
     Err(error) => {
       warnings.insert(error);
       return WitnessGateEvaluation {
-        status: DetectionEvalWitnessStatus::Failed,
+        status: StageStatus::Failed,
         reason: Some(DetectionEvalWitnessReason::DetectionEvalManifestParseFailed),
         visual_eval_report,
         detection_eval_manifest: None,
@@ -289,7 +288,7 @@ fn evaluate_witness_gate(
 
   let Some(report) = visual_eval_report.as_ref() else {
     return WitnessGateEvaluation {
-      status: DetectionEvalWitnessStatus::Failed,
+      status: StageStatus::Failed,
       reason: Some(DetectionEvalWitnessReason::VisualEvalReportParseFailed),
       visual_eval_report,
       detection_eval_manifest,
@@ -298,7 +297,7 @@ fn evaluate_witness_gate(
 
   if report.total_frames == 0 {
     return WitnessGateEvaluation {
-      status: DetectionEvalWitnessStatus::Blocked,
+      status: StageStatus::Blocked,
       reason: Some(DetectionEvalWitnessReason::EmptyFrames),
       visual_eval_report,
       detection_eval_manifest,
@@ -306,7 +305,7 @@ fn evaluate_witness_gate(
   }
 
   WitnessGateEvaluation {
-    status: DetectionEvalWitnessStatus::Ready,
+    status: StageStatus::Ready,
     reason: None,
     visual_eval_report,
     detection_eval_manifest,
@@ -406,7 +405,7 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(output.manifest.status, DetectionEvalWitnessStatus::Ready);
+    assert_eq!(output.manifest.status, StageStatus::Ready);
     assert_eq!(output.manifest.total_frames, 3);
     assert_eq!(output.manifest.label_matched_frames, 1);
     assert_eq!(output.manifest.spatial_matched_frames, 1);
@@ -426,7 +425,7 @@ mod tests {
     })
     .expect("witness");
 
-    assert_eq!(output.manifest.status, DetectionEvalWitnessStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
     assert_eq!(output.manifest.reason, Some(DetectionEvalWitnessReason::MissingVisualEvalReport));
     assert_eq!(output.manifest.frame_witnesses.len(), 0);
   }

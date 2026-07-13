@@ -27,18 +27,16 @@ pub use visual_truth::{CaptureFrame, ExpectedObjectTruth, VisualTruthFrame, Visu
 
 pub use detection_eval_quality::{
   DetectionEvalQualityInputs, DetectionEvalQualityInspectReport, DetectionEvalQualityManifest, DetectionEvalQualityMetrics,
-  DetectionEvalQualityOutput, DetectionEvalQualityReason, DetectionEvalQualityStatus, DetectionEvalQualityVerdict,
-  OSU_WQ1_V1_QUALITY_KNOWN_LIMIT, build_detection_eval_quality, build_detection_eval_quality_from_witness_dir,
-  derive_detection_eval_quality_verdict,
+  DetectionEvalQualityOutput, DetectionEvalQualityReason, DetectionEvalQualityVerdict, OSU_WQ1_V1_QUALITY_KNOWN_LIMIT,
+  build_detection_eval_quality, build_detection_eval_quality_from_witness_dir, derive_detection_eval_quality_verdict,
 };
 pub use detection_eval_witness::{
   DetectionEvalFrameWitness, DetectionEvalWitnessInputs, DetectionEvalWitnessInspectReport, DetectionEvalWitnessManifest,
-  DetectionEvalWitnessOutput, DetectionEvalWitnessReason, DetectionEvalWitnessStatus, OSU_WQ1_V1_WITNESS_KNOWN_LIMIT,
-  build_detection_eval_witness,
+  DetectionEvalWitnessOutput, DetectionEvalWitnessReason, OSU_WQ1_V1_WITNESS_KNOWN_LIMIT, build_detection_eval_witness,
 };
 pub use visual_truth_semantic::{
-  VisualTruthSemanticInspectReport, VisualTruthSemanticManifest, VisualTruthSemanticReason, VisualTruthSemanticStatus,
-  VisualTruthSemanticValidationInputs, VisualTruthSemanticValidationOutput, validate_visual_truth_semantic,
+  VisualTruthSemanticInspectReport, VisualTruthSemanticManifest, VisualTruthSemanticReason, VisualTruthSemanticValidationInputs,
+  VisualTruthSemanticValidationOutput, validate_visual_truth_semantic,
 };
 pub use visual_truth_spatial_query::{
   VisualTruthPixelVisibility, VisualTruthSpatialQueryBackend, VisualTruthSpatialQueryInputs, VisualTruthSpatialQueryInspectReport,

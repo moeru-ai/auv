@@ -6,10 +6,11 @@ use auv_file::{
   JsonFileReadError, JsonFileWriteError, JsonWriteOptions, read_json_file as read_json_file_helper,
   write_json_file as write_json_file_helper,
 };
+use auv_stage_status::StageStatus;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::detection_eval_witness::{DetectionEvalWitnessManifest, DetectionEvalWitnessReason, DetectionEvalWitnessStatus};
+use crate::detection_eval_witness::{DetectionEvalWitnessManifest, DetectionEvalWitnessReason};
 
 pub type DetectionEvalQualityResult<T> = Result<T, String>;
 
@@ -63,8 +64,8 @@ pub struct DetectionEvalQualityManifest {
   pub source_run_artifact_dir: String,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub detector_model_id: Option<String>,
-  pub witness_status: DetectionEvalWitnessStatus,
-  pub status: DetectionEvalQualityStatus,
+  pub witness_status: StageStatus,
+  pub status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reason: Option<DetectionEvalQualityReason>,
   pub verdict: DetectionEvalQualityVerdict,
@@ -80,8 +81,8 @@ pub struct DetectionEvalQualityInspectReport {
   pub detection_eval_quality_manifest_path: String,
   pub detection_eval_witness_manifest_path: String,
   pub source_visual_eval_report_path: String,
-  pub witness_status: DetectionEvalWitnessStatus,
-  pub status: DetectionEvalQualityStatus,
+  pub witness_status: StageStatus,
+  pub status: StageStatus,
   pub verdict: DetectionEvalQualityVerdict,
   pub label_recall_available: bool,
   pub spatial_recall_available: bool,
@@ -90,8 +91,6 @@ pub struct DetectionEvalQualityInspectReport {
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
-
-pub type DetectionEvalQualityStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -160,7 +159,7 @@ pub fn build_detection_eval_quality(inputs: &DetectionEvalQualityInputs) -> Dete
     source_visual_eval_report_path: witness.map(|w| w.source_visual_eval_report_path.clone()).unwrap_or_default(),
     source_run_artifact_dir: witness.map(|w| w.source_run_artifact_dir.clone()).unwrap_or_default(),
     detector_model_id: witness.and_then(|w| w.detector_model_id.clone()),
-    witness_status: witness.map(|w| w.status).unwrap_or(DetectionEvalWitnessStatus::Blocked),
+    witness_status: witness.map(|w| w.status).unwrap_or(StageStatus::Blocked),
     status: outcome.status,
     reason: outcome.reason,
     verdict: outcome.verdict,
@@ -214,14 +213,14 @@ pub fn derive_detection_eval_quality_verdict(witness: &DetectionEvalWitnessManif
 }
 
 struct QualityGateEvaluation {
-  quality_status: DetectionEvalQualityStatus,
+  quality_status: StageStatus,
   quality_reason: Option<DetectionEvalQualityReason>,
   verdict: DetectionEvalQualityVerdict,
   witness_manifest: Option<DetectionEvalWitnessManifest>,
 }
 
 struct QualityOutcome {
-  status: DetectionEvalQualityStatus,
+  status: StageStatus,
   reason: Option<DetectionEvalQualityReason>,
   verdict: DetectionEvalQualityVerdict,
   metrics: Option<DetectionEvalQualityMetrics>,
@@ -230,7 +229,7 @@ struct QualityOutcome {
 fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<String>) -> QualityGateEvaluation {
   if !witness_manifest_path.is_file() {
     return QualityGateEvaluation {
-      quality_status: DetectionEvalQualityStatus::Blocked,
+      quality_status: StageStatus::Blocked,
       quality_reason: Some(DetectionEvalQualityReason::MissingWitnessManifest),
       verdict: DetectionEvalQualityVerdict::Blocked,
       witness_manifest: None,
@@ -242,7 +241,7 @@ fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<S
     Err(error) => {
       warnings.insert(error);
       return QualityGateEvaluation {
-        quality_status: DetectionEvalQualityStatus::Failed,
+        quality_status: StageStatus::Failed,
         quality_reason: Some(DetectionEvalQualityReason::WitnessManifestParseFailed),
         verdict: DetectionEvalQualityVerdict::Failed,
         witness_manifest: None,
@@ -252,7 +251,7 @@ fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<S
 
   let Some(witness) = witness_manifest.as_ref() else {
     return QualityGateEvaluation {
-      quality_status: DetectionEvalQualityStatus::Failed,
+      quality_status: StageStatus::Failed,
       quality_reason: Some(DetectionEvalQualityReason::WitnessManifestParseFailed),
       verdict: DetectionEvalQualityVerdict::Failed,
       witness_manifest,
@@ -260,8 +259,8 @@ fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<S
   };
 
   match witness.status {
-    DetectionEvalWitnessStatus::Blocked => QualityGateEvaluation {
-      quality_status: DetectionEvalQualityStatus::Blocked,
+    StageStatus::Blocked => QualityGateEvaluation {
+      quality_status: StageStatus::Blocked,
       quality_reason: witness.reason.map(|reason| match reason {
         DetectionEvalWitnessReason::MissingVisualEvalReport
         | DetectionEvalWitnessReason::MissingDetectionEvalManifest
@@ -271,13 +270,13 @@ fn evaluate_quality_gate(witness_manifest_path: &Path, warnings: &mut BTreeSet<S
       verdict: DetectionEvalQualityVerdict::Blocked,
       witness_manifest,
     },
-    DetectionEvalWitnessStatus::Failed => QualityGateEvaluation {
-      quality_status: DetectionEvalQualityStatus::Failed,
+    StageStatus::Failed => QualityGateEvaluation {
+      quality_status: StageStatus::Failed,
       quality_reason: Some(DetectionEvalQualityReason::WitnessFailed),
       verdict: DetectionEvalQualityVerdict::Failed,
       witness_manifest,
     },
-    DetectionEvalWitnessStatus::Ready => {
+    StageStatus::Ready => {
       let outcome = derive_quality_outcome(witness);
       QualityGateEvaluation {
         quality_status: outcome.status,
@@ -300,7 +299,7 @@ fn derive_quality_outcome(witness: &DetectionEvalWitnessManifest) -> QualityOutc
   };
 
   QualityOutcome {
-    status: DetectionEvalQualityStatus::Ready,
+    status: StageStatus::Ready,
     reason: None,
     verdict,
     metrics: Some(metrics),
@@ -362,9 +361,7 @@ fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::detection_eval_witness::{
-    DetectionEvalWitnessInputs, DetectionEvalWitnessManifest, DetectionEvalWitnessStatus, build_detection_eval_witness,
-  };
+  use crate::detection_eval_witness::{DetectionEvalWitnessInputs, DetectionEvalWitnessManifest, build_detection_eval_witness};
   use std::path::PathBuf;
 
   fn fixture_witness_manifest() -> (tempfile::TempDir, PathBuf) {
@@ -396,7 +393,7 @@ mod tests {
     })
     .expect("quality");
 
-    assert_eq!(quality_output.manifest.status, DetectionEvalQualityStatus::Ready);
+    assert_eq!(quality_output.manifest.status, StageStatus::Ready);
     assert_eq!(quality_output.manifest.verdict, DetectionEvalQualityVerdict::MeasuredOnly);
     let metrics = quality_output.manifest.metrics.as_ref().expect("metrics");
     assert_eq!(metrics.total_frames, 3);
@@ -429,7 +426,7 @@ mod tests {
       spurious_detection_count: 0,
       projection_kind: "unavailable".to_string(),
       frame_witnesses: vec![],
-      status: DetectionEvalWitnessStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       known_limits: vec![],
     };
@@ -445,7 +442,7 @@ mod tests {
     })
     .expect("quality");
 
-    assert_eq!(output.manifest.status, DetectionEvalQualityStatus::Blocked);
+    assert_eq!(output.manifest.status, StageStatus::Blocked);
     assert_eq!(output.manifest.verdict, DetectionEvalQualityVerdict::Blocked);
     assert!(output.manifest.metrics.is_none());
   }

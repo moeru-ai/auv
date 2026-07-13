@@ -434,8 +434,9 @@ mod tests {
     TrainingResultArtifactFetchInspectReport, TrainingResultArtifactFetchManifest, TrainingResultArtifactFetchReason,
     TrainingResultArtifactFetchStatus, TrainingResultArtifactRecord, TrainingResultInspectReport, TrainingResultManifest,
     TrainingResultNormalizedArtifactKind, TrainingResultReason, TrainingResultSemanticInspectReport, TrainingResultSemanticManifest,
-    TrainingResultSemanticStatus, TrainingResultStatus,
+    TrainingResultStatus,
   };
+  use auv_stage_status::StageStatus;
   use auv_tracing_driver::ArtifactFileSource;
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
@@ -787,7 +788,7 @@ mod tests {
       job_backend: "remote".to_string(),
       source_result_status: TrainingResultStatus::Succeeded,
       normalized_result_dir: "/tmp/result/normalized-result".to_string(),
-      semantic_status: TrainingResultSemanticStatus::Ready,
+      semantic_status: StageStatus::Ready,
       semantic_reason: None,
       config_path: "/tmp/result/normalized-result/config.yml".to_string(),
       models_dir_path: "/tmp/result/normalized-result/nerfstudio_models".to_string(),
@@ -862,7 +863,7 @@ mod tests {
       job_backend: "remote".to_string(),
       source_result_status: TrainingResultStatus::Succeeded,
       normalized_result_dir: "/tmp/result/normalized-result".to_string(),
-      semantic_status: TrainingResultSemanticStatus::Ready,
+      semantic_status: StageStatus::Ready,
       semantic_reason: None,
       config_yaml_parsed: true,
       config_trainer: Some("nerfstudio.splatfacto".to_string()),
@@ -988,8 +989,7 @@ mod tests {
   #[test]
   fn minecraft_training_result_holdout_preview_manifest_lineage_reads_summary() {
     use auv_game_minecraft::{
-      HoldoutFrameSelection, HoldoutFrameWitness, HoldoutPreviewStatus, TrainingResultHoldoutPreviewInspectReport,
-      TrainingResultHoldoutPreviewManifest,
+      HoldoutFrameSelection, HoldoutFrameWitness, TrainingResultHoldoutPreviewInspectReport, TrainingResultHoldoutPreviewManifest,
     };
     let root = temp_dir("run-read-mc16-holdout-manifest");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
@@ -1021,7 +1021,7 @@ mod tests {
       basis_checkpoint_path: Some("/tmp/normalized/nerfstudio_models/step-000001.ckpt".to_string()),
       holdout_screenshot_path: Some(witness.screenshot_path.clone()),
       reference_overlay_path: Some("/tmp/holdout/holdout_overlay_frame_000006.png".to_string()),
-      status: HoldoutPreviewStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       known_limits: vec!["holdout preview only".to_string()],
     };
@@ -1046,7 +1046,7 @@ mod tests {
       basis_checkpoint_path: manifest.basis_checkpoint_path.clone(),
       holdout_screenshot_path: manifest.holdout_screenshot_path.clone(),
       reference_overlay_path: manifest.reference_overlay_path.clone(),
-      status: HoldoutPreviewStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       holdout_frame_selection: HoldoutFrameSelection::LastInGame,
       checkpoint_count: 1,
@@ -1105,9 +1105,8 @@ mod tests {
   #[test]
   fn minecraft_holdout_render_quality_manifest_lineage_reads_summary() {
     use auv_game_minecraft::{
-      HoldoutFrameWitness, HoldoutPreviewStatus, HoldoutRenderQualityBackend, HoldoutRenderQualityMetrics, HoldoutRenderQualityStatus,
-      HoldoutRenderQualityVerdict, TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport,
-      TrainingResultHoldoutRenderQualityManifest,
+      HoldoutFrameWitness, HoldoutRenderQualityBackend, HoldoutRenderQualityMetrics, HoldoutRenderQualityVerdict,
+      TrainingResultHoldoutPreviewManifest, TrainingResultHoldoutRenderQualityInspectReport, TrainingResultHoldoutRenderQualityManifest,
     };
     let root = temp_dir("run-read-mc17-holdout-quality-manifest");
     let store = LocalStore::new(root.clone()).expect("store should initialize");
@@ -1139,7 +1138,7 @@ mod tests {
       basis_checkpoint_path: Some("/tmp/normalized/nerfstudio_models/step-000001.ckpt".to_string()),
       holdout_screenshot_path: Some(witness.screenshot_path.clone()),
       reference_overlay_path: Some("/tmp/holdout/holdout_overlay_frame_000006.png".to_string()),
-      status: HoldoutPreviewStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       known_limits: vec!["holdout preview only".to_string()],
     };
@@ -1174,7 +1173,7 @@ mod tests {
         psnr: Some(27.0),
         ssim: None,
       }),
-      status: HoldoutRenderQualityStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       verdict: HoldoutRenderQualityVerdict::MeasuredOnly,
       known_limits: vec!["render quality evidence only".to_string()],
@@ -1208,7 +1207,7 @@ mod tests {
       psnr_available: true,
       ssim_available: false,
       metrics: manifest.metrics.clone(),
-      status: HoldoutRenderQualityStatus::Ready,
+      status: StageStatus::Ready,
       reason: None,
       verdict: HoldoutRenderQualityVerdict::MeasuredOnly,
       warnings: vec![],

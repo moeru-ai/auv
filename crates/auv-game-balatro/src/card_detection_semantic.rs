@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use auv_file::{JsonFileWriteError, JsonWriteOptions, write_json_file as write_json_file_helper};
+use auv_stage_status::StageStatus;
 use serde::{Deserialize, Serialize};
 
 use crate::card_detection_producer::{LoadedDetectionBundle, load_detection_bundle, resolve_bundle_manifest_path, total_detection_count};
@@ -41,7 +42,7 @@ pub struct CardDetectionSemanticManifest {
   pub image_height: u32,
   pub ui_detection_count: usize,
   pub entities_detection_count: usize,
-  pub semantic_status: CardDetectionSemanticStatus,
+  pub semantic_status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub semantic_reason: Option<CardDetectionSemanticReason>,
   pub known_limits: Vec<String>,
@@ -54,7 +55,7 @@ pub struct CardDetectionSemanticInspectReport {
   pub card_detection_semantic_manifest_path: String,
   pub source_detection_bundle_path: String,
   pub source_detection_bundle_dir: String,
-  pub semantic_status: CardDetectionSemanticStatus,
+  pub semantic_status: StageStatus,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub semantic_reason: Option<CardDetectionSemanticReason>,
   pub detection_bundle_readable: bool,
@@ -62,8 +63,6 @@ pub struct CardDetectionSemanticInspectReport {
   pub warnings: Vec<String>,
   pub known_limits: Vec<String>,
 }
-
-pub type CardDetectionSemanticStatus = auv_stage_status::StageStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -161,7 +160,7 @@ pub fn validate_card_detection_semantic(
 }
 
 struct SemanticGateEvaluation {
-  semantic_status: CardDetectionSemanticStatus,
+  semantic_status: StageStatus,
   semantic_reason: Option<CardDetectionSemanticReason>,
   bundle: Option<LoadedDetectionBundle>,
   detection_sets_non_empty: bool,
@@ -171,7 +170,7 @@ fn evaluate_semantic_gate(bundle_input: &Path, warnings: &mut BTreeSet<String>) 
   let manifest_path = resolve_bundle_manifest_path(bundle_input);
   if !manifest_path.is_file() {
     return SemanticGateEvaluation {
-      semantic_status: CardDetectionSemanticStatus::Blocked,
+      semantic_status: StageStatus::Blocked,
       semantic_reason: Some(CardDetectionSemanticReason::MissingDetectionBundle),
       bundle: None,
       detection_sets_non_empty: false,
@@ -182,14 +181,14 @@ fn evaluate_semantic_gate(bundle_input: &Path, warnings: &mut BTreeSet<String>) 
     Ok(bundle) => {
       if total_detection_count(&bundle) == 0 {
         return SemanticGateEvaluation {
-          semantic_status: CardDetectionSemanticStatus::Blocked,
+          semantic_status: StageStatus::Blocked,
           semantic_reason: Some(CardDetectionSemanticReason::EmptyDetections),
           bundle: Some(bundle),
           detection_sets_non_empty: false,
         };
       }
       SemanticGateEvaluation {
-        semantic_status: CardDetectionSemanticStatus::Ready,
+        semantic_status: StageStatus::Ready,
         semantic_reason: None,
         detection_sets_non_empty: true,
         bundle: Some(bundle),
@@ -205,7 +204,7 @@ fn evaluate_semantic_gate(bundle_input: &Path, warnings: &mut BTreeSet<String>) 
         CardDetectionSemanticReason::BundleParseFailed
       };
       SemanticGateEvaluation {
-        semantic_status: CardDetectionSemanticStatus::Failed,
+        semantic_status: StageStatus::Failed,
         semantic_reason: Some(reason),
         bundle: None,
         detection_sets_non_empty: false,
@@ -235,11 +234,11 @@ mod tests {
   }
 
   #[test]
-  fn semantic_status_type_alias_preserves_wire_labels() {
+  fn stage_status_preserves_wire_labels() {
     for (status, wire) in [
-      (CardDetectionSemanticStatus::Ready, "\"ready\""),
-      (CardDetectionSemanticStatus::Blocked, "\"blocked\""),
-      (CardDetectionSemanticStatus::Failed, "\"failed\""),
+      (StageStatus::Ready, "\"ready\""),
+      (StageStatus::Blocked, "\"blocked\""),
+      (StageStatus::Failed, "\"failed\""),
     ] {
       assert_eq!(serde_json::to_string(&status).unwrap(), wire);
     }
@@ -253,7 +252,7 @@ mod tests {
       output_dir: temp.path().join("semantic"),
     })
     .expect("semantic");
-    assert_eq!(output.manifest.semantic_status, CardDetectionSemanticStatus::Ready);
+    assert_eq!(output.manifest.semantic_status, StageStatus::Ready);
     assert!(output.manifest_path.exists());
   }
 
@@ -265,7 +264,7 @@ mod tests {
       output_dir: temp.path().join("semantic"),
     })
     .expect("semantic");
-    assert_eq!(output.manifest.semantic_status, CardDetectionSemanticStatus::Blocked);
+    assert_eq!(output.manifest.semantic_status, StageStatus::Blocked);
     assert_eq!(output.manifest.semantic_reason, Some(CardDetectionSemanticReason::MissingDetectionBundle));
   }
 
@@ -278,7 +277,7 @@ mod tests {
       output_dir: temp.path().join("semantic"),
     })
     .expect("semantic");
-    assert_eq!(output.manifest.semantic_status, CardDetectionSemanticStatus::Blocked);
+    assert_eq!(output.manifest.semantic_status, StageStatus::Blocked);
     assert_eq!(output.manifest.semantic_reason, Some(CardDetectionSemanticReason::EmptyDetections));
   }
 
@@ -291,7 +290,7 @@ mod tests {
       output_dir: temp.path().join("semantic"),
     })
     .expect("semantic");
-    assert_eq!(output.manifest.semantic_status, CardDetectionSemanticStatus::Failed);
+    assert_eq!(output.manifest.semantic_status, StageStatus::Failed);
     assert_eq!(output.manifest.semantic_reason, Some(CardDetectionSemanticReason::BundleParseFailed));
   }
 }
