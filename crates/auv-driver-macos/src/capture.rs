@@ -1,5 +1,5 @@
 #[doc(hidden)]
-pub mod artifact;
+pub mod contract_render;
 #[doc(hidden)]
 pub mod geometry;
 #[doc(hidden)]

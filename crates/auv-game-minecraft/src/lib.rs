@@ -1,4 +1,3 @@
-pub mod artifact;
 pub mod bind;
 pub mod closed_scene_toy_fixture;
 pub mod dataset;
@@ -9,6 +8,7 @@ pub mod measurement;
 pub mod overlay;
 pub mod prep;
 pub mod projection;
+mod projection_record;
 pub mod sample_builder;
 pub mod scene_packet;
 pub mod session_observation;
@@ -27,7 +27,6 @@ pub mod training_result_spatial_query_provider;
 pub mod types;
 pub mod verify;
 
-pub use artifact::{MinecraftProjectionArtifact, ProjectionViewportBounds};
 pub use bind::{BoundSpatialFrame, bind_capture_to_frame};
 pub use dataset::{
   SPATIAL_BUNDLE_SCHEMA_VERSION, SourceRunSummary, SpatialBundleArtifactRecord, SpatialBundleCounts, SpatialBundleDirectory,
@@ -50,6 +49,7 @@ pub use prep::{
   TextureSweepRunStep, prepare_texture_sweep_resource_packs,
 };
 pub use projection::MinecraftProjector;
+pub use projection_record::{MinecraftProjectionArtifact, ProjectionViewportBounds};
 pub use sample_builder::{
   TEXTURE_SWEEP_SAMPLE_BUILDER_GENERATOR, TextureSweepSampleBuildInputs, TextureSweepSampleBuildOutput,
   build_texture_sweep_samples_from_bundles,

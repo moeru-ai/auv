@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::association::{AssociationResult, FrameObservation, associate_adjacent_frames};
 use crate::coverage::{CoverageView, build_coverage_view};
-use crate::coverage_artifact::{ScanCoverageWire, coverage_wire_to_view};
+use crate::coverage_wire::{ScanCoverageWire, coverage_wire_to_view};
 use crate::lifecycle::{LifecycleError, LifecycleEvent, LifecycleVerdict, evaluate_lifecycle};
 use crate::motion::{MotionResult, MotionUnknown, estimate_viewport_motion};
 use crate::reader::ScanFrameBundle;

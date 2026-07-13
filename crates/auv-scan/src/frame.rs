@@ -16,12 +16,12 @@ pub struct ScanBounds {
 }
 
 impl ScanBounds {
-  pub fn validate_positive(&self, field: &'static str) -> Result<(), crate::artifact::ScanArtifactError> {
+  pub fn validate_positive(&self, field: &'static str) -> Result<(), crate::frame_io::ScanArtifactError> {
     if self.width <= 0 {
-      return Err(crate::artifact::ScanArtifactError::InvalidBounds { field });
+      return Err(crate::frame_io::ScanArtifactError::InvalidBounds { field });
     }
     if self.height <= 0 {
-      return Err(crate::artifact::ScanArtifactError::InvalidBounds { field });
+      return Err(crate::frame_io::ScanArtifactError::InvalidBounds { field });
     }
     Ok(())
   }
@@ -48,9 +48,9 @@ pub struct ScanFrame {
 }
 
 impl ScanFrame {
-  pub fn validate_wire(&self) -> Result<(), crate::artifact::ScanArtifactError> {
+  pub fn validate_wire(&self) -> Result<(), crate::frame_io::ScanArtifactError> {
     if self.schema_version != SCAN_FRAME_SCHEMA_VERSION {
-      return Err(crate::artifact::ScanArtifactError::SchemaMismatch {
+      return Err(crate::frame_io::ScanArtifactError::SchemaMismatch {
         found: self.schema_version.clone(),
       });
     }

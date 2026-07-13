@@ -1,4 +1,4 @@
-//! Temporal scan contracts, producers, artifact IO, and read-side projections.
+//! Temporal scan contracts, producers, frame and coverage IO, and read-side projections.
 //!
 //! The crate root is the only public import path. Implementation modules stay
 //! private so one concept cannot be imported through both `auv_scan::Type` and
@@ -17,11 +17,11 @@ mod fixture;
 #[cfg(test)]
 mod scene_fixture_support;
 
-mod artifact;
 mod association;
 mod coverage;
-mod coverage_artifact;
+mod coverage_wire;
 mod frame;
+mod frame_io;
 mod lifecycle;
 mod motion;
 mod producer;
@@ -31,15 +31,15 @@ mod scene_state_inspect;
 mod timeline;
 mod tracks;
 
-pub use artifact::{ScanArtifactError, frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
 pub use association::{AssociationDiagnostic, AssociationResult, FrameObservation, associate_adjacent_frames};
 pub use coverage::{CompletenessClaim, CoverageEntry, CoverageView, NegativeEvidence, build_coverage_view};
-pub use coverage_artifact::{
+pub use coverage_wire::{
   CompletenessWire, CoverageArtifactError, CoverageEntryWire, NegativeEvidenceWire, SCAN_COVERAGE_ARTIFACT_FILE_NAME,
   SCAN_COVERAGE_ARTIFACT_ROLE, SCAN_COVERAGE_SCHEMA_VERSION, ScanCoverageWire, coverage_view_to_wire, read_coverage_artifact,
   write_coverage_artifact,
 };
 pub use frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+pub use frame_io::{ScanArtifactError, frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
 pub use lifecycle::{LifecycleError, LifecycleEvent, LifecycleVerdict, TransitionEvidence, evaluate_lifecycle};
 pub use motion::{MotionError, MotionEstimate, MotionResult, MotionUnknown, estimate_viewport_motion};
 #[cfg(feature = "live-capture")]

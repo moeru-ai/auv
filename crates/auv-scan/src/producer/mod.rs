@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::artifact::write_frame_artifact;
 use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+use crate::frame_io::write_frame_artifact;
 
 pub use coverage::{CoverageProducerError, ProducedCoverage, produce_coverage_from_fixture_dir};
 pub use error::ScanProducerError;
@@ -259,7 +259,7 @@ mod tests {
   use image::RgbaImage;
 
   use super::*;
-  use crate::artifact::{frame_artifact_file_name, read_frame_artifact};
+  use crate::frame_io::{frame_artifact_file_name, read_frame_artifact};
 
   fn single_frame_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/single_frame_v0")
@@ -508,7 +508,7 @@ mod tests {
     fs::create_dir_all(out_dir.join(frame_artifact_file_name(1))).expect("poison path");
 
     let err = produce_frames_from_fixture_dir(&fixture_dir, &out_dir).expect_err("late failure");
-    assert!(matches!(err, ScanProducerError::Artifact(crate::artifact::ScanArtifactError::Io(_))));
+    assert!(matches!(err, ScanProducerError::Artifact(crate::frame_io::ScanArtifactError::Io(_))));
     assert!(!out_dir.join(frame_artifact_file_name(0)).exists());
     assert!(!out_dir.join("frame-0001.png").exists());
     assert!(!out_dir.join("frame-0002.png").exists());

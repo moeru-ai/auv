@@ -1,3 +1,5 @@
+//! Serialized Minecraft projection evidence and shared-contract conversions.
+
 use serde::{Deserialize, Serialize};
 
 use auv_driver::geometry::{CoordinateSpace, ProjectionBasis, ProjectionDerivationFamily, ProjectionSourceSpace, Rect};

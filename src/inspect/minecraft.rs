@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn append_primary_sections(
   output: &mut String,
-  minecraft_projection_artifacts: &[auv_game_minecraft::artifact::MinecraftProjectionArtifact],
+  minecraft_projection_artifacts: &[auv_game_minecraft::MinecraftProjectionArtifact],
   minecraft_telemetry_sample_artifacts: &[MinecraftTelemetrySampleArtifactLineage],
   minecraft_spatial_bundle_manifests: &[MinecraftSpatialBundleManifestLineage],
   minecraft_training_package_manifests: &[MinecraftTrainingPackageManifestLineage],

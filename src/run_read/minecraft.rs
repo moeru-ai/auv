@@ -1,7 +1,7 @@
 //! Minecraft donor read-side helpers.
 
 use super::*;
-use auv_game_minecraft::artifact::MinecraftProjectionArtifact;
+use auv_game_minecraft::MinecraftProjectionArtifact;
 use auv_game_minecraft::dataset::{SourceRunSummary, SpatialBundleCounts};
 use auv_game_minecraft::{
   TrainingCompatibilityViewReport, TrainingLaunchInspectReport, TrainingLaunchJobInspectReport, TrainingLaunchJobManifest,

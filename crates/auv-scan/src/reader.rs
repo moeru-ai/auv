@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
-use crate::artifact::{ScanArtifactError, read_frame_artifact};
 use crate::frame::ScanFrame;
+use crate::frame_io::{ScanArtifactError, read_frame_artifact};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ScanFrameBundle {
@@ -179,9 +179,9 @@ mod tests {
 
   use super::test_support::{FrameFieldExpectation, assert_frame_matches_expectation};
   use super::*;
-  use crate::artifact::{frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
   use crate::fixture::build_frame_from_fixture;
   use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+  use crate::frame_io::{frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
   use crate::producer::{produce_frame_from_fixture_dir, produce_frames_from_fixture_dir};
 
   fn single_frame_fixture_dir() -> PathBuf {

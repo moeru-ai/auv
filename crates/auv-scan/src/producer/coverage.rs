@@ -26,7 +26,7 @@ use thiserror::Error;
 use super::{ScanProducerError, produce_frames_from_fixture_dir};
 use crate::association::{FrameObservation, associate_adjacent_frames};
 use crate::coverage::build_coverage_view;
-use crate::coverage_artifact::{CoverageArtifactError, ScanCoverageWire, coverage_view_to_wire, write_coverage_artifact};
+use crate::coverage_wire::{CoverageArtifactError, ScanCoverageWire, coverage_view_to_wire, write_coverage_artifact};
 use crate::reader::ScanFrameBundle;
 
 const MANIFEST_FILE: &str = "manifest.json";
@@ -160,7 +160,7 @@ pub fn produce_coverage_from_fixture_dir(coverage_fixture_dir: &Path, out_dir: &
 mod tests {
   use std::path::PathBuf;
 
-  use crate::coverage_artifact::{SCAN_COVERAGE_ARTIFACT_FILE_NAME, read_coverage_artifact};
+  use crate::coverage_wire::{SCAN_COVERAGE_ARTIFACT_FILE_NAME, read_coverage_artifact};
 
   use super::*;
 

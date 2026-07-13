@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::artifact::ScanArtifactError;
+use crate::frame_io::ScanArtifactError;
 
 #[derive(Debug, Error)]
 pub enum ScanProducerError {

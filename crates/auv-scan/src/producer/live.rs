@@ -29,8 +29,8 @@ mod tests {
   use image::RgbaImage;
 
   use super::*;
-  use crate::artifact::read_frame_artifact;
   use crate::frame::ScanBounds;
+  use crate::frame_io::read_frame_artifact;
 
   #[test]
   #[ignore = "live"]

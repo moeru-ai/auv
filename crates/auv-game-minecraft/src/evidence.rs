@@ -1,9 +1,9 @@
 use image::RgbImage;
 
-use crate::artifact::MinecraftProjectionArtifact;
 use crate::bind::bind_capture_to_frame;
 use crate::overlay::render_projection_overlay;
 use crate::projection::MinecraftProjector;
+use crate::projection_record::MinecraftProjectionArtifact;
 use crate::types::{MinecraftBlockTarget, MinecraftSpatialFrame, RaycastHit};
 use crate::verify::{MismatchRefusal, evaluate_mismatch_refusal};
 

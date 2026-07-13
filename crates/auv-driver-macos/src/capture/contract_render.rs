@@ -1,4 +1,5 @@
-// File: src/driver/macos/capture/artifact.rs
+//! Capture contract renderers for JSON artifacts and human-readable output.
+
 use super::types::{CaptureContract, CaptureSource, CoordinateSpace};
 use crate::types::AuvResult;
 

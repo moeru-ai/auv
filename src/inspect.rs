@@ -310,7 +310,7 @@ pub fn render_run_text(
   verifications: &[VerificationResult],
   observation_snapshots: &[ObservationSnapshot],
   detector_recognition_lineage: &[DetectorRecognitionLineage],
-  minecraft_projection_artifacts: &[auv_game_minecraft::artifact::MinecraftProjectionArtifact],
+  minecraft_projection_artifacts: &[auv_game_minecraft::MinecraftProjectionArtifact],
   minecraft_telemetry_sample_artifacts: &[MinecraftTelemetrySampleArtifactLineage],
   minecraft_spatial_bundle_manifests: &[MinecraftSpatialBundleManifestLineage],
   minecraft_training_package_manifests: &[MinecraftTrainingPackageManifestLineage],
@@ -902,11 +902,11 @@ mod tests {
       ],
       issue: None,
     }];
-    let minecraft_projection_artifacts = vec![auv_game_minecraft::artifact::MinecraftProjectionArtifact {
+    let minecraft_projection_artifacts = vec![auv_game_minecraft::MinecraftProjectionArtifact {
       spatial_frame_id: "frame-1".to_string(),
       world_tick: 42,
       monotonic_timestamp_ms: 1_000,
-      viewport_bounds: auv_game_minecraft::artifact::ProjectionViewportBounds {
+      viewport_bounds: auv_game_minecraft::ProjectionViewportBounds {
         x: 0.0,
         y: 0.0,
         width: 800.0,

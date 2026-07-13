@@ -93,8 +93,8 @@ impl MinecraftProjector {
     &self,
     projected_point: Option<MinecraftProjectedPoint>,
     verification_reference: Option<String>,
-  ) -> crate::artifact::MinecraftProjectionArtifact {
-    crate::artifact::MinecraftProjectionArtifact::for_frame(&self.frame, projected_point, verification_reference)
+  ) -> crate::projection_record::MinecraftProjectionArtifact {
+    crate::projection_record::MinecraftProjectionArtifact::for_frame(&self.frame, projected_point, verification_reference)
   }
 
   fn non_visible_point(&self, visibility: ProjectionVisibility) -> MinecraftProjectedPoint {

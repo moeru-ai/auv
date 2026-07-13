@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::Deserialize;
 
 use crate::association::FrameObservation;
-use crate::coverage_artifact::read_coverage_artifact_from_scan_dir;
+use crate::coverage_wire::read_coverage_artifact_from_scan_dir;
 use crate::lifecycle::{LifecycleEvent, TransitionEvidence};
 use crate::producer::produce_frames_from_fixture_dir;
 use crate::reader::{ScanFrameBundle, load_scan_frames_from_dir};
@@ -139,7 +139,7 @@ pub(crate) fn coverage_golden_scenario_for_scene(scene_scenario: &str) -> Option
   }
 }
 
-pub(crate) fn coverage_wire_from_scene_fixture(scenario_dir: &str) -> Option<crate::coverage_artifact::ScanCoverageWire> {
+pub(crate) fn coverage_wire_from_scene_fixture(scenario_dir: &str) -> Option<crate::coverage_wire::ScanCoverageWire> {
   let golden = coverage_golden_scenario_for_scene(scenario_dir)?;
   let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/coverage").join(golden).join("golden");
   Some(read_coverage_artifact_from_scan_dir(&dir).expect("read coverage golden"))

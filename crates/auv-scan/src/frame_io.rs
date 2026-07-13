@@ -1,4 +1,4 @@
-//! Frame artifact read/write for `scan-frame-v0`.
+//! Frame read/write for the durable `scan-frame-v0` wire format.
 
 use std::fs;
 use std::io::Write;

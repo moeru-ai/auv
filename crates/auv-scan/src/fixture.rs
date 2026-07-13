@@ -5,8 +5,8 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::artifact::ScanArtifactError;
 use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanFrame, ScanImageRef};
+use crate::frame_io::ScanArtifactError;
 
 const MANIFEST_FILE: &str = "manifest.json";
 
@@ -51,8 +51,8 @@ mod tests {
   use std::path::PathBuf;
 
   use super::*;
-  use crate::artifact::{frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
   use crate::frame::{SCAN_FRAME_SCHEMA_VERSION, ScanBounds, ScanImageRef};
+  use crate::frame_io::{frame_artifact_file_name, read_frame_artifact, write_frame_artifact};
 
   fn single_frame_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/scan/temporal/single_frame_v0")

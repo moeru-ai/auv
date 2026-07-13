@@ -7,9 +7,9 @@ use auv_driver::geometry::Point;
 use serde::de::DeserializeOwned;
 
 use crate::MinecraftProjector;
-use crate::artifact::MinecraftProjectionArtifact;
 use crate::dataset::{SpatialBundleDirectory, SpatialBundleManifest};
 use crate::measurement::{TextureSweepSample, TextureSweepSampleSet, TextureSweepSampleSource};
+use crate::projection_record::MinecraftProjectionArtifact;
 use crate::types::{MinecraftSpatialFrame, MinecraftTargetSemantics, ProjectionVisibility};
 use crate::verify::MismatchRefusalReason;
 
@@ -333,8 +333,8 @@ fn read_json_file<T: DeserializeOwned>(path: &Path, label: &str) -> SampleBuildR
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::artifact::MinecraftProjectionArtifact;
   use crate::dataset::{SPATIAL_BUNDLE_SCHEMA_VERSION, SourceRunSummary, SpatialBundleArtifactRecord, SpatialBundleCounts};
+  use crate::projection_record::MinecraftProjectionArtifact;
   use crate::types::{BlockFace, BlockPosition, PlayerPose, RaycastHit, Vec3, Viewport};
   use crate::verify::MismatchRefusalReason;
 
@@ -389,7 +389,7 @@ mod tests {
       monotonic_timestamp_ms: frame.monotonic_timestamp_ms,
       screenshot_artifact_ref: frame.screenshot_artifact_ref.clone(),
       mc_capture_skew_ms: frame.mc_capture_skew_ms,
-      viewport_bounds: crate::artifact::ProjectionViewportBounds::from_rect(frame.viewport.bounds()),
+      viewport_bounds: crate::projection_record::ProjectionViewportBounds::from_rect(frame.viewport.bounds()),
       projected_point: None,
       visibility: ProjectionVisibility::OutsideWindow,
       raycast_block_id: frame.raycast_hit.as_ref().map(|hit| hit.block_id.clone()),

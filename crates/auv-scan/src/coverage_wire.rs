@@ -1,7 +1,7 @@
-//! Bounded crate-local coverage ledger wire (`scan-coverage-v0`).
+//! Durable scan coverage wire format and directory-level IO.
 //!
-//! NOTICE(s8a-artifact-boundary): directory-level artifact beside scan-frame-*.json;
-//! not run-level; not runtime-staged by S8a; not scene_state durable product.
+//! The coverage file lives beside scan frame JSON in a scan output directory;
+//! it is not a run-store record and does not own scene-state persistence.
 
 use std::fs;
 use std::io::Write;
