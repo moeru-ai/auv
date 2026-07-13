@@ -35,8 +35,8 @@ pub const TELEMETRY_SAMPLE_ARTIFACT_ROLE: &str = "telemetry-sample";
 
 /// Shared artifact reference view used by inspect and run readers.
 ///
-/// NOTICE(inspect-composition / S3a): owned here so game crates can parse
-/// artifacts without depending on `auv-cli`. Do not fork a same-shape copy.
+/// Owned here so game crates can parse artifacts without depending on
+/// `auv-cli`. Do not fork a same-shape copy.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct ArtifactRefView {
   pub run_id: RunId,
@@ -118,15 +118,16 @@ pub fn read_telemetry_artifact_summary(
 }
 
 /// Type-erased output of one inspect section.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct InspectSectionOutput {
   pub id: &'static str,
   pub text: String,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub json: Option<Value>,
 }
 
 /// Ordered collection of collected section outputs.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 pub struct InspectDocument {
   pub sections: Vec<InspectSectionOutput>,
 }

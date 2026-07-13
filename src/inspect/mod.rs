@@ -1,10 +1,9 @@
 //! Core human-readable run inspection (library-only).
 //!
-//! NOTICE(inspect-composition / S4): Donor/product sections live in
-//! `auv-product`. This module only emits core sections (run summary,
-//! verifications, observations, detector lineage, view-parser proof, scene
-//! state). Product CLI/MCP must inject a product composer; do not re-add
-//! donor wiring here.
+//! App-specific sections live in `auv-product`. This module emits only core
+//! sections: run summary, verifications, observations, detector reads,
+//! view-parser proof, and scene state. Product frontends inject their composer
+//! rather than adding app wiring here.
 
 use auv_inspect_model::InspectComposer;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};

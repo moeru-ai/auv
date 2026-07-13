@@ -5,7 +5,7 @@ use crate::run_read::{
   OsuVisualTruthSpatialQueryManifestLineage, derive_osu_visual_truth_spatial_query_action_readiness,
 };
 
-pub fn append_sections_a(
+pub(crate) fn append_sections_a(
   output: &mut String,
   osu_visual_truth_semantic_manifests: &[OsuVisualTruthSemanticManifestLineage],
   osu_visual_truth_semantic_inspect_reports: &[OsuVisualTruthSemanticInspectReportLineage],

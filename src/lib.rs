@@ -18,25 +18,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use auv_inspect_model::{InspectComposer, InspectDocument};
-use auv_inspect_server::{InspectDocumentWire, InspectSectionWire};
 use auv_tracing_driver::store::LocalStore;
 use model::AuvResult;
 use runtime::Runtime;
-
-/// Convert a model document into the inspect-server wire shape.
-pub fn inspect_document_to_wire(document: InspectDocument) -> InspectDocumentWire {
-  InspectDocumentWire {
-    sections: document
-      .sections
-      .into_iter()
-      .map(|section| InspectSectionWire {
-        id: section.id.to_string(),
-        text: section.text,
-        json: section.json,
-      })
-      .collect(),
-  }
-}
 
 /// Core inspect-server read projection (no donor JSON extensions).
 ///
@@ -106,9 +90,9 @@ impl auv_inspect_server::InspectReadProjection for RootInspectReadProjection {
     &self,
     store: &auv_tracing_driver::store::LocalStore,
     run: &auv_tracing_driver::store::CanonicalRun,
-  ) -> Result<Option<InspectDocumentWire>, String> {
+  ) -> Result<Option<InspectDocument>, String> {
     let document = self.composer.collect_document(store, run).map_err(|error| error.to_string())?;
-    Ok(Some(inspect_document_to_wire(document)))
+    Ok(Some(document))
   }
 
   fn inspect_text(&self, store: &auv_tracing_driver::store::LocalStore, run_id: &str) -> Result<Option<String>, String> {

@@ -1,7 +1,7 @@
 //! Durable Balatro inspect/run artifact role names.
 //!
-//! NOTICE(inspect-composition / S3a): Roles live in the donor crate so readers
-//! can graduate out of `auv-cli` without copying string constants.
+//! The game crate owns these durable strings so its producers and readers do
+//! not duplicate role names or depend on product assembly.
 
 pub const BALATRO_CARD_DETECTION_SEMANTIC_ROLE: &str = "balatro-card-detection-semantic";
 pub const BALATRO_CARD_DETECTION_SEMANTIC_INSPECT_ROLE: &str = "balatro-card-detection-semantic-inspect";

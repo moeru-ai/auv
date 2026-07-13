@@ -1,12 +1,12 @@
 //! Product MCP bootstrap: inject product inspect composer into core MCP frontend.
 //!
-//! NOTICE(inspect-composition / S4): Do not fork `auv_cli::mcp::McpServer` here.
-//! Product owns composer assembly only; the MCP tool surface stays in `auv-cli`.
+//! Product owns composer assembly only; the MCP tool surface stays in `auv-cli`
+//! instead of forking `auv_cli::mcp::McpServer` here.
 
 use std::path::PathBuf;
 
 /// Serve product MCP (CLI `auv mcp serve`) with the shared product inspect composer.
 pub async fn serve_stdio(project_root: PathBuf) -> Result<(), String> {
-  let composer = crate::product_inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
+  let composer = crate::inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
   auv_cli::mcp::serve_stdio_with_composer(project_root, composer).await
 }

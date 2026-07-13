@@ -773,13 +773,14 @@ mod tests {
   use std::sync::Arc;
   use std::sync::atomic::{AtomicUsize, Ordering};
 
+  use auv_inspect_model::{InspectDocument, InspectSectionOutput};
   use axum::Router;
   use axum::body::{Body, to_bytes};
   use axum::http::{Request, StatusCode};
   use tower::ServiceExt;
 
   use super::{ensure_stream_run_exists, next_stream_payload, router, router_with_config, router_with_projection};
-  use crate::read_projection::{CommandBoundaryClaim, InspectDocumentWire, InspectReadProjection, InspectRunEnrichment, InspectSectionWire};
+  use crate::read_projection::{CommandBoundaryClaim, InspectReadProjection, InspectRunEnrichment};
   use auv_tracing_driver::store::{CanonicalRun, LocalStore};
   use auv_tracing_driver::trace::{
     ARTIFACT_API_VERSION, ArtifactId, ArtifactRecordV1Alpha1, EVENT_API_VERSION, EventId, EventRecordV1Alpha1, RUN_API_VERSION, RunId,
@@ -810,10 +811,10 @@ mod tests {
       Ok(None)
     }
 
-    fn inspect_document(&self, _store: &LocalStore, run: &CanonicalRun) -> super::InspectResult<Option<InspectDocumentWire>> {
-      Ok(Some(InspectDocumentWire {
-        sections: vec![InspectSectionWire {
-          id: "demo".to_string(),
+    fn inspect_document(&self, _store: &LocalStore, run: &CanonicalRun) -> super::InspectResult<Option<InspectDocument>> {
+      Ok(Some(InspectDocument {
+        sections: vec![InspectSectionOutput {
+          id: "demo",
           text: format!("demo for {}\n", run.run.run_id),
           json: Some(serde_json::json!({ "kind": "demo" })),
         }],
@@ -1750,7 +1751,7 @@ mod tests {
       )
       .await
       .expect("route should respond");
-    assert_eq!(legacy_minecraft_response.status(), StatusCode::NOT_FOUND, "Minecraft-first quality route must be removed after S5");
+    assert_eq!(legacy_minecraft_response.status(), StatusCode::NOT_FOUND, "Minecraft-first quality route must remain removed");
 
     let _ = fs::remove_dir_all(root);
   }

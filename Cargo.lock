@@ -618,6 +618,7 @@ dependencies = [
 name = "auv-inspect-server"
 version = "0.0.1"
 dependencies = [
+ "auv-inspect-model",
  "auv-tracing-driver",
  "auv-view",
  "axum",

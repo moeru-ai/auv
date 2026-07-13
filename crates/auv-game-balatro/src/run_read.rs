@@ -5,63 +5,63 @@
 use auv_inspect_model::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
-pub struct BalatroCardDetectionSemanticManifestLineage {
+pub(crate) struct BalatroCardDetectionSemanticManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<BalatroCardDetectionSemanticManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct BalatroCardDetectionSemanticInspectReportLineage {
+pub(crate) struct BalatroCardDetectionSemanticInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<BalatroCardDetectionSemanticInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct BalatroCardDetectionSpatialQueryManifestLineage {
+pub(crate) struct BalatroCardDetectionSpatialQueryManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<BalatroCardDetectionSpatialQueryManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct BalatroCardDetectionSpatialQueryInspectReportLineage {
+pub(crate) struct BalatroCardDetectionSpatialQueryInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<BalatroCardDetectionSpatialQueryInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct BalatroCardDetectionEvalWitnessManifestLineage {
+pub(crate) struct BalatroCardDetectionEvalWitnessManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<BalatroCardDetectionEvalWitnessManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct BalatroCardDetectionEvalWitnessInspectReportLineage {
+pub(crate) struct BalatroCardDetectionEvalWitnessInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<BalatroCardDetectionEvalWitnessInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct BalatroCardDetectionQualityManifestLineage {
+pub(crate) struct BalatroCardDetectionQualityManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<BalatroCardDetectionQualityManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct BalatroCardDetectionQualityInspectReportLineage {
+pub(crate) struct BalatroCardDetectionQualityInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<BalatroCardDetectionQualityInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BalatroCardDetectionSemanticManifestSummary {
+pub(crate) struct BalatroCardDetectionSemanticManifestSummary {
   pub schema_version: u32,
   pub source_detection_bundle_dir: String,
   pub frame_source: String,
@@ -75,7 +75,7 @@ pub struct BalatroCardDetectionSemanticManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BalatroCardDetectionSemanticInspectReportSummary {
+pub(crate) struct BalatroCardDetectionSemanticInspectReportSummary {
   pub schema_version: u32,
   pub card_detection_semantic_manifest_path: String,
   pub semantic_status: String,
@@ -87,7 +87,7 @@ pub struct BalatroCardDetectionSemanticInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BalatroCardDetectionSpatialQueryManifestSummary {
+pub(crate) struct BalatroCardDetectionSpatialQueryManifestSummary {
   pub schema_version: u32,
   pub card_detection_semantic_manifest_path: String,
   pub target_zone: String,
@@ -101,7 +101,7 @@ pub struct BalatroCardDetectionSpatialQueryManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BalatroCardDetectionSpatialQueryInspectReportSummary {
+pub(crate) struct BalatroCardDetectionSpatialQueryInspectReportSummary {
   pub schema_version: u32,
   pub card_detection_spatial_query_manifest_path: String,
   pub target_zone: String,
@@ -115,7 +115,7 @@ pub struct BalatroCardDetectionSpatialQueryInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BalatroCardDetectionEvalWitnessManifestSummary {
+pub(crate) struct BalatroCardDetectionEvalWitnessManifestSummary {
   pub schema_version: u32,
   pub card_detection_semantic_manifest_path: String,
   pub card_detection_spatial_query_manifest_path: String,
@@ -133,7 +133,7 @@ pub struct BalatroCardDetectionEvalWitnessManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BalatroCardDetectionEvalWitnessInspectReportSummary {
+pub(crate) struct BalatroCardDetectionEvalWitnessInspectReportSummary {
   pub schema_version: u32,
   pub card_detection_eval_witness_manifest_path: String,
   pub card_detection_semantic_manifest_path: String,
@@ -156,7 +156,7 @@ pub struct BalatroCardDetectionEvalWitnessInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BalatroCardDetectionQualityManifestSummary {
+pub(crate) struct BalatroCardDetectionQualityManifestSummary {
   pub schema_version: u32,
   pub card_detection_eval_witness_manifest_path: String,
   pub witness_status: String,
@@ -170,7 +170,7 @@ pub struct BalatroCardDetectionQualityManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct BalatroCardDetectionQualityInspectReportSummary {
+pub(crate) struct BalatroCardDetectionQualityInspectReportSummary {
   pub schema_version: u32,
   pub card_detection_quality_manifest_path: String,
   pub card_detection_eval_witness_manifest_path: String,
@@ -181,71 +181,7 @@ pub struct BalatroCardDetectionQualityInspectReportSummary {
   pub slot_coverage_ratio_available: bool,
 }
 
-pub fn list_balatro_card_detection_semantic_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<BalatroCardDetectionSemanticManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_balatro_card_detection_semantic_manifests(store, &run)
-}
-
-pub fn list_balatro_card_detection_semantic_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<BalatroCardDetectionSemanticInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_balatro_card_detection_semantic_inspect_reports(store, &run)
-}
-
-pub fn list_balatro_card_detection_spatial_query_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<BalatroCardDetectionSpatialQueryManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_balatro_card_detection_spatial_query_manifests(store, &run)
-}
-
-pub fn list_balatro_card_detection_spatial_query_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<BalatroCardDetectionSpatialQueryInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_balatro_card_detection_spatial_query_inspect_reports(store, &run)
-}
-
-pub fn list_balatro_card_detection_eval_witness_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<BalatroCardDetectionEvalWitnessManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_balatro_card_detection_eval_witness_manifests(store, &run)
-}
-
-pub fn list_balatro_card_detection_eval_witness_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<BalatroCardDetectionEvalWitnessInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_balatro_card_detection_eval_witness_inspect_reports(store, &run)
-}
-
-pub fn list_balatro_card_detection_quality_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<BalatroCardDetectionQualityManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_balatro_card_detection_quality_manifests(store, &run)
-}
-
-pub fn list_balatro_card_detection_quality_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<BalatroCardDetectionQualityInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_balatro_card_detection_quality_inspect_reports(store, &run)
-}
-
-pub fn extract_balatro_card_detection_semantic_manifests(
+pub(crate) fn extract_balatro_card_detection_semantic_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<BalatroCardDetectionSemanticManifestLineage>, String> {
@@ -287,7 +223,7 @@ pub fn extract_balatro_card_detection_semantic_manifests(
   Ok(manifests)
 }
 
-pub fn extract_balatro_card_detection_semantic_inspect_reports(
+pub(crate) fn extract_balatro_card_detection_semantic_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<BalatroCardDetectionSemanticInspectReportLineage>, String> {
@@ -329,7 +265,7 @@ pub fn extract_balatro_card_detection_semantic_inspect_reports(
   Ok(reports)
 }
 
-pub fn extract_balatro_card_detection_spatial_query_manifests(
+pub(crate) fn extract_balatro_card_detection_spatial_query_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<BalatroCardDetectionSpatialQueryManifestLineage>, String> {
@@ -371,7 +307,7 @@ pub fn extract_balatro_card_detection_spatial_query_manifests(
   Ok(manifests)
 }
 
-pub fn extract_balatro_card_detection_spatial_query_inspect_reports(
+pub(crate) fn extract_balatro_card_detection_spatial_query_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<BalatroCardDetectionSpatialQueryInspectReportLineage>, String> {
@@ -413,7 +349,7 @@ pub fn extract_balatro_card_detection_spatial_query_inspect_reports(
   Ok(reports)
 }
 
-pub fn extract_balatro_card_detection_eval_witness_manifests(
+pub(crate) fn extract_balatro_card_detection_eval_witness_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<BalatroCardDetectionEvalWitnessManifestLineage>, String> {
@@ -455,7 +391,7 @@ pub fn extract_balatro_card_detection_eval_witness_manifests(
   Ok(manifests)
 }
 
-pub fn extract_balatro_card_detection_eval_witness_inspect_reports(
+pub(crate) fn extract_balatro_card_detection_eval_witness_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<BalatroCardDetectionEvalWitnessInspectReportLineage>, String> {
@@ -497,7 +433,7 @@ pub fn extract_balatro_card_detection_eval_witness_inspect_reports(
   Ok(reports)
 }
 
-pub fn extract_balatro_card_detection_quality_manifests(
+pub(crate) fn extract_balatro_card_detection_quality_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<BalatroCardDetectionQualityManifestLineage>, String> {
@@ -539,7 +475,7 @@ pub fn extract_balatro_card_detection_quality_manifests(
   Ok(manifests)
 }
 
-pub fn extract_balatro_card_detection_quality_inspect_reports(
+pub(crate) fn extract_balatro_card_detection_quality_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<BalatroCardDetectionQualityInspectReportLineage>, String> {

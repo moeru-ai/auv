@@ -1,4 +1,4 @@
-//! S2 donor CLI migration lock (subprocess).
+//! Subprocess coverage for separate app binaries and removed root subcommands.
 //!
 //! Hermetic: only spawns built `auv` / donor bins with `--help` or bare donor
 //! subcommands. No desktop input, no network, no durable writes.

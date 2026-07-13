@@ -1,4 +1,4 @@
-//! S1a inspect goldens (test-only).
+//! Inspect goldens (test-only).
 //!
 //! Classification: test-only
 //! Non-goals: no production control-flow changes.
@@ -20,8 +20,7 @@ use auv_tracing_driver::trace::{
 use serde::Serialize;
 use serde_json::json;
 
-use crate::inspect::inspect_run;
-use crate::product_inspect::{build_product_inspect_composer, inspect_run_with};
+use crate::inspect::{build_product_inspect_composer, inspect_run, inspect_run_with};
 use auv_cli::contract::{
   OBSERVATION_SNAPSHOT_API_VERSION, OPERATION_RESULT_API_VERSION, ObservationSnapshot, ObservationSource, OperationOutput, OperationResult,
   OperationStatus, RecognitionScope, RecognitionSurface, VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
@@ -430,7 +429,7 @@ fn mcp_and_composer_share_same_text_for_core_fixture() {
   let via_mcp = inspect_run_with(mcp.inspect_composer(), &store, "run_golden_parity").expect("mcp path");
   assert_eq!(via_composer, via_mcp);
 
-  // S5: product inspect-server projection consumes the same composer for text/document.
+  // The product inspect-server projection consumes the same composer for text/document.
   use auv_inspect_server::InspectReadProjection;
   let projection = crate::projection::ProductInspectReadProjection::with_composer(composer.clone());
   let via_server = projection.inspect_text(&store, "run_golden_parity").expect("server projection text").expect("product inspect text");

@@ -17,7 +17,7 @@ use crate::{
 };
 use std::fs;
 
-pub struct MinecraftTelemetrySampleArtifactLineage {
+pub(crate) struct MinecraftTelemetrySampleArtifactLineage {
   pub artifact: ArtifactRefView,
   pub line_count: Option<usize>,
   pub byte_size: Option<u64>,
@@ -31,77 +31,77 @@ pub struct MinecraftSpatialBundleManifestLineage {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingPackageManifestLineage {
+pub(crate) struct MinecraftTrainingPackageManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingPackageManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingLaunchManifestLineage {
+pub(crate) struct MinecraftTrainingLaunchManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingLaunchManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingLaunchInspectReportLineage {
+pub(crate) struct MinecraftTrainingLaunchInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingLaunchInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingJobManifestLineage {
+pub(crate) struct MinecraftTrainingJobManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingJobManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingJobInspectReportLineage {
+pub(crate) struct MinecraftTrainingJobInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingJobInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingResultManifestLineage {
+pub(crate) struct MinecraftTrainingResultManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingResultManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingResultInspectReportLineage {
+pub(crate) struct MinecraftTrainingResultInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingResultArtifactFetchManifestLineage {
+pub(crate) struct MinecraftTrainingResultArtifactFetchManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingResultArtifactFetchManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingResultArtifactFetchInspectReportLineage {
+pub(crate) struct MinecraftTrainingResultArtifactFetchInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultArtifactFetchInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingResultSemanticManifestLineage {
+pub(crate) struct MinecraftTrainingResultSemanticManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingResultSemanticManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingResultSemanticInspectReportLineage {
+pub(crate) struct MinecraftTrainingResultSemanticInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultSemanticInspectReportSummary>,
   pub issue: Option<String>,
@@ -125,14 +125,14 @@ pub struct MinecraftTrainingResultSpatialQueryActionReadinessSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingResultSpatialQueryInspectReportLineage {
+pub(crate) struct MinecraftTrainingResultSpatialQueryInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultSpatialQueryInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary {
+pub(crate) struct MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary {
   pub frame_index: usize,
   pub spatial_frame_id: String,
   pub screenshot_path: String,
@@ -140,7 +140,7 @@ pub struct MinecraftTrainingResultHoldoutPreviewFrameWitnessSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultHoldoutPreviewManifestSummary {
+pub(crate) struct MinecraftTrainingResultHoldoutPreviewManifestSummary {
   pub schema_version: u32,
   pub training_result_semantic_manifest_path: String,
   pub source_training_result_artifact_manifest_path: String,
@@ -165,7 +165,7 @@ pub struct MinecraftTrainingResultHoldoutPreviewManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultHoldoutPreviewInspectReportSummary {
+pub(crate) struct MinecraftTrainingResultHoldoutPreviewInspectReportSummary {
   pub schema_version: u32,
   pub training_result_holdout_preview_manifest_path: String,
   pub training_result_semantic_manifest_path: String,
@@ -195,28 +195,28 @@ pub struct MinecraftTrainingResultHoldoutPreviewInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingResultHoldoutPreviewManifestLineage {
+pub(crate) struct MinecraftTrainingResultHoldoutPreviewManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftTrainingResultHoldoutPreviewManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingResultHoldoutPreviewInspectReportLineage {
+pub(crate) struct MinecraftTrainingResultHoldoutPreviewInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingResultHoldoutPreviewInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftHoldoutRenderQualityMetricsSummary {
+pub(crate) struct MinecraftHoldoutRenderQualityMetricsSummary {
   pub l1_mean: Option<f64>,
   pub mse: Option<f64>,
   pub psnr: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftHoldoutRenderQualityManifestSummary {
+pub(crate) struct MinecraftHoldoutRenderQualityManifestSummary {
   pub schema_version: u32,
   pub training_result_semantic_manifest_path: String,
   pub holdout_preview_manifest_path: String,
@@ -237,7 +237,7 @@ pub struct MinecraftHoldoutRenderQualityManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftHoldoutRenderQualityInspectReportSummary {
+pub(crate) struct MinecraftHoldoutRenderQualityInspectReportSummary {
   pub schema_version: u32,
   pub training_result_holdout_render_quality_manifest_path: String,
   pub training_result_semantic_manifest_path: String,
@@ -260,28 +260,28 @@ pub struct MinecraftHoldoutRenderQualityInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftHoldoutRenderQualityManifestLineage {
+pub(crate) struct MinecraftHoldoutRenderQualityManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<MinecraftHoldoutRenderQualityManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftHoldoutRenderQualityInspectReportLineage {
+pub(crate) struct MinecraftHoldoutRenderQualityInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<MinecraftHoldoutRenderQualityInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct MinecraftTrainingPackageInspectReportLineage {
+pub(crate) struct MinecraftTrainingPackageInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<MinecraftTrainingPackageInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingLaunchManifestSummary {
+pub(crate) struct MinecraftTrainingLaunchManifestSummary {
   pub schema_version: u32,
   pub source_training_package_manifest_path: String,
   pub source_training_package_inspect_report_path: String,
@@ -300,7 +300,7 @@ pub struct MinecraftTrainingLaunchManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingLaunchInspectReportSummary {
+pub(crate) struct MinecraftTrainingLaunchInspectReportSummary {
   pub schema_version: u32,
   pub training_launch_manifest_path: String,
   pub source_training_package_manifest_path: String,
@@ -320,7 +320,7 @@ pub struct MinecraftTrainingLaunchInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingJobManifestSummary {
+pub(crate) struct MinecraftTrainingJobManifestSummary {
   pub schema_version: u32,
   pub source_training_launch_plan_path: String,
   pub source_training_package_manifest_path: String,
@@ -350,7 +350,7 @@ pub struct MinecraftTrainingJobManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingJobInspectReportSummary {
+pub(crate) struct MinecraftTrainingJobInspectReportSummary {
   pub schema_version: u32,
   pub training_launch_manifest_path: String,
   pub source_training_launch_plan_path: String,
@@ -379,7 +379,7 @@ pub struct MinecraftTrainingJobInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultManifestSummary {
+pub(crate) struct MinecraftTrainingResultManifestSummary {
   pub schema_version: u32,
   pub source_training_job_manifest_path: String,
   pub source_training_launch_plan_path: String,
@@ -404,7 +404,7 @@ pub struct MinecraftTrainingResultManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultArtifactSummary {
+pub(crate) struct MinecraftTrainingResultArtifactSummary {
   pub relative_path: String,
   pub absolute_path: String,
   pub readable: bool,
@@ -423,7 +423,7 @@ impl From<crate::TrainingResultArtifactRecord> for MinecraftTrainingResultArtifa
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultInspectReportSummary {
+pub(crate) struct MinecraftTrainingResultInspectReportSummary {
   pub schema_version: u32,
   pub training_result_manifest_path: String,
   pub source_training_job_manifest_path: String,
@@ -450,7 +450,7 @@ pub struct MinecraftTrainingResultInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultArtifactFetchManifestSummary {
+pub(crate) struct MinecraftTrainingResultArtifactFetchManifestSummary {
   pub schema_version: u32,
   pub source_training_result_manifest_path: String,
   pub source_training_job_manifest_path: String,
@@ -471,7 +471,7 @@ pub struct MinecraftTrainingResultArtifactFetchManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultArtifactFetchInspectReportSummary {
+pub(crate) struct MinecraftTrainingResultArtifactFetchInspectReportSummary {
   pub schema_version: u32,
   pub training_result_artifact_fetch_manifest_path: String,
   pub source_training_result_manifest_path: String,
@@ -497,7 +497,7 @@ pub struct MinecraftTrainingResultArtifactFetchInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultNormalizedArtifactSummary {
+pub(crate) struct MinecraftTrainingResultNormalizedArtifactSummary {
   pub kind: String,
   pub relative_path: String,
   pub absolute_path: String,
@@ -506,13 +506,13 @@ pub struct MinecraftTrainingResultNormalizedArtifactSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultSemanticCheckpointSummary {
+pub(crate) struct MinecraftTrainingResultSemanticCheckpointSummary {
   pub relative_path: String,
   pub byte_size: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultSemanticManifestSummary {
+pub(crate) struct MinecraftTrainingResultSemanticManifestSummary {
   pub schema_version: u32,
   pub source_training_result_artifact_manifest_path: String,
   pub source_training_result_manifest_path: String,
@@ -538,7 +538,7 @@ pub struct MinecraftTrainingResultSemanticManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultSemanticInspectReportSummary {
+pub(crate) struct MinecraftTrainingResultSemanticInspectReportSummary {
   pub schema_version: u32,
   pub training_result_semantic_manifest_path: String,
   pub source_training_result_artifact_manifest_path: String,
@@ -597,7 +597,7 @@ pub struct MinecraftTrainingResultSpatialQueryManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingResultSpatialQueryInspectReportSummary {
+pub(crate) struct MinecraftTrainingResultSpatialQueryInspectReportSummary {
   pub schema_version: u32,
   pub training_result_spatial_query_manifest_path: String,
   pub training_result_semantic_manifest_path: String,
@@ -646,7 +646,7 @@ pub struct MinecraftSpatialBundleManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingPackageManifestSummary {
+pub(crate) struct MinecraftTrainingPackageManifestSummary {
   pub schema_version: u32,
   pub source_scene_packet_manifest_path: String,
   pub source_bundle_manifest_paths: Vec<String>,
@@ -657,7 +657,7 @@ pub struct MinecraftTrainingPackageManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MinecraftTrainingPackageInspectReportSummary {
+pub(crate) struct MinecraftTrainingPackageInspectReportSummary {
   pub schema_version: u32,
   pub training_package_manifest_path: String,
   pub scene_packet_manifest_path: String,
@@ -669,12 +669,10 @@ pub struct MinecraftTrainingPackageInspectReportSummary {
   pub known_limits: Vec<String>,
 }
 
-pub fn list_minecraft_projection_artifacts(store: &LocalStore, run_id: &str) -> Result<Vec<MinecraftProjectionArtifact>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_projection_artifacts(store, &run)
-}
-
-pub fn extract_minecraft_projection_artifacts(store: &LocalStore, run: &CanonicalRun) -> Result<Vec<MinecraftProjectionArtifact>, String> {
+pub(crate) fn extract_minecraft_projection_artifacts(
+  store: &LocalStore,
+  run: &CanonicalRun,
+) -> Result<Vec<MinecraftProjectionArtifact>, String> {
   let mut artifacts = Vec::new();
   for artifact in &run.artifacts {
     if artifact.role != crate::MINECRAFT_PROJECTION_ARTIFACT_ROLE || !is_json_mime(&artifact.mime_type) {
@@ -691,14 +689,6 @@ pub fn extract_minecraft_projection_artifacts(store: &LocalStore, run: &Canonica
   Ok(artifacts)
 }
 
-pub fn list_minecraft_telemetry_sample_artifacts(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTelemetrySampleArtifactLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_telemetry_sample_artifacts(store, &run)
-}
-
 pub fn list_minecraft_spatial_bundle_manifests(
   store: &LocalStore,
   run_id: &str,
@@ -707,84 +697,7 @@ pub fn list_minecraft_spatial_bundle_manifests(
   extract_minecraft_spatial_bundle_manifests(store, &run)
 }
 
-pub fn list_minecraft_training_launch_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingLaunchManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_launch_manifests(store, &run)
-}
-
-pub fn list_minecraft_training_launch_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingLaunchInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_launch_inspect_reports(store, &run)
-}
-
-pub fn list_minecraft_training_job_manifests(store: &LocalStore, run_id: &str) -> Result<Vec<MinecraftTrainingJobManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_job_manifests(store, &run)
-}
-
-pub fn list_minecraft_training_job_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingJobInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_job_inspect_reports(store, &run)
-}
-
-pub fn list_minecraft_training_result_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingResultManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_result_manifests(store, &run)
-}
-
-pub fn list_minecraft_training_result_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingResultInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_result_inspect_reports(store, &run)
-}
-
-pub fn list_minecraft_training_result_artifact_fetch_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingResultArtifactFetchManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_result_artifact_fetch_manifests(store, &run)
-}
-
-pub fn list_minecraft_training_result_artifact_fetch_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingResultArtifactFetchInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_result_artifact_fetch_inspect_reports(store, &run)
-}
-
-pub fn list_minecraft_training_result_semantic_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingResultSemanticManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_result_semantic_manifests(store, &run)
-}
-
-pub fn list_minecraft_training_result_semantic_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingResultSemanticInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_result_semantic_inspect_reports(store, &run)
-}
-
-pub fn list_minecraft_holdout_render_quality_manifests(
+pub(crate) fn list_minecraft_holdout_render_quality_manifests(
   store: &LocalStore,
   run_id: &str,
 ) -> Result<Vec<MinecraftHoldoutRenderQualityManifestLineage>, String> {
@@ -792,15 +705,7 @@ pub fn list_minecraft_holdout_render_quality_manifests(
   extract_minecraft_holdout_render_quality_manifests(store, &run)
 }
 
-pub fn list_minecraft_holdout_render_quality_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftHoldoutRenderQualityInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_holdout_render_quality_inspect_reports(store, &run)
-}
-
-pub fn extract_minecraft_holdout_render_quality_manifests(
+pub(crate) fn extract_minecraft_holdout_render_quality_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftHoldoutRenderQualityManifestLineage>, String> {
@@ -841,7 +746,7 @@ pub fn extract_minecraft_holdout_render_quality_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_holdout_render_quality_inspect_reports(
+pub(crate) fn extract_minecraft_holdout_render_quality_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftHoldoutRenderQualityInspectReportLineage>, String> {
@@ -882,7 +787,7 @@ pub fn extract_minecraft_holdout_render_quality_inspect_reports(
   Ok(reports)
 }
 
-pub fn list_minecraft_training_result_spatial_query_manifests(
+pub(crate) fn list_minecraft_training_result_spatial_query_manifests(
   store: &LocalStore,
   run_id: &str,
 ) -> Result<Vec<MinecraftTrainingResultSpatialQueryManifestLineage>, String> {
@@ -890,31 +795,7 @@ pub fn list_minecraft_training_result_spatial_query_manifests(
   extract_minecraft_training_result_spatial_query_manifests(store, &run)
 }
 
-pub fn list_minecraft_training_result_spatial_query_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingResultSpatialQueryInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_result_spatial_query_inspect_reports(store, &run)
-}
-
-pub fn list_minecraft_training_package_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingPackageManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_package_manifests(store, &run)
-}
-
-pub fn list_minecraft_training_package_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingPackageInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_package_inspect_reports(store, &run)
-}
-
-pub fn extract_minecraft_spatial_bundle_manifests(
+pub(crate) fn extract_minecraft_spatial_bundle_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftSpatialBundleManifestLineage>, String> {
@@ -957,7 +838,7 @@ pub fn extract_minecraft_spatial_bundle_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_training_launch_manifests(
+pub(crate) fn extract_minecraft_training_launch_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingLaunchManifestLineage>, String> {
@@ -998,7 +879,7 @@ pub fn extract_minecraft_training_launch_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_training_launch_inspect_reports(
+pub(crate) fn extract_minecraft_training_launch_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingLaunchInspectReportLineage>, String> {
@@ -1039,7 +920,7 @@ pub fn extract_minecraft_training_launch_inspect_reports(
   Ok(reports)
 }
 
-pub fn extract_minecraft_training_job_manifests(
+pub(crate) fn extract_minecraft_training_job_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingJobManifestLineage>, String> {
@@ -1080,7 +961,7 @@ pub fn extract_minecraft_training_job_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_training_job_inspect_reports(
+pub(crate) fn extract_minecraft_training_job_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingJobInspectReportLineage>, String> {
@@ -1121,7 +1002,7 @@ pub fn extract_minecraft_training_job_inspect_reports(
   Ok(reports)
 }
 
-pub fn extract_minecraft_training_result_manifests(
+pub(crate) fn extract_minecraft_training_result_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingResultManifestLineage>, String> {
@@ -1162,7 +1043,7 @@ pub fn extract_minecraft_training_result_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_training_result_inspect_reports(
+pub(crate) fn extract_minecraft_training_result_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingResultInspectReportLineage>, String> {
@@ -1203,7 +1084,7 @@ pub fn extract_minecraft_training_result_inspect_reports(
   Ok(reports)
 }
 
-pub fn extract_minecraft_training_result_artifact_fetch_manifests(
+pub(crate) fn extract_minecraft_training_result_artifact_fetch_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingResultArtifactFetchManifestLineage>, String> {
@@ -1244,7 +1125,7 @@ pub fn extract_minecraft_training_result_artifact_fetch_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_training_result_artifact_fetch_inspect_reports(
+pub(crate) fn extract_minecraft_training_result_artifact_fetch_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingResultArtifactFetchInspectReportLineage>, String> {
@@ -1285,7 +1166,7 @@ pub fn extract_minecraft_training_result_artifact_fetch_inspect_reports(
   Ok(reports)
 }
 
-pub fn extract_minecraft_training_result_semantic_manifests(
+pub(crate) fn extract_minecraft_training_result_semantic_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingResultSemanticManifestLineage>, String> {
@@ -1326,7 +1207,7 @@ pub fn extract_minecraft_training_result_semantic_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_training_result_semantic_inspect_reports(
+pub(crate) fn extract_minecraft_training_result_semantic_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingResultSemanticInspectReportLineage>, String> {
@@ -1408,7 +1289,7 @@ pub fn extract_minecraft_training_result_spatial_query_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_training_result_spatial_query_inspect_reports(
+pub(crate) fn extract_minecraft_training_result_spatial_query_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingResultSpatialQueryInspectReportLineage>, String> {
@@ -1449,7 +1330,7 @@ pub fn extract_minecraft_training_result_spatial_query_inspect_reports(
   Ok(reports)
 }
 
-pub fn list_minecraft_training_result_holdout_preview_manifests(
+pub(crate) fn list_minecraft_training_result_holdout_preview_manifests(
   store: &LocalStore,
   run_id: &str,
 ) -> Result<Vec<MinecraftTrainingResultHoldoutPreviewManifestLineage>, String> {
@@ -1457,15 +1338,7 @@ pub fn list_minecraft_training_result_holdout_preview_manifests(
   extract_minecraft_training_result_holdout_preview_manifests(store, &run)
 }
 
-pub fn list_minecraft_training_result_holdout_preview_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<MinecraftTrainingResultHoldoutPreviewInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_minecraft_training_result_holdout_preview_inspect_reports(store, &run)
-}
-
-pub fn extract_minecraft_training_result_holdout_preview_manifests(
+pub(crate) fn extract_minecraft_training_result_holdout_preview_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingResultHoldoutPreviewManifestLineage>, String> {
@@ -1506,7 +1379,7 @@ pub fn extract_minecraft_training_result_holdout_preview_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_training_result_holdout_preview_inspect_reports(
+pub(crate) fn extract_minecraft_training_result_holdout_preview_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingResultHoldoutPreviewInspectReportLineage>, String> {
@@ -1594,10 +1467,10 @@ pub fn derive_minecraft_training_result_spatial_query_action_readiness(
   }
 }
 
-pub const QUALITY_BASELINE_PROFILE_V1_JSON: &str = include_str!("../tests/fixtures/mc17-d2/baseline-profile-v1.json");
+pub(crate) const QUALITY_BASELINE_PROFILE_V1_JSON: &str = include_str!("../tests/fixtures/mc17-d2/baseline-profile-v1.json");
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct QualityBaselineProfile {
+pub(crate) struct QualityBaselineProfile {
   pub profile_id: String,
   pub training_result_semantic_manifest_path: String,
   pub query_target_block: String,
@@ -1610,7 +1483,7 @@ pub struct QualityBaselineProfile {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
-pub struct QualityBaselineRecordedRunIds {
+pub(crate) struct QualityBaselineRecordedRunIds {
   pub mc12: Option<String>,
   pub mc16: Option<String>,
   pub mc17: Option<String>,
@@ -1662,14 +1535,14 @@ pub struct MinecraftTrainingResultQualityBaselineReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct QualityBaselineEvidenceBundle {
+pub(crate) struct QualityBaselineEvidenceBundle {
   pub spatial_query: Option<MinecraftTrainingResultSpatialQueryManifestSummary>,
   pub holdout_preview: Option<MinecraftTrainingResultHoldoutPreviewManifestSummary>,
   pub render_quality: Option<MinecraftHoldoutRenderQualityManifestSummary>,
   pub collection_issues: Vec<String>,
 }
 
-pub fn quality_baseline_report_for_run(
+pub(crate) fn quality_baseline_report_for_run(
   store: &LocalStore,
   run_id: &str,
 ) -> Result<MinecraftTrainingResultQualityBaselineReportSummary, String> {
@@ -1684,7 +1557,7 @@ pub fn quality_baseline_report_for_run(
   ))
 }
 
-pub fn quality_baseline_profile_v1() -> Result<QualityBaselineProfile, String> {
+pub(crate) fn quality_baseline_profile_v1() -> Result<QualityBaselineProfile, String> {
   serde_json::from_str(QUALITY_BASELINE_PROFILE_V1_JSON).map_err(|error| format!("parse quality baseline profile v1 fixture: {error}"))
 }
 
@@ -1768,7 +1641,7 @@ fn build_quality_baseline_trust_notes(render_quality: Option<&QualityBaselineRen
   notes
 }
 
-pub fn derive_minecraft_training_result_quality_baseline_report(
+pub(crate) fn derive_minecraft_training_result_quality_baseline_report(
   profile: &QualityBaselineProfile,
   spatial_query: Option<&MinecraftTrainingResultSpatialQueryManifestSummary>,
   holdout_preview: Option<&MinecraftTrainingResultHoldoutPreviewManifestSummary>,
@@ -1929,7 +1802,7 @@ fn find_holdout_preview_manifest_in_store(
   None
 }
 
-pub fn collect_quality_baseline_evidence_for_run(
+pub(crate) fn collect_quality_baseline_evidence_for_run(
   store: &LocalStore,
   run_id: &str,
   profile: &QualityBaselineProfile,
@@ -1968,25 +1841,25 @@ pub fn collect_quality_baseline_evidence_for_run(
   })
 }
 
-pub const QUALITY_BASELINE_VERDICT_THRESHOLDS_PROBE_V1_JSON: &str =
+pub(crate) const QUALITY_BASELINE_VERDICT_THRESHOLDS_PROBE_V1_JSON: &str =
   include_str!("../tests/fixtures/mc17-d3/baseline-verdict-thresholds-v1-probe.json");
-pub const QUALITY_BASELINE_VERDICT_THRESHOLDS_TRAINED_RENDER_V1_JSON: &str =
+pub(crate) const QUALITY_BASELINE_VERDICT_THRESHOLDS_TRAINED_RENDER_V1_JSON: &str =
   include_str!("../tests/fixtures/mc17-d3/baseline-verdict-thresholds-v1-trained-render.json");
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct QualityBaselineSpatialQueryThresholds {
+pub(crate) struct QualityBaselineSpatialQueryThresholds {
   pub required_status: String,
   #[serde(default)]
   pub required_visibility: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct QualityBaselineHoldoutWitnessThresholds {
+pub(crate) struct QualityBaselineHoldoutWitnessThresholds {
   pub required_status: String,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct QualityBaselineRenderQualityThresholds {
+pub(crate) struct QualityBaselineRenderQualityThresholds {
   pub required_status: String,
   pub required_verdict: String,
   pub require_image_size_match: bool,
@@ -1999,14 +1872,14 @@ pub struct QualityBaselineRenderQualityThresholds {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct QualityBaselineVerdictThresholdSet {
+pub(crate) struct QualityBaselineVerdictThresholdSet {
   pub spatial_query: QualityBaselineSpatialQueryThresholds,
   pub holdout_witness: QualityBaselineHoldoutWitnessThresholds,
   pub render_quality: QualityBaselineRenderQualityThresholds,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct QualityBaselineVerdictThresholds {
+pub(crate) struct QualityBaselineVerdictThresholds {
   pub profile_id: String,
   pub render_evidence_mode: String,
   pub thresholds: QualityBaselineVerdictThresholdSet,
@@ -2045,12 +1918,12 @@ pub struct MinecraftQualityBaselineReportWithVerdicts {
   pub verdicts: MinecraftQualityBaselineDualVerdicts,
 }
 
-pub fn quality_baseline_verdict_thresholds_probe_v1() -> Result<QualityBaselineVerdictThresholds, String> {
+pub(crate) fn quality_baseline_verdict_thresholds_probe_v1() -> Result<QualityBaselineVerdictThresholds, String> {
   serde_json::from_str(QUALITY_BASELINE_VERDICT_THRESHOLDS_PROBE_V1_JSON)
     .map_err(|error| format!("parse quality baseline verdict thresholds probe v1 fixture: {error}"))
 }
 
-pub fn quality_baseline_verdict_thresholds_trained_render_v1() -> Result<QualityBaselineVerdictThresholds, String> {
+pub(crate) fn quality_baseline_verdict_thresholds_trained_render_v1() -> Result<QualityBaselineVerdictThresholds, String> {
   serde_json::from_str(QUALITY_BASELINE_VERDICT_THRESHOLDS_TRAINED_RENDER_V1_JSON)
     .map_err(|error| format!("parse quality baseline verdict thresholds trained_render v1 fixture: {error}"))
 }
@@ -2257,7 +2130,7 @@ fn build_quality_verdict_trust_notes(
   notes
 }
 
-pub fn derive_minecraft_training_result_quality_verdict(
+pub(crate) fn derive_minecraft_training_result_quality_verdict(
   baseline: &MinecraftTrainingResultQualityBaselineReportSummary,
   thresholds: &QualityBaselineVerdictThresholds,
 ) -> MinecraftTrainingResultQualityVerdictSummary {
@@ -2282,15 +2155,6 @@ pub fn derive_minecraft_training_result_quality_verdict(
     trust_notes,
     issue,
   }
-}
-
-pub fn quality_baseline_verdict_for_run(
-  store: &LocalStore,
-  run_id: &str,
-  thresholds: &QualityBaselineVerdictThresholds,
-) -> Result<MinecraftTrainingResultQualityVerdictSummary, String> {
-  let baseline = quality_baseline_report_for_run(store, run_id)?;
-  Ok(derive_minecraft_training_result_quality_verdict(&baseline, thresholds))
 }
 
 pub fn quality_baseline_report_with_verdicts_for_run(
@@ -2454,7 +2318,7 @@ fn parse_spatial_query_comparison_verdict(label: &str) -> Result<crate::Training
   }
 }
 
-pub fn extract_minecraft_training_package_manifests(
+pub(crate) fn extract_minecraft_training_package_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingPackageManifestLineage>, String> {
@@ -2498,7 +2362,7 @@ pub fn extract_minecraft_training_package_manifests(
   Ok(manifests)
 }
 
-pub fn extract_minecraft_training_package_inspect_reports(
+pub(crate) fn extract_minecraft_training_package_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTrainingPackageInspectReportLineage>, String> {
@@ -2542,7 +2406,7 @@ pub fn extract_minecraft_training_package_inspect_reports(
   Ok(reports)
 }
 
-pub fn extract_minecraft_telemetry_sample_artifacts(
+pub(crate) fn extract_minecraft_telemetry_sample_artifacts(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<MinecraftTelemetrySampleArtifactLineage>, String> {

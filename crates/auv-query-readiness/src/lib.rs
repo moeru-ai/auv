@@ -60,14 +60,11 @@ pub fn format_query_not_consumable_refusal(status_label: &str, reason_label: Opt
   }
 }
 
-/// NOTICE(core-c2-d1): reader-side vocabulary only — Core-C1 table in
-/// docs/ai/references/2026-06-28-auv-core-c1-action-attempt-admission-design.md.
-///
-/// Maps donor `DerivedActionEligibility::as_str()` labels onto inspect
+/// Maps `DerivedActionEligibility::as_str()` labels onto inspect
 /// `readiness_class` strings shared by ordinary game readers and product
 /// query-wired projections.
-pub fn map_action_eligibility_to_readiness_class(donor: &str) -> Option<String> {
-  match donor {
+pub fn map_action_eligibility_to_readiness_class(eligibility: &str) -> Option<String> {
+  match eligibility {
     "click_ready" => Some("ready".to_string()),
     "answer_non_clickable" => Some("non_actionable".to_string()),
     "not_consumable" => Some("not_consumable".to_string()),

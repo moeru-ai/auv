@@ -10,14 +10,14 @@ use crate::{
 use auv_inspect_model::{ArtifactRefView, artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
-pub struct OsuVisualTruthSemanticManifestLineage {
+pub(crate) struct OsuVisualTruthSemanticManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<OsuVisualTruthSemanticManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct OsuVisualTruthSemanticInspectReportLineage {
+pub(crate) struct OsuVisualTruthSemanticInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<OsuVisualTruthSemanticInspectReportSummary>,
   pub issue: Option<String>,
@@ -31,7 +31,7 @@ pub struct OsuVisualTruthSpatialQueryManifestLineage {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct OsuVisualTruthSpatialQueryInspectReportLineage {
+pub(crate) struct OsuVisualTruthSpatialQueryInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<OsuVisualTruthSpatialQueryInspectReportSummary>,
   pub issue: Option<String>,
@@ -46,7 +46,7 @@ pub struct OsuVisualTruthSpatialQueryActionReadinessSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct OsuVisualTruthSemanticManifestSummary {
+pub(crate) struct OsuVisualTruthSemanticManifestSummary {
   pub schema_version: u32,
   pub source_run_artifact_dir: String,
   pub source_visual_truth_manifest_path: String,
@@ -59,7 +59,7 @@ pub struct OsuVisualTruthSemanticManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct OsuVisualTruthSemanticInspectReportSummary {
+pub(crate) struct OsuVisualTruthSemanticInspectReportSummary {
   pub schema_version: u32,
   pub visual_truth_semantic_manifest_path: String,
   pub source_run_artifact_dir: String,
@@ -93,7 +93,7 @@ pub struct OsuVisualTruthSpatialQueryManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct OsuVisualTruthSpatialQueryInspectReportSummary {
+pub(crate) struct OsuVisualTruthSpatialQueryInspectReportSummary {
   pub schema_version: u32,
   pub visual_truth_spatial_query_manifest_path: String,
   pub visual_truth_semantic_manifest_path: String,
@@ -109,35 +109,35 @@ pub struct OsuVisualTruthSpatialQueryInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct OsuDetectionEvalWitnessManifestLineage {
+pub(crate) struct OsuDetectionEvalWitnessManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<OsuDetectionEvalWitnessManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct OsuDetectionEvalWitnessInspectReportLineage {
+pub(crate) struct OsuDetectionEvalWitnessInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<OsuDetectionEvalWitnessInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct OsuDetectionEvalQualityManifestLineage {
+pub(crate) struct OsuDetectionEvalQualityManifestLineage {
   pub artifact: ArtifactRefView,
   pub manifest: Option<OsuDetectionEvalQualityManifestSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
-pub struct OsuDetectionEvalQualityInspectReportLineage {
+pub(crate) struct OsuDetectionEvalQualityInspectReportLineage {
   pub artifact: ArtifactRefView,
   pub report: Option<OsuDetectionEvalQualityInspectReportSummary>,
   pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct OsuDetectionEvalWitnessManifestSummary {
+pub(crate) struct OsuDetectionEvalWitnessManifestSummary {
   pub schema_version: u32,
   pub source_visual_eval_report_path: String,
   pub source_run_artifact_dir: String,
@@ -154,7 +154,7 @@ pub struct OsuDetectionEvalWitnessManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct OsuDetectionEvalWitnessInspectReportSummary {
+pub(crate) struct OsuDetectionEvalWitnessInspectReportSummary {
   pub schema_version: u32,
   pub detection_eval_witness_manifest_path: String,
   pub total_frames: usize,
@@ -164,7 +164,7 @@ pub struct OsuDetectionEvalWitnessInspectReportSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct OsuDetectionEvalQualityManifestSummary {
+pub(crate) struct OsuDetectionEvalQualityManifestSummary {
   pub schema_version: u32,
   pub detection_eval_witness_manifest_path: String,
   pub source_visual_eval_report_path: String,
@@ -177,7 +177,7 @@ pub struct OsuDetectionEvalQualityManifestSummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct OsuDetectionEvalQualityInspectReportSummary {
+pub(crate) struct OsuDetectionEvalQualityInspectReportSummary {
   pub schema_version: u32,
   pub detection_eval_quality_manifest_path: String,
   pub witness_status: String,
@@ -187,45 +187,7 @@ pub struct OsuDetectionEvalQualityInspectReportSummary {
   pub spatial_recall_available: bool,
 }
 
-pub struct OsuDetectionEvalQualityVerdictSummary {
-  pub verdict: String,
-  pub derived_from_witness_status: String,
-  pub issue: Option<String>,
-}
-
-pub fn list_osu_visual_truth_semantic_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<OsuVisualTruthSemanticManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_osu_visual_truth_semantic_manifests(store, &run)
-}
-
-pub fn list_osu_visual_truth_semantic_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<OsuVisualTruthSemanticInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_osu_visual_truth_semantic_inspect_reports(store, &run)
-}
-
-pub fn list_osu_visual_truth_spatial_query_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<OsuVisualTruthSpatialQueryManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_osu_visual_truth_spatial_query_manifests(store, &run)
-}
-
-pub fn list_osu_visual_truth_spatial_query_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<OsuVisualTruthSpatialQueryInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_osu_visual_truth_spatial_query_inspect_reports(store, &run)
-}
-
-pub fn extract_osu_visual_truth_semantic_manifests(
+pub(crate) fn extract_osu_visual_truth_semantic_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<OsuVisualTruthSemanticManifestLineage>, String> {
@@ -262,7 +224,7 @@ pub fn extract_osu_visual_truth_semantic_manifests(
   Ok(manifests)
 }
 
-pub fn extract_osu_visual_truth_semantic_inspect_reports(
+pub(crate) fn extract_osu_visual_truth_semantic_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<OsuVisualTruthSemanticInspectReportLineage>, String> {
@@ -344,7 +306,7 @@ pub fn extract_osu_visual_truth_spatial_query_manifests(
   Ok(manifests)
 }
 
-pub fn extract_osu_visual_truth_spatial_query_inspect_reports(
+pub(crate) fn extract_osu_visual_truth_spatial_query_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<OsuVisualTruthSpatialQueryInspectReportLineage>, String> {
@@ -385,39 +347,7 @@ pub fn extract_osu_visual_truth_spatial_query_inspect_reports(
   Ok(reports)
 }
 
-pub fn list_osu_detection_eval_witness_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<OsuDetectionEvalWitnessManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_osu_detection_eval_witness_manifests(store, &run)
-}
-
-pub fn list_osu_detection_eval_witness_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<OsuDetectionEvalWitnessInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_osu_detection_eval_witness_inspect_reports(store, &run)
-}
-
-pub fn list_osu_detection_eval_quality_manifests(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<OsuDetectionEvalQualityManifestLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_osu_detection_eval_quality_manifests(store, &run)
-}
-
-pub fn list_osu_detection_eval_quality_inspect_reports(
-  store: &LocalStore,
-  run_id: &str,
-) -> Result<Vec<OsuDetectionEvalQualityInspectReportLineage>, String> {
-  let run = store.read_run(run_id)?;
-  extract_osu_detection_eval_quality_inspect_reports(store, &run)
-}
-
-pub fn extract_osu_detection_eval_witness_manifests(
+pub(crate) fn extract_osu_detection_eval_witness_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<OsuDetectionEvalWitnessManifestLineage>, String> {
@@ -454,7 +384,7 @@ pub fn extract_osu_detection_eval_witness_manifests(
   Ok(manifests)
 }
 
-pub fn extract_osu_detection_eval_witness_inspect_reports(
+pub(crate) fn extract_osu_detection_eval_witness_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<OsuDetectionEvalWitnessInspectReportLineage>, String> {
@@ -495,7 +425,7 @@ pub fn extract_osu_detection_eval_witness_inspect_reports(
   Ok(reports)
 }
 
-pub fn extract_osu_detection_eval_quality_manifests(
+pub(crate) fn extract_osu_detection_eval_quality_manifests(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<OsuDetectionEvalQualityManifestLineage>, String> {
@@ -532,7 +462,7 @@ pub fn extract_osu_detection_eval_quality_manifests(
   Ok(manifests)
 }
 
-pub fn extract_osu_detection_eval_quality_inspect_reports(
+pub(crate) fn extract_osu_detection_eval_quality_inspect_reports(
   store: &LocalStore,
   run: &CanonicalRun,
 ) -> Result<Vec<OsuDetectionEvalQualityInspectReportLineage>, String> {
@@ -573,28 +503,14 @@ pub fn extract_osu_detection_eval_quality_inspect_reports(
   Ok(reports)
 }
 
-pub fn derive_osu_detection_eval_quality_verdict_summary(
-  lineage: &OsuDetectionEvalQualityManifestLineage,
-) -> OsuDetectionEvalQualityVerdictSummary {
-  if let Some(issue) = &lineage.issue {
-    return OsuDetectionEvalQualityVerdictSummary {
-      verdict: "n/a".to_string(),
-      derived_from_witness_status: "n/a".to_string(),
-      issue: Some(issue.clone()),
-    };
+pub(crate) fn derive_osu_detection_eval_quality_verdict_summary(lineage: &OsuDetectionEvalQualityManifestLineage) -> String {
+  if lineage.issue.is_some() {
+    return "n/a".to_string();
   }
   let Some(summary) = &lineage.manifest else {
-    return OsuDetectionEvalQualityVerdictSummary {
-      verdict: "n/a".to_string(),
-      derived_from_witness_status: "n/a".to_string(),
-      issue: Some("osu detection eval quality manifest summary missing".to_string()),
-    };
+    return "n/a".to_string();
   };
-  OsuDetectionEvalQualityVerdictSummary {
-    verdict: summary.verdict.clone(),
-    derived_from_witness_status: summary.witness_status.clone(),
-    issue: None,
-  }
+  summary.verdict.clone()
 }
 
 pub fn derive_osu_visual_truth_spatial_query_action_readiness(

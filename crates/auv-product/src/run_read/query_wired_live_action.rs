@@ -1,16 +1,12 @@
-//! Query wired live action donor read-side helpers.
+//! Product-owned query-wired live-action readers.
 //!
-//! NOTICE(inspect-composition / S3b): This donor adapter intentionally stays in
-//! `auv-product` (not game crates). It reads `OperationResult` /
-//! `VerificationResult` / `FailureLayer` from `auv-cli::contract`. Full-file
-//! graduation into `auv-game-*` is blocked until those types' ownership move is
-//! owner-approved. Shared readiness / source-ref projection without those types
-//! lives in `query_wired_projection`; donor event names / summary structs stay
-//! local here. Ordinary artifact readers are S3a; this file is not.
+//! This adapter stays in `auv-product` because it reads `OperationResult`,
+//! `VerificationResult`, and `FailureLayer` from `auv-cli::contract`. Neutral
+//! readiness and source-reference projection live in `query_wired_projection`;
+//! app event names and summaries remain local here.
 //!
-//! TODO(inspect-composition / S3b): After OperationResult (+ verification /
-//! failure) ownership is approved outside `auv-cli`, revisit moving this adapter
-//! with its contract types — not before.
+//! TODO: Reconsider moving this adapter only after operation, verification, and
+//! failure contracts have an approved neutral owner outside `auv-cli`.
 
 use super::query_wired_projection::{
   classify_manifest_source_readiness_lookup, format_source_readiness_ref, map_action_eligibility_to_readiness_class,

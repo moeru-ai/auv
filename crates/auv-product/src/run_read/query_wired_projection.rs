@@ -1,14 +1,12 @@
-//! Shared query-wired readiness / source-ref projection helpers (S3b).
+//! Shared query-wired readiness and source-reference projection helpers.
 //!
-//! NOTICE(inspect-composition / S3b): Source-ref projection stays product-local
-//! because it sits on the OperationResult adapter boundary. The neutral
-//! eligibility-to-readiness mapping is owned by `auv-query-readiness` and shared
-//! with ordinary game readers. Full file graduation into `auv-game-*` remains
-//! blocked until the OperationResult types' ownership move is owner-approved.
+//! Source-reference projection stays product-local because it reads the product
+//! operation adapter. The neutral eligibility mapping is owned by
+//! `auv-query-readiness` and shared with ordinary game readers.
 
 pub(crate) use auv_query_readiness::map_action_eligibility_to_readiness_class;
 
-/// NOTICE(core-c2-d2): reader-side provenance only — Core-C1 source_readiness_ref.
+/// Formats the reader-side provenance fields stored in a source-readiness reference.
 pub(crate) fn format_source_readiness_ref(parts: &[(&str, &str)]) -> String {
   parts.iter().filter(|(_, value)| !value.is_empty()).map(|(key, value)| format!("{key}={value}")).collect::<Vec<_>>().join(" ")
 }

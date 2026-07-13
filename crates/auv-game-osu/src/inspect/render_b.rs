@@ -5,7 +5,7 @@ use crate::run_read::{
   OsuDetectionEvalWitnessManifestLineage, derive_osu_detection_eval_quality_verdict_summary,
 };
 
-pub fn append_sections_b(
+pub(crate) fn append_sections_b(
   output: &mut String,
   osu_detection_eval_witness_manifests: &[OsuDetectionEvalWitnessManifestLineage],
   osu_detection_eval_witness_inspect_reports: &[OsuDetectionEvalWitnessInspectReportLineage],
@@ -74,7 +74,7 @@ pub fn append_sections_b(
             .spurious_detection_count
             .map(|value| value.to_string())
             .unwrap_or_else(|| "n/a".to_string()),
-          derived.verdict,
+          derived,
           manifest_lineage.issue.as_deref().unwrap_or("n/a"),
         ));
       }

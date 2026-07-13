@@ -1,9 +1,8 @@
 // Shared CLI frontend for root `auv` and donor bins (`auv-minecraft`, `auv-osu`, `auv-godot`).
 //
-// NOTICE(inspect-composition / S2): Root binary tombstones donor subcommands; donor
-// bins own the live parse+dispatch path. This module stays in the root package as
-// product assembly until S4 moves it to a dedicated product package or pure
-// bin-only boundary.
+// The root binary tombstones app-specific subcommands; dedicated app binaries
+// own their live parse and dispatch paths. This product crate owns their shared
+// frontend assembly.
 
 use std::env;
 use std::fs;
@@ -89,8 +88,8 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
         no_token: write.no_token,
       },
     };
-    // S5: inject the same product composer used by CLI text inspect + product MCP.
-    let composer = crate::product_inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
+    // Inject the same product composer used by CLI text inspect and product MCP.
+    let composer = crate::inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
     auv_inspect_server::serve(store, recorder, config, Arc::new(ProductInspectReadProjection::with_composer(composer))).await?;
     return Ok(());
   }
@@ -1033,9 +1032,9 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
     CliCommand::Inspect { run_id, store_root } => {
       let store_root = resolve_store_root(&project_root, store_root.as_ref());
       let store = auv_tracing_driver::store::LocalStore::new(store_root)?;
-      // S1b: CLI shares the same product-assembled composer as MCP.
-      let composer = crate::product_inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
-      print!("{}", crate::product_inspect::inspect_run_with(&composer, &store, &run_id)?);
+      // CLI shares the same product-assembled composer as MCP.
+      let composer = crate::inspect::build_product_inspect_composer().map_err(|error| error.to_string())?;
+      print!("{}", crate::inspect::inspect_run_with(&composer, &store, &run_id)?);
     }
     CliCommand::InspectServe { .. } => {
       unreachable!("inspect serve is handled before runtime setup")
@@ -2835,8 +2834,8 @@ mod tests {
     assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[3].role, "minecraft-overlay");
 
-    let inspect_text = crate::product_inspect::inspect_run_with(
-      &crate::product_inspect::build_product_inspect_composer().expect("product composer"),
+    let inspect_text = crate::inspect::inspect_run_with(
+      &crate::inspect::build_product_inspect_composer().expect("product composer"),
       runtime.recording().store(),
       output.run_id.as_str(),
     )
@@ -2869,8 +2868,8 @@ mod tests {
     assert_eq!(run.artifacts[1].role, crate::integrations::minecraft::MINECRAFT_SPATIAL_FRAME_ARTIFACT_ROLE);
     assert_eq!(run.artifacts[2].role, crate::integrations::minecraft::MINECRAFT_PROJECTION_ARTIFACT_ROLE);
 
-    let inspect_text = crate::product_inspect::inspect_run_with(
-      &crate::product_inspect::build_product_inspect_composer().expect("product composer"),
+    let inspect_text = crate::inspect::inspect_run_with(
+      &crate::inspect::build_product_inspect_composer().expect("product composer"),
       runtime.recording().store(),
       output.run_id.as_str(),
     )

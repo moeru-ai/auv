@@ -9,9 +9,7 @@ pub mod session;
 mod server;
 mod viewer_assets;
 
-pub use read_projection::{
-  CommandBoundaryClaim, DefaultInspectReadProjection, InspectDocumentWire, InspectReadProjection, InspectRunEnrichment, InspectSectionWire,
-};
+pub use read_projection::{CommandBoundaryClaim, DefaultInspectReadProjection, InspectReadProjection, InspectRunEnrichment};
 pub use server::{
   DEFAULT_INSPECT_HOST, DEFAULT_INSPECT_PORT, InspectServeConfig, InspectWriteConfig, router, router_with_projection, serve,
 };

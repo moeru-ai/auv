@@ -306,7 +306,8 @@ pub fn parse_donor_cli(donor: &str, arguments: &[String]) -> AuvResult<CliComman
   }
 }
 
-/// Root-bin tombstone gate (S2). Parse still knows donors for tests + donor bins.
+/// Rejects app-specific subcommands at the root binary while standalone app
+/// binaries continue to reuse the same parsers.
 pub fn root_donor_tombstone(arguments: &[String]) -> Option<String> {
   match arguments.first().map(String::as_str) {
     Some("godot") => Some("`auv godot` has been removed; use `auv-godot` instead".to_string()),

@@ -13,6 +13,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
+auv-inspect-model = { path = "../auv-inspect-model" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
 auv-view = { path = "../auv-view" }
 axum = { version = "0.8", features = ["ws"] }

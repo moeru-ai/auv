@@ -27,9 +27,11 @@ pub struct McpServer {
 }
 
 impl McpServer {
-  /// NOTICE(inspect-composition / S4): Product donor inspect must call
-  /// `serve_stdio_with_composer` with an explicit product composer. Do not
-  /// default-construct donor product composers inside this core library.
+  /// Builds the core-only MCP server.
+  ///
+  /// Product callers inject their composer through
+  /// [`Self::with_inspect_composer`]; this core library does not construct
+  /// app-specific inspect sections.
   pub fn new(project_root: PathBuf) -> Self {
     Self::with_inspect_composer(project_root, crate::inspect::build_core_inspect_composer().expect("core inspect composer"))
   }

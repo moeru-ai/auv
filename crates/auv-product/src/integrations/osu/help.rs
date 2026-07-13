@@ -1,7 +1,4 @@
-//! Osu donor help (`auv-osu --help`).
-//!
-//! NOTICE(inspect-composition / S2): Live usage strings name the donor bin
-//! (`auv-osu`). Root `auv osu` is a tombstone only.
+//! osu! app help (`auv-osu --help`).
 
 pub fn render_osu_help() -> String {
   let mut help = String::from(

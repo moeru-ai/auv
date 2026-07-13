@@ -1,13 +1,13 @@
-//! Product inspect sections: query-wired bridges (S3b) assembled with donor sections.
+//! Product inspect sections assembled from app-owned and product-owned readers.
 //!
-//! NOTICE(inspect-composition / S3b): Query-wired sections remain product-owned
-//! because they depend on OperationResult adapters. Ordinary donor sections are
-//! supplied by `auv-game-*` factories.
+//! Query-wired sections remain product-owned because they depend on
+//! `OperationResult` adapters. Ordinary app-specific sections are supplied by
+//! `auv-game-*` factories.
 //!
-//! NOTICE(inspect-composition / S5): Product CLI, product MCP, and product
-//! inspect-server projection inject the same composer from
-//! `build_product_inspect_composer`. Viewer donor cards still fetch named JSON
-//! extensions (e.g. quality baseline) by key — not first-class Minecraft routes.
+//! Product CLI, product MCP, and the product inspect-server projection inject
+//! the same composer from `build_product_inspect_composer`. Viewer app-specific
+//! cards still fetch named JSON extensions (e.g. quality baseline) by key, not
+//! first-class Minecraft routes.
 
 use std::sync::Arc;
 

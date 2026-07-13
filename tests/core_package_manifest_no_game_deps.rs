@@ -1,4 +1,4 @@
-//! S4 falsifier: root `auv-cli` package must not regain game/godot deps.
+//! Guards the core `auv-cli` package against regaining game or Godot dependencies.
 //!
 //! Prefer this + `rg 'auv_game_' src/` over any `cargo tree -p auv-cli --lib`
 //! trick (that graph is not a reliable library-only proof).

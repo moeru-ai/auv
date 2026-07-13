@@ -4,7 +4,6 @@ mod helpers;
 mod render;
 mod sections;
 
-pub use render::{append_primary_sections, append_quality_and_spatial_sections};
 pub use sections::{
   MinecraftPrimarySection, MinecraftQualitySpatialSection, inspect_sections_primary, inspect_sections_quality_spatial,
   render_minecraft_primary_text, render_minecraft_quality_spatial_text,

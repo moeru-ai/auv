@@ -19,7 +19,7 @@ pub struct ProductInspectReadProjection {
 
 impl Default for ProductInspectReadProjection {
   fn default() -> Self {
-    Self::with_composer(crate::product_inspect::build_product_inspect_composer().expect("product inspect composer"))
+    Self::with_composer(crate::inspect::build_product_inspect_composer().expect("product inspect composer"))
   }
 }
 
@@ -65,7 +65,7 @@ impl auv_inspect_server::InspectReadProjection for ProductInspectReadProjection 
     &self,
     store: &auv_tracing_driver::store::LocalStore,
     run: &auv_tracing_driver::store::CanonicalRun,
-  ) -> Result<Option<auv_inspect_server::InspectDocumentWire>, String> {
+  ) -> Result<Option<auv_inspect_model::InspectDocument>, String> {
     InspectReadProjection::inspect_document(&self.inner, store, run)
   }
 

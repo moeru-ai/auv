@@ -1,7 +1,4 @@
-//! Minecraft donor help (`auv-minecraft --help`).
-//!
-//! NOTICE(inspect-composition / S2): Live usage strings name the donor bin
-//! (`auv-minecraft`). Root `auv minecraft` is a tombstone only.
+//! Minecraft app help (`auv-minecraft --help`).
 
 const INSPECT_OPTIONS: &str = " [--store-root <path>] [--inspect-local-write true|false|default] [--inspect-server-write true|false|default] [--require-inspect-server-write] [--inspect-server-url <url>] [--inspect-server-token <token>] [--inspect-server-token-file <path>]";
 

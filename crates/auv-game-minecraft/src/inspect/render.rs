@@ -9,7 +9,7 @@ use super::helpers::{
 };
 use crate::run_read::*;
 
-pub fn append_primary_sections(
+pub(crate) fn append_primary_sections(
   output: &mut String,
   minecraft_projection_artifacts: &[crate::artifact::MinecraftProjectionArtifact],
   minecraft_telemetry_sample_artifacts: &[MinecraftTelemetrySampleArtifactLineage],
@@ -1146,7 +1146,7 @@ pub fn append_primary_sections(
   }
 }
 
-pub fn append_quality_and_spatial_sections(
+pub(crate) fn append_quality_and_spatial_sections(
   output: &mut String,
   minecraft_training_result_spatial_query_manifests: &[MinecraftTrainingResultSpatialQueryManifestLineage],
   minecraft_training_result_spatial_query_inspect_reports: &[MinecraftTrainingResultSpatialQueryInspectReportLineage],

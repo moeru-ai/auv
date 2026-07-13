@@ -7,7 +7,7 @@ use crate::run_read::{
   BalatroCardDetectionSpatialQueryInspectReportLineage, BalatroCardDetectionSpatialQueryManifestLineage,
 };
 
-pub fn append_sections(
+pub(crate) fn append_sections(
   output: &mut String,
   balatro_card_detection_semantic_manifests: &[BalatroCardDetectionSemanticManifestLineage],
   balatro_card_detection_semantic_inspect_reports: &[BalatroCardDetectionSemanticInspectReportLineage],
