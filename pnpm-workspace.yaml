@@ -1,5 +1,11 @@
 packages:
   - "crates/auv-inspect-server/viewer"
+  - "js/packages/*"
 
 allowBuilds:
   esbuild: true
+
+minimumReleaseAgeExclude:
+  - '@alint-js/cli@0.0.20'
+  - '@alint-js/config@0.0.20'
+  - '@alint-js/core@0.0.20'
