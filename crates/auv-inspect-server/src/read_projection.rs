@@ -1,3 +1,4 @@
+use auv_inspect_model::InspectDocument;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_view::memory::{ViewParserInspect, ViewParserListSummary};
 
@@ -6,9 +7,28 @@ use crate::InspectResult;
 pub trait InspectReadProjection: Send + Sync + 'static {
   fn run_enrichment(&self, store: &LocalStore, run: &CanonicalRun) -> InspectResult<InspectRunEnrichment>;
 
-  fn run_json_extension(&self, extension: &str, store: &LocalStore, run_id: &str) -> InspectResult<serde_json::Value> {
-    let _ = store;
-    Err(format!("inspect run extension {extension:?} is not available for run {run_id}"))
+  /// Named JSON extension lookup for an already-loaded run.
+  ///
+  /// Returns `Ok(None)` when the extension key is unsupported for this
+  /// projection (HTTP maps that to 404). Real load/encode failures remain `Err`.
+  fn run_json_extension(&self, extension: &str, store: &LocalStore, run: &CanonicalRun) -> InspectResult<Option<serde_json::Value>> {
+    let _ = (store, run, extension);
+    Ok(None)
+  }
+
+  /// Composer-backed structured inspect document.
+  ///
+  /// Default: unsupported. Core / product projections override by collecting
+  /// from an injected [`auv_inspect_model::InspectComposer`].
+  fn inspect_document(&self, store: &LocalStore, run: &CanonicalRun) -> InspectResult<Option<InspectDocument>> {
+    let _ = (store, run);
+    Ok(None)
+  }
+
+  /// Composer-backed inspect text. Default derives from [`Self::inspect_document`].
+  fn inspect_text(&self, store: &LocalStore, run_id: &str) -> InspectResult<Option<String>> {
+    let run = store.read_run(run_id)?;
+    Ok(self.inspect_document(store, &run)?.map(|document| document.render_text()))
   }
 }
 

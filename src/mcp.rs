@@ -23,14 +23,30 @@ use auv_cli_invoke::{ArgSpec, InvokeCommand, default_registry};
 pub struct McpServer {
   project_root: PathBuf,
   tool_router: ToolRouter<Self>,
+  inspect_composer: Arc<auv_inspect_model::InspectComposer>,
 }
 
 impl McpServer {
+  /// Builds the core-only MCP server.
+  ///
+  /// Product callers inject their composer through
+  /// [`Self::with_inspect_composer`]; this core library does not construct
+  /// app-specific inspect sections.
   pub fn new(project_root: PathBuf) -> Self {
+    Self::with_inspect_composer(project_root, crate::inspect::build_core_inspect_composer().expect("core inspect composer"))
+  }
+
+  pub fn with_inspect_composer(project_root: PathBuf, inspect_composer: Arc<auv_inspect_model::InspectComposer>) -> Self {
     Self {
       project_root,
       tool_router: Self::tool_router(),
+      inspect_composer,
     }
+  }
+
+  /// Shared composer used by MCP text inspect (same instance as CLI product assembly).
+  pub fn inspect_composer(&self) -> &Arc<auv_inspect_model::InspectComposer> {
+    &self.inspect_composer
   }
 
   fn store(&self, store_root: Option<String>) -> Result<auv_tracing_driver::store::LocalStore, McpError> {
@@ -94,10 +110,24 @@ impl McpServer {
   #[tool(description = "Inspect one existing AUV run id.")]
   async fn run_inspect(&self, Parameters(req): Parameters<RunInspectRequest>) -> Result<CallToolResult, McpError> {
     let store = self.store(req.store_root.clone())?;
-    let text = crate::inspect::inspect_run(&store, &req.run_id).map_err(invalid_params)?;
+    let run = store.read_run(&req.run_id).map_err(invalid_params)?;
+    let document = self.inspect_composer.collect_document(&store, &run).map_err(|error| invalid_params(error.to_string()))?;
+    let text = document.render_text();
+    let sections = document
+      .sections
+      .iter()
+      .map(|section| {
+        serde_json::json!({
+          "id": section.id,
+          "text": section.text,
+          "json": section.json,
+        })
+      })
+      .collect::<Vec<_>>();
     json_result(serde_json::json!({
       "run_id": req.run_id,
       "text": text,
+      "sections": sections,
     }))
   }
 }
@@ -223,8 +253,19 @@ fn invalid_params(message: impl ToString) -> McpError {
 }
 
 pub async fn serve_stdio(project_root: PathBuf) -> Result<(), String> {
-  let service =
-    McpServer::new(project_root).serve(stdio()).await.map_err(|error| format!("failed to serve MCP stdio transport: {error}"))?;
+  let composer = crate::inspect::build_core_inspect_composer().map_err(|error| error.to_string())?;
+  serve_stdio_with_composer(project_root, composer).await
+}
+
+/// Serve MCP stdio with an explicit inspect composer (product injects donor sections here).
+pub async fn serve_stdio_with_composer(
+  project_root: PathBuf,
+  inspect_composer: Arc<auv_inspect_model::InspectComposer>,
+) -> Result<(), String> {
+  let service = McpServer::with_inspect_composer(project_root, inspect_composer)
+    .serve(stdio())
+    .await
+    .map_err(|error| format!("failed to serve MCP stdio transport: {error}"))?;
   service.waiting().await.map(|_| ()).map_err(|error| format!("mcp stdio server exited with error: {error}"))
 }
 

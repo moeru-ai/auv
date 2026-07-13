@@ -1,0 +1,116 @@
+Run <RUN_ID>
+Type: execute
+Status: ok
+State: ended
+Summary: osu validate visual truth semantic gate completed
+
+Spans: 2
+- <SPAN_ID> name=auv.osu.validate_visual_truth_semantic parent=n/a status=ok
+- <SPAN_ID> name=osu.validate_visual_truth_semantic.artifacts parent=<SPAN_ID> status=ok
+
+Events: 5
+- <EVENT_ID> span=<SPAN_ID> name=operation.started recorded operation osu validate visual truth semantic gate started
+- <EVENT_ID> span=<SPAN_ID> name=osu.validate_visual_truth_semantic.inputs run_artifact_dir=<TMP> output_dir=<TMP>/semantic-out
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0001 kind=osu-visual-truth-semantic path=artifacts/artifact_0001_osu-visual-truth-semantic.json note=osu visual truth semantic artifact osu-visual-truth-semantic.json
+- <EVENT_ID> span=<SPAN_ID> name=artifact.captured artifact_0002 kind=osu-visual-truth-semantic-inspect path=artifacts/artifact_0002_osu-visual-truth-semantic-inspect.json note=osu visual truth semantic artifact osu-visual-truth-semantic-inspect.json
+- <EVENT_ID> span=<SPAN_ID> name=operation.completed osu validate visual truth semantic gate completed
+
+Artifacts: 2
+- artifact_0001 span=<SPAN_ID> role=osu-visual-truth-semantic path=artifacts/artifact_0001_osu-visual-truth-semantic.json
+- artifact_0002 span=<SPAN_ID> role=osu-visual-truth-semantic-inspect path=artifacts/artifact_0002_osu-visual-truth-semantic-inspect.json
+
+Command Boundary Claims:
+- none
+
+Verifications:
+- none
+
+Observations:
+- none
+
+Detector Recognition Lineage:
+- none
+
+MC-1 Telemetry Samples:
+- none
+
+MC-2 Projection Artifacts:
+- none
+
+MC-6 Spatial Bundles:
+- none
+
+MC-7 Training Packages:
+- none
+
+MC-7 Training Launches:
+- none
+
+MC-7 Training Jobs:
+- none
+
+MC-7 Training Results:
+- none
+
+MC-7 Training Result Artifacts:
+- none
+
+MC-10 Training Result Semantics:
+- none
+
+MC-16 Training Result Holdout Preview:
+- none
+
+MC-17 Holdout Render Quality:
+- none
+
+Balatro Card Detection Semantic:
+- none
+
+Balatro Card Detection Spatial Query:
+- none
+
+Balatro Card Detection Eval Witness:
+- none
+
+Balatro Card Detection Quality:
+- none
+
+MC-17 Quality Baseline Report:
+- profile_id=mc17-d2-primary-v1 evidence_coverage=missing_stage training_result_semantic_manifest=.tmp/mc10-smoke-review/semantic/minecraft-3dgs-training-result-semantic.json spatial_query_status=n/a visibility=n/a screen_point=n/a holdout_status=n/a holdout_frame_index=n/a basis_checkpoint_path=n/a render_quality_status=n/a verdict=n/a image_size_match=n/a l1_mean=n/a mse=n/a psnr=n/a issue=n/a
+  trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence
+
+MC-17 Quality Verdict:
+- profile_id=mc17-d2-primary-v1 render_evidence_mode=screenshot_copy_probe evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing issue=evidence_coverage=missing_stage blocks threshold verdict evaluation
+  trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence | screenshot_copy_probe thresholds judge pipeline wiring only, not splat usefulness
+- profile_id=mc17-d2-primary-v1 render_evidence_mode=trained_render evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing issue=evidence_coverage=missing_stage blocks threshold verdict evaluation
+  trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence | trained_render thresholds are provisional v1 photometric gates; tune only via fixture revision plus new closure, not inline code | pass under trained_render profile means metrics met pre-committed bounds, not downstream action eligibility
+
+MC-12 Training Result Spatial Query:
+- none
+
+MC-14 Training Result Spatial Query Action Readiness:
+- none
+
+Osu Visual Truth Semantic:
+- manifest_artifact=artifact_0001 role=osu-visual-truth-semantic path=artifacts/artifact_0001_osu-visual-truth-semantic.json semantic_status=ready semantic_reason=n/a frame_count=1 beatmap_path=tests/fixtures/probe.osu issue=n/a
+- inspect_artifact=artifact_0002 semantic_status=ready projection_eval_ready=true warnings=0 issue=n/a
+
+Osu Visual Truth Spatial Query:
+- none
+
+Osu Visual Truth Spatial Query Action Readiness:
+- none
+
+Osu Visual Truth Query Wired Live Action:
+- none
+
+Osu Detection Eval Witness:
+- none
+
+Osu Detection Eval Quality:
+- none
+
+MC-19 Query Wired Live Action:
+- none
+Scene state: missing scan-scene-state-input-v0 artifact

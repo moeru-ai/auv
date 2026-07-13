@@ -1,3 +1,7 @@
+pub mod inspect;
+pub(crate) mod run_read;
+
+pub mod artifact_roles;
 pub mod cache;
 #[cfg(feature = "card-corner-onnx")]
 pub mod card_corner;
@@ -14,6 +18,11 @@ pub mod observation;
 pub mod operation;
 pub mod output;
 
+pub use artifact_roles::{
+  BALATRO_CARD_DETECTION_EVAL_WITNESS_INSPECT_ROLE, BALATRO_CARD_DETECTION_EVAL_WITNESS_ROLE, BALATRO_CARD_DETECTION_QUALITY_INSPECT_ROLE,
+  BALATRO_CARD_DETECTION_QUALITY_ROLE, BALATRO_CARD_DETECTION_SEMANTIC_INSPECT_ROLE, BALATRO_CARD_DETECTION_SEMANTIC_ROLE,
+  BALATRO_CARD_DETECTION_SPATIAL_QUERY_INSPECT_ROLE, BALATRO_CARD_DETECTION_SPATIAL_QUERY_ROLE,
+};
 pub use cli::{CliArgs, Command, OutputMode};
 pub use config::BalatroModelConfig;
 pub use model::{
@@ -47,3 +56,5 @@ pub use card_detection_spatial_query::{
   CardDetectionSpatialQueryManifest, CardDetectionSpatialQueryOutput, CardDetectionSpatialQueryReason, CardDetectionSpatialQueryStatus,
   query_card_detection_spatial,
 };
+
+pub use inspect::inspect_sections;

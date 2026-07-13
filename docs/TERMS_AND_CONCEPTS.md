@@ -24,14 +24,32 @@ Provisional core vocabulary for shared inspect composition across frontends
   type-erased `InspectSectionOutput { id, text, json }`).
 - **InspectDocument** — ordered list of collected section outputs; `render_text`
   concatenates section text in registration order.
-- **InspectComposer** — explicit value holding registered sections; CLI and MCP
-  must share the same composer instance for text inspect. Inspect-server /
-  viewer section parity is deferred (owner-gated).
+- **InspectComposer** — explicit value holding registered sections; product CLI,
+  product MCP, and product inspect-server projection use the same product factory
+  and section set, with each frontend explicitly injecting its composer `Arc`
+  into all text / document paths for that lifecycle. Core library default
+  composer is core-only (prefix+suffix). Named JSON extensions (e.g. quality
+  baseline) are served via generic `/runs/{id}/extensions/{extension}` keys
+  registered by the product projection — not first-class donor routes in the
+  shared server.
 
-Semantics: registration order is render order; duplicate ids fail assembly;
-`collect` returning `None` omits the section; a section error aborts the
-document. Product assembly (not the core library default) owns donor-including
-composers.
+Semantics: registration order is render order; duplicate registered ids fail
+assembly; after `collect` returns `Some(output)`, `output.id` must equal the
+registered `section.id()` (mismatch aborts the document); `collect` returning
+`None` omits the section; a section error aborts the document. Product assembly
+(not the core library default) owns donor-including composers.
+
+## Product package / auv-product (provisional)
+
+Provisional packaging term for the app-integration composition crate
+(`crates/auv-product`):
+
+- Owns root `auv` and app-specific bins, CLI frontend, integration wiring, product
+  `InspectComposer`, query-wired OperationResult adapters (S3b; stay in product
+  until contract ownership moves), and product inspect-server projection wrappers.
+- Depends on library-only `auv-cli` plus `auv-game-*` / `auv-godot`.
+- Must not be confused with core `auv-cli`; game crates must not depend on
+  `auv-cli` to reach product types.
 
 ## Device
 
@@ -250,7 +268,7 @@ producer artifact
 ```
 
 This is a pattern note, not a stable runtime API. See
-`docs/ai/references/runtime/2026-06-27-core-spatial-result-consumption-pattern.md`
+`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-pattern.md`
 for the current design boundary, ownership split, and defer list.
 
 ## Semantic Gate
@@ -266,9 +284,9 @@ actionability.
 The current expected stage-state shape is `ready`, `blocked`, or `failed`.
 This term is design vocabulary, not approval to extract current app-specific
 semantic gate code into core. See
-`docs/ai/references/runtime/2026-06-27-core-spatial-result-consumption-pattern.md`
+`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-pattern.md`
 and
-`docs/ai/references/runtime/2026-06-27-core-spatial-result-consumption-admission-table.md`.
+`docs/ai/references/2026-06-27-auv-core-spatial-result-consumption-admission-table.md`.
 
 ## Action Readiness View
 

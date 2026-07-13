@@ -2,7 +2,7 @@
 
 Run recording, inspect viewer, tracing split
 
-Count: **8**
+Count: **9**
 
 - [`2026-05-19-trace-run-inspect-design.md`](2026-05-19-trace-run-inspect-design.md)
 - [`2026-05-19-trace-run-inspect-implementation-plan.md`](2026-05-19-trace-run-inspect-implementation-plan.md)
@@ -12,6 +12,7 @@ Count: **8**
 - [`2026-06-18-recording-root-shim-removal-spec.md`](2026-06-18-recording-root-shim-removal-spec.md)
 - [`2026-07-10-inspect-server-crate-viewer-implementation-plan.md`](2026-07-10-inspect-server-crate-viewer-implementation-plan.md)
 - [`2026-07-10-inspect-server-crate-viewer-spec.md`](2026-07-10-inspect-server-crate-viewer-spec.md)
+- [`2026-07-13-inspect-composition-s4-migration.md`](2026-07-13-inspect-composition-s4-migration.md)
 
 ## Related
 

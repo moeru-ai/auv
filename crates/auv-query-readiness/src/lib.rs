@@ -60,6 +60,18 @@ pub fn format_query_not_consumable_refusal(status_label: &str, reason_label: Opt
   }
 }
 
+/// Maps `DerivedActionEligibility::as_str()` labels onto inspect
+/// `readiness_class` strings shared by ordinary game readers and product
+/// query-wired projections.
+pub fn map_action_eligibility_to_readiness_class(eligibility: &str) -> Option<String> {
+  match eligibility {
+    "click_ready" => Some("ready".to_string()),
+    "answer_non_clickable" => Some("non_actionable".to_string()),
+    "not_consumable" => Some("not_consumable".to_string()),
+    _ => None,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -90,5 +102,14 @@ mod tests {
   fn format_query_not_consumable_refusal_with_and_without_reason() {
     assert_eq!(format_query_not_consumable_refusal("failed", Some("target_absent")), "status=failed reason=target_absent");
     assert_eq!(format_query_not_consumable_refusal("blocked", None), "status=blocked");
+  }
+
+  #[test]
+  fn map_action_eligibility_to_readiness_class_covers_triad_and_unknown() {
+    assert_eq!(map_action_eligibility_to_readiness_class("click_ready").as_deref(), Some("ready"));
+    assert_eq!(map_action_eligibility_to_readiness_class("answer_non_clickable").as_deref(), Some("non_actionable"));
+    assert_eq!(map_action_eligibility_to_readiness_class("not_consumable").as_deref(), Some("not_consumable"));
+    assert_eq!(map_action_eligibility_to_readiness_class("n/a"), None);
+    assert_eq!(map_action_eligibility_to_readiness_class("unknown"), None);
   }
 }

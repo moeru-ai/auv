@@ -1,0 +1,109 @@
+Run run_golden_minecraft
+Type: command
+Status: ok
+State: ended
+Summary: golden run
+
+Spans: 1
+- span_root name=auv.inspect.span parent=n/a status=ok
+
+Events: 0
+
+Artifacts: 1
+- artifact_0001 span=span_root role=minecraft-3dgs-training-package path=artifacts/artifact_0001_minecraft-3dgs-training-package-run.json
+
+Command Boundary Claims:
+- none
+
+Verifications:
+- none
+
+Observations:
+- none
+
+Detector Recognition Lineage:
+- none
+
+MC-1 Telemetry Samples:
+- none
+
+MC-2 Projection Artifacts:
+- none
+
+MC-6 Spatial Bundles:
+- none
+
+MC-7 Training Packages:
+- manifest_artifact=artifact_0001 role=minecraft-3dgs-training-package path=artifacts/artifact_0001_minecraft-3dgs-training-package-run.json schema=1 source_scene_packet=<TMP>/scene-packet/run.json source_runs=1 frames=2 images=2 compatibility_view=nerfstudio compatibility_status=ready exported=2 skipped=0 transforms=present paired_report_artifact=n/a issue=n/a
+  known_limits=golden fixture
+
+MC-7 Training Launches:
+- none
+
+MC-7 Training Jobs:
+- none
+
+MC-7 Training Results:
+- none
+
+MC-7 Training Result Artifacts:
+- none
+
+MC-10 Training Result Semantics:
+- none
+
+MC-16 Training Result Holdout Preview:
+- none
+
+MC-17 Holdout Render Quality:
+- none
+
+Balatro Card Detection Semantic:
+- none
+
+Balatro Card Detection Spatial Query:
+- none
+
+Balatro Card Detection Eval Witness:
+- none
+
+Balatro Card Detection Quality:
+- none
+
+MC-17 Quality Baseline Report:
+- profile_id=mc17-d2-primary-v1 evidence_coverage=missing_stage training_result_semantic_manifest=.tmp/mc10-smoke-review/semantic/minecraft-3dgs-training-result-semantic.json spatial_query_status=n/a visibility=n/a screen_point=n/a holdout_status=n/a holdout_frame_index=n/a basis_checkpoint_path=n/a render_quality_status=n/a verdict=n/a image_size_match=n/a l1_mean=n/a mse=n/a psnr=n/a issue=n/a
+  trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence
+
+MC-17 Quality Verdict:
+- profile_id=mc17-d2-primary-v1 render_evidence_mode=screenshot_copy_probe evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing issue=evidence_coverage=missing_stage blocks threshold verdict evaluation
+  trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence | screenshot_copy_probe thresholds judge pipeline wiring only, not splat usefulness
+- profile_id=mc17-d2-primary-v1 render_evidence_mode=trained_render evidence_coverage=missing_stage quality_verdict=blocked spatial_query=blocked reason=spatial query evidence missing holdout_witness=blocked reason=holdout witness evidence missing render_quality=blocked reason=render quality evidence missing issue=evidence_coverage=missing_stage blocks threshold verdict evaluation
+  trust_notes=MC-12 projection_reference answers are scene-packet reference geometry only; they are not Gaussian-native inference | MC-17 screenshot-copy render probe measures pipeline comparability only; it is not trained-splat usefulness evidence | trained_render thresholds are provisional v1 photometric gates; tune only via fixture revision plus new closure, not inline code | pass under trained_render profile means metrics met pre-committed bounds, not downstream action eligibility
+
+MC-12 Training Result Spatial Query:
+- none
+
+MC-14 Training Result Spatial Query Action Readiness:
+- none
+
+Osu Visual Truth Semantic:
+- none
+
+Osu Visual Truth Spatial Query:
+- none
+
+Osu Visual Truth Spatial Query Action Readiness:
+- none
+
+Osu Visual Truth Query Wired Live Action:
+- none
+
+Osu Detection Eval Witness:
+- none
+
+Osu Detection Eval Quality:
+- none
+
+MC-19 Query Wired Live Action:
+- none
+Scene state: missing scan-scene-state-input-v0 artifact

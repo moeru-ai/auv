@@ -17,6 +17,7 @@ default = []
 card-corner-onnx = ["dep:auv-inference-ort"]
 
 [dependencies]
+auv-inspect-model = { path = "../auv-inspect-model" }
 auv-file = { path = "../auv-file" }
 auv-stage-status = { path = "../auv-stage-status" }
 auv-tracing-driver = { path = "../auv-tracing-driver" }
