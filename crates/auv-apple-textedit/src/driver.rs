@@ -72,10 +72,7 @@ mod macos {
 
   impl TextEditDriver for MacosTextEditDriver {
     fn activate_app(&mut self, app_id: &str, settle: Duration) -> OperationResult<StepOutcome> {
-      self
-        .session
-        .activate_bundle_id(app_id, settle)
-        .map_err(|error| format!("TextEdit activation failed: {error}"))?;
+      self.session.activate_bundle_id(app_id, settle).map_err(|error| format!("TextEdit activation failed: {error}"))?;
       Ok(StepOutcome {
         step_id: "activate-target-app",
         summary: format!("activated foreground TextEdit application for {app_id} without requiring WindowServer discovery"),
