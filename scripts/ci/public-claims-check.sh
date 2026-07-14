@@ -26,9 +26,8 @@ for level in contract compiles tested live-validated supported; do
   assert_contains "$matrix" "| \`$level\` |"
 done
 
-assert_contains "$matrix" '| App-local recorded operation: TextEdit document write | none | `not claimed` | `not claimed` | `not claimed` |'
-assert_contains "$matrix" 'The audited `main` does not include this command, so it receives no current public level.'
-assert_contains "$matrix" 'Pending [PR #102](https://github.com/moeru-ai/auv/pull/102) is not matrix evidence;'
+assert_contains "$matrix" '| App-local recorded operation: TextEdit document write | `auv invoke app.textedit.document.write` | `tested` | `not claimed` | `not claimed` |'
+assert_contains "$matrix" 'The real macOS closure remains blocked at target-window discovery, so this is neither `live-validated` nor `supported`.'
 assert_contains "$matrix" '| JS/TS and Python bindings | none | `not claimed` | `not claimed` | `not claimed` |'
 
 if grep -nE '[✅❌⚠️💡]' "$matrix"; then
