@@ -13,6 +13,8 @@ repository.workspace = true
 
 [dependencies]
 auv-driver = { path = "../auv-driver" }
-auv-driver-macos = { path = "../auv-driver-macos" }
 clap = { version = "4", features = ["derive"] }
 serde.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+auv-driver-macos = { path = "../auv-driver-macos" }

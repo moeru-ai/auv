@@ -1,56 +1,206 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types:
+      - prereleased
   workflow_dispatch:
+    inputs:
+      upload_to_release:
+        description: Upload artifacts to an existing GitHub release
+        required: false
+        default: false
+        type: boolean
+      tag_name:
+        description: Existing release tag to upload to when upload_to_release is enabled
+        required: false
+        type: string
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name || github.ref }}
+  cancel-in-progress: false
 
 env:
+  BINARY_NAME: auv
   CARGO_TERM_COLOR: always
+  PACKAGE_NAME: auv-cli
 
 jobs:
   build:
-    permissions:
-      contents: write
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-24.04
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
-          - target: x86_64-apple-darwin
-            os: macos-13
-          - target: aarch64-apple-darwin
-            os: macos-14
-    runs-on: ${{ matrix.os }}
-    name: build ${{ matrix.target }}
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive: auv-x86_64-unknown-linux-gnu.tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: auv-aarch64-unknown-linux-gnu.tar.gz
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            archive: auv-x86_64-apple-darwin.tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: auv-aarch64-apple-darwin.tar.gz
+
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libclang-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            libdbus-1-dev \
+            libpipewire-0.3-dev \
+            libwayland-dev \
+            libegl-dev \
+            libleptonica-dev \
+            libtesseract-dev
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
+
+      - name: Build release binary
+        run: cargo build --release --package "$PACKAGE_NAME" --bin "$BINARY_NAME" --target "${{ matrix.target }}"
+
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@v7
         with:
-          name: auv-cli.${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/auv-cli
-          if-no-files-found: error
-          retention-days: 7
-      - uses: TheDoctor0/zip-release@0.7.6
+          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+
+      - name: Sign macOS executable
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="$(security find-identity -v -p codesigning | sed -n 's/.*"\(Developer ID Application:.*\)".*/\1/p' | head -n 1)"
+          test -n "$identity"
+          codesign --force --timestamp --options runtime \
+            --sign "$identity" \
+            "target/${{ matrix.target }}/release/${BINARY_NAME}"
+          codesign --verify --strict --verbose=2 "target/${{ matrix.target }}/release/${BINARY_NAME}"
+
+      - name: Verify binary starts
+        run: target/${{ matrix.target }}/release/${{ env.BINARY_NAME }} --help
+
+      - name: Create archive
+        run: tar -czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release ${{ env.BINARY_NAME }}
+
+      - name: Calculate hash
+        run: shasum -a 256 ${{ matrix.archive }} | awk '{ print $1 }' > ${{ matrix.archive }}.sha256
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
         with:
-          type: tar
-          filename: auv-cli.${{ matrix.target }}.tar
-          directory: target/${{ matrix.target }}/release/
-          path: auv-cli
-      - uses: softprops/action-gh-release@v1
+          name: ${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+
+  publish:
+    name: Publish release artifacts
+    needs:
+      - build
+      - notarize-macos
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release && inputs.tag_name != '')
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
         with:
-          draft: true
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref, '-') }}
-          files: target/${{ matrix.target }}/release/auv-cli.${{ matrix.target }}.tar
+          path: artifacts
+
+      - name: Prefer notarized macOS archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find artifacts -type f \( -name 'auv-*' -o -name '*.sha256' \) -print0 | while IFS= read -r -d '' file; do
+            case "$file" in
+              artifacts/notarized-*/*)
+                cp "$file" release/
+                ;;
+              *apple-darwin*)
+                if [ ! -e "release/$(basename "$file")" ]; then
+                  cp "$file" release/
+                fi
+                ;;
+              *)
+                cp "$file" release/
+                ;;
+            esac
+          done
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name || inputs.tag_name }}
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: release/*
+
+  notarize-macos:
+    name: Notarize macOS ${{ matrix.archive }}
+    needs: build
+    runs-on: macos-latest
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release && inputs.tag_name != '')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - archive: auv-x86_64-apple-darwin.tar.gz
+          - archive: auv-aarch64-apple-darwin.tar.gz
+
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ matrix.archive }}
+
+      - name: Set up notarization credentials
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        shell: bash
+        run: |
+          xcrun notarytool store-credentials auv-notary \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD"
+
+      - name: Submit executable for notarization
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf ${{ matrix.archive }}
+          codesign --verify --strict --verbose=2 auv
+          zip auv-notary.zip auv
+          xcrun notarytool submit auv-notary.zip --keychain-profile auv-notary --wait
+          ./auv --help
+          tar -czf ${{ matrix.archive }} auv
+          shasum -a 256 ${{ matrix.archive }} | awk '{ print $1 }' > ${{ matrix.archive }}.sha256
+
+      - name: Upload notarized macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: notarized-${{ matrix.archive }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256

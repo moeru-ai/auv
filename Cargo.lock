@@ -370,7 +370,9 @@ name = "auv-cli"
 version = "0.0.1"
 dependencies = [
  "auv-api-proto",
+ "auv-apple-textedit",
  "auv-cli-invoke",
+ "auv-cli-invoke-macros",
  "auv-driver",
  "auv-driver-macos",
  "auv-game-balatro",
@@ -390,6 +392,7 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-core-graphics",
  "reqwest 0.12.28",
+ "rmcp",
  "serde",
  "serde_json",
  "swift-bridge-build",
