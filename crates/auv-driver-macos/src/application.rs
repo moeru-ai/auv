@@ -43,10 +43,7 @@ fn activation_script(bundle_id: &str) -> DriverResult<String> {
     });
   }
 
-  Ok(format!(
-    "tell application id \"{}\" to activate",
-    escape_applescript(bundle_id)
-  ))
+  Ok(format!("tell application id \"{}\" to activate", escape_applescript(bundle_id)))
 }
 
 fn escape_applescript(value: &str) -> String {
@@ -55,13 +52,9 @@ fn escape_applescript(value: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn run_activation_script(script: &str) -> DriverResult<()> {
-  let output = Command::new("osascript")
-    .arg("-e")
-    .arg(script)
-    .output()
-    .map_err(|error| DriverError::Backend {
-      message: format!("failed to launch osascript for application activation: {error}"),
-    })?;
+  let output = Command::new("osascript").arg("-e").arg(script).output().map_err(|error| DriverError::Backend {
+    message: format!("failed to launch osascript for application activation: {error}"),
+  })?;
 
   if output.status.success() {
     return Ok(());
@@ -88,10 +81,7 @@ mod tests {
 
   #[test]
   fn activation_script_is_scoped_to_exact_bundle_id() {
-    assert_eq!(
-      activation_script("com.apple.TextEdit").expect("script"),
-      "tell application id \"com.apple.TextEdit\" to activate"
-    );
+    assert_eq!(activation_script("com.apple.TextEdit").expect("script"), "tell application id \"com.apple.TextEdit\" to activate");
   }
 
   #[test]
