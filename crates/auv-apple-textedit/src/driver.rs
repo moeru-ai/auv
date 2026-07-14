@@ -48,11 +48,8 @@ mod macos {
   use std::time::Duration;
 
   use auv_driver::LocalDriverSession;
-  use auv_driver::{
-    ActivationPolicy, App, InputActionResult, InputDeliveryPath, PasteTextOptions, PrepareForInputOptions, TextSubmit, Window,
-    WindowSelector,
-  };
-  use auv_driver_macos::MacosDriverSession;
+  use auv_driver::{InputActionResult, InputDeliveryPath, PasteTextOptions, TextSubmit};
+  use auv_driver_macos::{ApplicationControl, MacosDriverSession};
 
   use super::{OperationResult, StepOutcome, TextEditDriver, VerificationOutcome};
 
@@ -71,31 +68,17 @@ mod macos {
         session: LocalDriverSession::Macos(session),
       }
     }
-
-    fn main_window(&self, app_id: &str) -> OperationResult<Window> {
-      self.session.window().resolve(main_window_selector(app_id)).map_err(|error| error.to_string())
-    }
   }
 
   impl TextEditDriver for MacosTextEditDriver {
     fn activate_app(&mut self, app_id: &str, settle: Duration) -> OperationResult<StepOutcome> {
-      let window = self.main_window(app_id)?;
       self
         .session
-        .window()
-        .prepare_for_input(
-          &window,
-          PrepareForInputOptions {
-            activation: ActivationPolicy::Foreground { settle },
-            preserve_frontmost: false,
-            install_focus_guard: false,
-            settle: Duration::ZERO,
-          },
-        )
-        .map_err(|error| error.to_string())?;
+        .activate_bundle_id(app_id, settle)
+        .map_err(|error| format!("TextEdit activation failed: {error}"))?;
       Ok(StepOutcome {
         step_id: "activate-target-app",
-        summary: format!("activated foreground TextEdit window for {app_id}"),
+        summary: format!("activated foreground TextEdit application for {app_id} without requiring WindowServer discovery"),
         input_action_result: None,
       })
     }
@@ -153,14 +136,6 @@ mod macos {
         observation_path: Some(observation.path),
         observation_pid: Some(observation.pid),
       })
-    }
-  }
-
-  fn main_window_selector(app_id: &str) -> WindowSelector {
-    WindowSelector {
-      app: Some(App::bundle_id(app_id)),
-      title: None,
-      main_visible: true,
     }
   }
 }
