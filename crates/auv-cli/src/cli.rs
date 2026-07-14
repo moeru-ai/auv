@@ -56,6 +56,7 @@ pub struct InspectServeWriteOptions {
 #[derive(Debug)]
 pub enum CliCommand {
   Help,
+  Version,
   PermissionCheck {
     json: bool,
   },
@@ -274,8 +275,13 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     return Ok(CliCommand::Help);
   }
 
+  if root_version_requested(arguments) {
+    return Ok(CliCommand::Version);
+  }
+
   match arguments[0].as_str() {
     "help" | "--help" | "-h" => Ok(CliCommand::Help),
+    "--version" | "-V" => Err("usage: auv --version".to_string()),
     "doctor" => parse_permission_check(arguments),
     "permissions" => parse_permissions(arguments),
     "--xtask" => parse_xtask(arguments),
@@ -291,6 +297,11 @@ pub fn parse_cli(arguments: &[String]) -> AuvResult<CliCommand> {
     "skill" => Err("skill commands have been removed; use app-local Rust commands instead".to_string()),
     other => Err(format!("unknown subcommand {other}; use `help` to see supported commands")),
   }
+}
+
+/// Returns whether root `auv` can print its version before creating an async runtime.
+pub fn root_version_requested(arguments: &[String]) -> bool {
+  matches!(arguments, [flag] if matches!(flag.as_str(), "--version" | "-V"))
 }
 
 /// Parse donor bin argv (`capability-query …`), used by `auv-godot` / `auv-osu` / `auv-minecraft`.
@@ -334,6 +345,7 @@ pub fn help_text() -> String {
   auv prototype
 
 USAGE
+  auv --version
   auv doctor [--json]
   auv permissions check [--json]
   auv app probe <bundle-id> [--output-dir <dir>]
@@ -371,6 +383,10 @@ NOTES
   - `app analyze` turns one of those probe directories into `analysis.json` and `report.md`; use that as typed evidence instead of free-form chat summaries.
 ",
   )
+}
+
+pub fn version_text() -> String {
+  format!("auv {}\n", env!("CARGO_PKG_VERSION"))
 }
 
 fn parse_permission_check(arguments: &[String]) -> AuvResult<CliCommand> {
@@ -2142,6 +2158,7 @@ mod tests {
     let help = help_text();
 
     for expected in [
+      "auv --version",
       "auv doctor [--json]",
       "auv permissions check [--json]",
       "auv app probe <bundle-id> [--output-dir <dir>]",
@@ -2157,6 +2174,32 @@ mod tests {
     ] {
       assert!(help.contains(expected), "top-level help should keep core path visible: {expected}");
     }
+  }
+
+  #[test]
+  fn parse_root_version() {
+    let command = parse_cli(&["--version".to_string()]).expect("root --version should parse");
+
+    assert!(matches!(command, CliCommand::Version));
+  }
+
+  #[test]
+  fn root_version_request_requires_only_the_version_flag() {
+    assert!(root_version_requested(&["--version".to_string()]));
+    assert!(root_version_requested(&["-V".to_string()]));
+    assert!(!root_version_requested(&["--version".to_string(), "extra".to_string()]));
+  }
+
+  #[test]
+  fn parse_root_version_rejects_trailing_arguments() {
+    let error = parse_cli(&["--version".to_string(), "extra".to_string()]).expect_err("root --version extra should fail");
+
+    assert_eq!(error, "usage: auv --version");
+  }
+
+  #[test]
+  fn version_text_names_the_package_version() {
+    assert_eq!(version_text(), format!("auv {}\n", env!("CARGO_PKG_VERSION")));
   }
 
   #[test]

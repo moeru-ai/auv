@@ -65,6 +65,9 @@ surface area, it needs an explicit reason tied to the current contract.
 
 ## Scope Discipline
 
+Public capability claims must name an evidence level and link to current
+evidence. A live probe is not a support claim, and compilation is not behavior.
+
 Before editing, classify the change as one of: bug fix, test-only, docs-only,
 narrow refactor, or approved feature. If none fits, ask for a smaller slice.
 

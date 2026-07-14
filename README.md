@@ -18,24 +18,25 @@
 
 [![License](https://badgen.net/github/license/moeru-ai/auv)](LICENSE.md)
 
-AUV means **Application Use Via ...**.
-
-- Apple Music Application Use Via [`auv-apple-music`](https://github.com/moeru-ai/auv/tree/main/crates/auv-apple-music)...
-- macOS Media Control Use Via [`auv-media-macos`](https://github.com/moeru-ai/auv/tree/main/crates/auv-media-macos)...
-- [Balatro](https://www.playbalatro.com/) (yes the game [Balatro](https://www.playbalatro.com/)) Application Use Via [`auv-game-balatro`](https://github.com/moeru-ai/auv/tree/main/crates/auv-game-balatro)...
-- ... more, waiting for your implementation.
+AUV means **Application Use Via ...**: a Rust-first runtime for explicit,
+inspectable desktop operations.
 
 > Think of it as a programmable computer use, without agents.
+
+Current public support levels and platform limits are tracked in the
+[support matrix](docs/SUPPORT_MATRIX.md).
 
 ## Install
 
 Install Rust first. This workspace uses Rust 2024 and currently requires the
 toolchain declared in `Cargo.toml`.
 
-Install directly from GitHub:
+Install directly from GitHub. CI validates the same Cargo Git-source
+package/bin shape from a local, commit-pinned snapshot; it does not exercise
+GitHub network fetch availability:
 
 ```sh
-cargo install --git https://github.com/moeru-ai/auv --package auv-cli --bin auv
+cargo install --git https://github.com/moeru-ai/auv auv-cli --bin auv
 auv --help
 ```
 
@@ -43,8 +44,13 @@ After installation, use the `auv` CLI directly:
 
 ```sh
 auv --help
+auv --version
 auv invoke --help
 ```
+
+The matrix names the evidence level and known limits behind every public
+capability claim. AUV does not treat a compiled driver or fixture test as proof
+of live desktop support.
 
 ## Setup
 
@@ -212,9 +218,8 @@ That means:
 
 - If your agent can call a CLI, AUV can be used as computer use.
 - If your agent can write code, AUV can save tokens by moving repeated GUI work
-  into Rust commands today, with JavaScript/TypeScript and Python bindings
-  planned after the contracts settle. Once a GUI flow is finalized as a command,
-  repeated execution can approach zero reasoning-token cost.
+  into Rust commands today. JavaScript/TypeScript and Python bindings are
+  planned after the contracts settle; they are not shipped surfaces.
 
 ## Why even build AUV?
 
@@ -231,43 +236,17 @@ AUV born from the grounding knowledge of building general gaming agents for [Pro
 
 Since Vercel published the [`agent-browser`](https://github.com/vercel/agent-browser), we fell in love with it and have it assisted agents to build many web projects, but we found that the loop it requires for agents to call `agent-browser` CLI to execute the commands is too slow and inefficient, while in computer use world, many operations can be repeated thousands of times, just like how Playwright/Vitest would allow us to write E2E test for applications, why don't we expand this idea of writing code to control application to computer use world?
 
-## Capability Matrix
+## Capability Evidence
 
-> What AUV can do, compared to other computer-use projects.
+The project records what a command attempted, what artifacts it captured, and
+what verification says. The public capability claim is intentionally narrower:
+it is only as strong as its current evidence level. Read the
+[support matrix](docs/SUPPORT_MATRIX.md) for platform-specific claims, evidence
+links, and known limits.
 
-| Capability | AUV | [Cua](https://github.com/trycua/cua) | [OpenBridge](https://github.com/AFK-surf/OpenBridge) / [KWWKComputerUseCore](https://github.com/EYHN/kwwk-computer-use-core) | Playwright |
-| --- | --- | --- | --- | --- |
-| Agent model | 💡 BYOA | 💡 BYOA + Built-in Agent | 💡 BYOA + Built-in Agent | ❌ |
-| Scriptable | ✅ Rust ⏳ JS/TS/Python | ⚠️ Tools only | ⚠️ Swift Only | ✅ JS/TS/Python/... |
-| Multi-driver | ✅ macOS/Windows ⏳ Linux/Android/iOS | ✅ | ❌ | ❌ |
-| CLI | ✅ | ✅ | ❌ | ⚠️ via user scripts |
-| MCP | ✅ | ✅ | ❌ | ❌ |
-| RL Trajectory | ✅ runs + o11y (OTEL compatible) + artifacts | ⚠️ recordings | ❌ | ✅ |
-| Screenshot | ✅ | ✅ | ✅ | ✅ browser only |
-| OCR | ✅ BYOK / OS OCR | ⚠️ BYOK | ❌ | ❌ |
-| Image Match | ✅ | ✅ | ❌ | ❌ user code only |
-| AX (Accessibility Tree) | ✅ macOS/Windows | ✅ macOS | ✅ macOS | ⚠️ Browser only |
-| AX Actions | ✅ | ✅ | ✅ | ⚠️ browser only |
-| Mouse / Click | ✅ | ✅ | ✅ | ⚠️ Browser only |
-| Virtual Mouse / Background | ✅ macOS/Windows | ✅ macOS focused | ✅ macOS focused | ⚠️ Browser only |
-| Virtual Mouse / Foreground HID | ✅ | ✅ | ❌ | ⚠️ Browser only |
-| Keyboard | ✅ | ✅ | ✅ | ⚠️ Browser Only |
-| Scroll | ✅ | ✅ | ✅ | ⚠️ Browser Only |
-| Scroll to List | ✅ | ❌ | ❌ | ✅ |
-| Bundled for Apps | ✅ | ❌ | ❌ | ❌ |
-| Feedback | ✅ Agent understand whether clicked or typed | ⚠️ tool outputs | ⚠️ structured metadata | ⚠️ assertions/traces |
-| SLM friendly | ✅ Bundled for Apps | ⚠️ Agent orchestrated | ⚠️ Agent ochestrated | ✅ |
-| YOLO / Custom Models | ✅ | ✅ | ❌ | ❌ |
-
-- **Scroll scan** is a major reason AUV exists. Most desktop automation stacks can
-scroll or read a screenshot, but they do not turn a native app's visual list into
-page records, row candidates, crop artifacts, OCR fragments, and inspectable
-stop reasons. AUV's current scroll-scan implementation is still contract work,
-so the old public `scan window-region` CLI was removed until the reusable API is
-clear.
-- **Feedback** means the automation returns machine-readable evidence after an
-attempt: what input path was used, what changed, what artifacts were captured,
-whether verification passed, and why an operation should retry, stop, or fail.
+The matrix deliberately does not compare third-party feature checkmarks. Those
+claims require a separate upstream audit and would otherwise blur what this
+repository can prove.
 
 ## Development
 
