@@ -810,7 +810,7 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       return Err("`list-commands` has been removed; use `auv invoke --help` instead".to_string());
     }
     CliCommand::InvokeHelp { command_id } => {
-      let registry = auv_cli_invoke::default_registry();
+      let registry = crate::product_registry();
       if let Some(command_id) = command_id {
         let command = registry
           .resolve(&command_id)
@@ -1021,8 +1021,8 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
       output,
     } => {
       let recording = build_recording_for_inspect(&project_root, &inspect)?;
-      let registry = auv_cli_invoke::default_registry();
-      let result = auv_cli_invoke::invoke_recorded(&recording, &registry, request)?;
+      let registry = crate::product_registry();
+      let result = crate::invoke_recorded(&recording, &registry, request)?;
       auv_cli_invoke::render_invoke_result(&result, output)?;
 
       if result.status == auv_cli_invoke::RunStatus::Failed {

@@ -43,6 +43,7 @@ Do not put engineering slice codes (`a2`, `p14`, scan-step codes, etc.) in navig
 | [`scan/`](scan/INDEX.md) | Active | Temporal scan / surface observation | |
 | [`scenebridge/`](scenebridge/INDEX.md) | Active | Cross-app scene identity / grounding | |
 | [`recognition/`](recognition/INDEX.md) | Active | RecognitionResult, detectors | |
+| [`apps/textedit/`](apps/textedit/INDEX.md) | Product | TextEdit document.write golden path | |
 | [`apps/netease-music/`](apps/netease-music/INDEX.md) | Product | Netease Cloud Music app-local commands | |
 | [`apps/qqmusic/`](apps/qqmusic/INDEX.md) | Historical | QQ Music probes | |
 | [`apps/minecraft/`](apps/minecraft/INDEX.md) | Paused | Minecraft spatial probe | |

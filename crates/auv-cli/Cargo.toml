@@ -32,6 +32,8 @@ path = "src/bin/auv-minecraft.rs"
 
 [dependencies]
 auv-runtime = { path = "../.." }
+auv-apple-textedit = { path = "../auv-apple-textedit" }
+auv-cli-invoke-macros = { path = "../auv-cli-invoke-macros" }
 auv-game-osu = { path = "../auv-game-osu" }
 auv-game-balatro = { path = "../auv-game-balatro" }
 auv-game-minecraft = { path = "../auv-game-minecraft" }
@@ -62,6 +64,7 @@ swift-bridge-build.workspace = true
 auv-api-proto = { path = "../auv-api-proto" }
 auv-stage-status = { path = "../auv-stage-status" }
 axum = { version = "0.8", default-features = false }
+rmcp = { version = "0.6", features = ["server", "client", "transport-io"] }
 tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "time"] }
 tonic = { version = "0.14", features = ["transport"] }
 tower = { version = "0.5", features = ["util"] }

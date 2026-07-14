@@ -12,3 +12,4 @@ pub mod godot;
 pub mod minecraft;
 pub mod osu;
 pub(crate) mod query_wired_live_action_status;
+pub mod textedit;

@@ -182,6 +182,9 @@ mod tests {
         matched_role: target_role.to_string(),
         matched_text: format!("prefix {target_text} suffix"),
         artifact_count: 1,
+        semantic_matched: true,
+        observation_path: Some("0.1.2".to_string()),
+        observation_pid: Some(1),
       })
     }
   }

@@ -5,6 +5,13 @@ use auv_tracing_driver::{
 
 use crate::{InvokeCommand, InvokeCommandInput, InvokeRegistry, InvokeRequest, InvokeResult, RunStatus};
 
+/// Product-specific work performed after handler artifacts are recorded and
+/// before the command span and run status are finalized.
+///
+/// A hook may append artifacts or update `InvokeResult` status. Returning an
+/// error records the command/run as failed and returns that error to the caller.
+pub type InvokeFinalizeHook = dyn Fn(&RunRecordingBackend, &mut RecordingRun, &SpanRef, &mut InvokeResult) -> AuvResult<()> + Send + Sync;
+
 /// Run a recorded command invoke under the default session.
 ///
 /// The recorded invoke path owns the default `session_id` so CLI/MCP callers
@@ -13,7 +20,18 @@ use crate::{InvokeCommand, InvokeCommandInput, InvokeRegistry, InvokeRequest, In
 /// owns the default). Callers that can name a session use
 /// [`invoke_recorded_with_session`].
 pub fn invoke_recorded(recording: &RunRecordingBackend, registry: &InvokeRegistry, request: InvokeRequest) -> AuvResult<InvokeResult> {
-  invoke_recorded_with_session(recording, registry, request, SessionId::default_session())
+  invoke_recorded_with_session_and_finalize(recording, registry, request, SessionId::default_session(), None)
+}
+
+/// Run a recorded command invoke under the default session with an in-lifecycle
+/// finalize hook.
+pub fn invoke_recorded_with_finalize(
+  recording: &RunRecordingBackend,
+  registry: &InvokeRegistry,
+  request: InvokeRequest,
+  finalize: &InvokeFinalizeHook,
+) -> AuvResult<InvokeResult> {
+  invoke_recorded_with_session_and_finalize(recording, registry, request, SessionId::default_session(), Some(finalize))
 }
 
 /// Run a recorded command invoke and stamp `session` onto the recorded run.
@@ -30,9 +48,19 @@ pub fn invoke_recorded_with_session(
   request: InvokeRequest,
   session: SessionId,
 ) -> AuvResult<InvokeResult> {
+  invoke_recorded_with_session_and_finalize(recording, registry, request, session, None)
+}
+
+fn invoke_recorded_with_session_and_finalize(
+  recording: &RunRecordingBackend,
+  registry: &InvokeRegistry,
+  request: InvokeRequest,
+  session: SessionId,
+  finalize: Option<&InvokeFinalizeHook>,
+) -> AuvResult<InvokeResult> {
   let mut run = recording.handle().start_run(RunSpec::new(RunType::Command, "auv.command").with_session(session))?;
   let root = run.root_span();
-  let result = match invoke_recorded_in_span(recording, registry, &mut run, &root, request) {
+  let result = match invoke_recorded_in_span_with_finalize(recording, registry, &mut run, &root, request, finalize) {
     Ok(result) => result,
     Err(error) => {
       if let Err(finish_error) = recording.handle().finish_run(
@@ -58,7 +86,7 @@ pub fn invoke_recorded_with_session(
     RunFinish {
       status_code,
       summary: Some(result.output_summary.clone()),
-      failure: result.failure_message.clone(),
+      failure: result.failure_message.clone().or_else(|| (result.status == RunStatus::Failed).then(|| result.output_summary.clone())),
     },
   )?;
   Ok(result)
@@ -71,11 +99,22 @@ pub fn invoke_recorded_in_span(
   parent: &SpanRef,
   request: InvokeRequest,
 ) -> AuvResult<InvokeResult> {
+  invoke_recorded_in_span_with_finalize(recording, registry, run, parent, request, None)
+}
+
+fn invoke_recorded_in_span_with_finalize(
+  recording: &RunRecordingBackend,
+  registry: &InvokeRegistry,
+  run: &mut RecordingRun,
+  parent: &SpanRef,
+  request: InvokeRequest,
+  finalize: Option<&InvokeFinalizeHook>,
+) -> AuvResult<InvokeResult> {
   let command_id = request.command_id.clone();
   let command = registry
     .resolve(&command_id)
     .ok_or_else(|| format!("unknown command {command_id}; use `auv invoke --help` to inspect available entries"))?;
-  invoke_resolved_recorded_in_span(recording, run, parent, command, request)
+  invoke_resolved_recorded_in_span_with_finalize(recording, run, parent, command, request, finalize)
 }
 
 pub fn invoke_resolved_recorded_in_span(
@@ -85,32 +124,90 @@ pub fn invoke_resolved_recorded_in_span(
   command: &InvokeCommand,
   request: InvokeRequest,
 ) -> AuvResult<InvokeResult> {
+  invoke_resolved_recorded_in_span_with_finalize(recording, run, parent, command, request, None)
+}
+
+fn invoke_resolved_recorded_in_span_with_finalize(
+  recording: &RunRecordingBackend,
+  run: &mut RecordingRun,
+  parent: &SpanRef,
+  command: &InvokeCommand,
+  request: InvokeRequest,
+  finalize: Option<&InvokeFinalizeHook>,
+) -> AuvResult<InvokeResult> {
   let command_span = run.start_span(
     parent,
     running_span_record("auv.command.invoke", command_attributes(command.id, request.target.application_id.as_deref())),
   )?;
   record_event(run, command_span.id(), "command.resolved", Some(format!("resolved {}", command.id)));
 
-  let output = match command.invoke(InvokeCommandInput {
+  let mut result = match command.invoke(InvokeCommandInput {
     command_id: command.id,
     target_application_id: request.target.application_id.as_deref(),
     inputs: &request.inputs,
     dry_run: request.dry_run,
   }) {
-    Ok(output) => output,
+    Ok(output) => {
+      if let Some(backend) = &output.backend {
+        record_event(run, command_span.id(), "command.backend", Some(format!("backend={backend}")));
+      }
+      for note in &output.notes {
+        record_event(run, command_span.id(), "command.note", Some(note.clone()));
+      }
+      if let Some(verification) = &output.verification {
+        record_event(run, command_span.id(), "command.verification", Some(verification.clone()));
+      }
+      for known_limit in &output.known_limits {
+        record_event(run, command_span.id(), "command.known_limit", Some(known_limit.clone()));
+      }
+
+      match recording.record_produced_artifacts(run, &command_span, output.artifacts) {
+        Ok(recorded) => InvokeResult {
+          run_id: run.id().to_string(),
+          producer_span_id: command_span.id().clone(),
+          command_id: command.id.to_string(),
+          command_summary: command.summary.to_string(),
+          status: RunStatus::Completed,
+          output_summary: output.summary,
+          backend: output.backend,
+          signals: output.signals,
+          notes: output.notes,
+          known_limits: output.known_limits,
+          verification: output.verification,
+          report: output.report,
+          artifacts: recorded.records,
+          artifact_paths: recorded.paths,
+          failure_message: None,
+        },
+        Err(failure) => {
+          let failure_message = format!("command {} artifact recording failed: {}", command.id, failure.message);
+          let output_summary =
+            format!("Command invocation produced output, but artifact recording failed. Inspect {} for the recorded trace.", run.id());
+          InvokeResult {
+            run_id: run.id().to_string(),
+            producer_span_id: command_span.id().clone(),
+            command_id: command.id.to_string(),
+            command_summary: command.summary.to_string(),
+            status: RunStatus::Failed,
+            output_summary,
+            backend: output.backend,
+            signals: output.signals,
+            notes: output.notes,
+            known_limits: output.known_limits,
+            verification: output.verification,
+            report: output.report,
+            artifacts: failure.recorded.records,
+            artifact_paths: failure.recorded.paths,
+            failure_message: Some(failure_message),
+          }
+        }
+      }
+    }
     Err(error) => {
       let failure_message = format!("command {} handler failed: {error}", command.id);
       let output_summary = format!("Command invocation failed after run creation. Inspect {} for the recorded trace.", run.id());
       record_event(run, command_span.id(), "command.failed", Some(failure_message.clone()));
-      run.finish_span(
-        &command_span,
-        SpanFinish {
-          status_code: TraceStatusCode::Error,
-          summary: Some(output_summary.clone()),
-          failure: Some(failure_message.clone()),
-        },
-      )?;
-      return Ok(InvokeResult {
+      InvokeResult {
         run_id: run.id().to_string(),
         producer_span_id: command_span.id().clone(),
         command_id: command.id.to_string(),
@@ -126,89 +223,51 @@ pub fn invoke_resolved_recorded_in_span(
         artifacts: Vec::new(),
         artifact_paths: Vec::new(),
         failure_message: Some(failure_message),
-      });
+      }
     }
   };
 
-  if let Some(backend) = &output.backend {
-    record_event(run, command_span.id(), "command.backend", Some(format!("backend={backend}")));
-  }
-
-  for note in &output.notes {
-    record_event(run, command_span.id(), "command.note", Some(note.clone()));
-  }
-
-  if let Some(verification) = &output.verification {
-    record_event(run, command_span.id(), "command.verification", Some(verification.clone()));
-  }
-
-  for known_limit in &output.known_limits {
-    record_event(run, command_span.id(), "command.known_limit", Some(known_limit.clone()));
-  }
-
-  let artifact_result = recording.record_produced_artifacts(run, &command_span, output.artifacts);
-  let (artifact_records, artifact_paths) = match artifact_result {
-    Ok(recorded) => (recorded.records, recorded.paths),
-    Err(failure) => {
-      let failure_message = format!("command {} artifact recording failed: {}", command.id, failure.message);
+  if let Some(finalize) = finalize {
+    if let Err(error) = finalize(recording, run, &command_span, &mut result) {
+      let failure_message = format!("command {} finalize failed: {error}", command.id);
       let output_summary =
-        format!("Command invocation produced output, but artifact recording failed. Inspect {} for the recorded trace.", run.id());
+        format!("Command invocation finalization failed after run creation. Inspect {} for the recorded trace.", run.id());
+      record_event(run, command_span.id(), "command.finalize.failed", Some(failure_message.clone()));
       run.finish_span(
         &command_span,
         SpanFinish {
           status_code: TraceStatusCode::Error,
-          summary: Some(output_summary.clone()),
+          summary: Some(output_summary),
           failure: Some(failure_message.clone()),
         },
       )?;
-      return Ok(InvokeResult {
-        run_id: run.id().to_string(),
-        producer_span_id: command_span.id().clone(),
-        command_id: command.id.to_string(),
-        command_summary: command.summary.to_string(),
-        status: RunStatus::Failed,
-        output_summary,
-        backend: output.backend,
-        signals: output.signals,
-        notes: output.notes,
-        known_limits: output.known_limits,
-        verification: output.verification,
-        report: output.report,
-        artifacts: failure.recorded.records,
-        artifact_paths: failure.recorded.paths,
-        failure_message: Some(failure_message),
-      });
+      return Err(failure_message);
     }
-  };
+  }
 
-  record_event(run, command_span.id(), "run.completed", Some(output.summary.clone()));
+  let status_code = if result.status == RunStatus::Completed {
+    TraceStatusCode::Ok
+  } else {
+    TraceStatusCode::Error
+  };
+  let event_name = if result.status == RunStatus::Completed {
+    "run.completed"
+  } else {
+    "run.failed"
+  };
+  let failure = result.failure_message.clone().or_else(|| (result.status == RunStatus::Failed).then(|| result.output_summary.clone()));
+  record_event(run, command_span.id(), event_name, Some(result.output_summary.clone()));
 
   run.finish_span(
     &command_span,
     SpanFinish {
-      status_code: TraceStatusCode::Ok,
-      summary: Some(output.summary.clone()),
-      failure: None,
+      status_code,
+      summary: Some(result.output_summary.clone()),
+      failure,
     },
   )?;
 
-  Ok(InvokeResult {
-    run_id: run.id().to_string(),
-    producer_span_id: command_span.id().clone(),
-    command_id: command.id.to_string(),
-    command_summary: command.summary.to_string(),
-    status: RunStatus::Completed,
-    output_summary: output.summary,
-    backend: output.backend,
-    signals: output.signals,
-    notes: output.notes,
-    known_limits: output.known_limits,
-    verification: output.verification,
-    report: output.report,
-    artifacts: artifact_records,
-    artifact_paths,
-    failure_message: None,
-  })
+  Ok(result)
 }
 
 fn command_attributes(command_id: &str, target_application_id: Option<&str>) -> auv_tracing_driver::Attributes {
@@ -558,6 +617,123 @@ mod tests {
     let command_span = canonical.spans.iter().find(|span| span.name == "auv.command.invoke").expect("command span should be recorded");
     assert_eq!(command_span.status_code, TraceStatusCode::Error);
     assert!(command_span.failure.as_ref().is_some_and(|failure| failure.message.contains("handler failed: boom")));
+
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  // ROOT CAUSE:
+  //
+  // Moving product finalization into recorded invoke initially left the
+  // handler-failure early return outside the hook, dropping canonical
+  // finalization for failed attempts after run creation.
+  #[test]
+  fn invoke_recorded_with_finalize_runs_hook_for_handler_failure() {
+    let (recording, store_root) = recording("handler-failure-finalize");
+    let registry = failing_registry();
+    let finalize = |_recording: &RunRecordingBackend,
+                    _run: &mut auv_tracing_driver::RecordingRun,
+                    _span: &auv_tracing_driver::SpanRef,
+                    result: &mut crate::InvokeResult| {
+      result.known_limits.push("fixture.finalized".to_string());
+      Ok(())
+    };
+
+    let result = super::invoke_recorded_with_finalize(
+      &recording,
+      &registry,
+      InvokeRequest {
+        command_id: FAILING_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      },
+      &finalize,
+    )
+    .expect("failed handler should remain an inspectable InvokeResult");
+
+    assert_eq!(result.status, RunStatus::Failed);
+    assert!(result.known_limits.iter().any(|limit| limit == "fixture.finalized"));
+    let canonical = recording.read_run(&result.run_id).expect("failed run should persist");
+    assert_eq!(canonical.run.status_code, TraceStatusCode::Error);
+
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_recorded_with_finalize_uses_final_status_for_span_and_run() {
+    let (recording, store_root) = recording("finalize-status");
+    let registry = fixture_registry();
+    let finalize = |_recording: &RunRecordingBackend,
+                    _run: &mut auv_tracing_driver::RecordingRun,
+                    _span: &auv_tracing_driver::SpanRef,
+                    result: &mut crate::InvokeResult| {
+      result.status = RunStatus::Failed;
+      result.output_summary = "semantic verification failed".to_string();
+      result.failure_message = Some("semantic mismatch".to_string());
+      Ok(())
+    };
+
+    let result = super::invoke_recorded_with_finalize(
+      &recording,
+      &registry,
+      InvokeRequest {
+        command_id: FIXTURE_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      },
+      &finalize,
+    )
+    .expect("finalized failure should remain inspectable");
+
+    assert_eq!(result.status, RunStatus::Failed);
+    let canonical = recording.read_run(&result.run_id).expect("finalized run should persist");
+    assert_eq!(canonical.run.status_code, TraceStatusCode::Error);
+    let command_span = canonical.spans.iter().find(|span| span.name == "auv.command.invoke").expect("command span");
+    assert_eq!(command_span.status_code, TraceStatusCode::Error);
+    assert_eq!(command_span.failure.as_ref().map(|failure| failure.message.as_str()), Some("semantic mismatch"));
+
+    let _ = fs::remove_dir_all(store_root);
+  }
+
+  #[test]
+  fn invoke_recorded_finalize_error_persists_failed_run() {
+    let store_root = temp_dir("finalize-error");
+    let recorder = Arc::new(MemoryRunRecorder::new());
+    let recording = RunRecordingBackend::new(LocalStore::new(store_root.clone()).expect("store should create"), recorder.clone());
+    let registry = fixture_registry();
+    let finalize = |_recording: &RunRecordingBackend,
+                    _run: &mut auv_tracing_driver::RecordingRun,
+                    _span: &auv_tracing_driver::SpanRef,
+                    _result: &mut crate::InvokeResult| Err("fixture finalize failure".to_string());
+
+    let error = super::invoke_recorded_with_finalize(
+      &recording,
+      &registry,
+      InvokeRequest {
+        command_id: FIXTURE_COMMAND_ID.to_string(),
+        target: ExecutionTarget::default(),
+        inputs: BTreeMap::new(),
+        dry_run: false,
+      },
+      &finalize,
+    )
+    .expect_err("finalize failure should fail the caller");
+
+    assert!(error.contains("fixture finalize failure"));
+    let run_id = recorder
+      .drain_for_test()
+      .into_iter()
+      .find_map(|update| match update {
+        RunUpdate::RunFinished { run, .. } => Some(run.run_id),
+        _ => None,
+      })
+      .expect("failed finalized run should finish");
+    let canonical = recording.read_run(run_id.as_str()).expect("failed finalized run should persist");
+    assert_eq!(canonical.run.status_code, TraceStatusCode::Error);
+    let command_span = canonical.spans.iter().find(|span| span.name == "auv.command.invoke").expect("command span");
+    assert_eq!(command_span.status_code, TraceStatusCode::Error);
+    assert!(canonical.events.iter().any(|event| event.name == "command.finalize.failed"));
 
     let _ = fs::remove_dir_all(store_root);
   }
