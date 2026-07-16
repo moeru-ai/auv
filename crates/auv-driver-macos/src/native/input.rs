@@ -139,7 +139,7 @@ mod tests {
   #[cfg(target_os = "macos")]
   use super::action_result;
   #[cfg(target_os = "macos")]
-  use crate::native::types::NativeActionResponse;
+  use crate::native::binding::ffi::NativeActionResponse;
 
   #[cfg(target_os = "macos")]
   #[test]

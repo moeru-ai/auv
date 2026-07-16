@@ -51,7 +51,7 @@ mod tests {
   #[cfg(target_os = "macos")]
   use super::decode_clipboard_snapshot;
   #[cfg(target_os = "macos")]
-  use crate::native::types::NativeClipboardSnapshotResponse;
+  use crate::native::binding::ffi::NativeClipboardSnapshotResponse;
 
   #[cfg(target_os = "macos")]
   #[test]
