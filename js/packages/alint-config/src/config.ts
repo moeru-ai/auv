@@ -1,16 +1,20 @@
-import { defineConfig } from "@alint-js/core";
+import { createApeiraAdapter } from "@alint-js/agent-apeira";
+import { defineConfig } from "@alint-js/plugin";
 import auv from "./plugins/auv";
 
 export default defineConfig([
   {
     name: "auv/rust",
+    directories: ["crates/*"],
     files: ["**/*.rs"],
     language: "text/plain",
+    agent: createApeiraAdapter(),
     plugins: {
       rust: auv,
     },
     rules: {
-      "rust/todo": "warn",
+      "rust/no-vacant-control-boundary": "warn",
+      "rust/prefer-established-foundation": "warn",
     },
   },
   {

@@ -18,11 +18,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@alint-js/core": "0.0.20"
-  },
-  "devDependencies": {
-    "@types/node": "^26.1.1",
-    "tsdown": "^0.22.3",
-    "typescript": "^5.9.3"
+    "@alint-js/agent-apeira": "^0.0.33",
+    "@alint-js/plugin": "^0.0.33",
+    "@alint-js/tools-fs": "^0.0.33"
   }
 }

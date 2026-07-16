@@ -6,6 +6,38 @@ allowBuilds:
   esbuild: true
 
 minimumReleaseAgeExclude:
-  - '@alint-js/cli@0.0.20'
-  - '@alint-js/config@0.0.20'
-  - '@alint-js/core@0.0.20'
+  - '@alint-js/agent-apeira@0.0.33'
+  - '@alint-js/cli@0.0.33'
+  - '@alint-js/config@0.0.33'
+  - '@alint-js/core@0.0.33'
+  - '@xsai/generate-text@0.5.0-beta.7'
+  - '@xsai/shared-chat@0.5.0-beta.7'
+  - '@xsai/shared@0.5.0-beta.7'
+  - '@xsai/tool@0.5.0-beta.7'
+  - xsschema@0.5.0-beta.7
+  - '@alint-js/tools-fs@0.0.33'
+  - '@apeira/core@0.0.7'
+  - '@apeira/session@0.0.7'
+  - '@apeira/storage@0.0.7'
+  - '@xsai-ext/responses@0.5.0-beta.7'
+  - '@xsai/shared-stream@0.5.0-beta.7'
+  - '@xsai/stream-text@0.5.0-beta.7'
+  - apeira@0.0.7
+  - '@alint-js/plugin@0.0.33'
+  - '@moeru/std@0.1.0-beta.20'
+
+catalog:
+  '@alint-js/agent-apeira': '^0.0.33'
+  '@alint-js/plugin': '^0.0.33'
+  '@alint-js/tools-fs': '^0.0.33'
+  '@alint-js/cli': ^0.0.33
+  '@types/node': ^26.0.1
+  taze: ^19.14.1
+  tsdown: ^0.22.3
+  typescript: ^6.0.3
+  vite: ^8.1.0
+
+catalogs:
+  vitest:
+    '@vitest/coverage-v8': ^4.1.9
+    vitest: ^4.1.9
