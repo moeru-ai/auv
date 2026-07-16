@@ -1,6 +1,6 @@
 # TextEdit document.write live macOS closure
 
-**Status:** blocked / opt-in (not claimed as product-supported until this passes)
+**Status:** live-validated / opt-in (2026-07-15 pass; not claimed as `supported`)
 
 ## Manual command
 
@@ -42,3 +42,15 @@ closure.
 ## CI
 
 Hermetic path uses `--driver fixture` (see `textedit_document_write_same_run_cli_mcp_inspect_parity`).
+
+## Live result (2026-07-15)
+
+- Environment: real macOS desktop (not remote/container)
+- Command: `AUV_TEXTEDIT_LIVE=1 cargo test -p auv-cli --test textedit_document_write_parity textedit_document_write_live_macos_closure -- --ignored --nocapture`
+- Result: 1 passed
+- `VerificationResult.semantic_matched=true`
+- PR #106 (`ApplicationControl::activate_bundle_id`) resolved the target-window discovery blocker above by activating the bundle via `osascript` instead of resolving a `CGWindowID`.
+
+This closes the activation-step blocker only. `state_changed` tracking (pre/post AX
+observation) remains undone; see the Evidence boundary section above. Still not
+claimed as `supported`.

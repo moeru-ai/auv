@@ -26,8 +26,8 @@ for level in contract compiles tested live-validated supported; do
   assert_contains "$matrix" "| \`$level\` |"
 done
 
-assert_contains "$matrix" '| App-local recorded operation: TextEdit document write | `auv invoke app.textedit.document.write` | `tested` | `not claimed` | `not claimed` |'
-assert_contains "$matrix" 'The real macOS closure remains blocked at target-window discovery, so this is neither `live-validated` nor `supported`.'
+assert_contains "$matrix" '| App-local recorded operation: TextEdit document write | `auv invoke app.textedit.document.write` | `live-validated` | `not claimed` | `not claimed` |'
+assert_contains "$matrix" 'Live closure was manually validated on one macOS environment (2026-07-15, `semantic_matched=true`). It is not an automated live regression gate, and `state_changed` remains `false` because no pre-write AX observation is recorded. Not yet `supported`.'
 assert_contains "$matrix" '| JS/TS and Python bindings | none | `not claimed` | `not claimed` | `not claimed` |'
 
 if grep -nE '[✅❌⚠️💡]' "$matrix"; then
