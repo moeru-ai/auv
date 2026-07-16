@@ -6,12 +6,13 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::commands::launch::OpenWindowInputs;
 use crate::commands::playback::PlaybackStatusInputs;
+use crate::commands::probe_macos::{DEFAULT_ACTIVATE_SETTLE_MS, DEFAULT_MUSIC_APP_BUNDLE_ID, ProbeInputs};
 use crate::commands::search::{
   DEFAULT_RESULT_SELECTION_TIMEOUT_MS, DEFAULT_SEARCH_SETTLE_MS, DEFAULT_SEARCH_VERIFICATION_TIMEOUT_MS, SearchInputs,
   SearchResultSelectInputs,
 };
 use crate::commands::transport::{TransportAction, TransportInputs};
-use crate::{run_open_window, run_playback_status, run_search, run_search_result_select, run_transport_action};
+use crate::{run_open_window, run_playback_status, run_probe, run_search, run_search_result_select, run_transport_action};
 
 #[derive(Clone, Debug, Parser)]
 #[command(
@@ -34,6 +35,8 @@ enum CliCommand {
   Search(SearchArgs),
   /// Send a transport control action (play/pause, next, previous).
   Transport(TransportArgs),
+  /// Probe Music.app's AX surface for search field and result row candidates (macOS).
+  ProbeMacos(ProbeMacosArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -111,6 +114,25 @@ struct TransportArgs {
   json: bool,
 }
 
+#[derive(Clone, Debug, Args)]
+struct ProbeMacosArgs {
+  /// Bundle id to activate and probe.
+  #[arg(long = "bundle-id", default_value = DEFAULT_MUSIC_APP_BUNDLE_ID)]
+  bundle_id: String,
+
+  /// How long to wait after activation before capturing the AX tree (ms).
+  #[arg(long = "activate-settle-ms", default_value_t = DEFAULT_ACTIVATE_SETTLE_MS)]
+  activate_settle_ms: u64,
+
+  /// Persist the captured AX snapshot as JSON to this directory.
+  #[arg(long = "artifact-dir", value_name = "DIR")]
+  artifact_dir: Option<PathBuf>,
+
+  /// Output as JSON instead of human-readable text.
+  #[arg(long)]
+  json: bool,
+}
+
 #[derive(Clone, Debug, Subcommand)]
 enum TransportSubcommand {
   /// Toggle play/pause.
@@ -129,6 +151,7 @@ pub fn run() -> ExitCode {
     CliCommand::Playback(args) => run_playback_cmd(args),
     CliCommand::Search(args) => run_search_cmd(args),
     CliCommand::Transport(args) => run_transport_cmd(args),
+    CliCommand::ProbeMacos(args) => run_probe_macos_cmd(args),
   }
 }
 
@@ -295,6 +318,46 @@ fn run_search_cmd(args: SearchArgs) -> ExitCode {
       } else {
         ExitCode::FAILURE
       }
+    }
+  }
+}
+
+fn run_probe_macos_cmd(args: ProbeMacosArgs) -> ExitCode {
+  let inputs = ProbeInputs {
+    bundle_id: args.bundle_id,
+    activate_settle_ms: args.activate_settle_ms,
+    artifact_dir: args.artifact_dir,
+  };
+
+  match run_probe(&inputs) {
+    Err(error) => {
+      eprintln!("error: {error}");
+      ExitCode::FAILURE
+    }
+    Ok(result) => {
+      if args.json {
+        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+      } else {
+        println!("bundle_id:        {}", result.bundle_id);
+        println!("activated:        {}", result.activated);
+        println!("ax_captured:      {}", result.ax_snapshot_captured);
+        println!("node_count:       {}", result.node_count);
+        println!("search_fields:    {}", result.search_field_candidates.len());
+        for node in &result.search_field_candidates {
+          println!("  path={} role={} subrole={} title={:?}", node.path, node.role, node.subrole, node.title);
+        }
+        println!("result_rows:      {}", result.result_row_candidates.len());
+        for node in &result.result_row_candidates {
+          println!("  path={} role={} title={:?} value={:?}", node.path, node.role, node.title, node.value);
+        }
+        if let Some(artifact) = &result.artifact {
+          println!("artifact:         {artifact}");
+        }
+        for note in &result.diagnostics {
+          println!("note:             {note}");
+        }
+      }
+      ExitCode::SUCCESS
     }
   }
 }
