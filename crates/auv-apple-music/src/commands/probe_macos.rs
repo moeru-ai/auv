@@ -1,8 +1,9 @@
 //! macOS Music.app AX surface probe.
 //!
-//! Bounded discovery for search field and result list nodes — activation,
-//! capture, locate, persist. Does not click results, play tracks, or implement
-//! candidate selection algorithms.
+//! Bounded discovery for the search field only — activate, capture, locate,
+//! persist. Does not submit a search query, click results, play tracks, or
+//! implement candidate selection algorithms. Result-row classification is
+//! deferred; see [`ProbeResult`] doc for why.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -50,6 +51,15 @@ pub struct DiscoveredNode {
 }
 
 /// Output produced by the probe.
+///
+/// NOTICE(apple-music-result-row-deferred): a `result_row_candidates` field
+/// was deliberately removed here. This probe never submits a search query, so
+/// it only ever observes Music.app's default/landing surface. Any static-text
+/// heuristic run against that surface would misclassify sidebar labels,
+/// buttons, and recommendation copy as "search results" — a taxonomy that
+/// cannot be validated without first observing a real post-search AX tree.
+/// Unlock once a query-submission slice captures a live post-search snapshot
+/// an owner can review.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProbeResult {
   pub command: String,
@@ -58,7 +68,6 @@ pub struct ProbeResult {
   pub ax_snapshot_captured: bool,
   pub node_count: usize,
   pub search_field_candidates: Vec<DiscoveredNode>,
-  pub result_row_candidates: Vec<DiscoveredNode>,
   pub artifact: Option<String>,
   pub diagnostics: Vec<String>,
 }
@@ -81,13 +90,12 @@ fn run_probe_macos(inputs: &ProbeInputs) -> Result<ProbeResult, String> {
   let LocalDriverSession::Macos(session) = session;
 
   let mut result = ProbeResult {
-    command: "probe".to_string(),
+    command: "probe-macos".to_string(),
     bundle_id: inputs.bundle_id.clone(),
     activated: false,
     ax_snapshot_captured: false,
     node_count: 0,
     search_field_candidates: Vec::new(),
-    result_row_candidates: Vec::new(),
     artifact: None,
     diagnostics: Vec::new(),
   };
@@ -112,13 +120,7 @@ fn run_probe_macos(inputs: &ProbeInputs) -> Result<ProbeResult, String> {
     result.diagnostics.push("no search field candidates found".to_string());
   }
 
-  // Step 4: locate result row candidates
-  result.result_row_candidates = find_result_row_candidates(&snapshot);
-  if result.result_row_candidates.is_empty() {
-    result.diagnostics.push("no result row candidates found (search may need to be submitted first)".to_string());
-  }
-
-  // Step 5: persist artifact if requested
+  // Step 4: persist artifact if requested
   if let Some(dir) = &inputs.artifact_dir {
     result.artifact = Some(save_probe_artifact(dir, &snapshot)?);
   }
@@ -138,17 +140,6 @@ fn find_search_field_candidates(snapshot: &ObservedAxTreeSnapshot) -> Vec<Discov
 }
 
 #[cfg(target_os = "macos")]
-fn find_result_row_candidates(snapshot: &ObservedAxTreeSnapshot) -> Vec<DiscoveredNode> {
-  snapshot
-    .nodes
-    .iter()
-    .filter(|node| node.bounds.width > 0 && node.bounds.height > 0)
-    .filter(|node| is_result_row_candidate(node))
-    .map(node_to_discovered)
-    .collect()
-}
-
-#[cfg(target_os = "macos")]
 fn is_search_field_candidate(node: &ObservedAxNode) -> bool {
   let role_match = node.role.eq_ignore_ascii_case("AXTextField") || node.role.eq_ignore_ascii_case("AXSearchField");
   let subrole_match = node.subrole.eq_ignore_ascii_case("AXSearchField");
@@ -156,15 +147,6 @@ fn is_search_field_candidate(node: &ObservedAxNode) -> bool {
   let title_match = node.title.to_lowercase().contains("search");
 
   role_match || subrole_match || placeholder_match || title_match
-}
-
-#[cfg(target_os = "macos")]
-fn is_result_row_candidate(node: &ObservedAxNode) -> bool {
-  // Result rows in Music.app are typically AXRow or similar list items
-  let role_match = node.role.eq_ignore_ascii_case("AXRow") || node.role.eq_ignore_ascii_case("AXStaticText");
-  let has_content = !node.title.trim().is_empty() || !node.value.trim().is_empty();
-
-  role_match && has_content
 }
 
 #[cfg(target_os = "macos")]
@@ -248,32 +230,5 @@ mod tests {
     };
 
     assert!(is_search_field_candidate(&node));
-  }
-
-  #[cfg(target_os = "macos")]
-  #[test]
-  fn is_result_row_candidate_matches_row_with_content() {
-    use auv_driver_macos::ObservedAxNode;
-    let node = ObservedAxNode {
-      depth: 3,
-      path: "0.1.2.3".to_string(),
-      role: "AXRow".to_string(),
-      subrole: String::new(),
-      title: "Track Title - Artist Name".to_string(),
-      description: String::new(),
-      help: String::new(),
-      identifier: String::new(),
-      placeholder: String::new(),
-      value: String::new(),
-      focused: false,
-      bounds: auv_driver_macos::types::ObservedRect {
-        x: 10,
-        y: 100,
-        width: 400,
-        height: 40,
-      },
-    };
-
-    assert!(is_result_row_candidate(&node));
   }
 }

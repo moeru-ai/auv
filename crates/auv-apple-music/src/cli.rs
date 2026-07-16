@@ -35,7 +35,7 @@ enum CliCommand {
   Search(SearchArgs),
   /// Send a transport control action (play/pause, next, previous).
   Transport(TransportArgs),
-  /// Probe Music.app's AX surface for search field and result row candidates (macOS).
+  /// Probe Music.app's AX surface for search field candidates (macOS).
   ProbeMacos(ProbeMacosArgs),
 }
 
@@ -345,10 +345,6 @@ fn run_probe_macos_cmd(args: ProbeMacosArgs) -> ExitCode {
         println!("search_fields:    {}", result.search_field_candidates.len());
         for node in &result.search_field_candidates {
           println!("  path={} role={} subrole={} title={:?}", node.path, node.role, node.subrole, node.title);
-        }
-        println!("result_rows:      {}", result.result_row_candidates.len());
-        for node in &result.result_row_candidates {
-          println!("  path={} role={} title={:?} value={:?}", node.path, node.role, node.title, node.value);
         }
         if let Some(artifact) = &result.artifact {
           println!("artifact:         {artifact}");
