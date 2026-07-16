@@ -4,6 +4,13 @@
 //! persist. Does not submit a search query, click results, play tracks, or
 //! implement candidate selection algorithms. Result-row classification is
 //! deferred; see [`ProbeResult`] doc for why.
+//!
+//! Also runs a diagnostic-only reachability inspection over every captured
+//! `AXToolbar` node (see [`AxNodeInspection`] doc for why): a prior real
+//! probe run found the search field unreachable because a toolbar node was
+//! captured with zero `AXChildren`, and this diagnostic checks whether that
+//! toolbar's children are reachable through a different AX attribute instead
+//! of guessing at a traversal fix.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -13,7 +20,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use auv_driver::LocalDriverSession;
 #[cfg(target_os = "macos")]
-use auv_driver_macos::{ApplicationControl, DEFAULT_AX_MAX_CHILDREN, DEFAULT_AX_MAX_DEPTH, ObservedAxNode, ObservedAxTreeSnapshot};
+use auv_driver_macos::{
+  ApplicationControl, AxNodeInspection, DEFAULT_AX_MAX_CHILDREN, DEFAULT_AX_MAX_DEPTH, ObservedAxNode, ObservedAxTreeSnapshot,
+};
 
 pub const DEFAULT_MUSIC_APP_BUNDLE_ID: &str = "com.apple.Music";
 pub const DEFAULT_ACTIVATE_SETTLE_MS: u64 = 800;
@@ -68,6 +77,13 @@ pub struct ProbeResult {
   pub ax_snapshot_captured: bool,
   pub node_count: usize,
   pub search_field_candidates: Vec<DiscoveredNode>,
+  /// Reachability inspections for every captured `AXToolbar` node. See the
+  /// module doc for why this exists: a prior real probe found the search
+  /// field unreachable when a toolbar node was captured with zero
+  /// `AXChildren`, and this answers whether the toolbar's children are
+  /// reachable through `AXVisibleChildren`, `AXContents`, or
+  /// `AXChildrenInNavigationOrder` instead — before any traversal change.
+  pub toolbar_inspections: Vec<AxNodeInspection>,
   pub artifact: Option<String>,
   pub diagnostics: Vec<String>,
 }
@@ -96,6 +112,7 @@ fn run_probe_macos(inputs: &ProbeInputs) -> Result<ProbeResult, String> {
     ax_snapshot_captured: false,
     node_count: 0,
     search_field_candidates: Vec::new(),
+    toolbar_inspections: Vec::new(),
     artifact: None,
     diagnostics: Vec::new(),
   };
@@ -120,12 +137,36 @@ fn run_probe_macos(inputs: &ProbeInputs) -> Result<ProbeResult, String> {
     result.diagnostics.push("no search field candidates found".to_string());
   }
 
+  // Step 3b: inspect every toolbar node for children reachable through an
+  // AX attribute other than AXChildren. See ProbeResult::toolbar_inspections.
+  result.toolbar_inspections = inspect_toolbar_nodes(&session, &snapshot);
+  for inspection in &result.toolbar_inspections {
+    if inspection.children_count == 0
+      && (inspection.visible_children_count > 0 || inspection.contents_count > 0 || inspection.navigation_children_count > 0)
+    {
+      result.diagnostics.push(format!(
+        "toolbar {} has 0 AXChildren but non-zero children via another attribute (visible={}, contents={}, navigation={})",
+        inspection.path, inspection.visible_children_count, inspection.contents_count, inspection.navigation_children_count
+      ));
+    }
+  }
+
   // Step 4: persist artifact if requested
   if let Some(dir) = &inputs.artifact_dir {
     result.artifact = Some(save_probe_artifact(dir, &snapshot)?);
   }
 
   Ok(result)
+}
+
+#[cfg(target_os = "macos")]
+fn inspect_toolbar_nodes(session: &auv_driver_macos::MacosDriverSession, snapshot: &ObservedAxTreeSnapshot) -> Vec<AxNodeInspection> {
+  snapshot
+    .nodes
+    .iter()
+    .filter(|node| node.role.eq_ignore_ascii_case("AXToolbar"))
+    .filter_map(|node| session.accessibility().inspect_node_path(snapshot.pid, &node.path, &node.role).ok())
+    .collect()
 }
 
 #[cfg(target_os = "macos")]

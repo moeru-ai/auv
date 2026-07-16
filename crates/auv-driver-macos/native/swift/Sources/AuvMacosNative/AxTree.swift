@@ -339,6 +339,101 @@ func perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse
   )
 }
 
+func inspect_ax_node(request: NativeAxNodeInspectionRequest) -> NativeAxNodeInspectionResponse {
+  let pid = pid_t(request.pid)
+  let pathRaw = request.path.toString()
+  let expectedRole = request.expected_role.toString()
+
+  func inspectionError(_ message: String, _ recovery: String) -> NativeAxNodeInspectionResponse {
+    NativeAxNodeInspectionResponse(
+      role: "".intoRustString(),
+      subrole: "".intoRustString(),
+      title: "".intoRustString(),
+      available_actions: RustVec<RustString>(),
+      available_attributes: RustVec<RustString>(),
+      children_count: 0,
+      visible_children_count: 0,
+      contents_count: 0,
+      navigation_children_count: 0,
+      error_message: message.intoRustString(),
+      recovery_hint: recovery.intoRustString()
+    )
+  }
+
+  let segments = pathRaw.split(separator: ".").map { String($0) }
+  guard let firstSegment = segments.first, firstSegment == "0" else {
+    return inspectionError(
+      "AX inspection path must begin with 0; got \(pathRaw)",
+      "capture a fresh AX tree and retry the inspection"
+    )
+  }
+
+  let appElement = AXUIElementCreateApplication(pid)
+  let rootElement = axFirstWindow(appElement) ?? appElement
+
+  var current = rootElement
+  for (offset, segment) in segments.dropFirst().enumerated() {
+    guard let index = Int(segment) else {
+      return inspectionError(
+        "AX inspection path segment \(segment) at offset \(offset) is not an integer",
+        "capture a fresh AX tree and retry the inspection"
+      )
+    }
+    let children = axChildren(current)
+    if index < 0 || index >= children.count {
+      return inspectionError(
+        "AX inspection path index \(index) is out of range at offset \(offset); element has \(children.count) child(ren)",
+        "the AX tree likely shifted since observation; capture a fresh tree and retry"
+      )
+    }
+    current = children[index]
+  }
+
+  let actualRole = axStringAttribute(current, kAXRoleAttribute as String)
+  let actualSubrole = axStringAttribute(current, kAXSubroleAttribute as String)
+  let actualTitle = axStringAttribute(current, kAXTitleAttribute as String)
+
+  if !expectedRole.isEmpty && actualRole != expectedRole {
+    return inspectionError(
+      "AX inspection expected role \(expectedRole) at path \(pathRaw), got \(actualRole)",
+      "the AX tree likely shifted since observation; capture a fresh tree and retry"
+    )
+  }
+
+  var actionNames: CFArray?
+  let actionsResult = AXUIElementCopyActionNames(current, &actionNames)
+  let availableActions: [String] = actionsResult == .success ? (actionNames as? [String] ?? []) : []
+
+  var attributeNames: CFArray?
+  let attributesResult = AXUIElementCopyAttributeNames(current, &attributeNames)
+  let availableAttributes: [String] = attributesResult == .success ? (attributeNames as? [String] ?? []) : []
+
+  // NOTICE(apple-music-toolbar-reachability): diagnostic only. These four
+  // attributes are read independently of the `AXChildren`-only walk that
+  // `capture_ax_tree` performs, so a real machine result here can tell us
+  // whether a node's children are reachable through a different attribute
+  // (`AXVisibleChildren`, `AXContents`, `AXChildrenInNavigationOrder`) that
+  // the tree walk currently skips, before any traversal change is made.
+  let childrenCount = axChildren(current).count
+  let visibleChildrenCount = axElementArrayAttribute(current, "AXVisibleChildren").count
+  let contentsCount = axElementArrayAttribute(current, "AXContents").count
+  let navigationChildrenCount = axElementArrayAttribute(current, "AXChildrenInNavigationOrder").count
+
+  return NativeAxNodeInspectionResponse(
+    role: actualRole.intoRustString(),
+    subrole: actualSubrole.intoRustString(),
+    title: actualTitle.intoRustString(),
+    available_actions: nativeStringVec(availableActions),
+    available_attributes: nativeStringVec(availableAttributes),
+    children_count: Int64(childrenCount),
+    visible_children_count: Int64(visibleChildrenCount),
+    contents_count: Int64(contentsCount),
+    navigation_children_count: Int64(navigationChildrenCount),
+    error_message: nil,
+    recovery_hint: nil
+  )
+}
+
 func set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse {
   let pid = pid_t(request.pid)
   let pathRaw = request.path.toString()

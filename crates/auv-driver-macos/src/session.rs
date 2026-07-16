@@ -142,6 +142,15 @@ impl AccessibilityApi<'_> {
     let _ = self.session;
     crate::accessibility::verify_text(app, expected_text, expected_role)
   }
+
+  /// Inspects a previously observed AX node path across `AXChildren`,
+  /// `AXVisibleChildren`, `AXContents`, and `AXChildrenInNavigationOrder`, to
+  /// diagnose why a node captured with zero children in a snapshot may still
+  /// have reachable children through a different AX attribute.
+  pub fn inspect_node_path(&self, pid: i32, path: &str, expected_role: &str) -> DriverResult<crate::types::AxNodeInspection> {
+    let _ = self.session;
+    crate::accessibility::inspect_node_path(pid, path, expected_role)
+  }
 }
 
 impl DisplayApi<'_> {

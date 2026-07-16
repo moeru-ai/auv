@@ -44,6 +44,14 @@ pub fn capture_app_tree(app: &str, max_depth: i64, max_children: i64) -> DriverR
   Ok(capture.snapshot)
 }
 
+/// Inspects one previously observed AX node path for reachability across
+/// `AXChildren`, `AXVisibleChildren`, `AXContents`, and
+/// `AXChildrenInNavigationOrder`, independent of the `AXChildren`-only walk
+/// `capture_app_tree` performs.
+pub fn inspect_node_path(pid: i32, path: &str, expected_role: &str) -> DriverResult<crate::types::AxNodeInspection> {
+  crate::native::ax_tree::inspect_ax_node_path(pid, path, expected_role).map_err(backend)
+}
+
 pub fn focus_node_path(pid: i32, path: &str, expected_role: &str) -> DriverResult<InputActionResult> {
   let _ = crate::native::ax_tree::set_ax_focused_path(pid, path, expected_role).map_err(backend)?;
   Ok(InputActionResult {

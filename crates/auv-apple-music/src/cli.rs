@@ -346,6 +346,19 @@ fn run_probe_macos_cmd(args: ProbeMacosArgs) -> ExitCode {
         for node in &result.search_field_candidates {
           println!("  path={} role={} subrole={} title={:?}", node.path, node.role, node.subrole, node.title);
         }
+        println!("toolbars_inspected: {}", result.toolbar_inspections.len());
+        for inspection in &result.toolbar_inspections {
+          println!(
+            "  path={} role={} children={} visible={} contents={} navigation={} actions={:?}",
+            inspection.path,
+            inspection.role,
+            inspection.children_count,
+            inspection.visible_children_count,
+            inspection.contents_count,
+            inspection.navigation_children_count,
+            inspection.available_actions,
+          );
+        }
         if let Some(artifact) = &result.artifact {
           println!("artifact:         {artifact}");
         }

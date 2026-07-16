@@ -196,6 +196,26 @@ pub struct ObservedAxTreeSnapshot {
   pub nodes: Vec<ObservedAxNode>,
 }
 
+/// Diagnostic reachability report for one AX node, independent of the
+/// `AXChildren`-only traversal `capture_app_tree` performs. Answers whether a
+/// node with `children_count == 0` in a captured snapshot genuinely has no
+/// child elements, or whether its children are reachable through a different
+/// AX attribute (`AXVisibleChildren`, `AXContents`,
+/// `AXChildrenInNavigationOrder`) that the tree walk does not follow.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AxNodeInspection {
+  pub path: String,
+  pub role: String,
+  pub subrole: String,
+  pub title: String,
+  pub available_actions: Vec<String>,
+  pub available_attributes: Vec<String>,
+  pub children_count: usize,
+  pub visible_children_count: usize,
+  pub contents_count: usize,
+  pub navigation_children_count: usize,
+}
+
 pub fn compute_combined_bounds(displays: &[ObservedDisplay]) -> ObservedRect {
   let min_x = displays.iter().map(|display| display.bounds.x).min().unwrap_or(0);
   let min_y = displays.iter().map(|display| display.bounds.y).min().unwrap_or(0);

@@ -33,4 +33,4 @@ pub use descriptor::{MacosLegacyDescriptorMetadata, macos_legacy_descriptor_meta
 pub use driver::{MacosDriver, MacosDriverSession};
 pub use readiness::assess_readiness;
 pub use session::{AccessibilityApi, ClipboardApi, InputApi, PermissionApi, VisionApi, WindowApi};
-pub use types::{ObservedAxNode, ObservedAxTreeSnapshot};
+pub use types::{AxNodeInspection, ObservedAxNode, ObservedAxTreeSnapshot};
