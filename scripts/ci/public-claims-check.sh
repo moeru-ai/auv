@@ -27,7 +27,7 @@ for level in contract compiles tested live-validated supported; do
 done
 
 assert_contains "$matrix" '| App-local recorded operation: TextEdit document write | `auv invoke app.textedit.document.write` | `live-validated` | `not claimed` | `not claimed` |'
-assert_contains "$matrix" 'PR #106 resolved WindowServer discovery blocker via AX-only path. Live validation passed 2026-07-15. TextEdit serves as core contract regression baseline, not product showcase.'
+assert_contains "$matrix" 'Live closure was manually validated on one macOS environment (2026-07-15, `semantic_matched=true`). It is not an automated live regression gate, and `state_changed` remains `false` because no pre-write AX observation is recorded. Not yet `supported`.'
 assert_contains "$matrix" '| JS/TS and Python bindings | none | `not claimed` | `not claimed` | `not claimed` |'
 
 if grep -nE '[✅❌⚠️💡]' "$matrix"; then
