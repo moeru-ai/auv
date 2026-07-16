@@ -181,7 +181,6 @@ mod tests {
   #[cfg(target_os = "macos")]
   #[test]
   fn is_search_field_candidate_matches_role() {
-    use auv_driver_macos::ObservedAxNode;
     let node = ObservedAxNode {
       depth: 2,
       path: "0.1.2".to_string(),
@@ -208,7 +207,6 @@ mod tests {
   #[cfg(target_os = "macos")]
   #[test]
   fn is_search_field_candidate_matches_placeholder() {
-    use auv_driver_macos::ObservedAxNode;
     let node = ObservedAxNode {
       depth: 2,
       path: "0.1.2".to_string(),
