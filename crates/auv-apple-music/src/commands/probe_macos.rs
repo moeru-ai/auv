@@ -36,7 +36,7 @@ impl Default for ProbeInputs {
   }
 }
 
-/// A discovered AX node candidate (search field or result row).
+/// A discovered search-field AX node candidate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiscoveredNode {
   pub path: String,
