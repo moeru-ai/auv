@@ -1,4 +1,5 @@
 mod accessibility;
+mod application;
 mod descriptor;
 mod driver;
 mod readiness;
@@ -24,6 +25,7 @@ pub mod types;
 pub mod native;
 
 pub use accessibility::{AxFocusObservation, AxTextObservation, DEFAULT_AX_MAX_CHILDREN, DEFAULT_AX_MAX_DEPTH};
+pub use application::ApplicationControl;
 pub use auv_driver_common::vision::{OcrMatch, OcrMatches};
 pub use descriptor::{MacosDriverDescriptor, macos_driver_descriptor};
 #[doc(hidden)]
