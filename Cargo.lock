@@ -339,6 +339,7 @@ name = "auv-apple-music"
 version = "0.0.1"
 dependencies = [
  "auv-driver",
+ "auv-driver-macos",
  "auv-driver-windows",
  "clap",
  "serde",
