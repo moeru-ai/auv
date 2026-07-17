@@ -359,7 +359,8 @@ mod tests {
       .expect("invoke schema should describe command_id");
     let command_ids =
       command_id_schema.get("enum").and_then(|value| value.as_array()).expect("command_id schema should enumerate registry command ids");
-    assert!(command_ids.iter().any(|id| id == "fixture.observe"));
+    assert!(!command_ids.iter().any(|id| id == "fixture.observe"));
+    assert!(command_ids.iter().any(|id| id == "scan.coverage"));
     assert!(command_ids.iter().any(|id| id == "input.pressButton"));
     assert!(!command_ids.iter().any(|id| id == "steam.library.list.v0"));
     assert!(!command_ids.iter().any(|id| id == "debug.captureWindow"));
@@ -399,8 +400,8 @@ mod tests {
         name: "invoke".into(),
         arguments: Some(
           serde_json::json!({
-            "command_id": "fixture.observe",
-            "dry_run": false,
+            "command_id": "scan.coverage",
+            "dry_run": true,
             "inputs": {},
             "target": {},
             "inspect": {
@@ -418,7 +419,7 @@ mod tests {
     )
     .expect("invoke text should decode as json");
     let run_id = invoke_json.get("run_id").and_then(|value| value.as_str()).expect("run_id should exist").to_string();
-    assert_eq!(invoke_json.get("output_summary").and_then(|value| value.as_str()), Some("fixture observed"));
+    assert_eq!(invoke_json.get("output_summary").and_then(|value| value.as_str()), Some("scan.coverage dry-run"));
     assert_eq!(invoke_json.get("status").and_then(|value| value.as_str()), Some("completed"));
     assert_eq!(invoke_json.get("signals"), Some(&Value::Object(Default::default())));
     assert_eq!(invoke_json.get("artifacts").and_then(|value| value.as_array()).map(Vec::len), Some(0));
@@ -442,9 +443,9 @@ mod tests {
     )
     .expect("inspect text should decode as json");
     let inspect_text = inspect_json.get("text").and_then(|value| value.as_str()).expect("inspect text should exist");
-    assert!(inspect_text.contains("Summary: fixture observed"));
+    assert!(inspect_text.contains("Summary: scan.coverage dry-run"));
     assert!(inspect_text.contains("name=auv.command.invoke"));
-    assert!(inspect_text.contains("resolved fixture.observe"));
+    assert!(inspect_text.contains("resolved scan.coverage"));
 
     let failed_invoke = client
       .call_tool(CallToolRequestParam {

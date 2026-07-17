@@ -49,12 +49,12 @@ async fn create_session(client: &mut SessionServiceClient<Channel>) -> proto::Se
     .expect("session ref")
 }
 
-async fn invoke_fixture_observe(client: &mut SessionServiceClient<Channel>, session: proto::SessionRef) -> proto::InvokeResponse {
+async fn invoke_sample_command(client: &mut SessionServiceClient<Channel>, session: proto::SessionRef) -> proto::InvokeResponse {
   client
     .invoke(proto::InvokeRequest {
       session: Some(session),
-      command_id: "fixture.observe".to_string(),
-      json_payload: Vec::new(),
+      command_id: "scan.coverage".to_string(),
+      json_payload: br#"{"dry_run":true}"#.to_vec(),
     })
     .await
     .expect("invoke")
@@ -100,7 +100,7 @@ async fn session_api_subprocess_smoke_invoke_then_get_operation_round_trips() {
   let session = create_session(&mut client).await;
   assert!(!session.session_id.is_empty());
 
-  let invoke_response = invoke_fixture_observe(&mut client, session).await;
+  let invoke_response = invoke_sample_command(&mut client, session).await;
   assert_eq!(invoke_response.status, "completed");
   let operation = invoke_response.operation.expect("operation ref");
 
@@ -113,8 +113,8 @@ async fn session_api_subprocess_smoke_invoke_then_get_operation_round_trips() {
     .into_inner();
 
   assert_eq!(response.status, "completed");
-  assert_eq!(response.output_summary, "fixture observed");
-  assert_eq!(response.operation.expect("operation ref").operation_id, "fixture.observe");
+  assert_eq!(response.output_summary, "scan.coverage dry-run");
+  assert_eq!(response.operation.expect("operation ref").operation_id, "scan.coverage");
   assert!(response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
 
   child.kill().await.expect("kill session serve child");

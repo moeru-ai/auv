@@ -199,6 +199,10 @@ mod tests {
   use crate::api::session_service::summary_store::OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT;
   use crate::api::session_service::test_fixtures::unique_temp_dir;
 
+  const INVOKE_SAMPLE_COMMAND_ID: &str = "scan.coverage";
+  const INVOKE_SAMPLE_PAYLOAD: &[u8] = br#"{"dry_run":true}"#;
+  const INVOKE_SAMPLE_OUTPUT_SUMMARY: &str = "scan.coverage dry-run";
+
   static DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
   fn handler() -> SessionApiHandler {
@@ -238,7 +242,7 @@ mod tests {
         session: Some(proto::SessionRef {
           session_id: "ghost".to_string(),
         }),
-        command_id: "fixture.observe".to_string(),
+        command_id: INVOKE_SAMPLE_COMMAND_ID.to_string(),
         json_payload: Vec::new(),
       })
       .expect_err("unknown session should fail");
@@ -246,7 +250,7 @@ mod tests {
   }
 
   #[test]
-  fn invoke_runs_fixture_command_for_known_session() {
+  fn invoke_runs_registry_command_for_known_session() {
     let handler = handler();
     let session = handler
       .create_session(proto::CreateSessionRequest {
@@ -258,14 +262,14 @@ mod tests {
     let response = handler
       .invoke(proto::InvokeRequest {
         session: Some(session),
-        command_id: "fixture.observe".to_string(),
-        json_payload: Vec::new(),
+        command_id: INVOKE_SAMPLE_COMMAND_ID.to_string(),
+        json_payload: INVOKE_SAMPLE_PAYLOAD.to_vec(),
       })
-      .expect("invoke fixture.observe");
+      .expect("invoke sample command");
     assert_eq!(response.status, "completed");
     let operation = response.operation.expect("operation ref");
     assert!(!operation.run_id.is_empty());
-    assert_eq!(operation.operation_id, "fixture.observe");
+    assert_eq!(operation.operation_id, INVOKE_SAMPLE_COMMAND_ID);
   }
 
   #[test]
@@ -281,10 +285,10 @@ mod tests {
     let invoked = handler
       .invoke(proto::InvokeRequest {
         session: Some(session),
-        command_id: "fixture.observe".to_string(),
-        json_payload: Vec::new(),
+        command_id: INVOKE_SAMPLE_COMMAND_ID.to_string(),
+        json_payload: INVOKE_SAMPLE_PAYLOAD.to_vec(),
       })
-      .expect("invoke fixture.observe");
+      .expect("invoke sample command");
     let run_id = invoked.operation.expect("operation ref").run_id;
 
     let response = handler
@@ -297,10 +301,10 @@ mod tests {
       .expect("get_operation should succeed after invoke");
 
     assert_eq!(response.status, "completed");
-    assert_eq!(response.output_summary, "fixture observed");
+    assert_eq!(response.output_summary, INVOKE_SAMPLE_OUTPUT_SUMMARY);
     let operation_ref = response.operation.expect("operation ref");
     assert_eq!(operation_ref.run_id, run_id);
-    assert_eq!(operation_ref.operation_id, "fixture.observe");
+    assert_eq!(operation_ref.operation_id, INVOKE_SAMPLE_COMMAND_ID);
     assert!(response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
   }
 
@@ -345,10 +349,10 @@ mod tests {
     let invoked = handler1
       .invoke(proto::InvokeRequest {
         session: Some(session),
-        command_id: "fixture.observe".to_string(),
-        json_payload: Vec::new(),
+        command_id: INVOKE_SAMPLE_COMMAND_ID.to_string(),
+        json_payload: INVOKE_SAMPLE_PAYLOAD.to_vec(),
       })
-      .expect("invoke fixture.observe");
+      .expect("invoke sample command");
     let run_id = invoked.operation.expect("operation ref").run_id;
 
     let handler2 = SessionApiHandler::new(root.clone());
@@ -364,7 +368,7 @@ mod tests {
       .expect("get_operation should succeed after restart");
 
     assert_eq!(response.status, "completed");
-    assert_eq!(response.output_summary, "fixture observed");
+    assert_eq!(response.output_summary, INVOKE_SAMPLE_OUTPUT_SUMMARY);
     assert_eq!(response.operation.expect("operation ref").run_id, run_id);
     assert!(response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
 
@@ -484,15 +488,15 @@ mod tests {
       let result = auv_cli_invoke::invoke_recorded_with_session(
         &recording,
         &default_registry(),
-        mapper::decode_invoke_payload("fixture.observe".to_string(), &Vec::new()).expect("decode"),
+        mapper::decode_invoke_payload(INVOKE_SAMPLE_COMMAND_ID.to_string(), INVOKE_SAMPLE_PAYLOAD).expect("decode"),
         SessionId::new(session.session_id.clone()),
       )
-      .expect("invoke fixture.observe");
+      .expect("invoke sample command");
       let run_dir = store.run_dir(result.run_id.as_str()).expect("run dir");
       let mut permissions = std::fs::metadata(&run_dir).expect("run dir metadata").permissions();
       permissions.set_mode(0o500);
       std::fs::set_permissions(&run_dir, permissions).expect("run dir should be read-only");
-      let response = handler.finish_invoke_response("fixture.observe", &result, &recording);
+      let response = handler.finish_invoke_response(INVOKE_SAMPLE_COMMAND_ID, &result, &recording);
       assert!(response.known_limits.iter().any(|limit| limit == OPERATION_SUMMARY_PERSIST_FAILED_KNOWN_LIMIT));
       assert!(response.known_limits.iter().any(|limit| limit == OPERATION_RESULT_PERSIST_FAILED_KNOWN_LIMIT));
       assert!(handler.summaries.lock().expect("summary cache mutex poisoned").get(result.run_id.as_str()).is_none());

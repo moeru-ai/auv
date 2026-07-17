@@ -178,8 +178,7 @@ fn normalize_for_clap(tokens: &[String]) -> Result<NormalizedInvokeArguments, St
 #[cfg(test)]
 mod tests {
   use super::{
-    CommandGroup, InvokeNamespace, InvokeOutputOptions, InvokeRegistry, default_registry, invoke_cli_command, render_command_help,
-    render_help_index,
+    CommandGroup, InvokeOutputOptions, InvokeRegistry, default_registry, invoke_cli_command, render_command_help, render_help_index,
   };
 
   #[test]
@@ -202,6 +201,8 @@ mod tests {
     assert!(help.contains("SCAN\n"));
     assert!(help.contains("  scan.frame"));
     assert!(help.contains("  scan.coverage"));
+    assert!(!help.contains("FIXTURE\n"));
+    assert!(!help.contains("fixture.observe"));
     assert!(!help.contains("STEAM\n"));
     assert!(!help.contains("  steam.library.list.v0"));
     assert!(!help.contains("debug."));
@@ -211,37 +212,37 @@ mod tests {
 
   #[test]
   fn registry_supports_nested_command_groups() {
-    let fixture = default_registry().resolve("fixture.observe").expect("fixture command should exist").clone();
+    let scan_frame = default_registry().resolve("scan.frame").expect("scan.frame command should exist").clone();
     let registry =
-      InvokeRegistry::from_groups(vec![CommandGroup::new("root", "ROOT").group(CommandGroup::new("child", "CHILD").command(fixture))]);
+      InvokeRegistry::from_groups(vec![CommandGroup::new("root", "ROOT").group(CommandGroup::new("child", "CHILD").command(scan_frame))]);
 
-    assert!(registry.resolve("fixture.observe").is_some());
+    assert!(registry.resolve("scan.frame").is_some());
     let help = render_help_index(&registry);
     assert!(help.contains("ROOT\n"));
     assert!(help.contains("  CHILD\n"));
-    assert!(help.contains("    fixture.observe"));
+    assert!(help.contains("    scan.frame"));
   }
 
   #[test]
-  #[should_panic(expected = "duplicate invoke command id registered: fixture.observe")]
+  #[should_panic(expected = "duplicate invoke command id registered: scan.frame")]
   fn registry_rejects_duplicate_command_ids() {
-    let fixture = default_registry().resolve("fixture.observe").expect("fixture command should exist").clone();
+    let scan_frame = default_registry().resolve("scan.frame").expect("scan.frame command should exist").clone();
 
     let _registry = InvokeRegistry::from_groups(vec![
-      CommandGroup::new("one", "ONE").command(fixture.clone()),
-      CommandGroup::new("two", "TWO").command(fixture),
+      CommandGroup::new("one", "ONE").command(scan_frame.clone()),
+      CommandGroup::new("two", "TWO").command(scan_frame),
     ]);
   }
 
   #[test]
   fn command_metadata_preserves_invoke_surface() {
     let registry = default_registry();
-    let command = registry.resolve("fixture.observe").expect("fixture.observe should be registered");
+    let command = registry.resolve("scan.coverage").expect("scan.coverage should be registered");
 
-    assert_eq!(command.id, "fixture.observe");
-    assert_eq!(command.namespace, InvokeNamespace::Fixture);
-    assert_eq!(command.summary, "Emit a deterministic observation result without touching the real UI.");
-    assert_eq!(command.args, crate::arg::NO_ARGS);
+    assert_eq!(command.id, "scan.coverage");
+    assert_eq!(command.namespace.as_str(), "scan");
+    assert_eq!(command.summary, "Produce a scan-coverage-v0 artifact from a coverage scenario fixture and stage it into the run.");
+    assert_eq!(command.args, crate::arg::SCAN_COVERAGE_ARGS);
   }
 
   #[test]
@@ -453,13 +454,13 @@ mod tests {
   #[test]
   fn command_help_renders_metadata_only_sections() {
     let registry = default_registry();
-    let command = registry.resolve("fixture.observe").expect("fixture.observe should be registered");
+    let command = registry.resolve("mediaControl.nowPlaying").expect("mediaControl.nowPlaying should be registered");
 
     let help = render_command_help(command);
 
-    assert!(help.contains("COMMAND\n  fixture.observe"));
-    assert!(help.contains("USAGE\n  auv invoke fixture.observe"));
-    assert!(help.contains("SUMMARY\n  Emit a deterministic observation result"));
+    assert!(help.contains("COMMAND\n  mediaControl.nowPlaying"));
+    assert!(help.contains("USAGE\n  auv invoke mediaControl.nowPlaying"));
+    assert!(help.contains("SUMMARY\n  Read structured now-playing media state"));
     assert!(help.contains("OPTIONS\n  --json"));
     assert!(help.contains("--detail"));
     assert!(help.contains("--wide"));
@@ -473,11 +474,11 @@ mod tests {
 
   #[test]
   fn help_index_skips_empty_nested_groups() {
-    let fixture = default_registry().resolve("fixture.observe").expect("fixture command should exist").clone();
+    let scan_frame = default_registry().resolve("scan.frame").expect("scan.frame command should exist").clone();
     let registry = InvokeRegistry::from_groups(vec![
       CommandGroup::new("root", "ROOT")
         .group(CommandGroup::new("empty", "EMPTY"))
-        .group(CommandGroup::new("child", "CHILD").command(fixture)),
+        .group(CommandGroup::new("child", "CHILD").command(scan_frame)),
     ]);
 
     let help = render_help_index(&registry);
@@ -557,12 +558,12 @@ mod tests {
       "mediaControl.togglePlayPause",
       "mediaControl.next",
       "mediaControl.previous",
-      "fixture.observe",
       "scan.frame",
       "scan.coverage",
     ] {
       assert!(registry.resolve(id).is_some(), "{id} should be registered");
     }
+    assert!(registry.resolve("fixture.observe").is_none());
     assert!(registry.resolve("steam.library.list.v0").is_none());
   }
 }
