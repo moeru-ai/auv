@@ -10,7 +10,7 @@ export const vacantControlBoundaryRule = defineRule({
         context: ctx,
         instructions: vacantControlBoundaryInstructions,
         operation: "vacant-control-boundary-review",
-        prompt: vacantControlBoundaryPrompt,
+        prompt: `${vacantControlBoundaryPrompt}\n\nFile path:\n${target.file.path}`,
         source: ctx.src.getText(target),
       });
 

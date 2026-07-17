@@ -14,6 +14,7 @@ export default defineConfig([
     },
     rules: {
       "rust/no-vacant-control-boundary": "warn",
+      "rust/no-private-schema-toolkit": "warn",
       "rust/prefer-established-foundation": "warn",
     },
   },

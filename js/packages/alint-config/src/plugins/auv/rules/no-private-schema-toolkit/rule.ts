@@ -1,16 +1,16 @@
 import { defineRule } from "@alint-js/plugin";
 
 import { judgeSource } from "../../agents/judge";
-import { establishedFoundationInstructions, establishedFoundationPrompt } from "./prompt";
+import { privateSchemaToolkitInstructions, privateSchemaToolkitPrompt } from "./prompt";
 
-export const establishedFoundationRule = defineRule({
+export const privateSchemaToolkitRule = defineRule({
   create: ctx => ({
     async onTargetFile(target) {
       const findings = await judgeSource({
         context: ctx,
-        instructions: establishedFoundationInstructions,
-        operation: "established-foundation-review",
-        prompt: `${establishedFoundationPrompt}\n\nFile path:\n${target.file.path}`,
+        instructions: privateSchemaToolkitInstructions,
+        operation: "private-schema-toolkit-review",
+        prompt: `${privateSchemaToolkitPrompt}\n\nFile path:\n${target.file.path}`,
         source: ctx.src.getText(target),
       });
 

@@ -31,11 +31,17 @@ Common qualifying shapes include:
 Do not report functions that add a real boundary, including:
 - framework, macro, ABI, trait, or callback adaptation where the signature itself is the boundary and the body owns the behavior directly
 - stable public facade that intentionally hides volatile internals
+- public ergonomic aliases, constructor synonyms, builder vocabulary, or DSL-style names that preserve a caller-facing API contract even when they delegate to a canonical constructor
+- namespace accessors that create typed sub-API handles or capability views, such as session methods returning DisplayApi, WindowApi, InputApi, or similar objects
+- binary, example, test, benchmark, or build-script entrypoints whose required role is to adapt the process/tooling entry signature to a library or platform-specific implementation
+- cross-module, cross-crate, or platform facade functions that intentionally preserve a stable public seam over native, generated, or conditionally compiled implementation details
 - meaningful validation or normalization that callers should not duplicate
 - resource acquisition and cleanup scope
 - error conversion that defines caller-visible semantics
 - tracing, metrics, retry, cache, permission, transaction, or lifecycle ownership
 - test helpers or fixture builders whose value is local readability
+
+Treat the file path as context. If the path indicates an example, test, benchmark, build.rs, binary wrapper, platform adapter, or public API facade module, require stronger evidence before reporting. Do not report merely because such a boundary is thin.
 
 When suggesting a fix, prefer either merging the delegated body into the caller-facing function or moving the delegated behavior behind a boundary that carries real policy. If uncertain, return no finding.
 `.trim();
