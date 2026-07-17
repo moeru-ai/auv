@@ -1028,11 +1028,9 @@ async fn dispatch(command: CliCommand) -> Result<(), String> {
     } => {
       let recording = build_recording_for_inspect(&project_root, &inspect)?;
       let registry = crate::product_registry();
-      let result = crate::invoke_recorded(&recording, &registry, request)?;
-      auv_cli_invoke::render_invoke_result(&result, output)?;
-
-      if result.status == auv_cli_invoke::RunStatus::Failed {
-        process::exit(1);
+      let outcome = crate::invoke_recorded_and_render(&recording, &registry, request, output)?;
+      if outcome.exit_code != 0 {
+        process::exit(outcome.exit_code);
       }
     }
     CliCommand::Inspect { run_id, store_root } => {

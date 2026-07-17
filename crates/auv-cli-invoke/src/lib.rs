@@ -10,10 +10,11 @@ use clap::{Arg, ArgAction, Command};
 extern crate self as auv_cli_invoke;
 
 pub mod arg;
+pub(crate) mod artifact;
 pub mod command;
 pub mod commands;
 pub mod help;
-pub mod model;
+pub mod models;
 pub mod recorded;
 pub mod registry;
 pub mod render;
@@ -23,16 +24,17 @@ pub use arg::ArgSpec;
 pub use auv_cli_invoke_macros::invoke_command;
 pub use command::{CommandGroup, CommandNode, InvokeCommand, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeNamespace};
 pub use help::{render_command_help, render_help_index};
-pub use model::{
+pub use models::{
   ExecutionTarget, InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportSection, InvokeReportTable, InvokeReportTableRow,
   InvokeRequest, InvokeResult, RunStatus,
 };
+pub(crate) use models::{InvokeReportLabels, InvokeReportValue, InvokeSignalValue, OptionalReportText};
 pub use recorded::{
   InvokeFinalizeHook, invoke_recorded, invoke_recorded_in_span, invoke_recorded_with_finalize, invoke_recorded_with_session,
   invoke_resolved_recorded_in_span,
 };
 pub use registry::{InvokeRegistry, default_registry};
-pub use render::{render_invoke_result, render_to_string, write_rendered};
+pub use render::{InvokeCliOutcome, render_recorded_invoke};
 pub use summary::{OperationSummary, OperationSummaryCache, OperationSummaryRecord, OperationSummarySource};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

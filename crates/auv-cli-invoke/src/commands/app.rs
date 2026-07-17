@@ -16,10 +16,20 @@ pub fn group() -> CommandGroup {
   args = NO_ARGS,
 )]
 fn probe_permissions(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  if input.dry_run {
-    return Ok(InvokeCommandOutput::new("dry run: app.probePermissions would probe macOS permissions"));
+  #[cfg(target_os = "macos")]
+  {
+    if input.dry_run {
+      return Ok(InvokeCommandOutput::new("dry run: app.probePermissions would probe macOS permissions"));
+    }
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let permissions = session.permission().probe().map_err(|error| error.to_string())?;
+    Ok(permission_probe_output(&permissions))
   }
-  probe_permissions_impl()
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = input;
+    Err("app.probePermissions is only available on macOS".to_string())
+  }
 }
 
 #[invoke_command(
@@ -35,13 +45,6 @@ fn activate_app(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   Err("app.activate requires a typed app activation API in auv-driver-macos".to_string())
 }
 
-#[cfg(target_os = "macos")]
-fn probe_permissions_impl() -> InvokeCommandResult {
-  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-  let permissions = session.permission().probe().map_err(|error| error.to_string())?;
-  Ok(permission_probe_output(&permissions))
-}
-
 fn permission_probe_output(permissions: &auv_driver::PermissionProbe) -> InvokeCommandOutput {
   let mut output = InvokeCommandOutput::new("macOS permissions probed");
   output.backend = Some("auv-driver-macos.permission".to_string());
@@ -55,11 +58,6 @@ fn permission_probe_output(permissions: &auv_driver::PermissionProbe) -> InvokeC
     .known_limits
     .push("app.probePermissions records current permission status only; it does not verify an application workflow.".to_string());
   output
-}
-
-#[cfg(not(target_os = "macos"))]
-fn probe_permissions_impl() -> InvokeCommandResult {
-  Err("app.probePermissions is only available on macOS".to_string())
 }
 
 fn permission_report(permissions: &auv_driver::PermissionProbe) -> InvokeReport {
@@ -78,10 +76,7 @@ fn permission_report(permissions: &auv_driver::PermissionProbe) -> InvokeReport 
 }
 
 fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
-  InvokeReportField {
-    label: label.to_string(),
-    value: value.into(),
-  }
+  InvokeReportField::new(label, value)
 }
 
 #[cfg(test)]

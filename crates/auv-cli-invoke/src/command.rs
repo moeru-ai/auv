@@ -14,6 +14,25 @@ pub struct InvokeCommandInput<'a> {
   pub dry_run: bool,
 }
 
+impl<'a> InvokeCommandInput<'a> {
+  pub fn required_input(&self, name: &str) -> Result<&'a str, String> {
+    self
+      .inputs
+      .get(name)
+      .map(String::as_str)
+      .filter(|value| !value.trim().is_empty())
+      .ok_or_else(|| format!("{} requires --{name}", self.command_id))
+  }
+
+  pub fn required_f64(&self, name: &str) -> Result<f64, String> {
+    self.required_input(name)?.parse::<f64>().map_err(|error| format!("{} received invalid --{name}: {error}", self.command_id))
+  }
+
+  pub fn target_or_input_target(&self) -> Option<&'a str> {
+    self.target_application_id.or_else(|| self.inputs.get("target").map(String::as_str)).filter(|value| !value.trim().is_empty())
+  }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvokeCommandOutput {
   pub summary: String,
