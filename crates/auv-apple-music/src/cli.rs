@@ -339,8 +339,6 @@ fn run_probe_macos_cmd(args: ProbeMacosArgs) -> ExitCode {
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
       } else {
         println!("bundle_id:        {}", result.bundle_id);
-        println!("activated:        {}", result.activated);
-        println!("ax_captured:      {}", result.ax_snapshot_captured);
         println!("node_count:       {}", result.node_count);
         println!("search_fields:    {}", result.search_field_candidates.len());
         for node in &result.search_field_candidates {
@@ -348,14 +346,15 @@ fn run_probe_macos_cmd(args: ProbeMacosArgs) -> ExitCode {
         }
         println!("toolbars_inspected: {}", result.toolbar_inspections.len());
         for inspection in &result.toolbar_inspections {
+          let counts = &inspection.child_counts;
           println!(
             "  path={} role={} children={} visible={} contents={} navigation={} actions={:?}",
             inspection.path,
             inspection.role,
-            inspection.children_count,
-            inspection.visible_children_count,
-            inspection.contents_count,
-            inspection.navigation_children_count,
+            counts.children_count,
+            counts.visible_children_count,
+            counts.contents_count,
+            counts.navigation_children_count,
             inspection.available_actions,
           );
         }

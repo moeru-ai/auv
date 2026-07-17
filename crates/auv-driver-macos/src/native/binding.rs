@@ -197,8 +197,6 @@ pub(crate) mod ffi {
   #[swift_bridge(swift_repr = "struct")]
   struct NativeAxNodeInspectionResponse {
     role: String,
-    subrole: String,
-    title: String,
     available_actions: Vec<String>,
     available_attributes: Vec<String>,
     children_count: i64,

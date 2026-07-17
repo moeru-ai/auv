@@ -5,7 +5,7 @@ use super::binding::ffi::{
   NativeAxNodeInspectionResponse, NativeAxTreeRequest, NativeAxTreeResponse, capture_ax_tree, inspect_ax_node, perform_ax_action,
   set_ax_focused,
 };
-use super::types::{AuvResult, AxNodeInspection, ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
+use super::types::{AuvResult, ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeAxTreeCapture {
@@ -31,6 +31,19 @@ pub struct NativeAxFocus {
   pub identifier: String,
   pub placeholder: String,
   pub bounds: ObservedRect,
+}
+
+/// Temporary native diagnostic payload for the Apple Music AX probe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AxNodeInspection {
+  pub path: String,
+  pub role: String,
+  pub available_actions: Vec<String>,
+  pub available_attributes: Vec<String>,
+  pub children_count: usize,
+  pub visible_children_count: usize,
+  pub contents_count: usize,
+  pub navigation_children_count: usize,
 }
 
 #[cfg(target_os = "macos")]
@@ -184,8 +197,6 @@ pub fn decode_ax_node_inspection_response(path: String, response: DecodedAxNodeI
   Ok(AxNodeInspection {
     path,
     role: response.role,
-    subrole: response.subrole,
-    title: response.title,
     available_actions: response.available_actions,
     available_attributes: response.available_attributes,
     children_count: non_negative_count(response.children_count),
@@ -294,8 +305,6 @@ pub struct DecodedAxActionResponse {
 #[derive(Clone, Debug)]
 pub struct DecodedAxNodeInspectionResponse {
   pub role: String,
-  pub subrole: String,
-  pub title: String,
   pub available_actions: Vec<String>,
   pub available_attributes: Vec<String>,
   pub children_count: i64,
@@ -372,8 +381,6 @@ impl From<NativeAxNodeInspectionResponse> for DecodedAxNodeInspectionResponse {
   fn from(value: NativeAxNodeInspectionResponse) -> Self {
     Self {
       role: value.role,
-      subrole: value.subrole,
-      title: value.title,
       available_actions: value.available_actions,
       available_attributes: value.available_attributes,
       children_count: value.children_count,
@@ -515,8 +522,6 @@ mod tests {
   fn base_inspection_response() -> DecodedAxNodeInspectionResponse {
     DecodedAxNodeInspectionResponse {
       role: "AXToolbar".to_string(),
-      subrole: "".to_string(),
-      title: "".to_string(),
       available_actions: vec![],
       available_attributes: vec!["AXRole".to_string(), "AXChildren".to_string()],
       children_count: 0,
