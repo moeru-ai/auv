@@ -1,49 +1,48 @@
-use crate::{InvokeReport, InvokeReportField, InvokeReportTable, InvokeReportTableRow};
+use crate::{InvokeReport, InvokeReportField, InvokeReportTable, InvokeReportTableRow, InvokeReportValue};
 
 pub(super) fn match_report(matches: &[auv_driver::OcrMatch], selected_index: Option<usize>) -> InvokeReport {
   let has_selection = selected_index.is_some();
+  let columns = if has_selection {
+    &["SEL", "IDX", "TEXT", "POINT", "BOUNDS"][..]
+  } else {
+    &["IDX", "TEXT", "POINT", "BOUNDS"][..]
+  };
+  let wide_columns = if has_selection {
+    &["SEL", "IDX", "TEXT", "POINT", "BOUNDS", "CONF"][..]
+  } else {
+    &["IDX", "TEXT", "POINT", "BOUNDS", "CONF"][..]
+  };
+  let display_max_chars = if has_selection {
+    vec![None, None, Some(48), None, None]
+  } else {
+    vec![None, Some(48), None, None]
+  };
+  let wide_display_max_chars = if has_selection {
+    vec![None, None, Some(48), None, None, None]
+  } else {
+    vec![None, Some(48), None, None, None]
+  };
+
   InvokeReport {
-    fields: vec![report_field(
+    fields: vec![InvokeReportField::new(
       "Result",
       format!("{} text match(es)", matches.len()),
     )],
-    tables: vec![
-      InvokeReportTable::new(columns(has_selection, false), rows(matches, selected_index, false))
-        .with_display_max_chars(display_max_chars(has_selection, false)),
-    ],
-    wide_tables: vec![
-      InvokeReportTable::new(columns(has_selection, true), rows(matches, selected_index, true))
-        .with_display_max_chars(display_max_chars(has_selection, true)),
-    ],
+    tables: vec![InvokeReportTable::from_columns_with_display_max_chars(
+      columns,
+      match_rows(matches, selected_index, false),
+      display_max_chars,
+    )],
+    wide_tables: vec![InvokeReportTable::from_columns_with_display_max_chars(
+      wide_columns,
+      match_rows(matches, selected_index, true),
+      wide_display_max_chars,
+    )],
     sections: Vec::new(),
   }
 }
 
-fn columns(has_selection: bool, wide: bool) -> Vec<String> {
-  let mut columns = Vec::new();
-  if has_selection {
-    columns.push("SEL".to_string());
-  }
-  columns.extend(["IDX", "TEXT", "POINT", "BOUNDS"].map(str::to_string));
-  if wide {
-    columns.push("CONF".to_string());
-  }
-  columns
-}
-
-fn display_max_chars(has_selection: bool, wide: bool) -> Vec<Option<usize>> {
-  let mut max_chars = Vec::new();
-  if has_selection {
-    max_chars.push(None);
-  }
-  max_chars.extend([None, Some(48), None, None]);
-  if wide {
-    max_chars.push(None);
-  }
-  max_chars
-}
-
-fn rows(matches: &[auv_driver::OcrMatch], selected_index: Option<usize>, wide: bool) -> Vec<InvokeReportTableRow> {
+fn match_rows(matches: &[auv_driver::OcrMatch], selected_index: Option<usize>, wide: bool) -> Vec<crate::InvokeReportTableRow> {
   matches
     .iter()
     .enumerate()
@@ -55,30 +54,15 @@ fn rows(matches: &[auv_driver::OcrMatch], selected_index: Option<usize>, wide: b
       cells.extend([
         index.to_string(),
         matched.text.clone(),
-        format_point(matched.action_point()),
-        format_rect(matched.bounds),
+        matched.action_point().report_value(),
+        matched.bounds.report_value(),
       ]);
       if wide {
         cells.push(format!("{:.3}", matched.confidence));
       }
-      InvokeReportTableRow { cells }
+      InvokeReportTableRow::from_cells(cells)
     })
     .collect()
-}
-
-fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
-  InvokeReportField {
-    label: label.to_string(),
-    value: value.into(),
-  }
-}
-
-fn format_point(point: auv_driver::Point) -> String {
-  format!("{:.0},{:.0}", point.x, point.y)
-}
-
-fn format_rect(rect: auv_driver::Rect) -> String {
-  format!("{:.0},{:.0} {:.0}x{:.0}", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
 }
 
 #[cfg(test)]

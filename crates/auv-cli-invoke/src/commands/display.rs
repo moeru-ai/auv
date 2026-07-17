@@ -1,11 +1,12 @@
 use crate::{
-  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
+  CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportTable,
+  InvokeReportTableRow, InvokeReportValue, InvokeSignalValue,
   arg::{NO_ARGS, TARGET_ARGS},
+  artifact::invoke_artifact_path,
   invoke_command,
 };
-use crate::{InvokeReport, InvokeReportField, InvokeReportTable, InvokeReportTableRow};
 #[cfg(target_os = "macos")]
-use auv_tracing_driver::{ProducedArtifact, now_millis};
+use auv_tracing_driver::ProducedArtifact;
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("display", "DISPLAY")
@@ -22,10 +23,54 @@ pub fn group() -> CommandGroup {
   args = TARGET_ARGS,
 )]
 fn capture_display(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  if input.dry_run {
-    return Ok(InvokeCommandOutput::new("dry run: display.capture would capture the primary display"));
+  #[cfg(target_os = "macos")]
+  {
+    if input.dry_run {
+      return Ok(InvokeCommandOutput::new("dry run: display.capture would capture the primary display"));
+    }
+    use auv_driver::CaptureOptions;
+
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let result = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
+    let mut output = InvokeCommandOutput::new(format!(
+      "Captured {} through {} ({}x{} pixels).",
+      display_label(&result.display),
+      result.capture.backend,
+      result.capture.image.width(),
+      result.capture.image.height()
+    ));
+    output.backend = Some(result.capture.backend.clone());
+    insert_display_signals(&mut output, "display", &result.display);
+    output.signals.insert("capture.pixel_width".to_string(), result.capture.image.width().to_string());
+    output.signals.insert("capture.pixel_height".to_string(), result.capture.image.height().to_string());
+    output.signals.insert("capture.bounds".to_string(), result.capture.bounds.signal_value());
+    output.signals.insert("capture.scale_factor".to_string(), format!("{:.3}", result.capture.scale_factor));
+    if let Some(reason) = result.capture.fallback_reason {
+      output.signals.insert("capture.fallback_reason".to_string(), reason);
+    }
+    // TODO(invoke-capture-contract-artifacts): this handler records the screenshot
+    // and coordinate signals, but not the old standalone capture-contract
+    // artifact. Add the contract artifact after its direct-invoke JSON shape is
+    // accepted in `2026-06-18-invoke-direct-command-implementations-handoff.md`.
+    let source_path = invoke_artifact_path(input.command_id, "display-capture", "png");
+    result.capture.image.save(&source_path).map_err(|error| format!("failed to write display.capture screenshot artifact: {error}"))?;
+    output.artifacts.push(ProducedArtifact {
+      kind: "display-screenshot".to_string(),
+      source_path,
+      preferred_name: "display-capture.png".to_string(),
+      note: Some("Screenshot captured by display.capture.".to_string()),
+    });
+    output.verification = Some("capture-only; no semantic success claim".to_string());
+    output
+      .known_limits
+      .push("display.capture records a screenshot and coordinate signals only; it does not verify UI semantics.".to_string());
+    Ok(output)
   }
-  capture_display_impl()
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = input;
+    Err("display.capture is only available on macOS through auv-driver-macos".to_string())
+  }
 }
 
 #[invoke_command(
@@ -35,10 +80,20 @@ fn capture_display(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   args = NO_ARGS,
 )]
 fn list_displays(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  if input.dry_run {
-    return Ok(InvokeCommandOutput::new("dry run: display.list would enumerate connected displays"));
+  #[cfg(target_os = "macos")]
+  {
+    if input.dry_run {
+      return Ok(InvokeCommandOutput::new("dry run: display.list would enumerate connected displays"));
+    }
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let displays = session.display().list().map_err(|error| error.to_string())?;
+    Ok(display_list_output(&displays.displays))
   }
-  list_displays_impl()
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = input;
+    Err("display.list is only available on macOS through auv-driver-macos".to_string())
+  }
 }
 
 #[invoke_command(
@@ -64,13 +119,6 @@ fn identify_point(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   // TODO(invoke-display-typed-api): identifyPoint needs a typed display point
   // resolution API before this invoke command can replace root-driver routing.
   Err("display.identifyPoint requires a typed display API for point identification".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn list_displays_impl() -> InvokeCommandResult {
-  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-  let displays = session.display().list().map_err(|error| error.to_string())?;
-  Ok(display_list_output(&displays.displays))
 }
 
 fn display_list_output(displays: &[auv_driver::Display]) -> InvokeCommandOutput {
@@ -99,59 +147,10 @@ fn display_list_output(displays: &[auv_driver::Display]) -> InvokeCommandOutput 
   output
 }
 
-#[cfg(not(target_os = "macos"))]
-fn list_displays_impl() -> InvokeCommandResult {
-  Err("display.list is only available on macOS through auv-driver-macos".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn capture_display_impl() -> InvokeCommandResult {
-  use auv_driver::CaptureOptions;
-
-  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-  let result = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
-  let mut output = InvokeCommandOutput::new(format!(
-    "Captured {} through {} ({}x{} pixels).",
-    display_label(&result.display),
-    result.capture.backend,
-    result.capture.image.width(),
-    result.capture.image.height()
-  ));
-  output.backend = Some(result.capture.backend.clone());
-  insert_display_signals(&mut output, "display", &result.display);
-  output.signals.insert("capture.pixel_width".to_string(), result.capture.image.width().to_string());
-  output.signals.insert("capture.pixel_height".to_string(), result.capture.image.height().to_string());
-  output.signals.insert("capture.bounds".to_string(), format_rect(result.capture.bounds));
-  output.signals.insert("capture.scale_factor".to_string(), format!("{:.3}", result.capture.scale_factor));
-  if let Some(reason) = result.capture.fallback_reason {
-    output.signals.insert("capture.fallback_reason".to_string(), reason);
-  }
-  // TODO(invoke-capture-contract-artifacts): this handler records the screenshot
-  // and coordinate signals, but not the old standalone capture-contract
-  // artifact. Add the contract artifact after its direct-invoke JSON shape is
-  // accepted in `2026-06-18-invoke-direct-command-implementations-handoff.md`.
-  let source_path = invoke_artifact_path("display-capture", "png");
-  result.capture.image.save(&source_path).map_err(|error| format!("failed to write display.capture screenshot artifact: {error}"))?;
-  output.artifacts.push(ProducedArtifact {
-    kind: "display-screenshot".to_string(),
-    source_path,
-    preferred_name: "display-capture.png".to_string(),
-    note: Some("Screenshot captured by display.capture.".to_string()),
-  });
-  output.verification = Some("capture-only; no semantic success claim".to_string());
-  output.known_limits.push("display.capture records a screenshot and coordinate signals only; it does not verify UI semantics.".to_string());
-  Ok(output)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn capture_display_impl() -> InvokeCommandResult {
-  Err("display.capture is only available on macOS through auv-driver-macos".to_string())
-}
-
 fn insert_display_signals(output: &mut InvokeCommandOutput, prefix: &str, display: &auv_driver::Display) {
   output.signals.insert(format!("{prefix}.id"), display.id.clone());
   output.signals.insert(format!("{prefix}.label"), display_label(display));
-  output.signals.insert(format!("{prefix}.frame"), format_rect(display.frame));
+  output.signals.insert(format!("{prefix}.frame"), display.frame.signal_value());
   output.signals.insert(format!("{prefix}.scale_factor"), format!("{:.3}", display.scale_factor));
   output.signals.insert(format!("{prefix}.is_primary"), display.is_primary.to_string());
   if let Some(is_builtin) = display.is_builtin {
@@ -165,51 +164,38 @@ fn display_label(display: &auv_driver::Display) -> String {
 
 fn display_list_report(displays: &[auv_driver::Display]) -> InvokeReport {
   InvokeReport {
-    fields: vec![report_field(
+    fields: vec![InvokeReportField::new(
       "Result",
       format!("{} display(s)", displays.len()),
     )],
-    tables: vec![InvokeReportTable::new(
-      vec![
-        "REF".to_string(),
-        "ROLE".to_string(),
-        "NAME".to_string(),
-        "FRAME".to_string(),
-        "SCALE".to_string(),
-      ],
+    tables: vec![InvokeReportTable::from_columns(
+      &["REF", "ROLE", "NAME", "FRAME", "SCALE"],
       displays
         .iter()
-        .map(|display| InvokeReportTableRow {
-          cells: vec![
+        .map(|display| {
+          InvokeReportTableRow::from_cells([
             display.id.clone(),
             display_role(display).to_string(),
             display_label(display),
-            format_table_rect(display.frame),
+            display.frame.report_value(),
             format!("{:.3}", display.scale_factor),
-          ],
+          ])
         })
         .collect(),
     )],
-    wide_tables: vec![InvokeReportTable::new(
-      vec![
-        "REF".to_string(),
-        "ROLE".to_string(),
-        "NAME".to_string(),
-        "FRAME".to_string(),
-        "SCALE".to_string(),
-        "KIND".to_string(),
-      ],
+    wide_tables: vec![InvokeReportTable::from_columns(
+      &["REF", "ROLE", "NAME", "FRAME", "SCALE", "KIND"],
       displays
         .iter()
-        .map(|display| InvokeReportTableRow {
-          cells: vec![
+        .map(|display| {
+          InvokeReportTableRow::from_cells([
             display.id.clone(),
             display_role(display).to_string(),
             display_label(display),
-            format_table_rect(display.frame),
+            display.frame.report_value(),
             format!("{:.3}", display.scale_factor),
             display_kind(display).to_string(),
-          ],
+          ])
         })
         .collect(),
     )],
@@ -231,26 +217,6 @@ fn display_kind(display: &auv_driver::Display) -> &'static str {
     Some(false) => "external",
     None => "unknown",
   }
-}
-
-fn format_rect(rect: auv_driver::Rect) -> String {
-  format!("x={:.0},y={:.0},width={:.0},height={:.0}", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
-}
-
-fn format_table_rect(rect: auv_driver::Rect) -> String {
-  format!("{:.0},{:.0} {:.0}x{:.0}", rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
-}
-
-fn report_field(label: &str, value: impl Into<String>) -> InvokeReportField {
-  InvokeReportField {
-    label: label.to_string(),
-    value: value.into(),
-  }
-}
-
-#[cfg(target_os = "macos")]
-fn invoke_artifact_path(label: &str, extension: &str) -> std::path::PathBuf {
-  std::env::temp_dir().join(format!("auv-invoke-{label}-{}-{}.{}", std::process::id(), now_millis(), extension))
 }
 
 #[cfg(test)]

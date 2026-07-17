@@ -1,261 +1,43 @@
-use std::collections::BTreeMap;
-use std::io::{self, Write};
+use std::io;
 
 use anstream::{AutoStream, ColorChoice};
-use anstyle::{AnsiColor, Style};
-use comfy_table::{Cell, Table, presets::NOTHING};
-use serde::Serialize;
+use auv_tracing_driver::{AuvResult, RunRecordingBackend};
 
-use crate::{InvokeOutputOptions, InvokeReport, InvokeReportField, InvokeReportTable, InvokeResult, RunStatus};
+use crate::{InvokeFinalizeHook, InvokeOutputOptions, InvokeRegistry, InvokeRequest, RunStatus};
 
-pub fn render_invoke_result(result: &InvokeResult, options: InvokeOutputOptions) -> Result<(), String> {
-  if options.json {
-    let mut stdout = io::stdout().lock();
-    write_json(&mut stdout, result, options)
-  } else {
-    let stdout = io::stdout();
-    let mut stream = AutoStream::new(stdout.lock(), ColorChoice::Auto);
-    write_human(&mut stream, result, options, true)
-  }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InvokeCliOutcome {
+  pub exit_code: i32,
 }
 
-pub fn write_rendered<W: Write>(writer: &mut W, result: &InvokeResult, options: InvokeOutputOptions) -> Result<(), String> {
-  if options.json {
-    write_json(writer, result, options)
-  } else {
-    write_human(writer, result, options, false)
-  }
-}
-
-pub fn render_to_string(result: &InvokeResult, options: InvokeOutputOptions) -> Result<String, String> {
-  let mut bytes = Vec::new();
-  write_rendered(&mut bytes, result, options)?;
-  String::from_utf8(bytes).map_err(|error| format!("renderer emitted invalid UTF-8: {error}"))
-}
-
-fn write_json<W: Write>(writer: &mut W, result: &InvokeResult, options: InvokeOutputOptions) -> Result<(), String> {
-  let output = InvokeJsonOutput::from_result(result, options);
-  serde_json::to_writer_pretty(&mut *writer, &output).map_err(|error| format!("failed to serialize invoke output: {error}"))?;
-  writeln!(writer).map_err(|error| format!("failed to write invoke output: {error}"))
-}
-
-fn write_human<W: Write>(writer: &mut W, result: &InvokeResult, options: InvokeOutputOptions, color: bool) -> Result<(), String> {
-  writeln!(writer, "{}. {}: {}", terminal_status(&result.status), label("Run", color), result.run_id).map_err(write_error)?;
-  writeln!(writer).map_err(write_error)?;
-  writeln!(writer, "● {} - {}", result.command_id, result.command_summary).map_err(write_error)?;
-
-  if let Some(failure) = result.failure_message.as_deref() {
-    write_field_rows(writer, &[field("Failure", failure)], color)?;
-  }
-
-  match result.report.as_ref() {
-    Some(report) => write_report(writer, report, options, color)?,
-    None => write_field_rows(writer, &[field("Output", &result.output_summary)], color)?,
-  }
-
-  if result.status == RunStatus::Failed {
-    writeln!(writer).map_err(write_error)?;
-    write_field_rows(writer, &[field("Inspect", &format!("auv inspect {}", result.run_id))], color)?;
-  }
-
-  if options.detail {
-    write_detail(writer, result, color)?;
-  }
-
-  Ok(())
-}
-
-fn write_report<W: Write>(writer: &mut W, report: &InvokeReport, options: InvokeOutputOptions, color: bool) -> Result<(), String> {
-  write_field_rows(writer, &report.fields, color)?;
-
-  let tables = if options.wide && !report.wide_tables.is_empty() {
-    &report.wide_tables
-  } else {
-    &report.tables
-  };
-  for table in tables {
-    writeln!(writer).map_err(write_error)?;
-    write_table(writer, table)?;
-  }
-
-  for section in &report.sections {
-    writeln!(writer).map_err(write_error)?;
-    writeln!(writer, "  {}", section.title).map_err(write_error)?;
-    write_field_rows(writer, &section.fields, color)?;
-  }
-
-  Ok(())
-}
-
-fn write_table<W: Write>(writer: &mut W, table: &InvokeReportTable) -> Result<(), String> {
-  let mut rendered = Table::new();
-  rendered.load_preset(NOTHING);
-  rendered.set_header(table.columns.iter().map(Cell::new));
-  for row in &table.rows {
-    rendered.add_row(row.cells.iter().enumerate().map(|(index, cell)| Cell::new(display_cell(table, index, cell))));
-  }
-  for line in rendered.to_string().lines() {
-    writeln!(writer, "  {}", line.trim()).map_err(write_error)?;
-  }
-  Ok(())
-}
-
-fn display_cell(table: &InvokeReportTable, column_index: usize, value: &str) -> String {
-  match table.display_max_chars.get(column_index).copied().flatten() {
-    Some(max_chars) => truncate(value, max_chars),
-    None => value.to_string(),
-  }
-}
-
-fn truncate(value: &str, max_chars: usize) -> String {
-  if value.chars().count() <= max_chars {
-    return value.to_string();
-  }
-  if max_chars <= 3 {
-    return ".".repeat(max_chars);
-  }
-  let mut truncated = value.chars().take(max_chars - 3).collect::<String>();
-  truncated.push_str("...");
-  truncated
-}
-
-fn write_detail<W: Write>(writer: &mut W, result: &InvokeResult, color: bool) -> Result<(), String> {
-  if let Some(backend) = result.backend.as_deref() {
-    write_detail_section(writer, "Backend", &[backend.to_string()], color)?;
-  }
-  if let Some(verification) = result.verification.as_deref() {
-    write_detail_section(writer, "Verification", &[verification.to_string()], color)?;
-  }
-  if !result.notes.is_empty() {
-    write_detail_section(writer, "Notes", &result.notes, color)?;
-  }
-  if !result.known_limits.is_empty() {
-    write_detail_section(writer, "Known limits", &result.known_limits, color)?;
-  }
-  if !result.artifacts.is_empty() {
-    let artifacts = result
-      .artifacts
-      .iter()
-      .map(|artifact| {
-        let mut line = format!("{} ({})", artifact.artifact_id, artifact.role);
-        if let Some(summary) = artifact.summary.as_deref() {
-          line.push_str(": ");
-          line.push_str(summary);
-        }
-        line
-      })
-      .collect::<Vec<_>>();
-    write_detail_section(writer, "Artifacts", &artifacts, color)?;
-  }
-
-  let signals = selected_signals(&result.signals).into_iter().map(|(key, value)| format!("{key}: {value}")).collect::<Vec<_>>();
-  if !signals.is_empty() {
-    write_detail_section(writer, "Signals", &signals, color)?;
-  }
-
-  Ok(())
-}
-
-fn write_detail_section<W: Write>(writer: &mut W, title: &str, rows: &[String], color: bool) -> Result<(), String> {
-  writeln!(writer).map_err(write_error)?;
-  writeln!(writer, "  {}", label(title, color)).map_err(write_error)?;
-  for row in rows {
-    writeln!(writer, "    {row}").map_err(write_error)?;
-  }
-  Ok(())
-}
-
-fn write_field_rows<W: Write>(writer: &mut W, fields: &[InvokeReportField], color: bool) -> Result<(), String> {
-  for field in fields {
-    writeln!(writer, "  {}: {}", label(&field.label, color), field.value).map_err(write_error)?;
-  }
-  Ok(())
-}
-
-fn terminal_status(status: &RunStatus) -> &'static str {
-  match status {
-    RunStatus::Completed => "OK",
-    RunStatus::Failed => "ERROR",
-  }
-}
-
-fn field(label: &str, value: &str) -> InvokeReportField {
-  InvokeReportField {
-    label: label.to_string(),
-    value: value.to_string(),
-  }
-}
-
-fn label(value: &str, color: bool) -> String {
-  if color {
-    let style: Style = AnsiColor::BrightBlack.on_default();
-    format!("{style}{value}{style:#}")
-  } else {
-    value.to_string()
-  }
-}
-
-fn selected_signals(signals: &BTreeMap<String, String>) -> BTreeMap<String, String> {
-  signals
-    .iter()
-    .filter(|(key, _)| {
-      let normalized = key.replace('_', "").to_ascii_lowercase();
-      normalized != "operatorsummary"
-    })
-    .map(|(key, value)| (key.clone(), value.clone()))
-    .collect()
-}
-
-fn write_error(error: io::Error) -> String {
-  format!("failed to write invoke output: {error}")
-}
-
-#[derive(Serialize)]
-struct InvokeJsonOutput<'a> {
-  run_id: &'a str,
-  status: &'a str,
-  command_id: &'a str,
-  summary: &'a str,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  report: Option<&'a InvokeReport>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  failure: Option<&'a str>,
-  artifacts: Vec<InvokeJsonArtifact<'a>>,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  signals: Option<BTreeMap<String, String>>,
-}
-
-impl<'a> InvokeJsonOutput<'a> {
-  fn from_result(result: &'a InvokeResult, options: InvokeOutputOptions) -> Self {
+impl InvokeCliOutcome {
+  pub fn from_status(status: RunStatus) -> Self {
     Self {
-      run_id: &result.run_id,
-      status: result.status.as_str(),
-      command_id: &result.command_id,
-      summary: &result.output_summary,
-      report: result.report.as_ref(),
-      failure: result.failure_message.as_deref(),
-      artifacts: result
-        .artifacts
-        .iter()
-        .map(|artifact| InvokeJsonArtifact {
-          artifact_id: artifact.artifact_id.as_str(),
-          role: &artifact.role,
-          mime_type: &artifact.mime_type,
-          summary: artifact.summary.as_deref(),
-        })
-        .collect(),
-      signals: options.detail.then(|| selected_signals(&result.signals)),
+      exit_code: if status == RunStatus::Failed { 1 } else { 0 },
     }
   }
 }
 
-#[derive(Serialize)]
-struct InvokeJsonArtifact<'a> {
-  artifact_id: &'a str,
-  role: &'a str,
-  mime_type: &'a str,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  summary: Option<&'a str>,
+pub fn render_recorded_invoke(
+  recording: &RunRecordingBackend,
+  registry: &InvokeRegistry,
+  request: InvokeRequest,
+  options: InvokeOutputOptions,
+  finalize: Option<&InvokeFinalizeHook>,
+) -> AuvResult<InvokeCliOutcome> {
+  let result = match finalize {
+    Some(finalize) => crate::invoke_recorded_with_finalize(recording, registry, request, finalize)?,
+    None => crate::invoke_recorded(recording, registry, request)?,
+  };
+  if options.json {
+    let mut stdout = io::stdout().lock();
+    result.write_json(&mut stdout, options)?;
+  } else {
+    let stdout = io::stdout();
+    let mut stream = AutoStream::new(stdout.lock(), ColorChoice::Auto);
+    result.write_human(&mut stream, options, true)?;
+  }
+  Ok(InvokeCliOutcome::from_status(result.status))
 }
 
 #[cfg(test)]
@@ -342,7 +124,7 @@ mod tests {
 
   #[test]
   fn default_success_omits_operator_summary_raw_signals_artifacts_notes_and_limits() {
-    let output = super::render_to_string(&fixture_result(RunStatus::Completed), Default::default()).expect("render should succeed");
+    let output = fixture_result(RunStatus::Completed).render_to_string(Default::default()).expect("render should succeed");
 
     assert!(output.contains("OK. Run: run_fixture"));
     assert!(output.contains("fixture.observe - Observe fixture"));
@@ -367,7 +149,7 @@ mod tests {
     let mut result = fixture_result(RunStatus::Failed);
     result.failure_message = Some("fixture failed".to_string());
 
-    let output = super::render_to_string(&result, Default::default()).expect("render should succeed");
+    let output = result.render_to_string(Default::default()).expect("render should succeed");
 
     assert!(output.contains("ERROR. Run: run_fixture"));
     assert!(output.contains("fixture failed"));
@@ -376,15 +158,13 @@ mod tests {
 
   #[test]
   fn detail_includes_notes_limits_verification_artifacts_and_selected_signals() {
-    let output = super::render_to_string(
-      &fixture_result(RunStatus::Completed),
-      InvokeOutputOptions {
+    let output = fixture_result(RunStatus::Completed)
+      .render_to_string(InvokeOutputOptions {
         json: false,
         detail: true,
         wide: false,
-      },
-    )
-    .expect("render should succeed");
+      })
+      .expect("render should succeed");
 
     assert!(output.contains("Notes"));
     assert!(output.contains("note for detail"));
@@ -400,15 +180,13 @@ mod tests {
 
   #[test]
   fn wide_output_renders_wide_report_table() {
-    let output = super::render_to_string(
-      &fixture_result(RunStatus::Completed),
-      InvokeOutputOptions {
+    let output = fixture_result(RunStatus::Completed)
+      .render_to_string(InvokeOutputOptions {
         json: false,
         detail: false,
         wide: true,
-      },
-    )
-    .expect("render should succeed");
+      })
+      .expect("render should succeed");
 
     assert!(output.contains("PID"));
     assert!(output.contains("1234"));
@@ -416,15 +194,13 @@ mod tests {
 
   #[test]
   fn json_output_parses_and_contains_no_ansi() {
-    let output = super::render_to_string(
-      &fixture_result(RunStatus::Completed),
-      InvokeOutputOptions {
+    let output = fixture_result(RunStatus::Completed)
+      .render_to_string(InvokeOutputOptions {
         json: true,
         detail: false,
         wide: false,
-      },
-    )
-    .expect("render should succeed");
+      })
+      .expect("render should succeed");
 
     assert!(!output.contains("\u{1b}["));
     let value: Value = serde_json::from_str(&output).expect("json should parse");

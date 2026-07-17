@@ -15,6 +15,6 @@ pub mod registry;
 pub mod run_read;
 pub mod xtask;
 
-pub use invoke::invoke_recorded;
+pub use invoke::{invoke_recorded, invoke_recorded_and_render};
 pub use projection::ProductInspectReadProjection;
 pub use registry::product_registry;

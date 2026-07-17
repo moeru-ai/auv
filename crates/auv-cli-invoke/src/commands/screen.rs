@@ -1,10 +1,11 @@
 use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
   arg::{IMAGE_TEXT_ARGS, REGION_ARGS, SCREEN_TEXT_ARGS, TARGET_ARGS},
+  artifact::invoke_artifact_path,
   invoke_command,
 };
 #[cfg(target_os = "macos")]
-use auv_tracing_driver::{ProducedArtifact, now_millis};
+use auv_tracing_driver::ProducedArtifact;
 
 pub fn group() -> CommandGroup {
   CommandGroup::new("screen", "SCREEN")
@@ -25,7 +26,51 @@ pub fn group() -> CommandGroup {
   args = REGION_ARGS,
 )]
 fn capture_region(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  capture_region_impl(input)
+  #[cfg(target_os = "macos")]
+  {
+    use auv_driver::{CaptureOptions, Rect};
+
+    reject_target_activation(&input, "screen.captureRegion")?;
+    if input.dry_run {
+      return Ok(dry_run_output(input.command_id));
+    }
+
+    let region = Rect::new(input.required_f64("x")?, input.required_f64("y")?, input.required_f64("width")?, input.required_f64("height")?);
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let capture = session
+      .display()
+      .capture_region(CaptureOptions {
+        region: Some(region),
+        ..CaptureOptions::default()
+      })
+      .map_err(|error| error.to_string())?;
+
+    let mut output = InvokeCommandOutput::new("screen region captured");
+    output.backend = Some(format!("auv-driver-macos.display.{}", capture.capture.backend));
+    output.signals.insert("display.id".to_string(), capture.display.id);
+    output.signals.insert("capture.width".to_string(), capture.capture.image.width().to_string());
+    output.signals.insert("capture.height".to_string(), capture.capture.image.height().to_string());
+    // TODO(invoke-capture-contract-artifacts): this records the captured pixels
+    // and basic dimensions, but not the standalone capture-contract artifact.
+    // Add it after the direct-invoke contract JSON shape is accepted in
+    // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
+    let source_path = invoke_artifact_path(input.command_id, "region-capture", "png");
+    capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen.captureRegion artifact: {error}"))?;
+    output.artifacts.push(ProducedArtifact {
+      kind: "screen-region-capture".to_string(),
+      source_path,
+      preferred_name: format!("{}-region-capture.png", input.command_id.replace('.', "-")),
+      note: Some("Region screenshot captured by screen.captureRegion.".to_string()),
+    });
+    output.verification = Some("capture-only; no semantic success claim".to_string());
+    output.known_limits.push("screen.captureRegion records a region screenshot only; it does not verify UI semantics.".to_string());
+    Ok(output)
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = input;
+    Err("screen.captureRegion is only available on macOS".to_string())
+  }
 }
 
 #[invoke_command(
@@ -35,7 +80,22 @@ fn capture_region(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   args = SCREEN_TEXT_ARGS,
 )]
 fn find_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  find_screen_text_impl(input, false)
+  #[cfg(target_os = "macos")]
+  {
+    reject_target_activation(&input, "screen.findText")?;
+    if input.dry_run {
+      return Ok(dry_run_output(input.command_id));
+    }
+
+    let query = input.required_input("query")?;
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    screen_text_matches(input.command_id, &session, query, false)
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = input;
+    Err("screen text OCR is only available on macOS".to_string())
+  }
 }
 
 #[invoke_command(
@@ -45,7 +105,62 @@ fn find_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   args = SCREEN_TEXT_ARGS,
 )]
 fn wait_for_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  find_screen_text_impl(input, true)
+  #[cfg(target_os = "macos")]
+  {
+    reject_target_activation(&input, "screen.waitForText")?;
+    if input.dry_run {
+      return Ok(dry_run_output(input.command_id));
+    }
+
+    let query = input.required_input("query")?;
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    screen_text_matches(input.command_id, &session, query, true)
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = input;
+    Err("screen text OCR is only available on macOS".to_string())
+  }
+}
+
+#[cfg(target_os = "macos")]
+fn screen_text_matches(command_id: &str, session: &auv_driver::LocalDriverSession, query: &str, wait: bool) -> InvokeCommandResult {
+  use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
+  use std::{thread, time::Instant};
+
+  let wait_options = WaitOptions::default();
+  let started = Instant::now();
+  loop {
+    let capture = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
+    let matches = session
+      .vision()
+      .find_text_in_capture(&capture.capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0))
+      .map_err(|error| error.to_string())?;
+    if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
+      if wait && matches.matches.is_empty() {
+        return Err(format!("screen.waitForText did not find text {query:?} before timeout"));
+      }
+      let mut output = text_matches_output(command_id, "auv-driver-macos.vision", &matches.matches, None);
+      // TODO(invoke-recognition-result-artifacts): this records the OCR source
+      // screenshot and scalar match signals, but not a structured
+      // recognition-result artifact with query/bounds/confidence. Add that
+      // after the artifact shape is accepted in the direct-command handoff.
+      let source_path = invoke_artifact_path(command_id, "ocr-screenshot", "png");
+      capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen OCR screenshot artifact: {error}"))?;
+      output.artifacts.push(ProducedArtifact {
+        kind: "screen-ocr-screenshot".to_string(),
+        source_path,
+        preferred_name: format!("{}-ocr-screenshot.png", command_id.replace('.', "-")),
+        note: Some("Screenshot used for screen OCR matching.".to_string()),
+      });
+      output.verification = Some("recognition-only; no semantic success claim".to_string());
+      output
+        .known_limits
+        .push("screen OCR recognition records text matches and source screenshot only; it does not verify downstream UI state.".to_string());
+      return Ok(output);
+    }
+    thread::sleep(wait_options.poll_interval);
+  }
 }
 
 #[invoke_command(
@@ -94,7 +209,52 @@ fn find_image_text(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   args = SCREEN_TEXT_ARGS,
 )]
 fn click_screen_text(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  click_screen_text_impl(input)
+  #[cfg(target_os = "macos")]
+  {
+    use auv_driver::{CaptureOptions, Click, RatioRect};
+
+    reject_target_activation(&input, "screen.clickText")?;
+    if input.dry_run {
+      return Ok(dry_run_output(input.command_id));
+    }
+
+    let query = input.required_input("query")?;
+    let session = auv_driver::open_local().map_err(|error| error.to_string())?;
+    let capture = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
+    let matches = session
+      .vision()
+      .find_text_in_capture(&capture.capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0))
+      .map_err(|error| error.to_string())?;
+    let matched = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?;
+    let point = matched.action_point();
+    session.input().click_at(point, Click::Single).map_err(|error| error.to_string())?;
+
+    let mut output = text_matches_output(input.command_id, "auv-driver-macos.input", &matches.matches, Some(0));
+    // TODO(invoke-recognition-result-artifacts): clickText records the OCR
+    // source screenshot used for target resolution, but not the structured
+    // recognition-result artifact. Add it with screen.findText once the
+    // direct-invoke recognition artifact shape is accepted.
+    let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
+    capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen click OCR screenshot artifact: {error}"))?;
+    output.artifacts.push(ProducedArtifact {
+      kind: "screen-ocr-screenshot".to_string(),
+      source_path,
+      preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
+      note: Some("Screenshot used to resolve screen.clickText OCR target.".to_string()),
+    });
+    output.signals.insert("click.x".to_string(), point.x.to_string());
+    output.signals.insert("click.y".to_string(), point.y.to_string());
+    output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
+    output
+      .known_limits
+      .push("screen.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
+    Ok(output)
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = input;
+    Err("screen.clickText is only available on macOS".to_string())
+  }
 }
 
 #[invoke_command(
@@ -110,171 +270,6 @@ fn click_screen_row(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   Err("screen.clickRow requires a typed screen row click API".to_string())
 }
 
-#[cfg(target_os = "macos")]
-fn capture_region_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{CaptureOptions, Rect};
-
-  reject_target_activation(&input, "screen.captureRegion")?;
-  if input.dry_run {
-    return Ok(dry_run_output(input.command_id));
-  }
-
-  let region =
-    Rect::new(required_f64(&input, "x")?, required_f64(&input, "y")?, required_f64(&input, "width")?, required_f64(&input, "height")?);
-  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-  let capture = session
-    .display()
-    .capture_region(CaptureOptions {
-      region: Some(region),
-      ..CaptureOptions::default()
-    })
-    .map_err(|error| error.to_string())?;
-
-  let mut output = InvokeCommandOutput::new("screen region captured");
-  output.backend = Some(format!("auv-driver-macos.display.{}", capture.capture.backend));
-  output.signals.insert("display.id".to_string(), capture.display.id);
-  output.signals.insert("capture.width".to_string(), capture.capture.image.width().to_string());
-  output.signals.insert("capture.height".to_string(), capture.capture.image.height().to_string());
-  // TODO(invoke-capture-contract-artifacts): this records the captured pixels
-  // and basic dimensions, but not the standalone capture-contract artifact.
-  // Add it after the direct-invoke contract JSON shape is accepted in
-  // `2026-06-18-invoke-direct-command-implementations-handoff.md`.
-  let source_path = invoke_artifact_path(input.command_id, "region-capture", "png");
-  capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen.captureRegion artifact: {error}"))?;
-  output.artifacts.push(ProducedArtifact {
-    kind: "screen-region-capture".to_string(),
-    source_path,
-    preferred_name: format!("{}-region-capture.png", input.command_id.replace('.', "-")),
-    note: Some("Region screenshot captured by screen.captureRegion.".to_string()),
-  });
-  output.verification = Some("capture-only; no semantic success claim".to_string());
-  output.known_limits.push("screen.captureRegion records a region screenshot only; it does not verify UI semantics.".to_string());
-  Ok(output)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn capture_region_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  Err("screen.captureRegion is only available on macOS".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn find_screen_text_impl(input: InvokeCommandInput<'_>, wait: bool) -> InvokeCommandResult {
-  use auv_driver::{CaptureOptions, RatioRect, WaitOptions};
-  use std::{thread, time::Instant};
-
-  reject_target_activation(
-    &input,
-    if wait {
-      "screen.waitForText"
-    } else {
-      "screen.findText"
-    },
-  )?;
-  if input.dry_run {
-    return Ok(dry_run_output(input.command_id));
-  }
-
-  let query = required_input(&input, "query")?;
-  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-  let wait_options = WaitOptions::default();
-  let started = Instant::now();
-  loop {
-    let capture = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
-    let matches = session
-      .vision()
-      .find_text_in_capture(&capture.capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0))
-      .map_err(|error| error.to_string())?;
-    if !matches.matches.is_empty() || !wait || started.elapsed() >= wait_options.timeout {
-      if wait && matches.matches.is_empty() {
-        return Err(format!("screen.waitForText did not find text {query:?} before timeout"));
-      }
-      let mut output = text_matches_output(input.command_id, "auv-driver-macos.vision", &matches.matches, None);
-      // TODO(invoke-recognition-result-artifacts): this records the OCR source
-      // screenshot and scalar match signals, but not a structured
-      // recognition-result artifact with query/bounds/confidence. Add that
-      // after the artifact shape is accepted in the direct-command handoff.
-      let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
-      capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen OCR screenshot artifact: {error}"))?;
-      output.artifacts.push(ProducedArtifact {
-        kind: "screen-ocr-screenshot".to_string(),
-        source_path,
-        preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
-        note: Some("Screenshot used for screen OCR matching.".to_string()),
-      });
-      output.verification = Some("recognition-only; no semantic success claim".to_string());
-      output
-        .known_limits
-        .push("screen OCR recognition records text matches and source screenshot only; it does not verify downstream UI state.".to_string());
-      return Ok(output);
-    }
-    thread::sleep(wait_options.poll_interval);
-  }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn find_screen_text_impl(_input: InvokeCommandInput<'_>, _wait: bool) -> InvokeCommandResult {
-  Err("screen text OCR is only available on macOS".to_string())
-}
-
-#[cfg(target_os = "macos")]
-fn click_screen_text_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  use auv_driver::{CaptureOptions, Click, RatioRect};
-
-  reject_target_activation(&input, "screen.clickText")?;
-  if input.dry_run {
-    return Ok(dry_run_output(input.command_id));
-  }
-
-  let query = required_input(&input, "query")?;
-  let session = auv_driver::open_local().map_err(|error| error.to_string())?;
-  let capture = session.display().capture(CaptureOptions::default()).map_err(|error| error.to_string())?;
-  let matches =
-    session.vision().find_text_in_capture(&capture.capture, query, RatioRect::new(0.0, 0.0, 1.0, 1.0)).map_err(|error| error.to_string())?;
-  let matched = matches.best_match().ok_or_else(|| format!("screen.clickText did not find text {query:?}"))?;
-  let point = matched.action_point();
-  session.input().click_at(point, Click::Single).map_err(|error| error.to_string())?;
-
-  let mut output = text_matches_output(input.command_id, "auv-driver-macos.input", &matches.matches, Some(0));
-  // TODO(invoke-recognition-result-artifacts): clickText records the OCR
-  // source screenshot used for target resolution, but not the structured
-  // recognition-result artifact. Add it with screen.findText once the
-  // direct-invoke recognition artifact shape is accepted.
-  let source_path = invoke_artifact_path(input.command_id, "ocr-screenshot", "png");
-  capture.capture.image.save(&source_path).map_err(|error| format!("failed to write screen click OCR screenshot artifact: {error}"))?;
-  output.artifacts.push(ProducedArtifact {
-    kind: "screen-ocr-screenshot".to_string(),
-    source_path,
-    preferred_name: format!("{}-ocr-screenshot.png", input.command_id.replace('.', "-")),
-    note: Some("Screenshot used to resolve screen.clickText OCR target.".to_string()),
-  });
-  output.signals.insert("click.x".to_string(), point.x.to_string());
-  output.signals.insert("click.y".to_string(), point.y.to_string());
-  output.verification = Some("activation-only; semantic success requires a separate verification result".to_string());
-  output
-    .known_limits
-    .push("screen.clickText records OCR resolution and input delivery only; it does not verify post-click UI state.".to_string());
-  Ok(output)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn click_screen_text_impl(_input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  Err("screen.clickText is only available on macOS".to_string())
-}
-
-fn required_input<'a>(input: &'a InvokeCommandInput<'_>, name: &str) -> Result<&'a str, String> {
-  input
-    .inputs
-    .get(name)
-    .map(String::as_str)
-    .filter(|value| !value.trim().is_empty())
-    .ok_or_else(|| format!("{} requires --{name}", input.command_id))
-}
-
-fn required_f64(input: &InvokeCommandInput<'_>, name: &str) -> Result<f64, String> {
-  let value = required_input(input, name)?;
-  value.parse::<f64>().map_err(|error| format!("invalid --{name} value {value:?}: {error}"))
-}
-
 fn reject_target_activation(input: &InvokeCommandInput<'_>, command_id: &str) -> Result<(), String> {
   if input.target_application_id.is_some() {
     // TODO(invoke-screen-activation): target activation for screen capture/OCR
@@ -287,17 +282,6 @@ fn reject_target_activation(input: &InvokeCommandInput<'_>, command_id: &str) ->
 
 fn dry_run_output(command_id: &str) -> InvokeCommandOutput {
   InvokeCommandOutput::new(format!("dry run: {command_id}"))
-}
-
-#[cfg(target_os = "macos")]
-fn invoke_artifact_path(command_id: &str, label: &str, extension: &str) -> std::path::PathBuf {
-  std::env::temp_dir().join(format!(
-    "auv-invoke-{}-{label}-{}-{}.{}",
-    command_id.replace('.', "-"),
-    std::process::id(),
-    now_millis(),
-    extension
-  ))
 }
 
 #[cfg(target_os = "macos")]

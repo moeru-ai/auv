@@ -1,16 +1,17 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult,
   arg::{SCAN_COVERAGE_ARGS, SCAN_FRAME_ARGS},
+  artifact::invoke_artifact_path,
   invoke_command,
 };
 use auv_scan::{
   SCAN_COVERAGE_ARTIFACT_FILE_NAME, SCAN_COVERAGE_ARTIFACT_ROLE, frame_artifact_file_name, produce_coverage_from_fixture_dir,
   produce_frame_from_fixture_dir,
 };
-use auv_tracing_driver::{ProducedArtifact, now_millis};
+use auv_tracing_driver::ProducedArtifact;
 use tempfile::TempDir;
 
 pub fn group() -> CommandGroup {
@@ -24,20 +25,6 @@ pub fn group() -> CommandGroup {
   args = SCAN_FRAME_ARGS,
 )]
 fn frame(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  frame_impl(input)
-}
-
-#[invoke_command(
-  id = "scan.coverage",
-  group = "scan",
-  summary = "Produce a scan-coverage-v0 artifact from a coverage scenario fixture and stage it into the run.",
-  args = SCAN_COVERAGE_ARGS,
-)]
-fn coverage(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
-  coverage_impl(input)
-}
-
-fn frame_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   if input.dry_run {
     let mut output = InvokeCommandOutput::new("scan.frame dry-run");
     output.verification = Some("dry-run; no artifacts produced".to_string());
@@ -45,7 +32,7 @@ fn frame_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     return Ok(output);
   }
 
-  let fixture_dir = required_input(&input, "fixture-dir", "scan.frame")?;
+  let fixture_dir = input.required_input("fixture-dir")?;
   let fixture_path = Path::new(fixture_dir);
   if !fixture_path.is_dir() {
     return Err(format!("scan.frame fixture directory does not exist: {fixture_dir}"));
@@ -88,7 +75,13 @@ fn frame_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   Ok(output)
 }
 
-fn coverage_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
+#[invoke_command(
+  id = "scan.coverage",
+  group = "scan",
+  summary = "Produce a scan-coverage-v0 artifact from a coverage scenario fixture and stage it into the run.",
+  args = SCAN_COVERAGE_ARGS,
+)]
+fn coverage(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   if input.dry_run {
     let mut output = InvokeCommandOutput::new("scan.coverage dry-run");
     output.verification = Some("dry-run; no artifacts produced".to_string());
@@ -96,7 +89,7 @@ fn coverage_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
     return Ok(output);
   }
 
-  let fixture_dir = required_input(&input, "fixture-dir", "scan.coverage")?;
+  let fixture_dir = input.required_input("fixture-dir")?;
   let fixture_path = Path::new(fixture_dir);
   if !fixture_path.is_dir() {
     return Err(format!("scan.coverage fixture directory does not exist: {fixture_dir}"));
@@ -126,20 +119,6 @@ fn coverage_impl(input: InvokeCommandInput<'_>) -> InvokeCommandResult {
   Ok(output)
 }
 
-fn invoke_artifact_path(command_id: &str, label: &str, extension: &str) -> PathBuf {
-  std::env::temp_dir().join(format!(
-    "auv-invoke-{}-{label}-{}-{}.{}",
-    command_id.replace('.', "-"),
-    std::process::id(),
-    now_millis(),
-    extension
-  ))
-}
-
-fn required_input<'a>(input: &'a InvokeCommandInput<'_>, name: &str, command_id: &str) -> Result<&'a str, String> {
-  input.inputs.get(name).map(String::as_str).ok_or_else(|| format!("{command_id} missing required flag --{name}"))
-}
-
 #[cfg(test)]
 mod tests {
   use std::collections::BTreeMap;
@@ -156,7 +135,7 @@ mod tests {
     render_command_help,
   };
 
-  use super::{coverage_impl, coverage_invoke_command, frame_impl, frame_invoke_command};
+  use super::{coverage, coverage_invoke_command, frame, frame_invoke_command};
 
   fn single_frame_fixture_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../auv-scan/tests/fixtures/scan/temporal/single_frame_v0")
@@ -219,7 +198,7 @@ mod tests {
 
   #[test]
   fn scan_frame_requires_fixture_dir() {
-    let err = frame_impl(crate::InvokeCommandInput {
+    let err = frame(crate::InvokeCommandInput {
       command_id: "scan.frame",
       target_application_id: None,
       inputs: &BTreeMap::new(),
@@ -232,7 +211,7 @@ mod tests {
 
   #[test]
   fn scan_coverage_requires_fixture_dir() {
-    let err = coverage_impl(crate::InvokeCommandInput {
+    let err = coverage(crate::InvokeCommandInput {
       command_id: "scan.coverage",
       target_application_id: None,
       inputs: &BTreeMap::new(),
@@ -245,7 +224,7 @@ mod tests {
 
   #[test]
   fn scan_frame_dry_run_produces_no_artifacts() {
-    let output = frame_impl(crate::InvokeCommandInput {
+    let output = frame(crate::InvokeCommandInput {
       command_id: "scan.frame",
       target_application_id: None,
       inputs: &BTreeMap::from([("fixture-dir".to_string(), "/tmp/unused".to_string())]),
@@ -259,7 +238,7 @@ mod tests {
 
   #[test]
   fn scan_coverage_dry_run_produces_no_artifacts() {
-    let output = coverage_impl(crate::InvokeCommandInput {
+    let output = coverage(crate::InvokeCommandInput {
       command_id: "scan.coverage",
       target_application_id: None,
       inputs: &BTreeMap::from([("fixture-dir".to_string(), "/tmp/unused".to_string())]),

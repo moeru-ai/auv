@@ -131,7 +131,7 @@ fn textedit_document_write_same_run_cli_mcp_inspect_parity() {
   assert_eq!(extract_section_ids(&cli_text), extract_section_ids(&mcp_text));
   assert_eq!(extract_section_ids(&cli_text), extract_section_ids(&server_text));
 
-  let rendered = auv_cli_invoke::render_to_string(&result, InvokeOutputOptions::default()).expect("render");
+  let rendered = result.render_to_string(InvokeOutputOptions::default()).expect("render");
   assert!(rendered.contains(DOCUMENT_WRITE_COMMAND_ID) || rendered.contains("TextEdit"));
 
   let _ = std::fs::remove_dir_all(root);
