@@ -44,6 +44,10 @@ fn recommended_native_text_strategy_uses_ax_backed_taxonomy_id() {
   assert_eq!(strategy.taxonomy_id, NATIVE_TEXT_CANONICAL_TAXONOMY_ID);
 }
 
+fn scan_coverage_fixture_dir() -> String {
+  PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("crates/auv-scan/tests/fixtures/scan/coverage/coverage_stable_v0").display().to_string()
+}
+
 #[test]
 fn invoke_probe_steps_share_parent_probe_run_id() {
   let root = temp_dir("probe-step-parent-run");
@@ -51,10 +55,11 @@ fn invoke_probe_steps_share_parent_probe_run_id() {
   let mut run = runtime.recording().handle().start_run(RunSpec::new(RunType::Probe, "auv.probe")).expect("probe run should start");
   let root_span = run.root_span();
 
-  let first = invoke_probe_step(&runtime, &mut run, &root_span, "first", "fixture.observe", None, BTreeMap::new(), false)
+  let inputs = BTreeMap::from([("fixture-dir".to_string(), scan_coverage_fixture_dir())]);
+  let first = invoke_probe_step(&runtime, &mut run, &root_span, "first", "scan.coverage", None, inputs.clone(), false)
     .expect("first step should complete");
-  let second = invoke_probe_step(&runtime, &mut run, &root_span, "second", "fixture.observe", None, BTreeMap::new(), false)
-    .expect("second step should complete");
+  let second =
+    invoke_probe_step(&runtime, &mut run, &root_span, "second", "scan.coverage", None, inputs, false).expect("second step should complete");
 
   assert_eq!(first.run_id, run.id().as_str());
   assert_eq!(second.run_id, run.id().as_str());
@@ -89,12 +94,13 @@ fn invoke_probe_step_preserves_direct_command_artifact_boundary() {
   let mut run = runtime.recording().handle().start_run(RunSpec::new(RunType::Probe, "auv.probe")).expect("probe run should start");
   let root_span = run.root_span();
 
-  let step = invoke_probe_step(&runtime, &mut run, &root_span, "artifact-step", "fixture.observe", None, BTreeMap::new(), false)
+  let inputs = BTreeMap::from([("fixture-dir".to_string(), scan_coverage_fixture_dir())]);
+  let step = invoke_probe_step(&runtime, &mut run, &root_span, "artifact-step", "scan.coverage", None, inputs, false)
     .expect("direct invoke step should complete");
 
-  assert_eq!(step.output_summary, "fixture observed");
-  assert!(step.artifact_paths.is_empty());
-  assert!(step.artifacts.is_empty());
+  assert!(step.output_summary.starts_with("scan coverage produced from fixture "));
+  assert!(!step.artifact_paths.is_empty());
+  assert!(!step.artifacts.is_empty());
 
   let _ = runtime
     .recording()

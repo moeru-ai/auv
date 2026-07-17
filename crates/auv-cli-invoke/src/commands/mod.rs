@@ -1,6 +1,5 @@
 pub mod app;
 pub mod display;
-pub mod fixture;
 pub mod input;
 pub mod media_control;
 #[cfg(target_os = "macos")]

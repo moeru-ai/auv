@@ -318,8 +318,8 @@ mod tests {
     let invoke_response = client
       .invoke(proto::InvokeRequest {
         session: Some(session),
-        command_id: "fixture.observe".to_string(),
-        json_payload: Vec::new(),
+        command_id: "scan.coverage".to_string(),
+        json_payload: br#"{"dry_run":true}"#.to_vec(),
       })
       .await
       .expect("invoke")
@@ -336,7 +336,7 @@ mod tests {
       .into_inner();
 
     assert_eq!(get_response.status, "completed");
-    assert_eq!(get_response.output_summary, "fixture observed");
+    assert_eq!(get_response.output_summary, "scan.coverage dry-run");
     assert!(get_response.known_limits.iter().any(|limit| limit == INVOKE_SYNTHETIC_OPERATION_RESULT_KNOWN_LIMIT));
 
     server.abort();
