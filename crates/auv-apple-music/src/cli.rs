@@ -339,6 +339,8 @@ fn run_probe_macos_cmd(args: ProbeMacosArgs) -> ExitCode {
         println!("{}", serde_json::to_string_pretty(&result).unwrap());
       } else {
         println!("bundle_id:        {}", result.bundle_id);
+        println!("activated:        {}", result.activated);
+        println!("ax_captured:      {}", result.ax_snapshot_captured);
         println!("node_count:       {}", result.node_count);
         println!("search_fields:    {}", result.search_field_candidates.len());
         for node in &result.search_field_candidates {

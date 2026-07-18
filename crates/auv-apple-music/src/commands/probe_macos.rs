@@ -74,6 +74,8 @@ pub struct ToolbarChildCounts {
 pub struct ProbeResult {
   pub command: String,
   pub bundle_id: String,
+  pub activated: bool,
+  pub ax_snapshot_captured: bool,
   pub node_count: usize,
   pub search_field_candidates: Vec<DiscoveredNode>,
   pub toolbar_inspections: Vec<ToolbarInspection>,
@@ -101,6 +103,8 @@ fn run_probe_macos(inputs: &ProbeInputs) -> Result<ProbeResult, String> {
   let mut result = ProbeResult {
     command: "probe-macos".to_string(),
     bundle_id: inputs.bundle_id.clone(),
+    activated: false,
+    ax_snapshot_captured: false,
     node_count: 0,
     search_field_candidates: Vec::new(),
     toolbar_inspections: Vec::new(),
@@ -112,12 +116,14 @@ fn run_probe_macos(inputs: &ProbeInputs) -> Result<ProbeResult, String> {
   session
     .activate_bundle_id(&inputs.bundle_id, Duration::from_millis(inputs.activate_settle_ms))
     .map_err(|error| format!("Music.app activation failed: {error}"))?;
+  result.activated = true;
 
   // Step 2: capture AX tree
   let snapshot = session
     .accessibility()
     .capture_app_tree(&inputs.bundle_id, DEFAULT_AX_MAX_DEPTH, DEFAULT_AX_MAX_CHILDREN)
     .map_err(|error| format!("AX tree capture failed: {error}"))?;
+  result.ax_snapshot_captured = true;
   result.node_count = snapshot.nodes.len();
 
   // Step 3: locate search field candidates
@@ -238,24 +244,6 @@ fn save_probe_artifact(dir: &std::path::Path, snapshot: &ObservedAxTreeSnapshot)
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  #[test]
-  fn probe_result_serializes_without_invariant_success_fields() {
-    let result = ProbeResult {
-      command: "probe-macos".to_string(),
-      bundle_id: DEFAULT_MUSIC_APP_BUNDLE_ID.to_string(),
-      node_count: 0,
-      search_field_candidates: Vec::new(),
-      toolbar_inspections: Vec::new(),
-      artifact: None,
-      diagnostics: Vec::new(),
-    };
-
-    let value = serde_json::to_value(result).expect("probe result should serialize");
-    assert!(value.get("activated").is_none());
-    assert!(value.get("ax_snapshot_captured").is_none());
-    assert_eq!(value["toolbar_inspections"], serde_json::json!([]));
-  }
 
   #[test]
   fn toolbar_inspection_error_is_recorded_with_target_context() {

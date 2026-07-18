@@ -70,10 +70,6 @@ Run on real macOS hardware (Darwin 27.0, macOS 27.0 build 26A5368g, arm64):
 `search_field_candidates` is empty. The probe correctly reported failure
 rather than fabricating a match — the diagnostics path worked as designed.
 
-The JSON above is the original live capture. The current success result omits
-`activated` and `ax_snapshot_captured`: both were invariantly `true` whenever
-`run_probe` returned `Ok`, so they did not represent partial progress.
-
 ### Why the search field was not found
 
 Inspecting the full 77-node snapshot:
@@ -131,13 +127,19 @@ role, and driver error into `diagnostics` instead of silently dropping it.
 - Checked: the PR diff and CI annotations, all three Swift AX path walkers,
   Rust exposure through `types`, `AccessibilityApi`, and the crate root, probe
   serialization/CLI output, the support matrix, and this reference note.
-- Rejected: silently dropping per-toolbar errors, stabilizing the
-  hypothesis-specific driver type, and inventing a partial-result state model
-  for two success-only booleans.
+- Rejected: silently dropping per-toolbar errors, and stabilizing the
+  hypothesis-specific driver type.
 - Selected: one Swift path resolver shared by action/focus/inspection;
   temporary native diagnostics mapped to an app-local result rather than
   adding them to stable `AccessibilityApi` or crate-root re-exports;
-  per-item diagnostic errors; deletion of invariant success fields.
+  per-item diagnostic errors.
+- Scope decision (2026-07-18): the `activated` / `ax_snapshot_captured`
+  success booleans on `ProbeResult` (introduced by #108) are kept, not deleted.
+  Removing them would change the probe JSON schema — a compatibility change
+  that does not serve this PR's AX-diagnostic goal — so it is held out of this
+  slice. Revisit deleting them, or replacing them with a real partial-result
+  shape, in a dedicated schema PR if a consumer ever depends on the probe
+  output.
 - Follow-up (2026-07-17): the inspection FFI (`NativeAxNodeInspectionResponse`
   and `DecodedAxNodeInspectionResponse`) carried `subrole`/`title` that Swift
   read and marshalled but the decode step dropped before building
