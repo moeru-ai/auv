@@ -5,6 +5,8 @@ use super::binding::ffi::{
   NativeAxNodeInspectionResponse, NativeAxTreeRequest, NativeAxTreeResponse, capture_ax_tree, inspect_ax_node, perform_ax_action,
   set_ax_focused,
 };
+use auv_driver_common::error::{DriverError, DriverResult};
+
 use super::types::{AuvResult, ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,8 +91,14 @@ pub fn set_ax_focused_path(_pid: i32, _path: &str, _expected_role: &str) -> AuvR
   Err("macOS native AX focus dispatch is unsupported on this target".to_string())
 }
 
+// NOTICE: unlike the sibling `native` AX helpers (which return `AuvResult` and
+// are wrapped into `DriverError` by `accessibility.rs` before leaving the
+// crate), this one is consumed directly by the Apple Music probe. It converts
+// the native String failure to `DriverError` here so no `Result<_, String>`
+// crosses the crate boundary. AGENTS.md: "Internal FFI decode may use strings;
+// convert to DriverError ... before leaving the crate."
 #[cfg(target_os = "macos")]
-pub fn inspect_ax_node_path(pid: i32, path: &str, expected_role: &str) -> AuvResult<AxNodeInspection> {
+pub fn inspect_ax_node_path(pid: i32, path: &str, expected_role: &str) -> DriverResult<AxNodeInspection> {
   decode_ax_node_inspection_response(
     path.to_string(),
     DecodedAxNodeInspectionResponse::from(inspect_ax_node(NativeAxNodeInspectionRequest {
@@ -99,11 +107,12 @@ pub fn inspect_ax_node_path(pid: i32, path: &str, expected_role: &str) -> AuvRes
       expected_role: expected_role.to_string(),
     })),
   )
+  .map_err(|message| DriverError::Backend { message })
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn inspect_ax_node_path(_pid: i32, _path: &str, _expected_role: &str) -> AuvResult<AxNodeInspection> {
-  Err("macOS native AX node inspection is unsupported on this target".to_string())
+pub fn inspect_ax_node_path(_pid: i32, _path: &str, _expected_role: &str) -> DriverResult<AxNodeInspection> {
+  Err(DriverError::unsupported("macos.ax.inspect_node_path"))
 }
 
 pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<NativeAxTreeCapture> {
