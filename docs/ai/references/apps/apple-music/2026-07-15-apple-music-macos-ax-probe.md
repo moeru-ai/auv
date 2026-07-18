@@ -99,3 +99,64 @@ in this slice; this finding is recorded for the next slice to investigate
 (e.g., a probe that first activates/expands the toolbar search affordance,
 or one that captures with different traversal parameters, before re-checking
 for `AXTextField` nodes).
+
+## Toolbar reachability diagnostic
+
+The follow-up diagnostic resolves each captured `AXToolbar` path against the
+current `AXChildren` tree, verifies the observed role, and independently reads
+`AXChildren`, `AXVisibleChildren`, `AXContents`, and
+`AXChildrenInNavigationOrder`. This is evidence gathering only; it does not
+change capture traversal.
+
+`AxNodeInspection` remains on the explicitly temporary, doc-hidden
+`native::ax_tree` compatibility surface and is not exposed through the stable
+`AccessibilityApi` or crate-root re-exports. Rust requires the native type and
+function to remain publicly callable while Apple Music is a separate crate;
+that visibility is an implementation constraint, not API graduation. The four
+child-attribute counts encode this probe's current hypothesis and have no
+second independent consumer, so they are not a stable core driver capability.
+The Apple Music crate maps successful reads into its app-local
+`ToolbarInspection` output. Per-toolbar failures remain partial diagnostic
+outcomes: the probe keeps successful inspections and writes each failed path,
+role, and driver error into `diagnostics` instead of silently dropping it.
+
+## PR #111 quality-slice record (2026-07-16)
+
+- Classification: approved feature hardening across `auv-driver-macos`
+  (`core-maintained`) and `auv-apple-music` (`reference-maintained`).
+- Checked: the PR diff and CI annotations, all three Swift AX path walkers,
+  Rust exposure through `types`, `AccessibilityApi`, and the crate root, probe
+  serialization/CLI output, the support matrix, and this reference note.
+- Rejected: silently dropping per-toolbar errors, and stabilizing the
+  hypothesis-specific driver type.
+- Selected: one Swift path resolver shared by action/focus/inspection;
+  temporary native diagnostics mapped to an app-local result rather than
+  adding them to stable `AccessibilityApi` or crate-root re-exports;
+  per-item diagnostic errors.
+- Scope decision (2026-07-18): the `activated` / `ax_snapshot_captured`
+  success booleans on `ProbeResult` (introduced by #108) are kept, not deleted.
+  Removing them would change the probe JSON schema — a compatibility change
+  that does not serve this PR's AX-diagnostic goal — so it is held out of this
+  slice. Revisit deleting them, or replacing them with a real partial-result
+  shape, in a dedicated schema PR if a consumer ever depends on the probe
+  output.
+- Follow-up (2026-07-17): the inspection FFI (`NativeAxNodeInspectionResponse`
+  and `DecodedAxNodeInspectionResponse`) carried `subrole`/`title` that Swift
+  read and marshalled but the decode step dropped before building
+  `AxNodeInspection`. Those two fields were removed from the Swift constructor,
+  the bridge struct, and the decode struct so the inspection surface carries
+  only the diagnostic-relevant role, child counts, actions, and attributes.
+  Bridge regenerated; SwiftPM build, `cargo test`, clippy, and format re-run
+  clean.
+- Qodana root cause: `ProbeResult` referenced `AxNodeInspection`, but that type
+  was imported only under `cfg(target_os = "macos")`. The app-local,
+  target-independent output type removes the unresolved path.
+- Validation path: generated Swift bridge files, SwiftPM build, RustRover
+  diagnostics/build, focused crate tests, workspace check, clippy, format, and
+  diff checks. Full workspace tests were attempted but the unrelated
+  `auv-driver-linux::ocr::rejects_buffer_with_mismatched_length` test fails on
+  macOS because it receives `Unsupported` instead of `InvalidImage`. The
+  SwiftPM manifest's bridging-header path was corrected so the required package
+  build runs from `native/swift` as documented.
+- Core API decision: no stable core public API was added, no provisional term
+  was added, and no new error type crossed a Rust crate boundary.

@@ -188,6 +188,26 @@ pub(crate) mod ffi {
   }
 
   #[swift_bridge(swift_repr = "struct")]
+  struct NativeAxNodeInspectionRequest {
+    pid: i64,
+    path: String,
+    expected_role: String,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
+  struct NativeAxNodeInspectionResponse {
+    role: String,
+    available_actions: Vec<String>,
+    available_attributes: Vec<String>,
+    children_count: i64,
+    visible_children_count: i64,
+    contents_count: i64,
+    navigation_children_count: i64,
+    error_message: Option<String>,
+    recovery_hint: Option<String>,
+  }
+
+  #[swift_bridge(swift_repr = "struct")]
   struct NativeAxFocusRequest {
     pid: i64,
     path: String,
@@ -364,6 +384,7 @@ pub(crate) mod ffi {
     fn capture_ax_tree(request: NativeAxTreeRequest) -> NativeAxTreeResponse;
     fn perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse;
     fn set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse;
+    fn inspect_ax_node(request: NativeAxNodeInspectionRequest) -> NativeAxNodeInspectionResponse;
     fn find_ocr_text(request: NativeOcrTextRequest) -> NativeOcrTextResponse;
     fn find_ocr_text_rgba(request: NativeOcrRgbaRequest) -> NativeOcrTextResponse;
     fn capture_window_image(request: NativeWindowCaptureRequest) -> NativeWindowCaptureResponse;

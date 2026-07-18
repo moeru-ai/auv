@@ -132,6 +132,72 @@ private func axFirstWindow(_ appElement: AXUIElement) -> AXUIElement? {
   return axElementArrayAttribute(appElement, kAXWindowsAttribute as String).first
 }
 
+private struct AxPathResolutionFailure: Error {
+  let message: String
+  let recovery: String
+}
+
+private func axObservedPathIndices(path: String, operation: String, retry: String) -> Result<[Int], AxPathResolutionFailure> {
+  let segments = path.split(separator: ".").map(String.init)
+  guard segments.first == "0" else {
+    return .failure(AxPathResolutionFailure(
+      message: "AX \(operation) path must begin with 0; got \(path)",
+      recovery: "capture a fresh AX tree and retry \(retry)"
+    ))
+  }
+
+  var indices: [Int] = []
+  for (offset, segment) in segments.dropFirst().enumerated() {
+    guard let index = Int(segment), index >= 0 else {
+      return .failure(AxPathResolutionFailure(
+        message: "AX \(operation) path segment \(segment) at offset \(offset) is not a non-negative integer",
+        recovery: "capture a fresh AX tree and retry \(retry)"
+      ))
+    }
+    indices.append(index)
+  }
+  return .success(indices)
+}
+
+private func axResolveObservedPath(
+  pid: pid_t,
+  path: String,
+  expectedRole: String,
+  operation: String,
+  retry: String
+) -> Result<AXUIElement, AxPathResolutionFailure> {
+  let indices: [Int]
+  switch axObservedPathIndices(path: path, operation: operation, retry: retry) {
+  case .success(let parsed):
+    indices = parsed
+  case .failure(let failure):
+    return .failure(failure)
+  }
+
+  let appElement = AXUIElementCreateApplication(pid)
+  var current = axFirstWindow(appElement) ?? appElement
+  for (offset, index) in indices.enumerated() {
+    let children = axChildren(current)
+    guard children.indices.contains(index) else {
+      return .failure(AxPathResolutionFailure(
+        message: "AX \(operation) path index \(index) is out of range at offset \(offset); element has \(children.count) child(ren)",
+        recovery: "the AX tree likely shifted since observation; capture a fresh tree and retry \(retry)"
+      ))
+    }
+    current = children[index]
+  }
+
+  let actualRole = axStringAttribute(current, kAXRoleAttribute as String)
+  guard expectedRole.isEmpty || actualRole == expectedRole else {
+    return .failure(AxPathResolutionFailure(
+      message: "AX \(operation) expected role \(expectedRole) at path \(path), got \(actualRole)",
+      recovery: "the AX tree likely shifted since observation; capture a fresh tree and retry \(retry)"
+    ))
+  }
+
+  return .success(current)
+}
+
 func capture_ax_tree(request: NativeAxTreeRequest) -> NativeAxTreeResponse {
   let appQuery = request.app.toString().lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
   let maxDepth = Int(request.max_depth)
@@ -245,33 +311,12 @@ func perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse
     )
   }
 
-  let segments = pathRaw.split(separator: ".").map { String($0) }
-  guard let firstSegment = segments.first, firstSegment == "0" else {
-    return actionError(
-      "AX action path must begin with 0; got \(pathRaw)",
-      "capture a fresh AX tree and retry the action"
-    )
-  }
-
-  let appElement = AXUIElementCreateApplication(pid)
-  let rootElement = axFirstWindow(appElement) ?? appElement
-
-  var current = rootElement
-  for (offset, segment) in segments.dropFirst().enumerated() {
-    guard let index = Int(segment) else {
-      return actionError(
-        "AX action path segment \(segment) at offset \(offset) is not an integer",
-        "capture a fresh AX tree and retry the action"
-      )
-    }
-    let children = axChildren(current)
-    if index < 0 || index >= children.count {
-      return actionError(
-        "AX action path index \(index) is out of range at offset \(offset); element has \(children.count) child(ren)",
-        "the AX tree likely shifted since observation; capture a fresh tree and retry"
-      )
-    }
-    current = children[index]
+  let current: AXUIElement
+  switch axResolveObservedPath(pid: pid, path: pathRaw, expectedRole: expectedRole, operation: "action", retry: "the action") {
+  case .success(let resolved):
+    current = resolved
+  case .failure(let failure):
+    return actionError(failure.message, failure.recovery)
   }
 
   let actualRole = axStringAttribute(current, kAXRoleAttribute as String)
@@ -279,13 +324,6 @@ func perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse
   let actualTitle = axStringAttribute(current, kAXTitleAttribute as String)
   let actualDescription = axStringAttribute(current, kAXDescriptionAttribute as String)
   let actualIdentifier = axStringAttribute(current, kAXIdentifierAttribute as String)
-
-  if !expectedRole.isEmpty && actualRole != expectedRole {
-    return actionError(
-      "AX action expected role \(expectedRole) at path \(pathRaw), got \(actualRole)",
-      "the AX tree likely shifted since observation; capture a fresh tree and retry"
-    )
-  }
 
   var actionNames: CFArray?
   let listResult = AXUIElementCopyActionNames(current, &actionNames)
@@ -339,6 +377,106 @@ func perform_ax_action(request: NativeAxActionRequest) -> NativeAxActionResponse
   )
 }
 
+func inspect_ax_node(request: NativeAxNodeInspectionRequest) -> NativeAxNodeInspectionResponse {
+  let pid = pid_t(request.pid)
+  let pathRaw = request.path.toString()
+  let expectedRole = request.expected_role.toString()
+
+  func inspectionError(_ message: String, _ recovery: String) -> NativeAxNodeInspectionResponse {
+    NativeAxNodeInspectionResponse(
+      role: "".intoRustString(),
+      available_actions: RustVec<RustString>(),
+      available_attributes: RustVec<RustString>(),
+      children_count: 0,
+      visible_children_count: 0,
+      contents_count: 0,
+      navigation_children_count: 0,
+      error_message: message.intoRustString(),
+      recovery_hint: recovery.intoRustString()
+    )
+  }
+
+  let current: AXUIElement
+  switch axResolveObservedPath(pid: pid, path: pathRaw, expectedRole: expectedRole, operation: "inspection", retry: "the inspection") {
+  case .success(let resolved):
+    current = resolved
+  case .failure(let failure):
+    return inspectionError(failure.message, failure.recovery)
+  }
+
+  let actualRole = axStringAttribute(current, kAXRoleAttribute as String)
+
+  var actionNames: CFArray?
+  let actionsResult = AXUIElementCopyActionNames(current, &actionNames)
+  guard actionsResult == .success else {
+    return inspectionError(
+      "AX inspection could not read action names at path \(pathRaw): AX error \(actionsResult.rawValue)",
+      "verify Accessibility permission and retry the inspection against a fresh AX tree"
+    )
+  }
+  let availableActions = actionNames as? [String] ?? []
+
+  var attributeNames: CFArray?
+  let attributesResult = AXUIElementCopyAttributeNames(current, &attributeNames)
+  guard attributesResult == .success else {
+    return inspectionError(
+      "AX inspection could not read attribute names at path \(pathRaw): AX error \(attributesResult.rawValue)",
+      "verify Accessibility permission and retry the inspection against a fresh AX tree"
+    )
+  }
+  let availableAttributes = attributeNames as? [String] ?? []
+
+  func inspectedElementCount(_ attribute: String) -> Result<Int, AxPathResolutionFailure> {
+    var rawValue: CFTypeRef?
+    let result = AXUIElementCopyAttributeValue(current, attribute as CFString, &rawValue)
+    if result == .noValue || result == .attributeUnsupported {
+      return .success(0)
+    }
+    guard result == .success else {
+      return .failure(AxPathResolutionFailure(
+        message: "AX inspection could not read \(attribute) at path \(pathRaw): AX error \(result.rawValue)",
+        recovery: "verify Accessibility permission and retry the inspection against a fresh AX tree"
+      ))
+    }
+    guard let array = rawValue as? NSArray else {
+      return .failure(AxPathResolutionFailure(
+        message: "AX inspection expected \(attribute) to contain an array at path \(pathRaw)",
+        recovery: "capture a fresh AX tree and retry the inspection"
+      ))
+    }
+    return .success(array.reduce(into: 0) { count, item in
+      let value = item as CFTypeRef
+      if CFGetTypeID(value) == AXUIElementGetTypeID() {
+        count += 1
+      }
+    })
+  }
+
+  // Diagnostic only; the owning rationale lives in the Apple Music AX reference note.
+  let attributes = [kAXChildrenAttribute as String, "AXVisibleChildren", "AXContents", "AXChildrenInNavigationOrder"]
+  var counts: [Int] = []
+  for attribute in attributes {
+    switch inspectedElementCount(attribute) {
+    case .success(let count):
+      counts.append(count)
+    case .failure(let failure):
+      return inspectionError(failure.message, failure.recovery)
+    }
+  }
+
+  return NativeAxNodeInspectionResponse(
+    role: actualRole.intoRustString(),
+    available_actions: nativeStringVec(availableActions),
+    available_attributes: nativeStringVec(availableAttributes),
+    children_count: Int64(counts[0]),
+    visible_children_count: Int64(counts[1]),
+    contents_count: Int64(counts[2]),
+    navigation_children_count: Int64(counts[3]),
+    error_message: nil,
+    recovery_hint: nil
+  )
+}
+
 func set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse {
   let pid = pid_t(request.pid)
   let pathRaw = request.path.toString()
@@ -363,33 +501,12 @@ func set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse {
     )
   }
 
-  let segments = pathRaw.split(separator: ".").map { String($0) }
-  guard let firstSegment = segments.first, firstSegment == "0" else {
-    return focusError(
-      "AX focus path must begin with 0; got \(pathRaw)",
-      "capture a fresh AX tree and retry the focus request"
-    )
-  }
-
-  let appElement = AXUIElementCreateApplication(pid)
-  let rootElement = axFirstWindow(appElement) ?? appElement
-
-  var current = rootElement
-  for (offset, segment) in segments.dropFirst().enumerated() {
-    guard let index = Int(segment) else {
-      return focusError(
-        "AX focus path segment \(segment) at offset \(offset) is not an integer",
-        "capture a fresh AX tree and retry the focus request"
-      )
-    }
-    let children = axChildren(current)
-    if index < 0 || index >= children.count {
-      return focusError(
-        "AX focus path index \(index) is out of range at offset \(offset); element has \(children.count) child(ren)",
-        "the AX tree likely shifted since observation; capture a fresh tree and retry"
-      )
-    }
-    current = children[index]
+  let current: AXUIElement
+  switch axResolveObservedPath(pid: pid, path: pathRaw, expectedRole: expectedRole, operation: "focus", retry: "the focus request") {
+  case .success(let resolved):
+    current = resolved
+  case .failure(let failure):
+    return focusError(failure.message, failure.recovery)
   }
 
   let actualRole = axStringAttribute(current, kAXRoleAttribute as String)
@@ -399,13 +516,6 @@ func set_ax_focused(request: NativeAxFocusRequest) -> NativeAxFocusResponse {
   let actualIdentifier = axStringAttribute(current, kAXIdentifierAttribute as String)
   let actualPlaceholder = axStringAttribute(current, kAXPlaceholderValueAttribute as String)
   let bounds = axBounds(current)
-
-  if !expectedRole.isEmpty && actualRole != expectedRole {
-    return focusError(
-      "AX focus expected role \(expectedRole) at path \(pathRaw), got \(actualRole)",
-      "the AX tree likely shifted since observation; capture a fresh tree and retry"
-    )
-  }
 
   // Check whether the element is currently focused; treat that as a no-op success.
   var alreadyFocused = false

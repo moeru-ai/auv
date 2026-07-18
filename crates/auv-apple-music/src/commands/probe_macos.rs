@@ -1,9 +1,7 @@
 //! macOS Music.app AX surface probe.
 //!
-//! Bounded discovery for the search field only — activate, capture, locate,
-//! persist. Does not submit a search query, click results, play tracks, or
-//! implement candidate selection algorithms. Result-row classification is
-//! deferred; see [`ProbeResult`] doc for why.
+//! Bounded search-field discovery plus toolbar reachability diagnostics. See
+//! `docs/ai/references/apps/apple-music/2026-07-15-apple-music-macos-ax-probe.md`.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -50,16 +48,28 @@ pub struct DiscoveredNode {
   pub bounds_height: i64,
 }
 
+/// App-local diagnostic output for one captured toolbar.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolbarInspection {
+  pub path: String,
+  pub role: String,
+  pub available_actions: Vec<String>,
+  pub available_attributes: Vec<String>,
+  pub child_counts: ToolbarChildCounts,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolbarChildCounts {
+  pub children_count: usize,
+  pub visible_children_count: usize,
+  pub contents_count: usize,
+  pub navigation_children_count: usize,
+}
+
 /// Output produced by the probe.
 ///
-/// NOTICE(apple-music-result-row-deferred): a `result_row_candidates` field
-/// was deliberately removed here. This probe never submits a search query, so
-/// it only ever observes Music.app's default/landing surface. Any static-text
-/// heuristic run against that surface would misclassify sidebar labels,
-/// buttons, and recommendation copy as "search results" — a taxonomy that
-/// cannot be validated without first observing a real post-search AX tree.
-/// Unlock once a query-submission slice captures a live post-search snapshot
-/// an owner can review.
+/// TODO(apple-music-result-row): result rows require an owner-approved query
+/// submission slice; see the Apple Music AX reference note.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProbeResult {
   pub command: String,
@@ -68,6 +78,7 @@ pub struct ProbeResult {
   pub ax_snapshot_captured: bool,
   pub node_count: usize,
   pub search_field_candidates: Vec<DiscoveredNode>,
+  pub toolbar_inspections: Vec<ToolbarInspection>,
   pub artifact: Option<String>,
   pub diagnostics: Vec<String>,
 }
@@ -96,6 +107,7 @@ fn run_probe_macos(inputs: &ProbeInputs) -> Result<ProbeResult, String> {
     ax_snapshot_captured: false,
     node_count: 0,
     search_field_candidates: Vec::new(),
+    toolbar_inspections: Vec::new(),
     artifact: None,
     diagnostics: Vec::new(),
   };
@@ -120,12 +132,67 @@ fn run_probe_macos(inputs: &ProbeInputs) -> Result<ProbeResult, String> {
     result.diagnostics.push("no search field candidates found".to_string());
   }
 
+  // Step 3b: inspect every toolbar node for children reachable through an
+  // AX attribute other than AXChildren. See ProbeResult::toolbar_inspections.
+  let (toolbar_inspections, toolbar_diagnostics) = inspect_toolbar_nodes(&snapshot);
+  result.toolbar_inspections = toolbar_inspections;
+  result.diagnostics.extend(toolbar_diagnostics);
+  for inspection in &result.toolbar_inspections {
+    let counts = &inspection.child_counts;
+    if counts.children_count == 0 && (counts.visible_children_count > 0 || counts.contents_count > 0 || counts.navigation_children_count > 0)
+    {
+      result.diagnostics.push(format!(
+        "toolbar {} has 0 AXChildren but non-zero children via another attribute (visible={}, contents={}, navigation={})",
+        inspection.path, counts.visible_children_count, counts.contents_count, counts.navigation_children_count
+      ));
+    }
+  }
+
   // Step 4: persist artifact if requested
   if let Some(dir) = &inputs.artifact_dir {
     result.artifact = Some(save_probe_artifact(dir, &snapshot)?);
   }
 
   Ok(result)
+}
+
+#[cfg(target_os = "macos")]
+fn inspect_toolbar_nodes(snapshot: &ObservedAxTreeSnapshot) -> (Vec<ToolbarInspection>, Vec<String>) {
+  let mut inspections = Vec::new();
+  let mut diagnostics = Vec::new();
+
+  for node in snapshot.nodes.iter().filter(|node| node.role.eq_ignore_ascii_case("AXToolbar")) {
+    let inspection = auv_driver_macos::native::ax_tree::inspect_ax_node_path(snapshot.pid, &node.path, &node.role)
+      .map(|inspection| ToolbarInspection {
+        path: inspection.path,
+        role: inspection.role,
+        available_actions: inspection.available_actions,
+        available_attributes: inspection.available_attributes,
+        child_counts: ToolbarChildCounts {
+          children_count: inspection.children_count,
+          visible_children_count: inspection.visible_children_count,
+          contents_count: inspection.contents_count,
+          navigation_children_count: inspection.navigation_children_count,
+        },
+      })
+      .map_err(|error| error.to_string());
+    record_toolbar_inspection(&mut inspections, &mut diagnostics, &node.path, &node.role, inspection);
+  }
+
+  (inspections, diagnostics)
+}
+
+fn record_toolbar_inspection(
+  inspections: &mut Vec<ToolbarInspection>,
+  diagnostics: &mut Vec<String>,
+  path: &str,
+  role: &str,
+  inspection: Result<ToolbarInspection, String>,
+) {
+  match inspection {
+    Ok(inspection) => inspections.push(inspection),
+    Err(error) => diagnostics.push(format!("toolbar inspection failed for path={path} role={role}: {error}")),
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -177,6 +244,17 @@ fn save_probe_artifact(dir: &std::path::Path, snapshot: &ObservedAxTreeSnapshot)
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn toolbar_inspection_error_is_recorded_with_target_context() {
+    let mut inspections = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    record_toolbar_inspection(&mut inspections, &mut diagnostics, "0.1", "AXToolbar", Err("AX path shifted".to_string()));
+
+    assert!(inspections.is_empty());
+    assert_eq!(diagnostics, ["toolbar inspection failed for path=0.1 role=AXToolbar: AX path shifted"]);
+  }
 
   #[cfg(target_os = "macos")]
   #[test]

@@ -1,8 +1,9 @@
 // File: src/driver/macos/native/ax_tree.rs
 #[cfg(target_os = "macos")]
 use super::binding::ffi::{
-  NativeAxActionRequest, NativeAxActionResponse, NativeAxFocusRequest, NativeAxFocusResponse, NativeAxTreeRequest, NativeAxTreeResponse,
-  capture_ax_tree, perform_ax_action, set_ax_focused,
+  NativeAxActionRequest, NativeAxActionResponse, NativeAxFocusRequest, NativeAxFocusResponse, NativeAxNodeInspectionRequest,
+  NativeAxNodeInspectionResponse, NativeAxTreeRequest, NativeAxTreeResponse, capture_ax_tree, inspect_ax_node, perform_ax_action,
+  set_ax_focused,
 };
 use super::types::{AuvResult, ObservedAxNode, ObservedAxTreeSnapshot, ObservedRect};
 
@@ -30,6 +31,19 @@ pub struct NativeAxFocus {
   pub identifier: String,
   pub placeholder: String,
   pub bounds: ObservedRect,
+}
+
+/// Temporary native diagnostic payload for the Apple Music AX probe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AxNodeInspection {
+  pub path: String,
+  pub role: String,
+  pub available_actions: Vec<String>,
+  pub available_attributes: Vec<String>,
+  pub children_count: usize,
+  pub visible_children_count: usize,
+  pub contents_count: usize,
+  pub navigation_children_count: usize,
 }
 
 #[cfg(target_os = "macos")]
@@ -73,6 +87,23 @@ pub fn set_ax_focused_path(pid: i32, path: &str, expected_role: &str) -> AuvResu
 #[cfg(not(target_os = "macos"))]
 pub fn set_ax_focused_path(_pid: i32, _path: &str, _expected_role: &str) -> AuvResult<NativeAxFocus> {
   Err("macOS native AX focus dispatch is unsupported on this target".to_string())
+}
+
+#[cfg(target_os = "macos")]
+pub fn inspect_ax_node_path(pid: i32, path: &str, expected_role: &str) -> AuvResult<AxNodeInspection> {
+  decode_ax_node_inspection_response(
+    path.to_string(),
+    DecodedAxNodeInspectionResponse::from(inspect_ax_node(NativeAxNodeInspectionRequest {
+      pid: i64::from(pid),
+      path: path.to_string(),
+      expected_role: expected_role.to_string(),
+    })),
+  )
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn inspect_ax_node_path(_pid: i32, _path: &str, _expected_role: &str) -> AuvResult<AxNodeInspection> {
+  Err("macOS native AX node inspection is unsupported on this target".to_string())
 }
 
 pub fn decode_ax_tree_response(response: DecodedAxTreeResponse) -> AuvResult<NativeAxTreeCapture> {
@@ -156,6 +187,27 @@ pub fn decode_ax_action_response(response: DecodedAxActionResponse) -> AuvResult
     performed_action: response.performed_action,
     available_actions: response.available_actions,
   })
+}
+
+pub fn decode_ax_node_inspection_response(path: String, response: DecodedAxNodeInspectionResponse) -> AuvResult<AxNodeInspection> {
+  if response.error_message.is_some() {
+    return super::error::native_result("inspect_ax_node", None, response.error_message, response.recovery_hint);
+  }
+
+  Ok(AxNodeInspection {
+    path,
+    role: response.role,
+    available_actions: response.available_actions,
+    available_attributes: response.available_attributes,
+    children_count: non_negative_count(response.children_count),
+    visible_children_count: non_negative_count(response.visible_children_count),
+    contents_count: non_negative_count(response.contents_count),
+    navigation_children_count: non_negative_count(response.navigation_children_count),
+  })
+}
+
+fn non_negative_count(value: i64) -> usize {
+  usize::try_from(value).unwrap_or(0)
 }
 
 pub fn decode_ax_focus_response(response: DecodedAxFocusResponse) -> AuvResult<NativeAxFocus> {
@@ -251,6 +303,19 @@ pub struct DecodedAxActionResponse {
 }
 
 #[derive(Clone, Debug)]
+pub struct DecodedAxNodeInspectionResponse {
+  pub role: String,
+  pub available_actions: Vec<String>,
+  pub available_attributes: Vec<String>,
+  pub children_count: i64,
+  pub visible_children_count: i64,
+  pub contents_count: i64,
+  pub navigation_children_count: i64,
+  pub error_message: Option<String>,
+  pub recovery_hint: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct DecodedAxFocusResponse {
   pub set_attribute: String,
   pub was_already_focused: bool,
@@ -305,6 +370,23 @@ impl From<NativeAxActionResponse> for DecodedAxActionResponse {
     Self {
       performed_action: value.performed_action,
       available_actions: value.available_actions,
+      error_message: value.error_message,
+      recovery_hint: value.recovery_hint,
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
+impl From<NativeAxNodeInspectionResponse> for DecodedAxNodeInspectionResponse {
+  fn from(value: NativeAxNodeInspectionResponse) -> Self {
+    Self {
+      role: value.role,
+      available_actions: value.available_actions,
+      available_attributes: value.available_attributes,
+      children_count: value.children_count,
+      visible_children_count: value.visible_children_count,
+      contents_count: value.contents_count,
+      navigation_children_count: value.navigation_children_count,
       error_message: value.error_message,
       recovery_hint: value.recovery_hint,
     }
@@ -435,6 +517,41 @@ mod tests {
 
     assert!(focus.was_already_focused);
     assert_eq!(focus.set_attribute, "AXFocused");
+  }
+
+  fn base_inspection_response() -> DecodedAxNodeInspectionResponse {
+    DecodedAxNodeInspectionResponse {
+      role: "AXToolbar".to_string(),
+      available_actions: vec![],
+      available_attributes: vec!["AXRole".to_string(), "AXChildren".to_string()],
+      children_count: 0,
+      visible_children_count: 2,
+      contents_count: 0,
+      navigation_children_count: 0,
+      error_message: None,
+      recovery_hint: None,
+    }
+  }
+
+  #[test]
+  fn decode_ax_node_inspection_reports_attribute_specific_child_counts() {
+    let inspection = decode_ax_node_inspection_response("0.1".to_string(), base_inspection_response()).unwrap();
+
+    assert_eq!(inspection.path, "0.1");
+    assert_eq!(inspection.children_count, 0);
+    assert_eq!(inspection.visible_children_count, 2);
+  }
+
+  #[test]
+  fn decode_ax_node_inspection_rejects_native_error() {
+    let mut response = base_inspection_response();
+    response.error_message = Some("AXUIElementCopyAttributeNames returned -25200".to_string());
+    response.recovery_hint = Some("verify the AX path still resolves".to_string());
+
+    let error = decode_ax_node_inspection_response("0.1".to_string(), response).unwrap_err();
+
+    assert!(error.contains("inspect_ax_node failed"));
+    assert!(error.contains("AXUIElementCopyAttributeNames returned -25200"));
   }
 
   #[test]
