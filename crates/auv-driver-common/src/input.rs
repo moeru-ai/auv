@@ -305,12 +305,15 @@ impl InputAttempt {
 ///   `InputActionResult` when it attempts typed delivery. Direct driver-
 ///   API consumers (recipes, typed commands invoking driver primitives)
 ///   construct `InputActionResult` the same way.
-/// - **Downstream**: action-bearing operations attach this (and any
-///   current verification records) to the resulting `OperationResult`
-///   artifact (`src/contract.rs`) as delivery evidence.
+/// - **Downstream**: persisted as a standalone `input-action-result` JSON
+///   artifact — **not** embedded in `OperationResult`. Read-side seam:
+///   see `src/contract.rs` module docs.
 ///
 /// Do not introduce a new action-result schema beside `InputActionResult`
 /// without owner approval.
+///
+/// TODO(operation-result-iar-ref): whether `OperationResult.evidence_artifacts`
+/// should explicitly cite the standalone artifact is a separate slice.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputActionResult {
   pub selected_path: InputDeliveryPath,

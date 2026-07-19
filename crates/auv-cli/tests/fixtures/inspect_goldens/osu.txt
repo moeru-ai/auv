@@ -22,6 +22,9 @@ Artifacts: 2
 Command Boundary Claims:
 - none
 
+Input Actions:
+- none
+
 Verifications:
 - none
 

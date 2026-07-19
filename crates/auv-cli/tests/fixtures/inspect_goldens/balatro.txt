@@ -34,6 +34,9 @@ Artifacts: 8
 Command Boundary Claims:
 - none
 
+Input Actions:
+- none
+
 Verifications:
 - none
 

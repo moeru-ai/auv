@@ -51,6 +51,9 @@ pub struct InspectRunEnrichment {
   pub observation_snapshots: Vec<serde_json::Value>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub detector_recognition_lineage: Vec<serde_json::Value>,
+  /// Serialized `InputActionResult` from `input-action-result` artifacts.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub input_action_results: Vec<serde_json::Value>,
   pub view_parser: ViewParserInspect,
   pub view_parser_summary: ViewParserListSummary,
 }

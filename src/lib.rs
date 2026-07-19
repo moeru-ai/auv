@@ -72,6 +72,11 @@ impl auv_inspect_server::InspectReadProjection for RootInspectReadProjection {
         .map(serde_json::to_value)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to encode detector recognition lineage inspect values: {error}"))?,
+      input_action_results: run_read::extract_input_action_results(store, run)?
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to encode input action result inspect values: {error}"))?,
       view_parser,
       view_parser_summary,
     })

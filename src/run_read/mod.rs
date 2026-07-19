@@ -6,6 +6,8 @@
 //!
 //! - verification claims come from `operation-result` JSON artifacts
 //! - observation snapshots come from `scroll-scan` JSON artifacts
+//! - input delivery evidence comes from standalone `input-action-result`
+//!   JSON artifacts (`auv_driver::InputActionResult`)
 //! - legacy `OperationOutput::Verification` remains readable without
 //!   double-counting artifacts that also populate `OperationResult.verifications`
 
@@ -14,6 +16,7 @@ use crate::contract::{
 };
 use crate::model::AuvResult;
 use crate::scroll_scan::ScrollScanArtifact;
+use auv_driver::InputActionResult;
 use auv_inspect_model::{artifact_record_view, is_json_mime, read_artifact_json};
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_tracing_driver::trace::ArtifactRecordV1Alpha1;
@@ -23,6 +26,7 @@ pub fn read_run(store: &LocalStore, run_id: &str) -> AuvResult<CanonicalRun> {
 }
 
 const DETECTOR_RECOGNITION_ARTIFACT_ROLE: &str = "detector-recognition";
+const INPUT_ACTION_RESULT_ARTIFACT_ROLE: &str = "input-action-result";
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -135,6 +139,32 @@ pub(crate) fn extract_observation_snapshots(store: &LocalStore, run: &CanonicalR
     snapshots.extend(scroll_scan_artifact.snapshots);
   }
   Ok(snapshots)
+}
+
+/// List typed input-delivery records persisted as `input-action-result` artifacts.
+///
+/// Delivery evidence is a standalone artifact role today; it is not embedded in
+/// [`OperationResult`]. Callers must not treat presence or `attempts[*].succeeded`
+/// as semantic success — that remains a separate verification claim.
+pub(crate) fn list_input_action_results(store: &LocalStore, run_id: &str) -> AuvResult<Vec<InputActionResult>> {
+  let run = store.read_run(run_id)?;
+  extract_input_action_results(store, &run)
+}
+
+/// Scan a loaded run for `input-action-result` JSON artifacts in artifact order.
+///
+/// Non-matching roles and non-JSON MIME types are skipped. Matching role with
+/// malformed JSON returns an error (no silent drop).
+pub(crate) fn extract_input_action_results(store: &LocalStore, run: &CanonicalRun) -> AuvResult<Vec<InputActionResult>> {
+  let mut results = Vec::new();
+  for artifact in &run.artifacts {
+    if artifact.role != INPUT_ACTION_RESULT_ARTIFACT_ROLE || !is_json_mime(&artifact.mime_type) {
+      continue;
+    }
+    let result: InputActionResult = read_artifact_json(store, run.run.run_id.as_str(), artifact, INPUT_ACTION_RESULT_ARTIFACT_ROLE)?;
+    results.push(result);
+  }
+  Ok(results)
 }
 
 pub(crate) fn list_detector_recognition_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<DetectorRecognitionLineage>> {
@@ -284,3 +314,203 @@ pub use crate::view_parser_read::{
   build_view_parser_inspect, build_view_resolution_summary, extract_playlist_select_result_wires, extract_reacquisition_records,
   extract_view_memory_writes, list_view_memory_writes,
 };
+
+#[cfg(test)]
+mod tests {
+  use std::collections::BTreeMap;
+  use std::fs;
+  use std::path::{Path, PathBuf};
+
+  use auv_driver::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
+  use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+  use auv_tracing_driver::trace::{
+    ArtifactRecordV1Alpha1, RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId,
+    TraceState, TraceStatusCode,
+  };
+  use serde::Serialize;
+
+  use super::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, extract_input_action_results, list_input_action_results};
+
+  fn temp_root(label: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("auv-run-read-iar-{label}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp root");
+    root
+  }
+
+  fn stage_file(
+    store: &LocalStore,
+    root: &Path,
+    run_id: &RunId,
+    span_id: &SpanId,
+    index: usize,
+    role: &str,
+    preferred_name: &str,
+    bytes: &[u8],
+  ) -> ArtifactRecordV1Alpha1 {
+    let source_path = root.join(format!("source-{index}-{preferred_name}"));
+    fs::write(&source_path, bytes).expect("write source");
+    store
+      .stage_artifact_file(
+        run_id,
+        index,
+        span_id,
+        None,
+        auv_tracing_driver::ArtifactFileSource {
+          role: role.to_string(),
+          source_path,
+          preferred_name: preferred_name.to_string(),
+          summary: None,
+        },
+      )
+      .expect("stage artifact")
+  }
+
+  fn stage_json<T: Serialize>(
+    store: &LocalStore,
+    root: &Path,
+    run_id: &RunId,
+    span_id: &SpanId,
+    index: usize,
+    role: &str,
+    preferred_name: &str,
+    value: &T,
+  ) -> ArtifactRecordV1Alpha1 {
+    let rendered = serde_json::to_string_pretty(value).expect("serialize") + "\n";
+    stage_file(store, root, run_id, span_id, index, role, preferred_name, rendered.as_bytes())
+  }
+
+  fn write_run(store: &LocalStore, run_id: &str, artifacts: Vec<ArtifactRecordV1Alpha1>) {
+    let run_id = RunId::new(run_id);
+    let span_id = SpanId::new("0000000000000001");
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: RunRecordV1Alpha1 {
+          api_version: RUN_API_VERSION.to_string(),
+          run_id: run_id.clone(),
+          trace_id: TraceId::new("trace_iar"),
+          run_type: RunType::Command,
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 1,
+          finished_at_millis: Some(2),
+          root_span_id: span_id.clone(),
+          attributes: BTreeMap::new(),
+          summary: Some("iar fixture".to_string()),
+          failure: None,
+        },
+        spans: vec![SpanRecordV1Alpha1 {
+          api_version: SPAN_API_VERSION.to_string(),
+          span_id,
+          parent_span_id: None,
+          name: "auv.command".to_string(),
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 1,
+          finished_at_millis: Some(2),
+          attributes: BTreeMap::new(),
+          summary: None,
+          failure: None,
+        }],
+        events: Vec::new(),
+        artifacts,
+      })
+      .expect("write run");
+  }
+
+  fn sample_iar(path: InputDeliveryPath) -> InputActionResult {
+    InputActionResult {
+      selected_path: path,
+      attempts: vec![InputAttempt::success(path)],
+      fallback_reason: None,
+      mouse_disturbance: DisturbanceLevel::None,
+      focus_disturbance: DisturbanceLevel::Temporary,
+      clipboard_disturbance: DisturbanceLevel::None,
+    }
+  }
+
+  #[test]
+  fn extract_input_action_results_reads_valid_artifacts_in_order() {
+    let root = temp_root("valid");
+    let store = LocalStore::new(root.clone()).expect("store");
+    let run_id = RunId::new("run_iar_valid");
+    let span_id = SpanId::new("0000000000000001");
+    let first = sample_iar(InputDeliveryPath::ForegroundSystemEvents);
+    let second = sample_iar(InputDeliveryPath::WindowTargetedKeyboard);
+    let artifacts = vec![
+      stage_json(&store, &root, &run_id, &span_id, 0, INPUT_ACTION_RESULT_ARTIFACT_ROLE, "iar-0.json", &first),
+      stage_json(&store, &root, &run_id, &span_id, 1, "operation-result", "op.json", &serde_json::json!({"ignored": true})),
+      stage_json(&store, &root, &run_id, &span_id, 2, INPUT_ACTION_RESULT_ARTIFACT_ROLE, "iar-1.json", &second),
+    ];
+    write_run(&store, "run_iar_valid", artifacts);
+
+    let results = list_input_action_results(&store, "run_iar_valid").expect("list");
+    assert_eq!(results, vec![first, second]);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn extract_input_action_results_ignores_unrelated_roles_and_non_json() {
+    let root = temp_root("filters");
+    let store = LocalStore::new(root.clone()).expect("store");
+    let run_id = RunId::new("run_iar_filters");
+    let span_id = SpanId::new("0000000000000001");
+    let kept = sample_iar(InputDeliveryPath::ClipboardPaste);
+    // Non-JSON preferred name → text/plain mime; matching role but ignored by mime filter.
+    let artifacts = vec![
+      stage_file(
+        &store,
+        &root,
+        &run_id,
+        &span_id,
+        0,
+        INPUT_ACTION_RESULT_ARTIFACT_ROLE,
+        "iar.txt",
+        br#"{"selected_path":"clipboard_paste"}"#,
+      ),
+      stage_json(&store, &root, &run_id, &span_id, 1, "scroll-scan", "scan.json", &serde_json::json!({"snapshots": []})),
+      stage_json(&store, &root, &run_id, &span_id, 2, INPUT_ACTION_RESULT_ARTIFACT_ROLE, "iar.json", &kept),
+    ];
+    write_run(&store, "run_iar_filters", artifacts);
+
+    let results = extract_input_action_results(&store, &store.read_run("run_iar_filters").expect("read")).expect("extract");
+    assert_eq!(results, vec![kept]);
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn extract_input_action_results_errors_on_malformed_matching_json() {
+    let root = temp_root("malformed");
+    let store = LocalStore::new(root.clone()).expect("store");
+    let run_id = RunId::new("run_iar_bad");
+    let span_id = SpanId::new("0000000000000001");
+    let artifacts = vec![stage_file(
+      &store,
+      &root,
+      &run_id,
+      &span_id,
+      0,
+      INPUT_ACTION_RESULT_ARTIFACT_ROLE,
+      "iar-bad.json",
+      b"{not-valid-json",
+    )];
+    write_run(&store, "run_iar_bad", artifacts);
+
+    let error = list_input_action_results(&store, "run_iar_bad").expect_err("malformed must fail");
+    assert!(error.contains("input-action-result"), "error={error}");
+
+    let _ = fs::remove_dir_all(root);
+  }
+
+  #[test]
+  fn extract_input_action_results_returns_empty_when_absent() {
+    let root = temp_root("empty");
+    let store = LocalStore::new(root.clone()).expect("store");
+    write_run(&store, "run_iar_empty", Vec::new());
+    let results = list_input_action_results(&store, "run_iar_empty").expect("list");
+    assert!(results.is_empty());
+    let _ = fs::remove_dir_all(root);
+  }
+}

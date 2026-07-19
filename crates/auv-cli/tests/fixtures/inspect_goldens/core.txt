@@ -16,6 +16,9 @@ Artifacts: 2
 Command Boundary Claims:
 - none
 
+Input Actions:
+- none
+
 Verifications:
 - method=text_visible executed=true state_changed=true semantic_matched=true failure_layer=n/a evidence=0 observed_label=hello
 

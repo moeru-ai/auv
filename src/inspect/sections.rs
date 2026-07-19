@@ -7,7 +7,8 @@ use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 
 use super::{inspect_run_core_prefix_body, inspect_run_core_suffix_body};
 
-/// Core prefix: run header through Detector Recognition Lineage.
+/// Core prefix: run header through Input Actions / Verifications / Observations /
+/// Detector Recognition Lineage.
 pub struct CorePrefixSection;
 
 impl InspectSection for CorePrefixSection {
