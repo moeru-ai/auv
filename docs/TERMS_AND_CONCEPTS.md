@@ -4,16 +4,36 @@ This document defines the working vocabulary for AUV runtime recording,
 inspection, and future replay work. Terms marked as provisional are design
 terms, not stable public API names.
 
-## Trace
+## Run
 
-A trace is one complete inspectable workflow. Examples include one Rust
-orchestration workflow, one app probe, one validation pass, or one ad-hoc
-command invocation. Historical JSON recipe execution produced traces before
-the recipe lane was retired.
+A run is AUV's correlation, persistence, inspection, and replay scope. A run
+contains zero or more operation executions. It is not an OpenTelemetry trace.
 
-A trace is the unit that inspection tools load as a whole. It should contain
-enough structure to reconstruct what AUV attempted, what happened, what state
-was observed, and which captured materials support that account.
+## Operation
+
+An operation is a reusable typed capability identified by `OperationName`.
+CLI command names and MCP tool names are frontend routes to an operation, not
+canonical execution identity.
+
+## Operation Execution
+
+An operation execution is one invocation that actually started. Its direct
+typed result exists independently from persistence and verification.
+
+## Run Commit
+
+A run commit is one atomic, ordered history entry accepted by the authority
+`RunStore`. It is the only durable source of truth for run state.
+
+## Run Snapshot
+
+A run snapshot is a disposable read model reduced from commits through one
+revision. `through_revision` is a read cursor, not a schema version.
+
+## Verification
+
+Verification evaluates asserted external state. It is independent from target
+resolution, input delivery, operation completion, and persistence.
 
 ## InspectSection / InspectDocument / InspectComposer (provisional)
 
@@ -88,56 +108,50 @@ verification resources, and invalidate observations after an action. Daemon
 transport, JS/REPL handles, session-scoped artifact namespaces, and
 device-level action locks are still planned, not implemented.
 
-## Run
-
-A run is the user-visible top-level record for a trace. The `run_id` is the
-stable handle used by CLI commands, storage paths, and viewer APIs.
-
-A run is scoped to one `device_id` and one `session_id`. Both identifiers are
-recorded on the run's attributes (`auv.device.id`, `auv.session.id`) so
-historical runs remain self-describing once multi-device and multi-session
-land. Runs from different devices or sessions never share local state.
-
-For local storage, a run is expected to live under `.auv/runs/{run_id}/`. The
-on-disk layout is independent of device/session — those are run-record
-attributes, not path components — so existing run directories remain readable
-across the protocol skeleton expansion.
-
-Internally, a run may also carry an OpenTelemetry-compatible trace identifier so
-the recorded data can later be exported to OTLP without treating the human
-readable `run_id` as the telemetry trace id.
-
 ## Span
 
-A span is a timed unit of work inside a run. Spans form a tree through
-`parent_span_id`.
+An AUV span is an optional timed diagnostic fact owned by an operation
+execution. Spans may form a tree through `parent_span_id`, but they do not
+identify the operation or operation execution and do not create an independent
+tracing authority.
 
-Expected span levels include workflow phases, command invocations, driver
-actions, and historical JSON recipe compatibility spans in older runs. A
-single ad-hoc command can be a run with one root span and one command span.
-Historical recipe execution was modeled as one run with child spans for its
-steps and command invocations; active workflow composition uses Rust
-orchestration over typed driver APIs and tracing boundaries.
+A span becomes durable only when the run's authority `RunStore` accepts it
+through a `RunCommit`. Until then it is transient diagnostic data.
+OpenTelemetry spans are projections, not AUV persistence identity.
 
 ## Event
 
-An event is a timestamped occurrence attached to a span. Events are small and
-append-friendly. They should describe what happened, not carry large payloads.
+An AUV event is an optional timestamped diagnostic fact owned by an operation
+execution. It may be associated with a span, but it does not identify the
+operation or operation execution and does not create an independent event or
+tracing authority.
 
 Examples include `command.resolved`, `driver.invoke`, `action.started`,
 `artifact.captured`, `assertion.passed`, and `assertion.failed`.
 
+An event becomes durable only when the run's authority `RunStore` accepts it
+through a `RunCommit`. Events should describe small occurrences; structured or
+large payloads belong in typed values or artifacts.
+
 ## Artifact
 
-An artifact is persisted inspection material produced during a run. Artifacts
-may be files, structured JSON documents, images, reports, logs, or media.
+An artifact is committed inspection or replay material owned by a run. It
+combines typed metadata with authority-owned bytes and becomes visible only
+when the authority `RunStore` atomically includes it in a `RunCommit` after
+validating the complete byte stream.
+
+Artifacts may be scoped to the run, an operation execution, or verification.
+They may contain structured JSON documents, images, reports, logs, media, or
+other files.
 
 Examples include screenshots, click-overlay images, accessibility snapshots,
 driver input/output JSON, distillation reports, validation reports, and video
 segments.
 
-Artifacts are referenced from spans or events by metadata. Large payloads should
-remain as files or blobs rather than being embedded directly in events.
+Committed typed facts and resources refer to artifacts through `ArtifactRef`
+metadata. Spans and events may add diagnostic links, but they do not own
+artifacts; large payloads remain authority-owned bytes rather than embedded
+event data.
 
 ## Observation Scope
 
@@ -558,48 +572,24 @@ The server exists so browser viewers, Android WebViews, IDE integrations, and
 other tools can list runs, fetch run structure, load artifacts, and subscribe to
 live run events.
 
-The default CLI endpoint is `127.0.0.1:8765`. A standalone `inspect serve`
-process can read historical runs from the configured store root and can accept
-cross-process run updates only when write mode is explicitly enabled.
+V1 selects exactly one authority `RunStore` for each run. An inspect server may
+have one of three explicit relationships to that authority:
 
-Inspect server write mode is opt-in. In write mode, runtimes can report
-incremental run updates to the server over local HTTP, and the server applies
-accepted updates to its configured store before broadcasting them to live
-viewers. The server rejects conflicting updates instead of silently merging or
-overwriting them.
+- read snapshots, commits, subscriptions, and artifacts from the selected
+  `RunStore`;
+- receive best-effort `InspectPublisher` projections whose delivery failures do
+  not alter committed truth; or
+- explicitly implement `RunStore`, making the inspect server the authority for
+  that run.
 
-Local recording and inspect server reporting are multi-write behavior. AUV does
-not define a universal single source of truth when both are enabled; each target
-owns the records it accepted, and callers choose which store or server they
-inspect.
+Only `RunCommit` values accepted by the selected authority define durable run
+truth. Inspect rendering, broadcasting, and best-effort publication cannot
+change already committed history.
 
-Artifact byte upload is available in write mode after the corresponding
-artifact metadata has been accepted for the run. Replay and broader mutation
-APIs remain out of scope for the first inspect-server design.
-
-## Run Recording Backend
-
-A run recording backend is a dependency of execution surfaces, not of the
-legacy `Runtime` type specifically. It owns run recording effects by combining
-one store for canonical snapshots and artifact staging with one or more run
-recorders for incremental updates.
-
-The backend lets CLI, library calls, and future frontends share the same runtime
-execution model while choosing different recording policies. Examples include
-local-only recording, local plus inspect server reporting, server-required
-reporting, and library-supplied recorders.
-
-## Driver Tracing Boundary
-
-The driver tracing boundary is implemented by `auv-tracing-driver`. It owns
-durable AUV run/span/event/artifact recording and may emit Rust `tracing`
-spans/events for observability. It does not install global subscribers or
-OpenTelemetry exporters; binaries and servers configure those layers.
-
-Typed driver calls and Rust orchestration should use this boundary when they
-need inspectable artifacts without depending on command catalog or CLI argument
-parsing code. The root `Runtime` still exposes temporary facade methods for
-remaining invoke and historical callers.
+Reliable replication between authorities requires a separate protocol with an
+outbox, acknowledgement, resume cursor, and conflict policy; that protocol is
+deferred. Artifact metadata and bytes are committed atomically through the
+authority `RunStore` artifact contract.
 
 ## Interaction Tracing Boundary
 
@@ -670,7 +660,67 @@ stay together. It wraps driver operation specs but does not own the operation
 contract itself. It is not the core runtime and should not own run recording
 semantics, recipe execution, or bundle discovery.
 
-## Run Recorder
+## Historical terms
+
+The definitions below record vocabulary used by the legacy run-recording
+implementation. They are retained for migration context and are not the active
+contract.
+
+### Trace
+
+A trace is one complete inspectable workflow. Examples include one Rust
+orchestration workflow, one app probe, one validation pass, or one ad-hoc
+command invocation. Historical JSON recipe execution produced traces before
+the recipe lane was retired.
+
+A trace is the unit that inspection tools load as a whole. It should contain
+enough structure to reconstruct what AUV attempted, what happened, what state
+was observed, and which captured materials support that account.
+
+### Run
+
+A run is the user-visible top-level record for a trace. The `run_id` is the
+stable handle used by CLI commands, storage paths, and viewer APIs.
+
+A run is scoped to one `device_id` and one `session_id`. Both identifiers are
+recorded on the run's attributes (`auv.device.id`, `auv.session.id`) so
+historical runs remain self-describing once multi-device and multi-session
+land. Runs from different devices or sessions never share local state.
+
+For local storage, a run is expected to live under `.auv/runs/{run_id}/`. The
+on-disk layout is independent of device/session — those are run-record
+attributes, not path components — so existing run directories remain readable
+across the protocol skeleton expansion.
+
+Internally, a run may also carry an OpenTelemetry-compatible trace identifier so
+the recorded data can later be exported to OTLP without treating the human
+readable `run_id` as the telemetry trace id.
+
+### Run Recording Backend
+
+A run recording backend is a dependency of execution surfaces, not of the
+legacy `Runtime` type specifically. It owns run recording effects by combining
+one store for canonical snapshots and artifact staging with one or more run
+recorders for incremental updates.
+
+The backend lets CLI, library calls, and future frontends share the same runtime
+execution model while choosing different recording policies. Examples include
+local-only recording, local plus inspect server reporting, server-required
+reporting, and library-supplied recorders.
+
+### Driver Tracing Boundary
+
+The driver tracing boundary is implemented by `auv-tracing-driver`. It owns
+durable AUV run/span/event/artifact recording and may emit Rust `tracing`
+spans/events for observability. It does not install global subscribers or
+OpenTelemetry exporters; binaries and servers configure those layers.
+
+Typed driver calls and Rust orchestration should use this boundary when they
+need inspectable artifacts without depending on command catalog or CLI argument
+parsing code. The root `Runtime` still exposes temporary facade methods for
+remaining invoke and historical callers.
+
+### Run Recorder
 
 A run recorder receives incremental run updates such as `runStarted`,
 `spanStarted`, `eventAppended`, `artifactCreated`, `spanFinished`, and
