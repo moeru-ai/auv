@@ -287,6 +287,9 @@ impl InputAttempt {
   }
 }
 
+/// Artifact role for persisted [`InputActionResult`] JSON records.
+pub const INPUT_ACTION_RESULT_ARTIFACT_ROLE: &str = "input-action-result";
+
 /// Persisted record of one driver input delivery — clicks, scrolls,
 /// text submission, etc. Captures the attempt sequence, the path that
 /// ultimately succeeded (or the failure mode), and the disturbance
@@ -305,12 +308,19 @@ impl InputAttempt {
 ///   `InputActionResult` when it attempts typed delivery. Direct driver-
 ///   API consumers (recipes, typed commands invoking driver primitives)
 ///   construct `InputActionResult` the same way.
-/// - **Downstream**: action-bearing operations attach this (and any
-///   current verification records) to the resulting `OperationResult`
-///   artifact (`src/contract.rs`) as delivery evidence.
+/// - **Downstream**: persisted as a standalone `input-action-result` JSON
+///   artifact — **not** embedded in `OperationResult`. Read-side seam:
+///   see `src/contract.rs` module docs.
 ///
 /// Do not introduce a new action-result schema beside `InputActionResult`
 /// without owner approval.
+///
+/// TODO(operation-result-iar-ref): whether `OperationResult.evidence_artifacts`
+/// should explicitly cite the standalone artifact is a separate slice.
+///
+/// TODO(input-action-result-api-version): this existing wire shape has no
+/// version discriminator. Add producer stamping and reader validation together
+/// only when an owner-approved versioning slice defines the compatibility rule.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InputActionResult {
   pub selected_path: InputDeliveryPath,

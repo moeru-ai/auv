@@ -1,13 +1,15 @@
 //! Core human-readable run inspection (library-only).
 //!
 //! App-specific sections live in `auv-product`. This module emits only core
-//! sections: run summary, verifications, observations, detector reads,
-//! view-parser proof, and scene state. Product frontends inject their composer
-//! rather than adding app wiring here.
+//! sections: run summary, input actions, verifications, observations, detector
+//! reads, view-parser proof, and scene state. Product frontends inject their
+//! composer rather than adding app wiring here.
 
 use auv_inspect_model::InspectComposer;
 use auv_tracing_driver::store::{CanonicalRun, LocalStore};
 use auv_view::memory::{ViewMemory, ViewParserInspect, format_view_resolution_summary_text};
+
+use auv_driver::{DisturbanceLevel, InputActionResult, InputDeliveryPath};
 
 use crate::contract::{FailureLayer, ObservationSnapshot, ObservationSource, VerificationMethod, VerificationResult};
 use crate::model::AuvResult;
@@ -28,6 +30,10 @@ pub fn list_verifications(store: &LocalStore, run_id: &str) -> AuvResult<Vec<Ver
 
 pub fn list_observation_snapshots(store: &LocalStore, run_id: &str) -> AuvResult<Vec<ObservationSnapshot>> {
   crate::run_read::list_observation_snapshots(store, run_id)
+}
+
+pub fn list_input_action_results(store: &LocalStore, run_id: &str) -> AuvResult<Vec<InputActionResult>> {
+  crate::run_read::list_input_action_results(store, run_id)
 }
 
 pub fn list_detector_recognition_lineage(store: &LocalStore, run_id: &str) -> AuvResult<Vec<DetectorRecognitionLineage>> {
@@ -55,10 +61,11 @@ pub fn inspect_run_with(composer: &InspectComposer, store: &LocalStore, run_id: 
 
 pub(crate) fn inspect_run_core_prefix_body(store: &LocalStore, run_id: &str) -> AuvResult<String> {
   let canonical = read_run(store, run_id)?;
-  let verifications = list_verifications(store, run_id)?;
-  let observation_snapshots = list_observation_snapshots(store, run_id)?;
-  let detector_recognition_lineage = list_detector_recognition_lineage(store, run_id)?;
-  Ok(render_core_run_text(&canonical, &verifications, &observation_snapshots, &detector_recognition_lineage))
+  let input_action_results = crate::run_read::extract_input_action_results(store, &canonical)?;
+  let verifications = crate::run_read::extract_verifications(store, &canonical)?;
+  let observation_snapshots = crate::run_read::extract_observation_snapshots(store, &canonical)?;
+  let detector_recognition_lineage = crate::run_read::extract_detector_recognition_lineage(store, &canonical)?;
+  Ok(render_core_run_text(&canonical, &input_action_results, &verifications, &observation_snapshots, &detector_recognition_lineage))
 }
 
 pub(crate) fn inspect_run_core_suffix_body(store: &LocalStore, run_id: &str) -> AuvResult<String> {
@@ -98,6 +105,7 @@ fn append_scene_state_text_from_run(store: &LocalStore, run: &CanonicalRun, outp
 
 fn render_core_run_text(
   run: &CanonicalRun,
+  input_action_results: &[InputActionResult],
   verifications: &[VerificationResult],
   observation_snapshots: &[ObservationSnapshot],
   detector_recognition_lineage: &[DetectorRecognitionLineage],
@@ -158,6 +166,24 @@ fn render_core_run_text(
     }
     for event in command_known_limits {
       output.push_str(&format!("- known_limit={} span={}\n", event.message.as_deref().unwrap_or("n/a"), event.span_id));
+    }
+  }
+
+  // Neutral delivery facts only — do not collapse attempts[*].succeeded into success.
+  output.push_str("\nInput Actions:\n");
+  if input_action_results.is_empty() {
+    output.push_str("- none\n");
+  } else {
+    for result in input_action_results {
+      output.push_str(&format!(
+        "- path={} attempts={} fallback={} mouse={} focus={} clipboard={}\n",
+        render_input_delivery_path(result.selected_path),
+        result.attempts.len(),
+        result.fallback_reason.as_deref().unwrap_or("n/a"),
+        render_disturbance_level(result.mouse_disturbance),
+        render_disturbance_level(result.focus_disturbance),
+        render_disturbance_level(result.clipboard_disturbance)
+      ));
     }
   }
 
@@ -241,6 +267,33 @@ fn render_detector_status(status: &crate::run_read::DetectorRecognitionLineageSt
   }
 }
 
+fn render_input_delivery_path(path: InputDeliveryPath) -> &'static str {
+  match path {
+    InputDeliveryPath::Noop => "noop",
+    InputDeliveryPath::AxPress => "ax_press",
+    InputDeliveryPath::AxFocus => "ax_focus",
+    InputDeliveryPath::AxSetValue => "ax_set_value",
+    InputDeliveryPath::AxScroll => "ax_scroll",
+    InputDeliveryPath::AxSelectedText => "ax_selected_text",
+    InputDeliveryPath::WindowTargetedMouse => "window_targeted_mouse",
+    InputDeliveryPath::WindowTargetedWheel => "window_targeted_wheel",
+    InputDeliveryPath::WindowTargetedKeyboard => "window_targeted_keyboard",
+    InputDeliveryPath::WindowTargetedKeyboardScroll => "window_targeted_keyboard_scroll",
+    InputDeliveryPath::ClipboardPaste => "clipboard_paste",
+    InputDeliveryPath::ForegroundSystemEvents => "foreground_system_events",
+    InputDeliveryPath::Unsupported => "unsupported",
+  }
+}
+
+fn render_disturbance_level(level: DisturbanceLevel) -> &'static str {
+  match level {
+    DisturbanceLevel::None => "none",
+    DisturbanceLevel::Temporary => "temporary",
+    DisturbanceLevel::Foreground => "foreground",
+    DisturbanceLevel::Unknown => "unknown",
+  }
+}
+
 fn render_optional_bool(value: Option<bool>) -> &'static str {
   match value {
     Some(true) => "true",
@@ -290,5 +343,103 @@ fn render_recognition_source(source: crate::contract::RecognitionSource) -> &'st
     crate::contract::RecognitionSource::SegmentedRegion => "segmented_region",
     crate::contract::RecognitionSource::IconMatch => "icon_match",
     crate::contract::RecognitionSource::Custom => "custom",
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::collections::BTreeMap;
+  use std::fs;
+  use std::path::PathBuf;
+
+  use auv_driver::{DisturbanceLevel, InputActionResult, InputAttempt, InputDeliveryPath};
+  use auv_tracing_driver::store::{CanonicalRun, LocalStore};
+  use auv_tracing_driver::trace::{
+    RUN_API_VERSION, RunId, RunRecordV1Alpha1, RunType, SPAN_API_VERSION, SpanId, SpanRecordV1Alpha1, TraceId, TraceState, TraceStatusCode,
+  };
+
+  use super::inspect_run_core_prefix_body;
+
+  #[test]
+  fn core_inspect_text_projects_input_action_facts_without_success_claim() {
+    let root = PathBuf::from(std::env::temp_dir()).join(format!("auv-inspect-iar-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("temp");
+    let store = LocalStore::new(root.clone()).expect("store");
+    let run_id = RunId::new("run_inspect_iar");
+    let span_id = SpanId::new("0000000000000001");
+    let result = InputActionResult {
+      selected_path: InputDeliveryPath::ForegroundSystemEvents,
+      attempts: vec![
+        InputAttempt::failure(InputDeliveryPath::WindowTargetedKeyboard, "first path missed"),
+        InputAttempt::success(InputDeliveryPath::ForegroundSystemEvents),
+      ],
+      fallback_reason: Some("foreground_required".to_string()),
+      mouse_disturbance: DisturbanceLevel::None,
+      focus_disturbance: DisturbanceLevel::Temporary,
+      clipboard_disturbance: DisturbanceLevel::None,
+    };
+    let source = root.join("iar.json");
+    fs::write(&source, serde_json::to_string_pretty(&result).unwrap() + "\n").expect("write");
+    let artifact = store
+      .stage_artifact_file(
+        &run_id,
+        0,
+        &span_id,
+        None,
+        auv_tracing_driver::ArtifactFileSource {
+          role: auv_driver::INPUT_ACTION_RESULT_ARTIFACT_ROLE.to_string(),
+          source_path: source,
+          preferred_name: "iar.json".to_string(),
+          summary: None,
+        },
+      )
+      .expect("stage");
+    store
+      .write_run_snapshot(&CanonicalRun {
+        run: RunRecordV1Alpha1 {
+          api_version: RUN_API_VERSION.to_string(),
+          run_id: run_id.clone(),
+          trace_id: TraceId::new("trace_inspect_iar"),
+          run_type: RunType::Command,
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 1,
+          finished_at_millis: Some(2),
+          root_span_id: span_id.clone(),
+          attributes: BTreeMap::new(),
+          summary: None,
+          failure: None,
+        },
+        spans: vec![SpanRecordV1Alpha1 {
+          api_version: SPAN_API_VERSION.to_string(),
+          span_id,
+          parent_span_id: None,
+          name: "auv.command".to_string(),
+          state: TraceState::Ended,
+          status_code: TraceStatusCode::Ok,
+          started_at_millis: 1,
+          finished_at_millis: Some(2),
+          attributes: BTreeMap::new(),
+          summary: None,
+          failure: None,
+        }],
+        events: Vec::new(),
+        artifacts: vec![artifact],
+      })
+      .expect("write run");
+
+    let text = inspect_run_core_prefix_body(&store, "run_inspect_iar").expect("inspect");
+    let input_section = text.split("\nVerifications:\n").next().expect("input section");
+    assert!(input_section.contains("Input Actions:"), "{text}");
+    assert!(
+      input_section
+        .contains("path=foreground_system_events attempts=2 fallback=foreground_required mouse=none focus=temporary clipboard=none"),
+      "{text}"
+    );
+    // Neutral projection: delivery attempts are not collapsed into a success bit.
+    assert!(!input_section.contains("succeeded="), "{text}");
+
+    let _ = fs::remove_dir_all(root);
   }
 }

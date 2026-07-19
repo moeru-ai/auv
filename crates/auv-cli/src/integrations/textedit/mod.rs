@@ -12,7 +12,7 @@ use auv_cli_invoke::{
   CommandGroup, InvokeCommandInput, InvokeCommandOutput, InvokeCommandResult, InvokeReport, InvokeReportField, InvokeReportSection,
   InvokeResult, invoke_command,
 };
-use auv_driver::{InputActionResult, InputDeliveryPath};
+use auv_driver::{INPUT_ACTION_RESULT_ARTIFACT_ROLE, InputActionResult, InputDeliveryPath};
 use auv_runtime::contract::{
   ArtifactRef, FailureLayer, OPERATION_RESULT_API_VERSION, OperationOutput, OperationResult, OperationStatus,
   VERIFICATION_RESULT_API_VERSION, VerificationMethod, VerificationResult,
@@ -104,7 +104,7 @@ pub(crate) fn build_invoke_output_from_report(report: &DocumentCommandReport, co
   for outcome in &report.outcomes {
     if let Some(result) = &outcome.input_action_result {
       output.artifacts.push(json_artifact(
-        "input-action-result",
+        INPUT_ACTION_RESULT_ARTIFACT_ROLE,
         &format!("textedit-{}-input-action", outcome.step_id.replace('.', "-")),
         result,
         "Typed InputActionResult from TextEdit document.write step.",
@@ -174,7 +174,7 @@ fn build_canonical_operation_result(result: &InvokeResult, observation: Option<&
   let evidence_artifacts = result
     .artifacts
     .iter()
-    .filter(|artifact| artifact.role == "input-action-result" || artifact.role == "ax-text-observation")
+    .filter(|artifact| artifact.role == INPUT_ACTION_RESULT_ARTIFACT_ROLE || artifact.role == "ax-text-observation")
     .map(|artifact| ArtifactRef {
       run_id: run_id.clone(),
       artifact_id: artifact.artifact_id.clone(),
@@ -506,7 +506,7 @@ mod tests {
       dry_run: false,
     };
     let output = document_write_impl(input).expect("fixture write");
-    assert!(output.artifacts.iter().any(|artifact| artifact.kind == "input-action-result"));
+    assert!(output.artifacts.iter().any(|artifact| artifact.kind == INPUT_ACTION_RESULT_ARTIFACT_ROLE));
     assert!(output.artifacts.iter().any(|artifact| artifact.kind == "ax-text-observation"));
     assert!(!output.artifacts.iter().any(|artifact| artifact.kind == "operation-result"));
     assert_eq!(output.backend.as_deref(), Some("auv-apple-textedit.DocumentWrite"));

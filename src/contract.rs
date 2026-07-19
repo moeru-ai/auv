@@ -16,21 +16,20 @@
 //! ```text
 //! recognition / AX / candidates
 //!   -> auv-driver InputActionResult
-//!        (crates/auv-driver/src/input.rs;
-//!         `InputActionResult`, pub, full serde,
-//!         records the actual delivery attempts + disturbance levels)
+//!        (standalone `input-action-result` artifact; read via
+//!         `run_read::extract_input_action_results`)
 //!   -> OperationResult / VerificationResult / ObservationSnapshot
 //!        (this file; the persisted, reader-consumable records)
 //!   -> trace artifacts
-//!        (src/run_read.rs reads them back via `extract_verifications`
-//!         and `extract_observation_snapshots`; src/recorded_operation.rs
-//!         is the orchestration bridge, not a contract record)
+//!        (src/run_read/mod.rs reads them back via `extract_verifications`,
+//!         `extract_observation_snapshots`, and
+//!         `extract_input_action_results`)
 //! ```
 //!
 //! The archived candidate-action `ActionResolverDecision` schema was removed.
-//! Current input delivery evidence should use `InputActionResult` together
-//! with current `OperationResult` and `VerificationResult` records. Do not
-//! introduce a replacement action-result schema without owner approval.
+//! Current input delivery evidence is the standalone `InputActionResult`
+//! artifact plus separate `OperationResult` / `VerificationResult` records.
+//! Do not introduce a replacement action-result schema without owner approval.
 //!
 //! Reader-side `api_version` rejection is deferred; see
 //! `NOTICE(contract-api-version-reader-check)` immediately below.
@@ -111,9 +110,9 @@ pub enum OperationStatus {
 ///
 /// - **Produced by** typed driver / runtime command handlers via
 ///   `Runtime::record_operation` (see [`auv_tracing_driver::recorded_operation`]).
-///   Action commands attach current input delivery evidence such as
-///   `InputActionResult` from `crates/auv-driver` and any verification
-///   claims to the resulting `OperationResult` here.
+///   Verification claims attach here. Input delivery evidence is persisted
+///   separately as an `input-action-result` artifact (`InputActionResult`),
+///   not as a field on this record.
 /// - **Consumed by** `run_read::extract_verifications` (which scans
 ///   `operation-result` JSON artifacts and lifts both top-level
 ///   `verifications` and the legacy `OperationOutput::Verification`),

@@ -304,6 +304,7 @@ async fn get_run(State(state): State<InspectServerState>, Path(run_id): Path<Str
     verifications,
     observation_snapshots,
     detector_recognition_lineage,
+    input_action_results,
     view_parser,
     view_parser_summary,
   } = state.projection.run_enrichment(state.store.as_ref(), &run).map_err(InspectHttpError::from_store)?;
@@ -314,6 +315,7 @@ async fn get_run(State(state): State<InspectServerState>, Path(run_id): Path<Str
       verifications,
       observation_snapshots,
       detector_recognition_lineage,
+      input_action_results,
       view_parser,
       view_parser_summary,
     })
@@ -478,6 +480,8 @@ struct InspectRunResponse {
   observation_snapshots: Vec<serde_json::Value>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   detector_recognition_lineage: Vec<serde_json::Value>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  input_action_results: Vec<serde_json::Value>,
   view_parser: ViewParserInspect,
   view_parser_summary: ViewParserListSummary,
 }
@@ -835,6 +839,14 @@ mod tests {
         verifications: vec![serde_json::json!({"method":{"kind":"semantic_match"}})],
         observation_snapshots: vec![serde_json::json!({"snapshot_id":"snapshot_projection_test"})],
         detector_recognition_lineage: vec![serde_json::json!({"status":"ready"})],
+        input_action_results: vec![serde_json::json!({
+          "selected_path": "foreground_system_events",
+          "attempts": [{"path": "foreground_system_events", "succeeded": true, "message": null}],
+          "fallback_reason": null,
+          "mouse_disturbance": "none",
+          "focus_disturbance": "none",
+          "clipboard_disturbance": "none"
+        })],
         ..Default::default()
       })
     }
@@ -1683,6 +1695,8 @@ mod tests {
     assert_eq!(run["verifications"][0]["method"]["kind"], "semantic_match");
     assert_eq!(run["observation_snapshots"][0]["snapshot_id"], "snapshot_projection_test");
     assert_eq!(run["detector_recognition_lineage"][0]["status"], "ready");
+    assert_eq!(run["input_action_results"][0]["selected_path"], "foreground_system_events");
+    assert_eq!(run["input_action_results"][0]["attempts"][0]["succeeded"], true);
     assert!(run["command_boundary_claims"].as_array().is_some_and(|claims| !claims.is_empty()));
     assert!(run["verifications"].as_array().is_some_and(|verifications| !verifications.is_empty()));
     assert!(run["observation_snapshots"].as_array().is_some_and(|snapshots| !snapshots.is_empty()));
